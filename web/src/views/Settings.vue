@@ -54,7 +54,7 @@
                           placeholder="每行一个问题，欢迎页展示前 8 条（数据看板热门问题也可一键加入）" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.retrievalDebugEnabled" placement="top">检索调试入口 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.retrievalDebugEnabled" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">检索调试入口 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
               <a-switch v-model:checked="form.chat.retrievalDebugEnabled" />
             </a-form-item>
             <a-form-item>
@@ -85,7 +85,7 @@
               <span style="margin-left:12px;color:#999;font-size:12px">SSE 超时截断并提示，默认 300000</span>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.showDebugDegradations" placement="top">降级提示 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.showDebugDegradations" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">降级提示 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
               <a-switch v-model:checked="form.chat.showDebugDegradations" />
               <span style="margin-left:12px;color:#999;font-size:12px">
                 默认关闭：回答下方不显示任何降级提示（无命中/改写失败/图片剔除/缓存命中等）；调试排障时开启可见全部原因
@@ -96,6 +96,13 @@
               <a-switch v-model:checked="form.chat.citationCheckEnabled" />
               <span style="margin-left:12px;color:#999;font-size:12px">
                 生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）
+              </span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.judgeEnabled" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">体检 LLM 评判 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
+              <a-switch v-model:checked="form.eval.judgeEnabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">
+                自动体检时对每个 case 判"命中资料是否足以直接回答"，产出 judgeScore（每 case 一次调用，增加体检耗时）
               </span>
             </a-form-item>
           </a-form>
@@ -639,6 +646,7 @@ const tips = {
   suggestedQuestions: '欢迎页展示的推荐问题（新用户引导）。每行一条、最多 8 条；数据看板的热门问题可一键加入。改动保存后，用户下次进入问答页生效。',
   showDebugDegradations: '回答下方是否显示降级提示（无命中/查询改写失败/图片剔除/未标注引用/缓存命中等）。默认关：回答区不显示任何降级提示（排障信息仍写 [FAIL-LOUD] 日志）；调试排障时开启即可看到全部降级原因。',
   citationCheck: '引用语义一致性自检：回答生成后，把每条 [N] 引用的前文句子与其来源片段交给模型判断是否被直接支撑，剔除"编号存在但内容与该块无关"的引用并重编编号。提升引用可信度，代价是每轮回答多一次校验调用（约数秒延迟）。',
+  judgeEnabled: '自动体检的 LLM 评判（调试度量）：体检时对每个 case 判断"当前检索的 top 命中资料是否足以直接回答该问题"，汇总为 judgeScore 写入体检报告，用于评估检索结果的实际可用性。每 case 一次模型调用，评估集大时体检耗时明显增加。',
   visionEnabled: '视觉模型总开关。关闭后：文档图片/用户图片都不生成描述——图片仅展示、内容不进检索与回答引用（RAG 对图片语义失效），一般不建议关闭。',
   parseConcurrency: '文档异步解析的并发数（同时解析几个文档）。调高多文档上传更快，但并发解析会同时占用 embedding/Ollama 资源；保存后对新任务生效。',
   embedRetryCount: '向量化批次失败时的自动重试次数（0=不重试）。重试仍失败则整个文档解析失败并回退/提示（fail-loud，绝不静默丢块）。',
@@ -785,7 +793,8 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                      searchTag: 'search', maxSubQueries: 3, multiRetrieval: true,
                                      timeoutMillis: 30000, maxThinkingTokens: 0 },
                     ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10 },
-                    semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 } })
+                    semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 },
+                    eval: { judgeEnabled: false } })
 
 // 当前向量索引维度（后端重嵌入成功后回写 embedding.dimensions，只读展示）
 const embeddingDimensions = ref('')
@@ -850,6 +859,7 @@ onMounted(async () => {
       form.value.chat.sseTimeoutMs = Number(d.chat?.sseTimeoutMs?.value ?? 300000)
       form.value.chat.showDebugDegradations = d.chat?.showDebugDegradations?.value === 'true'
       form.value.chat.citationCheckEnabled = d.chat?.citationCheckEnabled?.value !== 'false'
+      form.value.eval.judgeEnabled = d.eval?.judgeEnabled?.value === 'true'
       form.value.vision.enabled = d.vision?.enabled?.value !== 'false'
       form.value.vision.model = d.vision?.model?.value || ''
       form.value.vision.baseUrl = d.vision?.baseUrl?.value || ''
@@ -986,6 +996,7 @@ const save = async () => {
               sseTimeoutMs: String(form.value.chat.sseTimeoutMs),
               showDebugDegradations: String(form.value.chat.showDebugDegradations),
               citationCheckEnabled: String(form.value.chat.citationCheckEnabled) },
+      eval: { judgeEnabled: String(form.value.eval.judgeEnabled) },
       vision: { enabled: String(form.value.vision.enabled),
                 model: form.value.vision.model?.trim(),
                 baseUrl: form.value.vision.baseUrl?.trim(),
