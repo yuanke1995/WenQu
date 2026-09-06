@@ -285,7 +285,7 @@ public class ConfigService {
     /** 从 yml/env 读取默认值 */
     private Map<String, String> defaults() {
         Map<String, String> d = new LinkedHashMap<>();
-        d.put("chat.model", env("spring.ai.openai.chat.options.model", "qwen3.7-flash-2026-07-15"));
+        d.put("chat.model", env("spring.ai.openai.chat.options.model", "qwen3.8-27b"));
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
         d.put("chat.systemPrompt", properties.getSystemPrompt());
         d.put("chat.baseUrl", env("spring.ai.openai.base-url", ""));

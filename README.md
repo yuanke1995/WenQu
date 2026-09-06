@@ -10,7 +10,7 @@
 | ORM | MyBatis-Plus 3.5.12 |
 | 数据库 | OceanBase（MySQL 协议，库 `ai_doc_assistant`，可按环境调整） |
 | 向量库 | Redis Stack（RediSearch，docker 映射端口 **6380**，Jedis 客户端） |
-| LLM | 阿里云 MaaS 网关（OpenAI 兼容：chat=`qwen3.7-flash-2026-07-15`，embedding=`qwen3.7-text-embedding`，base-url 不含 `/v1`）；图片理解/OCR 走本地 Ollama `qwen3-vl:2b` |
+| LLM | 阿里云 MaaS 网关（OpenAI 兼容：chat=`qwen3.8-27b`，embedding=`qwen3.7-text-embedding-flash`，base-url 不含 `/v1`）；图片理解/OCR 走本地 Ollama `qwen3-vl:2b` |
 | 文档解析 | Apache POI 5.2.3（docx/xlsx）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
 | 前端 | Vue 3 + Vite 5 + Ant Design Vue 4 + markdown-it/DOMPurify/highlight.js（Node ≥ 18，建议 20/22） |
 
@@ -325,8 +325,8 @@ spring:
   ai.openai:
     api-key: ${AI_DEEPSEEK_KEY}
     base-url: <MaaS 网关 /compatible-mode> # 不含 /v1（Spring AI 自动补）
-    chat: { options: { model: qwen3.7-flash-2026-07-15, temperature: 0.3 } }
-    embedding: { base-url: ... , options: { model: qwen3.7-text-embedding } }
+    chat: { options: { model: qwen3.8-27b, temperature: 0.3 } }
+    embedding: { base-url: ... , options: { model: qwen3.7-text-embedding-flash } }
   ai.vectorstore.redis: { initialize-schema: true, index-name: ai-doc-index, prefix: "ai:chunk:" }  # Spring AI 1.1 起属性为 index-name；initialize-schema 必须 true，否则全量重嵌入被护栏拒绝执行（DROP 后无法重建索引）
 ```
 
@@ -336,7 +336,7 @@ spring:
 
 ## 已知注意事项
 
-- **聊天模型**：当前使用 `qwen3.7-flash-2026-07-15`。该 MaaS 网关对部分模型（如 `qwen-max`）返回 DashScope 原生格式（`{"text":...}`），Spring AI 无法解析（表现为 0 token 无回答）；需使用返回标准 OpenAI 格式的模型（`qwen-plus`、`qwen3.7-flash` 已实测兼容）
+- **聊天模型**：当前使用 `qwen3.8-27b`。该 MaaS 网关对部分模型（如 `qwen-max`）返回 DashScope 原生格式（`{"text":...}`），Spring AI 无法解析（表现为 0 token 无回答）；需使用返回标准 OpenAI 格式的模型（`qwen-plus`、`qwen3.7-flash` 已实测兼容）
 - **结构切分/分词升级需重解析**：jieba 分词（关键词路即时生效）与结构感知切分（docx）需对存量文档**重解析**才重建知识块；切分后 `c_ai_message.sources` 的 knowledgeId 失效，**评估集需重新生成**（检索评估页"从历史问答重新生成"）
 - **引用识别需重解析**：交叉引用/提及识别在解析时建立 `c_ai_knowledge_ref`，修改 `refDetectEnabled/refDetectMention` 后需重解析；引用扩散/父章节带出（`refExpand*`）保存即生效
 - **无编号标题文档的编号引用**：正文标题不带编号（WPS 自动编号只在目录）的文档，"见 4.1.2 节"这类编号引用匹配不到正文标题，走章节名匹配或丢弃（V1 边界）；标题文本自带编号（如"4.1.2 数值Api类型"）的文档编号引用可精确命中
