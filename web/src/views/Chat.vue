@@ -1138,6 +1138,11 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
       messages.value[idx].loading = false
       messages.value[idx].sources = sources
+      // 引用语义自检/越界校验可能裁剪了来源：状态行"参考 N 段资料"改用最终 sources 长度，
+      // 与展开明细保持一致（retrieved 事件先到，done 时以最终值为准）
+      if (messages.value[idx].retrieved && Array.isArray(sources)) {
+        messages.value[idx].retrieved.refs = sources.length
+      }
       messages.value[idx].related = related
       messages.value[idx].messageId = messageId
       messages.value[idx].degradations = degradations

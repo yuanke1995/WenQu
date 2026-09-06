@@ -793,6 +793,21 @@ public class RagService {
                             log.warn("[FAIL-LOUD] 引用一致性自检失败（保持原回答）: {}", e.getMessage());
                         }
                     }
+                    // 引用来源被裁剪后，检索状态行的 refs 需同步（否则"参考 N 段资料"与展开明细不一致，
+                    // 且该值会随消息持久化、历史恢复时同样错位）。terms/keywords 不受影响；
+                    // 正常未裁剪时 sources.size() 与 refs 相等，重算后值不变。
+                    String finalRetrievedJson = st.retrievedJson;
+                    try {
+                        Map<String, Object> rj = JSON.parseObject(st.retrievedJson);
+                        if (rj != null) {
+                            Integer oldRefs = rj.get("refs") instanceof Number n ? n.intValue() : null;
+                            if (oldRefs == null || oldRefs != sources.size()) {
+                                rj.put("refs", sources.size());
+                                finalRetrievedJson = JSON.toJSONString(rj);
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
 
                     // 记录对话历史（含图片与引用来源），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
@@ -800,7 +815,7 @@ public class RagService {
                     sessionService.appendMessage(st.sessionId, "user", st.question,
                             userImgUrls.isEmpty() ? null : userImgUrls, null);
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
-                            finalImgs, sourcesJson, st.thinkingHolder[0], st.retrievedJson);
+                            finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson);
 
                     // 异步落问答日志（不阻塞 SSE 完成）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
