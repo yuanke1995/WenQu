@@ -520,11 +520,22 @@ public class RetrievalEvaluationService {
                     report.put("deprecatedOk", deprecatedOk == null || Boolean.TRUE.equals(deprecatedOk));
                     if (!result.timedOutGroups().isEmpty()) report.put("timedOut", result.timedOutGroups());
 
-                    // 与上期对比：同键指标相对变化（%），跌幅超阈值置 decline
+                    // 与上期对比：同键指标相对变化（%），跌幅超阈值置 decline。
+                    // 基线护栏：对比仅在"评估集未变更"时有效——评估集是 generate 从历史问答回放生成的，
+                    // 重新生成后样本与上期不同，delta 失去可比性（曾误报 recall@5 下滑）。用
+                    // generatedAt+version+caseCount 作为评估集标识，标识不同则本期记为新的基线，不做 delta 判定。
+                    String evalSetId = set.generatedAt() + "|v" + set.version() + "|" + set.cases().size();
+                    report.put("evalSetId", evalSetId);
                     Map<String, Object> prev = parseReport(configService.get("eval.lastReport"));
+                    String prevEvalSetId = prev == null ? null : String.valueOf(prev.get("evalSetId"));
                     Map<String, Double> prevMetrics = prev == null ? null : castMetrics(prev.get("metrics"));
                     double thresholdPct = Math.max(1, configService.getDouble("eval.autoThresholdPct", 10.0));
-                    if (prevMetrics == null || prevMetrics.isEmpty()) {
+                    if (prevEvalSetId != null && !prevEvalSetId.equals(evalSetId)) {
+                        // 评估集已变更：基线不可比，本期直接作为新基线（metrics 照常记录供展示）
+                        report.put("message", "评估集已变更（生成于 " + set.generatedAt() + "，共 " + set.cases().size()
+                                + " 条），本期作为新基线，下次起在此样本上对比");
+                        log.info("[Eval] 评估集已变更，本期作为新基线: {} -> {}", prevEvalSetId, evalSetId);
+                    } else if (prevMetrics == null || prevMetrics.isEmpty()) {
                         report.put("message", "首期体检完成（暂无上期基线，" + metrics.size() + " 项指标）");
                     } else {
                         Map<String, Object> delta = new LinkedHashMap<>();
