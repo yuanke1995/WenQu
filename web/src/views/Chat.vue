@@ -83,7 +83,7 @@
                 <!-- 检索状态行（回答下方合并区）：概览行展开=检索词+来源条目；条目点击弹原文（平替原引用 chips，与正文 [N] 角标同源） -->
                 <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
                   <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                    <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词，参考 {{ m.retrieved.refs }} 段资料</template>
+                    <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="!m.loading">，参考 {{ m.retrieved.refs }} 段资料</template></template>
                     <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
                     <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
                   </div>
