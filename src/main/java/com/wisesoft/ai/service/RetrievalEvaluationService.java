@@ -13,6 +13,8 @@ import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.AiKnowledge;
 import com.wisesoft.ai.model.AiMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -84,6 +86,7 @@ public class RetrievalEvaluationService {
     private final AiKnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
     private final AiAppProperties properties;
+    private final ChatClient chatClient;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -95,7 +98,8 @@ public class RetrievalEvaluationService {
     public RetrievalEvaluationService(HybridRetrievalService retrievalService, ConfigService configService,
                                       KeywordExtractor keywordExtractor, RerankService rerankService,
                                       AiMessageMapper messageMapper, AiKnowledgeMapper knowledgeMapper,
-                                      AiDocumentMapper documentMapper, AiAppProperties properties) {
+                                      AiDocumentMapper documentMapper, AiAppProperties properties,
+                                      ChatClient chatClient) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -104,6 +108,7 @@ public class RetrievalEvaluationService {
         this.knowledgeMapper = knowledgeMapper;
         this.documentMapper = documentMapper;
         this.properties = properties;
+        this.chatClient = chatClient;
     }
 
     @jakarta.annotation.PreDestroy
@@ -502,6 +507,15 @@ public class RetrievalEvaluationService {
                     report.put("status", "ok");
                     report.put("caseCount", group.cases().size());
                     report.put("metrics", metrics);
+                    // LLM 评判检索充分性（可选增强，eval.judgeEnabled；对每个 case 判 top 命中是否足以回答）
+                    if (configService.getBoolean("eval.judgeEnabled")) {
+                        try {
+                            Double coverage = judgeCoverage(set.cases());
+                            if (coverage != null) report.put("judgeScore", coverage);
+                        } catch (Exception e) {
+                            log.warn("[Eval] 检索充分性评判失败: {}", e.getMessage());
+                        }
+                    }
                     Object deprecatedOk = result.deprecatedCheck() == null ? null : result.deprecatedCheck().get("ok");
                     report.put("deprecatedOk", deprecatedOk == null || Boolean.TRUE.equals(deprecatedOk));
                     if (!result.timedOutGroups().isEmpty()) report.put("timedOut", result.timedOutGroups());
@@ -571,5 +585,48 @@ public class RetrievalEvaluationService {
             }
         });
         return out;
+    }
+
+    /**
+     * LLM 评判检索充分性：对每个 case 用当前线上参数检索 top 命中，由评判模型判"命中资料是否足以直接回答该问题"，
+     * 汇总为 judgeScore（0~1）。这是对 recall@k 的补充：recall 度量"期望块是否在结果里"，judge 度量"用户能否从结果得到答案"。
+     * 单 case 单次调用（temperature=0）；失败的单 case 跳过不计。返回 null 表示无法计算（空集）。
+     */
+    private Double judgeCoverage(List<EvalCase> cases) {
+        if (cases.isEmpty()) return null;
+        int covered = 0;
+        int judged = 0;
+        for (EvalCase c : cases) {
+            try {
+                List<HybridRetrievalService.Hit> hits = retrievalService.search(c.question());
+                if (hits.isEmpty()) { judged++; continue; } // 无命中 = 不足以回答
+                StringBuilder prompt = new StringBuilder();
+                prompt.append("判断下面的资料片段是否足以直接回答用户问题。\n");
+                prompt.append("资料中能找到答案要点（操作步骤/定义/规则/数值）就算\"足以\"；资料完全不相关或只有只言片语算\"不足以\"。\n");
+                prompt.append("只输出一个词：是 或 否。\n\n用户问题：").append(c.question()).append("\n\n资料片段：\n");
+                for (int i = 0; i < Math.min(3, hits.size()); i++) {
+                    HybridRetrievalService.Hit h = hits.get(i);
+                    String t = h.title() == null ? "" : h.title();
+                    String body = h.content() == null ? "" : h.content();
+                    if (body.length() > 200) body = body.substring(0, 200);
+                    prompt.append("[").append(i + 1).append("] ").append(t).append("：").append(body).append("\n");
+                }
+                String judge = chatClient.prompt()
+                        .system("你是检索质量评估员，只判断资料是否足以回答用户问题，输出\"是\"或\"否\"。")
+                        .user(prompt.toString())
+                        .options(OpenAiChatOptions.builder()
+                                .model(configService.get("chat.model"))
+                                .temperature(0.0)
+                                .maxTokens(8)
+                                .build())
+                        .call()
+                        .content();
+                judged++;
+                if (judge != null && judge.contains("是") && !judge.contains("否")) covered++;
+            } catch (Exception e) {
+                log.warn("[Eval] 检索充分性评判失败（跳过该 case）: {}", e.getMessage());
+            }
+        }
+        return judged == 0 ? null : round3((double) covered / judged);
     }
 }

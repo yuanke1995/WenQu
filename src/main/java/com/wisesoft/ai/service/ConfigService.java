@@ -94,6 +94,10 @@ public class ConfigService {
             Map.entry("context.historyPerMsgChars", "上下文：单条历史截断(字符)"),
             Map.entry("context.snippetWindowChars", "上下文：知识块命中片段窗口(字符,0=整块)"),
             Map.entry("context.maxContextHits", "上下文：知识块填充上限(块)"),
+            Map.entry("context.dedupEnabled", "上下文：信息增益去冗余（跳过与已选块语义重复的候选，防同一操作多块重复进上下文）"),
+            Map.entry("context.dedupThreshold", "上下文：去冗余词元重叠阈值(0~1，默认0.45，越高越宽松)"),
+            Map.entry("context.dedupPathThreshold", "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)"),
+            Map.entry("chat.citationCheckEnabled", "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）"),
             Map.entry("deepReasoning.enabled", "深度思考：总开关"),
             Map.entry("deepReasoning.thinkingMode", "深度思考：思考模式(model/prompt)"),
             Map.entry("deepReasoning.enableThinking", "深度思考：透传 enable_thinking"),
@@ -126,7 +130,8 @@ public class ConfigService {
             Map.entry("embedding.embeddingsPath", "向量化路径(默认 /v1/embeddings;智谱 /v4、千帆 /v2)"),
             Map.entry("semanticCache.enabled", "语义缓存总开关（相似问题直接复用历史回答）"),
             Map.entry("semanticCache.threshold", "语义缓存相似度阈值(0.8~1，默认0.96)"),
-            Map.entry("semanticCache.maxEntries", "语义缓存最大条数(超出淘汰最早，默认500)"));
+            Map.entry("semanticCache.maxEntries", "语义缓存最大条数(超出淘汰最早，默认500)"),
+            Map.entry("eval.judgeEnabled", "自动体检：LLM 评判检索充分性（对每个 case 判 top 命中是否足以回答；增加体检耗时与一次调用/case）"));
 
     private final AiConfigMapper configMapper;
     private final AiAppProperties properties;
@@ -292,6 +297,7 @@ public class ConfigService {
         d.put("chat.apiKey", env("spring.ai.openai.api-key", ""));
         // 对话补全路径（GLM 等非 /v1 网关需改，如 /api/paas/v4/chat/completions；默认与 Spring AI 一致）
         d.put("chat.completionsPath", "/v1/chat/completions");
+        d.put("chat.citationCheckEnabled", "true");        // 引用语义一致性自检（生成后校验，默认开）
         d.put("vision.model", properties.getVision().getModel());
         d.put("vision.prompt", properties.getVision().getPrompt());
         d.put("vision.baseUrl", properties.getVision().getBaseUrl());
@@ -345,6 +351,9 @@ public class ConfigService {
         d.put("context.historyPerMsgChars", String.valueOf(properties.getContext().getHistoryPerMsgChars()));
         d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
+        d.put("context.dedupEnabled", "true");             // 信息增益去冗余（默认开）
+        d.put("context.dedupThreshold", "0.45");           // 词元重叠阈值（越高越宽松）
+        d.put("context.dedupPathThreshold", "0.28");       // 同章节路径下重叠阈值
         d.put("deepReasoning.enabled", String.valueOf(properties.getDeepReasoning().isEnabled()));
         d.put("deepReasoning.thinkingMode", properties.getDeepReasoning().getThinkingMode());
         d.put("deepReasoning.enableThinking", String.valueOf(properties.getDeepReasoning().isEnableThinking()));
@@ -400,6 +409,7 @@ public class ConfigService {
         d.put("semanticCache.enabled", "true");
         d.put("semanticCache.threshold", "0.96");
         d.put("semanticCache.maxEntries", "500");
+        d.put("eval.judgeEnabled", "false");   // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
         return d;
     }
 

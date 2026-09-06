@@ -91,6 +91,13 @@
                 默认关闭：回答下方不显示任何降级提示（无命中/改写失败/图片剔除/缓存命中等）；调试排障时开启可见全部原因
               </span>
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.citationCheck" placement="top">引用一致性自检 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.chat.citationCheckEnabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">
+                生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）
+              </span>
+            </a-form-item>
           </a-form>
         </a-collapse-panel>
 
@@ -413,6 +420,23 @@
               <template #label><a-tooltip :title="tips.maxContextHits" placement="top">知识块填充上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.context.maxContextHits" :min="1" :max="30" style="width:200px" />
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.dedupEnabled" placement="top">信息增益去冗余 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.context.dedupEnabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">
+                跳过与已选块语义重复的候选块（同一操作被切成多块时只保留最高相关那块，防重复进上下文与表述不一致）
+              </span>
+            </a-form-item>
+            <a-form-item v-if="form.context.dedupEnabled">
+              <template #label><a-tooltip :title="tips.dedupThreshold" placement="top">重叠阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.context.dedupThreshold" :min="0.1" :max="0.9" :step="0.05" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">词元重叠比例达此值即判冗余（越高越宽松，越少剔除）</span>
+            </a-form-item>
+            <a-form-item v-if="form.context.dedupEnabled">
+              <template #label><a-tooltip :title="tips.dedupPathThreshold" placement="top">同章节阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.context.dedupPathThreshold" :min="0.1" :max="0.9" :step="0.05" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">同章节路径的相邻切片重复率更高，用更低阈值判断冗余</span>
+            </a-form-item>
           </a-form>
           <a-alert type="info" show-icon style="margin:0 24px 16px"
                    message="预算 = min(模型窗口×安全系数−输出限制, 成本上限)，知识块按相关度降序累积填充，超出预算的块自动被裁；每块只取命中关键词±窗口片段。历史单条截断+总量限制，[图片N] 标记自动剥离避免编号冲突。保存后立即生效。" />
@@ -593,6 +617,9 @@ const tips = {
   historyPerMsg: '每条历史消息保留的最大字符数，超出部分截断。控制历史占用的空间，保留最近轮次。',
   snippetWindow: '每个知识块只取"命中关键词 ± 该字符数"的片段送入上下文（0=整块塞入）。调大上下文信息更全但 token 消耗增大；调小更省 token 但可能丢失上下文导致理解偏差。',
   maxContextHits: '上下文最多塞入的知识块数量上限。调大可能引入相关度低的块稀释注意力；调小可能漏掉有价值的参考资料。',
+  dedupEnabled: '信息增益去冗余：跳过与已选块语义重复的候选块（同一操作被切成多个知识块时，只保留最高相关的一块进上下文）。防止重复内容浪费预算、以及多块表述不一致导致模型自相矛盾。关闭后所有命中块按原顺序填充。',
+  dedupThreshold: '候选块与任一已选块的词元重叠比例（Jaccard）达到此值即判定为冗余跳过。越高越宽松（剔除越少）；越低剪得越狠但可能误伤信息有增量的相关块。',
+  dedupPathThreshold: '候选块与已选块处于同一章节路径（titlePath 互为前缀/相等）时使用的重叠阈值。同章节的相邻切片几乎总讲同一内容，此阈值通常设得比普通阈值更低（更容易剪）。',
   drEnabled: '深度思考总开关。关闭后即使前端开启"深度思考"开关也走普通回答流程（前端开关独立控制）。',
   drMode: '思考模式：model=通过 extraBody 透传 enable_thinking=true，从模型 reasoning_content 提取思维链（qwen3 系原生支持）；prompt=用提示词引导模型把思考输出到正文 content（兼容不支持思考参数的模型/网关）。',
   drEnableThinking: 'thinkingMode=model 时是否透传 enable_thinking=true。若网关静默忽略或返回异常，可关闭此项并切到 prompt 模式。',
@@ -611,6 +638,7 @@ const tips = {
   retrievalDebugEnabled: '检索调试入口开关（内部排障用）：开启后回答操作菜单显示「检索调试」，可分步查看关键词/向量/重排召回结果；面向用户的部署建议保持关闭。',
   suggestedQuestions: '欢迎页展示的推荐问题（新用户引导）。每行一条、最多 8 条；数据看板的热门问题可一键加入。改动保存后，用户下次进入问答页生效。',
   showDebugDegradations: '回答下方是否显示降级提示（无命中/查询改写失败/图片剔除/未标注引用/缓存命中等）。默认关：回答区不显示任何降级提示（排障信息仍写 [FAIL-LOUD] 日志）；调试排障时开启即可看到全部降级原因。',
+  citationCheck: '引用语义一致性自检：回答生成后，把每条 [N] 引用的前文句子与其来源片段交给模型判断是否被直接支撑，剔除"编号存在但内容与该块无关"的引用并重编编号。提升引用可信度，代价是每轮回答多一次校验调用（约数秒延迟）。',
   visionEnabled: '视觉模型总开关。关闭后：文档图片/用户图片都不生成描述——图片仅展示、内容不进检索与回答引用（RAG 对图片语义失效），一般不建议关闭。',
   parseConcurrency: '文档异步解析的并发数（同时解析几个文档）。调高多文档上传更快，但并发解析会同时占用 embedding/Ollama 资源；保存后对新任务生效。',
   embedRetryCount: '向量化批次失败时的自动重试次数（0=不重试）。重试仍失败则整个文档解析失败并回退/提示（fail-loud，绝不静默丢块）。',
@@ -733,7 +761,7 @@ const onChatPresetChange = val => {
   message.info('已填充网关地址与补全路径，请补齐 API Key 与模型名后保存')
 }
 
-const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false },
+const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false, citationCheckEnabled: true },
                     vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2 },
                     embedding: { model: '', baseUrl: '', apiKey: '', embeddingsPath: '' },
                     chunk: { maxChunks: 3000, maxImages: 100, overlap: 100, structural: true, structuralRatio: 0.8 },
@@ -751,7 +779,8 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                     keyword: { engine: 'mysql', baseUrl: 'http://localhost:7700', apiKey: '', timeoutMillis: 1000 },
                     context: { modelWindows: '', defaultWindowTokens: 32768, safetyFactor: 0.7, costCapTokens: 8000,
                                maxOutputTokens: 2000, historyMaxTokens: 1200, historyPerMsgChars: 200,
-                               snippetWindowChars: 150, maxContextHits: 8 },
+                               snippetWindowChars: 150, maxContextHits: 8,
+                               dedupEnabled: true, dedupThreshold: 0.45, dedupPathThreshold: 0.28 },
                     deepReasoning: { enabled: true, thinkingMode: 'model', enableThinking: true, prompt: '',
                                      searchTag: 'search', maxSubQueries: 3, multiRetrieval: true,
                                      timeoutMillis: 30000, maxThinkingTokens: 0 },
@@ -820,6 +849,7 @@ onMounted(async () => {
       form.value.chat.streamRetryCount = Number(d.chat?.streamRetryCount?.value ?? 1)
       form.value.chat.sseTimeoutMs = Number(d.chat?.sseTimeoutMs?.value ?? 300000)
       form.value.chat.showDebugDegradations = d.chat?.showDebugDegradations?.value === 'true'
+      form.value.chat.citationCheckEnabled = d.chat?.citationCheckEnabled?.value !== 'false'
       form.value.vision.enabled = d.vision?.enabled?.value !== 'false'
       form.value.vision.model = d.vision?.model?.value || ''
       form.value.vision.baseUrl = d.vision?.baseUrl?.value || ''
@@ -883,6 +913,9 @@ onMounted(async () => {
       form.value.context.historyPerMsgChars = Number(ctx.historyPerMsgChars?.value ?? 200)
       form.value.context.snippetWindowChars = Number(ctx.snippetWindowChars?.value ?? 150)
       form.value.context.maxContextHits = Number(ctx.maxContextHits?.value ?? 8)
+      form.value.context.dedupEnabled = ctx.dedupEnabled?.value !== 'false'
+      form.value.context.dedupThreshold = Number(ctx.dedupThreshold?.value ?? 0.45)
+      form.value.context.dedupPathThreshold = Number(ctx.dedupPathThreshold?.value ?? 0.28)
       const dr = d.deepReasoning || {}
       form.value.deepReasoning.enabled = dr.enabled?.value === 'true'
       form.value.deepReasoning.thinkingMode = dr.thinkingMode?.value || 'model'
@@ -951,7 +984,8 @@ const save = async () => {
               pipelineThreads: String(form.value.chat.pipelineThreads),
               streamRetryCount: String(form.value.chat.streamRetryCount),
               sseTimeoutMs: String(form.value.chat.sseTimeoutMs),
-              showDebugDegradations: String(form.value.chat.showDebugDegradations) },
+              showDebugDegradations: String(form.value.chat.showDebugDegradations),
+              citationCheckEnabled: String(form.value.chat.citationCheckEnabled) },
       vision: { enabled: String(form.value.vision.enabled),
                 model: form.value.vision.model?.trim(),
                 baseUrl: form.value.vision.baseUrl?.trim(),
@@ -1013,7 +1047,10 @@ const save = async () => {
                  historyMaxTokens: String(form.value.context.historyMaxTokens),
                  historyPerMsgChars: String(form.value.context.historyPerMsgChars),
                  snippetWindowChars: String(form.value.context.snippetWindowChars),
-                 maxContextHits: String(form.value.context.maxContextHits) },
+                 maxContextHits: String(form.value.context.maxContextHits),
+                 dedupEnabled: String(form.value.context.dedupEnabled),
+                 dedupThreshold: String(form.value.context.dedupThreshold),
+                 dedupPathThreshold: String(form.value.context.dedupPathThreshold) },
       deepReasoning: { enabled: String(form.value.deepReasoning.enabled),
                        thinkingMode: form.value.deepReasoning.thinkingMode,
                        enableThinking: String(form.value.deepReasoning.enableThinking),

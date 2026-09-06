@@ -431,6 +431,16 @@ public class RagService {
                     .filter(d -> d != null && !d.isBlank())
                     .collect(Collectors.toSet());
             Map<String, String> fileNameMap = documentMetaCache.getFileNames(refDocIds);
+
+            // 信息增益去冗余（MMR 轻量版）：候选块与已选块词元重叠过高 → 视为同一信息的重复切片，跳过。
+            // 同一操作被切成多块时，重复块一起进上下文既浪费预算，又让模型在不同表述间自相矛盾。
+            // 章节路径相同的块是同一章节相邻切片（高概率讲同一内容），重叠阈值放更低更易剪。
+            // 仅影响问答上下文填充，不改检索结果本身（评估/调试面板看到的是原始召回）。
+            boolean dedupEnabled = configService.getBoolean("context.dedupEnabled");
+            double dedupThreshold = configService.getDouble("context.dedupThreshold", 0.45);
+            double dedupPathThreshold = configService.getDouble("context.dedupPathThreshold", 0.28);
+            List<Set<String>> selectedTermSets = new ArrayList<>();
+            List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
                 HybridRetrievalService.Hit hit = allHits.get(hi);
                 boolean isExtra = hi >= hits.size();
@@ -439,6 +449,12 @@ public class RagService {
                     if (extraUsed >= maxExtraHits || extraTokensUsed >= maxExtraTokens) break;
                 } else {
                     if (docNo > maxContextHits) break;
+                }
+                // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）
+                if (dedupEnabled && !selectedTermSets.isEmpty()
+                        && isRedundantHit(hit, selectedTermSets, selectedPaths, dedupThreshold, dedupPathThreshold)) {
+                    log.debug("[CTX] 信息增益去冗余跳过: kid={} title={}", hit.knowledgeId(), hit.title());
+                    continue;
                 }
                 String text = hit.content();
                 List<String> urls = hit.images();
@@ -540,6 +556,17 @@ public class RagService {
                 if (isExtra) {
                     extraUsed++;
                     extraTokensUsed += tokens;
+                }
+                // 记录已选块特征（词元集合 + 章节路径），供后续候选去冗余判定
+                String featureSrc = (hit.title() == null ? "" : hit.title()) + " "
+                        + (hit.content() == null ? "" : hit.content());
+                if (featureSrc.length() > 400) featureSrc = featureSrc.substring(0, 400);
+                Set<String> terms = new HashSet<>(keywordExtractor.extract(featureSrc));
+                if (!terms.isEmpty()) {
+                    selectedTermSets.add(terms);
+                    if (hit.titlePath() != null && !hit.titlePath().isBlank()) {
+                        selectedPaths.add(hit.titlePath());
+                    }
                 }
 
                 // 图片数量多于正文占位时，剩余补在末尾
@@ -701,6 +728,8 @@ public class RagService {
                         related = extractRelated(st.fullResponse);
                     }
                     String answer = st.fullResponse.toString();
+                    // 引用来源（局部可变：语义一致性自检会剔除不支撑的条目并重编 ref，替换新列表）
+                    List<Map<String, Object>> sources = st.sources;
 
                     // 图片相关性校验兜底：剔除与描述不匹配的 [图片N] 标记并重建编号（LLM 偶发错配）
                     List<String> finalImgs = new ArrayList<>(st.imgIndex.values());
@@ -719,11 +748,11 @@ public class RagService {
                     }
                     // L4 fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
                     // 注意用 find() 而非 matches()：matches 全串锚定且 . 不跨行，多行回答永远误判为未标注
-                    if (!st.sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
+                    if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
                         addDegradation(st.degradations, st.degradedCodes, "noCitation", "回答未标注引用来源");
                     }
                     // 引用编号越界校验：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）
-                    int maxRef = st.sources.size();
+                    int maxRef = sources.size();
                     if (maxRef > 0) {
                         java.util.regex.Matcher cm = CITE_PATTERN.matcher(answer);
                         StringBuilder cb = new StringBuilder();
@@ -745,9 +774,28 @@ public class RagService {
                             log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
                         }
                     }
+                    // 引用语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
+                    // 但对应句子的结论与该块无关（编号正确、语义不符）。把每个 [N] 的"前文句子"与其
+                    // 来源 snippet 打包给 LLM 判"是否支撑"，不支撑的剔除标记、来源同步裁剪并重编 ref。
+                    // 一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
+                    if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
+                        try {
+                            CitationCheckResult ccr = citationConsistencyCheck(answer, sources, st.question);
+                            if (ccr.droppedCount() > 0) {
+                                answer = ccr.text();
+                                sources = ccr.sources();
+                                addDegradation(st.degradations, st.degradedCodes, "citationUnsupported",
+                                        "已剔除 " + ccr.droppedCount() + " 处与引用内容不匹配的引用标注");
+                                log.info("[CITE-CHECK] 引用语义一致性剔除 {} 处: {}", ccr.droppedCount(), ccr.dropped());
+                            }
+                        } catch (Exception e) {
+                            // fail-loud：自检失败保持原回答（校验是增强，不是必选防线）
+                            log.warn("[FAIL-LOUD] 引用一致性自检失败（保持原回答）: {}", e.getMessage());
+                        }
+                    }
 
                     // 记录对话历史（含图片与引用来源），拿到消息ID供前端反馈
-                    String sourcesJson = st.sources.isEmpty() ? null : JSON.toJSONString(st.sources);
+                    String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
                     List<String> userImgUrls = st.userImgs.stream().map(UserImageService.UserImage::url).toList();
                     sessionService.appendMessage(st.sessionId, "user", st.question,
                             userImgUrls.isEmpty() ? null : userImgUrls, null);
@@ -755,7 +803,7 @@ public class RagService {
                             finalImgs, sourcesJson, st.thinkingHolder[0], st.retrievedJson);
 
                     // 异步落问答日志（不阻塞 SSE 完成）
-                    List<String> hitDocIds = st.sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
+                    List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
                     qaLogService.logAsync(st.sessionId, st.question, answer, hitDocIds,
                             !st.sources.isEmpty(), System.currentTimeMillis() - st.startTime,
                             st.queryForLog);
@@ -767,7 +815,7 @@ public class RagService {
 
                     // done 事件：引用来源/相关推荐/消息ID + 校验修正后的内容/图片 + 思考全文 + 本轮全部降级事件（fail-loud）
                     Map<String, Object> donePayload = new LinkedHashMap<>();
-                    donePayload.put("sources", st.sources);
+                    donePayload.put("sources", sources);
                     donePayload.put("related", related);
                     donePayload.put("messageId", messageId);
                     donePayload.put("finalContent", answer);
@@ -1054,6 +1102,117 @@ public class RagService {
         // 剥离图片标记与【上下文】章节路径前缀（结构切分注入，不展示给用户）
         String s = content.replaceAll("\\[图片[^\\]]*\\]|【上下文】[^\\n]*\\n?", " ").trim();
         return s.length() > SNIPPET_LEN ? s.substring(0, SNIPPET_LEN) + "…" : s;
+    }
+
+    /**
+     * 信息增益去冗余判定：候选块词元与任一已选块的 Jaccard 重叠 ≥ 阈值即视为冗余。
+     * 同章节路径（titlePath 互为前缀/相等）的块按更低阈值判定——同一章节的相邻切片几乎总讲同一内容。
+     * 只算前 300 字特征控开销；词元提取失败（空）不判冗余（放行，宁漏勿误杀）。
+     */
+    private boolean isRedundantHit(HybridRetrievalService.Hit hit, List<Set<String>> selectedTermSets,
+                                   List<String> selectedPaths, double threshold, double pathThreshold) {
+        String title = hit.title() == null ? "" : hit.title();
+        String content = hit.content() == null ? "" : hit.content();
+        if (content.length() > 300) content = content.substring(0, 300);
+        Set<String> terms = new HashSet<>(keywordExtractor.extract(title + " " + content));
+        if (terms.isEmpty()) return false;
+        boolean samePath = hit.titlePath() != null && !hit.titlePath().isBlank()
+                && selectedPaths.stream().anyMatch(p -> p != null && (p.equals(hit.titlePath())
+                        || p.startsWith(hit.titlePath()) || hit.titlePath().startsWith(p)));
+        double useThreshold = samePath ? pathThreshold : threshold;
+        for (Set<String> s : selectedTermSets) {
+            if (s.isEmpty()) continue;
+            int inter = 0;
+            for (String t : terms) if (s.contains(t)) inter++;
+            Set<String> union = new HashSet<>(s);
+            union.addAll(terms);
+            if (union.isEmpty()) continue;
+            if ((double) inter / union.size() >= useThreshold) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 引用语义一致性自检：把回答中每个 [N] 首次出现的"前文句子"与其来源 snippet 打包给 LLM，
+     * 让模型输出"不支撑该句子结论"的编号；剔除这些编号的标记、来源同步裁剪并重编 ref。
+     * <p>
+     * 复用 ImageFilterService.precedingContext 取 [N] 前文（[N] 通常在句末，前文即"这句话"）；
+     * 前文为空（无法界定句子）的引用放行（宁漏勿杀）。失败/超时由调用方 catch 保持原回答。
+     */
+    private CitationCheckResult citationConsistencyCheck(String answer, List<Map<String, Object>> sources, String question) {
+        // 1. 收集每个编号首次出现的"前文句子"（重复引用按首次判定）
+        Map<Integer, String> sentenceByRef = new LinkedHashMap<>();
+        Matcher m = CITE_PATTERN.matcher(answer);
+        while (m.find()) {
+            int n = Integer.parseInt(m.group(1));
+            if (n < 1 || n > sources.size() || sentenceByRef.containsKey(n)) continue;
+            String ctx = imageFilterService.precedingContext(answer, m.start(), 80);
+            if (ctx.isBlank()) continue; // 无前文无法界定句子 → 放行
+            sentenceByRef.put(n, ctx);
+        }
+        if (sentenceByRef.isEmpty()) return new CitationCheckResult(answer, sources, Set.of(), 0);
+
+        // 2. 打包给 LLM 批量判定（单次调用，temperature=0 保证稳定；只要求输出编号）
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("判断回答中的每条引用编号标注的句子，其内容是否被给出的\"证据片段\"直接支撑。\n");
+        prompt.append("规则：证据片段必须能支撑句子的核心结论（操作步骤/定义/规则/数值）。\n");
+        prompt.append("仅相关但支撑不了结论，也算\"不支撑\"。无法确定时算\"支撑\"。\n");
+        prompt.append("只输出\"不支撑\"的编号，用英文逗号分隔；全部支撑则输出\"无\"。不要输出其他内容。\n\n");
+        for (Map.Entry<Integer, String> e : sentenceByRef.entrySet()) {
+            String snip = String.valueOf(sources.get(e.getKey() - 1).getOrDefault("snippet", ""));
+            String sent = e.getValue().length() > 100 ? e.getValue().substring(0, 100) : e.getValue();
+            if (snip.length() > 180) snip = snip.substring(0, 180);
+            prompt.append("[").append(e.getKey()).append("] 句子：").append(sent).append("\n");
+            prompt.append("   证据：").append(snip).append("\n");
+        }
+        String judge = chatClient.prompt()
+                .system("你是回答引用的质检员，只判断引用是否被证据直接支撑，输出最简结果。")
+                .user(prompt.toString())
+                .options(OpenAiChatOptions.builder()
+                        .model(configService.get("chat.model"))
+                        .temperature(0.0)
+                        .maxTokens(64)
+                        .build())
+                .call()
+                .content();
+
+        // 3. 解析被剔除编号（容错：非数字/超范围忽略）
+        Set<Integer> dropped = new HashSet<>();
+        if (judge != null && !"无".equals(judge.trim()) && !judge.isBlank()) {
+            for (String tok : judge.split("[,，、;；\\s]+")) {
+                try {
+                    int n = Integer.parseInt(tok.trim());
+                    if (n >= 1 && n <= sources.size()) dropped.add(n);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        if (dropped.isEmpty()) return new CitationCheckResult(answer, sources, Set.of(), 0);
+
+        // 4. 重建：剔除标记、保留的重编 1..M、来源同步裁剪
+        Map<Integer, Integer> renum = new HashMap<>();
+        List<Map<String, Object>> newSources = new ArrayList<>();
+        int seq = 0;
+        for (int i = 0; i < sources.size(); i++) {
+            int ref = i + 1;
+            if (dropped.contains(ref)) continue;
+            renum.put(ref, ++seq);
+            Map<String, Object> ns = new LinkedHashMap<>(sources.get(i));
+            ns.put("ref", seq);
+            newSources.add(ns);
+        }
+        Matcher cm = CITE_PATTERN.matcher(answer);
+        StringBuffer sb = new StringBuffer();
+        while (cm.find()) {
+            Integer nn = renum.get(Integer.parseInt(cm.group(1)));
+            cm.appendReplacement(sb, Matcher.quoteReplacement(nn == null ? "" : "[" + nn + "]"));
+        }
+        cm.appendTail(sb);
+        return new CitationCheckResult(sb.toString(), newSources, dropped, dropped.size());
+    }
+
+    /** 引用语义校验结果：text=重建后回答，sources=裁剪后的引用来源（ref 已重编），dropped=被剔除编号 */
+    private record CitationCheckResult(String text, List<Map<String, Object>> sources, Set<Integer> dropped, int droppedCount) {
     }
 
     // ==================== 深度思考（生产级） ====================
