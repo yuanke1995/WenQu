@@ -60,7 +60,36 @@ public class KeywordExtractor {
      * 提取检索词元（jieba 主词元优先，子词元补充；空输入返回空列表）
      */
     public List<String> extract(String query) {
-        if (query == null || query.isBlank()) return List.of();
+        MainSub ms = extractMainSub(query);
+        List<String> main = ms.main().stream()
+                .sorted((a, b) -> b.length() - a.length())
+                .limit(maxTerms()).toList();
+        List<String> sub = ms.sub().stream()
+                .sorted((a, b) -> b.length() - a.length())
+                .limit(Math.max(0, maxTotal() - main.size())).toList();
+        List<String> result = new ArrayList<>(main);
+        result.addAll(sub);
+        return result;
+    }
+
+    /**
+     * 仅主词元（jieba 有效词去停用词，不含 2-gram/4-gram 子词元）。
+     * 供检索状态行等面向用户的展示：子词元（如"据源"这类 2-gram 碎片）只参与内部召回、不展示。
+     */
+    public List<String> extractMain(String query) {
+        MainSub ms = extractMainSub(query);
+        return ms.main().stream()
+                .sorted((a, b) -> b.length() - a.length())
+                .limit(maxTerms())
+                .toList();
+    }
+
+    /** 主词元 + 子词元 拆分结果（extract / extractMain 共用一次 jieba 分词） */
+    private record MainSub(Set<String> main, Set<String> sub) {
+    }
+
+    private MainSub extractMainSub(String query) {
+        if (query == null || query.isBlank()) return new MainSub(Set.of(), Set.of());
         LinkedHashSet<String> mainTerms = new LinkedHashSet<>();
         LinkedHashSet<String> subTerms = new LinkedHashSet<>();
         for (SegToken token : segmenter.process(query, JiebaSegmenter.SegMode.SEARCH)) {
@@ -85,16 +114,7 @@ public class KeywordExtractor {
                 }
             }
         }
-        // 主词元按长度降序（长词更精准），子词元按长度降序，取前 maxTerms 个主词元
-        List<String> main = mainTerms.stream()
-                .sorted((a, b) -> b.length() - a.length())
-                .limit(maxTerms()).toList();
-        List<String> sub = subTerms.stream()
-                .sorted((a, b) -> b.length() - a.length())
-                .limit(Math.max(0, maxTotal() - main.size())).toList();
-        List<String> result = new ArrayList<>(main);
-        result.addAll(sub);
-        return result;
+        return new MainSub(mainTerms, subTerms);
     }
 
     private boolean isPureChinese(String s) {

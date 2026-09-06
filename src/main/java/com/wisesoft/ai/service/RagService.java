@@ -580,7 +580,8 @@ public class RagService {
             log.info("[CTX] 上下文填充 {} 块（含扩散 {}）, 总用 {} / 预算 {} token", docNo - 1, extraUsed, usedTokens + fixedTokens, budget);
 
             // 3.5 检索状态行（豆包式，回答上方常驻）：搜索 N 个关键词，参考 M 段资料
-            List<String> searchTerms = keywordExtractor.extract(retrievalQuery);
+            // 只展示主词元（jieba 有效词），2-gram/4-gram 子词元仅参与召回、不展示给用户
+            List<String> searchTerms = keywordExtractor.extractMain(retrievalQuery);
             String retrievedJson = JSON.toJSONString(Map.of(
                     "keywords", searchTerms.size(), "refs", docNo - 1, "terms", searchTerms));
             sendSseEvent(emitter, "retrieved", retrievedJson, sessionId);
