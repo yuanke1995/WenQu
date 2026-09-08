@@ -99,16 +99,19 @@ public class RagService {
                 sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
             }
             sendSseEvent(emitter, "token", cached.getAnswer(), sessionId);
-            // 会话历史 + 问答日志照常落库
+            // 会话历史 + 问答日志照常落库（用新建消息 ID 作为本次 messageId 回传——
+            // 反馈/删除轮/导出都应以"本条新消息"为准，而非缓存写入时的历史消息；
+            // cached.messageId 仅作缓存来源追溯。appendMessage 返回 null=MySQL 降级窗口，
+            // 此时无持久消息可关联，回退缓存来源 ID 保证前端反馈不因空值报错）
             sessionService.appendMessage(sessionId, "user", question, null, null);
-            sessionService.appendMessage(sessionId, "assistant", cached.getAnswer(), images, cached.getSources());
+            String assistantMsgId = sessionService.appendMessage(sessionId, "assistant", cached.getAnswer(), images, cached.getSources());
             List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
             qaLogService.logAsync(sessionId, question, cached.getAnswer(), hitDocIds,
                     !sources.isEmpty(), System.currentTimeMillis() - startTime, question);
             Map<String, Object> donePayload = new LinkedHashMap<>();
             donePayload.put("sources", sources);
             donePayload.put("related", related);
-            donePayload.put("messageId", cached.getMessageId());
+            donePayload.put("messageId", assistantMsgId != null ? assistantMsgId : cached.getMessageId());
             donePayload.put("finalContent", cached.getAnswer());
             donePayload.put("finalImages", images);
             // 缓存命中提示同样收进调试开关（默认不展示；开启后才提示"已复用相似回答"）

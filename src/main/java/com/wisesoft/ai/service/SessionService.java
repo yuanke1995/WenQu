@@ -297,8 +297,11 @@ public class SessionService {
     }
 
     /**
-     * 合并 Redis 降级消息：仅追加标记了 mysqlPending 且与 MySQL 既有消息不重复（role+content+images 判重）的条目。
-     * 正常双写路径下 Redis 尾部条目都已在 MySQL，靠判重跳过不会重复；追加出的消息异步幂等补写 MySQL。
+     * 合并 Redis 降级消息：仅追加标记了 mysqlPending 且尚未补写进 MySQL 的条目。
+     * 判定基准为 msgId（新格式降级消息自带全局唯一 ID）——已补写（msgId 已落库）跳过；
+     * 旧格式（无 msgId 的历史降级消息）退回 role+content+images 判重兜底。
+     * 相比纯文本判重，带 msgId 后"用户复读完全相同问题"的两次降级消息各自独立补写，不再误丢。
+     * 补写异步幂等执行（backfillInsert 按 msgId 判重，多副本并发合并同一批也不会重复插入）。
      */
     private List<Map<String, Object>> mergeRedisPending(String sessionId, List<Map<String, Object>> fromMysql) {
         try {
@@ -309,17 +312,31 @@ public class SessionService {
                     .collect(Collectors.toList());
             if (pending.isEmpty()) return fromMysql;
 
-            Set<String> existing = fromMysql.stream()
+            // MySQL 已有消息的 messageId 集合（toMessageMap 输出字段）与旧格式内容判重键
+            Set<String> mysqlIds = fromMysql.stream()
+                    .map(m -> m.get("messageId"))
+                    .filter(Objects::nonNull)
+                    .map(String::valueOf)
+                    .collect(Collectors.toSet());
+            Set<String> contentKeys = fromMysql.stream()
                     .map(m -> messageKey(m.get("role"), m.get("content"), m.get("images")))
                     .collect(Collectors.toSet());
             List<Map<String, Object>> merged = new ArrayList<>(fromMysql);
             List<Map<String, Object>> toBackfill = new ArrayList<>();
             for (Map<String, Object> m : pending) {
-                String key = messageKey(m.get("role"), m.get("content"), m.get("images"));
-                if (existing.contains(key)) continue;
-                existing.add(key);
+                String msgId = m.get("msgId") == null ? null : String.valueOf(m.get("msgId"));
+                if (msgId != null) {
+                    if (mysqlIds.contains(msgId)) continue; // 已补写：不重复展示/补写
+                    m.put("messageId", msgId);              // 展示侧暴露与 SSE done 一致的消息 ID
+                } else {
+                    // 旧格式降级消息：按内容判重（保持历史行为）
+                    String ck = messageKey(m.get("role"), m.get("content"), m.get("images"));
+                    if (contentKeys.contains(ck)) continue;
+                    contentKeys.add(ck);
+                }
                 merged.add(m);
                 toBackfill.add(m);
+                if (msgId != null) mysqlIds.add(msgId);
             }
             if (!toBackfill.isEmpty()) {
                 List<Map<String, Object>> need = toBackfill;
@@ -413,6 +430,9 @@ public class SessionService {
             redisMsg.put("role", role);
             redisMsg.put("content", content);
             redisMsg.put("mysqlPending", true);
+            // 降级消息自带全局唯一 msgId：补写 MySQL 时按 id 幂等（同一消息不重复插；
+            // 且不再被"与历史消息同文"误判为重复——用户复读完全相同的问题也各自补写，不丢失）
+            redisMsg.put("msgId", UUID.randomUUID().toString().replace("-", ""));
             if (thinking != null && !thinking.isBlank()) {
                 redisMsg.put("thinking", thinking);
             }
@@ -686,7 +706,8 @@ public class SessionService {
     }
 
     /**
-     * 幂等补写消息：按 (role, content, images) 判重逐条插入缺失项（空库回填与降级窗口合并共用）。
+     * 幂等补写消息：优先按 msgId（降级消息自带全局唯一 ID）判重——已落库跳过，同一消息并发补写不重复；
+     * 无 msgId 的旧格式回退按 (role, content, images) 判重（空库回填共用此方法）。
      * 事务内锁会话行取物理 max 序号，与并发 append 不撞号；序号/标题随插随更。
      *
      * @return 实际插入条数
@@ -707,12 +728,20 @@ public class SessionService {
                     locked = sessionMapper.selectForUpdate(sessionId);
                 }
 
-                // 判重基准：MySQL 现存全部消息（逻辑过滤，已软删的不参与判重——恢复后是同一条，不会重复插）
-                Set<String> existing = messageMapper.selectList(new LambdaQueryWrapper<AiMessage>()
-                                .eq(AiMessage::getSessionId, sessionId))
+                // 判重基准：1) 带 msgId 的消息一次性查库（含软删行——软删消息撤销窗口内不得同 ID 重插撞主键，
+                // 已落库的跳过，保证幂等）；2) 旧格式（无 msgId）沿用 role+content+images 键
+                List<String> msgIds = messages.stream()
+                        .map(m -> m.get("msgId"))
+                        .filter(Objects::nonNull)
+                        .map(String::valueOf)
+                        .collect(Collectors.toList());
+                Set<String> existingIds = msgIds.isEmpty() ? Collections.emptySet()
+                        : new HashSet<>(messageMapper.selectExistingIdsIncludingDeleted(msgIds));
+                Set<String> contentKeys = new HashSet<>(messageMapper.selectList(
+                                new LambdaQueryWrapper<AiMessage>().eq(AiMessage::getSessionId, sessionId))
                         .stream()
                         .map(m -> messageKey(m.getRole(), m.getContent(), m.getImages()))
-                        .collect(Collectors.toSet());
+                        .toList());
                 String title = locked == null || locked.getTitle() == null || locked.getTitle().isBlank()
                         ? null : locked.getTitle();
                 int seq = messageMapper.maxSequencePhysical(sessionId);
@@ -723,9 +752,17 @@ public class SessionService {
                     Object imagesObj = m.get("images");
                     String imagesJson = imagesObj instanceof List<?> list && !list.isEmpty()
                             ? JSON.toJSONString(list) : null;
-                    if (existing.contains(messageKey(role, content, imagesJson))) continue;
+                    String msgId = m.get("msgId") == null ? null : String.valueOf(m.get("msgId"));
+                    if (msgId != null) {
+                        if (existingIds.contains(msgId)) continue; // 同一消息已补写：幂等跳过
+                    } else if (contentKeys.contains(messageKey(role, content, imagesJson))) {
+                        continue; // 旧格式无 ID：按内容判重（历史行为）
+                    }
 
                     AiMessage msg = new AiMessage();
+                    if (msgId != null) {
+                        msg.setId(msgId); // 与 Redis 侧 ID 一致：后续合并/幂等可追溯
+                    }
                     msg.setSessionId(sessionId);
                     msg.setRole(role);
                     msg.setContent(content);
@@ -744,7 +781,11 @@ public class SessionService {
                     }
                     msg.setSequence(++seq);
                     messageMapper.insert(msg);
-                    existing.add(messageKey(role, content, imagesJson));
+                    if (msgId != null) {
+                        existingIds.add(msgId);
+                    } else {
+                        contentKeys.add(messageKey(role, content, imagesJson));
+                    }
                     added++;
                     if (title == null && "user".equals(role) && !content.isBlank()) {
                         title = content.length() > 50 ? content.substring(0, 50).trim() : content.trim();

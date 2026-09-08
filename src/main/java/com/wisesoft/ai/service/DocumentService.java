@@ -21,6 +21,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.redis.RedisVectorStore;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -80,6 +81,8 @@ public class DocumentService {
     private final org.springframework.ai.embedding.EmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
     private final DocxParser docxParser;
+    /** Redis：全量重嵌入分布式互斥锁（多副本共享库时防两个实例互删对方正在重建的索引） */
+    private final StringRedisTemplate redisTemplate;
     /** 解析进度节流守卫：docId -> 已上报 progress（值未变化不写库） */
     private final Map<String, Integer> progressGuard = new ConcurrentHashMap<>();
     /** 图片描述补齐进行中标志（docId -> true；防并发重复触发） */
@@ -106,6 +109,11 @@ public class DocumentService {
     /** 全量重嵌入任务状态（设置页查询/展示；字段 volatile 供异步线程写、接口线程读） */
     private final ReembedStatus reembedStatus = new ReembedStatus();
     private final AtomicBoolean reembedRunning = new AtomicBoolean(false);
+
+    /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
+    public static final String REEMBED_LOCK_KEY = "ai-doc:reembed:lock";
+    /** 锁 TTL：任务每批刷新续期；实例崩溃后最多 TTL 秒自愈（不再永久降级） */
+    private static final long REEMBED_LOCK_TTL_SECONDS = 120;
 
     /** 重嵌入状态快照（设置页/接口用） */
     public static class ReembedStatus {
@@ -330,7 +338,17 @@ public class DocumentService {
             return false;
         }
         Thread t = new Thread(() -> {
+            boolean lockHeld = false;
             try {
+                // 多副本互斥：仅一个实例执行 DROP+重建（并发执行会互删对方正在写的索引）；
+                // Redis 不可用时退化为仅本地 CAS（原单实例语义，避免锁本身阻断重嵌入）
+                lockHeld = acquireReembedLock();
+                if (!lockHeld) {
+                    reembedStatus.status = "failed";
+                    reembedStatus.error = "另一实例正在执行全量重嵌入，本次已跳过（避免索引互删），完成后可重试";
+                    log.warn("[Reembed] 另一实例正在执行全量重嵌入（分布式锁被占），本次跳过");
+                    return;
+                }
                 reembedAll();
                 reembedStatus.endTime = System.currentTimeMillis();
                 reembedStatus.status = "done";
@@ -343,6 +361,9 @@ public class DocumentService {
                 reembedStatus.error = e.getMessage();
                 log.error("[Reembed] 全量重嵌入失败（已完成 {} 块）: {}", reembedStatus.done, e.getMessage(), e);
             } finally {
+                if (lockHeld) {
+                    releaseReembedLock();
+                }
                 reembedStatus.endTime = System.currentTimeMillis();
                 reembedRunning.set(false);
             }
@@ -350,6 +371,35 @@ public class DocumentService {
         t.setDaemon(true);
         t.start();
         return true;
+    }
+
+    /** 抢占全量重嵌入分布式锁（setIfAbsent + TTL）；false=其它实例正在执行 */
+    private boolean acquireReembedLock() {
+        try {
+            Boolean ok = redisTemplate.opsForValue().setIfAbsent(
+                    REEMBED_LOCK_KEY, "1", java.time.Duration.ofSeconds(REEMBED_LOCK_TTL_SECONDS));
+            return Boolean.TRUE.equals(ok);
+        } catch (Exception e) {
+            log.warn("[Reembed] 分布式锁不可用（Redis 异常），按单实例语义继续: {}", e.getMessage());
+            return true;
+        }
+    }
+
+    /** 批处理循环中续期锁（防长任务执行中被 TTL 误释放，崩溃后自然过期自愈） */
+    private void refreshReembedLock() {
+        try {
+            redisTemplate.expire(REEMBED_LOCK_KEY, java.time.Duration.ofSeconds(REEMBED_LOCK_TTL_SECONDS));
+        } catch (Exception ignored) {
+            // 续期失败不阻断任务本体
+        }
+    }
+
+    /** 释放分布式锁（仅持有者调用） */
+    private void releaseReembedLock() {
+        try {
+            redisTemplate.delete(REEMBED_LOCK_KEY);
+        } catch (Exception ignored) {
+        }
     }
 
     public ReembedStatus getReembedStatus() {
@@ -447,6 +497,8 @@ public class DocumentService {
                 reembedStatus.failed += docs.size();
                 log.warn("[FAIL-LOUD] [Reembed] 批次重嵌失败（{} 块）: {}", docs.size(), e.getMessage());
             }
+            // 续期分布式锁（任务可能持续数分钟~数小时，防止 TTL 期间被误释放导致其它实例切入互删索引）
+            refreshReembedLock();
         }
         // 4. 记录本次索引维度：作为下次切换的"旧维度"基线，也让设置页能显示当前索引维度。
         // 只在索引确实按 newDim 重建后写入，失败任务不留下说谎的记录

@@ -90,7 +90,7 @@ export AI_RATELIMIT_UPLOAD=10             # 上传限频：次/分钟/用户（0
 export LOG_LEVEL_APP=info                 # 应用日志级别
 ```
 
-**本地开发**：无需 export，把真实值直接写入项目根 `config/application-local.yml`（私有文件，已加入 .gitignore；Spring Boot 自动从外部 `config/` 目录加载，**不打进构建产物**——密钥不会随 jar 分发；**数据目录 `ai-app.images.dir` 也在此配置**，Windows 机器改成 `D:/workspace/dtbd-ai-service/data` 即可，天然区分平台。该文件同时可关闭图片鉴权 `auth-enabled: false` 保持本地开发便利），然后以 `local` profile 启动（application.yml 已默认激活 local）：
+**本地开发**：无需 export，把真实值直接写入项目根 `config/application-local.yml`（私有文件，已加入 .gitignore；Spring Boot 自动从外部 `config/` 目录加载，**不打进构建产物**——密钥不会随 jar 分发；**数据目录 `ai-app.images.dir` 也在此配置**，Windows 机器改成 `D:/workspace/ai-doc-assistant/data` 即可，天然区分平台。该文件同时可关闭图片鉴权 `auth-enabled: false` 保持本地开发便利），然后以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
 - 命令行：`SPRING_PROFILES_ACTIVE=local mvn spring-boot:run`
 
@@ -112,7 +112,7 @@ docker compose up -d
 
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
-接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需在请求头携带 `X-Trusted-Token`）。
+接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需在请求头携带 `X-Trusted-Token`）。**默认仅本地打开**：本地开发在 `config/application-local.yml` 已启用；生产 `SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），如需临时开启 export `SPRINGDOC_ENABLED=true`。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或由 nginx/网关注入鉴权。
 
 ### 4. 启动前端
 
@@ -190,6 +190,10 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 3. **并发防护**：重解析用 **DB 状态机 CAS**（`SET status=2 WHERE status≠2`，原子）——两实例同时重解析同一文档只有一个成功，另一个返回"正在解析中"；解析队列有界（50）+ 图片描述线程池有界，超限拒绝/降级不失控
 4. **删除中断语义**：删除在任意实例生效——本实例解析的文档立即中断；其他实例上的解析由 DB 兜底在检查点（入库每 10 块/向量化每批）秒级停止清理，不产生孤儿数据
 5. **总并发核算**：解析并发为"副本数 × parse.concurrency"（默认 2/实例），embedding/Ollama 为共享瓶颈，多副本时需下调单实例并发或扩容推理资源
+6. **语义缓存与文档名缓存一致性（无需手工同步）**：相似问题答案缓存的失效以"命中时校验 DB 行存在（原子自增命中数）"兜底——任一实例清空/淘汰后，其它实例下一次命中即感知并整体失效本地索引，绝不返回基于旧知识库的过期答案；文档名缓存带 10 分钟 TTL 回源自愈
+7. **向量模型热切换为全实例串行**：重嵌入由保存配置的实例执行，并通过 Redis 分布式锁（`ai-doc:reembed:lock`）互斥——其它实例不会切入执行造成索引互删；锁持有期间所有实例的向量检索路自动跳过（安静降级关键词路），避免命中半成品索引。任务每批续期锁，实例崩溃后锁 TTL（120s）自愈，不再永久降级
+8. **启动对账/巡检开关需收敛为单点**：`keyword.reconcileOnStartup`（配置默认项，可在 `c_ai_config` 改）与 `parse.recoverStuckOnStartup`（同上）默认 true，适合单实例；多副本同时启动会互相复位对方正在解析/对账的任务。多副本上线前请置 false（或仅首实例/运维单点触发），对应周期兜底任务（ScheduleCenter 每小时精确对账）仍会补齐
+9. **RSA 密钥文件必须共享**：模型 API Key 加密解密的私钥文件默认在 `{AI_IMAGES_DIR}/secret/config-rsa.key`（随数据卷持久化），可用环境变量 `AI_CONFIG_RSA_KEY` 覆盖路径。多实例共享同一 DB 时必须让所有实例使用同一密钥文件——否则 A 实例加密保存的 key 在 B 实例无法解密，问答/向量/视觉链路全部不可用（删除密钥文件后已加密配置将永久不可解密）
 
 ## 与其它平台集成
 

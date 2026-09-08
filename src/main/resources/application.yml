@@ -227,11 +227,13 @@ management:
       show-details: ${ACTUATOR_HEALTH_DETAILS:never}
 
 # SpringDoc OpenAPI (Swagger UI)
+# 生产默认关闭（接口契约不外泄）；本地开发在 config/application-local.yml 打开或 export SPRINGDOC_ENABLED=true
 springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:false}
   swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:false}
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: alpha
-  api-docs:
-    path: /v3/api-docs
   show-actuator: false

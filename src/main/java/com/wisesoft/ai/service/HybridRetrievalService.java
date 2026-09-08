@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -45,6 +46,16 @@ public class HybridRetrievalService {
     private final KeywordExtractor keywordExtractor;
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
+    private final StringRedisTemplate redisTemplate;
+
+    /** 全量重嵌入进行中（持有分布式锁的实例正在 DROP/重建向量索引）→ 各实例向量路跳过降级关键词 */
+    private boolean reembedInProgress() {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey(DocumentService.REEMBED_LOCK_KEY));
+        } catch (Exception e) {
+            return false; // Redis 异常按未锁定处理（向量检索自身仍有 try-catch 兜底）
+        }
+    }
 
     /**
      * 混合检索结果（chunkIndex 用于位置奖励；titlePath 章节路径，检索侧拼装上下文用）
@@ -309,6 +320,12 @@ public class HybridRetrievalService {
 
     /** 带诊断的向量召回（fail-loud：失败写入 diag） */
     public List<Document> vectorSearch(String query, RetrievalDiag diag) {
+        // 全量重嵌入期间（任一实例执行 DROP/重建索引中）：向量索引不存在或半成品，
+        // 直接跳过向量路（安静降级关键词路），避免对半成品索引检索产生错误/空召回与噪音告警
+        if (reembedInProgress()) {
+            log.debug("[RAG] 全量重嵌入进行中，向量路本次跳过（关键词路继续）");
+            return List.of();
+        }
         try {
             SearchRequest req = SearchRequest.builder()
                     .query(query)

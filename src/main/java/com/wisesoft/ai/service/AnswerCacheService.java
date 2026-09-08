@@ -82,7 +82,9 @@ public class AnswerCacheService {
 
     /**
      * 查询相似问题命中。返回命中的缓存实体（含问题/答案/来源等），未命中或未启用返回 null。
-     * 命中时异步累加命中计数。
+     * 命中后做 DB 行存在性校验（原子自增命中数）：
+     * 行不存在说明内存索引滞后（其它实例 clearAll/淘汰）→ 整体失效本地索引并按未命中放行，
+     * 保证多副本部署下绝不会返回"知识库已变更"的过期答案。
      */
     public AiAnswerCache lookup(String question) {
         if (!enabled() || question == null || question.isBlank()) return null;
@@ -121,15 +123,23 @@ public class AnswerCacheService {
         }
         AiAnswerCache hit = best.cache;
         log.info("[ANSWER-CACHE] 命中 similarity={} question=[{}] → cache=[{}]", String.format("%.4f", bestScore), question, best.question);
-        ThreadPoolManager.execute(() -> {
-            try {
-                AiAnswerCache upd = new AiAnswerCache();
-                upd.setId(hit.getId());
-                upd.setHitCount((hit.getHitCount() == null ? 0 : hit.getHitCount()) + 1);
-                cacheMapper.updateById(upd);
-            } catch (Exception ignored) {
-            }
-        });
+        // 命中入库校验（原子自增二合一）：DB 行不存在 = 本实例内存索引滞后于共享库
+        // （其它实例已 clearAll——知识库变更，或已按 LRU 淘汰该行）。此时内存条目已失效，
+        // 若直接返回会把"旧知识库快照的答案"当正式回答下发并写入会话历史（多副本答错级风险）。
+        // 受影响 0 → 整体置空本地索引（与库对齐），本次按未命中放行走正常检索。
+        int affected;
+        try {
+            affected = cacheMapper.incrHitCount(hit.getId());
+        } catch (Exception e) {
+            // DB 异常：无法确认缓存有效，宁放行（多花一次 RAG）也不返回可能失效的答案
+            log.warn("[ANSWER-CACHE] 命中校验失败（DB 异常），按未命中放行: {}", e.getMessage());
+            return null;
+        }
+        if (affected == 0) {
+            index = List.of();
+            log.info("[ANSWER-CACHE] 命中条目 id={} 已被其它实例清除/淘汰，本地缓存整体失效，本次放行", hit.getId());
+            return null;
+        }
         return hit;
     }
 
