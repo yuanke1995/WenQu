@@ -30,6 +30,10 @@
       <div class="chat-box">
         <div class="head">
           <span class="head-title">{{ currentSessionTitle }}</span>
+          <a-tooltip title="导出整个会话为 Markdown（含图片内嵌）">
+            <a-button v-if="messages.length" type="text" size="small" class="head-export" :loading="exportingSession"
+                      @click="exportSessionMarkdown"><download-outlined /></a-button>
+          </a-tooltip>
           <span class="disclaimer" title="查看免责声明" @click="disclaimerVisible = true"><info-circle-outlined style="margin-right:4px" />AI 回答可能有误，重要信息请核实</span>
         </div>
 
@@ -1232,76 +1236,139 @@ const fallbackCopyText = txt => {
   } catch (err) { message.error('复制失败，请手动复制') }
 }
 
-// 导出该轮问答为 .md（问题仅配对当前回答所在轮次）。
-// 图片策略：data URL 原样内嵌；服务内 /ai/... 图片先经 /proxy fetch 转 base64 内嵌
-//（导出文件自包含，Typora/Obsidian/VSCode 打开即见图）；抓取失败则保留 [图片N] 占位文本。
+// ==================== Markdown 导出（单轮 + 整会话） ====================
+// 图片策略：data URL 原样；服务内 /ai/... 图片经 /proxy fetch 转 base64 内嵌（导出文件自包含）；
+// 抓取失败（签名过期/跨域被拦）返回 null → 正文保留 [图片N] 占位。
+
+const imgToDataUri = async u => {
+  if (!u) return null
+  if (u.startsWith('data:')) return u
+  try {
+    const r = await fetch(resolveImg(u))
+    if (!r.ok) return null
+    const blob = await r.blob()
+    return await new Promise((res, rej) => {
+      const fr = new FileReader()
+      fr.onload = () => res(fr.result)
+      fr.onerror = rej
+      fr.readAsDataURL(blob)
+    })
+  } catch (e) {
+    return null
+  }
+}
+
+/** 把正文里的 [图片N] 占位替换为内嵌图（取不到图的保留原占位文本） */
+const embedMdImages = async (content, imgs) => {
+  const uris = []
+  for (const u of (imgs || [])) uris.push(await imgToDataUri(u))
+  return content.replace(/\[图片\s*(\d+)(?:[：:]([^\]]*))?\]/g, (all, num, desc) => {
+    const uri = uris[Number(num) - 1]
+    return uri ? `![图片${num}${desc && desc.trim() ? '：' + desc.trim() : ''}](${uri})` : all
+  })
+}
+
+const downloadMd = (md, fileName) => {
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+const fmtTime = ts => {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// 导出该轮问答为 .md（问题仅配对当前回答所在轮次；图片尽量 base64 内嵌）
 const exportAnswer = async mi => {
   const m = messages.value[mi]
   if (!m || !m.content) { message.warning('该回答无可导出内容'); return }
   const imgs = Array.isArray(m.images) ? m.images : []
-  const hide = imgs.length ? message.loading(`正在导出（含 ${imgs.length} 张图片，抓取转码中…）`, 0) : null
+  const hide = imgs.length ? message.loading('正在导出（含图片抓取转码）…', 0) : null
   try {
-    // 逐张把服务内图片抓为 base64；失败置 null（正文保留原占位）
-    const dataUris = []
-    for (const u of imgs) {
-      if (!u) { dataUris.push(null); continue }
-      if (u.startsWith('data:')) { dataUris.push(u); continue }
-      try {
-        const src = resolveImg(u)
-        const r = await fetch(src)
-        if (!r.ok) throw new Error('HTTP ' + r.status)
-        const blob = await r.blob()
-        dataUris.push(await new Promise((res, rej) => {
-          const fr = new FileReader()
-          fr.onload = () => res(fr.result)
-          fr.onerror = rej
-          fr.readAsDataURL(blob)
-        }))
-      } catch (e) {
-        dataUris.push(null) // 签名过期/不可达：占位保留，不阻断导出
-      }
-    }
-
     const title = sessions.value.find(s => s.id === currentSessionId.value)?.title || 'AI回答'
     const parts = [`# ${title}\n`]
-
-    // 单轮配对：向 mi 前找最近一条 user（遇到更早的 assistant/ai 即停，不把整段历史问题都塞进来）
+    // 单轮配对：向 mi 前找最近一条 user（遇更早 ai/assistant 即停）
     let question = null
     for (let i = mi - 1; i >= 0; i--) {
       if (messages.value[i].role === 'user') { question = messages.value[i]; break }
       if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
     }
     if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
-
-    // 正文：图片占位 [图片N：描述] → ![图片N](内嵌URL)（成功取到 base64 时）；其余原样
-    const body = m.content.trim().replace(/\[图片\s*(\d+)(?:[：:]([^\]]*))?\]/g, (all, num, desc) => {
-      const uri = dataUris[Number(num) - 1]
-      if (!uri) return all
-      return `![图片${num}${desc && desc.trim() ? '：' + desc.trim() : ''}](${uri})`
-    })
+    const body = await embedMdImages(m.content.trim(), imgs)
     parts.push('## 回答\n' + body + '\n')
-
     if (m.sources && m.sources.length) {
       parts.push('## 引用来源\n' + m.sources.map((s, si) =>
         `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
     }
-    const failed = imgs.map((u, i) => ({ u, i })).filter(x => x.u && !x.u.startsWith('data:') && !dataUris[x.i])
-    if (failed.length) {
-      parts.push('## 相关图片（未嵌入，需服务内访问）\n' + failed.map(f => `${f.i + 1}. ${f.u || ''}`).join('\n') + '\n')
-    }
-
-    const md = parts.join('\n')
-    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
     const safeName = (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
-    a.href = url
-    a.download = safeName + '.md'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    downloadMd(parts.join('\n'), safeName + '.md')
   } finally {
+    if (hide) hide()
+  }
+}
+
+// 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图）→ 引用来源）
+const exportingSession = ref(false)
+const exportSessionMarkdown = async () => {
+  const sid = currentSessionId.value
+  if (!sid) return
+  const title = currentSessionTitle.value || 'AI对话'
+  exportingSession.value = true
+  const hide = message.loading('正在导出整个会话（含图片抓取转码）…', 0)
+  try {
+    const r = await getHistory(sid)
+    if (!r.success) { message.error(r.msg || '获取会话历史失败'); return }
+    const list = r.data || []
+    const rows = list.filter(m => m && ((m.content && m.content.trim()) || (Array.isArray(m.images) && m.images.length)))
+    const now = new Date()
+    const roundCount = rows.filter(m => m.role === 'ai').length
+    const parts = [`# ${title}`, '', `> 导出时间：${now.toLocaleString('zh-CN', { hour12: false })} · 共 ${roundCount} 轮问答`, '']
+    let qn = 0
+    let first = true
+    for (const m of rows) {
+      if (!first) parts.push('---', '')
+      first = false
+      if (m.role === 'user') {
+        qn++
+        parts.push(`## ${qn}. 问题`, '')
+        if (m.content && m.content.trim()) parts.push(m.content.trim(), '')
+        const uims = Array.isArray(m.images) ? m.images : []
+        for (let k = 0; k < uims.length; k++) {
+          const uri = await imgToDataUri(uims[k])
+          if (uri) parts.push(`![用户图片${k + 1}](${uri})`, '')
+        }
+      } else {
+        const body = await embedMdImages((m.content || '').trim(), Array.isArray(m.images) ? m.images : [])
+        parts.push('**回答**', '', body, '')
+        if (m.sources && m.sources.length) {
+          parts.push('**引用来源**', m.sources.map((s, si) =>
+            `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
+        }
+        if (m.messageId && m.fb !== undefined) {
+          // 保留评价状态，便于回顾哪些回答被认可
+          parts.push(`> 评价：${m.fb === 1 ? '有帮助 👍' : '没帮助 👎'}${fmtTime(m.time) ? ' · ' + fmtTime(m.time) : ''}`, '')
+        } else if (fmtTime(m.time)) {
+          parts.push(`> ${fmtTime(m.time)}`, '')
+        }
+      }
+    }
+    if (parts.length <= 3) { message.warning('会话为空，无可导出内容'); return }
+    const safeName = (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
+    downloadMd(parts.join('\n'), safeName + '.md')
+  } catch (e) {
+    message.error(e.message || '导出失败')
+  } finally {
+    exportingSession.value = false
     if (hide) hide()
   }
 }
@@ -1527,6 +1594,14 @@ const scrollForce = () => nextTick(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 整会话导出按钮：标题右侧弱化显示 */
+.head-export {
+  color: #8c8c8c;
+  margin: 0 2px;
+}
+.head-export:hover {
+  color: #1677ff !important;
 }
 /* 免责声明：标题下方、同一框内，弱化显示不抢焦点；可点击查看完整声明 */
 .disclaimer {
