@@ -10,11 +10,24 @@
       </template>
     </div>
 
+    <!-- 未保存改动提示（差异感知：避免"以为保存了其实没有"） -->
+    <div v-if="dirtyCount" class="dirty-tip">
+      <warning-outlined style="color:#d48806" /> 有 {{ dirtyCount }} 组配置已修改未保存，点击右下角「保存配置（{{ dirtyCount }} 组改动）」生效
+    </div>
+
+    <!-- 参数过滤：输入关键词按组匹配并展开定位（组内控件多时快速找到目标参数） -->
+    <div class="cfg-filter">
+      <a-input v-model:value="filterText" allow-clear placeholder="搜索参数：输入关键词自动展开并定位所在分组（如 温度 / 超时 / 重排 / 并发）">
+        <template #prefix><search-outlined style="color:#bbb" /></template>
+      </a-input>
+    </div>
+
     <a-spin :spinning="loading">
-      <a-collapse v-model:activeKey="activeKeys" :bordered="false" class="cfg-collapse">
+      <a-collapse v-model:activeKey="activeKeys" :bordered="false" class="cfg-collapse" ref="collapseEl">
 
         <a-collapse-panel key="chat" header="智能问答模型" :id="'cfg-anchor-chat'">
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">模型与网关（厂商预设自动填充地址与补全路径）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.chatModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.chat.model" placeholder="如 deepseek-chat / glm-4.5 / qwen-plus，与所选厂商一致" />
@@ -39,6 +52,7 @@
               <a-input-password v-model:value="form.chat.apiKey" style="width:420px"
                         placeholder="未修改时显示 ****掩码，无需重新输入（RSA 加密入库）" />
             </a-form-item>
+            <div class="cfg-sub">回答行为与内容</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.temperature" placement="top">温度 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.temperature" :min="0" :max="2" :step="0.1" style="width:200px" />
@@ -53,6 +67,7 @@
               <a-textarea v-model:value="form.chat.suggestedQuestions" :rows="4"
                           placeholder="每行一个问题，欢迎页展示前 8 条（数据看板热门问题也可一键加入）" />
             </a-form-item>
+            <div class="cfg-sub">记忆 · 并发 · 调试</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.retrievalDebugEnabled" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">检索调试入口 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
               <a-switch v-model:checked="form.chat.retrievalDebugEnabled" />
@@ -552,10 +567,10 @@
 
       <!-- 悬浮保存按钮：固定在右下角，无需滚动到底部 -->
       <div style="position:fixed; right:24px; bottom:24px; z-index:100; margin:0">
-        <a-button type="primary" :loading="saving" @click="save"
+        <a-button type="primary" :loading="saving" :disabled="!dirtyCount" @click="save"
                   style="box-shadow:0 4px 12px rgba(0,0,0,0.18)">
           <template #icon><save-outlined /></template>
-          保存配置
+          {{ dirtyCount ? `保存配置（${dirtyCount} 组改动）` : '保存配置' }}
         </a-button>
       </div>
     </a-spin>
@@ -563,9 +578,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { QuestionCircleOutlined, SaveOutlined } from '@ant-design/icons-vue'
+import { QuestionCircleOutlined, SaveOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed } from '../api'
 
 // 折叠面板：默认展开常用分组（chat / retrieval / context / deepReasoning），vision / embedding 收起
@@ -585,6 +600,35 @@ const anchors = [
 ]
 const currentAnchor = ref('')
 let anchorObserver = null
+
+// ===== 参数过滤（按组文本匹配：命中组保留并展开，未命中隐藏；清空还原默认展开） =====
+const filterText = ref('')
+const collapseEl = ref(null)
+const allGroupKeys = anchors.map(a => a.key)
+const defaultActiveKeys = ['chat', 'retrieval', 'context', 'deepReasoning']
+const applyFilter = kw => {
+  const el = collapseEl.value && (collapseEl.value.$el || collapseEl.value)
+  if (!el) return
+  const text = (kw || '').trim().toLowerCase()
+  if (!text) {
+    el.querySelectorAll('.ant-collapse-item').forEach(it => { it.style.display = '' })
+    activeKeys.value = [...defaultActiveKeys]
+    return
+  }
+  // 需全文匹配 → 先展开全部组，再按命中显示/隐藏（收起组不渲染内容无法匹配）
+  if (activeKeys.value.length !== allGroupKeys.length) activeKeys.value = [...allGroupKeys]
+  nextTick(() => {
+    const items = el.querySelectorAll('.ant-collapse-item')
+    let firstHit = null
+    items.forEach(it => {
+      const hit = (it.textContent || '').toLowerCase().includes(text)
+      it.style.display = hit ? '' : 'none'
+      if (hit && !firstHit) firstHit = it
+    })
+    if (firstHit) requestAnimationFrame(() => firstHit.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  })
+}
+watch(filterText, applyFilter)
 const jumpTo = (key) => {
   currentAnchor.value = key
   // 展开该分组（若收起）
@@ -970,6 +1014,8 @@ onMounted(async () => {
       getAnswerCacheStats().then(r => { if (r.success) cacheStats.value = r.data }).catch(() => {})
       // 重嵌入状态（若后台仍在跑则自动开启轮询）
       refreshReembedStatus()
+      // 保存差异基线：以"表单 → 载荷"同一管线产物为准（与后端掩码/数值归一一致）
+      initialPayload.value = buildPayload()
     }
   } catch (e) { message.error(e.message || '加载配置失败') }
   finally { loading.value = false }
@@ -991,10 +1037,8 @@ onUnmounted(() => {
   if (reembedTimer) { clearInterval(reembedTimer); reembedTimer = null }
 })
 
-const save = async () => {
-  saving.value = true
-  try {
-    const r = await saveConfig({
+/** 从当前表单组装提交载荷（与后端分组/掩码规则一致：掩码 apiKey 不提交） */
+const buildPayload = () => ({
       chat: { model: form.value.chat.model?.trim(), baseUrl: form.value.chat.baseUrl?.trim(),
               // 掩码原样提交会覆盖真实 key：未修改（**** 开头）则不提交
               apiKey: form.value.chat.apiKey?.trim().startsWith('****') ? undefined : form.value.chat.apiKey?.trim(),
@@ -1095,11 +1139,29 @@ const save = async () => {
                        threshold: String(form.value.semanticCache.threshold),
                        maxEntries: String(form.value.semanticCache.maxEntries) }
     })
+
+/** 加载完成时的基线载荷（保存差异判定用；掩码 apiKey 未改时载荷无该键，与基线一致不误报） */
+const initialPayload = ref(null)
+/** 有改动的分组列表（对比 form 当前载荷与基线；值经同一 buildPayload 管线归一，避免数值/空格伪差异） */
+const dirtyGroups = computed(() => {
+  const base = initialPayload.value
+  if (!base) return []
+  const cur = buildPayload()
+  return Object.keys(base).filter(g => JSON.stringify(base[g]) !== JSON.stringify(cur[g]))
+})
+const dirtyCount = computed(() => dirtyGroups.value.length)
+
+const save = async () => {
+  const dirty = dirtyGroups.value
+  if (!dirty.length) { message.info('没有需要保存的改动'); return }
+  saving.value = true
+  try {
+    const r = await saveConfig(buildPayload())
     if (r.success) {
       const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
       // N=0 即"假保存"哨兵：后端白名单未命中任何键时给出明确提示而非"已保存"误导
       if (n === 0) message.warning('没有可保存的配置项（后端未识别提交的键），请检查后重试')
-      else message.success(`配置已保存并生效（更新 ${n} 项）`)
+      else { message.success(`配置已保存并生效（更新 ${n} 项）`); initialPayload.value = buildPayload() }
       // 若触发了向量模型切换，重嵌入任务已自动启动（状态轮询自动开启）
       refreshReembedStatus()
     }
@@ -1162,5 +1224,32 @@ const save = async () => {
 }
 .cfg-collapse :deep(.ant-collapse-header) {
   font-weight: 500;
+}
+.dirty-tip {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  color: #ad6800;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.cfg-filter {
+  margin: 0 0 12px;
+  max-width: 460px;
+}
+.cfg-filter :deep(.ant-input-affix-wrapper) {
+  border-radius: 6px;
+}
+/* 组内小节标题（信息层级：接入/行为/记忆… 一目了然） */
+.cfg-sub {
+  margin: 4px 0 10px;
+  padding: 2px 0 2px 8px;
+  border-left: 3px solid #1677ff;
+  color: #4a5568;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: #f6f8fa;
+  border-radius: 0 4px 4px 0;
 }
 </style>
