@@ -317,6 +317,16 @@
               <a-input-number v-model:value="form.retrieval.rewriteTimeoutMs" :min="1000" :step="500" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">查询改写超时，本地模型慢可调大</span>
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.rewriteFallbackMinHits" placement="top">改写回退-最小命中 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.rewriteFallbackMinHits" :min="0" :step="1" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">改写后命中少于该值→回退原问重检；0=关</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.rewriteFallbackWeakScore" placement="top">改写回退-弱分阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.rewriteFallbackWeakScore" :min="0" :max="1" :step="0.05" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">改写后最高命中分低于该值→回退原问重检；0=关</span>
+            </a-form-item>
             <!-- 知识块关联检索：引用 1-hop 扩散 + 父章节带出 -->
             <a-form-item>
               <template #label><a-tooltip :title="tips.refExpandEnabled" placement="top">关联扩散 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -658,6 +668,8 @@ const tips = {
   keywordLimit: '关键词检索最多返回的知识块数（SQL LIMIT）。调高召回更全但更慢、融合分计算更重。',
   retrievalTimeout: '混合检索超时（ms）：关键词子检索与总检索的超时上限，超时降级返回已收集结果。',
   rewriteTimeoutMs: '查询改写超时（ms）：LLM 改写问题（多轮追问补全上下文）的等待上限，超时则用原问题检索并提示。本地模型响应慢时调大可减少改写降级，默认 5000。',
+  rewriteFallbackMinHits: '改写跑偏回退-最小命中数：改写后的检索词召回的知识块数低于该值时，判定"改写跑偏"，自动丢弃改写结果、用原始问题重检一次（防止改写改错方向导致漏召回）。0=关闭该判据。默认 2。',
+  rewriteFallbackWeakScore: '改写跑偏回退-弱分阈值：改写后的最高命中融合分低于该值时同样判定"改写跑偏"并回退原问题重检。0=关闭该判据。默认 0.2（回退后答案质量差、命中分整体偏低时可适当调高）。',
   refExpandEnabled: '知识块关联扩散总开关：命中块时自动带出"它引用的块"（详见/参见X节）与"父章节摘要"，让交叉引用内容的回答更完整。关闭后回到只检索直接命中块。',
   refExpandMaxHits: '关联扩散块的数量上限（0=只做父章节带出、不带引用块）。扩散块是可舍弃的增强，受数量与 token 双上限约束。',
   refExpandIncludeIncoming: '是否同时带出"引用了本块的块"（入边扩散）。默认关：入边常带出低相关块；出边（本块引用的）与父章节已覆盖主要场景。',
@@ -778,6 +790,7 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                     upload: { maxFileSizeMB: 200 },
                     retrieval: { vectorWeight: 0.6, keywordWeight: 0.4, titleBonus: 0.1,
                                  vecThreshold: 0.3, keywordLimit: 20, keywordTimeoutMs: 800, searchTimeoutMs: 8000, rewriteTimeoutMs: 5000,
+                                 rewriteFallbackMinHits: 2, rewriteFallbackWeakScore: 0.2,
                                  refDetectEnabled: true, refDetectMention: true, refExpandEnabled: true, refExpandMaxHits: 3, refExpandIncludeIncoming: false,
                                  refExpandParentEnabled: true,
                                  positionBonus: 0.03, sectionBonus: 0.01, keywordMaxTerms: 6, keywordMaxTotal: 12,
@@ -889,6 +902,8 @@ onMounted(async () => {
       form.value.retrieval.keywordTimeoutMs = Number(d.retrieval?.keywordTimeoutMs?.value ?? 800)
       form.value.retrieval.searchTimeoutMs = Number(d.retrieval?.searchTimeoutMs?.value ?? 8000)
       form.value.retrieval.rewriteTimeoutMs = Number(d.retrieval?.rewriteTimeoutMs?.value ?? 5000)
+      form.value.retrieval.rewriteFallbackMinHits = Number(d.retrieval?.rewriteFallbackMinHits?.value ?? 2)
+      form.value.retrieval.rewriteFallbackWeakScore = Number(d.retrieval?.rewriteFallbackWeakScore?.value ?? 0.2)
       form.value.retrieval.refDetectEnabled = d.retrieval?.refDetectEnabled?.value !== 'false'
       form.value.retrieval.refDetectMention = d.retrieval?.refDetectMention?.value !== 'false'
       form.value.retrieval.refExpandEnabled = d.retrieval?.refExpandEnabled?.value !== 'false'
@@ -1027,6 +1042,8 @@ const save = async () => {
                    keywordTimeoutMs: String(form.value.retrieval.keywordTimeoutMs),
                    searchTimeoutMs: String(form.value.retrieval.searchTimeoutMs),
                    rewriteTimeoutMs: String(form.value.retrieval.rewriteTimeoutMs),
+                   rewriteFallbackMinHits: String(form.value.retrieval.rewriteFallbackMinHits),
+                   rewriteFallbackWeakScore: String(form.value.retrieval.rewriteFallbackWeakScore),
                    refDetectEnabled: String(form.value.retrieval.refDetectEnabled),
                    refDetectMention: String(form.value.retrieval.refDetectMention),
                    refExpandEnabled: String(form.value.retrieval.refExpandEnabled),

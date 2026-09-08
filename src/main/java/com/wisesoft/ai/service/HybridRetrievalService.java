@@ -82,6 +82,16 @@ public class HybridRetrievalService {
         void keywordFallback() { this.keywordFallback = true; }
         void multiTimeout() { this.multiTimeout = true; }
 
+        /** 清空本次诊断（改写回退/二次检索前调用：最终用于回答的那次检索的状态为准） */
+        void reset() {
+            this.vectorFailed = false;
+            this.keywordFailed = false;
+            this.keywordBusy = false;
+            this.keywordFallback = false;
+            this.multiTimeout = false;
+            this.lastError = null;
+        }
+
         public boolean isVectorFailed() { return vectorFailed; }
         public boolean isKeywordFailed() { return keywordFailed; }
         public boolean isKeywordBusy() { return keywordBusy; }

@@ -77,6 +77,47 @@ public class RagService {
         }
         return hits;
     }
+
+    /** 改写结果（实际检索用 query + 命中） */
+    private record FallbackSearchResult(List<HybridRetrievalService.Hit> hits, String usedQuery) {
+    }
+
+    /**
+     * 改写跑偏回退：改写 query 与原文不同且"改写后召回质量差"时，丢弃改写结果、回退用原始问题重检。
+     * 质量判据（两者任一命中即回退，均可配置；判据值为 0 表示关闭对应判据）：
+     * 1) 命中块数 < retrieval.rewriteFallbackMinHits（默认 2）——改写词太窄/太偏，基本没召回到东西；
+     * 2) 最高命中融合分 < retrieval.rewriteFallbackWeakScore（默认 0.2）——召回了但整体相似度很弱。
+     * <p>
+     * 回退前清空本次诊断（diag.reset），以"最终用于回答的那次检索"状态为准；
+     * 回退属 fail-loud 事件，随回答标记（默认不展示，进 [FAIL-LOUD] 日志）。
+     */
+    private FallbackSearchResult searchWithRewriteFallback(String original, String rewritten, HybridRetrievalService.RetrievalDiag diag,
+                                                           List<Map<String, String>> degradations, Set<String> degradedCodes) {
+        List<HybridRetrievalService.Hit> hits = hybridRetrievalService.search(rewritten, diag);
+        String used = rewritten;
+        boolean rewriteActive = rewritten != null && !rewritten.equals(original);
+        if (rewriteActive) {
+            int minHits = configService.getInt("retrieval.rewriteFallbackMinHits", 2);
+            double weakScore = configService.getDouble("retrieval.rewriteFallbackWeakScore", 0.2);
+            String reason = null;
+            if (minHits > 0 && hits.size() < minHits) {
+                reason = "召回仅 " + hits.size() + " 块（< " + minHits + "）";
+            } else if (weakScore > 0 && !hits.isEmpty() && hits.get(0).score() < weakScore) {
+                reason = "最高命中分 " + String.format("%.3f", hits.get(0).score()) + " 过低（< " + weakScore + "）";
+            }
+            if (reason != null) {
+                // 回退重检：原始问题（改写前语义），清空首次检索的诊断标记，避免污染最终回答状态
+                diag.reset();
+                List<HybridRetrievalService.Hit> back = hybridRetrievalService.search(original, diag);
+                log.info("[FAIL-LOUD] 查询改写跑偏，回退原问题检索: question=[{}]，原因: {}（改写命中 {} 块 → 原问命中 {} 块）",
+                        original, reason, hits.size(), back.size());
+                addDegradation(degradations, degradedCodes, "rewriteFallback",
+                        "问题改写后召回不足，已回退用原始问题检索");
+                return new FallbackSearchResult(back, original);
+            }
+        }
+        return new FallbackSearchResult(hits, used);
+    }
     /** 引用摘要截断长度 */
     private static final int SNIPPET_LEN = 80;
 
@@ -348,7 +389,17 @@ public class RagService {
             // 降级/未开启深度思考：走普通单路检索
             if (hits == null) {
                 sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
-                hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
+                // 改写跑偏回退：改写是"优化"而非"承诺"——改写词跑偏（召回极少/最高分极弱）时
+                // 回退用原始问题重检，避免"改写成功但改错方向"导致漏召回；仅改写真正生效时触发，
+                // 且图片提问不回退（检索词含图片视觉描述，回退会丢掉视觉语义）。
+                if (userImgs.isEmpty()) {
+                    FallbackSearchResult sr = searchWithRewriteFallback(question, retrievalQuery, retrievalDiag,
+                            degradations, degradedCodes);
+                    hits = sr.hits();
+                    retrievalQuery = sr.usedQuery(); // 后续重排/上下文/日志统一用实际生效的 query
+                } else {
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
+                }
                 hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）

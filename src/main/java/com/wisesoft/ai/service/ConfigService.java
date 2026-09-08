@@ -74,6 +74,8 @@ public class ConfigService {
             Map.entry("retrieval.keywordWeight", "混合检索：关键词权重(0~1)"),
             Map.entry("retrieval.titleBonus", "混合检索：标题命中奖励(0~1)"),
             Map.entry("retrieval.rewriteTimeoutMs", "查询改写超时(毫秒,默认5000；本地模型慢可调大)"),
+            Map.entry("retrieval.rewriteFallbackMinHits", "改写回退：改写后检索命中块数低于此值→回退用原问题重检(0=关闭回退)"),
+            Map.entry("retrieval.rewriteFallbackWeakScore", "改写回退：改写后最高命中融合分低于此值→回退用原问题重检(0=关闭该判据)"),
             Map.entry("retrieval.refDetectEnabled", "解析时识别知识块交叉引用(详见/参见X节,改后需重解析)"),
             Map.entry("retrieval.refDetectMention", "识别无动词提及(如 4.1.2 所述/《数据字典》/XX章节,仅精确匹配)"),
             Map.entry("retrieval.refExpandEnabled", "检索时关联块扩散+父章节带出总开关(保存即生效)"),
@@ -328,6 +330,8 @@ public class ConfigService {
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("retrieval.titleBonus", String.valueOf(properties.getRetrieval().getTitleBonus()));
         d.put("retrieval.rewriteTimeoutMs", String.valueOf(properties.getQueryRewrite().getTimeoutMillis())); // 查询改写超时(ms)
+        d.put("retrieval.rewriteFallbackMinHits", "2");    // 改写回退：命中块数下限（0=关闭回退）
+        d.put("retrieval.rewriteFallbackWeakScore", "0.2"); // 改写回退：最高融合分下限（0=关闭该判据）
         d.put("retrieval.refDetectEnabled", "true");      // 解析时引用识别
         d.put("retrieval.refDetectMention", "true");      // 无动词提及识别（如 4.1.2 所述/《数据字典》）
         d.put("retrieval.refExpandEnabled", "true");      // 检索时关联扩散+父章节带出
@@ -556,7 +560,7 @@ public class ConfigService {
             throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
         }
         // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.titleBonus", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio"}) {
+        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.titleBonus", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
             String w = updates.get(wKey);
             if (w != null && !w.isBlank()) {
                 try {
@@ -590,7 +594,7 @@ public class ConfigService {
                 }
             }
         }
-        for (String iKey : new String[]{"rerank.minHits"}) {
+        for (String iKey : new String[]{"rerank.minHits", "retrieval.rewriteFallbackMinHits"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
