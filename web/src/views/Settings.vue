@@ -127,6 +127,7 @@
                 ⚠ 关闭后文档图片/用户图片不生成描述：图片仅展示、内容不进入检索（RAG 对图片语义失效）
               </span>
             </a-form-item>
+            <div class="cfg-sub">识别模型与提示词</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.model" placeholder="如 qwen3-vl:2b" />
@@ -136,6 +137,7 @@
               <a-textarea v-model:value="form.vision.prompt" :rows="3"
                           placeholder="图片描述提示词（50字内描述界面/元素）" />
             </a-form-item>
+            <div class="cfg-sub">描述并发（文档图与用户传图分开控制）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionConcurrency" placement="top">图片描述并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.vision.concurrency" :min="1" :max="16" style="width:200px" />
@@ -144,6 +146,7 @@
               <template #label><a-tooltip :title="tips.userImageConcurrency" placement="top">用户图片并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.vision.userImageConcurrency" :min="1" :max="16" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">网关与密钥</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.baseUrl" style="width:420px"
@@ -160,6 +163,7 @@
         <a-collapse-panel key="chunk" :id="'cfg-anchor-chunk'" header="文档解析（上传上限/分块/图片）">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='chunk'" @click.stop="onResetGroup('chunk')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">上传与单文档保护（超限截断入库）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.uploadMaxSize" placement="top">上传大小上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.upload.maxFileSizeMB" :min="1" :max="1024" :step="50" style="width:200px" />
@@ -175,6 +179,7 @@
               <a-input-number v-model:value="form.chunk.maxImages" :min="0" :step="20" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">0=不限制</span>
             </a-form-item>
+            <div class="cfg-sub">分块与解析行为（需重新解析/新上传文档生效）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.overlap" placement="top">分块重叠字符 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chunk.overlap" :min="0" :step="20" style="width:200px" />
@@ -278,6 +283,7 @@
         <a-collapse-panel key="retrieval" :id="'cfg-anchor-retrieval'" header="检索设置（混合检索权重 + 重排 + 关键词引擎）">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='retrieval'" @click.stop="onResetGroup('retrieval')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">关键词召回引擎</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.keywordEngine" placement="top">关键词引擎 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-select v-model:value="form.keyword.engine" style="width:220px" :options="[
@@ -298,6 +304,7 @@
               <a-input-number v-model:value="form.keyword.timeoutMillis" :min="200" :step="100" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">超时自动降级 mysql</span>
             </a-form-item>
+            <div class="cfg-sub">融合权重 · 阈值 · 改写回退</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.vectorWeight" placement="top">向量权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.vectorWeight" :min="0" :max="1" :step="0.05" style="width:200px" />
@@ -339,6 +346,7 @@
               <a-input-number v-model:value="form.retrieval.rewriteFallbackWeakScore" :min="0" :max="1" :step="0.05" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">改写后最高命中分低于该值→回退原问重检；0=关</span>
             </a-form-item>
+            <div class="cfg-sub">关联扩散与引用识别</div>
             <!-- 知识块关联检索：引用 1-hop 扩散 + 父章节带出 -->
             <a-form-item>
               <template #label><a-tooltip :title="tips.refExpandEnabled" placement="top">关联扩散 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -375,6 +383,7 @@
               <a-input-number v-model:value="form.retrieval.positionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">首块 / 前段奖励</span>
             </a-form-item>
+            <div class="cfg-sub">重排（可选 reranker，需独立服务）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankEnabled" placement="top">启用重排 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.retrieval.rerank.enabled" :loading="rerankChecking" @change="onRerankEnabledChange" />
@@ -413,6 +422,7 @@
         <a-collapse-panel key="context" :id="'cfg-anchor-context'" header="上下文与长度控制">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='context'" @click.stop="onResetGroup('context')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">窗口与预算（决定单次请求上下文长度）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.modelWindows" placement="top">模型窗口映射 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.context.modelWindows"
@@ -434,6 +444,7 @@
               <template #label><a-tooltip :title="tips.maxOutput" placement="top">输出限制 token <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.context.maxOutputTokens" :min="100" :step="100" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">历史裁剪 · 命中片段与填充</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.historyMax" placement="top">历史注入上限 token <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.context.historyMaxTokens" :min="0" :step="100" style="width:200px" />
@@ -450,6 +461,7 @@
               <template #label><a-tooltip :title="tips.maxContextHits" placement="top">知识块填充上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.context.maxContextHits" :min="1" :max="30" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">信息增益去冗余</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.dedupEnabled" placement="top">信息增益去冗余 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.context.dedupEnabled" />
@@ -475,6 +487,7 @@
         <a-collapse-panel key="deepReasoning" :id="'cfg-anchor-deepReasoning'" header="深度思考设置">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='deepReasoning'" @click.stop="onResetGroup('deepReasoning')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">思考模式与引导</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.drEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.deepReasoning.enabled" />
@@ -495,6 +508,7 @@
               <a-textarea v-model:value="form.deepReasoning.prompt" :rows="6"
                           placeholder="引导模型先深度思考、末尾输出 <search>精化query|子问题1|子问题2</search> 检索计划" />
             </a-form-item>
+            <div class="cfg-sub">检索计划 · 多路与超时</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.drSearchTag" placement="top">检索计划标签名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.deepReasoning.searchTag" style="width:200px" placeholder="search" />
