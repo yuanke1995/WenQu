@@ -1232,49 +1232,78 @@ const fallbackCopyText = txt => {
   } catch (err) { message.error('复制失败，请手动复制') }
 }
 
-// 导出该轮问答为 .md（问题仅配对当前回答所在轮次；图片为签名/私有 URL，正文保留 [图片N] 占位，
-// 在文末附「相关图片」清单供追溯，避免坏链）
-const exportAnswer = mi => {
+// 导出该轮问答为 .md（问题仅配对当前回答所在轮次）。
+// 图片策略：data URL 原样内嵌；服务内 /ai/... 图片先经 /proxy fetch 转 base64 内嵌
+//（导出文件自包含，Typora/Obsidian/VSCode 打开即见图）；抓取失败则保留 [图片N] 占位文本。
+const exportAnswer = async mi => {
   const m = messages.value[mi]
   if (!m || !m.content) { message.warning('该回答无可导出内容'); return }
-  const title = sessions.value.find(s => s.id === currentSessionId.value)?.title || 'AI回答'
-  const parts = [`# ${title}\n`]
-
-  // 单轮配对：向 mi 前找最近一条 user（遇到更早的 assistant 即停，不把整段历史问题都塞进来）
-  let question = null
-  for (let i = mi - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
-    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
-  }
-  if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
-
-  // 回答正文：保留 LLM 原始 markdown（表格/代码/引用角标 [N]/图片占位 [图片N] 原样输出，
-  // 不在正文制造对签名 URL 的坏链接引用）
-  parts.push('## 回答\n' + m.content.trim() + '\n')
-
-  if (m.sources && m.sources.length) {
-    parts.push('## 引用来源\n' + m.sources.map((s, si) =>
-      `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
-  }
   const imgs = Array.isArray(m.images) ? m.images : []
-  if (imgs.length) {
-    parts.push('## 相关图片\n' + imgs.map((u, i) => {
-      const label = u && u.startsWith('data:') ? '(内嵌图)' : '(需登录服务访问)'
-      return `${i + 1}. ${label} ${u || ''}`
-    }).join('\n') + '\n')
-  }
+  const hide = imgs.length ? message.loading(`正在导出（含 ${imgs.length} 张图片，抓取转码中…）`, 0) : null
+  try {
+    // 逐张把服务内图片抓为 base64；失败置 null（正文保留原占位）
+    const dataUris = []
+    for (const u of imgs) {
+      if (!u) { dataUris.push(null); continue }
+      if (u.startsWith('data:')) { dataUris.push(u); continue }
+      try {
+        const src = resolveImg(u)
+        const r = await fetch(src)
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        const blob = await r.blob()
+        dataUris.push(await new Promise((res, rej) => {
+          const fr = new FileReader()
+          fr.onload = () => res(fr.result)
+          fr.onerror = rej
+          fr.readAsDataURL(blob)
+        }))
+      } catch (e) {
+        dataUris.push(null) // 签名过期/不可达：占位保留，不阻断导出
+      }
+    }
 
-  const md = parts.join('\n')
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  const safeName = (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
-  a.href = url
-  a.download = safeName + '.md'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+    const title = sessions.value.find(s => s.id === currentSessionId.value)?.title || 'AI回答'
+    const parts = [`# ${title}\n`]
+
+    // 单轮配对：向 mi 前找最近一条 user（遇到更早的 assistant/ai 即停，不把整段历史问题都塞进来）
+    let question = null
+    for (let i = mi - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') { question = messages.value[i]; break }
+      if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
+    }
+    if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
+
+    // 正文：图片占位 [图片N：描述] → ![图片N](内嵌URL)（成功取到 base64 时）；其余原样
+    const body = m.content.trim().replace(/\[图片\s*(\d+)(?:[：:]([^\]]*))?\]/g, (all, num, desc) => {
+      const uri = dataUris[Number(num) - 1]
+      if (!uri) return all
+      return `![图片${num}${desc && desc.trim() ? '：' + desc.trim() : ''}](${uri})`
+    })
+    parts.push('## 回答\n' + body + '\n')
+
+    if (m.sources && m.sources.length) {
+      parts.push('## 引用来源\n' + m.sources.map((s, si) =>
+        `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
+    }
+    const failed = imgs.map((u, i) => ({ u, i })).filter(x => x.u && !x.u.startsWith('data:') && !dataUris[x.i])
+    if (failed.length) {
+      parts.push('## 相关图片（未嵌入，需服务内访问）\n' + failed.map(f => `${f.i + 1}. ${f.u || ''}`).join('\n') + '\n')
+    }
+
+    const md = parts.join('\n')
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const safeName = (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
+    a.href = url
+    a.download = safeName + '.md'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } finally {
+    if (hide) hide()
+  }
 }
 
 // 检索调试：打开弹窗（默认该轮问题）并执行
