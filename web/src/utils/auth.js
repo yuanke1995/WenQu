@@ -15,8 +15,11 @@ export const isAdminSync = () => {
 export async function ensureAuth(force = false) {
   if (cached && !force) return cached
   try {
-    cached = await getAuthMe()
-    try { localStorage.setItem('ai_role', cached?.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
+    const body = await getAuthMe()
+    // api.js request() 返回整个 ResultJson（success/code/msg/data）——角色在 data 里，勿取 body.admin（undefined）
+    const info = (body && typeof body === 'object' && body.data) || body || {}
+    cached = { user: info.user || 'anonymous', admin: Boolean(info.admin) }
+    try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
   } catch (e) {
     cached = { user: 'anonymous', admin: false }
   }

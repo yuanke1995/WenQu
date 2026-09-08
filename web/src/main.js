@@ -5,6 +5,7 @@ import 'ant-design-vue/dist/reset.css'
 import './md.css'
 import App from './App.vue'
 import router from './router'
+import { ensureAuth } from './utils/auth'
 
 const app = createApp(App)
 
@@ -35,4 +36,8 @@ window.addEventListener('app:forbidden', () => {
   message.error('无管理员权限，请先完成管理员验证')
 })
 
-app.use(Antd).use(router).mount('#app')
+// 首屏先确认身份/角色再挂载（避免 App 渲染后才异步拉取导致的"角色已就绪但菜单未刷新"时序问题；
+// auth 失败静默按普通用户处理，管理入口自然隐藏）
+ensureAuth().finally(() => {
+  app.use(Antd).use(router).mount('#app')
+})

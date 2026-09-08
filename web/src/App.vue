@@ -48,7 +48,8 @@ dayjs.locale('zh-cn')
 
 const route = useRoute()
 const router = useRouter()
-const isAdmin = ref(false)
+// 首屏 mount 前 main.js 已 ensureAuth（cached 就绪），此处同步取初始值，杜绝"先渲染隐藏、后更新菜单"的闪烁/滞后
+const isAdmin = ref(isAdminSync())
 const adminModal = ref(false)
 const adminTokenInput = ref('')
 const adminVerifying = ref(false)
