@@ -15,15 +15,8 @@
       <warning-outlined style="color:#d48806" /> 有 {{ dirtyCount }} 组配置已修改未保存，点击右下角「保存配置（{{ dirtyCount }} 组改动）」生效
     </div>
 
-    <!-- 参数过滤：输入关键词按组匹配并展开定位（组内控件多时快速找到目标参数） -->
-    <div class="cfg-filter">
-      <a-input v-model:value="filterText" allow-clear placeholder="搜索参数：输入关键词自动展开并定位所在分组（如 温度 / 超时 / 重排 / 并发）">
-        <template #prefix><search-outlined style="color:#bbb" /></template>
-      </a-input>
-    </div>
-
     <a-spin :spinning="loading">
-      <a-collapse v-model:activeKey="activeKeys" :bordered="false" class="cfg-collapse" ref="collapseEl">
+      <a-collapse v-model:activeKey="activeKeys" :bordered="false" class="cfg-collapse">
 
         <a-collapse-panel key="chat" header="智能问答模型" :id="'cfg-anchor-chat'">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='chat'" @click.stop="onResetGroup('chat')">恢复本组默认</a-button></template>
@@ -586,9 +579,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { QuestionCircleOutlined, SaveOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import { QuestionCircleOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed } from '../api'
 
 // 折叠面板：默认展开常用分组（chat / retrieval / context / deepReasoning），vision / embedding 收起
@@ -608,35 +601,6 @@ const anchors = [
 ]
 const currentAnchor = ref('')
 let anchorObserver = null
-
-// ===== 参数过滤（按组文本匹配：命中组保留并展开，未命中隐藏；清空还原默认展开） =====
-const filterText = ref('')
-const collapseEl = ref(null)
-const allGroupKeys = anchors.map(a => a.key)
-const defaultActiveKeys = ['chat', 'retrieval', 'context', 'deepReasoning']
-const applyFilter = kw => {
-  const el = collapseEl.value && (collapseEl.value.$el || collapseEl.value)
-  if (!el) return
-  const text = (kw || '').trim().toLowerCase()
-  if (!text) {
-    el.querySelectorAll('.ant-collapse-item').forEach(it => { it.style.display = '' })
-    activeKeys.value = [...defaultActiveKeys]
-    return
-  }
-  // 需全文匹配 → 先展开全部组，再按命中显示/隐藏（收起组不渲染内容无法匹配）
-  if (activeKeys.value.length !== allGroupKeys.length) activeKeys.value = [...allGroupKeys]
-  nextTick(() => {
-    const items = el.querySelectorAll('.ant-collapse-item')
-    let firstHit = null
-    items.forEach(it => {
-      const hit = (it.textContent || '').toLowerCase().includes(text)
-      it.style.display = hit ? '' : 'none'
-      if (hit && !firstHit) firstHit = it
-    })
-    if (firstHit) requestAnimationFrame(() => firstHit.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-  })
-}
-watch(filterText, applyFilter)
 const jumpTo = (key) => {
   currentAnchor.value = key
   // 展开该分组（若收起）
@@ -1273,14 +1237,6 @@ const save = async () => {
   margin: 0 0 12px;
   font-size: 13px;
 }
-.cfg-filter {
-  margin: 0 0 12px;
-  max-width: 460px;
-}
-.cfg-filter :deep(.ant-input-affix-wrapper) {
-  border-radius: 6px;
-}
-/* 组内小节标题（信息层级：接入/行为/记忆… 一目了然） */
 .cfg-sub {
   margin: 4px 0 10px;
   padding: 2px 0 2px 8px;
