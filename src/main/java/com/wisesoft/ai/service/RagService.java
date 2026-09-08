@@ -122,6 +122,35 @@ public class RagService {
     private static final int SNIPPET_LEN = 80;
 
     /**
+     * 深度思考自动路由（autoRoute 开启时）：短问直接答；长问（≥25 字）或含多条件/对比/递进词的复杂问题自动开思考。
+     * 保守启发式——只对明显复杂的问题路由，避免常见"如何/怎么"类问题全量思考导致成本与延迟翻倍。
+     */
+    private boolean shouldAutoDeepThink(String question) {
+        if (question == null) return false;
+        String q = question.trim();
+        if (q.length() < 8) return false;
+        if (q.length() >= 25) return true;
+        for (String w : new String[]{"如果", "当", "对比", "区别", "以及", "同时", "多个", "分别", "为什么"}) {
+            if (q.contains(w)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 思考关键词增强：从思考全文提取词元（injectKeywords 开关），供多路检索补充一条 query / 失败降级增强。
+     * 思考链里往往出现关键实体与限定词（如"必填、数据唯一、审批流"），补进检索可提升召回。
+     */
+    private List<String> thinkingEnhanceTerms(String thinking) {
+        if (!configService.getBoolean("deepReasoning.injectKeywords") || thinking == null || thinking.isBlank()) {
+            return List.of();
+        }
+        List<String> terms = keywordExtractor.extract(thinking);
+        if (terms.isEmpty()) return List.of();
+        int max = Math.max(1, configService.getInt("deepReasoning.injectKeywordsMax", 5));
+        return terms.stream().limit(max).toList();
+    }
+
+    /**
      * 语义缓存命中直出：跳过检索与 LLM，把历史回答作为完整回答一次性下发（SSE 事件序列与正常路径一致）。
      * 会话历史与问答日志照常落库，保证会话恢复/反馈/看板链路不受影响。
      */
@@ -267,6 +296,12 @@ public class RagService {
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
     public void chat(String sessionId, String question, List<String> userImages, boolean deepThink, SseEmitter emitter) {
+        // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
+        if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
+            deepThink = shouldAutoDeepThink(question);
+        }
+        // lambda 引用需 effectively final：自动路由改写后用局部副本传递
+        final boolean useDeepThink = deepThink;
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         emitter.onCompletion(() -> ACTIVE_SSE.remove(emitter));
@@ -274,7 +309,7 @@ public class RagService {
         emitter.onError(t -> ACTIVE_SSE.remove(emitter));
         syncPipelineSize();
         try {
-            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, deepThink, emitter));
+            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, emitter));
         } catch (RejectedExecutionException e) {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -351,31 +386,46 @@ public class RagService {
             }
 
             // 1. 深度思考（可选）：思考流式 → 提取检索计划 → 多路检索。
-            //    失败/超时/提取失败 → 降级为原始 question 单路检索并 fail-loud（thinkingHolder 保留已收集增量，可为空）
+            //    失败/超时/未提取到计划 → 降级检索，但已收集的思考内容（thinking 词元）参与增强，不白费
             List<HybridRetrievalService.Hit> hits = null;
             HybridRetrievalService.RetrievalDiag retrievalDiag = new HybridRetrievalService.RetrievalDiag();
+            // 思考链注入参考（深度思考成功后把推理过程截断注入回答 prompt，让"想过的"作用于"答"）
+            String thinkingInject = "";
+            // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
+            List<String> thinkTerms = List.of();
             if (deepThink && configService.getBoolean("deepReasoning.enabled")) {
                 DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, emitter);
                 thinkingHolder[0] = dr.thinking();
+                thinkTerms = thinkingEnhanceTerms(dr.thinking());
+                if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
+                    int maxChars = Math.max(100, configService.getInt("deepReasoning.injectThinkingMaxChars", 800));
+                    String t = dr.thinking();
+                    thinkingInject = t.length() > maxChars ? t.substring(0, maxChars) + "…" : t;
+                }
                 if (dr.ok()) {
                     String rankQuery;
-                    // 多路检索：精化 query + 子问题并行召回合并；开关关闭时单路精化 query
+                    // 多路检索：精化 query + 子问题并行召回合并 + 思考词元增强路；开关关闭时单路精化 query
                     sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                     if (configService.getBoolean("deepReasoning.multiRetrieval")) {
                         List<String> queries = new ArrayList<>();
                         queries.add(dr.refinedQuery());
                         queries.addAll(dr.subQueries());
+                        if (!thinkTerms.isEmpty()) {
+                            queries.add(String.join(" ", thinkTerms));
+                        }
                         hits = hybridRetrievalService.searchMulti(queries, retrievalDiag);
                         rankQuery = dr.refinedQuery();
                     } else {
-                        retrievalQuery = dr.refinedQuery();
+                        retrievalQuery = thinkTerms.isEmpty()
+                                ? dr.refinedQuery()
+                                : dr.refinedQuery() + " " + String.join(" ", thinkTerms);
                         hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
                         rankQuery = retrievalQuery;
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
                     hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes);
-                    log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, hits={}",
-                            dr.refinedQuery(), dr.subQueries(), hits.size());
+                    log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, thinkTerms={}, hits={}",
+                            dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
                 } else {
                     // M2 fail-loud：深度思考降级（思考阶段失败/超时/未提取到检索计划）——用户可读措辞，技术原因留日志
                     addDegradation(degradations, degradedCodes, "deepThinkDegraded", "深度思考未完成，已转为普通回答");
@@ -389,10 +439,15 @@ public class RagService {
             // 降级/未开启深度思考：走普通单路检索
             if (hits == null) {
                 sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
-                // 改写跑偏回退：改写是"优化"而非"承诺"——改写词跑偏（召回极少/最高分极弱）时
-                // 回退用原始问题重检，避免"改写成功但改错方向"导致漏召回；仅改写真正生效时触发，
-                // 且图片提问不回退（检索词含图片视觉描述，回退会丢掉视觉语义）。
-                if (userImgs.isEmpty()) {
+                // 深度思考失败但产生了思考内容：用"原问题 + 思考词元"检索，思考不算白费（比纯普通检索召回更好）
+                if (deepThink && !thinkTerms.isEmpty()) {
+                    retrievalQuery = question + " " + String.join(" ", thinkTerms);
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
+                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
+                } else if (userImgs.isEmpty()) {
+                    // 改写跑偏回退：改写是"优化"而非"承诺"——改写词跑偏（召回极少/最高分极弱）时
+                    // 回退用原始问题重检，避免"改写成功但改错方向"导致漏召回；仅改写真正生效时触发，
+                    // 且图片提问不回退（检索词含图片视觉描述，回退会丢掉视觉语义）。
                     FallbackSearchResult sr = searchWithRewriteFallback(question, retrievalQuery, retrievalDiag,
                             degradations, degradedCodes);
                     hits = sr.hits();
@@ -451,6 +506,12 @@ public class RagService {
             StringBuilder userQuestion = new StringBuilder(question);
             if (!imgDescText.isBlank()) {
                 userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            }
+            // 思考链注入：把深度思考的推理过程（截断）作为参考注入，让"想过的"作用于"答"；
+            // 明确说明必须以参考资料为准，思考只是辅助拆解
+            if (!thinkingInject.isBlank()) {
+                userQuestion.append("\n\n【你的思考过程】以下是本问题此前生成的深度分析过程，供参考其中的拆解与判断，"
+                        + "但最终回答必须以下方参考资料为准：\n").append(thinkingInject);
             }
 
             // 3. 价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)；减去 system/问题固定部分后，按相关度累积填充知识块
@@ -1296,7 +1357,8 @@ public class RagService {
      * 阶段1 流式思考（SSE thinking 增量；thinkingMode=model 从 reasoning_content 提取，prompt 从 content 提取）
      * 阶段2 提取 <search> 检索计划（精化 query + 子问题）
      * 阶段3 由调用方执行多路检索（本方法只返回计划）
-     * 失败/超时/提取失败 → 返回 ok=false + 已收集思考增量，调用方降级单路检索
+     * 失败/超时/未提取到计划 → 返回 ok=false + 已收集思考增量（调用方用思考词元增强降级检索）
+     * 思考长度护栏（maxThinkingChars）：超限中断思考流但保留已收集内容继续走计划提取，不整段丢弃
      */
     private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText, SseEmitter emitter) {
         String thinkingMode = configService.get("deepReasoning.thinkingMode");
@@ -1304,6 +1366,7 @@ public class RagService {
         boolean multiRetrieval = configService.getBoolean("deepReasoning.multiRetrieval");
         int timeoutMillis = configService.getInt("deepReasoning.timeoutMillis");
         int maxThinkingTokens = configService.getInt("deepReasoning.maxThinkingTokens");
+        int maxThinkingChars = configService.getInt("deepReasoning.maxThinkingChars", 3000);
 
         // 思考 system = 思考引导 prompt + 对话历史（复用 buildHistoryText 裁剪）
         StringBuilder system = new StringBuilder(configService.get("deepReasoning.prompt"));
@@ -1340,6 +1403,10 @@ public class RagService {
                     .doOnNext(resp -> {
                         String delta = extractThinkingDelta(resp, thinkingMode);
                         if (delta != null && !delta.isBlank()) {
+                            // 思考长度护栏：超上限即中断思考流（保留已收集部分），避免刷爆上下文/token
+                            if (maxThinkingChars > 0 && thinking.length() + delta.length() > maxThinkingChars) {
+                                throw new ThinkingCappedException();
+                            }
                             thinking.append(delta);
                             // 客户端断开：抛异常中止同步消费（blockLast），省余下思考输出；调用方检查点兜底不再检索
                             if (!sendSseEvent(emitter, "thinking", delta, sessionId)) {
@@ -1349,29 +1416,43 @@ public class RagService {
                     })
                     .blockLast(Duration.ofMillis(Math.max(1000, timeoutMillis)));
 
-            // 阶段2：提取检索计划（剥离 <search> 块用于展示/持久化）
-            SearchPlan plan = extractSearchPlan(thinking.toString(), question);
-            String display = stripSearchBlock(thinking.toString(), plan.searchTag());
-            String status = multiRetrieval && !plan.subQueries().isEmpty() ? "ok" : "ok";
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("status", status);
-            done.put("thinking", display);
-            sendSseEvent(emitter, "thinking_done", JSON.toJSONString(done), sessionId);
-            log.info("[DEEP-THINK] 思考完成 {} 字, refined={}, subs={}", display.length(), plan.refinedQuery(), plan.subQueries());
-            return new DeepThinkResult(true, display, plan.refinedQuery(), plan.subQueries(), null);
+            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, true);
         } catch (SseClientGoneException e) {
             log.info("[SSE] 客户端断开，深度思考终止: session={}", sessionId);
             return new DeepThinkResult(false, stripSearchBlock(thinking.toString(), "search"),
                     question, List.of(), "disconnected");
+        } catch (ThinkingCappedException e) {
+            // 思考长度达上限：用已收集内容继续（可能提取到计划则 ok，否则由调用方用思考词元增强降级）
+            log.info("[DEEP-THINK] 思考长度达上限截断（{} 字），用已收集内容继续", thinking.length());
+            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, false);
         } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 深度思考失败/超时，降级普通检索: {}", e.getMessage());
-            String display = stripSearchBlock(thinking.toString(), "search");
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("status", "degraded");
-            done.put("thinking", display);
-            sendSseEvent(emitter, "thinking_done", JSON.toJSONString(done), sessionId);
-            return new DeepThinkResult(false, display, question, List.of(), e.getMessage());
+            // 思考流异常/超时：若已收集内容含检索计划仍可用，否则降级（调用方用思考词元增强）
+            log.warn("[FAIL-LOUD] 深度思考失败/超时，降级检索: {}", e.getMessage());
+            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, false);
         }
+    }
+
+    /**
+     * 思考收尾公共逻辑：提取检索计划、剥离 <search> 块、下发 thinking_done。
+     * ok = 流正常完成，或虽中断但已收集内容中提取到了有效检索计划（refinedQuery 非原问题或子问题非空）——
+     * 这样长度截断/部分异常时思考内容不白费，能继续多路检索。
+     */
+    private DeepThinkResult finishDeepThinking(String rawThinking, String question, String sessionId, SseEmitter emitter, boolean streamOk) {
+        SearchPlan plan = extractSearchPlan(rawThinking, question);
+        String display = stripSearchBlock(rawThinking, plan.searchTag());
+        boolean hasPlan = !plan.subQueries().isEmpty()
+                || (plan.refinedQuery() != null && !plan.refinedQuery().equals(question));
+        boolean ok = streamOk || hasPlan;
+        Map<String, Object> done = new LinkedHashMap<>();
+        done.put("status", ok ? "ok" : "degraded");
+        done.put("thinking", display);
+        sendSseEvent(emitter, "thinking_done", JSON.toJSONString(done), sessionId);
+        log.info("[DEEP-THINK] 思考结束 {} 字, ok={}, refined={}, subs={}", display.length(), ok, plan.refinedQuery(), plan.subQueries());
+        return new DeepThinkResult(ok, display, plan.refinedQuery(), plan.subQueries(), null);
+    }
+
+    /** 思考流长度达上限的中断信号（内部异常，不走 fail-loud） */
+    private static final class ThinkingCappedException extends RuntimeException {
     }
 
     /** 检索计划：精化 query + 子问题列表 */

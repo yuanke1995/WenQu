@@ -1093,6 +1093,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
     onThinkingDone: payload => {
       const m = messages.value[idx]
       m.thinkLoading = false
+      // 思考完成自动折叠（避免超长思维链刷屏；想看再点开）
+      m.thinkOpen = false
       try {
         const j = JSON.parse(payload)
         if (j.thinking) m.thinking = j.thinking
