@@ -1232,25 +1232,38 @@ const fallbackCopyText = txt => {
   } catch (err) { message.error('复制失败，请手动复制') }
 }
 
-// 导出回答为 .md 文件（含会话标题 + 引用来源）
+// 导出该轮问答为 .md（问题仅配对当前回答所在轮次；图片为签名/私有 URL，正文保留 [图片N] 占位，
+// 在文末附「相关图片」清单供追溯，避免坏链）
 const exportAnswer = mi => {
   const m = messages.value[mi]
   if (!m || !m.content) { message.warning('该回答无可导出内容'); return }
   const title = sessions.value.find(s => s.id === currentSessionId.value)?.title || 'AI回答'
   const parts = [`# ${title}\n`]
-  // 收集该回答之前的用户问题（同会话上下文）
-  const questions = []
+
+  // 单轮配对：向 mi 前找最近一条 user（遇到更早的 assistant 即停，不把整段历史问题都塞进来）
+  let question = null
   for (let i = mi - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'user') questions.unshift(messages.value[i].content)
+    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
+    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
   }
-  if (questions.length) {
-    parts.push('## 问题\n' + questions.join('\n\n') + '\n')
-  }
+  if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
+
+  // 回答正文：保留 LLM 原始 markdown（表格/代码/引用角标 [N]/图片占位 [图片N] 原样输出，
+  // 不在正文制造对签名 URL 的坏链接引用）
   parts.push('## 回答\n' + m.content.trim() + '\n')
+
   if (m.sources && m.sources.length) {
     parts.push('## 引用来源\n' + m.sources.map((s, si) =>
       `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
   }
+  const imgs = Array.isArray(m.images) ? m.images : []
+  if (imgs.length) {
+    parts.push('## 相关图片\n' + imgs.map((u, i) => {
+      const label = u && u.startsWith('data:') ? '(内嵌图)' : '(需登录服务访问)'
+      return `${i + 1}. ${label} ${u || ''}`
+    }).join('\n') + '\n')
+  }
+
   const md = parts.join('\n')
   const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
   const url = URL.createObjectURL(blob)
