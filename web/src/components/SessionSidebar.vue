@@ -97,6 +97,9 @@
                     {{ s.isPinned ? '取消置顶' : '置顶' }}
                   </a-menu-item>
                   <a-menu-divider />
+                  <a-menu-item key="export">
+                    <download-outlined style="color:#666;margin-right:6px" />导出 Markdown
+                  </a-menu-item>
                   <a-menu-item key="del" danger>
                     <delete-outlined style="margin-right:6px" />删除会话
                   </a-menu-item>
@@ -145,7 +148,7 @@
 import { ref, computed } from 'vue'
 import { Modal } from 'ant-design-vue'
 import { PlusOutlined, DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ClearOutlined, CommentOutlined,
-         SearchOutlined, PushpinOutlined, PushpinFilled, StarOutlined, MoreOutlined, CheckSquareOutlined, EditOutlined } from '@ant-design/icons-vue'
+         SearchOutlined, PushpinOutlined, PushpinFilled, StarOutlined, MoreOutlined, CheckSquareOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons-vue'
 
 const props = defineProps({
   sessions: { type: Array, default: () => [] },
@@ -157,7 +160,7 @@ const props = defineProps({
   dragging: { type: Boolean, default: false }    // 拖拽中（禁用宽度过渡动画）
 })
 
-const emit = defineEmits(['select', 'delete', 'new', 'toggle-collapse', 'clear', 'toggle-pin', 'toggle-favorite', 'search', 'filter-change', 'batch-delete', 'rename'])
+const emit = defineEmits(['select', 'delete', 'new', 'toggle-collapse', 'clear', 'toggle-pin', 'toggle-favorite', 'search', 'filter-change', 'batch-delete', 'rename', 'export'])
 
 // 「···」更多菜单：批量管理进入多选模式（当前会话默认勾选）；收藏/置顶/重命名直接派发，删除二次确认
 const onMenuClick = (s, { key }) => {
@@ -171,6 +174,7 @@ const onMenuClick = (s, { key }) => {
     const el = itemEls.get(s.id)
     emit('rename', s, el ? el.getBoundingClientRect() : null)
   }
+  else if (key === 'export') emit('export', s)
   else if (key === 'del') {
     Modal.confirm({
       title: '删除会话？',

@@ -21,6 +21,7 @@
       @toggle-pin="handleTogglePin"
       @toggle-favorite="handleToggleFavorite"
       @rename="openRenameModal"
+      @export="handleExportSession"
     />
     <!-- 侧边栏拖拽手柄（左右伸缩） -->
     <div class="sidebar-resizer" title="拖动调整宽度" @mousedown="onSidebarDrag" />
@@ -30,10 +31,6 @@
       <div class="chat-box">
         <div class="head">
           <span class="head-title">{{ currentSessionTitle }}</span>
-          <a-tooltip title="导出整个会话为 Markdown（含图片内嵌）">
-            <a-button v-if="messages.length" type="text" size="small" class="head-export" :loading="exportingSession"
-                      @click="exportSessionMarkdown"><download-outlined /></a-button>
-          </a-tooltip>
           <span class="disclaimer" title="查看免责声明" @click="disclaimerVisible = true"><info-circle-outlined style="margin-right:4px" />AI 回答可能有误，重要信息请核实</span>
         </div>
 
@@ -1318,12 +1315,14 @@ const exportAnswer = async mi => {
 }
 
 // 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图）→ 引用来源）
-const exportingSession = ref(false)
-const exportSessionMarkdown = async () => {
-  const sid = currentSessionId.value
+// 入口在会话列表「···」菜单（可导出任意会话，无需先打开）
+const exportSessionMarkdown = async sidOrSession => {
+  const sid = typeof sidOrSession === 'object' && sidOrSession
+    ? sidOrSession.id
+    : (sidOrSession || currentSessionId.value)
   if (!sid) return
-  const title = currentSessionTitle.value || 'AI对话'
-  exportingSession.value = true
+  const s = (sessions.value || []).find(x => x.id === sid)
+  const title = (s && s.title) || (sid === currentSessionId.value ? currentSessionTitle.value : 'AI对话')
   const hide = message.loading('正在导出整个会话（含图片抓取转码）…', 0)
   try {
     const r = await getHistory(sid)
@@ -1368,9 +1367,13 @@ const exportSessionMarkdown = async () => {
   } catch (e) {
     message.error(e.message || '导出失败')
   } finally {
-    exportingSession.value = false
     if (hide) hide()
   }
+}
+
+// 会话列表「···」菜单：导出该会话（任意会话均可，不必先打开）
+const handleExportSession = s => {
+  if (s && s.id) exportSessionMarkdown(s.id)
 }
 
 // 检索调试：打开弹窗（默认该轮问题）并执行
@@ -1578,6 +1581,7 @@ const scrollForce = () => nextTick(() => {
   overflow: hidden;
 }
 .head {
+  position: relative;          /* 供右上角工具按钮定位 */
   display: flex;
   flex-direction: column;   /* 上下两行：标题 + 免责声明，同一框内 */
   align-items: center;
@@ -1594,14 +1598,6 @@ const scrollForce = () => nextTick(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-/* 整会话导出按钮：标题右侧弱化显示 */
-.head-export {
-  color: #8c8c8c;
-  margin: 0 2px;
-}
-.head-export:hover {
-  color: #1677ff !important;
 }
 /* 免责声明：标题下方、同一框内，弱化显示不抢焦点；可点击查看完整声明 */
 .disclaimer {
