@@ -232,6 +232,18 @@ public class AiAppProperties {
         private int timeoutMillis = 30000;
         /** 思考输出上限 token（0=不设，规避 qwen 思考模式 max_tokens 空输出） */
         private int maxThinkingTokens = 0;
+        /** 思考流长度上限（字符，0=不限制）：超限中断思考流并保留已收集内容，避免刷爆上下文/token */
+        private int maxThinkingChars = 3000;
+        /** 思考链注入最终回答（把推理过程截断后作为参考注入生成 prompt，让"想过的"作用于"答"） */
+        private boolean injectThinking = true;
+        /** 思考链注入回答的长度上限（字符） */
+        private int injectThinkingMaxChars = 800;
+        /** 思考关键词增强检索（从思考全文提取词元补充到检索 query，提升召回） */
+        private boolean injectKeywords = true;
+        /** 思考关键词增强的词元数上限 */
+        private int injectKeywordsMax = 5;
+        /** 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考 */
+        private boolean autoRoute = false;
     }
 
     /**

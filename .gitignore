@@ -19,3 +19,5 @@ __pycache__/
 /.zcode/
 /.md/
 /.vite/
+# npm 在仓库根误生成的锁文件（前端锁文件在 web/ 内管理）；web/package-lock.json 因历史原因已被跟踪，不受此规则影响
+package-lock.json

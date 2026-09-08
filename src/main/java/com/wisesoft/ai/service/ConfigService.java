@@ -115,6 +115,12 @@ public class ConfigService {
             Map.entry("deepReasoning.multiRetrieval", "深度思考：多路并行检索开关"),
             Map.entry("deepReasoning.timeoutMillis", "深度思考：思考阶段超时(ms)"),
             Map.entry("deepReasoning.maxThinkingTokens", "深度思考：思考输出上限(token,0=不设)"),
+            Map.entry("deepReasoning.maxThinkingChars", "深度思考：思考流长度上限(字符,0=不限制；超限截断保留已想内容)"),
+            Map.entry("deepReasoning.injectThinking", "深度思考：思考链注入最终回答（推理过程作参考，让想过的作用于答）"),
+            Map.entry("deepReasoning.injectThinkingMaxChars", "深度思考：思考链注入回答的长度上限(字符)"),
+            Map.entry("deepReasoning.injectKeywords", "深度思考：思考关键词增强检索（从思考全文提取词元补充召回）"),
+            Map.entry("deepReasoning.injectKeywordsMax", "深度思考：思考关键词增强的词元数上限"),
+            Map.entry("deepReasoning.autoRoute", "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）"),
             Map.entry("rerank.enabled", "重排：是否启用（需先启动本地 reranker 服务）"),
             Map.entry("rerank.baseUrl", "重排：服务地址"),
             Map.entry("rerank.model", "重排：模型名"),
@@ -377,6 +383,12 @@ public class ConfigService {
         d.put("deepReasoning.multiRetrieval", String.valueOf(properties.getDeepReasoning().isMultiRetrieval()));
         d.put("deepReasoning.timeoutMillis", String.valueOf(properties.getDeepReasoning().getTimeoutMillis()));
         d.put("deepReasoning.maxThinkingTokens", String.valueOf(properties.getDeepReasoning().getMaxThinkingTokens()));
+        d.put("deepReasoning.maxThinkingChars", String.valueOf(properties.getDeepReasoning().getMaxThinkingChars()));
+        d.put("deepReasoning.injectThinking", String.valueOf(properties.getDeepReasoning().isInjectThinking()));
+        d.put("deepReasoning.injectThinkingMaxChars", String.valueOf(properties.getDeepReasoning().getInjectThinkingMaxChars()));
+        d.put("deepReasoning.injectKeywords", String.valueOf(properties.getDeepReasoning().isInjectKeywords()));
+        d.put("deepReasoning.injectKeywordsMax", String.valueOf(properties.getDeepReasoning().getInjectKeywordsMax()));
+        d.put("deepReasoning.autoRoute", String.valueOf(properties.getDeepReasoning().isAutoRoute()));
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
@@ -621,6 +633,7 @@ public class ConfigService {
             throw new IllegalArgumentException("deepReasoning.thinkingMode 仅允许 model / prompt");
         }
         for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
+                "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax",
                 "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
@@ -631,7 +644,9 @@ public class ConfigService {
                 }
             }
         }
-        for (String bKey : new String[]{"deepReasoning.enabled", "deepReasoning.enableThinking", "deepReasoning.multiRetrieval", "chunk.structural",
+        for (String bKey : new String[]{"deepReasoning.enabled", "deepReasoning.enableThinking", "deepReasoning.multiRetrieval",
+                "deepReasoning.injectThinking", "deepReasoning.injectKeywords", "deepReasoning.autoRoute",
+                "chunk.structural",
                 "retrieval.refDetectEnabled", "retrieval.refDetectMention", "retrieval.refExpandEnabled", "retrieval.refExpandIncludeIncoming",
                 "retrieval.refExpandParentEnabled", "retrieval.refExpandFuzzyName"}) {
             String v = updates.get(bKey);

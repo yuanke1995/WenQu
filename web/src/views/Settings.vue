@@ -529,9 +529,38 @@
               <template #label><a-tooltip :title="tips.drMaxTokens" placement="top">思考输出上限 token <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.deepReasoning.maxThinkingTokens" :min="0" :step="100" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">思考增强 · 护栏与路由</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.drMaxThinkingChars" placement="top">思考长度上限字符 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.deepReasoning.maxThinkingChars" :min="0" :step="500" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">超限截断思考流并保留已想内容继续（0=不限制）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.drInjectThinking" placement="top">思考链注入回答 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.deepReasoning.injectThinking" />
+              <span style="margin-left:12px;color:#999;font-size:12px">把推理过程（截断）作为参考注入生成 prompt，让思考作用于回答</span>
+            </a-form-item>
+            <a-form-item v-if="form.deepReasoning.injectThinking">
+              <template #label><a-tooltip :title="tips.drInjectThinkingChars" placement="top">注入长度上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.deepReasoning.injectThinkingMaxChars" :min="100" :step="100" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.drInjectKeywords" placement="top">思考关键词增强检索 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.deepReasoning.injectKeywords" />
+              <span style="margin-left:12px;color:#999;font-size:12px">从思考全文提取词元补充检索（思考失败时也用于增强降级检索）</span>
+            </a-form-item>
+            <a-form-item v-if="form.deepReasoning.injectKeywords">
+              <template #label><a-tooltip :title="tips.drInjectKeywordsMax" placement="top">增强词元数上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.deepReasoning.injectKeywordsMax" :min="1" :max="10" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.drAutoRoute" placement="top">自动路由 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.deepReasoning.autoRoute" />
+              <span style="margin-left:12px;color:#999;font-size:12px">未手动开启时，长问/多条件/对比类问题自动启用深度思考</span>
+            </a-form-item>
           </a-form>
           <a-alert type="info" show-icon style="margin:0 24px 16px"
-                   message="深度思考：AI 先流式展示思维链（回答上方折叠面板），思考末尾输出 <search> 检索计划（精化 query + 子问题），多路并行检索合并后回答。默认 maxThinkingTokens=0 不设上限（qwen 思考模式设 max_tokens 会空输出）。失败自动降级为普通回答。" />
+                   message="深度思考：AI 先流式展示思维链（回答上方折叠面板，思考完成自动收起），思考末尾输出 <search> 检索计划（精化 query + 子问题），多路并行检索合并后回答；思考链与思考关键词参与最终检索/回答增强。默认 maxThinkingTokens=0 不设上限（qwen 思考模式设 max_tokens 会空输出）。失败自动降级（思考内容不白费，用于增强检索）。" />
         </a-collapse-panel>
 
         <a-collapse-panel key="semanticCache" :id="'cfg-anchor-semanticCache'" header="语义缓存（相似问题加速）">
@@ -676,6 +705,12 @@ const tips = {
   drMultiRetrieval: '是否多路并行检索（精化 query + 子问题分别检索后按最高分合并）。关闭则只用精化 query 单路检索（更快但召回面窄）。',
   drTimeout: '思考阶段最大等待时间(ms)。超时用已收集的思考内容降级为普通检索回答，不阻塞。',
   drMaxTokens: '思考输出的 token 上限（0=不设）。qwen3 思考模式下设 max_tokens 会导致空输出，默认 0；仅当思考过长需裁剪时设置。',
+  drMaxThinkingChars: '思考流长度上限（字符，0=不限制）。超限自动中断思考流但保留已想内容继续提取检索计划，避免超长思维链刷爆上下文与 token。',
+  drInjectThinking: '把深度思考的推理过程（截断到注入长度上限）作为参考注入最终回答的生成 prompt，让"想过的拆解与判断"直接作用于回答；明确以参考资料为准，思考仅辅助。',
+  drInjectThinkingChars: '思考链注入回答的最大字符数。越长信息越全但占用生成预算；过短可能丢失关键推理。',
+  drInjectKeywords: '从思考全文提取关键词元补充到检索 query（多路检索多一条增强路；深度思考失败时也用它增强降级检索，思考不白费）。提升"思考中提到的实体/限定词"的召回。',
+  drInjectKeywordsMax: '思考关键词增强最多取多少个词元。越多召回越宽但可能引入噪声。',
+  drAutoRoute: '未手动开启深度思考时，按问题特征自动判断：长问（≥25 字）或含多条件/对比/递进词（如果/当/对比/区别/以及/同时/多个）的问题自动启用深度思考。保守启发式，避免常见问题全量思考导致成本翻倍。',
   historyRounds: '问答时注入对话历史的轮数（多轮记忆）。调大更连贯但占上下文预算；0=不注入历史。',
   remainTokenFloor: '上下文预算保留下限（token）：扣除系统提示与问题后至少保留的量，低于则不再填充知识块。',
   truncateFallbackChars: '知识块超出预算时的截断兜底字符数（至少保留的字数）。',
@@ -834,7 +869,9 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                dedupEnabled: true, dedupThreshold: 0.45, dedupPathThreshold: 0.28 },
                     deepReasoning: { enabled: true, thinkingMode: 'model', enableThinking: true, prompt: '',
                                      searchTag: 'search', maxSubQueries: 3, multiRetrieval: true,
-                                     timeoutMillis: 30000, maxThinkingTokens: 0 },
+                                     timeoutMillis: 30000, maxThinkingTokens: 0,
+                                     maxThinkingChars: 3000, injectThinking: true, injectThinkingMaxChars: 800,
+                                     injectKeywords: true, injectKeywordsMax: 5, autoRoute: false },
                     ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10 },
                     semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 },
                     eval: { judgeEnabled: false } })
@@ -982,6 +1019,12 @@ const fetchAndFill = async () => {
       form.value.deepReasoning.multiRetrieval = dr.multiRetrieval?.value === 'true'
       form.value.deepReasoning.timeoutMillis = Number(dr.timeoutMillis?.value ?? 30000)
       form.value.deepReasoning.maxThinkingTokens = Number(dr.maxThinkingTokens?.value ?? 0)
+      form.value.deepReasoning.maxThinkingChars = Number(dr.maxThinkingChars?.value ?? 3000)
+      form.value.deepReasoning.injectThinking = dr.injectThinking?.value !== 'false'
+      form.value.deepReasoning.injectThinkingMaxChars = Number(dr.injectThinkingMaxChars?.value ?? 800)
+      form.value.deepReasoning.injectKeywords = dr.injectKeywords?.value !== 'false'
+      form.value.deepReasoning.injectKeywordsMax = Number(dr.injectKeywordsMax?.value ?? 5)
+      form.value.deepReasoning.autoRoute = dr.autoRoute?.value === 'true'
       const rl = d.ratelimit || {}
       form.value.ratelimit.enabled = rl.enabled?.value !== 'false'
       form.value.ratelimit.chatPerMinute = Number(rl.chatPerMinute?.value ?? 10)
@@ -1122,7 +1165,13 @@ const buildPayload = () => ({
                        maxSubQueries: String(form.value.deepReasoning.maxSubQueries),
                        multiRetrieval: String(form.value.deepReasoning.multiRetrieval),
                        timeoutMillis: String(form.value.deepReasoning.timeoutMillis),
-                       maxThinkingTokens: String(form.value.deepReasoning.maxThinkingTokens) },
+                       maxThinkingTokens: String(form.value.deepReasoning.maxThinkingTokens),
+                       maxThinkingChars: String(form.value.deepReasoning.maxThinkingChars),
+                       injectThinking: String(form.value.deepReasoning.injectThinking),
+                       injectThinkingMaxChars: String(form.value.deepReasoning.injectThinkingMaxChars),
+                       injectKeywords: String(form.value.deepReasoning.injectKeywords),
+                       injectKeywordsMax: String(form.value.deepReasoning.injectKeywordsMax),
+                       autoRoute: String(form.value.deepReasoning.autoRoute) },
       ratelimit: { enabled: String(form.value.ratelimit.enabled),
                    chatPerMinute: String(form.value.ratelimit.chatPerMinute),
                    uploadPerMinute: String(form.value.ratelimit.uploadPerMinute) },
