@@ -210,6 +210,11 @@ ai-app:
     max-thinking-tokens: 0
   # 内部鉴权 token（与平台网关一致；必须通过环境变量 AI_TRUSTED_TOKEN 提供，缺失启动即失败）
   trusted-token: ${AI_TRUSTED_TOKEN}
+  # 权限模型：普通用户仅开放问答链路（chat/会话/反馈/引用溯源）；文档/配置/评估/看板/索引运维为管理员专属。
+  # 管理员判定：X-User-Id ∈ AI_ADMIN_USERS（逗号分隔；* = 全员管理员，单机自用）或请求头 X-Admin-Token == AI_ADMIN_TOKEN。
+  # 生产多用户：网关按人透传 X-User-Id 后配置 AI_ADMIN_USERS 白名单；本地/无网关直连：配 AI_ADMIN_TOKEN（前端同步 VITE_ADMIN_TOKEN）。
+  admin-users: ${AI_ADMIN_USERS:}
+  admin-token: ${AI_ADMIN_TOKEN:}
 
 logging:
   level:

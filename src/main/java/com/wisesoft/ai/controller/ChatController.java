@@ -2,6 +2,7 @@ package com.wisesoft.ai.controller;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.config.AdminGuard;
 import com.wisesoft.ai.dto.ChatRequest;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.dto.SessionInfo;
@@ -52,6 +53,15 @@ public class ChatController {
     private final ConfigService configService;
     private final RateLimitService rateLimitService;
     private final QaLogService qaLogService;
+    private final AdminGuard adminGuard;
+
+    /** 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用） */
+    @Operation(summary = "当前身份与权限", description = "返回当前 X-User-Id 与是否管理员（admin=true 时前端展示文档/看板/评估/设置等管理入口）")
+    @GetMapping("/auth/me")
+    public ResultJson authMe(HttpServletRequest httpRequest) {
+        String userId = UserContext.resolve(httpRequest);
+        return ResultJson.ok(Map.of("user", userId, "admin", adminGuard.isAdmin(httpRequest)));
+    }
 
     @Operation(summary = "SSE 流式问答",
             description = "发送问题（可含图片），通过 SSE 流式返回 AI 回答。事件类型：thinking（深度思考增量）、thinking_done（思考结束）、token（文本增量）、image（图片 URL 列表）、done（引用来源/相关推荐/消息ID/思考全文）、error（错误信息）。按用户限频（ratelimit.chatPerMinute）")

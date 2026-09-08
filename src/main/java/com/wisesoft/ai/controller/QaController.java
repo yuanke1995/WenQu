@@ -1,10 +1,16 @@
 package com.wisesoft.ai.controller;
 
+import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
+import com.wisesoft.ai.mapper.AiMessageMapper;
+import com.wisesoft.ai.model.AiMessage;
 import com.wisesoft.ai.service.QaLogService;
+import com.wisesoft.ai.service.SessionService;
+import com.wisesoft.ai.util.UserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,6 +18,8 @@ import java.util.Map;
 
 /**
  * 问答反馈与数据看板
+ * <p>
+ * 权限：feedback（普通用户问答链路的一部分，需归属校验）公开；analytics/** 为管理端点（拦截器管理员判定）。
  *
  * @author yuanke
  */
@@ -22,15 +30,27 @@ import java.util.Map;
 public class QaController {
 
     private final QaLogService qaLogService;
+    private final AiMessageMapper messageMapper;
+    private final SessionService sessionService;
 
-    @Operation(summary = "提交回答反馈", description = "对 AI 回答进行 👍👎 评价，可选填写反馈文本")
+    @Operation(summary = "提交回答反馈", description = "对 AI 回答进行 👍👎 评价，可选填写反馈文本（仅能评价本人会话内的消息）")
     @PostMapping("/feedback")
     public ResultJson feedback(
             @Parameter(description = "{\"messageId\": \"消息ID\", \"rating\": 1|0, \"feedbackText\": \"可选反馈文本\"}")
-            @RequestBody Map<String, Object> body) {
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
         String messageId = body.get("messageId") == null ? null : String.valueOf(body.get("messageId"));
+        if (messageId == null || messageId.isBlank()) {
+            throw new BizException("缺少 messageId");
+        }
         int rating = body.get("rating") == null ? 0 : Integer.parseInt(String.valueOf(body.get("rating")));
         String text = body.get("feedbackText") == null ? null : String.valueOf(body.get("feedbackText"));
+        // 归属校验：只能评价本人会话内的消息（防用他人 messageId 灌反馈/探测）
+        AiMessage msg = messageMapper.selectByIdIgnoreDeleted(messageId);
+        if (msg == null) {
+            throw new BizException(404, "消息不存在或已过撤销期");
+        }
+        sessionService.assertOwned(msg.getSessionId(), UserContext.resolve(httpRequest));
         qaLogService.feedback(messageId, rating, text);
         return ResultJson.ok("感谢反馈");
     }

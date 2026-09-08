@@ -88,6 +88,10 @@ export AI_RATELIMIT_ENABLED=true          # 接口限流开关（Redis 固定窗
 export AI_RATELIMIT_CHAT=10               # 问答限频：次/分钟/用户（0=不限）
 export AI_RATELIMIT_UPLOAD=10             # 上传限频：次/分钟/用户（0=不限）
 export LOG_LEVEL_APP=info                 # 应用日志级别
+export AI_ADMIN_USERS=""                  # 管理员用户白名单（逗号分隔 X-User-Id；"*"=全员管理员，单机自用）
+export AI_ADMIN_TOKEN=""                  # 管理员口令（请求头 X-Admin-Token；无网关/本地部署与前端 VITE_ADMIN_TOKEN 一致）
+                                          # 两者任一命中即管理员；均未配置则管理端点默认 403（只问答可用的最小开放）
+export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（生产默认关，本地开发在 application-local.yml 已开启）
 ```
 
 **本地开发**：无需 export，把真实值直接写入项目根 `config/application-local.yml`（私有文件，已加入 .gitignore；Spring Boot 自动从外部 `config/` 目录加载，**不打进构建产物**——密钥不会随 jar 分发；**数据目录 `ai-app.images.dir` 也在此配置**，Windows 机器改成 `D:/workspace/ai-doc-assistant/data` 即可，天然区分平台。该文件同时可关闭图片鉴权 `auth-enabled: false` 保持本地开发便利），然后以 `local` profile 启动（application.yml 已默认激活 local）：
@@ -204,6 +208,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 3. 内部 token `AI_TRUSTED_TOKEN` 由网关注入请求头，前端不携带共享密钥
 4. **用户身份透传**：网关鉴权后必须注入（并覆盖客户端自带的）`X-User-Id` 请求头作为用户标识——会话按该标识隔离（列表/删除/清空只作用于本人；anonymous 名下的存量会话为**升级兼容池**，默认对全员可见，设 `AI_SESSION_ANONYMOUS_SHARED=false` 收紧为仅 anonymous 调用方可访问）。前端在无网关的本地调试场景会用 localStorage 稳定 ID 自行携带该头。**生产网关若不注入，所有人共用 anonymous 池，等于无隔离**
 5. **接口限流**：问答/上传按"用户（无身份则按 IP）"做 Redis 固定窗口限频（默认 10 次/分钟，设置页可调，超限返回 429）；Redis 不可用自动放行
+6. **权限模型（用户问答 / 管理员运维）**：普通用户仅开放问答链路——`/chat`、会话管理、反馈提交、引用溯源（GET 单个知识块）、`/config/public`、`/suggested`、`/auth/me`。**其余端点（文档上传/删除、模型与系统配置、评估、看板、检索调试、索引重建、语义缓存/图片描述缓存运维等）仅管理员可访问**（403，fail-closed）。管理员判定：网关透传的 `X-User-Id` ∈ `AI_ADMIN_USERS` 白名单，或请求携带 `X-Admin-Token` == `AI_ADMIN_TOKEN`。前端在页面右上角提供"管理员验证"入口（口令仅存本机 localStorage）；生产多用户建议用账号白名单而非共享口令
+7. **普通用户 UI 收敛**：前端 `/documents`、`/dashboard`、`/evaluation`、`/settings` 路由带管理员守卫（`router.beforeEach` + `/auth/me`），非管理员菜单不展示、直达 URL 自动跳回智能问答
 
 ## 测试与验证
 

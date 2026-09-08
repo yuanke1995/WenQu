@@ -8,6 +8,14 @@
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 const TOKEN = import.meta.env.VITE_TRUSTED_TOKEN || ''
 
+// 管理员访问口令：普通用户问答无需携带；管理员经 VITE_ADMIN_TOKEN（构建注入）或运行时
+// localStorage('ai_admin_token') 提供（utils/auth.js setAdminToken 切换），用于文档/配置/评估/看板等管理端点
+// （后端 AdminGuard 判定）。生产多用户：管理员也可不配口令，由网关按 X-User-Id 白名单（AI_ADMIN_USERS）判定。
+const ADMIN_TOKEN_ENV = import.meta.env.VITE_ADMIN_TOKEN || ''
+const adminToken = () => {
+  try { return localStorage.getItem('ai_admin_token') || ADMIN_TOKEN_ENV || '' } catch (e) { return ADMIN_TOKEN_ENV }
+}
+
 // 用户标识：localStorage 稳定 ID，经 X-User-Id 透传做会话隔离；
 // 生产环境由平台网关覆盖为真实用户身份（客户端值仅作本地/调试用途）
 const USER_ID = (() => {
@@ -24,6 +32,8 @@ const USER_ID = (() => {
 const authHeaders = extra => {
   const h = { 'Content-Type': 'application/json', 'X-User-Id': USER_ID, ...(extra || {}) }
   if (TOKEN) h['X-Trusted-Token'] = TOKEN
+  const at = adminToken()
+  if (at) h['X-Admin-Token'] = at
   return h
 }
 
@@ -44,6 +54,7 @@ async function request(path, { method = 'GET', body, timeout = 30000 } = {}) {
     try { data = await res.json() } catch (e) { /* 非 JSON 响应 */ }
     if (!res.ok) {
       if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
+      if (res.status === 403) window.dispatchEvent(new CustomEvent('app:forbidden', { detail: data?.msg }))
       throw new Error(data?.msg || `请求失败(${res.status})`)
     }
     if (data && data.success === false) throw new Error(data.msg || '请求失败')
@@ -65,6 +76,8 @@ function upload(path, formData, onProgress) {
     xhr.open('POST', BASE + path)
     xhr.setRequestHeader('X-User-Id', USER_ID)
     if (TOKEN) xhr.setRequestHeader('X-Trusted-Token', TOKEN)
+    const at = adminToken()
+    if (at) xhr.setRequestHeader('X-Admin-Token', at)
     xhr.timeout = 120000
     xhr.upload.onprogress = e => {
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
@@ -390,3 +403,6 @@ export const getEvalLastReport = () => request('/eval/last-report')
 
 /** 检索评估：立即自动体检（按线上参数全量跑，耗时数十秒） */
 export const runEvalAutoCheck = () => request('/eval/run-auto', { method: 'POST', timeout: 300000 })
+
+/** 身份与权限：返回 { user, admin }——admin=true 时前端展示文档/看板/评估/设置等管理入口 */
+export const getAuthMe = () => request('/auth/me')

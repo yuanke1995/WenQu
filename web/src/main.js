@@ -30,4 +30,9 @@ window.addEventListener('app:unauthorized', () => {
   message.error('登录状态已失效，请刷新页面重试')
 })
 
+// 403 统一处理（管理端点被拒：非管理员或管理员口令无效）
+window.addEventListener('app:forbidden', () => {
+  message.error('无管理员权限，请先完成管理员验证')
+})
+
 app.use(Antd).use(router).mount('#app')
