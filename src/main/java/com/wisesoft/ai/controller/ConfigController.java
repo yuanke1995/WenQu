@@ -116,4 +116,18 @@ public class ConfigController {
             return ResultJson.error(500, "保存失败: " + e.getMessage());
         }
     }
+
+    @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit/semanticCache）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
+    @PostMapping("/reset")
+    public ResultJson resetGroup(@Parameter(description = "{\"groups\": [\"chat\"]}")
+                                 @RequestBody Map<String, Object> body) {
+        List<String> groups = body.get("groups") instanceof List<?> list
+                ? list.stream().map(String::valueOf).toList() : List.of();
+        try {
+            Map<String, String> reset = configService.resetDefaults(groups);
+            return ResultJson.ok(reset, "已恢复默认");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
 }

@@ -13,10 +13,13 @@ import org.springframework.stereotype.Service;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
 
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 模型配置服务：DB（c_ai_config）存储 + 内存缓存
@@ -833,6 +836,67 @@ public class ConfigService {
             }
         }
         return updates;
+    }
+
+    /**
+     * 将指定分组恢复为出厂默认值（defaults() 值写库 + 刷新缓存 + Redis 广播）。
+     * <ul>
+     *   <li>白名单分组与 snapshot 对齐，但<b>排除 embedding</b>：向量模型恢复会触发全量重嵌入，
+     *       必须走设置页正常流程（探测→确认）；</li>
+     *   <li><b>跳过 *.apiKey</b>：密钥以 RSA 加密存于 DB，恢复默认不得清空用户已配置的模型密钥
+     *       （env 回退值可能为空导致模型不可用）；</li>
+     *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
+     * </ul>
+     *
+     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit/semanticCache）
+     * @return 实际恢复的键值
+     */
+    public Map<String, String> resetDefaults(Collection<String> groups) {
+        Set<String> allowed = new HashSet<>(List.of(
+                "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
+                "keyword", "context", "deepReasoning", "ratelimit", "semanticCache"));
+        Set<String> targets = new HashSet<>();
+        for (String g : groups) {
+            if (g == null || g.isBlank() || !allowed.contains(g)) {
+                throw new IllegalArgumentException("不支持恢复默认的分组: " + g);
+            }
+            targets.add(g);
+        }
+        if (targets.isEmpty()) {
+            throw new IllegalArgumentException("请至少指定一个分组");
+        }
+        Map<String, String> defs = defaults();
+        Map<String, String> next = new HashMap<>(cache);
+        Map<String, String> reset = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : defs.entrySet()) {
+            String k = e.getKey();
+            int dot = k.indexOf('.');
+            if (dot <= 0 || !targets.contains(k.substring(0, dot))) continue;
+            if (k.endsWith(".apiKey")) continue; // 密钥不随"恢复默认"清空
+            String v = e.getValue();
+            try {
+                AiConfig c = configMapper.selectById(k);
+                if (c == null) {
+                    c = new AiConfig();
+                    c.setConfigKey(k);
+                    c.setConfigValue(v);
+                    c.setRemark(EDITABLE.getOrDefault(k, "只读配置"));
+                    configMapper.insert(c);
+                } else {
+                    c.setConfigValue(v);
+                    configMapper.updateById(c);
+                }
+            } catch (Exception ex) {
+                log.warn("[Config] 恢复默认写库失败 {}: {}", k, ex.getMessage());
+                continue;
+            }
+            next.put(k, v);
+            reset.put(k, v);
+        }
+        cache = next;
+        publishConfigChanged();
+        log.info("[Config] 分组恢复默认完成: {}（{} 项）", targets, reset.size());
+        return reset;
     }
 
     /**

@@ -326,6 +326,10 @@ export const reindexSearchIndex = () => request('/search-index/reindex', { metho
 /** 模型配置：保存可编辑项 {"chat":{...},"vision":{...}} */
 export const saveConfig = payload => request('/config', { method: 'PUT', body: JSON.stringify(payload) })
 
+/** 恢复指定配置分组为默认值（不触碰 embedding 组与各模型 API Key） */
+export const resetConfig = groups =>
+  request('/config/reset', { method: 'POST', body: JSON.stringify({ groups }) })
+
 /** 向量模型全量重嵌入：任务状态（status/total/done/failed） */
 export const getReembedStatus = () => request('/config/embedding/reindex')
 

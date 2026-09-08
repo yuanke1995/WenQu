@@ -26,6 +26,7 @@
       <a-collapse v-model:activeKey="activeKeys" :bordered="false" class="cfg-collapse" ref="collapseEl">
 
         <a-collapse-panel key="chat" header="智能问答模型" :id="'cfg-anchor-chat'">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='chat'" @click.stop="onResetGroup('chat')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <div class="cfg-sub">模型与网关（厂商预设自动填充地址与补全路径）</div>
             <a-form-item>
@@ -124,6 +125,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="vision" :id="'cfg-anchor-vision'" header="视觉模型（图片识别）">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='vision'" @click.stop="onResetGroup('vision')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionEnabled" placement="top">启用图片描述 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -163,6 +165,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="chunk" :id="'cfg-anchor-chunk'" header="文档解析（上传上限/分块/图片）">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='chunk'" @click.stop="onResetGroup('chunk')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.uploadMaxSize" placement="top">上传大小上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -280,6 +283,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="retrieval" :id="'cfg-anchor-retrieval'" header="检索设置（混合检索权重 + 重排 + 关键词引擎）">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='retrieval'" @click.stop="onResetGroup('retrieval')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.keywordEngine" placement="top">关键词引擎 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -414,6 +418,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="context" :id="'cfg-anchor-context'" header="上下文与长度控制">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='context'" @click.stop="onResetGroup('context')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.modelWindows" placement="top">模型窗口映射 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -475,6 +480,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="deepReasoning" :id="'cfg-anchor-deepReasoning'" header="深度思考设置">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='deepReasoning'" @click.stop="onResetGroup('deepReasoning')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.drEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -522,6 +528,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="semanticCache" :id="'cfg-anchor-semanticCache'" header="语义缓存（相似问题加速）">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='semanticCache'" @click.stop="onResetGroup('semanticCache')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.scEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -545,6 +552,7 @@
         </a-collapse-panel>
 
         <a-collapse-panel key="ratelimit" :id="'cfg-anchor-ratelimit'" header="接口限流（防滥用）">
+          <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='ratelimit'" @click.stop="onResetGroup('ratelimit')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
               <template #label><a-tooltip :title="tips.rlEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -579,9 +587,9 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { QuestionCircleOutlined, SaveOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons-vue'
-import { getConfig, saveConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed } from '../api'
+import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed } from '../api'
 
 // 折叠面板：默认展开常用分组（chat / retrieval / context / deepReasoning），vision / embedding 收起
 const activeKeys = ref(['chat', 'retrieval', 'context', 'deepReasoning'])
@@ -893,7 +901,8 @@ const doTriggerReembed = async () => {
   finally { reembedTriggering.value = false }
 }
 
-onMounted(async () => {
+/** 拉取配置并回填表单与保存基线（进入页面 / 恢复本组默认后调用） */
+const fetchAndFill = async () => {
   loading.value = true
   try {
     const r = await getConfig()
@@ -1019,6 +1028,10 @@ onMounted(async () => {
     }
   } catch (e) { message.error(e.message || '加载配置失败') }
   finally { loading.value = false }
+}
+
+onMounted(async () => {
+  await fetchAndFill()
 
   // 滚动高亮跟随：视口内最靠上的分组自动点亮对应锚点
   anchorObserver = new IntersectionObserver(entries => {
@@ -1151,6 +1164,32 @@ const dirtyGroups = computed(() => {
 })
 const dirtyCount = computed(() => dirtyGroups.value.length)
 
+// ===== 恢复本组默认 =====
+const resettingKey = ref('')
+const groupLabel = key => (anchors.find(a => a.key === key) || {}).label || key
+const doResetGroup = async (key, label) => {
+  resettingKey.value = key
+  try {
+    const r = await resetConfig([key])
+    if (r.success) {
+      const cnt = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
+      message.success(`「${label}」已恢复默认（${cnt} 项）`)
+      await fetchAndFill() // 回填 + 重建保存基线
+    } else message.error(r.msg || '恢复失败')
+  } catch (e) { message.error(e.message || '恢复失败') }
+  finally { resettingKey.value = '' }
+}
+const onResetGroup = key => {
+  const label = groupLabel(key)
+  Modal.confirm({
+    title: `恢复「${label}」为默认值？`,
+    content: '该组当前的自定义值会被覆盖为出厂默认（模型 API Key 与向量模型组不受影响）。',
+    okText: '恢复',
+    cancelText: '取消',
+    onOk: () => doResetGroup(key, label)
+  })
+}
+
 const save = async () => {
   const dirty = dirtyGroups.value
   if (!dirty.length) { message.info('没有需要保存的改动'); return }
@@ -1251,5 +1290,13 @@ const save = async () => {
   font-weight: 500;
   background: #f6f8fa;
   border-radius: 0 4px 4px 0;
+}
+.reset-group-btn {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-right: 4px;
+}
+.reset-group-btn:hover {
+  color: #d4380d !important;
 }
 </style>
