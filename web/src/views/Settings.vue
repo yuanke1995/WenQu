@@ -1096,7 +1096,10 @@ const save = async () => {
                        maxEntries: String(form.value.semanticCache.maxEntries) }
     })
     if (r.success) {
-      message.success('配置已保存并生效')
+      const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
+      // N=0 即"假保存"哨兵：后端白名单未命中任何键时给出明确提示而非"已保存"误导
+      if (n === 0) message.warning('没有可保存的配置项（后端未识别提交的键），请检查后重试')
+      else message.success(`配置已保存并生效（更新 ${n} 项）`)
       // 若触发了向量模型切换，重嵌入任务已自动启动（状态轮询自动开启）
       refreshReembedStatus()
     }

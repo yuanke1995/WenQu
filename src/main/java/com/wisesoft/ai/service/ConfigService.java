@@ -52,6 +52,9 @@ public class ConfigService {
             Map.entry("chat.showDebugDegradations", "回答提示显示调试级降级信息（默认关：只显示用户级）"),
             Map.entry("chat.suggestedQuestions", "推荐问题池（每行一个，欢迎页展示，最多8条；看板热门问题可一键加入）"),
             Map.entry("chat.retrievalDebugEnabled", "检索调试入口（内部排障用，默认隐藏；开启后回答操作菜单显示「检索调试」）"),
+            Map.entry("chat.historyRounds", "多轮记忆注入轮数（问答时注入最近几轮对话作为上下文）"),
+            Map.entry("chat.remainTokenFloor", "上下文填充保留下限(token)：预算扣掉固定部分后至少保留该值给知识块"),
+            Map.entry("chat.truncateFallbackChars", "知识块超预算截断兜底字符数(块级截断每块仍保留的最小片段)"),
             Map.entry("vision.enabled", "视觉模型总开关（false 时图片不生成描述）"),
             Map.entry("vision.model", "视觉识别模型名"),
             Map.entry("vision.baseUrl", "视觉模型网关地址(OpenAI 兼容,保存即生效)"),
@@ -117,8 +120,11 @@ public class ConfigService {
             Map.entry("retrieval.keywordLimit", "检索：关键词召回词数上限"),
             Map.entry("retrieval.vectorTopK", "检索：向量召回 topK（评估对比后可应用）"),
             Map.entry("retrieval.fusionMode", "检索：双路融合方式 sum=加权和(默认,含标题/位置奖励) / rrf=倒数排名融合(实验,按名次,可用评估页对比)"),
+            Map.entry("retrieval.searchTimeoutMs", "检索：混合检索总超时(ms,含关键词并行)"),
+            Map.entry("retrieval.positionBonus", "检索：文档首块位置奖励(0~1)"),
             Map.entry("rerank.minHits", "重排：触发候选数下限（评估对比后可应用）"),
             Map.entry("rerank.maxHits", "重排：触发候选数上限（评估对比后可应用）"),
+            Map.entry("rerank.failCooldownMs", "重排：服务失败后冷却时间(ms)，冷却期内不再探测/调用"),
             Map.entry("keyword.engine", "关键词引擎：mysql / meilisearch（切换前先探测并重建索引）"),
             Map.entry("keyword.baseUrl", "关键词引擎：Meilisearch 服务地址"),
             Map.entry("keyword.apiKey", "关键词引擎：Meilisearch master key（RSA 加密入库,留空回退环境变量 AI_MEILI_KEY）"),
@@ -560,7 +566,7 @@ public class ConfigService {
             throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
         }
         // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.titleBonus", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
+        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.titleBonus", "retrieval.vecThreshold", "retrieval.positionBonus", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
             String w = updates.get(wKey);
             if (w != null && !w.isBlank()) {
                 try {
@@ -573,7 +579,8 @@ public class ConfigService {
         }
         // 上下文长度参数校验：必须是非负整数
         for (String iKey : new String[]{"context.defaultWindowTokens", "context.costCapTokens", "context.maxOutputTokens",
-                "context.historyMaxTokens", "context.historyPerMsgChars", "context.snippetWindowChars", "context.maxContextHits"}) {
+                "context.historyMaxTokens", "context.historyPerMsgChars", "context.snippetWindowChars", "context.maxContextHits",
+                "chat.historyRounds", "chat.remainTokenFloor", "chat.truncateFallbackChars"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
@@ -584,7 +591,8 @@ public class ConfigService {
             }
         }
         // 检索/重排数值参数校验：正整数（minHits 允许 0=从不触发）
-        for (String iKey : new String[]{"retrieval.keywordLimit", "retrieval.vectorTopK", "rerank.maxHits"}) {
+        for (String iKey : new String[]{"retrieval.keywordLimit", "retrieval.vectorTopK", "rerank.maxHits",
+                "retrieval.searchTimeoutMs"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
@@ -594,7 +602,7 @@ public class ConfigService {
                 }
             }
         }
-        for (String iKey : new String[]{"rerank.minHits", "retrieval.rewriteFallbackMinHits"}) {
+        for (String iKey : new String[]{"rerank.minHits", "retrieval.rewriteFallbackMinHits", "rerank.failCooldownMs"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
