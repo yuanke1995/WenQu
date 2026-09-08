@@ -100,7 +100,6 @@ ai-app:
   # 检索
   retrieval:
     top-k: 5
-    similarity-threshold: 0.5
     # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）
     vector-weight: 0.6
     keyword-weight: 0.4
@@ -123,6 +122,8 @@ ai-app:
   session:
     max-history: 10
     expire-minutes: 30
+    # anonymous 历史兼容池对具名用户共享可见；设 false 收紧为仅 anonymous（无 X-User-Id）调用方可访问
+    anonymous-shared: ${AI_SESSION_ANONYMOUS_SHARED:true}
   # 接口限流（Redis 固定窗口，按用户/IP；Redis 不可用自动放行）
   ratelimit:
     enabled: ${AI_RATELIMIT_ENABLED:true}

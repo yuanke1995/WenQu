@@ -174,10 +174,17 @@ public class DocxParser implements DocumentParser {
                         continue;
                     }
 
-                    // 正文文本
+                    // 正文文本（主 run 文本 + 文本框旁注；文本框内容 WPS/Word 常见，POI getText 读不到）
                     if (!text.isEmpty()) {
                         if (content.length() > 0) content.append("\n");
                         content.append(text);
+                    }
+                    String textboxExtra = textboxExtraText(p);
+                    if (!textboxExtra.isEmpty()) {
+                        if (content.length() > 0 && content.charAt(content.length() - 1) != '\n') {
+                            content.append("\n");
+                        }
+                        content.append(textboxExtra);
                     }
 
                     // 段落内嵌图片（图片独立成段时 text 为空，也要进块）
@@ -241,9 +248,15 @@ public class DocxParser implements DocumentParser {
                 StringBuilder ct = new StringBuilder();
                 for (XWPFParagraph p : cell.getParagraphs()) {
                     String t = p.getText().trim();
-                    if (t.isEmpty()) continue;
-                    if (ct.length() > 0) ct.append('\n');
-                    ct.append(t);
+                    if (!t.isEmpty()) {
+                        if (ct.length() > 0) ct.append('\n');
+                        ct.append(t);
+                    }
+                    String textboxExtra = textboxExtraText(p);
+                    if (!textboxExtra.isEmpty()) {
+                        if (ct.length() > 0) ct.append('\n');
+                        ct.append(textboxExtra);
+                    }
                 }
                 cells.add(ct.toString());
             }
@@ -609,13 +622,65 @@ public class DocxParser implements DocumentParser {
             // desc 可能为 null：队列满降级（completedFuture(null)）或视觉模型调用失败返回 null，均按"无描述"处理
             m.appendReplacement(out, desc == null || desc.isBlank()
                     ? "[图片]"
-                    : "[图片：" + Matcher.quoteReplacement(desc) + "]");
+                    : "[图片：" + Matcher.quoteReplacement(sanitizeDesc(desc)) + "]");
         }
         m.appendTail(out);
         if (imgIdx != currentImages.size()) {
             log.warn("图片占位与图片数不一致: 占位{} 图片{}", imgIdx, currentImages.size());
         }
         return out.toString();
+    }
+
+    /**
+     * 描述文本写入 [图片：…] 标记前的方括号清理：下游多处按"标记内不含 ]"正则解析
+     * （RagService IMG_NUMBER_PATTERN、DocumentService IMG_PH/重叠尾巴、ImageFilterService、
+     * QaLogService、RagService 历史剥离），描述含 ASCII [] 会让标记被截断错配，统一换全角。
+     */
+    static String sanitizeDesc(String desc) {
+        if (desc == null || desc.isEmpty()) return desc;
+        return desc.replace("[", "［").replace("]", "］");
+    }
+
+    /** WordprocessingML 命名空间（文本框 DOM 提取用） */
+    private static final String W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /**
+     * 段落内文本框（w:txbxContent）旁注文字：POI getText() 只覆盖 run 直挂文本；
+     * WPS/Word 常用"文本框"承载图注/旁注，此前整段丢失。各内嵌段落按行拼接返回，
+     * 由调用方追加到主文本后（文本框相对正文无强顺序语义，近似位置足够 RAG 用）。
+     */
+    private String textboxExtraText(XWPFParagraph p) {
+        try {
+            org.w3c.dom.Node node = p.getCTP().getDomNode();
+            if (!(node instanceof org.w3c.dom.Element el)) return "";
+            org.w3c.dom.NodeList boxes = el.getElementsByTagNameNS(W_NS, "txbxContent");
+            if (boxes.getLength() == 0) return "";
+            StringBuilder sb = new StringBuilder();
+            for (int b = 0; b < boxes.getLength(); b++) {
+                org.w3c.dom.NodeList paras = ((org.w3c.dom.Element) boxes.item(b)).getElementsByTagNameNS(W_NS, "p");
+                for (int i = 0; i < paras.getLength(); i++) {
+                    String pt = textBoxParagraphText((org.w3c.dom.Element) paras.item(i));
+                    if (pt.isEmpty()) continue;
+                    if (sb.length() > 0) sb.append('\n');
+                    sb.append(pt);
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.debug("文本框文本提取失败（忽略）: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /** 文本框内单个 w:p 的纯文本（按文档序拼接 w:t；近似处理：不建模 tab/br 布局） */
+    private String textBoxParagraphText(org.w3c.dom.Element pEl) {
+        org.w3c.dom.NodeList ts = pEl.getElementsByTagNameNS(W_NS, "t");
+        if (ts.getLength() == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ts.getLength(); i++) {
+            sb.append(ts.item(i).getTextContent());
+        }
+        return sb.toString().trim();
     }
 
     /** 组装分块：净正文 + 图片 URL 列表 + 章节路径（路径不拼进正文，向量化/检索时再拼装） */

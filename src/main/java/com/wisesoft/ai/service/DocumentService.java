@@ -196,10 +196,8 @@ public class DocumentService {
 
     /**
      * 上传文档：校验格式 → 同名替换 → 源文件落盘 → 建记录(解析中) → 异步解析
-     *
-     * @param category 文档分类（可选，≤50字）
      */
-    public AiDocument upload(MultipartFile file, String description, String category) throws Exception {
+    public AiDocument upload(MultipartFile file, String description) throws Exception {
         String fileName = file.getOriginalFilename();
         if (fileName == null || fileName.isBlank()) {
             throw new BizException("文件名为空");
@@ -219,7 +217,7 @@ public class DocumentService {
         Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
         try {
             synchronized (lock) {
-                return doUpload(file, fileName, ext, description, category, parser);
+                return doUpload(file, fileName, ext, description, parser);
             }
         } finally {
             uploadLocks.remove(fileName, lock);
@@ -228,12 +226,12 @@ public class DocumentService {
 
     /** 上传主体（已按文件名串行）：优先复用同名文档走 diff，否则新建 */
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
-                                String category, DocumentParser parser) throws Exception {
+                                DocumentParser parser) throws Exception {
         // 同名文档优先复用其 docId 走 diff 重解析（upsert 语义：文档身份/knowledgeId 稳定，未变块增量复用、只重嵌变更处）；
         // 无可复用（无同名，或同名均解析中已清理）时走全新上传
         AiDocument reusable = reusableTarget(fileName);
         if (reusable != null) {
-            return replaceExisting(reusable, file, description, category, parser);
+            return replaceExisting(reusable, file, description, parser);
         }
 
         // 全新上传：源文件落盘（异步解析需要；重解析复用）
@@ -242,12 +240,7 @@ public class DocumentService {
         doc.setFileType(ext);
         doc.setFileSize(file.getSize());
         doc.setStatus(2); // 解析中
-        doc.setDescription(description);        if (category != null && !category.isBlank()) {
-            if (category.trim().length() > 50) {
-                throw new BizException("分类过长（最多50字）");
-            }
-            doc.setCategory(category.trim());
-        }
+        doc.setDescription(description);
         documentMapper.insert(doc);
         documentMetaCache.invalidate(doc.getId());
         updateProgress(doc.getId(), 0, "已提交,等待解析");
@@ -845,46 +838,12 @@ public class DocumentService {
     }
 
     /**
-     * 文档列表（可按分类筛选）
+     * 文档列表
      */
-    public List<AiDocument> list(String category) {
+    public List<AiDocument> list() {
         LambdaQueryWrapper<AiDocument> wrapper = new LambdaQueryWrapper<>();
-        if (category != null && !category.isBlank()) {
-            wrapper.eq(AiDocument::getCategory, category.trim());
-        }
         wrapper.orderByDesc(AiDocument::getCreateTime);
         return documentMapper.selectList(wrapper);
-    }
-
-    /**
-     * 修改文档分类（空串/空白视为清除分类）
-     */
-    public void updateCategory(String docId, String category) {
-        AiDocument doc = documentMapper.selectById(docId);
-        if (doc == null) throw new BizException("文档不存在");
-        if (category != null && !category.isBlank()) {
-            if (category.trim().length() > 50) throw new BizException("分类过长（最多50字）");
-            doc.setCategory(category.trim());
-        } else {
-            doc.setCategory(null);
-        }
-        documentMapper.updateById(doc);
-        documentMetaCache.invalidate(docId);
-    }
-
-    /**
-     * 文档分类列表（去重、按使用频次降序）
-     */
-    public List<String> listCategories() {
-        return documentMapper.selectList(
-                        new LambdaQueryWrapper<AiDocument>()
-                                .isNotNull(AiDocument::getCategory)
-                                .select(AiDocument::getCategory))
-                .stream()
-                .map(AiDocument::getCategory)
-                .filter(c -> c != null && !c.isBlank())
-                .distinct()
-                .toList();
     }
 
     /**
@@ -989,12 +948,19 @@ public class DocumentService {
         }
 
         // 2. 向量写入成功后再更新 MySQL（此时两侧内容一致）
+        String oldTitle = k.getTitle();
+        String oldContent = k.getContent();
         k.setTitle(newTitle);
         k.setContent(content);
         k.setContentHash(contentHash(k.getTitle(), k.getTitlePath(), k.getContent(), parseImages(k.getImages())));
         k.setVectorId(k.getId());
         knowledgeMapper.updateById(k);
         keywordIndexService.indexChunks(List.of(k)); // 关键词索引同步：按 id upsert（best-effort）
+        // 标题/内容确实变化才清答案缓存（编辑知识块与图片补描述回写均经此路径，缓存答案对应旧块快照，
+        // 不清除则改后旧答案仍可持续命中；其余知识库变更路径的 clearAll 语义一致）
+        if (!Objects.equals(oldTitle, newTitle) || !Objects.equals(oldContent, content)) {
+            answerCacheService.clearAll();
+        }
         // 3. 清理历史遗留的异 id 旧向量（正常链路 vectorId==knowledgeId，已被 upsert 覆盖，无需删除）
         if (oldVectorId != null && !oldVectorId.isBlank() && !oldVectorId.equals(k.getId())) {
             try {
@@ -1351,12 +1317,9 @@ public class DocumentService {
      * 同名替换：复用原 docId（覆盖源文件 + 走 diff 重解析）
      * 文档身份与 knowledgeId 保持稳定（历史引用/评估集不失效），未变块增量复用、只重嵌变更处。
      */
-    private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description, String category,
+    private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description,
                                        DocumentParser parser) throws Exception {
         String docId = existing.getId();
-        if (category != null && !category.isBlank()) {
-            if (category.trim().length() > 50) throw new BizException("分类过长（最多50字）");
-        }
         int origStatus = existing.getStatus() == null ? 0 : existing.getStatus();
         // 并发防护（多实例也原子）：CAS 抢占"解析中"状态，失败说明已有解析在进行
         tryLockParsing(docId);
@@ -1373,9 +1336,6 @@ public class DocumentService {
             // 更新元数据并置解析中
             existing.setFileSize(file.getSize());
             existing.setDescription(description);
-            if (category != null && !category.isBlank()) {
-                existing.setCategory(category.trim());
-            }
             existing.setStatus(2);
             existing.setFailReason(null);
             documentMapper.updateById(existing);
@@ -1714,7 +1674,9 @@ public class DocumentService {
             if ("[图片]".equals(ph)) {
                 String desc = descByUrl.get(url);
                 if (desc != null && !desc.isBlank()) {
-                    m.appendReplacement(sb, "[图片：" + Matcher.quoteReplacement(desc) + "]");
+                    // 描述含 ASCII 方括号会截断 [图片：…] 标记（IMG_PH 等正则约定标记内不含 ]），统一换全角
+                    String safe = desc.replace("[", "［").replace("]", "］");
+                    m.appendReplacement(sb, "[图片：" + Matcher.quoteReplacement(safe) + "]");
                     changed = true;
                     continue;
                 }

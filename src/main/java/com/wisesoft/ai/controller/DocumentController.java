@@ -57,14 +57,13 @@ public class DocumentController {
     public ResultJson upload(
             @Parameter(description = "文档文件") @RequestParam("file") MultipartFile file,
             @Parameter(description = "文档描述（可选）") @RequestParam(value = "description", required = false) String description,
-            @Parameter(description = "文档分类（可选，≤50字）") @RequestParam(value = "category", required = false) String category,
             HttpServletRequest httpRequest) throws Exception {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
         checkUploadSize(file);
         if (description != null && description.length() > 500) {
             throw new BizException("文档描述过长（最多 500 字）");
         }
-        var doc = documentService.upload(file, description, category);
+        var doc = documentService.upload(file, description);
         log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", UserContext.resolve(httpRequest),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
         return ResultJson.ok(doc, "已提交解析");
@@ -74,7 +73,6 @@ public class DocumentController {
     @PostMapping("/upload/batch")
     public ResultJson uploadBatch(
             @Parameter(description = "文档文件列表") @RequestParam("file") MultipartFile[] files,
-            @Parameter(description = "批量分类（可选，应用到所有文件）") @RequestParam(value = "category", required = false) String category,
             @Parameter(description = "批量描述（可选，应用到所有文件）") @RequestParam(value = "description", required = false) String description,
             HttpServletRequest httpRequest) {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
@@ -87,7 +85,7 @@ public class DocumentController {
             item.put("fileName", file.getOriginalFilename());
             try {
                 checkUploadSize(file);
-                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description, category);
+                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description);
                 item.put("docId", doc.getId());
                 item.put("success", true);
                 item.put("msg", "已提交解析");
@@ -101,26 +99,10 @@ public class DocumentController {
         return ResultJson.ok(results);
     }
 
-    @Operation(summary = "文档列表", description = "获取所有文档列表（含解析状态、分块数、文件大小等）；可按分类筛选")
+    @Operation(summary = "文档列表", description = "获取所有文档列表（含解析状态、分块数、文件大小等）")
     @GetMapping("/list")
-    public ResultJson list(
-            @Parameter(description = "分类筛选（可选）") @RequestParam(value = "category", required = false) String category) {
-        return ResultJson.ok(documentService.list(category));
-    }
-
-    @Operation(summary = "文档分类列表", description = "获取所有已使用的文档分类（去重）")
-    @GetMapping("/categories")
-    public ResultJson categories() {
-        return ResultJson.ok(documentService.listCategories());
-    }
-
-    @Operation(summary = "修改文档分类", description = "设置文档分类；category 传空串/空白清除分类")
-    @PutMapping("/{id}/category")
-    public ResultJson updateCategory(
-            @Parameter(description = "文档 ID") @PathVariable("id") String id,
-            @RequestBody Map<String, String> body) {
-        documentService.updateCategory(id, body.get("category"));
-        return ResultJson.ok("操作成功");
+    public ResultJson list() {
+        return ResultJson.ok(documentService.list());
     }
 
     @Operation(summary = "删除文档", description = "删除指定文档（同时清理向量、知识块、图片、源文件）")

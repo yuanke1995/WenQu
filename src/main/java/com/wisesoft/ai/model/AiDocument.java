@@ -47,9 +47,6 @@ public class AiDocument {
     /** 文档描述 */
     private String description;
 
-    /** 文档分类 */
-    private String category;
-
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

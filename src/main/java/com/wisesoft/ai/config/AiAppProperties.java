@@ -72,8 +72,6 @@ public class AiAppProperties {
     @Data
     public static class Retrieval {        /** 检索返回 Top-K */
         private int topK = 5;
-        /** 相似度阈值 */
-        private double similarityThreshold = 0.5;
         /** 混合检索：向量相似度权重（0~1） */
         private double vectorWeight = 0.6;
         /** 混合检索：关键词命中率权重（0~1） */
@@ -102,6 +100,8 @@ public class AiAppProperties {
         private int maxHistory = 10;
         /** 会话过期时间（分钟） */
         private int expireMinutes = 30;
+        /** anonymous 历史兼容池是否对具名用户共享可见（存量升级兼容；false 时仅 anonymous 调用方可访问，收紧越权面） */
+        private boolean anonymousShared = true;
     }
 
     @Data

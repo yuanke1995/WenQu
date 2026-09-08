@@ -2,10 +2,13 @@ package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.wisesoft.ai.model.AiMessage;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+
+import java.time.LocalDateTime;
 
 /**
  * AI 消息 Mapper
@@ -33,4 +36,8 @@ public interface AiMessageMapper extends BaseMapper<AiMessage> {
     /** 会话内最大序号（物理查询：含已软删行）。删除轮次后序号不复用，撤销按 seq-1 精确配对依赖序号单调唯一 */
     @Select("SELECT COALESCE(MAX(sequence), 0) FROM c_ai_message WHERE session_id = #{sessionId}")
     int maxSequencePhysical(@Param("sessionId") String sessionId);
+
+    /** 物理删除逻辑删除标记且创建时间早于截止时间的消息（过期数据清理；物理清除即"撤销删除"窗口终点，幂等） */
+    @Delete("DELETE FROM c_ai_message WHERE deleted = 1 AND create_time < #{cutoff}")
+    int purgeDeletedOlderThan(@Param("cutoff") LocalDateTime cutoff);
 }

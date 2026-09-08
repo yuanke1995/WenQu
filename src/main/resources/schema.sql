@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `deleted`     INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     PRIMARY KEY (`id`),
-    KEY `idx_session_id` (`session_id`, `sequence`)
+    KEY `idx_session_id` (`session_id`, `sequence`),
+    KEY `idx_deleted_create` (`deleted`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI消息表';
 
 -- ============================================

@@ -3,6 +3,7 @@ package com.wisesoft.ai.schedule;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
+import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.service.UserImageService;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +45,7 @@ public class ScheduleCenter {
     private final KeywordIndexService keywordIndexService;
     private final UserImageService userImageService;
     private final RetrievalEvaluationService evalService;
+    private final SessionService sessionService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -53,11 +55,13 @@ public class ScheduleCenter {
     });
 
     public ScheduleCenter(ConfigService configService, KeywordIndexService keywordIndexService,
-                          UserImageService userImageService, RetrievalEvaluationService evalService) {
+                          UserImageService userImageService, RetrievalEvaluationService evalService,
+                          SessionService sessionService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
         this.evalService = evalService;
+        this.sessionService = sessionService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -84,6 +88,11 @@ public class ScheduleCenter {
                 () -> 5 * 60 * 1000,
                 () -> false,
                 () -> configService.reload());
+        // 过期会话/消息物理清理：硬删逻辑删除标记超保留期的会话与其消息（保留期即撤销窗口；间隔/保留期配置化）
+        register("过期会话/消息清理",
+                () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30)));
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

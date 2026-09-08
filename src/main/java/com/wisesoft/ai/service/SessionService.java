@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.time.LocalDateTime;
 
 /**
  * 会话管理（MySQL + Redis 双层存储）
@@ -74,8 +75,9 @@ public class SessionService {
     }
 
     /**
-     * 归属校验：会话不存在抛 404；存在但不属于该用户且非 anonymous 历史池则抛 403。
-     * anonymous 名下的存量会话对所有用户可见（升级兼容），新建会话严格隔离。
+     * 归属校验：会话不存在抛 404；存在但不属于该用户则抛 403。
+     * anonymous 名下会话为历史兼容池：anonymousShared=true 时对所有用户可见（存量升级兼容），
+     * false 时仅 anonymous 调用方（无 X-User-Id 的请求）可访问，收紧跨用户越权面。新建会话严格隔离。
      *
      * @return 校验通过的会话实体
      */
@@ -87,10 +89,17 @@ public class SessionService {
         String owner = session.getUserId() == null || session.getUserId().isBlank()
                 ? com.wisesoft.ai.util.UserContext.ANONYMOUS : session.getUserId();
         String uid = normalizeUser(userId);
-        if (!owner.equals(uid) && !com.wisesoft.ai.util.UserContext.ANONYMOUS.equals(owner)) {
+        boolean anonymousSession = com.wisesoft.ai.util.UserContext.ANONYMOUS.equals(owner);
+        if (!owner.equals(uid) && !(anonymousSession && canAccessAnonymousPool(userId))) {
             throw new com.wisesoft.ai.common.BizException(403, "无权访问该会话");
         }
         return session;
+    }
+
+    /** anonymous 池访问门槛：调用方自身为 anonymous，或配置开启历史兼容池共享 */
+    private boolean canAccessAnonymousPool(String userId) {
+        return com.wisesoft.ai.util.UserContext.ANONYMOUS.equals(normalizeUser(userId))
+                || properties.getSession().isAnonymousShared();
     }
 
     /** 用户标识规范化：空值归 anonymous */
@@ -119,16 +128,18 @@ public class SessionService {
     }
 
     /**
-     * 查询会话列表（仅当前用户 + anonymous 历史兼容池；支持关键词搜索），置顶优先、按更新时间倒序
+     * 查询会话列表（仅当前用户；配置开启时并入 anonymous 历史兼容池；支持关键词搜索），置顶优先、按更新时间倒序
      *
      * @param keyword 可选，按标题或消息内容模糊匹配；空/空白返回全量
      */
     public List<SessionInfo> listSessions(String userId, String keyword) {
         try {
             LambdaQueryWrapper<AiSession> wrapper = new LambdaQueryWrapper<>();
-            // 只看自己的会话 + anonymous 历史兼容池（存量升级数据）
-            wrapper.and(w -> w.eq(AiSession::getUserId, normalizeUser(userId))
-                    .or().eq(AiSession::getUserId, com.wisesoft.ai.util.UserContext.ANONYMOUS));
+            // 只看自己的会话（+ anonymous 历史兼容池，仅池访问放行时并入，防跨用户捞取）
+            wrapper.eq(AiSession::getUserId, normalizeUser(userId));
+            if (canAccessAnonymousPool(userId)) {
+                wrapper.or().eq(AiSession::getUserId, com.wisesoft.ai.util.UserContext.ANONYMOUS);
+            }
             if (keyword != null && !keyword.isBlank()) {
                 String esc = escapeLike(keyword.trim());
                 wrapper.and(w -> w.like(AiSession::getTitle, keyword.trim())
@@ -755,5 +766,36 @@ public class SessionService {
             log.warn("补写消息到 MySQL 失败 (session={}): {}", sessionId, e.getMessage());
             return 0;
         }
+    }
+
+    /**
+     * 过期数据清理（ScheduleCenter 周期触发）：物理清除逻辑删除标记且超过保留期的会话与消息。
+     * 保留期即"撤销删除"窗口——物理清除后撤销必然返回 0（前端提示已过撤销期）。
+     * 幂等可并发（多副本各自触发互不冲突）；单类失败仅告警，另一类继续。
+     *
+     * @param retentionDays 保留天数（<=0 表示停用）
+     * @return 清理统计 {sessions, messages}，供日志与观测
+     */
+    public Map<String, Object> purgeExpired(int retentionDays) {
+        Map<String, Object> stat = new HashMap<>();
+        if (retentionDays <= 0) return stat;
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        try {
+            stat.put("sessions", sessionMapper.purgeDeletedOlderThan(cutoff));
+        } catch (Exception e) {
+            log.warn("[CLEANUP] 过期会话物理清理失败: {}", e.getMessage());
+        }
+        try {
+            stat.put("messages", messageMapper.purgeDeletedOlderThan(cutoff));
+        } catch (Exception e) {
+            log.warn("[CLEANUP] 过期消息物理清理失败: {}", e.getMessage());
+        }
+        int sessions = ((Number) stat.getOrDefault("sessions", 0)).intValue();
+        int messages = ((Number) stat.getOrDefault("messages", 0)).intValue();
+        if (sessions > 0 || messages > 0) {
+            log.info("[CLEANUP] 过期数据清理完成：会话 {} 条、消息 {} 条（保留 {} 天，截止 {}）",
+                    sessions, messages, retentionDays, cutoff);
+        }
+        return stat;
     }
 }

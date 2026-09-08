@@ -114,6 +114,7 @@ public class ConfigService {
             Map.entry("retrieval.vecThreshold", "检索：向量相似度下限(0~1，评估对比后可应用)"),
             Map.entry("retrieval.keywordLimit", "检索：关键词召回词数上限"),
             Map.entry("retrieval.vectorTopK", "检索：向量召回 topK（评估对比后可应用）"),
+            Map.entry("retrieval.fusionMode", "检索：双路融合方式 sum=加权和(默认,含标题/位置奖励) / rrf=倒数排名融合(实验,按名次,可用评估页对比)"),
             Map.entry("rerank.minHits", "重排：触发候选数下限（评估对比后可应用）"),
             Map.entry("rerank.maxHits", "重排：触发候选数上限（评估对比后可应用）"),
             Map.entry("keyword.engine", "关键词引擎：mysql / meilisearch（切换前先探测并重建索引）"),
@@ -366,6 +367,7 @@ public class ConfigService {
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
+        d.put("retrieval.fusionMode", "sum");              // 双路融合：sum=加权和 / rrf=倒数排名（实验）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.keywordTimeoutMs", "800");        // 关键词检索超时
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
@@ -645,6 +647,11 @@ public class ConfigService {
         String ke = updates.get("keyword.engine");
         if (ke != null && !ke.isBlank() && !"mysql".equalsIgnoreCase(ke) && !"meilisearch".equalsIgnoreCase(ke)) {
             throw new IllegalArgumentException("keyword.engine 仅允许 mysql / meilisearch");
+        }
+        // 检索融合方式校验（rrf 为实验模式：保存即生效，用评估页对比验证后再留用）
+        String fm = updates.get("retrieval.fusionMode");
+        if (fm != null && !fm.isBlank() && !"sum".equalsIgnoreCase(fm) && !"rrf".equalsIgnoreCase(fm)) {
+            throw new IllegalArgumentException("retrieval.fusionMode 仅允许 sum / rrf");
         }
         // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）
         if (ke != null && "meilisearch".equalsIgnoreCase(ke)) {

@@ -74,7 +74,11 @@ public class RetrievalEvaluationService {
                               Map<String, Double> metrics, List<CaseResult> cases) {}
 
     public record EvalResult(List<GroupResult> groups, List<Integer> kList,
-                             Map<String, Object> deprecatedCheck, List<String> timedOutGroups, long elapsedMs) {}
+                             Map<String, Object> deprecatedCheck, List<String> timedOutGroups, long elapsedMs,
+                             int staleExpected) {}
+
+    /** 回放存活校验结果：cases=过滤后可执行列表，stale=剔除的失效期望标签数，skipped=全失效跳过的 case 数 */
+    public record Revalidated(List<EvalCase> cases, int stale, int skipped) {}
 
     // ==================== 依赖 ====================
 
@@ -296,6 +300,15 @@ public class RetrievalEvaluationService {
                 ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null, null, null, null))
                 : groups;
 
+        // 期望块存活校验（与 generate 时口径一致）：文档删除/重解析后旧 ID 失效，
+        // 若不剔除会让 recall 永久 <1 被误报"下滑"。运行前统一过滤，全失效 case 跳过不参与指标。
+        Revalidated revalidated = revalidateExpected(cases);
+        final List<EvalCase> liveCases = revalidated.cases();
+        if (revalidated.stale() > 0 || revalidated.skipped() > 0) {
+            log.info("[Eval] 回放存活校验：失效期望标签剔除 {} 个，全失效跳过 {} 条 case（知识库有删除/重解析？）",
+                    revalidated.stale(), revalidated.skipped());
+        }
+
         // 弃用文档的知识块集合（断言它们不得出现在任何命中）
         Set<String> deprecatedIds = loadDeprecatedKnowledgeIds();
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
@@ -305,7 +318,7 @@ public class RetrievalEvaluationService {
             futures.add(evalPool.submit(() -> {
                 try {
                     configService.putOverrides(g.toOverrides());
-                    return runGroup(g, cases, ks, deprecatedIds, violations);
+                    return runGroup(g, liveCases, ks, deprecatedIds, violations);
                 } finally {
                     configService.clearOverride();
                 }
@@ -315,7 +328,7 @@ public class RetrievalEvaluationService {
         List<GroupResult> results = new ArrayList<>();
         List<String> timedOut = new ArrayList<>();
         // 超时按工作量估算：基础 60s + 每 case 3s 余量（multi 模式每 case 最多 3 路检索，关键词路最坏 800ms/路）
-        long timeoutMs = 60_000L + cases.size() * 3_000L;
+        long timeoutMs = 60_000L + liveCases.size() * 3_000L;
         for (int i = 0; i < futures.size(); i++) {
             Future<GroupResult> f = futures.get(i);
             String name = gs.get(i).name();
@@ -333,7 +346,43 @@ public class RetrievalEvaluationService {
         Map<String, Object> deprecatedCheck = Map.of(
                 "ok", violations.isEmpty(),
                 "violations", List.copyOf(violations));
-        return new EvalResult(results, ks, deprecatedCheck, timedOut, System.currentTimeMillis() - start);
+        return new EvalResult(results, ks, deprecatedCheck, timedOut, System.currentTimeMillis() - start,
+                revalidated.stale());
+    }
+
+    /**
+     * 评估回放的期望块存活校验（与 generate 时口径一致）：文档删除/重解析后旧 ID 失效，
+     * 若不剔除会让 recall 永久 <1 被误报"下滑"。失效标签剔除、全失效的 case 跳过不参与指标。
+     * 校验整体异常时回退原始列表（宁多跑不丢样本）。
+     */
+    private Revalidated revalidateExpected(List<EvalCase> cases) {
+        int stale = 0;
+        int skipped = 0;
+        try {
+            List<EvalCase> validCases = new ArrayList<>();
+            Set<String> allExpected = cases.stream()
+                    .flatMap(c -> c.expectedKnowledgeIds().stream())
+                    .collect(java.util.stream.Collectors.toSet());
+            Set<String> existing = loadExistingKnowledgeIds(allExpected);
+            for (EvalCase c : cases) {
+                if (c.expectedKnowledgeIds().isEmpty()) {
+                    validCases.add(c); // 无期望标签的 case 正常参与（不约束 recall）
+                    continue;
+                }
+                List<String> valid = c.expectedKnowledgeIds().stream()
+                        .filter(existing::contains).distinct().toList();
+                stale += c.expectedKnowledgeIds().size() - valid.size();
+                if (valid.isEmpty()) {
+                    skipped++;
+                    continue;
+                }
+                validCases.add(new EvalCase(c.id(), c.question(), valid, c.note()));
+            }
+            return new Revalidated(validCases, stale, skipped);
+        } catch (Exception e) {
+            log.warn("[Eval] 回放存活校验失败，按原始评估集执行: {}", e.getMessage());
+            return new Revalidated(new ArrayList<>(cases), 0, 0);
+        }
     }
 
     private GroupResult runGroup(EvalParams params, List<EvalCase> cases, List<Integer> ks,
@@ -518,6 +567,8 @@ public class RetrievalEvaluationService {
                     }
                     Object deprecatedOk = result.deprecatedCheck() == null ? null : result.deprecatedCheck().get("ok");
                     report.put("deprecatedOk", deprecatedOk == null || Boolean.TRUE.equals(deprecatedOk));
+                    // 回放存活校验剔除的失效期望标签数（>0 = 知识库删除/重解析漂移，基线不再可比）
+                    report.put("staleExpected", result.staleExpected());
                     if (!result.timedOutGroups().isEmpty()) report.put("timedOut", result.timedOutGroups());
 
                     // 与上期对比：同键指标相对变化（%），跌幅超阈值置 decline。
@@ -537,6 +588,12 @@ public class RetrievalEvaluationService {
                         log.info("[Eval] 评估集已变更，本期作为新基线: {} -> {}", prevEvalSetId, evalSetId);
                     } else if (prevMetrics == null || prevMetrics.isEmpty()) {
                         report.put("message", "首期体检完成（暂无上期基线，" + metrics.size() + " 项指标）");
+                    } else if (result.staleExpected() > 0) {
+                        // 期望标签漂移：本期样本与上期不再同口径（删除/重解析让部分期望块失效被剔除），
+                        // delta 会误报下滑——本期直接作为新基线，与"评估集重新生成"护栏同语义
+                        report.put("message", "评估集有 " + result.staleExpected()
+                                + " 个期望标签已失效被剔除（知识库删除/重解析？），本期作为新基线，下次起在此样本上对比");
+                        log.info("[Eval] 评估集期望标签漂移 {} 个，本期作为新基线: {}", result.staleExpected(), evalSetId);
                     } else {
                         Map<String, Object> delta = new LinkedHashMap<>();
                         List<String> declinedItems = new ArrayList<>();
@@ -601,12 +658,19 @@ public class RetrievalEvaluationService {
     /**
      * LLM 评判检索充分性：对每个 case 用当前线上参数检索 top 命中，由评判模型判"命中资料是否足以直接回答该问题"，
      * 汇总为 judgeScore（0~1）。这是对 recall@k 的补充：recall 度量"期望块是否在结果里"，judge 度量"用户能否从结果得到答案"。
-     * 单 case 单次调用（temperature=0）；失败的单 case 跳过不计。返回 null 表示无法计算（空集）。
+     * 证据窗口与产品上下文一致（context.maxContextHits 条，默认 8）：只给 top3 会把真实可答的 case 判成"不足"，系统性低估。
+     * 评判模型可用 eval.judgeModel 独立配置（未配置回落 chat.model），避免与被评判的问答模型强耦合。
+     * 单 case 单次调用（temperature=0）；检索无命中按"不足以回答"计（退化检索正是该指标要暴露的）；失败的单 case 跳过不计。
+     * 返回 null 表示无法计算（空集/全部失败）。
      */
     private Double judgeCoverage(List<EvalCase> cases) {
         if (cases.isEmpty()) return null;
         int covered = 0;
         int judged = 0;
+        int evidenceWindow = Math.max(1, configService.getInt("context.maxContextHits", 8));
+        String chatModel = configService.get("chat.model");
+        String judgeModel = configService.get("eval.judgeModel");
+        String model = judgeModel == null || judgeModel.isBlank() ? chatModel : judgeModel;
         for (EvalCase c : cases) {
             try {
                 List<HybridRetrievalService.Hit> hits = retrievalService.search(c.question());
@@ -615,7 +679,7 @@ public class RetrievalEvaluationService {
                 prompt.append("判断下面的资料片段是否足以直接回答用户问题。\n");
                 prompt.append("资料中能找到答案要点（操作步骤/定义/规则/数值）就算\"足以\"；资料完全不相关或只有只言片语算\"不足以\"。\n");
                 prompt.append("只输出一个词：是 或 否。\n\n用户问题：").append(c.question()).append("\n\n资料片段：\n");
-                for (int i = 0; i < Math.min(3, hits.size()); i++) {
+                for (int i = 0; i < Math.min(evidenceWindow, hits.size()); i++) {
                     HybridRetrievalService.Hit h = hits.get(i);
                     String t = h.title() == null ? "" : h.title();
                     String body = h.content() == null ? "" : h.content();
@@ -626,7 +690,7 @@ public class RetrievalEvaluationService {
                         .system("你是检索质量评估员，只判断资料是否足以回答用户问题，输出\"是\"或\"否\"。")
                         .user(prompt.toString())
                         .options(OpenAiChatOptions.builder()
-                                .model(configService.get("chat.model"))
+                                .model(model)
                                 .temperature(0.0)
                                 .maxTokens(8)
                                 .build())

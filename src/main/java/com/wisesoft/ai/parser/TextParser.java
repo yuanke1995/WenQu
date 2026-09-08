@@ -103,17 +103,16 @@ public class TextParser implements DocumentParser {
         return chunks;
     }
 
-    /** csv：首行作表头，行转 "a | b | c" 后按行聚合 */
+    /** csv：RFC-4180 引号感知解析（引号内逗号/换行/""转义不再被裸 split(",") 破坏），首行作表头，行转 "a | b | c" 后按行聚合 */
     private List<Chunk> parseCsv(String content) {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
         String header = null;
-        String[] lines = content.split("\n", -1);
-        for (int i = 0; i < lines.length; i++) {
-            String row = lines[i].trim();
-            if (row.isEmpty()) continue;
-            String cells = String.join(" | ", row.split(","));
-            if (i == 0) {
+        List<List<String>> rows = parseCsvRows(content);
+        for (List<String> row : rows) {
+            String cells = String.join(" | ", row);
+            if (cells.isEmpty()) continue;
+            if (header == null) {
                 header = "表头: " + cells;
                 buf.append(header).append('\n');
                 continue;
@@ -126,6 +125,53 @@ public class TextParser implements DocumentParser {
         }
         flush(chunks, buf, header);
         return chunks;
+    }
+
+    /**
+     * CSV 逐字段状态机解析（RFC 4180 子集）：双引号包裹的字段支持内部逗号、换行，
+     * 连续两个双引号表示转义的单引号；非开头出现的双引号按字面字符处理（宽松兼容）。
+     */
+    private List<List<String>> parseCsvRows(String content) {
+        List<List<String>> rows = new ArrayList<>();
+        List<String> row = new ArrayList<>();
+        StringBuilder field = new StringBuilder();
+        boolean inQuotes = false;
+        int n = content.length();
+        for (int i = 0; i < n; i++) {
+            char c = content.charAt(i);
+            if (inQuotes) {
+                if (c == '"') {
+                    if (i + 1 < n && content.charAt(i + 1) == '"') {
+                        field.append('"');
+                        i++;
+                    } else {
+                        inQuotes = false;
+                    }
+                } else {
+                    field.append(c);
+                }
+                continue;
+            }
+            if (c == '"' && field.isEmpty()) {
+                inQuotes = true; // 仅字段开头引号开启引号模式
+            } else if (c == ',') {
+                row.add(field.toString());
+                field.setLength(0);
+            } else if (c == '\n' || c == '\r') {
+                if (c == '\r' && i + 1 < n && content.charAt(i + 1) == '\n') i++; // CRLF 合一
+                row.add(field.toString());
+                field.setLength(0);
+                rows.add(row);
+                row = new ArrayList<>();
+            } else {
+                field.append(c);
+            }
+        }
+        if (field.length() > 0 || !row.isEmpty()) {
+            row.add(field.toString());
+            rows.add(row);
+        }
+        return rows;
     }
 
     /** 聚合缓冲 → Chunk（带 overlap 尾巴进向量化语义由增量链路处理，此处纯文本简单切） */

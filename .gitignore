@@ -11,10 +11,11 @@ data/
 config/application-local.yml
 .env
 .env.local
+.env.*.local
+__pycache__/
 /.workbuddy/
 /.qoder/
 /.pyenv/
 /.zcode/
 /.md/
-package-lock.json
 /.vite/

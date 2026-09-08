@@ -144,11 +144,11 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **上下文与长度控制**：`预算 = min(模型窗口×安全系数 − 输出限制, 成本软上限)`，窗口按当前模型动态匹配；**价值驱动填充**（知识块按相关度分数累积填充，替代固定 8 块）；**块内命中片段截取**（±150 字窗口，边界对齐行/图片标记，长命令不被切断；**被截掉的图片占位自动补到片段末尾**，保证 LLM 配图依据完整）；**关联扩散块独立配额**（原始命中块用 `max-context-hits`，扩散块用 `refExpandMaxHits/MaxTokens`，共享剩余预算）；**信息增益去冗余**（`context.dedupEnabled` 默认开：候选块与已选块词元重叠过高即跳过，同一操作被切成多块时只保留最高相关那块进上下文，防重复内容浪费预算与多块表述不一致；同章节路径用更低阈值 `dedupPathThreshold`，仅影响问答上下文不影响检索/评估）；**历史裁剪**（单条 200 字 + 总量上限 + 剥离 `[图片N]`）；输出 maxTokens 限制；token 按中英文分语言估算（TokenCounter）
 - **图片链路**：docx 提取图片（去重 + **双图策略**：识别用压缩图 1280px 进视觉模型，**展示用原图**落盘）→ 视觉模型生成描述并随分块落库（Ollama `num_ctx=16384` 防 1280px 视觉 token 截断）→ 检索命中后**相关性预筛**（与问题无关的图不分配编号，LLM 生成时即避开，避免"先输出后剔除"的图闪现）→ 全局编号 `[图片N：描述]` 供 LLM 选图 → **相关性校验兜底**（错配/编造编号自动剔除并重建，被剔除提示用户）→ SSE `image` 事件 → 前端按标记渲染原图（灯箱：滚轮按幅度平滑缩放/拖动/多图切换/ESC）；图片描述完成逐张上报进度（10→30 区间"识别图片 k/total"）
 - **引用溯源**：回答句末 `[N]` 角标 → 弹窗展示来源知识块全文（图文交错，还原原文结构）+ 关联截图；**回答下方检索状态行**（搜索 N 个关键词/参考 M 段资料，**参考段数在回答完成、引用最终确定后一次性显示**，不与生成中的候选数跳变）展开列出全部命中来源与摘要片段，条目点击弹同一溯源弹窗（历史消息兼容：无检索数据时降级显示来源数）；`done` 事件携带 sources/related/messageId，`retrieved` 事件携带检索概览（随消息持久化，引用剔除后 refs 同步重算）
-- **语义缓存**（`c_ai_answer_cache`）：相似问题直接复用历史回答（embedding 余弦相似度 ≥ `semanticCache.threshold`，默认 0.96），命中秒回；知识库文档增删改/启停用/重解析**整体失效**，带图片的提问不走缓存；最大条数 LRU 淘汰，设置页可调（`semanticCache.enabled/threshold/maxEntries`）；**维度护栏**：缓存向量与当前模型维度不一致（向量模型切换后的存量条目）一律判不命中并告警——跨模型向量空间不可比，按较短长度截断算出的相似度是噪声且可能越过阈值返回语义无关的旧回答，脏条目由重嵌入编排第一步清空
+- **语义缓存**（`c_ai_answer_cache`）：相似问题直接复用历史回答（embedding 余弦相似度 ≥ `semanticCache.threshold`，默认 0.96），命中秒回；知识库文档增删改/启停用/重解析/知识块编辑（含图片补描述回写）**整体失效**，带图片的提问不走缓存；最大条数 LRU 淘汰，设置页可调（`semanticCache.enabled/threshold/maxEntries`）；**维度护栏**：缓存向量与当前模型维度不一致（向量模型切换后的存量条目）一律判不命中并告警——跨模型向量空间不可比，按较短长度截断算出的相似度是噪声且可能越过阈值返回语义无关的旧回答，脏条目由重嵌入编排第一步清空
 - **文档解析**：docx（段落/标题大纲级别/**表格→Markdown 表格、单列表格→代码块**/内嵌图/单元格换行保留）/ xlsx（sheet 转文本）/ pdf（PDFBox 文本抽取）/ **txt/md/csv**（md 按标题分块、代码围栏跟踪不切断，csv 首行表头）；**扫描件自动 OCR**（文本 <20 字符判定，逐页渲染 200DPI → 本地视觉模型识别，OCR 专用提示词）；**大文件流式解析**（解析器按 `Path` 流式读取，不整载内存）；**结构感知切分**（docx：标题层级开新块 + 章节路径独立存储、向量化/检索时拼入 `【上下文】章节 > 小节`、达到边界阈值在段落交界断块、表格独立成块；`chunk.structural` 可关，需重解析生效）；**分块重叠只进向量化文本**（不入库、不进指纹，邻块变动不连锁重嵌）；**解析删除感知**（内存删除标志 + 线程中断，删除立即停止并清理本次产物）
 - **数据闭环**：问答日志（含改写后问题/命中文档/耗时）+ 回答 👍👎 反馈 + 看板聚合；**无命中问题汇总 → 一键创建知识块（自动生成向量）**，形成"发现缺口→补充→验证"闭环；**差评回流**：看板差评样本还原问题与引用块 → 一键加入检索评估集（`POST /api/ai/eval/case` 单条增补），调参后可用真实坏例回归验证
 - **检索调试**：`POST /api/ai/debug/retrieval` 分步展示检索词元（分词结果）/关键词/向量/合并/重排/最终结果与命中率，前端问答页"检索调试"按钮可视化排查召回问题
-- **检索评估**：`POST /api/ai/eval/generate` 从历史问答引用（`c_ai_message.sources`）回放生成评估集（问题→期望知识块，失效期望块自动剔除并计数；差评回流单条增补）→ `POST /api/ai/eval/run` 批量参数组对比 **recall@k / MRR / 命中率** + 弃用文档召回断言；前端四件套：**一键体检**（当前配置全量评估 → 红绿灯结论 + 落空/低分题清单）、**预设参数组**（关键词优先/向量优先/向量+重排/多路模拟，空参数框占位回显当前值）、**一键应用**（好的组直接写入 `c_ai_config` 广播生效，检索 topK/阈值/关键词上限/重排区间等键已纳入在线白名单）、**自动结论**（相对基线 ↑↓ 与可应用建议）；**自动体检基线护栏**（报告携带评估集标识，重新生成评估集后样本变化，本期自动记为新的基线、不做跨样本 delta 判定，避免假性下滑）；**LLM 评判检索充分性**（`eval.judgeEnabled` 调试开关：对每个 case 判“命中资料是否足以直接回答”，产出 judgeScore，作为 recall 之外的端到端度量）；参数覆盖走线程局部 override，**不写 DB 不污染生产配置**（multi 模式为确定性拆分近似，衡量多路合并机制而非 LLM 深度思考质量）
+- **检索评估**：`POST /api/ai/eval/generate` 从历史问答引用（`c_ai_message.sources`）回放生成评估集（问题→期望知识块，失效期望块自动剔除并计数；差评回流单条增补）→ `POST /api/ai/eval/run` 批量参数组对比 **recall@k / MRR / 命中率** + 弃用文档召回断言；前端四件套：**一键体检**（当前配置全量评估 → 红绿灯结论 + 落空/低分题清单）、**预设参数组**（关键词优先/向量优先/向量+重排/多路模拟，空参数框占位回显当前值）、**一键应用**（好的组直接写入 `c_ai_config` 广播生效，检索 topK/阈值/关键词上限/重排区间等键已纳入在线白名单）、**自动结论**（相对基线 ↑↓ 与可应用建议）；**自动体检基线护栏**（报告携带评估集标识，重新生成评估集后样本变化，本期自动记为新的基线、不做跨样本 delta 判定，避免假性下滑；**每次回放前对期望块做存活校验**——文档删除/重解析后的失效标签运行期剔除、全失效 case 跳过，期望标签漂移同样记为新的基线，杜绝"内容漂移被误报为检索质量下滑"）；**LLM 评判检索充分性**（`eval.judgeEnabled` 调试开关：对每个 case 判“命中资料是否足以直接回答”，证据窗口与产品上下文上限一致（`context.maxContextHits` 条），评判模型可用 `eval.judgeModel` 独立配置（留空回落 `chat.model`），产出 judgeScore，作为 recall 之外的端到端度量）；参数覆盖走线程局部 override，**不写 DB 不污染生产配置**（multi 模式为确定性拆分近似，衡量多路合并机制而非 LLM 深度思考质量）
 - **会话**：MySQL + Redis 双层存储，历史恢复（含图片/引用来源/messageId/检索状态行）、删除/清空、**搜索/置顶/收藏**、侧边栏拖拽伸缩（宽度记忆）、**按消息组删除问答**（多选模式：勾回答默认勾同组问题，支持撤销）、消息时间戳、推荐问题池（`chat.suggestedQuestions`，设置页编辑 + 看板热门问题一键加入，欢迎页展示）
 - **前端体验**：markdown-it + DOMPurify + highlight.js 安全渲染（代码块复制按钮、**长行自动折行 + 限高滚动**、**表格渲染容错**：LLM 在标题/列表后未留空行的表格自动补空行独立渲染、结尾孤立竖线清理）、重新生成/编辑重问（编辑图标悬浮气泡下方）、图片灯箱（**滚轮按幅度平滑缩放**：每 100 单位滚轮量 8%、单次 clamp ±30% 防惯性跳变）、发送后自动滚动到底部（不等首个 token）、问答 👍👎 反馈（**单选锁定**：评价后两按钮禁用不可再点，刷新/重进会话仍保持——历史消息回带既有评价）、断连自动重试内联提示、全局错误边界（渲染异常友好提示防白屏、401 统一提示）、图片加载失败占位图、上传进度条
 
@@ -166,9 +166,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `GET /api/ai/suggested`、`POST /api/ai/suggested` | 推荐问题池读取 / 追加（去重上限 8 条） |
 | `GET /api/ai/analytics/badcases` | 差评坏例列表（还原问题与引用块，供回流评估集） |
 | `GET/DELETE /api/ai/answer-cache` | 语义缓存统计 / 清空 |
-| `POST /api/ai/document/upload`、`/upload/batch` | 上传文档（docx/pdf/xlsx，异步解析；category 参数保留兼容，前端已不再传） |
+| `POST /api/ai/document/upload`、`/upload/batch` | 上传文档（docx/pdf/xlsx，异步解析） |
 | `GET /api/ai/document/list`、`DELETE /{id}`、`PUT /{id}/status`、`POST /{id}/reparse` | 文档列表 / 删除 / 启停用 / 重解析 |
-| `GET /api/ai/document/categories`、`PUT /{id}/category` | 分类列表 / 修改文档分类（接口保留，前端分类 UI 已移除） |
 | `GET /api/ai/document/{id}/versions`、`POST /{id}/rollback` | 版本历史 / 回滚到指定版本（按原 ID 重建知识块+向量） |
 | `POST /api/ai/document/batch/delete`、`/batch/status`、`/batch/reparse`、`GET /document/stats` | 批量操作（删除/启停用/重解析）+ 命中次数统计 |
 | `GET /api/ai/knowledge/{id}`、`GET /api/ai/knowledge/list?docId=` | 知识块详情（引用溯源） / 按文档预览 |
@@ -199,7 +198,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 1. 平台网关需额外透传图片路径 `/ai/images/**`（生产开启图片鉴权时，图片 URL 带 HMAC 签名与过期时间，由本服务动态生成）
 2. SSE 接口（`/chat`）网关需关闭响应缓冲，否则流式 token 无法实时到达
 3. 内部 token `AI_TRUSTED_TOKEN` 由网关注入请求头，前端不携带共享密钥
-4. **用户身份透传**：网关鉴权后必须注入（并覆盖客户端自带的）`X-User-Id` 请求头作为用户标识——会话按该标识隔离（列表/删除/清空只作用于本人；anonymous 名下的存量会话为升级兼容池，全员可见）。前端在无网关的本地调试场景会用 localStorage 稳定 ID 自行携带该头。**生产网关若不注入，所有人共用 anonymous 池，等于无隔离**
+4. **用户身份透传**：网关鉴权后必须注入（并覆盖客户端自带的）`X-User-Id` 请求头作为用户标识——会话按该标识隔离（列表/删除/清空只作用于本人；anonymous 名下的存量会话为**升级兼容池**，默认对全员可见，设 `AI_SESSION_ANONYMOUS_SHARED=false` 收紧为仅 anonymous 调用方可访问）。前端在无网关的本地调试场景会用 localStorage 稳定 ID 自行携带该头。**生产网关若不注入，所有人共用 anonymous 池，等于无隔离**
 5. **接口限流**：问答/上传按"用户（无身份则按 IP）"做 Redis 固定窗口限频（默认 10 次/分钟，设置页可调，超限返回 429）；Redis 不可用自动放行
 
 ## 测试与验证
@@ -262,10 +261,12 @@ ai-app:
   chunk: { max-size: 800, overlap: 100, structural: true, structural-ratio: 0.8 }   # 分块(重叠仅进向量化文本) + 结构感知切分（docx，需重解析生效）
   retrieval:
     top-k: 5                               # 上下文用命中块数（重排候选另算）
-    similarity-threshold: 0.5
     vector-weight: 0.6                     # 混合检索：向量权重（DB c_ai_config 可覆盖，设置页保存即生效）
     keyword-weight: 0.4                    # 混合检索：关键词权重
     title-bonus: 0.1                       # 混合检索：标题命中奖励
+    # ---- 检索行为参数（DB c_ai_config 可覆盖，设置页保存即生效）----
+    # vecThreshold: 0.3                    # 向量相似度下限/归一化基准（0~1，唯一真源，评估"应用此组"可写）
+    # fusionMode: sum                      # 双路融合：sum=加权和(默认，含标题/位置奖励) / rrf=倒数排名融合(实验，按名次融合，用评估页对比验证)
     rewrite-timeout-ms: 5000               # 查询改写超时（DB 可覆盖：retrieval.rewriteTimeoutMs，设置页可调）
     # ---- 知识块关联检索（DB c_ai_config 可覆盖，设置页"知识块关联检索"小节） ----
     # ref-detect-enabled: true             # 解析时引用识别（改后需重解析）
@@ -292,7 +293,10 @@ ai-app:
     # dedup-enabled: true                  # 信息增益去冗余：跳过与已选块语义重复的候选（防重复内容进上下文）
     # dedup-threshold: 0.45                # 去冗余词元重叠阈值（越高越宽松）
     # dedup-path-threshold: 0.28           # 同章节路径下去冗余阈值（同章节切片更易剪）
-  session: { max-history: 10, expire-minutes: 30 }
+  session:
+    max-history: 10
+    expire-minutes: 30
+    anonymous-shared: ${AI_SESSION_ANONYMOUS_SHARED:true}  # anonymous 历史兼容池对具名用户共享可见；false=仅 anonymous（无 X-User-Id）调用方可访问（收紧越权面）
   images:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（开发在 application-local.yml 配绝对路径；生产 /app/data）
     max-width: 1280                         # 识别用压缩图最长边（qwen3-vl 最佳清晰度档，视觉 token 约 1600-2500；展示用原图不受限）
@@ -333,7 +337,7 @@ spring:
   ai.vectorstore.redis: { initialize-schema: true, index-name: ai-doc-index, prefix: "ai:chunk:" }  # Spring AI 1.1 起属性为 index-name；initialize-schema 必须 true，否则全量重嵌入被护栏拒绝执行（DROP 后无法重建索引）
 ```
 
-> **模型配置以 DB 为准**：`spring.ai.openai.*`（问答）与 `spring.ai.openai.embedding.*`（向量）仅作 `c_ai_config` 未配置时的**回退默认值**；设置页保存后一律以 DB 为准，改 yml 不再生效。另有系统内部记录项 `embedding.dimensions`（当前向量索引维度，重嵌入成功后自动回写，设置页只读展示，不可手工修改）。检索质量相关 DB 键：`context.dedupEnabled/dedupThreshold/dedupPathThreshold`（信息增益去冗余）、`chat.citationCheckEnabled`（引用语义一致性自检）、`eval.judgeEnabled`（自动体检 LLM 评判，调试级）均已开放白名单与设置页。
+> **模型配置以 DB 为准**：`spring.ai.openai.*`（问答）与 `spring.ai.openai.embedding.*`（向量）仅作 `c_ai_config` 未配置时的**回退默认值**；设置页保存后一律以 DB 为准，改 yml 不再生效。另有系统内部记录项 `embedding.dimensions`（当前向量索引维度，重嵌入成功后自动回写，设置页只读展示，不可手工修改）。检索质量相关 DB 键：`retrieval.vecThreshold`（向量相似度下限/归一化基准，唯一真源——0.5 以上区间真实生效，评估"应用此组"可写）、`retrieval.fusionMode`（双路融合 sum/rrf，实验）、`context.dedupEnabled/dedupThreshold/dedupPathThreshold`（信息增益去冗余）、`chat.citationCheckEnabled`（引用语义一致性自检）、`eval.judgeEnabled`（自动体检 LLM 评判，调试级）、`eval.judgeModel`（评判模型名，留空回落 `chat.model`）均已开放白名单与设置页（judgeModel 为 DB 只读项，直接写库生效）。过期数据清理：`cleanup.sessionRetentionDays`（软删会话/消息物理保留天数，默认 30，≤0 停用）、`cleanup.sessionCleanupIntervalMs`（默认每日）经 DB 写入生效。
 
 > **System Prompt 外置边界**：仅"角色与回答风格"段可编辑（设置页）；引用 `[N]` / 图片 `[图片N]` / 追问 `<related>` 规则与后端解析器强耦合，保留代码固定，避免改坏导致解析失效。
 
@@ -353,3 +357,8 @@ spring:
 - **存量库升级**：`c_ai_config.config_value` 需为 TEXT（容纳长 prompt）；**schema 演进自动补列**——启动时 `SchemaMigrator` 解析 schema.sql 与 information_schema 比对，缺失列自动 ALTER 补上（幂等，失败仅告警不阻塞启动；新表 `c_ai_document_version` 仍由启动自动创建）；`c_ai_document.category` 字段保留（前端分类 UI 已移除，存量值已清空）
 - **视觉模型思考模式**：qwen3 系列 `max_tokens` 限制会导致内容为空（思考耗尽 token），VisionService 不发送 max_tokens、改用 `think: false`
 - **多图描述性能**：图片描述耗时与并发强相关，Ollama 需设 `OLLAMA_NUM_PARALLEL` 才能真正并行；文档重传会重新生成全部图片描述（77 图约 5-10 分钟）
+- **解析增强需重解析存量文档**：Excel 公式求值/日期按格式输出、CSV 引号感知解析、docx 文本框旁注提取均只对**重新解析**的文档生效（解析后 `sources` 的 knowledgeId 不变、无需重生成评估集，但块内容会变，建议顺手跑一次自动体检）
+- **向量阈值行为变化**：`retrieval.vecThreshold` 现为唯一真源（原受 yml `similarity-threshold: 0.5` 上限钳制）。若此前把阈值配到 0.5 以上而当时未生效，升级后**会真实生效**——召回更严格（recall 可能下降、准确率上升），请用检索评估页确认是否符合预期；0.5 及以下无行为变化
+- **rrf 融合为实验模式**：`retrieval.fusionMode=rrf`（倒数排名融合，忽略标题/位置奖励的分值加分）保存即生效，建议先用检索评估页"对比调优"验证对 recall/命中率的影响再决定是否留用；默认 `sum` 与历史行为一致
+- **过期会话/消息自动清理**：默认每日物理清除逻辑删除超过 30 天的会话与消息（间隔/保留期经 `cleanup.sessionCleanupIntervalMs`、`cleanup.sessionRetentionDays` DB 键调整，≤0 停用）。**保留期即"撤销删除"窗口**——被清理的消息无法再撤销。存量大库建议手工补索引 `ALTER TABLE c_ai_message ADD KEY idx_deleted_create (deleted, create_time)`（新库已内置），否则清理首轮会全表扫描
+- **图片描述含 ASCII 方括号自动转全角**：描述写入 `[图片：…]` 标记时 `[]` 统一替换为全角 `［］`（标记内不允许出现半角 ]，否则下游正则截断错配）；对中文描述几乎无感知

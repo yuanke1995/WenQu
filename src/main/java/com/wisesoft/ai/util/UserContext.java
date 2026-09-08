@@ -6,7 +6,8 @@ import jakarta.servlet.http.HttpServletRequest;
  * 用户身份解析：平台网关完成 JWT 鉴权后透传用户标识（请求头 X-User-Id）。
  * <p>
  * - 无网关的本地/内部调试场景：请求未携带该头时统一归属 {@link #ANONYMOUS}（历史兼容池，
- *   anonymous 名下的会话对所有用户可见，保证存量数据升级后不丢失访问权）
+ *   anonymous 名下会话默认对所有用户可见（存量升级兼容），由 session.anonymous-shared 配置控制；
+ *   关闭后该池仅 anonymous 调用方可访问）
  * - 生产环境网关必须覆盖/剥离客户端自带的 X-User-Id，防止身份伪造
  * - 解析结果做长度截断 + 字符白名单，防脏数据进 DB 与日志
  *

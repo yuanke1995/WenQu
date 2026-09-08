@@ -1,7 +1,6 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.wisesoft.ai.config.AiAppProperties;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.AiKnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
@@ -43,7 +42,6 @@ public class HybridRetrievalService {
     private final VectorStore vectorStore;
     private final AiKnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
-    private final AiAppProperties properties;
     private final KeywordExtractor keywordExtractor;
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
@@ -105,7 +103,12 @@ public class HybridRetrievalService {
         Map<String, AiKnowledge> kidMap = loadKnowledgeBatch(vectorDocs);
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
 
-        // 4. 合并去重 + 加权（A1：双命中叠加，不再取 max）
+        // 4. 合并去重 + 加权（默认 sum：A1 双命中叠加；可选 rrf 倒数排名融合，见下）
+        String fusionMode = configService.get("retrieval.fusionMode");
+        if ("rrf".equalsIgnoreCase(fusionMode)) {
+            return mergeByRrf(vectorDocs, kwDocs, kidMap, blockedDocIds);
+        }
+
         Map<String, Hit> merged = new LinkedHashMap<>();
 
         // 向量命中：score = 向量权重 × 归一化向量分；非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
@@ -156,6 +159,77 @@ public class HybridRetrievalService {
         }
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
         return result;
+    }
+
+    /**
+     * RRF 倒数排名融合（实验模式，retrieval.fusionMode=rrf）：
+     * 双路各自按"排序名次"贡献 1/(K+rank+1)（K=60，双命中叠加），规避关键词路命中集内归一化
+     * （顶命恒≈1）与向量路绝对归一化之间的标度错配导致的排序漂移。标题/位置奖励是分值加分语义，
+     * 不参与名次。单路为空时退化为另一路的纯名次排序。是否优于 sum 需用检索评估页参数组对比验证。
+     */
+    private List<Hit> mergeByRrf(List<Document> vectorDocs, List<AiKnowledge> kwDocs,
+                                 Map<String, AiKnowledge> kidMap, Set<String> blockedDocIds) {
+        Map<String, Hit> base = new LinkedHashMap<>();
+        Map<String, Double> rrf = new HashMap<>();
+
+        // 向量路（升秩前先按分降序，防御存储返回乱序）
+        List<Document> vecRanked = vectorDocs.stream()
+                .sorted(Comparator.comparingDouble((Document d) -> parseScore(d.getScore())).reversed())
+                .toList();
+        int rank = 0;
+        for (Document doc : vecRanked) {
+            String kid = String.valueOf(doc.getId());
+            AiKnowledge k = kidMap.get(kid);
+            String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
+            if (docId != null && blockedDocIds.contains(docId)) {
+                log.debug("[RAG] RRF 跳过非生效文档命中: docId={} kid={}", docId, kid);
+                continue;
+            }
+            if (k != null && k.getStatus() != null && k.getStatus() == 1) {
+                log.debug("[RAG] RRF 跳过已停用知识块: kid={}", kid);
+                continue;
+            }
+            base.put(kid, buildHit(doc, k, kid, 0));
+            rrf.merge(kid, 1.0 / (RRF_K + rank + 1), Double::sum);
+            rank++;
+        }
+
+        // 关键词路（词频加权分降序取秩；与 sum 路同样依赖关键词检索自身的 status 过滤）
+        List<AiKnowledge> kwRanked = kwDocs.stream()
+                .sorted(Comparator.comparingDouble(AiKnowledge::getKwScore).reversed())
+                .toList();
+        rank = 0;
+        for (AiKnowledge k : kwRanked) {
+            String kid = k.getId();
+            Hit kwHit = buildHit(k, 0);
+            if (base.containsKey(kid)) {
+                Hit old = base.get(kid);
+                base.put(kid, mergeHits(old, kwHit));
+            } else {
+                base.put(kid, kwHit);
+            }
+            rrf.merge(kid, 1.0 / (RRF_K + rank + 1), Double::sum);
+            rank++;
+        }
+
+        List<Hit> result = new ArrayList<>(base.size());
+        base.forEach((kid, h) -> result.add(new Hit(h.knowledgeId(), h.docId(), h.title(), h.content(), h.images(),
+                rrf.getOrDefault(kid, 0.0), h.chunkIndex(), h.titlePath())));
+        result.sort((a, b) -> Double.compare(b.score(), a.score()));
+        return result;
+    }
+
+    /** RRF 常数（标准 K=60）：名次贡献 1/(K+rank+1) */
+    private static final int RRF_K = 60;
+
+    /** 双路命中字段合并（与 sum 路 A1 合并器同语义：优先保留向量路实体，空字段回落关键词路） */
+    private Hit mergeHits(Hit oldHit, Hit newHit) {
+        return new Hit(oldHit.knowledgeId(),
+                oldHit.docId() == null || oldHit.docId().isBlank() ? newHit.docId() : oldHit.docId(),
+                oldHit.title(), oldHit.content(), oldHit.images(),
+                oldHit.score(), // 分数由 RRF 名次分统一回填，此处不叠加
+                oldHit.chunkIndex() == null ? newHit.chunkIndex() : oldHit.chunkIndex(),
+                oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath());
     }
 
     /** 多路并行检索线程池（daemon，供深度思考多路检索用） */
@@ -240,7 +314,9 @@ public class HybridRetrievalService {
                     .query(query)
                     // topK 直接取配置（默认 15，下限 1）：评估扫参需要小于 15 的值，max(15,...) 钳制会让扫参等价
                     .topK(Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
-                    .similarityThreshold(Math.min(vecThreshold(), properties.getRetrieval().getSimilarityThreshold()))
+                    // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
+                    // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
+                    .similarityThreshold(vecThreshold())
                     .build();
             return vectorStore.similaritySearch(req);
         } catch (Exception e) {

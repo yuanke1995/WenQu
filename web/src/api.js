@@ -88,27 +88,62 @@ function upload(path, formData, onProgress) {
 
 /**
  * 流式聊天（SSE）
- * signal 用于停止生成（AbortController.abort()）
+ * signal 用于停止生成（外部 AbortController.abort()）
  * deepThink=true 时后端先流式输出思考过程（thinking / thinking_done 事件）
+ * idleTimeoutMs：读流空闲看门狗——服务端排队/挂起超过该时长未推任何数据即中断并报错（默认 120s），
+ * 避免 UI 永久转圈；收到任意数据自动重置计时。
  */
-export function sendQuestion(sessionId, question, images = [], { onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, deepThink = false, signal }) {
+export function sendQuestion(sessionId, question, images = [], opts = {}) {
+  const {
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved,
+    deepThink = false, signal, idleTimeoutMs = 120000
+  } = opts
+  if (typeof onError !== 'function' || typeof onDone !== 'function') return
+
+  const inner = new AbortController()
+  let idleTimedOut = false
+  let idleTimer = null
+  const armIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      idleTimedOut = true
+      inner.abort()
+    }, idleTimeoutMs)
+  }
+  const stopIdle = () => clearTimeout(idleTimer)
+  if (signal) {
+    if (signal.aborted) inner.abort()
+    else signal.addEventListener('abort', () => inner.abort())
+  }
+
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ sessionId, question, images, deepThink }),
-    signal
+    signal: inner.signal
   }).then(res => {
     if (!res.ok) {
+      stopIdle()
       if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
       res.json().then(d => onError(d?.msg || '请求失败: ' + res.status)).catch(() => onError('请求失败: ' + res.status))
       return
     }
+    armIdle()
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let ended = false
+    const end = err => {
+      if (ended) return
+      ended = true
+      stopIdle()
+      if (err) onError(err)
+      else onDone()
+    }
     const read = () => {
       reader.read().then(({ done, value }) => {
-        if (done) { onDone(); return }
+        if (done) { end(); return }
+        armIdle() // 收到数据（任意字节）即视为存活
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
@@ -122,26 +157,31 @@ export function sendQuestion(sessionId, question, images = [], { onToken, onImag
               else if (d.type === 'retrieved') { onRetrieved && onRetrieved(d.content) }
               else if (d.type === 'thinking') { onThinking && onThinking(d.content) }
               else if (d.type === 'thinking_done') { onThinkingDone && onThinkingDone(d.content) }
-              else if (d.type === 'image') { console.log('[SSE] 收到 image 事件:', d.content); onImage(d.content) }
-              else if (d.type === 'warn') { console.warn('[SSE] 收到 warn 事件:', d.content); onWarn && onWarn(d.content) }
-              else if (d.type === 'done') { onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
-              else if (d.type === 'error') { onError(d.content); return }
-              else { console.log('[SSE] 未知事件类型:', d.type, d) }
-            } catch (e) { console.warn('[SSE] JSON 解析失败:', line, e) }
-          } else if (line.startsWith('event:')) {
-            console.log('[SSE] 收到 named event:', line)
+              else if (d.type === 'image') { onImage(d.content) }
+              else if (d.type === 'warn') { onWarn && onWarn(d.content) }
+              else if (d.type === 'done') { end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
+              else if (d.type === 'error') { end(); onError(d.content); return }
+            } catch (e) {
+              console.warn('[SSE] JSON 解析失败，已忽略该行:', e.message)
+            }
           }
         }
         read()
       }).catch(e => {
-        if (e.name === 'AbortError') onDone()  // 用户主动停止，按正常结束处理
-        else onError('读取失败: ' + e.message)
+        // 空闲看门狗超时按"可重试错误"上报；用户主动停止（signal abort）按正常结束处理
+        if (idleTimedOut) end('长时间未收到响应，连接已中断，请重试')
+        else if (e.name === 'AbortError') end()
+        else end('读取失败: ' + e.message)
       })
     }
     read()
   }).catch(e => {
-    if (e.name === 'AbortError') onDone()
-    else onError('请求失败: ' + e.message)
+    if (e.name === 'AbortError') {
+      if (idleTimedOut) onError('长时间未收到响应，连接已中断，请重试')
+      else onDone() // 用户主动停止，按正常结束处理
+    } else {
+      onError('请求失败: ' + e.message)
+    }
   })
 }
 
