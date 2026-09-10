@@ -9,6 +9,10 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 图片访问签名（HMAC-SHA256）
@@ -51,6 +55,41 @@ public class ImageUrlSigner {
         String sigBase = q > 0 ? url.substring(0, q) : url;
         String sig = sign(sigBase, expire);
         return url + (q > 0 ? "&" : "?") + "expire=" + expire + "&sig=" + sig;
+    }
+
+    /**
+     * 批量签名图片 URL 列表（保留原始顺序；未开启鉴权时原样返回）。
+     * 用于 SSE 下发/接口响应等"展示层"路径——库里与缓存中始终存原始 URL，
+     * 每次响应时重新签名，避免签名过期。
+     */
+    public List<String> signUrls(List<String> urls) {
+        if (!isEnabled() || urls == null || urls.isEmpty()) {
+            return urls;
+        }
+        return urls.stream().map(this::signUrl).toList();
+    }
+
+    /**
+     * 为引用来源列表（sources）中的 images 字段批量签名（响应副本，不改动入参）。
+     * 引用弹窗直接 <img> 加载这些 URL，未签名会被鉴权拦截返回 401。
+     */
+    public List<Map<String, Object>> signSourceImages(List<Map<String, Object>> sources) {
+        if (!isEnabled() || sources == null || sources.isEmpty()) {
+            return sources;
+        }
+        List<Map<String, Object>> out = new ArrayList<>(sources.size());
+        for (Map<String, Object> src : sources) {
+            if (src == null) continue;
+            Object imgs = src.get("images");
+            if (imgs instanceof List<?> list && !list.isEmpty()) {
+                Map<String, Object> copy = new LinkedHashMap<>(src);
+                copy.put("images", list.stream().map(String::valueOf).map(this::signUrl).toList());
+                out.add(copy);
+            } else {
+                out.add(src);
+            }
+        }
+        return out;
     }
 
     /**

@@ -189,6 +189,14 @@ public class ChatController {
                         .map(imageUrlSigner::signUrl)
                         .toList());
             }
+            // 引用来源内的图片同样动态签名（引用弹窗直接加载；原始 URL 存库，避免签名过期 401）
+            Object srcs = msg.get("sources");
+            if (srcs instanceof List<?> srcList && !srcList.isEmpty()
+                    && srcList.get(0) instanceof Map) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> typed = (List<Map<String, Object>>) srcList;
+                msg.put("sources", imageUrlSigner.signSourceImages(typed));
+            }
             Object mid = msg.get("messageId");
             if (mid != null) {
                 Integer fb = ratings.get(String.valueOf(mid));
@@ -247,8 +255,10 @@ public class ChatController {
         m.put("titlePath", k.getTitlePath());
         m.put("content", k.getContent());
         m.put("chunkIndex", k.getChunkIndex());
-        m.put("images", (k.getImages() == null || k.getImages().isBlank())
-                ? List.of() : JSON.parseArray(k.getImages(), String.class));
+        // 知识块原文内嵌图片：原始 URL 存库，响应时动态签名（否则引用弹窗图片 401）
+        List<String> kImgs = (k.getImages() == null || k.getImages().isBlank())
+                ? List.of() : JSON.parseArray(k.getImages(), String.class);
+        m.put("images", imageUrlSigner.signUrls(kImgs));
         return ResultJson.ok(m);
     }
 

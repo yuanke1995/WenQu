@@ -164,9 +164,10 @@ public class RagService {
             List<String> related = cached.getRelated() == null ? List.of()
                     : JSON.parseArray(cached.getRelated(), String.class);
             // 图片 URL 动态签名（与正常路径一致，避免签名过期 401）
-            if (!images.isEmpty()) {
-                List<String> signed = images.stream().map(imageUrlSigner::signUrl).toList();
-                sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
+            List<String> signedImages = images.isEmpty() ? List.of()
+                    : images.stream().map(imageUrlSigner::signUrl).toList();
+            if (!signedImages.isEmpty()) {
+                sendSseEvent(emitter, "image", JSON.toJSONString(signedImages), sessionId);
             }
             sendSseEvent(emitter, "token", cached.getAnswer(), sessionId);
             // 会话历史 + 问答日志照常落库（用新建消息 ID 作为本次 messageId 回传——
@@ -179,11 +180,11 @@ public class RagService {
             qaLogService.logAsync(sessionId, question, cached.getAnswer(), hitDocIds,
                     !sources.isEmpty(), System.currentTimeMillis() - startTime, question);
             Map<String, Object> donePayload = new LinkedHashMap<>();
-            donePayload.put("sources", sources);
+            donePayload.put("sources", imageUrlSigner.signSourceImages(sources));
             donePayload.put("related", related);
             donePayload.put("messageId", assistantMsgId != null ? assistantMsgId : cached.getMessageId());
             donePayload.put("finalContent", cached.getAnswer());
-            donePayload.put("finalImages", images);
+            donePayload.put("finalImages", signedImages);
             // 缓存命中提示同样收进调试开关（默认不展示；开启后才提示"已复用相似回答"）
             donePayload.put("degradations", configService.getBoolean("chat.showDebugDegradations")
                     ? List.of(Map.of("code", "cacheHit",
@@ -946,11 +947,17 @@ public class RagService {
 
                     // done 事件：引用来源/相关推荐/消息ID + 校验修正后的内容/图片 + 思考全文 + 本轮全部降级事件（fail-loud）
                     Map<String, Object> donePayload = new LinkedHashMap<>();
-                    donePayload.put("sources", sources);
+                    // 引用来源内的 images 同样动态签名（引用弹窗直接加载；原始 URL 存库，签名仅作用于下发副本）
+                    donePayload.put("sources", imageUrlSigner.signSourceImages(sources));
                     donePayload.put("related", related);
                     donePayload.put("messageId", messageId);
                     donePayload.put("finalContent", answer);
-                    donePayload.put("finalImages", finalImgs);
+                    // 必须与前面的 image 事件一致地动态签名：前端 onDone 会用 finalImages 覆盖流式期间已签名的
+                    // images，若此处下发原始 URL，回答完成瞬间图片立即 401（"图片链接无效或已过期"），
+                    // 刷新页面经 getHistory 重新签名才恢复。注意 finalImgs 本身已用于落库/缓存（存原始 URL），
+                    // 故仅对下发的副本签名，不改动原列表。
+                    donePayload.put("finalImages",
+                            finalImgs.stream().map(imageUrlSigner::signUrl).toList());
                     donePayload.put("thinking", st.thinkingHolder[0]);
                     donePayload.put("degradations", st.degradations);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
