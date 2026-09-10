@@ -172,6 +172,17 @@
               <template #label><a-tooltip :title="tips.userImageConcurrency" placement="top">用户图片并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.vision.userImageConcurrency" :min="1" :max="16" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">图片描述缓存（改版本号/有效期后需重解析生效）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.descCacheVersion" placement="top">描述缓存版本 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input v-model:value="form.vision.descCacheVersion" style="width:200px" placeholder="如 1" />
+              <span style="margin-left:12px;color:#999;font-size:12px">版本号 +1 → 忽略旧描述缓存，重解析时全量重新描述</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.descCacheTtlDays" placement="top">描述缓存有效期 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.descCacheTtlDays" :min="0" :step="30" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">天，0=不过期</span>
+            </a-form-item>
           </a-form>
         </a-collapse-panel>
 
@@ -338,6 +349,14 @@
             </a-form-item>
             <div class="cfg-sub">融合权重 · 阈值 · 改写回退</div>
             <a-form-item>
+              <template #label><a-tooltip :title="tips.fusionMode" placement="top">双路融合方式 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-select v-model:value="form.retrieval.fusionMode" style="width:300px" :options="[
+                { value: 'sum', label: 'sum（加权和，含标题/位置奖励，默认）' },
+                { value: 'rrf', label: 'rrf（倒数排名融合，按名次，实验）' }
+              ]" />
+              <span style="margin-left:12px;color:#999;font-size:12px">rrf 下权重/奖励项不参与</span>
+            </a-form-item>
+            <a-form-item>
               <template #label><a-tooltip :title="tips.vectorWeight" placement="top">向量权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.vectorWeight" :min="0" :max="1" :step="0.05" style="width:200px" />
             </a-form-item>
@@ -353,6 +372,11 @@
               <template #label><a-tooltip :title="tips.positionBonus" placement="top">位置奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.positionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">首块 / 前段奖励</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.vectorTopK" placement="top">向量召回上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.vectorTopK" :min="1" :max="100" :step="5" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">向量路候选块数，调大更易召回生僻表述</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.vecThreshold" placement="top">向量阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -396,6 +420,11 @@
               <span style="margin-left:12px;color:#999;font-size:12px">0=仅父章节不带引用块</span>
             </a-form-item>
             <a-form-item v-if="form.retrieval.refExpandEnabled">
+              <template #label><a-tooltip :title="tips.refExpandMaxTokens" placement="top">扩散块 token 上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.refExpandMaxTokens" :min="0" :step="100" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">扩散块合计 token 上限，防挤占正文预算</span>
+            </a-form-item>
+            <a-form-item v-if="form.retrieval.refExpandEnabled">
               <template #label><a-tooltip :title="tips.refExpandIncludeIncoming" placement="top">入边扩散 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.retrieval.refExpandIncludeIncoming" />
               <span style="margin-left:12px;color:#999;font-size:12px">同时带出"引用本块的块"（默认关，易带低相关）</span>
@@ -404,6 +433,23 @@
               <template #label><a-tooltip :title="tips.refExpandParentEnabled" placement="top">父章节带出 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.retrieval.refExpandParentEnabled" />
               <span style="margin-left:12px;color:#999;font-size:12px">命中子章节时带父章节摘要（定义/总述）</span>
+            </a-form-item>
+            <a-form-item v-if="form.retrieval.refExpandEnabled && form.retrieval.refExpandParentEnabled">
+              <template #label><a-tooltip :title="tips.refExpandParentMode" placement="top">父章节内容模式 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-select v-model:value="form.retrieval.refExpandParentMode" style="width:280px" :options="[
+                { value: 'summary', label: 'summary（标题+摘要，占预算适中，推荐）' },
+                { value: 'title_only', label: 'title_only（仅标题路径，最省）' },
+                { value: 'full', label: 'full（整块带出，最全但占预算多）' }
+              ]" />
+            </a-form-item>
+            <a-form-item v-if="form.retrieval.refExpandEnabled && form.retrieval.refExpandParentEnabled">
+              <template #label><a-tooltip :title="tips.refExpandParentMaxLevels" placement="top">父章节向上级数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.refExpandParentMaxLevels" :min="1" :max="5" style="width:200px" />
+            </a-form-item>
+            <a-form-item v-if="form.retrieval.refExpandEnabled">
+              <template #label><a-tooltip :title="tips.refExpandFuzzyName" placement="top">章节名弱匹配 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.retrieval.refExpandFuzzyName" />
+              <span style="margin-left:12px;color:#999;font-size:12px">章节名按 contains 弱匹配（默认开，应对标题微差）</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.refDetectEnabled" placement="top">引用识别 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -768,7 +814,11 @@ const tips = {
   chunkStructural: '按文档结构切分：标题层级开新块、达到边界阈值在段落边界断块（避免从句子中间硬切）、章节标题路径注入块上下文。docx 生效；存量文档需重解析后才会按新规则重建知识块。',
   chunkStructuralRatio: '结构切分边界阈值（maxSize×比例）：块达到该长度时优先在段落边界断块。调低块更小更贴近边界但块数更多；调高更接近原 800 字硬切。',
   userImageConcurrency: '用户在对话中上传图片的识别并发数（区别于文档解析的图片描述并发）。',
+  descCacheVersion: '图片描述缓存版本号：用于强制让旧描述失效。把版本号 +1 后重新解析文档，会忽略历史缓存、对全部图片重新调用视觉模型描述（换视觉模型或提示词后应 +1）。',
+  descCacheTtlDays: '图片描述缓存的有效期（天，0=永不过期）。同一张图片（按内容哈希）在该期限内复用已生成的描述，避免重复识别；到期后重新描述。',
   vecThreshold: '向量相似度归一化基准：低于该分的向量命中归一化为 0 分，也是向量检索的相似度下限。调高更严格（召回更少但更相关）。',
+  fusionMode: '双路（向量+关键词）融合方式：sum=加权和（默认，向量权重×相似度 + 关键词权重×命中率 + 标题/位置奖励）；rrf=倒数排名融合（只看两路名次、不看分数，跨模型更稳，但权重与奖励项不参与）。可配合检索评估页对比切换。',
+  vectorTopK: '向量检索最多取回的候选块数：用户说法与手册用词不一致时，调大能让语义相近但用词不同的块也进入候选（再经融合/重排决定最终入选）。调大更全但更慢。',
   keywordLimit: '关键词检索最多返回的知识块数（SQL LIMIT）。调高召回更全但更慢、融合分计算更重。',
   retrievalTimeout: '混合检索超时（ms）：关键词子检索与总检索的超时上限，超时降级返回已收集结果。',
   rewriteTimeoutMs: '查询改写超时（ms）：LLM 改写问题（多轮追问补全上下文）的等待上限，超时则用原问题检索并提示。本地模型响应慢时调大可减少改写降级，默认 5000。',
@@ -778,6 +828,10 @@ const tips = {
   refExpandMaxHits: '关联扩散块的数量上限（0=只做父章节带出、不带引用块）。扩散块是可舍弃的增强，受数量与 token 双上限约束。',
   refExpandIncludeIncoming: '是否同时带出"引用了本块的块"（入边扩散）。默认关：入边常带出低相关块；出边（本块引用的）与父章节已覆盖主要场景。',
   refExpandParentEnabled: '父章节带出：命中子章节块时，自动带上父章节的标题+摘要（前200字，含定义/总述），解决子块上下文不完整。',
+  refExpandParentMode: '父章节带出的内容模式：summary=标题路径+摘要截断（默认，信息量与预算平衡）；title_only=只带标题路径（最省 token）；full=整块带出（最全但可能挤占正文预算）。',
+  refExpandParentMaxLevels: '父章节向上递归带出的最大级数（默认 2，即带到祖父级）。级数越大上下文越完整，但块数与 token 消耗随之增加。',
+  refExpandMaxTokens: '关联扩散块的 token 汇总上限（默认 800）。扩散块超出后会按相关度截断，防止关联块挤占正文知识块的预算。',
+  refExpandFuzzyName: '章节名弱匹配：父章节/引用目标的名字用 contains 弱匹配（而非严格相等），应对标题标点、编号或措辞的细微差异。默认开；若出现误关联可关闭。',
   refDetectEnabled: '解析时识别知识块中的交叉引用（详见/参见/见 X 节/「章节名」）并建立引用关系。改后需重新解析文档才生效。',
   refDetectMention: '同时识别正文中无动词的章节提及（如"如 4.1.2 所述""在《数据字典》中""报表设计模块"）。提及类只做精确匹配、单块最多 8 条引用，避免把高频话题词误建成引用边。',
   positionBonus: '知识块位置奖励：位于文档首块/前段的内容额外加分。适合"文档开头是摘要"的结构；对顺序无关的文档可调低。',
@@ -886,17 +940,20 @@ const onChatPresetChange = val => {
 }
 
 const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false, citationCheckEnabled: true },
-                    vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2 },
+                    vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2, descCacheVersion: '1', descCacheTtlDays: 180 },
                     embedding: { model: '', baseUrl: '', apiKey: '', embeddingsPath: '' },
                     chunk: { maxChunks: 3000, maxImages: 100, overlap: 100, structural: true, structuralRatio: 0.8 },
                     // 解析类参数后端 key 前缀是 parse.*（不是 chunk.*），必须独立分组提交，否则被白名单静默丢弃
                     parse: { concurrency: 2, ocrMinText: 20, embedRetryCount: 1 },
                     upload: { maxFileSizeMB: 200 },
                     retrieval: { vectorWeight: 0.6, keywordWeight: 0.4, titleBonus: 0.1,
+                                 vectorTopK: 15,
                                  vecThreshold: 0.3, keywordLimit: 20, keywordTimeoutMs: 800, searchTimeoutMs: 8000, rewriteTimeoutMs: 5000,
                                  rewriteFallbackMinHits: 2, rewriteFallbackWeakScore: 0.2,
+                                 fusionMode: 'sum',
                                  refDetectEnabled: true, refDetectMention: true, refExpandEnabled: true, refExpandMaxHits: 3, refExpandIncludeIncoming: false,
-                                 refExpandParentEnabled: true,
+                                 refExpandParentEnabled: true, refExpandParentMode: 'summary', refExpandParentMaxLevels: 2,
+                                 refExpandFuzzyName: true, refExpandMaxTokens: 800,
                                  positionBonus: 0.03, sectionBonus: 0.01, keywordMaxTerms: 6, keywordMaxTotal: 12,
                                  rerank: { enabled: false, baseUrl: 'http://localhost:7997',
                                            model: 'BAAI/bge-reranker-v2-m3', timeoutMillis: 5000,
@@ -1052,6 +1109,8 @@ const fetchAndFill = async () => {
       form.value.vision.prompt = d.vision?.prompt?.value || ''
       form.value.vision.concurrency = Number(d.vision?.concurrency?.value ?? 4)
       form.value.vision.userImageConcurrency = Number(d.vision?.userImageConcurrency?.value ?? 2)
+      form.value.vision.descCacheVersion = d.vision?.descCacheVersion?.value || '1'
+      form.value.vision.descCacheTtlDays = Number(d.vision?.descCacheTtlDays?.value ?? 180)
       const ck = d.chunk || {}
       form.value.chunk.maxChunks = Number(ck.maxChunks?.value ?? 3000)
       form.value.chunk.maxImages = Number(ck.maxImages?.value ?? 100)
@@ -1069,6 +1128,7 @@ const fetchAndFill = async () => {
       form.value.retrieval.keywordWeight = Number(d.retrieval?.keywordWeight?.value ?? 0.4)
       form.value.retrieval.titleBonus = Number(d.retrieval?.titleBonus?.value ?? 0.1)
       form.value.retrieval.vecThreshold = Number(d.retrieval?.vecThreshold?.value ?? 0.3)
+      form.value.retrieval.vectorTopK = Number(d.retrieval?.vectorTopK?.value ?? 15)
       form.value.retrieval.keywordLimit = Number(d.retrieval?.keywordLimit?.value ?? 20)
       form.value.retrieval.keywordTimeoutMs = Number(d.retrieval?.keywordTimeoutMs?.value ?? 800)
       form.value.retrieval.searchTimeoutMs = Number(d.retrieval?.searchTimeoutMs?.value ?? 8000)
@@ -1081,6 +1141,11 @@ const fetchAndFill = async () => {
       form.value.retrieval.refExpandMaxHits = Number(d.retrieval?.refExpandMaxHits?.value ?? 3)
       form.value.retrieval.refExpandIncludeIncoming = d.retrieval?.refExpandIncludeIncoming?.value === 'true'
       form.value.retrieval.refExpandParentEnabled = d.retrieval?.refExpandParentEnabled?.value !== 'false'
+      form.value.retrieval.fusionMode = d.retrieval?.fusionMode?.value || 'sum'
+      form.value.retrieval.refExpandMaxTokens = Number(d.retrieval?.refExpandMaxTokens?.value ?? 800)
+      form.value.retrieval.refExpandParentMode = d.retrieval?.refExpandParentMode?.value || 'summary'
+      form.value.retrieval.refExpandParentMaxLevels = Number(d.retrieval?.refExpandParentMaxLevels?.value ?? 2)
+      form.value.retrieval.refExpandFuzzyName = d.retrieval?.refExpandFuzzyName?.value !== 'false'
       form.value.retrieval.positionBonus = Number(d.retrieval?.positionBonus?.value ?? 0.03)
       form.value.retrieval.sectionBonus = Number(d.retrieval?.sectionBonus?.value ?? 0.01)
       form.value.retrieval.keywordMaxTerms = Number(d.retrieval?.keywordMaxTerms?.value ?? 6)
@@ -1200,7 +1265,9 @@ const buildPayload = () => ({
                 apiKey: form.value.vision.apiKey?.trim().startsWith('****') ? undefined : form.value.vision.apiKey?.trim(),
                 prompt: form.value.vision.prompt?.trim(),
                 concurrency: String(form.value.vision.concurrency),
-                userImageConcurrency: String(form.value.vision.userImageConcurrency) },
+                userImageConcurrency: String(form.value.vision.userImageConcurrency),
+                descCacheVersion: String(form.value.vision.descCacheVersion ?? '').trim(),
+                descCacheTtlDays: String(form.value.vision.descCacheTtlDays) },
       // 向量模型热切换：保存时后端先探测新配置，通过后自动触发全量重嵌入
       embedding: { model: form.value.embedding.model?.trim(),
                    baseUrl: form.value.embedding.baseUrl?.trim(),
@@ -1216,9 +1283,11 @@ const buildPayload = () => ({
                embedRetryCount: String(form.value.parse.embedRetryCount) },
       upload: { maxFileSize: String(form.value.upload.maxFileSizeMB * 1024 * 1024) },
       retrieval: { vectorWeight: String(form.value.retrieval.vectorWeight),
+                   fusionMode: String(form.value.retrieval.fusionMode),
                    keywordWeight: String(form.value.retrieval.keywordWeight),
                    titleBonus: String(form.value.retrieval.titleBonus),
                    vecThreshold: String(form.value.retrieval.vecThreshold),
+                   vectorTopK: String(form.value.retrieval.vectorTopK),
                    keywordLimit: String(form.value.retrieval.keywordLimit),
                    keywordTimeoutMs: String(form.value.retrieval.keywordTimeoutMs),
                    searchTimeoutMs: String(form.value.retrieval.searchTimeoutMs),
@@ -1231,6 +1300,10 @@ const buildPayload = () => ({
                    refExpandMaxHits: String(form.value.retrieval.refExpandMaxHits),
                    refExpandIncludeIncoming: String(form.value.retrieval.refExpandIncludeIncoming),
                    refExpandParentEnabled: String(form.value.retrieval.refExpandParentEnabled),
+                   refExpandParentMode: String(form.value.retrieval.refExpandParentMode),
+                   refExpandParentMaxLevels: String(form.value.retrieval.refExpandParentMaxLevels),
+                   refExpandFuzzyName: String(form.value.retrieval.refExpandFuzzyName),
+                   refExpandMaxTokens: String(form.value.retrieval.refExpandMaxTokens),
                    positionBonus: String(form.value.retrieval.positionBonus),
                    sectionBonus: String(form.value.retrieval.sectionBonus),
                    keywordMaxTerms: String(form.value.retrieval.keywordMaxTerms),
