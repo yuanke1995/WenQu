@@ -149,7 +149,37 @@ public class ConfigService {
             Map.entry("semanticCache.enabled", "语义缓存总开关（相似问题直接复用历史回答）"),
             Map.entry("semanticCache.threshold", "语义缓存相似度阈值(0.8~1，默认0.96)"),
             Map.entry("semanticCache.maxEntries", "语义缓存最大条数(超出淘汰最早，默认500)"),
-            Map.entry("eval.judgeEnabled", "自动体检：LLM 评判检索充分性（对每个 case 判 top 命中是否足以回答；增加体检耗时与一次调用/case）"));
+            Map.entry("eval.judgeEnabled", "自动体检：LLM 评判检索充分性（对每个 case 判 top 命中是否足以回答；增加体检耗时与一次调用/case）"),
+            // ===== 以下为「代码早已读取、此前未开放到设置页」的参数（补白名单，无需改读取点）=====
+            Map.entry("retrieval.keywordTimeoutMs", "检索：关键词降级(MySQL LIKE)检索超时(ms,默认800；超时则本次跳过关键词路)"),
+            Map.entry("retrieval.sectionBonus", "检索：文档前段(前2块)位置奖励(0~1,默认0.01)"),
+            Map.entry("retrieval.keywordMaxTerms", "检索：关键词主词元数量上限(默认6，直接决定 LIKE/Meili 查询规模)"),
+            Map.entry("retrieval.keywordMaxTotal", "检索：关键词主词元+子词元总数上限(默认12)"),
+            Map.entry("keyword.failCooldownMs", "关键词引擎：调用失败后冷却时间(ms,默认60000)，冷却期内不再探测/调用、关键词路走 MySQL 兜底"),
+            Map.entry("keyword.reconcileOnStartup", "关键词索引：启动时对账并按(id,hash)修复漂移(多副本部署建议关，由运维单点执行)"),
+            Map.entry("keyword.reconcileIntervalMs", "关键词索引：周期对账间隔(ms，≤0=暂停，默认3600000)"),
+            Map.entry("parse.recoverStuckOnStartup", "文档解析：启动时复位崩溃残留的「解析中」文档(多副本部署建议关)"),
+            Map.entry("images.chatCleanupIntervalMs", "聊天图片：清理任务执行间隔(ms,默认86400000=每天)"),
+            Map.entry("images.chatRetentionMillis", "聊天图片：保留时长(ms,默认604800000=7天；超期清理)"),
+            Map.entry("eval.autoIntervalMs", "自动体检：周期执行间隔(ms,默认86400000=每天)"),
+            Map.entry("eval.autoThresholdPct", "自动体检：指标相对跌幅超过该百分比即判为退化(默认10)"),
+            Map.entry("eval.judgeModel", "自动体检：LLM 评判使用的模型(留空回落 chat.model)"),
+            Map.entry("cleanup.sessionCleanupIntervalMs", "会话清理：任务执行间隔(ms,默认86400000=每天)"),
+            Map.entry("cleanup.sessionRetentionDays", "会话清理：会话保留天数(默认30；超期删除)"),
+            // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AiAppProperties =====
+            Map.entry("chunk.maxSize", "文档解析：单块最大字符数(分块粒度，影响检索精度与 embedding 成本；改后需重解析生效)"),
+            Map.entry("images.maxWidth", "图片：压缩后最长边像素(0=不压缩；影响视觉识别清晰度与成本)"),
+            Map.entry("images.quality", "图片：JPEG 压缩质量(0~1)"),
+            Map.entry("images.authEnabled", "图片访问鉴权：HMAC 签名 URL 开关(生产建议开，关闭则图片 URL 可直接访问)"),
+            Map.entry("images.authExpireSeconds", "图片访问鉴权：签名 URL 有效期(秒)"),
+            Map.entry("vision.timeoutMillis", "视觉模型：单张图片描述读取超时(ms；客户端在启动时构建，改动需重启生效)"),
+            Map.entry("vision.retryCount", "视觉模型：单图描述失败重试次数(降低降级率)"),
+            Map.entry("vision.think", "视觉模型：是否开启思考模式(qwen3 系默认思考；关闭可提速且输出更稳定)"),
+            Map.entry("vision.keepAliveMinutes", "视觉模型：Ollama 模型常驻时长(分钟，0=不发送；云端服务需设 0)"),
+            Map.entry("vision.numCtx", "视觉模型：Ollama 上下文窗口 num_ctx(0=不设置；默认 4096 会截断大图)"),
+            Map.entry("session.maxHistory", "会话：保留最近对话轮数(Redis 降级时的历史条数上限)"),
+            Map.entry("session.expireMinutes", "会话：缓存过期时间(分钟)"),
+            Map.entry("session.anonymousShared", "会话：匿名历史池是否对具名用户共享(存量升级兼容；false 可收紧越权面)"));
 
     private final AiConfigMapper configMapper;
     private final AiAppProperties properties;
@@ -222,6 +252,7 @@ public class ConfigService {
             Map<String, String> newCache = new HashMap<>(cache);
             newCache.putAll(encrypted);
             cache = newCache;
+            syncProperties();
             log.info("[Config] 存量明文密钥已迁移为 RSA 加密存储: {}", encrypted.keySet());
         } catch (Exception e) {
             log.warn("[Config] 明文密钥加密迁移失败（不影响启动，读取兼容明文）: {}", e.getMessage());
@@ -237,6 +268,7 @@ public class ConfigService {
                 map.put(c.getConfigKey(), c.getConfigValue());
             }
             cache = map;
+            syncProperties();
         } catch (Exception e) {
             log.warn("[Config] 配置重载失败: {}", e.getMessage());
         }
@@ -437,7 +469,81 @@ public class ConfigService {
         d.put("semanticCache.threshold", "0.96");
         d.put("semanticCache.maxEntries", "500");
         d.put("eval.judgeEnabled", "false");   // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
+        d.put("eval.judgeModel", "");              // 评判用独立模型（留空回落 chat.model）
+        d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
+        d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
+        // 定时维护（schedule 包读取；≤0=暂停对应任务）
+        d.put("images.chatCleanupIntervalMs", "86400000");   // 聊天图片清理间隔(ms)
+        d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
+        d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
+        d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
+        // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AiAppProperties，读取点无需改动）
+        d.put("chunk.maxSize", "800");                 // 单块最大字符数
+        d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
+        d.put("images.quality", "0.9");                // JPEG 压缩质量
+        d.put("images.authEnabled", "false");          // 图片签名鉴权开关
+        d.put("images.authExpireSeconds", "3600");     // 签名 URL 有效期(秒)
+        d.put("vision.timeoutMillis", "30000");        // 视觉模型读取超时(ms)
+        d.put("vision.retryCount", "1");               // 单图失败重试次数
+        d.put("vision.think", "false");                // 视觉模型思考模式开关
+        d.put("vision.keepAliveMinutes", "30");        // Ollama 常驻时长(分钟)
+        d.put("vision.numCtx", "16384");               // Ollama num_ctx
+        d.put("session.maxHistory", "10");             // 会话保留轮数
+        d.put("session.expireMinutes", "30");          // 会话过期(分钟)
+        d.put("session.anonymousShared", "true");      // 匿名历史池共享
         return d;
+    }
+
+    /**
+     * 把「原由 ai-app.*（yml/env）在启动时绑定」的配置项，从缓存回写到 AiAppProperties。
+     * <p>目的：这些项（chunk.maxSize、images.*、vision.*、session.*）的消费方直接调用
+     * properties.getXxx()，若只加白名单不回写，设置页保存了也不会生效。
+     * 在每次缓存（重）载入后调用一次，即可让消费方无需改动而支持 DB/设置页热生效。
+     * <p>bean 是缓存派生视图（非第二份真源）：值非法/缺失时保留 bean 当前值（安全回退）。
+     * 注：个别在构造期一次性读取的值（如 VisionService 的 RestClient 读超时）需重启才生效。
+     */
+    private void syncProperties() {
+        try {
+            AiAppProperties.Chunk chunk = properties.getChunk();
+            chunk.setMaxSize(pInt("chunk.maxSize", chunk.getMaxSize()));
+            AiAppProperties.Images images = properties.getImages();
+            images.setMaxWidth(pInt("images.maxWidth", images.getMaxWidth()));
+            images.setQuality((float) pDouble("images.quality", images.getQuality()));
+            images.setAuthEnabled(pBool("images.authEnabled", images.isAuthEnabled()));
+            images.setAuthExpireSeconds(pLong("images.authExpireSeconds", images.getAuthExpireSeconds()));
+            AiAppProperties.Vision vision = properties.getVision();
+            vision.setTimeoutMillis(pInt("vision.timeoutMillis", vision.getTimeoutMillis()));
+            vision.setRetryCount(pInt("vision.retryCount", vision.getRetryCount()));
+            vision.setThink(pBool("vision.think", vision.isThink()));
+            vision.setKeepAliveMinutes(pInt("vision.keepAliveMinutes", vision.getKeepAliveMinutes()));
+            vision.setNumCtx(pInt("vision.numCtx", vision.getNumCtx()));
+            AiAppProperties.Session session = properties.getSession();
+            session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
+            session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
+            session.setAnonymousShared(pBool("session.anonymousShared", session.isAnonymousShared()));
+        } catch (Exception e) {
+            log.warn("[Config] 回写 AiAppProperties 失败（沿用当前值）: {}", e.getMessage());
+        }
+    }
+
+    private int pInt(String k, int def) {
+        try { String v = get(k); return v == null || v.isBlank() ? def : Integer.parseInt(v.trim()); }
+        catch (Exception e) { return def; }
+    }
+
+    private long pLong(String k, long def) {
+        try { String v = get(k); return v == null || v.isBlank() ? def : Long.parseLong(v.trim()); }
+        catch (Exception e) { return def; }
+    }
+
+    private double pDouble(String k, double def) {
+        try { String v = get(k); return v == null || v.isBlank() ? def : Double.parseDouble(v.trim()); }
+        catch (Exception e) { return def; }
+    }
+
+    private boolean pBool(String k, boolean def) {
+        try { String v = get(k); return v == null || v.isBlank() ? def : Boolean.parseBoolean(v.trim()); }
+        catch (Exception e) { return def; }
     }
 
     private String env(String key, String def) {
@@ -831,6 +937,7 @@ public class ConfigService {
         Map<String, String> newCache = new HashMap<>(cache);
         newCache.putAll(updates);
         cache = newCache;
+        syncProperties();
         log.info("模型配置已更新: {}", updates.keySet());
         // 广播其他实例刷新（多副本部署配置同步）
         publishConfigChanged();
@@ -909,6 +1016,7 @@ public class ConfigService {
             reset.put(k, v);
         }
         cache = next;
+        syncProperties();
         publishConfigChanged();
         log.info("[Config] 分组恢复默认完成: {}（{} 项）", targets, reset.size());
         return reset;
@@ -936,6 +1044,7 @@ public class ConfigService {
             Map<String, String> newCache = new HashMap<>(cache);
             newCache.put(key, value);
             cache = newCache;
+            syncProperties();
             publishConfigChanged();
             log.info("[Config] 系统内部记录已更新: {}={}", key, value);
         } catch (Exception e) {

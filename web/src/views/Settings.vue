@@ -172,6 +172,32 @@
               <template #label><a-tooltip :title="tips.userImageConcurrency" placement="top">用户图片并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.vision.userImageConcurrency" :min="1" :max="16" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">调用参数（超时 / 重试 / Ollama 推理）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionTimeout" placement="top">描述超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.timeoutMillis" :min="1000" :step="5000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">单张图片描述的读取超时（客户端启动时构建，改动需重启生效）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionRetryCount" placement="top">失败重试次数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.retryCount" :min="0" :max="5" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">本地模型偶发超时/500，重试可显著降低降级率</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionThink" placement="top">开启思考模式 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.vision.think" />
+              <span style="margin-left:12px;color:#999;font-size:12px">qwen3 系视觉模型默认思考；关闭可提速且输出更稳定</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionKeepAlive" placement="top">模型常驻(分钟) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.keepAliveMinutes" :min="0" :step="5" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">仅 Ollama；0=不发送该参数（云端服务须设 0）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionNumCtx" placement="top">num_ctx <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.numCtx" :min="0" :step="1024" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">仅 Ollama；0=不设置（默认 4096 会截断大图视觉 token）</span>
+            </a-form-item>
             <div class="cfg-sub">图片描述缓存（改版本号/有效期后需重解析生效）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.descCacheVersion" placement="top">描述缓存版本 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -205,7 +231,32 @@
               <a-input-number v-model:value="form.chunk.maxImages" :min="0" :step="20" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">0=不限制</span>
             </a-form-item>
+            <div class="cfg-sub">图片处理与访问鉴权（需重解析/新上传生效）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.imagesMaxWidth" placement="top">压缩最长边(px) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.images.maxWidth" :min="0" :step="160" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">0=不压缩；调小省成本但可能看不清界面细节</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.imagesQuality" placement="top">JPEG 质量(0~1) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.images.quality" :min="0.1" :max="1" :step="0.05" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.imagesAuthEnabled" placement="top">图片访问鉴权 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.images.authEnabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">开启后图片 URL 需 HMAC 签名，防止被直接盗链（生产建议开）</span>
+            </a-form-item>
+            <a-form-item v-if="form.images.authEnabled">
+              <template #label><a-tooltip :title="tips.imagesAuthExpire" placement="top">签名有效期(秒) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.images.authExpireSeconds" :min="60" :step="600" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">超期后旧链接失效，页面刷新会自动重新签名</span>
+            </a-form-item>
             <div class="cfg-sub">分块与解析行为（需重新解析/新上传文档生效）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.chunkMaxSize" placement="top">分块最大字符数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.chunk.maxSize" :min="200" :step="100" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">单块上限，决定检索粒度；改后需重解析生效</span>
+            </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.overlap" placement="top">分块重叠字符 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chunk.overlap" :min="0" :step="20" style="width:200px" />
@@ -347,6 +398,11 @@
               <a-input-number v-model:value="form.keyword.timeoutMillis" :min="200" :step="100" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">超时自动降级 mysql</span>
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.keywordFailCooldown" placement="top">失败冷却(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.keyword.failCooldownMs" :min="0" :step="5000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">引擎失败后冷却期内不再探测，关键词路走 MySQL 兜底</span>
+            </a-form-item>
             <div class="cfg-sub">融合权重 · 阈值 · 改写回退</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.fusionMode" placement="top">双路融合方式 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -371,7 +427,12 @@
             <a-form-item>
               <template #label><a-tooltip :title="tips.positionBonus" placement="top">位置奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.positionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
-              <span style="margin-left:12px;color:#999;font-size:12px">首块 / 前段奖励</span>
+              <span style="margin-left:12px;color:#999;font-size:12px">首块奖励</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sectionBonus" placement="top">前段奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.sectionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">文档前 2 块的额外加分</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.vectorTopK" placement="top">向量召回上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -388,9 +449,24 @@
               <a-input-number v-model:value="form.retrieval.keywordLimit" :min="1" :step="5" style="width:200px" />
             </a-form-item>
             <a-form-item>
+              <template #label><a-tooltip :title="tips.keywordMaxTerms" placement="top">关键词主词元上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.keywordMaxTerms" :min="1" :max="20" :step="1" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">直接决定关键词查询规模，长问句可适当调大</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.keywordMaxTotal" placement="top">关键词词元总数上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.keywordMaxTotal" :min="1" :max="40" :step="1" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">主词元 + 子词元总数上限</span>
+            </a-form-item>
+            <a-form-item>
               <template #label><a-tooltip :title="tips.retrievalTimeout" placement="top">检索超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.searchTimeoutMs" :min="500" :step="500" style="width:200px" />
-              <span style="margin-left:12px;color:#999;font-size:12px">关键词/总检索超时</span>
+              <span style="margin-left:12px;color:#999;font-size:12px">混合检索总超时</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.keywordTimeoutMs" placement="top">关键词检索超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.keywordTimeoutMs" :min="100" :step="100" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">MySQL 关键词兜底路超时，超时则本次跳过关键词召回</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rewriteTimeoutMs" placement="top">改写超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -692,6 +768,80 @@
                    message="Redis 固定窗口计数，按用户（网关未透传 X-User-Id 时按 IP）限频，超限返回 429 并提示等待秒数。限频设为 0 表示该接口不限流；Redis 不可用时自动放行，不影响正常使用。保存后立即生效。" />
         </a-collapse-panel>
 
+        <a-collapse-panel key="maintenance" :id="'cfg-anchor-maintenance'" header="定时维护（索引对账 / 自动体检 / 清理）">
+          <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">启动自愈与索引对账</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.kwReconcileOnStartup" placement="top">启动索引对账 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.keyword.reconcileOnStartup" />
+              <span style="margin-left:12px;color:#999;font-size:12px">启动时按 (id,hash) 比对并修复关键词索引漂移；多副本部署建议关，由运维单点执行</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.kwReconcileIntervalMs" placement="top">周期对账间隔(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.keyword.reconcileIntervalMs" :min="0" :step="600000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">≤0 = 暂停周期对账，默认 3600000（1 小时）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.parseRecoverStuck" placement="top">复位卡死解析 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.parse.recoverStuckOnStartup" />
+              <span style="margin-left:12px;color:#999;font-size:12px">启动时把崩溃残留的「解析中」文档复位为可重试；多副本部署建议关</span>
+            </a-form-item>
+            <div class="cfg-sub">自动体检（检索质量回归）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.evalAutoIntervalMs" placement="top">体检周期(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.eval.autoIntervalMs" :min="0" :step="3600000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">≤0 = 暂停自动体检，默认 86400000（每天）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.evalAutoThresholdPct" placement="top">退化判定跌幅(%) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.eval.autoThresholdPct" :min="0" :max="100" :step="1" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">指标相对跌幅超过该值即判为退化</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.evalJudgeModel" placement="top">评判模型 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input v-model:value="form.eval.judgeModel" style="width:320px" placeholder="留空则回落 chat.model" />
+            </a-form-item>
+            <div class="cfg-sub">聊天图片清理</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.chatImgCleanupInterval" placement="top">清理任务间隔(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.images.chatCleanupIntervalMs" :min="0" :step="3600000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">≤0 = 暂停清理，默认 86400000（每天）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.chatImgRetention" placement="top">图片保留时长(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.images.chatRetentionMillis" :min="0" :step="86400000" style="width:220px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">默认 604800000（7 天），超期清理聊天上传图</span>
+            </a-form-item>
+            <div class="cfg-sub">会话参数与清理</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sessionMaxHistory" placement="top">保留对话轮数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.session.maxHistory" :min="0" :max="50" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">会话历史容量上限（Redis 降级时生效）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sessionExpireMinutes" placement="top">会话过期(分钟) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.session.expireMinutes" :min="1" :step="10" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sessionAnonymousShared" placement="top">匿名历史池共享 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.session.anonymousShared" />
+              <span style="margin-left:12px;color:#999;font-size:12px">存量升级兼容项；关闭后匿名会话仅匿名调用方可访问（收紧越权面）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sessionCleanupInterval" placement="top">清理任务间隔(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.cleanup.sessionCleanupIntervalMs" :min="0" :step="3600000" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">≤0 = 暂停清理，默认 86400000（每天）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.sessionRetentionDays" placement="top">会话保留天数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.cleanup.sessionRetentionDays" :min="1" :step="1" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">超期会话将被删除，默认 30 天</span>
+            </a-form-item>
+          </a-form>
+          <a-alert type="info" show-icon style="margin:0 24px 16px"
+                   message="以上均为后台定时任务参数，保存即生效（已运行的调度按新周期重排）。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据，不影响正在进行中的解析与问答。" />
+        </a-collapse-panel>
+
       </a-collapse>
 
       <!-- 悬浮保存按钮：固定在右下角，无需滚动到底部 -->
@@ -725,7 +875,8 @@ const anchors = [
   { key: 'context', label: '上下文控制' },
   { key: 'deepReasoning', label: '深度思考' },
   { key: 'semanticCache', label: '语义缓存' },
-  { key: 'ratelimit', label: '接口限流' }
+  { key: 'ratelimit', label: '接口限流' },
+  { key: 'maintenance', label: '定时维护' }
 ]
 const currentAnchor = ref('')
 let anchorObserver = null
@@ -846,7 +997,37 @@ const tips = {
   scMaxEntries: '缓存条数上限，超出按时间淘汰最早的条目。每条存储一次问题向量化 + 完整回答。',
   rlEnabled: '接口限流总开关（Redis 固定窗口计数）。关闭后所有接口不限流；Redis 不可用时即使开启也会自动放行（限流是保护措施，不比业务先挂）。',
   rlChat: '每个用户每分钟最多发起的问答次数（0=不限流）。匿名请求（网关未透传 X-User-Id）按 IP 维度共享额度。用于防止滥用与成本失控。',
-  rlUpload: '每个用户每分钟最多上传文档的次数（0=不限流）。批量上传按一次请求计。解析是重资源操作，限制上传频次可防止解析队列被打满。'
+  rlUpload: '每个用户每分钟最多上传文档的次数（0=不限流）。批量上传按一次请求计。解析是重资源操作，限制上传频次可防止解析队列被打满。',
+  // ===== 定时维护 / 此前未开放参数 =====
+  kwReconcileOnStartup: '关键词索引启动对账：启动时按 (id,contentHash) 与 MySQL 精确比对，自动补写/删除漂移文档。单实例部署建议开；多副本部署建议关，改为运维单点执行，避免多实例同时重建。',
+  kwReconcileIntervalMs: '关键词索引周期对账间隔（ms，≤0=暂停）。Meilisearch 与 MySQL 长期运行可能因异常写入产生漂移，周期对账可自动修复。默认 3600000（1 小时）。',
+  parseRecoverStuck: '文档解析启动自愈：把上次崩溃时残留的「解析中」状态文档复位为可重试。单实例部署建议开；多副本部署若多实例同时启动会重复复位，建议关。',
+  evalAutoIntervalMs: '自动体检的执行周期（ms，≤0=暂停）。按周期跑评估集并对比历史指标，指标跌幅超过「退化判定跌幅」即标记退化。默认 86400000（每天）。',
+  evalAutoThresholdPct: '退化判定阈值：某项指标相对上次体检的跌幅超过该百分比即判为退化并在报告中标出。调小更敏感（更早发现轻微退化，但噪声多）；调大更宽容。',
+  evalJudgeModel: '体检的 LLM 评判所用模型（留空则复用当前问答模型）。可指定更便宜的模型专做「资料是否足以回答」的判断，降低体检成本。',
+  chatImgCleanupInterval: '聊天上传图片的清理任务间隔（ms，≤0=暂停）。默认 86400000（每天）扫描一次超期图片并删除。',
+  chatImgRetention: '聊天上传图片的保留时长（ms）。超过该时长且无引用的聊天图片会被清理，防止磁盘无限增长；默认 604800000（7 天）。',
+  sessionCleanupInterval: '会话清理任务间隔（ms，≤0=暂停）。默认 86400000（每天）扫描并删除超期会话。',
+  sessionRetentionDays: '会话保留天数：最后一次活跃超过该天数的会话将被删除（含消息）。默认 30 天；调大可保留更久，代价是存储与查询变慢。',
+  keywordFailCooldown: '关键词引擎失败冷却（ms）：Meilisearch 调用失败（超时/鉴权错误/服务不可用）后，冷却期内不再探测与调用，关键词路直接走 MySQL LIKE 兜底，避免每个请求都撞一次失败。默认 60000。',
+  sectionBonus: '文档前段奖励：文档前 2 个知识块（chunkIndex 1~2）额外加分，适合「开头是摘要/总述」的手册结构。与「位置奖励」叠加生效，对顺序无关的文档可调低。',
+  keywordMaxTerms: '关键词主词元数量上限：jieba 分词后取多少个主词元参与关键词召回。词元越多召回面越广但 SQL/索引查询更重；长问句被截断时可适当调大。默认 6。',
+  keywordMaxTotal: '关键词词元总数上限：主词元 + 由长词拆出的 2-gram/4-gram 子词元的总数。子词元用于「换说法/子串」场景的补充召回，过多会引入噪声。默认 12。',
+  keywordTimeoutMs: 'MySQL 关键词兜底检索的超时（ms）。关键词路是辅助召回，超时即本次跳过关键词、仅用向量结果（不阻塞问答）。默认 800。',
+  // ===== B 类：原 yml 参数开放 =====
+  chunkMaxSize: '单块最大字符数：决定分块粒度。调小检索更精准但块数/embedding 成本上升；调大上下文更完整但可能混入无关内容。改动需重新解析文档生效。默认 800。',
+  imagesMaxWidth: '图片压缩后的最长边像素（0=不压缩）。文档中提取的图片会等比缩放到该尺寸再入库与送视觉模型；调小显著省成本但界面截图细节可能看不清。默认 1280。',
+  imagesQuality: 'JPEG 压缩质量（0~1）。越低体积越小、越省存储与带宽，但文字边缘易糊影响识别。默认 0.9。',
+  imagesAuthEnabled: '图片访问鉴权（HMAC 签名 URL）。开启后图片必须带有效签名才能访问，防止被直接盗链；生产环境建议开启。关闭则图片 URL 可直接访问。',
+  imagesAuthExpire: '签名 URL 有效期（秒）。超期后旧链接失效（页面刷新会按新签名重新加载）。过短会频繁失效，过长削弱防盗链效果。默认 3600。',
+  visionTimeout: '单张图片描述的读取超时（ms）。本地大模型出图慢可调大；注意该超时在客户端构建时读取，改动需重启后端生效。默认 30000。',
+  visionRetryCount: '单张图片描述失败后的自动重试次数。本地 Ollama 偶发超时/500，重试可显著降低"图片无描述"的降级率。0=不重试。',
+  visionThink: '视觉模型思考模式开关。qwen3 系默认开启思考（慢且输出不稳定）；关闭后可提速并让描述更稳定。默认关闭。',
+  visionKeepAlive: 'Ollama 模型常驻时长（分钟）：避免每次识别都重新加载模型。0=不发送该参数（云端 OpenAI 兼容服务不支持该参数，须设 0）。默认 30。',
+  visionNumCtx: 'Ollama num_ctx 上下文窗口。图片视觉 token 较多（1280px 约 1600~2500），Ollama 默认 4096 会截断导致描述不全；0=不设置。默认 16384。',
+  sessionMaxHistory: '会话保留的最近对话轮数上限。越大多轮上下文越完整，但占用 Redis 内存与注入预算。默认 10。',
+  sessionExpireMinutes: '会话缓存的过期时间（分钟）。超期后会话从缓存淘汰（数据库记录仍保留，按会话清理策略删除）。默认 30。',
+  sessionAnonymousShared: '匿名历史池是否对具名用户可见（存量升级兼容项）。关闭后匿名会话只能由匿名调用方访问，可收紧越权面；若历史数据需被具名用户复用则应保持开启。默认开启。'
 }
 
 const loading = ref(false)
@@ -940,11 +1121,13 @@ const onChatPresetChange = val => {
 }
 
 const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false, citationCheckEnabled: true },
-                    vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2, descCacheVersion: '1', descCacheTtlDays: 180 },
+                    vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2,
+                              timeoutMillis: 30000, retryCount: 1, think: false, keepAliveMinutes: 30, numCtx: 16384,
+                              descCacheVersion: '1', descCacheTtlDays: 180 },
                     embedding: { model: '', baseUrl: '', apiKey: '', embeddingsPath: '' },
-                    chunk: { maxChunks: 3000, maxImages: 100, overlap: 100, structural: true, structuralRatio: 0.8 },
+                    chunk: { maxSize: 800, maxChunks: 3000, maxImages: 100, overlap: 100, structural: true, structuralRatio: 0.8 },
                     // 解析类参数后端 key 前缀是 parse.*（不是 chunk.*），必须独立分组提交，否则被白名单静默丢弃
-                    parse: { concurrency: 2, ocrMinText: 20, embedRetryCount: 1 },
+                    parse: { concurrency: 2, ocrMinText: 20, embedRetryCount: 1, recoverStuckOnStartup: true },
                     upload: { maxFileSizeMB: 200 },
                     retrieval: { vectorWeight: 0.6, keywordWeight: 0.4, titleBonus: 0.1,
                                  vectorTopK: 15,
@@ -958,7 +1141,8 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                  rerank: { enabled: false, baseUrl: 'http://localhost:7997',
                                            model: 'BAAI/bge-reranker-v2-m3', timeoutMillis: 5000,
                                            minHits: 6, maxHits: 15, failCooldownMs: 60000 } },
-                    keyword: { engine: 'mysql', baseUrl: 'http://localhost:7700', apiKey: '', timeoutMillis: 1000 },
+                    keyword: { engine: 'mysql', baseUrl: 'http://localhost:7700', apiKey: '', timeoutMillis: 1000,
+                               failCooldownMs: 60000, reconcileOnStartup: true, reconcileIntervalMs: 3600000 },
                     context: { modelWindows: '', defaultWindowTokens: 32768, safetyFactor: 0.7, costCapTokens: 8000,
                                maxOutputTokens: 2000, historyMaxTokens: 1200, historyPerMsgChars: 200,
                                snippetWindowChars: 150, maxContextHits: 8,
@@ -970,7 +1154,11 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                      injectKeywords: true, injectKeywordsMax: 5, autoRoute: false },
                     ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10 },
                     semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 },
-                    eval: { judgeEnabled: false } })
+                    eval: { judgeEnabled: false, autoIntervalMs: 86400000, autoThresholdPct: 10, judgeModel: '' },
+                    images: { maxWidth: 1280, quality: 0.9, authEnabled: false, authExpireSeconds: 3600,
+                              chatCleanupIntervalMs: 86400000, chatRetentionMillis: 604800000 },
+                    session: { maxHistory: 10, expireMinutes: 30, anonymousShared: true },
+                    cleanup: { sessionCleanupIntervalMs: 86400000, sessionRetentionDays: 30 } })
 
 // ==================== 测试连接（模型网关 / 服务可达性） ====================
 // 用表单里「尚未保存」的值探测，先测后存；与保存流程无关，不改配置、不落库。
@@ -1101,6 +1289,20 @@ const fetchAndFill = async () => {
       form.value.chat.showDebugDegradations = d.chat?.showDebugDegradations?.value === 'true'
       form.value.chat.citationCheckEnabled = d.chat?.citationCheckEnabled?.value !== 'false'
       form.value.eval.judgeEnabled = d.eval?.judgeEnabled?.value === 'true'
+      form.value.eval.autoIntervalMs = Number(d.eval?.autoIntervalMs?.value ?? 86400000)
+      form.value.eval.autoThresholdPct = Number(d.eval?.autoThresholdPct?.value ?? 10)
+      form.value.eval.judgeModel = d.eval?.judgeModel?.value || ''
+      form.value.images.chatCleanupIntervalMs = Number(d.images?.chatCleanupIntervalMs?.value ?? 86400000)
+      form.value.images.chatRetentionMillis = Number(d.images?.chatRetentionMillis?.value ?? 604800000)
+      form.value.images.maxWidth = Number(d.images?.maxWidth?.value ?? 1280)
+      form.value.images.quality = Number(d.images?.quality?.value ?? 0.9)
+      form.value.images.authEnabled = d.images?.authEnabled?.value === 'true'
+      form.value.images.authExpireSeconds = Number(d.images?.authExpireSeconds?.value ?? 3600)
+      form.value.session.maxHistory = Number(d.session?.maxHistory?.value ?? 10)
+      form.value.session.expireMinutes = Number(d.session?.expireMinutes?.value ?? 30)
+      form.value.session.anonymousShared = d.session?.anonymousShared?.value !== 'false'
+      form.value.cleanup.sessionCleanupIntervalMs = Number(d.cleanup?.sessionCleanupIntervalMs?.value ?? 86400000)
+      form.value.cleanup.sessionRetentionDays = Number(d.cleanup?.sessionRetentionDays?.value ?? 30)
       form.value.vision.enabled = d.vision?.enabled?.value !== 'false'
       form.value.vision.model = d.vision?.model?.value || ''
       form.value.vision.baseUrl = d.vision?.baseUrl?.value || ''
@@ -1111,17 +1313,24 @@ const fetchAndFill = async () => {
       form.value.vision.userImageConcurrency = Number(d.vision?.userImageConcurrency?.value ?? 2)
       form.value.vision.descCacheVersion = d.vision?.descCacheVersion?.value || '1'
       form.value.vision.descCacheTtlDays = Number(d.vision?.descCacheTtlDays?.value ?? 180)
+      form.value.vision.timeoutMillis = Number(d.vision?.timeoutMillis?.value ?? 30000)
+      form.value.vision.retryCount = Number(d.vision?.retryCount?.value ?? 1)
+      form.value.vision.think = d.vision?.think?.value === 'true'
+      form.value.vision.keepAliveMinutes = Number(d.vision?.keepAliveMinutes?.value ?? 30)
+      form.value.vision.numCtx = Number(d.vision?.numCtx?.value ?? 16384)
       const ck = d.chunk || {}
       form.value.chunk.maxChunks = Number(ck.maxChunks?.value ?? 3000)
       form.value.chunk.maxImages = Number(ck.maxImages?.value ?? 100)
       form.value.chunk.overlap = Number(ck.overlap?.value ?? 100)
       form.value.chunk.structural = ck.structural?.value !== 'false'
       form.value.chunk.structuralRatio = Number(ck.structuralRatio?.value ?? 0.8)
+      form.value.chunk.maxSize = Number(ck.maxSize?.value ?? 800)
       // 解析类参数在后端 parse.* 分组（与 chunk.* 分开）
       const ps = d.parse || {}
       form.value.parse.concurrency = Number(ps.concurrency?.value ?? 2)
       form.value.parse.ocrMinText = Number(ps.ocrMinText?.value ?? 20)
       form.value.parse.embedRetryCount = Number(ps.embedRetryCount?.value ?? 1)
+      form.value.parse.recoverStuckOnStartup = ps.recoverStuckOnStartup?.value !== 'false'
       const up = d.upload || {}
       form.value.upload.maxFileSizeMB = Math.round(Number(up.maxFileSize?.value ?? 209715200) / 1024 / 1024)
       form.value.retrieval.vectorWeight = Number(d.retrieval?.vectorWeight?.value ?? 0.6)
@@ -1164,6 +1373,9 @@ const fetchAndFill = async () => {
       form.value.keyword.baseUrl = kw.baseUrl?.value || 'http://localhost:7700'
       form.value.keyword.apiKey = kw.apiKey?.value || ''
       form.value.keyword.timeoutMillis = Number(kw.timeoutMillis?.value ?? 1000)
+      form.value.keyword.failCooldownMs = Number(kw.failCooldownMs?.value ?? 60000)
+      form.value.keyword.reconcileOnStartup = kw.reconcileOnStartup?.value !== 'false'
+      form.value.keyword.reconcileIntervalMs = Number(kw.reconcileIntervalMs?.value ?? 3600000)
       const ctx = d.context || {}
       form.value.context.modelWindows = ctx.modelWindows?.value || ''
       form.value.context.defaultWindowTokens = Number(ctx.defaultWindowTokens?.value ?? 32768)
@@ -1257,7 +1469,10 @@ const buildPayload = () => ({
               sseTimeoutMs: String(form.value.chat.sseTimeoutMs),
               showDebugDegradations: String(form.value.chat.showDebugDegradations),
               citationCheckEnabled: String(form.value.chat.citationCheckEnabled) },
-      eval: { judgeEnabled: String(form.value.eval.judgeEnabled) },
+      eval: { judgeEnabled: String(form.value.eval.judgeEnabled),
+              autoIntervalMs: String(form.value.eval.autoIntervalMs),
+              autoThresholdPct: String(form.value.eval.autoThresholdPct),
+              judgeModel: form.value.eval.judgeModel?.trim() },
       vision: { enabled: String(form.value.vision.enabled),
                 model: form.value.vision.model?.trim(),
                 baseUrl: form.value.vision.baseUrl?.trim(),
@@ -1267,7 +1482,12 @@ const buildPayload = () => ({
                 concurrency: String(form.value.vision.concurrency),
                 userImageConcurrency: String(form.value.vision.userImageConcurrency),
                 descCacheVersion: String(form.value.vision.descCacheVersion ?? '').trim(),
-                descCacheTtlDays: String(form.value.vision.descCacheTtlDays) },
+                descCacheTtlDays: String(form.value.vision.descCacheTtlDays),
+                timeoutMillis: String(form.value.vision.timeoutMillis),
+                retryCount: String(form.value.vision.retryCount),
+                think: String(form.value.vision.think),
+                keepAliveMinutes: String(form.value.vision.keepAliveMinutes),
+                numCtx: String(form.value.vision.numCtx) },
       // 向量模型热切换：保存时后端先探测新配置，通过后自动触发全量重嵌入
       embedding: { model: form.value.embedding.model?.trim(),
                    baseUrl: form.value.embedding.baseUrl?.trim(),
@@ -1276,11 +1496,13 @@ const buildPayload = () => ({
       chunk: { maxChunks: String(form.value.chunk.maxChunks), maxImages: String(form.value.chunk.maxImages),
                overlap: String(form.value.chunk.overlap),
                structural: String(form.value.chunk.structural),
-               structuralRatio: String(form.value.chunk.structuralRatio) },
+               structuralRatio: String(form.value.chunk.structuralRatio),
+               maxSize: String(form.value.chunk.maxSize) },
       // parse 是独立分组（后端 key 前缀 parse.*），并发/OCR阈值/向量化重试都在这里，不可放进 chunk
       parse: { concurrency: String(form.value.parse.concurrency),
                ocrMinText: String(form.value.parse.ocrMinText),
-               embedRetryCount: String(form.value.parse.embedRetryCount) },
+               embedRetryCount: String(form.value.parse.embedRetryCount),
+               recoverStuckOnStartup: String(form.value.parse.recoverStuckOnStartup) },
       upload: { maxFileSize: String(form.value.upload.maxFileSizeMB * 1024 * 1024) },
       retrieval: { vectorWeight: String(form.value.retrieval.vectorWeight),
                    fusionMode: String(form.value.retrieval.fusionMode),
@@ -1320,7 +1542,21 @@ const buildPayload = () => ({
                  baseUrl: form.value.keyword.baseUrl?.trim(),
                  // 后端 snapshot 对 apiKey 脱敏（****后4位），掩码原样提交会覆盖真实 key：未修改（**** 开头）则不提交
                  apiKey: form.value.keyword.apiKey?.trim().startsWith('****') ? undefined : form.value.keyword.apiKey?.trim(),
-                 timeoutMillis: String(form.value.keyword.timeoutMillis) },
+                 timeoutMillis: String(form.value.keyword.timeoutMillis),
+                 failCooldownMs: String(form.value.keyword.failCooldownMs),
+                 reconcileOnStartup: String(form.value.keyword.reconcileOnStartup),
+                 reconcileIntervalMs: String(form.value.keyword.reconcileIntervalMs) },
+      images: { maxWidth: String(form.value.images.maxWidth),
+                quality: String(form.value.images.quality),
+                authEnabled: String(form.value.images.authEnabled),
+                authExpireSeconds: String(form.value.images.authExpireSeconds),
+                chatCleanupIntervalMs: String(form.value.images.chatCleanupIntervalMs),
+                chatRetentionMillis: String(form.value.images.chatRetentionMillis) },
+      session: { maxHistory: String(form.value.session.maxHistory),
+                 expireMinutes: String(form.value.session.expireMinutes),
+                 anonymousShared: String(form.value.session.anonymousShared) },
+      cleanup: { sessionCleanupIntervalMs: String(form.value.cleanup.sessionCleanupIntervalMs),
+                 sessionRetentionDays: String(form.value.cleanup.sessionRetentionDays) },
       context: { modelWindows: form.value.context.modelWindows?.trim(),
                  defaultWindowTokens: String(form.value.context.defaultWindowTokens),
                  safetyFactor: String(form.value.context.safetyFactor),
