@@ -81,8 +81,7 @@ public class AiAppProperties {
     }
 
     @Data
-    public static class Retrieval {        /** 检索返回 Top-K */
-        private int topK = 5;
+    public static class Retrieval {
         /** 混合检索：向量相似度权重（0~1） */
         private double vectorWeight = 0.6;
         /** 混合检索：关键词命中率权重（0~1） */
@@ -173,8 +172,6 @@ public class AiAppProperties {
         private int keepAliveMinutes = 30;
         /** Ollama 上下文窗口 num_ctx：1280px 识别图视觉 token 约 1600-2500，默认 4096 会截断；0=不设置 */
         private int numCtx = 16384;
-        /** 请求超时兜底(ms)，若单请求处理超长则不等待直接降级 */
-        private int abortMillis = 0;
         /**
          * 关闭思考模式（qwen3 系列默认思考，关闭后提速且输出稳定）。
          * 注意：max_tokens 在该思考模型下会导致空输出，本项目不发送 max_tokens

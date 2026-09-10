@@ -99,7 +99,6 @@ ai-app:
     structural-ratio: 0.8
   # 检索
   retrieval:
-    top-k: 5
     # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）
     vector-weight: 0.6
     keyword-weight: 0.4
