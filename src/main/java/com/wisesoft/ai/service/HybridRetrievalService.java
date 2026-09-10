@@ -391,7 +391,11 @@ public class HybridRetrievalService {
      */
     private List<AiKnowledge> keywordSearchMeili(String query, List<String> terms, int limit) {
         // 过量取回（×2）为状态过滤留余量，避免被弃用/解析中文档的块挤掉有效命中
-        List<KeywordIndexService.ScoredId> scored = keywordIndexService.search(query, Math.max(limit * 2, limit));
+        // 传 jieba 分词词元而非原始问句：Meili 默认 matchingStrategy=last（首词必须命中，再从末尾逐词删减），
+        // 且中文在 Meili 里按字符切 token——直接传原句时，首字（如"怎/如/什"）不在语料中就会直接 0 命中。
+        // 词元以空格分隔可形成正确 token 边界；词元为空时回退原句。
+        String meiliQuery = (terms == null || terms.isEmpty()) ? query : String.join(" ", terms);
+        List<KeywordIndexService.ScoredId> scored = keywordIndexService.search(meiliQuery, Math.max(limit * 2, limit));
         if (scored.isEmpty()) return List.of();
         Map<String, Double> scoreById = new LinkedHashMap<>();
         for (KeywordIndexService.ScoredId s : scored) scoreById.put(s.id(), s.score());
@@ -453,11 +457,17 @@ public class HybridRetrievalService {
                                 .or().isNull("doc_id"))
                         // 块级停用过滤（status 默认 0；NULL 兼容存量行）
                         .and(w -> w.eq("status", 0).or().isNull("status"));
+                // 词元之间必须是 OR（任一命中即可）——用 or(Consumer) 承载后续词元。
+                // 注意不能写成 `w.or(); w.and(t -> ...)`：and(Consumer) 会强制以 AND 连接该嵌套段，
+                // 把前一个 or() 覆盖掉，词元被 AND 串联（词元越多命中越少，长问句直接 0 命中）。
                 wrapper.and(w -> {
                     for (int i = 0; i < terms.size(); i++) {
-                        if (i > 0) w.or();
                         String term = terms.get(i);
-                        w.and(t -> t.like("content", term).or().like("title", term));
+                        if (i == 0) {
+                            w.and(t -> t.like("content", term).or().like("title", term));
+                        } else {
+                            w.or(t -> t.like("content", term).or().like("title", term));
+                        }
                     }
                 });
                 wrapper.last("LIMIT " + limit);
