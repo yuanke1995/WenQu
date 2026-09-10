@@ -317,6 +317,14 @@ export const checkRerank = () => request('/config/rerank/check')
 /** 探测 Meilisearch 是否可用（设置页切换关键词引擎前校验） */
 export const checkKeywordEngine = () => request('/config/keyword/check')
 
+/**
+ * 通用连通性探测（设置页各地址旁的「测试连接」按钮）。
+ * 用表单里尚未保存的值真实探测，实现"先测后存"；group=chat|vision|embedding|rerank|keyword。
+ * 返回 { available, latencyMs, detail }。
+ */
+export const probeConnectivity = payload =>
+  request('/config/probe', { method: 'POST', body: JSON.stringify(payload), timeout: 20000 })
+
 /** 关键词索引运维：引擎状态/索引统计 */
 export const getSearchIndexStats = () => request('/search-index/stats')
 

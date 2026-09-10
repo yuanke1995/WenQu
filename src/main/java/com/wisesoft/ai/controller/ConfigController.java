@@ -3,6 +3,7 @@ package com.wisesoft.ai.controller;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.parser.DocumentParser;
 import com.wisesoft.ai.service.ConfigService;
+import com.wisesoft.ai.service.ConnectivityProbeService;
 import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RerankService;
@@ -34,6 +35,7 @@ public class ConfigController {
     private final RerankService rerankService;
     private final KeywordIndexService keywordIndexService;
     private final DocumentService documentService;
+    private final ConnectivityProbeService connectivityProbeService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
     @GetMapping
@@ -84,6 +86,24 @@ public class ConfigController {
     @GetMapping("/keyword/check")
     public ResultJson checkKeyword() {
         return ResultJson.ok(Map.of("available", keywordIndexService.checkAvailable()));
+    }
+
+    /**
+     * 通用连通性探测（设置页各模型/服务地址旁的「测试连接」按钮）。
+     * 用表单里<b>尚未保存</b>的值真实探测，实现"先测后存"；不落库、不触发重嵌入/索引重建。
+     */
+    @Operation(summary = "测试连通", description = "用传入的（未保存）配置真实探测模型网关或服务是否可达。"
+            + "group=chat|vision|embedding|rerank|keyword；返回 {available, latencyMs, detail}")
+    @PostMapping("/probe")
+    public ResultJson probe(
+            @Parameter(description = "{\"group\":\"chat\",\"baseUrl\":\"..\",\"apiKey\":\"..\",\"model\":\"..\",\"path\":\"..\"}")
+            @RequestBody Map<String, String> body) {
+        String group = body.get("group");
+        if (group == null || group.isBlank()) {
+            return ResultJson.error(400, "缺少 group（chat/vision/embedding/rerank/keyword）");
+        }
+        return ResultJson.ok(connectivityProbeService.probe(group, body.get("baseUrl"),
+                body.get("apiKey"), body.get("model"), body.get("path")));
     }
 
     /** 向量模型全量重嵌入状态（切换向量模型后自动触发，也可手动重试） */

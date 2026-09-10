@@ -35,6 +35,13 @@
               <template #label><a-tooltip :title="tips.chatBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.chat.baseUrl" style="width:420px"
                         placeholder="如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀或完整端点也能自动识别" />
+              <a-button size="small" style="margin-left:8px" :loading="probeStates.chat.loading"
+                        @click="doProbe('chat')">测试连接</a-button>
+              <a-tooltip v-if="probeStates.chat.result" :title="probeStates.chat.result.detail">
+                <span class="probe-chip" :class="probeStates.chat.result.available ? 'probe-ok' : 'probe-bad'">
+                  {{ probeStates.chat.result.available ? '可达' : '不可达' }} {{ probeStates.chat.result.latencyMs }}ms
+                </span>
+              </a-tooltip>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.chatCompletionsPath" placement="top">补全路径 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -151,6 +158,13 @@
               <template #label><a-tooltip :title="tips.visionBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.baseUrl" style="width:420px"
                         placeholder="如 http://localhost:11434（Ollama）或 https://open.bigmodel.cn/api/paas" />
+              <a-button size="small" style="margin-left:8px" :loading="probeStates.vision.loading"
+                        @click="doProbe('vision')">测试连接</a-button>
+              <a-tooltip v-if="probeStates.vision.result" :title="probeStates.vision.result.detail">
+                <span class="probe-chip" :class="probeStates.vision.result.available ? 'probe-ok' : 'probe-bad'">
+                  {{ probeStates.vision.result.available ? '可达' : '不可达' }} {{ probeStates.vision.result.latencyMs }}ms
+                </span>
+              </a-tooltip>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -225,6 +239,14 @@
               <template #label><a-tooltip :title="tips.embeddingBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.embedding.baseUrl" style="width:420px"
                         placeholder="OpenAI 兼容网关；…/v1、…/v4 等版本尾缀自动识别" />
+              <a-button size="small" style="margin-left:8px" :loading="probeStates.embedding.loading"
+                        @click="doProbe('embedding')">测试连接</a-button>
+              <a-tooltip v-if="probeStates.embedding.result" :title="probeStates.embedding.result.detail">
+                <span class="probe-chip" :class="probeStates.embedding.result.available ? 'probe-ok' : 'probe-bad'">
+                  {{ probeStates.embedding.result.available ? '可达' : '不可达' }} {{ probeStates.embedding.result.latencyMs }}ms
+                </span>
+              </a-tooltip>
+              <span style="margin-left:8px;color:#999;font-size:12px">保存会触发全量重嵌入，建议先测连通</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.embeddingApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -294,6 +316,13 @@
             <a-form-item>
               <template #label><a-tooltip :title="tips.keywordBaseUrl" placement="top">引擎服务地址 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.keyword.baseUrl" placeholder="http://localhost:7700" style="width:320px" />
+              <a-button size="small" style="margin-left:8px" :loading="probeStates.keyword.loading"
+                        @click="doProbe('keyword')">测试连接</a-button>
+              <a-tooltip v-if="probeStates.keyword.result" :title="probeStates.keyword.result.detail">
+                <span class="probe-chip" :class="probeStates.keyword.result.available ? 'probe-ok' : 'probe-bad'">
+                  {{ probeStates.keyword.result.available ? '可达' : '不可达' }} {{ probeStates.keyword.result.latencyMs }}ms
+                </span>
+              </a-tooltip>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.keywordApiKey" placement="top">引擎 Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -392,6 +421,13 @@
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankBaseUrl" placement="top">服务地址 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.retrieval.rerank.baseUrl" placeholder="http://localhost:7997" style="width:320px" />
+              <a-button size="small" style="margin-left:8px" :loading="probeStates.rerank.loading"
+                        @click="doProbe('rerank')">测试连接</a-button>
+              <a-tooltip v-if="probeStates.rerank.result" :title="probeStates.rerank.result.detail">
+                <span class="probe-chip" :class="probeStates.rerank.result.available ? 'probe-ok' : 'probe-bad'">
+                  {{ probeStates.rerank.result.available ? '可达' : '不可达' }} {{ probeStates.rerank.result.latencyMs }}ms
+                </span>
+              </a-tooltip>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -622,10 +658,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { QuestionCircleOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons-vue'
-import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed } from '../api'
+import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache, getReembedStatus, triggerReembed, probeConnectivity } from '../api'
 
 // 折叠面板：默认展开常用分组（chat / retrieval / context / deepReasoning），vision / embedding 收起
 const activeKeys = ref(['chat', 'retrieval', 'context', 'deepReasoning'])
@@ -875,6 +911,70 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                     ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10 },
                     semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 },
                     eval: { judgeEnabled: false } })
+
+// ==================== 测试连接（模型网关 / 服务可达性） ====================
+// 用表单里「尚未保存」的值探测，先测后存；与保存流程无关，不改配置、不落库。
+// 注意：必须定义在 form 之后——watch 创建时会立即执行取值函数收集依赖，早于 form 初始化会抛 ReferenceError。
+const probeStates = ref({
+  chat: { loading: false, result: null },
+  vision: { loading: false, result: null },
+  embedding: { loading: false, result: null },
+  rerank: { loading: false, result: null },
+  keyword: { loading: false, result: null }
+})
+const probeLabels = { chat: '对话模型', vision: '视觉模型', embedding: '向量模型', rerank: '重排服务', keyword: '关键词引擎' }
+
+const doProbe = async group => {
+  const s = probeStates.value[group]
+  if (!s || s.loading) return
+  const f = form.value
+  const payload = { group }
+  if (group === 'chat') {
+    Object.assign(payload, { baseUrl: f.chat.baseUrl, apiKey: f.chat.apiKey, model: f.chat.model, path: f.chat.completionsPath })
+  } else if (group === 'vision') {
+    Object.assign(payload, { baseUrl: f.vision.baseUrl, apiKey: f.vision.apiKey, model: f.vision.model })
+  } else if (group === 'embedding') {
+    Object.assign(payload, { baseUrl: f.embedding.baseUrl, apiKey: f.embedding.apiKey, model: f.embedding.model, path: f.embedding.embeddingsPath })
+  } else if (group === 'rerank') {
+    Object.assign(payload, { baseUrl: f.retrieval.rerank.baseUrl, model: f.retrieval.rerank.model })
+  } else if (group === 'keyword') {
+    Object.assign(payload, { baseUrl: f.keyword.baseUrl, apiKey: f.keyword.apiKey })
+  }
+  s.loading = true
+  s.result = null
+  try {
+    const r = await probeConnectivity(payload)
+    const d = r?.data || {}
+    s.result = {
+      available: !!d.available,
+      latencyMs: d.latencyMs ?? 0,
+      detail: d.detail || (r?.msg || '（无详情）')
+    }
+    // 失败时同时弹提示：详情可能较长，chip + tooltip 之外再给一次显性反馈
+    if (!s.result.available) {
+      message.error(`${probeLabels[group]}不可达：${s.result.detail}`)
+    }
+  } catch (e) {
+    s.result = { available: false, latencyMs: 0, detail: e.message || '请求失败' }
+    message.error(`${probeLabels[group]}探测失败：${s.result.detail}`)
+  } finally {
+    s.loading = false
+  }
+}
+
+// 任一被探测的配置项改动后，清空已有的探测结果（避免"改了地址还显示旧的可达"）
+watch(
+  () => [
+    form.value.chat.baseUrl, form.value.chat.completionsPath, form.value.chat.model, form.value.chat.apiKey,
+    form.value.vision.baseUrl, form.value.vision.model, form.value.vision.apiKey,
+    form.value.embedding.baseUrl, form.value.embedding.embeddingsPath, form.value.embedding.model, form.value.embedding.apiKey,
+    form.value.retrieval.rerank.baseUrl, form.value.retrieval.rerank.model,
+    form.value.keyword.baseUrl, form.value.keyword.apiKey
+  ],
+  () => {
+    for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
+  }
+)
 
 // 当前向量索引维度（后端重嵌入成功后回写 embedding.dimensions，只读展示）
 const embeddingDimensions = ref('')
@@ -1317,5 +1417,26 @@ const save = async () => {
 }
 .reset-group-btn:hover {
   color: #d4380d !important;
+}
+/* 测试连接结果标记：紧凑小标签，hover 看详情 */
+.probe-chip {
+  margin-left: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  cursor: default;
+  white-space: nowrap;
+}
+.probe-ok {
+  color: #389e0d;
+  background: #f6ffed;
+  border-color: #b7eb8f;
+}
+.probe-bad {
+  color: #cf1322;
+  background: #fff1f0;
+  border-color: #ffa39e;
 }
 </style>
