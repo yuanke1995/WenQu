@@ -21,7 +21,7 @@
         <a-collapse-panel key="chat" header="智能问答模型" :id="'cfg-anchor-chat'">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='chat'" @click.stop="onResetGroup('chat')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
-            <div class="cfg-sub">模型与网关（厂商预设自动填充地址与补全路径）</div>
+            <div class="cfg-sub">模型与连接（厂商预设自动填充地址与补全路径）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.chatModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.chat.model" placeholder="如 deepseek-chat / glm-4.5 / qwen-plus，与所选厂商一致" />
@@ -68,11 +68,14 @@
               <a-textarea v-model:value="form.chat.suggestedQuestions" :rows="4"
                           placeholder="每行一个问题，欢迎页展示前 8 条（数据看板热门问题也可一键加入）" />
             </a-form-item>
-            <div class="cfg-sub">记忆 · 并发 · 调试</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.retrievalDebugEnabled" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">检索调试入口 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
-              <a-switch v-model:checked="form.chat.retrievalDebugEnabled" />
+              <template #label><a-tooltip :title="tips.citationCheck" placement="top">引用一致性自检 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.chat.citationCheckEnabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">
+                生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）
+              </span>
             </a-form-item>
+            <div class="cfg-sub">记忆与上下文</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.historyRounds" placement="top">多轮记忆轮数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.historyRounds" :min="0" :max="20" style="width:200px" />
@@ -85,6 +88,7 @@
               <template #label><a-tooltip :title="tips.truncateFallbackChars" placement="top">截断兜底字符 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.truncateFallbackChars" :min="0" :step="50" style="width:200px" />
             </a-form-item>
+            <div class="cfg-sub">并发与超时</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.pipelineThreads" placement="top">问答流水线线程 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.pipelineThreads" :min="2" :max="64" style="width:200px" />
@@ -100,18 +104,16 @@
               <a-input-number v-model:value="form.chat.sseTimeoutMs" :min="60000" :step="30000" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">SSE 超时截断并提示，默认 300000</span>
             </a-form-item>
+            <div class="cfg-sub">调试开关（排障用，生产建议仅开引用自检）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.retrievalDebugEnabled" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">检索调试入口 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
+              <a-switch v-model:checked="form.chat.retrievalDebugEnabled" />
+            </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.showDebugDegradations" placement="top"><span style="display:inline-flex;align-items:center;gap:4px">降级提示 <a-tag color="warning" size="small" style="margin-left:2px">调试</a-tag> <question-circle-outlined class="tip-icon" /></span></a-tooltip></template>
               <a-switch v-model:checked="form.chat.showDebugDegradations" />
               <span style="margin-left:12px;color:#999;font-size:12px">
                 默认关闭：回答下方不显示任何降级提示（无命中/改写失败/图片剔除/缓存命中等）；调试排障时开启可见全部原因
-              </span>
-            </a-form-item>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.citationCheck" placement="top">引用一致性自检 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-switch v-model:checked="form.chat.citationCheckEnabled" />
-              <span style="margin-left:12px;color:#999;font-size:12px">
-                生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）
               </span>
             </a-form-item>
             <a-form-item>
@@ -134,26 +136,11 @@
                 ⚠ 关闭后文档图片/用户图片不生成描述：图片仅展示、内容不进入检索（RAG 对图片语义失效）
               </span>
             </a-form-item>
-            <div class="cfg-sub">识别模型与提示词</div>
+            <div class="cfg-sub">模型与连接（网关地址 / 密钥）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.model" placeholder="如 qwen3-vl:2b" />
             </a-form-item>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.visionPrompt" placement="top">识别提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-textarea v-model:value="form.vision.prompt" :rows="3"
-                          placeholder="图片描述提示词（50字内描述界面/元素）" />
-            </a-form-item>
-            <div class="cfg-sub">描述并发（文档图与用户传图分开控制）</div>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.visionConcurrency" placement="top">图片描述并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-input-number v-model:value="form.vision.concurrency" :min="1" :max="16" style="width:200px" />
-            </a-form-item>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.userImageConcurrency" placement="top">用户图片并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-input-number v-model:value="form.vision.userImageConcurrency" :min="1" :max="16" style="width:200px" />
-            </a-form-item>
-            <div class="cfg-sub">网关与密钥</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.visionBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.baseUrl" style="width:420px"
@@ -170,6 +157,20 @@
               <template #label><a-tooltip :title="tips.visionApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-password v-model:value="form.vision.apiKey" style="width:420px"
                         placeholder="未修改时显示 ****掩码（Ollama 无需 Key 可留空；RSA 加密入库）" />
+            </a-form-item>
+            <div class="cfg-sub">识别提示词与并发（文档图与用户传图分开控制）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionPrompt" placement="top">识别提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-textarea v-model:value="form.vision.prompt" :rows="3"
+                          placeholder="图片描述提示词（50字内描述界面/元素）" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.visionConcurrency" placement="top">图片描述并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.concurrency" :min="1" :max="16" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.userImageConcurrency" placement="top">用户图片并发 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.vision.userImageConcurrency" :min="1" :max="16" style="width:200px" />
             </a-form-item>
           </a-form>
         </a-collapse-panel>
@@ -230,6 +231,7 @@
 
         <a-collapse-panel key="embedding" :id="'cfg-anchor-embedding'" header="向量模型（Embedding，切换需全量重嵌入）">
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
+            <div class="cfg-sub">模型与连接（网关地址 / 向量化路径 / 密钥）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.embeddingModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.embedding.model" style="width:420px"
@@ -249,15 +251,16 @@
               <span style="margin-left:8px;color:#999;font-size:12px">保存会触发全量重嵌入，建议先测连通</span>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.embeddingApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-input-password v-model:value="form.embedding.apiKey" style="width:420px"
-                        placeholder="未修改时显示 ****掩码，无需重新输入（RSA 加密入库）" />
-            </a-form-item>
-            <a-form-item>
               <template #label><a-tooltip :title="tips.embeddingPath" placement="top">向量化路径 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.embedding.embeddingsPath" style="width:420px"
                         placeholder="默认 /v1/embeddings；智谱 /v4/embeddings、千帆 /v2/embeddings（留空自动识别）" />
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.embeddingApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-password v-model:value="form.embedding.apiKey" style="width:420px"
+                        placeholder="未修改时显示 ****掩码，无需重新输入（RSA 加密入库）" />
+            </a-form-item>
+            <div class="cfg-sub">索引状态与重嵌入（切换模型后自动触发）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.embeddingDimensions" placement="top">当前索引维度 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <span v-if="embeddingDimensions" style="color:#555">{{ embeddingDimensions }} 维</span>
@@ -305,7 +308,7 @@
         <a-collapse-panel key="retrieval" :id="'cfg-anchor-retrieval'" header="检索设置（混合检索权重 + 重排 + 关键词引擎）">
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='retrieval'" @click.stop="onResetGroup('retrieval')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
-            <div class="cfg-sub">关键词召回引擎</div>
+            <div class="cfg-sub">关键词引擎（类型与服务连接）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.keywordEngine" placement="top">关键词引擎 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-select v-model:value="form.keyword.engine" style="width:220px" :options="[
@@ -345,6 +348,11 @@
             <a-form-item>
               <template #label><a-tooltip :title="tips.titleBonus" placement="top">标题命中奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.titleBonus" :min="0" :max="1" :step="0.05" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.positionBonus" placement="top">位置奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.positionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">首块 / 前段奖励</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.vecThreshold" placement="top">向量阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -407,16 +415,15 @@
               <a-switch v-model:checked="form.retrieval.refDetectMention" />
               <span style="margin-left:12px;color:#999;font-size:12px">正文提到其他章节也算引用（如 4.1.2 所述/《数据字典》/XX章节）</span>
             </a-form-item>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.positionBonus" placement="top">位置奖励 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-input-number v-model:value="form.retrieval.positionBonus" :min="0" :max="0.5" :step="0.01" style="width:200px" />
-              <span style="margin-left:12px;color:#999;font-size:12px">首块 / 前段奖励</span>
-            </a-form-item>
-            <div class="cfg-sub">重排（可选 reranker，需独立服务）</div>
+            <div class="cfg-sub">重排服务（可选 reranker，需独立服务）</div>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankEnabled" placement="top">启用重排 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.retrieval.rerank.enabled" :loading="rerankChecking" @change="onRerankEnabledChange" />
               <span style="margin-left:12px;color:#999;font-size:12px">开启前自动校验服务可用性</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.rerankModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input v-model:value="form.retrieval.rerank.model" placeholder="BAAI/bge-reranker-v2-m3" style="width:320px" />
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankBaseUrl" placement="top">服务地址 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -428,10 +435,6 @@
                   {{ probeStates.rerank.result.available ? '可达' : '不可达' }} {{ probeStates.rerank.result.latencyMs }}ms
                 </span>
               </a-tooltip>
-            </a-form-item>
-            <a-form-item>
-              <template #label><a-tooltip :title="tips.rerankModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
-              <a-input v-model:value="form.retrieval.rerank.model" placeholder="BAAI/bge-reranker-v2-m3" style="width:320px" />
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.rerankTimeout" placement="top">超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
