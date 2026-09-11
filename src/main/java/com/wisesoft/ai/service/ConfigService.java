@@ -179,7 +179,27 @@ public class ConfigService {
             Map.entry("vision.numCtx", "视觉模型：Ollama 上下文窗口 num_ctx(0=不设置；默认 4096 会截断大图)"),
             Map.entry("session.maxHistory", "会话：保留最近对话轮数(Redis 降级时的历史条数上限)"),
             Map.entry("session.expireMinutes", "会话：缓存过期时间(分钟)"),
-            Map.entry("session.anonymousShared", "会话：匿名历史池是否对具名用户共享(存量升级兼容；false 可收紧越权面)"));
+            Map.entry("session.anonymousShared", "会话：匿名历史池是否对具名用户共享(存量升级兼容；false 可收紧越权面)"),
+            // ===== 查询改写（QueryRewrite）与图片相关性校验（ImageFilter）：同样由 syncProperties 回写 =====
+            Map.entry("queryRewrite.enabled", "查询改写：是否启用（把用户问句改写为检索关键词以提升召回；关闭则直接用原句）"),
+            Map.entry("queryRewrite.prompt", "查询改写：单轮改写提示词（要求模型只输出改写后的检索关键词）"),
+            Map.entry("queryRewrite.promptMultiTurn", "查询改写：多轮改写提示词（其中 %s 会被替换为对话历史）"),
+            Map.entry("queryRewrite.historyRounds", "查询改写：多轮改写时参考的最近对话轮数"),
+            Map.entry("imageFilter.enabled", "图片相关性校验：是否启用（按图片标记前文关键词判断与问题是否相关，过滤无关配图）"),
+            Map.entry("imageFilter.minHits", "图片相关性校验：前文关键词命中数阈值(≥该值视为相关)"),
+            Map.entry("imageFilter.preContextChars", "图片相关性校验：取图片标记前文的最大字符数"),
+            // ===== 消费方直读 configService 的行为参数（原先写死在代码里）=====
+            Map.entry("deepReasoning.autoRouteMinChars", "自动路由：问题字数下限（低于此数不触发深度思考）"),
+            Map.entry("deepReasoning.autoRouteLongChars", "自动路由：问题字数上限（达到即触发深度思考）"),
+            Map.entry("deepReasoning.autoRouteKeywords", "自动路由：触发词（逗号分隔；留空=只按长度判断）"),
+            Map.entry("chat.maxImagesPerMessage", "对话：单条消息最多图片张数"),
+            Map.entry("chat.maxImageMb", "对话：单张图片体积上限(MB)"),
+            Map.entry("retrieval.maxRefsPerBlock", "解析：单个知识块最多保留的引用条数（超出丢弃，显式引用优先）"),
+            Map.entry("retrieval.relatedCount", "回答：末尾 <related> 相关追问的推荐条数"),
+            Map.entry("parse.embedBatchSize", "解析：向量化分批大小（每批嵌入条数；与上游接口单次上限匹配）"),
+            Map.entry("parse.ocrDpi", "解析：PDF 页 OCR 渲染 DPI（越高小字越清晰，内存/耗时越高）"),
+            Map.entry("ratelimit.windowSeconds", "限流：固定窗口长度（秒）"),
+            Map.entry("cache.docMetaTtlSeconds", "文档名缓存有效期（秒）：多副本下改名/删除的感知延迟上限"));
 
     private final AiConfigMapper configMapper;
     private final AiAppProperties properties;
@@ -491,6 +511,27 @@ public class ConfigService {
         d.put("session.maxHistory", "10");             // 会话保留轮数
         d.put("session.expireMinutes", "30");          // 会话过期(分钟)
         d.put("session.anonymousShared", "true");      // 匿名历史池共享
+        // 查询改写（默认值取 bean，单一来源；消费方 RagService 经 syncProperties 回写后热生效）
+        d.put("queryRewrite.enabled", String.valueOf(properties.getQueryRewrite().isEnabled()));
+        d.put("queryRewrite.historyRounds", String.valueOf(properties.getQueryRewrite().getHistoryRounds()));
+        d.put("queryRewrite.prompt", properties.getQueryRewrite().getPrompt());
+        d.put("queryRewrite.promptMultiTurn", properties.getQueryRewrite().getPromptMultiTurn());
+        // 图片相关性校验（读取点 RagService；defaults 取 bean）
+        d.put("imageFilter.enabled", String.valueOf(properties.getImages().getImageFilter().isEnabled()));
+        d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
+        d.put("imageFilter.preContextChars", String.valueOf(properties.getImages().getImageFilter().getPreContextChars()));
+        // 原先写死在消费方代码里的行为参数（直读 configService，保存即生效）
+        d.put("deepReasoning.autoRouteMinChars", "8");
+        d.put("deepReasoning.autoRouteLongChars", "25");
+        d.put("deepReasoning.autoRouteKeywords", "如果,当,对比,区别,以及,同时,多个,分别,为什么");
+        d.put("chat.maxImagesPerMessage", "9");
+        d.put("chat.maxImageMb", "10");
+        d.put("retrieval.maxRefsPerBlock", "8");
+        d.put("retrieval.relatedCount", "3");
+        d.put("parse.embedBatchSize", "10");
+        d.put("parse.ocrDpi", "200");
+        d.put("ratelimit.windowSeconds", "60");
+        d.put("cache.docMetaTtlSeconds", "600");
         return d;
     }
 
@@ -521,6 +562,18 @@ public class ConfigService {
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
             session.setAnonymousShared(pBool("session.anonymousShared", session.isAnonymousShared()));
+            AiAppProperties.QueryRewrite qr = properties.getQueryRewrite();
+            qr.setEnabled(pBool("queryRewrite.enabled", qr.isEnabled()));
+            qr.setHistoryRounds(pInt("queryRewrite.historyRounds", qr.getHistoryRounds()));
+            // 提示词：仅在 DB 给出非空值时回写，避免空串把默认提示词清掉
+            String qrPrompt = get("queryRewrite.prompt");
+            if (qrPrompt != null && !qrPrompt.isBlank()) qr.setPrompt(qrPrompt);
+            String qrPromptMt = get("queryRewrite.promptMultiTurn");
+            if (qrPromptMt != null && !qrPromptMt.isBlank()) qr.setPromptMultiTurn(qrPromptMt);
+            AiAppProperties.ImageFilter imgFilter = properties.getImages().getImageFilter();
+            imgFilter.setEnabled(pBool("imageFilter.enabled", imgFilter.isEnabled()));
+            imgFilter.setMinHits(pInt("imageFilter.minHits", imgFilter.getMinHits()));
+            imgFilter.setPreContextChars(pInt("imageFilter.preContextChars", imgFilter.getPreContextChars()));
         } catch (Exception e) {
             log.warn("[Config] 回写 AiAppProperties 失败（沿用当前值）: {}", e.getMessage());
         }
@@ -1057,7 +1110,9 @@ public class ConfigService {
         Map<String, Object> result = new LinkedHashMap<>();
         // 分组需覆盖 defaults() 里所有前缀，否则该组配置永远回显不出来（前端只能退回硬编码默认值）
         String[] groups = {"chat", "vision", "embedding", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit", "semanticCache"};
+                "keyword", "context", "deepReasoning", "ratelimit", "semanticCache",
+                // 补漏：defaults() 中已有这些前缀，但此前未列入本数组，导致设置页永远只能回显前端硬编码默认值
+                "images", "session", "cleanup", "eval", "queryRewrite", "imageFilter", "cache"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {

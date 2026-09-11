@@ -25,8 +25,13 @@ import java.time.Duration;
 public class RateLimitService {
 
     private static final String PREFIX = "ai-doc:ratelimit:";
-    /** 窗口长度（秒） */
-    private static final int WINDOW_SECONDS = 60;
+    /** 窗口长度默认值（秒）：ratelimit.windowSeconds 可配 */
+    private static final int WINDOW_SECONDS_DEFAULT = 60;
+
+    /** 限流窗口（秒），设置页可配 */
+    private int windowSeconds() {
+        return Math.max(1, configService.getInt("ratelimit.windowSeconds", WINDOW_SECONDS_DEFAULT));
+    }
 
     private final StringRedisTemplate redisTemplate;
     private final ConfigService configService;
@@ -52,12 +57,12 @@ public class RateLimitService {
         try {
             count = redisTemplate.opsForValue().increment(key);
             if (count != null && count == 1) {
-                redisTemplate.expire(key, Duration.ofSeconds(WINDOW_SECONDS));
+                redisTemplate.expire(key, Duration.ofSeconds(windowSeconds()));
             } else {
                 // 孤儿键自愈：INCR 成功但 EXPIRE 失败的键无 TTL，补设防永久累积
                 Long ttl = redisTemplate.getExpire(key);
                 if (ttl != null && ttl < 0) {
-                    redisTemplate.expire(key, Duration.ofSeconds(WINDOW_SECONDS));
+                    redisTemplate.expire(key, Duration.ofSeconds(windowSeconds()));
                 }
             }
         } catch (Exception e) {
@@ -71,9 +76,9 @@ public class RateLimitService {
             long ttl;
             try {
                 Long t = redisTemplate.getExpire(key);
-                ttl = (t != null && t > 0) ? t : WINDOW_SECONDS;
+                ttl = (t != null && t > 0) ? t : windowSeconds();
             } catch (Exception e) {
-                ttl = WINDOW_SECONDS;
+                ttl = windowSeconds();
             }
             log.info("[RateLimit] 触发限流 bucket={} identity={} count={}/{}", bucket, identity, count, limit);
             throw new BizException(429, "请求过于频繁，请 " + ttl + " 秒后重试");

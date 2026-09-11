@@ -458,7 +458,7 @@ public class DocumentService {
         // 2. 重建索引 schema：embeddingModel（DynamicEmbeddingModel）此时已是新配置，dimensions() 为新维度
         rvs.afterPropertiesSet();
         // 3. 游标分批全量重嵌（id 升序、LIMIT 翻页，逻辑删除由 MyBatis-Plus 自动过滤；与解析链路同批大小与重试）
-        int batchSize = 10;
+        int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
         String lastId = "";
         while (true) {
@@ -708,9 +708,9 @@ public class DocumentService {
             // 删除感知：入库后、向量化前再查一次
             if (!isDocAlive(docId)) { cleanupPartial(docId, aiDocs); return; }
 
-            // 写入向量库（embedding 接口单次请求上限 10 条，需分批；M10：每批失败自动重试 embedRetry 次）
+            // 写入向量库（embedding 接口单次请求有条数上限，需分批；M10：每批失败自动重试 embedRetry 次）
             if (!aiDocs.isEmpty()) {
-                int batchSize = 10;
+                int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
                 int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
                 int totalBatch = (aiDocs.size() + batchSize - 1) / batchSize;
                 int batchNo = 0;

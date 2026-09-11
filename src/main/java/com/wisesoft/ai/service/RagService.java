@@ -125,15 +125,39 @@ public class RagService {
      * 深度思考自动路由（autoRoute 开启时）：短问直接答；长问（≥25 字）或含多条件/对比/递进词的复杂问题自动开思考。
      * 保守启发式——只对明显复杂的问题路由，避免常见"如何/怎么"类问题全量思考导致成本与延迟翻倍。
      */
+    /** 自动路由阈值（设置页 deepReasoning.autoRoute* 可配）：短于下限不思考，达到上限或命中触发词才思考 */
     private boolean shouldAutoDeepThink(String question) {
         if (question == null) return false;
         String q = question.trim();
-        if (q.length() < 8) return false;
-        if (q.length() >= 25) return true;
-        for (String w : new String[]{"如果", "当", "对比", "区别", "以及", "同时", "多个", "分别", "为什么"}) {
+        int minChars = Math.max(1, configService.getInt("deepReasoning.autoRouteMinChars", 8));
+        int longChars = Math.max(minChars, configService.getInt("deepReasoning.autoRouteLongChars", 25));
+        if (q.length() < minChars) return false;
+        if (q.length() >= longChars) return true;
+        for (String w : autoRouteKeywords()) {
             if (q.contains(w)) return true;
         }
         return false;
+    }
+
+    /** 自动路由触发词（逗号分隔，deepReasoning.autoRouteKeywords 可配；留空=只按长度判断） */
+    private String[] autoRouteKeywords() {
+        String cfg = configService.get("deepReasoning.autoRouteKeywords");
+        if (cfg == null || cfg.isBlank()) return new String[0];
+        List<String> words = new ArrayList<>();
+        for (String w : cfg.split("[,，]")) {
+            String t = w.trim();
+            if (!t.isEmpty()) words.add(t);
+        }
+        return words.toArray(new String[0]);
+    }
+
+    /** <related> 追问推荐数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
+    private String relatedPromptLine() {
+        int n = Math.max(1, configService.getInt("retrieval.relatedCount", 3));
+        StringBuilder ex = new StringBuilder("问题1");
+        for (int i = 2; i <= n; i++) ex.append("|问题").append(i);
+        return "\n回答末尾用 <related>" + ex + "</related> 输出 " + n
+                + " 个用户可能追问的相关问题（用 | 分隔），如无合适问题可不输出。";
     }
 
     /**
@@ -491,7 +515,7 @@ public class RagService {
                     .append("\n注意：插入 [图片N] 时，标记前后不要紧贴任何标点，[图片N] 应独立成行；"
                             + "若句末需要标点，放在标记之前的文字末尾，如\"布局组件[图片1]\"，不要写成\"布局组件[图片1]、\"。")
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
-                    .append("\n回答末尾用 <related>问题1|问题2|问题3</related> 输出 3 个用户可能追问的相关问题（用 | 分隔），如无合适问题可不输出。");
+                    .append(relatedPromptLine());
             List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, configService.getInt("chat.historyRounds", 5));
             if (recentHistory == null) {
                 // M6 fail-loud：历史读取失败 → 本次对话无历史注入

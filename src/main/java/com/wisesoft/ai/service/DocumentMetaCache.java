@@ -28,10 +28,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class DocumentMetaCache {
 
-    /** 缓存条目有效期（ms）：10 分钟；过期后回源 DB 自愈（覆盖其它实例的改名/删除） */
-    private static final long ENTRY_TTL_MS = 10 * 60 * 1000L;
+    /** 缓存条目有效期（秒）：cache.docMetaTtlSeconds 可配（默认 600=10 分钟）；过期后回源 DB 自愈
+     *  （覆盖其它实例的改名/删除）。TTL 越长跨副本感知越慢，越短回源越频繁 */
+    private long entryTtlMs() {
+        return Math.max(1, configService.getInt("cache.docMetaTtlSeconds", 600)) * 1000L;
+    }
 
     private final AiDocumentMapper documentMapper;
+    private final ConfigService configService;
     private final Map<String, Entry> fileNameCache = new ConcurrentHashMap<>();
 
     /** 缓存条目（带过期时间；命中时刷新过期线，冷条目持续活跃） */
@@ -59,14 +63,14 @@ public class DocumentMetaCache {
         }
         Entry entry = fileNameCache.get(docId);
         if (entry != null && entry.fresh()) {
-            entry.expireAt = System.currentTimeMillis() + ENTRY_TTL_MS;
+            entry.expireAt = System.currentTimeMillis() + entryTtlMs();
             return entry.name;
         }
         // 未命中或已过期：回源 DB（过期条目的旧名自愈为最新值/清除）
         try {
             AiDocument doc = documentMapper.selectById(docId);
             if (doc != null && doc.getFileName() != null && !doc.getFileName().isBlank()) {
-                fileNameCache.put(docId, new Entry(doc.getFileName(), System.currentTimeMillis() + ENTRY_TTL_MS));
+                fileNameCache.put(docId, new Entry(doc.getFileName(), System.currentTimeMillis() + entryTtlMs()));
                 return doc.getFileName();
             }
             // DB 中已不存在/文件名为空：清除本地陈旧缓存（跨副本删除/改名自愈）
@@ -91,7 +95,7 @@ public class DocumentMetaCache {
             if (docId == null || docId.isBlank()) continue;
             Entry entry = fileNameCache.get(docId);
             if (entry != null && entry.fresh()) {
-                entry.expireAt = now + ENTRY_TTL_MS;
+                entry.expireAt = now + entryTtlMs();
                 result.put(docId, entry.name);
             } else {
                 missing.add(docId);
@@ -102,7 +106,7 @@ public class DocumentMetaCache {
             List<AiDocument> docs = documentMapper.selectBatchIds(missing);
             for (AiDocument doc : docs) {
                 if (doc != null && doc.getFileName() != null && !doc.getFileName().isBlank()) {
-                    fileNameCache.put(doc.getId(), new Entry(doc.getFileName(), now + ENTRY_TTL_MS));
+                    fileNameCache.put(doc.getId(), new Entry(doc.getFileName(), now + entryTtlMs()));
                     result.put(doc.getId(), doc.getFileName());
                 }
             }

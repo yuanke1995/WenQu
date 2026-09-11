@@ -112,12 +112,12 @@ public class PdfParser implements DocumentParser {
         return chunks;
     }
 
-    /** PDF 页 OCR 渲染 DPI：150→200 提高小字识别清晰度（内存/耗时小幅增加） */
-    private static final int OCR_DPI = 200;
+    /** PDF 页 OCR 渲染 DPI（parse.ocrDpi 可配，默认 200）：提高小字识别清晰度（内存/耗时小幅增加） */
+    private int ocrDpi() { return configService.getInt("parse.ocrDpi", 200); }
 
     private String ocrPage(PDFRenderer renderer, int page) {
         try {
-            BufferedImage img = renderer.renderImageWithDPI(page, OCR_DPI);
+            BufferedImage img = renderer.renderImageWithDPI(page, ocrDpi());
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             ImageIO.write(img, "png", bos);
             String text = visionService.describe(bos.toByteArray(), "png", OCR_PROMPT);

@@ -79,16 +79,19 @@ public class ChatController {
         // 聊天传图上限：数量与单张体积（防 base64 洪峰压垮解码/视觉处理；数据 URL 字符量≈体积×4/3）
         List<String> images = request.getImages();
         if (images != null && !images.isEmpty()) {
-            if (images.size() > 9) {
-                throw new BizException("一次最多发送 9 张图片");
+            int maxImages = Math.max(1, configService.getInt("chat.maxImagesPerMessage", 9));
+            if (images.size() > maxImages) {
+                throw new BizException("一次最多发送 " + maxImages + " 张图片");
             }
+            int maxImageMb = Math.max(1, configService.getInt("chat.maxImageMb", 10));
+            long maxBase64Chars = maxImageMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
             for (String img : images) {
                 int comma = img == null ? -1 : img.indexOf(',');
                 if (comma <= 0 || !img.startsWith("data:image/")) {
                     throw new BizException("图片格式不正确（需 data:image/* 的 data URL）");
                 }
-                if (img.length() - comma - 1 > 14_000_000) { // ≈10MB 原图（base64 膨胀 4/3）
-                    throw new BizException("单张图片不能超过 10MB");
+                if (img.length() - comma - 1 > maxBase64Chars) { // ≈maxImageMb MB 原图（base64 膨胀 4/3）
+                    throw new BizException("单张图片不能超过 " + maxImageMb + "MB");
                 }
             }
         }

@@ -155,16 +155,18 @@ public class KnowledgeRefService {
         }
     }
 
-    /** 单块引用条数上限（提及类易多，防 ref 膨胀；显式引用在前、提及在后，超出丢弃） */
-    private static final int MAX_REFS_PER_BLOCK = 8;
+    /** 单块引用条数上限（retrieval.maxRefsPerBlock 可配，默认 8；提及类易多，防 ref 膨胀；显式引用在前、提及在后，超出丢弃） */
+    private static final String MAX_REFS_PER_BLOCK_KEY = "retrieval.maxRefsPerBlock";
+    private static final int MAX_REFS_PER_BLOCK_DEFAULT = 8;
 
     /** 扫描块 content，提取候选引用（显式引用 + 无动词提及；同 from+to 去重）。
      *  mentionEnabled 由调用方读取配置（retrieval.refDetectMention），无参桥接实例方法便于单测直接验证纯逻辑 */
     List<Candidate> detectRefs(String content) {
-        return detectRefs0(content, configService.getBoolean("retrieval.refDetectMention"));
+        int maxRefs = Math.max(1, configService.getInt(MAX_REFS_PER_BLOCK_KEY, MAX_REFS_PER_BLOCK_DEFAULT));
+        return detectRefs0(content, configService.getBoolean("retrieval.refDetectMention"), maxRefs);
     }
 
-    static List<Candidate> detectRefs0(String content, boolean mentionEnabled) {
+    static List<Candidate> detectRefs0(String content, boolean mentionEnabled, int maxRefs) {
         List<Candidate> list = new ArrayList<>();
         if (content == null || content.isBlank()) return list;
         Set<String> seen = new HashSet<>();
@@ -224,8 +226,8 @@ public class KnowledgeRefService {
             }
         }
         // 上限截断：显式引用排前面（插入顺序天然显式在前），超出丢弃
-        if (list.size() > MAX_REFS_PER_BLOCK) {
-            return new ArrayList<>(list.subList(0, MAX_REFS_PER_BLOCK));
+        if (list.size() > maxRefs) {
+            return new ArrayList<>(list.subList(0, maxRefs));
         }
         return list;
     }
