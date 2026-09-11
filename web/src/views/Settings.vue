@@ -12,7 +12,7 @@
 
     <!-- 未保存改动提示（差异感知：避免"以为保存了其实没有"） -->
     <div v-if="dirtyCount" class="dirty-tip">
-      <warning-outlined style="color:#d48806" /> 有 {{ dirtyCount }} 组配置已修改未保存，点击右下角「保存配置（{{ dirtyCount }} 组改动）」生效
+      <warning-outlined style="color:#d48806" /> 有 {{ dirtyCount }} 项配置已修改未保存，点击右下角「保存配置（{{ dirtyCount }} 项改动）」生效
     </div>
 
     <a-spin :spinning="loading">
@@ -849,7 +849,7 @@
         <a-button type="primary" :loading="saving" :disabled="!dirtyCount" @click="save"
                   style="box-shadow:0 4px 12px rgba(0,0,0,0.18)">
           <template #icon><save-outlined /></template>
-          {{ dirtyCount ? `保存配置（${dirtyCount} 组改动）` : '保存配置' }}
+          {{ dirtyCount ? `保存配置（${dirtyCount} 项改动）` : '保存配置' }}
         </a-button>
       </div>
     </a-spin>
@@ -1594,14 +1594,27 @@ const buildPayload = () => ({
 
 /** 加载完成时的基线载荷（保存差异判定用；掩码 apiKey 未改时载荷无该键，与基线一致不误报） */
 const initialPayload = ref(null)
-/** 有改动的分组列表（对比 form 当前载荷与基线；值经同一 buildPayload 管线归一，避免数值/空格伪差异） */
-const dirtyGroups = computed(() => {
+/** 键级差集：只含真正变化的配置项，既是"有无改动"的判据，也是提交载荷
+ *  （后端 update() 为部分更新语义——只写请求体中出现且命中白名单的键，未传的键原样不动）
+ *  值经同一 buildPayload 管线归一，避免数值/空格伪差异；掩码 apiKey 未改时该键不在两侧，不误报 */
+const dirtyPayload = computed(() => {
   const base = initialPayload.value
-  if (!base) return []
+  if (!base) return {}
   const cur = buildPayload()
-  return Object.keys(base).filter(g => JSON.stringify(base[g]) !== JSON.stringify(cur[g]))
+  const out = {}
+  for (const g of Object.keys(cur)) {
+    const cb = base[g] || {}
+    const diff = {}
+    for (const k of Object.keys(cur[g] || {})) {
+      if (JSON.stringify(cur[g][k]) !== JSON.stringify(cb[k])) diff[k] = cur[g][k]
+    }
+    if (Object.keys(diff).length) out[g] = diff
+  }
+  return out
 })
-const dirtyCount = computed(() => dirtyGroups.value.length)
+/** 改动项数（键级，仅用于按钮与提示文案；与提交内容同一口径） */
+const dirtyCount = computed(() =>
+  Object.values(dirtyPayload.value).reduce((n, g) => n + Object.keys(g).length, 0))
 
 // ===== 恢复本组默认 =====
 const resettingKey = ref('')
@@ -1630,11 +1643,12 @@ const onResetGroup = key => {
 }
 
 const save = async () => {
-  const dirty = dirtyGroups.value
-  if (!dirty.length) { message.info('没有需要保存的改动'); return }
+  const payload = dirtyPayload.value
+  if (!Object.keys(payload).length) { message.info('没有需要保存的改动'); return }
   saving.value = true
   try {
-    const r = await saveConfig(buildPayload())
+    // 只提交改动项：后端为部分更新语义，未改动的键不写库（也避免用当前值无谓重写）
+    const r = await saveConfig(payload)
     if (r.success) {
       const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
       // N=0 即"假保存"哨兵：后端白名单未命中任何键时给出明确提示而非"已保存"误导
