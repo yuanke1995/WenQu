@@ -174,6 +174,11 @@ ai-app:
   query-rewrite:
     enabled: ${AI_QUERY_REWRITE_ENABLED:true}
     timeout-millis: 5000
+  # 意图分类（默认关闭：纯文本消息先经 LLM 判断「闲聊/知识库无关」vs「文档问答」，
+  # 前者跳过改写/思考/检索/引用直接对话，后者走完整 RAG；失败/超时自动降级为文档问答）
+  intent:
+    enabled: ${AI_INTENT_CLASSIFY_ENABLED:false}
+    timeout-millis: 3000
   # 上下文与长度控制（价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)，块按相关度累积）
   context:
     # 模型窗口映射（子串匹配当前 chat.model，未匹配用 default-window-tokens）

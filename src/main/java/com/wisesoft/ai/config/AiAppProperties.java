@@ -24,6 +24,8 @@ public class AiAppProperties {
 
     private QueryRewrite queryRewrite = new QueryRewrite();
 
+    private Intent intent = new Intent();
+
     private DeepReasoning deepReasoning = new DeepReasoning();
 
     private Context context = new Context();
@@ -197,6 +199,33 @@ public class AiAppProperties {
         private String promptMultiTurn = "以下是一段对话历史。请根据上下文，将最后一条用户消息改写为一个独立、精准的检索关键词或短语，用于检索操作手册知识库。"
                 + "要求：1) 只输出改写后的文本，不要解释；2) 如果最后一条消息是追问（如'那删除呢'），结合历史补全为完整问题；"
                 + "3) 保留核心动作和对象。\n\n对话历史：\n%s";
+    }
+
+    /**
+     * 意图分类：纯文本消息先经 LLM 判断「闲聊/知识库无关」（chat）还是「可能需要检索知识库」（doc），
+     * chat 跳过改写/思考/检索/引用直达对话，doc 走完整 RAG 链路。
+     * 失败/超时/输出无法识别一律降级为 doc（fail-safe，最坏等于现状）。
+     */
+    @Data
+    public static class Intent {
+        /** 是否启用意图分类（默认关闭，AI_INTENT_CLASSIFY_ENABLED 可开） */
+        private boolean enabled = false;
+        /** 分类超时时间(ms)：分类只输出一个单词，超时不宜过大，超时按 doc 处理 */
+        private int timeoutMillis = 3000;
+        /** 分类用模型（留空回落 chat.model，可配更小更快的模型） */
+        private String model = "";
+        /** 分类 prompt（要求只输出 chat 或 doc 单词；拿不准输出 doc） */
+        private String prompt = "你是意图分类器，判断用户消息是否需要检索产品操作手册知识库。只输出一个单词：chat 或 doc，不要任何解释。\n"
+                + "输出 chat：问候/寒暄/致谢/告别（你好、hi、在吗、谢谢、再见）、闲聊，"
+                + "以及与产品文档知识库无关的一切话题（天气、新闻、常识问答、其他产品等）。\n"
+                + "输出 doc：凡是可能需要查操作手册/功能说明/配置方法/操作步骤/报错处理的问题，"
+                + "以及提及本产品、系统、表单、组件、功能等内容的消息。\n"
+                + "拿不准时一律输出 doc。";
+        /** chat 分支（闲聊/知识库无关）回答规则：拼在角色段之后，DB 可编辑保存即生效 */
+        private String chatPrompt = "当前用户消息不涉及产品文档内容（问候、寒暄或与知识库无关的话题）。"
+                + "请自然友好地用简短篇幅回应，不要引用任何资料。"
+                + "若用户询问与产品无关的问题，可简要回应，并说明你是产品文档助手、擅长回答产品使用/配置/操作类问题，引导用户提问相关内容。"
+                + "不要编造文档内容，不要输出 [N] 或 [图片N] 标记。";
     }
 
     /**

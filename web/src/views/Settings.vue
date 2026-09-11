@@ -543,6 +543,29 @@
               <template #label><a-tooltip :title="tips.queryRewritePromptMultiTurn" placement="top">多轮改写提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-textarea v-model:value="form.queryRewrite.promptMultiTurn" :rows="3" placeholder="其中 %s 会被替换为对话历史" />
             </a-form-item>
+            <div class="cfg-sub">意图分类（问候/闲聊/知识库无关话题跳过检索直接对话）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.intentEnabled" placement="top"><span class="core-dot"></span>启用意图分类 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.intent.enabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">开启后闲聊不再显示"搜索N个关键词"状态行</span>
+            </a-form-item>
+            <a-form-item v-if="form.intent.enabled">
+              <template #label><a-tooltip :title="tips.intentTimeoutMillis" placement="top">分类超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.intent.timeoutMillis" :min="500" :step="500" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">超时按文档问答处理（走完整检索）</span>
+            </a-form-item>
+            <a-form-item v-if="form.intent.enabled">
+              <template #label><a-tooltip :title="tips.intentModel" placement="top">分类模型 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input v-model:value="form.intent.model" style="width:320px" placeholder="留空回落对话模型" />
+            </a-form-item>
+            <a-form-item v-if="form.intent.enabled">
+              <template #label><a-tooltip :title="tips.intentPrompt" placement="top">分类提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-textarea v-model:value="form.intent.prompt" :rows="4" placeholder="要求模型只输出 chat 或 doc 单词" />
+            </a-form-item>
+            <a-form-item v-if="form.intent.enabled">
+              <template #label><a-tooltip :title="tips.intentChatPrompt" placement="top">闲聊回答规则 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-textarea v-model:value="form.intent.chatPrompt" :rows="4" placeholder="闲聊/无关话题的回答口径，拼在角色段后" />
+            </a-form-item>
             <div class="cfg-sub">关联扩散与引用识别</div>
             <!-- 知识块关联检索：引用 1-hop 扩散 + 父章节带出 -->
             <a-form-item>
@@ -1125,6 +1148,11 @@ const tips = {
   queryRewritePrompt: '单轮对话的改写提示词。要求模型只输出改写后的检索关键词、不解释。注意：改写只重写"说法"，不会凭空补出语料里没有的同义词，对术语鸿沟帮助有限。',
   queryRewritePromptMultiTurn: '多轮对话的改写提示词，其中 %s 会被替换为最近若干轮对话历史，用于把追问（如"那删除呢"）补全成独立问题。',
   queryRewriteHistoryRounds: '多轮改写时参考的最近对话轮数。轮数越多上下文越全，但提示词更长、耗时略增。默认 2。',
+  intentEnabled: '意图分类总开关。开启后纯文本消息先让模型判断是「闲聊/知识库无关」还是「文档问答」：前者跳过改写/深度思考/检索直接对话（不再显示"搜索N个关键词，参考N段资料"状态行），后者走完整 RAG 链路。分类失败/超时自动按文档问答处理（最坏等于现状）。默认关闭。',
+  intentTimeoutMillis: '意图分类调用的超时时间(ms)。分类只要求模型输出一个单词，超时不宜过大；超时按文档问答处理（走完整检索）。',
+  intentModel: '意图分类使用的模型，留空回落对话模型(chat.model)。可配置更小更快的模型降低分类耗时与成本。',
+  intentPrompt: '意图分类提示词。要求模型只输出 chat（闲聊/知识库无关）或 doc（可能需要查知识库）单词；要调整分类边界（哪些话题算"无关"）改这里，保存即生效。',
+  intentChatPrompt: '闲聊分支的回答规则，拼在角色提示词之后。控制问候/闲聊/无关话题的回应口径（简短友好回应、无关问题引导回产品话题、不引用资料不输出标记），保存即生效。',
   imageFilterEnabled: '图片相关性校验开关。开启后按图片标记前文的关键词判断该图是否与问题相关，过滤掉无关配图；关闭则回答里只要命中图片就一并带出。',
   imageFilterMinHits: '图片相关性校验的关键词命中数阈值：前文命中数 ≥ 该值才视为相关。调高更严格（可能误杀配图），调低更宽松。默认 1。',
   imageFilterPreContextChars: '校验取图片标记之前多少字符作为判断前文。过短可能漏掉关键词，过长可能引入无关词。默认 100。',
@@ -1276,6 +1304,7 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                     cleanup: { sessionCleanupIntervalMs: 86400000, sessionRetentionDays: 30 },
                     queryRewrite: { enabled: true, historyRounds: 2, prompt: '', promptMultiTurn: '' },
                     imageFilter: { enabled: true, minHits: 1, preContextChars: 100 },
+                    intent: { enabled: false, timeoutMillis: 3000, model: '', prompt: '', chatPrompt: '' },
                     cache: { docMetaTtlSeconds: 600 } })
 
 // ==================== 测试连接（模型网关 / 服务可达性） ====================
@@ -1476,6 +1505,12 @@ const fetchAndFill = async () => {
       form.value.queryRewrite.historyRounds = Number(d.queryRewrite?.historyRounds?.value ?? 2)
       form.value.queryRewrite.prompt = d.queryRewrite?.prompt?.value || ''
       form.value.queryRewrite.promptMultiTurn = d.queryRewrite?.promptMultiTurn?.value || ''
+      // 意图分类（intent 为独立分组）
+      form.value.intent.enabled = d.intent?.enabled?.value === 'true'
+      form.value.intent.timeoutMillis = Number(d.intent?.timeoutMillis?.value ?? 3000)
+      form.value.intent.model = d.intent?.model?.value || ''
+      form.value.intent.prompt = d.intent?.prompt?.value || ''
+      form.value.intent.chatPrompt = d.intent?.chatPrompt?.value || ''
       form.value.retrieval.refDetectEnabled = d.retrieval?.refDetectEnabled?.value !== 'false'
       form.value.retrieval.refDetectMention = d.retrieval?.refDetectMention?.value !== 'false'
       form.value.retrieval.refExpandEnabled = d.retrieval?.refExpandEnabled?.value !== 'false'
@@ -1746,7 +1781,12 @@ const buildPayload = () => ({
                       promptMultiTurn: form.value.queryRewrite.promptMultiTurn },
       imageFilter: { enabled: String(form.value.imageFilter.enabled),
                      minHits: String(form.value.imageFilter.minHits),
-                     preContextChars: String(form.value.imageFilter.preContextChars) }
+                     preContextChars: String(form.value.imageFilter.preContextChars) },
+      intent: { enabled: String(form.value.intent.enabled),
+                timeoutMillis: String(form.value.intent.timeoutMillis),
+                model: form.value.intent.model,
+                prompt: form.value.intent.prompt,
+                chatPrompt: form.value.intent.chatPrompt }
     })
 
 /** 加载完成时的基线载荷（保存差异判定用；掩码 apiKey 未改时载荷无该键，与基线一致不误报） */

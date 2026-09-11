@@ -372,6 +372,21 @@ public class RagService {
                 }
             }
 
+            // 0.5 意图分类：问候/闲聊/知识库无关话题跳过 RAG（改写/思考/检索/引用），直接对话。
+            //     带图不分类（图片提问默认走视觉+RAG）；分类失败/超时/关闭一律继续走完整 RAG（fail-safe）
+            if (userImgs.isEmpty() && properties.getIntent().isEnabled()) {
+                // 客户端断开短路：分类是 LLM 调用，断开后不再发起
+                if (clientDisconnected(emitter)) {
+                    log.info("[SSE] 客户端断开，跳过意图分类: session={}", sessionId);
+                    return;
+                }
+                IntentResult ir = classifyIntent(question);
+                if (ir.chat()) {
+                    runSmallTalkChat(sessionId, question, emitter, startTime, thinkingHolder, degradations, degradedCodes);
+                    return;
+                }
+            }
+
             // 0. 查询改写（支持多轮历史上下文；失败降级为原始问题并上报 fail-loud；M2：关闭时跳过历史查询）
             String retrievalQuery = question;
             if (properties.getQueryRewrite().isEnabled()) {
@@ -1657,5 +1672,113 @@ public class RagService {
             }
         }
         return sb.toString();
+    }
+
+    /** 意图分类结果：chat=true 闲聊/知识库无关（reason 记录判定来源，排障用：llm/timeout/error/unrecognized/disabled） */
+    private record IntentResult(boolean chat, String reason) {
+    }
+
+    /**
+     * LLM 意图分类：判断消息是「闲聊/知识库无关」（chat）还是「可能需要检索知识库」（doc）。
+     * 只要求输出一个单词：temperature 0 + 不透传 thinking（普通 call 无思考链，rewriteQuery 已验证），
+     * 不设 maxTokens（qwen 思考模型下 max_tokens 会导致空输出，与 Vision 同源的坑），
+     * 靠单单词 prompt + contains 判定控制成本。失败/超时/空结果/无法识别一律返回 doc（fail-safe：走现有 RAG，最坏等于现状）。
+     * 保守判定顺序：先 doc 后 chat，输出同时含两词时按 doc 处理。
+     */
+    private IntentResult classifyIntent(String question) {
+        long start = System.currentTimeMillis();
+        // 分类模型：intent.model 留空回落 chat.model（final 副本，lambda 中引用需 effectively final）
+        String modelCfg = configService.get("intent.model");
+        final String model = (modelCfg == null || modelCfg.isBlank()) ? configService.get("chat.model") : modelCfg;
+        try {
+            String out = CompletableFuture
+                    .supplyAsync(() -> chatClient.prompt()
+                            .system(properties.getIntent().getPrompt())
+                            .user(question)
+                            .options(OpenAiChatOptions.builder()
+                                    .model(model)
+                                    .temperature(0.0)
+                                    .build())
+                            .call()
+                            .content(), rewriteExecutor)
+                    .get(configService.getInt("intent.timeoutMillis",
+                            properties.getIntent().getTimeoutMillis()), TimeUnit.MILLISECONDS);
+            String trimmed = out == null ? "" : out.trim().toLowerCase();
+            long cost = System.currentTimeMillis() - start;
+            if (trimmed.contains("doc")) {
+                log.info("[INTENT] {} -> doc ({}ms)", question, cost);
+                return new IntentResult(false, "llm");
+            }
+            if (trimmed.contains("chat")) {
+                log.info("[INTENT] {} -> chat ({}ms)", question, cost);
+                return new IntentResult(true, "llm");
+            }
+            log.warn("[FAIL-LOUD] 意图分类输出无法识别（[{}]），按文档问题处理: {}", trimmed, question);
+            return new IntentResult(false, "unrecognized");
+        } catch (TimeoutException e) {
+            log.warn("[FAIL-LOUD] 意图分类超时（{}ms），按文档问题处理: {}",
+                    configService.getInt("intent.timeoutMillis", properties.getIntent().getTimeoutMillis()), question);
+            return new IntentResult(false, "timeout");
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] 意图分类失败（{}），按文档问题处理: {}",
+                    e.getClass().getSimpleName(), e.getMessage() == null ? "无详情" : e.getMessage());
+            return new IntentResult(false, "error");
+        }
+    }
+
+    /**
+     * 闲聊分支（意图分类判 chat）：跳过改写/思考/检索/引用，直接流式对话。
+     * 复用主回答流（AnswerStreamState + buildAnswerStream）：无资料、无图片、不下发 retrieved 事件，
+     * 空 sources → 前端检索状态行天然不渲染（Chat.vue 条件 m.retrieved || sources.length 不成立）；
+     * 多轮历史照常注入保持会话连贯；回答照常落库/进语义缓存/问答日志（hitDocIds 为空）。
+     */
+    private void runSmallTalkChat(String sessionId, String question, SseEmitter emitter, long startTime,
+                                  String[] thinkingHolder, List<Map<String, String>> degradations,
+                                  Set<String> degradedCodes) {
+        try {
+            // 角色段（与主链路同源，保持人设一致）+ 闲聊分支规则（intent.chatPrompt，DB 可编辑保存即生效）
+            String rolePart = configService.get("chat.systemPrompt");
+            if (rolePart == null || rolePart.isBlank()) {
+                rolePart = properties.getSystemPrompt();
+            }
+            StringBuilder system = new StringBuilder(rolePart)
+                    .append("\n\n【本轮对话说明】\n")
+                    .append(properties.getIntent().getChatPrompt());
+            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId,
+                    configService.getInt("chat.historyRounds", 5));
+            if (recentHistory == null) {
+                // M6 fail-loud：历史读取失败 → 本次对话无历史注入
+                addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
+                recentHistory = List.of();
+            }
+            String historyText = buildHistoryText(recentHistory);
+            if (!historyText.isEmpty()) {
+                system.append("\n\n对话历史：\n").append(historyText);
+            }
+
+            // 生成前最后一道短路检查：流式回答是最长成本段，断开即不再发起
+            if (clientDisconnected(emitter)) {
+                log.info("[SSE] 客户端断开，终止本轮闲聊（生成前）: session={}", sessionId);
+                return;
+            }
+            sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
+            // 无资料/无图片/无检索状态行：空 sources + null retrievedJson（done/持久化路径均已空值兼容）
+            AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
+                    new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), List.of(),
+                    startTime, question, thinkingHolder, degradations, degradedCodes, null);
+            st.disposableRef.set(buildAnswerStream(system.toString(), question, st));
+            emitter.onCompletion(() -> st.disposeSafe());
+            emitter.onTimeout(() -> {
+                log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);
+                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
+                st.disposeSafe();
+                completeEmitter(emitter);
+            });
+            emitter.onError(t -> st.disposeSafe());
+        } catch (Exception e) {
+            log.error("Small talk chat error", e);
+            sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
+            completeEmitter(emitter);
+        }
     }
 }

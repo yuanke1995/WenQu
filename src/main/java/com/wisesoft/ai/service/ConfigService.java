@@ -188,6 +188,12 @@ public class ConfigService {
             Map.entry("imageFilter.enabled", "图片相关性校验：是否启用（按图片标记前文关键词判断与问题是否相关，过滤无关配图）"),
             Map.entry("imageFilter.minHits", "图片相关性校验：前文关键词命中数阈值(≥该值视为相关)"),
             Map.entry("imageFilter.preContextChars", "图片相关性校验：取图片标记前文的最大字符数"),
+            // ===== 意图分类（Intent）：闲聊/知识库无关消息跳过检索直接对话，由 syncProperties 回写 =====
+            Map.entry("intent.enabled", "意图分类：是否启用（纯文本消息先经 LLM 判断闲聊/知识库无关 vs 文档问答，前者跳过检索直接对话；失败自动降级文档问答）"),
+            Map.entry("intent.timeoutMillis", "意图分类：分类调用超时(ms，超时按文档问答处理)"),
+            Map.entry("intent.model", "意图分类：分类用模型（留空回落 chat.model，可配更小更快的模型）"),
+            Map.entry("intent.prompt", "意图分类：分类提示词（要求只输出 chat 或 doc 单词）"),
+            Map.entry("intent.chatPrompt", "意图分类：闲聊分支回答规则（拼在角色段后，保存即生效）"),
             // ===== 消费方直读 configService 的行为参数（原先写死在代码里）=====
             Map.entry("deepReasoning.autoRouteMinChars", "自动路由：问题字数下限（低于此数不触发深度思考）"),
             Map.entry("deepReasoning.autoRouteLongChars", "自动路由：问题字数上限（达到即触发深度思考）"),
@@ -574,6 +580,16 @@ public class ConfigService {
             imgFilter.setEnabled(pBool("imageFilter.enabled", imgFilter.isEnabled()));
             imgFilter.setMinHits(pInt("imageFilter.minHits", imgFilter.getMinHits()));
             imgFilter.setPreContextChars(pInt("imageFilter.preContextChars", imgFilter.getPreContextChars()));
+            AiAppProperties.Intent intent = properties.getIntent();
+            intent.setEnabled(pBool("intent.enabled", intent.isEnabled()));
+            intent.setTimeoutMillis(pInt("intent.timeoutMillis", intent.getTimeoutMillis()));
+            String intentModel = get("intent.model");
+            if (intentModel != null) intent.setModel(intentModel.trim());
+            // 提示词：仅在 DB 给出非空值时回写，避免空串把默认提示词清掉
+            String intentPrompt = get("intent.prompt");
+            if (intentPrompt != null && !intentPrompt.isBlank()) intent.setPrompt(intentPrompt);
+            String intentChatPrompt = get("intent.chatPrompt");
+            if (intentChatPrompt != null && !intentChatPrompt.isBlank()) intent.setChatPrompt(intentChatPrompt);
         } catch (Exception e) {
             log.warn("[Config] 回写 AiAppProperties 失败（沿用当前值）: {}", e.getMessage());
         }
