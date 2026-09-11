@@ -8,6 +8,7 @@
       <template v-for="a in anchors" :key="a.key">
         <a :class="{ 'anchor-active': currentAnchor === a.key }" href="javascript:void(0)" @click="jumpTo(a.key)">{{ a.label }}</a>
       </template>
+      <span class="anchor-legend"><span class="core-dot"></span>＝ 关键参数（其余为进阶调优，悬停 ? 看说明）</span>
     </div>
 
     <!-- 未保存改动提示（差异感知：避免"以为保存了其实没有"） -->
@@ -23,7 +24,7 @@
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <div class="cfg-sub">模型与连接（厂商预设自动填充地址与补全路径）</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.chatModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.chatModel" placement="top"><span class="core-dot"></span>模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.chat.model" placeholder="如 deepseek-chat / glm-4.5 / qwen-plus，与所选厂商一致" />
             </a-form-item>
             <a-form-item>
@@ -32,7 +33,7 @@
                         placeholder="选择厂商自动填充网关地址与补全路径" @change="onChatPresetChange" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.chatBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.chatBaseUrl" placement="top"><span class="core-dot"></span>网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.chat.baseUrl" style="width:420px"
                         placeholder="如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀或完整端点也能自动识别" />
               <a-button size="small" style="margin-left:8px" :loading="probeStates.chat.loading"
@@ -49,7 +50,7 @@
                         placeholder="默认 /v1/chat/completions；智谱 /v4、方舟 /v3、千帆 /v2（留空自动识别）" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.chatApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.chatApiKey" placement="top"><span class="core-dot"></span>API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-password v-model:value="form.chat.apiKey" style="width:420px"
                         placeholder="未修改时显示 ****掩码，无需重新输入（RSA 加密入库）" />
             </a-form-item>
@@ -75,9 +76,14 @@
                 生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）
               </span>
             </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.relatedCount" placement="top">相关追问条数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.relatedCount" :min="1" :max="8" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">回答末尾 &lt;related&gt; 推荐的用户可能追问数</span>
+            </a-form-item>
             <div class="cfg-sub">记忆与上下文</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.historyRounds" placement="top">多轮记忆轮数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.historyRounds" placement="top"><span class="core-dot"></span>多轮记忆轮数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.historyRounds" :min="0" :max="20" style="width:200px" />
             </a-form-item>
             <a-form-item>
@@ -103,6 +109,15 @@
               <template #label><a-tooltip :title="tips.sseTimeoutMs" placement="top">回答超时(ms) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chat.sseTimeoutMs" :min="60000" :step="30000" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">SSE 超时截断并提示，默认 300000</span>
+            </a-form-item>
+            <div class="cfg-sub">消息图片限制（防 base64 洪峰压垮解码/视觉处理）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.maxImagesPerMessage" placement="top">单条消息图片上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.chat.maxImagesPerMessage" :min="1" :max="20" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.maxImageMb" placement="top">单张图片上限(MB) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.chat.maxImageMb" :min="1" :max="50" style="width:200px" />
             </a-form-item>
             <div class="cfg-sub">调试开关（排障用，生产建议仅开引用自检）</div>
             <a-form-item>
@@ -138,11 +153,11 @@
             </a-form-item>
             <div class="cfg-sub">模型与连接（网关地址 / 密钥）</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.visionModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.visionModel" placement="top"><span class="core-dot"></span>模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.model" placeholder="如 qwen3-vl:2b" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.visionBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.visionBaseUrl" placement="top"><span class="core-dot"></span>网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.vision.baseUrl" style="width:420px"
                         placeholder="如 http://localhost:11434（Ollama）或 https://open.bigmodel.cn/api/paas" />
               <a-button size="small" style="margin-left:8px" :loading="probeStates.vision.loading"
@@ -154,7 +169,7 @@
               </a-tooltip>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.visionApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.visionApiKey" placement="top"><span class="core-dot"></span>API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-password v-model:value="form.vision.apiKey" style="width:420px"
                         placeholder="未修改时显示 ****掩码（Ollama 无需 Key 可留空；RSA 加密入库）" />
             </a-form-item>
@@ -209,6 +224,22 @@
               <a-input-number v-model:value="form.vision.descCacheTtlDays" :min="0" :step="30" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">天，0=不过期</span>
             </a-form-item>
+            <div class="cfg-sub">图片相关性校验（按图片标记前文关键词过滤无关配图）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.imageFilterEnabled" placement="top">启用校验 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.imageFilter.enabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">关闭则回答里只要有图就带出</span>
+            </a-form-item>
+            <a-form-item v-if="form.imageFilter.enabled">
+              <template #label><a-tooltip :title="tips.imageFilterMinHits" placement="top">关键词命中阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.imageFilter.minHits" :min="1" :max="10" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">前文关键词命中数 ≥ 该值视为相关</span>
+            </a-form-item>
+            <a-form-item v-if="form.imageFilter.enabled">
+              <template #label><a-tooltip :title="tips.imageFilterPreContextChars" placement="top">前文字符数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.imageFilter.preContextChars" :min="0" :step="20" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">取图片标记之前多少字符做关键词判断</span>
+            </a-form-item>
           </a-form>
         </a-collapse-panel>
 
@@ -242,7 +273,7 @@
               <a-input-number v-model:value="form.images.quality" :min="0.1" :max="1" :step="0.05" style="width:200px" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.imagesAuthEnabled" placement="top">图片访问鉴权 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.imagesAuthEnabled" placement="top"><span class="core-dot"></span>图片访问鉴权 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.images.authEnabled" />
               <span style="margin-left:12px;color:#999;font-size:12px">开启后图片 URL 需 HMAC 签名，防止被直接盗链（生产建议开）</span>
             </a-form-item>
@@ -253,7 +284,7 @@
             </a-form-item>
             <div class="cfg-sub">分块与解析行为（需重新解析/新上传文档生效）</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.chunkMaxSize" placement="top">分块最大字符数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.chunkMaxSize" placement="top"><span class="core-dot"></span>分块最大字符数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.chunk.maxSize" :min="200" :step="100" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">单块上限，决定检索粒度；改后需重解析生效</span>
             </a-form-item>
@@ -277,6 +308,16 @@
               <span style="margin-left:12px;color:#999;font-size:12px">页文本少于该长度触发 OCR</span>
             </a-form-item>
             <a-form-item>
+              <template #label><a-tooltip :title="tips.embedBatchSize" placement="top">向量化批次大小 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.parse.embedBatchSize" :min="1" :max="64" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">每批嵌入条数，需与上游接口单次上限匹配</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.ocrDpi" placement="top">PDF OCR 渲染 DPI <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.parse.ocrDpi" :min="72" :max="400" :step="10" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">越高小字越清晰，内存/耗时越高；默认 200</span>
+            </a-form-item>
+            <a-form-item>
               <template #label><a-tooltip :title="tips.chunkStructural" placement="top">结构感知切分 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.chunk.structural" />
               <span style="margin-left:12px;color:#999;font-size:12px">标题/段落边界优先 + 章节路径注入，需重解析生效</span>
@@ -295,12 +336,12 @@
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <div class="cfg-sub">模型与连接（网关地址 / 向量化路径 / 密钥）</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.embeddingModel" placement="top">模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.embeddingModel" placement="top"><span class="core-dot"></span>模型名 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.embedding.model" style="width:420px"
                         placeholder="如 text-embedding-v4 / embedding-3 / bge-m3，与所选厂商一致" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.embeddingBaseUrl" placement="top">网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.embeddingBaseUrl" placement="top"><span class="core-dot"></span>网关地址 Base URL <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input v-model:value="form.embedding.baseUrl" style="width:420px"
                         placeholder="OpenAI 兼容网关；…/v1、…/v4 等版本尾缀自动识别" />
               <a-button size="small" style="margin-left:8px" :loading="probeStates.embedding.loading"
@@ -318,7 +359,7 @@
                         placeholder="默认 /v1/embeddings；智谱 /v4/embeddings、千帆 /v2/embeddings（留空自动识别）" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.embeddingApiKey" placement="top">API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.embeddingApiKey" placement="top"><span class="core-dot"></span>API Key <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-password v-model:value="form.embedding.apiKey" style="width:420px"
                         placeholder="未修改时显示 ****掩码，无需重新输入（RSA 加密入库）" />
             </a-form-item>
@@ -413,11 +454,11 @@
               <span style="margin-left:12px;color:#999;font-size:12px">rrf 下权重/奖励项不参与</span>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.vectorWeight" placement="top">向量权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.vectorWeight" placement="top"><span class="core-dot"></span>向量权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.vectorWeight" :min="0" :max="1" :step="0.05" style="width:200px" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.keywordWeight" placement="top">关键词权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.keywordWeight" placement="top"><span class="core-dot"></span>关键词权重 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.keywordWeight" :min="0" :max="1" :step="0.05" style="width:200px" />
             </a-form-item>
             <a-form-item>
@@ -435,12 +476,12 @@
               <span style="margin-left:12px;color:#999;font-size:12px">文档前 2 块的额外加分</span>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.vectorTopK" placement="top">向量召回上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.vectorTopK" placement="top"><span class="core-dot"></span>向量召回上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.vectorTopK" :min="1" :max="100" :step="5" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">向量路候选块数，调大更易召回生僻表述</span>
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.vecThreshold" placement="top">向量阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.vecThreshold" placement="top"><span class="core-dot"></span>向量阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.vecThreshold" :min="0" :max="1" :step="0.05" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">相似度归一化基准/下限</span>
             </a-form-item>
@@ -482,6 +523,25 @@
               <template #label><a-tooltip :title="tips.rewriteFallbackWeakScore" placement="top">改写回退-弱分阈值 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.retrieval.rewriteFallbackWeakScore" :min="0" :max="1" :step="0.05" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">改写后最高命中分低于该值→回退原问重检；0=关</span>
+            </a-form-item>
+            <div class="cfg-sub">查询改写（把问句改写为检索关键词，提升召回）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.queryRewriteEnabled" placement="top"><span class="core-dot"></span>启用查询改写 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-switch v-model:checked="form.queryRewrite.enabled" />
+              <span style="margin-left:12px;color:#999;font-size:12px">关闭则直接用原问检索</span>
+            </a-form-item>
+            <a-form-item v-if="form.queryRewrite.enabled">
+              <template #label><a-tooltip :title="tips.queryRewriteHistoryRounds" placement="top">参考对话轮数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.queryRewrite.historyRounds" :min="0" :max="10" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">多轮改写时参考的最近轮数</span>
+            </a-form-item>
+            <a-form-item v-if="form.queryRewrite.enabled">
+              <template #label><a-tooltip :title="tips.queryRewritePrompt" placement="top">单轮改写提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-textarea v-model:value="form.queryRewrite.prompt" :rows="3" placeholder="要求模型只输出改写后的检索关键词" />
+            </a-form-item>
+            <a-form-item v-if="form.queryRewrite.enabled">
+              <template #label><a-tooltip :title="tips.queryRewritePromptMultiTurn" placement="top">多轮改写提示词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-textarea v-model:value="form.queryRewrite.promptMultiTurn" :rows="3" placeholder="其中 %s 会被替换为对话历史" />
             </a-form-item>
             <div class="cfg-sub">关联扩散与引用识别</div>
             <!-- 知识块关联检索：引用 1-hop 扩散 + 父章节带出 -->
@@ -526,6 +586,11 @@
               <template #label><a-tooltip :title="tips.refExpandFuzzyName" placement="top">章节名弱匹配 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.retrieval.refExpandFuzzyName" />
               <span style="margin-left:12px;color:#999;font-size:12px">章节名按 contains 弱匹配（默认开，应对标题微差）</span>
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.maxRefsPerBlock" placement="top">单块引用上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.retrieval.maxRefsPerBlock" :min="1" :max="30" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">解析时单个知识块最多保留的引用条数，超出丢弃</span>
             </a-form-item>
             <a-form-item>
               <template #label><a-tooltip :title="tips.refDetectEnabled" placement="top">引用识别 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
@@ -650,7 +715,7 @@
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <div class="cfg-sub">思考模式与引导</div>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.drEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.drEnabled" placement="top"><span class="core-dot"></span>总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.deepReasoning.enabled" />
             </a-form-item>
             <a-form-item>
@@ -715,9 +780,25 @@
               <a-input-number v-model:value="form.deepReasoning.injectKeywordsMax" :min="1" :max="10" style="width:200px" />
             </a-form-item>
             <a-form-item>
-              <template #label><a-tooltip :title="tips.drAutoRoute" placement="top">自动路由 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.drAutoRoute" placement="top"><span class="core-dot"></span>自动路由 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.deepReasoning.autoRoute" />
               <span style="margin-left:12px;color:#999;font-size:12px">未手动开启时，长问/多条件/对比类问题自动启用深度思考</span>
+            </a-form-item>
+            <a-form-item v-if="form.deepReasoning.autoRoute">
+              <template #label><a-tooltip :title="tips.drAutoRouteMinChars" placement="top">字数下限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.deepReasoning.autoRouteMinChars" :min="1" :max="100" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">低于该字数的问题不触发深度思考</span>
+            </a-form-item>
+            <a-form-item v-if="form.deepReasoning.autoRoute">
+              <template #label><a-tooltip :title="tips.drAutoRouteLongChars" placement="top">字数上限 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.deepReasoning.autoRouteLongChars" :min="2" :max="500" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">达到该字数即触发深度思考</span>
+            </a-form-item>
+            <a-form-item v-if="form.deepReasoning.autoRoute">
+              <template #label><a-tooltip :title="tips.drAutoRouteKeywords" placement="top">触发词 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input v-model:value="form.deepReasoning.autoRouteKeywords" style="width:420px"
+                       placeholder="逗号分隔，如：如果,当,对比,区别" />
+              <span style="margin-left:12px;color:#999;font-size:12px">问句含任一触发词即触发；留空=只按长度判断</span>
             </a-form-item>
           </a-form>
           <a-alert type="info" show-icon style="margin:0 24px 16px"
@@ -728,7 +809,7 @@
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='semanticCache'" @click.stop="onResetGroup('semanticCache')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
-              <template #label><a-tooltip :title="tips.scEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.scEnabled" placement="top"><span class="core-dot"></span>总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.semanticCache.enabled" />
             </a-form-item>
             <a-form-item>
@@ -752,7 +833,7 @@
           <template #extra><a-button size="small" type="text" class="reset-group-btn" :loading="resettingKey==='ratelimit'" @click.stop="onResetGroup('ratelimit')">恢复本组默认</a-button></template>
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 14 }">
             <a-form-item>
-              <template #label><a-tooltip :title="tips.rlEnabled" placement="top">总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <template #label><a-tooltip :title="tips.rlEnabled" placement="top"><span class="core-dot"></span>总开关 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-switch v-model:checked="form.ratelimit.enabled" />
             </a-form-item>
             <a-form-item>
@@ -762,6 +843,11 @@
             <a-form-item>
               <template #label><a-tooltip :title="tips.rlUpload" placement="top">上传限频（次/分钟/用户） <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.ratelimit.uploadPerMinute" :min="0" :step="5" style="width:200px" />
+            </a-form-item>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.rlWindowSeconds" placement="top">窗口长度(秒) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.ratelimit.windowSeconds" :min="5" :step="5" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">固定窗口计数周期，默认 60 秒</span>
             </a-form-item>
           </a-form>
           <a-alert type="info" show-icon style="margin:0 24px 16px"
@@ -836,6 +922,12 @@
               <template #label><a-tooltip :title="tips.sessionRetentionDays" placement="top">会话保留天数 <question-circle-outlined class="tip-icon" /></a-tooltip></template>
               <a-input-number v-model:value="form.cleanup.sessionRetentionDays" :min="1" :step="1" style="width:200px" />
               <span style="margin-left:12px;color:#999;font-size:12px">超期会话将被删除，默认 30 天</span>
+            </a-form-item>
+            <div class="cfg-sub">文档名缓存（多副本一致性）</div>
+            <a-form-item>
+              <template #label><a-tooltip :title="tips.docMetaTtlSeconds" placement="top">缓存有效期(秒) <question-circle-outlined class="tip-icon" /></a-tooltip></template>
+              <a-input-number v-model:value="form.cache.docMetaTtlSeconds" :min="10" :step="60" style="width:200px" />
+              <span style="margin-left:12px;color:#999;font-size:12px">多副本下文档改名/删除的感知延迟上限，默认 600</span>
             </a-form-item>
           </a-form>
           <a-alert type="info" show-icon style="margin:0 24px 16px"
@@ -946,7 +1038,7 @@ const tips = {
   drInjectThinkingChars: '思考链注入回答的最大字符数。越长信息越全但占用生成预算；过短可能丢失关键推理。',
   drInjectKeywords: '从思考全文提取关键词元补充到检索 query（多路检索多一条增强路；深度思考失败时也用它增强降级检索，思考不白费）。提升"思考中提到的实体/限定词"的召回。',
   drInjectKeywordsMax: '思考关键词增强最多取多少个词元。越多召回越宽但可能引入噪声。',
-  drAutoRoute: '未手动开启深度思考时，按问题特征自动判断：长问（≥25 字）或含多条件/对比/递进词（如果/当/对比/区别/以及/同时/多个）的问题自动启用深度思考。保守启发式，避免常见问题全量思考导致成本翻倍。',
+  drAutoRoute: '未手动开启深度思考时，按问题特征自动判断：达到「字数上限」的长问，或命中「触发词」的问题自动启用深度思考；低于「字数下限」的问题一律不思考。保守启发式，避免常见问题全量思考导致成本翻倍。',
   historyRounds: '问答时注入对话历史的轮数（多轮记忆）。调大更连贯但占上下文预算；0=不注入历史。',
   remainTokenFloor: '上下文预算保留下限（token）：扣除系统提示与问题后至少保留的量，低于则不再填充知识块。',
   truncateFallbackChars: '知识块超出预算时的截断兜底字符数（至少保留的字数）。',
@@ -1027,7 +1119,27 @@ const tips = {
   visionNumCtx: 'Ollama num_ctx 上下文窗口。图片视觉 token 较多（1280px 约 1600~2500），Ollama 默认 4096 会截断导致描述不全；0=不设置。默认 16384。',
   sessionMaxHistory: '会话保留的最近对话轮数上限。越大多轮上下文越完整，但占用 Redis 内存与注入预算。默认 10。',
   sessionExpireMinutes: '会话缓存的过期时间（分钟）。超期后会话从缓存淘汰（数据库记录仍保留，按会话清理策略删除）。默认 30。',
-  sessionAnonymousShared: '匿名历史池是否对具名用户可见（存量升级兼容项）。关闭后匿名会话只能由匿名调用方访问，可收紧越权面；若历史数据需被具名用户复用则应保持开启。默认开启。'
+  sessionAnonymousShared: '匿名历史池是否对具名用户可见（存量升级兼容项）。关闭后匿名会话只能由匿名调用方访问，可收紧越权面；若历史数据需被具名用户复用则应保持开启。默认开启。',
+  // ===== 查询改写 / 图片相关性校验（原 yml 参数开放）=====
+  queryRewriteEnabled: '查询改写总开关。开启后先用模型把用户问句改写成更适合检索的关键词（含多轮补全）再检索，可提升召回；关闭则直接用原句检索，省一次模型调用。默认开启。',
+  queryRewritePrompt: '单轮对话的改写提示词。要求模型只输出改写后的检索关键词、不解释。注意：改写只重写"说法"，不会凭空补出语料里没有的同义词，对术语鸿沟帮助有限。',
+  queryRewritePromptMultiTurn: '多轮对话的改写提示词，其中 %s 会被替换为最近若干轮对话历史，用于把追问（如"那删除呢"）补全成独立问题。',
+  queryRewriteHistoryRounds: '多轮改写时参考的最近对话轮数。轮数越多上下文越全，但提示词更长、耗时略增。默认 2。',
+  imageFilterEnabled: '图片相关性校验开关。开启后按图片标记前文的关键词判断该图是否与问题相关，过滤掉无关配图；关闭则回答里只要命中图片就一并带出。',
+  imageFilterMinHits: '图片相关性校验的关键词命中数阈值：前文命中数 ≥ 该值才视为相关。调高更严格（可能误杀配图），调低更宽松。默认 1。',
+  imageFilterPreContextChars: '校验取图片标记之前多少字符作为判断前文。过短可能漏掉关键词，过长可能引入无关词。默认 100。',
+  // ===== 原写死在消费方代码里的行为参数（直读 configService，保存即生效）=====
+  drAutoRouteMinChars: '自动路由的问题字数下限：低于该字数的问题不触发深度思考（短问直接答）。默认 8。',
+  drAutoRouteLongChars: '自动路由的问题字数上限：达到该字数即触发深度思考。默认 25。',
+  drAutoRouteKeywords: '自动路由触发词（逗号分隔）：问句含任一触发词即触发深度思考，用于拦截多条件/对比/递进类中等长度问题。留空表示只按长度判断。',
+  maxImagesPerMessage: '单条消息最多携带的图片张数。超限直接拒绝，防止 base64 大载荷压垮解码与视觉处理。默认 9。',
+  maxImageMb: '单张图片的体积上限（MB，按原图计；base64 编码后约为 4/3 倍）。超限拒绝发送。默认 10。',
+  maxRefsPerBlock: '解析时单个知识块最多保留的引用条数：提及类引用容易膨胀，超出按「显式引用在前」截断丢弃。默认 8。',
+  relatedCount: '回答末尾 <related> 相关追问的推荐条数，提示词里的示例会与该数量保持一致。默认 3。',
+  embedBatchSize: '向量化分批大小（每批嵌入的知识块条数）。需与 embedding 上游接口的单次请求上限匹配，调大可提速但可能被限流。默认 10。',
+  ocrDpi: 'PDF 扫描页 OCR 渲染 DPI：越高小字越清晰、识别率越好，但内存与耗时随之增加。默认 200。',
+  rlWindowSeconds: '限流固定窗口的长度（秒）：窗口内按「次/分钟」配置的额度计数，窗口越长突发容纳越多。默认 60。',
+  docMetaTtlSeconds: '文档名本地缓存的有效期（秒）。多副本部署时，其它实例的改名/删除最多延迟一个 TTL 后自愈；单副本可调大，多副本调小可加快一致但增加回源查询。默认 600。'
 }
 
 const loading = ref(false)
@@ -1120,14 +1232,15 @@ const onChatPresetChange = val => {
   message.info('已填充网关地址与补全路径，请补齐 API Key 与模型名后保存')
 }
 
-const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false, citationCheckEnabled: true },
+const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: '', temperature: 0.3, systemPrompt: '', suggestedQuestions: '', retrievalDebugEnabled: false, remainTokenFloor: 800, truncateFallbackChars: 200, historyRounds: 5, pipelineThreads: 8, streamRetryCount: 1, sseTimeoutMs: 300000, showDebugDegradations: false, citationCheckEnabled: true, maxImagesPerMessage: 9, maxImageMb: 10 },
                     vision: { enabled: true, model: '', baseUrl: '', apiKey: '', prompt: '', concurrency: 4, userImageConcurrency: 2,
                               timeoutMillis: 30000, retryCount: 1, think: false, keepAliveMinutes: 30, numCtx: 16384,
                               descCacheVersion: '1', descCacheTtlDays: 180 },
                     embedding: { model: '', baseUrl: '', apiKey: '', embeddingsPath: '' },
                     chunk: { maxSize: 800, maxChunks: 3000, maxImages: 100, overlap: 100, structural: true, structuralRatio: 0.8 },
                     // 解析类参数后端 key 前缀是 parse.*（不是 chunk.*），必须独立分组提交，否则被白名单静默丢弃
-                    parse: { concurrency: 2, ocrMinText: 20, embedRetryCount: 1, recoverStuckOnStartup: true },
+                    parse: { concurrency: 2, ocrMinText: 20, embedRetryCount: 1, recoverStuckOnStartup: true,
+                             embedBatchSize: 10, ocrDpi: 200 },
                     upload: { maxFileSizeMB: 200 },
                     retrieval: { vectorWeight: 0.6, keywordWeight: 0.4, titleBonus: 0.1,
                                  vectorTopK: 15,
@@ -1136,7 +1249,7 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                  fusionMode: 'sum',
                                  refDetectEnabled: true, refDetectMention: true, refExpandEnabled: true, refExpandMaxHits: 3, refExpandIncludeIncoming: false,
                                  refExpandParentEnabled: true, refExpandParentMode: 'summary', refExpandParentMaxLevels: 2,
-                                 refExpandFuzzyName: true, refExpandMaxTokens: 800,
+                                 refExpandFuzzyName: true, refExpandMaxTokens: 800, maxRefsPerBlock: 8, relatedCount: 3,
                                  positionBonus: 0.03, sectionBonus: 0.01, keywordMaxTerms: 6, keywordMaxTotal: 12,
                                  rerank: { enabled: false, baseUrl: 'http://localhost:7997',
                                            model: 'BAAI/bge-reranker-v2-m3', timeoutMillis: 5000,
@@ -1151,14 +1264,19 @@ const form = ref({ chat: { model: '', baseUrl: '', apiKey: '', completionsPath: 
                                      searchTag: 'search', maxSubQueries: 3, multiRetrieval: true,
                                      timeoutMillis: 30000, maxThinkingTokens: 0,
                                      maxThinkingChars: 3000, injectThinking: true, injectThinkingMaxChars: 800,
-                                     injectKeywords: true, injectKeywordsMax: 5, autoRoute: false },
-                    ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10 },
+                                     injectKeywords: true, injectKeywordsMax: 5, autoRoute: false,
+                                     autoRouteMinChars: 8, autoRouteLongChars: 25,
+                                     autoRouteKeywords: '如果,当,对比,区别,以及,同时,多个,分别,为什么' },
+                    ratelimit: { enabled: true, chatPerMinute: 10, uploadPerMinute: 10, windowSeconds: 60 },
                     semanticCache: { enabled: true, threshold: 0.96, maxEntries: 500 },
                     eval: { judgeEnabled: false, autoIntervalMs: 86400000, autoThresholdPct: 10, judgeModel: '' },
                     images: { maxWidth: 1280, quality: 0.9, authEnabled: false, authExpireSeconds: 3600,
                               chatCleanupIntervalMs: 86400000, chatRetentionMillis: 604800000 },
                     session: { maxHistory: 10, expireMinutes: 30, anonymousShared: true },
-                    cleanup: { sessionCleanupIntervalMs: 86400000, sessionRetentionDays: 30 } })
+                    cleanup: { sessionCleanupIntervalMs: 86400000, sessionRetentionDays: 30 },
+                    queryRewrite: { enabled: true, historyRounds: 2, prompt: '', promptMultiTurn: '' },
+                    imageFilter: { enabled: true, minHits: 1, preContextChars: 100 },
+                    cache: { docMetaTtlSeconds: 600 } })
 
 // ==================== 测试连接（模型网关 / 服务可达性） ====================
 // 用表单里「尚未保存」的值探测，先测后存；与保存流程无关，不改配置、不落库。
@@ -1288,6 +1406,8 @@ const fetchAndFill = async () => {
       form.value.chat.sseTimeoutMs = Number(d.chat?.sseTimeoutMs?.value ?? 300000)
       form.value.chat.showDebugDegradations = d.chat?.showDebugDegradations?.value === 'true'
       form.value.chat.citationCheckEnabled = d.chat?.citationCheckEnabled?.value !== 'false'
+      form.value.chat.maxImagesPerMessage = Number(d.chat?.maxImagesPerMessage?.value ?? 9)
+      form.value.chat.maxImageMb = Number(d.chat?.maxImageMb?.value ?? 10)
       form.value.eval.judgeEnabled = d.eval?.judgeEnabled?.value === 'true'
       form.value.eval.autoIntervalMs = Number(d.eval?.autoIntervalMs?.value ?? 86400000)
       form.value.eval.autoThresholdPct = Number(d.eval?.autoThresholdPct?.value ?? 10)
@@ -1303,6 +1423,7 @@ const fetchAndFill = async () => {
       form.value.session.anonymousShared = d.session?.anonymousShared?.value !== 'false'
       form.value.cleanup.sessionCleanupIntervalMs = Number(d.cleanup?.sessionCleanupIntervalMs?.value ?? 86400000)
       form.value.cleanup.sessionRetentionDays = Number(d.cleanup?.sessionRetentionDays?.value ?? 30)
+      form.value.cache.docMetaTtlSeconds = Number(d.cache?.docMetaTtlSeconds?.value ?? 600)
       form.value.vision.enabled = d.vision?.enabled?.value !== 'false'
       form.value.vision.model = d.vision?.model?.value || ''
       form.value.vision.baseUrl = d.vision?.baseUrl?.value || ''
@@ -1313,6 +1434,10 @@ const fetchAndFill = async () => {
       form.value.vision.userImageConcurrency = Number(d.vision?.userImageConcurrency?.value ?? 2)
       form.value.vision.descCacheVersion = d.vision?.descCacheVersion?.value || '1'
       form.value.vision.descCacheTtlDays = Number(d.vision?.descCacheTtlDays?.value ?? 180)
+      // 图片相关性校验（imageFilter 为独立分组）
+      form.value.imageFilter.enabled = d.imageFilter?.enabled?.value !== 'false'
+      form.value.imageFilter.minHits = Number(d.imageFilter?.minHits?.value ?? 1)
+      form.value.imageFilter.preContextChars = Number(d.imageFilter?.preContextChars?.value ?? 100)
       form.value.vision.timeoutMillis = Number(d.vision?.timeoutMillis?.value ?? 30000)
       form.value.vision.retryCount = Number(d.vision?.retryCount?.value ?? 1)
       form.value.vision.think = d.vision?.think?.value === 'true'
@@ -1330,6 +1455,8 @@ const fetchAndFill = async () => {
       form.value.parse.concurrency = Number(ps.concurrency?.value ?? 2)
       form.value.parse.ocrMinText = Number(ps.ocrMinText?.value ?? 20)
       form.value.parse.embedRetryCount = Number(ps.embedRetryCount?.value ?? 1)
+      form.value.parse.embedBatchSize = Number(ps.embedBatchSize?.value ?? 10)
+      form.value.parse.ocrDpi = Number(ps.ocrDpi?.value ?? 200)
       form.value.parse.recoverStuckOnStartup = ps.recoverStuckOnStartup?.value !== 'false'
       const up = d.upload || {}
       form.value.upload.maxFileSizeMB = Math.round(Number(up.maxFileSize?.value ?? 209715200) / 1024 / 1024)
@@ -1344,6 +1471,11 @@ const fetchAndFill = async () => {
       form.value.retrieval.rewriteTimeoutMs = Number(d.retrieval?.rewriteTimeoutMs?.value ?? 5000)
       form.value.retrieval.rewriteFallbackMinHits = Number(d.retrieval?.rewriteFallbackMinHits?.value ?? 2)
       form.value.retrieval.rewriteFallbackWeakScore = Number(d.retrieval?.rewriteFallbackWeakScore?.value ?? 0.2)
+      // 查询改写（queryRewrite 为独立分组）
+      form.value.queryRewrite.enabled = d.queryRewrite?.enabled?.value !== 'false'
+      form.value.queryRewrite.historyRounds = Number(d.queryRewrite?.historyRounds?.value ?? 2)
+      form.value.queryRewrite.prompt = d.queryRewrite?.prompt?.value || ''
+      form.value.queryRewrite.promptMultiTurn = d.queryRewrite?.promptMultiTurn?.value || ''
       form.value.retrieval.refDetectEnabled = d.retrieval?.refDetectEnabled?.value !== 'false'
       form.value.retrieval.refDetectMention = d.retrieval?.refDetectMention?.value !== 'false'
       form.value.retrieval.refExpandEnabled = d.retrieval?.refExpandEnabled?.value !== 'false'
@@ -1352,6 +1484,8 @@ const fetchAndFill = async () => {
       form.value.retrieval.refExpandParentEnabled = d.retrieval?.refExpandParentEnabled?.value !== 'false'
       form.value.retrieval.fusionMode = d.retrieval?.fusionMode?.value || 'sum'
       form.value.retrieval.refExpandMaxTokens = Number(d.retrieval?.refExpandMaxTokens?.value ?? 800)
+      form.value.retrieval.maxRefsPerBlock = Number(d.retrieval?.maxRefsPerBlock?.value ?? 8)
+      form.value.retrieval.relatedCount = Number(d.retrieval?.relatedCount?.value ?? 3)
       form.value.retrieval.refExpandParentMode = d.retrieval?.refExpandParentMode?.value || 'summary'
       form.value.retrieval.refExpandParentMaxLevels = Number(d.retrieval?.refExpandParentMaxLevels?.value ?? 2)
       form.value.retrieval.refExpandFuzzyName = d.retrieval?.refExpandFuzzyName?.value !== 'false'
@@ -1405,10 +1539,15 @@ const fetchAndFill = async () => {
       form.value.deepReasoning.injectKeywords = dr.injectKeywords?.value !== 'false'
       form.value.deepReasoning.injectKeywordsMax = Number(dr.injectKeywordsMax?.value ?? 5)
       form.value.deepReasoning.autoRoute = dr.autoRoute?.value === 'true'
+      form.value.deepReasoning.autoRouteMinChars = Number(dr.autoRouteMinChars?.value ?? 8)
+      form.value.deepReasoning.autoRouteLongChars = Number(dr.autoRouteLongChars?.value ?? 25)
+      form.value.deepReasoning.autoRouteKeywords = dr.autoRouteKeywords?.value
+              || '如果,当,对比,区别,以及,同时,多个,分别,为什么'
       const rl = d.ratelimit || {}
       form.value.ratelimit.enabled = rl.enabled?.value !== 'false'
       form.value.ratelimit.chatPerMinute = Number(rl.chatPerMinute?.value ?? 10)
       form.value.ratelimit.uploadPerMinute = Number(rl.uploadPerMinute?.value ?? 10)
+      form.value.ratelimit.windowSeconds = Number(rl.windowSeconds?.value ?? 60)
       const sc = d.semanticCache || {}
       form.value.semanticCache.enabled = sc.enabled?.value !== 'false'
       form.value.semanticCache.threshold = Number(sc.threshold?.value ?? 0.96)
@@ -1468,7 +1607,9 @@ const buildPayload = () => ({
               streamRetryCount: String(form.value.chat.streamRetryCount),
               sseTimeoutMs: String(form.value.chat.sseTimeoutMs),
               showDebugDegradations: String(form.value.chat.showDebugDegradations),
-              citationCheckEnabled: String(form.value.chat.citationCheckEnabled) },
+              citationCheckEnabled: String(form.value.chat.citationCheckEnabled),
+              maxImagesPerMessage: String(form.value.chat.maxImagesPerMessage),
+              maxImageMb: String(form.value.chat.maxImageMb) },
       eval: { judgeEnabled: String(form.value.eval.judgeEnabled),
               autoIntervalMs: String(form.value.eval.autoIntervalMs),
               autoThresholdPct: String(form.value.eval.autoThresholdPct),
@@ -1501,6 +1642,8 @@ const buildPayload = () => ({
       // parse 是独立分组（后端 key 前缀 parse.*），并发/OCR阈值/向量化重试都在这里，不可放进 chunk
       parse: { concurrency: String(form.value.parse.concurrency),
                ocrMinText: String(form.value.parse.ocrMinText),
+               embedBatchSize: String(form.value.parse.embedBatchSize),
+               ocrDpi: String(form.value.parse.ocrDpi),
                embedRetryCount: String(form.value.parse.embedRetryCount),
                recoverStuckOnStartup: String(form.value.parse.recoverStuckOnStartup) },
       upload: { maxFileSize: String(form.value.upload.maxFileSizeMB * 1024 * 1024) },
@@ -1525,6 +1668,8 @@ const buildPayload = () => ({
                    refExpandParentMode: String(form.value.retrieval.refExpandParentMode),
                    refExpandParentMaxLevels: String(form.value.retrieval.refExpandParentMaxLevels),
                    refExpandFuzzyName: String(form.value.retrieval.refExpandFuzzyName),
+                   maxRefsPerBlock: String(form.value.retrieval.maxRefsPerBlock),
+                   relatedCount: String(form.value.retrieval.relatedCount),
                    refExpandMaxTokens: String(form.value.retrieval.refExpandMaxTokens),
                    positionBonus: String(form.value.retrieval.positionBonus),
                    sectionBonus: String(form.value.retrieval.sectionBonus),
@@ -1557,6 +1702,7 @@ const buildPayload = () => ({
                  anonymousShared: String(form.value.session.anonymousShared) },
       cleanup: { sessionCleanupIntervalMs: String(form.value.cleanup.sessionCleanupIntervalMs),
                  sessionRetentionDays: String(form.value.cleanup.sessionRetentionDays) },
+      cache: { docMetaTtlSeconds: String(form.value.cache.docMetaTtlSeconds) },
       context: { modelWindows: form.value.context.modelWindows?.trim(),
                  defaultWindowTokens: String(form.value.context.defaultWindowTokens),
                  safetyFactor: String(form.value.context.safetyFactor),
@@ -1583,13 +1729,24 @@ const buildPayload = () => ({
                        injectThinkingMaxChars: String(form.value.deepReasoning.injectThinkingMaxChars),
                        injectKeywords: String(form.value.deepReasoning.injectKeywords),
                        injectKeywordsMax: String(form.value.deepReasoning.injectKeywordsMax),
-                       autoRoute: String(form.value.deepReasoning.autoRoute) },
+                       autoRoute: String(form.value.deepReasoning.autoRoute),
+                       autoRouteMinChars: String(form.value.deepReasoning.autoRouteMinChars),
+                       autoRouteLongChars: String(form.value.deepReasoning.autoRouteLongChars),
+                       autoRouteKeywords: form.value.deepReasoning.autoRouteKeywords },
       ratelimit: { enabled: String(form.value.ratelimit.enabled),
                    chatPerMinute: String(form.value.ratelimit.chatPerMinute),
-                   uploadPerMinute: String(form.value.ratelimit.uploadPerMinute) },
+                   uploadPerMinute: String(form.value.ratelimit.uploadPerMinute),
+                   windowSeconds: String(form.value.ratelimit.windowSeconds) },
       semanticCache: { enabled: String(form.value.semanticCache.enabled),
                        threshold: String(form.value.semanticCache.threshold),
-                       maxEntries: String(form.value.semanticCache.maxEntries) }
+                       maxEntries: String(form.value.semanticCache.maxEntries) },
+      queryRewrite: { enabled: String(form.value.queryRewrite.enabled),
+                      historyRounds: String(form.value.queryRewrite.historyRounds),
+                      prompt: form.value.queryRewrite.prompt,
+                      promptMultiTurn: form.value.queryRewrite.promptMultiTurn },
+      imageFilter: { enabled: String(form.value.imageFilter.enabled),
+                     minHits: String(form.value.imageFilter.minHits),
+                     preContextChars: String(form.value.imageFilter.preContextChars) }
     })
 
 /** 加载完成时的基线载荷（保存差异判定用；掩码 apiKey 未改时载荷无该键，与基线一致不误报） */
@@ -1672,6 +1829,25 @@ const save = async () => {
 }
 .tip-icon:hover {
   color: #1677ff;
+}
+/* 核心参数标记：前置琥珀色小圆点（轻量、可扫读；图例见锚点条右侧） */
+.core-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #faad14;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+/* 锚点条右侧「核心」图例 */
+.anchor-legend {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: #999;
+  font-size: 12px;
+  white-space: nowrap;
 }
 /* 折叠面板：去掉卡片默认背景与边框，保持与页面一致的浅色观感 */
 .cfg-collapse {
