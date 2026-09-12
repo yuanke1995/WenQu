@@ -204,9 +204,20 @@ public class DocxParser implements DocumentParser {
                     StringBuilder tableText = buildMarkdownTable(table);
                     if (tableText.length() > 0) {
                         if (structural) {
-                            // 结构模式：表格独立成块（不与其他段落混杂，保持结构语义）；超长表格按行拆（重复表头/重开围栏，保持语法有效）
-                            flushChunk(title, content, currentImages, chunks, titlePath);
-                            addTableChunks(title, tableText.toString(), titlePath, chunks, maxSize);
+                            // 表格独立成块（不与其他段落混杂，保持结构语义）；超长表格按行拆（重复表头/重开围栏，保持语法有效）
+                            // 但表格的引导句（"（一）下表为各个组件功能表单："）必须并入表格块：
+                            // 实测这些引导句独立成块只有 15 字、检索价值为零，而表格块又恰好缺这层上下文
+                            String lead = content.toString().trim();
+                            boolean inlineLead = !lead.isEmpty() && lead.length() <= 120
+                                    && !lead.contains("[图片") && currentImages.isEmpty();
+                            if (inlineLead) {
+                                content.setLength(0); // 并入表格，不再单独成块
+                            } else {
+                                flushChunk(title, content, currentImages, chunks, titlePath);
+                                lead = "";
+                            }
+                            String tableBody = lead.isEmpty() ? tableText.toString() : lead + "\n" + tableText;
+                            addTableChunks(title, tableBody, titlePath, chunks, maxSize);
                         } else {
                             if (content.length() > 0) content.append("\n");
                             content.append(tableText);
