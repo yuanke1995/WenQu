@@ -38,7 +38,7 @@ public class QaLogService {
      */
     public void logAsync(String sessionId, String question, String answer,
                          List<String> hitDocIds, boolean hasCitation, long elapsedMs,
-                         String rewrittenQuery) {
+                         String rewrittenQuery, String stageMsJson) {
         ThreadPoolManager.execute(() -> {
             try {
                 AiQaLog log = new AiQaLog();
@@ -51,6 +51,7 @@ public class QaLogService {
                         ? null : (rewrittenQuery.length() > 500 ? rewrittenQuery.substring(0, 500) : rewrittenQuery));
                 log.setHasCitation(hasCitation ? 1 : 0);
                 log.setElapsedMs((int) Math.min(elapsedMs, Integer.MAX_VALUE));
+                log.setStageMs(stageMsJson);
                 qaLogMapper.insert(log);
             } catch (Exception e) {
                 // L6 fail-loud：问答日志是反馈看板/知识缺口的数据源，丢失升级为 error（含 sessionId 便于排查）

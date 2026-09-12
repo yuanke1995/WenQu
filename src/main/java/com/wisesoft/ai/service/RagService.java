@@ -202,7 +202,7 @@ public class RagService {
             String assistantMsgId = sessionService.appendMessage(sessionId, "assistant", cached.getAnswer(), images, cached.getSources());
             List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
             qaLogService.logAsync(sessionId, question, cached.getAnswer(), hitDocIds,
-                    !sources.isEmpty(), System.currentTimeMillis() - startTime, question);
+                    !sources.isEmpty(), System.currentTimeMillis() - startTime, question, null);
             Map<String, Object> donePayload = new LinkedHashMap<>();
             donePayload.put("sources", imageUrlSigner.signSourceImages(sources));
             donePayload.put("related", related);
@@ -349,6 +349,8 @@ public class RagService {
      */
     private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
+        // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
+        final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
         final String[] thinkingHolder = {null};
         // 本轮回答的全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）
@@ -406,6 +408,7 @@ public class RagService {
                 if (rr.degraded()) {
                     addDegradation(degradations, degradedCodes, "rewriteFailed", "问题改写失败，使用原问题检索");
                 }
+                stageMs.put("rewrite", System.currentTimeMillis() - startTime);
             }
             // 图片描述参与检索：识别界面时描述含组件名，能显著提升召回
             if (!userImgs.isEmpty()) {
@@ -733,6 +736,8 @@ public class RagService {
                 }
             }
             log.info("[CTX] 上下文填充 {} 块（含扩散 {}）, 总用 {} / 预算 {} token", docNo - 1, extraUsed, usedTokens + fixedTokens, budget);
+            // 检索 + 重排 + 上下文填充全部完成（生成前的最后一个阶段）
+            stageMs.put("retrieve", System.currentTimeMillis() - startTime);
 
             // 3.5 检索状态行（豆包式，回答上方常驻）：搜索 N 个关键词，参考 M 段资料
             // 只展示主词元（jieba 有效词），2-gram/4-gram 子词元仅参与召回、不展示给用户
@@ -764,6 +769,8 @@ public class RagService {
             AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson);
+            // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
+            st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st));
 
             // 前端断开/超时时停止生成；超时先发 warn（fail-loud：回答被截断必须告知，不留静默半截）
@@ -930,6 +937,8 @@ public class RagService {
                             log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
                         }
                     }
+                    // 生成完成（引用自检前的最后一步）
+                    st.stageMs.put("generate", System.currentTimeMillis() - st.startTime);
                     // 引用语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
                     // 但对应句子的结论与该块无关（编号正确、语义不符）。把每个 [N] 的"前文句子"与其
                     // 来源 snippet 打包给 LLM 判"是否支撑"，不支撑的剔除标记、来源同步裁剪并重编 ref。
@@ -948,6 +957,7 @@ public class RagService {
                             // fail-loud：自检失败保持原回答（校验是增强，不是必选防线）
                             log.warn("[FAIL-LOUD] 引用一致性自检失败（保持原回答）: {}", e.getMessage());
                         }
+                        st.stageMs.put("citation", System.currentTimeMillis() - st.startTime);
                     }
                     // 引用来源被裁剪后，检索状态行的 refs 需同步（否则"参考 N 段资料"与展开明细不一致，
                     // 且该值会随消息持久化、历史恢复时同样错位）。terms/keywords 不受影响；
@@ -977,7 +987,7 @@ public class RagService {
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
                     qaLogService.logAsync(st.sessionId, st.question, answer, hitDocIds,
                             !st.sources.isEmpty(), System.currentTimeMillis() - st.startTime,
-                            st.queryForLog);
+                            st.queryForLog, st.stageMs.isEmpty() ? null : JSON.toJSONString(st.stageMs));
 
                     // 相似问题语义缓存写入（带图片提问/流式中断的回答不入缓存；异步不阻塞）
                     if (st.userImgs.isEmpty() && !st.degradedCodes.contains("streamError")) {
@@ -1017,6 +1027,8 @@ public class RagService {
         final List<Map<String, Object>> sources;
         final List<UserImageService.UserImage> userImgs;
         final long startTime;
+        /** 分段耗时（距开始的累计 ms）：改写/检索由主流程 putAll 合并进来，生成/自检由流回调写入 */
+        final Map<String, Long> stageMs = new LinkedHashMap<>();
         final String queryForLog;
         final String[] thinkingHolder;
         final List<Map<String, String>> degradations;

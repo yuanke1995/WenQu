@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `hit_doc_ids`     VARCHAR(1000) DEFAULT NULL COMMENT '命中文档ID列表(逗号分隔)',
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
+    `stage_ms`        VARCHAR(500) DEFAULT NULL COMMENT '分段耗时JSON(rewrite/retrieve/generate/citation,距开始的累计ms)',
     `created_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
     KEY `idx_created` (`created_at`)

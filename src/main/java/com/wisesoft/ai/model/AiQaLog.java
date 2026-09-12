@@ -38,5 +38,13 @@ public class AiQaLog {
     /** 回答耗时(ms) */
     private Integer elapsedMs;
 
+    /**
+     * 分段耗时（JSON）：{"rewrite":1200,"retrieve":3100,"generate":28000,"citation":9000}
+     * 值为「距开始的累计毫秒」，相邻两项相减才是该阶段自身耗时。
+     * 缓存命中的回答无分段（null）。
+     */
+    @com.baomidou.mybatisplus.annotation.TableField("stage_ms")
+    private String stageMs;
+
     private LocalDateTime createdAt;
 }
