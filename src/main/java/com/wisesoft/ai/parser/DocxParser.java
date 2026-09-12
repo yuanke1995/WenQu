@@ -250,6 +250,12 @@ public class DocxParser implements DocumentParser {
      * - 单元格内竖线转义（防止破坏表格语法）
      */
     private StringBuilder buildMarkdownTable(XWPFTable table) {
+        // 文档修订记录表：表头是 版本/修订/审核/批准 一类元信息列，数据行是"修订人/日期"占位符，
+        // 没有任何业务内容，且"审核/批准/修订"这些词会干扰检索，直接不产出
+        if (isRevisionHistoryTable(table)) {
+            log.debug("跳过文档修订记录表（无业务内容）");
+            return new StringBuilder();
+        }
         List<List<String>> grid = new ArrayList<>();
         // 垂直合并（vMerge=continue）标记：POI 把续格的文本留空，导致该行丢失所属分类。
         // 例："数字组件"下连排的"货币模式/精确小数/大小限制"，续格的组件名是空的，
@@ -376,6 +382,24 @@ public class DocxParser implements DocumentParser {
             return v == null ? Boolean.FALSE : Boolean.valueOf("CONTINUE".equals(String.valueOf(v)));
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /**
+     * 文档修订记录表判定：首行同时含「版本」「修订」与（「审核」或「批准」）。
+     * 这类表是文档元信息（修订人/日期占位），没有业务内容，进知识库只会干扰检索。
+     */
+    private static boolean isRevisionHistoryTable(XWPFTable table) {
+        try {
+            if (table.getRows().isEmpty()) return false;
+            StringBuilder head = new StringBuilder();
+            for (XWPFTableCell c : table.getRows().get(0).getTableCells()) {
+                head.append(c.getText()).append('|');
+            }
+            String h = head.toString();
+            return h.contains("版本") && h.contains("修订") && (h.contains("审核") || h.contains("批准"));
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -540,6 +564,19 @@ public class DocxParser implements DocumentParser {
      */
     private void flushChunk(String title, StringBuilder content, List<SavedImage> currentImages, List<Chunk> chunks, String titlePath) {
         if (content.length() == 0 && currentImages.isEmpty()) return;
+        // 极短且无图片的残片（如"下图为"这类图片引导词被 flush 单独切出来）会变成 3 字垃圾块：
+        // 并入上一个块，既消除垃圾块又不丢内容；文档首块无前块可并时照常成块
+        if (content.length() < 8 && currentImages.isEmpty()) {
+            if (chunks.isEmpty()) {
+                chunks.add(buildChunk(title, content.toString(), List.of(), titlePath));
+            } else {
+                Chunk last = chunks.get(chunks.size() - 1);
+                chunks.set(chunks.size() - 1, new Chunk(last.title(),
+                        last.content() + "\n" + content, last.images(), last.titlePath()));
+            }
+            content.setLength(0);
+            return;
+        }
         chunks.add(buildChunk(title, resolveImagePlaceholders(content.toString(), currentImages),
                 imageUrls(currentImages), titlePath));
         content.setLength(0);
