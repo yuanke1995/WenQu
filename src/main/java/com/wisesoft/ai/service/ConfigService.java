@@ -205,7 +205,132 @@ public class ConfigService {
             Map.entry("parse.embedBatchSize", "解析：向量化分批大小（每批嵌入条数；与上游接口单次上限匹配）"),
             Map.entry("parse.ocrDpi", "解析：PDF 页 OCR 渲染 DPI（越高小字越清晰，内存/耗时越高）"),
             Map.entry("ratelimit.windowSeconds", "限流：固定窗口长度（秒）"),
-            Map.entry("cache.docMetaTtlSeconds", "文档名缓存有效期（秒）：多副本下改名/删除的感知延迟上限"));
+            Map.entry("cache.docMetaTtlSeconds", "文档名缓存有效期（秒）：多副本下改名/删除的感知延迟上限"),
+            Map.entry("retrieval.strength", "检索强度预设：precision / balanced / recall / custom（切换会批量覆盖检索权重；手动改任一权重自动变 custom）"));
+
+    /**
+     * 参数分层（仅影响设置页可见性，不影响任何读取链路）：
+     * 1 = 必需，不配就不能跑（新手模式可见）
+     * 2 = 调优，换语料/换场景才动（专家模式可见）
+     * 3 = 工程排障，超时/重试/并发/TTL 之类（专家模式可见，默认折叠）
+     * 未列出的 key 一律按 2 处理。
+     */
+    private static final Map<String, Integer> TIER = Map.ofEntries(
+            // ===== L1 必需（15 项）=====
+            Map.entry("chat.model", 1),
+            Map.entry("chat.baseUrl", 1),
+            Map.entry("chat.apiKey", 1),
+            Map.entry("chat.temperature", 1),
+            Map.entry("chat.systemPrompt", 1),
+            Map.entry("chat.suggestedQuestions", 1),
+            Map.entry("chat.historyRounds", 1),
+            Map.entry("embedding.model", 1),
+            Map.entry("embedding.baseUrl", 1),
+            Map.entry("embedding.apiKey", 1),
+            Map.entry("chunk.maxSize", 1),
+            Map.entry("chunk.overlap", 1),
+            Map.entry("retrieval.vectorTopK", 1),
+            Map.entry("retrieval.vecThreshold", 1),
+            Map.entry("vision.enabled", 1),
+            // ===== L3 工程排障：chat =====
+            Map.entry("chat.pipelineThreads", 3),
+            Map.entry("chat.streamRetryCount", 3),
+            Map.entry("chat.sseTimeoutMs", 3),
+            Map.entry("chat.showDebugDegradations", 3),
+            Map.entry("chat.retrievalDebugEnabled", 3),
+            Map.entry("chat.truncateFallbackChars", 3),
+            Map.entry("chat.maxImagesPerMessage", 3),
+            Map.entry("chat.maxImageMb", 3),
+            // ===== L3：vision =====
+            Map.entry("vision.concurrency", 3),
+            Map.entry("vision.userImageConcurrency", 3),
+            Map.entry("vision.timeoutMillis", 3),
+            Map.entry("vision.retryCount", 3),
+            Map.entry("vision.think", 3),
+            Map.entry("vision.keepAliveMinutes", 3),
+            Map.entry("vision.numCtx", 3),
+            Map.entry("vision.descCacheVersion", 3),
+            Map.entry("vision.descCacheTtlDays", 3),
+            // ===== L3：解析 =====
+            Map.entry("parse.concurrency", 3),
+            Map.entry("parse.embedRetryCount", 3),
+            Map.entry("parse.embedBatchSize", 3),
+            Map.entry("parse.ocrMinText", 3),
+            Map.entry("parse.ocrDpi", 3),
+            Map.entry("parse.recoverStuckOnStartup", 3),
+            // ===== L3：关键词 / 重排 冷却与对账 =====
+            Map.entry("keyword.failCooldownMs", 3),
+            Map.entry("keyword.reconcileOnStartup", 3),
+            Map.entry("keyword.reconcileIntervalMs", 3),
+            Map.entry("rerank.failCooldownMs", 3),
+            // ===== L3：上下文预算（maxContextHits / costCapTokens / dedupEnabled 留 L2）=====
+            Map.entry("context.modelWindows", 3),
+            Map.entry("context.defaultWindowTokens", 3),
+            Map.entry("context.safetyFactor", 3),
+            Map.entry("context.maxOutputTokens", 3),
+            Map.entry("context.historyMaxTokens", 3),
+            Map.entry("context.historyPerMsgChars", 3),
+            Map.entry("context.snippetWindowChars", 3),
+            Map.entry("context.dedupThreshold", 3),
+            Map.entry("context.dedupPathThreshold", 3),
+            // ===== L3：深度思考细节（总开关/模式/自动路由留 L2）=====
+            Map.entry("deepReasoning.timeoutMillis", 3),
+            Map.entry("deepReasoning.maxThinkingTokens", 3),
+            Map.entry("deepReasoning.maxThinkingChars", 3),
+            Map.entry("deepReasoning.searchTag", 3),
+            Map.entry("deepReasoning.prompt", 3),
+            Map.entry("deepReasoning.multiRetrieval", 3),
+            Map.entry("deepReasoning.injectThinkingMaxChars", 3),
+            Map.entry("deepReasoning.injectKeywords", 3),
+            Map.entry("deepReasoning.injectKeywordsMax", 3),
+            Map.entry("deepReasoning.autoRouteMinChars", 3),
+            Map.entry("deepReasoning.autoRouteLongChars", 3),
+            Map.entry("deepReasoning.autoRouteKeywords", 3),
+            // ===== L3：检索细节（权重/bonus/keywordLimit 等留 L2）=====
+            Map.entry("retrieval.rewriteTimeoutMs", 3),
+            Map.entry("retrieval.rewriteFallbackMinHits", 3),
+            Map.entry("retrieval.rewriteFallbackWeakScore", 3),
+            Map.entry("retrieval.refExpandMaxHits", 3),
+            Map.entry("retrieval.refExpandMaxTokens", 3),
+            Map.entry("retrieval.refExpandIncludeIncoming", 3),
+            Map.entry("retrieval.refExpandParentMode", 3),
+            Map.entry("retrieval.refExpandParentMaxLevels", 3),
+            Map.entry("retrieval.refExpandParentSummaryChars", 3),
+            Map.entry("retrieval.refExpandFuzzyName", 3),
+            Map.entry("retrieval.refDetectMention", 3),
+            Map.entry("retrieval.maxRefsPerBlock", 3),
+            Map.entry("retrieval.keywordTimeoutMs", 3),
+            // ===== L3：查询改写 / 意图 / 图片过滤 细节（总开关留 L2）=====
+            Map.entry("queryRewrite.prompt", 3),
+            Map.entry("queryRewrite.promptMultiTurn", 3),
+            Map.entry("queryRewrite.historyRounds", 3),
+            Map.entry("intent.timeoutMillis", 3),
+            Map.entry("intent.model", 3),
+            Map.entry("intent.prompt", 3),
+            Map.entry("intent.chatPrompt", 3),
+            Map.entry("imageFilter.minHits", 3),
+            Map.entry("imageFilter.preContextChars", 3),
+            // ===== L3：运维（限流 / 图片 / 会话 / 体检 / 清理 / 缓存）=====
+            Map.entry("ratelimit.windowSeconds", 3),
+            Map.entry("ratelimit.chatPerMinute", 3),
+            Map.entry("ratelimit.uploadPerMinute", 3),
+            Map.entry("images.maxWidth", 3),
+            Map.entry("images.quality", 3),
+            Map.entry("images.authEnabled", 3),
+            Map.entry("images.authExpireSeconds", 3),
+            Map.entry("images.chatCleanupIntervalMs", 3),
+            Map.entry("images.chatRetentionMillis", 3),
+            Map.entry("session.maxHistory", 3),
+            Map.entry("session.expireMinutes", 3),
+            Map.entry("session.anonymousShared", 3),
+            Map.entry("eval.judgeEnabled", 3),
+            Map.entry("eval.autoIntervalMs", 3),
+            Map.entry("eval.autoThresholdPct", 3),
+            Map.entry("eval.judgeModel", 3),
+            Map.entry("cleanup.sessionCleanupIntervalMs", 3),
+            Map.entry("cleanup.sessionRetentionDays", 3),
+            Map.entry("cache.docMetaTtlSeconds", 3),
+            Map.entry("semanticCache.maxEntries", 3));
 
     private final AiConfigMapper configMapper;
     private final AiAppProperties properties;
@@ -538,6 +663,7 @@ public class ConfigService {
         d.put("parse.ocrDpi", "200");
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
+        d.put("retrieval.strength", "balanced");
         return d;
     }
 
@@ -1140,7 +1266,8 @@ public class ConfigService {
                 }
                 items.put(shortKey, Map.of(
                         "value", value,
-                        "editable", EDITABLE.containsKey(d.getKey())));
+                        "editable", EDITABLE.containsKey(d.getKey()),
+                        "tier", TIER.getOrDefault(d.getKey(), 2)));
             }
             result.put(g, items);
         }
