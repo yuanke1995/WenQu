@@ -240,10 +240,16 @@ public class DocxParser implements DocumentParser {
      */
     private StringBuilder buildMarkdownTable(XWPFTable table) {
         List<List<String>> grid = new ArrayList<>();
+        // 垂直合并（vMerge=continue）标记：POI 把续格的文本留空，导致该行丢失所属分类。
+        // 例："数字组件"下连排的"货币模式/精确小数/大小限制"，续格的组件名是空的，
+        // 切块后这些行变成无归属行（向量与关键词都召不回），必须按上一行同列回填。
+        List<List<Boolean>> vMergeContinue = new ArrayList<>();
         int colCount = 0;
         for (XWPFTableRow row : table.getRows()) {
             List<String> cells = new ArrayList<>();
+            List<Boolean> conts = new ArrayList<>();
             for (XWPFTableCell cell : row.getTableCells()) {
+                conts.add(isVMergeContinue(cell));
                 // 逐段落提取，保留单元格内换行（getTextRecursively 会丢失段落分隔，导致多行命令粘连）
                 StringBuilder ct = new StringBuilder();
                 for (XWPFParagraph p : cell.getParagraphs()) {
@@ -262,8 +268,10 @@ public class DocxParser implements DocumentParser {
             }
             colCount = Math.max(colCount, cells.size());
             grid.add(cells);
+            vMergeContinue.add(conts);
         }
         if (grid.isEmpty()) return new StringBuilder();
+        forwardFillMerged(grid, vMergeContinue, colCount);
 
         // 单列表格：极可能是"代码/命令/模板容器"，输出为代码块（LLM 识别为代码、前端渲染代码样式）
         if (colCount == 1) {
@@ -295,6 +303,65 @@ public class DocxParser implements DocumentParser {
             }
         }
         return sb;
+    }
+
+    /**
+     * 垂直合并单元格的前向回填：让每行都带上所属分类。
+     * 典型场景——"数字组件"下连排的"货币模式/精确小数/大小限制"，续格的组件名在 POI 里是空串，
+     * 切块后这些行变成无归属行，向量与关键词都召不回。
+     * <p>优先按 vMerge=continue 精确判定；取不到该属性（poi-ooxml-lite 未打包 schema 类）时，
+     * 退回列空值率启发式（空值率 20%~80% 视为存在合并单元格的列）。
+     */
+    private static void forwardFillMerged(List<List<String>> grid, List<List<Boolean>> flags, int colCount) {
+        boolean vMergeAvailable = false;
+        for (List<Boolean> row : flags) {
+            for (Boolean b : row) {
+                if (b != null) { vMergeAvailable = true; break; }
+            }
+            if (vMergeAvailable) break;
+        }
+        for (int c = 0; c < colCount; c++) {
+            if (!vMergeAvailable && !looksMergedColumn(grid, c)) continue;
+            String carried = null;
+            for (int r = 0; r < grid.size(); r++) {
+                List<String> row = grid.get(r);
+                if (c >= row.size()) continue;
+                String v = row.get(c);
+                boolean isContinue = !vMergeAvailable
+                        || (c < flags.get(r).size() && Boolean.TRUE.equals(flags.get(r).get(c)));
+                if (isContinue && (v == null || v.isEmpty()) && carried != null) {
+                    row.set(c, carried);
+                } else if (v != null && !v.isEmpty()) {
+                    carried = v;
+                }
+            }
+        }
+    }
+
+    /** 列空值率启发式：介于 20%~80% 之间视为含合并单元格的分类列（过低=本无合并，过高=整列空） */
+    private static boolean looksMergedColumn(List<List<String>> grid, int c) {
+        int total = 0, empty = 0;
+        for (List<String> row : grid) {
+            if (c >= row.size()) continue;
+            total++;
+            String v = row.get(c);
+            if (v == null || v.isEmpty()) empty++;
+        }
+        // 至少 4 行、且非空值 ≥2，避免小表格误判
+        if (total < 4 || total - empty < 2) return false;
+        double ratio = (double) empty / total;
+        return ratio > 0.2 && ratio < 0.8;
+    }
+
+    /** vMerge=continue 判定；反射失败返回 null（表示不可判定，交给启发式） */
+    private static Boolean isVMergeContinue(XWPFTableCell cell) {
+        try {
+            java.lang.reflect.Method m = XWPFTableCell.class.getMethod("getVerticalMerge");
+            Object v = m.invoke(cell);
+            return v == null ? Boolean.FALSE : Boolean.valueOf("CONTINUE".equals(String.valueOf(v)));
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /**
