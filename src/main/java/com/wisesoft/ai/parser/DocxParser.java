@@ -349,7 +349,7 @@ public class DocxParser implements DocumentParser {
         }
     }
 
-    /** 列空值率启发式：介于 20%~80% 之间视为含合并单元格的分类列（过低=本无合并，过高=整列空） */
+    /** 列空值率启发式：介于阈值之间视为含合并单元格的分类列（过低=本无合并，过高=整列空） */
     private static boolean looksMergedColumn(List<List<String>> grid, int c) {
         int total = 0, empty = 0;
         for (List<String> row : grid) {
@@ -358,10 +358,14 @@ public class DocxParser implements DocumentParser {
             String v = row.get(c);
             if (v == null || v.isEmpty()) empty++;
         }
-        // 至少 4 行、且非空值 ≥2，避免小表格误判
-        if (total < 4 || total - empty < 2) return false;
+        // 行数下限 + 非空值下限（首列=分类列，允许"一个值统辖全表"的形态；其余列保守，防稀疏列被误填）
+        int minNonEmpty = (c == 0) ? 1 : 2;
+        if (total < 4 || total - empty < minNonEmpty) return false;
         double ratio = (double) empty / total;
-        return ratio > 0.2 && ratio < 0.8;
+        // 首列通常是"分类/组件"列：一个值统辖很多行（实测「全局设置」辖 11 行，空值率 85%），
+        // 因此上限放宽到 0.95；其余列保持保守，避免把"备注"这类稀疏列的值复制到下方各行
+        double upper = (c == 0) ? 0.95 : 0.8;
+        return ratio > 0.2 && ratio < upper;
     }
 
     /** vMerge=continue 判定；反射失败返回 null（表示不可判定，交给启发式） */
