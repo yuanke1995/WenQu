@@ -697,7 +697,13 @@ public class RetrievalEvaluationService {
                         .call()
                         .content();
                 judged++;
-                if (judge != null && judge.contains("是") && !judge.contains("否")) covered++;
+                boolean coveredThis = judge != null && judge.contains("是") && !judge.contains("否");
+                if (coveredThis) covered++;
+                // 诊断日志：judgeScore 只给总数，看不出是哪些问题检索失败。
+                // 逐条落日志，便于直接定位"资料不足以回答"的具体问题（grep '不足以' 即可）
+                log.info("[Eval][Judge] {} | 命中={} | 原始返回={} | 问题={}",
+                        coveredThis ? "足以" : "不足以", hits.size(),
+                        judge == null ? "null" : judge.trim(), c.question());
             } catch (Exception e) {
                 log.warn("[Eval] 检索充分性评判失败（跳过该 case）: {}", e.getMessage());
             }
