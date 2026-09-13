@@ -95,7 +95,7 @@
       </div>
 
       <!-- 入库弹窗 -->
-      <a-modal v-model:open="addVisible" title="补充知识块" :footer="null" width="640" destroy-on-close>
+      <a-modal v-model:open="addVisible" title="补充知识块" :footer="null" :width="640" destroy-on-close>
         <a-form layout="vertical">
           <a-form-item label="问题（自动作为标题）"><a-input v-model:value="addForm.title" disabled /></a-form-item>
           <a-form-item label="回答内容（请填写准确的回答内容或操作步骤）" required>

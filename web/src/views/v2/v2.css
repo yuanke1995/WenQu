@@ -1,7 +1,9 @@
 /* ==================== v2 工作台设计令牌 ====================
  * 三栏布局新版界面：白底细边框、紧凑小字号、圆角卡片、蓝色主色。
- * 仅定义变量与少量通用类；组件级样式在各 .vue 的 scoped 块内。 */
-.v2-root {
+ * 仅定义变量与少量通用类；组件级样式在各 .vue 的 scoped 块内。
+ * 变量必须挂 :root：antd 弹窗/下拉/气泡均 teleport 到 body，不在 .v2-root
+ * 子树内，挂 .v2-root 会导致弹窗内 var(--v2-*) 全部失效（按钮透明/边框消失）。 */
+:root {
   --v2-bg: #f7f8fa;
   --v2-panel: #ffffff;
   --v2-border: #e6e9ed;
@@ -13,6 +15,8 @@
   --v2-danger: #d4552e;
   --v2-ok: #3b8f4e;
   --v2-radius: 10px;
+}
+.v2-root {
   height: 100%;
   display: flex;
   background: var(--v2-bg);

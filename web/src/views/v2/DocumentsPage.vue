@@ -86,12 +86,14 @@
     </div>
 
     <!-- 知识块预览 -->
-    <a-modal v-model:open="kbVisible" :title="'知识块预览 · ' + kbDocName" :footer="null" width="820">
+    <a-modal v-model:open="kbVisible" :title="'知识块预览 · ' + kbDocName" :footer="null" :width="1080">
       <div style="margin-bottom:10px">
         <a-input-search v-model:value="kbSearch" placeholder="按标题/内容过滤知识块" allow-clear />
       </div>
       <a-spin :spinning="kbLoading">
+        <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应 -->
         <a-table :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
+                 :scroll="{ y: kbScrollY }"
                  :locale="{ emptyText: '暂无知识块' }"
                  :custom-row="r => ({ onClick: () => openKbDetail(r) })" style="cursor:pointer">
           <a-table-column title="#" dataIndex="chunkIndex" key="chunkIndex" width="50" />
@@ -125,7 +127,7 @@
     </a-modal>
 
     <!-- 知识块编辑弹窗：Markdown 工具栏快捷插入 + 左写右看实时预览 + [图片N] 点选插入 + 未保存关闭提醒（与旧版同功能） -->
-    <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" width="900" @cancel="closeKbEdit">
+    <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" :width="900" @cancel="closeKbEdit">
       <a-form layout="vertical">
         <a-form-item label="标题"><a-input v-model:value="kbEditForm.title" maxlength="200" placeholder="知识块标题" /></a-form-item>
         <a-form-item label="内容">
@@ -170,7 +172,7 @@
     </a-modal>
 
     <!-- 全局搜索 -->
-    <a-modal v-model:open="gSearchVisible" title="知识块全局搜索" :footer="null" width="820">
+    <a-modal v-model:open="gSearchVisible" title="知识块全局搜索" :footer="null" :width="820">
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <a-input-search v-model:value="gSearchKw" placeholder="输入关键词，跨全部文档搜索知识块（含已停用）" enter-button="搜索" :loading="gSearchLoading" @search="doGlobalSearch" />
       </div>
@@ -189,12 +191,12 @@
     </a-modal>
 
     <!-- 知识块详情 -->
-    <a-modal v-model:open="kbDetailVisible" :title="kbDetail?.title || '知识块详情'" :footer="null" width="720">
+    <a-modal v-model:open="kbDetailVisible" :title="kbDetail?.title || '知识块详情'" :footer="null" :width="720">
       <div class="md" style="max-height:60vh;overflow-y:auto;font-size:14px;line-height:1.7" v-html="kbDetailHtml"></div>
     </a-modal>
 
     <!-- 版本管理 -->
-    <a-modal v-model:open="verVisible" :title="'版本历史 · ' + verDocName" :footer="null" width="560">
+    <a-modal v-model:open="verVisible" :title="'版本历史 · ' + verDocName" :footer="null" :width="560">
       <a-spin :spinning="verLoading">
         <a-table :data-source="verList" size="small" row-key="version" :pagination="false" :locale="{ emptyText: '暂无版本记录' }">
           <a-table-column title="版本" dataIndex="version" key="version" width="80" />
@@ -408,6 +410,8 @@ const kbList = ref([])
 const kbDocName = ref('')
 const kbDocId = ref('')
 const kbSearch = ref('')
+// 知识块列表表体滚动高度：随视口自适应（一页 20 条在矮屏会超出屏幕；下限 200，上限 520）
+const kbScrollY = Math.max(200, Math.min(520, window.innerHeight - 400))
 const kbFilteredList = computed(() => {
   const kw = kbSearch.value.trim().toLowerCase()
   if (!kw) return kbList.value
@@ -691,9 +695,10 @@ const fmtTime = t => {
   margin-bottom: 6px;
 }
 .kb-edit-split { display: flex; gap: 10px; }
-.kb-edit-ta { flex: 1 1 50%; min-width: 0; height: 380px; resize: none; font-size: 13px; line-height: 1.7; }
+/* 高度自适应：矮视口下压缩分栏，保证标题+工具栏+分栏+按钮完整可见（下限 150 保证 577px 视口恰好放下） */
+.kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {
-  flex: 1 1 50%; min-width: 0; height: 380px; overflow-y: auto;
+  flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); overflow-y: auto;
   border: 1px solid var(--v2-border); border-radius: 6px; background: #fafbfc;
   padding: 10px 14px; font-size: 14px; line-height: 1.7;
 }
