@@ -1,7 +1,8 @@
 <template>
   <a-config-provider :locale="zhCN">
     <a-layout style="min-height:100vh">
-      <a-layout-header class="header">
+      <!-- v2 工作台自带侧边栏壳层，隐藏旧顶部导航（旧页面路由不受影响） -->
+      <a-layout-header v-if="!isV2" class="header">
         <div class="logo">
           <robot-outlined style="color:#fff;font-size:20px;margin-right:8px" />
           <span>AI 文档助手</span>
@@ -26,7 +27,7 @@
           <a-input-password v-model:value="adminTokenInput" placeholder="管理员口令" @pressEnter="verifyAdmin" />
         </a-modal>
       </a-layout-header>
-      <a-layout-content class="content">
+      <a-layout-content :class="isV2 ? 'content-v2' : 'content'">
         <router-view />
       </a-layout-content>
     </a-layout>
@@ -84,6 +85,8 @@ const activeKey = computed(() => {
   if (route.path === '/settings') return 'settings'
   return 'chat'
 })
+// v2 工作台路由前缀：隐藏旧壳层（顶栏/内边距），由 V2Layout 自带侧边栏
+const isV2 = computed(() => route.path.startsWith('/v2'))
 const onMenu = ({ key }) => {
   const map = { chat: '/chat', documents: '/documents', dashboard: '/dashboard', evaluation: '/evaluation', settings: '/settings' }
   router.push(map[key] || '/chat')
@@ -104,4 +107,6 @@ html, body { margin: 0; overflow-x: hidden; }
 .admin-btn { margin-right:8px }
 .admin-btn:hover { background:rgba(255,255,255,.12) !important }
 .content { padding:24px;background:#f0f2f5 }
+/* v2 工作台：无内边距满屏，由内部布局自己管理 */
+.content-v2 { padding:0;background:#f7f8fa;height:100vh;overflow:hidden }
 </style>

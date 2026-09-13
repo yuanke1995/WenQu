@@ -1,0 +1,1192 @@
+<template>
+  <div class="chat2">
+    <!-- 中间：标题栏 + 消息流 + 输入区 -->
+    <div class="chat-col">
+      <div class="chat-head">
+        <span class="chat-title">{{ currentSessionTitle }}</span>
+        <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
+        <button class="v2-btn ghost head-panel-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
+      </div>
+
+      <div class="messages" ref="box" @click="openPreview" @scroll="onMessagesScroll">
+        <div v-if="messages.length === 0" class="welcome">
+          <div class="welcome-mark">文</div>
+          <h2>有什么可以帮你？</h2>
+          <p>基于知识库回答，支持图片提问与深度思考</p>
+          <div class="welcome-tags">
+            <span v-for="(q, i) in tips" :key="i" class="welcome-tag" @click="ask(q)">{{ q }}</span>
+          </div>
+        </div>
+
+        <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
+          <div class="msg-block" :class="m.role">
+            <div class="bubble" :class="m.role">
+              <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
+                <img v-for="(u, ui) in m.images" :key="ui" :src="resolveImg(u)" class="msg-img"
+                     :alt="'上传图片' + (ui + 1)" @click="openPreviewFromMsg(m, ui)" @error="onImgError" />
+              </div>
+              <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
+                <div class="think-head" @click="m.thinkOpen = !m.thinkOpen">
+                  <down-outlined class="think-arrow" />
+                  <span class="think-title">深度思考</span>
+                  <a-spin v-if="m.thinkLoading" size="small" style="margin-left:6px" />
+                  <span v-else class="think-badge">已完成</span>
+                </div>
+                <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
+              </div>
+              <div class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+              <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
+              <a-spin v-if="m.loading && m.content" size="small" style="margin-top:4px" />
+              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length" class="tool-status-list">
+                <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-status-item" :title="t.args ? ('入参: ' + t.args) : ''">
+                  <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
+                  <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
+                  <close-circle-outlined v-else class="tool-ic tool-ic-err" />
+                  <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                  <span v-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
+                  <span v-if="t.status === 'error'" class="tool-fail">失败</span>
+                </div>
+              </div>
+              <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
+                <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
+                   :href="resolveImg(a.url)" :download="a.filename" target="_blank" :title="'下载 ' + a.filename">
+                  <file-text-outlined class="artifact-icon" />
+                  <span class="artifact-name">{{ a.filename }}</span>
+                  <span v-if="a.description" class="artifact-desc">{{ a.description }}</span>
+                  <download-outlined class="artifact-dl" />
+                </a>
+              </div>
+              <div v-if="m.role === 'ai' && m.degradations && m.degradations.length" class="degradation-bar">
+                <exclamation-circle-outlined style="margin-right:6px" />
+                <span v-for="(d, di) in m.degradations" :key="di" class="degradation-item">{{ d.msg }}</span>
+              </div>
+              <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
+              <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
+                <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
+                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="!m.loading">，参考 {{ m.retrieved.refs }} 段资料</template></template>
+                  <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
+                  <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
+                </div>
+                <div v-if="m.rtOpen" class="retrieval-detail">
+                  <div v-if="m.retrieved?.terms?.length" class="rt-terms">检索词：{{ (m.retrieved.terms || []).join('、') }}</div>
+                  <div v-if="toolSearchQueries(m).length" class="rt-terms rt-tool-terms">
+                    <span class="rt-tool-tag">精确检索</span>{{ toolSearchQueries(m).join('；') }}
+                  </div>
+                  <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref" title="点击查看原文" @click="openSource(s)">
+                    <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '') }}
+                    <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
+                  </div>
+                </div>
+              </div>
+              <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
+                <span class="related-label">猜你想问：</span>
+                <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
+              </div>
+            </div>
+            <div v-if="m.role === 'ai' && m.failed && !m.loading" class="retry-row">
+              <button class="v2-btn ghost" :disabled="loading" @click="regenerate(i)"><reload-outlined /> 重试</button>
+            </div>
+            <div v-if="m.role === 'ai' && !m.loading && (m.messageId || m.time)" class="fb-row">
+              <template v-if="m.messageId">
+                <a-tooltip title="复制"><button class="v2-icon-btn" @click="copyAnswer(i)"><copy-outlined /></button></a-tooltip>
+                <a-tooltip :title="m.fb != null ? '已评价' : '有帮助'"><button class="v2-icon-btn" :class="{ 'fb-active': m.fb === 1 }" :disabled="m.fb != null" @click="openFeedback(m, 1)"><like-outlined /></button></a-tooltip>
+                <a-tooltip :title="m.fb != null ? '已评价' : '没帮助'"><button class="v2-icon-btn" :class="{ 'fb-active': m.fb === 0 }" :disabled="m.fb != null" @click="openFeedback(m, 0)"><dislike-outlined /></button></a-tooltip>
+                <a-tooltip title="重新生成"><button class="v2-icon-btn" :disabled="loading" @click="regenerate(i)"><reload-outlined /></button></a-tooltip>
+                <a-dropdown :trigger="['hover']">
+                  <button class="v2-icon-btn" title="更多"><more-outlined /></button>
+                  <template #overlay>
+                    <a-menu @click="({ key }) => onMoreAction(key, i)">
+                      <a-menu-item v-if="debugEntryVisible" key="debug"><bug-outlined style="margin-right:8px" />检索调试</a-menu-item>
+                      <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+              </template>
+              <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
+            </div>
+            <div v-if="m.retrying" class="retry-tip"><a-spin size="small" /><span>连接中断，正在自动重试…</span></div>
+            <div v-if="m.role === 'user'" class="msg-edit-row">
+              <a-tooltip title="编辑此问题重新发送" placement="top">
+                <edit-outlined class="v2-icon-btn" @click="editMessage(i)" />
+              </a-tooltip>
+              <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="!stickToBottom && messages.length" class="jump-latest" @click.stop="scrollForce">↓ 回到底部</div>
+      </div>
+
+      <!-- 输入区：大圆角卡片（文本上、工具行下） -->
+      <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropImages">
+        <div v-if="dragOver" class="drop-overlay">松开以添加图片</div>
+        <div v-if="pendingImages.length" class="pending-imgs">
+          <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
+            <img :src="p.dataUrl" alt="待发送图片" @click="previewPendingImage(pi)" />
+            <span class="pending-del" @click.stop="removePendingImage(pi)">×</span>
+          </div>
+        </div>
+        <div class="input-box">
+          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行"
+                      :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
+                      @keydown.enter.exact.prevent="onEnterKey" />
+          <div class="input-toolbar">
+            <div class="toolbar-left">
+              <a-tooltip title="上传图片（最多 5 张）">
+                <button class="v2-icon-btn" @click="pickImages"><picture-outlined /></button>
+              </a-tooltip>
+              <a-tooltip :title="deepThinkOn ? '深度思考：已开启' : '深度思考：已关闭'">
+                <button class="v2-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }" @click="toggleDeepThink"><bulb-outlined /></button>
+              </a-tooltip>
+            </div>
+            <span class="model-name">{{ modelLabel }}</span>
+            <button v-if="loading" class="send-btn stop" title="停止生成" @click="stop"><pause-circle-outlined /></button>
+            <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
+          </div>
+        </div>
+        <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onFilesChange" />
+      </div>
+    </div>
+
+    <!-- 右侧状态栏（可收起）：模型 / 本次检索 / 引用来源 -->
+    <aside v-if="panelOpen" class="right-panel">
+      <div class="rp-card">
+        <div class="rp-label">当前模型</div>
+        <div class="rp-strong">{{ modelLabel || '—' }}</div>
+        <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
+      </div>
+      <div class="rp-card">
+        <div class="rp-label">最近一次检索</div>
+        <template v-if="lastRetrieved || lastSources.length">
+          <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">资料 {{ lastRetrieved?.refs ?? lastSources.length }} 段</span></div>
+          <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
+          <template v-if="toolSearchQueries(lastAi).length">
+            <div class="rp-divider"></div>
+            <div class="rp-tool-label">精确检索（模型主动补充）</div>
+            <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
+          </template>
+        </template>
+        <div v-else class="rp-dim">本轮尚无检索记录</div>
+      </div>
+      <div class="rp-card">
+        <div class="rp-label">引用来源</div>
+        <template v-if="lastSources.length">
+          <div v-for="(s, si) in lastSources" :key="si" class="rp-src" :title="'点击查看原文'" @click="openSource(s)">
+            <file-text-outlined class="rp-src-ic" />
+            <span class="rp-src-name">{{ s.fileName || '未知文档' }}{{ s.title ? ' §' + s.title : '' }}</span>
+          </div>
+        </template>
+        <div v-else class="rp-dim">暂无引用</div>
+      </div>
+    </aside>
+
+    <!-- 引用来源详情弹窗 -->
+    <a-modal v-model:open="sourceVisible" :title="sourceTitle" :footer="null" :width="sourceImages.length ? 720 : 560"
+             wrap-class-name="source-modal" :keyboard="!previewUrl" :mask-closable="!previewUrl">
+      <a-spin v-if="sourceLoading" style="display:block;margin:40px auto" />
+      <div v-else class="md src-content" @click="openPreview"
+           v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages)"></div>
+    </a-modal>
+
+    <!-- 回答反馈弹窗 -->
+    <a-modal v-model:open="feedbackVisible" title="反馈" :footer="null" width="440">
+      <a-textarea v-model:value="feedbackText" placeholder="可选：告诉我们哪里不满意" :rows="3" />
+      <button class="v2-btn" style="margin-top:12px" :disabled="feedbackSubmitting" @click="doSubmitFeedback">提交反馈</button>
+    </a-modal>
+
+    <!-- 免责声明 -->
+    <a-modal v-model:open="disclaimerVisible" title="免责声明" :footer="null" width="560">
+      <div class="md" style="max-height:60vh;overflow-y:auto" v-html="renderMd(DISCLAIMER_TEXT, [])"></div>
+    </a-modal>
+
+    <!-- 检索调试弹窗 -->
+    <a-modal v-model:open="debugVisible" title="检索调试（为什么这么答）" :footer="null" width="780">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <a-input v-model:value="debugQuestion" placeholder="输入要调试的问题" @pressEnter="runDebug" />
+        <button class="v2-btn" :disabled="debugLoading" @click="runDebug">调试</button>
+      </div>
+      <a-spin :spinning="debugLoading">
+        <template v-if="debugResult">
+          <div v-if="debugResult.keywordTerms?.length" class="dbg-terms">
+            <span class="dbg-terms-label">检索词元</span>
+            <a-tag v-for="(t, ti) in debugResult.keywordTerms" :key="ti" color="blue" style="margin:2px">{{ t }}</a-tag>
+          </div>
+          <a-collapse :bordered="false" :default-active-key="['final']">
+            <a-collapse-panel v-for="(s, si) in debugStages" :key="si" :name="si === 4 ? 'final' : String(si)" :header="s.name">
+              <div v-if="s.items.length" class="dbg-item" v-for="(it, ii) in s.items" :key="ii">
+                <div class="dbg-head">
+                  <span class="dbg-title">{{ it.title }}</span>
+                  <a-tag v-if="it.docName" size="small">{{ it.docName }}</a-tag>
+                  <a-tag color="blue" size="small">{{ it.tag }}</a-tag>
+                </div>
+                <div class="dbg-snippet">{{ it.snippet }}</div>
+              </div>
+              <a-empty v-else description="无命中" />
+            </a-collapse-panel>
+          </a-collapse>
+        </template>
+      </a-spin>
+    </a-modal>
+
+    <!-- 图片灯箱：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
+    <div v-if="previewUrl" class="lightbox" @click="closeLightbox" @wheel.prevent="onWheel">
+      <img :src="previewUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
+           :style="{ transform: 'translate(' + offset.x + 'px,' + offset.y + 'px) scale(' + zoom + ')' }"
+           @mousedown="onImgMouseDown" @mousemove="onImgMouseMove" @mouseup="onImgMouseUp" @mouseleave="onImgMouseUp" @dblclick="resetView" />
+      <button v-if="previewList.length > 1" class="lightbox-prev" :disabled="previewIndex === 0" @click.stop="prevImg">‹</button>
+      <button v-if="previewList.length > 1" class="lightbox-next" :disabled="previewIndex === previewList.length - 1" @click.stop="nextImg">›</button>
+      <span class="lightbox-close" @click.stop="closeLightbox">×</span>
+      <span v-if="previewList.length > 1" class="lightbox-count">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+      <span class="lightbox-tip">滚轮缩放 · 拖动平移 · 双击重置 · ESC 关闭</span>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { message } from 'ant-design-vue'
+import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
+         ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
+         DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
+         ArrowUpOutlined } from '@ant-design/icons-vue'
+import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
+         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig } from '../../api'
+import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../../utils/markdown'
+import { sessionStore, loadSessions } from './store'
+
+const route = useRoute()
+const router = useRouter()
+
+// 工具名友好展示（与旧版口径一致）
+const TOOL_LABELS = { searchKnowledge: '知识库精确检索', presentArtifact: '生成文件产物' }
+const MCP_CLIENT_PREFIX = 'a_d_a_'
+const toolLabel = n => TOOL_LABELS[n] || (n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n)
+const toolCallsView = list => {
+  if (!Array.isArray(list)) return []
+  return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
+}
+const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
+// 精确检索工具实际使用的检索词（模型可主动改词做二次检索，与主链路 retrieved 的词不同源）。
+// 从 toolCalls 终态记录的 args 派生：实时路径 start 记录带 args（done 合并后保留），历史恢复是 done 记录带 args，两路都覆盖
+const toolSearchQueries = m => {
+  if (!Array.isArray(m?.toolCalls)) return []
+  const qs = []
+  for (const t of m.toolCalls) {
+    if (t.name !== 'searchKnowledge' || t.status === 'start') continue
+    try { const q = JSON.parse(t.args || '{}').query; if (q) qs.push(q) } catch (e) { /* args 非 JSON 时忽略 */ }
+  }
+  return qs
+}
+
+const text = ref('')
+const textareaRef = ref(null)
+const deepThinkOn = ref(localStorage.getItem('ai_deep_think') === '1')
+const toggleDeepThink = () => {
+  if (loading.value) return
+  deepThinkOn.value = !deepThinkOn.value
+  localStorage.setItem('ai_deep_think', deepThinkOn.value ? '1' : '0')
+}
+const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length))
+
+const loading = ref(false)
+const currentSessionId = ref(null)
+const messages = ref([])
+const box = ref(null)
+const stickToBottom = ref(true)
+const AUTO_SCROLL_MARGIN = 80
+const onMessagesScroll = () => {
+  const el = box.value
+  if (!el) return
+  stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_MARGIN
+}
+const previewList = ref([])
+const previewIndex = ref(0)
+const previewUrl = computed(() => previewList.value[previewIndex.value] || '')
+const zoom = ref(1)
+const offset = ref({ x: 0, y: 0 })
+const dragState = ref(null)
+const abortController = ref(null)
+
+const currentSessionTitle = computed(() => {
+  const s = sessionStore.list.find(x => x.id === currentSessionId.value)
+  return s?.title || '新对话'
+})
+const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && !m.loading).length)
+
+// 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
+const panelOpen = ref(localStorage.getItem('v2_panel') !== '0')
+const togglePanel = () => {
+  panelOpen.value = !panelOpen.value
+  localStorage.setItem('v2_panel', panelOpen.value ? '1' : '0')
+}
+const modelLabel = ref('')
+const debugEntryVisible = ref(false)
+const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
+const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
+const lastSources = computed(() => lastAi.value?.sources || [])
+
+// 推荐问题（DB 配置，失败回退内置默认）
+const FALLBACK_TIPS = ['系统有哪些功能？', '如何创建一个新表单？', '字段验证怎么设置？', '什么是填报周期？']
+const tips = ref(FALLBACK_TIPS)
+
+// 免责声明（与旧版同一份文案）
+const disclaimerVisible = ref(false)
+const DISCLAIMER_TEXT = `
+
+### 一、内容生成方式
+
+本系统的回答由人工智能模型基于知识库检索结果**自动生成**，仅供学习与工作参考，不构成任何形式的专业建议（包括但不限于法律、医疗、财务、投资建议），亦不代表系统开发方与运营方的官方立场。
+
+### 二、准确性不作保证
+
+AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**之处。知识库内容可能更新滞后，回答引用的资料版本可能与最新版本存在差异。重要信息（如操作规范、数据口径、流程要求、审批条件等）请以**官方文档、正式通知或相关业务部门的确认为准**。
+
+### 三、引用来源说明
+
+回答中标注的引用来源仅用于帮助定位参考资料。受文档分块与摘要机制影响，展示的片段可能与原文存在出入，完整含义请以知识块原文及原始文档为准。
+
+### 四、使用限制
+
+请勿仅依赖本系统的回答做出对个人或组织有重大影响的决策。因使用或依赖本系统内容而产生的任何直接或间接损失，系统提供方不承担责任。请遵守信息安全相关规定，**不要在提问中输入密码、密钥、客户隐私等敏感信息**。
+
+### 五、反馈与改进
+
+如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
+
+// 引用来源详情弹窗
+const sourceVisible = ref(false)
+const sourceTitle = ref('')
+const sourceSnippet = ref('')
+const sourceImages = ref([])
+const sourceContent = ref('')
+const sourceLoading = ref(false)
+const openSource = async s => {
+  if (!s) return
+  sourceTitle.value = (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '')
+  sourceSnippet.value = s.snippet || '（无原文片段）'
+  sourceImages.value = Array.isArray(s.images) ? s.images : []
+  sourceContent.value = ''
+  sourceLoading.value = true
+  sourceVisible.value = true
+  try {
+    const r = await getKnowledgeDetail(s.knowledgeId)
+    if (r.success && r.data) {
+      sourceContent.value = r.data.content || ''
+      if (Array.isArray(r.data.images)) sourceImages.value = r.data.images
+      if (r.data.title) sourceTitle.value = (s.fileName || '未知文档') + ' §' + r.data.title
+    }
+  } catch (e) { /* 接口失败回退 snippet */ }
+  finally { sourceLoading.value = false }
+}
+
+// 消息内容点击：代码复制 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
+const openPreview = e => {
+  const t = e.target
+  const copyBtn = t && t.closest ? t.closest('.code-copy') : null
+  if (copyBtn) { copyCode(copyBtn); return }
+  if (t && t.classList && t.classList.contains('ref-sup')) {
+    const mdEl = t.closest('.md')
+    const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
+    const ref = Number(t.dataset.ref)
+    const src = messages.value[msgIdx]?.sources?.[ref - 1]
+    if (src) openSource(src)
+    return
+  }
+  if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
+    const mdEl = t.closest('.md')
+    const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
+    const seq = Number(t.dataset.seq || 0)
+    const imgs = messages.value[msgIdx]?.images
+    if (Array.isArray(imgs) && imgs.length) {
+      previewList.value = imgs.map(resolveImg)
+      previewIndex.value = seq > 0 && seq <= imgs.length ? seq - 1 : 0
+    } else {
+      previewList.value = [t.getAttribute('src')]
+      previewIndex.value = 0
+    }
+    resetView()
+  }
+}
+
+// 回答反馈
+const feedbackVisible = ref(false)
+const feedbackSubmitting = ref(false)
+const feedbackText = ref('')
+const feedbackTarget = ref(null)
+const openFeedback = (m, rating) => {
+  if (m.fb != null && m.fb !== rating) {
+    message.warning(`已评价为「${m.fb === 1 ? '有帮助' : '没帮助'}」，同一回答只能选择一项`)
+    return
+  }
+  feedbackTarget.value = { msg: m, rating }
+  feedbackText.value = ''
+  feedbackVisible.value = true
+}
+const doSubmitFeedback = async () => {
+  const t = feedbackTarget.value
+  if (!t || !t.msg.messageId) { message.warning('该回答不可反馈'); return }
+  feedbackSubmitting.value = true
+  try {
+    const r = await apiSubmitFeedback(t.msg.messageId, t.rating, feedbackText.value.trim())
+    if (r.success) { t.msg.fb = t.rating; message.success('感谢反馈'); feedbackVisible.value = false }
+    else message.error(r.msg || '提交失败')
+  } catch (e) { message.error(e.message || '提交失败') }
+  finally { feedbackSubmitting.value = false }
+}
+
+// 灯箱
+const resetView = () => { zoom.value = 1; offset.value = { x: 0, y: 0 } }
+const prevImg = () => { if (previewIndex.value > 0) { previewIndex.value--; resetView() } }
+const nextImg = () => { if (previewIndex.value < previewList.value.length - 1) { previewIndex.value++; resetView() } }
+const closeLightbox = () => { previewList.value = []; previewIndex.value = 0; resetView(); dragState.value = null }
+const onWheel = e => {
+  let factor = Math.pow(1.08, -e.deltaY / 100)
+  if (factor > 1.3) factor = 1.3
+  if (factor < 1 / 1.3) factor = 1 / 1.3
+  zoom.value = Math.min(8, Math.max(0.25, zoom.value * factor))
+}
+const onImgMouseDown = e => {
+  if (e.button !== 0) return
+  dragState.value = { startX: e.clientX, startY: e.clientY, ox: offset.value.x, oy: offset.value.y }
+  e.preventDefault()
+}
+const onImgMouseMove = e => {
+  if (!dragState.value) return
+  offset.value.x = dragState.value.ox + (e.clientX - dragState.value.startX)
+  offset.value.y = dragState.value.oy + (e.clientY - dragState.value.startY)
+}
+const onImgMouseUp = () => { dragState.value = null }
+const onKeydown = e => {
+  if (e.key === 'Escape') closeLightbox()
+  else if (e.key === 'ArrowLeft') prevImg()
+  else if (e.key === 'ArrowRight') nextImg()
+}
+watch(previewUrl, v => {
+  if (v) window.addEventListener('keydown', onKeydown)
+  else window.removeEventListener('keydown', onKeydown)
+})
+
+// 全局快捷键：ESC 停止生成 / 清空输入；粘贴发图
+const onGlobalKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return
+  if (previewUrl.value && ['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
+  if (e.key === 'Escape') {
+    if (loading.value) { stop(); return }
+    if (document.activeElement === textareaRef.value) {
+      if (text.value) text.value = ''
+      else textareaRef.value?.blur()
+    }
+  }
+}
+const onGlobalPaste = e => onPasteImages(e)
+onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('paste', onGlobalPaste)
+})
+
+// ==================== 会话 ====================
+const switchSession = async sid => {
+  if (loading.value) return
+  currentSessionId.value = sid
+  // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上
+  router.replace({ path: '/v2/chat', query: { sid } }).catch(() => {})
+  try {
+    const r = await getHistory(sid)
+    if (r.success && Array.isArray(r.data)) {
+      messages.value = r.data
+        .filter(m => m && (m.content || (Array.isArray(m.images) && m.images.length)))
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'ai',
+          content: String(m.content || ''),
+          messageId: m.messageId || m.id || null,
+          fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
+          images: Array.isArray(m.images) ? m.images : [],
+          sources: Array.isArray(m.sources) ? m.sources : [],
+          related: [],
+          thinking: m.thinking || '',
+          thinkOpen: false,
+          time: m.createTime ? new Date(m.createTime).getTime() : null,
+          artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
+          toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
+          retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })()
+        }))
+      scrollForce()
+    } else {
+      messages.value = []
+    }
+  } catch (e) {
+    messages.value = []
+  }
+}
+
+const creatingSession = ref(false)
+const createNewSession = async () => {
+  if (creatingSession.value) return
+  const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0)?.id
+  if (emptySid) {
+    if (currentSessionId.value !== emptySid) await switchSession(emptySid)
+    else messages.value = []
+    router.replace({ path: '/v2/chat', query: { sid: emptySid } })
+    focusInput()
+    return
+  }
+  creatingSession.value = true
+  try {
+    const r = await newSession()
+    if (r.success && r.data?.sessionId) {
+      currentSessionId.value = r.data.sessionId
+      messages.value = []
+      router.replace({ path: '/v2/chat', query: { sid: r.data.sessionId } })
+      await loadSessions()
+      focusInput()
+    }
+  } catch (e) {
+    message.error('创建会话失败: ' + (e.message || '未知错误'))
+  } finally {
+    creatingSession.value = false
+  }
+}
+
+// 路由 query.sid 驱动：只处理"切到某个会话"；sid 清空（新建/删除当前会话）由 tick 信号接管，
+// 避免两条链路同时触发 autoPick / createNew 的竞态
+watch(() => route.query.sid, sid => {
+  if (route.path !== '/v2/chat' || !sid) return
+  if (sid !== currentSessionId.value) switchSession(sid)
+})
+// 侧边栏「新建对话」信号（消费后回写 seen，跨页积累的 tick 只消费一次）
+// 注意不依赖 route.query 状态：tick 触发时路由 push 可能尚未完成，条件里查 sid 会偶发落空
+watch(() => sessionStore.newChatTick, async tick => {
+  sessionStore.newChatSeen = tick
+  if (route.path === '/v2/chat' && !loading.value) await createNewSession()
+})
+// 当前会话被删除 → 自动落到最近会话或新建
+watch(() => sessionStore.autoPickTick, async () => {
+  if (route.path === '/v2/chat' && !loading.value) await autoPick()
+})
+const autoPick = async () => {
+  const first = sessionStore.list.find(s => (s.messageCount ?? 0) > 0)
+  if (first) await switchSession(first.id)
+  else await createNewSession()
+}
+
+const focusInput = () => nextTick(() => textareaRef.value?.focus())
+
+const handleDeleteSession = async sid => {
+  try {
+    await deleteSessionApi(sid)
+    message.success('会话已删除')
+    if (sid === currentSessionId.value) {
+      const remaining = sessionStore.list.filter(s => s.id !== sid && (s.messageCount ?? 0) > 0)
+      if (remaining.length > 0) await switchSession(remaining[0].id)
+      else { messages.value = []; currentSessionId.value = null; router.replace('/v2/chat') }
+    }
+    await loadSessions()
+  } catch (e) { message.error(e.message || '删除失败') }
+}
+
+// ==================== 图片上传（选择/拖入/粘贴，压缩为 dataURL） ====================
+const pendingImages = ref([])
+const fileInput = ref(null)
+const pickImages = () => {
+  if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); return }
+  fileInput.value?.click()
+}
+const onFilesChange = e => {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+  addImageFiles(files)
+}
+const compressImage = file => new Promise((resolve, reject) => {
+  const img = new Image()
+  const url = URL.createObjectURL(file)
+  img.onload = () => {
+    const max = 1280
+    let { width, height } = img
+    if (width > max || height > max) {
+      const ratio = Math.min(max / width, max / height)
+      width = Math.round(width * ratio); height = Math.round(height * ratio)
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = width; canvas.height = height
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+    URL.revokeObjectURL(url)
+    resolve(canvas.toDataURL('image/jpeg', 0.85))
+  }
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
+  img.src = url
+})
+const addImageFiles = files => {
+  for (const f of files) {
+    if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); break }
+    if (!f.type.startsWith('image/')) continue
+    compressImage(f).then(dataUrl => pendingImages.value.push({ dataUrl })).catch(() => message.error(`图片处理失败: ${f.name}`))
+  }
+}
+const removePendingImage = i => pendingImages.value.splice(i, 1)
+const previewPendingImage = pi => {
+  if (!pendingImages.value.length) return
+  previewList.value = pendingImages.value.map(p => p.dataUrl)
+  previewIndex.value = pi
+  resetView()
+}
+const openPreviewFromMsg = (m, index) => {
+  if (!m.images || !m.images.length) return
+  previewList.value = m.images.map(resolveImg)
+  previewIndex.value = index || 0
+  resetView()
+}
+const dragOver = ref(false)
+let dragDepth = 0
+const onDragEnter = e => {
+  if (!loading.value && Array.from(e.dataTransfer?.types || []).includes('Files')) {
+    dragDepth++
+    dragOver.value = true
+  }
+}
+const onDragLeave = () => { if (--dragDepth <= 0) { dragDepth = 0; dragOver.value = false } }
+const onDropImages = e => {
+  dragDepth = 0
+  dragOver.value = false
+  if (loading.value) return
+  addImageFiles(Array.from(e.dataTransfer?.files || []))
+}
+const onPasteImages = e => {
+  const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
+  if (!imgs.length || loading.value) return
+  e.preventDefault()
+  addImageFiles(imgs)
+}
+
+// ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
+const send = () => {
+  const q = text.value.trim()
+  const imgs = pendingImages.value.map(p => p.dataUrl)
+  if ((!q && !imgs.length) || loading.value) return
+  text.value = ''
+  pendingImages.value = []
+  const deep = deepThinkOn.value
+  messages.value.push({ role: 'user', content: q, images: imgs, deepThink: deep, time: Date.now() })
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep)
+}
+const onEnterKey = e => {
+  if (e.isComposing || e.keyCode === 229) return
+  send()
+}
+
+const fmtMsgTime = ts => {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ''
+  const now = new Date()
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+  if (d.toDateString() === now.toDateString()) return '今天 ' + hm
+  const yest = new Date(now)
+  yest.setDate(now.getDate() - 1)
+  if (d.toDateString() === yest.toDateString()) return '昨天 ' + hm
+  return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
+}
+
+const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false) => {
+  const idx = replaceIdx ?? messages.value.length
+  if (replaceIdx == null) {
+    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] })
+  } else {
+    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] }
+  }
+  loading.value = true
+  scrollForce()
+  abortController.value = new AbortController()
+  let full = ''
+  let gotToken = false
+  sendQuestion(currentSessionId.value, question, imgs, {
+    signal: abortController.value.signal,
+    deepThink,
+    onThinking: t => {
+      const m = messages.value[idx]
+      m.thinking = (m.thinking || '') + t
+      m.thinkLoading = true
+      scroll()
+    },
+    onThinkingDone: payload => {
+      const m = messages.value[idx]
+      m.thinkLoading = false
+      m.thinkOpen = false
+      try {
+        const j = JSON.parse(payload)
+        if (j.thinking) m.thinking = j.thinking
+      } catch (e) { /* 兼容旧 payload */ }
+    },
+    onToken: t => { gotToken = true; full += t; messages.value[idx].content = full; messages.value[idx].stage = ''; messages.value[idx].thinkLoading = false; scroll() },
+    onStage: s => { messages.value[idx].stage = s; scroll() },
+    onRetrieved: payload => {
+      try {
+        const j = JSON.parse(payload)
+        messages.value[idx].retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
+        messages.value[idx].stage = ''
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onImage: imgs2 => {
+      try {
+        const parsed = JSON.parse(imgs2)
+        messages.value[idx].images = Array.isArray(parsed) ? parsed : []
+      } catch (e) { messages.value[idx].images = [] }
+    },
+    onArtifact: payload => {
+      try {
+        const a = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!a || !a.url) return
+        if (!Array.isArray(messages.value[idx].artifacts)) messages.value[idx].artifacts = []
+        messages.value[idx].artifacts.push(a)
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onToolStatus: rec => {
+      try {
+        const t = typeof rec === 'string' ? JSON.parse(rec) : rec
+        if (!t || !t.name) return
+        if (!Array.isArray(messages.value[idx].toolCalls)) messages.value[idx].toolCalls = []
+        if (t.status === 'start') {
+          messages.value[idx].toolCalls.push({ ...t })
+        } else {
+          const list = messages.value[idx].toolCalls
+          const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
+          if (last) {
+            last.status = t.status
+            last.elapsedMs = t.elapsedMs || 0
+            if (t.error) last.error = t.error
+          } else {
+            list.push({ ...t })
+          }
+        }
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onDone: contentJson => {
+      let sources = [], related = [], messageId = null, degradations = []
+      try {
+        const p = JSON.parse(contentJson || '{}')
+        sources = Array.isArray(p.sources) ? p.sources : []
+        related = Array.isArray(p.related) ? p.related : []
+        messageId = p.messageId || null
+        degradations = Array.isArray(p.degradations) ? p.degradations : []
+        if (p.thinking) messages.value[idx].thinking = p.thinking
+        messages.value[idx].thinkLoading = false
+        if (typeof p.finalContent === 'string' && p.finalContent !== '') messages.value[idx].content = p.finalContent
+        if (Array.isArray(p.finalImages)) messages.value[idx].images = p.finalImages
+        if (Array.isArray(p.artifacts) && p.artifacts.length) messages.value[idx].artifacts = p.artifacts
+        if (Array.isArray(p.toolCalls) && p.toolCalls.length) messages.value[idx].toolCalls = p.toolCalls
+      } catch (e) { /* 旧版/停止生成：无负载 */ }
+      if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
+      messages.value[idx].loading = false
+      messages.value[idx].sources = sources
+      if (messages.value[idx].retrieved && Array.isArray(sources)) messages.value[idx].retrieved.refs = sources.length
+      messages.value[idx].related = related
+      messages.value[idx].messageId = messageId
+      messages.value[idx].degradations = degradations
+      loading.value = false
+      abortController.value = null
+      scrollForce()
+      if (isFirstMessage) loadSessions()
+    },
+    onWarn: w => { messages.value[idx].warnMsg = w; scroll() },
+    onError: e => {
+      if (autoRetry > 0 && !gotToken) {
+        messages.value[idx].retrying = true
+        scroll()
+        setTimeout(() => {
+          if (idx < messages.value.length && messages.value[idx]?.role === 'ai' && messages.value[idx]?.loading) {
+            streamAnswer(question, imgs, idx, false, 0, deepThink)
+          } else {
+            if (messages.value[idx]) messages.value[idx].retrying = false
+            loading.value = false
+            abortController.value = null
+          }
+        }, 2500)
+        return
+      }
+      messages.value[idx].content = '😅 ' + e
+      messages.value[idx].loading = false
+      messages.value[idx].retrying = false
+      messages.value[idx].failed = true
+      loading.value = false
+      abortController.value = null
+      message.error(e)
+      scrollForce()
+    }
+  })
+}
+
+const regenerate = mi => {
+  if (loading.value) return
+  for (let i = mi - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') {
+      const imgs = (messages.value[i].images || []).filter(u => u.startsWith('data:'))
+      const deep = !!messages.value[i].deepThink
+      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep)
+      return
+    }
+  }
+  message.warning('未找到对应的问题')
+}
+
+const copyAnswer = async mi => {
+  const m = messages.value[mi]
+  if (!m || !m.content) { message.warning('该回答无可复制内容'); return }
+  const txt = m.content.trim()
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(txt); message.success('已复制到剪贴板') }
+    catch (e) { fallbackCopyText(txt) }
+  } else fallbackCopyText(txt)
+}
+const fallbackCopyText = txt => {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = txt
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'absolute'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.focus(); ta.select(); ta.setSelectionRange(0, txt.length)
+    const ok = document.execCommand('copy')
+    ta.remove()
+    if (ok) message.success('已复制到剪贴板')
+    else message.error('复制失败，请手动复制')
+  } catch (err) { message.error('复制失败，请手动复制') }
+}
+
+// 删除本轮对话（回答 + 同组问题一起软删除）
+const onMoreAction = (key, mi) => {
+  if (key === 'debug') openDebug(mi)
+  else if (key === 'deleteRound') deleteRound(mi)
+}
+const deleteRound = async mi => {
+  const mid = messages.value[mi]?.messageId
+  if (!mid) { message.warning('该轮对话不可删除'); return }
+  try {
+    const r = await deleteMessageGroup(mid)
+    if (r.success) {
+      // 本地移除该回答与其前面的用户问题
+      let from = mi
+      if (mi > 0 && messages.value[mi - 1]?.role === 'user') from = mi - 1
+      messages.value.splice(from, mi - from + 1)
+      message.success('已删除本轮对话')
+      loadSessions()
+    } else message.error(r.msg || '删除失败')
+  } catch (e) { message.error(e.message || '删除失败') }
+}
+
+// 检索调试
+const debugVisible = ref(false)
+const debugLoading = ref(false)
+const debugQuestion = ref('')
+const debugResult = ref(null)
+const openDebug = mi => {
+  for (let i = mi - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') { debugQuestion.value = messages.value[i].content; break }
+  }
+  debugVisible.value = true
+  runDebug()
+}
+const runDebug = async () => {
+  const q = debugQuestion.value.trim()
+  if (!q) { message.warning('请输入问题'); return }
+  debugLoading.value = true
+  debugResult.value = null
+  try {
+    const r = await debugRetrieval(q)
+    if (r.success) debugResult.value = r.data
+    else message.error(r.msg || '调试失败')
+  } catch (e) { message.error(e.message || '调试失败') }
+  finally { debugLoading.value = false }
+}
+const debugStages = computed(() => {
+  const d = debugResult.value
+  if (!d) return []
+  const map = (items, tagFn) => (items || []).map(it => ({
+    title: it.title || '（无标题）',
+    docName: it.docName || '',
+    snippet: it.snippet || '',
+    tag: tagFn(it)
+  }))
+  return [
+    { name: `关键词命中（${(d.keywordHits || []).length}）`, items: map(d.keywordHits, it => '命中率 ' + (it.hitRate ?? 0)) },
+    { name: `向量命中（${(d.vectorHits || []).length}）`, items: map(d.vectorHits, it => '相似度 ' + (it.score ?? 0)) },
+    { name: `合并后（${(d.merged || []).length}）`, items: map(d.merged, it => '分 ' + (it.score ?? 0)) },
+    { name: `重排后（${(d.reranked || []).length}）` + (d.rerankApplied ? '' : `（${d.rerankSkipReason || '未重排'}）`), items: map(d.reranked, it => '分 ' + (it.score ?? 0)) },
+    { name: `最终上下文（${(d.finalContext || []).length}/8）`, items: map(d.finalContext, it => '分 ' + (it.score ?? 0)) },
+    { name: `被排除（${(d.excluded || []).length}）`, items: map(d.excluded, it => '分 ' + (it.score ?? 0)) }
+  ]
+})
+
+// 编辑问题重新发送
+const editMessage = mi => {
+  const m = messages.value[mi]
+  if (!m || m.role !== 'user') return
+  text.value = m.content
+  const localImgs = (m.images || []).filter(u => u.startsWith('data:'))
+  if (localImgs.length) pendingImages.value = [...pendingImages.value, ...localImgs.map(u => ({ dataUrl: u }))]
+  nextTick(() => textareaRef.value?.focus())
+  message.info('已回填到输入框，修改后按 Enter 发送')
+}
+
+const stop = () => {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+  }
+}
+
+const ask = q => { text.value = q; nextTick(send) }
+
+// 贴底自动滚动（上翻回看历史暂停跟随）
+const scroll = () => nextTick(() => {
+  if (box.value && stickToBottom.value) {
+    box.value.scrollTop = box.value.scrollHeight
+    stickToBottom.value = true
+  }
+})
+const scrollForce = () => nextTick(() => {
+  if (box.value) {
+    box.value.scrollTop = box.value.scrollHeight
+    stickToBottom.value = true
+  }
+})
+
+onMounted(async () => {
+  window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('paste', onGlobalPaste)
+  await loadSessions()
+  const sid = route.query.sid
+  if (sid) {
+    await switchSession(sid)
+  } else if (sessionStore.newChatTick > sessionStore.newChatSeen) {
+    // 其它页面点过「新建对话」后跳转过来：消费该信号，直接进空会话
+    sessionStore.newChatSeen = sessionStore.newChatTick
+    await createNewSession()
+  } else {
+    await autoPick()
+  }
+  focusInput()
+  getSuggested().then(r => {
+    if (r.success && Array.isArray(r.data) && r.data.length) tips.value = r.data
+  }).catch(() => {})
+  getConfig().then(r => {
+    if (!r.success) return
+    modelLabel.value = r.data?.chat?.model?.value || ''
+    debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
+  }).catch(() => {})
+})
+</script>
+
+<style scoped>
+.chat2 { display: flex; height: 100%; min-width: 0; background: var(--v2-panel); }
+.chat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-head {
+  display: flex; align-items: center; gap: 12px; padding: 10px 20px;
+  border-bottom: 1px solid var(--v2-border); flex: none; background: var(--v2-panel);
+}
+.chat-title { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-tip { font-size: 11px; color: var(--v2-text3); cursor: pointer; user-select: none; }
+.head-tip:hover { color: var(--v2-accent); }
+.head-panel-btn { margin-left: auto; padding: 4px 12px; }
+
+.messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }
+.welcome { text-align: center; padding: 72px 20px 40px; }
+.welcome-mark {
+  width: 44px; height: 44px; border-radius: 12px; background: var(--v2-text); color: #fff;
+  font-size: 20px; display: inline-flex; align-items: center; justify-content: center;
+}
+.welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
+.welcome p { color: var(--v2-text3); margin: 0 0 18px; }
+.welcome-tags { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.welcome-tag {
+  font-size: 12px; color: var(--v2-text2); background: var(--v2-bg);
+  border: 1px solid var(--v2-border); border-radius: 999px; padding: 5px 14px; cursor: pointer;
+}
+.welcome-tag:hover { color: var(--v2-accent); border-color: var(--v2-accent); background: var(--v2-accent-weak); }
+
+.row { display: flex; margin-bottom: 20px; justify-content: center; }
+.msg-block { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: min(94%, 860px); width: 100%; }
+.msg-block.user { align-items: flex-end; }
+.msg-block.ai { align-items: flex-start; }
+.bubble { width: 100%; line-height: 1.65; }
+.bubble.user { background: #f2f4f7; border-radius: 12px; padding: 9px 14px; width: fit-content; max-width: 100%; }
+.bubble.user :deep(.md > p) { margin: 0; }
+.bubble.ai { background: transparent; padding: 0; }
+
+.msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; border: 1px solid var(--v2-border); cursor: zoom-in; }
+.pending-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: 860px; }
+.pending-img { position: relative; }
+.pending-img img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--v2-border); cursor: zoom-in; }
+.pending-del { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 18px; text-align: center; cursor: pointer; }
+.pending-del:hover { background: var(--v2-danger); }
+
+.think-panel { margin: 4px 0 8px; border: 1px solid var(--v2-border); border-radius: 8px; background: #fafbfc; overflow: hidden; }
+.think-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--v2-text3); }
+.think-head:hover { background: #f2f4f7; }
+.think-arrow { font-size: 10px; transition: transform .2s; }
+.think-panel.open .think-arrow { transform: rotate(180deg); }
+.think-title { font-weight: 500; color: var(--v2-text2); }
+.think-badge { font-size: 11px; color: var(--v2-text3); }
+.think-body { padding: 0 10px 8px; border-top: 1px dashed var(--v2-border); color: var(--v2-text2); font-size: 12px; line-height: 1.7; max-height: 300px; overflow-y: auto; }
+.think-body :deep(.md > p) { margin: 4px 0; }
+
+.tool-status-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.tool-status-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; width: fit-content; }
+.tool-ic { font-size: 13px; }
+.tool-ic-run { color: var(--v2-accent); }
+.tool-ic-ok { color: var(--v2-ok); }
+.tool-ic-err { color: var(--v2-danger); }
+.tool-name { font-weight: 500; color: var(--v2-text2); }
+.tool-dur { color: var(--v2-text3); }
+.tool-fail { color: var(--v2-danger); }
+
+.artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.artifact-item {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 6px 10px; border: 1px solid var(--v2-border); border-radius: 8px;
+  font-size: 12px; color: var(--v2-text); text-decoration: none; background: #fafbfc;
+}
+.artifact-item:hover { border-color: var(--v2-accent); background: var(--v2-accent-weak); }
+.artifact-icon { color: var(--v2-accent); }
+.artifact-name { font-weight: 500; color: var(--v2-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-desc { color: var(--v2-text3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-dl { color: var(--v2-text3); margin-left: auto; }
+
+.degradation-bar {
+  margin-top: 8px; padding: 6px 10px; border-radius: 6px;
+  background: #faf3e6; border: 1px solid #f0dfb6; color: #a3691b;
+  font-size: 12px; line-height: 1.6; display: flex; flex-wrap: wrap; gap: 4px 12px;
+}
+.degradation-item { display: inline-block; }
+
+.retrieval-merged { margin-top: 8px; width: 100%; }
+.retrieval-line { font-size: 12px; color: var(--v2-text3); user-select: none; cursor: pointer; }
+.retrieval-line:hover { color: var(--v2-accent); }
+.rt-arrow { font-size: 10px; margin-left: 2px; transition: transform .15s; }
+.rt-arrow.open { transform: rotate(180deg); }
+.retrieval-detail {
+  font-size: 12px; color: var(--v2-text2); background: #fafbfc; border: 1px solid var(--v2-border);
+  border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px;
+}
+.rt-terms { margin-bottom: 6px; }
+.rt-tool-terms { color: var(--v2-accent); }
+.rt-tool-tag {
+  display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: var(--v2-accent-weak); color: var(--v2-accent); margin-right: 6px; vertical-align: 1px;
+}
+.rt-ref { padding: 3px 0; border-top: 1px dashed var(--v2-border); cursor: pointer; }
+.rt-ref:hover { color: var(--v2-accent); }
+.rt-ref-tag { color: var(--v2-accent); margin-right: 4px; }
+.rt-snip { color: var(--v2-text3); margin-top: 2px; }
+
+.related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.related-label { font-size: 12px; color: var(--v2-text3); }
+.related-tag {
+  font-size: 11px; color: var(--v2-ok); background: #eaf5ec; border-radius: 999px;
+  padding: 3px 10px; cursor: pointer;
+}
+.related-tag:hover { background: #ddefe0; }
+.stage-hint { margin-top: 6px; font-size: 13px; color: var(--v2-accent); display: flex; align-items: center; gap: 6px; }
+
+.fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
+.fb-row :deep(.fb-active) { color: var(--v2-accent); }
+.retry-row { margin-top: 8px; }
+.retry-tip {
+  margin-top: 8px; display: flex; align-items: center; gap: 6px; color: #a3691b;
+  font-size: 12px; background: #faf3e6; border: 1px solid #f0dfb6; border-radius: 6px;
+  padding: 4px 10px; width: fit-content;
+}
+.msg-edit-row {
+  position: absolute; top: calc(100% + 2px); left: 0; right: 0; height: 24px; z-index: 1;
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  opacity: 0; transition: opacity .15s;
+}
+.msg-block:hover .msg-edit-row { opacity: 1; }
+.msg-time-inline { font-size: 11px; color: var(--v2-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
+.jump-latest {
+  position: sticky; bottom: 12px; z-index: 5; width: fit-content; margin: 0 auto 4px;
+  background: var(--v2-accent); color: #fff; font-size: 12px; padding: 4px 16px;
+  border-radius: 999px; cursor: pointer; user-select: none;
+}
+
+.input { position: relative; padding: 10px 32px 14px; flex: none; }
+.drop-overlay {
+  position: absolute; inset: 6px 32px; z-index: 6; pointer-events: none;
+  background: rgba(46,107,230,.06); border: 2px dashed var(--v2-accent); border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--v2-accent); font-size: 14px; font-weight: 500;
+}
+.input-box {
+  position: relative; max-width: 860px; margin: 0 auto;
+  border: 1px solid var(--v2-border); border-radius: 16px; background: var(--v2-panel);
+  padding: 10px 12px 8px; transition: border-color .2s;
+}
+.input-box:focus-within { border-color: var(--v2-accent); }
+.input-area { resize: none; padding: 2px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
+.input-area:focus { border: none; box-shadow: none; }
+.input-toolbar { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.toolbar-left { display: flex; align-items: center; gap: 2px; }
+.toolbar-btn-on { color: var(--v2-accent) !important; background: var(--v2-accent-weak) !important; }
+.model-name { margin-left: auto; font-size: 12px; color: var(--v2-text3); margin-right: 10px; user-select: none; }
+.send-btn {
+  width: 30px; height: 30px; border-radius: 50%; border: none;
+  background: var(--v2-accent); color: #fff; font-size: 15px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; transition: background .2s;
+}
+.send-btn:hover:not(:disabled) { background: #4a80ef; }
+.send-btn:disabled { background: #c6d4f2; cursor: not-allowed; }
+.send-btn.stop { background: var(--v2-danger); }
+
+/* 右侧状态栏 */
+.right-panel {
+  width: 230px; flex: none; border-left: 1px solid var(--v2-border); background: #fafbfc;
+  padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+}
+.rp-card { background: var(--v2-panel); border: 1px solid var(--v2-border); border-radius: 10px; padding: 10px 12px; }
+.rp-label { font-size: 11px; color: var(--v2-text3); margin-bottom: 4px; }
+.rp-strong { font-size: 14px; font-weight: 500; word-break: break-all; }
+.rp-meta { font-size: 11px; color: var(--v2-text3); margin-top: 4px; }
+.rp-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--v2-text2); }
+.rp-dim { font-size: 11px; color: var(--v2-text3); }
+.rp-terms { font-size: 11px; color: var(--v2-text3); margin-top: 5px; line-height: 1.6; word-break: break-all; }
+.rp-divider { border-top: 1px dashed var(--v2-border); margin: 8px 0 6px; }
+.rp-tool-label { font-size: 11px; color: var(--v2-accent); font-weight: 500; }
+.rp-tool-q { color: var(--v2-text2); margin-top: 3px; }
+.rp-src { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
+.rp-src:hover .rp-src-name { color: var(--v2-accent); }
+.rp-src-ic { color: var(--v2-accent); font-size: 12px; flex: none; }
+.rp-src-name { font-size: 12px; color: var(--v2-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 来源弹窗内容 */
+.src-content { max-height: 55vh; overflow-y: auto; line-height: 1.7; font-size: 14px; padding-right: 6px; }
+
+/* 检索调试面板 */
+.dbg-item { padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--v2-border); border-radius: 6px; background: #fafbfc; }
+.dbg-terms { padding: 8px 10px; margin-bottom: 10px; border: 1px solid #d6e4ff; border-radius: 6px; background: #f0f6ff; }
+.dbg-terms-label { font-size: 12px; color: var(--v2-text3); margin-right: 6px; }
+.dbg-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dbg-title { font-weight: 500; font-size: 13px; }
+.dbg-snippet { margin-top: 3px; font-size: 12px; color: var(--v2-text3); word-break: break-all; }
+
+/* 灯箱 */
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; z-index: 2000; cursor: zoom-out; overflow: hidden; }
+.lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 4px; cursor: grab; user-select: none; transition: transform .12s ease; }
+.lightbox-close { position: fixed; top: 16px; right: 24px; font-size: 36px; color: #fff; cursor: pointer; line-height: 1; opacity: .85; }
+.lightbox-close:hover { opacity: 1; }
+.lightbox-count { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.75); font-size: 13px; background: rgba(0,0,0,.45); padding: 2px 12px; border-radius: 12px; }
+.lightbox-tip { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.6); font-size: 12px; user-select: none; }
+.lightbox-prev, .lightbox-next {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.4); color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; z-index: 2001; user-select: none;
+}
+.lightbox-prev { left: 16px; }
+.lightbox-next { right: 16px; }
+.lightbox-prev:hover:not(:disabled), .lightbox-next:hover:not(:disabled) { background: rgba(0,0,0,.7); }
+.lightbox-prev:disabled, .lightbox-next:disabled { opacity: .25; cursor: not-allowed; }
+</style>
