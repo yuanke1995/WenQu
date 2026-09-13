@@ -1319,6 +1319,11 @@ public class DocumentService {
         // 提交前保存"解析前"状态：下方 setStatus(2) 会改写内存对象，队列满恢复分支必须用此原值，
         // 否则恢复语句把状态重置回 2（沿用 doc.getStatus() 的原实现会让文档永久卡在"解析中"）
         int origStatus = doc.getStatus() == null ? 0 : doc.getStatus();
+        // 队列满恢复时一并回滚解析态字段：下方 updateProgress 会把 parse_desc 改写为"重新解析中"，
+        // 只回滚 status 会让已入库文档悬浮显示"重新解析中"（终态与描述不一致）
+        Integer origProgress = doc.getParseProgress();
+        String origParseDesc = doc.getParseDesc();
+        String origFailReason = doc.getFailReason();
         doc.setStatus(2);
         doc.setFailReason(null);
         documentMapper.updateById(doc);
@@ -1330,9 +1335,13 @@ public class DocumentService {
         try {
             parseExecutor.submit(() -> processUpload(docId, doc.getFileName(), source, fp));
         } catch (RejectedExecutionException e) {
-            // 队列满：恢复文档原状态（避免停留在"解析中"）
+            // 队列满：恢复文档原状态与解析态字段（避免停留在"解析中"或残留"重新解析中"描述）
             documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                    .eq(AiDocument::getId, docId).set(AiDocument::getStatus, origStatus));
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getStatus, origStatus)
+                    .set(AiDocument::getParseProgress, origProgress)
+                    .set(AiDocument::getParseDesc, origParseDesc)
+                    .set(AiDocument::getFailReason, origFailReason));
             throw new BizException("解析队列繁忙（已有 50 个待解析任务），请稍后再试");
         }
     }
@@ -1373,6 +1382,11 @@ public class DocumentService {
                                        DocumentParser parser) throws Exception {
         String docId = existing.getId();
         int origStatus = existing.getStatus() == null ? 0 : existing.getStatus();
+        // 未成功提交时一并回滚解析态字段：fail_reason 下方会置 null、parse_desc 会被改写为
+        // "已提交,等待解析"，只回滚 status 会留下终态与描述不一致的脏数据
+        Integer origProgress = existing.getParseProgress();
+        String origParseDesc = existing.getParseDesc();
+        String origFailReason = existing.getFailReason();
         // 并发防护（多实例也原子）：CAS 抢占"解析中"状态，失败说明已有解析在进行
         tryLockParsing(docId);
         boolean submitted = false;
@@ -1402,11 +1416,15 @@ public class DocumentService {
         } catch (RejectedExecutionException e) {
             throw new BizException("解析队列繁忙（已有 50 个待解析任务），请稍后再试");
         } finally {
-            // 未成功提交解析任务时恢复原状态（避免文档卡在"解析中"）
+            // 未成功提交解析任务时恢复原状态与解析态字段（避免卡在"解析中"或残留错误描述）
             if (!submitted) {
                 try {
                     documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                            .eq(AiDocument::getId, docId).set(AiDocument::getStatus, origStatus));
+                            .eq(AiDocument::getId, docId)
+                            .set(AiDocument::getStatus, origStatus)
+                            .set(AiDocument::getParseProgress, origProgress)
+                            .set(AiDocument::getParseDesc, origParseDesc)
+                            .set(AiDocument::getFailReason, origFailReason));
                 } catch (Exception ex) {
                     log.warn("[{}] 恢复文档状态失败: {}", docId, ex.getMessage());
                 }
