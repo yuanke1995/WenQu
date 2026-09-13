@@ -78,7 +78,7 @@
                 </a-form-item>
               </template>
               <template v-else-if="blk.type === 'field'">
-                <SchemaField :field="blk.field" :form="form" :tips="tips" @change="onFieldChange">
+                <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
                   <template v-if="probeKey(blk.field)" #extra>
                     <a-button size="small" style="margin-left:8px" :loading="probeStates[probeKey(blk.field)].loading"
                               @click="doProbe(probeKey(blk.field))">测试连接</a-button>
