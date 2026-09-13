@@ -168,6 +168,7 @@ public class ConfigService {
             Map.entry("cleanup.sessionRetentionDays", "会话清理：会话保留天数(默认30；超期删除)"),
             // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AiAppProperties =====
             Map.entry("chunk.maxSize", "文档解析：单块最大字符数(分块粒度，影响检索精度与 embedding 成本；改后需重解析生效)"),
+            Map.entry("chunk.headingDepth", "文档解析：章节标题识别上限层级(1~6；调大后更深层的小节/条目标题独立成块并进章节路径，改后需重解析生效)"),
             Map.entry("images.maxWidth", "图片：压缩后最长边像素(0=不压缩；影响视觉识别清晰度与成本)"),
             Map.entry("images.quality", "图片：JPEG 压缩质量(0~1)"),
             Map.entry("images.authEnabled", "图片访问鉴权：HMAC 签名 URL 开关(生产建议开，关闭则图片 URL 可直接访问)"),
@@ -630,6 +631,7 @@ public class ConfigService {
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AiAppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
+        d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)
         d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
         d.put("images.quality", "0.9");                // JPEG 压缩质量
         d.put("images.authEnabled", "false");          // 图片签名鉴权开关
@@ -679,6 +681,7 @@ public class ConfigService {
         try {
             AiAppProperties.Chunk chunk = properties.getChunk();
             chunk.setMaxSize(pInt("chunk.maxSize", chunk.getMaxSize()));
+            chunk.setHeadingDepth(pInt("chunk.headingDepth", chunk.getHeadingDepth()));
             AiAppProperties.Images images = properties.getImages();
             images.setMaxWidth(pInt("images.maxWidth", images.getMaxWidth()));
             images.setQuality((float) pDouble("images.quality", images.getQuality()));

@@ -97,6 +97,8 @@ ai-app:
     # 结构感知切分：标题/段落边界优先 + 章节标题路径注入（docx 生效，存量文档需重解析）
     structural: true
     structural-ratio: 0.8
+    # 章节标题识别上限层级（1~6；调大后更深层的小节/条目标题独立成块并进章节路径，改后需重解析生效）
+    heading-depth: 4
   # 检索
   retrieval:
     # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）

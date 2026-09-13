@@ -62,6 +62,8 @@ public class AiAppProperties {
         private boolean structural = true;
         /** 结构切分边界阈值比例（达到 maxSize×该比例时优先在段落边界断块） */
         private double structuralRatio = 0.8;
+        /** 章节标题识别上限层级（1~6）：调大后更深层的小节/条目标题独立成块并进章节路径（改后需重解析生效） */
+        private int headingDepth = 4;
     }
 
     /**

@@ -124,6 +124,8 @@ public class DocxParser implements DocumentParser {
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId, ParseProgress progress) throws IOException {
         List<Chunk> chunks = new ArrayList<>();
         int maxSize = properties.getChunk().getMaxSize();
+        // 章节标题识别上限层级（chunk.headingDepth，默认 4，设置页可改，改后需重解析生效）
+        int maxHeading = Math.max(1, Math.min(6, properties.getChunk().getHeadingDepth()));
         // 结构感知切分（chunk.structural 可配，默认开）：标题栈 → 章节路径；边界优先阈值 = maxSize × ratio
         boolean structural = configService.getBoolean("chunk.structural");
         double ratio = Math.min(1.0, Math.max(0.5, configService.getDouble("chunk.structuralRatio", 0.8)));
@@ -160,7 +162,11 @@ public class DocxParser implements DocumentParser {
 
                     int level = headingLevel(p, styleLevels);
                     if (level < 0) continue; // 目录段落（toc 样式，含页码）：跳过不进知识块
-                    if (level > 0 && level <= 3) {
+                    // 标题层级上限可配（chunk.headingDepth，默认 4）：4 级（WPS/Word styleId=5）是"组件/条目"级标题，
+                    // 必须先于正文处理——否则「报表设计 > 组件 > 高级组件」下的「分页子表」「动态子表」「弹窗子表」
+                    // 会被当正文：① titlePath 缺组件名，向量召不回"XX 是什么"这类问题（实测概念块排第 18、被示例挤出前 8）
+                    // ② 同一章节的多个组件糊进一个块。5 级以上（"组件概述"/"基础配置"）默认仍按正文，避免切块过碎。
+                    if (level > 0 && level <= maxHeading) {
                         // 遇标题 flush 当前块（结构模式：按层级维护标题栈生成章节路径）
                         flushChunk(title, content, currentImages, chunks, titlePath);
                         if (structural) {
