@@ -717,12 +717,25 @@ public class DocxParser implements DocumentParser {
             }
             return result;
         }
-        // Markdown 表格：表头行 + 分隔行作为每段的重复前缀（保持每段都是合法表格）
+        // Markdown 表格：每段前缀 = 引导句(如有) + 表头行 + 分隔行（保持每段都是合法表格）。
+        // 坑：tableText 开头可能并入了引导句（"下表为xxx："），不能假定 lines[0]=表头、lines[1]=分隔行——
+        // 旧写法前缀错位成"引导句+表头"，分隔行被当表体留在第一段，第二段起全部缺分隔行（孤儿表格）。
         if (lines.length < 2) return List.of(tableText);
-        String header = lines[0] + "\n" + lines[1] + "\n";
+        int headerIdx = -1;
+        for (int i = 0; i < Math.min(3, lines.length); i++) {
+            if (lines[i].trim().startsWith("|")) { headerIdx = i; break; }
+        }
+        // 防御：找不到表头行，或表头下一行不是分隔行（正常不会发生——buildMarkdownTable 保证输出分隔行），原样返回不拆
+        if (headerIdx < 0 || headerIdx + 1 >= lines.length
+                || !(lines[headerIdx + 1].trim().startsWith("|") && lines[headerIdx + 1].contains("-"))) {
+            return List.of(tableText);
+        }
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i <= headerIdx + 1; i++) prefix.append(lines[i]).append('\n'); // 引导句+表头+分隔行
+        String header = prefix.toString();
         List<String> result = new ArrayList<>();
         StringBuilder cur = new StringBuilder(header);
-        for (int i = 2; i < lines.length; i++) {
+        for (int i = headerIdx + 2; i < lines.length; i++) {
             String r = lines[i];
             if (r.isBlank()) continue;
             if (cur.length() > header.length() && cur.length() + r.length() + 1 > max) {
