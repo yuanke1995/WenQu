@@ -59,6 +59,12 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-vector-store-redis</artifactId>
         </dependency>
+        <!-- MCP 客户端：把用户在设置页配置的外部 MCP Server 工具动态接入 Function Calling
+             （McpClientService 使用；传递依赖 io.modelcontextprotocol.sdk:mcp 0.18.3，版本由 spring-ai-bom 管理） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
 
         <!-- MyBatis-Plus -->
         <dependency>

@@ -26,15 +26,21 @@ public class ImageWebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         // toUri() 得到 file: 形式，Windows 反斜杠也能正确处理
-        String location = Paths.get(properties.getImages().getDir(), "images")
+        String imagesDir = Paths.get(properties.getImages().getDir(), "images")
                 .toAbsolutePath().normalize().toUri().toString();
         registry.addResourceHandler("/images/**")
-                .addResourceLocations(location);
+                .addResourceLocations(imagesDir);
+        // 产物交付（present_artifacts）：/artifacts/** 映射到 data/artifacts，配合 context-path=/ai 实际访问 /ai/artifacts/**
+        // 与图片同一鉴权拦截器（开启签名校验时 URL 带 expire+sig），文件名已在 ArtifactService 白名单净化
+        String artifactsDir = Paths.get(properties.getImages().getDir(), "artifacts")
+                .toAbsolutePath().normalize().toUri().toString();
+        registry.addResourceHandler("/artifacts/**")
+                .addResourceLocations(artifactsDir);
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new ImageAuthInterceptor(imageUrlSigner))
-                .addPathPatterns("/images/**");
+                .addPathPatterns("/images/**", "/artifacts/**");
     }
 }

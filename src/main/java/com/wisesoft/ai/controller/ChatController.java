@@ -200,6 +200,17 @@ public class ChatController {
                 List<Map<String, Object>> typed = (List<Map<String, Object>>) srcList;
                 msg.put("sources", imageUrlSigner.signSourceImages(typed));
             }
+            // 产物卡片 URL 动态签名（下载/预览走静态资源鉴权；原始 URL 存库）
+            Object arts = msg.get("artifacts");
+            if (arts instanceof List<?> artList && !artList.isEmpty()
+                    && artList.get(0) instanceof Map) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> typedArts = (List<Map<String, Object>>) artList;
+                for (Map<String, Object> a : typedArts) {
+                    Object u = a.get("url");
+                    if (u != null) a.put("url", imageUrlSigner.signUrl(String.valueOf(u)));
+                }
+            }
             Object mid = msg.get("messageId");
             if (mid != null) {
                 Integer fb = ratings.get(String.valueOf(mid));

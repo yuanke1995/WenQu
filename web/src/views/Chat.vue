@@ -74,6 +74,29 @@
                 </div>
                 <!-- 内容生成中：仅当已有正文在流出时显示（文字增长本身就是进度，避免与阶段提示双重转圈） -->
                 <a-spin v-if="m.loading && m.content" size="small" style="margin-top:4px" />
+                <!-- 工具调用过程（Function Calling 状态展示）：start 转圈 → done 对勾 / error 失败，完成后保留 -->
+                <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length" class="tool-status-list">
+                  <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-status-item" :title="t.args ? ('入参: ' + t.args) : ''">
+                    <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
+                    <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
+                    <close-circle-outlined v-else class="tool-ic tool-ic-err" />
+                    <api-outlined class="tool-ic tool-ic-api" />
+                    <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                    <span v-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
+                    <span v-if="t.status === 'error'" class="tool-fail">失败</span>
+                  </div>
+                </div>
+                <!-- 产物交付卡片（工具生成文件）：行式紧凑卡，点击下载/预览 -->
+                <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
+                  <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
+                     :href="resolveImg(a.url)" :download="a.filename" target="_blank"
+                     :title="'下载 ' + a.filename">
+                    <file-text-outlined class="artifact-icon" />
+                    <span class="artifact-name">{{ a.filename }}</span>
+                    <span v-if="a.description" class="artifact-desc">{{ a.description }}</span>
+                    <download-outlined class="artifact-dl" />
+                  </a>
+                </div>
                 <!-- fail-loud：本轮回答的降级事件警示（检索失败/改写失败/重排不可用/上下文截断等） -->
                 <div v-if="m.role === 'ai' && m.degradations && m.degradations.length" class="degradation-bar">
                   <exclamation-circle-outlined style="margin-right:6px" />
@@ -309,7 +332,21 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, notification } from 'ant-design-vue'
-import { RobotOutlined, SendOutlined, PauseCircleOutlined, LikeOutlined, DislikeOutlined, PictureOutlined, ReloadOutlined, EditOutlined, BugOutlined, SyncOutlined, CopyOutlined, DownloadOutlined, InfoCircleOutlined, QuestionCircleOutlined, DownOutlined, BulbOutlined, LoadingOutlined, MoreOutlined, DeleteOutlined, ArrowUpOutlined } from '@ant-design/icons-vue'
+import { RobotOutlined, SendOutlined, PauseCircleOutlined, LikeOutlined, DislikeOutlined, PictureOutlined, ReloadOutlined, EditOutlined, BugOutlined, SyncOutlined, CopyOutlined, DownloadOutlined, InfoCircleOutlined, QuestionCircleOutlined, DownOutlined, BulbOutlined, LoadingOutlined, MoreOutlined, DeleteOutlined, ArrowUpOutlined, FileTextOutlined, ApiOutlined, CheckOutlined, CloseCircleOutlined } from '@ant-design/icons-vue'
+
+// 工具名友好展示：内置工具映射中文，MCP 外部工具保留原名（Spring AI 自动加 server 前缀）
+const TOOL_LABELS = { searchKnowledge: '知识库精确检索', presentArtifact: '生成文件产物' }
+// MCP 工具的 Spring AI 防冲突前缀：McpClientService 的 clientInfo name "ai-doc-assistant"
+// 经 McpToolUtils.prefixedToolName 首字母缩写（按 -/_ 分段取首字母）→ "a_d_a_"。
+// 后端用全名保证唯一；前端展示剥离前缀，露出工具原名。
+const MCP_CLIENT_PREFIX = 'a_d_a_'
+const toolLabel = n => TOOL_LABELS[n] || (n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n)
+// 展示归一化：旧数据里 start/done 成对存储时折叠为终态一条（进行中的 start 保留转圈显示）
+const toolCallsView = list => {
+  if (!Array.isArray(list)) return []
+  return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
+}
+const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 import { sendQuestion, newSession, getHistory, listSessions, deleteSessionApi, batchDeleteSessionsApi, pinSession, favoriteSession, renameSessionApi, submitFeedback as apiSubmitFeedback, getKnowledgeDetail, clearAllSessionsApi, debugRetrieval, getSuggested, deleteMessageGroup, undoDeleteMessageGroup, getConfig } from '../api'
 import SessionSidebar from '../components/SessionSidebar.vue'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
@@ -733,6 +770,8 @@ async function switchSession(sid) {
           thinking: m.thinking || '',
           thinkOpen: false,
           time: m.createTime ? new Date(m.createTime).getTime() : null,
+          artifacts: Array.isArray(m.artifacts) ? m.artifacts : [], // 历史产物卡片（后端已签名）
+          toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [], // 历史工具调用过程（后端持久化）
           retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })()
         }))
       // 切换会话回到底部（历史加载完成）
@@ -1066,9 +1105,9 @@ const fmtMsgTime = ts => {
 const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false) => {
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
-    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now() })
+    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] })
   } else {
-    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now() }
+    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] }
   }
   loading.value = true
   // 发送后立即滚到底部：不等第一个 token（深度思考/图片处理时 AI 迟迟不出字，视角也要先到最下看到 loading 气泡）
@@ -1119,6 +1158,39 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         messages.value[idx].images = []
       }
     },
+    onArtifact: payload => {
+      // 工具产物实时下发：{url, filename, description}（url 已按需签名）
+      try {
+        const a = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!a || !a.url) return
+        if (!Array.isArray(messages.value[idx].artifacts)) messages.value[idx].artifacts = []
+        messages.value[idx].artifacts.push(a)
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onToolStatus: rec => {
+      // 工具调用过程实时下发：{name, status:start|done|error, elapsedMs, args, result|error}
+      try {
+        const t = typeof rec === 'string' ? JSON.parse(rec) : rec
+        if (!t || !t.name) return
+        if (!Array.isArray(messages.value[idx].toolCalls)) messages.value[idx].toolCalls = []
+        if (t.status === 'start') {
+          messages.value[idx].toolCalls.push({ ...t })
+        } else {
+          // done/error 回填最近一条同名 start 记录（后端每次调用先 start 后 done）
+          const list = messages.value[idx].toolCalls
+          const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
+          if (last) {
+            last.status = t.status
+            last.elapsedMs = t.elapsedMs || 0
+            if (t.error) last.error = t.error
+          } else {
+            list.push({ ...t }) // 兜底：无对应 start（如断线重连后补发）
+          }
+        }
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
     onDone: contentJson => {
       // done 事件 content 为 {sources, related, messageId, thinking, degradations} JSON 字符串
       let sources = [], related = [], messageId = null, degradations = []
@@ -1136,6 +1208,14 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         }
         if (Array.isArray(p.finalImages)) {
           messages.value[idx].images = p.finalImages
+        }
+        // 产物兜底：以 done 汇总为准覆盖流式收集（防 artifact 事件丢失/重复）
+        if (Array.isArray(p.artifacts) && p.artifacts.length) {
+          messages.value[idx].artifacts = p.artifacts
+        }
+        // 工具调用过程兜底：以 done 汇总覆盖（防 tool_status 事件丢失；空数组不覆盖保留实时收集）
+        if (Array.isArray(p.toolCalls) && p.toolCalls.length) {
+          messages.value[idx].toolCalls = p.toolCalls
         }
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
@@ -1793,6 +1873,31 @@ const scrollForce = () => nextTick(() => {
 /* 相关推荐 */
 .related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .related-label { font-size: 12px; color: #888; margin-right: 4px; }
+/* 产物交付卡片：行式紧凑，与检索状态行同视觉层级 */
+.artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.artifact-item {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 6px 10px; border: 1px solid #e0e0e0; border-radius: 8px;
+  font-size: 13px; color: #333; text-decoration: none; background: #fafafa;
+  transition: border-color .2s, background .2s;
+}
+.artifact-item:hover { border-color: #185fa5; background: #f0f6fc; }
+.artifact-icon { color: #185fa5; flex: none; }
+.artifact-name { font-weight: 500; color: #185fa5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-desc { color: #888; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-dl { color: #999; flex: none; margin-left: auto; }
+.artifact-item:hover .artifact-dl { color: #185fa5; }
+/* 工具调用过程状态行：紧凑行式，执行中转圈 → 完成/失败定格 */
+.tool-status-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.tool-status-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 20px; width: fit-content; }
+.tool-ic { font-size: 13px; flex: none; }
+.tool-ic-run { color: #185fa5; }
+.tool-ic-ok { color: #52a352; }
+.tool-ic-err { color: #d4552e; }
+.tool-ic-api { color: #b3bdca; font-size: 11px; margin-left: -3px; }
+.tool-name { font-weight: 500; color: #4a5766; }
+.tool-dur { color: #98a4b1; }
+.tool-fail { color: #d4552e; }
 /* fail-loud 警示条：回答降级事件（检索失败/改写失败/截断等） */
 .degradation-bar {
   margin-top: 8px; padding: 6px 10px; border-radius: 4px;

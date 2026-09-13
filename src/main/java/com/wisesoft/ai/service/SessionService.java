@@ -406,9 +406,26 @@ public class SessionService {
      * 仍失败降级 Redis（标记 mysqlPending，读侧合并并异步补写，保证降级窗口消息不永久不可见）
      */
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources, String thinking, String retrieved) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, null);
+    }
+
+    /**
+     * 追加消息（含产物交付清单）：artifacts 为 JSON 数组字符串（[{url,filename,size,description}]），
+     * 存原始 URL（展示层签名），随消息持久化使产物卡片刷新后仍在。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources, String thinking, String retrieved, String artifacts) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts, null);
+    }
+
+    /**
+     * 追加消息（含工具调用过程）：toolCalls 为 JSON 数组字符串（[{name,status,elapsedMs,args,result}]），
+     * 随消息持久化使工具调用状态刷新后仍可回显（工具调用状态展示与留存）。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls) {
         // 1. MySQL 持久化
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -419,7 +436,7 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -451,6 +468,18 @@ public class SessionService {
                 } catch (Exception ignored) {
                 }
             }
+            if (artifacts != null && !artifacts.isBlank()) {
+                try {
+                    redisMsg.put("artifacts", JSON.parse(artifacts));
+                } catch (Exception ignored) {
+                }
+            }
+            if (toolCalls != null && !toolCalls.isBlank()) {
+                try {
+                    redisMsg.put("toolCalls", JSON.parse(toolCalls));
+                } catch (Exception ignored) {
+                }
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -468,7 +497,8 @@ public class SessionService {
      * 任一失败抛异常回滚，由调用方决定降级。
      */
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
-                                 String sources, String thinking, String retrieved) {
+                                 String sources, String thinking, String retrieved, String artifacts,
+                                 String toolCalls) {
         return transactionTemplate.execute(status -> {
             AiSession locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -495,6 +525,8 @@ public class SessionService {
             msg.setImages(images != null && !images.isEmpty() ? JSON.toJSONString(images) : null);
             msg.setSources(sources);
             msg.setRetrieved(retrieved);
+            msg.setArtifacts(artifacts);
+            msg.setToolCalls(toolCalls);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -664,6 +696,20 @@ public class SessionService {
         }
         if (m.getRetrieved() != null && !m.getRetrieved().isBlank()) {
             map.put("retrieved", m.getRetrieved()); // 检索状态行（前端 JSON.parse）
+        }
+        if (m.getArtifacts() != null && !m.getArtifacts().isBlank()) {
+            try {
+                map.put("artifacts", JSON.parseArray(m.getArtifacts(), Map.class)); // 产物卡片（前端按需签名下载）
+            } catch (Exception e) {
+                // artifacts 解析失败忽略
+            }
+        }
+        if (m.getToolCalls() != null && !m.getToolCalls().isBlank()) {
+            try {
+                map.put("toolCalls", JSON.parseArray(m.getToolCalls(), Map.class)); // 工具调用过程（历史回显）
+            } catch (Exception e) {
+                // toolCalls 解析失败忽略
+            }
         }
         return map;
     }

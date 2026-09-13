@@ -39,6 +39,11 @@ public class AiMessage {
     private String sources;
     /** 检索状态行数据 (JSON: keywords/refs/terms) */
     private String retrieved;
+    /** 产物交付 (JSON数组: [{url,filename,size,description}]，原始 URL 存库、展示层签名) */
+    private String artifacts;
+
+    /** 工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]) */
+    private String toolCalls;
 
     /** 消息序号 (会话内递增) */
     private Integer sequence;

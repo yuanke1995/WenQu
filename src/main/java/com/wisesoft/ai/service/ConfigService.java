@@ -207,7 +207,15 @@ public class ConfigService {
             Map.entry("parse.ocrDpi", "解析：PDF 页 OCR 渲染 DPI（越高小字越清晰，内存/耗时越高）"),
             Map.entry("ratelimit.windowSeconds", "限流：固定窗口长度（秒）"),
             Map.entry("cache.docMetaTtlSeconds", "文档名缓存有效期（秒）：多副本下改名/删除的感知延迟上限"),
-            Map.entry("retrieval.strength", "检索强度预设：precision / balanced / recall / custom（切换会批量覆盖检索权重；手动改任一权重自动变 custom）"));
+            Map.entry("retrieval.strength", "检索强度预设：precision / balanced / recall / custom（切换会批量覆盖检索权重；手动改任一权重自动变 custom）"),
+            // ===== 工具调用（Function Calling）：@Tool 工具开关，均需 tool.enabled 总开关开启才生效 =====
+            Map.entry("tool.enabled", "工具调用：总开关（开启后模型可调用 @Tool 工具，如知识库精确检索、产物交付）"),
+            Map.entry("tool.knowledgeRetrieval.enabled", "工具调用：知识库精确检索工具开关（模型可主动补充检索，需总开关开启）"),
+            Map.entry("tool.knowledgeRetrieval.maxHits", "工具调用：精确检索工具单次返回命中块上限(1~5)"),
+            Map.entry("tool.artifact.enabled", "工具调用：产物交付工具开关（模型可生成 Markdown/CSV/JSON/HTML 文件并推送给用户，需总开关开启；默认关）"),
+            // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
+            Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
+            Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
 
     /**
      * 参数分层（仅影响设置页可见性，不影响任何读取链路）：
@@ -331,7 +339,14 @@ public class ConfigService {
             Map.entry("cleanup.sessionCleanupIntervalMs", 3),
             Map.entry("cleanup.sessionRetentionDays", 3),
             Map.entry("cache.docMetaTtlSeconds", 3),
-            Map.entry("semanticCache.maxEntries", 3));
+            Map.entry("semanticCache.maxEntries", 3),
+            // ===== 工具调用 / MCP（管理调优项）=====
+            Map.entry("tool.enabled", 2),
+            Map.entry("tool.knowledgeRetrieval.enabled", 2),
+            Map.entry("tool.knowledgeRetrieval.maxHits", 3),
+            Map.entry("tool.artifact.enabled", 2),
+            Map.entry("mcp.enabled", 2),
+            Map.entry("mcp.servers", 2));
 
     private final AiConfigMapper configMapper;
     private final AiAppProperties properties;
@@ -666,6 +681,13 @@ public class ConfigService {
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
         d.put("retrieval.strength", "balanced");
+        // 工具调用（Function Calling）总开关与知识库精确检索工具
+        d.put("tool.enabled", "false");                    // 工具调用总开关（默认关，开启后模型可调用工具）
+        d.put("tool.knowledgeRetrieval.enabled", "false"); // 知识库精确检索工具开关（需总开关开启）
+        d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
+        d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
+        d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
+        d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
     }
 
@@ -1257,7 +1279,11 @@ public class ConfigService {
         String[] groups = {"chat", "vision", "embedding", "chunk", "parse", "upload", "retrieval", "rerank",
                 "keyword", "context", "deepReasoning", "ratelimit", "semanticCache",
                 // 补漏：defaults() 中已有这些前缀，但此前未列入本数组，导致设置页永远只能回显前端硬编码默认值
-                "images", "session", "cleanup", "eval", "queryRewrite", "imageFilter", "cache"};
+                "images", "session", "cleanup", "eval", "queryRewrite", "imageFilter", "cache",
+                // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
+                "tool",
+                // MCP 外部工具分组：mcp.enabled / mcp.servers
+                "mcp"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {

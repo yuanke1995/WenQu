@@ -241,6 +241,14 @@ public class RagService {
     private final KeywordExtractor keywordExtractor;
     private final KnowledgeRefService knowledgeRefService;
     private final AnswerCacheService answerCacheService;
+    /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认关闭） */
+    private final KnowledgeRetrievalTool knowledgeRetrievalTool;
+    /** 产物交付服务（会话 emitter 注册表 + 文件落盘 + SSE 下发） */
+    private final ArtifactService artifactService;
+    /** MCP 客户端服务（外部 MCP server 工具接入；mcp.* 配置，默认关） */
+    private final McpClientService mcpClientService;
+    /** 产物交付工具（Function Calling；生成文件并实时推送） */
+    private final PresentArtifactTool presentArtifactTool;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -297,7 +305,11 @@ public class RagService {
                       ImageFilterService imageFilterService,
                       KeywordExtractor keywordExtractor,
                       KnowledgeRefService knowledgeRefService,
-                      AnswerCacheService answerCacheService) {
+                      AnswerCacheService answerCacheService,
+                      KnowledgeRetrievalTool knowledgeRetrievalTool,
+                      ArtifactService artifactService,
+                      PresentArtifactTool presentArtifactTool,
+                      McpClientService mcpClientService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -313,6 +325,10 @@ public class RagService {
         this.keywordExtractor = keywordExtractor;
         this.knowledgeRefService = knowledgeRefService;
         this.answerCacheService = answerCacheService;
+        this.knowledgeRetrievalTool = knowledgeRetrievalTool;
+        this.artifactService = artifactService;
+        this.presentArtifactTool = presentArtifactTool;
+        this.mcpClientService = mcpClientService;
     }
 
     /**
@@ -791,11 +807,114 @@ public class RagService {
     }
 
     /**
+     * 判断并返回本次问答启用的工具回调列表（统一 ToolCallback 形态）。
+     * 仅当 tool.enabled（总开关）开启时才暴露工具；各子工具开关决定具体暴露哪些。
+     * MCP 工具另需 mcp.enabled + mcp.servers 配置（外部 server 连接失败自动跳过）。
+     * 内置 @Tool 对象经 ToolCallbacks.from() 转成 MethodToolCallback——注意 ChatClient 的
+     * .tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛 IllegalStateException
+     * （"No @Tool annotated methods found... use .toolCallbacks() instead"），故统一走 .toolCallbacks()。
+     * 全部关闭时返回空列表（等价未配置工具，零侵入）。
+     */
+    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks() {
+        java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
+        if (!configService.getBoolean("tool.enabled")) {
+            return callbacks;
+        }
+        if (configService.getBoolean("tool.knowledgeRetrieval.enabled")) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
+        }
+        if (configService.getBoolean("tool.artifact.enabled")) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
+        }
+        // MCP 外部工具（工具生态层）：mcp.enabled 总开关 + servers 配置；失败容错由 McpClientService 兜底
+        if (configService.getBoolean("mcp.enabled")) {
+            try {
+                callbacks.addAll(mcpClientService.toolCallbacks());
+            } catch (Exception e) {
+                log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
+            }
+        }
+        return callbacks;
+    }
+
+    /**
+     * 工具调用过程追踪：把启用列表里的 ToolCallback 包一层（call 前后发 tool_status SSE（start/done/error）
+     * 并记录耗时与结果摘要），供 done 事件汇总与历史持久化（工具调用状态展示）。
+     * 返回 ToolCallback[]（供 ChatClient .toolCallbacks() 使用）。
+     */
+    private org.springframework.ai.tool.ToolCallback[] instrumentTools(
+            java.util.List<org.springframework.ai.tool.ToolCallback> rawTools, AnswerStreamState st) {
+        List<org.springframework.ai.tool.ToolCallback> wrapped = new ArrayList<>(rawTools.size());
+        for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
+            wrapped.add(new org.springframework.ai.tool.ToolCallback() {
+                @Override
+                public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
+                    return cb.getToolDefinition();
+                }
+
+                @Override
+                public String call(String toolInput) {
+                    return cb.call(toolInput);
+                }
+
+                @Override
+                public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
+                    String name = cb.getToolDefinition().name();
+                    long begin = System.currentTimeMillis();
+                    recordToolStatus(st, name, toolInput, "start", null, 0);
+                    try {
+                        String result = cb.call(toolInput, toolContext);
+                        recordToolStatus(st, name, toolInput, "done", result, System.currentTimeMillis() - begin);
+                        return result;
+                    } catch (Exception e) {
+                        recordToolStatus(st, name, toolInput, "error", e.getMessage(), System.currentTimeMillis() - begin);
+                        throw e;
+                    }
+                }
+            });
+        }
+        return wrapped.toArray(new org.springframework.ai.tool.ToolCallback[0]);
+    }
+
+    /** 记录一条工具状态：实时 SSE tool_status 事件 + AnswerStreamState.toolCalls 累积（done 汇总与持久化用） */
+    private void recordToolStatus(AnswerStreamState st, String name, String input,
+                                  String status, String resultOrError, long elapsedMs) {
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("name", name);
+        rec.put("status", status);
+        rec.put("elapsedMs", elapsedMs);
+        // 入参/结果截断（防超长工具 I/O 撑爆 SSE 与库）
+        String argsBrief = input == null ? "" : input.substring(0, Math.min(200, input.length()));
+        rec.put("args", argsBrief);
+        if (resultOrError != null) {
+            String brief = resultOrError.substring(0, Math.min(200, resultOrError.length()));
+            rec.put(status.equals("error") ? "error" : "result", brief);
+        }
+        // 只把终态（done/error）记入持久化列表：start 仅实时下发（前端转圈显示），
+        // 否则快照里 start/done 成对存在，前端 done 汇总覆盖后工具状态行会出现重复双行
+        if (!"start".equals(status)) {
+            st.toolCalls.add(rec);
+        }
+        try {
+            st.emitter.send(SseEmitter.event()
+                    .name("tool_status")
+                    .data("{\"type\":\"tool_status\",\"content\":" + JSON.toJSONString(rec)
+                            + ",\"sessionId\":\"" + st.sessionId + "\"}"));
+        } catch (Exception e) {
+            log.debug("[TOOL-STATUS] SSE 下发失败（客户端可能已断开）: {}", e.getMessage());
+        }
+    }
+
+    /**
      * 构建并订阅主 LLM 流式回答（H2：未输出任何 token 时中断自动重试，次数 chat.streamRetryCount 可配）。
      * 可变状态与 complete 回调依赖收敛在 AnswerStreamState；重试时重建全新流并丢弃旧缓冲。
      */
     private Disposable buildAnswerStream(String system, String user, AnswerStreamState st) {
         SseEmitter emitter = st.emitter;
+        // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
+        artifactService.registerEmitter(st.sessionId, emitter);
         return chatClient.prompt()
                 .system(system)
                 .user(user)
@@ -805,6 +924,15 @@ public class RagService {
                         .temperature(configService.getDouble("chat.temperature"))
                         .maxTokens(configService.getInt("context.maxOutputTokens"))
                         .build())
+                // 工具调用（Function Calling）：默认关闭（tool.* 配置）；总开关+各子工具开关均开启时，
+                // 模型可在回答中主动调用工具（精确检索知识库、交付文件产物），补充主链路未召回的上下文。
+                // 传空数组等价未配置工具，不影响现有行为（零侵入）。
+                // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。
+                // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
+                // IllegalStateException（Spring AI 1.1.8 实测坑）。
+                .toolCallbacks(instrumentTools(enabledToolCallbacks(), st))
+                // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
+                .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
                 .stream()
                 .content()
                 .doOnNext(token -> {
@@ -873,6 +1001,7 @@ public class RagService {
                     st.degradations.add(Map.of("code", "streamError", "msg", "模型输出中断：" + msg));
                     sendSseEvent(emitter, "error", msg, st.sessionId);
                     completeEmitter(emitter);
+                    artifactService.unregisterEmitter(st.sessionId);
                 })
                 .doOnComplete(() -> {
                     // 下发缓冲尾部（可能残留滑动窗口），并剥离可能的不完整标签
@@ -975,13 +1104,22 @@ public class RagService {
                     } catch (Exception ignored) {
                     }
 
+                    // 产物交付：本轮生成的文件清单（原始 URL 落库，展示层签名；done 事件与消息持久化共用）
+                    List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
+
+                    // 工具调用过程（状态展示）：done 汇总 + 随消息持久化（tool_status SSE 已实时下发）
+                    List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
+                    String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
+
                     // 记录对话历史（含图片与引用来源），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
                     List<String> userImgUrls = st.userImgs.stream().map(UserImageService.UserImage::url).toList();
                     sessionService.appendMessage(st.sessionId, "user", st.question,
                             userImgUrls.isEmpty() ? null : userImgUrls, null);
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
-                            finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson);
+                            finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
+                            sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
+                            toolCallsJson);
 
                     // 异步落问答日志（不阻塞 SSE 完成）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
@@ -1009,8 +1147,14 @@ public class RagService {
                             finalImgs.stream().map(imageUrlSigner::signUrl).toList());
                     donePayload.put("thinking", st.thinkingHolder[0]);
                     donePayload.put("degradations", st.degradations);
+                    // 产物交付汇总（流式 artifact 事件已实时下发；此处兜底保证不丢失，url 已重新签名）
+                    donePayload.put("artifacts", sessionArtifacts.isEmpty()
+                            ? List.of() : artifactService.takeArtifacts(st.sessionId));
+                    // 工具调用过程汇总（实时 tool_status 已逐条下发；此处兜底，前端 onDone 覆盖渲染）
+                    donePayload.put("toolCalls", toolCallSnapshot);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
+                    artifactService.unregisterEmitter(st.sessionId);
                 })
                 .subscribe();
     }
@@ -1039,6 +1183,8 @@ public class RagService {
         final StringBuilder emitBuf = new StringBuilder();
         final AtomicInteger retried = new AtomicInteger();
         final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
+        /** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
+        final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
