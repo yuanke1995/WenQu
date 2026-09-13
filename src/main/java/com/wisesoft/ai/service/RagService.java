@@ -836,6 +836,13 @@ public class RagService {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
         }
+        // 可观测性：本次问答暴露了哪些工具（空则不打印；模型调不调用由模型决策，但"挂了什么"要可见）
+        if (!callbacks.isEmpty()) {
+            String names = callbacks.stream()
+                    .map(cb -> cb.getToolDefinition().name())
+                    .collect(java.util.stream.Collectors.joining(", "));
+            log.info("[TOOL] 本次启用 {} 个工具: [{}]", callbacks.size(), names);
+        }
         return callbacks;
     }
 
@@ -896,6 +903,15 @@ public class RagService {
         // 否则快照里 start/done 成对存在，前端 done 汇总覆盖后工具状态行会出现重复双行
         if (!"start".equals(status)) {
             st.toolCalls.add(rec);
+        }
+        // 后端日志同步留痕（与 [RAG]/[CTX] 等阶段日志同级可观测）：开始/完成/失败各一行，结果截断防爆量
+        if ("start".equals(status)) {
+            log.info("[TOOL] {} 调用开始 args={}", name, argsBrief);
+        } else if ("error".equals(status)) {
+            log.warn("[TOOL] {} 调用失败 ({}ms) error={}", name, elapsedMs, rec.get("error"));
+        } else {
+            log.info("[TOOL] {} 调用完成 ({}ms) result={}", name, elapsedMs,
+                    resultOrError == null ? "" : resultOrError.substring(0, Math.min(160, resultOrError.length())).replace('\n', ' '));
         }
         try {
             st.emitter.send(SseEmitter.event()
