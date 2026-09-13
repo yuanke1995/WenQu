@@ -8,7 +8,7 @@
         <button class="v2-btn ghost head-panel-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
       </div>
 
-      <div class="messages" ref="box" @click="openPreview" @scroll="onMessagesScroll">
+      <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <div class="welcome-mark">文</div>
           <h2>有什么可以帮你？</h2>
@@ -97,6 +97,7 @@
                   <template #overlay>
                     <a-menu @click="({ key }) => onMoreAction(key, i)">
                       <a-menu-item v-if="debugEntryVisible" key="debug"><bug-outlined style="margin-right:8px" />检索调试</a-menu-item>
+                      <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
                   </template>
@@ -188,18 +189,18 @@
     </a-modal>
 
     <!-- 回答反馈弹窗 -->
-    <a-modal v-model:open="feedbackVisible" title="反馈" :footer="null" width="440">
+    <a-modal v-model:open="feedbackVisible" title="反馈" :footer="null" :width="440">
       <a-textarea v-model:value="feedbackText" placeholder="可选：告诉我们哪里不满意" :rows="3" />
       <button class="v2-btn" style="margin-top:12px" :disabled="feedbackSubmitting" @click="doSubmitFeedback">提交反馈</button>
     </a-modal>
 
     <!-- 免责声明 -->
-    <a-modal v-model:open="disclaimerVisible" title="免责声明" :footer="null" width="560">
+    <a-modal v-model:open="disclaimerVisible" title="免责声明" :footer="null" :width="560">
       <div class="md" style="max-height:60vh;overflow-y:auto" v-html="renderMd(DISCLAIMER_TEXT, [])"></div>
     </a-modal>
 
     <!-- 检索调试弹窗 -->
-    <a-modal v-model:open="debugVisible" title="检索调试（为什么这么答）" :footer="null" width="780">
+    <a-modal v-model:open="debugVisible" title="检索调试（为什么这么答）" :footer="null" :width="780">
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <a-input v-model:value="debugQuestion" placeholder="输入要调试的问题" @pressEnter="runDebug" />
         <button class="v2-btn" :disabled="debugLoading" @click="runDebug">调试</button>
@@ -253,6 +254,7 @@ import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback 
          getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig } from '../../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../../utils/markdown'
 import { sessionStore, loadSessions } from './store'
+import { exportAnswerMd } from './exportMd'
 
 const route = useRoute()
 const router = useRouter()
@@ -377,6 +379,20 @@ const openSource = async s => {
     }
   } catch (e) { /* 接口失败回退 snippet */ }
   finally { sourceLoading.value = false }
+}
+
+// 引用角标悬浮提示：悬停时从 sources 取标题/片段写入原生 title（含精确检索工具来源，数据 done 后可用；
+// 原生 title 零依赖，点击角标仍走引用弹窗看完整原文）
+const refHover = e => {
+  const t = e.target
+  if (!t || !t.classList || !t.classList.contains('ref-sup') || t.dataset.tipSet) return
+  const mdEl = t.closest('.md')
+  const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
+  const src = messages.value[msgIdx]?.sources?.[Number(t.dataset.ref) - 1]
+  t.title = src
+    ? `[${t.dataset.ref}] ${(src.fileName || '未知文档')}${src.title ? ' §' + src.title : ''}\n${src.snippet || '（无原文片段）'}`
+    : `[${t.dataset.ref}] 来源信息加载中`
+  t.dataset.tipSet = '1'
 }
 
 // 消息内容点击：代码复制 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
@@ -855,10 +871,22 @@ const fallbackCopyText = txt => {
   } catch (err) { message.error('复制失败，请手动复制') }
 }
 
-// 删除本轮对话（回答 + 同组问题一起软删除）
+// 删除本轮对话（回答 + 同组问题一起软删除）；导出 Markdown（该轮问答）
 const onMoreAction = (key, mi) => {
   if (key === 'debug') openDebug(mi)
   else if (key === 'deleteRound') deleteRound(mi)
+  else if (key === 'export') exportRound(mi)
+}
+// 单轮导出：向 mi 前配对最近的用户提问（遇更早回答即停）
+const exportRound = mi => {
+  const m = messages.value[mi]
+  if (!m || !m.content) { message.warning('该回答无可导出内容'); return }
+  let question = null
+  for (let i = mi - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
+    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
+  }
+  exportAnswerMd({ answer: m, question, title: currentSessionTitle.value })
 }
 const deleteRound = async mi => {
   const mid = messages.value[mi]?.messageId

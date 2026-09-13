@@ -49,9 +49,14 @@
                :title="s.title" @click="openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
             <span v-else class="sess-title">{{ s.title || '新对话' }}</span>
-            <a-popconfirm v-if="!collapsed" title="删除该会话？" ok-text="删除" cancel-text="取消" @confirm.stop="delSession(s.id)">
-              <span class="sess-del" @click.stop><delete-outlined /></span>
-            </a-popconfirm>
+            <template v-if="!collapsed">
+              <a-tooltip title="导出 Markdown">
+                <span class="sess-export" @click.stop="exportSessionMd(s)"><download-outlined /></span>
+              </a-tooltip>
+              <a-popconfirm title="删除该会话？" ok-text="删除" cancel-text="取消" @confirm.stop="delSession(s.id)">
+                <span class="sess-del" @click.stop><delete-outlined /></span>
+              </a-popconfirm>
+            </template>
           </div>
           <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">暂无会话</div>
         </template>
@@ -82,10 +87,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi } from '../../api'
 import { ensureAuth, isAdminSync, setAdminToken } from '../../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
+import { exportSessionMarkdown } from './exportMd'
 import './v2.css'
 
 const route = useRoute()
@@ -108,6 +114,11 @@ const newChat = () => {
   router.push('/v2/chat').catch(() => {})
 }
 const openSession = sid => router.push({ path: '/v2/chat', query: { sid } })
+
+// 整会话导出 Markdown（无需先打开会话）
+const exportSessionMd = s => {
+  if (s && s.id) exportSessionMarkdown(s.id, s.title || 'AI对话')
+}
 
 const delSession = async sid => {
   try {
@@ -202,6 +213,9 @@ onMounted(async () => {
 .sess-del { color: var(--v2-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
 .sess-item:hover .sess-del { opacity: 1; }
 .sess-del:hover { color: var(--v2-danger); }
+.sess-export { color: var(--v2-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
+.sess-item:hover .sess-export { opacity: 1; }
+.sess-export:hover { color: var(--v2-accent); }
 .sess-empty { font-size: 12px; color: var(--v2-text3); text-align: center; padding: 16px 0; }
 
 .side-foot {
