@@ -165,6 +165,12 @@ onMounted(async () => {
 /* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 隐藏 logo、按钮居中 */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
 .side.collapsed .logo-mark { display: none; }
+/* 折叠态所有图标统一对齐到侧边栏中轴（实测导航图标左偏 4px、头像左偏 2.5px） */
+.side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+.side.collapsed .side-foot { justify-content: center; padding-left: 0; padding-right: 0; }
+.side.collapsed .side-foot .v2-icon-btn { margin-left: 0 !important; }
+/* 非管理员折叠态：头像+验证按钮放不下（22+8+26 > 40），藏头像只留验证按钮并居中 */
+.side.collapsed .side-foot .avatar:not(:only-child) { display: none; }
 .logo-mark {
   width: 24px; height: 24px; border-radius: 6px; background: var(--v2-text);
   color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none;
