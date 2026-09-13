@@ -97,6 +97,22 @@
                 </a-form-item>
               </template>
             </template>
+            <!-- 语义缓存运维：运行统计 + 手动清空（知识库变更时后端已自动清空，此按钮用于手动干预） -->
+            <a-form-item v-if="p.key === 'semanticCache'" label="缓存状态">
+              <div>
+                <span v-if="cacheStats.count != null" style="color:#555">
+                  已缓存 <span style="color:#1677ff;font-weight:600">{{ cacheStats.count }}</span> 条（上限 {{ form.semanticCache?.maxEntries ?? '—' }}）
+                </span>
+                <span v-else style="color:#999">统计未加载</span>
+                <a-popconfirm title="清空后缓存重新积累，确定清空？" ok-text="清空" cancel-text="取消" @confirm="doClearCache">
+                  <a-button size="small" danger :loading="cacheClearing" style="margin-left:12px">清空语义缓存</a-button>
+                </a-popconfirm>
+                <a-button size="small" style="margin-left:8px" @click="refreshCacheStats">刷新</a-button>
+              </div>
+              <div style="margin-top:6px;color:#999;font-size:12px;line-height:1.8">
+                清空后按提问重新积累；知识库变更（解析/删除/回滚/启停用）时后端会自动整体清空，一般无需手动操作。
+              </div>
+            </a-form-item>
           </a-form>
           <a-alert v-for="(al, ai) in (PANEL_ALERTS[p.key] || [])" :key="ai" :type="al.type" show-icon
                    style="margin:0 24px 16px" :message="al.msg" />
@@ -239,6 +255,9 @@ const doClearCache = async () => {
     else message.error(r.msg || '清空失败')
   } catch (e) { message.error(e.message || '清空失败') }
   finally { cacheClearing.value = false }
+}
+const refreshCacheStats = () => {
+  getAnswerCacheStats().then(r => { if (r.success) cacheStats.value = r.data }).catch(() => {})
 }
 const rerankChecking = ref(false)
 const keywordChecking = ref(false)
