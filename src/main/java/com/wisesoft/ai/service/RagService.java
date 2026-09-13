@@ -785,6 +785,7 @@ public class RagService {
             AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson);
+            st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st));
@@ -871,6 +872,12 @@ public class RagService {
                     String name = cb.getToolDefinition().name();
                     long begin = System.currentTimeMillis();
                     recordToolStatus(st, name, toolInput, "start", null, 0);
+                    // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
+                    // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源
+                    boolean kbTool = "searchKnowledge".equals(name);
+                    if (kbTool) {
+                        KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
+                    }
                     try {
                         String result = cb.call(toolInput, toolContext);
                         recordToolStatus(st, name, toolInput, "done", result, System.currentTimeMillis() - begin);
@@ -878,6 +885,10 @@ public class RagService {
                     } catch (Exception e) {
                         recordToolStatus(st, name, toolInput, "error", e.getMessage(), System.currentTimeMillis() - begin);
                         throw e;
+                    } finally {
+                        if (kbTool) {
+                            KnowledgeRetrievalTool.clearSourceRegistrar();
+                        }
                     }
                 }
             });
@@ -1201,6 +1212,8 @@ public class RagService {
         final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
         /** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
+        volatile Map<String, String> docFileNames;
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
@@ -1225,6 +1238,35 @@ public class RagService {
         void disposeSafe() {
             Disposable d = disposableRef.get();
             if (d != null) d.dispose();
+        }
+
+        /**
+         * 精确检索工具命中注册为引用来源：续编 ref 编号（与主链路 [1..N] 同一编号空间），
+         * 同块已注册/已在主链路则复用原编号不重复注册；返回分配的编号供工具文本【引用N】提示模型标注。
+         * origin=TOOL 供前端区分工具来源；synchronized 防工具线程与流回调并发追加。
+         */
+        int registerToolSource(HybridRetrievalService.Hit h, String snippet) {
+            synchronized (sources) {
+                if (h.knowledgeId() != null) {
+                    for (Map<String, Object> s : sources) {
+                        if (h.knowledgeId().equals(s.get("knowledgeId"))) {
+                            return (Integer) s.get("ref");
+                        }
+                    }
+                }
+                int ref = sources.size() + 1;
+                Map<String, Object> src = new LinkedHashMap<>();
+                src.put("ref", ref);
+                src.put("knowledgeId", h.knowledgeId());
+                src.put("docId", h.docId());
+                src.put("fileName", docFileNames != null ? docFileNames.get(h.docId()) : null);
+                src.put("title", h.title());
+                src.put("snippet", snippet);
+                src.put("images", h.images());
+                src.put("origin", "TOOL");
+                sources.add(src);
+                return ref;
+            }
         }
     }
 

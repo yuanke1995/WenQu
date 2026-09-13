@@ -25,6 +25,24 @@ public class KnowledgeRetrievalTool {
     private static final int MAX_HITS = 5;
     /** 单块 content 截断字符数（控制工具结果 token 量） */
     private static final int MAX_CONTENT_CHARS = 600;
+    /** 悬浮/弹窗溯源摘要截断长度（注册进 sources 的 snippet） */
+    private static final int SNIPPET_CHARS = 120;
+
+    /** 引用来源注册器：流式问答期间由 RagService 注入（instrumentTools 包装层），把工具命中注册进当前回答的来源列表并分配引用编号 */
+    public interface SourceRegistrar {
+        int register(Hit hit, String snippet);
+    }
+
+    /** 工具执行线程内有效（Spring AI 同步执行工具回调），用完即清，避免跨会话串号 */
+    private static final ThreadLocal<SourceRegistrar> REGISTRAR = new ThreadLocal<>();
+
+    public static void setSourceRegistrar(SourceRegistrar r) {
+        REGISTRAR.set(r);
+    }
+
+    public static void clearSourceRegistrar() {
+        REGISTRAR.remove();
+    }
 
     private final HybridRetrievalService hybridRetrievalService;
 
@@ -58,21 +76,31 @@ public class KnowledgeRetrievalTool {
         if (hits == null || hits.isEmpty()) {
             return "未在知识库中检索到相关内容";
         }
+        // 注册模式（流式问答）：命中块注册进当前回答的来源列表续编引用编号，
+        // 文本用【引用N】并提示模型按编号标注 → 前端角标悬浮/引用弹窗可溯源；
+        // 非注册模式（无流上下文，如直接调用）：保持旧【片段N】格式
+        SourceRegistrar registrar = REGISTRAR.get();
         StringBuilder sb = new StringBuilder();
         int count = 0;
         for (Hit h : hits) {
             if (count >= limit) break;
             count++;
-            sb.append("【片段").append(count).append("】");
+            String content = h.content() == null ? "" : h.content();
+            String cut = content.length() > MAX_CONTENT_CHARS ? content.substring(0, MAX_CONTENT_CHARS) + "…（已截断）" : content;
+            if (registrar != null) {
+                String snippet = content.length() > SNIPPET_CHARS ? content.substring(0, SNIPPET_CHARS) + "…" : content;
+                sb.append("【引用").append(registrar.register(h, snippet)).append("】");
+            } else {
+                sb.append("【片段").append(count).append("】");
+            }
             if (h.titlePath() != null && !h.titlePath().isBlank()) {
                 sb.append("章节：").append(h.titlePath()).append(" / ");
             }
             sb.append("标题：").append(h.title() == null ? "" : h.title()).append("\n");
-            String content = h.content() == null ? "" : h.content();
-            if (content.length() > MAX_CONTENT_CHARS) {
-                content = content.substring(0, MAX_CONTENT_CHARS) + "…（已截断）";
-            }
-            sb.append(content).append("\n\n");
+            sb.append(cut).append("\n\n");
+        }
+        if (registrar != null) {
+            sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]）");
         }
         return sb.toString().trim();
     }
