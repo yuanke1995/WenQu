@@ -90,6 +90,13 @@
       <div style="margin-bottom:10px">
         <a-input-search v-model:value="kbSearch" placeholder="按标题/内容过滤知识块" allow-clear />
       </div>
+      <!-- 切片统计（2.9）：块数 / 合计与平均 token / 未向量化块数，随过滤实时变化 -->
+      <div class="kb-stat">
+        <span>共 <b>{{ kbFilteredList.length }}</b> 块</span>
+        <span>合计 <b>{{ fmtTokens(kbStatTokens) }}</b> tokens</span>
+        <span>平均 <b>{{ kbFilteredList.length ? Math.round(kbStatTokens / kbFilteredList.length) : 0 }}</b></span>
+        <span v-if="kbNoVector" class="kb-stat-warn">未向量化 {{ kbNoVector }} 块</span>
+      </div>
       <a-spin :spinning="kbLoading">
         <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应 -->
         <a-table :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
@@ -107,6 +114,11 @@
             <template #default="{ record }">
               <span>{{ record.title }}</span>
               <a-tag v-if="!record.vectorId" color="orange" style="margin-left:6px;font-size:11px">未向量化</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="Token" key="tokens" width="80" align="right">
+            <template #default="{ record }">
+              <span class="kb-tok" :title="'估算值（与后端同口径）：标题+正文'">{{ estimateTokens((record.title || '') + (record.content || '')) }}</span>
             </template>
           </a-table-column>
           <a-table-column title="内容摘要" key="snippet">
@@ -224,6 +236,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge } from '../../api'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError } from '../../utils/markdown'
+import { estimateTokens, fmtTokens } from '../../utils/token'
 
 // 上传限制（启动时从 /config/public 动态获取）
 const MAX_SIZE = 200 * 1024 * 1024
@@ -412,6 +425,10 @@ const kbDocId = ref('')
 const kbSearch = ref('')
 // 知识块列表表体滚动高度：随视口自适应（一页 20 条在矮屏会超出屏幕；下限 200，上限 520）
 const kbScrollY = Math.max(200, Math.min(520, window.innerHeight - 400))
+// 切片统计（2.9）：合计 token 与未向量化块数（过滤后口径，随搜索实时变化）
+const kbStatTokens = computed(() => kbFilteredList.value
+    .reduce((sum, r) => sum + estimateTokens((r.title || '') + (r.content || '')), 0))
+const kbNoVector = computed(() => kbFilteredList.value.filter(r => !r.vectorId).length)
 const kbFilteredList = computed(() => {
   const kw = kbSearch.value.trim().toLowerCase()
   if (!kw) return kbList.value
@@ -695,6 +712,11 @@ const fmtTime = t => {
   margin-bottom: 6px;
 }
 .kb-edit-split { display: flex; gap: 10px; }
+/* 切片统计与 Token 列（2.9） */
+.kb-stat { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--v2-text3); }
+.kb-stat b { color: var(--v2-text); font-weight: 500; }
+.kb-stat-warn { color: #d46b08; }
+.kb-tok { font-variant-numeric: tabular-nums; color: var(--v2-text3); }
 /* 高度自适应：矮视口下压缩分栏，保证标题+工具栏+分栏+按钮完整可见（下限 150 保证 577px 视口恰好放下） */
 .kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {

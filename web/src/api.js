@@ -237,6 +237,10 @@ export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', {
 /** 文档列表 */
 export const listDocuments = () => request('/document/list')
 
+// ==================== MCP 外部工具（设置页管理界面） ====================
+export const getMcpStatus = () => request('/mcp/status')
+export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
+
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress) {
   const fd = new FormData()

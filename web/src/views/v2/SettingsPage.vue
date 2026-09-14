@@ -61,6 +61,29 @@
                   </a-form-item>
                 </template>
 
+                <!-- MCP 面板：连接状态可视化 + 手动重连（server 增删改仍走下方配置字段） -->
+                <template v-if="current === 'mcp' && blk.type === 'sub'">
+                  <a-form-item label="连接状态">
+                    <div>
+                      <div v-if="!mcpStatus.enabled" class="mcp-empty">总开关未开启（开启后保存即自动连接）</div>
+                      <div v-else-if="!mcpStatus.servers.length" class="mcp-empty">未配置 MCP 服务（在下方 servers 里添加）</div>
+                      <div v-for="s in mcpStatus.servers" :key="s.name" class="mcp-srv">
+                        <span class="mcp-dot" :class="s.connected ? 'ok' : 'bad'"></span>
+                        <span class="mcp-name">{{ s.name }}</span>
+                        <span class="mcp-url" :title="s.url">{{ s.url }}</span>
+                        <span class="mcp-type">{{ s.type }}</span>
+                        <span v-if="s.connected" class="mcp-state ok">已连接 · {{ s.tools }} 个工具</span>
+                        <span v-else class="mcp-state bad" :title="s.state">{{ mcpErr(s.state) }}</span>
+                      </div>
+                      <button class="v2-btn ghost small" :disabled="mcpLoading" @click="loadMcpStatus">刷新</button>
+                      <button class="v2-btn ghost small" :disabled="mcpReloading" @click="doReloadMcp">
+                        {{ mcpReloading ? '重连中…' : '重连' }}
+                      </button>
+                      <span v-if="mcpCheckedAt" class="mcp-checked">更新于 {{ mcpCheckedAt }}</span>
+                    </div>
+                  </a-form-item>
+                </template>
+
                 <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明） -->
                 <template v-else-if="blk.type === 'field'">
                   <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
@@ -116,6 +139,7 @@ import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, ge
          getReembedStatus, triggerReembed, probeConnectivity } from '../../api'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
+import { getMcpStatus, reloadMcp } from '../../api'
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -175,6 +199,7 @@ const fetchAndFill = async () => {
       embeddingDimensions.value = em.dimensions?.value || ''
       refreshCacheStats()
       refreshReembedStatus()
+      loadMcpStatus()
       initialPayload.value = buildPayload()
     }
   } catch (e) { message.error(e.message || '加载配置失败') }
@@ -229,6 +254,7 @@ const save = async () => {
       if (n === 0) message.warning('没有可保存的配置项（后端未识别提交的键），请检查后重试')
       else { message.success(`配置已保存并生效（更新 ${n} 项）`); initialPayload.value = buildPayload() }
       refreshReembedStatus()
+      if (payload.mcp) loadMcpStatus()   // 改了 MCP 配置：按新配置重连后刷新状态
     } else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
@@ -410,6 +436,42 @@ const refreshReembedStatus = async () => {
     }
   } catch (e) { /* 静默 */ }
 }
+// ==================== MCP 外部工具：连接状态与重连 ====================
+const mcpStatus = ref({ enabled: false, servers: [] })
+const mcpLoading = ref(false)
+const mcpReloading = ref(false)
+const mcpCheckedAt = ref('')
+/** 失败态去掉 "failed:" 前缀，只给用户看原因；未知态原样显示 */
+const mcpErr = st => (st || '').startsWith('failed:') ? (st || '').slice(7) : (st || '未知')
+const applyMcp = d => {
+  mcpStatus.value = { enabled: !!d?.enabled, servers: d?.servers || [] }
+  mcpCheckedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+}
+const loadMcpStatus = async () => {
+  mcpLoading.value = true
+  try {
+    const r = await getMcpStatus()
+    if (r.success) applyMcp(r.data)
+  } catch (e) { /* 状态拉取失败不打扰配置操作，保持上次状态 */ }
+  finally { mcpLoading.value = false }
+}
+// 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）
+watch(current, k => { if (k === 'mcp') loadMcpStatus() })
+
+const doReloadMcp = async () => {
+  mcpReloading.value = true
+  try {
+    const r = await reloadMcp()
+    if (r.success) {
+      applyMcp(r.data)
+      const bad = (r.data?.servers || []).filter(s => !s.connected).length
+      if (bad) message.warning(`已重连，${bad} 个服务仍未连上（见状态详情）`)
+      else message.success('已重连')
+    } else message.error(r.msg || '重连失败')
+  } catch (e) { message.error(e.message || '重连失败') }
+  finally { mcpReloading.value = false }
+}
+
 const doTriggerReembed = async () => {
   reembedTriggering.value = true
   try {
@@ -450,4 +512,17 @@ onUnmounted(() => {
 .probe-chip.ok { color: var(--v2-ok); background: #eaf5ec; }
 .probe-chip.bad { color: var(--v2-danger); background: #fbecea; }
 .reembed-meta { margin-top: 6px; color: var(--v2-text3); font-size: 12px; line-height: 1.8; }
+/* MCP 连接状态列表 */
+.mcp-empty { color: var(--v2-text3); font-size: 12px; margin-bottom: 6px; }
+.mcp-srv { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.mcp-dot.ok { background: var(--v2-ok); }
+.mcp-dot.bad { background: var(--v2-danger); }
+.mcp-name { flex: none; font-weight: 500; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-url { flex: 1; min-width: 0; color: var(--v2-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-type { flex: none; color: var(--v2-text3); }
+.mcp-state { flex: none; }
+.mcp-state.ok { color: var(--v2-ok); }
+.mcp-state.bad { color: var(--v2-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
 </style>

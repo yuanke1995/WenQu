@@ -103,6 +103,9 @@
                   </template>
                 </a-dropdown>
               </template>
+              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} / 预算 ${m.tokens.budget} · 输出 ${m.tokens.output} tokens（估算）`">
+                <span class="msg-tokens">≈{{ fmtTokens(m.tokens.total) }} tokens</span>
+              </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
             <div v-if="m.retrying" class="retry-tip"><a-spin size="small" /><span>连接中断，正在自动重试…</span></div>
@@ -184,6 +187,13 @@
           </template>
         </template>
         <div v-else class="rp-dim">本轮尚无检索记录</div>
+      </div>
+      <!-- 本次用量（1.9 Token 消耗可视化）：估算值，上下文为实际填充、输出按正文估算 -->
+      <div v-if="lastTokens" class="rp-card">
+        <div class="rp-label">本次用量（估算）</div>
+        <div class="rp-strong">{{ fmtTokens(lastTokens.total) }} tokens</div>
+        <div class="rp-row"><span>上下文 {{ fmtTokens(lastTokens.context) }}</span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
+        <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 填充 {{ lastTokens.hits }} 块资料</div>
       </div>
       <div class="rp-card">
         <div class="rp-label">引用来源</div>
@@ -272,6 +282,7 @@ import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback 
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
+import { fmtTokens } from '../../utils/token'
 
 const route = useRoute()
 const router = useRouter()
@@ -343,6 +354,8 @@ const debugEntryVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
+// 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
+const lastTokens = computed(() => lastAi.value?.tokens || null)
 
 // 推荐问题（DB 配置，失败回退内置默认）
 const FALLBACK_TIPS = ['系统有哪些功能？', '如何创建一个新表单？', '字段验证怎么设置？', '什么是填报周期？']
@@ -907,6 +920,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         related = Array.isArray(p.related) ? p.related : []
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
+        if (p.tokens && typeof p.tokens === 'object') messages.value[idx].tokens = p.tokens
         if (p.thinking) messages.value[idx].thinking = p.thinking
         messages.value[idx].thinkLoading = false
         if (typeof p.finalContent === 'string' && p.finalContent !== '') messages.value[idx].content = p.finalContent
@@ -1259,6 +1273,7 @@ onMounted(async () => {
 }
 .msg-block:hover .msg-edit-row { opacity: 1; }
 .msg-time-inline { font-size: 11px; color: var(--v2-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
+.msg-tokens { font-size: 11px; color: var(--v2-text3); white-space: nowrap; cursor: default; }
 .jump-latest {
   position: sticky; bottom: 12px; z-index: 5; width: fit-content; margin: 0 auto 4px;
   background: var(--v2-accent); color: #fff; font-size: 12px; padding: 4px 16px;
