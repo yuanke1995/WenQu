@@ -215,6 +215,7 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.enabled", "工具调用：知识库精确检索工具开关（模型可主动补充检索，需总开关开启）"),
             Map.entry("tool.knowledgeRetrieval.maxHits", "工具调用：精确检索工具单次返回命中块上限(1~5)"),
             Map.entry("tool.artifact.enabled", "工具调用：产物交付工具开关（模型可生成 Markdown/CSV/JSON/HTML 文件并推送给用户，需总开关开启；默认关）"),
+            Map.entry("tool.builtin.enabled", "工具调用：内置高频工具开关（算术计算/当前时间/日期差，需总开关开启；默认关）"),
             // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
             Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
             Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
@@ -349,6 +350,7 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.enabled", 2),
             Map.entry("tool.knowledgeRetrieval.maxHits", 3),
             Map.entry("tool.artifact.enabled", 2),
+            Map.entry("tool.builtin.enabled", 2),
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
@@ -692,6 +694,7 @@ public class ConfigService {
         d.put("tool.knowledgeRetrieval.enabled", "false"); // 知识库精确检索工具开关（需总开关开启）
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
         d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
+        d.put("tool.builtin.enabled", "false");            // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;

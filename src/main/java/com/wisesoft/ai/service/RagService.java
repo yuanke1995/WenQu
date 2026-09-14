@@ -250,6 +250,8 @@ public class RagService {
     private final McpClientService mcpClientService;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
     private final PresentArtifactTool presentArtifactTool;
+    /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
+    private final BuiltinTools builtinTools;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -310,6 +312,7 @@ public class RagService {
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       ArtifactService artifactService,
                       PresentArtifactTool presentArtifactTool,
+                      BuiltinTools builtinTools,
                       McpClientService mcpClientService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
@@ -329,6 +332,7 @@ public class RagService {
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.artifactService = artifactService;
         this.presentArtifactTool = presentArtifactTool;
+        this.builtinTools = builtinTools;
         this.mcpClientService = mcpClientService;
     }
 
@@ -843,6 +847,10 @@ public class RagService {
         if (configService.getBoolean("tool.knowledgeRetrieval.enabled")) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
+        }
+        if (configService.getBoolean("tool.builtin.enabled")) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)));
         }
         if (configService.getBoolean("tool.artifact.enabled")) {
             callbacks.addAll(java.util.Arrays.asList(
