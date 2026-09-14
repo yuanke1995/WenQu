@@ -801,6 +801,10 @@ public class RagService {
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
+            // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
+            st.contextTokens = usedTokens + fixedTokens;
+            st.budgetTokens = budget;
+            st.contextHits = docNo - 1;
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st));
@@ -1194,6 +1198,16 @@ public class RagService {
                             ? List.of() : artifactService.takeArtifacts(st.sessionId));
                     // 工具调用过程汇总（实时 tool_status 已逐条下发；此处兜底，前端 onDone 覆盖渲染）
                     donePayload.put("toolCalls", toolCallSnapshot);
+                    // Token 消耗可视化（1.9）：上下文实际/预算/填充块数 + 输出估算。
+                    // 输出用本地估算而非网关 usage——流式下多数兼容网关不返回 usage，估算稳定可得且量级一致
+                    Map<String, Object> tokens = new LinkedHashMap<>();
+                    int outputTokens = TokenCounter.estimate(answer);
+                    tokens.put("context", st.contextTokens);
+                    tokens.put("budget", st.budgetTokens);
+                    tokens.put("hits", st.contextHits);
+                    tokens.put("output", outputTokens);
+                    tokens.put("total", st.contextTokens + outputTokens);
+                    donePayload.put("tokens", tokens);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
@@ -1229,6 +1243,10 @@ public class RagService {
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
+        /** 本轮上下文 token 用量（主链路构建后回填）：实际/预算/填充块数，供 done 下发做 Token 消耗可视化 */
+        volatile int contextTokens;
+        volatile int budgetTokens;
+        volatile int contextHits;
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,

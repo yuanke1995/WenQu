@@ -56,6 +56,9 @@ public class McpClientService {
     private final Map<String, String> states = new ConcurrentHashMap<>();
     /** 配置指纹：servers JSON 变化才触发 reload */
     private volatile String lastConfigFingerprint = "";
+    /** name → 配置里的地址/类型（管理界面展示用；与 clients/states 同生命周期，reload 时重建） */
+    private final Map<String, String> serverUrls = new LinkedHashMap<>();
+    private final Map<String, String> serverTypes = new LinkedHashMap<>();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -94,6 +97,36 @@ public class McpClientService {
         return new LinkedHashMap<>(states);
     }
 
+    /**
+     * 管理界面快照：按配置顺序列出每个 server 的地址/类型/连接状态/可用工具数。
+     * 总开关关闭或没配 server 时返回空列表（前端据此显示"未启用/未配置"）。
+     */
+    public List<Map<String, Object>> serverStatuses() {
+        ensureConnections();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String name : serverUrls.keySet()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", name);
+            m.put("url", serverUrls.get(name));
+            m.put("type", serverTypes.get(name));
+            String st = states.get(name);
+            m.put("state", st == null ? "unknown" : st);
+            m.put("connected", "connected".equals(st));
+            int tools = 0;
+            McpSyncClient c = clients.get(name);
+            if (c != null) {
+                try {
+                    tools = c.listTools().tools().size();
+                } catch (Exception ignore) {
+                    // 拉列表失败不阻断状态展示（工具数显示 0，状态仍以 states 为准）
+                }
+            }
+            m.put("tools", tools);
+            out.add(m);
+        }
+        return out;
+    }
+
     /** 配置变更后强制重建全部连接（设置页保存 mcp.* 后调用或下次取工具时按指纹自动触发） */
     public synchronized void reload() {
         lastConfigFingerprint = ""; // 清指纹 → 下次 ensureConnections 重建
@@ -115,6 +148,8 @@ public class McpClientService {
         });
         clients.clear();
         states.clear();
+        serverUrls.clear();
+        serverTypes.clear();
         lastConfigFingerprint = fingerprint;
         // 2) 解析配置
         if (!configService.getBoolean("mcp.enabled") || serversJson == null || serversJson.isBlank()) {
@@ -129,6 +164,9 @@ public class McpClientService {
             if (name == null || name.isBlank() || url == null || url.isBlank()) {
                 continue;
             }
+            // 先登记配置元信息：连接失败也能在管理界面看到这条 server 与其原因
+            serverUrls.put(name, url);
+            serverTypes.put(name, type);
             try {
                 McpSyncClient client = connect(name, url, type);
                 client.initialize();
