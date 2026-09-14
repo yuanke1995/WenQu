@@ -174,6 +174,10 @@ export const TIPS = {
   "skillInjectMax": "技能清单注入系统提示的字符上限：技能很多时超出部分只列到截断（不会挤占知识块与历史的预算）。",
   "skillTool": "readSkill 工具：模型主动取回某个技能的完整内容。需要「工具调用」总开关同时开启；关闭后技能清单仍会注入，但模型无法读取正文。",
   "skillMaxFile": "单个技能全文读取上限（字符）：技能内容过长时截断，防止一个技能吃掉整个上下文预算。",
+  "agentEnabled": "SubAgent 并行编排总开关。开启后每轮问答先把问题拆成多个视角（全句语义 / 关键词精确 / 长问题子句），交给多个子代理并行检索、各自提炼要点，再汇总进上下文——多条件、跨章节的复杂问题召回更全。代价：首字延迟变长（多 2~4 路检索，开启提炼时再多 2~4 次短调用）。默认关闭；建议先小范围对比效果。",
+  "agentSubAgents": "子代理数量：每个子代理负责一个检索视角。2 个覆盖大多数问题；3~4 适合多条件/多主题的长问题。数量越多召回越全但越慢。",
+  "agentTopK": "每个子代理取回的命中块数上限（跨代理自动去重，重复块只占一个引用编号）。",
+  "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
   "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
   "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
 }
@@ -191,6 +195,7 @@ export const PANELS = [
   { key: "semanticCache", title: "语义缓存（相似问题加速）", sections: [] },
   { key: "apiKey", title: "API Key 管理（对外开放问答能力）", sections: [] },
   { key: "skills", title: "技能 Skills（可插拔能力包）", sections: ["总开关与目录", "行为开关（渐进披露）"] },
+  { key: "agent", title: "SubAgent 并行编排（多视角检索）", sections: ["总开关与并行度"] },
   { key: "ratelimit", title: "接口限流（防滥用）", sections: [] },
   { key: "maintenance", title: "定时维护（索引对账 / 自动体检 / 清理）", sections: ["启动自愈与索引对账","自动体检（检索质量回归）","聊天图片清理","会话参数与清理","文档名缓存（多副本一致性）"] },
 ]
@@ -370,6 +375,10 @@ export const FIELDS = [
   { panel: "skills", section: 1, group: "skill", key: "injectMaxChars", path: "skill.injectMaxChars", label: "清单字符上限", type: "number", tips: "skillInjectMax", def: 1200, min: 200, step: 100, width: 200, vif: "skill.enabled && skill.injectEnabled", tier: 3 },
   { panel: "skills", section: 1, group: "skill", key: "toolEnabled", path: "skill.toolEnabled", label: "readSkill 工具", type: "switch", tips: "skillTool", def: true, note: "让模型主动读取技能全文（需「工具调用」总开关同时开启）", vif: "skill.enabled", tier: 2 },
   { panel: "skills", section: 1, group: "skill", key: "maxFileChars", path: "skill.maxFileChars", label: "技能读取上限", type: "number", tips: "skillMaxFile", def: 20000, min: 500, step: 1000, width: 200, note: "单个技能全文读取字符上限，超出截断", vif: "skill.enabled && skill.toolEnabled", tier: 3 },
+  { panel: "agent", section: 0, group: "agent", key: "enabled", path: "agent.enabled", label: "总开关", type: "switch", tips: "agentEnabled", def: false, core: true, note: "开启后每轮问答先并行多视角检索再汇总（默认关，会增加首字延迟）", tier: 2 },
+  { panel: "agent", section: 0, group: "agent", key: "subAgents", path: "agent.subAgents", label: "子代理数量", type: "number", tips: "agentSubAgents", def: 2, min: 2, max: 4, step: 1, width: 200, note: "2~4：越多召回越全，并发检索与提炼调用也越多", vif: "agent.enabled", tier: 2 },
+  { panel: "agent", section: 0, group: "agent", key: "topKPerAgent", path: "agent.topKPerAgent", label: "每代理取块数", type: "number", tips: "agentTopK", def: 3, min: 1, max: 10, step: 1, width: 200, note: "每个子代理取回命中块上限（跨代理自动去重）", vif: "agent.enabled", tier: 3 },
+  { panel: "agent", section: 0, group: "agent", key: "digestEnabled", path: "agent.digestEnabled", label: "要点提炼", type: "switch", tips: "agentDigest", def: true, note: "开=每个子代理用模型提炼 2~3 条要点再汇总；关=只并行检索合并（零额外调用）", vif: "agent.enabled", tier: 2 },
 ]
 
 /** 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入 */

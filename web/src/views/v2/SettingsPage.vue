@@ -479,7 +479,8 @@ import { getMcpStatus, reloadMcp, probeMcp } from '../../api'
 const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', mcp: 'MCP 外部工具',
-  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能 Skills'
+  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能 Skills',
+  agent: 'SubAgent 并行编排'
 }
 const groupLabel = key => NAV_LABELS[key] || key
 const current = ref('chat')
@@ -504,7 +505,8 @@ const PANEL_ALERTS = {
   ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
   maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
   apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }],
-  skills: [{ type: 'info', msg: '技能 = 一段可复用的"做法说明"（步骤/格式/禁忌）。系统提示里只放技能名与描述，模型判断某个问题属于某技能领域时，才去读取它的完整内容——所以技能装得多也不会拖慢每次问答。需要 skill.enabled 总开关开启后生效。' }]
+  skills: [{ type: 'info', msg: '技能 = 一段可复用的"做法说明"（步骤/格式/禁忌）。系统提示里只放技能名与描述，模型判断某个问题属于某技能领域时，才去读取它的完整内容——所以技能装得多也不会拖慢每次问答。需要 skill.enabled 总开关开启后生效。' }],
+  agent: [{ type: 'info', msg: 'SubAgent 并行编排：把一个问题拆成多个检索视角并行执行（各自检索 + 提炼要点）再汇总，改善复杂问题"召回不全"。基于 Spring AI Alibaba 的 StateGraph 编排，子代理失败会自动降级为原有单路检索，不影响问答可用性。' }]
 }
 
 const loading = ref(false)
