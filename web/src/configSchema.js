@@ -183,6 +183,7 @@ export const PANELS = [
   { key: "tool", title: "工具调用（Function Calling）", sections: ["总开关","子工具（需总开关开启）"] },
   { key: "mcp", title: "MCP 外部工具（用户可自行扩展）", sections: ["MCP 服务管理（连接外部工具 Server）"] },
   { key: "semanticCache", title: "语义缓存（相似问题加速）", sections: [] },
+  { key: "apiKey", title: "API Key 管理（对外开放问答能力）", sections: [] },
   { key: "ratelimit", title: "接口限流（防滥用）", sections: [] },
   { key: "maintenance", title: "定时维护（索引对账 / 自动体检 / 清理）", sections: ["启动自愈与索引对账","自动体检（检索质量回归）","聊天图片清理","会话参数与清理","文档名缓存（多副本一致性）"] },
 ]

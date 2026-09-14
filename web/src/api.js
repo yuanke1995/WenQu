@@ -241,6 +241,13 @@ export const listDocuments = () => request('/document/list')
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
 
+// ==================== API Key 管理（对外开放问答能力） ====================
+export const listApiKeys = () => request('/api-key/list')
+export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })
+export const setApiKeyDisabled = (id, disabled) =>
+  request(`/api-key/${id}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
+export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
+
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress) {
   const fd = new FormData()

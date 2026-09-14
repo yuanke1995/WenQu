@@ -123,6 +123,52 @@
                 </div>
                 <div class="reembed-meta">清空后按提问重新积累；知识库变更（解析/删除/回滚/启停用）时后端会自动整体清空，一般无需手动操作。</div>
               </a-form-item>
+
+              <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
+              <template v-if="current === 'apiKey'">
+                <div class="apikey-toolbar">
+                  <a-input v-model:value="newKeyName" placeholder="用途名称，如：报表系统集成" style="width:240px" />
+                  <a-input v-model:value="newKeyExpire" placeholder="过期日期（可选，yyyy-MM-dd）" style="width:220px" />
+                  <button class="v2-btn small" :disabled="keyCreating" @click="doCreateKey">{{ keyCreating ? '签发中…' : '签发新 Key' }}</button>
+                  <button class="v2-btn ghost small" @click="loadKeys">刷新</button>
+                </div>
+                <a-table :data-source="keys" size="small" row-key="id" :pagination="false" :locale="{ emptyText: '暂无 Key' }">
+                  <a-table-column title="名称" dataIndex="name" key="name" ellipsis />
+                  <a-table-column title="Key" key="prefix" width="150">
+                    <template #default="{ record }"><code>{{ record.keyPrefix }}…</code></template>
+                  </a-table-column>
+                  <a-table-column title="状态" key="state" width="100">
+                    <template #default="{ record }">
+                      <span v-if="record.disabled" class="v2-pill warn">已停用</span>
+                      <span v-else-if="record.expired" class="v2-pill err">已过期</span>
+                      <span v-else class="v2-pill ok">生效中</span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="最近使用" key="lastUsed" width="150">
+                    <template #default="{ record }">
+                      <span :style="{ color: record.lastUsedAt ? 'var(--v2-text2)' : 'var(--v2-text3)' }">
+                        {{ record.lastUsedAt ? String(record.lastUsedAt).replace('T', ' ').slice(0, 16) : '从未使用' }}
+                      </span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="过期时间" key="expire" width="120">
+                    <template #default="{ record }">{{ record.expireAt ? String(record.expireAt).slice(0, 10) : '长期' }}</template>
+                  </a-table-column>
+                  <a-table-column title="操作" key="act" width="130">
+                    <template #default="{ record }">
+                      <button class="v2-link-btn" @click="toggleKey(record)">{{ record.disabled ? '启用' : '停用' }}</button>
+                      <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
+                        <button class="v2-link-btn danger">删除</button>
+                      </a-popconfirm>
+                    </template>
+                  </a-table-column>
+                </a-table>
+                <div class="reembed-meta">
+                  调用方式：请求头 <code>X-Api-Key: sk-…</code>（替代平台 token，携带用户身份仍走 X-User-Id）。
+                  Key 权限固定为问答链路（问答/会话/反馈/引用溯源），管理端点一律拒绝。
+                  明文仅在签发时显示一次（库里只存哈希），请立即保存；不再使用建议「停用」而非删除，便于审计。
+                </div>
+              </template>
             </a-form>
           </div>
         </a-spin>
@@ -132,11 +178,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
-         getReembedStatus, triggerReembed, probeConnectivity } from '../../api'
+         getReembedStatus, triggerReembed, probeConnectivity,
+         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey } from '../../api'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
 import { getMcpStatus, reloadMcp } from '../../api'
@@ -145,14 +192,14 @@ import { getMcpStatus, reloadMcp } from '../../api'
 const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', mcp: 'MCP 外部工具',
-  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护'
+  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理'
 }
 const groupLabel = key => NAV_LABELS[key] || key
 const current = ref('chat')
 const currentPanel = computed(() => PANELS.find(p => p.key === current.value))
 
-// 无「恢复本组默认」的分组
-const NO_RESET = ['embedding', 'maintenance']
+// 无「恢复本组默认」的分组（API Key 由数据库管理，与配置默认值无关）
+const NO_RESET = ['embedding', 'maintenance', 'apiKey']
 
 // 分组顶部说明（与旧版文案一致）
 const PANEL_ALERTS = {
@@ -168,7 +215,8 @@ const PANEL_ALERTS = {
   deepReasoning: [{ type: 'info', msg: '深度思考：AI 先流式展示思维链，思考末尾输出检索计划（精化 query + 子问题）多路并行检索合并后回答。失败自动降级。' }],
   semanticCache: [{ type: 'info', msg: '命中相似问题（≥阈值）时直接复用历史回答：省检索与 LLM 成本、秒级返回。知识库变更时自动整体清空，不会用过期答案。' }],
   ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
-  maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }]
+  maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
+  apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }]
 }
 
 const loading = ref(false)
@@ -455,8 +503,61 @@ const loadMcpStatus = async () => {
   } catch (e) { /* 状态拉取失败不打扰配置操作，保持上次状态 */ }
   finally { mcpLoading.value = false }
 }
-// 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）
-watch(current, k => { if (k === 'mcp') loadMcpStatus() })
+// ==================== API Key 管理（6.5） ====================
+const keys = ref([])
+const keyCreating = ref(false)
+const newKeyName = ref('')
+const newKeyExpire = ref('')
+const loadKeys = async () => {
+  try {
+    const r = await listApiKeys()
+    if (r.success && Array.isArray(r.data)) keys.value = r.data
+  } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
+}
+const doCreateKey = async () => {
+  keyCreating.value = true
+  try {
+    const r = await createApiKey({ name: newKeyName.value.trim(), expireAt: newKeyExpire.value.trim() })
+    if (r.success) {
+      const plain = r.data?.apiKey || ''
+      // 明文只此一次：先尝试复制到剪贴板，再用弹窗展示（复制失败也能手动取）
+      let copied = false
+      try { await navigator.clipboard.writeText(plain); copied = true } catch (e) { copied = false }
+      Modal.success({
+        title: copied ? 'Key 已签发（已复制到剪贴板）' : 'Key 已签发',
+        content: h => h('div', [
+          h('p', { style: 'margin-bottom:6px' }, plain),
+          h('p', { style: 'color:#8a9099;font-size:12px;margin:0' }, '明文仅显示这一次（库里只存哈希），请立即保存；关闭后无法再查看。')
+        ]),
+        okText: '我已保存'
+      })
+      newKeyName.value = ''
+      newKeyExpire.value = ''
+      loadKeys()
+    } else message.error(r.msg || '签发失败')
+  } catch (e) { message.error(e.message || '签发失败') }
+  finally { keyCreating.value = false }
+}
+const toggleKey = async rec => {
+  try {
+    const r = await setApiKeyDisabled(rec.id, !rec.disabled)
+    if (r.success) { message.success(rec.disabled ? '已启用' : '已停用'); loadKeys() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+}
+const delKey = async id => {
+  try {
+    const r = await deleteApiKey(id)
+    if (r.success) { message.success('已删除'); loadKeys() }
+    else message.error(r.msg || '删除失败')
+  } catch (e) { message.error(e.message || '删除失败') }
+}
+
+// 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）；API Key 面板同理
+watch(current, k => {
+  if (k === 'mcp') loadMcpStatus()
+  if (k === 'apiKey') loadKeys()
+})
 
 const doReloadMcp = async () => {
   mcpReloading.value = true
@@ -525,4 +626,6 @@ onUnmounted(() => {
 .mcp-state.ok { color: var(--v2-ok); }
 .mcp-state.bad { color: var(--v2-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
+/* API Key 管理（6.5） */
+.apikey-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 </style>
