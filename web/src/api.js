@@ -237,6 +237,28 @@ export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', {
 /** 文档列表 */
 export const listDocuments = () => request('/document/list')
 
+/**
+ * 下载文档源文件（个人文件区：取回上传的原始文件）。
+ * 走 fetch 带鉴权头取 blob（直接 a[href] 无法带 X-Trusted-Token），再触发浏览器下载。
+ */
+export async function downloadDocumentSource (id, fileName) {
+  const r = await fetch(`${BASE}/document/${id}/source`, { headers: authHeaders() })
+  if (!r.ok) {
+    let msg = '下载失败'
+    try { const j = await r.json(); if (j && j.msg) msg = j.msg } catch (e) { /* 非 JSON 响应保留默认文案 */ }
+    throw new Error(msg)
+  }
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName || 'document'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 // ==================== MCP 外部工具（设置页管理界面） ====================
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })

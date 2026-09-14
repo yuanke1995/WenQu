@@ -74,6 +74,8 @@
                 <button class="v2-link-btn" @click="toggleStatus(d, 1)">弃用</button>
               </template>
               <button v-else-if="d.status === 1" class="v2-link-btn" @click="toggleStatus(d, 0)">启用</button>
+              <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
+              <button v-if="d.status !== 2" class="v2-link-btn" @click="dlSource(d)">下载</button>
               <button v-if="d.status === 0 || d.status === 3" class="v2-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
               <a-popconfirm title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
                 <button class="v2-link-btn danger" :disabled="deletingId === d.id">删除</button>
@@ -256,7 +258,8 @@ import { UploadOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons-
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
-         getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge } from '../../api'
+         getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
+         downloadDocumentSource } from '../../api'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError } from '../../utils/markdown'
 import { estimateTokens, fmtTokens } from '../../utils/token'
 
@@ -299,7 +302,9 @@ const summaryText = computed(() => {
   const total = list.value.length
   const chunks = list.value.reduce((n, d) => n + (d.chunkCount || 0), 0)
   const active = list.value.filter(d => d.status === 0).length
-  return `${total} 个文档 · ${active} 个生效 · ${chunks} 片段`
+  // 文件区概览（5.4）：源文件总占用，让"存了多少"可见
+  const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
+  return `${total} 个文档 · ${active} 个生效 · ${chunks} 片段 · 占用 ${fmtSize(bytes)}`
 })
 
 const toggleSelect = (id, e) => {
@@ -521,6 +526,15 @@ const kbDetailVisible = ref(false)
 const kbDetail = ref(null)
 const kbDetailHtml = computed(() =>
   renderMd(prepKnowledgeContent(kbDetail.value?.content, kbDetail.value?.images), kbDetail.value?.images))
+// 源文件下载（个人文件区，5.4）：取回上传的原始文件
+const dlSource = async d => {
+  try {
+    await downloadDocumentSource(d.id, d.fileName)
+  } catch (e) {
+    message.error(e.message || '下载失败')
+  }
+}
+
 const openKb = async record => {
   kbDocName.value = record.fileName
   kbDocId.value = record.id
