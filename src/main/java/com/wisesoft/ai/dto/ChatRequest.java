@@ -28,4 +28,7 @@ public class ChatRequest {
 
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")
     private boolean deepThink;
+
+    @Schema(description = "@ 引用（用户在输入框手动指定的参考资料；被 @ 文档的块会前置进上下文）")
+    private List<ChatRef> refs;
 }

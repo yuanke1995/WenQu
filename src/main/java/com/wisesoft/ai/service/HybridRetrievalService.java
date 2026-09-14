@@ -659,6 +659,64 @@ public class HybridRetrievalService {
                 k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath());
     }
 
+    /**
+     * 文档内定向检索（@ 引用用）：用户 @ 了某篇文档时，取该文档内与问题最相关的若干块。
+     *
+     * <p>不走向量路：① 避免额外一次 embedding 调用（延迟与额度）；② 文档较大时向量 topK
+     * 可能整篇漏召回，而 @ 的语义是"这篇必看"，漏块等于违背用户意图。
+     * 实现：取该文档全部生效块 → 按问题词元命中数打分（标题命中 ×2）→ 取 topK；
+     * 全部 0 分（纯英文/生僻问法等词元不重叠）时按 chunkIndex 取文档开头若干块（通常含概述）。
+     *
+     * <p>分数给到固定高值（10.0，高于常规融合分）：保证 @ 块排序在最前、优先进入上下文，
+     * 但仍受 token 预算与信息增益去冗余约束，不会无上限挤占。
+     */
+    public List<Hit> searchInDoc(String query, String docId, int topK) {
+        if (docId == null || docId.isBlank() || topK <= 0) return List.of();
+        try {
+            QueryWrapper<AiKnowledge> wrapper = new QueryWrapper<AiKnowledge>()
+                    .eq("doc_id", docId)
+                    .and(w -> w.eq("status", 0).or().isNull("status"))
+                    .orderByAsc("chunk_index");
+            List<AiKnowledge> chunks = knowledgeMapper.selectList(wrapper);
+            if (chunks.isEmpty()) return List.of();
+
+            List<String> terms = keywordExtractor.extract(query == null ? "" : query);
+            List<AiKnowledge> ranked = chunks;
+            if (terms != null && !terms.isEmpty()) {
+                List<AiKnowledge> byTerm = new ArrayList<>(chunks);
+                byTerm.sort(Comparator
+                        .comparingInt((AiKnowledge k) -> -scoreTermHits(k, terms))
+                        .thenComparingInt(k -> k.getChunkIndex() == null ? 0 : k.getChunkIndex()));
+                // 首块 0 分说明无任何词元命中 → 退化为原文顺序（文档开头多为概述，比随机块有用）
+                if (!byTerm.isEmpty() && scoreTermHits(byTerm.get(0), terms) > 0) {
+                    ranked = byTerm;
+                }
+            }
+            List<Hit> out = new ArrayList<>();
+            for (AiKnowledge k : ranked.subList(0, Math.min(topK, ranked.size()))) {
+                out.add(buildHit(k, 10.0));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[AT-REF] 文档内检索失败 docId={}: {}", docId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** @ 引用文档内排序分：命中词元数（标题命中 ×2，正文命中 ×1）；非最终检索分，仅用于文档内排序 */
+    private int scoreTermHits(AiKnowledge k, List<String> terms) {
+        String title = k.getTitle() == null ? "" : k.getTitle();
+        String content = k.getContent() == null ? "" : k.getContent();
+        if (content.length() > 4000) content = content.substring(0, 4000);
+        int s = 0;
+        for (String t : terms) {
+            if (t == null || t.isBlank()) continue;
+            if (title.contains(t)) s += 2;
+            if (content.contains(t)) s += 1;
+        }
+        return s;
+    }
+
     private List<String> imagesFromMd(Map<String, Object> md) {
         Object v = md.get("images");
         if (v == null) return List.of();

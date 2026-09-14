@@ -2,6 +2,7 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.dto.ChatRef;
 import com.wisesoft.ai.model.AiAnswerCache;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
@@ -336,7 +337,8 @@ public class RagService {
      * deepThink=true 时先流式输出思考过程（thinking 事件），提取检索计划后多路检索再回答。
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
-    public void chat(String sessionId, String question, List<String> userImages, boolean deepThink, SseEmitter emitter) {
+    public void chat(String sessionId, String question, List<String> userImages, boolean deepThink,
+                     List<ChatRef> refs, SseEmitter emitter) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -349,8 +351,10 @@ public class RagService {
         emitter.onTimeout(() -> ACTIVE_SSE.remove(emitter));
         emitter.onError(t -> ACTIVE_SSE.remove(emitter));
         syncPipelineSize();
+        // lambda 引用需 effectively final：@ 引用列表用不可变副本传递
+        final List<ChatRef> finalRefs = refs == null ? List.of() : List.copyOf(refs);
         try {
-            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, emitter));
+            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, finalRefs, emitter));
         } catch (RejectedExecutionException e) {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -363,7 +367,8 @@ public class RagService {
     /**
      * 问答流水线主体（独立线程执行）：图片处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
-    private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink, SseEmitter emitter) {
+    private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
+                         List<ChatRef> refs, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
         final Map<String, Long> stageMs = new LinkedHashMap<>();
@@ -591,10 +596,20 @@ public class RagService {
             int snippetWindow = configService.getInt("context.snippetWindowChars");
             // 引用扩散 + 结构上下文扩展：命中 A → 带出被引块 B / 引用块 C（默认关）/ 父章节块。
             // 扩散块以 Hit 形态混入同一上下文循环，复用图片占位/截取/预算逻辑；任一环节失败降级为不扩散
-            KnowledgeRefService.ExpandResult expandResult = knowledgeRefService.expand(hits);
+            // @ 引用：用户手动 @ 的文档 → 该文档内相关块前置（"指定必被参考"，优先于普通命中）
+            List<HybridRetrievalService.Hit> atHits = buildAtRefHits(refs, retrievalQuery);
+            List<HybridRetrievalService.Hit> mainHits = new ArrayList<>(atHits);
+            Set<String> atKid = atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
+                    .filter(Objects::nonNull).collect(Collectors.toSet());
+            for (HybridRetrievalService.Hit h : hits) {
+                // @ 块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
+                if (!atKid.contains(h.knowledgeId())) mainHits.add(h);
+            }
+            KnowledgeRefService.ExpandResult expandResult = knowledgeRefService.expand(mainHits);
             List<HybridRetrievalService.Hit> extraHits = expandResult.extra();
-            Map<String, String> refOrigins = expandResult.origins();
-            List<HybridRetrievalService.Hit> allHits = new ArrayList<>(hits);
+            Map<String, String> refOrigins = new HashMap<>(expandResult.origins());
+            for (String kid : atKid) refOrigins.put(kid, "AT_REF"); // 前端引用弹窗可区分 @ 来源
+            List<HybridRetrievalService.Hit> allHits = new ArrayList<>(mainHits);
             allHits.addAll(extraHits);
             int maxExtraHits = Math.max(1, configService.getInt("retrieval.refExpandMaxHits", 3));
             int maxExtraTokens = configService.getInt("retrieval.refExpandMaxTokens", 800);
@@ -617,7 +632,7 @@ public class RagService {
             List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
                 HybridRetrievalService.Hit hit = allHits.get(hi);
-                boolean isExtra = hi >= hits.size();
+                boolean isExtra = hi >= mainHits.size();
                 if (isExtra) {
                     // 扩散块是可舍弃的增强：数量/token 双上限，超限直接跳过（不做首块硬截断）
                     if (extraUsed >= maxExtraHits || extraTokensUsed >= maxExtraTokens) break;
@@ -1996,5 +2011,33 @@ public class RagService {
             sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
             completeEmitter(emitter);
         }
+    }
+
+    // ==================== @ 引用（用户手动指定参考资料） ====================
+
+    /**
+     * 取回用户 @ 的文档内相关块，由 chat 前置进上下文（优先于普通检索命中）。
+     * 基础版仅支持文档级引用（type=doc）；每文档取块数与总上限由 atRef.* 配置控制（设置页可调）。
+     */
+    private List<HybridRetrievalService.Hit> buildAtRefHits(List<ChatRef> refs, String query) {
+        if (refs == null || refs.isEmpty()) return List.of();
+        int perDoc = configService.getInt("atRef.maxChunksPerDoc", 3);
+        int maxTotal = configService.getInt("atRef.maxTotal", 6);
+        List<HybridRetrievalService.Hit> out = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (ChatRef r : refs) {
+            if (r == null || r.getId() == null || r.getId().isBlank()) continue;
+            // 基础版：chunk 级（指定知识块）与 Skill 引用暂不支持，静默跳过不影响问答
+            if (r.getType() != null && !"doc".equalsIgnoreCase(r.getType())) continue;
+            List<HybridRetrievalService.Hit> hs = hybridRetrievalService.searchInDoc(query, r.getId(), perDoc);
+            names.add((r.getName() == null || r.getName().isBlank() ? r.getId() : r.getName()) + "×" + hs.size());
+            for (HybridRetrievalService.Hit h : hs) {
+                if (out.size() >= maxTotal) break;
+                out.add(h);
+            }
+            if (out.size() >= maxTotal) break;
+        }
+        log.info("[@REF] @ 引用注入 {} 块（{}）", out.size(), String.join("、", names));
+        return out;
     }
 }

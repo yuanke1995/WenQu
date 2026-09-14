@@ -105,6 +105,8 @@ public class ConfigService {
             Map.entry("context.dedupEnabled", "上下文：信息增益去冗余（跳过与已选块语义重复的候选，防同一操作多块重复进上下文）"),
             Map.entry("context.dedupThreshold", "上下文：去冗余词元重叠阈值(0~1，默认0.45，越高越宽松)"),
             Map.entry("context.dedupPathThreshold", "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)"),
+            Map.entry("atRef.maxChunksPerDoc", "@ 引用：单个被 @ 文档取回的知识块数(默认3；取该文档内与问题最相关的块)"),
+            Map.entry("atRef.maxTotal", "@ 引用：单次问答注入的 @ 块总数上限(默认6；防 @ 块挤占普通检索命中)"),
             Map.entry("chat.citationCheckEnabled", "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）"),
             Map.entry("deepReasoning.enabled", "深度思考：总开关"),
             Map.entry("deepReasoning.thinkingMode", "深度思考：思考模式(model/prompt)"),
@@ -282,6 +284,8 @@ public class ConfigService {
             Map.entry("context.snippetWindowChars", 3),
             Map.entry("context.dedupThreshold", 3),
             Map.entry("context.dedupPathThreshold", 3),
+            Map.entry("atRef.maxChunksPerDoc", 2),
+            Map.entry("atRef.maxTotal", 2),
             // ===== L3：深度思考细节（总开关/模式/自动路由留 L2）=====
             Map.entry("deepReasoning.timeoutMillis", 3),
             Map.entry("deepReasoning.maxThinkingTokens", 3),
@@ -557,6 +561,8 @@ public class ConfigService {
         d.put("retrieval.refExpandParentMaxLevels", "2");    // 父块级数
         d.put("retrieval.refExpandParentSummaryChars", "200"); // summary 截取字符
         d.put("retrieval.refExpandFuzzyName", "true");       // 章节名弱匹配
+        d.put("atRef.maxChunksPerDoc", "3");                 // @ 引用：单个文档取回块数
+        d.put("atRef.maxTotal", "6");                        // @ 引用：单次问答注入总块上限
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         d.put("rerank.model", properties.getRetrieval().getRerank().getModel());
@@ -960,7 +966,8 @@ public class ConfigService {
         }
         for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
                 "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax",
-                "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars"}) {
+                "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars",
+                "atRef.maxChunksPerDoc", "atRef.maxTotal"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
