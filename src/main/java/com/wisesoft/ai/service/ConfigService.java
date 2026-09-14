@@ -1313,7 +1313,11 @@ public class ConfigService {
                 // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
                 "tool",
                 // MCP 外部工具分组：mcp.enabled / mcp.servers
-                "mcp"};
+                "mcp",
+                // 技能（Skills）分组：skill.enabled / skill.dir / skill.inject* / skill.maxFileChars
+                "skill",
+                // @ 引用分组：atRef.maxChunksPerDoc / atRef.maxTotal
+                "atRef"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {
