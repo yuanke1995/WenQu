@@ -61,27 +61,103 @@
                   </a-form-item>
                 </template>
 
-                <!-- MCP 面板：连接状态可视化 + 手动重连（server 增删改仍走下方配置字段） -->
+                <!-- MCP 面板：服务卡片（状态/工具清单/测试/编辑）+ 添加弹窗；下方 JSON 字段保留为高级编辑 -->
                 <template v-if="current === 'mcp' && blk.type === 'sub'">
-                  <a-form-item label="连接状态">
-                    <div>
-                      <div v-if="!mcpStatus.enabled" class="mcp-empty">总开关未开启（开启后保存即自动连接）</div>
-                      <div v-else-if="!mcpStatus.servers.length" class="mcp-empty">未配置 MCP 服务（在下方 servers 里添加）</div>
-                      <div v-for="s in mcpStatus.servers" :key="s.name" class="mcp-srv">
-                        <span class="mcp-dot" :class="s.connected ? 'ok' : 'bad'"></span>
-                        <span class="mcp-name">{{ s.name }}</span>
-                        <span class="mcp-url" :title="s.url">{{ s.url }}</span>
-                        <span class="mcp-type">{{ s.type }}</span>
-                        <span v-if="s.connected" class="mcp-state ok">已连接 · {{ s.tools }} 个工具</span>
-                        <span v-else class="mcp-state bad" :title="s.state">{{ mcpErr(s.state) }}</span>
-                      </div>
+                  <div class="key-bar">
+                    <span class="key-stat">
+                      共 <b>{{ mcpStatus.servers.length }}</b> 个服务 · 已连接 <b>{{ mcpConnectedCount }}</b>
+                      <span v-if="mcpCheckedAt" class="key-dim">· 更新于 {{ mcpCheckedAt }}</span>
+                    </span>
+                    <div class="key-bar-actions">
                       <button class="v2-btn ghost small" :disabled="mcpLoading" @click="loadMcpStatus">刷新</button>
                       <button class="v2-btn ghost small" :disabled="mcpReloading" @click="doReloadMcp">
-                        {{ mcpReloading ? '重连中…' : '重连' }}
+                        {{ mcpReloading ? '重连中…' : '全部重连' }}
                       </button>
-                      <span v-if="mcpCheckedAt" class="mcp-checked">更新于 {{ mcpCheckedAt }}</span>
+                      <button class="v2-btn small" @click="openMcpAdd">＋ 添加服务</button>
                     </div>
-                  </a-form-item>
+                  </div>
+
+                  <a-alert v-if="!mcpStatus.enabled" type="warning" show-icon style="margin-bottom:12px"
+                           message="MCP 总开关未开启"
+                           description="开启后才会连接下方服务、并把它们的工具提供给模型（在下方「MCP 总开关」处开启并保存）。" />
+
+                  <div v-if="!mcpStatus.servers.length" class="key-empty">
+                    <div class="key-empty-title">还没有 MCP 服务</div>
+                    <div class="key-empty-desc">
+                      接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
+                    </div>
+                    <button class="v2-btn small" @click="openMcpAdd">添加第一个服务</button>
+                  </div>
+
+                  <template v-else>
+                    <div v-for="s in mcpStatus.servers" :key="s.name" class="mcp-card">
+                      <div class="mcp-card-head">
+                        <span class="mcp-dot" :class="s.connected ? 'ok' : 'bad'"></span>
+                        <span class="mcp-card-name">{{ s.name }}</span>
+                        <span v-if="s.connected" class="mcp-state ok">已连接 · {{ s.toolCount }} 个工具</span>
+                        <span v-else class="mcp-state bad" :title="s.state">{{ mcpErr(s.state) }}</span>
+                        <div class="mcp-card-actions">
+                          <button v-if="s.connected" class="v2-link-btn" @click="toggleMcpTools(s)">
+                            {{ mcpExpanded === s.name ? '收起工具' : '查看工具' }}
+                          </button>
+                          <button class="v2-link-btn" @click="openMcpEdit(s)">编辑</button>
+                          <a-popconfirm title="从配置中移除该服务？" ok-text="移除" cancel-text="取消" @confirm="removeMcpServer(s)">
+                            <button class="v2-link-btn danger">移除</button>
+                          </a-popconfirm>
+                        </div>
+                      </div>
+                      <div class="mcp-card-sub">
+                        <span class="mcp-type-pill">{{ s.type }}</span>
+                        <span class="mcp-url" :title="s.url">{{ s.url }}</span>
+                      </div>
+                      <div v-if="mcpExpanded === s.name" class="mcp-tools">
+                        <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
+                          <code>{{ t.name }}</code>
+                          <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
+                        </div>
+                        <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 添加 / 编辑服务弹窗：先测再存，不用手写 JSON -->
+                  <a-modal v-model:open="mcpFormOpen" :title="mcpForm.mode === 'add' ? '添加 MCP 服务' : '编辑 MCP 服务'"
+                           :footer="null" :width="580">
+                    <a-form layout="vertical">
+                      <a-form-item label="名称" required>
+                        <a-input v-model:value="mcpForm.name" placeholder="如：时间工具 / 内部系统查询" :maxlength="40" />
+                      </a-form-item>
+                      <a-form-item label="服务地址" required>
+                        <a-input v-model:value="mcpForm.url" placeholder="http://127.0.0.1:8931 或 http://host:port/mcp" />
+                      </a-form-item>
+                      <a-form-item label="传输类型">
+                        <a-radio-group v-model:value="mcpForm.type" size="small" button-style="solid">
+                          <a-radio-button value="streamable">streamable（推荐）</a-radio-button>
+                          <a-radio-button value="sse">SSE</a-radio-button>
+                        </a-radio-group>
+                      </a-form-item>
+                      <a-form-item v-if="mcpProbe.done" label="测试结果">
+                        <div v-if="mcpProbe.available" class="mcp-probe-ok">
+                          连接正常，提供 {{ mcpProbe.tools.length }} 个工具
+                        </div>
+                        <div v-else class="mcp-probe-bad">连接失败：{{ mcpProbe.error }}</div>
+                        <div v-if="mcpProbe.available && mcpProbe.tools.length" class="mcp-tools" style="margin-top:6px">
+                          <div v-for="t in mcpProbe.tools" :key="t.name" class="mcp-tool">
+                            <code>{{ t.name }}</code>
+                            <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
+                          </div>
+                        </div>
+                      </a-form-item>
+                    </a-form>
+                    <div class="key-modal-foot">
+                      <button class="v2-btn ghost" :disabled="mcpProbe.loading" @click="testMcpForm">
+                        {{ mcpProbe.loading ? '测试中…' : '测试连接' }}
+                      </button>
+                      <button class="v2-btn" :disabled="mcpSaving" @click="submitMcpForm">
+                        {{ mcpSaving ? '保存中…' : (mcpForm.mode === 'add' ? '添加并连接' : '保存并重连') }}
+                      </button>
+                    </div>
+                  </a-modal>
                 </template>
 
                 <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明） -->
@@ -373,7 +449,7 @@ import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, ge
 import { renderMd } from '../../utils/markdown'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
-import { getMcpStatus, reloadMcp } from '../../api'
+import { getMcpStatus, reloadMcp, probeMcp } from '../../api'
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -870,6 +946,94 @@ const delSkill = async rec => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
+// ==================== MCP 服务卡片：添加 / 编辑 / 移除 / 测试连接 ====================
+// 服务的增删改都落到 mcp.servers 配置（一个 JSON 数组），保存后自动重连并刷新状态——
+// 用户不必再手写 JSON，也不需要"保存配置 + 手动重连"两步操作。
+const mcpExpanded = ref('')
+const mcpFormOpen = ref(false)
+const mcpSaving = ref(false)
+const mcpForm = ref({ mode: 'add', origin: '', name: '', url: '', type: 'streamable' })
+const mcpProbe = ref({ loading: false, done: false, available: false, error: '', tools: [] })
+const mcpConnectedCount = computed(() => mcpStatus.value.servers.filter(s => s.connected).length)
+
+const toggleMcpTools = s => { mcpExpanded.value = mcpExpanded.value === s.name ? '' : s.name }
+const openMcpAdd = () => {
+  mcpForm.value = { mode: 'add', origin: '', name: '', url: '', type: 'streamable' }
+  mcpProbe.value = { loading: false, done: false, available: false, error: '', tools: [] }
+  mcpFormOpen.value = true
+}
+const openMcpEdit = s => {
+  mcpForm.value = { mode: 'edit', origin: s.name, name: s.name, url: s.url || '', type: s.type || 'streamable' }
+  mcpProbe.value = { loading: false, done: false, available: false, error: '', tools: [] }
+  mcpFormOpen.value = true
+}
+const testMcpForm = async () => {
+  if (!mcpForm.value.url.trim()) { message.warning('请先填写服务地址'); return }
+  mcpProbe.value = { loading: true, done: false, available: false, error: '', tools: [] }
+  try {
+    const r = await probeMcp(mcpForm.value.url.trim(), mcpForm.value.type)
+    const d = r.success ? r.data : null
+    mcpProbe.value = { loading: false, done: true, available: !!(d && d.available),
+      error: (d && d.error) || '未知错误', tools: (d && d.tools) || [] }
+  } catch (e) {
+    mcpProbe.value = { loading: false, done: true, available: false, error: e.message || '测试失败', tools: [] }
+  }
+}
+/** 当前配置里的服务数组（从 mcp.servers 字段解析；非法 JSON 给可读提示，不静默清空） */
+const currentMcpServers = () => {
+  const raw = readForm(form.value, 'mcp.servers')
+  if (!raw || !String(raw).trim()) return []
+  const arr = JSON.parse(raw)
+  if (!Array.isArray(arr)) throw new Error('mcp.servers 不是 JSON 数组，请先在下方高级编辑里修正')
+  return arr
+}
+/** 保存服务列表（只提交 mcp 两项，不动用户其它未保存改动）→ 重连 → 刷新状态 */
+const persistMcpServers = async list => {
+  const json = JSON.stringify(list)
+  const r = await saveConfig({ mcp: { servers: json, enabled: 'true' } })
+  if (!r.success) { message.error(r.msg || '保存失败'); return false }
+  writeForm(form.value, 'mcp.servers', json)
+  writeForm(form.value, 'mcp.enabled', true)
+  mcpStatus.value = { ...mcpStatus.value, enabled: true }
+  // 基线同步：否则脏检测会把刚存下的值当成"待保存"再提交一次
+  if (initialPayload.value) {
+    const base = JSON.parse(JSON.stringify(initialPayload.value))
+    base.mcp = { ...(base.mcp || {}), servers: json, enabled: 'true' }
+    initialPayload.value = base
+  }
+  await doReloadMcp()
+  return true
+}
+const submitMcpForm = async () => {
+  const name = mcpForm.value.name.trim()
+  const url = mcpForm.value.url.trim()
+  if (!name) { message.warning('请填写名称'); return }
+  if (!url) { message.warning('请填写服务地址'); return }
+  mcpSaving.value = true
+  try {
+    let list
+    try { list = currentMcpServers() } catch (e) { message.error(e.message); return }
+    const item = { name, url, type: mcpForm.value.type }
+    if (mcpForm.value.mode === 'edit') {
+      const at = list.findIndex(x => x && x.name === mcpForm.value.origin)
+      if (at >= 0) list[at] = item; else list.push(item)
+    } else {
+      if (list.some(x => x && x.name === name)) { message.warning('已存在同名服务，请换个名称'); return }
+      if (list.length >= 10) { message.warning('最多接入 10 个 MCP 服务'); return }
+      list.push(item)
+    }
+    if (await persistMcpServers(list)) {
+      message.success(mcpForm.value.mode === 'add' ? '已添加并连接' : '已保存并重连')
+      mcpFormOpen.value = false
+    }
+  } finally { mcpSaving.value = false }
+}
+const removeMcpServer = async s => {
+  let list
+  try { list = currentMcpServers() } catch (e) { message.error(e.message); return }
+  if (await persistMcpServers(list.filter(x => !x || x.name !== s.name))) message.success('已移除')
+}
+
 // 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）；API Key / 技能面板同理
 watch(current, k => {
   if (k === 'mcp') loadMcpStatus()
@@ -931,7 +1095,22 @@ onUnmounted(() => {
 .probe-chip.ok { color: var(--v2-ok); background: #eaf5ec; }
 .probe-chip.bad { color: var(--v2-danger); background: #fbecea; }
 .reembed-meta { margin-top: 6px; color: var(--v2-text3); font-size: 12px; line-height: 1.8; }
-/* MCP 连接状态列表 */
+/* MCP 服务卡片 */
+.mcp-card { border: 1px solid var(--v2-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.mcp-card-head { display: flex; align-items: center; gap: 8px; }
+.mcp-card-name { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-card-head .mcp-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-card-actions { margin-left: auto; flex: none; }
+.mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--v2-text3); }
+.mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: #f1f3f5; color: var(--v2-text3); }
+.mcp-tools { margin-top: 8px; border-top: 1px dashed var(--v2-border); padding-top: 6px; }
+.mcp-tool { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
+.mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: #f2f3f5; padding: 1px 5px; border-radius: 4px; }
+.mcp-tool-desc { min-width: 0; color: var(--v2-text3); }
+.mcp-probe-ok { font-size: 12px; color: var(--v2-ok); }
+.mcp-probe-bad { font-size: 12px; color: var(--v2-danger); word-break: break-all; }
+/* 旧版单行状态（保留：无卡片渲染时不会用到，但样式不删以免其它页面引用报缺失） */
 .mcp-empty { color: var(--v2-text3); font-size: 12px; margin-bottom: 6px; }
 .mcp-srv { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }

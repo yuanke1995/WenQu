@@ -262,6 +262,7 @@ export async function downloadDocumentSource (id, fileName) {
 // ==================== MCP 外部工具（设置页管理界面） ====================
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
+export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', body: JSON.stringify({ url, type }) })
 
 // ==================== 技能（Skills） ====================
 export const listSkills = () => request('/skill/list')
