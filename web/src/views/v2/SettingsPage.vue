@@ -150,10 +150,12 @@
                 <a-table v-else :data-source="keys" size="small" row-key="id" :pagination="false">
                   <a-table-column title="名称" key="name" ellipsis>
                     <template #default="{ record }">
-                      <span class="key-name">{{ record.name || '未命名' }}</span>
-                      <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
-                      <span v-else-if="record.expired" class="v2-pill err key-tag">已过期</span>
-                      <span v-else class="v2-pill ok key-tag">生效中</span>
+                      <span class="key-name-wrap">
+                        <span class="key-name">{{ record.name || '未命名' }}</span>
+                        <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
+                        <span v-else-if="record.expired" class="v2-pill err key-tag">已过期</span>
+                        <span v-else class="v2-pill ok key-tag">生效中</span>
+                      </span>
                     </template>
                   </a-table-column>
                   <a-table-column title="Key" key="prefix" width="170">
@@ -170,18 +172,12 @@
                   <a-table-column title="有效期" key="expire" width="110">
                     <template #default="{ record }"><span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span></template>
                   </a-table-column>
-                  <a-table-column title="操作" key="act" width="120" align="right">
+                  <a-table-column title="操作" key="act" width="150">
                     <template #default="{ record }">
-                      <a-tooltip title="改名">
-                        <button class="key-icon-btn" @click="openRenameKey(record)"><edit-outlined /></button>
-                      </a-tooltip>
-                      <a-tooltip :title="record.disabled ? '启用' : '停用（吊销，调用方立即失效）'">
-                        <button class="key-icon-btn" @click="toggleKey(record)">
-                          <play-circle-outlined v-if="record.disabled" /><stop-outlined v-else />
-                        </button>
-                      </a-tooltip>
+                      <button class="v2-link-btn" @click="openRenameKey(record)">改名</button>
+                      <button class="v2-link-btn" @click="toggleKey(record)">{{ record.disabled ? '启用' : '停用' }}</button>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
-                        <a-tooltip title="删除"><button class="key-icon-btn danger"><delete-outlined /></button></a-tooltip>
+                        <button class="v2-link-btn danger">删除</button>
                       </a-popconfirm>
                     </template>
                   </a-table-column>
@@ -278,8 +274,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SaveOutlined, QuestionCircleOutlined, EditOutlined, DeleteOutlined, StopOutlined,
-         PlayCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
+import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey } from '../../api'
@@ -798,17 +793,11 @@ onUnmounted(() => {
 .key-stat { font-size: 12px; color: var(--v2-text2); }
 .key-stat b { color: var(--v2-text); font-weight: 600; }
 .key-dim { color: var(--v2-text3); font-size: 12px; }
-.key-name { font-weight: 500; }
-.key-tag { margin-left: 6px; font-size: 11px; }
+/* 名称与状态标签同一行：inline-flex 垂直居中（inline-block 的基线对齐会让标签高低不齐） */
+.key-name-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.key-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.key-tag { font-size: 11px; flex: none; line-height: 18px; }
 .key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--v2-text2); }
-/* 操作图标按钮：hover 才出色，避免整行花花绿绿 */
-.key-icon-btn {
-  width: 24px; height: 24px; border: none; background: transparent; border-radius: 5px;
-  color: var(--v2-text3); cursor: pointer; font-size: 13px; margin-left: 2px;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.key-icon-btn:hover { background: var(--v2-accent-weak); color: var(--v2-accent); }
-.key-icon-btn.danger:hover { background: rgba(220, 38, 38, .08); color: var(--v2-danger); }
 /* 空态 */
 .key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--v2-border); border-radius: 8px; }
 .key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
