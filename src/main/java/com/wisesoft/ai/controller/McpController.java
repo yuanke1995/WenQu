@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -45,5 +46,11 @@ public class McpController {
     public ResultJson reload() {
         mcpClientService.reload();
         return status();
+    }
+
+    @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"")
+    @PostMapping("/probe")
+    public ResultJson probe(@RequestBody Map<String, String> body) {
+        return ResultJson.ok(mcpClientService.probe(body.get("url"), body.get("type")));
     }
 }

@@ -98,7 +98,7 @@ public class McpClientService {
     }
 
     /**
-     * 管理界面快照：按配置顺序列出每个 server 的地址/类型/连接状态/可用工具数。
+     * 管理界面快照：按配置顺序列出每个 server 的地址/类型/连接状态/可用工具。
      * 总开关关闭或没配 server 时返回空列表（前端据此显示"未启用/未配置"）。
      */
     public List<Map<String, Object>> serverStatuses() {
@@ -112,19 +112,68 @@ public class McpClientService {
             String st = states.get(name);
             m.put("state", st == null ? "unknown" : st);
             m.put("connected", "connected".equals(st));
-            int tools = 0;
+            List<Map<String, String>> tools = new ArrayList<>();
             McpSyncClient c = clients.get(name);
             if (c != null) {
                 try {
-                    tools = c.listTools().tools().size();
+                    for (McpSchema.Tool t : c.listTools().tools()) {
+                        tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+                    }
                 } catch (Exception ignore) {
-                    // 拉列表失败不阻断状态展示（工具数显示 0，状态仍以 states 为准）
+                    // 拉列表失败不阻断状态展示（工具列表为空，连接状态仍以 states 为准）
                 }
             }
             m.put("tools", tools);
+            m.put("toolCount", tools.size());
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 临时连接测试（设置页"测试连接"用）：**不落配置、不进客户端池**，连上后取工具清单即关闭。
+     * 用于"先测再存"，避免用户填错地址还得先保存再回来删。
+     */
+    public Map<String, Object> probe(String url, String type) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (url == null || url.isBlank()) {
+            out.put("available", false);
+            out.put("error", "地址为空");
+            return out;
+        }
+        String t = (type == null || type.isBlank()) ? "streamable" : type;
+        McpSyncClient client = null;
+        try {
+            client = connect("probe", url.trim(), t);
+            client.initialize();
+            List<Map<String, String>> tools = new ArrayList<>();
+            for (McpSchema.Tool tool : client.listTools().tools()) {
+                tools.add(Map.of("name", tool.name(), "description", brief(tool.description())));
+            }
+            out.put("available", true);
+            out.put("tools", tools);
+            out.put("toolCount", tools.size());
+            return out;
+        } catch (Exception e) {
+            out.put("available", false);
+            out.put("error", e.getMessage() == null ? "连接失败" : e.getMessage());
+            return out;
+        } finally {
+            if (client != null) {
+                try {
+                    client.closeGracefully();
+                } catch (Exception ignore) {
+                    // 探测用连接，关闭失败无需处理
+                }
+            }
+        }
+    }
+
+    /** 工具描述截断（界面展开用，避免超长描述撑坏卡片） */
+    private static String brief(String s) {
+        if (s == null) return "";
+        String one = s.replaceAll("\\s+", " ").trim();
+        return one.length() > 100 ? one.substring(0, 100) + "…" : one;
     }
 
     /** 配置变更后强制重建全部连接（设置页保存 mcp.* 后调用或下次取工具时按指纹自动触发） */
