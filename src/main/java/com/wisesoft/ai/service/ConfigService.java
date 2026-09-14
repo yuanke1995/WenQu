@@ -223,6 +223,10 @@ public class ConfigService {
             Map.entry("skill.injectMaxChars", "技能（Skills）：清单注入字符上限（防技能过多挤占上下文）"),
             Map.entry("skill.maxFileChars", "技能（Skills）：单个技能全文读取上限（字符，超出截断）"),
             Map.entry("skill.disabledNames", "技能（Skills）：已停用技能目录名列表（JSON 数组，系统写入）"),
+            Map.entry("agent.enabled", "SubAgent 并行编排：总开关（多视角并行检索 + 要点提炼；默认关，开启后每轮多 2~4 次提炼调用）"),
+            Map.entry("agent.subAgents", "SubAgent 并行编排：子代理数量（2~4，默认 2）"),
+            Map.entry("agent.topKPerAgent", "SubAgent 并行编排：每个子代理取回命中块数（默认 3）"),
+            Map.entry("agent.digestEnabled", "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）"),
             // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
             Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
             Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
@@ -364,6 +368,10 @@ public class ConfigService {
             Map.entry("skill.toolEnabled", 2),
             Map.entry("skill.injectMaxChars", 3),
             Map.entry("skill.maxFileChars", 3),
+            Map.entry("agent.enabled", 2),
+            Map.entry("agent.subAgents", 2),
+            Map.entry("agent.topKPerAgent", 3),
+            Map.entry("agent.digestEnabled", 2),
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
@@ -715,6 +723,10 @@ public class ConfigService {
         d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
         d.put("skill.maxFileChars", "20000");              // 单技能全文读取上限
         d.put("skill.disabledNames", "[]");                // 已停用技能（系统写入）
+        d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
+        d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
+        d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
+        d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
@@ -1317,7 +1329,9 @@ public class ConfigService {
                 // 技能（Skills）分组：skill.enabled / skill.dir / skill.inject* / skill.maxFileChars
                 "skill",
                 // @ 引用分组：atRef.maxChunksPerDoc / atRef.maxTotal
-                "atRef"};
+                "atRef",
+                // SubAgent 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent / agent.digestEnabled
+                "agent"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {

@@ -255,6 +255,8 @@ public class RagService {
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（skill.enabled 控制，默认关） */
     private final SkillService skillService;
     private final SkillTools skillTools;
+    /** SubAgent 并行编排（4.3）：多视角并行检索 + 要点提炼（agent.enabled 控制，默认关） */
+    private final SubAgentOrchestrator subAgentOrchestrator;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -318,6 +320,7 @@ public class RagService {
                       BuiltinTools builtinTools,
                       SkillService skillService,
                       SkillTools skillTools,
+                      SubAgentOrchestrator subAgentOrchestrator,
                       McpClientService mcpClientService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
@@ -340,6 +343,7 @@ public class RagService {
         this.builtinTools = builtinTools;
         this.skillService = skillService;
         this.skillTools = skillTools;
+        this.subAgentOrchestrator = subAgentOrchestrator;
         this.mcpClientService = mcpClientService;
     }
 
@@ -547,6 +551,19 @@ public class RagService {
             }
             log.info("[RAG] 检索命中 {} 块, query={}", hits.size(), retrievalQuery);
 
+            // SubAgent 并行编排（4.3，默认关）：多视角并行检索 + 要点提炼。
+            // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
+            // 增强项：编排内部已把所有异常降级为空结果，失败不影响主链路
+            SubAgentOrchestrator.Outcome subOutcome = null;
+            if (configService.getBoolean("agent.enabled")) {
+                sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
+                subOutcome = subAgentOrchestrator.run(question);
+                if (!subOutcome.hits().isEmpty()) {
+                    log.info("[SUBAGENT] 命中并入主链路 {} 块（子代理 {} 个，耗时 {}ms）",
+                            subOutcome.hits().size(), subOutcome.agents(), subOutcome.elapsedMs());
+                }
+            }
+
             // 2. System 提示：角色段（DB 可编辑，保存即生效；空则用代码默认值兜底）+ 规则段（代码固定，与解析器耦合）
             //    + 对话历史（单条截断 + token 上限 + 图片标记剥离）
             String rolePart = configService.get("chat.systemPrompt");
@@ -575,6 +592,11 @@ public class RagService {
                     log.info("[SKILL] 已注入技能清单（{} 个启用技能）",
                             skillBlock.split("\n- ").length - 1);
                 }
+            }
+            // SubAgent 并行检索要点：作为补充资料段（不占 [N] 引用编号空间，仅辅助生成）
+            if (subOutcome != null && !subOutcome.digestText().isBlank()) {
+                system.append("\n\n【并行检索要点】\n").append(subOutcome.digestText());
+                stageMs.put("subagent", subOutcome.elapsedMs());
             }
             List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, configService.getInt("chat.historyRounds", 5));
             if (recentHistory == null) {
@@ -617,15 +639,24 @@ public class RagService {
             int snippetWindow = configService.getInt("context.snippetWindowChars");
             // 引用扩散 + 结构上下文扩展：命中 A → 带出被引块 B / 引用块 C（默认关）/ 父章节块。
             // 扩散块以 Hit 形态混入同一上下文循环，复用图片占位/截取/预算逻辑；任一环节失败降级为不扩散
+            // （subOutcome 在检索阶段就已产出：子代理命中并入 mainHits、要点注入 system）
             // @ 引用：用户手动 @ 的文档 → 该文档内相关块前置（"指定必被参考"，优先于普通命中）
             List<HybridRetrievalService.Hit> atHits = buildAtRefHits(refs, retrievalQuery);
             List<HybridRetrievalService.Hit> mainHits = new ArrayList<>(atHits);
-            Set<String> atKid = atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
+            Set<String> seenKid = atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
                     .filter(Objects::nonNull).collect(Collectors.toSet());
-            for (HybridRetrievalService.Hit h : hits) {
-                // @ 块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
-                if (!atKid.contains(h.knowledgeId())) mainHits.add(h);
+            // 子代理命中优先级仅次于 @ 引用（针对性视角检索，价值高于普通召回）
+            if (subOutcome != null) {
+                for (HybridRetrievalService.Hit h : subOutcome.hits()) {
+                    if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())) mainHits.add(h);
+                }
             }
+            for (HybridRetrievalService.Hit h : hits) {
+                // @ 块/子代理块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
+                if (h.knowledgeId() == null || seenKid.add(h.knowledgeId())) mainHits.add(h);
+            }
+            Set<String> atKid = new HashSet<>(atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
+                    .filter(Objects::nonNull).collect(Collectors.toSet()));
             KnowledgeRefService.ExpandResult expandResult = knowledgeRefService.expand(mainHits);
             List<HybridRetrievalService.Hit> extraHits = expandResult.extra();
             Map<String, String> refOrigins = new HashMap<>(expandResult.origins());
