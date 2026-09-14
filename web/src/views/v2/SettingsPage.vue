@@ -126,59 +126,146 @@
 
               <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
               <template v-if="current === 'apiKey'">
-                <div class="apikey-toolbar">
-                  <a-input v-model:value="newKeyName" placeholder="用途名称（必填），如：报表系统集成" style="width:240px"
-                           :maxlength="200" @press-enter="doCreateKey" />
-                  <a-input v-model:value="newKeyExpire" placeholder="过期日期（可选，yyyy-MM-dd）" style="width:220px"
-                           @press-enter="doCreateKey" />
-                  <button class="v2-btn small" :disabled="keyCreating" @click="doCreateKey">{{ keyCreating ? '签发中…' : '签发新 Key' }}</button>
-                  <button class="v2-btn ghost small" @click="loadKeys">刷新</button>
+                <!-- 工具栏：概览统计 + 主操作 -->
+                <div class="key-bar">
+                  <span class="key-stat">
+                    共 <b>{{ keys.length }}</b> 个 Key · 生效中 <b>{{ activeKeyCount }}</b>
+                    <span v-if="lastUsedKey" class="key-dim">· 最近使用 {{ fmtTs(lastUsedKey.lastUsedAt) }}</span>
+                  </span>
+                  <div class="key-bar-actions">
+                    <button class="v2-btn ghost small" @click="loadKeys">刷新</button>
+                    <button class="v2-btn small" @click="openCreateKey">＋ 创建 API Key</button>
+                  </div>
                 </div>
-                <a-table :data-source="keys" size="small" row-key="id" :pagination="false" :locale="{ emptyText: '暂无 Key' }">
-                  <a-table-column title="名称（点击可改名）" key="name" ellipsis>
+
+                <!-- 空态：没有 Key 时给引导，而不是一张空表格 -->
+                <div v-if="!keys.length" class="key-empty">
+                  <div class="key-empty-title">还没有 API Key</div>
+                  <div class="key-empty-desc">
+                    创建后，外部系统在请求头带 <code>X-Api-Key</code> 即可调用问答接口，无需平台 token。
+                  </div>
+                  <button class="v2-btn small" @click="openCreateKey">创建第一个 API Key</button>
+                </div>
+
+                <a-table v-else :data-source="keys" size="small" row-key="id" :pagination="false">
+                  <a-table-column title="名称" key="name" ellipsis>
                     <template #default="{ record }">
-                      <a-input v-if="editingKeyId === record.id" v-model:value="editingKeyName" size="small"
-                               placeholder="用途名称，回车保存" :maxlength="200"
-                               @press-enter="saveKeyName(record)" @blur="saveKeyName(record)" @keydown.esc="editingKeyId = ''" />
-                      <span v-else class="apikey-name" :title="'点击改名：' + record.name" @click="startKeyName(record)">
-                        {{ record.name || '未命名' }}
-                      </span>
+                      <span class="key-name">{{ record.name || '未命名' }}</span>
+                      <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
+                      <span v-else-if="record.expired" class="v2-pill err key-tag">已过期</span>
+                      <span v-else class="v2-pill ok key-tag">生效中</span>
                     </template>
                   </a-table-column>
-                  <a-table-column title="Key" key="prefix" width="150">
-                    <template #default="{ record }"><code>{{ record.keyPrefix }}…</code></template>
-                  </a-table-column>
-                  <a-table-column title="状态" key="state" width="100">
-                    <template #default="{ record }">
-                      <span v-if="record.disabled" class="v2-pill warn">已停用</span>
-                      <span v-else-if="record.expired" class="v2-pill err">已过期</span>
-                      <span v-else class="v2-pill ok">生效中</span>
-                    </template>
+                  <a-table-column title="Key" key="prefix" width="170">
+                    <template #default="{ record }"><span class="key-prefix">{{ record.keyPrefix }}…</span></template>
                   </a-table-column>
                   <a-table-column title="最近使用" key="lastUsed" width="150">
                     <template #default="{ record }">
-                      <span :style="{ color: record.lastUsedAt ? 'var(--v2-text2)' : 'var(--v2-text3)' }">
-                        {{ record.lastUsedAt ? String(record.lastUsedAt).replace('T', ' ').slice(0, 16) : '从未使用' }}
-                      </span>
+                      <span :class="{ 'key-dim': !record.lastUsedAt }">{{ record.lastUsedAt ? fmtTs(record.lastUsedAt) : '从未使用' }}</span>
                     </template>
                   </a-table-column>
-                  <a-table-column title="过期时间" key="expire" width="120">
-                    <template #default="{ record }">{{ record.expireAt ? String(record.expireAt).slice(0, 10) : '长期' }}</template>
+                  <a-table-column title="创建时间" key="created" width="150">
+                    <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.createTime) }}</span></template>
                   </a-table-column>
-                  <a-table-column title="操作" key="act" width="130">
+                  <a-table-column title="有效期" key="expire" width="110">
+                    <template #default="{ record }"><span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span></template>
+                  </a-table-column>
+                  <a-table-column title="操作" key="act" width="120" align="right">
                     <template #default="{ record }">
-                      <button class="v2-link-btn" @click="toggleKey(record)">{{ record.disabled ? '启用' : '停用' }}</button>
+                      <a-tooltip title="改名">
+                        <button class="key-icon-btn" @click="openRenameKey(record)"><edit-outlined /></button>
+                      </a-tooltip>
+                      <a-tooltip :title="record.disabled ? '启用' : '停用（吊销，调用方立即失效）'">
+                        <button class="key-icon-btn" @click="toggleKey(record)">
+                          <play-circle-outlined v-if="record.disabled" /><stop-outlined v-else />
+                        </button>
+                      </a-tooltip>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
-                        <button class="v2-link-btn danger">删除</button>
+                        <a-tooltip title="删除"><button class="key-icon-btn danger"><delete-outlined /></button></a-tooltip>
                       </a-popconfirm>
                     </template>
                   </a-table-column>
                 </a-table>
-                <div class="reembed-meta">
-                  调用方式：请求头 <code>X-Api-Key: sk-…</code>（替代平台 token，携带用户身份仍走 X-User-Id）。
-                  Key 权限固定为问答链路（问答/会话/反馈/引用溯源），管理端点一律拒绝。
-                  明文仅在签发时显示一次（库里只存哈希），请立即保存；不再使用建议「停用」而非删除，便于审计。
+                <!-- 如何使用：拿到 Key 之后怎么调，比堆一段说明文字有用 -->
+                <div class="key-usage">
+                  <div class="key-usage-head" @click="usageOpen = !usageOpen">
+                    <span class="key-usage-caret">{{ usageOpen ? '▾' : '▸' }}</span> 如何使用
+                    <span class="key-dim">（调用方式与权限边界）</span>
+                  </div>
+                  <div v-if="usageOpen" class="key-usage-body">
+                    <div class="key-usage-label">调用问答接口（curl 示例）</div>
+                    <div class="key-code">
+                      <code>{{ curlSample }}</code>
+                      <button class="key-copy" :title="copiedSample === 'curl' ? '已复制' : '复制'"
+                              @click="copySample('curl', curlSample)">
+                        <check-outlined v-if="copiedSample === 'curl'" class="key-copy-ok" /><copy-outlined v-else />
+                      </button>
+                    </div>
+                    <ul class="key-usage-list">
+                      <li><code>X-Api-Key: sk-…</code> 替代平台 token（<code>X-Trusted-Token</code>）</li>
+                      <li><code>X-User-Id</code> 仍用于会话隔离：同一个 Key 不同用户带不同值，会话互不串</li>
+                      <li>权限仅限问答链路（问答 / 会话 / 反馈 / 引用溯源），管理端点一律拒绝</li>
+                      <li>不再使用建议「停用」而非删除：停用可保留审计线索，删除记录即消失</li>
+                    </ul>
+                  </div>
                 </div>
+
+                <!-- 创建弹窗：两步式（表单 → 明文仅此一次展示） -->
+                <a-modal v-model:open="createOpen" :title="createStep === 'form' ? '创建 API Key' : 'Key 已创建'"
+                         :footer="null" :width="580" :mask-closable="false" @cancel="closeCreateKey">
+                  <template v-if="createStep === 'form'">
+                    <a-form layout="vertical">
+                      <a-form-item label="用途名称" required>
+                        <a-input v-model:value="createForm.name" placeholder="如：报表系统集成 / 运维脚本 / 定时巡检"
+                                 :maxlength="200" @press-enter="submitCreateKey" />
+                      </a-form-item>
+                      <a-form-item label="有效期">
+                        <a-radio-group v-model:value="createForm.expireMode" size="small" button-style="solid">
+                          <a-radio-button value="never">长期有效</a-radio-button>
+                          <a-radio-button value="30">30 天</a-radio-button>
+                          <a-radio-button value="90">90 天</a-radio-button>
+                          <a-radio-button value="custom">自定义</a-radio-button>
+                        </a-radio-group>
+                        <a-date-picker v-if="createForm.expireMode === 'custom'" v-model:value="createForm.expireDate"
+                                       style="margin-top:8px" placeholder="选择到期日期"
+                                       :disabled-date="d => d && d.valueOf() < Date.now() - 86400000" />
+                      </a-form-item>
+                    </a-form>
+                    <div class="key-modal-foot">
+                      <button class="v2-btn ghost" @click="closeCreateKey">取消</button>
+                      <button class="v2-btn" :disabled="keyCreating" @click="submitCreateKey">{{ keyCreating ? '创建中…' : '创建' }}</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="key-done-warn">
+                      请立即复制保存——明文只显示这一次（服务端只存哈希，关闭后无法再查看）
+                    </div>
+                    <div class="key-done-meta">用途：<b>{{ createdKey.name }}</b></div>
+                    <div class="key-done-box">
+                      <code>{{ createdKey.apiKey }}</code>
+                      <button class="key-copy" :title="copiedKey ? '已复制' : '复制'" @click="copyCreatedKey">
+                        <check-outlined v-if="copiedKey" class="key-copy-ok" /><copy-outlined v-else />
+                      </button>
+                    </div>
+                    <div class="key-modal-foot">
+                      <button class="v2-btn" @click="closeCreateKey">我已保存，关闭</button>
+                    </div>
+                  </template>
+                </a-modal>
+
+                <!-- 改名弹窗 -->
+                <a-modal v-model:open="renameOpen" title="重命名 API Key" :footer="null" :width="460">
+                  <a-form layout="vertical">
+                    <a-form-item label="用途名称" required>
+                      <a-input v-model:value="renameForm.name" placeholder="如：报表系统集成"
+                               :maxlength="200" @press-enter="submitRenameKey" />
+                    </a-form-item>
+                  </a-form>
+                  <div class="key-modal-foot">
+                    <button class="v2-btn ghost" @click="renameOpen = false">取消</button>
+                    <button class="v2-btn" @click="submitRenameKey">保存</button>
+                  </div>
+                </a-modal>
               </template>
             </a-form>
           </div>
@@ -189,9 +276,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SaveOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { SaveOutlined, QuestionCircleOutlined, EditOutlined, DeleteOutlined, StopOutlined,
+         PlayCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey } from '../../api'
@@ -517,58 +605,104 @@ const loadMcpStatus = async () => {
 // ==================== API Key 管理（6.5） ====================
 const keys = ref([])
 const keyCreating = ref(false)
-const newKeyName = ref('')
-const newKeyExpire = ref('')
+const usageOpen = ref(false)
+const copiedSample = ref('')
+const copiedKey = ref(false)
+// 创建走两步式弹窗：form（填名称/有效期）→ done（明文仅此一次展示）
+const createOpen = ref(false)
+const createStep = ref('form')
+const createForm = ref({ name: '', expireMode: 'never', expireDate: null })
+const createdKey = ref({ name: '', apiKey: '' })
+const renameOpen = ref(false)
+const renameForm = ref({ id: '', name: '' })
+
+const activeKeyCount = computed(() => keys.value.filter(k => !k.disabled && !k.expired).length)
+const lastUsedKey = computed(() => keys.value
+    .filter(k => k.lastUsedAt)
+    .sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)))[0] || null)
+const fmtTs = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
+const fmtDate = s => (s ? String(s).slice(0, 10) : '长期')
+
 const loadKeys = async () => {
   try {
     const r = await listApiKeys()
     if (r.success && Array.isArray(r.data)) keys.value = r.data
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
 }
-const editingKeyId = ref('')
-const editingKeyName = ref('')
-const startKeyName = rec => {
-  editingKeyId.value = rec.id
-  editingKeyName.value = rec.name || ''
+const copyText = async t => {
+  try { await navigator.clipboard.writeText(t); return true } catch (e) { return false }
 }
-/** 名称列内联改名：回车/失焦保存；空名或未改动直接退出（防 blur 与 enter 双触发重复请求） */
-const saveKeyName = async rec => {
-  if (editingKeyId.value !== rec.id) return
-  const name = (editingKeyName.value || '').trim()
-  editingKeyId.value = ''
-  if (!name || name === rec.name) return
-  try {
-    const r = await renameApiKey(rec.id, name)
-    if (r.success) { message.success('已改名'); loadKeys() } else message.error(r.msg || '改名失败')
-  } catch (e) { message.error(e.message || '改名失败') }
+/** 有效期选择 → 提交给后端的 expireAt（yyyy-MM-dd；空串=长期） */
+const expirePayload = () => {
+  const m = createForm.value.expireMode
+  if (m === 'never') return ''
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  if (m === 'custom') {
+    const d = createForm.value.expireDate
+    if (!d) return ''
+    return d.format ? d.format('YYYY-MM-DD') : ymd(new Date(d))
+  }
+  const d = new Date()
+  d.setDate(d.getDate() + Number(m))
+  return ymd(d)
 }
-const doCreateKey = async () => {
-  // 空名不再静默兜底成「未命名 Key」——直接提示，避免签出一堆分不清用途的 Key
-  if (!newKeyName.value.trim()) { message.warning('请先填写用途名称'); return }
+/** 示例随第一个 Key 的前缀变化，让用户一眼看到"在哪儿带" */
+const curlSample = computed(() => {
+  const k = keys.value[0]?.keyPrefix || 'sk-你的Key'
+  return `curl -X POST http://<你的服务地址>/ai/api/ai/chat \\
+  -H "Content-Type: application/json" \\
+  -H "X-Api-Key: ${k}..." \\
+  -H "X-User-Id: user-001" \\
+  -d '{"question":"如何创建评分组件？"}'`
+})
+const openCreateKey = () => {
+  createForm.value = { name: '', expireMode: 'never', expireDate: null }
+  createdKey.value = { name: '', apiKey: '' }
+  copiedKey.value = false
+  createStep.value = 'form'
+  createOpen.value = true
+}
+const closeCreateKey = () => {
+  createOpen.value = false
+  if (createStep.value === 'done') loadKeys()
+}
+const submitCreateKey = async () => {
+  // 空名不静默兜底成「未命名 Key」——直接提示，避免签出一堆分不清用途的 Key
+  if (!createForm.value.name.trim()) { message.warning('请先填写用途名称'); return }
+  if (createForm.value.expireMode === 'custom' && !createForm.value.expireDate) { message.warning('请选择到期日期'); return }
   keyCreating.value = true
   try {
-    const r = await createApiKey({ name: newKeyName.value.trim(), expireAt: newKeyExpire.value.trim() })
+    const r = await createApiKey({ name: createForm.value.name.trim(), expireAt: expirePayload() })
     if (r.success) {
-      const plain = r.data?.apiKey || ''
-      // 明文只此一次：先尝试复制到剪贴板，再用弹窗展示（复制失败也能手动取）
-      let copied = false
-      try { await navigator.clipboard.writeText(plain); copied = true } catch (e) { copied = false }
-      Modal.success({
-        title: copied ? 'Key 已签发（已复制到剪贴板）' : 'Key 已签发',
-        // content 直接给 VNode：ant-design-vue 对函数型 content 的调用签名不是 h => VNode，
-        // 传函数会走到 "h is not a function"
-        content: h('div', [
-          h('p', { style: 'margin-bottom:6px;word-break:break-all;font-family:monospace' }, plain),
-          h('p', { style: 'color:#8a9099;font-size:12px;margin:0' }, '明文仅显示这一次（库里只存哈希），请立即保存；关闭后无法再查看。')
-        ]),
-        okText: '我已保存'
-      })
-      newKeyName.value = ''
-      newKeyExpire.value = ''
-      loadKeys()
-    } else message.error(r.msg || '签发失败')
-  } catch (e) { message.error(e.message || '签发失败') }
+      createdKey.value = { name: r.data?.name || createForm.value.name.trim(), apiKey: r.data?.apiKey || '' }
+      createStep.value = 'done'
+      copiedKey.value = await copyText(createdKey.value.apiKey)
+    } else message.error(r.msg || '创建失败')
+  } catch (e) { message.error(e.message || '创建失败') }
   finally { keyCreating.value = false }
+}
+const copyCreatedKey = async () => {
+  const ok = await copyText(createdKey.value.apiKey)
+  copiedKey.value = ok
+  if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
+}
+const copySample = async (k, text) => {
+  const ok = await copyText(text)
+  copiedSample.value = ok ? k : ''
+  if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
+}
+const openRenameKey = rec => {
+  renameForm.value = { id: rec.id, name: rec.name || '' }
+  renameOpen.value = true
+}
+const submitRenameKey = async () => {
+  const name = renameForm.value.name.trim()
+  if (!name) { message.warning('名称不能为空'); return }
+  try {
+    const r = await renameApiKey(renameForm.value.id, name)
+    if (r.success) { message.success('已改名'); renameOpen.value = false; loadKeys() }
+    else message.error(r.msg || '改名失败')
+  } catch (e) { message.error(e.message || '改名失败') }
 }
 const toggleKey = async rec => {
   try {
@@ -659,7 +793,54 @@ onUnmounted(() => {
 .mcp-state.bad { color: var(--v2-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
 /* API Key 管理（6.5） */
-.apikey-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.apikey-name { cursor: pointer; border-bottom: 1px dashed transparent; }
-.apikey-name:hover { color: var(--v2-accent); border-bottom-color: var(--v2-accent); }
+.key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.key-stat { font-size: 12px; color: var(--v2-text2); }
+.key-stat b { color: var(--v2-text); font-weight: 600; }
+.key-dim { color: var(--v2-text3); font-size: 12px; }
+.key-name { font-weight: 500; }
+.key-tag { margin-left: 6px; font-size: 11px; }
+.key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--v2-text2); }
+/* 操作图标按钮：hover 才出色，避免整行花花绿绿 */
+.key-icon-btn {
+  width: 24px; height: 24px; border: none; background: transparent; border-radius: 5px;
+  color: var(--v2-text3); cursor: pointer; font-size: 13px; margin-left: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.key-icon-btn:hover { background: var(--v2-accent-weak); color: var(--v2-accent); }
+.key-icon-btn.danger:hover { background: rgba(220, 38, 38, .08); color: var(--v2-danger); }
+/* 空态 */
+.key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--v2-border); border-radius: 8px; }
+.key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.key-empty-desc { font-size: 12px; color: var(--v2-text3); margin-bottom: 14px; line-height: 1.7; }
+/* 如何使用 */
+.key-usage { margin-top: 16px; border-top: 1px solid var(--v2-border); padding-top: 10px; }
+.key-usage-head { font-size: 12px; font-weight: 500; cursor: pointer; user-select: none; }
+.key-usage-head:hover { color: var(--v2-accent); }
+.key-usage-caret { display: inline-block; width: 12px; color: var(--v2-text3); }
+.key-usage-body { padding: 10px 0 0 12px; }
+.key-usage-label { font-size: 12px; color: var(--v2-text2); margin-bottom: 6px; }
+.key-code { position: relative; background: #f6f7f9; border: 1px solid var(--v2-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
+.key-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--v2-text); }
+.key-copy {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: none; border-radius: 5px;
+  background: transparent; color: var(--v2-text3); cursor: pointer; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.key-copy:hover { background: var(--v2-accent-weak); color: var(--v2-accent); }
+.key-copy-ok { color: var(--v2-ok); }
+.key-usage-list { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--v2-text2); line-height: 1.9; }
+.key-usage-list code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+/* 弹窗内 */
+.key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.key-done-warn {
+  background: #fff7e6; border: 1px solid #ffd591; color: #d46b08;
+  border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.6;
+}
+.key-done-meta { font-size: 12px; color: var(--v2-text2); margin-bottom: 8px; }
+.key-done-box {
+  position: relative; background: #f6f7f9; border: 1px solid var(--v2-border); border-radius: 6px;
+  padding: 12px 36px 12px 12px;
+}
+.key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--v2-text); }
 </style>
