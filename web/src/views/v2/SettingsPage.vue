@@ -525,8 +525,10 @@ const doCreateKey = async () => {
       try { await navigator.clipboard.writeText(plain); copied = true } catch (e) { copied = false }
       Modal.success({
         title: copied ? 'Key 已签发（已复制到剪贴板）' : 'Key 已签发',
-        content: h => h('div', [
-          h('p', { style: 'margin-bottom:6px' }, plain),
+        // content 直接给 VNode：ant-design-vue 对函数型 content 的调用签名不是 h => VNode，
+        // 传函数会走到 "h is not a function"
+        content: h('div', [
+          h('p', { style: 'margin-bottom:6px;word-break:break-all;font-family:monospace' }, plain),
           h('p', { style: 'color:#8a9099;font-size:12px;margin:0' }, '明文仅显示这一次（库里只存哈希），请立即保存；关闭后无法再查看。')
         ]),
         okText: '我已保存'
