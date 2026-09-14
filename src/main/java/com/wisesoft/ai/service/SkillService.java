@@ -182,6 +182,78 @@ public class SkillService {
                 + "先用 readSkill 工具读取该技能的完整说明，再按其要求作答（不要在未读取时臆测技能内容）：\n" + sb;
     }
 
+    /**
+     * 从 URL 安装技能（4.5 收尾）：只接受 http/https 上的 **SKILL.md 纯文本**。
+     *
+     * <p>安全边界：协议白名单（杜绝 file:// 等）、响应体大小上限、连接与读取超时，
+     * 内容仅作为文本落盘（**不执行**）；要求内容自带 frontmatter（含 name/description），
+     * 缺 frontmatter 直接报错而不是猜——避免装进来一个模型永远看不到的"哑技能"。
+     *
+     * @param url          技能文件地址（GitHub 请用 raw 链接）
+     * @param nameOverride 显式技能名（可空；空则用 frontmatter 里的 name）
+     */
+    public Skill installFromUrl(String url, String nameOverride) {
+        if (url == null || url.isBlank()) throw new BizException("请填写技能文件地址");
+        String u = url.trim();
+        if (!u.startsWith("http://") && !u.startsWith("https://")) {
+            throw new BizException("仅支持 http/https 地址（GitHub 页面链接请换成 raw 链接）");
+        }
+        String content = download(u);
+        if (!content.stripLeading().startsWith("---")) {
+            throw new BizException("技能文件缺少 frontmatter（应以 --- 开头并包含 name / description），"
+                    + "请确认链接指向 SKILL.md 原文");
+        }
+        Skill meta = parse(content, "", "user");
+        String dir = (nameOverride != null && !nameOverride.isBlank()) ? nameOverride.trim() : meta.name();
+        if (dir == null || dir.isBlank() || !NAME_OK.matcher(dir).matches()) {
+            throw new BizException("无法从内容确定技能名，请显式填写名称（中英文/数字/下划线/连字符，1~64 字符）");
+        }
+        if (meta.description().isBlank()) {
+            throw new BizException("技能缺少 description——模型靠它判断何时读取该技能，请在技能文件 frontmatter 里补上");
+        }
+        Path base = userDir();
+        Path d = base.resolve(dir).normalize();
+        if (!d.startsWith(base)) throw new BizException("非法的技能名");
+        Path f = d.resolve(SKILL_FILE);
+        if (Files.exists(f)) throw new BizException("已存在同名技能（" + dir + "），请换个名称或先删除");
+        try {
+            Files.createDirectories(d);
+            Files.writeString(f, content, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new BizException("技能写入失败：" + e.getMessage());
+        }
+        log.info("[SKILL] 从 URL 安装技能 {} ← {}", dir, u);
+        return parse(content, dir, "user");
+    }
+
+    /** 下载 SKILL.md 文本（超时 + 大小上限；不跟随重定向到非 http/https） */
+    private String download(String url) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(8))
+                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+                    .build();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                    .timeout(java.time.Duration.ofSeconds(15))
+                    .header("User-Agent", "ai-doc-assistant-skill-installer")
+                    .GET().build();
+            java.net.http.HttpResponse<byte[]> resp = client.send(req,
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() != 200) throw new BizException("下载失败：HTTP " + resp.statusCode());
+            byte[] body = resp.body();
+            // 上限按字符配置换算成字节（中文 UTF-8 最多 3~4 字节/字符）
+            int maxBytes = Math.max(10000, configService.getInt("skill.maxFileChars", 20000)) * 4;
+            if (body.length > maxBytes) {
+                throw new BizException("技能文件过大（" + body.length + " 字节，上限 " + maxBytes + "）");
+            }
+            return new String(body, StandardCharsets.UTF_8);
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BizException("下载失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
     /** 创建用户技能（写 {skill.dir}/{name}/SKILL.md） */
     public Skill create(String name, String description, String content) {
         String n = name == null ? "" : name.trim();

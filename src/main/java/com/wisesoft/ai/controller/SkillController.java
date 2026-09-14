@@ -85,6 +85,13 @@ public class SkillController {
         return ResultJson.ok(Map.of("name", s.name(), "dirName", s.dirName(), "hash", s.hash()));
     }
 
+    @Operation(summary = "从 URL 安装技能", description = "body: {url, name?}；仅接受 http/https 的 SKILL.md 原文（须含 frontmatter）")
+    @PostMapping("/install")
+    public ResultJson install(@RequestBody Map<String, String> body) {
+        SkillService.Skill s = skillService.installFromUrl(body.get("url"), body.get("name"));
+        return ResultJson.ok(Map.of("name", s.name(), "dirName", s.dirName(), "hash", s.hash()));
+    }
+
     @Operation(summary = "启用/停用技能", description = "body: {\"disabled\": true}；停用后不注入清单、readSkill 也会拒绝")
     @PutMapping("/{name}/disabled")
     public ResultJson setDisabled(@PathVariable String name, @RequestBody Map<String, Object> body) {

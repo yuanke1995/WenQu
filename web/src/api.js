@@ -268,6 +268,8 @@ export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', b
 export const listSkills = () => request('/skill/list')
 export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))
 export const createSkill = body => request('/skill', { method: 'POST', body: JSON.stringify(body) })
+export const installSkillFromUrl = (url, name) =>
+  request('/skill/install', { method: 'POST', body: JSON.stringify({ url, name }) })
 export const setSkillDisabled = (name, disabled) =>
   request(`/skill/${encodeURIComponent(name)}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
 export const deleteSkill = name => request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })

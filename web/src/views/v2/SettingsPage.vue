@@ -348,6 +348,7 @@
                   </span>
                   <div class="key-bar-actions">
                     <button class="v2-btn ghost small" @click="loadSkills">刷新</button>
+                    <button class="v2-btn ghost small" @click="openInstallSkill">从 URL 安装</button>
                     <button class="v2-btn small" @click="openCreateSkill">＋ 新建技能</button>
                   </div>
                 </div>
@@ -429,6 +430,29 @@
                   </div>
                   <div class="skill-view-body md" v-html="renderMd(skillView.content)"></div>
                 </a-modal>
+                <!-- 从 URL 安装技能弹窗 -->
+                <a-modal v-model:open="skillInstallOpen" title="从 URL 安装技能" :footer="null" :width="620">
+                  <a-form layout="vertical">
+                    <a-form-item label="技能文件地址（SKILL.md 原文）" required>
+                      <a-input v-model:value="skillInstallForm.url"
+                               placeholder="https://…/SKILL.md（GitHub 请用 raw 链接，不要用网页链接）" />
+                    </a-form-item>
+                    <a-form-item label="技能名（可选）">
+                      <a-input v-model:value="skillInstallForm.name"
+                               placeholder="留空则用文件 frontmatter 里的 name" :maxlength="64" />
+                    </a-form-item>
+                  </a-form>
+                  <div class="skill-dir-tip" style="margin-bottom:0">
+                    安装时会校验：地址必须是 http/https、内容必须带 frontmatter（name + description）。
+                    技能内容只作为文本指令保存，<b>不会执行文件里的任何脚本</b>。
+                  </div>
+                  <div class="key-modal-foot">
+                    <button class="v2-btn ghost" @click="skillInstallOpen = false">取消</button>
+                    <button class="v2-btn" :disabled="skillInstalling" @click="doInstallSkill">
+                      {{ skillInstalling ? '安装中…' : '安装' }}
+                    </button>
+                  </div>
+                </a-modal>
               </template>
             </a-form>
           </div>
@@ -445,7 +469,7 @@ import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined } fro
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey,
-         listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill } from '../../api'
+         listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../../api'
 import { renderMd } from '../../utils/markdown'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
@@ -944,6 +968,27 @@ const delSkill = async rec => {
     if (r.success) { message.success('已删除'); loadSkills() }
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
+}
+// 从 URL 安装（4.5 收尾）：适合从团队仓库/GitHub raw 一处安装、多台机器复用
+const skillInstallOpen = ref(false)
+const skillInstalling = ref(false)
+const skillInstallForm = ref({ url: '', name: '' })
+const openInstallSkill = () => {
+  skillInstallForm.value = { url: '', name: '' }
+  skillInstallOpen.value = true
+}
+const doInstallSkill = async () => {
+  if (!skillInstallForm.value.url.trim()) { message.warning('请填写技能文件地址'); return }
+  skillInstalling.value = true
+  try {
+    const r = await installSkillFromUrl(skillInstallForm.value.url.trim(), skillInstallForm.value.name.trim())
+    if (r.success) {
+      message.success('已安装技能「' + (r.data?.name || '') + '」')
+      skillInstallOpen.value = false
+      loadSkills()
+    } else message.error(r.msg || '安装失败')
+  } catch (e) { message.error(e.message || '安装失败') }
+  finally { skillInstalling.value = false }
 }
 
 // ==================== MCP 服务卡片：添加 / 编辑 / 移除 / 测试连接 ====================
