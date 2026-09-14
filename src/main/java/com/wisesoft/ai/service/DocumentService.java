@@ -1453,6 +1453,22 @@ public class DocumentService {
         return target;
     }
 
+    /** 源文件（下载用）：文件名 + 磁盘路径 */
+    public record SourceFile(String fileName, Path path) {
+    }
+
+    /**
+     * 取源文件供下载（个人文件区：用户上传的原始文件可取回）。
+     * 文档不存在或源文件缺失（旧数据未保留）时抛可读业务异常。
+     */
+    public SourceFile sourceFileForDownload(String docId) {
+        AiDocument doc = documentMapper.selectById(docId);
+        if (doc == null) throw new BizException("文档不存在");
+        Path p = sourceFile(docId, doc.getFileName());
+        if (!Files.exists(p)) throw new BizException("源文件缺失（旧数据可能未保留源文件，请重新上传该文档）");
+        return new SourceFile(doc.getFileName(), p);
+    }
+
     private Path sourceFile(String docId, String fileName) {
         return Paths.get(properties.getImages().getDir(), "files", docId, sanitize(fileName));
     }

@@ -105,6 +105,21 @@ public class DocumentController {
         return ResultJson.ok(documentService.list());
     }
 
+    @Operation(summary = "下载源文件", description = "取回上传的原始文件（个人文件区：备份/本地查看用）")
+    @GetMapping("/{id}/source")
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadSource(
+            @Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        DocumentService.SourceFile sf = documentService.sourceFileForDownload(id);
+        // 文件名 URL 编码（RFC 5987）：中文名在 Content-Disposition 里必须编码，否则部分客户端乱码
+        String encoded = java.net.URLEncoder.encode(sf.fileName(), java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return org.springframework.http.ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''" + encoded)
+                .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                .body(new org.springframework.core.io.FileSystemResource(sf.path()));
+    }
+
     @Operation(summary = "删除文档", description = "删除指定文档（同时清理向量、知识块、图片、源文件）")
     @DeleteMapping("/{id}")
     public ResultJson delete(
