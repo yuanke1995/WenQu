@@ -252,6 +252,9 @@ public class RagService {
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
     private final BuiltinTools builtinTools;
+    /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（skill.enabled 控制，默认关） */
+    private final SkillService skillService;
+    private final SkillTools skillTools;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -313,6 +316,8 @@ public class RagService {
                       ArtifactService artifactService,
                       PresentArtifactTool presentArtifactTool,
                       BuiltinTools builtinTools,
+                      SkillService skillService,
+                      SkillTools skillTools,
                       McpClientService mcpClientService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
@@ -333,6 +338,8 @@ public class RagService {
         this.artifactService = artifactService;
         this.presentArtifactTool = presentArtifactTool;
         this.builtinTools = builtinTools;
+        this.skillService = skillService;
+        this.skillTools = skillTools;
         this.mcpClientService = mcpClientService;
     }
 
@@ -559,6 +566,16 @@ public class RagService {
                             + "若句末需要标点，放在标记之前的文字末尾，如\"布局组件[图片1]\"，不要写成\"布局组件[图片1]、\"。")
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
                     .append(relatedPromptLine());
+            // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
+            // 清单为空的段落不追加（未装技能时对提示词零影响）
+            if (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.injectEnabled")) {
+                String skillBlock = skillService.promptBlock(configService.getInt("skill.injectMaxChars", 1200));
+                if (!skillBlock.isEmpty()) {
+                    system.append("\n\n").append(skillBlock);
+                    log.info("[SKILL] 已注入技能清单（{} 个启用技能）",
+                            skillBlock.split("\n- ").length - 1);
+                }
+            }
             List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, configService.getInt("chat.historyRounds", 5));
             if (recentHistory == null) {
                 // M6 fail-loud：历史读取失败 → 本次对话无历史注入
@@ -851,6 +868,11 @@ public class RagService {
         if (configService.getBoolean("tool.builtin.enabled")) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(builtinTools)));
+        }
+        // 技能取回工具（Skills 渐进披露的取回端；需 skill.enabled 总开关，工具默认关）
+        if (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.toolEnabled")) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(skillTools)));
         }
         if (configService.getBoolean("tool.artifact.enabled")) {
             callbacks.addAll(java.util.Arrays.asList(

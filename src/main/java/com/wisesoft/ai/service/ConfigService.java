@@ -216,6 +216,13 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.maxHits", "工具调用：精确检索工具单次返回命中块上限(1~5)"),
             Map.entry("tool.artifact.enabled", "工具调用：产物交付工具开关（模型可生成 Markdown/CSV/JSON/HTML 文件并推送给用户，需总开关开启；默认关）"),
             Map.entry("tool.builtin.enabled", "工具调用：内置高频工具开关（算术计算/当前时间/日期差，需总开关开启；默认关）"),
+            Map.entry("skill.enabled", "技能（Skills）：总开关。技能=目录+SKILL.md 的纯文本能力包，开启后按需注入/读取"),
+            Map.entry("skill.dir", "技能（Skills）：用户技能目录（放 {技能名}/SKILL.md 即多一个技能；同名覆盖内置）"),
+            Map.entry("skill.injectEnabled", "技能（Skills）：把「技能名+描述」清单注入系统提示（渐进披露，正文由模型按需 readSkill 取）"),
+            Map.entry("skill.toolEnabled", "技能（Skills）：readSkill 工具开关（模型主动取技能全文，需工具总开关）"),
+            Map.entry("skill.injectMaxChars", "技能（Skills）：清单注入字符上限（防技能过多挤占上下文）"),
+            Map.entry("skill.maxFileChars", "技能（Skills）：单个技能全文读取上限（字符，超出截断）"),
+            Map.entry("skill.disabledNames", "技能（Skills）：已停用技能目录名列表（JSON 数组，系统写入）"),
             // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
             Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
             Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
@@ -351,6 +358,12 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.maxHits", 3),
             Map.entry("tool.artifact.enabled", 2),
             Map.entry("tool.builtin.enabled", 2),
+            Map.entry("skill.enabled", 2),
+            Map.entry("skill.dir", 2),
+            Map.entry("skill.injectEnabled", 2),
+            Map.entry("skill.toolEnabled", 2),
+            Map.entry("skill.injectMaxChars", 3),
+            Map.entry("skill.maxFileChars", 3),
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
@@ -695,6 +708,13 @@ public class ConfigService {
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
         d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
         d.put("tool.builtin.enabled", "false");            // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
+        d.put("skill.enabled", "false");                   // 技能总开关（默认关；开启后按需注入清单 + readSkill 工具）
+        d.put("skill.dir", "./data/skills");               // 用户技能目录（{技能名}/SKILL.md）
+        d.put("skill.injectEnabled", "true");              // 清单注入系统提示（渐进披露）
+        d.put("skill.toolEnabled", "true");                // readSkill 工具（需工具总开关）
+        d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
+        d.put("skill.maxFileChars", "20000");              // 单技能全文读取上限
+        d.put("skill.disabledNames", "[]");                // 已停用技能（系统写入）
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
