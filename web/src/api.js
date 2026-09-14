@@ -109,7 +109,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus,
-    deepThink = false, signal, idleTimeoutMs = 120000
+    deepThink = false, signal, idleTimeoutMs = 120000, refs = []
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -132,7 +132,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId, question, images, deepThink }),
+    body: JSON.stringify({ sessionId, question, images, deepThink, refs }),
     signal: inner.signal
   }).then(res => {
     if (!res.ok) {
