@@ -87,8 +87,12 @@
 
     <!-- 知识块预览 -->
     <a-modal v-model:open="kbVisible" :title="'知识块预览 · ' + kbDocName" :footer="null" :width="1080">
-      <div style="margin-bottom:10px">
-        <a-input-search v-model:value="kbSearch" placeholder="按标题/内容过滤知识块" allow-clear />
+      <div style="margin-bottom:10px; display:flex; gap:8px; align-items:center">
+        <a-input-search v-model:value="kbSearch" placeholder="按标题/内容过滤知识块" allow-clear style="flex:1" />
+        <a-radio-group v-model:value="kbView" size="small" button-style="solid">
+          <a-radio-button value="list">切片列表</a-radio-button>
+          <a-radio-button value="tree">结构导图</a-radio-button>
+        </a-radio-group>
       </div>
       <!-- 切片统计（2.9）：块数 / 合计与平均 token / 未向量化块数，随过滤实时变化 -->
       <div class="kb-stat">
@@ -98,6 +102,23 @@
         <span v-if="kbNoVector" class="kb-stat-warn">未向量化 {{ kbNoVector }} 块</span>
       </div>
       <a-spin :spinning="kbLoading">
+        <!-- 结构导图（3.3 知识导图 / 3.5 文件元数据导图）：按 titlePath 聚合成章节树，
+             每节点带块数/token/图片数，点章节名可直接过滤到该章节的切片 -->
+        <div v-if="kbView === 'tree'" class="kb-tree">
+          <div class="kb-tree-head">
+            <span>章节结构</span>
+            <span class="kb-tree-tip">块数 / tokens / 图片 · 点击章节名筛选切片</span>
+          </div>
+          <div class="kb-tree-body">
+            <div v-for="r in kbTreeRows" :key="r.path" class="kb-tree-row" :style="{ paddingLeft: (r.depth * 16 + 4) + 'px' }">
+              <span class="kb-tree-toggle" @click="toggleTreeNode(r.path)">{{ r.hasChild ? (r.open ? '−' : '+') : '·' }}</span>
+              <span class="kb-tree-name" :title="r.path" @click="focusTreeNode(r)">{{ r.name }}</span>
+              <span class="kb-tree-meta">{{ r.count }} 块 · {{ fmtTokens(r.tokens) }} · {{ r.imgs }} 图</span>
+            </div>
+            <div v-if="!kbTreeRows.length" class="kb-tree-empty">暂无结构数据（该文档知识块缺少章节路径）</div>
+          </div>
+        </div>
+        <template v-else>
         <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应 -->
         <a-table :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
                  :scroll="{ y: kbScrollY }"
@@ -135,6 +156,7 @@
             </template>
           </a-table-column>
         </a-table>
+        </template>
       </a-spin>
     </a-modal>
 
@@ -425,6 +447,66 @@ const kbDocId = ref('')
 const kbSearch = ref('')
 // 知识块列表表体滚动高度：随视口自适应（一页 20 条在矮屏会超出屏幕；下限 200，上限 520）
 const kbScrollY = Math.max(200, Math.min(520, window.innerHeight - 400))
+// ==================== 结构导图（3.3 知识导图 / 3.5 文件元数据导图） ====================
+// 按 titlePath（"报表设计 > 组件 > 文件上传"）聚合成章节树，每节点带块数/token/图片数。
+// 纯前端派生，不需要后端接口；元数据来自已加载的切片，故与搜索过滤同步。
+const kbView = ref('list')
+const kbCollapsed = ref(new Set())
+const imgCountOf = r => {
+  try {
+    const im = typeof r.images === 'string' ? JSON.parse(r.images || '[]') : (r.images || [])
+    return Array.isArray(im) ? im.length : 0
+  } catch (e) { return 0 }
+}
+const kbTreeRows = computed(() => {
+  const mk = (name, path) => ({ name, path, children: new Map(), own: [], tokens: 0, imgs: 0, count: 0 })
+  const root = mk('', '')
+  for (const r of kbFilteredList.value) {
+    const parts = String(r.titlePath || r.title || '未分类').split('>').map(s => s.trim()).filter(Boolean)
+    let node = root
+    let path = ''
+    for (const p of parts) {
+      path = path ? path + ' > ' + p : p
+      if (!node.children.has(p)) node.children.set(p, mk(p, path))
+      node = node.children.get(p)
+    }
+    node.own.push(r)
+  }
+  // 自底向上聚合：节点自身切片 + 全部子孙
+  const agg = n => {
+    let tokens = 0, imgs = 0
+    for (const c of n.children.values()) { agg(c); tokens += c.tokens; imgs += c.imgs; n.count += c.count }
+    for (const r of n.own) {
+      tokens += estimateTokens((r.title || '') + (r.content || ''))
+      imgs += imgCountOf(r)
+    }
+    n.tokens = tokens
+    n.imgs = imgs
+    n.count += n.own.length
+    return n
+  }
+  agg(root)
+  const rows = []
+  const walk = (n, depth) => {
+    const hasChild = n.children.size > 0
+    const open = !kbCollapsed.value.has(n.path)
+    rows.push({ name: n.name, path: n.path, count: n.count, tokens: n.tokens, imgs: n.imgs, depth, hasChild, open })
+    if (hasChild && open) for (const c of n.children.values()) walk(c, depth + 1)
+  }
+  for (const c of root.children.values()) walk(c, 0)
+  return rows
+})
+const toggleTreeNode = path => {
+  const s = new Set(kbCollapsed.value)
+  if (s.has(path)) s.delete(path); else s.add(path)
+  kbCollapsed.value = s
+}
+/** 点章节名：回到切片列表并按该章节路径过滤（结构视图只做导览，具体编辑仍在列表里） */
+const focusTreeNode = r => {
+  kbSearch.value = r.path
+  kbView.value = 'list'
+}
+
 // 切片统计（2.9）：合计 token 与未向量化块数（过滤后口径，随搜索实时变化）
 const kbStatTokens = computed(() => kbFilteredList.value
     .reduce((sum, r) => sum + estimateTokens((r.title || '') + (r.content || '')), 0))
@@ -717,6 +799,18 @@ const fmtTime = t => {
 .kb-stat b { color: var(--v2-text); font-weight: 500; }
 .kb-stat-warn { color: #d46b08; }
 .kb-tok { font-variant-numeric: tabular-nums; color: var(--v2-text3); }
+/* 结构导图（3.3 / 3.5） */
+.kb-tree { border: 1px solid var(--v2-border); border-radius: 6px; overflow: hidden; }
+.kb-tree-head { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; background: #fafbfc; border-bottom: 1px solid var(--v2-border); font-size: 12px; font-weight: 500; }
+.kb-tree-tip { font-weight: 400; color: var(--v2-text3); }
+.kb-tree-body { max-height: 420px; overflow-y: auto; padding: 4px 0; }
+.kb-tree-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; }
+.kb-tree-row:hover { background: #f7f8fa; }
+.kb-tree-toggle { flex: none; width: 12px; color: var(--v2-text3); cursor: pointer; user-select: none; }
+.kb-tree-name { flex: 1; min-width: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-tree-name:hover { color: var(--v2-accent); }
+.kb-tree-meta { flex: none; color: var(--v2-text3); font-variant-numeric: tabular-nums; }
+.kb-tree-empty { padding: 24px 10px; text-align: center; font-size: 12px; color: var(--v2-text3); }
 /* 高度自适应：矮视口下压缩分栏，保证标题+工具栏+分栏+按钮完整可见（下限 150 保证 577px 视口恰好放下） */
 .kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {
