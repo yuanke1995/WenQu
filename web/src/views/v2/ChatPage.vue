@@ -288,7 +288,13 @@ const route = useRoute()
 const router = useRouter()
 
 // 工具名友好展示（与旧版口径一致）
-const TOOL_LABELS = { searchKnowledge: '知识库精确检索', presentArtifact: '生成文件产物' }
+const TOOL_LABELS = {
+  searchKnowledge: '知识库精确检索',
+  presentArtifact: '生成文件产物',
+  calculate: '算术计算',
+  currentDateTime: '获取当前时间',
+  daysBetween: '计算日期差'
+}
 const MCP_CLIENT_PREFIX = 'a_d_a_'
 const toolLabel = n => TOOL_LABELS[n] || (n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n)
 const toolCallsView = list => {

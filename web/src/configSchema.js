@@ -167,6 +167,7 @@ export const TIPS = {
   "toolKnowledgeRetrieval": "知识库精确检索工具：开启后模型可在回答中自主发起检索（而非只使用系统预检索的资料），适合多跳追问、需要核实细节的场景。需总开关开启；默认关闭。",
   "toolKnowledgeRetrievalMaxHits": "精确检索工具单次返回的知识块上限（1~5）。调大单次信息更全但占用上下文预算；模型可能多次调用，注意累计开销。",
   "toolArtifactEnabled": "产物交付工具：开启后模型可按需生成 Markdown/CSV/JSON/HTML 等文件（如导出清单、对比表），以可下载卡片形式附在回答中并随会话持久化。需总开关开启；默认关闭。",
+  "toolBuiltinEnabled": "内置高频工具：开启后模型可调用「算术表达式计算」「当前日期时间」「日期相差天数」三个内置工具。模型口算与「不知道今天几号」是两类常见硬伤——涉及金额合计、百分比、工期/有效期推算时交给工具算，比让模型自己算可靠得多。表达式求值由后端自实现解析（不引入脚本引擎，仅数字与 + - * / % ^ 括号，无代码执行能力）。需总开关开启；默认关闭。",
   "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
   "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
 }
@@ -329,6 +330,7 @@ export const FIELDS = [
   { panel: "tool", section: 1, group: "tool", key: "knowledgeRetrieval.enabled", path: "tool.knowledgeRetrieval.enabled", label: "知识库精确检索工具", type: "switch", tips: "toolKnowledgeRetrieval", def: false, note: "模型回答中可自主发起检索补充资料（默认关）", vif: "tool.enabled", tier: 2 },
   { panel: "tool", section: 1, group: "tool", key: "knowledgeRetrieval.maxHits", path: "tool.knowledgeRetrieval.maxHits", label: "单次命中块上限", type: "number", tips: "toolKnowledgeRetrievalMaxHits", def: 5, min: 1, max: 5, width: 200, note: "工具单次返回的知识块数上限（1~5）", vif: "tool.enabled && tool.knowledgeRetrieval.enabled", tier: 3 },
   { panel: "tool", section: 1, group: "tool", key: "artifact.enabled", path: "tool.artifact.enabled", label: "产物交付工具", type: "switch", tips: "toolArtifactEnabled", def: false, note: "模型可生成 Markdown/CSV/JSON/HTML 文件并以可下载卡片附在回答中（默认关）", vif: "tool.enabled", tier: 2 },
+  { panel: "tool", section: 1, group: "tool", key: "builtin.enabled", path: "tool.builtin.enabled", label: "内置高频工具（计算/时间）", type: "switch", tips: "toolBuiltinEnabled", def: false, note: "算术表达式计算、当前日期时间、日期相差天数——模型口算与「今天几号」的硬伤交给工具（默认关）", vif: "tool.enabled", tier: 2 },
   { panel: "mcp", section: 0, group: "mcp", key: "enabled", path: "mcp.enabled", label: "MCP 总开关", type: "switch", tips: "mcpEnabled", def: false, note: "连接下方 MCP Server 并把其工具暴露给模型（默认关）", tier: 2 },
   { panel: "mcp", section: 0, group: "mcp", key: "servers", path: "mcp.servers", label: "MCP Server 列表", type: "textarea", tips: "mcpServers", def: "", rows: 5, ph: '[{"name":"时间工具","url":"http://127.0.0.1:8931","type":"streamable"}]', note: "JSON 数组，每项 {name,url,type}；type 可选 streamable/sse；连接失败自动跳过", vif: "mcp.enabled", tier: 2 },
   { panel: "semanticCache", section: -1, group: "semanticCache", key: "enabled", path: "semanticCache.enabled", label: "总开关", type: "switch", tips: "scEnabled", def: true, core: true, tier: 2 },
