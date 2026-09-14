@@ -263,6 +263,14 @@ export async function downloadDocumentSource (id, fileName) {
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
 
+// ==================== 技能（Skills） ====================
+export const listSkills = () => request('/skill/list')
+export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))
+export const createSkill = body => request('/skill', { method: 'POST', body: JSON.stringify(body) })
+export const setSkillDisabled = (name, disabled) =>
+  request(`/skill/${encodeURIComponent(name)}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
+export const deleteSkill = name => request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })
+
 // ==================== API Key 管理（对外开放问答能力） ====================
 export const listApiKeys = () => request('/api-key/list')
 export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })

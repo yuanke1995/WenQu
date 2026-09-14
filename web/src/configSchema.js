@@ -168,6 +168,12 @@ export const TIPS = {
   "toolKnowledgeRetrievalMaxHits": "精确检索工具单次返回的知识块上限（1~5）。调大单次信息更全但占用上下文预算；模型可能多次调用，注意累计开销。",
   "toolArtifactEnabled": "产物交付工具：开启后模型可按需生成 Markdown/CSV/JSON/HTML 等文件（如导出清单、对比表），以可下载卡片形式附在回答中并随会话持久化。需总开关开启；默认关闭。",
   "toolBuiltinEnabled": "内置高频工具：开启后模型可调用「算术表达式计算」「当前日期时间」「日期相差天数」三个内置工具。模型口算与「不知道今天几号」是两类常见硬伤——涉及金额合计、百分比、工期/有效期推算时交给工具算，比让模型自己算可靠得多。表达式求值由后端自实现解析（不引入脚本引擎，仅数字与 + - * / % ^ 括号，无代码执行能力）。需总开关开启；默认关闭。",
+  "skillEnabled": "技能（Skills）总开关。技能 = 一个目录 + SKILL.md（frontmatter 写 name/description/version，正文写做法）：把「这类问题该怎么做」固化成可复用的说明，不必每次在提问里重复交代。开启后系统提示会注入技能清单，模型判断问题属于某技能领域时再用 readSkill 读取它的全文——因此装多少技能都不会拖慢每一次问答。技能只作为文本指令使用，不会执行目录里的脚本。默认关闭。",
+  "skillDir": "用户技能目录：每个子目录放一个 SKILL.md 即多一个技能；与内置技能同目录名时用户目录优先（可用于覆盖内置做法）。改目录后立即生效，无需重启。",
+  "skillInject": "把「技能名 + 一行描述」注入系统提示。描述是模型判断「要不要读这个技能」的唯一依据——描述写得含糊（如只写“规范”），技能就基本不会被用到。",
+  "skillInjectMax": "技能清单注入系统提示的字符上限：技能很多时超出部分只列到截断（不会挤占知识块与历史的预算）。",
+  "skillTool": "readSkill 工具：模型主动取回某个技能的完整内容。需要「工具调用」总开关同时开启；关闭后技能清单仍会注入，但模型无法读取正文。",
+  "skillMaxFile": "单个技能全文读取上限（字符）：技能内容过长时截断，防止一个技能吃掉整个上下文预算。",
   "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
   "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
 }
@@ -184,6 +190,7 @@ export const PANELS = [
   { key: "mcp", title: "MCP 外部工具（用户可自行扩展）", sections: ["MCP 服务管理（连接外部工具 Server）"] },
   { key: "semanticCache", title: "语义缓存（相似问题加速）", sections: [] },
   { key: "apiKey", title: "API Key 管理（对外开放问答能力）", sections: [] },
+  { key: "skills", title: "技能 Skills（可插拔能力包）", sections: ["总开关与目录", "行为开关（渐进披露）"] },
   { key: "ratelimit", title: "接口限流（防滥用）", sections: [] },
   { key: "maintenance", title: "定时维护（索引对账 / 自动体检 / 清理）", sections: ["启动自愈与索引对账","自动体检（检索质量回归）","聊天图片清理","会话参数与清理","文档名缓存（多副本一致性）"] },
 ]
@@ -357,6 +364,12 @@ export const FIELDS = [
   { panel: "maintenance", section: 4, group: "cache", key: "docMetaTtlSeconds", path: "cache.docMetaTtlSeconds", label: "缓存有效期(秒)", type: "number", tips: "docMetaTtlSeconds", def: 600, min: 10, step: 60, width: 200, note: "多副本下文档改名/删除的感知延迟上限，默认 600", tier: 3 },
   { panel: "retrieval", section: 4, group: "retrieval", key: "refExpandParentSummaryChars", path: "retrieval.refExpandParentSummaryChars", label: "父章节摘要字符数", type: "number", def: 200, min: 0, step: 20, width: 200, note: "summary 模式截取字符数", vif: "retrieval.refExpandEnabled && retrieval.refExpandParentEnabled", tier: 3 },
   { panel: "retrieval", section: 0, group: "retrieval", key: "strength", path: "retrieval.strength", label: "检索强度预设", type: "select", def: "balanced", width: 320, note: "切换档位会批量覆盖相似度下限/召回条数/关键词上限/标题与位置奖励等 9 个参数", core: true, options: [{"value":"precision","label":"精准（少而准，答案更聚焦）"},{"value":"balanced","label":"均衡（默认推荐）"},{"value":"recall","label":"召回（多而全，宁滥勿缺）"},{"value":"custom","label":"自定义","disabled":true}], tier: 2 },
+  { panel: "skills", section: 0, group: "skill", key: "enabled", path: "skill.enabled", label: "总开关", type: "switch", tips: "skillEnabled", def: false, core: true, note: "开启后：系统提示注入技能清单，模型可调用 readSkill 读取技能全文（默认关）", tier: 2 },
+  { panel: "skills", section: 0, group: "skill", key: "dir", path: "skill.dir", label: "用户技能目录", type: "text", tips: "skillDir", def: "./data/skills", width: 320, ph: "./data/skills", vif: "skill.enabled", tier: 2 },
+  { panel: "skills", section: 1, group: "skill", key: "injectEnabled", path: "skill.injectEnabled", label: "注入技能清单", type: "switch", tips: "skillInject", def: true, note: "把「技能名+描述」注入系统提示：模型据此判断该不该读某个技能", vif: "skill.enabled", tier: 2 },
+  { panel: "skills", section: 1, group: "skill", key: "injectMaxChars", path: "skill.injectMaxChars", label: "清单字符上限", type: "number", tips: "skillInjectMax", def: 1200, min: 200, step: 100, width: 200, vif: "skill.enabled && skill.injectEnabled", tier: 3 },
+  { panel: "skills", section: 1, group: "skill", key: "toolEnabled", path: "skill.toolEnabled", label: "readSkill 工具", type: "switch", tips: "skillTool", def: true, note: "让模型主动读取技能全文（需「工具调用」总开关同时开启）", vif: "skill.enabled", tier: 2 },
+  { panel: "skills", section: 1, group: "skill", key: "maxFileChars", path: "skill.maxFileChars", label: "技能读取上限", type: "number", tips: "skillMaxFile", def: 20000, min: 500, step: 1000, width: 200, note: "单个技能全文读取字符上限，超出截断", vif: "skill.enabled && skill.toolEnabled", tier: 3 },
 ]
 
 /** 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入 */

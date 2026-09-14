@@ -263,6 +263,97 @@
                   </div>
                 </a-modal>
               </template>
+
+              <!-- 技能（Skills）：目录 + SKILL.md 的纯文本能力包，模型按需读取后照做 -->
+              <template v-if="current === 'skills'">
+                <div class="key-bar">
+                  <span class="key-stat">
+                    共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeSkillCount }}</b>
+                  </span>
+                  <div class="key-bar-actions">
+                    <button class="v2-btn ghost small" @click="loadSkills">刷新</button>
+                    <button class="v2-btn small" @click="openCreateSkill">＋ 新建技能</button>
+                  </div>
+                </div>
+                <div class="skill-dir-tip">
+                  技能目录 <code>{{ skillDir || '—' }}</code>：每个子目录放一个 <code>SKILL.md</code> 就是一个技能
+                  （frontmatter 写 name / description / version，正文写具体做法），与内置技能同名时用户目录优先。
+                  技能只作为文本指令注入，<b>不会执行目录里的任何脚本</b>。
+                </div>
+
+                <div v-if="!skills.length" class="key-empty">
+                  <div class="key-empty-title">还没有技能</div>
+                  <div class="key-empty-desc">
+                    技能用来固化「这类问题该怎么做」的做法——步骤、输出格式、禁忌。模型按需读取后照做，不必每次在提问里重复交代。
+                  </div>
+                  <button class="v2-btn small" @click="openCreateSkill">新建第一个技能</button>
+                </div>
+
+                <a-table v-else :data-source="skills" size="small" row-key="dirName" :pagination="false">
+                  <a-table-column title="技能" key="name" ellipsis>
+                    <template #default="{ record }">
+                      <span class="key-name-wrap">
+                        <span class="key-name">{{ record.name }}</span>
+                        <span v-if="record.source === 'builtin'" class="v2-pill muted key-tag">内置</span>
+                        <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
+                        <span v-else class="v2-pill ok key-tag">生效中</span>
+                      </span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="描述" key="desc" ellipsis>
+                    <template #default="{ record }">
+                      <span :class="{ 'key-dim': true, 'skill-desc-warn': !record.description }">
+                        {{ record.description || '（未填描述：模型不会主动读取它）' }}
+                      </span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="版本" key="version" width="80">
+                    <template #default="{ record }"><span class="key-dim">{{ record.version || '—' }}</span></template>
+                  </a-table-column>
+                  <a-table-column title="哈希" key="hash" width="90">
+                    <template #default="{ record }"><span class="key-prefix">{{ record.hash }}</span></template>
+                  </a-table-column>
+                  <a-table-column title="操作" key="act" width="150">
+                    <template #default="{ record }">
+                      <button class="v2-link-btn" @click="viewSkill(record)">查看</button>
+                      <button class="v2-link-btn" @click="toggleSkill(record)">{{ record.disabled ? '启用' : '停用' }}</button>
+                      <a-popconfirm v-if="record.source === 'user'" title="删除该技能？文件将同时删除" ok-text="删除" cancel-text="取消" @confirm="delSkill(record)">
+                        <button class="v2-link-btn danger">删除</button>
+                      </a-popconfirm>
+                    </template>
+                  </a-table-column>
+                </a-table>
+
+                <!-- 新建技能弹窗 -->
+                <a-modal v-model:open="skillCreateOpen" title="新建技能" :footer="null" :width="720">
+                  <a-form layout="vertical">
+                    <a-form-item label="技能名" required>
+                      <a-input v-model:value="skillForm.name" placeholder="如：报表字段命名规范（支持中英文、数字、下划线、连字符）" :maxlength="64" />
+                    </a-form-item>
+                    <a-form-item label="描述" required>
+                      <a-input v-model:value="skillForm.description" placeholder="一句话说明什么场景用它——模型靠这句判断要不要读取" :maxlength="200" />
+                    </a-form-item>
+                    <a-form-item label="技能内容（Markdown）">
+                      <a-textarea v-model:value="skillForm.content" :rows="12" />
+                    </a-form-item>
+                  </a-form>
+                  <div class="key-modal-foot">
+                    <button class="v2-btn ghost" @click="skillCreateOpen = false">取消</button>
+                    <button class="v2-btn" :disabled="skillCreating" @click="submitCreateSkill">{{ skillCreating ? '创建中…' : '创建' }}</button>
+                  </div>
+                </a-modal>
+
+                <!-- 查看技能弹窗 -->
+                <a-modal v-model:open="skillViewOpen" :title="'技能：' + skillView.name" :footer="null" :width="760">
+                  <div class="skill-view-meta">
+                    <span>目录 <code>{{ skillView.dirName }}</code></span>
+                    <span>版本 {{ skillView.version || '—' }}</span>
+                    <span>哈希 <code>{{ skillView.hash }}</code></span>
+                    <span>来源 {{ skillView.source === 'builtin' ? '内置' : '用户' }}</span>
+                  </div>
+                  <div class="skill-view-body md" v-html="renderMd(skillView.content)"></div>
+                </a-modal>
+              </template>
             </a-form>
           </div>
         </a-spin>
@@ -277,7 +368,9 @@ import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey } from '../../api'
+         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey,
+         listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill } from '../../api'
+import { renderMd } from '../../utils/markdown'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
 import { getMcpStatus, reloadMcp } from '../../api'
@@ -286,14 +379,14 @@ import { getMcpStatus, reloadMcp } from '../../api'
 const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', mcp: 'MCP 外部工具',
-  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理'
+  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能 Skills'
 }
 const groupLabel = key => NAV_LABELS[key] || key
 const current = ref('chat')
 const currentPanel = computed(() => PANELS.find(p => p.key === current.value))
 
-// 无「恢复本组默认」的分组（API Key 由数据库管理，与配置默认值无关）
-const NO_RESET = ['embedding', 'maintenance', 'apiKey']
+// 无「恢复本组默认」的分组（API Key/技能由文件与数据库管理，与配置默认值无关）
+const NO_RESET = ['embedding', 'maintenance', 'apiKey', 'skills']
 
 // 分组顶部说明（与旧版文案一致）
 const PANEL_ALERTS = {
@@ -310,7 +403,8 @@ const PANEL_ALERTS = {
   semanticCache: [{ type: 'info', msg: '命中相似问题（≥阈值）时直接复用历史回答：省检索与 LLM 成本、秒级返回。知识库变更时自动整体清空，不会用过期答案。' }],
   ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
   maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
-  apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }]
+  apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }],
+  skills: [{ type: 'info', msg: '技能 = 一段可复用的"做法说明"（步骤/格式/禁忌）。系统提示里只放技能名与描述，模型判断某个问题属于某技能领域时，才去读取它的完整内容——所以技能装得多也不会拖慢每次问答。需要 skill.enabled 总开关开启后生效。' }]
 }
 
 const loading = ref(false)
@@ -714,10 +808,73 @@ const delKey = async id => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）；API Key 面板同理
+// ==================== 技能（Skills，4.5） ====================
+const skills = ref([])
+const skillDir = ref('')
+const skillCreating = ref(false)
+const skillCreateOpen = ref(false)
+const skillViewOpen = ref(false)
+const skillView = ref({ name: '', dirName: '', version: '', hash: '', source: '', content: '' })
+const skillForm = ref({ name: '', description: '', content: '' })
+const activeSkillCount = computed(() => skills.value.filter(s => !s.disabled).length)
+const loadSkills = async () => {
+  try {
+    const r = await listSkills()
+    if (r.success && r.data) {
+      skills.value = r.data.skills || []
+      skillDir.value = r.data.dir || ''
+    }
+  } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
+}
+/** 新建技能时预填的骨架：直接给出"适用场景/做法/禁止"三段，比空白框好写 */
+const skillTemplate = () => '# 技能标题\n\n## 适用场景\n\n用户问到……时使用本技能。\n\n## 做法\n\n1. 先……\n2. 再……\n\n## 禁止\n\n- 不要……\n'
+const openCreateSkill = () => {
+  skillForm.value = { name: '', description: '', content: skillTemplate() }
+  skillCreateOpen.value = true
+}
+const submitCreateSkill = async () => {
+  if (!skillForm.value.name.trim()) { message.warning('请填写技能名'); return }
+  // 描述不是可有可无：模型是靠这句判断要不要读技能，空描述等于装了不生效
+  if (!skillForm.value.description.trim()) { message.warning('请填写描述——模型靠它判断何时读取技能'); return }
+  skillCreating.value = true
+  try {
+    const r = await createSkill({
+      name: skillForm.value.name.trim(),
+      description: skillForm.value.description.trim(),
+      content: skillForm.value.content
+    })
+    if (r.success) { message.success('技能已创建'); skillCreateOpen.value = false; loadSkills() }
+    else message.error(r.msg || '创建失败')
+  } catch (e) { message.error(e.message || '创建失败') }
+  finally { skillCreating.value = false }
+}
+const viewSkill = async rec => {
+  try {
+    const r = await getSkillDetail(rec.dirName)
+    if (r.success) { skillView.value = r.data; skillViewOpen.value = true }
+    else message.error(r.msg || '读取失败')
+  } catch (e) { message.error(e.message || '读取失败') }
+}
+const toggleSkill = async rec => {
+  try {
+    const r = await setSkillDisabled(rec.dirName, !rec.disabled)
+    if (r.success) { message.success(rec.disabled ? '已启用' : '已停用'); loadSkills() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+}
+const delSkill = async rec => {
+  try {
+    const r = await deleteSkill(rec.dirName)
+    if (r.success) { message.success('已删除'); loadSkills() }
+    else message.error(r.msg || '删除失败')
+  } catch (e) { message.error(e.message || '删除失败') }
+}
+
+// 切到 MCP 面板时自动拉一次最新状态（配置可能在别处改过）；API Key / 技能面板同理
 watch(current, k => {
   if (k === 'mcp') loadMcpStatus()
   if (k === 'apiKey') loadKeys()
+  if (k === 'skills') loadSkills()
 })
 
 const doReloadMcp = async () => {
@@ -832,4 +989,14 @@ onUnmounted(() => {
   padding: 12px 36px 12px 12px;
 }
 .key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--v2-text); }
+/* 技能（Skills） */
+.skill-dir-tip {
+  font-size: 12px; color: var(--v2-text3); line-height: 1.8; margin-bottom: 12px;
+  background: #f8f9fb; border: 1px solid var(--v2-border); border-radius: 6px; padding: 8px 10px;
+}
+.skill-dir-tip code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.skill-desc-warn { color: #a3691b; }
+.skill-view-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--v2-text3); margin-bottom: 10px; }
+.skill-view-meta code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.skill-view-body { max-height: 56vh; overflow-y: auto; border: 1px solid var(--v2-border); border-radius: 6px; padding: 12px 14px; }
 </style>
