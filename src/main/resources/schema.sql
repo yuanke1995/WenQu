@@ -183,3 +183,24 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_ref` (
     KEY `idx_to_doc` (`to_knowledge_id`, `doc_id`),
     KEY `idx_doc` (`doc_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI知识块引用关系表';
+
+-- ============================================
+-- 2026-09-14: API Key（对外开放问答能力）
+-- 库里只存 SHA-256 哈希 + 前 8 位前缀（列表可辨识、不泄露全文）；明文仅签发时返回一次
+-- key_hash 建唯一索引：鉴权热路径按哈希等值查询，且防重复签发同一 Key
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
+    `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `name`         VARCHAR(200) DEFAULT NULL COMMENT '用途名称（如"报表系统集成"）',
+    `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写）',
+    `key_prefix`   VARCHAR(32)  DEFAULT NULL COMMENT '明文前缀（列表展示用）',
+    `disabled`     INT          DEFAULT 0 COMMENT '是否停用: 0=启用, 1=停用（吊销）',
+    `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
+    `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_key_hash` (`key_hash`),
+    KEY `idx_disabled` (`disabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI API Key 表';

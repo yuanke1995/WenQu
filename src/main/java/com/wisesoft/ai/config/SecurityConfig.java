@@ -32,6 +32,10 @@ public class SecurityConfig implements WebMvcConfigurer {
     private final AiAppProperties properties;
     private final ObjectMapper objectMapper;
     private final AdminGuard adminGuard;
+    private final com.wisesoft.ai.service.ApiKeyService apiKeyService;
+
+    /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
+    public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
 
     @PostConstruct
     public void validate() {
@@ -82,6 +86,8 @@ public class SecurityConfig implements WebMvcConfigurer {
     class TrustedTokenInterceptor implements HandlerInterceptor {
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+            String method = request.getMethod();
+            String path = request.getRequestURI().substring(request.getContextPath().length());
             // 1. 平台信任 token（恒定时间比较）
             String token = request.getHeader("X-Trusted-Token");
             String expected = properties.getTrustedToken();
@@ -90,6 +96,16 @@ public class SecurityConfig implements WebMvcConfigurer {
                             token.getBytes(StandardCharsets.UTF_8),
                             expected.getBytes(StandardCharsets.UTF_8));
             if (!ok) {
+                // 1b. API Key（对外开放问答能力的入口）：仅放行「问答链路」白名单端点。
+                //     管理端点即便持有效 Key 也不放行——Key 泄露时危害被限制在问答能力内；
+                //     校验失败与无凭据返回同一 401 文案，不暴露服务支持哪些认证方式。
+                String plainKey = request.getHeader("X-Api-Key");
+                var rec = apiKeyService.verify(plainKey);
+                if (rec != null && isPublicUserEndpoint(method, path)) {
+                    request.setAttribute(ATTR_API_KEY_ID, rec.getId());
+                    apiKeyService.touchLastUsed(rec.getId());
+                    return true;
+                }
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(
@@ -97,8 +113,6 @@ public class SecurityConfig implements WebMvcConfigurer {
                 return false;
             }
             // 2. 问答用户白名单之外 → 管理员判定（fail-closed：普通用户不隐式获得管理权）
-            String method = request.getMethod();
-            String path = request.getRequestURI().substring(request.getContextPath().length());
             if (!isPublicUserEndpoint(method, path) && !adminGuard.isAdmin(request)) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
