@@ -127,13 +127,24 @@
               <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
               <template v-if="current === 'apiKey'">
                 <div class="apikey-toolbar">
-                  <a-input v-model:value="newKeyName" placeholder="用途名称，如：报表系统集成" style="width:240px" />
-                  <a-input v-model:value="newKeyExpire" placeholder="过期日期（可选，yyyy-MM-dd）" style="width:220px" />
+                  <a-input v-model:value="newKeyName" placeholder="用途名称（必填），如：报表系统集成" style="width:240px"
+                           :maxlength="200" @press-enter="doCreateKey" />
+                  <a-input v-model:value="newKeyExpire" placeholder="过期日期（可选，yyyy-MM-dd）" style="width:220px"
+                           @press-enter="doCreateKey" />
                   <button class="v2-btn small" :disabled="keyCreating" @click="doCreateKey">{{ keyCreating ? '签发中…' : '签发新 Key' }}</button>
                   <button class="v2-btn ghost small" @click="loadKeys">刷新</button>
                 </div>
                 <a-table :data-source="keys" size="small" row-key="id" :pagination="false" :locale="{ emptyText: '暂无 Key' }">
-                  <a-table-column title="名称" dataIndex="name" key="name" ellipsis />
+                  <a-table-column title="名称（点击可改名）" key="name" ellipsis>
+                    <template #default="{ record }">
+                      <a-input v-if="editingKeyId === record.id" v-model:value="editingKeyName" size="small"
+                               placeholder="用途名称，回车保存" :maxlength="200"
+                               @press-enter="saveKeyName(record)" @blur="saveKeyName(record)" @keydown.esc="editingKeyId = ''" />
+                      <span v-else class="apikey-name" :title="'点击改名：' + record.name" @click="startKeyName(record)">
+                        {{ record.name || '未命名' }}
+                      </span>
+                    </template>
+                  </a-table-column>
                   <a-table-column title="Key" key="prefix" width="150">
                     <template #default="{ record }"><code>{{ record.keyPrefix }}…</code></template>
                   </a-table-column>
@@ -183,7 +194,7 @@ import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey } from '../../api'
+         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey } from '../../api'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
 import { getMcpStatus, reloadMcp } from '../../api'
@@ -514,7 +525,26 @@ const loadKeys = async () => {
     if (r.success && Array.isArray(r.data)) keys.value = r.data
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
 }
+const editingKeyId = ref('')
+const editingKeyName = ref('')
+const startKeyName = rec => {
+  editingKeyId.value = rec.id
+  editingKeyName.value = rec.name || ''
+}
+/** 名称列内联改名：回车/失焦保存；空名或未改动直接退出（防 blur 与 enter 双触发重复请求） */
+const saveKeyName = async rec => {
+  if (editingKeyId.value !== rec.id) return
+  const name = (editingKeyName.value || '').trim()
+  editingKeyId.value = ''
+  if (!name || name === rec.name) return
+  try {
+    const r = await renameApiKey(rec.id, name)
+    if (r.success) { message.success('已改名'); loadKeys() } else message.error(r.msg || '改名失败')
+  } catch (e) { message.error(e.message || '改名失败') }
+}
 const doCreateKey = async () => {
+  // 空名不再静默兜底成「未命名 Key」——直接提示，避免签出一堆分不清用途的 Key
+  if (!newKeyName.value.trim()) { message.warning('请先填写用途名称'); return }
   keyCreating.value = true
   try {
     const r = await createApiKey({ name: newKeyName.value.trim(), expireAt: newKeyExpire.value.trim() })
@@ -630,4 +660,6 @@ onUnmounted(() => {
 .mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
 /* API Key 管理（6.5） */
 .apikey-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.apikey-name { cursor: pointer; border-bottom: 1px dashed transparent; }
+.apikey-name:hover { color: var(--v2-accent); border-bottom-color: var(--v2-accent); }
 </style>

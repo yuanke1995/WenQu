@@ -268,6 +268,8 @@ export const listApiKeys = () => request('/api-key/list')
 export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })
 export const setApiKeyDisabled = (id, disabled) =>
   request(`/api-key/${id}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
+export const renameApiKey = (id, name) =>
+  request(`/api-key/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
 
 /** 上传文档（onProgress 接收 0-100 百分比） */

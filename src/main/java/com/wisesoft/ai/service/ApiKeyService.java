@@ -93,6 +93,16 @@ public class ApiKeyService {
         }).toList();
     }
 
+    /** 重命名（用途备注可随时改，不影响 Key 本身与调用方） */
+    public void rename(String id, String name) {
+        AiApiKey k = new AiApiKey();
+        k.setId(id);
+        k.setName(name.length() > 200 ? name.substring(0, 200) : name);
+        k.setUpdateTime(LocalDateTime.now());
+        mapper.updateById(k);
+        log.info("[API-KEY] 重命名 {} → {}", id, k.getName());
+    }
+
     /** 启用/停用（吊销即停用；不物理删除，保留审计线索） */
     public void setDisabled(String id, boolean disabled) {
         AiApiKey k = new AiApiKey();

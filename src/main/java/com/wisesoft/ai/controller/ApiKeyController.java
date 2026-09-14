@@ -52,6 +52,15 @@ public class ApiKeyController {
         return ResultJson.ok(apiKeyService.create(name, expireAt, UserContext.resolve(request)));
     }
 
+    @Operation(summary = "重命名 Key", description = "改用途备注，不影响 Key 本身与调用方；body: {\"name\": \"…\"}")
+    @PutMapping("/{id}/name")
+    public ResultJson rename(@PathVariable String id, @RequestBody Map<String, String> body) {
+        String name = body.get("name");
+        if (name == null || name.isBlank()) throw new BizException("名称不能为空");
+        apiKeyService.rename(id, name.trim());
+        return ResultJson.ok(Map.of("id", id, "name", name.trim()));
+    }
+
     @Operation(summary = "启用/停用", description = "停用即吊销（保留记录便于审计）；body: {\"disabled\": true}")
     @PutMapping("/{id}/disabled")
     public ResultJson setDisabled(@PathVariable String id, @RequestBody Map<String, Object> body) {
