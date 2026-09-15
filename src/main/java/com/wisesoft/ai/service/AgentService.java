@@ -46,12 +46,33 @@ public class AgentService {
     public List<Map<String, Object>> available() {
         List<Map<String, Object>> out = new ArrayList<>();
         for (AiAgent a : list()) {
+            // 子智能体不出现在对话页下拉：它只能被主智能体委派调用，不能当作问答角色直接选用
+            if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
             m.put("name", a.getName());
             m.put("description", a.getDescription());
             m.put("model", a.getModel());
             m.put("isDefault", a.getIsDefault() == null ? 0 : a.getIsDefault());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 可委派的子智能体（供主智能体配置页勾选）。
+     * 只返回子智能体（is_subagent=1），且是最小字段——配置页只需要 id 与展示名。
+     */
+    public List<Map<String, Object>> subAgents() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<AiAgent> subs = mapper.selectList(new LambdaQueryWrapper<AiAgent>()
+                .eq(AiAgent::getIsSubagent, 1)
+                .orderByDesc(AiAgent::getCreateTime));
+        for (AiAgent a : subs) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", a.getId());
+            m.put("name", a.getName());
+            m.put("description", a.getDescription());
             out.add(m);
         }
         return out;
@@ -74,7 +95,9 @@ public class AgentService {
         AiAgent a = toEntity(body, new AiAgent());
         a.setCreateTime(LocalDateTime.now());
         a.setUpdateTime(LocalDateTime.now());
-        if (Boolean.TRUE.equals(a.getIsDefault()) || Integer.valueOf(1).equals(a.getIsDefault())) {
+        // 子智能体不参与「默认」：它只能被主智能体委派调用，不能作为对话页预选角色
+        boolean isSub = Integer.valueOf(1).equals(a.getIsSubagent());
+        if (!isSub && (Boolean.TRUE.equals(a.getIsDefault()) || Integer.valueOf(1).equals(a.getIsDefault()))) {
             clearDefault();
             a.setIsDefault(1);
         } else {
@@ -108,7 +131,11 @@ public class AgentService {
 
     /** 设为默认（其余清零） */
     public void setDefault(String id) {
-        if (mapper.selectById(id) == null) throw new com.wisesoft.ai.common.BizException(404, "智能体不存在");
+        AiAgent target = mapper.selectById(id);
+        if (target == null) throw new com.wisesoft.ai.common.BizException(404, "智能体不存在");
+        if (Integer.valueOf(1).equals(target.getIsSubagent())) {
+            throw new com.wisesoft.ai.common.BizException("子智能体不能设为默认：它只能被主智能体委派调用");
+        }
         clearDefault();
         AiAgent a = new AiAgent();
         a.setId(id);
@@ -140,6 +167,9 @@ public class AgentService {
         if (body.containsKey("skills")) a.setSkills(toScopeText(body.get("skills"), 1000));
         if (body.containsKey("mcps")) a.setMcps(toScopeText(body.get("mcps"), 1000));
         if (body.containsKey("builtinTools")) a.setBuiltinTools(toScopeText(body.get("builtinTools"), 500));
+        if (body.containsKey("isSubagent")) a.setIsSubagent(toTri(body.get("isSubagent")));
+        // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
+        if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
         return a;
     }

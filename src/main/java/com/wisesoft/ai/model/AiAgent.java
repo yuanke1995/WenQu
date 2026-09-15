@@ -66,6 +66,33 @@ public class AiAgent {
     /** 内置工具范围（具体项筛选）：NULL=跟随全局；空串=不用任何内置工具；逗号分隔=只用这些 */
     private String builtinTools;
 
+    /**
+     * 是否子智能体：0=主智能体（可在对话页直接选用）；1=子智能体（不直接选用，供主智能体委派）。
+     * 对齐语析：子智能体是同一张表里的一级智能体，只是用途不同。
+     */
+    private Integer isSubagent;
+
+    /**
+     * 主智能体可委派的子智能体 ID 列表：
+     * NULL 或空串 → 不启用委派，编排仍走原有的「多视角并行检索」；
+     * 逗号分隔 → 并行执行这些子智能体（各自用自己的提示词与知识库范围）。
+     */
+    private String subAgentIds;
+
+    /**
+     * 知识库范围解析：空 → null（不限制，用全部文档）；非空 → 允许的 docId 集合。
+     * 子智能体编排需要按各自的范围过滤命中，故与字段放在一起，免得调用方各写一遍解析。
+     */
+    public java.util.Set<String> scopeDocIds() {
+        if (knowledgeScope == null || knowledgeScope.isBlank()) return null;
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (String part : knowledgeScope.split(",")) {
+            String t = part == null ? "" : part.trim();
+            if (!t.isEmpty()) ids.add(t);
+        }
+        return ids.isEmpty() ? null : ids;
+    }
+
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
 

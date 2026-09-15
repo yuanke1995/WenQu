@@ -45,8 +45,16 @@ public class AgentController {
         return ResultJson.ok(agentService.available());
     }
 
+    @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description），供主智能体配置页勾选允许委派的对象")
+    @GetMapping("/sub")
+    public ResultJson subAgents() {
+        return ResultJson.ok(agentService.subAgents());
+    }
+
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/description/model/systemPrompt/knowledgeScope/"
-            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp(1开0关，省略=继承)/isDefault")
+            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp(1开0关，省略=继承)/"
+            + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
+            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(agentService.create(body));

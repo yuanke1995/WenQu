@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
+import com.wisesoft.ai.model.AiAgent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -69,23 +70,39 @@ public class SubAgentOrchestrator {
     private static final class RunCtx {
         final String question;
         final List<String> subQueries;
+        /** 主智能体委派的子智能体（null/空 = 走原有的多视角策略） */
+        final List<AiAgent> subAgents;
         final List<HybridRetrievalService.Hit> collected = new ArrayList<>();
         final Set<String> seenKids = new LinkedHashSet<>();
         final List<String> digests = new ArrayList<>();
 
-        RunCtx(String question, List<String> subQueries) {
+        RunCtx(String question, List<String> subQueries, List<AiAgent> subAgents) {
             this.question = question;
             this.subQueries = subQueries;
+            this.subAgents = subAgents;
         }
     }
 
     private static final ThreadLocal<RunCtx> CTX = new ThreadLocal<>();
 
-    /** 并行编排入口；任何异常都不抛出（编排是增强项，失败应降级为单路检索，不能影响问答） */
+    /** 并行编排入口（未挂子智能体）：走原有的「多视角并行检索」 */
     public Outcome run(String question) {
-        int agents = Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
+        return run(question, null);
+    }
+
+    /**
+     * 并行编排入口；任何异常都不抛出（编排是增强项，失败应降级为单路检索，不能影响问答）
+     *
+     * @param subAgents 主智能体委派的子智能体。为 null 或空时走原有的多视角策略；
+     *                  非空时按子智能体数并行——每个子智能体用自己的知识库范围检索、按自己的角色提示词提炼
+     */
+    public Outcome run(String question, List<AiAgent> subAgents) {
+        boolean delegated = subAgents != null && !subAgents.isEmpty();
+        int agents = delegated
+                ? Math.min(subAgents.size(), 4)
+                : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
-        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents));
+        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents);
         CTX.set(ctx);
         try {
             CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
@@ -94,8 +111,8 @@ public class SubAgentOrchestrator {
                 if (ctx.digests.isEmpty()) ctx.digests.add(String.valueOf(v));
             }));
             long ms = System.currentTimeMillis() - t0;
-            log.info("[SUBAGENT] 并行编排完成：{} 个子代理，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
-                    agents, ctx.collected.size(), ctx.digests.size(), ms);
+            log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
+                    delegated ? "子智能体委派" : "多视角", agents, ctx.collected.size(), ctx.digests.size(), ms);
             return new Outcome(List.copyOf(ctx.collected), String.join("\n", ctx.digests), agents, ms);
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
@@ -170,12 +187,16 @@ public class SubAgentOrchestrator {
         }
     }
 
-    /** 单个子代理：检索该视角 → 跨代理去重收集 → （可选）LLM 提炼要点 */
+    /** 单个分支执行：检索 → 按各自知识库范围过滤 → 跨分支去重 →（可选）按角色提炼要点 */
     private void runAgent(int idx, RunCtx ctx) {
-        String subQuery = idx < ctx.subQueries.size() ? ctx.subQueries.get(idx) : ctx.question;
         try {
+            AiAgent sub = (ctx.subAgents != null && idx < ctx.subAgents.size()) ? ctx.subAgents.get(idx) : null;
+            // 委派模式下各分支都用原问题：差异体现在「各自的知识库范围」与「各自的提炼视角」上——
+            // 这才是"派给某个角色去查"，而不是"同一个问题换个问法"。未委派时才走多视角子查询。
+            String subQuery = (sub == null && idx < ctx.subQueries.size()) ? ctx.subQueries.get(idx) : ctx.question;
             int topK = Math.max(1, configService.getInt("agent.topKPerAgent", 3));
             List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery);
+            if (sub != null) hits = inScope(hits, sub.scopeDocIds());
             List<HybridRetrievalService.Hit> fresh = new ArrayList<>();
             synchronized (ctx) {
                 int added = 0;
@@ -187,23 +208,29 @@ public class SubAgentOrchestrator {
                 }
             }
             if (configService.getBoolean("agent.digestEnabled") && !fresh.isEmpty()) {
-                String digest = digest(subQuery, fresh);
+                String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt());
                 if (digest != null && !digest.isBlank()) {
                     synchronized (ctx) {
-                        ctx.digests.add("· " + digest.strip());
+                        ctx.digests.add("· " + (sub == null ? "" : "【" + sub.getName() + "】") + digest.strip());
                     }
                 }
             }
         } catch (Exception e) {
-            log.warn("[SUBAGENT] 子代理 {} 执行失败（跳过该视角）: {}", idx, e.getMessage());
+            log.warn("[SUBAGENT] 分支 {} 执行失败（跳过）: {}", idx, e.getMessage());
         }
+    }
+
+    /** 按知识库范围过滤命中（scope 为 null 表示不限制） */
+    private static List<HybridRetrievalService.Hit> inScope(List<HybridRetrievalService.Hit> hits, Set<String> scope) {
+        if (scope == null || hits == null) return hits;
+        return hits.stream().filter(h -> h.docId() != null && scope.contains(h.docId())).toList();
     }
 
     /**
      * 用 LLM 把命中片段提炼成要点（非流式、短输出）：让汇总进上下文的资料更精炼，
      * 而不是把每个子代理的原始片段都塞进主链路。失败返回 null（不影响主流程）。
      */
-    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits) {
+    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits, String rolePrompt) {
         try {
             StringBuilder sb = new StringBuilder();
             for (HybridRetrievalService.Hit h : hits) {
@@ -211,7 +238,9 @@ public class SubAgentOrchestrator {
                 String content = h.content() == null ? "" : h.content().replaceAll("\\s+", " ");
                 sb.append(content, 0, Math.min(content.length(), 400)).append("\n");
             }
-            String prompt = "下面是知识库中与「" + subQuery + "」相关的资料片段：\n\n" + sb
+            // 委派模式带上子智能体的角色设定，让提炼视角贴合它的职责
+            String role = (rolePrompt == null || rolePrompt.isBlank()) ? "" : "你的分析视角：" + rolePrompt.trim() + "\n\n";
+            String prompt = role + "下面是知识库中与「" + subQuery + "」相关的资料片段：\n\n" + sb
                     + "\n请用 2~3 条要点提炼其中与问题最相关的事实（只输出要点，每条一行，不要解释、不要补充资料外内容）。";
             String out = chatClient.prompt().user(prompt).call().content();
             return out == null ? null : out.replaceAll("[\\r\\n]+", " ").trim();

@@ -287,6 +287,7 @@ export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' }
 /** 对话页下拉：问答用户可读的精简列表（仅 id/name/description/model/isDefault） */
 export const listAvailableAgents = () => request('/agent/available')
 export const listAgents = () => request('/agent/list')
+export const listSubAgents = () => request('/agent/sub')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })

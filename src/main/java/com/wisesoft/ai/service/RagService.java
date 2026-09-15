@@ -574,8 +574,13 @@ public class RagService {
             // 增强项：编排内部已把所有异常降级为空结果，失败不影响主链路
             SubAgentOrchestrator.Outcome subOutcome = null;
             if (configService.getBoolean("agent.enabled")) {
-                sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
-                subOutcome = subAgentOrchestrator.run(question);
+                // 委派模式：主智能体挂了子智能体时由它们并行执行（各自范围 + 各自视角）；
+                // 未挂则沿用原有的「多视角并行检索」
+                List<AiAgent> delegated = resolveSubAgents(agent);
+                sendSseEvent(emitter, "stage", delegated.isEmpty()
+                        ? "正在并行检索多个视角…"
+                        : "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
+                subOutcome = subAgentOrchestrator.run(question, delegated);
                 if (!subOutcome.hits().isEmpty()) {
                     log.info("[SUBAGENT] 命中并入主链路 {} 块（子代理 {} 个，耗时 {}ms）",
                             subOutcome.hits().size(), subOutcome.agents(), subOutcome.elapsedMs());
@@ -1503,6 +1508,37 @@ public class RagService {
     private boolean toolOn(AiAgent agent, String globalKey, Integer agentFlag) {
         if (agent != null && agentFlag != null) return agentFlag == 1;
         return configService.getBoolean(globalKey);
+    }
+
+    /**
+     * 解析主智能体委派的子智能体（4.1 与 4.3 打通）。
+     * <p>未配置或配置为空 → 返回空列表，编排走原有的多视角策略；
+     * 配置了 ID → 逐个加载，跳过已删除或已改回普通智能体的（避免残留 ID 造成空转）。</p>
+     */
+    private List<AiAgent> resolveSubAgents(AiAgent agent) {
+        if (agent == null || agent.getSubAgentIds() == null || agent.getSubAgentIds().isBlank()) {
+            return List.of();
+        }
+        Set<String> ids = scopeOf(agent.getSubAgentIds());
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<AiAgent> subs = new ArrayList<>();
+        for (String id : ids) {
+            AiAgent s = agentService.get(id);
+            if (s == null) {
+                log.warn("[AGENT] 委派的子智能体 {} 已不存在（跳过）", id);
+                continue;
+            }
+            if (!Integer.valueOf(1).equals(s.getIsSubagent())) {
+                log.warn("[AGENT] 智能体 {} 已不是子智能体，不再作为委派对象（跳过）", id);
+                continue;
+            }
+            subs.add(s);
+        }
+        if (subs.size() > 4) {
+            log.warn("[AGENT] 委派子智能体 {} 个，超出并行上限，仅取前 4 个", subs.size());
+            return subs.subList(0, 4);
+        }
+        return subs;
     }
 
     /**

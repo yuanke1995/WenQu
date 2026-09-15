@@ -39,7 +39,10 @@
             <div class="ap-card-head">
               <span class="ap-avatar"><robot-outlined /></span>
               <span class="ap-name" :title="a.name">{{ a.name }}</span>
-              <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
+              <span v-if="isDefault(a) || a.isSubagent === 1" class="ap-card-tags">
+                <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
+                <span v-if="a.isSubagent === 1" class="ap-tag-sub">子</span>
+              </span>
             </div>
             <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
             <div class="ap-chips">
@@ -49,7 +52,7 @@
             </div>
             <div class="ap-card-foot">
               <button class="v2-link-btn" @click.stop="openEdit(a)">配置</button>
-              <button v-if="!isDefault(a)" class="v2-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
+              <button v-if="!isDefault(a) && a.isSubagent !== 1" class="v2-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
               <a-popconfirm title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                 <button class="v2-link-btn danger" @click.stop>删除</button>
               </a-popconfirm>
@@ -88,6 +91,15 @@
           <section class="v2-card">
             <h2 class="v2-card-title"><idcard-outlined class="ap-sec-ic" />身份</h2>
             <p class="ap-block-hint">对话页下拉里展示的就是名称与描述，写清楚它适合什么场景。</p>
+            <a-form-item label="用途">
+              <a-radio-group v-model:value="form.isSubagent">
+                <a-radio-button :value="0">主智能体</a-radio-button>
+                <a-radio-button :value="1">子智能体</a-radio-button>
+              </a-radio-group>
+              <div class="ap-block-hint" style="margin: 6px 0 0">
+                主智能体可在对话页直接选用；子智能体不能直接选用，只能被主智能体委派去查资料。
+              </div>
+            </a-form-item>
             <a-form-item label="名称" required>
               <a-input v-model:value="form.name" :maxlength="200" placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
             </a-form-item>
@@ -159,7 +171,19 @@
             </div>
           </section>
 
-          <section class="v2-card">
+          <section class="v2-card" v-if="!form.isSubagent">
+            <h2 class="v2-card-title"><apartment-outlined class="ap-sec-ic" />子智能体委派</h2>
+            <p class="ap-block-hint">
+              选中后，复杂问题会并行交给这些子智能体各自检索——各按自己的知识库范围与角色视角，再汇总作答。
+              不选则沿用系统的多视角并行检索。
+            </p>
+            <a-select v-model:value="form.subAgentIds" mode="multiple" :options="subOptions" allow-clear
+                      show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
+                      :placeholder="subOptions.length ? '选择允许委派的子智能体（最多 4 个）'
+                        : '还没有子智能体——先在列表新建一个「用途 = 子智能体」的条目'" />
+          </section>
+
+          <section class="v2-card" v-if="!form.isSubagent">
             <h2 class="v2-card-title"><star-outlined class="ap-sec-ic" />默认</h2>
             <a-checkbox v-model:checked="form.isDefault">设为默认智能体</a-checkbox>
             <span class="ap-block-hint" style="margin-left:8px">对话页打开时预选它（同一时间只有一个默认）</span>
@@ -175,11 +199,11 @@ import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, RobotOutlined, IdcardOutlined,
-  ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined,
+  ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listDocuments, getConfig,
-         listSkills, getMcpStatus } from '../../api'
+         listSkills, getMcpStatus, listSubAgents } from '../../api'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -229,6 +253,8 @@ const globalModel = ref('未配置')
 const builtinOptions = ref(BUILTIN_TOOL_OPTIONS)
 const skillOptions = ref([])
 const mcpOptions = ref([])
+// 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
+const subOptions = ref([])
 const OPTION_REFS = { builtinOptions, skillOptions, mcpOptions }
 const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
@@ -299,8 +325,8 @@ const summaryCaps = computed(() => {
 const reload = async () => {
   loading.value = true
   try {
-    const [ar, dr, cr, sr, mr] = await Promise.all([
-      listAgents(), listDocuments(), getConfig(), listSkills(), getMcpStatus()
+    const [ar, dr, cr, sr, mr, xr] = await Promise.all([
+      listAgents(), listDocuments(), getConfig(), listSkills(), getMcpStatus(), listSubAgents()
     ])
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
@@ -321,6 +347,10 @@ const reload = async () => {
         value: s.name,
         label: s.connected ? s.name : s.name + '（未连接）'
       }))
+    }
+    // 可委派的子智能体
+    if (xr && xr.success && Array.isArray(xr.data)) {
+      subOptions.value = xr.data.map(s => ({ value: s.id, label: s.name }))
     }
   } catch (e) { message.error(e.message || '加载失败') }
   finally { loading.value = false }
@@ -361,7 +391,9 @@ const openEdit = a => {
     toolMcp: triStr(a.toolMcp),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
-    mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps)
+    mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
+    isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
+    subAgentIds: splitList(a.subAgentIds)
   }
   scopeMode.value = scope.length ? 'pick' : 'all'
   editing.value = true
@@ -383,7 +415,10 @@ const save = async () => {
     knowledgeScope: scopeMode.value === 'pick' ? (f.knowledgeScope || []).join(',') : '',
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
-    isDefault: f.isDefault ? 1 : 0
+    isDefault: f.isDefault ? 1 : 0,
+    isSubagent: f.isSubagent ? 1 : 0,
+    // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
+    subAgentIds: f.isSubagent ? null : (f.subAgentIds.length ? f.subAgentIds.join(',') : '')
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」
@@ -461,9 +496,14 @@ onMounted(reload)
   background: var(--v2-accent-weak); color: var(--v2-accent);
 }
 .ap-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-card-tags { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .ap-tag-default {
-  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; flex: none; margin-left: auto;
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: #eaf5ec; color: var(--v2-ok);
+}
+.ap-tag-sub {
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: #f1f3f5; color: var(--v2-text2);
 }
 .ap-desc {
   font-size: 12px; color: var(--v2-text2); line-height: 1.6; margin: 0; min-height: 32px;

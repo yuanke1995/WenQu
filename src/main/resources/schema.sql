@@ -225,6 +225,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `skills`          VARCHAR(1000) DEFAULT NULL COMMENT '技能范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
     `mcps`            VARCHAR(1000) DEFAULT NULL COMMENT 'MCP Server 范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
     `builtin_tools`   VARCHAR(500)  DEFAULT NULL COMMENT '内置工具范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
+    `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
+    `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
     `is_default`      INT          DEFAULT 0 COMMENT '是否默认智能体: 0=否 1=是',
     `create_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
