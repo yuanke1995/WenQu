@@ -727,6 +727,14 @@ public class ConfigService {
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
+
+        // 意图分类：默认值与 AiAppProperties.Intent 保持一致；
+        // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）
+        d.put("intent.enabled", "false");                  // 意图分类总开关（默认关）
+        d.put("intent.timeoutMillis", "3000");             // 分类调用超时(ms)
+        d.put("intent.model", "");                         // 分类用模型（留空回落 chat.model）
+        d.put("intent.prompt", "");                        // 分类提示词（留空 = 用代码内置默认）
+        d.put("intent.chatPrompt", "");                    // 闲聊分支回答规则（留空 = 用代码内置默认）
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
@@ -1330,8 +1338,11 @@ public class ConfigService {
                 "skill",
                 // @ 引用分组：atRef.maxChunksPerDoc / atRef.maxTotal
                 "atRef",
-                // SubAgent 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent / agent.digestEnabled
-                "agent"};
+                // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent / agent.digestEnabled
+                "agent",
+                // 意图分类分组：intent.enabled / intent.timeoutMillis / intent.model / intent.prompt / intent.chatPrompt
+                // （此前未列入本数组 + defaults() 缺条目 → 开启后设置页永远回显"关"）
+                "intent"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {
