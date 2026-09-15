@@ -9,6 +9,7 @@ import Evaluation from './views/Evaluation.vue'
 // v2 工作台（三栏布局的新版界面，与旧版页面并存，路由前缀 /v2）
 import V2Layout from './views/v2/V2Layout.vue'
 import ChatV2 from './views/v2/ChatPage.vue'
+import AgentsV2 from './views/v2/AgentsPage.vue'
 import DocumentsV2 from './views/v2/DocumentsPage.vue'
 import DashboardV2 from './views/v2/DashboardPage.vue'
 import SettingsV2 from './views/v2/SettingsPage.vue'
@@ -26,6 +27,7 @@ const router = createRouter({
     // v2：聊天对所有用户开放，管理页同样走管理员守卫
     { path: '/v2', redirect: '/v2/chat' },
     { path: '/v2/chat', component: V2Layout, children: [{ path: '', component: ChatV2 }] },
+    { path: '/v2/agents', component: V2Layout, children: [{ path: '', component: AgentsV2 }], meta: { requiresAdmin: true, title: '智能体' } },
     { path: '/v2/documents', component: V2Layout, children: [{ path: '', component: DocumentsV2 }], meta: { requiresAdmin: true, title: '文档管理' } },
     { path: '/v2/dashboard', component: V2Layout, children: [{ path: '', component: DashboardV2 }], meta: { requiresAdmin: true, title: '数据看板' } },
     { path: '/v2/settings', component: V2Layout, children: [{ path: '', component: SettingsV2 }], meta: { requiresAdmin: true, title: '系统设置' } },

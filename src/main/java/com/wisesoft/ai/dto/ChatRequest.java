@@ -31,4 +31,7 @@ public class ChatRequest {
 
     @Schema(description = "@ 引用（用户在输入框手动指定的参考资料；被 @ 文档的块会前置进上下文）")
     private List<ChatRef> refs;
+
+    @Schema(description = "智能体 ID（P3：4.1 Agent 配置）；非空时该轮问答按智能体覆盖模型/提示词/工具/知识库范围，未填维度继承全局")
+    private String agentId;
 }

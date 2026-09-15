@@ -3,6 +3,7 @@ package com.wisesoft.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.config.AiAppProperties;
 import com.wisesoft.ai.dto.ChatRef;
+import com.wisesoft.ai.model.AiAgent;
 import com.wisesoft.ai.model.AiAnswerCache;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
@@ -257,6 +258,8 @@ public class RagService {
     private final SkillTools skillTools;
     /** SubAgent 并行编排（4.3）：多视角并行检索 + 要点提炼（agent.enabled 控制，默认关） */
     private final SubAgentOrchestrator subAgentOrchestrator;
+    /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
+    private final AgentService agentService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -321,6 +324,7 @@ public class RagService {
                       SkillService skillService,
                       SkillTools skillTools,
                       SubAgentOrchestrator subAgentOrchestrator,
+                      AgentService agentService,
                       McpClientService mcpClientService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
@@ -344,6 +348,7 @@ public class RagService {
         this.skillService = skillService;
         this.skillTools = skillTools;
         this.subAgentOrchestrator = subAgentOrchestrator;
+        this.agentService = agentService;
         this.mcpClientService = mcpClientService;
     }
 
@@ -353,7 +358,7 @@ public class RagService {
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
     public void chat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                     List<ChatRef> refs, SseEmitter emitter) {
+                     List<ChatRef> refs, String agentId, SseEmitter emitter) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -369,7 +374,7 @@ public class RagService {
         // lambda 引用需 effectively final：@ 引用列表用不可变副本传递
         final List<ChatRef> finalRefs = refs == null ? List.of() : List.copyOf(refs);
         try {
-            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, finalRefs, emitter));
+            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, finalRefs, agentId, emitter));
         } catch (RejectedExecutionException e) {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -383,8 +388,19 @@ public class RagService {
      * 问答流水线主体（独立线程执行）：图片处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
     private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                         List<ChatRef> refs, SseEmitter emitter) {
+                         List<ChatRef> refs, String agentId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
+        // 智能体（4.1）：选中后覆盖模型/提示词/工具/知识库范围；agentId 无效/缺失时视为无覆盖（继承全局）
+        final AiAgent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
+        if (agent != null) {
+            log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
+        }
+        // 知识库范围：all/空 → null（继承全局全部文档）；否则解析为文档 ID 集合，检索命中按此过滤
+        final Set<String> scopeDocIds = (agent != null && agent.getKnowledgeScope() != null
+                && !agent.getKnowledgeScope().isBlank() && !"all".equalsIgnoreCase(agent.getKnowledgeScope().trim()))
+                ? Arrays.stream(agent.getKnowledgeScope().split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet())
+                : null;
         // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
         final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
@@ -420,7 +436,7 @@ public class RagService {
                 }
                 IntentResult ir = classifyIntent(question);
                 if (ir.chat()) {
-                    runSmallTalkChat(sessionId, question, emitter, startTime, thinkingHolder, degradations, degradedCodes);
+                    runSmallTalkChat(sessionId, question, emitter, startTime, thinkingHolder, degradations, degradedCodes, agent);
                     return;
                 }
             }
@@ -503,6 +519,7 @@ public class RagService {
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
                     hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes);
+                    hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
                     log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, thinkTerms={}, hits={}",
                             dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
                 } else {
@@ -535,6 +552,7 @@ public class RagService {
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
                 }
                 hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
+                hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
             if (retrievalDiag.isVectorFailed()) {
@@ -566,10 +584,7 @@ public class RagService {
 
             // 2. System 提示：角色段（DB 可编辑，保存即生效；空则用代码默认值兜底）+ 规则段（代码固定，与解析器耦合）
             //    + 对话历史（单条截断 + token 上限 + 图片标记剥离）
-            String rolePart = configService.get("chat.systemPrompt");
-            if (rolePart == null || rolePart.isBlank()) {
-                rolePart = properties.getSystemPrompt();
-            }
+            String rolePart = resolveSystemPrompt(agent);
             StringBuilder system = new StringBuilder(rolePart)
                     .append("\n\n【规则】\n")
                     .append("参考资料中以 [1][2] 编号标注来源，回答引用了某个资料时，在对应句末用 [N] 标注（如\"评分组件支持自定义总分[1]\"）。")
@@ -645,10 +660,13 @@ public class RagService {
             List<HybridRetrievalService.Hit> mainHits = new ArrayList<>(atHits);
             Set<String> seenKid = atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
                     .filter(Objects::nonNull).collect(Collectors.toSet());
-            // 子代理命中优先级仅次于 @ 引用（针对性视角检索，价值高于普通召回）
+            // 子代理命中优先级仅次于 @ 引用（针对性视角检索，价值高于普通召回）；同样受智能体知识库范围约束
             if (subOutcome != null) {
                 for (HybridRetrievalService.Hit h : subOutcome.hits()) {
-                    if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())) mainHits.add(h);
+                    if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())
+                            && (scopeDocIds == null || (h.docId() != null && scopeDocIds.contains(h.docId())))) {
+                        mainHits.add(h);
+                    }
                 }
             }
             for (HybridRetrievalService.Hit h : hits) {
@@ -859,7 +877,7 @@ public class RagService {
             st.contextHits = docNo - 1;
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
-            st.disposableRef.set(buildAnswerStream(system.toString(), user, st));
+            st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
 
             // 前端断开/超时时停止生成；超时先发 warn（fail-loud：回答被截断必须告知，不留静默半截）
             emitter.onCompletion(() -> st.disposeSafe());
@@ -887,30 +905,37 @@ public class RagService {
      * （"No @Tool annotated methods found... use .toolCallbacks() instead"），故统一走 .toolCallbacks()。
      * 全部关闭时返回空列表（等价未配置工具，零侵入）。
      */
-    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks() {
+    /**
+     * 启用工具列表（按智能体覆盖）。智能体工具开关为三态：agent 中显式设了 1/0 则强制覆盖，
+     * 否则继承全局 tool./mcp./skill. 开关。工具总开关 tool.enabled 仍由全局控制（智能体不开关总闸）。
+     */
+    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(AiAgent agent) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         if (!configService.getBoolean("tool.enabled")) {
             return callbacks;
         }
-        if (configService.getBoolean("tool.knowledgeRetrieval.enabled")) {
+        if (toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
         }
-        if (configService.getBoolean("tool.builtin.enabled")) {
+        if (toolOn(agent, "tool.builtin.enabled", agent == null ? null : agent.getToolBuiltin())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(builtinTools)));
         }
-        // 技能取回工具（Skills 渐进披露的取回端；需 skill.enabled 总开关，工具默认关）
-        if (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.toolEnabled")) {
+        // 技能取回工具（Skills 渐进披露的取回端）：agent 未指定时按 skill.enabled && skill.toolEnabled 判定
+        boolean skillToolOn = (agent != null && agent.getToolSkill() != null)
+                ? agent.getToolSkill() == 1
+                : (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.toolEnabled"));
+        if (skillToolOn) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(skillTools)));
         }
-        if (configService.getBoolean("tool.artifact.enabled")) {
+        if (toolOn(agent, "tool.artifact.enabled", agent == null ? null : agent.getToolArtifact())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
         }
         // MCP 外部工具（工具生态层）：mcp.enabled 总开关 + servers 配置；失败容错由 McpClientService 兜底
-        if (configService.getBoolean("mcp.enabled")) {
+        if (toolOn(agent, "mcp.enabled", agent == null ? null : agent.getToolMcp())) {
             try {
                 callbacks.addAll(mcpClientService.toolCallbacks());
             } catch (Exception e) {
@@ -1018,7 +1043,7 @@ public class RagService {
      * 构建并订阅主 LLM 流式回答（H2：未输出任何 token 时中断自动重试，次数 chat.streamRetryCount 可配）。
      * 可变状态与 complete 回调依赖收敛在 AnswerStreamState；重试时重建全新流并丢弃旧缓冲。
      */
-    private Disposable buildAnswerStream(String system, String user, AnswerStreamState st) {
+    private Disposable buildAnswerStream(String system, String user, AnswerStreamState st, AiAgent agent) {
         SseEmitter emitter = st.emitter;
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
@@ -1027,7 +1052,7 @@ public class RagService {
                 .user(user)
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
                 .options(OpenAiChatOptions.builder()
-                        .model(configService.get("chat.model"))
+                        .model(resolveModel(agent))
                         .temperature(configService.getDouble("chat.temperature"))
                         .maxTokens(configService.getInt("context.maxOutputTokens"))
                         .build())
@@ -1037,7 +1062,7 @@ public class RagService {
                 // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。
                 // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
-                .toolCallbacks(instrumentTools(enabledToolCallbacks(), st))
+                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent), st))
                 // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
                 .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
                 .stream()
@@ -1098,7 +1123,7 @@ public class RagService {
                         st.fullResponse.setLength(0);
                         st.emitBuf.setLength(0);
                         st.relatedBlock.setLength(0);
-                        st.disposableRef.set(buildAnswerStream(system, user, st));
+                        st.disposableRef.set(buildAnswerStream(system, user, st, agent));
                         return;
                     }
                     log.error("Stream error: {} -> {}", error.getClass().getSimpleName(), root.toString());
@@ -1434,6 +1459,39 @@ public class RagService {
      * 模型窗口按当前 chat.model 子串匹配 model-windows 映射，未匹配用默认窗口
      * 参数走 ConfigService（DB 设置页保存即生效，yml 兜底）
      */
+    // ---- 智能体（4.1）覆盖解析辅助 ----
+
+    /** 模型：智能体显式填写则用智能体模型，否则继承全局 chat.model */
+    private String resolveModel(AiAgent agent) {
+        return (agent != null && agent.getModel() != null && !agent.getModel().isBlank())
+                ? agent.getModel() : configService.get("chat.model");
+    }
+
+    /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值） */
+    private String resolveSystemPrompt(AiAgent agent) {
+        String p = (agent != null && agent.getSystemPrompt() != null && !agent.getSystemPrompt().isBlank())
+                ? agent.getSystemPrompt() : configService.get("chat.systemPrompt");
+        return (p == null || p.isBlank()) ? properties.getSystemPrompt() : p;
+    }
+
+    /** 工具开关三态解析：智能体显式设了 1/0 则强制覆盖，否则继承全局开关 */
+    private boolean toolOn(AiAgent agent, String globalKey, Integer agentFlag) {
+        if (agent != null && agentFlag != null) return agentFlag == 1;
+        return configService.getBoolean(globalKey);
+    }
+
+    /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */
+    private List<HybridRetrievalService.Hit> applyScope(List<HybridRetrievalService.Hit> hits, Set<String> scopeDocIds) {
+        if (scopeDocIds == null || hits == null) return hits;
+        List<HybridRetrievalService.Hit> scoped = hits.stream()
+                .filter(h -> h.docId() != null && scopeDocIds.contains(h.docId()))
+                .collect(Collectors.toList());
+        if (scoped.size() < hits.size()) {
+            log.info("[AGENT] 知识库范围约束：命中 {} → 范围内 {} 块", hits.size(), scoped.size());
+        }
+        return scoped;
+    }
+
     private int resolveContextBudget() {
         String modelWindows = configService.get("context.modelWindows");
         int defaultWindow = configService.getInt("context.defaultWindowTokens");
@@ -2044,13 +2102,10 @@ public class RagService {
      */
     private void runSmallTalkChat(String sessionId, String question, SseEmitter emitter, long startTime,
                                   String[] thinkingHolder, List<Map<String, String>> degradations,
-                                  Set<String> degradedCodes) {
+                                  Set<String> degradedCodes, AiAgent agent) {
         try {
             // 角色段（与主链路同源，保持人设一致）+ 闲聊分支规则（intent.chatPrompt，DB 可编辑保存即生效）
-            String rolePart = configService.get("chat.systemPrompt");
-            if (rolePart == null || rolePart.isBlank()) {
-                rolePart = properties.getSystemPrompt();
-            }
+            String rolePart = resolveSystemPrompt(agent);
             StringBuilder system = new StringBuilder(rolePart)
                     .append("\n\n【本轮对话说明】\n")
                     .append(properties.getIntent().getChatPrompt());
@@ -2076,7 +2131,7 @@ public class RagService {
             AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
                     new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), List.of(),
                     startTime, question, thinkingHolder, degradations, degradedCodes, null);
-            st.disposableRef.set(buildAnswerStream(system.toString(), question, st));
+            st.disposableRef.set(buildAnswerStream(system.toString(), question, st, agent));
             emitter.onCompletion(() -> st.disposeSafe());
             emitter.onTimeout(() -> {
                 log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);

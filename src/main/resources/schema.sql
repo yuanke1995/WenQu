@@ -204,3 +204,27 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     UNIQUE KEY `uk_key_hash` (`key_hash`),
     KEY `idx_disabled` (`disabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI API Key 表';
+
+-- ============================================
+-- 2026-09-15: 智能体配置（P3：4.1 Agent 配置——模型/知识库/工具/提示词）
+-- 智能体 = 命名预设，把「模型/系统提示词/知识库范围/工具开关」打包；对话页下拉切换，
+-- 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 NULL=继承。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_agent` (
+    `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
+    `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
+    `model`           VARCHAR(255) DEFAULT NULL COMMENT '模型覆盖（空=继承全局 chat.model）',
+    `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
+    `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
+    `tool_knowledge`  INT          DEFAULT NULL COMMENT '知识库检索工具: 1=开 0=关 NULL=继承',
+    `tool_builtin`    INT          DEFAULT NULL COMMENT '内置工具: 1=开 0=关 NULL=继承',
+    `tool_skill`      INT          DEFAULT NULL COMMENT '技能工具(readSkill): 1=开 0=关 NULL=继承',
+    `tool_artifact`   INT          DEFAULT NULL COMMENT '产物交付工具: 1=开 0=关 NULL=继承',
+    `tool_mcp`        INT          DEFAULT NULL COMMENT 'MCP 工具: 1=开 0=关 NULL=继承',
+    `is_default`      INT          DEFAULT 0 COMMENT '是否默认智能体: 0=否 1=是',
+    `create_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_default` (`is_default`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 智能体配置表';

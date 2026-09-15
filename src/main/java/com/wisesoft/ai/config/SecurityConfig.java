@@ -56,7 +56,8 @@ public class SecurityConfig implements WebMvcConfigurer {
      * <p>
      * 白名单 = 问答链路的最小闭环：
      * chat、会话（列表/新建/历史/删除/置顶收藏/重命名/批量/组删除撤销）、反馈提交、
-     * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、推荐问题读取（GET /suggested）、身份查询（/auth/me）。
+     * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、推荐问题读取（GET /suggested）、身份查询（/auth/me）、
+     * 对话页智能体下拉（GET /agent/available，只读精简字段）。
      */
     private static final Pattern KNOWLEDGE_SINGLE_GET = Pattern.compile("/api/ai/knowledge/([^/]+)");
 
@@ -75,6 +76,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/auth/me")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/suggested")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/config/public")) return true;
+        // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
+        // 管理端 /api/ai/agent/list 等仍走管理员判定。
+        if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
         // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
         if ("GET".equals(method)) {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);

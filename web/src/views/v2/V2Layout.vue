@@ -21,6 +21,10 @@
           <span v-if="!collapsed">对话</span>
         </button>
         <template v-if="isAdmin">
+          <button class="nav-item" :class="{ active: isActive('/v2/agents') }" @click="router.push('/v2/agents')" title="智能体">
+            <robot-outlined />
+            <span v-if="!collapsed">智能体</span>
+          </button>
           <button class="nav-item" :class="{ active: isActive('/v2/documents') }" @click="router.push('/v2/documents')" title="文档管理">
             <folder-outlined />
             <span v-if="!collapsed">文档管理</span>
@@ -86,7 +90,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { PlusOutlined, MessageOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
+import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi } from '../../api'
 import { ensureAuth, isAdminSync, setAdminToken } from '../../utils/auth'

@@ -152,6 +152,47 @@
                       @keydown="onInputKeydown" />
           <div class="input-toolbar">
             <div class="toolbar-left">
+              <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
+                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen }"
+                        title="选择智能体：按预设覆盖模型 / 提示词 / 知识库范围 / 能力">
+                  <robot-outlined class="agent-pill-ic" />
+                  <span class="agent-pill-name">{{ currentAgentName }}</span>
+                  <down-outlined class="agent-pill-caret" />
+                </button>
+                <template #overlay>
+                  <div class="agent-menu">
+                    <div class="agent-menu-head">
+                      <span>选择智能体</span>
+                      <span class="agent-menu-hint">决定这一轮问答用哪套配置</span>
+                    </div>
+                    <div class="agent-menu-list">
+                      <div class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+                        <div class="agent-mi-text">
+                          <span class="agent-mi-name">默认（全局配置）</span>
+                          <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
+                        </div>
+                        <check-outlined v-if="!currentAgentId" class="agent-mi-check" />
+                      </div>
+                      <div v-for="a in agentList" :key="a.id" class="agent-mi"
+                           :class="{ active: currentAgentId === a.id }" @click="pickAgent(a.id)">
+                        <div class="agent-mi-text">
+                          <span class="agent-mi-name">
+                            {{ a.name }}
+                            <span v-if="a.isDefault" class="agent-mi-badge">默认</span>
+                          </span>
+                          <span class="agent-mi-desc">{{ agentSummary(a) }}</span>
+                        </div>
+                        <check-outlined v-if="currentAgentId === a.id" class="agent-mi-check" />
+                      </div>
+                      <div v-if="!agentList.length" class="agent-mi-empty">还没有智能体，去「管理智能体」新建一个</div>
+                    </div>
+                    <div v-if="isAdmin" class="agent-menu-foot" @click="goManageAgents">
+                      <setting-outlined />
+                      <span>管理智能体</span>
+                    </div>
+                  </div>
+                </template>
+              </a-dropdown>
               <a-tooltip title="上传图片（最多 5 张）">
                 <button class="v2-icon-btn" @click="pickImages"><picture-outlined /></button>
               </a-tooltip>
@@ -159,7 +200,7 @@
                 <button class="v2-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }" @click="toggleDeepThink"><bulb-outlined /></button>
               </a-tooltip>
             </div>
-            <span class="model-name">{{ modelLabel }}</span>
+            <span class="model-name">{{ effectiveModel }}</span>
             <button v-if="loading" class="send-btn stop" title="停止生成" @click="stop"><pause-circle-outlined /></button>
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
           </div>
@@ -171,8 +212,18 @@
     <!-- 右侧状态栏（可收起）：模型 / 本次检索 / 引用来源 -->
     <aside v-if="panelOpen" class="right-panel">
       <div class="rp-card">
-        <div class="rp-label">当前模型</div>
-        <div class="rp-strong">{{ modelLabel || '—' }}</div>
+        <div class="rp-label">当前智能体</div>
+        <div class="rp-strong rp-agent">
+          <robot-outlined class="rp-agent-ic" />
+          <span>{{ currentAgentName }}</span>
+        </div>
+        <div class="rp-row rp-agent-row">
+          <span>模型</span>
+          <span class="rp-val" :title="effectiveModel">
+            <span class="rp-val-text">{{ effectiveModel || '—' }}</span>
+            <span v-if="currentAgentModelOverridden" class="rp-tag">智能体指定</span>
+          </span>
+        </div>
         <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
       </div>
       <div class="rp-card">
@@ -272,13 +323,14 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { isAdminSync } from '../../utils/auth'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
-         ArrowUpOutlined } from '@ant-design/icons-vue'
+         ArrowUpOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listDocuments } from '../../api'
+         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listDocuments, listAvailableAgents } from '../../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -324,6 +376,54 @@ const toggleDeepThink = () => {
 }
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length))
 
+// ==================== 智能体（4.1）：对话页下拉切换，按会话记忆 ====================
+const agentList = ref([])                       // 全部智能体
+const agentMap = ref({})                        // 会话ID → 选中的智能体ID（按会话记忆）
+const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
+const currentAgentId = computed({
+  get: () => agentMap.value[currentSessionId.value] ?? defaultAgentId.value,
+  set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
+})
+const isAdmin = ref(isAdminSync())
+const agentPickerOpen = ref(false)
+/** 当前生效的智能体名（空 = 走全局配置） */
+const currentAgentName = computed(() => {
+  const a = agentList.value.find(x => x.id === currentAgentId.value)
+  return a ? a.name : '默认（全局配置）'
+})
+/** 下拉每一项的副标题：描述为主，模型差异次之 */
+const agentSummary = a => {
+  const parts = []
+  if (a.description) parts.push(a.description)
+  if (a.model) parts.push('模型 ' + a.model)
+  return parts.join(' · ') || '未填写描述'
+}
+/** 选中智能体：写入当前会话记忆并给出即时反馈 */
+const pickAgent = id => {
+  currentAgentId.value = id || ''
+  agentPickerOpen.value = false
+  const a = agentList.value.find(x => x.id === id)
+  if (a) message.success(`已切换为「${a.name}」`)
+}
+/** 底部「管理智能体」：跳到独立的一级页面 */
+const goManageAgents = () => {
+  agentPickerOpen.value = false
+  router.push('/v2/agents')
+}
+const loadAgents = async () => {
+  try {
+    // 走 available 接口：问答用户可读的精简列表（管理端 /agent/list 仅管理员）
+    const r = await listAvailableAgents()
+    agentList.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
+    const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true)
+    defaultAgentId.value = def ? def.id : ''
+    // 当前会话尚未选择时，落到默认智能体
+    if (!(currentSessionId.value in agentMap.value)) {
+      agentMap.value = { ...agentMap.value, [currentSessionId.value]: defaultAgentId.value }
+    }
+  } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
+}
+
 const loading = ref(false)
 const currentSessionId = ref(null)
 const messages = ref([])
@@ -356,6 +456,16 @@ const togglePanel = () => {
   localStorage.setItem('v2_panel', panelOpen.value ? '1' : '0')
 }
 const modelLabel = ref('')
+/** 实际生效的模型：智能体指定了就用它的，否则回落到全局配置 */
+const effectiveModel = computed(() => {
+  const a = agentList.value.find(x => x.id === currentAgentId.value)
+  return (a && a.model) ? a.model : modelLabel.value
+})
+/** 模型是否来自智能体覆盖（状态栏打标用） */
+const currentAgentModelOverridden = computed(() => {
+  const a = agentList.value.find(x => x.id === currentAgentId.value)
+  return !!(a && a.model)
+})
 const debugEntryVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
@@ -857,6 +967,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
     signal: abortController.value.signal,
     deepThink,
     refs,
+    agentId: currentAgentId.value,
     onThinking: t => {
       const m = messages.value[idx]
       m.thinking = (m.thinking || '') + t
@@ -1129,6 +1240,7 @@ onMounted(async () => {
   window.addEventListener('paste', onGlobalPaste)
   await loadSessions()
   loadDocOptions()   // @ 引用候选（不阻塞首屏）
+  loadAgents()       // 智能体下拉候选（不阻塞首屏）
   const sid = route.query.sid
   if (sid) {
     await switchSession(sid)
@@ -1296,9 +1408,14 @@ onMounted(async () => {
 .input-box {
   position: relative; max-width: 860px; margin: 0 auto;
   border: 1px solid var(--v2-border); border-radius: 16px; background: var(--v2-panel);
-  padding: 10px 12px 8px; transition: border-color .2s;
+  padding: 10px 12px 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
+  transition: border-color .2s, box-shadow .2s;
 }
-.input-box:focus-within { border-color: var(--v2-accent); }
+.input-box:focus-within {
+  border-color: var(--v2-accent);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
+}
 /* @ 引用候选浮层：贴在输入框上方，与输入卡片同宽 */
 .at-panel {
   position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 20;
@@ -1324,12 +1441,78 @@ onMounted(async () => {
 .at-chip-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .at-chip-del { flex: none; cursor: pointer; font-size: 13px; line-height: 1; opacity: .65; padding: 0 1px; }
 .at-chip-del:hover { opacity: 1; color: var(--v2-danger); }
-.input-area { resize: none; padding: 2px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
+.input-area { resize: none; padding: 6px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
 .input-area:focus { border: none; box-shadow: none; }
-.input-toolbar { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.input-toolbar { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 .toolbar-left { display: flex; align-items: center; gap: 2px; }
 .toolbar-btn-on { color: var(--v2-accent) !important; background: var(--v2-accent-weak) !important; }
-.model-name { margin-left: auto; font-size: 12px; color: var(--v2-text3); margin-right: 10px; user-select: none; }
+.model-name {
+  margin-left: auto; font-size: 11px; color: var(--v2-text3); margin-right: 8px; user-select: none;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 智能体胶囊入口：默认态轻描淡写，选中态用主色表明「这一轮按它走」 */
+.agent-pill {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px;
+  padding: 0 8px 0 9px; border-radius: 999px; border: 1px solid var(--v2-border);
+  background: var(--v2-panel); color: var(--v2-text2); font-size: 12px; cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.agent-pill:hover { border-color: #c9d3e0; color: var(--v2-text); background: #fafbfc; }
+.agent-pill.on { border-color: #bcd0f7; background: var(--v2-accent-weak); color: var(--v2-accent); font-weight: 500; }
+.agent-pill.open { border-color: var(--v2-accent); }
+.agent-pill-ic { font-size: 13px; flex: none; }
+.agent-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-pill-caret { font-size: 10px; opacity: .6; flex: none; }
+
+/* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
+.agent-menu {
+  min-width: 320px; max-width: 400px; background: var(--v2-panel);
+  border: 1px solid var(--v2-border); border-radius: 12px; padding: 6px;
+  box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
+}
+.agent-menu-head { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 8px; }
+.agent-menu-head > span:first-child { font-size: 12px; font-weight: 500; color: var(--v2-text); }
+.agent-menu-hint { font-size: 11px; color: var(--v2-text3); }
+.agent-menu-list { max-height: 300px; overflow-y: auto; }
+.agent-mi { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 9px; cursor: pointer; }
+.agent-mi:hover { background: #f5f7fa; }
+.agent-mi.active { background: var(--v2-accent-weak); }
+.agent-mi-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-mi-name {
+  display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--v2-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-mi.active .agent-mi-name { color: var(--v2-accent); font-weight: 500; }
+.agent-mi-badge {
+  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; font-weight: 400; flex: none;
+  background: #eaf5ec; color: var(--v2-ok);
+}
+.agent-mi-desc {
+  font-size: 11px; color: var(--v2-text3); line-height: 1.5;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-mi-check { color: var(--v2-accent); font-size: 12px; flex: none; }
+.agent-mi-empty { padding: 14px 10px; font-size: 12px; color: var(--v2-text3); text-align: center; }
+.agent-menu-foot {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px 9px;
+  border-top: 1px solid var(--v2-border); border-radius: 0 0 8px 8px;
+  font-size: 12px; color: var(--v2-accent); cursor: pointer;
+}
+.agent-menu-foot:hover { background: var(--v2-accent-weak); }
+
+/* 状态栏：当前智能体卡片 */
+.rp-agent { display: flex; align-items: center; gap: 6px; }
+.rp-agent-ic { font-size: 13px; color: var(--v2-accent); flex: none; }
+.rp-agent-row { margin-top: 6px; align-items: baseline; }
+.rp-val {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 78%;
+  font-size: 12px; color: var(--v2-text);
+}
+.rp-val-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-tag {
+  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; flex: none;
+  background: var(--v2-accent-weak); color: var(--v2-accent);
+}
 .send-btn {
   width: 30px; height: 30px; border-radius: 50%; border: none;
   background: var(--v2-accent); color: #fff; font-size: 15px; cursor: pointer;

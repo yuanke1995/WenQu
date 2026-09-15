@@ -109,7 +109,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus,
-    deepThink = false, signal, idleTimeoutMs = 120000, refs = []
+    deepThink = false, signal, idleTimeoutMs = 120000, refs = [], agentId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -132,7 +132,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId, question, images, deepThink, refs }),
+    body: JSON.stringify({ sessionId, question, images, deepThink, refs, agentId: agentId || '' }),
     signal: inner.signal
   }).then(res => {
     if (!res.ok) {
@@ -282,6 +282,15 @@ export const setApiKeyDisabled = (id, disabled) =>
 export const renameApiKey = (id, name) =>
   request(`/api-key/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
+
+// ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
+/** 对话页下拉：问答用户可读的精简列表（仅 id/name/description/model/isDefault） */
+export const listAvailableAgents = () => request('/agent/available')
+export const listAgents = () => request('/agent/list')
+export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
+export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })
+export const setAgentDefault = id => request(`/agent/${id}/default`, { method: 'POST' })
 
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress) {
