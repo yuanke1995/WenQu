@@ -600,8 +600,14 @@ public class RagService {
                     .append(relatedPromptLine());
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
             // 清单为空的段落不追加（未装技能时对提示词零影响）
-            if (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.injectEnabled")) {
-                String skillBlock = skillService.promptBlock(configService.getInt("skill.injectMaxChars", 1200));
+            if (toolOn(agent, "skill.enabled", agent == null ? null : agent.getToolSkill())
+                    && configService.getBoolean("skill.injectEnabled")) {
+                // 智能体级筛选：skills 为 null → 注入全部启用技能；空串 → 一个都不注入；逗号串 → 只注入这些。
+                // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
+                // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
+                Set<String> onlySkills = agent == null ? null : scopeOf(agent.getSkills());
+                String skillBlock = skillService.promptBlock(
+                        configService.getInt("skill.injectMaxChars", 1200), onlySkills);
                 if (!skillBlock.isEmpty()) {
                     system.append("\n\n").append(skillBlock);
                     log.info("[SKILL] 已注入技能清单（{} 个启用技能）",
@@ -920,8 +926,14 @@ public class RagService {
                     org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
         }
         if (toolOn(agent, "tool.builtin.enabled", agent == null ? null : agent.getToolBuiltin())) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)));
+            // 具体项筛选：agent.builtinTools 为 null → 挂全部内置工具；否则只挂选中的那几个（按工具名匹配）
+            Set<String> onlyBuiltin = agent == null ? null : scopeOf(agent.getBuiltinTools());
+            for (org.springframework.ai.tool.ToolCallback cb :
+                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
+                if (onlyBuiltin == null || onlyBuiltin.contains(cb.getToolDefinition().name())) {
+                    callbacks.add(cb);
+                }
+            }
         }
         // 技能取回工具（Skills 渐进披露的取回端）：agent 未指定时按 skill.enabled && skill.toolEnabled 判定
         boolean skillToolOn = (agent != null && agent.getToolSkill() != null)
@@ -938,7 +950,8 @@ public class RagService {
         // MCP 外部工具（工具生态层）：mcp.enabled 总开关 + servers 配置；失败容错由 McpClientService 兜底
         if (toolOn(agent, "mcp.enabled", agent == null ? null : agent.getToolMcp())) {
             try {
-                callbacks.addAll(mcpClientService.toolCallbacks());
+                // 具体项筛选：agent.mcps 为 null → 连全部已启用 server；否则只连选中的那几个
+                callbacks.addAll(mcpClientService.toolCallbacks(agent == null ? null : scopeOf(agent.getMcps())));
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
@@ -1490,6 +1503,23 @@ public class RagService {
     private boolean toolOn(AiAgent agent, String globalKey, Integer agentFlag) {
         if (agent != null && agentFlag != null) return agentFlag == 1;
         return configService.getBoolean(globalKey);
+    }
+
+    /**
+     * 「具体项范围」字段解析（与语析的资源选择语义一致）：
+     * <ul>
+     *   <li>null → null：跟随全局，不做具体项筛选；</li>
+     *   <li>空串 → 空集合：显式一个都不用；</li>
+     *   <li>"a,b" → {a, b}：只用这些。</li>
+     * </ul>
+     */
+    private static Set<String> scopeOf(String v) {
+        if (v == null) return null;
+        if (v.isBlank()) return java.util.Collections.emptySet();
+        return java.util.Arrays.stream(v.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toSet());
     }
 
     /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */

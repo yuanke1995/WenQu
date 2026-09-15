@@ -10,9 +10,11 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 智能体配置服务（P3：4.1 Agent 配置——模型/知识库/工具/提示词）。
@@ -134,6 +136,10 @@ public class AgentService {
         if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
+        // 具体项范围（技能 / MCP Server / 内置工具）：null=跟随全局、空串=不使用、逗号串=仅这些
+        if (body.containsKey("skills")) a.setSkills(toScopeText(body.get("skills"), 1000));
+        if (body.containsKey("mcps")) a.setMcps(toScopeText(body.get("mcps"), 1000));
+        if (body.containsKey("builtinTools")) a.setBuiltinTools(toScopeText(body.get("builtinTools"), 500));
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
         return a;
     }
@@ -152,6 +158,25 @@ public class AgentService {
         String s = String.valueOf(v).trim();
         if (s.isEmpty()) return null;
         return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /**
+     * 「具体项范围」字段解析（对齐语析的资源选择语义）：
+     * null → null（跟随全局）；空串 → ""（显式一个都不用）；"a,b" → 归一化后的 "a,b"。
+     * <p>与 asText 的关键区别：**保留空串语义**——空串表示"显式不使用"，
+     * 若像 asText 那样归一成 null 就变成"跟随全局"，两者含义正好相反。</p>
+     */
+    private String toScopeText(Object v, int max) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return "";
+        String joined = Arrays.stream(s.split(","))
+                .map(String::trim)
+                .filter(x -> !x.isEmpty())
+                .distinct()
+                .collect(Collectors.joining(","));
+        if (joined.isEmpty()) return "";
+        return joined.length() > max ? joined.substring(0, max) : joined;
     }
 
     /** 三态解析：true/1 → 1，false/0 → 0，null/其它 → null（继承） */

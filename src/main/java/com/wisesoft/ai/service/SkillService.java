@@ -167,7 +167,20 @@ public class SkillService {
      * 无启用技能时返回空串（调用方不追加段落）。
      */
     public String promptBlock(int maxChars) {
-        List<Skill> enabled = list().stream().filter(s -> !isDisabled(s)).toList();
+        return promptBlock(maxChars, null);
+    }
+
+    /**
+     * 同上，但只注入指定技能（智能体级「具体项筛选」）。
+     *
+     * @param only null=不筛选（全部启用技能）；空集合=不注入任何技能；非空=只注入这些（按技能名匹配）
+     */
+    public String promptBlock(int maxChars, java.util.Set<String> only) {
+        if (only != null && only.isEmpty()) return "";
+        List<Skill> enabled = list().stream()
+                .filter(s -> !isDisabled(s))
+                .filter(s -> only == null || only.contains(s.name()))
+                .toList();
         if (enabled.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         for (Skill s : enabled) {

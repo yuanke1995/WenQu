@@ -53,6 +53,19 @@ public class AiAgent {
     /** MCP 工具：1=开 0=关 NULL=继承 */
     private Integer toolMcp;
 
+    /**
+     * 技能范围（具体项筛选，对齐语析的 skills 列表语义）：
+     * NULL=跟随全局（注入全部可用技能）；空串=显式不注入任何技能；逗号分隔的技能名=只注入这些。
+     * 与 toolSkill 的分工：toolSkill 决定"这类能力开不开"，本字段在其开启后限定"具体用哪几个"。
+     */
+    private String skills;
+
+    /** MCP Server 范围（具体项筛选）：NULL=跟随全局（连全部已启用 server）；空串=一个都不连；逗号分隔=只连这些 */
+    private String mcps;
+
+    /** 内置工具范围（具体项筛选）：NULL=跟随全局；空串=不用任何内置工具；逗号分隔=只用这些 */
+    private String builtinTools;
+
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
 

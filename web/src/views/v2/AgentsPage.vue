@@ -131,18 +131,30 @@
               默认全部沿用系统设置里的开关；只有需要为这个智能体单独破例时，才把某一项改成「开启」或「关闭」。
             </p>
             <div class="ap-caps">
-              <div v-for="c in CAPS" :key="c.key" class="ap-cap" :class="{ overridden: !!form[c.key] }">
-                <span class="ap-cap-ic"><component :is="c.icon" /></span>
-                <div class="ap-cap-l">
-                  <div class="ap-cap-name">
-                    {{ c.label }}
-                    <span v-if="form[c.key]" class="ap-cap-badge">已覆盖</span>
+              <div v-for="c in CAPS" :key="c.key" class="ap-cap-block">
+                <div class="ap-cap" :class="{ overridden: capOverridden(c) }">
+                  <span class="ap-cap-ic"><component :is="c.icon" /></span>
+                  <div class="ap-cap-l">
+                    <div class="ap-cap-name">
+                      {{ c.label }}
+                      <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
+                    </div>
+                    <div class="ap-cap-desc">
+                      {{ c.desc }}<span class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                    </div>
                   </div>
-                  <div class="ap-cap-desc">
-                    {{ c.desc }}<span class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                  <a-segmented v-if="c.kind === 'switch'" v-model:value="form[c.key]" :options="SEG" size="small" />
+                  <a-segmented v-else v-model:value="form[c.modeKey]" :options="SEG_MULTI" size="small" />
+                </div>
+                <!-- 「指定」模式：展开具体项多选（对齐语析的 skills / mcps 资源列表） -->
+                <div v-if="needsPick(c)" class="ap-cap-pick">
+                  <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
+                            size="small" style="width:100%"
+                            :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
+                  <div v-if="!optionsOf(c).length" class="ap-pick-empty">
+                    当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}
                   </div>
                 </div>
-                <a-segmented v-model:value="form[c.key]" :options="SEG" size="small" />
               </div>
             </div>
           </section>
@@ -166,27 +178,44 @@ import {
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
 } from '@ant-design/icons-vue'
-import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listDocuments, getConfig } from '../../api'
+import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listDocuments, getConfig,
+         listSkills, getMcpStatus } from '../../api'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
 const CAPS = [
   { key: 'toolKnowledge', label: '知识库检索', desc: '回答过程中可自主检索知识库补充依据', icon: FileSearchOutlined,
-    path: ['tool', 'knowledgeRetrieval', 'enabled'], gate: ['tool', 'enabled'] },
+    kind: 'switch', path: ['tool', 'knowledgeRetrieval', 'enabled'], gate: ['tool', 'enabled'] },
+  // 以下三项是「多实例能力」：除总开关外，还能指定具体用哪几个（对齐语析的资源列表语义）
   { key: 'toolBuiltin', label: '内置高频工具', desc: '算术计算 / 当前时间 / 日期相差天数', icon: CalculatorOutlined,
+    kind: 'list', modeKey: 'builtinMode', listKey: 'builtinTools', optionsKey: 'builtinOptions',
     path: ['tool', 'builtin', 'enabled'], gate: ['tool', 'enabled'] },
   { key: 'toolArtifact', label: '产物交付', desc: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片', icon: FileDoneOutlined,
-    path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
+    kind: 'switch', path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
   { key: 'toolSkill', label: '技能 Skills', desc: '注入技能清单，模型可按需读取技能全文', icon: AppstoreOutlined,
+    kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     path: ['skill', 'enabled'] },
   { key: 'toolMcp', label: 'MCP 外部工具', desc: '连接外部 MCP Server，把它的工具交给模型', icon: ApiOutlined,
+    kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     path: ['mcp', 'enabled'] }
 ]
-// 三态：''=跟随全局 / '1'=开启 / '0'=关闭（与后端 tool_* 字段 1/0/null 对应）
+// 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 const SEG = [
   { label: '跟随全局', value: '' },
   { label: '开启', value: '1' },
   { label: '关闭', value: '0' }
+]
+// 多实例能力：跟随全局 / 不使用 / 指定（选「指定」才展开具体项多选）
+const SEG_MULTI = [
+  { label: '跟随全局', value: 'inherit' },
+  { label: '不使用', value: 'none' },
+  { label: '指定', value: 'pick' }
+]
+// 内置工具可选项（value 与后端 BuiltinTools 的 @Tool 方法名一致，按名匹配注册）
+const BUILTIN_TOOL_OPTIONS = [
+  { value: 'calculate', label: '算术计算' },
+  { value: 'currentDateTime', label: '当前日期时间' },
+  { value: 'daysBetween', label: '日期相差天数' }
 ]
 
 const loading = ref(false)
@@ -196,13 +225,24 @@ const agents = ref([])
 const docOptions = ref([])
 const cfg = ref({})
 const globalModel = ref('未配置')
+// 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
+const builtinOptions = ref(BUILTIN_TOOL_OPTIONS)
+const skillOptions = ref([])
+const mcpOptions = ref([])
+const OPTION_REFS = { builtinOptions, skillOptions, mcpOptions }
+const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
 const editing = ref(false)
 const editingId = ref('')
 const scopeMode = ref('all')
 const blankForm = () => ({
   name: '', description: '', model: '', systemPrompt: '', knowledgeScope: [], isDefault: false,
-  toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: ''
+  // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
+  toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
+  // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
+  builtinMode: 'inherit', builtinTools: [],
+  skillMode: 'inherit', skills: [],
+  mcpMode: 'inherit', mcps: []
 })
 const form = ref(blankForm())
 
@@ -235,10 +275,19 @@ const summaryScope = computed(() => {
   const n = (form.value.knowledgeScope || []).length
   return n ? `限 ${n} 篇文档` : '未选文档（检索不到内容）'
 })
-const capsTouched = computed(() => CAPS.some(c => !!form.value[c.key]))
+/** 能力当前状态：开关型看三态值，多实例看模式（'1'/'pick'=开，'0'/'none'=关，其余=跟随全局） */
+const capState = c => (c.kind === 'switch' ? form.value[c.key] : form.value[c.modeKey])
+const capOn = c => { const v = capState(c); return v === '1' || v === 'pick' }
+const capOff = c => { const v = capState(c); return v === '0' || v === 'none' }
+/** 是否被本智能体显式覆盖（驱动「已覆盖」徽标与图标变色） */
+const capOverridden = c => capOn(c) || capOff(c)
+/** 多实例能力是否处于「指定」模式（决定要不要展开具体项多选） */
+const needsPick = c => c.kind === 'list' && form.value[c.modeKey] === 'pick'
+
+const capsTouched = computed(() => CAPS.some(c => capOverridden(c)))
 const summaryCaps = computed(() => {
-  const on = CAPS.filter(c => form.value[c.key] === '1').length
-  const off = CAPS.filter(c => form.value[c.key] === '0').length
+  const on = CAPS.filter(c => capOn(c)).length
+  const off = CAPS.filter(c => capOff(c)).length
   if (!on && !off) return '能力跟随全局'
   const parts = []
   if (on) parts.push(`${on} 项开启`)
@@ -250,7 +299,9 @@ const summaryCaps = computed(() => {
 const reload = async () => {
   loading.value = true
   try {
-    const [ar, dr, cr] = await Promise.all([listAgents(), listDocuments(), getConfig()])
+    const [ar, dr, cr, sr, mr] = await Promise.all([
+      listAgents(), listDocuments(), getConfig(), listSkills(), getMcpStatus()
+    ])
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
       const list = Array.isArray(dr.data) ? dr.data : (dr.data.list || [])
@@ -260,6 +311,16 @@ const reload = async () => {
       cfg.value = cr.data
       const m = cr.data.chat?.model?.value
       globalModel.value = m ? String(m) : '未配置'
+    }
+    // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
+    if (sr && sr.success && Array.isArray(sr.data)) {
+      skillOptions.value = sr.data.filter(s => !s.disabled).map(s => ({ value: s.name, label: s.name }))
+    }
+    if (mr && mr.success && mr.data) {
+      mcpOptions.value = (mr.data.servers || []).map(s => ({
+        value: s.name,
+        label: s.connected ? s.name : s.name + '（未连接）'
+      }))
     }
   } catch (e) { message.error(e.message || '加载失败') }
   finally { loading.value = false }
@@ -274,9 +335,18 @@ const openCreate = () => {
   scopeMode.value = 'all'
   editing.value = true
 }
+/** 逗号串 → 数组（具体项） */
+const splitList = v => (v ? String(v).split(',').filter(Boolean) : [])
+/** 总开关三态 → 多实例能力的模式：'none' 不使用 / 'pick' 指定 / 'inherit' 跟随全局 */
+const modeOf = tri => {
+  if (tri === 0 || tri === '0') return 'none'
+  if (tri === 1 || tri === '1') return 'pick'
+  return 'inherit'
+}
+
 const openEdit = a => {
   editingId.value = a.id
-  const scope = a.knowledgeScope ? String(a.knowledgeScope).split(',').filter(Boolean) : []
+  const scope = splitList(a.knowledgeScope)
   form.value = {
     name: a.name || '',
     description: a.description || '',
@@ -288,7 +358,10 @@ const openEdit = a => {
     toolBuiltin: triStr(a.toolBuiltin),
     toolSkill: triStr(a.toolSkill),
     toolArtifact: triStr(a.toolArtifact),
-    toolMcp: triStr(a.toolMcp)
+    toolMcp: triStr(a.toolMcp),
+    builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
+    skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
+    mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps)
   }
   scopeMode.value = scope.length ? 'pick' : 'all'
   editing.value = true
@@ -309,11 +382,26 @@ const save = async () => {
     // 「全部文档」时清空范围（空 → 后端存 null → 继承全局知识库）；「指定文档」时存逗号串
     knowledgeScope: scopeMode.value === 'pick' ? (f.knowledgeScope || []).join(',') : '',
     toolKnowledge: tri(f.toolKnowledge),
-    toolBuiltin: tri(f.toolBuiltin),
-    toolSkill: tri(f.toolSkill),
     toolArtifact: tri(f.toolArtifact),
-    toolMcp: tri(f.toolMcp),
     isDefault: f.isDefault ? 1 : 0
+  }
+  // 多实例能力：模式 →（总开关三态 + 具体项）
+  //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」
+  //   不使用 → 开关置 0 并清空列表
+  //   跟随全局 → 两者都置 null（后端按 null 判定继承）
+  for (const c of CAPS.filter(x => x.kind === 'list')) {
+    const mode = f[c.modeKey]
+    const picked = (f[c.listKey] || []).join(',')
+    if (mode === 'pick' && picked) {
+      payload[c.key] = 1
+      payload[c.listKey] = picked
+    } else if (mode === 'pick' || mode === 'none') {
+      payload[c.key] = 0
+      payload[c.listKey] = null
+    } else {
+      payload[c.key] = null
+      payload[c.listKey] = null
+    }
   }
   saving.value = true
   try {
@@ -417,11 +505,13 @@ onMounted(reload)
 
 /* 能力行：图标块 + 名称/描述 + 三态控件；只在「已覆盖」时才高亮 */
 .ap-caps { display: flex; flex-direction: column; }
-.ap-cap {
-  display: flex; align-items: center; gap: 12px; padding: 10px 0;
-  border-top: 1px dashed var(--v2-border);
-}
-.ap-cap:first-child { border-top: none; padding-top: 0; }
+.ap-cap-block { border-top: 1px dashed var(--v2-border); }
+.ap-cap-block:first-child { border-top: none; }
+.ap-cap { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.ap-cap-block:first-child .ap-cap { padding-top: 0; }
+/* 「指定」模式展开的具体项多选：与上方图标块左对齐 */
+.ap-cap-pick { padding: 0 0 12px 42px; }
+.ap-pick-empty { font-size: 11px; color: var(--v2-text3); margin-top: 5px; }
 .ap-cap-ic {
   width: 30px; height: 30px; border-radius: 8px; flex: none; font-size: 14px;
   display: inline-flex; align-items: center; justify-content: center;

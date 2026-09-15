@@ -71,12 +71,26 @@ public class McpClientService {
      * 内部先按配置对齐连接（懒加载 + 配置变更重连），连接失败的 server 工具自动跳过。
      */
     public List<ToolCallback> toolCallbacks() {
+        return toolCallbacks(null);
+    }
+
+    /**
+     * 同上，但只取指定 server 的工具（智能体级「具体项筛选」）。
+     *
+     * @param onlyServers null=不筛选（全部已启用 server）；空集合=一个都不取；非空=只取这些 server
+     */
+    public List<ToolCallback> toolCallbacks(java.util.Set<String> onlyServers) {
         if (!configService.getBoolean("mcp.enabled")) {
             return List.of();
         }
+        if (onlyServers != null && onlyServers.isEmpty()) {
+            return List.of(); // 智能体显式"不使用任何 MCP"：连接都不必建立
+        }
         ensureConnections();
         List<ToolCallback> callbacks = new ArrayList<>();
-        for (McpSyncClient client : clients.values()) {
+        for (Map.Entry<String, McpSyncClient> entry : clients.entrySet()) {
+            if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
+            McpSyncClient client = entry.getValue();
             try {
                 List<McpSchema.Tool> tools = client.listTools().tools();
                 for (McpSchema.Tool tool : tools) {
