@@ -33,7 +33,7 @@
           <div class="v2-card set-card">
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <template v-for="(blk, i) in blocksOf(current)" :key="i">
-                <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
+                <div v-if="blk.type === 'sub' && current !== 'skills'" class="cfg-sub">{{ blk.title }}</div>
 
                 <!-- 向量模型组：索引状态与重嵌入（只读状态 + 手动触发） -->
                 <template v-if="current === 'embedding' && blk.type === 'sub' && blk.title.includes('索引状态')">
@@ -61,15 +61,22 @@
                   </a-form-item>
                 </template>
 
-                <!-- MCP 面板：服务卡片（状态/工具清单/测试/编辑）+ 添加弹窗；下方 JSON 字段保留为高级编辑 -->
+                <!-- MCP 面板：工具栏（搜索/刷新/重连/添加）+ 总开关行 + 服务卡片 + 高级 JSON 编辑 -->
                 <template v-if="current === 'mcp' && blk.type === 'sub'">
                   <div class="key-bar">
-                    <span class="key-stat">
-                      共 <b>{{ mcpStatus.servers.length }}</b> 个服务 · 已连接 <b>{{ mcpConnectedCount }}</b>
-                      <span v-if="mcpCheckedAt" class="key-dim">· 更新于 {{ mcpCheckedAt }}</span>
-                    </span>
+                    <div class="key-bar-left">
+                      <a-input v-model:value="mcpKeyword" placeholder="搜索服务名称 / 地址" allow-clear size="small" class="res-search">
+                        <template #prefix><search-outlined class="res-search-ic" /></template>
+                      </a-input>
+                      <span class="key-stat">
+                        共 <b>{{ mcpCards.length }}</b> 个服务 · 已连接 <b>{{ mcpConnectedCount }}</b>
+                        <span v-if="mcpCheckedAt" class="key-dim">· 更新于 {{ mcpCheckedAt }}</span>
+                      </span>
+                    </div>
                     <div class="key-bar-actions">
-                      <button class="v2-btn ghost small" :disabled="mcpLoading" @click="loadMcpStatus">刷新</button>
+                      <a-tooltip title="刷新连接状态">
+                        <button class="v2-icon-btn" aria-label="刷新连接状态" :disabled="mcpLoading" @click="loadMcpStatus"><reload-outlined /></button>
+                      </a-tooltip>
                       <button class="v2-btn ghost small" :disabled="mcpReloading" @click="doReloadMcp">
                         {{ mcpReloading ? '重连中…' : '全部重连' }}
                       </button>
@@ -77,25 +84,39 @@
                     </div>
                   </div>
 
-                  <a-alert v-if="!mcpStatus.enabled" type="warning" show-icon style="margin-bottom:12px"
-                           message="MCP 总开关未开启"
-                           description="开启后才会连接下方服务、并把它们的工具提供给模型（在下方「MCP 总开关」处开启并保存）。" />
+                  <!-- 总开关：配置项，改动后点右上角「保存配置」生效（与列表增删的即时保存不同） -->
+                  <div class="mcp-switch-row">
+                    <a-switch v-model:checked="mcpEnabled" size="small" />
+                    <span class="mcp-switch-label">MCP 总开关</span>
+                    <span class="key-dim">开启后连接下方服务、把工具注册给模型；修改后点右上角「保存配置」生效</span>
+                  </div>
 
-                  <div v-if="!mcpStatus.servers.length" class="key-empty">
+                  <a-alert v-if="!mcpStatus.enabled" type="warning" show-icon style="margin-bottom:12px"
+                           message="MCP 总开关未开启（或修改尚未保存）"
+                           description="开启上方「MCP 总开关」并保存后，才会连接下方服务、并把它们的工具提供给模型。" />
+                  <a-alert v-if="mcpJsonError" type="error" show-icon style="margin-bottom:12px"
+                           message="原始 JSON 解析失败，服务列表可能显示不全"
+                           :description="mcpJsonError + '；请在下方「高级编辑（原始 JSON）」中修正后保存。'" />
+
+                  <div v-if="!mcpCards.length && !mcpJsonError" class="key-empty">
                     <div class="key-empty-title">还没有 MCP 服务</div>
                     <div class="key-empty-desc">
                       接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
                     </div>
                     <button class="v2-btn small" @click="openMcpAdd">添加第一个服务</button>
                   </div>
+                  <div v-else-if="mcpCards.length && !mcpFilteredCards.length" class="key-empty">
+                    <div class="key-empty-title">没有匹配的服务</div>
+                    <div class="key-empty-desc">没有名称或地址包含「{{ mcpKeyword }}」的服务。</div>
+                    <button class="v2-btn ghost small" @click="mcpKeyword = ''">清除搜索</button>
+                  </div>
 
-                  <template v-else>
-                    <div v-for="s in mcpStatus.servers" :key="s.name" class="mcp-card">
+                  <template v-if="mcpFilteredCards.length">
+                    <div v-for="s in mcpFilteredCards" :key="s.name" class="mcp-card">
                       <div class="mcp-card-head">
-                        <span class="mcp-dot" :class="s.connected ? 'ok' : 'bad'"></span>
+                        <span class="mcp-dot" :class="s.stateCls"></span>
                         <span class="mcp-card-name">{{ s.name }}</span>
-                        <span v-if="s.connected" class="mcp-state ok">已连接 · {{ s.toolCount }} 个工具</span>
-                        <span v-else class="mcp-state bad" :title="s.state">{{ mcpErr(s.state) }}</span>
+                        <span class="mcp-state" :class="s.stateCls" :title="s.runtimeState || ''">{{ s.stateText }}</span>
                         <div class="mcp-card-actions">
                           <button v-if="s.connected" class="v2-link-btn" @click="toggleMcpTools(s)">
                             {{ mcpExpanded === s.name ? '收起工具' : '查看工具' }}
@@ -119,6 +140,19 @@
                       </div>
                     </div>
                   </template>
+
+                  <!-- 原始 JSON：界面操作会自动维护，保留给排障与批量编辑；随全局「保存配置」生效 -->
+                  <div class="res-fold">
+                    <div class="fold-head" @click="mcpAdvancedOpen = !mcpAdvancedOpen">
+                      <span class="fold-caret">{{ mcpAdvancedOpen ? '▾' : '▸' }}</span> 高级编辑（原始 JSON）
+                      <span class="key-dim">（一般无需手动编辑）</span>
+                    </div>
+                    <div v-if="mcpAdvancedOpen" class="mcp-advanced-body">
+                      <a-textarea v-model:value="mcpServersJson" :rows="5"
+                                  placeholder='[{"name":"时间工具","url":"http://127.0.0.1:8931","type":"streamable"}]' />
+                      <div class="key-dim mcp-json-hint">JSON 数组，每项 {name,url,type}；type 可选 streamable/sse；连接失败自动跳过。修改后需保存配置生效。</div>
+                    </div>
+                  </div>
 
                   <!-- 添加 / 编辑服务弹窗：先测再存，不用手写 JSON -->
                   <a-modal v-model:open="mcpFormOpen" :title="mcpForm.mode === 'add' ? '添加 MCP 服务' : '编辑 MCP 服务'"
@@ -160,8 +194,9 @@
                   </a-modal>
                 </template>
 
-                <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明） -->
-                <template v-else-if="blk.type === 'field'">
+                <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）；
+                     skills 面板字段收进列表底部「技能设置」折叠区、MCP 开关与 JSON 为面板内自定义呈现 -->
+                <template v-else-if="blk.type === 'field' && current !== 'skills' && !MCP_CUSTOM_FIELDS.has(blk.field.path)">
                   <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
                     <template v-if="probeKey(blk.field)" #extra>
                       <button class="v2-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
@@ -202,19 +237,26 @@
 
               <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
               <template v-if="current === 'apiKey'">
-                <!-- 工具栏：概览统计 + 主操作 -->
+                <!-- 工具栏：搜索 + 概览统计 + 主操作 -->
                 <div class="key-bar">
-                  <span class="key-stat">
-                    共 <b>{{ keys.length }}</b> 个 Key · 生效中 <b>{{ activeKeyCount }}</b>
-                    <span v-if="lastUsedKey" class="key-dim">· 最近使用 {{ fmtTs(lastUsedKey.lastUsedAt) }}</span>
-                  </span>
+                  <div class="key-bar-left">
+                    <a-input v-model:value="keyKeyword" placeholder="搜索名称 / Key 前缀" allow-clear size="small" class="res-search">
+                      <template #prefix><search-outlined class="res-search-ic" /></template>
+                    </a-input>
+                    <span class="key-stat">
+                      共 <b>{{ keys.length }}</b> 个 Key · 生效中 <b>{{ activeKeyCount }}</b>
+                      <span v-if="lastUsedKey" class="key-dim">· 最近使用 {{ fmtTs(lastUsedKey.lastUsedAt) }}</span>
+                    </span>
+                  </div>
                   <div class="key-bar-actions">
-                    <button class="v2-btn ghost small" @click="loadKeys">刷新</button>
+                    <a-tooltip title="刷新列表">
+                      <button class="v2-icon-btn" aria-label="刷新 Key 列表" :disabled="keysLoading" @click="loadKeys"><reload-outlined /></button>
+                    </a-tooltip>
                     <button class="v2-btn small" @click="openCreateKey">＋ 创建 API Key</button>
                   </div>
                 </div>
 
-                <!-- 空态：没有 Key 时给引导，而不是一张空表格 -->
+                <!-- 空态：没有 Key 时给引导；有 Key 但搜索无匹配时提示清除搜索 -->
                 <div v-if="!keys.length" class="key-empty">
                   <div class="key-empty-title">还没有 API Key</div>
                   <div class="key-empty-desc">
@@ -222,20 +264,31 @@
                   </div>
                   <button class="v2-btn small" @click="openCreateKey">创建第一个 API Key</button>
                 </div>
+                <div v-else-if="!filteredKeys.length" class="key-empty">
+                  <div class="key-empty-title">没有匹配的 Key</div>
+                  <div class="key-empty-desc">没有名称或前缀包含「{{ keyKeyword }}」的 Key。</div>
+                  <button class="v2-btn ghost small" @click="keyKeyword = ''">清除搜索</button>
+                </div>
 
-                <a-table v-else :data-source="keys" size="small" row-key="id" :pagination="false">
+                <a-table v-else :data-source="filteredKeys" size="small" row-key="id" :pagination="false">
                   <a-table-column title="名称" key="name" ellipsis>
                     <template #default="{ record }">
                       <span class="key-name-wrap">
                         <span class="key-name">{{ record.name || '未命名' }}</span>
-                        <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
-                        <span v-else-if="record.expired" class="v2-pill err key-tag">已过期</span>
-                        <span v-else class="v2-pill ok key-tag">生效中</span>
+                        <span v-if="record.expired" class="v2-pill err key-tag">已过期</span>
                       </span>
                     </template>
                   </a-table-column>
                   <a-table-column title="Key" key="prefix" width="170">
                     <template #default="{ record }"><span class="key-prefix">{{ record.keyPrefix }}…</span></template>
+                  </a-table-column>
+                  <a-table-column title="状态" key="status" width="80">
+                    <template #default="{ record }">
+                      <a-tooltip :title="record.expired ? '已过期，不可启用' : (record.disabled ? '已停用，点击启用' : '生效中，点击停用')">
+                        <a-switch size="small" :checked="!record.disabled" :disabled="!!record.expired"
+                                  :loading="keyTogglingId === record.id" @change="toggleKey(record)" />
+                      </a-tooltip>
+                    </template>
                   </a-table-column>
                   <a-table-column title="最近使用" key="lastUsed" width="150">
                     <template #default="{ record }">
@@ -248,10 +301,9 @@
                   <a-table-column title="有效期" key="expire" width="110">
                     <template #default="{ record }"><span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span></template>
                   </a-table-column>
-                  <a-table-column title="操作" key="act" width="150">
+                  <a-table-column title="操作" key="act" width="110">
                     <template #default="{ record }">
                       <button class="v2-link-btn" @click="openRenameKey(record)">改名</button>
-                      <button class="v2-link-btn" @click="toggleKey(record)">{{ record.disabled ? '启用' : '停用' }}</button>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
                         <button class="v2-link-btn danger">删除</button>
                       </a-popconfirm>
@@ -260,8 +312,8 @@
                 </a-table>
                 <!-- 如何使用：拿到 Key 之后怎么调，比堆一段说明文字有用 -->
                 <div class="key-usage">
-                  <div class="key-usage-head" @click="usageOpen = !usageOpen">
-                    <span class="key-usage-caret">{{ usageOpen ? '▾' : '▸' }}</span> 如何使用
+                  <div class="fold-head" @click="usageOpen = !usageOpen">
+                    <span class="fold-caret">{{ usageOpen ? '▾' : '▸' }}</span> 如何使用
                     <span class="key-dim">（调用方式与权限边界）</span>
                   </div>
                   <div v-if="usageOpen" class="key-usage-body">
@@ -343,19 +395,19 @@
               <!-- 技能（Skills）：目录 + SKILL.md 的纯文本能力包，模型按需读取后照做 -->
               <template v-if="current === 'skills'">
                 <div class="key-bar">
-                  <span class="key-stat">
-                    共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeSkillCount }}</b>
-                  </span>
+                  <div class="key-bar-left">
+                    <a-input v-model:value="skillKeyword" placeholder="搜索技能名称 / 描述" allow-clear size="small" class="res-search">
+                      <template #prefix><search-outlined class="res-search-ic" /></template>
+                    </a-input>
+                    <span class="key-stat">共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeSkillCount }}</b></span>
+                  </div>
                   <div class="key-bar-actions">
-                    <button class="v2-btn ghost small" @click="loadSkills">刷新</button>
+                    <a-tooltip title="刷新列表">
+                      <button class="v2-icon-btn" aria-label="刷新技能列表" :disabled="skillsLoading" @click="loadSkills"><reload-outlined /></button>
+                    </a-tooltip>
                     <button class="v2-btn ghost small" @click="openInstallSkill">从 URL 安装</button>
                     <button class="v2-btn small" @click="openCreateSkill">＋ 新建技能</button>
                   </div>
-                </div>
-                <div class="skill-dir-tip">
-                  技能目录 <code>{{ skillDir || '—' }}</code>：每个子目录放一个 <code>SKILL.md</code> 就是一个技能
-                  （frontmatter 写 name / description / version，正文写具体做法），与内置技能同名时用户目录优先。
-                  技能只作为文本指令注入，<b>不会执行目录里的任何脚本</b>。
                 </div>
 
                 <div v-if="!skills.length" class="key-empty">
@@ -365,41 +417,56 @@
                   </div>
                   <button class="v2-btn small" @click="openCreateSkill">新建第一个技能</button>
                 </div>
+                <div v-else-if="!filteredSkills.length" class="key-empty">
+                  <div class="key-empty-title">没有匹配的技能</div>
+                  <div class="key-empty-desc">没有名称或描述包含「{{ skillKeyword }}」的技能。</div>
+                  <button class="v2-btn ghost small" @click="skillKeyword = ''">清除搜索</button>
+                </div>
 
-                <a-table v-else :data-source="skills" size="small" row-key="dirName" :pagination="false">
-                  <a-table-column title="技能" key="name" ellipsis>
-                    <template #default="{ record }">
-                      <span class="key-name-wrap">
-                        <span class="key-name">{{ record.name }}</span>
-                        <span v-if="record.source === 'builtin'" class="v2-pill muted key-tag">内置</span>
-                        <span v-if="record.disabled" class="v2-pill warn key-tag">已停用</span>
-                        <span v-else class="v2-pill ok key-tag">生效中</span>
-                      </span>
+                <!-- 卡片列表：按来源分组（用户 / 内置）；版本与哈希收进「查看」弹窗 -->
+                <template v-else>
+                  <template v-for="g in skillGroups" :key="g.title">
+                    <div class="res-group-title">{{ g.title }} ({{ g.list.length }})</div>
+                    <div class="skill-grid">
+                      <div v-for="s in g.list" :key="s.dirName" class="skill-card">
+                        <div class="skill-card-head">
+                          <span class="skill-card-name" :title="s.name">{{ s.name }}</span>
+                          <span v-if="s.disabled" class="v2-pill warn key-tag">已停用</span>
+                          <span v-else class="v2-pill ok key-tag">生效中</span>
+                        </div>
+                        <div class="skill-card-desc" :class="{ 'skill-desc-warn': !s.description }" :title="s.description || ''">
+                          {{ s.description || '（未填描述：模型不会主动读取它）' }}
+                        </div>
+                        <div class="skill-card-foot">
+                          <button class="v2-link-btn" @click="viewSkill(s)">查看</button>
+                          <button class="v2-link-btn" @click="toggleSkill(s)">{{ s.disabled ? '启用' : '停用' }}</button>
+                          <a-popconfirm v-if="s.source === 'user'" title="删除该技能？文件将同时删除" ok-text="删除" cancel-text="取消" @confirm="delSkill(s)">
+                            <button class="v2-link-btn danger">删除</button>
+                          </a-popconfirm>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </template>
+
+                <!-- 技能设置：参数字段收进折叠区，默认收起（总开关 / 目录 / 注入与读取限制） -->
+                <div class="res-fold">
+                  <div class="fold-head" @click="skillCfgOpen = !skillCfgOpen">
+                    <span class="fold-caret">{{ skillCfgOpen ? '▾' : '▸' }}</span> 技能设置
+                    <span class="key-dim">（总开关{{ skillEnabled ? '已开启' : '未开启' }} · 目录 · 注入与读取限制）</span>
+                  </div>
+                  <div v-if="skillCfgOpen" class="skill-cfg-body">
+                    <div class="skill-dir-tip">
+                      技能目录 <code>{{ skillDir || '—' }}</code>：每个子目录放一个 <code>SKILL.md</code> 就是一个技能
+                      （frontmatter 写 name / description / version，正文写具体做法），与内置技能同名时用户目录优先。
+                      技能只作为文本指令注入，<b>不会执行目录里的任何脚本</b>。
+                    </div>
+                    <template v-for="(blk, i) in blocksOf('skills')" :key="'sk' + i">
+                      <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
+                      <SchemaField v-else-if="blk.type === 'field'" :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange" />
                     </template>
-                  </a-table-column>
-                  <a-table-column title="描述" key="desc" ellipsis>
-                    <template #default="{ record }">
-                      <span :class="{ 'key-dim': true, 'skill-desc-warn': !record.description }">
-                        {{ record.description || '（未填描述：模型不会主动读取它）' }}
-                      </span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="版本" key="version" width="80">
-                    <template #default="{ record }"><span class="key-dim">{{ record.version || '—' }}</span></template>
-                  </a-table-column>
-                  <a-table-column title="哈希" key="hash" width="90">
-                    <template #default="{ record }"><span class="key-prefix">{{ record.hash }}</span></template>
-                  </a-table-column>
-                  <a-table-column title="操作" key="act" width="150">
-                    <template #default="{ record }">
-                      <button class="v2-link-btn" @click="viewSkill(record)">查看</button>
-                      <button class="v2-link-btn" @click="toggleSkill(record)">{{ record.disabled ? '启用' : '停用' }}</button>
-                      <a-popconfirm v-if="record.source === 'user'" title="删除该技能？文件将同时删除" ok-text="删除" cancel-text="取消" @confirm="delSkill(record)">
-                        <button class="v2-link-btn danger">删除</button>
-                      </a-popconfirm>
-                    </template>
-                  </a-table-column>
-                </a-table>
+                  </div>
+                </div>
 
                 <!-- 新建技能弹窗 -->
                 <a-modal v-model:open="skillCreateOpen" title="新建技能" :footer="null" :width="720">
@@ -427,6 +494,10 @@
                     <span>版本 {{ skillView.version || '—' }}</span>
                     <span>哈希 <code>{{ skillView.hash }}</code></span>
                     <span>来源 {{ skillView.source === 'builtin' ? '内置' : '用户' }}</span>
+                    <span class="skill-view-toggle">
+                      <a-switch size="small" :checked="!skillView.disabled" :loading="skillViewToggling" @change="toggleSkillFromView" />
+                      <span class="key-dim">{{ skillView.disabled ? '已停用' : '生效中' }}</span>
+                    </span>
                   </div>
                   <div class="skill-view-body md" v-html="renderMd(skillView.content)"></div>
                 </a-modal>
@@ -465,7 +536,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons-vue'
+import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey,
@@ -505,7 +576,7 @@ const PANEL_ALERTS = {
   ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
   maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
   apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }],
-  skills: [{ type: 'info', msg: '技能 = 一段可复用的"做法说明"（步骤/格式/禁忌）。系统提示里只放技能名与描述，模型判断某个问题属于某技能领域时，才去读取它的完整内容——所以技能装得多也不会拖慢每次问答。需要 skill.enabled 总开关开启后生效。' }],
+  skills: [{ type: 'info', msg: '技能 = 一段可复用的"做法说明"（步骤/格式/禁忌）。系统提示里只放技能名与描述，模型判断某个问题属于某技能领域时，才去读取它的完整内容——所以技能装得多也不会拖慢每次问答。需在下方「技能设置」中开启总开关后生效。' }],
   agent: [{ type: 'info', msg: 'SubAgent 并行编排：把一个问题拆成多个检索视角并行执行（各自检索 + 提炼要点）再汇总，改善复杂问题"召回不全"。基于 Spring AI Alibaba 的 StateGraph 编排，子代理失败会自动降级为原有单路检索，不影响问答可用性。' }]
 }
 
@@ -781,6 +852,69 @@ const mcpReloading = ref(false)
 const mcpCheckedAt = ref('')
 /** 失败态去掉 "failed:" 前缀，只给用户看原因；未知态原样显示 */
 const mcpErr = st => (st || '').startsWith('failed:') ? (st || '').slice(7) : (st || '未知')
+
+// —— 面板内自定义呈现：搜索 / 总开关行 / 高级 JSON 折叠（后两者仍写回 form，随全局保存生效） ——
+const mcpKeyword = ref('')
+const mcpAdvancedOpen = ref(false)
+/** MCP 总开关与 JSON 在面板内自定义渲染，字段循环里跳过（避免重复出现） */
+const MCP_CUSTOM_FIELDS = new Set(['mcp.enabled', 'mcp.servers'])
+const mcpEnabled = computed({
+  get: () => !!readForm(form.value, 'mcp.enabled'),
+  set: v => writeForm(form.value, 'mcp.enabled', v)
+})
+const mcpServersJson = computed({
+  get: () => readForm(form.value, 'mcp.servers') || '',
+  set: v => writeForm(form.value, 'mcp.servers', v)
+})
+/** 原始 JSON 解析错误文案（空串=正常）；列表据此给出可读提示，不静默清空 */
+const mcpJsonError = computed(() => {
+  const raw = readForm(form.value, 'mcp.servers')
+  if (!raw || !String(raw).trim()) return ''
+  try {
+    return Array.isArray(JSON.parse(raw)) ? '' : 'mcp.servers 不是 JSON 数组'
+  } catch (e) { return 'mcp.servers 不是合法 JSON（' + (e.message || '格式错误') + '）' }
+})
+/** 配置里的服务数组（容错解析，供展示合并；增删改仍走 currentMcpServers） */
+const mcpConfiguredServers = computed(() => {
+  const raw = readForm(form.value, 'mcp.servers')
+  if (!raw || !String(raw).trim() || mcpJsonError.value) return []
+  try { return (JSON.parse(raw) || []).filter(x => x && x.name) } catch (e) { return [] }
+})
+/** 展示列表 = 配置 JSON ∪ 运行时状态：总开关关闭时运行时为空，仍按配置展示并标「未启用」 */
+const mcpCards = computed(() => {
+  const runtime = new Map((mcpStatus.value.servers || []).map(s => [s.name, s]))
+  const cards = []
+  for (const c of mcpConfiguredServers.value) {
+    const r = runtime.get(c.name)
+    runtime.delete(c.name)
+    cards.push({
+      name: c.name,
+      url: c.url || (r && r.url) || '',
+      type: c.type || (r && r.type) || 'streamable',
+      connected: !!(r && r.connected),
+      runtimeState: r ? r.state : (mcpStatus.value.enabled ? 'unknown' : 'disabled'),
+      tools: (r && r.tools) || [],
+      toolCount: (r && r.toolCount) || 0
+    })
+  }
+  // 防御：运行时存在但配置里没有的条目也展示（JSON 尚未回填等边界场景）
+  for (const r of runtime.values()) {
+    cards.push({ name: r.name, url: r.url || '', type: r.type || 'streamable', connected: !!r.connected,
+                 runtimeState: r.state, tools: r.tools || [], toolCount: r.toolCount || 0 })
+  }
+  return cards.map(s => {
+    if (s.connected) return { ...s, stateText: `已连接 · ${s.toolCount} 个工具`, stateCls: 'ok' }
+    if (s.runtimeState === 'disabled') return { ...s, stateText: '未启用', stateCls: 'muted' }
+    if (!s.runtimeState || s.runtimeState === 'unknown') return { ...s, stateText: '未连接', stateCls: 'bad' }
+    return { ...s, stateText: mcpErr(s.runtimeState), stateCls: 'bad' }
+  })
+})
+const mcpFilteredCards = computed(() => {
+  const kw = mcpKeyword.value.trim().toLowerCase()
+  if (!kw) return mcpCards.value
+  return mcpCards.value.filter(s =>
+    String(s.name || '').toLowerCase().includes(kw) || String(s.url || '').toLowerCase().includes(kw))
+})
 const applyMcp = d => {
   mcpStatus.value = { enabled: !!d?.enabled, servers: d?.servers || [] }
   mcpCheckedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -795,6 +929,9 @@ const loadMcpStatus = async () => {
 }
 // ==================== API Key 管理（6.5） ====================
 const keys = ref([])
+const keysLoading = ref(false)
+const keyKeyword = ref('')
+const keyTogglingId = ref('')
 const keyCreating = ref(false)
 const usageOpen = ref(false)
 const copiedSample = ref('')
@@ -808,6 +945,12 @@ const renameOpen = ref(false)
 const renameForm = ref({ id: '', name: '' })
 
 const activeKeyCount = computed(() => keys.value.filter(k => !k.disabled && !k.expired).length)
+const filteredKeys = computed(() => {
+  const kw = keyKeyword.value.trim().toLowerCase()
+  if (!kw) return keys.value
+  return keys.value.filter(k =>
+    String(k.name || '').toLowerCase().includes(kw) || String(k.keyPrefix || '').toLowerCase().includes(kw))
+})
 const lastUsedKey = computed(() => keys.value
     .filter(k => k.lastUsedAt)
     .sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)))[0] || null)
@@ -815,10 +958,12 @@ const fmtTs = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 const fmtDate = s => (s ? String(s).slice(0, 10) : '长期')
 
 const loadKeys = async () => {
+  keysLoading.value = true
   try {
     const r = await listApiKeys()
     if (r.success && Array.isArray(r.data)) keys.value = r.data
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
+  finally { keysLoading.value = false }
 }
 const copyText = async t => {
   try { await navigator.clipboard.writeText(t); return true } catch (e) { return false }
@@ -896,11 +1041,14 @@ const submitRenameKey = async () => {
   } catch (e) { message.error(e.message || '改名失败') }
 }
 const toggleKey = async rec => {
+  if (keyTogglingId.value) return
+  keyTogglingId.value = rec.id
   try {
     const r = await setApiKeyDisabled(rec.id, !rec.disabled)
     if (r.success) { message.success(rec.disabled ? '已启用' : '已停用'); loadKeys() }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
+  finally { keyTogglingId.value = '' }
 }
 const delKey = async id => {
   try {
@@ -913,13 +1061,30 @@ const delKey = async id => {
 // ==================== 技能（Skills，4.5） ====================
 const skills = ref([])
 const skillDir = ref('')
+const skillsLoading = ref(false)
+const skillKeyword = ref('')
+const skillCfgOpen = ref(false)
 const skillCreating = ref(false)
 const skillCreateOpen = ref(false)
 const skillViewOpen = ref(false)
-const skillView = ref({ name: '', dirName: '', version: '', hash: '', source: '', content: '' })
+const skillView = ref({ name: '', dirName: '', version: '', hash: '', source: '', content: '', disabled: false })
+const skillViewToggling = ref(false)
 const skillForm = ref({ name: '', description: '', content: '' })
 const activeSkillCount = computed(() => skills.value.filter(s => !s.disabled).length)
+const skillEnabled = computed(() => !!readForm(form.value, 'skill.enabled'))
+const filteredSkills = computed(() => {
+  const kw = skillKeyword.value.trim().toLowerCase()
+  if (!kw) return skills.value
+  return skills.value.filter(s =>
+    String(s.name || '').toLowerCase().includes(kw) || String(s.description || '').toLowerCase().includes(kw))
+})
+/** 列表按来源分组：用户技能在前，内置技能在后（空组不渲染） */
+const skillGroups = computed(() => [
+  { title: '用户技能', list: filteredSkills.value.filter(s => s.source === 'user') },
+  { title: '内置技能', list: filteredSkills.value.filter(s => s.source !== 'user') }
+].filter(g => g.list.length))
 const loadSkills = async () => {
+  skillsLoading.value = true
   try {
     const r = await listSkills()
     if (r.success && r.data) {
@@ -927,6 +1092,7 @@ const loadSkills = async () => {
       skillDir.value = r.data.dir || ''
     }
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
+  finally { skillsLoading.value = false }
 }
 /** 新建技能时预填的骨架：直接给出"适用场景/做法/禁止"三段，比空白框好写 */
 const skillTemplate = () => '# 技能标题\n\n## 适用场景\n\n用户问到……时使用本技能。\n\n## 做法\n\n1. 先……\n2. 再……\n\n## 禁止\n\n- 不要……\n'
@@ -963,6 +1129,21 @@ const toggleSkill = async rec => {
     if (r.success) { message.success(rec.disabled ? '已启用' : '已停用'); loadSkills() }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
+}
+/** 查看弹窗头部开关：切换后同步弹窗内状态与列表 */
+const toggleSkillFromView = async checked => {
+  const rec = skillView.value
+  if (!rec.dirName) return
+  skillViewToggling.value = true
+  try {
+    const r = await setSkillDisabled(rec.dirName, !checked)
+    if (r.success) {
+      skillView.value = { ...rec, disabled: !checked }
+      message.success(checked ? '已启用' : '已停用')
+      loadSkills()
+    } else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { skillViewToggling.value = false }
 }
 const delSkill = async rec => {
   try {
@@ -1001,7 +1182,7 @@ const mcpFormOpen = ref(false)
 const mcpSaving = ref(false)
 const mcpForm = ref({ mode: 'add', origin: '', name: '', url: '', type: 'streamable' })
 const mcpProbe = ref({ loading: false, done: false, available: false, error: '', tools: [] })
-const mcpConnectedCount = computed(() => mcpStatus.value.servers.filter(s => s.connected).length)
+const mcpConnectedCount = computed(() => mcpCards.value.filter(s => s.connected).length)
 
 const toggleMcpTools = s => { mcpExpanded.value = mcpExpanded.value === s.name ? '' : s.name }
 const openMcpAdd = () => {
@@ -1142,6 +1323,15 @@ onUnmounted(() => {
 .probe-chip.ok { color: var(--v2-ok); background: #eaf5ec; }
 .probe-chip.bad { color: var(--v2-danger); background: #fbecea; }
 .reembed-meta { margin-top: 6px; color: var(--v2-text3); font-size: 12px; line-height: 1.8; }
+/* MCP 总开关行 + 高级 JSON 折叠 */
+.mcp-switch-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin-bottom: 12px;
+  background: #f8f9fb; border: 1px solid var(--v2-border); border-radius: 8px;
+}
+.mcp-switch-label { font-size: 12px; font-weight: 500; flex: none; }
+.mcp-advanced-body { padding-top: 8px; }
+.mcp-json-hint { margin-top: 6px; line-height: 1.7; }
 /* MCP 服务卡片 */
 .mcp-card { border: 1px solid var(--v2-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .mcp-card-head { display: flex; align-items: center; gap: 8px; }
@@ -1163,19 +1353,27 @@ onUnmounted(() => {
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 .mcp-dot.ok { background: var(--v2-ok); }
 .mcp-dot.bad { background: var(--v2-danger); }
+.mcp-dot.muted { background: var(--v2-text3); }
 .mcp-name { flex: none; font-weight: 500; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-url { flex: 1; min-width: 0; color: var(--v2-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-type { flex: none; color: var(--v2-text3); }
 .mcp-state { flex: none; }
 .mcp-state.ok { color: var(--v2-ok); }
+.mcp-state.muted { color: var(--v2-text3); }
 .mcp-state.bad { color: var(--v2-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
 /* API Key 管理（6.5） */
 .key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
 .key-stat { font-size: 12px; color: var(--v2-text2); }
 .key-stat b { color: var(--v2-text); font-weight: 600; }
 .key-dim { color: var(--v2-text3); font-size: 12px; }
+/* 搜索框（三面板统一肩部工具栏用） */
+.res-search { width: 220px; }
+.res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
+.res-search :deep(.ant-input-prefix) { margin-right: 6px; }
+.res-search-ic { color: var(--v2-text3); font-size: 12px; }
 /* 名称与状态标签同一行：inline-flex 垂直居中（inline-block 的基线对齐会让标签高低不齐） */
 .key-name-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .key-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1187,9 +1385,11 @@ onUnmounted(() => {
 .key-empty-desc { font-size: 12px; color: var(--v2-text3); margin-bottom: 14px; line-height: 1.7; }
 /* 如何使用 */
 .key-usage { margin-top: 16px; border-top: 1px solid var(--v2-border); padding-top: 10px; }
-.key-usage-head { font-size: 12px; font-weight: 500; cursor: pointer; user-select: none; }
-.key-usage-head:hover { color: var(--v2-accent); }
-.key-usage-caret { display: inline-block; width: 12px; color: var(--v2-text3); }
+/* 通用折叠头（如何使用 / 高级编辑 / 技能设置） */
+.res-fold { margin-top: 14px; border-top: 1px solid var(--v2-border); padding-top: 10px; }
+.fold-head { font-size: 12px; font-weight: 500; cursor: pointer; user-select: none; }
+.fold-head:hover { color: var(--v2-accent); }
+.fold-caret { display: inline-block; width: 12px; color: var(--v2-text3); }
 .key-usage-body { padding: 10px 0 0 12px; }
 .key-usage-label { font-size: 12px; color: var(--v2-text2); margin-bottom: 6px; }
 .key-code { position: relative; background: #f6f7f9; border: 1px solid var(--v2-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
@@ -1222,6 +1422,27 @@ onUnmounted(() => {
 }
 .skill-dir-tip code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .skill-desc-warn { color: #a3691b; }
+/* 技能卡片网格 + 分组标题 */
+.res-group-title {
+  margin: 14px 0 8px; font-size: 11px; font-weight: 600;
+  color: var(--v2-text3); letter-spacing: .4px; user-select: none;
+}
+.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.skill-card {
+  border: 1px solid var(--v2-border); border-radius: 8px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  transition: border-color .15s, background .15s;
+}
+.skill-card:hover { border-color: #d5dce8; background: #fafbfc; }
+.skill-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.skill-card-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skill-card-desc {
+  font-size: 12px; color: var(--v2-text2); line-height: 1.55; min-height: 2.6em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.skill-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 2px; border-top: 1px dashed var(--v2-border); padding-top: 4px; }
+.skill-cfg-body { padding-top: 6px; }
+.skill-view-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .skill-view-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--v2-text3); margin-bottom: 10px; }
 .skill-view-meta code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .skill-view-body { max-height: 56vh; overflow-y: auto; border: 1px solid var(--v2-border); border-radius: 6px; padding: 12px 14px; }

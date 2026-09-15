@@ -87,8 +87,9 @@
       </div>
     </div>
 
-    <!-- 知识块预览 -->
-    <a-modal v-model:open="kbVisible" :title="'知识块预览 · ' + kbDocName" :footer="null" :width="1080">
+    <!-- 知识块预览。勿加 destroy-on-close：关闭会销毁 Portal，重开时容器被重新追加到 body 末尾，
+         而本页弹窗 z-index 同值（zIndexPopupBase），DOM 靠后者在上——会反把「编辑知识块」弹窗盖住。 -->
+    <a-modal v-model:open="kbVisible" :title="'知识块预览 · ' + kbDocName" :footer="null" :width="1080" :keyboard="!kbImgUrl">
       <div style="margin-bottom:10px; display:flex; gap:8px; align-items:center">
         <a-input-search v-model:value="kbSearch" placeholder="按标题/内容过滤知识块" allow-clear style="flex:1" />
         <a-radio-group v-model:value="kbView" size="small" button-style="solid">
@@ -102,6 +103,7 @@
         <span>合计 <b>{{ fmtTokens(kbStatTokens) }}</b> tokens</span>
         <span>平均 <b>{{ kbFilteredList.length ? Math.round(kbStatTokens / kbFilteredList.length) : 0 }}</b></span>
         <span v-if="kbNoVector" class="kb-stat-warn">未向量化 {{ kbNoVector }} 块</span>
+        <span v-if="kbView === 'list'" class="kb-stat-tip">点行展开完整内容</span>
       </div>
       <a-spin :spinning="kbLoading">
         <!-- 结构导图（3.3 知识导图 / 3.5 文件元数据导图）：按 titlePath 聚合成章节树，
@@ -121,13 +123,22 @@
           </div>
         </div>
         <template v-else>
-        <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应 -->
-        <a-table :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
+        <!-- 章节筛选标识（结构导图点章节名后按路径精确过滤），可一键清除 -->
+        <div v-if="kbPathFilter" class="kb-path-chip">
+          章节：<b :title="kbPathFilter">{{ kbPathFilter }}</b>
+          <button class="kb-path-chip-x" title="清除章节筛选" @click="kbPathFilter = ''">×</button>
+        </div>
+        <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应。
+             点行内联展开完整内容（对齐语析片段卡片：内容直读，不再叠二级弹窗） -->
+        <a-table :key="kbDocId" :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
                  :scroll="{ y: kbScrollY }"
-                 :locale="{ emptyText: '暂无知识块' }"
-                 :custom-row="r => ({ onClick: () => openKbDetail(r) })" style="cursor:pointer">
-          <a-table-column title="#" dataIndex="chunkIndex" key="chunkIndex" width="50" />
-          <a-table-column title="状态" key="status" width="80">
+                 :locale="{ emptyText: kbEmptyText }"
+                 :expand-row-by-click="true"
+                 :expanded-row-keys="kbExpandedKeys"
+                 @expand="onKbExpand"
+                 style="cursor:pointer">
+          <a-table-column title="#" dataIndex="chunkIndex" key="chunkIndex" width="40" />
+          <a-table-column title="状态" key="status" width="76">
             <template #default="{ record }">
               <span v-if="(record.status ?? 0) === 0" class="v2-pill ok">生效</span>
               <span v-else class="v2-pill warn">已停用</span>
@@ -135,17 +146,19 @@
           </a-table-column>
           <a-table-column title="标题" key="title" ellipsis>
             <template #default="{ record }">
-              <span>{{ record.title }}</span>
+              <span><template v-for="(p, pi) in kbHighlightParts(record.title)" :key="pi"><mark v-if="p.hit" class="kb-hl">{{ p.t }}</mark><template v-else>{{ p.t }}</template></template></span>
               <a-tag v-if="!record.vectorId" color="orange" style="margin-left:6px;font-size:11px">未向量化</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="Token" key="tokens" width="80" align="right">
+          <a-table-column title="Token" key="tokens" width="64" align="right">
             <template #default="{ record }">
               <span class="kb-tok" :title="'估算值（与后端同口径）：标题+正文'">{{ estimateTokens((record.title || '') + (record.content || '')) }}</span>
             </template>
           </a-table-column>
           <a-table-column title="内容摘要" key="snippet">
-            <template #default="{ record }">{{ (record.content || '').replace(/\s+/g, ' ').slice(0, 80) }}</template>
+            <template #default="{ record }">
+              <div class="kb-snippet"><template v-for="(p, pi) in kbHighlightParts(kbCollapseWs(record.content))" :key="pi"><mark v-if="p.hit" class="kb-hl">{{ p.t }}</mark><template v-else>{{ p.t }}</template></template></div>
+            </template>
           </a-table-column>
           <a-table-column title="操作" key="action" width="130">
             <template #default="{ record }">
@@ -157,13 +170,25 @@
               </a-popconfirm>
             </template>
           </a-table-column>
+          <!-- 行内展开直读：元信息（章节/Token/图片）+ 完整 Markdown；图片走详情接口签名，先用列表数据即时渲染 -->
+          <template #expandedRowRender="{ record }">
+            <div class="kb-expand">
+              <div class="kb-expand-meta">
+                <span v-if="record.titlePath" class="kb-expand-path" :title="record.titlePath">{{ record.titlePath }}</span>
+                <span>~{{ estimateTokens((record.title || '') + (record.content || '')) }} tokens</span>
+                <span v-if="imgCountOf(record)">{{ imgCountOf(record) }} 图</span>
+                <button class="v2-link-btn kb-expand-copy" @click.stop="copyKbContent(record)">复制内容</button>
+              </div>
+              <div class="md kb-expand-md" @click="openKbImgPreview" v-html="kbChunkHtml(record)"></div>
+            </div>
+          </template>
         </a-table>
         </template>
       </a-spin>
     </a-modal>
 
     <!-- 知识块编辑弹窗：Markdown 工具栏快捷插入 + 左写右看实时预览 + [图片N] 点选插入 + 未保存关闭提醒（与旧版同功能） -->
-    <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" :width="900" @cancel="closeKbEdit">
+    <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" :width="900" :keyboard="!kbImgUrl" @cancel="closeKbEdit">
       <a-form layout="vertical">
         <a-form-item label="标题"><a-input v-model:value="kbEditForm.title" maxlength="200" placeholder="知识块标题" /></a-form-item>
         <a-form-item label="内容">
@@ -197,7 +222,7 @@
             <a-textarea ref="kbTaRef" v-model:value="kbEditForm.content" class="kb-edit-ta"
                         placeholder="支持 Markdown 语法，可用上方工具栏快捷插入；右侧为实时预览"
                         @keydown="onTaKeydown" />
-            <div class="kb-edit-preview md" v-html="kbEditPreviewHtml"></div>
+            <div class="kb-edit-preview md" @click="openKbImgPreview" v-html="kbEditPreviewHtml"></div>
           </div>
         </a-form-item>
       </a-form>
@@ -215,7 +240,7 @@
       <a-table :data-source="gResults" size="small" row-key="id"
                :pagination="gResults.length > 20 ? { pageSize: 20 } : false"
                :locale="{ emptyText: '输入关键词后搜索' }"
-               :custom-row="r => ({ onClick: () => openGlobalDetail(r) })" style="cursor:pointer">
+               :custom-row="r => ({ onClick: () => openKbDetail(r) })" style="cursor:pointer">
         <a-table-column title="文档" dataIndex="docName" key="docName" width="160" ellipsis />
         <a-table-column title="标题" key="title" width="150" ellipsis>
           <template #default="{ record }">{{ record.title || '（无标题）' }}</template>
@@ -226,9 +251,16 @@
       </a-table>
     </a-modal>
 
-    <!-- 知识块详情 -->
-    <a-modal v-model:open="kbDetailVisible" :title="kbDetail?.title || '知识块详情'" :footer="null" :width="720">
-      <div class="md" style="max-height:60vh;overflow-y:auto;font-size:14px;line-height:1.7" v-html="kbDetailHtml"></div>
+    <!-- 知识块详情（全局搜索打开）：加载/失败态齐全，失败可重试 -->
+    <a-modal v-model:open="kbDetailVisible" :title="kbDetail?.title || '知识块详情'" :footer="null" :width="720" :keyboard="!kbImgUrl">
+      <a-spin :spinning="kbDetailLoading">
+        <div v-if="kbDetailErr" class="kb-detail-err">
+          {{ kbDetailErr }}
+          <button class="v2-link-btn" @click="openKbDetail(kbDetailRow)">重试</button>
+        </div>
+        <div v-else class="md" style="max-height:60vh;overflow-y:auto;font-size:14px;line-height:1.7;min-height:80px"
+             @click="openKbImgPreview" v-html="kbDetailHtml"></div>
+      </a-spin>
     </a-modal>
 
     <!-- 版本管理 -->
@@ -248,11 +280,23 @@
         </a-table>
       </a-spin>
     </a-modal>
+
+    <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
+    <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
+      <img :src="kbImgUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
+           :style="{ transform: 'translate(' + kbImgOffset.x + 'px,' + kbImgOffset.y + 'px) scale(' + kbImgZoom + ')' }"
+           @mousedown="onKbImgMouseDown" @mousemove="onKbImgMouseMove" @mouseup="onKbImgMouseUp" @mouseleave="onKbImgMouseUp" @dblclick="resetKbImgView" />
+      <button v-if="kbImgList.length > 1" class="lightbox-prev" :disabled="kbImgIndex === 0" @click.stop="kbImgPrev">‹</button>
+      <button v-if="kbImgList.length > 1" class="lightbox-next" :disabled="kbImgIndex === kbImgList.length - 1" @click.stop="kbImgNext">›</button>
+      <span class="lightbox-close" @click.stop="closeKbImg">×</span>
+      <span v-if="kbImgList.length > 1" class="lightbox-count">{{ kbImgIndex + 1 }} / {{ kbImgList.length }}</span>
+      <span class="lightbox-tip">滚轮缩放 · 拖动平移 · 双击重置 · ESC 关闭</span>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { UploadOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons-vue'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
@@ -260,7 +304,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource } from '../../api'
-import { renderMd, prepKnowledgeContent, resolveImg, onImgError } from '../../utils/markdown'
+import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../../utils/markdown'
 import { estimateTokens, fmtTokens } from '../../utils/token'
 
 // 上传限制（启动时从 /config/public 动态获取）
@@ -314,7 +358,11 @@ const toggleSelect = (id, e) => {
 }
 
 onMounted(() => { fetchList(); loadUploadCfg(); window.addEventListener('paste', onPaste) })
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); window.removeEventListener('paste', onPaste) })
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  window.removeEventListener('paste', onPaste)
+  window.removeEventListener('keydown', onKbImgKeydown)
+})
 
 async function fetchList () {
   loading.value = true
@@ -450,6 +498,7 @@ const kbList = ref([])
 const kbDocName = ref('')
 const kbDocId = ref('')
 const kbSearch = ref('')
+const kbPathFilter = ref('')
 // 知识块列表表体滚动高度：随视口自适应（一页 20 条在矮屏会超出屏幕；下限 200，上限 520）
 const kbScrollY = Math.max(200, Math.min(520, window.innerHeight - 400))
 // ==================== 结构导图（3.3 知识导图 / 3.5 文件元数据导图） ====================
@@ -506,9 +555,9 @@ const toggleTreeNode = path => {
   if (s.has(path)) s.delete(path); else s.add(path)
   kbCollapsed.value = s
 }
-/** 点章节名：回到切片列表并按该章节路径过滤（结构视图只做导览，具体编辑仍在列表里） */
+/** 点章节名：回到切片列表并按该章节路径精确过滤（含子孙章节；结构视图只做导览） */
 const focusTreeNode = r => {
-  kbSearch.value = r.path
+  kbPathFilter.value = r.path
   kbView.value = 'list'
 }
 
@@ -517,15 +566,139 @@ const kbStatTokens = computed(() => kbFilteredList.value
     .reduce((sum, r) => sum + estimateTokens((r.title || '') + (r.content || '')), 0))
 const kbNoVector = computed(() => kbFilteredList.value.filter(r => !r.vectorId).length)
 const kbFilteredList = computed(() => {
+  const path = kbPathFilter.value
   const kw = kbSearch.value.trim().toLowerCase()
-  if (!kw) return kbList.value
-  return kbList.value.filter(k =>
-    (k.title || '').toLowerCase().includes(kw) || (k.content || '').toLowerCase().includes(kw))
+  return kbList.value.filter(k => {
+    if (path) {
+      const p = k.titlePath || ''
+      if (p !== path && !p.startsWith(path + ' > ')) return false
+    }
+    if (!kw) return true
+    return (k.title || '').toLowerCase().includes(kw) || (k.content || '').toLowerCase().includes(kw)
+  })
+})
+/** 空态文案：区分「章节筛选无结果 / 搜索无匹配 / 确实没有」 */
+const kbEmptyText = computed(() => {
+  const hasPath = !!kbPathFilter.value
+  const hasKw = !!kbSearch.value.trim()
+  if (hasPath && hasKw) return '当前章节筛选与搜索条件下暂无知识块'
+  if (hasPath) return '该章节下暂无知识块（可点上方标识清除筛选）'
+  if (hasKw) return '没有匹配的知识块'
+  return '暂无知识块'
 })
 const kbDetailVisible = ref(false)
 const kbDetail = ref(null)
+const kbDetailRow = ref(null)
+const kbDetailLoading = ref(false)
+const kbDetailErr = ref('')
 const kbDetailHtml = computed(() =>
   renderMd(prepKnowledgeContent(kbDetail.value?.content, kbDetail.value?.images), kbDetail.value?.images))
+
+// ==================== 行内展开直读（对齐语析片段卡片：完整内容不再叠二级弹窗） ====================
+const kbExpandedKeys = ref([])
+const kbExpandedDetail = ref(null)   // 展开块的详情（含签名图片）；未返回前先用列表数据即时渲染
+const onKbExpand = (expanded, record) => {
+  if (!expanded) {
+    kbExpandedKeys.value = []
+    kbExpandedDetail.value = null
+    return
+  }
+  kbExpandedKeys.value = [record.id]   // 单块展开：点其他行自动切换
+  kbExpandedDetail.value = null
+  getKnowledgeDetail(record.id).then(r => {
+    // 过期响应防护：仅当该块仍处于展开态才应用（列表刷新/切换后不覆盖）
+    if (r.success && kbExpandedKeys.value[0] === record.id) kbExpandedDetail.value = r.data
+  }).catch(() => { /* 详情失败不阻塞：用列表数据渲染（图片未签名时降级） */ })
+}
+const refreshKbExpandedDetail = () => {
+  const id = kbExpandedKeys.value[0]
+  if (!id) return
+  getKnowledgeDetail(id).then(r => {
+    if (r.success && kbExpandedKeys.value[0] === id) kbExpandedDetail.value = r.data
+  }).catch(() => {})
+}
+/** 展开块 HTML：详情已返回用详情（签名图片），否则用列表行数据 */
+const kbChunkHtml = record => {
+  const d = (kbExpandedDetail.value && kbExpandedDetail.value.id === record.id) ? kbExpandedDetail.value : record
+  return renderMd(prepKnowledgeContent(d.content, d.images || []), d.images || [])
+}
+const copyKbContent = async record => {
+  try {
+    await navigator.clipboard.writeText(record.content || '')
+    message.success('已复制知识块内容')
+  } catch (e) { message.warning('浏览器未授权剪贴板，请手动选中复制') }
+}
+const kbCollapseWs = t => String(t || '').replace(/\s+/g, ' ')
+/** 搜索词高亮分段（大小写不敏感）：返回 [{t, hit}] 供模板逐段渲染，避免 v-html 注入 */
+const kbHighlightParts = text => {
+  const t = String(text || '')
+  const kw = kbSearch.value.trim()
+  if (!kw) return [{ t, hit: false }]
+  const lower = t.toLowerCase()
+  const k = kw.toLowerCase()
+  const parts = []
+  let i = 0
+  while (i < t.length) {
+    const at = lower.indexOf(k, i)
+    if (at < 0) { parts.push({ t: t.slice(i), hit: false }); break }
+    if (at > i) parts.push({ t: t.slice(i, at), hit: false })
+    parts.push({ t: t.slice(at, at + kw.length), hit: true })
+    i = at + kw.length
+  }
+  return parts
+}
+
+// ==================== 知识块图片灯箱（与聊天页同款：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭） ====================
+const kbImgList = ref([])
+const kbImgIndex = ref(0)
+const kbImgUrl = computed(() => kbImgList.value[kbImgIndex.value] || '')
+const kbImgZoom = ref(1)
+const kbImgOffset = ref({ x: 0, y: 0 })
+const kbImgDrag = ref(null)
+const resetKbImgView = () => { kbImgZoom.value = 1; kbImgOffset.value = { x: 0, y: 0 } }
+const kbImgPrev = () => { if (kbImgIndex.value > 0) { kbImgIndex.value--; resetKbImgView() } }
+const kbImgNext = () => { if (kbImgIndex.value < kbImgList.value.length - 1) { kbImgIndex.value++; resetKbImgView() } }
+const closeKbImg = () => { kbImgList.value = []; kbImgIndex.value = 0; resetKbImgView(); kbImgDrag.value = null }
+/** 知识块内容点击（事件委托）：图片 → 灯箱（同容器多图可切换）；代码复制按钮 → copyCode */
+const openKbImgPreview = e => {
+  const t = e.target
+  const copyBtn = t && t.closest ? t.closest('.code-copy') : null
+  if (copyBtn) { copyCode(copyBtn); return }
+  if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
+    const mdEl = t.closest('.md')
+    const imgs = mdEl ? Array.from(mdEl.querySelectorAll('img')) : [t]
+    kbImgList.value = imgs.map(i => i.getAttribute('src'))
+    kbImgIndex.value = Math.max(0, imgs.indexOf(t))
+    resetKbImgView()
+  }
+}
+const onKbImgWheel = e => {
+  let factor = Math.pow(1.08, -e.deltaY / 100)
+  if (factor > 1.3) factor = 1.3
+  if (factor < 1 / 1.3) factor = 1 / 1.3
+  kbImgZoom.value = Math.min(8, Math.max(0.25, kbImgZoom.value * factor))
+}
+const onKbImgMouseDown = e => {
+  if (e.button !== 0) return
+  kbImgDrag.value = { startX: e.clientX, startY: e.clientY, ox: kbImgOffset.value.x, oy: kbImgOffset.value.y }
+  e.preventDefault()
+}
+const onKbImgMouseMove = e => {
+  if (!kbImgDrag.value) return
+  kbImgOffset.value.x = kbImgDrag.value.ox + (e.clientX - kbImgDrag.value.startX)
+  kbImgOffset.value.y = kbImgDrag.value.oy + (e.clientY - kbImgDrag.value.startY)
+}
+const onKbImgMouseUp = () => { kbImgDrag.value = null }
+const onKbImgKeydown = e => {
+  if (e.key === 'Escape') closeKbImg()
+  else if (e.key === 'ArrowLeft') kbImgPrev()
+  else if (e.key === 'ArrowRight') kbImgNext()
+}
+watch(kbImgUrl, v => {
+  if (v) window.addEventListener('keydown', onKbImgKeydown)
+  else window.removeEventListener('keydown', onKbImgKeydown)
+})
+
 // 源文件下载（个人文件区，5.4）：取回上传的原始文件
 const dlSource = async d => {
   try {
@@ -541,20 +714,32 @@ const openKb = async record => {
   kbVisible.value = true
   kbLoading.value = true
   kbList.value = []
+  // 切文档重置过滤/展开状态：避免上一次的搜索词、章节筛选、展开行残留
+  kbSearch.value = ''
+  kbPathFilter.value = ''
+  kbView.value = 'list'
+  kbCollapsed.value = new Set()
+  kbExpandedKeys.value = []
+  kbExpandedDetail.value = null
   try {
     const r = await listKnowledgeByDoc(record.id)
     kbList.value = r.success && Array.isArray(r.data) ? r.data : []
   } catch (e) { message.error(e.message || '加载知识块失败') }
   finally { kbLoading.value = false }
 }
+/** 知识块详情（全局搜索打开）：带加载/失败态，失败可重试 */
 const openKbDetail = async row => {
+  kbDetailRow.value = row
   kbDetail.value = null
+  kbDetailErr.value = ''
+  kbDetailLoading.value = true
   kbDetailVisible.value = true
   try {
     const r = await getKnowledgeDetail(row.id)
     if (r.success) kbDetail.value = r.data
-    else message.error(r.msg || '加载详情失败')
-  } catch (e) { message.error(e.message || '加载详情失败') }
+    else kbDetailErr.value = r.msg || '加载详情失败'
+  } catch (e) { kbDetailErr.value = e.message || '加载详情失败' }
+  finally { kbDetailLoading.value = false }
 }
 const kbEditVisible = ref(false)
 const kbEditSaving = ref(false)
@@ -673,6 +858,7 @@ const saveKnowledgeEdit = async () => {
       if (kbVisible.value) {
         const rr = await listKnowledgeByDoc(kbDocId.value)
         kbList.value = rr.success && Array.isArray(rr.data) ? rr.data : []
+        refreshKbExpandedDetail()   // 正在展开的块同步刷新（含图片签名）
       }
     } else message.error(r.msg || '更新失败')
   } catch (e) { message.error(e.message || '更新失败') }
@@ -698,6 +884,7 @@ const delKnowledge = async id => {
         const rr = await listKnowledgeByDoc(kbDocId.value)
         kbList.value = rr.success && Array.isArray(rr.data) ? rr.data : []
       }
+      if (kbExpandedKeys.value[0] === id) { kbExpandedKeys.value = []; kbExpandedDetail.value = null }
       fetchList()
     } else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
@@ -719,15 +906,6 @@ const doGlobalSearch = async () => {
     else message.error(r.msg || '搜索失败')
   } catch (e) { message.error(e.message || '搜索失败') }
   finally { gSearchLoading.value = false }
-}
-const openGlobalDetail = async row => {
-  kbDetail.value = null
-  kbDetailVisible.value = true
-  try {
-    const r = await getKnowledgeDetail(row.id)
-    if (r.success) kbDetail.value = r.data
-    else message.error(r.msg || '加载详情失败')
-  } catch (e) { message.error(e.message || '加载详情失败') }
 }
 
 // 版本管理
@@ -825,6 +1003,53 @@ const fmtTime = t => {
 .kb-tree-name:hover { color: var(--v2-accent); }
 .kb-tree-meta { flex: none; color: var(--v2-text3); font-variant-numeric: tabular-nums; }
 .kb-tree-empty { padding: 24px 10px; text-align: center; font-size: 12px; color: var(--v2-text3); }
+/* 行内展开直读（对齐语析片段卡片：元信息 + 完整 Markdown 内容） */
+.kb-expand { padding: 2px 0 8px 16px; }
+.kb-expand-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; color: var(--v2-text3); }
+.kb-expand-path { max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--v2-text2); }
+.kb-expand-copy { margin-left: auto; }
+.kb-expand-md { font-size: 13px; line-height: 1.75; color: var(--v2-text); }
+.kb-expand-md :deep(p) { margin: 0 0 8px; }
+.kb-expand-md :deep(p:last-child) { margin-bottom: 0; }
+.kb-expand-md :deep(h1), .kb-expand-md :deep(h2), .kb-expand-md :deep(h3), .kb-expand-md :deep(h4) { margin: 10px 0 6px; line-height: 1.45; }
+.kb-expand-md :deep(h1:first-child), .kb-expand-md :deep(h2:first-child), .kb-expand-md :deep(h3:first-child), .kb-expand-md :deep(h4:first-child) { margin-top: 0; }
+.kb-expand-md :deep(ul), .kb-expand-md :deep(ol) { margin: 6px 0; }
+.kb-expand-md :deep(li) { margin: 2px 0; }
+.kb-expand-md :deep(img) { max-width: 100%; }
+.kb-expand-md :deep(table) { margin: 8px 0; }
+/* 搜索命中高亮 */
+.kb-hl { background: #fff1b8; color: inherit; padding: 0 1px; border-radius: 2px; }
+/* 内容摘要：两行显示（不再固定截断 80 字） */
+.kb-snippet { color: var(--v2-text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 章节筛选标识（结构导图 → 切片列表），可一键清除 */
+.kb-path-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px;
+  padding: 3px 10px; font-size: 12px; color: var(--v2-accent);
+  background: var(--v2-accent-weak); border: 1px solid #c9d9f5; border-radius: 999px;
+}
+.kb-path-chip b { font-weight: 600; max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-path-chip-x { border: none; background: transparent; cursor: pointer; color: var(--v2-text3); font-size: 14px; line-height: 1; padding: 0 2px; }
+.kb-path-chip-x:hover { color: var(--v2-danger); }
+.kb-stat-tip { color: var(--v2-text3); }
+/* 详情弹窗（全局搜索）失败态 */
+.kb-detail-err { padding: 24px 0; text-align: center; color: var(--v2-text3); font-size: 13px; }
+/* 图片灯箱（知识块图片放大）：多图切换 / 滚轮缩放 / 拖动平移，与聊天页同款 */
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; z-index: 2000; cursor: zoom-out; overflow: hidden; }
+.lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 4px; cursor: grab; user-select: none; transition: transform .12s ease; }
+.lightbox-close { position: fixed; top: 16px; right: 24px; font-size: 36px; color: #fff; cursor: pointer; line-height: 1; opacity: .85; }
+.lightbox-close:hover { opacity: 1; }
+.lightbox-count { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.75); font-size: 13px; background: rgba(0,0,0,.45); padding: 2px 12px; border-radius: 12px; }
+.lightbox-tip { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.6); font-size: 12px; user-select: none; }
+.lightbox-prev, .lightbox-next {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.4); color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; z-index: 2001; user-select: none;
+}
+.lightbox-prev { left: 16px; }
+.lightbox-next { right: 16px; }
+.lightbox-prev:hover:not(:disabled), .lightbox-next:hover:not(:disabled) { background: rgba(0,0,0,.7); }
+.lightbox-prev:disabled, .lightbox-next:disabled { opacity: .25; cursor: not-allowed; }
 /* 高度自适应：矮视口下压缩分栏，保证标题+工具栏+分栏+按钮完整可见（下限 150 保证 577px 视口恰好放下） */
 .kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {
