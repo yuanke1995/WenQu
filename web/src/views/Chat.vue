@@ -114,7 +114,7 @@
                   <div v-if="m.rtOpen" class="retrieval-detail">
                     <div v-if="m.retrieved?.terms?.length" class="rt-terms">检索词：{{ (m.retrieved.terms || []).join('、') }}</div>
                     <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref" title="点击查看原文" @click="openSource(s)">
-                      <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '') }}
+                      <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '') }}
                       <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
                     </div>
                   </div>
@@ -512,7 +512,7 @@ const sourceContent = ref('')      // 知识块全文（异步加载）
 const sourceLoading = ref(false)
 const openSource = async s => {
   if (!s) return
-  sourceTitle.value = (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '')
+  sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
   sourceSnippet.value = s.snippet || '（无原文片段）'
   sourceImages.value = Array.isArray(s.images) ? s.images : [] // 旧消息 sources 无 images，兼容为空
   sourceContent.value = ''
@@ -530,7 +530,7 @@ const openSource = async s => {
     if (r.success && r.data) {
       sourceContent.value = r.data.content || ''
       if (Array.isArray(r.data.images)) sourceImages.value = r.data.images
-      if (r.data.title) sourceTitle.value = (s.fileName || '未知文档') + ' §' + r.data.title
+      if (r.data.title) sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + ' §' + r.data.title
     }
   } catch (e) { /* 接口失败：回退显示 snippet */ }
   finally { sourceLoading.value = false }
@@ -1387,7 +1387,7 @@ const exportAnswer = async mi => {
     parts.push('## 回答\n' + body + '\n')
     if (m.sources && m.sources.length) {
       parts.push('## 引用来源\n' + m.sources.map((s, si) =>
-        `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
+        `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
     }
     const safeName = (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
     downloadMd(parts.join('\n'), safeName + '.md')
@@ -1433,7 +1433,7 @@ const exportSessionMarkdown = async sidOrSession => {
         parts.push('**回答**', '', body, '')
         if (m.sources && m.sources.length) {
           parts.push('**引用来源**', m.sources.map((s, si) =>
-            `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
+            `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
         }
         if (m.messageId && m.fb !== undefined) {
           // 保留评价状态，便于回顾哪些回答被认可

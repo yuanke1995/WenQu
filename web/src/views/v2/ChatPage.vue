@@ -73,7 +73,7 @@
                     <span class="rt-tool-tag">精确检索</span>{{ toolSearchQueries(m).join('；') }}
                   </div>
                   <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref" title="点击查看原文" @click="openSource(s)">
-                    <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '') }}
+                    <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '') }}
                     <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
                   </div>
                 </div>
@@ -166,7 +166,7 @@
                       <span class="agent-menu-hint">决定这一轮问答用哪套配置</span>
                     </div>
                     <div class="agent-menu-list">
-                      <div class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+                      <div v-if="!agentList.length" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">默认（全局配置）</span>
                           <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
@@ -251,7 +251,7 @@
         <template v-if="lastSources.length">
           <div v-for="(s, si) in lastSources" :key="si" class="rp-src" :title="'点击查看原文'" @click="openSource(s)">
             <file-text-outlined class="rp-src-ic" />
-            <span class="rp-src-name">{{ s.fileName || '未知文档' }}{{ s.title ? ' §' + s.title : '' }}</span>
+            <span class="rp-src-name">{{ s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识') }}{{ s.title ? ' §' + s.title : '' }}</span>
           </div>
         </template>
         <div v-else class="rp-dim">暂无引用</div>
@@ -381,7 +381,8 @@ const agentList = ref([])                       // 全部智能体
 const agentMap = ref({})                        // 会话ID → 选中的智能体ID（按会话记忆）
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
 const currentAgentId = computed({
-  get: () => agentMap.value[currentSessionId.value] ?? defaultAgentId.value,
+  // 空值一律回落到默认助手：有了具名助手后，界面不再提供「不使用任何助手」的选项
+  get: () => agentMap.value[currentSessionId.value] || defaultAgentId.value || '',
   set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
 })
 const isAdmin = ref(isAdminSync())
@@ -415,7 +416,8 @@ const loadAgents = async () => {
     // 走 available 接口：问答用户可读的精简列表（管理端 /agent/list 仅管理员）
     const r = await listAvailableAgents()
     agentList.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
-    const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true)
+    // 优先默认助手；未设默认时用列表第一个，保证下拉总有可选项
+    const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true) || agentList.value[0]
     defaultAgentId.value = def ? def.id : ''
     // 当前会话尚未选择时，落到默认智能体
     if (!(currentSessionId.value in agentMap.value)) {
@@ -510,7 +512,7 @@ const sourceContent = ref('')
 const sourceLoading = ref(false)
 const openSource = async s => {
   if (!s) return
-  sourceTitle.value = (s.fileName || '未知文档') + (s.title ? ' §' + s.title : '')
+  sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
   sourceSnippet.value = s.snippet || '（无原文片段）'
   sourceImages.value = Array.isArray(s.images) ? s.images : []
   sourceContent.value = ''
@@ -521,7 +523,7 @@ const openSource = async s => {
     if (r.success && r.data) {
       sourceContent.value = r.data.content || ''
       if (Array.isArray(r.data.images)) sourceImages.value = r.data.images
-      if (r.data.title) sourceTitle.value = (s.fileName || '未知文档') + ' §' + r.data.title
+      if (r.data.title) sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + ' §' + r.data.title
     }
   } catch (e) { /* 接口失败回退 snippet */ }
   finally { sourceLoading.value = false }
@@ -536,7 +538,7 @@ const refHover = e => {
   const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
   const src = messages.value[msgIdx]?.sources?.[Number(t.dataset.ref) - 1]
   t.title = src
-    ? `[${t.dataset.ref}] ${(src.fileName || '未知文档')}${src.title ? ' §' + src.title : ''}\n${src.snippet || '（无原文片段）'}`
+    ? `[${t.dataset.ref}] ${(src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识'))}${src.title ? ' §' + src.title : ''}\n${src.snippet || '（无原文片段）'}`
     : `[${t.dataset.ref}] 来源信息加载中`
   t.dataset.tipSet = '1'
 }

@@ -67,7 +67,7 @@ export const exportAnswerMd = async ({ answer, question, title }) => {
     parts.push('## 回答\n' + body + '\n')
     if (answer.sources && answer.sources.length) {
       parts.push('## 引用来源\n' + answer.sources.map((s, si) =>
-        `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
+        `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
     }
     downloadMd(parts.join('\n'), safeFileName(title) + '.md')
   } finally {
@@ -106,7 +106,7 @@ export const exportSessionMarkdown = async (sid, title) => {
         parts.push('**回答**', '', body, '')
         if (m.sources && m.sources.length) {
           parts.push('**引用来源**', m.sources.map((s, si) =>
-            `${si + 1}. ${s.fileName || '未知文档'}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
+            `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
         }
         if ((m.messageId || m.id) && (m.fb === 0 || m.fb === 1)) {
           // 保留评价状态，便于回顾哪些回答被认可

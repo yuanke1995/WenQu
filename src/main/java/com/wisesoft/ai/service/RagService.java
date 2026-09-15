@@ -871,6 +871,7 @@ public class RagService {
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
+            st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1329,6 +1330,11 @@ public class RagService {
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
+        /**
+         * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
+         * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
+         */
+        DocumentMetaCache docMetaCache;
         /** 本轮上下文 token 用量（主链路构建后回填）：实际/预算/填充块数，供 done 下发做 Token 消耗可视化 */
         volatile int contextTokens;
         volatile int budgetTokens;
@@ -1378,7 +1384,13 @@ public class RagService {
                 src.put("ref", ref);
                 src.put("knowledgeId", h.knowledgeId());
                 src.put("docId", h.docId());
-                src.put("fileName", docFileNames != null ? docFileNames.get(h.docId()) : null);
+                String docName = docFileNames != null ? docFileNames.get(h.docId()) : null;
+                // 工具命中的文档若不在主链路映射里（本轮首次出现），直接取是 null →
+                // 前端会把来源显示成"未知文档"；这里按需补查一次（DocumentMetaCache 自带缓存，代价很低）
+                if (docName == null && h.docId() != null && !h.docId().isBlank() && docMetaCache != null) {
+                    docName = docMetaCache.getFileNames(Set.of(h.docId())).get(h.docId());
+                }
+                src.put("fileName", docName);
                 src.put("title", h.title());
                 src.put("snippet", snippet);
                 src.put("images", h.images());
