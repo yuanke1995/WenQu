@@ -95,7 +95,7 @@
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { GlobalOutlined, ApartmentOutlined, UserOutlined, UserAddOutlined } from '@ant-design/icons-vue'
-import { listDepartments, listUsers } from '../../api'
+import { listDepartments, listUsers } from '../api'
 
 const props = defineProps({
   /** 弹窗开关（配合 v-model:open） */
@@ -253,36 +253,36 @@ watch(() => props.open, v => { if (v) init() })
 .scope-section { margin-bottom: 14px; }
 .scope-section:last-child { margin-bottom: 0; }
 .scope-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.scope-title { font-size: 13px; font-weight: 500; color: var(--v2-text); }
-.scope-note { font-size: 12px; color: var(--v2-text3); }
+.scope-title { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.scope-note { font-size: 12px; color: var(--app-text3); }
 .scope-switch { margin-left: auto; }
 .scope-cards { display: flex; flex-direction: column; gap: 8px; }
 .scope-card {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-  border: 1px solid var(--v2-border); border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--app-border); border-radius: 8px; cursor: pointer;
   background: #fff; transition: border-color .15s, background .15s;
 }
-.scope-card:hover { border-color: var(--v2-accent); }
-.scope-card.active { border-color: var(--v2-accent); background: var(--v2-accent-weak); }
-.scope-card-ic { font-size: 16px; color: var(--v2-text3); flex: none; }
-.scope-card.active .scope-card-ic { color: var(--v2-accent); }
+.scope-card:hover { border-color: var(--app-accent); }
+.scope-card.active { border-color: var(--app-accent); background: var(--app-accent-weak); }
+.scope-card-ic { font-size: 16px; color: var(--app-text3); flex: none; }
+.scope-card.active .scope-card-ic { color: var(--app-accent); }
 .scope-card-txt { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.scope-card-title { font-size: 13px; color: var(--v2-text); white-space: nowrap; }
-.scope-card-desc { font-size: 12px; color: var(--v2-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scope-card-title { font-size: 13px; color: var(--app-text); white-space: nowrap; }
+.scope-card-desc { font-size: 12px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scope-count {
   margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px;
-  height: 24px; padding: 0 10px; font-size: 12px; color: var(--v2-text2);
-  background: #fff; border: 1px solid var(--v2-border); border-radius: 6px; cursor: pointer;
+  height: 24px; padding: 0 10px; font-size: 12px; color: var(--app-text2);
+  background: #fff; border: 1px solid var(--app-border); border-radius: 6px; cursor: pointer;
 }
-.scope-count:hover { border-color: var(--v2-accent); }
-.scope-off { font-size: 12px; color: var(--v2-text3); padding: 9px 12px; background: #f7f8fa; border-radius: 8px; }
+.scope-count:hover { border-color: var(--app-accent); }
+.scope-off { font-size: 12px; color: var(--app-text3); padding: 9px 12px; background: #f7f8fa; border-radius: 8px; }
 .sel-panel { width: 240px; }
 .sel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-.sel-title { font-size: 12px; font-weight: 500; color: var(--v2-text); }
-.sel-sub { font-size: 11px; color: var(--v2-text3); }
+.sel-title { font-size: 12px; font-weight: 500; color: var(--app-text); }
+.sel-sub { font-size: 11px; color: var(--app-text3); }
 .sel-list { max-height: 220px; overflow-y: auto; margin-top: 8px; }
 .sel-item { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
-.sel-item:hover { background: var(--v2-accent-weak); }
-.sel-label { font-size: 12px; color: var(--v2-text2); }
-.sel-empty { font-size: 12px; color: var(--v2-text3); padding: 12px 0; text-align: center; }
+.sel-item:hover { background: var(--app-accent-weak); }
+.sel-label { font-size: 12px; color: var(--app-text2); }
+.sel-empty { font-size: 12px; color: var(--app-text3); padding: 12px 0; text-align: center; }
 </style>

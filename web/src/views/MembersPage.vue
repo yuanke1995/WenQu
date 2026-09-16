@@ -1,12 +1,12 @@
 <template>
-  <div class="v2-page">
-    <div class="v2-page-head">
-      <h3 class="v2-page-title">成员管理</h3>
+  <div class="app-page">
+    <div class="app-page-head">
+      <h3 class="app-page-title">成员管理</h3>
       <a-segmented v-model:value="tab" :options="tabOptions" size="small" />
     </div>
 
-    <div class="v2-page-body">
-      <div class="v2-card" style="padding:0;overflow:hidden">
+    <div class="app-page-body">
+      <div class="app-card" style="padding:0;overflow:hidden">
         <!-- 工具栏：搜索 + 计数 + 新建 -->
         <div class="mem-toolbar">
           <a-input v-model:value="keyword" allow-clear size="small" class="mem-search"
@@ -18,8 +18,8 @@
           <a-select v-if="tab === 'users'" v-model:value="roleFilter" allow-clear size="small" class="mem-filter"
                     placeholder="全部角色" :options="roleFilterOptions" />
           <span class="mem-count">{{ tab === 'users' ? filteredUsers.length + ' 名用户' : filteredDepts.length + ' 个部门' }}</span>
-          <button v-if="tab === 'users'" class="v2-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
-          <button v-else class="v2-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
+          <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
+          <button v-else class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
         </div>
 
         <a-spin :spinning="loading">
@@ -49,16 +49,16 @@
             </a-table-column>
             <a-table-column title="状态" key="status" width="100">
               <template #default="{ record }">
-                <span class="v2-pill" :class="record.status === 0 ? 'warn' : 'ok'">{{ record.status === 0 ? '已禁用' : '启用' }}</span>
+                <span class="app-pill" :class="record.status === 0 ? 'warn' : 'ok'">{{ record.status === 0 ? '已禁用' : '启用' }}</span>
               </template>
             </a-table-column>
             <a-table-column title="操作" key="action" width="140">
               <template #default="{ record }">
                 <span class="mem-inline">
-                  <button class="v2-link-btn" @click="openUserEdit(record)">编辑</button>
-                  <button class="v2-link-btn" @click="openResetPwd(record)">重置密码</button>
+                  <button class="app-link-btn" @click="openUserEdit(record)">编辑</button>
+                  <button class="app-link-btn" @click="openResetPwd(record)">重置密码</button>
                   <a-popconfirm title="删除后该用户将失去部门与角色归属（不影响其历史会话）" ok-text="删除" cancel-text="取消" @confirm="delUser(record.uid)">
-                    <button class="v2-link-btn danger">删除</button>
+                    <button class="app-link-btn danger">删除</button>
                   </a-popconfirm>
                 </span>
               </template>
@@ -66,7 +66,7 @@
             <template #emptyText>
               <div class="mem-empty">
                 <span>{{ keyword ? '没有匹配的用户' : '暂无用户' }}</span>
-                <button v-if="!keyword" class="v2-link-btn" @click="openUserCreate">新建第一个用户</button>
+                <button v-if="!keyword" class="app-link-btn" @click="openUserCreate">新建第一个用户</button>
               </div>
             </template>
           </a-table>
@@ -93,9 +93,9 @@
             <a-table-column title="操作" key="action" width="140">
               <template #default="{ record }">
                 <span class="mem-inline">
-                  <button class="v2-link-btn" @click="openDeptEdit(record)">编辑</button>
+                  <button class="app-link-btn" @click="openDeptEdit(record)">编辑</button>
                   <a-popconfirm title="确定删除该部门？" ok-text="删除" cancel-text="取消" @confirm="delDept(record.id)">
-                    <button class="v2-link-btn danger">删除</button>
+                    <button class="app-link-btn danger">删除</button>
                   </a-popconfirm>
                 </span>
               </template>
@@ -103,7 +103,7 @@
             <template #emptyText>
               <div class="mem-empty">
                 <span>{{ keyword ? '没有匹配的部门' : '暂无部门' }}</span>
-                <button v-if="!keyword" class="v2-link-btn" @click="openDeptCreate">新建第一个部门</button>
+                <button v-if="!keyword" class="app-link-btn" @click="openDeptCreate">新建第一个部门</button>
               </div>
             </template>
           </a-table>
@@ -184,7 +184,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
-         listDepartments, createDepartment, updateDepartment, deleteDepartment } from '../../api'
+         listDepartments, createDepartment, updateDepartment, deleteDepartment } from '../api'
 
 const tab = ref('users')
 const keyword = ref('')
@@ -351,34 +351,34 @@ async function delDept (id) {
 </script>
 
 <style scoped>
-.mem-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--v2-border); }
+.mem-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--app-border); }
 .mem-search { width: 220px; }
-.mem-search-ic { color: var(--v2-text3); }
+.mem-search-ic { color: var(--app-text3); }
 .mem-filter { width: 130px; flex: none; }
 .mem-filter .ant-select-selector { font-size: 12px; }
-.mem-count { font-size: 12px; color: var(--v2-text3); }
+.mem-count { font-size: 12px; color: var(--app-text3); }
 .mem-new { margin-left: auto; }
 
 .mem-user { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
 .mem-avatar {
   width: 26px; height: 26px; border-radius: 50%; flex: none;
-  background: var(--v2-accent-weak); color: var(--v2-accent);
+  background: var(--app-accent-weak); color: var(--app-accent);
   font-size: 12px; display: inline-flex; align-items: center; justify-content: center;
 }
 .mem-avatar.dept { border-radius: 7px; }
 .mem-user-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.mem-name { color: var(--v2-text); }
-.mem-uid { font-size: 11px; color: var(--v2-text3); }
-.mem-dept { color: var(--v2-text2); }
-.mem-desc { color: var(--v2-text2); }
-.mem-none { color: var(--v2-text3); }
+.mem-name { color: var(--app-text); }
+.mem-uid { font-size: 11px; color: var(--app-text3); }
+.mem-dept { color: var(--app-text2); }
+.mem-desc { color: var(--app-text2); }
+.mem-none { color: var(--app-text3); }
 .mem-inline { display: inline-flex; align-items: center; gap: 8px; }
 
 .role-pill { display: inline-flex; align-items: center; font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; }
-.role-pill.r-superadmin { color: var(--v2-accent); background: #e8eefc; }
+.role-pill.r-superadmin { color: var(--app-accent); background: #e8eefc; }
 .role-pill.r-admin { color: #3b6d11; background: #eaf3de; }
-.role-pill.r-user { color: var(--v2-text2); background: #f1f3f5; }
+.role-pill.r-user { color: var(--app-text2); background: #f1f3f5; }
 
-.mem-empty { padding: 28px 0; color: var(--v2-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.form-tip { margin-top: 6px; font-size: 12px; color: var(--v2-text3); line-height: 1.5; }
+.mem-empty { padding: 28px 0; color: var(--app-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
 </style>

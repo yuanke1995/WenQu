@@ -1,20 +1,20 @@
 <template>
-  <div class="v2-page">
-    <div class="v2-page-head">
-      <h3 class="v2-page-title">检索评估</h3>
+  <div class="app-page">
+    <div class="app-page-head">
+      <h3 class="app-page-title">检索评估</h3>
       <span class="head-stat">评估集 · 一键体检 · 参数组对比调优</span>
       <span class="head-set">
-        <span class="v2-pill" :class="(evalSet.cases?.length || 0) ? 'ok' : 'warn'">{{ evalSet.cases?.length || 0 }} 条用例</span>
+        <span class="app-pill" :class="(evalSet.cases?.length || 0) ? 'ok' : 'warn'">{{ evalSet.cases?.length || 0 }} 条用例</span>
         <span v-if="evalSet.generatedAt" class="set-time">{{ evalSet.generatedAt }}</span>
       </span>
-      <button class="v2-btn ghost" style="margin-left:auto" :disabled="generating" @click="doGenerate">
+      <button class="app-btn ghost" style="margin-left:auto" :disabled="generating" @click="doGenerate">
         {{ generating ? '生成中...' : '重新生成评估集' }}
       </button>
     </div>
 
-    <div class="v2-page-body">
+    <div class="app-page-body">
       <!-- 使用说明（默认收起，点击展开） -->
-      <div class="v2-card help-card">
+      <div class="app-card help-card">
         <div class="help-head" @click="helpOpen = !helpOpen">
           <question-circle-outlined />
           <span>怎么用（三步）</span>
@@ -37,8 +37,8 @@
                :message="health.title" :description="health.description" @close="health = null" />
 
       <!-- 运行配置与参数组 -->
-      <div class="v2-card" style="margin-top:14px">
-        <div class="v2-card-title">运行配置
+      <div class="app-card" style="margin-top:14px">
+        <div class="app-card-title">运行配置
           <span class="card-sub">参数留空 = 不覆盖（空输入框的灰色占位就是设置页当前值）；multi 多路 = 模拟深度思考的拆子问题合并检索；重排开关打开会真实调用重排服务</span>
         </div>
 
@@ -59,7 +59,7 @@
               { value: 'normal', label: '单路 normal' },
               { value: 'multi', label: '多路 multi' }
             ]" />
-            <button v-if="groups.length > 1" class="v2-link-btn danger" style="margin-left:auto" @click="groups.splice(gi, 1)">删除</button>
+            <button v-if="groups.length > 1" class="app-link-btn danger" style="margin-left:auto" @click="groups.splice(gi, 1)">删除</button>
           </div>
           <div class="group-params">
             <span class="p-item"><span class="p-label">向量权重</span><a-input-number v-model:value="g.vectorWeight" :step="0.05" :placeholder="cur('retrieval.vectorWeight')" style="width:90px" /></span>
@@ -81,7 +81,7 @@
 
         <!-- 添加参数组：预设一键生成，免去手填数字 -->
         <a-dropdown :trigger="['click']">
-          <button class="v2-btn ghost dashed" style="width:100%;justify-content:center">
+          <button class="app-btn ghost dashed" style="width:100%;justify-content:center">
             + 添加参数组（选预设，最多 8 组）<down-outlined style="font-size:10px" />
           </button>
           <template #overlay>
@@ -96,10 +96,10 @@
         </a-dropdown>
 
         <div class="run-row">
-          <button class="v2-btn" :disabled="running || generating" @click="doHealth">
+          <button class="app-btn" :disabled="running || generating" @click="doHealth">
             <thunderbolt-outlined />{{ running ? '评估中...' : '一键体检（当前配置）' }}
           </button>
-          <button class="v2-btn ghost" :disabled="running || generating" @click="doRun">运行对比评估</button>
+          <button class="app-btn ghost" :disabled="running || generating" @click="doRun">运行对比评估</button>
           <span v-if="result" class="run-elapsed">耗时 {{ result.elapsedMs }}ms</span>
         </div>
       </div>
@@ -115,8 +115,8 @@
         <!-- 对比结论（自动生成，第一组为基线） -->
         <a-alert v-if="conclusion" style="margin-top:12px" type="info" show-icon :message="conclusion" />
 
-        <div class="v2-card" style="margin-top:14px">
-          <div class="v2-card-title">对比结果
+        <div class="app-card" style="margin-top:14px">
+          <div class="app-card-title">对比结果
             <span class="card-sub">非基线组的 ↑↓ 为相对第一组的差值（绿升红降）；「应用此组」直接写入线上配置并生效</span>
           </div>
           <a-table size="small" row-key="name" :data-source="result.groups" :pagination="false" :columns="metricsColumns" />
@@ -153,7 +153,7 @@
 import { ref, computed, h, onMounted } from 'vue'
 import { message, Modal, Tooltip } from 'ant-design-vue'
 import { ThunderboltOutlined, QuestionCircleOutlined, DownOutlined } from '@ant-design/icons-vue'
-import { evalGenerate, getEvalSet, runEvaluation, saveConfig, getConfig } from '../../api'
+import { evalGenerate, getEvalSet, runEvaluation, saveConfig, getConfig } from '../api'
 
 // 指标列头：文字 + ? 图标（hover 看含义）
 const metricTitle = (text, tip) =>
@@ -423,50 +423,50 @@ const buildHealth = data => {
 </script>
 
 <style scoped>
-.head-stat { font-size: 12px; color: var(--v2-text3); }
+.head-stat { font-size: 12px; color: var(--app-text3); }
 .head-set { display: inline-flex; align-items: center; gap: 8px; }
-.set-time { font-size: 11px; color: var(--v2-text3); }
-.card-sub { font-size: 11px; color: var(--v2-text3); font-weight: 400; }
+.set-time { font-size: 11px; color: var(--app-text3); }
+.card-sub { font-size: 11px; color: var(--app-text3); font-weight: 400; }
 
 /* 使用说明（可折叠） */
 .help-card { padding: 0 14px; }
 .help-head {
   display: flex; align-items: center; gap: 8px; padding: 11px 0;
-  font-size: 12px; color: var(--v2-text2); cursor: pointer; user-select: none;
+  font-size: 12px; color: var(--app-text2); cursor: pointer; user-select: none;
 }
-.help-arrow { margin-left: auto; font-size: 10px; transition: transform .15s; color: var(--v2-text3); }
+.help-arrow { margin-left: auto; font-size: 10px; transition: transform .15s; color: var(--app-text3); }
 .help-arrow.open { transform: rotate(180deg); }
-.help-body { padding: 2px 0 12px; border-top: 1px dashed var(--v2-border); }
-.help-body ol { margin: 10px 0 0; padding-left: 18px; line-height: 2; color: var(--v2-text2); font-size: 12px; }
-.help-metrics { margin-top: 6px; color: var(--v2-text3); font-size: 11px; line-height: 1.8; }
+.help-body { padding: 2px 0 12px; border-top: 1px dashed var(--app-border); }
+.help-body ol { margin: 10px 0 0; padding-left: 18px; line-height: 2; color: var(--app-text2); font-size: 12px; }
+.help-metrics { margin-top: 6px; color: var(--app-text3); font-size: 11px; line-height: 1.8; }
 
 /* 运行配置 */
 .cfg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.cfg-label { font-size: 12px; color: var(--v2-text2); white-space: nowrap; }
-.cfg-sub { font-size: 11px; color: var(--v2-text3); }
+.cfg-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.cfg-sub { font-size: 11px; color: var(--app-text3); }
 
 /* 参数组盒子 */
 .group-box {
-  border: 1px solid var(--v2-border); border-radius: 8px;
+  border: 1px solid var(--app-border); border-radius: 8px;
   padding: 10px 12px; margin-bottom: 10px; background: #fafbfc;
 }
 .group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.group-title { font-weight: 500; color: var(--v2-text); font-size: 13px; }
+.group-title { font-weight: 500; color: var(--app-text); font-size: 13px; }
 .group-params { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .p-item { display: inline-flex; align-items: center; gap: 4px; }
-.p-label { font-size: 12px; color: var(--v2-text2); white-space: nowrap; }
-.cur-hint { font-size: 11px; color: var(--v2-text3); white-space: nowrap; }
-.v2-btn.dashed { border-style: dashed; }
+.p-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.cur-hint { font-size: 11px; color: var(--app-text3); white-space: nowrap; }
+.app-btn.dashed { border-style: dashed; }
 
 /* 运行按钮行 */
 .run-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.run-elapsed { font-size: 11px; color: var(--v2-text3); }
+.run-elapsed { font-size: 11px; color: var(--app-text3); }
 
 /* 逐问题明细 */
-.case-expected { font-size: 12px; color: var(--v2-text2); margin-bottom: 6px; }
+.case-expected { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
 .case-hits { font-size: 12px; }
 .hit-row { padding: 2px 0; border-bottom: 1px dashed #f0f0f0; }
-.hit-good { color: var(--v2-ok); }
-.hit-miss { color: var(--v2-text2); }
-.hit-score { color: var(--v2-text3); margin-left: 8px; }
+.hit-good { color: var(--app-ok); }
+.hit-miss { color: var(--app-text2); }
+.hit-score { color: var(--app-text3); margin-left: 8px; }
 </style>

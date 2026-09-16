@@ -21,7 +21,7 @@ dayjs.locale('zh-cn')
 const route = useRoute()
 // 工作台自带侧边栏与滚动区域、登录页为独立全屏卡片：两者都不需要外层内边距
 const isLogin = computed(() => route.path === '/login')
-const contentClass = computed(() => (isLogin.value ? 'content-login' : 'content-v2'))
+const contentClass = computed(() => (isLogin.value ? 'content-login' : 'content-app'))
 </script>
 
 <style>
@@ -33,7 +33,7 @@ html, body { margin: 0; overflow-x: hidden; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 * { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,.18) transparent; }
 /* 工作台：无内边距满屏，由内部布局自己管理 */
-.content-v2 { padding:0;background:#f7f8fa;height:100vh;overflow:hidden }
+.content-app { padding:0;background:#f7f8fa;height:100vh;overflow:hidden }
 /* 登录页：无内边距，卡片自身居中 */
 .content-login { padding:0;background:#f7f8fa }
 </style>

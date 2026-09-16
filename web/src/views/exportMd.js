@@ -2,8 +2,8 @@
 // 图片策略：data URL 原样；服务内图片经 fetch 转 base64 内嵌（导出文件自包含）；
 // 抓取失败（签名过期/跨域被拦）返回 null → 正文保留 [图片N] 占位。
 import { message } from 'ant-design-vue'
-import { getHistory } from '../../api'
-import { resolveImg } from '../../utils/markdown'
+import { getHistory } from '../api'
+import { resolveImg } from '../utils/markdown'
 
 const imgToDataUri = async u => {
   if (!u) return null

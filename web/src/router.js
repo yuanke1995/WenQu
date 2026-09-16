@@ -3,27 +3,27 @@ import { message } from 'ant-design-vue'
 import { ensureAuth, isAdminSync, isLoggedIn } from './utils/auth'
 import Login from './views/LoginPage.vue'
 // 工作台（三栏布局）：侧边栏 + 内容区
-import V2Layout from './views/v2/V2Layout.vue'
-import ChatV2 from './views/v2/ChatPage.vue'
-import AgentsV2 from './views/v2/AgentsPage.vue'
-import DocumentsV2 from './views/v2/DocumentsPage.vue'
-import DashboardV2 from './views/v2/DashboardPage.vue'
-import SettingsV2 from './views/v2/SettingsPage.vue'
-import EvaluationV2 from './views/v2/EvaluationPage.vue'
-import MembersV2 from './views/v2/MembersPage.vue'
+import AppLayout from './views/AppLayout.vue'
+import Chat from './views/ChatPage.vue'
+import Agents from './views/AgentsPage.vue'
+import Documents from './views/DocumentsPage.vue'
+import Dashboard from './views/DashboardPage.vue'
+import Settings from './views/SettingsPage.vue'
+import Evaluation from './views/EvaluationPage.vue'
+import Members from './views/MembersPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/chat' },
     { path: '/login', component: Login, meta: { title: '登录' } },
-    { path: '/chat', component: V2Layout, children: [{ path: '', component: ChatV2 }] },
-    { path: '/agents', component: V2Layout, children: [{ path: '', component: AgentsV2 }], meta: { requiresAdmin: true, title: '智能体' } },
-    { path: '/documents', component: V2Layout, children: [{ path: '', component: DocumentsV2 }], meta: { requiresAdmin: true, title: '文档管理' } },
-    { path: '/members', component: V2Layout, children: [{ path: '', component: MembersV2 }], meta: { requiresAdmin: true, title: '成员管理' } },
-    { path: '/dashboard', component: V2Layout, children: [{ path: '', component: DashboardV2 }], meta: { requiresAdmin: true, title: '数据看板' } },
-    { path: '/settings', component: V2Layout, children: [{ path: '', component: SettingsV2 }], meta: { requiresAdmin: true, title: '系统设置' } },
-    { path: '/evaluation', component: V2Layout, children: [{ path: '', component: EvaluationV2 }], meta: { requiresAdmin: true, title: '检索评估' } },
+    { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
+    { path: '/agents', component: AppLayout, children: [{ path: '', component: Agents }], meta: { requiresAdmin: true, title: '智能体' } },
+    { path: '/documents', component: AppLayout, children: [{ path: '', component: Documents }], meta: { requiresAdmin: true, title: '文档管理' } },
+    { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },
+    { path: '/dashboard', component: AppLayout, children: [{ path: '', component: Dashboard }], meta: { requiresAdmin: true, title: '数据看板' } },
+    { path: '/settings', component: AppLayout, children: [{ path: '', component: Settings }], meta: { requiresAdmin: true, title: '系统设置' } },
+    { path: '/evaluation', component: AppLayout, children: [{ path: '', component: Evaluation }], meta: { requiresAdmin: true, title: '检索评估' } },
     // 兜底：未知路径（含历史遗留的旧链接）统一回到对话页
     { path: '/:pathMatch(.*)*', redirect: '/chat' }
   ]

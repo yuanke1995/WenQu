@@ -1,11 +1,11 @@
 <template>
-  <div class="v2-root">
+  <div class="app-root">
     <!-- 左侧边栏：logo / 导航 / 最近会话 / 底部用户区（可折叠为图标条） -->
     <aside class="side" :class="{ collapsed }">
       <div class="side-logo">
         <span class="logo-mark">渠</span>
         <span v-if="!collapsed" class="logo-name">问渠</span>
-        <button class="v2-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
+        <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
           <menu-unfold-outlined v-if="collapsed" />
           <menu-fold-outlined v-else />
         </button>
@@ -74,13 +74,13 @@
         <span class="avatar">{{ (userName || '游')[0] }}</span>
         <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
         <a-tooltip title="退出登录" placement="right">
-          <button class="v2-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
+          <button class="app-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
         </a-tooltip>
         <a-tooltip title="修改密码" placement="right">
-          <button class="v2-icon-btn" @click="pwdModal = true"><lock-outlined /></button>
+          <button class="app-icon-btn" @click="pwdModal = true"><lock-outlined /></button>
         </a-tooltip>
         <a-tooltip v-if="!isAdmin" :title="collapsed ? '管理员验证' : ''" placement="right">
-          <button class="v2-icon-btn" @click="adminModal = true"><safety-certificate-outlined /></button>
+          <button class="app-icon-btn" @click="adminModal = true"><safety-certificate-outlined /></button>
         </a-tooltip>
       </div>
     </aside>
@@ -119,11 +119,11 @@ import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, LockOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, changePasswordApi } from '../../api'
-import { ensureAuth, isAdminSync, setAdminToken, clearAuth } from '../../utils/auth'
+import { deleteSessionApi, logoutApi, changePasswordApi } from '../api'
+import { ensureAuth, isAdminSync, setAdminToken, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
 import { exportSessionMarkdown } from './exportMd'
-import './v2.css'
+import './app.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -131,10 +131,10 @@ const isAdmin = ref(isAdminSync())
 const userName = ref('')
 
 // 侧边栏折叠（持久化）
-const collapsed = ref(localStorage.getItem('v2_sidebar') === '1')
+const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
 const toggleFold = () => {
   collapsed.value = !collapsed.value
-  localStorage.setItem('v2_sidebar', collapsed.value ? '1' : '0')
+  localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0')
 }
 
 const visibleSessionList = computed(visibleSessions)
@@ -229,7 +229,7 @@ onMounted(async () => {
 <style scoped>
 .side {
   width: 200px; flex: none; display: flex; flex-direction: column;
-  background: var(--v2-panel); border-right: 1px solid var(--v2-border);
+  background: var(--app-panel); border-right: 1px solid var(--app-border);
   padding: 10px 8px; transition: width .18s ease; overflow: hidden;
 }
 .side.collapsed { width: 56px; }
@@ -240,11 +240,11 @@ onMounted(async () => {
 /* 折叠态所有图标统一对齐到侧边栏中轴（实测导航图标左偏 4px、头像左偏 2.5px） */
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
 .side.collapsed .side-foot { justify-content: center; padding-left: 0; padding-right: 0; }
-.side.collapsed .side-foot .v2-icon-btn { margin-left: 0 !important; }
+.side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 非管理员折叠态：头像+验证按钮放不下（22+8+26 > 40），藏头像只留验证按钮并居中 */
 .side.collapsed .side-foot .avatar:not(:only-child) { display: none; }
 .logo-mark {
-  width: 24px; height: 24px; border-radius: 6px; background: var(--v2-text);
+  width: 24px; height: 24px; border-radius: 6px; background: var(--app-text);
   color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none;
 }
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
@@ -254,42 +254,42 @@ onMounted(async () => {
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
   display: flex; align-items: center; gap: 9px; border: none; background: transparent;
-  padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--v2-text2);
+  padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--app-text2);
   cursor: pointer; text-align: left; white-space: nowrap; transition: background .15s, color .15s;
 }
-.nav-item:hover { background: var(--v2-accent-weak); color: var(--v2-text); }
-.nav-item.active { background: var(--v2-accent-weak); color: var(--v2-text); font-weight: 500; }
+.nav-item:hover { background: var(--app-accent-weak); color: var(--app-text); }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 
-.side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--v2-text3); }
+.side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
 .side-sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .sess-item {
   display: flex; align-items: center; padding: 6px 9px; border-radius: 8px;
-  font-size: 12px; color: var(--v2-text2); cursor: pointer; min-width: 0;
+  font-size: 12px; color: var(--app-text2); cursor: pointer; min-width: 0;
 }
 .sess-item:hover { background: #f2f4f7; }
-.sess-item.active { background: var(--v2-accent-weak); color: var(--v2-text); }
+.sess-item.active { background: var(--app-accent-weak); color: var(--app-text); }
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-text3); margin: 0 auto; }
-.sess-item.active .sess-dot { background: var(--v2-accent); }
-.sess-del { color: var(--v2-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
+.sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
+.sess-item.active .sess-dot { background: var(--app-accent); }
+.sess-del { color: var(--app-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
 .sess-item:hover .sess-del { opacity: 1; }
-.sess-del:hover { color: var(--v2-danger); }
-.sess-export { color: var(--v2-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
+.sess-del:hover { color: var(--app-danger); }
+.sess-export { color: var(--app-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
 .sess-item:hover .sess-export { opacity: 1; }
-.sess-export:hover { color: var(--v2-accent); }
-.sess-empty { font-size: 12px; color: var(--v2-text3); text-align: center; padding: 16px 0; }
+.sess-export:hover { color: var(--app-accent); }
+.sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
 
 .side-foot {
   display: flex; align-items: center; gap: 8px; padding: 8px 6px 2px;
-  border-top: 1px solid var(--v2-border);
+  border-top: 1px solid var(--app-border);
 }
 .avatar {
   width: 22px; height: 22px; border-radius: 50%; flex: none;
-  background: var(--v2-accent-weak); color: var(--v2-accent);
+  background: var(--app-accent-weak); color: var(--app-accent);
   font-size: 11px; display: inline-flex; align-items: center; justify-content: center;
 }
-.user-name { font-size: 12px; color: var(--v2-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--v2-danger); }
+.user-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
 .main { flex: 1; min-width: 0; height: 100%; }
 </style>

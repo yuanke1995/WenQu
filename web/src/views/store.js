@@ -1,9 +1,9 @@
-// ==================== v2 工作台共享状态 ====================
+// ==================== 工作台共享状态 ====================
 // 会话列表为布局侧边栏与聊天页共用：模块级单例 reactive store，
 // 避免两处各自拉取导致列表闪烁/不一致；聊天页在新建/删除/首条消息后调 loadSessions 同步。
 import { reactive } from 'vue'
 import { message } from 'ant-design-vue'
-import { listSessions } from '../../api'
+import { listSessions } from '../api'
 
 export const sessionStore = reactive({
   list: [],

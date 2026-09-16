@@ -1,19 +1,19 @@
 <template>
-  <div class="v2-page" @dragover.prevent @dragenter.prevent="dragDepth++" @dragleave.prevent="dragDepth = Math.max(0, dragDepth - 1)" @drop.prevent="onDrop">
-    <div class="v2-page-head">
-      <h3 class="v2-page-title">文档管理</h3>
+  <div class="app-page" @dragover.prevent @dragenter.prevent="dragDepth++" @dragleave.prevent="dragDepth = Math.max(0, dragDepth - 1)" @drop.prevent="onDrop">
+    <div class="app-page-head">
+      <h3 class="app-page-title">文档管理</h3>
       <span class="head-stat">{{ summaryText }}</span>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
-        <button class="v2-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
+        <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <a-upload :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
-          <button class="v2-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
+          <button class="app-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
         </a-upload>
       </div>
     </div>
     <a-progress v-if="uploading" :percent="uploadPercent" size="small" style="max-width:420px;margin:10px 20px 0" />
 
-    <div class="v2-page-body">
+    <div class="app-page-body">
       <!-- 拖拽遮罩 -->
       <div v-if="dragDepth > 0" class="drag-mask">
         <div class="drag-mask-tip"><upload-outlined style="font-size:36px" /><div>松开鼠标上传到知识库</div></div>
@@ -22,19 +22,19 @@
       <!-- 批量操作栏 -->
       <div v-if="selectedKeys.length" class="batch-bar">
         <span>已选 {{ selectedKeys.length }} 项：</span>
-        <button class="v2-btn ghost" @click="batchStatus(0)">批量启用</button>
-        <button class="v2-btn ghost" @click="batchStatus(1)">批量弃用</button>
+        <button class="app-btn ghost" @click="batchStatus(0)">批量启用</button>
+        <button class="app-btn ghost" @click="batchStatus(1)">批量弃用</button>
         <a-popconfirm title="确定删除选中的文档？知识库将同步移除" @confirm="batchDelete">
-          <button class="v2-btn danger">批量删除</button>
+          <button class="app-btn danger">批量删除</button>
         </a-popconfirm>
         <a-popconfirm title="对选中文档重新解析+向量化？" @confirm="batchReparse">
-          <button class="v2-btn ghost">批量重解析</button>
+          <button class="app-btn ghost">批量重解析</button>
         </a-popconfirm>
-        <button class="v2-link-btn" @click="selectedKeys = []">取消选择</button>
+        <button class="app-link-btn" @click="selectedKeys = []">取消选择</button>
       </div>
 
       <!-- 文件列表（行式） -->
-      <div class="v2-card" style="padding:0;overflow:hidden">
+      <div class="app-card" style="padding:0;overflow:hidden">
         <div class="doc-row head-row">
           <span class="col-check"></span>
           <span class="col-name">文件名</span>
@@ -51,16 +51,16 @@
             <span class="col-name">
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
               <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
-              <span v-if="scopeLabel(d)" class="v2-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
+              <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
             </span>
             <span class="col-num">{{ d.chunkCount || 0 }}</span>
             <span class="col-num">{{ d.hitCount || 0 }}</span>
             <span class="col-size">{{ fmtSize(d.fileSize) }}</span>
             <span class="col-status">
               <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="d.parseDesc || ''">
-                <span v-if="d.status === 0" class="v2-pill ok">已入库</span>
-                <span v-else-if="d.status === 1" class="v2-pill warn">已弃用</span>
-                <span v-else class="v2-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
+                <span v-if="d.status === 0" class="app-pill ok">已入库</span>
+                <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
+                <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
               </a-tooltip>
               <div v-else-if="d.status === 2" style="min-width:120px">
                 <a-progress :percent="d.parseProgress || 0" size="small" style="margin:0" />
@@ -70,17 +70,17 @@
             <span class="col-time">{{ fmtTime(d.createTime) }}</span>
             <span class="col-act">
               <template v-if="d.status === 0">
-                <button class="v2-link-btn" @click="openKb(d)">知识块</button>
-                <button class="v2-link-btn" @click="openVersions(d)">版本</button>
-                <button class="v2-link-btn" @click="toggleStatus(d, 1)">弃用</button>
+                <button class="app-link-btn" @click="openKb(d)">知识块</button>
+                <button class="app-link-btn" @click="openVersions(d)">版本</button>
+                <button class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
               </template>
-              <button v-else-if="d.status === 1" class="v2-link-btn" @click="toggleStatus(d, 0)">启用</button>
-              <button v-if="d.status !== 2" class="v2-link-btn" @click="openShare(d)">共享</button>
+              <button v-else-if="d.status === 1" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
+              <button v-if="d.status !== 2" class="app-link-btn" @click="openShare(d)">共享</button>
               <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
-              <button v-if="d.status !== 2" class="v2-link-btn" @click="dlSource(d)">下载</button>
-              <button v-if="d.status === 0 || d.status === 3" class="v2-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
+              <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
+              <button v-if="d.status === 0 || d.status === 3" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
               <a-popconfirm title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
-                <button class="v2-link-btn danger" :disabled="deletingId === d.id">删除</button>
+                <button class="app-link-btn danger" :disabled="deletingId === d.id">删除</button>
               </a-popconfirm>
             </span>
           </div>
@@ -142,8 +142,8 @@
           <a-table-column title="#" dataIndex="chunkIndex" key="chunkIndex" width="40" />
           <a-table-column title="状态" key="status" width="76">
             <template #default="{ record }">
-              <span v-if="(record.status ?? 0) === 0" class="v2-pill ok">生效</span>
-              <span v-else class="v2-pill warn">已停用</span>
+              <span v-if="(record.status ?? 0) === 0" class="app-pill ok">生效</span>
+              <span v-else class="app-pill warn">已停用</span>
             </template>
           </a-table-column>
           <a-table-column title="标题" key="title" ellipsis>
@@ -164,11 +164,11 @@
           </a-table-column>
           <a-table-column title="操作" key="action" width="130">
             <template #default="{ record }">
-              <button class="v2-link-btn" @click.stop="openKbEdit(record)">编辑</button>
-              <button v-if="(record.status ?? 0) === 0" class="v2-link-btn" @click.stop="toggleKbStatus(record, 1)">停用</button>
-              <button v-else class="v2-link-btn" @click.stop="toggleKbStatus(record, 0)">启用</button>
+              <button class="app-link-btn" @click.stop="openKbEdit(record)">编辑</button>
+              <button v-if="(record.status ?? 0) === 0" class="app-link-btn" @click.stop="toggleKbStatus(record, 1)">停用</button>
+              <button v-else class="app-link-btn" @click.stop="toggleKbStatus(record, 0)">启用</button>
               <a-popconfirm title="确定删除该知识块？向量将同步移除" ok-text="删除" cancel-text="取消" @confirm.stop="delKnowledge(record.id)">
-                <button class="v2-link-btn danger" @click.stop>删除</button>
+                <button class="app-link-btn danger" @click.stop>删除</button>
               </a-popconfirm>
             </template>
           </a-table-column>
@@ -179,7 +179,7 @@
                 <span v-if="record.titlePath" class="kb-expand-path" :title="record.titlePath">{{ record.titlePath }}</span>
                 <span>~{{ estimateTokens((record.title || '') + (record.content || '')) }} tokens</span>
                 <span v-if="imgCountOf(record)">{{ imgCountOf(record) }} 图</span>
-                <button class="v2-link-btn kb-expand-copy" @click.stop="copyKbContent(record)">复制内容</button>
+                <button class="app-link-btn kb-expand-copy" @click.stop="copyKbContent(record)">复制内容</button>
               </div>
               <div class="md kb-expand-md" @click="openKbImgPreview" v-html="kbChunkHtml(record)"></div>
             </div>
@@ -229,8 +229,8 @@
         </a-form-item>
       </a-form>
       <div style="text-align:right">
-        <button class="v2-btn ghost" style="margin-right:8px" @click="closeKbEdit">取消</button>
-        <button class="v2-btn" :disabled="kbEditSaving" @click="saveKnowledgeEdit">{{ kbEditSaving ? '保存中...' : '保存' }}</button>
+        <button class="app-btn ghost" style="margin-right:8px" @click="closeKbEdit">取消</button>
+        <button class="app-btn" :disabled="kbEditSaving" @click="saveKnowledgeEdit">{{ kbEditSaving ? '保存中...' : '保存' }}</button>
       </div>
     </a-modal>
 
@@ -258,7 +258,7 @@
       <a-spin :spinning="kbDetailLoading">
         <div v-if="kbDetailErr" class="kb-detail-err">
           {{ kbDetailErr }}
-          <button class="v2-link-btn" @click="openKbDetail(kbDetailRow)">重试</button>
+          <button class="app-link-btn" @click="openKbDetail(kbDetailRow)">重试</button>
         </div>
         <div v-else class="md" style="max-height:60vh;overflow-y:auto;font-size:14px;line-height:1.7;min-height:80px"
              @click="openKbImgPreview" v-html="kbDetailHtml"></div>
@@ -275,7 +275,7 @@
           <a-table-column title="操作" key="action" width="100">
             <template #default="{ record }">
               <a-popconfirm :title="`确定回滚到 v${record.version}？当前版本将被覆盖`" ok-text="回滚" cancel-text="取消" @confirm="doRollback(record.version)">
-                <button class="v2-link-btn">回滚</button>
+                <button class="app-link-btn">回滚</button>
               </a-popconfirm>
             </template>
           </a-table-column>
@@ -309,10 +309,10 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare } from '../../api'
+         downloadDocumentSource, updateDocumentShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
-import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../../utils/markdown'
-import { estimateTokens, fmtTokens } from '../../utils/token'
+import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
+import { estimateTokens, fmtTokens } from '../utils/token'
 
 // 上传限制（启动时从 /config/public 动态获取）
 const MAX_SIZE = 200 * 1024 * 1024
@@ -979,33 +979,33 @@ const fmtTime = t => {
 </script>
 
 <style scoped>
-.head-stat { font-size: 12px; color: var(--v2-text3); }
+.head-stat { font-size: 12px; color: var(--app-text3); }
 .batch-bar {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px;
-  background: var(--v2-accent-weak); border: 1px solid #c9d9f5; border-radius: 8px;
-  font-size: 12px; color: var(--v2-accent);
+  background: var(--app-accent-weak); border: 1px solid #c9d9f5; border-radius: 8px;
+  font-size: 12px; color: var(--app-accent);
 }
 .doc-row {
   display: flex; align-items: center; gap: 10px; padding: 9px 14px;
-  border-bottom: 1px solid #f1f3f5; font-size: 12px; color: var(--v2-text2); min-width: 0;
+  border-bottom: 1px solid #f1f3f5; font-size: 12px; color: var(--app-text2); min-width: 0;
 }
 .doc-row:last-child { border-bottom: none; }
 .doc-row:not(.head-row):hover { background: #fafbfc; }
-.head-row { font-size: 11px; color: var(--v2-text3); background: #fafbfc; border-bottom: 1px solid var(--v2-border); user-select: none; }
+.head-row { font-size: 11px; color: var(--app-text3); background: #fafbfc; border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .file-ic {
   width: 34px; height: 24px; border-radius: 5px; font-size: 9px; font-weight: 500; flex: none;
   display: inline-flex; align-items: center; justify-content: center; letter-spacing: .5px;
 }
-.file-name { color: var(--v2-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.file-desc { font-style: normal; color: var(--v2-text3); margin-left: 8px; font-size: 11px; }
+.file-name { color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.file-desc { font-style: normal; color: var(--app-text3); margin-left: 8px; font-size: 11px; }
 .col-num { width: 48px; flex: none; text-align: right; }
 .col-size { width: 72px; flex: none; text-align: right; }
 .col-status { width: 130px; flex: none; }
 .col-time { width: 130px; flex: none; }
 .col-act { width: 250px; flex: none; text-align: right; white-space: nowrap; }
-.parse-desc { font-size: 11px; color: var(--v2-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 共享范围列表标记（弹窗两区表单已抽为公共组件 ShareScopeModal） */
 .scope-tag { flex: none; }
 .drag-mask {
@@ -1014,8 +1014,8 @@ const fmtTime = t => {
   display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 .drag-mask-tip {
-  text-align: center; color: var(--v2-accent); font-size: 15px;
-  background: #fff; border: 2px dashed var(--v2-accent); border-radius: 12px;
+  text-align: center; color: var(--app-accent); font-size: 15px;
+  background: #fff; border: 2px dashed var(--app-accent); border-radius: 12px;
   padding: 24px 40px; display: flex; flex-direction: column; gap: 8px; align-items: center;
 }
 /* 知识块编辑：Markdown 工具栏 + 左写右看分栏实时预览 */
@@ -1025,28 +1025,28 @@ const fmtTime = t => {
 }
 .kb-edit-split { display: flex; gap: 10px; }
 /* 切片统计与 Token 列（2.9） */
-.kb-stat { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--v2-text3); }
-.kb-stat b { color: var(--v2-text); font-weight: 500; }
+.kb-stat { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--app-text3); }
+.kb-stat b { color: var(--app-text); font-weight: 500; }
 .kb-stat-warn { color: #d46b08; }
-.kb-tok { font-variant-numeric: tabular-nums; color: var(--v2-text3); }
+.kb-tok { font-variant-numeric: tabular-nums; color: var(--app-text3); }
 /* 结构导图（3.3 / 3.5） */
-.kb-tree { border: 1px solid var(--v2-border); border-radius: 6px; overflow: hidden; }
-.kb-tree-head { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; background: #fafbfc; border-bottom: 1px solid var(--v2-border); font-size: 12px; font-weight: 500; }
-.kb-tree-tip { font-weight: 400; color: var(--v2-text3); }
+.kb-tree { border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; }
+.kb-tree-head { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; background: #fafbfc; border-bottom: 1px solid var(--app-border); font-size: 12px; font-weight: 500; }
+.kb-tree-tip { font-weight: 400; color: var(--app-text3); }
 .kb-tree-body { max-height: 420px; overflow-y: auto; padding: 4px 0; }
 .kb-tree-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; }
 .kb-tree-row:hover { background: #f7f8fa; }
-.kb-tree-toggle { flex: none; width: 12px; color: var(--v2-text3); cursor: pointer; user-select: none; }
+.kb-tree-toggle { flex: none; width: 12px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .kb-tree-name { flex: 1; min-width: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kb-tree-name:hover { color: var(--v2-accent); }
-.kb-tree-meta { flex: none; color: var(--v2-text3); font-variant-numeric: tabular-nums; }
-.kb-tree-empty { padding: 24px 10px; text-align: center; font-size: 12px; color: var(--v2-text3); }
+.kb-tree-name:hover { color: var(--app-accent); }
+.kb-tree-meta { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.kb-tree-empty { padding: 24px 10px; text-align: center; font-size: 12px; color: var(--app-text3); }
 /* 行内展开直读（对齐片段卡片：元信息 + 完整 Markdown 内容） */
 .kb-expand { padding: 2px 0 8px 16px; }
-.kb-expand-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; color: var(--v2-text3); }
-.kb-expand-path { max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--v2-text2); }
+.kb-expand-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; color: var(--app-text3); }
+.kb-expand-path { max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--app-text2); }
 .kb-expand-copy { margin-left: auto; }
-.kb-expand-md { font-size: 13px; line-height: 1.75; color: var(--v2-text); }
+.kb-expand-md { font-size: 13px; line-height: 1.75; color: var(--app-text); }
 .kb-expand-md :deep(p) { margin: 0 0 8px; }
 .kb-expand-md :deep(p:last-child) { margin-bottom: 0; }
 .kb-expand-md :deep(h1), .kb-expand-md :deep(h2), .kb-expand-md :deep(h3), .kb-expand-md :deep(h4) { margin: 10px 0 6px; line-height: 1.45; }
@@ -1058,19 +1058,19 @@ const fmtTime = t => {
 /* 搜索命中高亮 */
 .kb-hl { background: #fff1b8; color: inherit; padding: 0 1px; border-radius: 2px; }
 /* 内容摘要：两行显示（不再固定截断 80 字） */
-.kb-snippet { color: var(--v2-text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kb-snippet { color: var(--app-text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* 章节筛选标识（结构导图 → 切片列表），可一键清除 */
 .kb-path-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px;
-  padding: 3px 10px; font-size: 12px; color: var(--v2-accent);
-  background: var(--v2-accent-weak); border: 1px solid #c9d9f5; border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--app-accent);
+  background: var(--app-accent-weak); border: 1px solid #c9d9f5; border-radius: 999px;
 }
 .kb-path-chip b { font-weight: 600; max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kb-path-chip-x { border: none; background: transparent; cursor: pointer; color: var(--v2-text3); font-size: 14px; line-height: 1; padding: 0 2px; }
-.kb-path-chip-x:hover { color: var(--v2-danger); }
-.kb-stat-tip { color: var(--v2-text3); }
+.kb-path-chip-x { border: none; background: transparent; cursor: pointer; color: var(--app-text3); font-size: 14px; line-height: 1; padding: 0 2px; }
+.kb-path-chip-x:hover { color: var(--app-danger); }
+.kb-stat-tip { color: var(--app-text3); }
 /* 详情弹窗（全局搜索）失败态 */
-.kb-detail-err { padding: 24px 0; text-align: center; color: var(--v2-text3); font-size: 13px; }
+.kb-detail-err { padding: 24px 0; text-align: center; color: var(--app-text3); font-size: 13px; }
 /* 图片灯箱（知识块图片放大）：多图切换 / 滚轮缩放 / 拖动平移，与聊天页同款 */
 .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; z-index: 2000; cursor: zoom-out; overflow: hidden; }
 .lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 4px; cursor: grab; user-select: none; transition: transform .12s ease; }
@@ -1092,7 +1092,7 @@ const fmtTime = t => {
 .kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {
   flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); overflow-y: auto;
-  border: 1px solid var(--v2-border); border-radius: 6px; background: #fafbfc;
+  border: 1px solid var(--app-border); border-radius: 6px; background: #fafbfc;
   padding: 10px 14px; font-size: 14px; line-height: 1.7;
 }
 /* 图片插入菜单项：缩略图 + 编号 */

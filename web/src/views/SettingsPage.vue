@@ -1,10 +1,10 @@
 <template>
-  <div class="v2-page">
-    <div class="v2-page-head">
-      <h3 class="v2-page-title">系统设置</h3>
+  <div class="app-page">
+    <div class="app-page-head">
+      <h3 class="app-page-title">系统设置</h3>
       <span v-if="dirtyCount" class="dirty-hint">有 {{ dirtyCount }} 项已修改未保存</span>
       <button v-else class="head-hint-plain">修改后点右侧保存生效，悬停参数旁 ? 查看说明</button>
-      <button class="v2-btn" style="margin-left:auto" :disabled="!dirtyCount" :class="{ dis: !dirtyCount }" @click="save">
+      <button class="app-btn" style="margin-left:auto" :disabled="!dirtyCount" :class="{ dis: !dirtyCount }" @click="save">
         <save-outlined /> 保存配置{{ dirtyCount ? `（${dirtyCount} 项改动）` : '' }}
       </button>
     </div>
@@ -21,8 +21,8 @@
       <section class="set-content">
         <a-spin :spinning="loading">
           <div class="set-panel-head">
-            <h3 class="v2-page-title">{{ currentPanel?.title }}</h3>
-            <button v-if="!NO_RESET.includes(current)" class="v2-btn ghost" :disabled="resettingKey === current" @click="onResetGroup(current)">
+            <h3 class="app-page-title">{{ currentPanel?.title }}</h3>
+            <button v-if="!NO_RESET.includes(current)" class="app-btn ghost" :disabled="resettingKey === current" @click="onResetGroup(current)">
               恢复本组默认
             </button>
           </div>
@@ -30,7 +30,7 @@
           <a-alert v-for="(al, ai) in (PANEL_ALERTS[current] || [])" :key="ai" :type="al.type" show-icon
                    style="margin-bottom:12px" :message="al.msg" />
 
-          <div class="v2-card set-card">
+          <div class="app-card set-card">
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <template v-for="(blk, i) in blocksOf(current)" :key="i">
                 <div v-if="blk.type === 'sub' && current !== 'skills'" class="cfg-sub">{{ blk.title }}</div>
@@ -41,22 +41,22 @@
                     <template #label>
                       <a-tooltip :title="TIPS.embeddingDimensions" placement="top">当前索引维度 <question-circle-outlined class="tip-icon" /></a-tooltip>
                     </template>
-                    <span v-if="embeddingDimensions" style="color:var(--v2-text2)">{{ embeddingDimensions }} 维</span>
-                    <span v-else style="color:var(--v2-text3)">未记录（首次重嵌入完成后自动记录）</span>
+                    <span v-if="embeddingDimensions" style="color:var(--app-text2)">{{ embeddingDimensions }} 维</span>
+                    <span v-else style="color:var(--app-text3)">未记录（首次重嵌入完成后自动记录）</span>
                   </a-form-item>
                   <a-form-item label="重嵌入状态">
                     <div>
-                      <span v-if="reembed.status === 'running'" style="color:var(--v2-accent)">进行中：{{ reembed.done }} / {{ reembed.total }} 块<span v-if="reembed.failed" style="color:var(--v2-danger)">（失败 {{ reembed.failed }}）</span></span>
-                      <span v-else-if="reembed.status === 'done'" style="color:var(--v2-ok)">已完成：{{ reembed.done }} 块<span v-if="reembed.failed" style="color:var(--v2-danger)">（失败 {{ reembed.failed }}，可重试补齐）</span></span>
-                      <span v-else-if="reembed.status === 'failed'" style="color:var(--v2-danger)">失败：{{ reembed.error }}（已完成 {{ reembed.done }} 块，可重试）</span>
-                      <span v-else style="color:var(--v2-text3)">未运行</span>
-                      <button class="v2-btn ghost small" :disabled="reembedTriggering" @click="doTriggerReembed">{{ reembedTriggering ? '启动中…' : '手动重嵌入' }}</button>
-                      <button class="v2-btn ghost small" @click="refreshReembedStatus">刷新</button>
+                      <span v-if="reembed.status === 'running'" style="color:var(--app-accent)">进行中：{{ reembed.done }} / {{ reembed.total }} 块<span v-if="reembed.failed" style="color:var(--app-danger)">（失败 {{ reembed.failed }}）</span></span>
+                      <span v-else-if="reembed.status === 'done'" style="color:var(--app-ok)">已完成：{{ reembed.done }} 块<span v-if="reembed.failed" style="color:var(--app-danger)">（失败 {{ reembed.failed }}，可重试补齐）</span></span>
+                      <span v-else-if="reembed.status === 'failed'" style="color:var(--app-danger)">失败：{{ reembed.error }}（已完成 {{ reembed.done }} 块，可重试）</span>
+                      <span v-else style="color:var(--app-text3)">未运行</span>
+                      <button class="app-btn ghost small" :disabled="reembedTriggering" @click="doTriggerReembed">{{ reembedTriggering ? '启动中…' : '手动重嵌入' }}</button>
+                      <button class="app-btn ghost small" @click="refreshReembedStatus">刷新</button>
                     </div>
                     <div v-if="reembed.status !== 'idle'" class="reembed-meta">
                       <span v-if="reembed.newDim">维度：{{ reembed.oldDim || '未知' }} → {{ reembed.newDim }}</span>
                       <span v-if="reembedElapsed" style="margin-left:12px">耗时 {{ reembedElapsed }}</span>
-                      <span v-if="reembed.indexed" style="margin-left:12px">索引内 {{ reembed.indexed }} 块<span v-if="reembed.status === 'done' && reembed.indexed < reembed.done" style="color:var(--v2-danger)">（少于成功写入数，建议再跑一次）</span></span>
+                      <span v-if="reembed.indexed" style="margin-left:12px">索引内 {{ reembed.indexed }} 块<span v-if="reembed.status === 'done' && reembed.indexed < reembed.done" style="color:var(--app-danger)">（少于成功写入数，建议再跑一次）</span></span>
                     </div>
                   </a-form-item>
                 </template>
@@ -75,12 +75,12 @@
                     </div>
                     <div class="key-bar-actions">
                       <a-tooltip title="刷新连接状态">
-                        <button class="v2-icon-btn" aria-label="刷新连接状态" :disabled="mcpLoading" @click="loadMcpStatus"><reload-outlined /></button>
+                        <button class="app-icon-btn" aria-label="刷新连接状态" :disabled="mcpLoading" @click="loadMcpStatus"><reload-outlined /></button>
                       </a-tooltip>
-                      <button class="v2-btn ghost small" :disabled="mcpReloading" @click="doReloadMcp">
+                      <button class="app-btn ghost small" :disabled="mcpReloading" @click="doReloadMcp">
                         {{ mcpReloading ? '重连中…' : '全部重连' }}
                       </button>
-                      <button class="v2-btn small" @click="openMcpAdd">＋ 添加服务</button>
+                      <button class="app-btn small" @click="openMcpAdd">＋ 添加服务</button>
                     </div>
                   </div>
 
@@ -103,12 +103,12 @@
                     <div class="key-empty-desc">
                       接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
                     </div>
-                    <button class="v2-btn small" @click="openMcpAdd">添加第一个服务</button>
+                    <button class="app-btn small" @click="openMcpAdd">添加第一个服务</button>
                   </div>
                   <div v-else-if="mcpCards.length && !mcpFilteredCards.length" class="key-empty">
                     <div class="key-empty-title">没有匹配的服务</div>
                     <div class="key-empty-desc">没有名称或地址包含「{{ mcpKeyword }}」的服务。</div>
-                    <button class="v2-btn ghost small" @click="mcpKeyword = ''">清除搜索</button>
+                    <button class="app-btn ghost small" @click="mcpKeyword = ''">清除搜索</button>
                   </div>
 
                   <template v-if="mcpFilteredCards.length">
@@ -118,12 +118,12 @@
                         <span class="mcp-card-name">{{ s.name }}</span>
                         <span class="mcp-state" :class="s.stateCls" :title="s.runtimeState || ''">{{ s.stateText }}</span>
                         <div class="mcp-card-actions">
-                          <button v-if="s.connected" class="v2-link-btn" @click="toggleMcpTools(s)">
+                          <button v-if="s.connected" class="app-link-btn" @click="toggleMcpTools(s)">
                             {{ mcpExpanded === s.name ? '收起工具' : '查看工具' }}
                           </button>
-                          <button class="v2-link-btn" @click="openMcpEdit(s)">编辑</button>
+                          <button class="app-link-btn" @click="openMcpEdit(s)">编辑</button>
                           <a-popconfirm title="从配置中移除该服务？" ok-text="移除" cancel-text="取消" @confirm="removeMcpServer(s)">
-                            <button class="v2-link-btn danger">移除</button>
+                            <button class="app-link-btn danger">移除</button>
                           </a-popconfirm>
                         </div>
                       </div>
@@ -184,10 +184,10 @@
                       </a-form-item>
                     </a-form>
                     <div class="key-modal-foot">
-                      <button class="v2-btn ghost" :disabled="mcpProbe.loading" @click="testMcpForm">
+                      <button class="app-btn ghost" :disabled="mcpProbe.loading" @click="testMcpForm">
                         {{ mcpProbe.loading ? '测试中…' : '测试连接' }}
                       </button>
-                      <button class="v2-btn" :disabled="mcpSaving" @click="submitMcpForm">
+                      <button class="app-btn" :disabled="mcpSaving" @click="submitMcpForm">
                         {{ mcpSaving ? '保存中…' : (mcpForm.mode === 'add' ? '添加并连接' : '保存并重连') }}
                       </button>
                     </div>
@@ -199,7 +199,7 @@
                 <template v-else-if="blk.type === 'field' && current !== 'skills' && !MCP_CUSTOM_FIELDS.has(blk.field.path)">
                   <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
                     <template v-if="probeKey(blk.field)" #extra>
-                      <button class="v2-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
+                      <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
                         {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
                       </button>
                       <a-tooltip v-if="probeStates[probeKey(blk.field)].result" :title="probeStates[probeKey(blk.field)].result.detail">
@@ -223,14 +223,14 @@
               <!-- 语义缓存运维：运行统计 + 手动清空 -->
               <a-form-item v-if="current === 'semanticCache'" label="缓存状态">
                 <div>
-                  <span v-if="cacheStats.count != null" style="color:var(--v2-text2)">
-                    已缓存 <b style="color:var(--v2-accent);font-weight:500">{{ cacheStats.count }}</b> 条（上限 {{ form.semanticCache?.maxEntries ?? '—' }}）
+                  <span v-if="cacheStats.count != null" style="color:var(--app-text2)">
+                    已缓存 <b style="color:var(--app-accent);font-weight:500">{{ cacheStats.count }}</b> 条（上限 {{ form.semanticCache?.maxEntries ?? '—' }}）
                   </span>
-                  <span v-else style="color:var(--v2-text3)">统计未加载</span>
+                  <span v-else style="color:var(--app-text3)">统计未加载</span>
                   <a-popconfirm title="清空后缓存重新积累，确定清空？" ok-text="清空" cancel-text="取消" @confirm="doClearCache">
-                    <button class="v2-btn danger small" style="margin-left:12px" :disabled="cacheClearing">{{ cacheClearing ? '清空中…' : '清空语义缓存' }}</button>
+                    <button class="app-btn danger small" style="margin-left:12px" :disabled="cacheClearing">{{ cacheClearing ? '清空中…' : '清空语义缓存' }}</button>
                   </a-popconfirm>
-                  <button class="v2-btn ghost small" style="margin-left:8px" @click="refreshCacheStats">刷新</button>
+                  <button class="app-btn ghost small" style="margin-left:8px" @click="refreshCacheStats">刷新</button>
                 </div>
                 <div class="reembed-meta">清空后按提问重新积累；知识库变更（解析/删除/回滚/启停用）时后端会自动整体清空，一般无需手动操作。</div>
               </a-form-item>
@@ -250,9 +250,9 @@
                   </div>
                   <div class="key-bar-actions">
                     <a-tooltip title="刷新列表">
-                      <button class="v2-icon-btn" aria-label="刷新 Key 列表" :disabled="keysLoading" @click="loadKeys"><reload-outlined /></button>
+                      <button class="app-icon-btn" aria-label="刷新 Key 列表" :disabled="keysLoading" @click="loadKeys"><reload-outlined /></button>
                     </a-tooltip>
-                    <button class="v2-btn small" @click="openCreateKey">＋ 创建 API Key</button>
+                    <button class="app-btn small" @click="openCreateKey">＋ 创建 API Key</button>
                   </div>
                 </div>
 
@@ -262,12 +262,12 @@
                   <div class="key-empty-desc">
                     创建后，外部系统在请求头带 <code>X-Api-Key</code> 即可调用问答接口，无需平台 token。
                   </div>
-                  <button class="v2-btn small" @click="openCreateKey">创建第一个 API Key</button>
+                  <button class="app-btn small" @click="openCreateKey">创建第一个 API Key</button>
                 </div>
                 <div v-else-if="!filteredKeys.length" class="key-empty">
                   <div class="key-empty-title">没有匹配的 Key</div>
                   <div class="key-empty-desc">没有名称或前缀包含「{{ keyKeyword }}」的 Key。</div>
-                  <button class="v2-btn ghost small" @click="keyKeyword = ''">清除搜索</button>
+                  <button class="app-btn ghost small" @click="keyKeyword = ''">清除搜索</button>
                 </div>
 
                 <a-table v-else :data-source="filteredKeys" size="small" row-key="id" :pagination="false">
@@ -275,7 +275,7 @@
                     <template #default="{ record }">
                       <span class="key-name-wrap">
                         <span class="key-name">{{ record.name || '未命名' }}</span>
-                        <span v-if="record.expired" class="v2-pill err key-tag">已过期</span>
+                        <span v-if="record.expired" class="app-pill err key-tag">已过期</span>
                       </span>
                     </template>
                   </a-table-column>
@@ -303,10 +303,10 @@
                   </a-table-column>
                   <a-table-column title="操作" key="act" width="150">
                     <template #default="{ record }">
-                      <button class="v2-link-btn" @click="openShareKey(record)">共享</button>
-                      <button class="v2-link-btn" @click="openRenameKey(record)">改名</button>
+                      <button class="app-link-btn" @click="openShareKey(record)">共享</button>
+                      <button class="app-link-btn" @click="openRenameKey(record)">改名</button>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
-                        <button class="v2-link-btn danger">删除</button>
+                        <button class="app-link-btn danger">删除</button>
                       </a-popconfirm>
                     </template>
                   </a-table-column>
@@ -357,8 +357,8 @@
                       </a-form-item>
                     </a-form>
                     <div class="key-modal-foot">
-                      <button class="v2-btn ghost" @click="closeCreateKey">取消</button>
-                      <button class="v2-btn" :disabled="keyCreating" @click="submitCreateKey">{{ keyCreating ? '创建中…' : '创建' }}</button>
+                      <button class="app-btn ghost" @click="closeCreateKey">取消</button>
+                      <button class="app-btn" :disabled="keyCreating" @click="submitCreateKey">{{ keyCreating ? '创建中…' : '创建' }}</button>
                     </div>
                   </template>
                   <template v-else>
@@ -373,7 +373,7 @@
                       </button>
                     </div>
                     <div class="key-modal-foot">
-                      <button class="v2-btn" @click="closeCreateKey">我已保存，关闭</button>
+                      <button class="app-btn" @click="closeCreateKey">我已保存，关闭</button>
                     </div>
                   </template>
                 </a-modal>
@@ -387,8 +387,8 @@
                     </a-form-item>
                   </a-form>
                   <div class="key-modal-foot">
-                    <button class="v2-btn ghost" @click="renameOpen = false">取消</button>
-                    <button class="v2-btn" @click="submitRenameKey">保存</button>
+                    <button class="app-btn ghost" @click="renameOpen = false">取消</button>
+                    <button class="app-btn" @click="submitRenameKey">保存</button>
                   </div>
                 </a-modal>
 
@@ -408,10 +408,10 @@
                   </div>
                   <div class="key-bar-actions">
                     <a-tooltip title="刷新列表">
-                      <button class="v2-icon-btn" aria-label="刷新技能列表" :disabled="skillsLoading" @click="loadSkills"><reload-outlined /></button>
+                      <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="skillsLoading" @click="loadSkills"><reload-outlined /></button>
                     </a-tooltip>
-                    <button class="v2-btn ghost small" @click="openInstallSkill">从 URL 安装</button>
-                    <button class="v2-btn small" @click="openCreateSkill">＋ 新建技能</button>
+                    <button class="app-btn ghost small" @click="openInstallSkill">从 URL 安装</button>
+                    <button class="app-btn small" @click="openCreateSkill">＋ 新建技能</button>
                   </div>
                 </div>
 
@@ -420,12 +420,12 @@
                   <div class="key-empty-desc">
                     技能用来固化「这类问题该怎么做」的做法——步骤、输出格式、禁忌。模型按需读取后照做，不必每次在提问里重复交代。
                   </div>
-                  <button class="v2-btn small" @click="openCreateSkill">新建第一个技能</button>
+                  <button class="app-btn small" @click="openCreateSkill">新建第一个技能</button>
                 </div>
                 <div v-else-if="!filteredSkills.length" class="key-empty">
                   <div class="key-empty-title">没有匹配的技能</div>
                   <div class="key-empty-desc">没有名称或描述包含「{{ skillKeyword }}」的技能。</div>
-                  <button class="v2-btn ghost small" @click="skillKeyword = ''">清除搜索</button>
+                  <button class="app-btn ghost small" @click="skillKeyword = ''">清除搜索</button>
                 </div>
 
                 <!-- 卡片列表：按来源分组（用户 / 内置）；版本与哈希收进「查看」弹窗 -->
@@ -436,17 +436,17 @@
                       <div v-for="s in g.list" :key="s.dirName" class="skill-card">
                         <div class="skill-card-head">
                           <span class="skill-card-name" :title="s.name">{{ s.name }}</span>
-                          <span v-if="s.disabled" class="v2-pill warn key-tag">已停用</span>
-                          <span v-else class="v2-pill ok key-tag">生效中</span>
+                          <span v-if="s.disabled" class="app-pill warn key-tag">已停用</span>
+                          <span v-else class="app-pill ok key-tag">生效中</span>
                         </div>
                         <div class="skill-card-desc" :class="{ 'skill-desc-warn': !s.description }" :title="s.description || ''">
                           {{ s.description || '（未填描述：模型不会主动读取它）' }}
                         </div>
                         <div class="skill-card-foot">
-                          <button class="v2-link-btn" @click="viewSkill(s)">查看</button>
-                          <button class="v2-link-btn" @click="toggleSkill(s)">{{ s.disabled ? '启用' : '停用' }}</button>
+                          <button class="app-link-btn" @click="viewSkill(s)">查看</button>
+                          <button class="app-link-btn" @click="toggleSkill(s)">{{ s.disabled ? '启用' : '停用' }}</button>
                           <a-popconfirm v-if="s.source === 'user'" title="删除该技能？文件将同时删除" ok-text="删除" cancel-text="取消" @confirm="delSkill(s)">
-                            <button class="v2-link-btn danger">删除</button>
+                            <button class="app-link-btn danger">删除</button>
                           </a-popconfirm>
                         </div>
                       </div>
@@ -487,8 +487,8 @@
                     </a-form-item>
                   </a-form>
                   <div class="key-modal-foot">
-                    <button class="v2-btn ghost" @click="skillCreateOpen = false">取消</button>
-                    <button class="v2-btn" :disabled="skillCreating" @click="submitCreateSkill">{{ skillCreating ? '创建中…' : '创建' }}</button>
+                    <button class="app-btn ghost" @click="skillCreateOpen = false">取消</button>
+                    <button class="app-btn" :disabled="skillCreating" @click="submitCreateSkill">{{ skillCreating ? '创建中…' : '创建' }}</button>
                   </div>
                 </a-modal>
 
@@ -523,8 +523,8 @@
                     技能内容只作为文本指令保存，<b>不会执行文件里的任何脚本</b>。
                   </div>
                   <div class="key-modal-foot">
-                    <button class="v2-btn ghost" @click="skillInstallOpen = false">取消</button>
-                    <button class="v2-btn" :disabled="skillInstalling" @click="doInstallSkill">
+                    <button class="app-btn ghost" @click="skillInstallOpen = false">取消</button>
+                    <button class="app-btn" :disabled="skillInstalling" @click="doInstallSkill">
                       {{ skillInstalling ? '安装中…' : '安装' }}
                     </button>
                   </div>
@@ -546,12 +546,12 @@ import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, Sear
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare,
-         listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../../api'
-import ShareScopeModal from '../v2/ShareScopeModal.vue'
-import { renderMd } from '../../utils/markdown'
-import SchemaField from '../../components/SchemaField.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
-import { getMcpStatus, reloadMcp, probeMcp } from '../../api'
+         listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
+import ShareScopeModal from './ShareScopeModal.vue'
+import { renderMd } from '../utils/markdown'
+import SchemaField from '../components/SchemaField.vue'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../configSchema'
+import { getMcpStatus, reloadMcp, probeMcp } from '../api'
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -1317,107 +1317,107 @@ onUnmounted(() => {
 
 <style scoped>
 .dirty-hint { font-size: 12px; color: #a3691b; background: #faf3e6; border-radius: 6px; padding: 3px 10px; }
-.head-hint-plain { font-size: 12px; color: var(--v2-text3); background: transparent; border: none; }
-.v2-btn.dis { background: #c6d4f2; cursor: not-allowed; }
+.head-hint-plain { font-size: 12px; color: var(--app-text3); background: transparent; border: none; }
+.app-btn.dis { background: #c6d4f2; cursor: not-allowed; }
 .set-body { flex: 1; min-height: 0; display: flex; }
 .set-nav {
-  width: 150px; flex: none; border-right: 1px solid var(--v2-border); background: var(--v2-panel);
+  width: 150px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);
   padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
 }
-.set-nav-item { padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--v2-text2); cursor: pointer; }
-.set-nav-item:hover { background: var(--v2-accent-weak); }
-.set-nav-item.active { background: var(--v2-accent-weak); color: var(--v2-text); font-weight: 500; }
+.set-nav-item { padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+.set-nav-item:hover { background: var(--app-accent-weak); }
+.set-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 .set-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 .set-panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .set-card { padding: 18px 20px 6px; }
-.cfg-sub { font-size: 12px; font-weight: 500; color: var(--v2-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--v2-border); }
-.tip-icon { color: var(--v2-text3); font-size: 12px; cursor: help; }
-.v2-btn.small { padding: 3px 10px; font-size: 11px; border-radius: 6px; margin-left: 10px; }
-.v2-btn.small + .v2-btn.small { margin-left: 8px; }
+.cfg-sub { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--app-border); }
+.tip-icon { color: var(--app-text3); font-size: 12px; cursor: help; }
+.app-btn.small { padding: 3px 10px; font-size: 11px; border-radius: 6px; margin-left: 10px; }
+.app-btn.small + .app-btn.small { margin-left: 8px; }
 .probe-btn { margin-left: 8px; }
 .probe-chip { margin-left: 8px; font-size: 11px; border-radius: 999px; padding: 3px 9px; cursor: help; }
-.probe-chip.ok { color: var(--v2-ok); background: #eaf5ec; }
-.probe-chip.bad { color: var(--v2-danger); background: #fbecea; }
-.reembed-meta { margin-top: 6px; color: var(--v2-text3); font-size: 12px; line-height: 1.8; }
+.probe-chip.ok { color: var(--app-ok); background: #eaf5ec; }
+.probe-chip.bad { color: var(--app-danger); background: #fbecea; }
+.reembed-meta { margin-top: 6px; color: var(--app-text3); font-size: 12px; line-height: 1.8; }
 /* MCP 总开关行 + 高级 JSON 折叠 */
 .mcp-switch-row {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; margin-bottom: 12px;
-  background: #f8f9fb; border: 1px solid var(--v2-border); border-radius: 8px;
+  background: #f8f9fb; border: 1px solid var(--app-border); border-radius: 8px;
 }
 .mcp-switch-label { font-size: 12px; font-weight: 500; flex: none; }
 .mcp-advanced-body { padding-top: 8px; }
 .mcp-json-hint { margin-top: 6px; line-height: 1.7; }
 /* MCP 服务卡片 */
-.mcp-card { border: 1px solid var(--v2-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.mcp-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .mcp-card-head { display: flex; align-items: center; gap: 8px; }
 .mcp-card-name { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-card-head .mcp-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-card-actions { margin-left: auto; flex: none; }
-.mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--v2-text3); }
+.mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--app-text3); }
 .mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: #f1f3f5; color: var(--v2-text3); }
-.mcp-tools { margin-top: 8px; border-top: 1px dashed var(--v2-border); padding-top: 6px; }
+.mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: #f1f3f5; color: var(--app-text3); }
+.mcp-tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
 .mcp-tool { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
 .mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: #f2f3f5; padding: 1px 5px; border-radius: 4px; }
-.mcp-tool-desc { min-width: 0; color: var(--v2-text3); }
-.mcp-probe-ok { font-size: 12px; color: var(--v2-ok); }
-.mcp-probe-bad { font-size: 12px; color: var(--v2-danger); word-break: break-all; }
+.mcp-tool-desc { min-width: 0; color: var(--app-text3); }
+.mcp-probe-ok { font-size: 12px; color: var(--app-ok); }
+.mcp-probe-bad { font-size: 12px; color: var(--app-danger); word-break: break-all; }
 /* 旧版单行状态（保留：无卡片渲染时不会用到，但样式不删以免其它页面引用报缺失） */
-.mcp-empty { color: var(--v2-text3); font-size: 12px; margin-bottom: 6px; }
+.mcp-empty { color: var(--app-text3); font-size: 12px; margin-bottom: 6px; }
 .mcp-srv { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
-.mcp-dot.ok { background: var(--v2-ok); }
-.mcp-dot.bad { background: var(--v2-danger); }
-.mcp-dot.muted { background: var(--v2-text3); }
+.mcp-dot.ok { background: var(--app-ok); }
+.mcp-dot.bad { background: var(--app-danger); }
+.mcp-dot.muted { background: var(--app-text3); }
 .mcp-name { flex: none; font-weight: 500; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-url { flex: 1; min-width: 0; color: var(--v2-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-type { flex: none; color: var(--v2-text3); }
+.mcp-url { flex: 1; min-width: 0; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-type { flex: none; color: var(--app-text3); }
 .mcp-state { flex: none; }
-.mcp-state.ok { color: var(--v2-ok); }
-.mcp-state.muted { color: var(--v2-text3); }
-.mcp-state.bad { color: var(--v2-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-checked { margin-left: 8px; font-size: 11px; color: var(--v2-text3); }
+.mcp-state.ok { color: var(--app-ok); }
+.mcp-state.muted { color: var(--app-text3); }
+.mcp-state.bad { color: var(--app-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-checked { margin-left: 8px; font-size: 11px; color: var(--app-text3); }
 /* API Key 管理（6.5） */
 .key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
-.key-stat { font-size: 12px; color: var(--v2-text2); }
-.key-stat b { color: var(--v2-text); font-weight: 600; }
-.key-dim { color: var(--v2-text3); font-size: 12px; }
+.key-stat { font-size: 12px; color: var(--app-text2); }
+.key-stat b { color: var(--app-text); font-weight: 600; }
+.key-dim { color: var(--app-text3); font-size: 12px; }
 /* 搜索框（三面板统一肩部工具栏用） */
 .res-search { width: 220px; }
 .res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
 .res-search :deep(.ant-input-prefix) { margin-right: 6px; }
-.res-search-ic { color: var(--v2-text3); font-size: 12px; }
+.res-search-ic { color: var(--app-text3); font-size: 12px; }
 /* 名称与状态标签同一行：inline-flex 垂直居中（inline-block 的基线对齐会让标签高低不齐） */
 .key-name-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .key-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .key-tag { font-size: 11px; flex: none; line-height: 18px; }
-.key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--v2-text2); }
+.key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--app-text2); }
 /* 空态 */
-.key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--v2-border); border-radius: 8px; }
+.key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--app-border); border-radius: 8px; }
 .key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
-.key-empty-desc { font-size: 12px; color: var(--v2-text3); margin-bottom: 14px; line-height: 1.7; }
+.key-empty-desc { font-size: 12px; color: var(--app-text3); margin-bottom: 14px; line-height: 1.7; }
 /* 如何使用 */
-.key-usage { margin-top: 16px; border-top: 1px solid var(--v2-border); padding-top: 10px; }
+.key-usage { margin-top: 16px; border-top: 1px solid var(--app-border); padding-top: 10px; }
 /* 通用折叠头（如何使用 / 高级编辑 / 技能设置） */
-.res-fold { margin-top: 14px; border-top: 1px solid var(--v2-border); padding-top: 10px; }
+.res-fold { margin-top: 14px; border-top: 1px solid var(--app-border); padding-top: 10px; }
 .fold-head { font-size: 12px; font-weight: 500; cursor: pointer; user-select: none; }
-.fold-head:hover { color: var(--v2-accent); }
-.fold-caret { display: inline-block; width: 12px; color: var(--v2-text3); }
+.fold-head:hover { color: var(--app-accent); }
+.fold-caret { display: inline-block; width: 12px; color: var(--app-text3); }
 .key-usage-body { padding: 10px 0 0 12px; }
-.key-usage-label { font-size: 12px; color: var(--v2-text2); margin-bottom: 6px; }
-.key-code { position: relative; background: #f6f7f9; border: 1px solid var(--v2-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
-.key-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--v2-text); }
+.key-usage-label { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
+.key-code { position: relative; background: #f6f7f9; border: 1px solid var(--app-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
+.key-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--app-text); }
 .key-copy {
   position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: none; border-radius: 5px;
-  background: transparent; color: var(--v2-text3); cursor: pointer; font-size: 13px;
+  background: transparent; color: var(--app-text3); cursor: pointer; font-size: 13px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.key-copy:hover { background: var(--v2-accent-weak); color: var(--v2-accent); }
-.key-copy-ok { color: var(--v2-ok); }
-.key-usage-list { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--v2-text2); line-height: 1.9; }
+.key-copy:hover { background: var(--app-accent-weak); color: var(--app-accent); }
+.key-copy-ok { color: var(--app-ok); }
+.key-usage-list { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--app-text2); line-height: 1.9; }
 .key-usage-list code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 /* 弹窗内 */
 .key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
@@ -1425,27 +1425,27 @@ onUnmounted(() => {
   background: #fff7e6; border: 1px solid #ffd591; color: #d46b08;
   border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.6;
 }
-.key-done-meta { font-size: 12px; color: var(--v2-text2); margin-bottom: 8px; }
+.key-done-meta { font-size: 12px; color: var(--app-text2); margin-bottom: 8px; }
 .key-done-box {
-  position: relative; background: #f6f7f9; border: 1px solid var(--v2-border); border-radius: 6px;
+  position: relative; background: #f6f7f9; border: 1px solid var(--app-border); border-radius: 6px;
   padding: 12px 36px 12px 12px;
 }
-.key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--v2-text); }
+.key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--app-text); }
 /* 技能（Skills） */
 .skill-dir-tip {
-  font-size: 12px; color: var(--v2-text3); line-height: 1.8; margin-bottom: 12px;
-  background: #f8f9fb; border: 1px solid var(--v2-border); border-radius: 6px; padding: 8px 10px;
+  font-size: 12px; color: var(--app-text3); line-height: 1.8; margin-bottom: 12px;
+  background: #f8f9fb; border: 1px solid var(--app-border); border-radius: 6px; padding: 8px 10px;
 }
 .skill-dir-tip code { background: #eef0f3; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .skill-desc-warn { color: #a3691b; }
 /* 技能卡片网格 + 分组标题 */
 .res-group-title {
   margin: 14px 0 8px; font-size: 11px; font-weight: 600;
-  color: var(--v2-text3); letter-spacing: .4px; user-select: none;
+  color: var(--app-text3); letter-spacing: .4px; user-select: none;
 }
 .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
 .skill-card {
-  border: 1px solid var(--v2-border); border-radius: 8px; padding: 10px 12px;
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px;
   display: flex; flex-direction: column; gap: 6px; min-width: 0;
   transition: border-color .15s, background .15s;
 }
@@ -1453,13 +1453,13 @@ onUnmounted(() => {
 .skill-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .skill-card-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skill-card-desc {
-  font-size: 12px; color: var(--v2-text2); line-height: 1.55; min-height: 2.6em;
+  font-size: 12px; color: var(--app-text2); line-height: 1.55; min-height: 2.6em;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.skill-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 2px; border-top: 1px dashed var(--v2-border); padding-top: 4px; }
+.skill-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 2px; border-top: 1px dashed var(--app-border); padding-top: 4px; }
 .skill-cfg-body { padding-top: 6px; }
 .skill-view-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
-.skill-view-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--v2-text3); margin-bottom: 10px; }
+.skill-view-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
 .skill-view-meta code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-.skill-view-body { max-height: 56vh; overflow-y: auto; border: 1px solid var(--v2-border); border-radius: 6px; padding: 12px 14px; }
+.skill-view-body { max-height: 56vh; overflow-y: auto; border: 1px solid var(--app-border); border-radius: 6px; padding: 12px 14px; }
 </style>

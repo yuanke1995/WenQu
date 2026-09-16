@@ -1,37 +1,37 @@
 <template>
-  <div class="v2-page">
-    <div class="v2-page-head">
-      <h3 class="v2-page-title">数据看板</h3>
+  <div class="app-page">
+    <div class="app-page-head">
+      <h3 class="app-page-title">数据看板</h3>
       <span class="head-stat">问答质量与知识库缺口一览</span>
-      <button class="v2-btn ghost" style="margin-left:auto" :disabled="analyticsLoading" @click="reloadAll">刷新</button>
+      <button class="app-btn ghost" style="margin-left:auto" :disabled="analyticsLoading" @click="reloadAll">刷新</button>
     </div>
 
-    <div class="v2-page-body">
+    <div class="app-page-body">
       <!-- 核心指标卡 -->
       <a-spin :spinning="analyticsLoading">
         <div class="metric-grid">
-          <div class="v2-card metric"><div class="metric-label">问答总数</div><div class="metric-num">{{ summary.total || 0 }}</div></div>
-          <div class="v2-card metric"><div class="metric-label">无命中率</div><div class="metric-num">{{ summary.noHitRate || 0 }}<i class="metric-unit">%</i></div></div>
-          <div class="v2-card metric"><div class="metric-label">有引用标注</div><div class="metric-num">{{ summary.citationRate || 0 }}<i class="metric-unit">%</i></div></div>
-          <div class="v2-card metric"><div class="metric-label">反馈满意率</div>
-            <div class="metric-num" :style="{ color: (fb.likeRate || 0) >= 80 ? 'var(--v2-ok)' : 'var(--v2-danger)' }">{{ fb.likeRate || 0 }}<i class="metric-unit">%</i></div>
+          <div class="app-card metric"><div class="metric-label">问答总数</div><div class="metric-num">{{ summary.total || 0 }}</div></div>
+          <div class="app-card metric"><div class="metric-label">无命中率</div><div class="metric-num">{{ summary.noHitRate || 0 }}<i class="metric-unit">%</i></div></div>
+          <div class="app-card metric"><div class="metric-label">有引用标注</div><div class="metric-num">{{ summary.citationRate || 0 }}<i class="metric-unit">%</i></div></div>
+          <div class="app-card metric"><div class="metric-label">反馈满意率</div>
+            <div class="metric-num" :style="{ color: (fb.likeRate || 0) >= 80 ? 'var(--app-ok)' : 'var(--app-danger)' }">{{ fb.likeRate || 0 }}<i class="metric-unit">%</i></div>
             <div class="metric-sub">👍 {{ fb.likes || 0 }} · 👎 {{ fb.dislikes || 0 }}</div>
           </div>
         </div>
       </a-spin>
 
       <!-- 检索质量自动体检 -->
-      <div class="v2-card" style="margin-top:14px">
-        <div class="v2-card-title">检索质量自动体检
+      <div class="app-card" style="margin-top:14px">
+        <div class="app-card-title">检索质量自动体检
           <span class="card-sub">定时按线上参数跑评估集，指标较上期下滑即预警</span>
-          <button class="v2-btn ghost" style="margin-left:auto" :disabled="checkLoading" @click="doAutoCheck">立即体检</button>
+          <button class="app-btn ghost" style="margin-left:auto" :disabled="checkLoading" @click="doAutoCheck">立即体检</button>
         </div>
         <a-spin :spinning="checkLoading">
           <template v-if="report">
             <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px">
-              <span class="v2-pill" :class="checkPillClass">{{ checkStatusText }}</span>
-              <span style="color:var(--v2-text2);font-size:12px">{{ report.message || '' }}</span>
-              <span v-if="report.runTime" style="color:var(--v2-text3);font-size:11px">{{ report.runTime }}</span>
+              <span class="app-pill" :class="checkPillClass">{{ checkStatusText }}</span>
+              <span style="color:var(--app-text2);font-size:12px">{{ report.message || '' }}</span>
+              <span v-if="report.runTime" style="color:var(--app-text3);font-size:11px">{{ report.runTime }}</span>
             </div>
             <a-table v-if="checkMetricRows.length" :data-source="checkMetricRows" :columns="checkCols" size="small"
                      row-key="name" :pagination="false" :locale="{ emptyText: '暂无指标' }" />
@@ -41,28 +41,28 @@
       </div>
 
       <div class="two-col">
-        <div class="v2-card">
-          <div class="v2-card-title">热门问题 TOP10</div>
+        <div class="app-card">
+          <div class="app-card-title">热门问题 TOP10</div>
           <a-table :data-source="summary.topQuestions || []" :columns="qCols" size="small"
                    row-key="question" :pagination="false" :loading="analyticsLoading" :locale="{ emptyText: '暂无数据' }">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'action'">
-                <button class="v2-link-btn" :disabled="addingSuggested === record.question" @click="addRecommended(record.question)">设为推荐</button>
+                <button class="app-link-btn" :disabled="addingSuggested === record.question" @click="addRecommended(record.question)">设为推荐</button>
               </template>
             </template>
           </a-table>
         </div>
-        <div class="v2-card">
-          <div class="v2-card-title">无命中问题 TOP10<span class="card-sub">建议补充知识库</span></div>
+        <div class="app-card">
+          <div class="app-card-title">无命中问题 TOP10<span class="card-sub">建议补充知识库</span></div>
           <a-table :data-source="summary.noHitQuestions || []" :columns="noHitCols" size="small"
                    row-key="question" :pagination="false" :loading="analyticsLoading" :locale="{ emptyText: '暂无数据' }" />
         </div>
       </div>
 
       <!-- 差评样本 -->
-      <div class="v2-card" style="margin-top:14px">
-        <div class="v2-card-title">差评样本（反馈回流）
-          <button class="v2-btn ghost" style="margin-left:auto" @click="loadBadCases">刷新</button>
+      <div class="app-card" style="margin-top:14px">
+        <div class="app-card-title">差评样本（反馈回流）
+          <button class="app-btn ghost" style="margin-left:auto" @click="loadBadCases">刷新</button>
         </div>
         <a-table :data-source="badCases" :columns="badCols" size="small" row-key="messageId" :loading="badLoading"
                  :pagination="badCases.length > 10 ? { pageSize: 10 } : false"
@@ -70,25 +70,25 @@
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'action'">
               <a-tooltip :title="record.knowledgeIds?.length ? '加入评估集（问题→引用过的知识块）' : '该轮回答无引用块，无法加入评估集'">
-                <button class="v2-link-btn" :disabled="!record.knowledgeIds?.length || evalAdding === record.messageId" @click="addToEval(record)">加入评估集</button>
+                <button class="app-link-btn" :disabled="!record.knowledgeIds?.length || evalAdding === record.messageId" @click="addToEval(record)">加入评估集</button>
               </a-tooltip>
-              <button class="v2-link-btn" @click="openBadCaseAdd(record)">补知识块</button>
+              <button class="app-link-btn" @click="openBadCaseAdd(record)">补知识块</button>
             </template>
           </template>
         </a-table>
       </div>
 
       <!-- 知识库缺口 -->
-      <div class="v2-card" style="margin-top:14px">
-        <div class="v2-card-title">知识库缺口管理（无命中问题汇总）
-          <button class="v2-btn ghost" style="margin-left:auto" @click="loadUnmatched">刷新</button>
+      <div class="app-card" style="margin-top:14px">
+        <div class="app-card-title">知识库缺口管理（无命中问题汇总）
+          <button class="app-btn ghost" style="margin-left:auto" @click="loadUnmatched">刷新</button>
         </div>
         <a-table :data-source="unmatchedList" :columns="unmatchedCols" size="small"
                  row-key="question" :pagination="{ pageSize: 10 }" :loading="unmatchedLoading"
                  :locale="{ emptyText: '暂无数据' }">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'action'">
-              <button class="v2-link-btn" @click="openAdd(record)">入库</button>
+              <button class="app-link-btn" @click="openAdd(record)">入库</button>
             </template>
           </template>
         </a-table>
@@ -103,8 +103,8 @@
           </a-form-item>
           <a-form-item label="关联文档 ID（可选）"><a-input v-model:value="addForm.docId" /></a-form-item>
           <a-form-item>
-            <button class="v2-btn" :disabled="addLoading" @click="submitAdd">确认入库</button>
-            <button class="v2-btn ghost" style="margin-left:8px" @click="addVisible = false">取消</button>
+            <button class="app-btn" :disabled="addLoading" @click="submitAdd">确认入库</button>
+            <button class="app-btn ghost" style="margin-left:8px" @click="addVisible = false">取消</button>
           </a-form-item>
         </a-form>
       </a-modal>
@@ -115,7 +115,7 @@
 <script setup>
 import { ref, computed, onMounted, h } from 'vue'
 import { message } from 'ant-design-vue'
-import { getAnalytics, getUnmatchedQuestions, createKnowledge, addSuggested, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck } from '../../api'
+import { getAnalytics, getUnmatchedQuestions, createKnowledge, addSuggested, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck } from '../api'
 
 const qCols = [
   { title: '问题', dataIndex: 'question', key: 'question', ellipsis: true },
@@ -277,13 +277,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.head-stat { font-size: 12px; color: var(--v2-text3); }
+.head-stat { font-size: 12px; color: var(--app-text3); }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.metric-label { font-size: 12px; color: var(--v2-text3); margin-bottom: 4px; }
+.metric-label { font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
 .metric-num { font-size: 24px; font-weight: 500; line-height: 1.2; }
-.metric-unit { font-style: normal; font-size: 13px; color: var(--v2-text3); margin-left: 2px; }
-.metric-sub { font-size: 11px; color: var(--v2-text3); margin-top: 4px; }
-.card-sub { font-size: 11px; color: var(--v2-text3); font-weight: 400; }
+.metric-unit { font-style: normal; font-size: 13px; color: var(--app-text3); margin-left: 2px; }
+.metric-sub { font-size: 11px; color: var(--app-text3); margin-top: 4px; }
+.card-sub { font-size: 11px; color: var(--app-text3); font-weight: 400; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
 @media (max-width: 1000px) { .two-col { grid-template-columns: 1fr; } }
 </style>
