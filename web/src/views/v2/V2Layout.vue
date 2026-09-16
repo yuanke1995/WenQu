@@ -76,6 +76,9 @@
         <a-tooltip title="退出登录" placement="right">
           <button class="v2-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
         </a-tooltip>
+        <a-tooltip title="修改密码" placement="right">
+          <button class="v2-icon-btn" @click="pwdModal = true"><lock-outlined /></button>
+        </a-tooltip>
         <a-tooltip v-if="!isAdmin" :title="collapsed ? '管理员验证' : ''" placement="right">
           <button class="v2-icon-btn" @click="adminModal = true"><safety-certificate-outlined /></button>
         </a-tooltip>
@@ -84,6 +87,22 @@
 
     <!-- 主内容区 -->
     <div class="main"><router-view /></div>
+
+    <!-- 修改密码（用户自助） -->
+    <a-modal v-model:open="pwdModal" title="修改密码" :confirm-loading="pwdSaving" ok-text="保存" cancel-text="取消" width="420px" @ok="submitPwd">
+      <a-form layout="vertical" style="margin-top:4px">
+        <a-form-item label="当前密码" required>
+          <a-input-password v-model:value="pwdForm.oldPassword" placeholder="请输入当前密码" @pressEnter="submitPwd" />
+        </a-form-item>
+        <a-form-item label="新密码" required>
+          <a-input-password v-model:value="pwdForm.newPassword" placeholder="至少 6 位" @change="pwdError = ''" @pressEnter="submitPwd" />
+        </a-form-item>
+        <a-form-item label="确认新密码" required style="margin-bottom:0">
+          <a-input-password v-model:value="pwdForm.confirm" placeholder="再次输入新密码" @pressEnter="submitPwd" />
+        </a-form-item>
+      </a-form>
+      <p v-if="pwdError" class="pwd-err">{{ pwdError }}</p>
+    </a-modal>
 
     <!-- 管理员验证（非管理员显示入口；逻辑与旧版一致） -->
     <a-modal v-model:open="adminModal" title="管理员验证" :confirm-loading="adminVerifying" ok-text="验证" cancel-text="取消" width="420px" @ok="verifyAdmin">
@@ -99,8 +118,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined, TeamOutlined,
-         LogoutOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi } from '../../api'
+         LogoutOutlined, LockOutlined } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi, changePasswordApi } from '../../api'
 import { ensureAuth, isAdminSync, setAdminToken, clearAuth } from '../../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
 import { exportSessionMarkdown } from './exportMd'
@@ -144,12 +163,37 @@ const delSession = async sid => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
+// 修改密码（用户自助，接 POST /auth/password；成功后强制重新登录）
+const pwdModal = ref(false)
+const pwdSaving = ref(false)
+const pwdError = ref('')
+const pwdForm = ref({ oldPassword: '', newPassword: '', confirm: '' })
+const submitPwd = async () => {
+  const f = pwdForm.value
+  pwdError.value = ''
+  if (!f.oldPassword) { pwdError.value = '请输入当前密码'; return }
+  if (!f.newPassword || f.newPassword.length < 6) { pwdError.value = '新密码至少 6 位'; return }
+  if (f.newPassword !== f.confirm) { pwdError.value = '两次输入的新密码不一致'; return }
+  pwdSaving.value = true
+  try {
+    const r = await changePasswordApi(f.oldPassword, f.newPassword)
+    if (r && r.success) {
+      message.success('密码已修改，请重新登录')
+      pwdModal.value = false
+      clearAuth()
+      router.push('/login')
+    } else {
+      message.error((r && r.msg) || '修改失败')
+    }
+  } catch (e) { message.error(e.message || '修改失败') }
+  finally { pwdSaving.value = false }
+}
+
 // 管理员验证（与旧版 App.vue 同逻辑）
 const adminModal = ref(false)
 const adminTokenInput = ref('')
 const adminVerifying = ref(false)
-const verifyAdmin = async () => {
-  const token = (adminTokenInput.value || '').trim()
+const verifyAdmin = async () => {  const token = (adminTokenInput.value || '').trim()
   if (!token) { message.warning('请输入管理员口令'); return }
   adminVerifying.value = true
   try {
@@ -245,6 +289,7 @@ onMounted(async () => {
   font-size: 11px; display: inline-flex; align-items: center; justify-content: center;
 }
 .user-name { font-size: 12px; color: var(--v2-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--v2-danger); }
 
 .main { flex: 1; min-width: 0; height: 100%; }
 </style>

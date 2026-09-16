@@ -49,9 +49,11 @@
               <span class="ap-chip">{{ a.model || '跟随全局模型' }}</span>
               <span class="ap-chip">{{ scopeText(a) }}</span>
               <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
+              <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
             </div>
             <div class="ap-card-foot">
               <button class="v2-link-btn" @click.stop="openEdit(a)">配置</button>
+              <button class="v2-link-btn" @click.stop="openShare(a)">共享</button>
               <button v-if="!isDefault(a) && a.isSubagent !== 1" class="v2-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
               <a-popconfirm title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                 <button class="v2-link-btn danger" @click.stop>删除</button>
@@ -191,6 +193,10 @@
         </a-form>
       </div>
     </template>
+
+    <!-- 共享范围（公共组件：与文档 / API Key 同一套两区表单） -->
+    <ShareScopeModal v-model:open="shareVisible" resource-label="智能体" read-verb="使用"
+                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="reload" />
   </div>
 </template>
 
@@ -203,7 +209,8 @@ import {
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listDocuments, getConfig,
-         listSkills, getMcpStatus, listSubAgents } from '../../api'
+         listSkills, getMcpStatus, listSubAgents, updateAgentShare } from '../../api'
+import ShareScopeModal from './ShareScopeModal.vue'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -285,6 +292,32 @@ const scopeText = a => {
   if (!a.knowledgeScope) return '全部文档'
   const n = String(a.knowledgeScope).split(',').filter(Boolean).length
   return n === 1 ? '限 1 篇文档' : `限 ${n} 篇文档`
+}
+
+// ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
+const shareVisible = ref(false)
+const shareTarget = ref({ id: '', shareConfig: '' })
+const saveShareFn = json => updateAgentShare(shareTarget.value.id, json)
+// 卡片上的共享范围标记：仅非全员时显示（全员=默认，不显示以免噪音）
+function scopeLabel (a) {
+  if (!a.shareConfig || !String(a.shareConfig).trim()) return ''
+  let parsed = null
+  try { parsed = JSON.parse(a.shareConfig) } catch (e) { return '' }
+  const r = (parsed && parsed.read_scope) || {}
+  const lvl = r.access_level || 'global'
+  if (lvl === 'department') {
+    const n = Array.isArray(r.department_ids) ? r.department_ids.length : 0
+    return n ? '限 ' + n + ' 个部门' : '部门可见'
+  }
+  if (lvl === 'user') {
+    const n = Array.isArray(r.user_uids) ? r.user_uids.length : 0
+    return n ? '限 ' + n + ' 人' : '指定人可见'
+  }
+  return ''
+}
+function openShare (a) {
+  shareTarget.value = { id: a.id, shareConfig: a.shareConfig || '' }
+  shareVisible.value = true
 }
 /** 卡片上只标出「显式开启」的能力——跟随全局的不占位置 */
 const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
@@ -517,6 +550,7 @@ onMounted(reload)
   background: #f1f3f5; color: var(--v2-text2); white-space: nowrap;
 }
 .ap-chip-on { background: var(--v2-accent-weak); color: var(--v2-accent); }
+.ap-chip-warn { background: #faf3e6; color: #a3691b; }
 .ap-card-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 2px;
   border-top: 1px dashed var(--v2-border); padding-top: 6px; margin-top: auto;

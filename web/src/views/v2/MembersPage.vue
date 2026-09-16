@@ -13,6 +13,10 @@
                    :placeholder="tab === 'users' ? '搜索用户名 / 用户标识' : '搜索部门名称'">
             <template #prefix><search-outlined class="mem-search-ic" /></template>
           </a-input>
+          <a-select v-if="tab === 'users'" v-model:value="deptFilter" allow-clear size="small" class="mem-filter"
+                    placeholder="全部部门" :options="deptFilterOptions" />
+          <a-select v-if="tab === 'users'" v-model:value="roleFilter" allow-clear size="small" class="mem-filter"
+                    placeholder="全部角色" :options="roleFilterOptions" />
           <span class="mem-count">{{ tab === 'users' ? filteredUsers.length + ' 名用户' : filteredDepts.length + ' 个部门' }}</span>
           <button v-if="tab === 'users'" class="v2-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
           <button v-else class="v2-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
@@ -195,10 +199,27 @@ const tabOptions = computed(() => [
 ])
 watch(tab, () => { keyword.value = '' })
 
+// 用户页签：部门 / 角色筛选（与搜索协同）
+const deptFilter = ref(undefined)
+const roleFilter = ref(undefined)
+const deptFilterOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
+const roleFilterOptions = [
+  { label: '超级管理员', value: 'superadmin' },
+  { label: '管理员', value: 'admin' },
+  { label: '成员', value: 'user' }
+]
+watch([deptFilter, roleFilter], () => { keyword.value = '' })
+
 const filteredUsers = computed(() => {
   const k = keyword.value.trim().toLowerCase()
-  if (!k) return users.value
-  return users.value.filter(u => (u.username || '').toLowerCase().includes(k) || (u.uid || '').toLowerCase().includes(k))
+  const d = deptFilter.value
+  const r = roleFilter.value
+  return users.value.filter(u => {
+    if (d !== undefined && (u.departmentId || '') !== d) return false
+    if (r !== undefined && (u.role || 'user') !== r) return false
+    if (k && !(u.username || '').toLowerCase().includes(k) && !(u.uid || '').toLowerCase().includes(k)) return false
+    return true
+  })
 })
 const filteredDepts = computed(() => {
   const k = keyword.value.trim().toLowerCase()
@@ -333,6 +354,8 @@ async function delDept (id) {
 .mem-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--v2-border); }
 .mem-search { width: 220px; }
 .mem-search-ic { color: var(--v2-text3); }
+.mem-filter { width: 130px; flex: none; }
+.mem-filter .ant-select-selector { font-size: 12px; }
 .mem-count { font-size: 12px; color: var(--v2-text3); }
 .mem-new { margin-left: auto; }
 

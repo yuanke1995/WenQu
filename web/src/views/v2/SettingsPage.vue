@@ -301,8 +301,9 @@
                   <a-table-column title="有效期" key="expire" width="110">
                     <template #default="{ record }"><span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span></template>
                   </a-table-column>
-                  <a-table-column title="操作" key="act" width="110">
+                  <a-table-column title="操作" key="act" width="150">
                     <template #default="{ record }">
+                      <button class="v2-link-btn" @click="openShareKey(record)">共享</button>
                       <button class="v2-link-btn" @click="openRenameKey(record)">改名</button>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
                         <button class="v2-link-btn danger">删除</button>
@@ -326,7 +327,7 @@
                       </button>
                     </div>
                     <ul class="key-usage-list">
-                      <li><code>X-Api-Key: sk-…</code> 替代平台 token（<code>X-Trusted-Token</code>）</li>
+                      <li><code>X-Api-Key: sk-…</code> 作为访问凭据，无需平台登录令牌</li>
                       <li><code>X-User-Id</code> 仍用于会话隔离：同一个 Key 不同用户带不同值，会话互不串</li>
                       <li>权限仅限问答链路（问答 / 会话 / 反馈 / 引用溯源），管理端点一律拒绝</li>
                       <li>不再使用建议「停用」而非删除：停用可保留审计线索，删除记录即消失</li>
@@ -390,6 +391,10 @@
                     <button class="v2-btn" @click="submitRenameKey">保存</button>
                   </div>
                 </a-modal>
+
+                <!-- 共享范围（公共组件：与文档 / 智能体同一套两区表单） -->
+                <ShareScopeModal v-model:open="keyShareVisible" resource-label="API Key" read-verb="查看"
+                                 :share-config="keyShareTarget.shareConfig" :save-fn="saveKeyShareFn" @saved="loadKeys" />
               </template>
 
               <!-- 技能（Skills）：目录 + SKILL.md 的纯文本能力包，模型按需读取后照做 -->
@@ -540,8 +545,9 @@ import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
          getReembedStatus, triggerReembed, probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey,
+         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare,
          listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../../api'
+import ShareScopeModal from '../v2/ShareScopeModal.vue'
 import { renderMd } from '../../utils/markdown'
 import SchemaField from '../../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../../configSchema'
@@ -1031,6 +1037,15 @@ const copySample = async (k, text) => {
 const openRenameKey = rec => {
   renameForm.value = { id: rec.id, name: rec.name || '' }
   renameOpen.value = true
+}
+
+// ==================== API Key 共享范围（弹窗为公共组件 ShareScopeModal） ====================
+const keyShareVisible = ref(false)
+const keyShareTarget = ref({ id: '', shareConfig: '' })
+const saveKeyShareFn = json => updateApiKeyShare(keyShareTarget.value.id, json)
+const openShareKey = rec => {
+  keyShareTarget.value = { id: rec.id, shareConfig: rec.shareConfig || '' }
+  keyShareVisible.value = true
 }
 const submitRenameKey = async () => {
   const name = renameForm.value.name.trim()

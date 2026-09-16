@@ -3,10 +3,9 @@
  * - 常规请求：fetch 封装（超时/401/业务失败统一抛出可读错误）
  * - 上传：XMLHttpRequest（支持进度回调）
  * - SSE：fetch + AbortController（支持停止生成）
- * - 环境配置：VITE_API_BASE 接口前缀、VITE_TRUSTED_TOKEN 内部 token（生产由平台网关注入）
+ * - 环境配置：VITE_API_BASE 接口前缀、VITE_ADMIN_TOKEN 管理员口令（构建注入）
  */
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
-const TOKEN = import.meta.env.VITE_TRUSTED_TOKEN || ''
 
 // 管理员访问口令：普通用户问答无需携带；管理员经 VITE_ADMIN_TOKEN（构建注入）或运行时
 // localStorage('ai_admin_token') 提供（utils/auth.js setAdminToken 切换），用于文档/配置/评估/看板等管理端点
@@ -35,7 +34,6 @@ const USER_ID = (() => {
 
 const authHeaders = extra => {
   const h = { 'Content-Type': 'application/json', 'X-User-Id': USER_ID, ...(extra || {}) }
-  if (TOKEN) h['X-Trusted-Token'] = TOKEN
   const at = adminToken()
   if (at) h['X-Admin-Token'] = at
   const bt = authToken()
@@ -81,7 +79,6 @@ function upload(path, formData, onProgress) {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', BASE + path)
     xhr.setRequestHeader('X-User-Id', USER_ID)
-    if (TOKEN) xhr.setRequestHeader('X-Trusted-Token', TOKEN)
     const at = adminToken()
     if (at) xhr.setRequestHeader('X-Admin-Token', at)
     const bt = authToken()
@@ -247,7 +244,7 @@ export const listDocuments = () => request('/document/list')
 
 /**
  * 下载文档源文件（个人文件区：取回上传的原始文件）。
- * 走 fetch 带鉴权头取 blob（直接 a[href] 无法带 X-Trusted-Token），再触发浏览器下载。
+ * 走 fetch 带鉴权头取 blob（直接 a[href] 无法带 Authorization/管理员口令），再触发浏览器下载。
  */
 export async function downloadDocumentSource (id, fileName) {
   const r = await fetch(`${BASE}/document/${id}/source`, { headers: authHeaders() })
@@ -300,6 +297,12 @@ export const createAgent = body => request('/agent', { method: 'POST', body: JSO
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })
 export const setAgentDefault = id => request(`/agent/${id}/default`, { method: 'POST' })
+
+// ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落全局） ====================
+export const updateAgentShare = (id, shareConfig) =>
+  request(`/agent/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
+export const updateApiKeyShare = (id, shareConfig) =>
+  request(`/api-key/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress) {

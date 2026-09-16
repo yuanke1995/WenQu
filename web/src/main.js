@@ -5,7 +5,7 @@ import 'ant-design-vue/dist/reset.css'
 import './md.css'
 import App from './App.vue'
 import router from './router'
-import { ensureAuth, isLoggedIn } from './utils/auth'
+import { ensureAuth, isLoggedIn, clearAuth } from './utils/auth'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -58,8 +58,15 @@ window.addEventListener('unhandledrejection', e => {
 })
 
 // 401 统一处理（api.js 在请求/上传/SSE 检测到 401 时派发）
+// 要点：401 = 登录态失效，除了提示，必须**清令牌 + 强制跳登录页**——
+// 路由守卫只在「发生导航」时检查 isLoggedIn，而 401 事件本身不触发导航，光提示不会回登录页。
 window.addEventListener('app:unauthorized', () => {
-  message.error('登录状态已失效，请刷新页面重试')
+  message.error('登录状态已失效，请重新登录')
+  clearAuth()
+  if (router.currentRoute.value.path !== '/login') {
+    // mount 前 router 可能未 ready，replace 会抛未处理 promise；吞掉（守卫会在导航时兜底）
+    router.replace('/login').catch(() => {})
+  }
 })
 
 // 403 统一处理（管理端点被拒：非管理员或管理员口令无效）

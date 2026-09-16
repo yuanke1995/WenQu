@@ -283,94 +283,9 @@
       </a-spin>
     </a-modal>
 
-    <!-- 共享范围：读取权限 / 共享管理权限 两区独立 -->
-    <a-modal v-model:open="shareVisible" title="共享范围" :width="600" :confirm-loading="shareSaving"
-             :ok-button-props="{ disabled: shareInvalid }" ok-text="保存" cancel-text="取消" @ok="saveShare">
-      <a-alert v-if="shareViolation" type="warning" show-icon style="margin-bottom:12px"
-               message="管理权限范围大于读取权限，请调整后再保存。" />
-
-      <div class="scope-section">
-        <div class="scope-head">
-          <span class="scope-title">读取权限</span>
-          <span class="scope-note">谁可以查看并检索此文档</span>
-        </div>
-        <div class="scope-cards">
-          <div v-for="o in SHARE_LEVELS" :key="o.value" class="scope-card"
-               :class="{ active: shareForm.read.level === o.value }" @click="setShareLevel('read', o.value)">
-            <component :is="o.icon" class="scope-card-ic" />
-            <div class="scope-card-txt">
-              <div class="scope-card-title">{{ o.title }}</div>
-              <div class="scope-card-desc">{{ o.desc }}</div>
-            </div>
-            <a-popover v-if="shareForm.read.level === o.value && o.value !== 'global'" trigger="click"
-                       placement="bottomLeft" overlay-class-name="scope-pop">
-              <template #content>
-                <div class="sel-panel">
-                  <div class="sel-head">
-                    <span class="sel-title">可选{{ o.value === 'department' ? '部门' : '用户' }}</span>
-                    <span class="sel-sub">已选 {{ sharePickCount('read') }}</span>
-                  </div>
-                  <a-input v-model:value="readSearch" size="small" allow-clear
-                           :placeholder="o.value === 'department' ? '搜索部门' : '搜索用户'" />
-                  <div class="sel-list">
-                    <div v-for="p in shareFilteredOptions('read')" :key="p.value" class="sel-item"
-                         @click="shareTogglePick('read', p.value)">
-                      <a-checkbox :checked="shareIsPicked('read', p.value)" style="pointer-events:none" />
-                      <span class="sel-label">{{ p.label }}</span>
-                    </div>
-                    <div v-if="!shareFilteredOptions('read').length" class="sel-empty">无可选项</div>
-                  </div>
-                </div>
-              </template>
-              <button class="scope-count" @click.stop><user-add-outlined /><span>{{ sharePickCount('read') }}</span></button>
-            </a-popover>
-          </div>
-        </div>
-      </div>
-
-      <div class="scope-section">
-        <div class="scope-head">
-          <span class="scope-title">共享管理权限</span>
-          <span class="scope-note">可编辑 / 删除 / 改共享范围（含读取）</span>
-          <a-switch v-model:checked="shareForm.manageOn" size="small" class="scope-switch" />
-        </div>
-        <template v-if="shareForm.manageOn">
-          <div class="scope-cards">
-            <div v-for="o in SHARE_LEVELS" :key="o.value" class="scope-card"
-                 :class="{ active: shareForm.manage.level === o.value }" @click="setShareLevel('manage', o.value)">
-              <component :is="o.icon" class="scope-card-ic" />
-              <div class="scope-card-txt">
-                <div class="scope-card-title">{{ o.title }}</div>
-                <div class="scope-card-desc">{{ o.desc }}</div>
-              </div>
-              <a-popover v-if="shareForm.manage.level === o.value && o.value !== 'global'" trigger="click"
-                         placement="bottomLeft" overlay-class-name="scope-pop">
-                <template #content>
-                  <div class="sel-panel">
-                    <div class="sel-head">
-                      <span class="sel-title">可选{{ o.value === 'department' ? '部门' : '用户' }}</span>
-                      <span class="sel-sub">已选 {{ sharePickCount('manage') }}</span>
-                    </div>
-                    <a-input v-model:value="manageSearch" size="small" allow-clear
-                             :placeholder="o.value === 'department' ? '搜索部门' : '搜索用户'" />
-                    <div class="sel-list">
-                      <div v-for="p in shareFilteredOptions('manage')" :key="p.value" class="sel-item"
-                           @click="shareTogglePick('manage', p.value)">
-                        <a-checkbox :checked="shareIsPicked('manage', p.value)" style="pointer-events:none" />
-                        <span class="sel-label">{{ p.label }}</span>
-                      </div>
-                      <div v-if="!shareFilteredOptions('manage').length" class="sel-empty">无可选项</div>
-                    </div>
-                  </div>
-                </template>
-                <button class="scope-count" @click.stop><user-add-outlined /><span>{{ sharePickCount('manage') }}</span></button>
-              </a-popover>
-            </div>
-          </div>
-        </template>
-        <div v-else class="scope-off">已关闭：除超级管理员外，无人可管理此文档。</div>
-      </div>
-    </a-modal>
+    <!-- 共享范围（公共组件：与智能体 / API Key 共用同一套两区表单） -->
+    <ShareScopeModal v-model:open="shareVisible" resource-label="文档" read-verb="查看并检索"
+                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="fetchList" />
 
     <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
@@ -389,13 +304,13 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { UploadOutlined, SearchOutlined, DownOutlined, InfoCircleOutlined,
-         GlobalOutlined, ApartmentOutlined, UserOutlined, UserAddOutlined } from '@ant-design/icons-vue'
+import { UploadOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons-vue'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare, listDepartments, listUsers } from '../../api'
+         downloadDocumentSource, updateDocumentShare } from '../../api'
+import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../../utils/markdown'
 import { estimateTokens, fmtTokens } from '../../utils/token'
 
@@ -583,67 +498,11 @@ function showFailReason (record) {
   Modal.info({ title: `解析失败 - ${record.fileName}`, content: record.failReason || '未知原因，可点击"重解析"重试' })
 }
 
-// ==================== 共享范围 ====================
+// ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
 const shareVisible = ref(false)
-const shareSaving = ref(false)
-const shareForm = ref({
-  docId: '',
-  read: { level: 'global', departmentIds: [], userUids: [] },
-  manageOn: true,
-  manage: { level: 'global', departmentIds: [], userUids: [] }
-})
-const readSearch = ref('')
-const manageSearch = ref('')
-const SHARE_LEVELS = [
-  { value: 'global', title: '全局共享', desc: '所有用户都可以访问', icon: GlobalOutlined },
-  { value: 'department', title: '部门共享', desc: '选中的部门可访问', icon: ApartmentOutlined },
-  { value: 'user', title: '指定人', desc: '选中的用户可以访问', icon: UserOutlined }
-]
-const shareScope = sec => (sec === 'read' ? shareForm.value.read : shareForm.value.manage)
-const sharePickArr = sec => {
-  const s = shareScope(sec)
-  return s.level === 'department' ? s.departmentIds : s.userUids
-}
-const sharePickCount = sec => sharePickArr(sec).length
-const sharePickOptions = sec => (shareScope(sec).level === 'department' ? shareDepartments : shareUsers).value
-function shareFilteredOptions (sec) {
-  const k = sharePickSearch(sec).trim().toLowerCase()
-  const list = sharePickOptions(sec)
-  return k ? list.filter(o => String(o.label).toLowerCase().includes(k)) : list
-}
-function sharePickSearch (sec) { return sec === 'read' ? readSearch.value : manageSearch.value }
-function setShareLevel (sec, level) { shareScope(sec).level = level }
-function shareIsPicked (sec, val) { return sharePickArr(sec).includes(val) }
-function shareTogglePick (sec, val) {
-  const arr = sharePickArr(sec)
-  const i = arr.indexOf(val)
-  if (i >= 0) arr.splice(i, 1)
-  else arr.push(val)
-}
-// 越权判定：管理范围是否超出读取范围（须与后端 validateShareConfig 语义一致）
-const shareViolation = computed(() => {
-  const f = shareForm.value
-  if (!f.manageOn) return false
-  const rank = { global: 0, department: 1, user: 2 }
-  const r = f.read.level
-  const m = f.manage.level
-  if (r === 'global') return false
-  if (m === 'global') return true
-  if (rank[r] > rank[m]) return true
-  if (r === 'department' && m === 'user') return true
-  if (r === m && r === 'department') return !f.manage.departmentIds.every(id => f.read.departmentIds.includes(id))
-  if (r === m && r === 'user') return !f.manage.userUids.every(u => f.read.userUids.includes(u))
-  return false
-})
-const shareInvalid = computed(() => {
-  const f = shareForm.value
-  if (f.read.level !== 'global' && !sharePickCount('read')) return true
-  if (f.manageOn && f.manage.level !== 'global' && !sharePickCount('manage')) return true
-  return shareViolation.value
-})
-const shareDepartments = ref([])
-const shareUsers = ref([])
-let shareOptionsLoaded = false
+const shareTarget = ref({ id: '', shareConfig: '' })
+// 保存回调透传给组件：组件只负责表单与校验，打哪个接口由调用方决定
+const saveShareFn = json => updateDocumentShare(shareTarget.value.id, json)
 
 // 文档行的共享范围标记：仅非全员时显示（全员=默认，不显示以免噪音）
 function scopeLabel (d) {
@@ -663,76 +522,9 @@ function scopeLabel (d) {
   return ''
 }
 
-async function loadShareOptions () {
-  if (shareOptionsLoaded) return
-  try {
-    const [depts, users] = await Promise.all([listDepartments(), listUsers()])
-    shareDepartments.value = ((depts && depts.data) || []).map(x => ({ label: x.name, value: x.id }))
-    shareUsers.value = ((users && users.data) || []).map(x => ({
-      label: (x.username || x.uid) + '（' + x.uid + '）', value: x.uid
-    }))
-    shareOptionsLoaded = true
-  } catch (e) { /* 下拉加载失败不阻断：仍可保存为「全员」 */ }
-}
-
-function parseScope (s) {
-  return {
-    level: (s && s.access_level) || 'global',
-    departmentIds: (s && Array.isArray(s.department_ids)) ? s.department_ids.slice() : [],
-    userUids: (s && Array.isArray(s.user_uids)) ? s.user_uids.slice() : []
-  }
-}
 function openShare (d) {
-  let cfg = null
-  if (d.shareConfig && String(d.shareConfig).trim()) {
-    try { cfg = JSON.parse(d.shareConfig) } catch (e) { cfg = null }
-  }
-  const present = cfg !== null
-  const r = (cfg && cfg.read_scope) || null
-  const m = (cfg && cfg.manage_scope) || null
-  shareForm.value = {
-    docId: d.id,
-    read: parseScope(r),
-    // 无 share_config = 全局共享库（任何人可管）→ 管理默认开启；
-    // 有配置但未声明 manage_scope = 显式关闭管理（仅超管）→ 开关关闭
-    manageOn: present ? Boolean(m) : true,
-    manage: parseScope(m || r)
-  }
-  readSearch.value = ''
-  manageSearch.value = ''
+  shareTarget.value = { id: d.id, shareConfig: d.shareConfig || '' }
   shareVisible.value = true
-  loadShareOptions()
-}
-
-function scopeToJson (s) {
-  const o = { access_level: s.level }
-  if (s.level === 'department') o.department_ids = s.departmentIds
-  if (s.level === 'user') o.user_uids = s.userUids
-  return o
-}
-function buildShareJson (f) {
-  const readOpen = f.read.level === 'global'
-  const manageOpen = f.manageOn && f.manage.level === 'global'
-  // 仅当「读取全员 且 管理也全员」才等同无配置（全局共享库）→ 清空；
-  // 「读取全员 + 管理已关闭」是有效配置（人人可读、仅超管可管），必须落库，不能清空
-  if (readOpen && manageOpen) return ''
-  const cfg = { version: 2, read_scope: scopeToJson(f.read) }
-  if (f.manageOn) cfg.manage_scope = scopeToJson(f.manage)
-  return JSON.stringify(cfg)
-}
-async function saveShare () {
-  const f = shareForm.value
-  if (shareInvalid.value) {
-    message.warning(shareViolation.value ? '管理范围不能宽于读取范围' : '请补齐未选择的部门 / 用户')
-    return
-  }
-  shareSaving.value = true
-  try {
-    const r = await updateDocumentShare(f.docId, buildShareJson(f))
-    if (r.success) { message.success('共享范围已保存'); shareVisible.value = false; fetchList() }
-    else message.error(r.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { shareSaving.value = false }
 }
 
 // ==================== 知识块 ====================
@@ -1214,43 +1006,8 @@ const fmtTime = t => {
 .col-time { width: 130px; flex: none; }
 .col-act { width: 250px; flex: none; text-align: right; white-space: nowrap; }
 .parse-desc { font-size: 11px; color: var(--v2-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 共享范围：列表标记 + 弹窗两区卡片 / 弹层选择 */
+/* 共享范围列表标记（弹窗两区表单已抽为公共组件 ShareScopeModal） */
 .scope-tag { flex: none; }
-.scope-section { margin-bottom: 14px; }
-.scope-section:last-child { margin-bottom: 0; }
-.scope-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.scope-title { font-size: 13px; font-weight: 500; color: var(--v2-text); }
-.scope-note { font-size: 12px; color: var(--v2-text3); }
-.scope-switch { margin-left: auto; }
-.scope-cards { display: flex; flex-direction: column; gap: 8px; }
-.scope-card {
-  display: flex; align-items: center; gap: 10px;
-  border: 1px solid var(--v2-border); border-radius: 8px; padding: 9px 12px;
-  cursor: pointer; transition: border-color .15s, background .15s;
-}
-.scope-card:hover { border-color: var(--v2-accent); }
-.scope-card.active { border-color: var(--v2-accent); background: var(--v2-accent-weak); }
-.scope-card-ic { font-size: 16px; color: var(--v2-text3); flex: none; }
-.scope-card.active .scope-card-ic { color: var(--v2-accent); }
-.scope-card-txt { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.scope-card-title { font-size: 13px; color: var(--v2-text); white-space: nowrap; }
-.scope-card-desc { font-size: 12px; color: var(--v2-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.scope-count {
-  margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px;
-  border: 1px solid var(--v2-border); background: #fff; color: var(--v2-accent);
-  font-size: 12px; border-radius: 7px; padding: 3px 9px; cursor: pointer;
-}
-.scope-count:hover { border-color: var(--v2-accent); }
-.scope-off { font-size: 12px; color: var(--v2-text3); padding: 9px 12px; background: #f7f8fa; border-radius: 8px; }
-.sel-panel { width: 240px; }
-.sel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-.sel-title { font-size: 12px; font-weight: 500; color: var(--v2-text); }
-.sel-sub { font-size: 11px; color: var(--v2-text3); }
-.sel-list { max-height: 220px; overflow-y: auto; margin-top: 8px; }
-.sel-item { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
-.sel-item:hover { background: var(--v2-accent-weak); }
-.sel-label { font-size: 12px; color: var(--v2-text2); }
-.sel-empty { font-size: 12px; color: var(--v2-text3); padding: 12px 0; text-align: center; }
 .drag-mask {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(46,107,230,.08);
