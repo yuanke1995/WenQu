@@ -41,10 +41,15 @@ public class AiApiKey {
     /** 最近使用时间 */
     private LocalDateTime lastUsedAt;
 
-    /** 创建人（管理员标识） */
+    /** 创建人（网关透传 X-User-Id） */
     private String createdBy;
 
+    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */
+    private String shareConfig;
+
+    /** 创建时间 */
     private LocalDateTime createTime;
 
+    /** 更新时间 */
     private LocalDateTime updateTime;
 }

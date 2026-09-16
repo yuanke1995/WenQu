@@ -30,6 +30,8 @@ public class AiAppProperties {
 
     private Context context = new Context();
 
+    private Auth auth = new Auth();
+
     /** 主回答 System Prompt 角色段（DB 可编辑覆盖，保存即生效；此处为兜底默认值） */
     private String systemPrompt = "你是\"问渠\"（WenQu），一个基于操作手册知识库回答系统使用问题的AI助手。"
             + "回答应准确、简洁，优先依据参考资料，不要编造不存在的内容。";
@@ -298,5 +300,29 @@ public class AiAppProperties {
         private int snippetWindowChars = 150;
         /** 上下文填充的最大块数（兜底上限，防候选极多时预算失控） */
         private int maxContextHits = 8;
+    }
+
+    /** 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现，不引入第三方依赖） */
+    @Data
+    public static class Auth {
+        /** JWT 签名密钥（env AI_JWT_SECRET）。留空则开发期自动生成随机值并告警（重启后原令牌失效） */
+        private String jwtSecret = "";
+        /** 令牌有效期（小时，默认 7 天） */
+        private int tokenTtlHours = 168;
+        /**
+         * 是否要求登录：true（默认）＝除公开端点外必须持有效令牌；
+         * false＝保留 X-User-Id 直连（网关模式/联调），登录仅作可选。
+         */
+        private boolean requireLogin = true;
+        /** 令牌签发者 */
+        private String issuer = "wenqu";
+        /** 令牌受众 */
+        private String audience = "wenqu-api";
+        /** 登录失败锁定阈值（连续失败次数，0=不锁定） */
+        private int maxLoginFailures = 5;
+        /** 锁定时长（分钟） */
+        private int lockMinutes = 15;
+        /** 初始化管理员时要求的最小密码长度 */
+        private int minPasswordLength = 6;
     }
 }

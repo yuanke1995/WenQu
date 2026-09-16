@@ -14,6 +14,8 @@ import com.wisesoft.ai.service.RagService;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.RateLimitService;
 import com.wisesoft.ai.service.SessionService;
+import com.wisesoft.ai.service.AuthService;
+import com.wisesoft.ai.util.RequestUser;
 import com.wisesoft.ai.util.UserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -54,13 +56,13 @@ public class ChatController {
     private final RateLimitService rateLimitService;
     private final QaLogService qaLogService;
     private final AdminGuard adminGuard;
+    private final AuthService authService;
 
     /** 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用） */
-    @Operation(summary = "当前身份与权限", description = "返回当前 X-User-Id 与是否管理员（admin=true 时前端展示文档/看板/评估/设置等管理入口）")
+    @Operation(summary = "当前身份与权限", description = "返回当前登录用户（uid/username/role/departmentId）与是否管理员（admin=true 时前端展示文档/看板/评估/设置等管理入口）")
     @GetMapping("/auth/me")
     public ResultJson authMe(HttpServletRequest httpRequest) {
-        String userId = UserContext.resolve(httpRequest);
-        return ResultJson.ok(Map.of("user", userId, "admin", adminGuard.isAdmin(httpRequest)));
+        return ResultJson.ok(authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest)));
     }
 
     @Operation(summary = "SSE 流式问答",

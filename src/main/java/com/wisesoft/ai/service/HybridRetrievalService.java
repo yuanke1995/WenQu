@@ -5,6 +5,7 @@ import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.AiKnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -47,6 +48,7 @@ public class HybridRetrievalService {
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
     private final StringRedisTemplate redisTemplate;
+    private final ResourceVisibilityService resourceVisibilityService;
 
     /** 全量重嵌入进行中（持有分布式锁的实例正在 DROP/重建向量索引）→ 各实例向量路跳过降级关键词 */
     private boolean reembedInProgress() {
@@ -114,11 +116,22 @@ public class HybridRetrievalService {
         double keywordWeight = configService.getDouble("retrieval.keywordWeight");
         double titleBonus = configService.getDouble("retrieval.titleBonus");
 
+        // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
+        Set<String> nonVisibleDocIds = loadNonVisibleDocIds();
+
         // 1. 向量召回（放大召回率）
         List<Document> vectorDocs = vectorSearch(query, diag);
 
         // 2. 关键词召回（并行，超时兜底）
         List<AiKnowledge> kwDocs = keywordSearch(query, diag);
+
+        // 可见范围过滤：剔除当前用户不可见的文档命中（与向量路同口径，统一在此拦截）
+        if (!nonVisibleDocIds.isEmpty()) {
+            kwDocs = kwDocs.stream().filter(k -> {
+                String d = k.getDocId() == null ? null : String.valueOf(k.getDocId());
+                return d == null || !nonVisibleDocIds.contains(d);
+            }).toList();
+        }
 
         // 3. 批量加载向量命中的知识块元数据（一次 selectBatchIds 替代逐条 selectById）+ 不可召回文档集合
         Map<String, AiKnowledge> kidMap = loadKnowledgeBatch(vectorDocs);
@@ -127,7 +140,7 @@ public class HybridRetrievalService {
         // 4. 合并去重 + 加权（默认 sum：A1 双命中叠加；可选 rrf 倒数排名融合，见下）
         String fusionMode = configService.get("retrieval.fusionMode");
         if ("rrf".equalsIgnoreCase(fusionMode)) {
-            return mergeByRrf(vectorDocs, kwDocs, kidMap, blockedDocIds);
+            return mergeByRrf(vectorDocs, kwDocs, kidMap, blockedDocIds, nonVisibleDocIds);
         }
 
         Map<String, Hit> merged = new LinkedHashMap<>();
@@ -138,7 +151,7 @@ public class HybridRetrievalService {
             String kid = String.valueOf(doc.getId());
             AiKnowledge k = kidMap.get(kid);
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
-            if (docId != null && blockedDocIds.contains(docId)) {
+            if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
                 log.debug("[RAG] 跳过非生效文档命中: docId={} kid={}", docId, kid);
                 continue;
             }
@@ -189,7 +202,8 @@ public class HybridRetrievalService {
      * 不参与名次。单路为空时退化为另一路的纯名次排序。是否优于 sum 需用检索评估页参数组对比验证。
      */
     private List<Hit> mergeByRrf(List<Document> vectorDocs, List<AiKnowledge> kwDocs,
-                                 Map<String, AiKnowledge> kidMap, Set<String> blockedDocIds) {
+                                 Map<String, AiKnowledge> kidMap, Set<String> blockedDocIds,
+                                 Set<String> nonVisibleDocIds) {
         Map<String, Hit> base = new LinkedHashMap<>();
         Map<String, Double> rrf = new HashMap<>();
 
@@ -202,7 +216,7 @@ public class HybridRetrievalService {
             String kid = String.valueOf(doc.getId());
             AiKnowledge k = kidMap.get(kid);
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
-            if (docId != null && blockedDocIds.contains(docId)) {
+            if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
                 log.debug("[RAG] RRF 跳过非生效文档命中: docId={} kid={}", docId, kid);
                 continue;
             }
@@ -638,6 +652,36 @@ public class HybridRetrievalService {
                 log.error("[FAIL-LOUD] 内存过滤也失败，非生效文档可能进入上下文: {}", ex.getMessage());
                 return Set.of();
             }
+        }
+    }
+
+    /**
+     * 可见范围过滤：返回当前用户【不可见】的文档 id 集合（资源共享范围）。
+     * 默认 global（share_config 为空）的文档不在其中 → 检索行为不变。
+     * 兜底：查询异常时返回空集（放行全部），不静默误伤。
+     */
+    private Set<String> loadNonVisibleDocIds() {
+        try {
+            List<AiDocument> docs = documentMapper.selectList(
+                    new QueryWrapper<AiDocument>().select("id", "share_config", "created_by"));
+            if (docs.isEmpty()) return Set.of();
+            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                    RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+            Map<String, ResourceVisibilityService.DocShare> shareByDoc = new LinkedHashMap<>();
+            for (AiDocument d : docs) {
+                shareByDoc.put(String.valueOf(d.getId()),
+                        new ResourceVisibilityService.DocShare(d.getShareConfig(), d.getCreatedBy()));
+            }
+            Set<String> visible = resourceVisibilityService.filterVisibleDocIds(p, shareByDoc);
+            Set<String> nonVisible = new LinkedHashSet<>();
+            for (AiDocument d : docs) {
+                String id = String.valueOf(d.getId());
+                if (!visible.contains(id)) nonVisible.add(id);
+            }
+            return nonVisible;
+        } catch (Exception e) {
+            log.error("[FAIL-LOUD] 查询文档可见范围失败，放行全部: {}", e.getMessage());
+            return Set.of();
         }
     }
 

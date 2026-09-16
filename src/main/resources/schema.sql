@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '文档描述',
     `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（网关透传 X-User-Id）',
+    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
@@ -198,6 +200,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
     `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -214,6 +217,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（网关透传 X-User-Id）',
+    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `model`           VARCHAR(255) DEFAULT NULL COMMENT '模型覆盖（空=继承全局 chat.model）',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
     `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
@@ -233,3 +238,36 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     PRIMARY KEY (`id`),
     KEY `idx_default` (`is_default`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 智能体配置表';
+
+-- ============================================
+-- 2026-09-16: 多用户协作（用户 + 部门 + 共享范围）
+-- c_ai_user 仅存画像/归属，鉴权由前置网关完成（透传 X-User-Id）；无密码字段。
+-- 首次出现未知 X-User-Id 时由服务层自动建档（与会话 anonymous 兼容池同理）。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_department` (
+    `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
+    `name`         VARCHAR(100) NOT NULL COMMENT '部门名称',
+    `description`  VARCHAR(255) DEFAULT NULL COMMENT '部门描述',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 部门表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_user` (
+    `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（网关透传 X-User-Id，与鉴权一致）',
+    `username`     VARCHAR(100) DEFAULT NULL COMMENT '显示名称',
+    `department_id` VARCHAR(50) DEFAULT NULL COMMENT '所属部门ID（外键 c_ai_department.id，可空=未分配）',
+    `role`         VARCHAR(20)  NOT NULL DEFAULT 'user' COMMENT '角色: superadmin | admin | user',
+    `status`       INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=禁用',
+    `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
+    `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
+    `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`uid`),
+    UNIQUE KEY `uk_username` (`username`),
+    KEY `idx_department` (`department_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';

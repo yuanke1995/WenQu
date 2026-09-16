@@ -1,5 +1,7 @@
 package com.wisesoft.ai.service;
 
+import com.wisesoft.ai.util.RequestUser;
+
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -77,6 +79,7 @@ public class DocumentService {
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final KnowledgeRefService knowledgeRefService;
     private final AnswerCacheService answerCacheService;
+    private final ResourceVisibilityService resourceVisibilityService;
     /** 向量模型（@Primary 为 DynamicEmbeddingModel）：重嵌入前探测新维度用 */
     private final org.springframework.ai.embedding.EmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
@@ -249,6 +252,7 @@ public class DocumentService {
         doc.setFileSize(file.getSize());
         doc.setStatus(2); // 解析中
         doc.setDescription(description);
+        doc.setCreatedBy(RequestUser.uid());
         documentMapper.insert(doc);
         documentMetaCache.invalidate(doc.getId());
         updateProgress(doc.getId(), 0, "已提交,等待解析");
@@ -930,6 +934,21 @@ public class DocumentService {
         } catch (Exception e) {
             log.warn("[{}] 关键词索引同步失败（可稍后 /reindex 修复）: {}", docId, e.getMessage());
         }
+    }
+
+    /**
+     * 设置文档共享范围（写入侧强校验 manage⊆read；空串=恢复全局可见）。
+     * 仅改 share_config 列与缓存，不影响解析状态/向量。
+     */
+    public void updateShareConfig(String docId, String shareConfigJson, String operator) {
+        AiDocument doc = documentMapper.selectById(docId);
+        if (doc == null) throw new BizException("文档不存在");
+        resourceVisibilityService.validateShareConfig(shareConfigJson);
+        doc.setShareConfig(shareConfigJson == null || shareConfigJson.isBlank() ? null : shareConfigJson);
+        documentMapper.updateById(doc);
+        documentMetaCache.invalidate(docId);
+        log.info("[AUDIT] 设置文档共享范围 operator={} docId={} scope={}", operator, docId,
+                doc.getShareConfig() == null ? "global" : "custom");
     }
 
     /**

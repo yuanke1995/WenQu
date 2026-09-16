@@ -141,6 +141,18 @@ public class DocumentController {
         return ResultJson.ok("操作成功");
     }
 
+    @Operation(summary = "设置文档共享范围", description = "写入 share_config（JSON，snake_case：read_scope/manage_scope 各含 access_level/global|department|user、department_ids、user_uids）。空串=恢复全局可见。写入时强校验 manage⊆read")
+    @PutMapping("/{id}/share")
+    public ResultJson updateShare(
+            @Parameter(description = "文档 ID") @PathVariable("id") String id,
+            @Parameter(description = "{\"shareConfig\": \"...\"}（空串=全局）")
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest) {
+        String shareConfig = body.get("shareConfig");
+        documentService.updateShareConfig(id, shareConfig, UserContext.resolve(httpRequest));
+        return ResultJson.ok("操作成功");
+    }
+
     @Operation(summary = "重解析文档", description = "复用源文件重新解析+向量化，适用于文档内容更新后重新入库")
     @PostMapping("/{id}/reparse")
     public ResultJson reparse(

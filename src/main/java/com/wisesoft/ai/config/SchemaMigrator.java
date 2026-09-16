@@ -74,7 +74,12 @@ public class SchemaMigrator implements ApplicationRunner {
         for (Map.Entry<String, TableDef> e : tables.entrySet()) {
             String table = e.getKey();
             List<String> existingCols = queryColumns(table);
-            if (existingCols == null) continue; // 表不存在（新库由 schema.sql 创建）或查询失败
+            if (existingCols == null) {
+                // 表不存在（新库由 schema.sql 创建）或 information_schema 查询失败：原样跳过但必须告警，
+                // 否则会出现"启动期看似无事、运行时才报 Unknown column"的静默失效。
+                log.warn("[SchemaMigrator] 跳过表 {} 的列补齐：查询现列失败（表不存在或 information_schema 不可读），该表新增列未自动补齐", table);
+                continue;
+            }
             for (Map.Entry<String, String> col : e.getValue().columns().entrySet()) {
                 if (!existingCols.contains(col.getKey())) {
                     if (addColumn(table, col.getKey(), col.getValue())) addedCols++;
@@ -82,7 +87,10 @@ public class SchemaMigrator implements ApplicationRunner {
             }
             if (autoIndex) {
                 List<String> existingIdx = queryIndexNames(table);
-                if (existingIdx == null) continue;
+                if (existingIdx == null) {
+                    log.warn("[SchemaMigrator] 跳过表 {} 的索引补齐：查询现索引失败", table);
+                    continue;
+                }
                 for (IndexDef idx : e.getValue().indexes()) {
                     if (!existingIdx.contains(idx.name())) {
                         if (addIndex(table, idx)) addedIdx++;

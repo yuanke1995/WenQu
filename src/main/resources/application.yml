@@ -221,6 +221,18 @@ ai-app:
   # 生产多用户：网关按人透传 X-User-Id 后配置 AI_ADMIN_USERS 白名单；本地/无网关直连：配 AI_ADMIN_TOKEN（前端同步 VITE_ADMIN_TOKEN）。
   admin-users: ${AI_ADMIN_USERS:}
   admin-token: ${AI_ADMIN_TOKEN:}
+  # 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现）
+  auth:
+    # 令牌签名密钥：留空则开发期自动生成随机值（重启后原令牌失效）；生产务必配置 ≥32 位随机串
+    jwt-secret: ${AI_JWT_SECRET:}
+    # 令牌有效期（小时，默认 7 天）
+    token-ttl-hours: ${AI_TOKEN_TTL_HOURS:168}
+    # 是否要求登录：true=除公开端点外必须持有效令牌；false=保留 X-User-Id 直连（网关模式/联调）
+    require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
+    # 登录失败锁定
+    max-login-failures: ${AI_MAX_LOGIN_FAILURES:5}
+    lock-minutes: ${AI_LOCK_MINUTES:15}
+    min-password-length: ${AI_MIN_PASSWORD_LENGTH:6}
 
 logging:
   level:

@@ -54,7 +54,7 @@ public class AiAgent {
     private Integer toolMcp;
 
     /**
-     * 技能范围（具体项筛选，对齐语析的 skills 列表语义）：
+     * 技能范围（具体项筛选，对齐通用智能体平台的 skills 列表语义）：
      * NULL=跟随全局（注入全部可用技能）；空串=显式不注入任何技能；逗号分隔的技能名=只注入这些。
      * 与 toolSkill 的分工：toolSkill 决定"这类能力开不开"，本字段在其开启后限定"具体用哪几个"。
      */
@@ -68,7 +68,7 @@ public class AiAgent {
 
     /**
      * 是否子智能体：0=主智能体（可在对话页直接选用）；1=子智能体（不直接选用，供主智能体委派）。
-     * 对齐语析：子智能体是同一张表里的一级智能体，只是用途不同。
+     * 子智能体说明：子智能体是同一张表里的一级智能体，只是用途不同。
      */
     private Integer isSubagent;
 
@@ -96,7 +96,15 @@ public class AiAgent {
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
 
+    /** 创建人（网关透传 X-User-Id） */
+    private String createdBy;
+
+    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */
+    private String shareConfig;
+
+    /** 创建时间 */
     private LocalDateTime createTime;
 
+    /** 更新时间 */
     private LocalDateTime updateTime;
 }

@@ -1,5 +1,7 @@
 package com.wisesoft.ai.service;
 
+import com.wisesoft.ai.util.RequestUser;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.mapper.AiAgentMapper;
 import com.wisesoft.ai.model.AiAgent;
@@ -93,6 +95,7 @@ public class AgentService {
     /** 新建智能体；isDefault=true 时先清空其它默认 */
     public AiAgent create(Map<String, Object> body) {
         AiAgent a = toEntity(body, new AiAgent());
+        a.setCreatedBy(RequestUser.uid());
         a.setCreateTime(LocalDateTime.now());
         a.setUpdateTime(LocalDateTime.now());
         // 子智能体不参与「默认」：它只能被主智能体委派调用，不能作为对话页预选角色
@@ -191,7 +194,7 @@ public class AgentService {
     }
 
     /**
-     * 「具体项范围」字段解析（对齐语析的资源选择语义）：
+     * 「具体项范围」字段解析（与主流智能体平台资源选择语义一致）：
      * null → null（跟随全局）；空串 → ""（显式一个都不用）；"a,b" → 归一化后的 "a,b"。
      * <p>与 asText 的关键区别：**保留空串语义**——空串表示"显式不使用"，
      * 若像 asText 那样归一成 null 就变成"跟随全局"，两者含义正好相反。</p>

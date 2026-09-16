@@ -1,5 +1,7 @@
 package com.wisesoft.ai.config;
 
+import com.wisesoft.ai.service.AuthService;
+import com.wisesoft.ai.util.RequestUser;
 import com.wisesoft.ai.util.UserContext;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +63,8 @@ public class AdminGuard {
                 if (!u.isBlank() && u.trim().equals(uid)) return true;
             }
         }
+        // 4) 本地登录用户：角色为 admin / superadmin（由 UserContextInterceptor 从令牌+用户表装载）
+        if (AuthService.isAdminRole(RequestUser.role())) return true;
         return false;
     }
 }
