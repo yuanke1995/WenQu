@@ -28,9 +28,11 @@ public class ImageUrlSigner {
     private static final String HMAC_ALGO = "HmacSHA256";
 
     private final AppProperties properties;
+    private final AuthService authService;
 
-    public ImageUrlSigner(AppProperties properties) {
+    public ImageUrlSigner(AppProperties properties, AuthService authService) {
         this.properties = properties;
+        this.authService = authService;
     }
 
     /**
@@ -131,8 +133,8 @@ public class ImageUrlSigner {
     }
 
     private String secretKey() {
-        // 签名密钥派生自 trusted-token（不额外引入配置项）
-        String token = properties.getTrustedToken();
-        return token == null || token.isBlank() ? "ai-doc-image-signer" : token + ":image";
+        // 签名密钥派生自登录 JWT 签名密钥（AI_JWT_SECRET，不额外引入配置项）
+        String secret = authService.secret();
+        return secret == null || secret.isBlank() ? "wenqu-image-signer" : secret + ":image";
     }
 }

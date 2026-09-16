@@ -42,9 +42,8 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     @PostConstruct
     public void validate() {
-        // 不再强制要求 AI_TRUSTED_TOKEN：本地登录（JWT）已是主鉴权，信任 token 仅作图片签名种子（可缺省）。
-        // 旧的 X-Trusted-Token 网关校验已移除——否则登录引导端点（login/first-run/initialize）会被
-        // 前置的信任 token 拦截，形成「要先有 token 才能登录」的死锁。
+        // 旧的 X-Trusted-Token 网关校验与 AI_TRUSTED_TOKEN 必填已移除——
+        // 本地登录（JWT）是唯一主鉴权；保留空方法以免移除调用点。
     }
 
     @Override

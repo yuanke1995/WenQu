@@ -3,17 +3,10 @@
  * - 常规请求：fetch 封装（超时/401/业务失败统一抛出可读错误）
  * - 上传：XMLHttpRequest（支持进度回调）
  * - SSE：fetch + AbortController（支持停止生成）
- * - 环境配置：VITE_API_BASE 接口前缀、VITE_ADMIN_TOKEN 管理员口令（构建注入）
+ * - 环境配置：VITE_API_BASE 接口前缀
  */
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
-// 管理员访问口令：普通用户问答无需携带；管理员经 VITE_ADMIN_TOKEN（构建注入）或运行时
-// localStorage('ai_admin_token') 提供（utils/auth.js setAdminToken 切换），用于文档/配置/评估/看板等管理端点
-// （后端 AdminGuard 判定）。生产多用户：管理员也可不配口令，由网关按 X-User-Id 白名单（AI_ADMIN_USERS）判定。
-const ADMIN_TOKEN_ENV = import.meta.env.VITE_ADMIN_TOKEN || ''
-const adminToken = () => {
-  try { return localStorage.getItem('ai_admin_token') || ADMIN_TOKEN_ENV || '' } catch (e) { return ADMIN_TOKEN_ENV }
-}
 // 登录令牌（本地登录后写入 localStorage('ai_token')；请求头 Authorization: Bearer <token>）
 const authToken = () => {
   try { return localStorage.getItem('ai_token') || '' } catch (e) { return '' }
@@ -34,8 +27,6 @@ const USER_ID = (() => {
 
 const authHeaders = extra => {
   const h = { 'Content-Type': 'application/json', 'X-User-Id': USER_ID, ...(extra || {}) }
-  const at = adminToken()
-  if (at) h['X-Admin-Token'] = at
   const bt = authToken()
   if (bt) h['Authorization'] = 'Bearer ' + bt
   return h
@@ -79,8 +70,6 @@ function upload(path, formData, onProgress) {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', BASE + path)
     xhr.setRequestHeader('X-User-Id', USER_ID)
-    const at = adminToken()
-    if (at) xhr.setRequestHeader('X-Admin-Token', at)
     const bt = authToken()
     if (bt) xhr.setRequestHeader('Authorization', 'Bearer ' + bt)
     xhr.timeout = 120000

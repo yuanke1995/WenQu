@@ -2,7 +2,7 @@
 # ============================================================
 #  Start backend jar (wenqu) - macOS / Linux
 #  JAR: <project root>/target/wenqu.jar
-#  Before first run: export DB_PASSWORD / AI_TRUSTED_TOKEN
+#  Before first run: export DB_PASSWORD
 #  or fill the defaults below
 # ============================================================
 set -e
@@ -20,7 +20,6 @@ fi
 
 # ---- edit these two lines (same values as IDEA run config) ----
 export DB_PASSWORD="${DB_PASSWORD:-CHANGE_ME}"
-export AI_TRUSTED_TOKEN="${AI_TRUSTED_TOKEN:-CHANGE_ME}"
 # --------------------------------------------------------------
 
 # ---- optional overrides (uncomment to change) ----

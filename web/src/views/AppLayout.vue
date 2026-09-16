@@ -79,9 +79,6 @@
         <a-tooltip title="修改密码" placement="right">
           <button class="app-icon-btn" @click="pwdModal = true"><lock-outlined /></button>
         </a-tooltip>
-        <a-tooltip v-if="!isAdmin" :title="collapsed ? '管理员验证' : ''" placement="right">
-          <button class="app-icon-btn" @click="adminModal = true"><safety-certificate-outlined /></button>
-        </a-tooltip>
       </div>
     </aside>
 
@@ -103,12 +100,6 @@
       </a-form>
       <p v-if="pwdError" class="pwd-err">{{ pwdError }}</p>
     </a-modal>
-
-    <!-- 管理员验证（非管理员显示入口；逻辑与旧版一致） -->
-    <a-modal v-model:open="adminModal" title="管理员验证" :confirm-loading="adminVerifying" ok-text="验证" cancel-text="取消" width="420px" @ok="verifyAdmin">
-      <p style="margin-top:0">请输入管理员访问口令（对应后端 <code>AI_ADMIN_TOKEN</code>；若已由平台网关按账号白名单识别为管理员则无需输入）。</p>
-      <a-input-password v-model:value="adminTokenInput" placeholder="管理员口令" @pressEnter="verifyAdmin" />
-    </a-modal>
   </div>
 </template>
 
@@ -117,10 +108,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined, TeamOutlined,
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, LockOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, changePasswordApi } from '../api'
-import { ensureAuth, isAdminSync, setAdminToken, clearAuth } from '../utils/auth'
+import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
@@ -187,27 +178,6 @@ const submitPwd = async () => {
     }
   } catch (e) { message.error(e.message || '修改失败') }
   finally { pwdSaving.value = false }
-}
-
-// 管理员验证（与旧版 App.vue 同逻辑）
-const adminModal = ref(false)
-const adminTokenInput = ref('')
-const adminVerifying = ref(false)
-const verifyAdmin = async () => {  const token = (adminTokenInput.value || '').trim()
-  if (!token) { message.warning('请输入管理员口令'); return }
-  adminVerifying.value = true
-  try {
-    const me = await setAdminToken(token)
-    if (me?.admin) {
-      message.success('管理员验证成功')
-      adminModal.value = false
-      adminTokenInput.value = ''
-      isAdmin.value = true
-    } else {
-      message.error('口令无效或无管理员权限')
-      adminTokenInput.value = ''
-    }
-  } finally { adminVerifying.value = false }
 }
 
 // 退出登录：令牌无状态，清本地令牌并回登录页

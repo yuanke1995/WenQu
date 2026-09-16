@@ -1,7 +1,6 @@
 // ==================== 身份与权限（前端） ====================
-// 主路径：本地登录 → 持有 JWT（localStorage），请求头 Authorization: Bearer <token>。
-// 兼容路径：VITE_ADMIN_TOKEN / localStorage('ai_admin_token') 作为管理员口令应急入口；
-//           生产多用户也可由网关按 X-User-Id 白名单判定（AI_ADMIN_USERS）。
+// 本地登录 → 持有 JWT（localStorage），请求头 Authorization: Bearer <token>；
+// 管理员由后端按登录角色（admin/superadmin）判定，前端经 /auth/me 回显缓存。
 import { getAuthMe } from '../api'
 
 const TOKEN_KEY = 'ai_token'
@@ -46,14 +45,4 @@ export async function ensureAuth (force = false) {
     cached = { user: 'anonymous', username: '', role: 'user', admin: false }
   }
   return cached
-}
-
-/** 设置/清除管理员口令（应急入口，避免依赖重新构建）；调用后强制刷新身份 */
-export function setAdminToken (token) {
-  try {
-    if (token) localStorage.setItem('ai_admin_token', token)
-    else localStorage.removeItem('ai_admin_token')
-  } catch (e) { /* ignore */ }
-  cached = null
-  return ensureAuth(true)
 }

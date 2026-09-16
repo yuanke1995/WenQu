@@ -36,20 +36,6 @@ public class AppProperties {
     private String systemPrompt = "你是\"问渠\"（WenQu），一个基于操作手册知识库回答系统使用问题的AI助手。"
             + "回答应准确、简洁，优先依据参考资料，不要编造不存在的内容。";
 
-    /** 内部信任 token（平台网关代理调用时携带；必须通过环境变量配置，无默认值） */
-    private String trustedToken;
-
-    /**
-     * 管理员用户白名单（逗号分隔 X-User-Id；"*" = 所有请求均为管理员，单机自用模式）。
-     * 权限模型：普通用户仅开放问答链路（chat/会话/反馈/引用溯源/公开配置），
-     * 文档管理、系统配置、评估、看板、索引运维等管理端点仅管理员可访问。
-     */
-    private String adminUsers = "";
-
-    /** 管理员访问口令（请求头 X-Admin-Token 携带；与 admin-users 任一命中即视为管理员）。
-     * 适合无网关直连/本地部署（配合前端 VITE_ADMIN_TOKEN）。留空则仅按 admin-users 判定。 */
-    private String adminToken = "";
-
     @Data
     public static class Chunk {
         /** 分块最大字符数 */

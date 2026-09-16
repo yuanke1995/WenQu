@@ -2,7 +2,7 @@
 REM ============================================================
 REM  Start backend jar (wenqu) - Windows
 REM  JAR: <project root>\target\wenqu.jar
-REM  Before first run: fill DB_PASSWORD / AI_TRUSTED_TOKEN below
+REM  Before first run: fill DB_PASSWORD below
 REM  (same values as your IDEA run config / platform gateway)
 REM ============================================================
 setlocal
@@ -15,10 +15,9 @@ if not exist "%JAR%" (
     exit /b 1
 )
 
-REM ---- 必填：填你的实际值（与 IDEA run config / 平台网关一致；不要提交真实值）----
+REM ---- 必填：填你的实际值（与 IDEA run config 一致；不要提交真实值）----
 REM 留空 = 后端启动即 fail-fast（DB_PASSWORD 缺失），不会用默认密钥兜底
 set DB_PASSWORD=
-set AI_TRUSTED_TOKEN=
 REM -----------------------------------------------------------------------------
 
 REM ---- optional overrides (uncomment to change) ----
