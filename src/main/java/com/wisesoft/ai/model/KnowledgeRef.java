@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_knowledge_ref")
-public class AiKnowledgeRef {
+public class KnowledgeRef {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

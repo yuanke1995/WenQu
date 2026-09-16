@@ -1,10 +1,10 @@
 package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.dto.ChatRef;
-import com.wisesoft.ai.model.AiAgent;
-import com.wisesoft.ai.model.AiAnswerCache;
+import com.wisesoft.ai.model.Agent;
+import com.wisesoft.ai.model.AnswerCache;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -180,7 +180,7 @@ public class RagService {
      * 语义缓存命中直出：跳过检索与 LLM，把历史回答作为完整回答一次性下发（SSE 事件序列与正常路径一致）。
      * 会话历史与问答日志照常落库，保证会话恢复/反馈/看板链路不受影响。
      */
-    private void serveFromCache(String sessionId, String question, AiAnswerCache cached, SseEmitter emitter, long startTime) {
+    private void serveFromCache(String sessionId, String question, AnswerCache cached, SseEmitter emitter, long startTime) {
         try {
             List<Map<String, Object>> sources = cached.getSources() == null ? List.of()
                     : JSON.parseObject(cached.getSources(), new com.alibaba.fastjson2.TypeReference<List<Map<String, Object>>>() {
@@ -231,7 +231,7 @@ public class RagService {
 
     private final ChatClient chatClient;
     private final SessionService sessionService;
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ImageUrlSigner imageUrlSigner;
     private final HybridRetrievalService hybridRetrievalService;
     private final RerankService rerankService;
@@ -305,7 +305,7 @@ public class RagService {
 
     public RagService(ChatClient chatClient,
                       SessionService sessionService,
-                      AiAppProperties properties,
+                      AppProperties properties,
                       ImageUrlSigner imageUrlSigner,
                       HybridRetrievalService hybridRetrievalService,
                       RerankService rerankService,
@@ -391,7 +391,7 @@ public class RagService {
                          List<ChatRef> refs, String agentId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         // 智能体（4.1）：选中后覆盖模型/提示词/工具/知识库范围；agentId 无效/缺失时视为无覆盖（继承全局）
-        final AiAgent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
+        final Agent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
         }
@@ -419,7 +419,7 @@ public class RagService {
 
             // 0. 相似问题语义缓存：命中直接返回历史答案（跳过改写/检索/LLM；带图片的提问不走缓存）
             if (userImgs.isEmpty()) {
-                AiAnswerCache cached = answerCacheService.lookup(question);
+                AnswerCache cached = answerCacheService.lookup(question);
                 if (cached != null) {
                     serveFromCache(sessionId, question, cached, emitter, startTime);
                     return;
@@ -576,7 +576,7 @@ public class RagService {
             if (configService.getBoolean("agent.enabled")) {
                 // 委派模式：主智能体挂了子智能体时由它们并行执行（各自范围 + 各自视角）；
                 // 未挂则沿用原有的「多视角并行检索」
-                List<AiAgent> delegated = resolveSubAgents(agent);
+                List<Agent> delegated = resolveSubAgents(agent);
                 sendSseEvent(emitter, "stage", delegated.isEmpty()
                         ? "正在并行检索多个视角…"
                         : "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
@@ -921,7 +921,7 @@ public class RagService {
      * 启用工具列表（按智能体覆盖）。智能体工具开关为三态：agent 中显式设了 1/0 则强制覆盖，
      * 否则继承全局 tool./mcp./skill. 开关。工具总开关 tool.enabled 仍由全局控制（智能体不开关总闸）。
      */
-    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(AiAgent agent) {
+    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         if (!configService.getBoolean("tool.enabled")) {
             return callbacks;
@@ -1062,7 +1062,7 @@ public class RagService {
      * 构建并订阅主 LLM 流式回答（H2：未输出任何 token 时中断自动重试，次数 chat.streamRetryCount 可配）。
      * 可变状态与 complete 回调依赖收敛在 AnswerStreamState；重试时重建全新流并丢弃旧缓冲。
      */
-    private Disposable buildAnswerStream(String system, String user, AnswerStreamState st, AiAgent agent) {
+    private Disposable buildAnswerStream(String system, String user, AnswerStreamState st, Agent agent) {
         SseEmitter emitter = st.emitter;
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
@@ -1492,20 +1492,20 @@ public class RagService {
     // ---- 智能体（4.1）覆盖解析辅助 ----
 
     /** 模型：智能体显式填写则用智能体模型，否则继承全局 chat.model */
-    private String resolveModel(AiAgent agent) {
+    private String resolveModel(Agent agent) {
         return (agent != null && agent.getModel() != null && !agent.getModel().isBlank())
                 ? agent.getModel() : configService.get("chat.model");
     }
 
     /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值） */
-    private String resolveSystemPrompt(AiAgent agent) {
+    private String resolveSystemPrompt(Agent agent) {
         String p = (agent != null && agent.getSystemPrompt() != null && !agent.getSystemPrompt().isBlank())
                 ? agent.getSystemPrompt() : configService.get("chat.systemPrompt");
         return (p == null || p.isBlank()) ? properties.getSystemPrompt() : p;
     }
 
     /** 工具开关三态解析：智能体显式设了 1/0 则强制覆盖，否则继承全局开关 */
-    private boolean toolOn(AiAgent agent, String globalKey, Integer agentFlag) {
+    private boolean toolOn(Agent agent, String globalKey, Integer agentFlag) {
         if (agent != null && agentFlag != null) return agentFlag == 1;
         return configService.getBoolean(globalKey);
     }
@@ -1515,15 +1515,15 @@ public class RagService {
      * <p>未配置或配置为空 → 返回空列表，编排走原有的多视角策略；
      * 配置了 ID → 逐个加载，跳过已删除或已改回普通智能体的（避免残留 ID 造成空转）。</p>
      */
-    private List<AiAgent> resolveSubAgents(AiAgent agent) {
+    private List<Agent> resolveSubAgents(Agent agent) {
         if (agent == null || agent.getSubAgentIds() == null || agent.getSubAgentIds().isBlank()) {
             return List.of();
         }
         Set<String> ids = scopeOf(agent.getSubAgentIds());
         if (ids == null || ids.isEmpty()) return List.of();
-        List<AiAgent> subs = new ArrayList<>();
+        List<Agent> subs = new ArrayList<>();
         for (String id : ids) {
-            AiAgent s = agentService.get(id);
+            Agent s = agentService.get(id);
             if (s == null) {
                 log.warn("[AGENT] 委派的子智能体 {} 已不存在（跳过）", id);
                 continue;
@@ -2180,7 +2180,7 @@ public class RagService {
      */
     private void runSmallTalkChat(String sessionId, String question, SseEmitter emitter, long startTime,
                                   String[] thinkingHolder, List<Map<String, String>> degradations,
-                                  Set<String> degradedCodes, AiAgent agent) {
+                                  Set<String> degradedCodes, Agent agent) {
         try {
             // 角色段（与主链路同源，保持人设一致）+ 闲聊分支规则（intent.chatPrompt，DB 可编辑保存即生效）
             String rolePart = resolveSystemPrompt(agent);

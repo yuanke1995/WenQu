@@ -3,8 +3,8 @@ package com.wisesoft.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
-import com.wisesoft.ai.mapper.AiApiKeyMapper;
-import com.wisesoft.ai.model.AiApiKey;
+import com.wisesoft.ai.mapper.ApiKeyMapper;
+import com.wisesoft.ai.model.ApiKey;
 import com.wisesoft.ai.service.ResourceVisibilityService.Principal;
 import com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind;
 import com.wisesoft.ai.util.RequestUser;
@@ -44,7 +44,7 @@ public class ApiKeyService {
     /** 随机字节数（32 字节 → 64 位十六进制字符，暴力不可行） */
     private static final int RANDOM_BYTES = 32;
 
-    private final AiApiKeyMapper mapper;
+    private final ApiKeyMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -54,7 +54,7 @@ public class ApiKeyService {
     }
 
     /** 管理动作前的权限闸：不在共享管理范围内则拒绝（未配置共享＝全局，行为与从前一致） */
-    private void ensureManageable(AiApiKey k) {
+    private void ensureManageable(ApiKey k) {
         if (k != null && !resourceVisibilityService.canManage(principal(), k.getShareConfig(), k.getCreatedBy(), ResourceKind.API_KEY)) {
             throw new BizException(403, "无权管理该 API Key（不在其共享管理范围内）");
         }
@@ -72,7 +72,7 @@ public class ApiKeyService {
         byte[] buf = new byte[RANDOM_BYTES];
         RANDOM.nextBytes(buf);
         String plain = PREFIX + HexFormat.of().formatHex(buf);
-        AiApiKey k = new AiApiKey();
+        ApiKey k = new ApiKey();
         k.setName(name == null || name.isBlank() ? "未命名 Key" : name.trim());
         k.setKeyHash(sha256(plain));
         k.setKeyPrefix(plain.substring(0, PREFIX.length() + 8));
@@ -94,8 +94,8 @@ public class ApiKeyService {
     /** 列表（不含哈希，仅前缀等元信息），按创建时间倒序 */
     public List<Map<String, Object>> list() {
         Principal p = principal();
-        List<AiApiKey> keys = mapper.selectList(new LambdaQueryWrapper<AiApiKey>()
-                .orderByDesc(AiApiKey::getCreateTime));
+        List<ApiKey> keys = mapper.selectList(new LambdaQueryWrapper<ApiKey>()
+                .orderByDesc(ApiKey::getCreateTime));
         LocalDateTime now = LocalDateTime.now();
         return keys.stream()
                 // 共享范围之外的人看不到该 Key 记录（未配置共享＝全局；创建者/超管始终可见）
@@ -121,7 +121,7 @@ public class ApiKeyService {
     /** 重命名（用途备注可随时改，不影响 Key 本身与调用方） */
     public void rename(String id, String name) {
         ensureManageable(mapper.selectById(id));
-        AiApiKey k = new AiApiKey();
+        ApiKey k = new ApiKey();
         k.setId(id);
         k.setName(name.length() > 200 ? name.substring(0, 200) : name);
         k.setUpdateTime(LocalDateTime.now());
@@ -132,7 +132,7 @@ public class ApiKeyService {
     /** 启用/停用（吊销即停用；不物理删除，保留审计线索） */
     public void setDisabled(String id, boolean disabled) {
         ensureManageable(mapper.selectById(id));
-        AiApiKey k = new AiApiKey();
+        ApiKey k = new ApiKey();
         k.setId(id);
         k.setDisabled(disabled ? 1 : 0);
         k.setUpdateTime(LocalDateTime.now());
@@ -156,10 +156,10 @@ public class ApiKeyService {
         ensureManageable(mapper.selectById(id));
         resourceVisibilityService.validateShareConfig(shareConfigJson);
         String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
-        mapper.update(null, new LambdaUpdateWrapper<AiApiKey>()
-                .eq(AiApiKey::getId, id)
-                .set(AiApiKey::getShareConfig, normalized)
-                .set(AiApiKey::getUpdateTime, LocalDateTime.now()));
+        mapper.update(null, new LambdaUpdateWrapper<ApiKey>()
+                .eq(ApiKey::getId, id)
+                .set(ApiKey::getShareConfig, normalized)
+                .set(ApiKey::getUpdateTime, LocalDateTime.now()));
         log.info("[API-KEY] 共享范围更新 id={} scope={}", id, normalized == null ? "全局" : "受限");
     }
 
@@ -167,11 +167,11 @@ public class ApiKeyService {
      * 校验 API Key：哈希命中 + 未停用 + 未过期 → 返回 Key 记录（供记录使用时间），否则 null。
      * 不做恒定时间比较——查的是哈希，攻击者也无法通过时序推断明文。
      */
-    public AiApiKey verify(String plainKey) {
+    public ApiKey verify(String plainKey) {
         if (plainKey == null || plainKey.isBlank() || !plainKey.startsWith(PREFIX)) return null;
         try {
-            AiApiKey k = mapper.selectOne(new LambdaQueryWrapper<AiApiKey>()
-                    .eq(AiApiKey::getKeyHash, sha256(plainKey)).last("LIMIT 1"));
+            ApiKey k = mapper.selectOne(new LambdaQueryWrapper<ApiKey>()
+                    .eq(ApiKey::getKeyHash, sha256(plainKey)).last("LIMIT 1"));
             if (k == null) return null;
             if (k.getDisabled() != null && k.getDisabled() == 1) return null;
             if (k.getExpireAt() != null && k.getExpireAt().isBefore(LocalDateTime.now())) return null;

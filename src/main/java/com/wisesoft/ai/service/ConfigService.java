@@ -1,9 +1,9 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.config.AiAppProperties;
-import com.wisesoft.ai.mapper.AiConfigMapper;
-import com.wisesoft.ai.model.AiConfig;
+import com.wisesoft.ai.config.AppProperties;
+import com.wisesoft.ai.mapper.ConfigMapper;
+import com.wisesoft.ai.model.Config;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
@@ -168,7 +168,7 @@ public class ConfigService {
             Map.entry("eval.judgeModel", "自动体检：LLM 评判使用的模型(留空回落 chat.model)"),
             Map.entry("cleanup.sessionCleanupIntervalMs", "会话清理：任务执行间隔(ms,默认86400000=每天)"),
             Map.entry("cleanup.sessionRetentionDays", "会话清理：会话保留天数(默认30；超期删除)"),
-            // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AiAppProperties =====
+            // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AppProperties =====
             Map.entry("chunk.maxSize", "文档解析：单块最大字符数(分块粒度，影响检索精度与 embedding 成本；改后需重解析生效)"),
             Map.entry("chunk.headingDepth", "文档解析：章节标题识别上限层级(1~6；调大后更深层的小节/条目标题独立成块并进章节路径，改后需重解析生效)"),
             Map.entry("images.maxWidth", "图片：压缩后最长边像素(0=不压缩；影响视觉识别清晰度与成本)"),
@@ -375,8 +375,8 @@ public class ConfigService {
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
-    private final AiConfigMapper configMapper;
-    private final AiAppProperties properties;
+    private final ConfigMapper configMapper;
+    private final AppProperties properties;
     private final Environment environment;
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
@@ -392,7 +392,7 @@ public class ConfigService {
 
     private volatile Map<String, String> cache = new HashMap<>();
 
-    public ConfigService(AiConfigMapper configMapper, AiAppProperties properties, Environment environment,
+    public ConfigService(ConfigMapper configMapper, AppProperties properties, Environment environment,
                          StringRedisTemplate redisTemplate, RedisProperties redisProperties,
                          @org.springframework.context.annotation.Lazy KeywordIndexService keywordIndexService,
                          @org.springframework.context.annotation.Lazy DocumentService documentService,
@@ -437,7 +437,7 @@ public class ConfigService {
                 return;
             }
             for (Map.Entry<String, String> e : encrypted.entrySet()) {
-                AiConfig c = configMapper.selectById(e.getKey());
+                Config c = configMapper.selectById(e.getKey());
                 if (c != null) {
                     c.setConfigValue(e.getValue());
                     configMapper.updateById(c);
@@ -456,9 +456,9 @@ public class ConfigService {
     /** 全量重读 c_ai_config 进缓存（本地更新 / Redis 订阅通知 / schedule 包周期兜底均调用） */
     public void reload() {
         try {
-            List<AiConfig> all = configMapper.selectList(new LambdaQueryWrapper<AiConfig>());
+            List<Config> all = configMapper.selectList(new LambdaQueryWrapper<Config>());
             Map<String, String> map = new HashMap<>();
-            for (AiConfig c : all) {
+            for (Config c : all) {
                 map.put(c.getConfigKey(), c.getConfigValue());
             }
             cache = map;
@@ -515,10 +515,10 @@ public class ConfigService {
     private void ensureDefaults() {
         for (Map.Entry<String, String> e : defaults().entrySet()) {
             try {
-                Long cnt = configMapper.selectCount(new LambdaQueryWrapper<AiConfig>()
-                        .eq(AiConfig::getConfigKey, e.getKey()));
+                Long cnt = configMapper.selectCount(new LambdaQueryWrapper<Config>()
+                        .eq(Config::getConfigKey, e.getKey()));
                 if (cnt == null || cnt == 0) {
-                    AiConfig c = new AiConfig();
+                    Config c = new Config();
                     c.setConfigKey(e.getKey());
                     // 敏感项默认值灌入即加密（RSA: 前缀密文）
                     c.setConfigValue(e.getKey().endsWith(".apiKey") ? crypto.encrypt(e.getValue()) : e.getValue());
@@ -673,7 +673,7 @@ public class ConfigService {
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
-        // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AiAppProperties，读取点无需改动）
+        // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
         d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)
         d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
@@ -728,7 +728,7 @@ public class ConfigService {
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
 
-        // 意图分类：默认值与 AiAppProperties.Intent 保持一致；
+        // 意图分类：默认值与 AppProperties.Intent 保持一致；
         // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）
         d.put("intent.enabled", "false");                  // 意图分类总开关（默认关）
         d.put("intent.timeoutMillis", "3000");             // 分类调用超时(ms)
@@ -741,7 +741,7 @@ public class ConfigService {
     }
 
     /**
-     * 把「原由 ai-app.*（yml/env）在启动时绑定」的配置项，从缓存回写到 AiAppProperties。
+     * 把「原由 ai-app.*（yml/env）在启动时绑定」的配置项，从缓存回写到 AppProperties。
      * <p>目的：这些项（chunk.maxSize、images.*、vision.*、session.*）的消费方直接调用
      * properties.getXxx()，若只加白名单不回写，设置页保存了也不会生效。
      * 在每次缓存（重）载入后调用一次，即可让消费方无需改动而支持 DB/设置页热生效。
@@ -750,25 +750,25 @@ public class ConfigService {
      */
     private void syncProperties() {
         try {
-            AiAppProperties.Chunk chunk = properties.getChunk();
+            AppProperties.Chunk chunk = properties.getChunk();
             chunk.setMaxSize(pInt("chunk.maxSize", chunk.getMaxSize()));
             chunk.setHeadingDepth(pInt("chunk.headingDepth", chunk.getHeadingDepth()));
-            AiAppProperties.Images images = properties.getImages();
+            AppProperties.Images images = properties.getImages();
             images.setMaxWidth(pInt("images.maxWidth", images.getMaxWidth()));
             images.setQuality((float) pDouble("images.quality", images.getQuality()));
             images.setAuthEnabled(pBool("images.authEnabled", images.isAuthEnabled()));
             images.setAuthExpireSeconds(pLong("images.authExpireSeconds", images.getAuthExpireSeconds()));
-            AiAppProperties.Vision vision = properties.getVision();
+            AppProperties.Vision vision = properties.getVision();
             vision.setTimeoutMillis(pInt("vision.timeoutMillis", vision.getTimeoutMillis()));
             vision.setRetryCount(pInt("vision.retryCount", vision.getRetryCount()));
             vision.setThink(pBool("vision.think", vision.isThink()));
             vision.setKeepAliveMinutes(pInt("vision.keepAliveMinutes", vision.getKeepAliveMinutes()));
             vision.setNumCtx(pInt("vision.numCtx", vision.getNumCtx()));
-            AiAppProperties.Session session = properties.getSession();
+            AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
             session.setAnonymousShared(pBool("session.anonymousShared", session.isAnonymousShared()));
-            AiAppProperties.QueryRewrite qr = properties.getQueryRewrite();
+            AppProperties.QueryRewrite qr = properties.getQueryRewrite();
             qr.setEnabled(pBool("queryRewrite.enabled", qr.isEnabled()));
             qr.setHistoryRounds(pInt("queryRewrite.historyRounds", qr.getHistoryRounds()));
             // 提示词：仅在 DB 给出非空值时回写，避免空串把默认提示词清掉
@@ -776,11 +776,11 @@ public class ConfigService {
             if (qrPrompt != null && !qrPrompt.isBlank()) qr.setPrompt(qrPrompt);
             String qrPromptMt = get("queryRewrite.promptMultiTurn");
             if (qrPromptMt != null && !qrPromptMt.isBlank()) qr.setPromptMultiTurn(qrPromptMt);
-            AiAppProperties.ImageFilter imgFilter = properties.getImages().getImageFilter();
+            AppProperties.ImageFilter imgFilter = properties.getImages().getImageFilter();
             imgFilter.setEnabled(pBool("imageFilter.enabled", imgFilter.isEnabled()));
             imgFilter.setMinHits(pInt("imageFilter.minHits", imgFilter.getMinHits()));
             imgFilter.setPreContextChars(pInt("imageFilter.preContextChars", imgFilter.getPreContextChars()));
-            AiAppProperties.Intent intent = properties.getIntent();
+            AppProperties.Intent intent = properties.getIntent();
             intent.setEnabled(pBool("intent.enabled", intent.isEnabled()));
             intent.setTimeoutMillis(pInt("intent.timeoutMillis", intent.getTimeoutMillis()));
             String intentModel = get("intent.model");
@@ -791,7 +791,7 @@ public class ConfigService {
             String intentChatPrompt = get("intent.chatPrompt");
             if (intentChatPrompt != null && !intentChatPrompt.isBlank()) intent.setChatPrompt(intentChatPrompt);
         } catch (Exception e) {
-            log.warn("[Config] 回写 AiAppProperties 失败（沿用当前值）: {}", e.getMessage());
+            log.warn("[Config] 回写 AppProperties 失败（沿用当前值）: {}", e.getMessage());
         }
     }
 
@@ -1183,9 +1183,9 @@ public class ConfigService {
         }
 
         for (Map.Entry<String, String> kv : updates.entrySet()) {
-            AiConfig c = configMapper.selectById(kv.getKey());
+            Config c = configMapper.selectById(kv.getKey());
             if (c == null) {
-                c = new AiConfig();
+                c = new Config();
                 c.setConfigKey(kv.getKey());
                 c.setConfigValue(kv.getValue());
                 c.setRemark(EDITABLE.get(kv.getKey()));
@@ -1267,9 +1267,9 @@ public class ConfigService {
             if (k.endsWith(".apiKey")) continue; // 密钥不随"恢复默认"清空
             String v = e.getValue();
             try {
-                AiConfig c = configMapper.selectById(k);
+                Config c = configMapper.selectById(k);
                 if (c == null) {
-                    c = new AiConfig();
+                    c = new Config();
                     c.setConfigKey(k);
                     c.setConfigValue(v);
                     c.setRemark(EDITABLE.getOrDefault(k, "只读配置"));
@@ -1300,9 +1300,9 @@ public class ConfigService {
      */
     public void putInternal(String key, String value) {
         try {
-            AiConfig c = configMapper.selectById(key);
+            Config c = configMapper.selectById(key);
             if (c == null) {
-                c = new AiConfig();
+                c = new Config();
                 c.setConfigKey(key);
                 c.setConfigValue(value);
                 c.setRemark("只读配置");

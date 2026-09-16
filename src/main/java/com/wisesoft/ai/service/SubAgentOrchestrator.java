@@ -6,7 +6,7 @@ import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
-import com.wisesoft.ai.model.AiAgent;
+import com.wisesoft.ai.model.Agent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -71,12 +71,12 @@ public class SubAgentOrchestrator {
         final String question;
         final List<String> subQueries;
         /** 主智能体委派的子智能体（null/空 = 走原有的多视角策略） */
-        final List<AiAgent> subAgents;
+        final List<Agent> subAgents;
         final List<HybridRetrievalService.Hit> collected = new ArrayList<>();
         final Set<String> seenKids = new LinkedHashSet<>();
         final List<String> digests = new ArrayList<>();
 
-        RunCtx(String question, List<String> subQueries, List<AiAgent> subAgents) {
+        RunCtx(String question, List<String> subQueries, List<Agent> subAgents) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
@@ -96,7 +96,7 @@ public class SubAgentOrchestrator {
      * @param subAgents 主智能体委派的子智能体。为 null 或空时走原有的多视角策略；
      *                  非空时按子智能体数并行——每个子智能体用自己的知识库范围检索、按自己的角色提示词提炼
      */
-    public Outcome run(String question, List<AiAgent> subAgents) {
+    public Outcome run(String question, List<Agent> subAgents) {
         boolean delegated = subAgents != null && !subAgents.isEmpty();
         int agents = delegated
                 ? Math.min(subAgents.size(), 4)
@@ -190,7 +190,7 @@ public class SubAgentOrchestrator {
     /** 单个分支执行：检索 → 按各自知识库范围过滤 → 跨分支去重 →（可选）按角色提炼要点 */
     private void runAgent(int idx, RunCtx ctx) {
         try {
-            AiAgent sub = (ctx.subAgents != null && idx < ctx.subAgents.size()) ? ctx.subAgents.get(idx) : null;
+            Agent sub = (ctx.subAgents != null && idx < ctx.subAgents.size()) ? ctx.subAgents.get(idx) : null;
             // 委派模式下各分支都用原问题：差异体现在「各自的知识库范围」与「各自的提炼视角」上——
             // 这才是"派给某个角色去查"，而不是"同一个问题换个问法"。未委派时才走多视角子查询。
             String subQuery = (sub == null && idx < ctx.subQueries.size()) ? ctx.subQueries.get(idx) : ctx.question;

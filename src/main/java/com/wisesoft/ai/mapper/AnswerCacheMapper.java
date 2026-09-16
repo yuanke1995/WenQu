@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiAnswerCache;
+import com.wisesoft.ai.model.AnswerCache;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Update;
 
@@ -11,7 +11,7 @@ import org.apache.ibatis.annotations.Update;
  * @author yuanke
  */
 @Mapper
-public interface AiAnswerCacheMapper extends BaseMapper<AiAnswerCache> {
+public interface AnswerCacheMapper extends BaseMapper<AnswerCache> {
 
     /**
      * 原子自增命中数并校验行仍存在（二合一）：

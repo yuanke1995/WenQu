@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_qa_feedback")
-public class AiQaFeedback {
+public class QaFeedback {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

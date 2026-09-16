@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiImageDesc;
+import com.wisesoft.ai.model.ImageDesc;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -18,7 +18,7 @@ import java.util.Map;
  * @author yuanke
  */
 @Mapper
-public interface AiImageDescMapper extends BaseMapper<AiImageDesc> {
+public interface ImageDescMapper extends BaseMapper<ImageDesc> {
 
     /** 原子 upsert：并发写同一 key 不产生重复行，刷新描述并更新 update_time（无写撕裂） */
     @Insert("INSERT INTO c_ai_image_desc(cache_key, description, model) " +

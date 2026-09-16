@@ -5,13 +5,13 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.JSONWriter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
-import com.wisesoft.ai.mapper.AiMessageMapper;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.mapper.MessageMapper;
 import com.wisesoft.ai.model.AiDocument;
-import com.wisesoft.ai.model.AiKnowledge;
-import com.wisesoft.ai.model.AiMessage;
+import com.wisesoft.ai.model.Knowledge;
+import com.wisesoft.ai.model.Message;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -86,10 +86,10 @@ public class RetrievalEvaluationService {
     private final ConfigService configService;
     private final KeywordExtractor keywordExtractor;
     private final RerankService rerankService;
-    private final AiMessageMapper messageMapper;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final MessageMapper messageMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ChatClient chatClient;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
@@ -101,8 +101,8 @@ public class RetrievalEvaluationService {
 
     public RetrievalEvaluationService(HybridRetrievalService retrievalService, ConfigService configService,
                                       KeywordExtractor keywordExtractor, RerankService rerankService,
-                                      AiMessageMapper messageMapper, AiKnowledgeMapper knowledgeMapper,
-                                      AiDocumentMapper documentMapper, AiAppProperties properties,
+                                      MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
+                                      AiDocumentMapper documentMapper, AppProperties properties,
                                       ChatClient chatClient) {
         this.retrievalService = retrievalService;
         this.configService = configService;
@@ -134,37 +134,37 @@ public class RetrievalEvaluationService {
     public synchronized EvalSet generate(int maxCases) {
         int limit = Math.min(Math.max(1, maxCases), 500);
         // 取最近 N 条带引用的 assistant 消息（逻辑删除由 @TableLogic 自动过滤）
-        List<AiMessage> assistants = messageMapper.selectList(new LambdaQueryWrapper<AiMessage>()
-                .eq(AiMessage::getRole, "assistant")
-                .isNotNull(AiMessage::getSources)
-                .ne(AiMessage::getSources, "")
-                .orderByDesc(AiMessage::getCreateTime)
+        List<Message> assistants = messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getRole, "assistant")
+                .isNotNull(Message::getSources)
+                .ne(Message::getSources, "")
+                .orderByDesc(Message::getCreateTime)
                 .last("LIMIT " + limit));
         if (assistants.isEmpty()) return new EvalSet(1, now(), List.of(), 0);
 
         // 按 session 预取 user 消息，避免逐条查库
-        Set<String> sessionIds = assistants.stream().map(AiMessage::getSessionId).collect(Collectors.toSet());
-        List<AiMessage> userMsgs = messageMapper.selectList(new LambdaQueryWrapper<AiMessage>()
-                .eq(AiMessage::getRole, "user")
-                .in(AiMessage::getSessionId, sessionIds)
-                .orderByAsc(AiMessage::getSequence));
-        Map<String, List<AiMessage>> bySession = userMsgs.stream()
-                .collect(Collectors.groupingBy(AiMessage::getSessionId));
+        Set<String> sessionIds = assistants.stream().map(Message::getSessionId).collect(Collectors.toSet());
+        List<Message> userMsgs = messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getRole, "user")
+                .in(Message::getSessionId, sessionIds)
+                .orderByAsc(Message::getSequence));
+        Map<String, List<Message>> bySession = userMsgs.stream()
+                .collect(Collectors.groupingBy(Message::getSessionId));
 
         // 批量校验 expected 知识块仍存在（文档删除/重解析后旧 ID 失效，会让 recall 永远到不了 1，生成时剔除并计数）
         Set<String> candidateIds = new HashSet<>();
-        for (AiMessage a : assistants) candidateIds.addAll(extractKnowledgeIds(a.getSources()));
+        for (Message a : assistants) candidateIds.addAll(extractKnowledgeIds(a.getSources()));
         Set<String> existingIds = loadExistingKnowledgeIds(candidateIds);
 
         List<EvalCase> cases = new ArrayList<>();
         Set<String> seenQuestions = new HashSet<>();
         int seq = 0;
         int stale = 0;
-        for (AiMessage a : assistants) {
+        for (Message a : assistants) {
             // 该 assistant 消息之前的最近一条 user 消息
-            List<AiMessage> users = bySession.getOrDefault(a.getSessionId(), List.of());
-            AiMessage prevUser = null;
-            for (AiMessage u : users) {
+            List<Message> users = bySession.getOrDefault(a.getSessionId(), List.of());
+            Message prevUser = null;
+            for (Message u : users) {
                 if (u.getSequence() != null && a.getSequence() != null && u.getSequence() < a.getSequence()) {
                     prevUser = u;
                 }
@@ -505,9 +505,9 @@ public class RetrievalEvaluationService {
                     .eq(AiDocument::getStatus, 1));
             if (deprecated.isEmpty()) return Set.of();
             List<String> docIds = deprecated.stream().map(AiDocument::getId).toList();
-            List<AiKnowledge> ks = knowledgeMapper.selectList(new LambdaQueryWrapper<AiKnowledge>()
-                    .in(AiKnowledge::getDocId, docIds));
-            return ks.stream().map(AiKnowledge::getId).collect(Collectors.toSet());
+            List<Knowledge> ks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                    .in(Knowledge::getDocId, docIds));
+            return ks.stream().map(Knowledge::getId).collect(Collectors.toSet());
         } catch (Exception e) {
             log.warn("[Eval] 弃用知识块加载失败: {}", e.getMessage());
             return Set.of();

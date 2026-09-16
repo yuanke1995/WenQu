@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 @Data
 @Component
 @ConfigurationProperties(prefix = "ai-app")
-public class AiAppProperties {
+public class AppProperties {
 
     private Chunk chunk = new Chunk();
     private Retrieval retrieval = new Retrieval();

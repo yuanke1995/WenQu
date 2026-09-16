@@ -5,8 +5,8 @@ import com.wisesoft.ai.util.RequestUser;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
-import com.wisesoft.ai.mapper.AiAgentMapper;
-import com.wisesoft.ai.model.AiAgent;
+import com.wisesoft.ai.mapper.AgentMapper;
+import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.service.ResourceVisibilityService.Principal;
 import com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AgentService {
 
-    private final AiAgentMapper mapper;
+    private final AgentMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
 
     /** 当前请求者（可见性/可管性判定的输入） */
@@ -44,22 +44,22 @@ public class AgentService {
     }
 
     /** 当前用户是否可读取该智能体（未配置共享＝全局，行为与从前一致） */
-    private boolean readable(AiAgent a) {
+    private boolean readable(Agent a) {
         return resourceVisibilityService.canRead(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT);
     }
 
     /** 当前用户是否可管理该智能体（出现在管理端点前先过这道闸） */
-    private void ensureManageable(AiAgent a) {
+    private void ensureManageable(Agent a) {
         if (!resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT)) {
             throw new BizException(403, "无权管理该智能体（不在其共享管理范围内）");
         }
     }
 
     /** 列表（默认智能体在前，其余按创建时间倒序） */
-    public List<AiAgent> list() {
-        return mapper.selectList(new LambdaQueryWrapper<AiAgent>()
-                .orderByDesc(AiAgent::getIsDefault)
-                .orderByDesc(AiAgent::getCreateTime));
+    public List<Agent> list() {
+        return mapper.selectList(new LambdaQueryWrapper<Agent>()
+                .orderByDesc(Agent::getIsDefault)
+                .orderByDesc(Agent::getCreateTime));
     }
 
     /**
@@ -69,7 +69,7 @@ public class AgentService {
      */
     public List<Map<String, Object>> available() {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (AiAgent a : list()) {
+        for (Agent a : list()) {
             // 子智能体不出现在对话页下拉：它只能被主智能体委派调用，不能当作问答角色直接选用
             if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
             // 共享范围之外的人不应在对话页看到该智能体（未配置共享＝全局，行为不变）
@@ -91,10 +91,10 @@ public class AgentService {
      */
     public List<Map<String, Object>> subAgents() {
         List<Map<String, Object>> out = new ArrayList<>();
-        List<AiAgent> subs = mapper.selectList(new LambdaQueryWrapper<AiAgent>()
-                .eq(AiAgent::getIsSubagent, 1)
-                .orderByDesc(AiAgent::getCreateTime));
-        for (AiAgent a : subs) {
+        List<Agent> subs = mapper.selectList(new LambdaQueryWrapper<Agent>()
+                .eq(Agent::getIsSubagent, 1)
+                .orderByDesc(Agent::getCreateTime));
+        for (Agent a : subs) {
             if (!readable(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
@@ -110,21 +110,21 @@ public class AgentService {
      * <p>额外做可读校验：共享范围之外的人即使拿到 id，也不能把该智能体套用到自己的问答上——
      * 一律按「不存在」处理，直接回落全局配置（避免用 id 绕过可见性拿到别人的提示词/知识库范围）。</p>
      */
-    public AiAgent get(String id) {
+    public Agent get(String id) {
         if (!StringUtils.hasText(id)) return null;
-        AiAgent a = mapper.selectById(id);
+        Agent a = mapper.selectById(id);
         return (a != null && readable(a)) ? a : null;
     }
 
     /** 默认智能体（无则返回 null） */
-    public AiAgent defaultAgent() {
-        return mapper.selectOne(new LambdaQueryWrapper<AiAgent>()
-                .eq(AiAgent::getIsDefault, 1).last("LIMIT 1"));
+    public Agent defaultAgent() {
+        return mapper.selectOne(new LambdaQueryWrapper<Agent>()
+                .eq(Agent::getIsDefault, 1).last("LIMIT 1"));
     }
 
     /** 新建智能体；isDefault=true 时先清空其它默认 */
-    public AiAgent create(Map<String, Object> body) {
-        AiAgent a = toEntity(body, new AiAgent());
+    public Agent create(Map<String, Object> body) {
+        Agent a = toEntity(body, new Agent());
         a.setCreatedBy(RequestUser.uid());
         a.setCreateTime(LocalDateTime.now());
         a.setUpdateTime(LocalDateTime.now());
@@ -142,11 +142,11 @@ public class AgentService {
     }
 
     /** 更新智能体；isDefault 变化时同步处理唯一默认 */
-    public AiAgent update(String id, Map<String, Object> body) {
-        AiAgent existing = mapper.selectById(id);
+    public Agent update(String id, Map<String, Object> body) {
+        Agent existing = mapper.selectById(id);
         if (existing == null) throw new BizException(404, "智能体不存在");
         ensureManageable(existing);
-        AiAgent a = toEntity(body, existing);
+        Agent a = toEntity(body, existing);
         a.setUpdateTime(LocalDateTime.now());
         if (Integer.valueOf(1).equals(a.getIsDefault())) {
             clearDefault();
@@ -159,7 +159,7 @@ public class AgentService {
 
     /** 删除智能体 */
     public void delete(String id) {
-        AiAgent existing = mapper.selectById(id);
+        Agent existing = mapper.selectById(id);
         if (existing != null) ensureManageable(existing);
         mapper.deleteById(id);
         log.info("[AGENT] 删除智能体 {}", id);
@@ -167,14 +167,14 @@ public class AgentService {
 
     /** 设为默认（其余清零） */
     public void setDefault(String id) {
-        AiAgent target = mapper.selectById(id);
+        Agent target = mapper.selectById(id);
         if (target == null) throw new BizException(404, "智能体不存在");
         ensureManageable(target);
         if (Integer.valueOf(1).equals(target.getIsSubagent())) {
             throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
         }
         clearDefault();
-        AiAgent a = new AiAgent();
+        Agent a = new Agent();
         a.setId(id);
         a.setIsDefault(1);
         a.setUpdateTime(LocalDateTime.now());
@@ -189,20 +189,20 @@ public class AgentService {
      * {@code updateById} 会跳过 null 字段，导致「恢复全员共享」静默不生效。</p>
      */
     public void updateShareConfig(String id, String shareConfigJson) {
-        AiAgent existing = mapper.selectById(id);
+        Agent existing = mapper.selectById(id);
         if (existing == null) throw new BizException(404, "智能体不存在");
         ensureManageable(existing);
         resourceVisibilityService.validateShareConfig(shareConfigJson);
         String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
-        mapper.update(null, new LambdaUpdateWrapper<AiAgent>()
-                .eq(AiAgent::getId, id)
-                .set(AiAgent::getShareConfig, normalized)
-                .set(AiAgent::getUpdateTime, LocalDateTime.now()));
+        mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                .eq(Agent::getId, id)
+                .set(Agent::getShareConfig, normalized)
+                .set(Agent::getUpdateTime, LocalDateTime.now()));
         log.info("[AGENT] 共享范围更新 id={} scope={}", id, normalized == null ? "全局" : "受限");
     }
 
     /** 把请求体字段映射到实体（仅覆盖 body 中出现的字段，其余保持原值） */
-    private AiAgent toEntity(Map<String, Object> body, AiAgent a) {
+    private Agent toEntity(Map<String, Object> body, Agent a) {
         if (body == null) return a;
         if (body.containsKey("name")) {
             String name = body.get("name") == null ? null : String.valueOf(body.get("name")).trim();
@@ -231,8 +231,8 @@ public class AgentService {
     }
 
     private void clearDefault() {
-        List<AiAgent> all = mapper.selectList(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getIsDefault, 1));
-        for (AiAgent a : all) {
+        List<Agent> all = mapper.selectList(new LambdaQueryWrapper<Agent>().eq(Agent::getIsDefault, 1));
+        for (Agent a : all) {
             a.setIsDefault(0);
             mapper.updateById(a);
         }

@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiKnowledgeRef;
+import com.wisesoft.ai.model.KnowledgeRef;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -15,7 +15,7 @@ import java.util.List;
  * @author yuanke
  */
 @Mapper
-public interface AiKnowledgeRefMapper extends BaseMapper<AiKnowledgeRef> {
+public interface KnowledgeRefMapper extends BaseMapper<KnowledgeRef> {
 
     /** 物理删除某文档全部引用（重解析/删文档/回滚重建用） */
     @Delete("DELETE FROM c_ai_knowledge_ref WHERE doc_id = #{docId}")
@@ -32,10 +32,10 @@ public interface AiKnowledgeRefMapper extends BaseMapper<AiKnowledgeRef> {
     /** 出边查询：这些块引用了谁（命中 A → 带出 B） */
     @Select("<script>SELECT * FROM c_ai_knowledge_ref WHERE from_knowledge_id IN "
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
-    List<AiKnowledgeRef> selectByFromIds(@Param("ids") List<String> ids);
+    List<KnowledgeRef> selectByFromIds(@Param("ids") List<String> ids);
 
     /** 入边查询：谁引用了这些块（命中 B → 带出 C，默认关） */
     @Select("<script>SELECT * FROM c_ai_knowledge_ref WHERE to_knowledge_id IN "
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
-    List<AiKnowledgeRef> selectByToIds(@Param("ids") List<String> ids);
+    List<KnowledgeRef> selectByToIds(@Param("ids") List<String> ids);
 }

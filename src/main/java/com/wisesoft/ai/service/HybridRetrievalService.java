@@ -2,9 +2,9 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +42,7 @@ public class HybridRetrievalService {
     private double vecThreshold() { return configService.getDouble("retrieval.vecThreshold", 0.3); }
 
     private final VectorStore vectorStore;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
     private final KeywordExtractor keywordExtractor;
     private final ConfigService configService;
@@ -123,7 +123,7 @@ public class HybridRetrievalService {
         List<Document> vectorDocs = vectorSearch(query, diag);
 
         // 2. 关键词召回（并行，超时兜底）
-        List<AiKnowledge> kwDocs = keywordSearch(query, diag);
+        List<Knowledge> kwDocs = keywordSearch(query, diag);
 
         // 可见范围过滤：剔除当前用户不可见的文档命中（与向量路同口径，统一在此拦截）
         if (!nonVisibleDocIds.isEmpty()) {
@@ -134,7 +134,7 @@ public class HybridRetrievalService {
         }
 
         // 3. 批量加载向量命中的知识块元数据（一次 selectBatchIds 替代逐条 selectById）+ 不可召回文档集合
-        Map<String, AiKnowledge> kidMap = loadKnowledgeBatch(vectorDocs);
+        Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
 
         // 4. 合并去重 + 加权（默认 sum：A1 双命中叠加；可选 rrf 倒数排名融合，见下）
@@ -149,7 +149,7 @@ public class HybridRetrievalService {
         double vt = vecThreshold();
         for (Document doc : vectorDocs) {
             String kid = String.valueOf(doc.getId());
-            AiKnowledge k = kidMap.get(kid);
+            Knowledge k = kidMap.get(kid);
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
             if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
                 log.debug("[RAG] 跳过非生效文档命中: docId={} kid={}", docId, kid);
@@ -168,7 +168,7 @@ public class HybridRetrievalService {
             merged.put(kid, buildHit(doc, k, kid, score));
         }
         // 关键词命中：score = 关键词权重 × 词频加权分 + 标题奖励；与向量命中叠加（相加）
-        for (AiKnowledge k : kwDocs) {
+        for (Knowledge k : kwDocs) {
             double hitRate = k.getKwScore(); // 词频加权归一化分（0~1，替代原词元占比）
             double score = keywordWeight * hitRate
                     + (k.isTitleHit() ? titleBonus : 0);
@@ -201,8 +201,8 @@ public class HybridRetrievalService {
      * （顶命恒≈1）与向量路绝对归一化之间的标度错配导致的排序漂移。标题/位置奖励是分值加分语义，
      * 不参与名次。单路为空时退化为另一路的纯名次排序。是否优于 sum 需用检索评估页参数组对比验证。
      */
-    private List<Hit> mergeByRrf(List<Document> vectorDocs, List<AiKnowledge> kwDocs,
-                                 Map<String, AiKnowledge> kidMap, Set<String> blockedDocIds,
+    private List<Hit> mergeByRrf(List<Document> vectorDocs, List<Knowledge> kwDocs,
+                                 Map<String, Knowledge> kidMap, Set<String> blockedDocIds,
                                  Set<String> nonVisibleDocIds) {
         Map<String, Hit> base = new LinkedHashMap<>();
         Map<String, Double> rrf = new HashMap<>();
@@ -214,7 +214,7 @@ public class HybridRetrievalService {
         int rank = 0;
         for (Document doc : vecRanked) {
             String kid = String.valueOf(doc.getId());
-            AiKnowledge k = kidMap.get(kid);
+            Knowledge k = kidMap.get(kid);
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
             if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
                 log.debug("[RAG] RRF 跳过非生效文档命中: docId={} kid={}", docId, kid);
@@ -230,11 +230,11 @@ public class HybridRetrievalService {
         }
 
         // 关键词路（词频加权分降序取秩；与 sum 路同样依赖关键词检索自身的 status 过滤）
-        List<AiKnowledge> kwRanked = kwDocs.stream()
-                .sorted(Comparator.comparingDouble(AiKnowledge::getKwScore).reversed())
+        List<Knowledge> kwRanked = kwDocs.stream()
+                .sorted(Comparator.comparingDouble(Knowledge::getKwScore).reversed())
                 .toList();
         rank = 0;
-        for (AiKnowledge k : kwRanked) {
+        for (Knowledge k : kwRanked) {
             String kid = k.getId();
             Hit kwHit = buildHit(k, 0);
             if (base.containsKey(kid)) {
@@ -371,20 +371,20 @@ public class HybridRetrievalService {
     /**
      * 关键词检索：按 keyword.engine 分派——
      * meilisearch（可用时）走外部索引（中文分词 + 相关度打分）；否则/不可用时降级 MySQL 词元 LIKE。
-     * 两条实现返回同一契约：List&lt;AiKnowledge&gt; 且已填充 kwScore/titleHit/hitTerms/totalTerms。
+     * 两条实现返回同一契约：List&lt;Knowledge&gt; 且已填充 kwScore/titleHit/hitTerms/totalTerms。
      */
-    public List<AiKnowledge> keywordSearch(String query) {
+    public List<Knowledge> keywordSearch(String query) {
         return keywordSearch(query, null);
     }
 
     /** 带诊断的关键词检索（fail-loud：Meili 不可用/降级 MySQL/繁忙跳过写入 diag） */
-    public List<AiKnowledge> keywordSearch(String query, RetrievalDiag diag) {
+    public List<Knowledge> keywordSearch(String query, RetrievalDiag diag) {
         List<String> terms = keywordExtractor.extract(query);
         if (terms.isEmpty()) return List.of();
         // LIMIT 必须在调用线程求值：supplyAsync 内跑在 commonPool 线程，ThreadLocal 参数覆盖（评估扫参）传不进去
         int limit = keywordLimit();
         if (keywordIndexService.isAvailable()) {
-            List<AiKnowledge> hits = keywordSearchMeili(query, terms, limit);
+            List<Knowledge> hits = keywordSearchMeili(query, terms, limit);
             if (!hits.isEmpty()) return hits;
             // 索引空/未重建时不静默返回空，回退 MySQL 保证召回（首次切换引擎未 reindex 的常见场景）
             // L2：仅调试展示，不扰用户
@@ -403,7 +403,7 @@ public class HybridRetrievalService {
      * → 剔除非生效文档的块（docId 为空的手动知识块保留，与 MySQL 路 isNull(doc_id) 语义一致）
      * → 保持索引给出的相关度顺序，截到 limit
      */
-    private List<AiKnowledge> keywordSearchMeili(String query, List<String> terms, int limit) {
+    private List<Knowledge> keywordSearchMeili(String query, List<String> terms, int limit) {
         // 过量取回（×2）为状态过滤留余量，避免被弃用/解析中文档的块挤掉有效命中
         // 传 jieba 分词词元而非原始问句：Meili 默认 matchingStrategy=last（首词必须命中，再从末尾逐词删减），
         // 且中文在 Meili 里按字符切 token——直接传原句时，首字（如"怎/如/什"）不在语料中就会直接 0 命中。
@@ -413,7 +413,7 @@ public class HybridRetrievalService {
         if (scored.isEmpty()) return List.of();
         Map<String, Double> scoreById = new LinkedHashMap<>();
         for (KeywordIndexService.ScoredId s : scored) scoreById.put(s.id(), s.score());
-        List<AiKnowledge> loaded;
+        List<Knowledge> loaded;
         try {
             loaded = knowledgeMapper.selectBatchIds(scoreById.keySet());
         } catch (Exception e) {
@@ -421,14 +421,14 @@ public class HybridRetrievalService {
             return List.of();
         }
         if (loaded.isEmpty()) return List.of();
-        Map<String, AiKnowledge> byId = loaded.stream()
+        Map<String, Knowledge> byId = loaded.stream()
                 .collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
         Set<String> blockedDocIds = loadNonRetrievableDocIds(byId);
 
-        List<AiKnowledge> result = new ArrayList<>();
+        List<Knowledge> result = new ArrayList<>();
         for (Map.Entry<String, Double> e : scoreById.entrySet()) {
             if (result.size() >= limit) break;
-            AiKnowledge k = byId.get(e.getKey());
+            Knowledge k = byId.get(e.getKey());
             if (k == null) continue; // 索引有、库已删（漂移）：跳过，reindex 可修正
             if (k.getStatus() != null && k.getStatus() == 1) continue; // 块级停用
             String docId = k.getDocId() == null ? null : String.valueOf(k.getDocId());
@@ -441,7 +441,7 @@ public class HybridRetrievalService {
     }
 
     /** 回填词元命中统计（titleHit 参与融合的标题奖励；hitTerms/totalTerms 供检索调试展示） */
-    private void fillTermStats(AiKnowledge k, List<String> terms) {
+    private void fillTermStats(Knowledge k, List<String> terms) {
         int hit = 0;
         for (String term : terms) {
             if (countOccurrences(k.getContent(), term) > 0 || countOccurrences(k.getTitle(), term) > 0) hit++;
@@ -456,17 +456,17 @@ public class HybridRetrievalService {
      * 命中后按词频加权（tf×idf，标题词频×2）在命中集内归一化到 kwScore（0~1）。
      * 注意：LIKE 无法走索引，知识块量大时依赖 keywordTimeoutMs 超时兜底。
      */
-    private List<AiKnowledge> keywordSearchMysql(List<String> terms, int limit) {
+    private List<Knowledge> keywordSearchMysql(List<String> terms, int limit) {
         return keywordSearchMysql(terms, limit, null);
     }
 
     /** 带诊断的 MySQL 关键词召回（fail-loud：繁忙/超时跳过整路写入 diag） */
-    private List<AiKnowledge> keywordSearchMysql(List<String> terms, int limit, RetrievalDiag diag) {
-        Future<List<AiKnowledge>> future;
+    private List<Knowledge> keywordSearchMysql(List<String> terms, int limit, RetrievalDiag diag) {
+        Future<List<Knowledge>> future;
         try {
             future = keywordFallbackPool.submit(() -> {
                 // WHERE doc_id IN (生效文档) AND ((content LIKE ? OR title LIKE ?) OR ...)
-                QueryWrapper<AiKnowledge> wrapper = new QueryWrapper<AiKnowledge>()
+                QueryWrapper<Knowledge> wrapper = new QueryWrapper<Knowledge>()
                         .and(w -> w.inSql("doc_id", "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0")
                                 .or().isNull("doc_id"))
                         // 块级停用过滤（status 默认 0；NULL 兼容存量行）
@@ -485,7 +485,7 @@ public class HybridRetrievalService {
                     }
                 });
                 wrapper.last("LIMIT " + limit);
-                List<AiKnowledge> hits = knowledgeMapper.selectList(wrapper);
+                List<Knowledge> hits = knowledgeMapper.selectList(wrapper);
                 if (hits.isEmpty()) return hits;
                 return scoreKeywordHits(hits, terms);
             });
@@ -510,10 +510,10 @@ public class HybridRetrievalService {
     /**
      * 词频加权打分（A3）：tf×idf，标题词频×2，min(tf,3) 封顶防极端词频；命中集内归一化到 0~1
      */
-    private List<AiKnowledge> scoreKeywordHits(List<AiKnowledge> hits, List<String> terms) {
+    private List<Knowledge> scoreKeywordHits(List<Knowledge> hits, List<String> terms) {
         // 词元在命中集内的文档频率（IDF 用）
         Map<String, Integer> df = new HashMap<>();
-        for (AiKnowledge k : hits) {
+        for (Knowledge k : hits) {
             for (String term : terms) {
                 if (countOccurrences(k.getContent(), term) > 0 || countOccurrences(k.getTitle(), term) > 0) {
                     df.merge(term, 1, Integer::sum);
@@ -521,7 +521,7 @@ public class HybridRetrievalService {
             }
         }
         double maxScore = 0;
-        for (AiKnowledge k : hits) {
+        for (Knowledge k : hits) {
             int hitTermCount = 0;
             double score = 0;
             for (String term : terms) {
@@ -538,7 +538,7 @@ public class HybridRetrievalService {
             maxScore = Math.max(maxScore, score);
         }
         // 归一化 0~1（最大加权分映射为 1）
-        for (AiKnowledge k : hits) {
+        for (Knowledge k : hits) {
             k.setKwScore(maxScore > 0 ? k.getKwScore() / maxScore : 0);
         }
         return hits;
@@ -571,7 +571,7 @@ public class HybridRetrievalService {
         return score == null ? 0 : score;
     }
 
-    private Hit buildHit(Document doc, AiKnowledge k, String kid, double score) {
+    private Hit buildHit(Document doc, Knowledge k, String kid, double score) {
         Map<String, Object> md = doc.getMetadata();
         String docId = metadataDocId(doc);
         String title = md.get("title") == null ? "" : String.valueOf(md.get("title"));
@@ -599,7 +599,7 @@ public class HybridRetrievalService {
     /**
      * 批量加载向量命中的知识块（一次 selectBatchIds，替代逐条 selectById；失败返回空 Map 走原降级）
      */
-    private Map<String, AiKnowledge> loadKnowledgeBatch(List<Document> vectorDocs) {
+    private Map<String, Knowledge> loadKnowledgeBatch(List<Document> vectorDocs) {
         if (vectorDocs == null || vectorDocs.isEmpty()) return Map.of();
         List<String> ids = vectorDocs.stream()
                 .map(d -> String.valueOf(d.getId()))
@@ -621,9 +621,9 @@ public class HybridRetrievalService {
      * 关键词路已按 status=0 过滤，此处保证两条召回路径语义一致
      * （尤其：重解析 diff 复用保留旧向量、崩溃残留半成品，其向量不应进入上下文）
      */
-    private Set<String> loadNonRetrievableDocIds(Map<String, AiKnowledge> kidMap) {
+    private Set<String> loadNonRetrievableDocIds(Map<String, Knowledge> kidMap) {
         Set<String> docIds = kidMap.values().stream()
-                .map(AiKnowledge::getDocId)
+                .map(Knowledge::getDocId)
                 .filter(Objects::nonNull)
                 .map(String::valueOf)
                 .filter(id -> !id.isBlank())
@@ -690,7 +690,7 @@ public class HybridRetrievalService {
         return v == null ? null : String.valueOf(v);
     }
 
-    private Hit buildHit(AiKnowledge k, double score) {
+    private Hit buildHit(Knowledge k, double score) {
         List<String> images = new ArrayList<>();
         if (k.getImages() != null && !k.getImages().isBlank()) {
             try {
@@ -717,19 +717,19 @@ public class HybridRetrievalService {
     public List<Hit> searchInDoc(String query, String docId, int topK) {
         if (docId == null || docId.isBlank() || topK <= 0) return List.of();
         try {
-            QueryWrapper<AiKnowledge> wrapper = new QueryWrapper<AiKnowledge>()
+            QueryWrapper<Knowledge> wrapper = new QueryWrapper<Knowledge>()
                     .eq("doc_id", docId)
                     .and(w -> w.eq("status", 0).or().isNull("status"))
                     .orderByAsc("chunk_index");
-            List<AiKnowledge> chunks = knowledgeMapper.selectList(wrapper);
+            List<Knowledge> chunks = knowledgeMapper.selectList(wrapper);
             if (chunks.isEmpty()) return List.of();
 
             List<String> terms = keywordExtractor.extract(query == null ? "" : query);
-            List<AiKnowledge> ranked = chunks;
+            List<Knowledge> ranked = chunks;
             if (terms != null && !terms.isEmpty()) {
-                List<AiKnowledge> byTerm = new ArrayList<>(chunks);
+                List<Knowledge> byTerm = new ArrayList<>(chunks);
                 byTerm.sort(Comparator
-                        .comparingInt((AiKnowledge k) -> -scoreTermHits(k, terms))
+                        .comparingInt((Knowledge k) -> -scoreTermHits(k, terms))
                         .thenComparingInt(k -> k.getChunkIndex() == null ? 0 : k.getChunkIndex()));
                 // 首块 0 分说明无任何词元命中 → 退化为原文顺序（文档开头多为概述，比随机块有用）
                 if (!byTerm.isEmpty() && scoreTermHits(byTerm.get(0), terms) > 0) {
@@ -737,7 +737,7 @@ public class HybridRetrievalService {
                 }
             }
             List<Hit> out = new ArrayList<>();
-            for (AiKnowledge k : ranked.subList(0, Math.min(topK, ranked.size()))) {
+            for (Knowledge k : ranked.subList(0, Math.min(topK, ranked.size()))) {
                 out.add(buildHit(k, 10.0));
             }
             return out;
@@ -748,7 +748,7 @@ public class HybridRetrievalService {
     }
 
     /** @ 引用文档内排序分：命中词元数（标题命中 ×2，正文命中 ×1）；非最终检索分，仅用于文档内排序 */
-    private int scoreTermHits(AiKnowledge k, List<String> terms) {
+    private int scoreTermHits(Knowledge k, List<String> terms) {
         String title = k.getTitle() == null ? "" : k.getTitle();
         String content = k.getContent() == null ? "" : k.getContent();
         if (content.length() > 4000) content = content.substring(0, 4000);

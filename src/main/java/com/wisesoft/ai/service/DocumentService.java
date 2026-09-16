@@ -6,11 +6,11 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.Chunk;
 import com.wisesoft.ai.parser.DocumentParser;
 import com.wisesoft.ai.parser.DocxParser;
@@ -67,12 +67,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class DocumentService {
 
     private final AiDocumentMapper documentMapper;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final com.wisesoft.ai.mapper.AiDocumentVersionMapper versionMapper;
     private final VectorStore vectorStore;
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final DocumentMetaCache documentMetaCache;
-    private final com.wisesoft.ai.mapper.AiQaLogMapper qaLogMapper;
+    private final com.wisesoft.ai.mapper.QaLogMapper qaLogMapper;
     private final List<DocumentParser> parsers;
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
@@ -288,7 +288,7 @@ public class DocumentService {
         answerCacheService.clearAll();
     }
 
-    public boolean embedAndStore(AiKnowledge k, String content) {
+    public boolean embedAndStore(Knowledge k, String content) {
         try {
             answerCacheService.clearAll();
             Map<String, Object> metadata = new HashMap<>();
@@ -466,9 +466,9 @@ public class DocumentService {
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
         String lastId = "";
         while (true) {
-            List<AiKnowledge> batch = knowledgeMapper.selectList(new LambdaQueryWrapper<AiKnowledge>()
-                    .gt(AiKnowledge::getId, lastId)
-                    .orderByAsc(AiKnowledge::getId)
+            List<Knowledge> batch = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                    .gt(Knowledge::getId, lastId)
+                    .orderByAsc(Knowledge::getId)
                     .last("LIMIT " + batchSize));
             if (batch.isEmpty()) {
                 break;
@@ -476,7 +476,7 @@ public class DocumentService {
             lastId = batch.get(batch.size() - 1).getId();
             reembedStatus.total = Math.max(reembedStatus.total, reembedStatus.done + batch.size());
             List<Document> docs = new ArrayList<>(batch.size());
-            for (AiKnowledge k : batch) {
+            for (Knowledge k : batch) {
                 Map<String, Object> metadata = new HashMap<>();
                 if (k.getDocId() != null) {
                     metadata.put("docId", k.getDocId());
@@ -549,7 +549,7 @@ public class DocumentService {
         } catch (Exception e) {
             log.warn("[{}] 补偿删除向量失败: {}", docId, e.getMessage());
         }
-        knowledgeMapper.delete(new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+        knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         cleanupImages(docId);
     }
@@ -628,18 +628,18 @@ public class DocumentService {
             // ===== 增量更新：对比式重建 =====
             // 旧块按 content_hash 索引；内容未变的块保留 knowledgeId+向量（跳过重新 embedding）
             // 存量旧块无 hash（老版本数据）时视为全部变更 → 首次重解析等价全量重建，语义正确
-            List<AiKnowledge> oldList = knowledgeMapper.selectList(
-                    new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+            List<Knowledge> oldList = knowledgeMapper.selectList(
+                    new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             hadExistingContent = !oldList.isEmpty();
             // 旧块按 content_hash 索引（同内容多块 → List，逐块一一对应出队，避免重复内容块 id 抖动）
-            Map<String, List<AiKnowledge>> oldByHash = new HashMap<>();
-            for (AiKnowledge ok : oldList) {
+            Map<String, List<Knowledge>> oldByHash = new HashMap<>();
+            for (Knowledge ok : oldList) {
                 if (ok.getContentHash() != null && !ok.getContentHash().isBlank()) {
                     oldByHash.computeIfAbsent(ok.getContentHash(), k -> new ArrayList<>()).add(ok);
                 }
             }
-            List<AiKnowledge> staleOld = new ArrayList<>(oldList);  // 未被新块匹配的旧块（内容变更的旧版/被删段落）→ 清理
-            List<AiKnowledge> newBlocks = new ArrayList<>();        // 本次新增/变更块（向量化成功后同步关键词索引）
+            List<Knowledge> staleOld = new ArrayList<>(oldList);  // 未被新块匹配的旧块（内容变更的旧版/被删段落）→ 清理
+            List<Knowledge> newBlocks = new ArrayList<>();        // 本次新增/变更块（向量化成功后同步关键词索引）
             int reused = 0, added = 0;
             int total = chunks.size();
             for (int i = 0; i < total; i++) {
@@ -656,8 +656,8 @@ public class DocumentService {
                         overlapPrefix = tail.replaceAll("\\[图片[^\\]]*\\]", " ").trim();
                     }
                 }
-                AiKnowledge match = null;
-                List<AiKnowledge> bucket = oldByHash.get(hash);
+                Knowledge match = null;
+                List<Knowledge> bucket = oldByHash.get(hash);
                 if (bucket != null && !bucket.isEmpty()) {
                     match = bucket.remove(bucket.size() - 1);
                     if (bucket.isEmpty()) oldByHash.remove(hash);
@@ -673,7 +673,7 @@ public class DocumentService {
                     continue;
                 }
                 // 新块/变更块：入库 + 待向量化
-                AiKnowledge knowledge = new AiKnowledge();
+                Knowledge knowledge = new Knowledge();
                 knowledge.setDocId(docId);
                 knowledge.setTitle(chunk.title());
                 knowledge.setContent(chunk.content());
@@ -743,7 +743,7 @@ public class DocumentService {
             // 时机必须在向量化成功之后：若向量化失败，旧块仍保留 → hadExistingContent 回退 status=0 时内容完整可用；
             // 若提前删除，失败后旧版已毁、新版未建成，文档知识块全空（回退失效）。
             if (!staleOld.isEmpty()) {
-                List<String> delIds = staleOld.stream().map(AiKnowledge::getVectorId)
+                List<String> delIds = staleOld.stream().map(Knowledge::getVectorId)
                         .filter(Objects::nonNull).filter(s -> !s.isBlank()).toList();
                 if (!delIds.isEmpty()) {
                     try {
@@ -752,7 +752,7 @@ public class DocumentService {
                         log.warn("[{}] 增量清理旧向量失败: {}", docId, e.getMessage());
                     }
                 }
-                for (AiKnowledge d : staleOld) {
+                for (Knowledge d : staleOld) {
                     try {
                         knowledgeMapper.physicalDeleteById(d.getId());
                     } catch (Exception e) {
@@ -760,7 +760,7 @@ public class DocumentService {
                     }
                 }
                 // 关键词索引同步：删除变更/被删块（best-effort）
-                keywordIndexService.deleteChunks(staleOld.stream().map(AiKnowledge::getId)
+                keywordIndexService.deleteChunks(staleOld.stream().map(Knowledge::getId)
                         .filter(Objects::nonNull).toList());
                 log.info("[{}] 增量清理旧块 {} 个（内容变更/删除）", docId, staleOld.size());
             }
@@ -858,13 +858,13 @@ public class DocumentService {
             parseThread.interrupt();
             log.info("[{}] 删除时中断解析线程", docId);
         }
-        List<AiKnowledge> chunks = knowledgeMapper.selectList(
-                new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+        List<Knowledge> chunks = knowledgeMapper.selectList(
+                new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
         // 删除顺序：先删向量，成功后再删 MySQL 行。
         // 反序会产生"MySQL 已删、向量残留"的不可见孤儿（无 knowledgeId 可追溯，只能整库重建）；
         // 本序若向量删除失败则保留 MySQL 行并抛错，用户可重试删除，不产生不可追溯残留。
         if (!chunks.isEmpty()) {
-            List<String> vectorIds = chunks.stream().map(AiKnowledge::getVectorId)
+            List<String> vectorIds = chunks.stream().map(Knowledge::getVectorId)
                     .filter(Objects::nonNull).filter(s -> !s.isBlank()).toList();
             if (!vectorIds.isEmpty()) {
                 try {
@@ -876,7 +876,7 @@ public class DocumentService {
                 }
             }
         }
-        knowledgeMapper.delete(new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+        knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
         documentMapper.deleteById(docId);
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         // 清理版本快照
@@ -924,8 +924,8 @@ public class DocumentService {
                 keywordIndexService.deleteByDoc(docId);
                 log.info("[{}] 文档已弃用，关键词索引已移除", docId);
             } else {
-                List<AiKnowledge> blocks = knowledgeMapper.selectList(
-                        new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+                List<Knowledge> blocks = knowledgeMapper.selectList(
+                        new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
                 if (!blocks.isEmpty()) {
                     keywordIndexService.indexChunks(blocks);
                     log.info("[{}] 文档已恢复，关键词索引已灌入 {} 块", docId, blocks.size());
@@ -990,7 +990,7 @@ public class DocumentService {
      * 顺序保证一致性：向量化失败时 MySQL 与旧向量都不动，抛错让调用方重试，不会出现"内容已改但无向量"。
      */
     public void updateKnowledge(String id, String title, String content) {
-        AiKnowledge k = knowledgeMapper.selectById(id);
+        Knowledge k = knowledgeMapper.selectById(id);
         if (k == null) throw new BizException("知识块不存在");
         if (title == null || title.isBlank()) throw new BizException("标题不能为空");
         if (title.length() > 200) throw new BizException("标题过长（最多200字）");
@@ -1054,7 +1054,7 @@ public class DocumentService {
      * 删除知识块：删向量 + 逻辑删行 + 扣减文档 chunk_count
      */
     public void deleteKnowledge(String id) {
-        AiKnowledge k = knowledgeMapper.selectById(id);
+        Knowledge k = knowledgeMapper.selectById(id);
         if (k == null) throw new BizException("知识块不存在");
         if (k.getDocId() != null) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
@@ -1093,10 +1093,10 @@ public class DocumentService {
      * 保存文档当前知识块状态为版本快照（按 chunk_index 有序，快照含原 knowledgeId 便于回滚后可溯源）
      */
     private void saveSnapshot(String docId, int version) {
-        List<AiKnowledge> chunks = knowledgeMapper.selectList(
-                new LambdaQueryWrapper<AiKnowledge>()
-                        .eq(AiKnowledge::getDocId, docId)
-                        .orderByAsc(AiKnowledge::getChunkIndex));
+        List<Knowledge> chunks = knowledgeMapper.selectList(
+                new LambdaQueryWrapper<Knowledge>()
+                        .eq(Knowledge::getDocId, docId)
+                        .orderByAsc(Knowledge::getChunkIndex));
         List<Map<String, Object>> snapshot = chunks.stream().map(k -> {
             Map<String, Object> m = new HashMap<>();
             m.put("id", k.getId());
@@ -1165,7 +1165,7 @@ public class DocumentService {
 
         // 1. 构建快照块（仅内存，不落库不动向量；复用原 id 保持历史引用可溯源）
         List<org.springframework.ai.document.Document> aiDocs = new ArrayList<>();
-        List<AiKnowledge> rebuilt = new ArrayList<>();
+        List<Knowledge> rebuilt = new ArrayList<>();
         int idx = 0;
         for (Map<String, Object> item : snapshot) {
             // 快照字段：id/title/content/titlePath/images（旧快照无 titlePath 按 null 兼容）
@@ -1177,7 +1177,7 @@ public class DocumentService {
             List<String> imgList = imagesObj instanceof List<?> list
                     ? list.stream().map(String::valueOf).toList() : List.of();
 
-            AiKnowledge k = new AiKnowledge();
+            Knowledge k = new Knowledge();
             if (oldId != null && !oldId.isBlank()) k.setId(oldId);
             k.setDocId(docId);
             k.setTitle(title);
@@ -1201,8 +1201,8 @@ public class DocumentService {
 
         // 2. 先向量化（最终 id 直接写入）。任一批重试一次后仍失败 → 恢复原向量并抛错，当前内容保持可用
         if (!aiDocs.isEmpty()) {
-            List<AiKnowledge> currentRows = knowledgeMapper.selectList(
-                    new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+            List<Knowledge> currentRows = knowledgeMapper.selectList(
+                    new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             java.util.Set<String> written = new java.util.HashSet<>();
             int batchSize = 10;
             for (int i = 0; i < aiDocs.size(); i += batchSize) {
@@ -1225,10 +1225,10 @@ public class DocumentService {
         }
 
         // 3. 行级切换（全为本地幂等操作）：删不在快照中的旧向量与旧行 → 按快照原 id 重建行 → 关键词索引
-        List<AiKnowledge> currentRows = knowledgeMapper.selectList(
-                new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
-        java.util.Set<String> keepIds = rebuilt.stream().map(AiKnowledge::getId).collect(java.util.stream.Collectors.toSet());
-        List<String> staleVectorIds = currentRows.stream().map(AiKnowledge::getVectorId)
+        List<Knowledge> currentRows = knowledgeMapper.selectList(
+                new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
+        java.util.Set<String> keepIds = rebuilt.stream().map(Knowledge::getId).collect(java.util.stream.Collectors.toSet());
+        List<String> staleVectorIds = currentRows.stream().map(Knowledge::getVectorId)
                 .filter(id -> id != null && !id.isBlank() && !keepIds.contains(id))
                 .toList();
         if (!staleVectorIds.isEmpty()) {
@@ -1240,7 +1240,7 @@ public class DocumentService {
         }
         knowledgeMapper.physicalDeleteByDocId(docId);
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步：清空该文档旧块（best-effort）
-        for (AiKnowledge k : rebuilt) {
+        for (Knowledge k : rebuilt) {
             knowledgeMapper.insert(k);
         }
 
@@ -1268,11 +1268,11 @@ public class DocumentService {
      * 再按当前 MySQL 行内容重新向量化——embedding 为瞬时故障时可自愈；仍失败时该文档仅关键词可召回
      * （行与状态均保持原样，重试回滚或重新解析即可恢复向量），不再出现"回滚失败连带当前内容丢失"。
      */
-    private void restoreVectorsAfterRollbackFail(String docId, List<AiKnowledge> currentRows, java.util.Set<String> writtenIds) {
+    private void restoreVectorsAfterRollbackFail(String docId, List<Knowledge> currentRows, java.util.Set<String> writtenIds) {
         try {
-            List<String> rowVectorIds = currentRows.stream().map(AiKnowledge::getVectorId)
+            List<String> rowVectorIds = currentRows.stream().map(Knowledge::getVectorId)
                     .filter(id -> id != null && !id.isBlank()).toList();
-            java.util.Set<String> rowIdSet = currentRows.stream().map(AiKnowledge::getId)
+            java.util.Set<String> rowIdSet = currentRows.stream().map(Knowledge::getId)
                     .collect(java.util.stream.Collectors.toSet());
             List<String> orphanIds = writtenIds.stream().filter(id -> !rowIdSet.contains(id)).toList();
             List<String> toDelete = new ArrayList<>(rowVectorIds);
@@ -1284,7 +1284,7 @@ public class DocumentService {
             log.warn("[{}] 回滚失败后清理向量异常: {}", docId, e.getMessage());
         }
         // 按当前行内容恢复向量（逐行 best-effort；行内容始终在库中，缺向量可稍后重解析补齐）
-        for (AiKnowledge k : currentRows) {
+        for (Knowledge k : currentRows) {
             embedAndStore(k, k.getContent());
         }
         updateProgress(docId, 0, "回滚向量化失败，原内容与向量已恢复，请稍后重试");
@@ -1297,11 +1297,11 @@ public class DocumentService {
     public Map<String, Long> statsHitCounts() {
         Map<String, Long> counts = new HashMap<>();
         try {
-            var logs = qaLogMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wisesoft.ai.model.AiQaLog>()
-                    .isNotNull(com.wisesoft.ai.model.AiQaLog::getHitDocIds)
-                    .ne(com.wisesoft.ai.model.AiQaLog::getHitDocIds, "")
-                    .ge(com.wisesoft.ai.model.AiQaLog::getCreatedAt, java.time.LocalDateTime.now().minusDays(90))
-                    .select(com.wisesoft.ai.model.AiQaLog::getHitDocIds)
+            var logs = qaLogMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wisesoft.ai.model.QaLog>()
+                    .isNotNull(com.wisesoft.ai.model.QaLog::getHitDocIds)
+                    .ne(com.wisesoft.ai.model.QaLog::getHitDocIds, "")
+                    .ge(com.wisesoft.ai.model.QaLog::getCreatedAt, java.time.LocalDateTime.now().minusDays(90))
+                    .select(com.wisesoft.ai.model.QaLog::getHitDocIds)
                     .last("LIMIT 20000"));
             for (var log : logs) {
                 if (log.getHitDocIds() == null || log.getHitDocIds().isBlank()) continue;
@@ -1537,10 +1537,10 @@ public class DocumentService {
         Path dir = Paths.get(properties.getImages().getDir(), "images", docId);
         if (!Files.exists(dir)) return true;
         try {
-            List<AiKnowledge> blocks = knowledgeMapper.selectList(
-                    new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId));
+            List<Knowledge> blocks = knowledgeMapper.selectList(
+                    new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             Set<String> referenced = new HashSet<>();
-            for (AiKnowledge b : blocks) {
+            for (Knowledge b : blocks) {
                 if (b.getImages() == null || b.getImages().isBlank()) continue;
                 try {
                     JSON.parseArray(b.getImages(), String.class).forEach(u -> {
@@ -1679,13 +1679,13 @@ public class DocumentService {
         if (descBackfillRunning.putIfAbsent(docId, Boolean.TRUE) != null) return; // 防重入
         boolean submitted = ThreadPoolManager.execute(() -> {
             try {
-                List<AiKnowledge> blocks = knowledgeMapper.selectList(
-                        new LambdaQueryWrapper<AiKnowledge>().eq(AiKnowledge::getDocId, docId)
-                                .orderByAsc(AiKnowledge::getChunkIndex));
+                List<Knowledge> blocks = knowledgeMapper.selectList(
+                        new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId)
+                                .orderByAsc(Knowledge::getChunkIndex));
                 if (blocks.isEmpty()) return;
                 // 1. 收集全部无描述图 URL（块内裸 [图片] 占位按序对应 images 列表）
                 Set<String> missing = new LinkedHashSet<>();
-                for (AiKnowledge k : blocks) {
+                for (Knowledge k : blocks) {
                     collectMissingImages(k.getContent(), parseImages(k.getImages()), missing);
                 }
                 if (missing.isEmpty()) return;
@@ -1698,7 +1698,7 @@ public class DocumentService {
                 if (descByUrl.isEmpty()) return;
                 // 3. 回写命中块（裸占位替换；复用 updateKnowledge 重新向量化 + 索引同步）
                 int written = 0;
-                for (AiKnowledge k : blocks) {
+                for (Knowledge k : blocks) {
                     String newContent = replaceMissingImages(k.getContent(), parseImages(k.getImages()), descByUrl);
                     if (!newContent.equals(k.getContent())) {
                         try {
@@ -1754,9 +1754,9 @@ public class DocumentService {
     }
 
     /** 补描述后仍无描述（本次未补上）的图片数（M8 fail-loud 统计用） */
-    private int countRemainingMissing(List<AiKnowledge> blocks, Map<String, String> descByUrl) {
+    private int countRemainingMissing(List<Knowledge> blocks, Map<String, String> descByUrl) {
         Set<String> missing = new LinkedHashSet<>();
-        for (AiKnowledge k : blocks) {
+        for (Knowledge k : blocks) {
             collectMissingImages(k.getContent(), parseImages(k.getImages()), missing);
         }
         int remain = 0;

@@ -1,10 +1,10 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
-import com.wisesoft.ai.mapper.AiKnowledgeRefMapper;
-import com.wisesoft.ai.model.AiKnowledge;
-import com.wisesoft.ai.model.AiKnowledgeRef;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.mapper.KnowledgeRefMapper;
+import com.wisesoft.ai.model.Knowledge;
+import com.wisesoft.ai.model.KnowledgeRef;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,8 +36,8 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class KnowledgeRefService {
 
-    private final AiKnowledgeRefMapper refMapper;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeRefMapper refMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final ConfigService configService;
 
     /** 引用表达（记录一次命中：编号 或 章节名；loose=false 的提及类只做精确匹配，控制误报） */
@@ -101,16 +101,16 @@ public class KnowledgeRefService {
     public void rebuildFromKnowledgeId(String knowledgeId, String docId) {
         if (knowledgeId == null || docId == null || knowledgeId.isBlank() || docId.isBlank()) return;
         try {
-            AiKnowledge from = knowledgeMapper.selectById(knowledgeId);
+            Knowledge from = knowledgeMapper.selectById(knowledgeId);
             if (from == null) return;
-            List<AiKnowledge> blocks = knowledgeMapper.selectList(new LambdaQueryWrapper<AiKnowledge>()
-                    .eq(AiKnowledge::getDocId, docId)
-                    .orderByAsc(AiKnowledge::getChunkIndex));
-            List<AiKnowledgeRef> refs = new ArrayList<>();
+            List<Knowledge> blocks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                    .eq(Knowledge::getDocId, docId)
+                    .orderByAsc(Knowledge::getChunkIndex));
+            List<KnowledgeRef> refs = new ArrayList<>();
             for (Candidate c : detectRefs(from.getContent())) {
                 String toId = matchTarget(from, c, blocks);
                 if (toId == null || toId.equals(from.getId())) continue;
-                AiKnowledgeRef r = new AiKnowledgeRef();
+                KnowledgeRef r = new KnowledgeRef();
                 r.setDocId(docId);
                 r.setFromKnowledgeId(from.getId());
                 r.setToKnowledgeId(toId);
@@ -129,17 +129,17 @@ public class KnowledgeRefService {
     public void rebuildByDocId(String docId) {
         if (docId == null || docId.isBlank()) return;
         try {
-            List<AiKnowledge> blocks = knowledgeMapper.selectList(new LambdaQueryWrapper<AiKnowledge>()
-                    .eq(AiKnowledge::getDocId, docId)
-                    .orderByAsc(AiKnowledge::getChunkIndex));
-            List<AiKnowledgeRef> refs = new ArrayList<>();
+            List<Knowledge> blocks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                    .eq(Knowledge::getDocId, docId)
+                    .orderByAsc(Knowledge::getChunkIndex));
+            List<KnowledgeRef> refs = new ArrayList<>();
             Set<String> dedup = new HashSet<>();
-            for (AiKnowledge a : blocks) {
+            for (Knowledge a : blocks) {
                 for (Candidate c : detectRefs(a.getContent())) {
                     String toId = matchTarget(a, c, blocks);
                     if (toId == null || toId.equals(a.getId())) continue;
                     if (!dedup.add(a.getId() + "->" + toId)) continue;
-                    AiKnowledgeRef r = new AiKnowledgeRef();
+                    KnowledgeRef r = new KnowledgeRef();
                     r.setDocId(docId);
                     r.setFromKnowledgeId(a.getId());
                     r.setToKnowledgeId(toId);
@@ -233,10 +233,10 @@ public class KnowledgeRefService {
     }
 
     /** 目标匹配：编号 → 章节名精确 → 弱匹配，逐级降级；匹配不到返回 null（丢弃不阻断） */
-    String matchTarget(AiKnowledge from, Candidate c, List<AiKnowledge> blocks) {
+    String matchTarget(Knowledge from, Candidate c, List<Knowledge> blocks) {
         if (c.num() != null) {
             // 标题文本自带编号的文档（如"4.1.2 数值Api类型"）
-            for (AiKnowledge b : blocks) {
+            for (Knowledge b : blocks) {
                 if (b.getId().equals(from.getId())) continue;
                 String t = b.getTitle() == null ? "" : b.getTitle().trim();
                 if (t.equals(c.num()) || t.startsWith(c.num() + " ")) {
@@ -246,8 +246,8 @@ public class KnowledgeRefService {
             return null; // 编号未命中 → 丢弃（V1 不做路径前缀匹配，避免误匹配子节）
         }
         if (c.name() != null) {
-            List<AiKnowledge> exact = new ArrayList<>();
-            for (AiKnowledge b : blocks) {
+            List<Knowledge> exact = new ArrayList<>();
+            for (Knowledge b : blocks) {
                 if (b.getId().equals(from.getId())) continue;
                 String t = b.getTitle() == null ? "" : b.getTitle().trim();
                 if (t.equals(c.name())) exact.add(b);
@@ -259,8 +259,8 @@ public class KnowledgeRefService {
             }
             // 提及类（无动词）不做弱匹配，避免把正常话题词（如"数据字典"在正文高频出现）误建成引用边
             if (c.loose() && configService.getBoolean("retrieval.refExpandFuzzyName")) {
-                List<AiKnowledge> fuzzy = new ArrayList<>();
-                for (AiKnowledge b : blocks) {
+                List<Knowledge> fuzzy = new ArrayList<>();
+                for (Knowledge b : blocks) {
                     if (b.getId().equals(from.getId())) continue;
                     String t = b.getTitle() == null ? "" : b.getTitle().trim();
                     if ((!t.isEmpty() && t.contains(c.name())) || c.name().contains(t)) fuzzy.add(b);
@@ -302,10 +302,10 @@ public class KnowledgeRefService {
             List<String> hitIds = hits.stream().map(HybridRetrievalService.Hit::knowledgeId).toList();
 
             // 1) 出边 A→B：A 引用了 B
-            List<AiKnowledgeRef> outRefs = refMapper.selectByFromIds(hitIds);
-            for (AiKnowledgeRef r : outRefs) {
+            List<KnowledgeRef> outRefs = refMapper.selectByFromIds(hitIds);
+            for (KnowledgeRef r : outRefs) {
                 if (seen.add(r.getToKnowledgeId())) {
-                    AiKnowledge b = knowledgeMapper.selectById(r.getToKnowledgeId());
+                    Knowledge b = knowledgeMapper.selectById(r.getToKnowledgeId());
                     if (b != null && !(b.getStatus() != null && b.getStatus() == 1)) {
                         extra.add(toHit(b, "REF_OUT"));
                         origins.put(b.getId(), "REF_OUT");
@@ -314,10 +314,10 @@ public class KnowledgeRefService {
             }
             // 2) 入边 C→A：引用 A 的 C（默认关）
             if (configService.getBoolean("retrieval.refExpandIncludeIncoming")) {
-                List<AiKnowledgeRef> inRefs = refMapper.selectByToIds(hitIds);
-                for (AiKnowledgeRef r : inRefs) {
+                List<KnowledgeRef> inRefs = refMapper.selectByToIds(hitIds);
+                for (KnowledgeRef r : inRefs) {
                     if (seen.add(r.getFromKnowledgeId())) {
-                        AiKnowledge c = knowledgeMapper.selectById(r.getFromKnowledgeId());
+                        Knowledge c = knowledgeMapper.selectById(r.getFromKnowledgeId());
                         if (c != null && !(c.getStatus() != null && c.getStatus() == 1)) {
                             extra.add(toHit(c, "REF_IN"));
                             origins.put(c.getId(), "REF_IN");
@@ -332,10 +332,10 @@ public class KnowledgeRefService {
                     if (h.docId() != null && !h.docId().isBlank()) docIds.add(h.docId());
                 }
                 if (!docIds.isEmpty()) {
-                    List<AiKnowledge> all = knowledgeMapper.selectList(new LambdaQueryWrapper<AiKnowledge>()
-                            .in(AiKnowledge::getDocId, docIds));
+                    List<Knowledge> all = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                            .in(Knowledge::getDocId, docIds));
                     for (HybridRetrievalService.Hit h : hits) {
-                        for (AiKnowledge p : findParentBlocks(h, all)) {
+                        for (Knowledge p : findParentBlocks(h, all)) {
                             if (p.getStatus() != null && p.getStatus() == 1) continue; // 块级停用
                             if (seen.add(p.getId())) {
                                 extra.add(toHit(p, "PARENT"));
@@ -361,17 +361,17 @@ public class KnowledgeRefService {
     }
 
     /** 父块定位：titlePath 分段，逐级向上找 title 匹配路径分段且 chunkIndex 在前的最近块 */
-    List<AiKnowledge> findParentBlocks(HybridRetrievalService.Hit hit, List<AiKnowledge> blocks) {
+    List<Knowledge> findParentBlocks(HybridRetrievalService.Hit hit, List<Knowledge> blocks) {
         if (hit.titlePath() == null || hit.titlePath().isBlank() || blocks == null) return List.of();
         String[] segments = hit.titlePath().split("\\s*>\\s*");
         int maxLevels = Math.max(1, configService.getInt("retrieval.refExpandParentMaxLevels", 2));
-        List<AiKnowledge> parents = new ArrayList<>();
+        List<Knowledge> parents = new ArrayList<>();
         int hitIdx = hit.chunkIndex() == null ? 0 : hit.chunkIndex();
         int start = Math.max(0, segments.length - maxLevels);
         for (int i = segments.length - 1; i >= start; i--) {
             String parentTitle = segments[i].trim();
-            AiKnowledge best = null;
-            for (AiKnowledge b : blocks) {
+            Knowledge best = null;
+            for (Knowledge b : blocks) {
                 String t = b.getTitle() == null ? "" : b.getTitle().trim();
                 if (!parentTitle.equals(t)) continue;
                 int idx = b.getChunkIndex() == null ? 0 : b.getChunkIndex();
@@ -385,7 +385,7 @@ public class KnowledgeRefService {
     }
 
     /** 块实体 → 检索 Hit（score=0 不参与排序；PARENT 块按配置精简 content） */
-    private HybridRetrievalService.Hit toHit(AiKnowledge b, String origin) {
+    private HybridRetrievalService.Hit toHit(Knowledge b, String origin) {
         List<String> images = (b.getImages() == null || b.getImages().isBlank())
                 ? List.of()
                 : com.alibaba.fastjson2.JSON.parseArray(b.getImages(), String.class);

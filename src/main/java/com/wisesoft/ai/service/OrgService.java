@@ -2,10 +2,10 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
-import com.wisesoft.ai.mapper.AiDepartmentMapper;
-import com.wisesoft.ai.mapper.AiUserMapper;
-import com.wisesoft.ai.model.AiDepartment;
-import com.wisesoft.ai.model.AiUser;
+import com.wisesoft.ai.mapper.DepartmentMapper;
+import com.wisesoft.ai.mapper.UserMapper;
+import com.wisesoft.ai.model.Department;
+import com.wisesoft.ai.model.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,21 +29,21 @@ public class OrgService {
     private static final String UID_PATTERN = "[A-Za-z0-9_@.\\-]+";
     private static final int NAME_MAX = 100;
 
-    private final AiDepartmentMapper departmentMapper;
-    private final AiUserMapper userMapper;
+    private final DepartmentMapper departmentMapper;
+    private final UserMapper userMapper;
     private final AuthService authService;
 
     // ==================== 部门 ====================
 
-    public List<AiDepartment> listDepartments() {
+    public List<Department> listDepartments() {
         return departmentMapper.selectList(
-                new LambdaQueryWrapper<AiDepartment>().orderByAsc(AiDepartment::getName));
+                new LambdaQueryWrapper<Department>().orderByAsc(Department::getName));
     }
 
-    public AiDepartment createDepartment(String name, String description) {
+    public Department createDepartment(String name, String description) {
         String n = normalizeName(name, "部门名称");
         ensureDeptNameUnique(n, null);
-        AiDepartment d = new AiDepartment();
+        Department d = new Department();
         d.setName(n);
         d.setDescription(trimOrNull(description));
         departmentMapper.insert(d);
@@ -52,7 +52,7 @@ public class OrgService {
     }
 
     public void updateDepartment(String id, String name, String description) {
-        AiDepartment d = departmentMapper.selectById(id);
+        Department d = departmentMapper.selectById(id);
         if (d == null) throw new BizException("部门不存在");
         String n = normalizeName(name, "部门名称");
         ensureDeptNameUnique(n, id);
@@ -61,11 +61,11 @@ public class OrgService {
         departmentMapper.updateById(d);
     }
 
-    /** 删除部门：先校验无用户挂靠；物理删除（见 AiDepartmentMapper 注释，规避软删 + uk_name 的名称占位问题） */
+    /** 删除部门：先校验无用户挂靠；物理删除（见 DepartmentMapper 注释，规避软删 + uk_name 的名称占位问题） */
     public void deleteDepartment(String id) {
-        AiDepartment d = departmentMapper.selectById(id);
+        Department d = departmentMapper.selectById(id);
         if (d == null) throw new BizException("部门不存在");
-        Long used = userMapper.selectCount(new LambdaQueryWrapper<AiUser>().eq(AiUser::getDepartmentId, id));
+        Long used = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getDepartmentId, id));
         if (used != null && used > 0) {
             throw new BizException("该部门下仍有 " + used + " 名用户，请先调整其归属");
         }
@@ -75,20 +75,20 @@ public class OrgService {
 
     // ==================== 用户 ====================
 
-    public List<AiUser> listUsers() {
+    public List<User> listUsers() {
         return userMapper.selectList(
-                new LambdaQueryWrapper<AiUser>().orderByAsc(AiUser::getUsername));
+                new LambdaQueryWrapper<User>().orderByAsc(User::getUsername));
     }
 
     /** 新建用户（必须设置初始密码，否则无法登录） */
-    public AiUser createUser(String uid, String username, String departmentId, String role, String password) {
+    public User createUser(String uid, String username, String departmentId, String role, String password) {
         String u = normalizeUid(uid);
         if (userMapper.selectById(u) != null) throw new BizException("该用户标识已存在");
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, null);
         String r = normalizeRole(role);
         ensureDeptExists(departmentId);
-        AiUser user = new AiUser();
+        User user = new User();
         user.setUid(u);
         user.setUsername(name);
         user.setDepartmentId(trimOrNull(departmentId));
@@ -102,7 +102,7 @@ public class OrgService {
     }
 
     public void updateUser(String uid, String username, String departmentId, String role, Integer status) {
-        AiUser user = userMapper.selectById(uid);
+        User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         String r = normalizeRole(role);
         ensureDeptExists(departmentId);
@@ -121,7 +121,7 @@ public class OrgService {
     }
 
     public void deleteUser(String uid) {
-        AiUser user = userMapper.selectById(uid);
+        User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         if ("superadmin".equals(user.getRole()) && isLastSuperadmin()) {
             throw new BizException("至少保留一名超级管理员，无法删除最后一名");
@@ -154,16 +154,16 @@ public class OrgService {
     }
 
     private void ensureDeptNameUnique(String name, String excludeId) {
-        LambdaQueryWrapper<AiDepartment> q = new LambdaQueryWrapper<AiDepartment>().eq(AiDepartment::getName, name);
-        if (excludeId != null) q.ne(AiDepartment::getId, excludeId);
+        LambdaQueryWrapper<Department> q = new LambdaQueryWrapper<Department>().eq(Department::getName, name);
+        if (excludeId != null) q.ne(Department::getId, excludeId);
         Long c = departmentMapper.selectCount(q);
         if (c != null && c > 0) throw new BizException("部门名称已存在");
     }
 
     /** 用户名唯一（登录可按用户名） */
     private void ensureUsernameUnique(String username, String excludeUid) {
-        LambdaQueryWrapper<AiUser> q = new LambdaQueryWrapper<AiUser>().eq(AiUser::getUsername, username);
-        if (excludeUid != null) q.ne(AiUser::getUid, excludeUid);
+        LambdaQueryWrapper<User> q = new LambdaQueryWrapper<User>().eq(User::getUsername, username);
+        if (excludeUid != null) q.ne(User::getUid, excludeUid);
         Long c = userMapper.selectCount(q);
         if (c != null && c > 0) throw new BizException("用户名已存在");
     }
@@ -175,7 +175,7 @@ public class OrgService {
     }
 
     private boolean isLastSuperadmin() {
-        Long c = userMapper.selectCount(new LambdaQueryWrapper<AiUser>().eq(AiUser::getRole, "superadmin"));
+        Long c = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getRole, "superadmin"));
         return c != null && c <= 1;
     }
 

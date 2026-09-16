@@ -2,8 +2,8 @@ package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
-import com.wisesoft.ai.mapper.AiMessageMapper;
-import com.wisesoft.ai.model.AiMessage;
+import com.wisesoft.ai.mapper.MessageMapper;
+import com.wisesoft.ai.model.Message;
 import com.wisesoft.ai.service.QaLogService;
 import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.util.UserContext;
@@ -30,7 +30,7 @@ import java.util.Map;
 public class QaController {
 
     private final QaLogService qaLogService;
-    private final AiMessageMapper messageMapper;
+    private final MessageMapper messageMapper;
     private final SessionService sessionService;
 
     @Operation(summary = "提交回答反馈", description = "对 AI 回答进行 👍👎 评价，可选填写反馈文本（仅能评价本人会话内的消息）")
@@ -46,7 +46,7 @@ public class QaController {
         int rating = body.get("rating") == null ? 0 : Integer.parseInt(String.valueOf(body.get("rating")));
         String text = body.get("feedbackText") == null ? null : String.valueOf(body.get("feedbackText"));
         // 归属校验：只能评价本人会话内的消息（防用他人 messageId 灌反馈/探测）
-        AiMessage msg = messageMapper.selectByIdIgnoreDeleted(messageId);
+        Message msg = messageMapper.selectByIdIgnoreDeleted(messageId);
         if (msg == null) {
             throw new BizException(404, "消息不存在或已过撤销期");
         }

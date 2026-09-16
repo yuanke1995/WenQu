@@ -1,6 +1,6 @@
 package com.wisesoft.ai.parser;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.VisionService;
@@ -35,7 +35,7 @@ public class PdfParser implements DocumentParser {
     /** OCR 专用提示词：原样输出文字，不做描述/评论 */
     private static final String OCR_PROMPT = "请识别图片中的全部文字内容，按原文原样输出。不要描述界面、不要评论、不要输出多余内容。如果图片中几乎没有文字，返回空。";
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final VisionService visionService;
     private final ConfigService configService;
 

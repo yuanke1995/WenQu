@@ -1,6 +1,6 @@
 package com.wisesoft.ai.service;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -27,9 +27,9 @@ public class ImageUrlSigner {
 
     private static final String HMAC_ALGO = "HmacSHA256";
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
 
-    public ImageUrlSigner(AiAppProperties properties) {
+    public ImageUrlSigner(AppProperties properties) {
         this.properties = properties;
     }
 

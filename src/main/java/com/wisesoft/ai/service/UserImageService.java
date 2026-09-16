@@ -1,6 +1,6 @@
 package com.wisesoft.ai.service;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -30,11 +30,11 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class UserImageService {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final VisionService visionService;
     private final ExecutorService imageExecutor;
 
-    public UserImageService(AiAppProperties properties, VisionService visionService, ConfigService configService) {
+    public UserImageService(AppProperties properties, VisionService visionService, ConfigService configService) {
         this.properties = properties;
         this.visionService = visionService;
         // 用户图片并发处理（本地视觉模型资源有限；vision.userImageConcurrency 可调，默认 2）。

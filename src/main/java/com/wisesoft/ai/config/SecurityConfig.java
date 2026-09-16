@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class SecurityConfig implements WebMvcConfigurer {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ObjectMapper objectMapper;
     private final AdminGuard adminGuard;
     private final com.wisesoft.ai.service.ApiKeyService apiKeyService;

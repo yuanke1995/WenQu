@@ -6,8 +6,8 @@ import com.wisesoft.ai.config.AdminGuard;
 import com.wisesoft.ai.dto.ChatRequest;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.dto.SessionInfo;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.service.ImageUrlSigner;
 import com.wisesoft.ai.service.QaLogService;
 import com.wisesoft.ai.service.RagService;
@@ -50,8 +50,8 @@ public class ChatController {
     private final RagService ragService;
     private final SessionService sessionService;
     private final ImageUrlSigner imageUrlSigner;
-    private final AiKnowledgeMapper knowledgeMapper;
-    private final com.wisesoft.ai.mapper.AiMessageMapper messageMapper;
+    private final KnowledgeMapper knowledgeMapper;
+    private final com.wisesoft.ai.mapper.MessageMapper messageMapper;
     private final ConfigService configService;
     private final RateLimitService rateLimitService;
     private final QaLogService qaLogService;
@@ -260,7 +260,7 @@ public class ChatController {
     @GetMapping("/knowledge/{knowledgeId}")
     public ResultJson knowledgeDetail(
             @Parameter(description = "知识块 ID") @PathVariable("knowledgeId") String knowledgeId) {
-        AiKnowledge k = knowledgeMapper.selectById(knowledgeId);
+        Knowledge k = knowledgeMapper.selectById(knowledgeId);
         if (k == null) {
             return ResultJson.error(404, "知识块不存在");
         }
@@ -286,7 +286,7 @@ public class ChatController {
     public ResultJson deleteMessageGroup(
             @Parameter(description = "该轮回答（assistant 消息）ID") @PathVariable("assistantMessageId") String assistantMessageId,
             HttpServletRequest httpRequest) {
-        com.wisesoft.ai.model.AiMessage assistant = messageMapper.selectById(assistantMessageId);
+        com.wisesoft.ai.model.Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null) throw new BizException(404, "消息不存在");
         sessionService.assertOwned(assistant.getSessionId(), UserContext.resolve(httpRequest));
         int deleted = sessionService.deleteRound(assistant.getSessionId(), assistantMessageId);
@@ -303,7 +303,7 @@ public class ChatController {
         String messageId = body.get("messageId");
         if (messageId == null || messageId.isBlank()) throw new BizException("缺少 messageId");
         // 已软删消息的归属校验：忽略删除标记取回，会话本身仍须存在且属于当前用户
-        com.wisesoft.ai.model.AiMessage assistant = messageMapper.selectByIdIgnoreDeleted(messageId);
+        com.wisesoft.ai.model.Message assistant = messageMapper.selectByIdIgnoreDeleted(messageId);
         if (assistant == null) throw new BizException(404, "消息不存在或已过撤销期");
         sessionService.assertOwned(assistant.getSessionId(), UserContext.resolve(httpRequest));
         int restored = sessionService.undoDeleteRound(assistant.getSessionId(), messageId);

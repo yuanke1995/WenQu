@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_agent")
-public class AiAgent {
+public class Agent {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

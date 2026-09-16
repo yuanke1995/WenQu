@@ -4,9 +4,9 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.config.AiAppProperties;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.config.AppProperties;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -42,9 +42,9 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class KeywordIndexService {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ConfigService configService;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
 
     private final AtomicBoolean supportChecked = new AtomicBoolean(false);
     private volatile boolean available = false;
@@ -66,7 +66,7 @@ public class KeywordIndexService {
     private volatile String clientApiKey = "";
     private volatile int clientTimeout = 0;
 
-    public KeywordIndexService(AiAppProperties properties, ConfigService configService, AiKnowledgeMapper knowledgeMapper) {
+    public KeywordIndexService(AppProperties properties, ConfigService configService, KnowledgeMapper knowledgeMapper) {
         this.properties = properties;
         this.configService = configService;
         this.knowledgeMapper = knowledgeMapper;
@@ -282,13 +282,13 @@ public class KeywordIndexService {
     // ==================== 索引写入（best-effort，失败只告警） ====================
 
     /** upsert 知识块（按 primaryKey=id 覆盖） */
-    public void indexChunks(List<AiKnowledge> blocks) {
+    public void indexChunks(List<Knowledge> blocks) {
         if (!enabled() || blocks == null || blocks.isEmpty()) return;
         if (!isAvailable()) return;
         ensureIndex();
         try {
             List<Map<String, Object>> docs = new ArrayList<>(blocks.size());
-            for (AiKnowledge k : blocks) {
+            for (Knowledge k : blocks) {
                 if (k == null || k.getId() == null) continue;
                 Map<String, Object> d = new LinkedHashMap<>();
                 d.put("id", k.getId());
@@ -381,13 +381,13 @@ public class KeywordIndexService {
                 while (true) {
                     // 只灌有效块（status=0 文档的块 + 手动块 docId IS NULL），使"索引集合 = 有效块集合"闭环：
                     // 弃用/失败文档的块不入索引，启动对账（indexedCount vs 有效块数）不会因残留而每次重建
-                    List<AiKnowledge> batch = knowledgeMapper.selectList(
-                            new LambdaQueryWrapper<AiKnowledge>()
-                                    .gt(AiKnowledge::getId, lastId) // UUID 字符串升序游标
-                                    .and(w -> w.isNull(AiKnowledge::getDocId)
-                                            .or().inSql(AiKnowledge::getDocId,
+                    List<Knowledge> batch = knowledgeMapper.selectList(
+                            new LambdaQueryWrapper<Knowledge>()
+                                    .gt(Knowledge::getId, lastId) // UUID 字符串升序游标
+                                    .and(w -> w.isNull(Knowledge::getDocId)
+                                            .or().inSql(Knowledge::getDocId,
                                                     "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0"))
-                                    .orderByAsc(AiKnowledge::getId)
+                                    .orderByAsc(Knowledge::getId)
                                     .last("LIMIT 1000"));
                     if (batch.isEmpty()) break;
                     indexChunks(batch);
@@ -457,7 +457,7 @@ public class KeywordIndexService {
                 reindexAll();
             } else {
                 for (int i = 0; i < stale.size(); i += 1000) {
-                    List<AiKnowledge> rows = knowledgeMapper.selectBatchIds(
+                    List<Knowledge> rows = knowledgeMapper.selectBatchIds(
                             stale.subList(i, Math.min(i + 1000, stale.size())));
                     indexChunks(rows);
                 }
@@ -476,17 +476,17 @@ public class KeywordIndexService {
             Map<String, String> map = new LinkedHashMap<>();
             String lastId = "";
             while (true) {
-                List<AiKnowledge> batch = knowledgeMapper.selectList(
-                        new LambdaQueryWrapper<AiKnowledge>()
-                                .select(AiKnowledge::getId, AiKnowledge::getContentHash)
-                                .gt(AiKnowledge::getId, lastId)
-                                .and(w -> w.isNull(AiKnowledge::getDocId)
-                                        .or().inSql(AiKnowledge::getDocId,
+                List<Knowledge> batch = knowledgeMapper.selectList(
+                        new LambdaQueryWrapper<Knowledge>()
+                                .select(Knowledge::getId, Knowledge::getContentHash)
+                                .gt(Knowledge::getId, lastId)
+                                .and(w -> w.isNull(Knowledge::getDocId)
+                                        .or().inSql(Knowledge::getDocId,
                                                 "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0"))
-                                .orderByAsc(AiKnowledge::getId)
+                                .orderByAsc(Knowledge::getId)
                                 .last("LIMIT 1000"));
                 if (batch.isEmpty()) break;
-                for (AiKnowledge k : batch) {
+                for (Knowledge k : batch) {
                     map.put(k.getId(), k.getContentHash() == null ? "" : k.getContentHash());
                 }
                 lastId = batch.get(batch.size() - 1).getId();

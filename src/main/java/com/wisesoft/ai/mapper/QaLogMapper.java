@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiQaLog;
+import com.wisesoft.ai.model.QaLog;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -16,7 +16,7 @@ import java.util.Map;
  * @author yuanke
  */
 @Mapper
-public interface AiQaLogMapper extends BaseMapper<AiQaLog> {
+public interface QaLogMapper extends BaseMapper<QaLog> {
 
     /** 最近 limit 条日志中热门问题 TOP10（先取最近 N 条再过滤聚合，保留原 LIMIT 2000 语义） */
     @Select("SELECT question, COUNT(*) AS cnt FROM (" +

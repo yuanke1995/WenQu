@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_image_desc")
-public class AiImageDesc {
+public class ImageDesc {
 
     @TableId
     private String cacheKey;

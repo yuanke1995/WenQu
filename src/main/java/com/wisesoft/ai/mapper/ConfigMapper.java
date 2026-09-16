@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiConfig;
+import com.wisesoft.ai.model.Config;
 import org.apache.ibatis.annotations.Mapper;
 
 /**
@@ -10,5 +10,5 @@ import org.apache.ibatis.annotations.Mapper;
  * @author yuanke
  */
 @Mapper
-public interface AiConfigMapper extends BaseMapper<AiConfig> {
+public interface ConfigMapper extends BaseMapper<Config> {
 }

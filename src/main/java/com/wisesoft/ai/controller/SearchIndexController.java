@@ -2,7 +2,7 @@ package com.wisesoft.ai.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.dto.ResultJson;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.service.KeywordIndexService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,7 +30,7 @@ import java.util.Map;
 public class SearchIndexController {
 
     private final KeywordIndexService keywordIndexService;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
 
     @Operation(summary = "引擎状态与索引统计（indexedCount 与 mysqlCount 对比可发现索引漂移）")
     @GetMapping("/stats")

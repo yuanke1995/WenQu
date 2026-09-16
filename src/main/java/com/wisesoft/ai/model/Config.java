@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_config")
-public class AiConfig {
+public class Config {
 
     /** 配置键（主键，如 chat.model；列名 config_key 避开 MySQL 保留字 key） */
     @TableId(type = IdType.INPUT)

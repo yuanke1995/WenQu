@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiMessage;
+import com.wisesoft.ai.model.Message;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -16,16 +16,16 @@ import java.time.LocalDateTime;
  * @author yuanke
  */
 @Mapper
-public interface AiMessageMapper extends BaseMapper<AiMessage> {
+public interface MessageMapper extends BaseMapper<Message> {
 
     /** 按 ID 查询（忽略逻辑删除标记，撤销删除时定位已软删消息用；自定义 SQL 不经 @TableLogic 改写） */
     @Select("SELECT * FROM c_ai_message WHERE id = #{id}")
-    AiMessage selectByIdIgnoreDeleted(@Param("id") String id);
+    Message selectByIdIgnoreDeleted(@Param("id") String id);
 
     /** 按会话+序号+角色查询（忽略逻辑删除，撤销删除时配对同组用户问题用） */
     @Select("SELECT * FROM c_ai_message WHERE session_id = #{sessionId} AND sequence = #{seq} AND role = #{role} " +
             "ORDER BY create_time DESC LIMIT 1")
-    AiMessage selectBySeqIgnoreDeleted(@Param("sessionId") String sessionId,
+    Message selectBySeqIgnoreDeleted(@Param("sessionId") String sessionId,
                                        @Param("seq") int seq,
                                        @Param("role") String role);
 

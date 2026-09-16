@@ -1,12 +1,12 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.mapper.AiMessageMapper;
-import com.wisesoft.ai.mapper.AiQaFeedbackMapper;
-import com.wisesoft.ai.mapper.AiQaLogMapper;
-import com.wisesoft.ai.model.AiMessage;
-import com.wisesoft.ai.model.AiQaFeedback;
-import com.wisesoft.ai.model.AiQaLog;
+import com.wisesoft.ai.mapper.MessageMapper;
+import com.wisesoft.ai.mapper.QaFeedbackMapper;
+import com.wisesoft.ai.mapper.QaLogMapper;
+import com.wisesoft.ai.model.Message;
+import com.wisesoft.ai.model.QaFeedback;
+import com.wisesoft.ai.model.QaLog;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,9 +29,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class QaLogService {
 
-    private final AiQaLogMapper qaLogMapper;
-    private final AiQaFeedbackMapper feedbackMapper;
-    private final AiMessageMapper messageMapper;
+    private final QaLogMapper qaLogMapper;
+    private final QaFeedbackMapper feedbackMapper;
+    private final MessageMapper messageMapper;
 
     /**
      * 异步落问答日志（不阻塞主流程）
@@ -41,7 +41,7 @@ public class QaLogService {
                          String rewrittenQuery, String stageMsJson) {
         ThreadPoolManager.execute(() -> {
             try {
-                AiQaLog log = new AiQaLog();
+                QaLog log = new QaLog();
                 log.setSessionId(sessionId);
                 log.setQuestion(question == null ? "" : question.length() > 500 ? question.substring(0, 500) : question);
                 log.setAnswerSummary(summary(answer));
@@ -70,14 +70,14 @@ public class QaLogService {
         if (rating != 0 && rating != 1) {
             throw new com.wisesoft.ai.common.BizException("rating 仅支持 0/1");
         }
-        AiQaFeedback existing = feedbackMapper.selectOne(
-                new LambdaQueryWrapper<AiQaFeedback>().eq(AiQaFeedback::getMessageId, messageId).last("limit 1"));
+        QaFeedback existing = feedbackMapper.selectOne(
+                new LambdaQueryWrapper<QaFeedback>().eq(QaFeedback::getMessageId, messageId).last("limit 1"));
         if (existing != null) {
             existing.setRating(rating);
             existing.setFeedbackText(feedbackText);
             feedbackMapper.updateById(existing);
         } else {
-            AiQaFeedback f = new AiQaFeedback();
+            QaFeedback f = new QaFeedback();
             f.setMessageId(messageId);
             f.setRating(rating);
             f.setFeedbackText(feedbackText);
@@ -98,9 +98,9 @@ public class QaLogService {
                 .collect(Collectors.toList());
         if (ids.isEmpty()) return result;
         try {
-            List<AiQaFeedback> list = feedbackMapper.selectList(new LambdaQueryWrapper<AiQaFeedback>()
-                    .in(AiQaFeedback::getMessageId, ids));
-            for (AiQaFeedback f : list) {
+            List<QaFeedback> list = feedbackMapper.selectList(new LambdaQueryWrapper<QaFeedback>()
+                    .in(QaFeedback::getMessageId, ids));
+            for (QaFeedback f : list) {
                 if (f.getRating() != null) {
                     result.put(f.getMessageId(), f.getRating());
                 }
@@ -119,33 +119,33 @@ public class QaLogService {
      */
     public List<Map<String, Object>> listBadCases(int limit) {
         int n = Math.min(Math.max(1, limit), 100);
-        List<AiQaFeedback> dislikes = feedbackMapper.selectList(new LambdaQueryWrapper<AiQaFeedback>()
-                .eq(AiQaFeedback::getRating, 0)
-                .orderByDesc(AiQaFeedback::getCreatedAt)
+        List<QaFeedback> dislikes = feedbackMapper.selectList(new LambdaQueryWrapper<QaFeedback>()
+                .eq(QaFeedback::getRating, 0)
+                .orderByDesc(QaFeedback::getCreatedAt)
                 .last("LIMIT " + n));
         if (dislikes.isEmpty()) return List.of();
 
-        List<String> mids = dislikes.stream().map(AiQaFeedback::getMessageId).toList();
-        Map<String, AiMessage> msgById = new HashMap<>();
+        List<String> mids = dislikes.stream().map(QaFeedback::getMessageId).toList();
+        Map<String, Message> msgById = new HashMap<>();
         messageMapper.selectBatchIds(mids).forEach(m -> msgById.put(m.getId(), m));
 
         // 按 session 预取 user 消息，还原每轮问题（sequence 配对，与评估生成同法）
         Set<String> sids = msgById.values().stream()
-                .map(AiMessage::getSessionId).filter(Objects::nonNull).collect(Collectors.toSet());
-        Map<String, List<AiMessage>> userMsgsBySession = new HashMap<>();
+                .map(Message::getSessionId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<String, List<Message>> userMsgsBySession = new HashMap<>();
         if (!sids.isEmpty()) {
-            messageMapper.selectList(new LambdaQueryWrapper<AiMessage>()
-                            .eq(AiMessage::getRole, "user").in(AiMessage::getSessionId, sids))
+            messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                            .eq(Message::getRole, "user").in(Message::getSessionId, sids))
                     .forEach(u -> userMsgsBySession.computeIfAbsent(u.getSessionId(), k -> new ArrayList<>()).add(u));
         }
 
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (AiQaFeedback f : dislikes) {
-            AiMessage answer = msgById.get(f.getMessageId());
+        for (QaFeedback f : dislikes) {
+            Message answer = msgById.get(f.getMessageId());
             if (answer == null) continue; // 消息已随对话组删除
-            AiMessage user = userMsgsBySession.getOrDefault(answer.getSessionId(), List.of()).stream()
+            Message user = userMsgsBySession.getOrDefault(answer.getSessionId(), List.of()).stream()
                     .filter(u -> u.getSequence() < answer.getSequence())
-                    .max(Comparator.comparingInt(AiMessage::getSequence)).orElse(null);
+                    .max(Comparator.comparingInt(Message::getSequence)).orElse(null);
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("messageId", f.getMessageId());

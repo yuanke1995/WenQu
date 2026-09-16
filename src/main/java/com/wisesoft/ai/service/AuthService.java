@@ -2,9 +2,9 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
-import com.wisesoft.ai.config.AiAppProperties;
-import com.wisesoft.ai.mapper.AiUserMapper;
-import com.wisesoft.ai.model.AiUser;
+import com.wisesoft.ai.config.AppProperties;
+import com.wisesoft.ai.mapper.UserMapper;
+import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.util.AuthCrypto;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -28,15 +28,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final AiUserMapper userMapper;
-    private final AiAppProperties properties;
+    private final UserMapper userMapper;
+    private final AppProperties properties;
 
     /** 运行时解析后的签名密钥（未配置时开发期随机生成） */
     private volatile String resolvedSecret;
 
     @PostConstruct
     void init() {
-        AiAppProperties.Auth a = properties.getAuth();
+        AppProperties.Auth a = properties.getAuth();
         String s = a.getJwtSecret();
         if (s == null || s.isBlank()) {
             resolvedSecret = AuthCrypto.randomSecret();
@@ -67,8 +67,8 @@ public class AuthService {
 
     /** 是否「首次运行」：库中尚无任何已设置密码的用户（仅此时允许初始化管理员） */
     public boolean needsInitialize() {
-        Long n = userMapper.selectCount(new LambdaQueryWrapper<AiUser>()
-                .isNotNull(AiUser::getPasswordHash).ne(AiUser::getPasswordHash, ""));
+        Long n = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                .isNotNull(User::getPasswordHash).ne(User::getPasswordHash, ""));
         return n == null || n == 0;
     }
 
@@ -80,9 +80,9 @@ public class AuthService {
         checkPassword(password);
         if (!needsInitialize()) throw new BizException("系统已初始化，请直接登录或由管理员添加账号");
 
-        AiUser user = userMapper.selectById(u);
+        User user = userMapper.selectById(u);
         if (user == null) {
-            user = new AiUser();
+            user = new User();
             user.setUid(u);
             user.setUsername(name);
             user.setRole("superadmin");
@@ -109,7 +109,7 @@ public class AuthService {
     public Map<String, Object> login(String identifier, String password) {
         String id = required(identifier, "账号");
         required(password, "密码");
-        AiUser user = findByIdentifier(id);
+        User user = findByIdentifier(id);
         // 统一文案，不暴露"账号是否存在"
         if (user == null) throw new BizException("账号或密码不正确");
         if (user.getStatus() != null && user.getStatus() == 0) throw new BizException("账号已被禁用");
@@ -140,7 +140,7 @@ public class AuthService {
     /** 本人改密（校验旧密码） */
     public void changePassword(String uid, String oldPassword, String newPassword) {
         required(uid, "用户标识");
-        AiUser user = userMapper.selectById(uid);
+        User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         if (!AuthCrypto.verifyPassword(user.getPasswordHash(), oldPassword)) {
             throw new BizException("原密码不正确");
@@ -153,7 +153,7 @@ public class AuthService {
 
     /** 管理员重置他人密码（同时清除锁定） */
     public void resetPassword(String uid, String newPassword) {
-        AiUser user = userMapper.selectById(uid);
+        User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         checkPassword(newPassword);
         user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
@@ -164,7 +164,7 @@ public class AuthService {
     }
 
     /** 用户公开信息（不含敏感字段） */
-    public Map<String, Object> userInfo(AiUser u) {
+    public Map<String, Object> userInfo(User u) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("uid", u.getUid());
         m.put("username", u.getUsername());
@@ -186,7 +186,7 @@ public class AuthService {
 
     /** 当前身份（供 /auth/me）：返回 uid/username/role/departmentId 与是否管理员 */
     public Map<String, Object> currentUser(String uid, boolean adminFromGuard) {
-        AiUser u = (uid == null || uid.isBlank()) ? null : userMapper.selectById(uid);
+        User u = (uid == null || uid.isBlank()) ? null : userMapper.selectById(uid);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("user", uid);
         if (u != null) {
@@ -201,14 +201,14 @@ public class AuthService {
 
     // ==================== 内部 ====================
 
-    private AiUser findByIdentifier(String identifier) {
-        AiUser byId = userMapper.selectById(identifier);
+    private User findByIdentifier(String identifier) {
+        User byId = userMapper.selectById(identifier);
         if (byId != null) return byId;
-        return userMapper.selectOne(new LambdaQueryWrapper<AiUser>()
-                .eq(AiUser::getUsername, identifier).last("LIMIT 1"));
+        return userMapper.selectOne(new LambdaQueryWrapper<User>()
+                .eq(User::getUsername, identifier).last("LIMIT 1"));
     }
 
-    private void registerFailure(AiUser user) {
+    private void registerFailure(User user) {
         int max = properties.getAuth().getMaxLoginFailures();
         if (max <= 0) return;
         int count = (user.getLoginFailCount() == null ? 0 : user.getLoginFailCount()) + 1;

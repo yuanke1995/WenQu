@@ -3,9 +3,9 @@ package com.wisesoft.ai.controller;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.DocumentMetaCache;
 import com.wisesoft.ai.service.KeywordExtractor;
@@ -35,9 +35,9 @@ import java.util.Map;
 @RequestMapping("/api/ai")
 @RequiredArgsConstructor
 @Tag(name = "知识库", description = "无命中问题查询、知识块预览、跨文档搜索、手动创建知识块")
-public class AiKnowledgeController {
+public class KnowledgeController {
 
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
     private final DocumentService documentService;
     private final QaLogService qaLogService;
@@ -59,9 +59,9 @@ public class AiKnowledgeController {
             throw new BizException("缺少 docId");
         }
         List<Map<String, Object>> list = knowledgeMapper.selectList(
-                        new LambdaQueryWrapper<AiKnowledge>()
-                                .eq(AiKnowledge::getDocId, docId)
-                                .orderByAsc(AiKnowledge::getChunkIndex))
+                        new LambdaQueryWrapper<Knowledge>()
+                                .eq(Knowledge::getDocId, docId)
+                                .orderByAsc(Knowledge::getChunkIndex))
                 .stream().map(k -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", k.getId());
@@ -86,7 +86,7 @@ public class AiKnowledgeController {
             HttpServletRequest httpRequest) {
         Integer status = body.get("status");
         if (status == null || (status != 0 && status != 1)) throw new BizException("非法状态（0=生效, 1=停用）");
-        AiKnowledge k = knowledgeMapper.selectById(id);
+        Knowledge k = knowledgeMapper.selectById(id);
         if (k == null) throw new BizException(404, "知识块不存在");
         if (k.getDocId() != null && !k.getDocId().isBlank()) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
@@ -94,7 +94,7 @@ public class AiKnowledgeController {
                 throw new BizException("文档解析中，暂不可操作");
             }
         }
-        AiKnowledge upd = new AiKnowledge();
+        Knowledge upd = new Knowledge();
         upd.setId(id);
         upd.setStatus(status);
         knowledgeMapper.updateById(upd);
@@ -121,8 +121,8 @@ public class AiKnowledgeController {
         if (extracted.isEmpty()) extracted.add(keyword.trim());
         final List<String> terms = extracted.size() > 5 ? new ArrayList<>(extracted.subList(0, 5)) : extracted;
 
-        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiKnowledge> wrapper =
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiKnowledge>()
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge>()
                         .last("LIMIT " + Math.min(Math.max(1, limit), 50));
         wrapper.and(w -> {
             for (int i = 0; i < terms.size(); i++) {
@@ -131,7 +131,7 @@ public class AiKnowledgeController {
                 w.and(t -> t.like("content", term).or().like("title", term));
             }
         });
-        List<AiKnowledge> hits = knowledgeMapper.selectList(wrapper);
+        List<Knowledge> hits = knowledgeMapper.selectList(wrapper);
         List<Map<String, Object>> rows = hits.stream().map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", k.getId());
@@ -175,7 +175,7 @@ public class AiKnowledgeController {
             }
         }
 
-        AiKnowledge k = new AiKnowledge();
+        Knowledge k = new Knowledge();
         k.setTitle(title);
         k.setContent(content);
         k.setStatus(0);

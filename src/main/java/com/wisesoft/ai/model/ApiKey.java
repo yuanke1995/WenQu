@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_api_key")
-public class AiApiKey {
+public class ApiKey {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

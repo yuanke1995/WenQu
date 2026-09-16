@@ -4,12 +4,12 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.dto.SessionInfo;
-import com.wisesoft.ai.mapper.AiMessageMapper;
-import com.wisesoft.ai.mapper.AiSessionMapper;
-import com.wisesoft.ai.model.AiMessage;
-import com.wisesoft.ai.model.AiSession;
+import com.wisesoft.ai.mapper.MessageMapper;
+import com.wisesoft.ai.mapper.SessionMapper;
+import com.wisesoft.ai.model.Message;
+import com.wisesoft.ai.model.Session;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,10 +49,10 @@ public class SessionService {
                     "return 1;", Long.class);
 
     private final StringRedisTemplate redisTemplate;
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ObjectMapper objectMapper;
-    private final AiSessionMapper sessionMapper;
-    private final AiMessageMapper messageMapper;
+    private final SessionMapper sessionMapper;
+    private final MessageMapper messageMapper;
     private final TransactionTemplate transactionTemplate;
 
     /**
@@ -63,7 +63,7 @@ public class SessionService {
     public String createSession(String userId) {
         String sessionId = UUID.randomUUID().toString().replace("-", "");
         try {
-            AiSession session = new AiSession();
+            Session session = new Session();
             session.setId(sessionId);
             session.setUserId(normalizeUser(userId));
             session.setMessageCount(0);
@@ -81,8 +81,8 @@ public class SessionService {
      *
      * @return 校验通过的会话实体
      */
-    public AiSession assertOwned(String sessionId, String userId) {
-        AiSession session = sessionMapper.selectById(sessionId);
+    public Session assertOwned(String sessionId, String userId) {
+        Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
             throw new com.wisesoft.ai.common.BizException(404, "会话不存在或已被删除");
         }
@@ -114,7 +114,7 @@ public class SessionService {
      * @return 校验/补建后的会话 ID
      */
     public String ensureSession(String sessionId, String userId) {
-        AiSession session = new AiSession();
+        Session session = new Session();
         session.setId(sessionId);
         session.setUserId(normalizeUser(userId));
         session.setMessageCount(0);
@@ -134,21 +134,21 @@ public class SessionService {
      */
     public List<SessionInfo> listSessions(String userId, String keyword) {
         try {
-            LambdaQueryWrapper<AiSession> wrapper = new LambdaQueryWrapper<>();
+            LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
             // 只看自己的会话（+ anonymous 历史兼容池，仅池访问放行时并入，防跨用户捞取）
-            wrapper.eq(AiSession::getUserId, normalizeUser(userId));
+            wrapper.eq(Session::getUserId, normalizeUser(userId));
             if (canAccessAnonymousPool(userId)) {
-                wrapper.or().eq(AiSession::getUserId, com.wisesoft.ai.util.UserContext.ANONYMOUS);
+                wrapper.or().eq(Session::getUserId, com.wisesoft.ai.util.UserContext.ANONYMOUS);
             }
             if (keyword != null && !keyword.isBlank()) {
                 String esc = escapeLike(keyword.trim());
-                wrapper.and(w -> w.like(AiSession::getTitle, keyword.trim())
-                        .or().inSql(AiSession::getId,
+                wrapper.and(w -> w.like(Session::getTitle, keyword.trim())
+                        .or().inSql(Session::getId,
                                 "SELECT DISTINCT session_id FROM c_ai_message WHERE deleted=0 AND content LIKE '%"
                                         + esc + "%'"));
             }
-            wrapper.orderByDesc(AiSession::getIsPinned)
-                    .orderByDesc(AiSession::getUpdateTime);
+            wrapper.orderByDesc(Session::getIsPinned)
+                    .orderByDesc(Session::getUpdateTime);
             return sessionMapper.selectList(wrapper).stream().map(s -> {
                 SessionInfo info = new SessionInfo();
                 info.setId(s.getId());
@@ -170,7 +170,7 @@ public class SessionService {
      */
     public void updatePin(String userId, String sessionId, boolean pinned) {
         assertOwned(sessionId, userId);
-        updateFlag(sessionId, pinned, "is_pinned", AiSession::setIsPinned);
+        updateFlag(sessionId, pinned, "is_pinned", Session::setIsPinned);
     }
 
     /**
@@ -178,7 +178,7 @@ public class SessionService {
      */
     public void updateFavorite(String userId, String sessionId, boolean favorite) {
         assertOwned(sessionId, userId);
-        updateFlag(sessionId, favorite, "is_favorite", AiSession::setIsFavorite);
+        updateFlag(sessionId, favorite, "is_favorite", Session::setIsFavorite);
     }
 
     /**
@@ -188,7 +188,7 @@ public class SessionService {
         assertOwned(sessionId, userId);
         String t = title.trim();
         if (t.length() > 50) t = t.substring(0, 50).trim();
-        AiSession update = new AiSession();
+        Session update = new Session();
         update.setId(sessionId);
         update.setTitle(t);
         sessionMapper.updateById(update);
@@ -198,12 +198,12 @@ public class SessionService {
      * 通用布尔标志更新（置顶/收藏）
      */
     private void updateFlag(String sessionId, boolean flag, String fieldName,
-                            java.util.function.BiConsumer<AiSession, Integer> setter) {
-        AiSession session = sessionMapper.selectById(sessionId);
+                            java.util.function.BiConsumer<Session, Integer> setter) {
+        Session session = sessionMapper.selectById(sessionId);
         if (session == null) {
             throw new com.wisesoft.ai.common.BizException("会话不存在");
         }
-        AiSession update = new AiSession();
+        Session update = new Session();
         update.setId(sessionId);
         setter.accept(update, flag ? 1 : 0);
         sessionMapper.updateById(update);
@@ -227,9 +227,9 @@ public class SessionService {
         try {
             sessionMapper.deleteById(sessionId);
             // 同步软删除该会话下的所有消息
-            LambdaUpdateWrapper<AiMessage> wrapper = new LambdaUpdateWrapper<>();
-            wrapper.set(AiMessage::getDeleted, 1)
-                    .eq(AiMessage::getSessionId, sessionId);
+            LambdaUpdateWrapper<Message> wrapper = new LambdaUpdateWrapper<>();
+            wrapper.set(Message::getDeleted, 1)
+                    .eq(Message::getSessionId, sessionId);
             messageMapper.update(null, wrapper);
         } catch (Exception e) {
             log.warn("删除会话 MySQL 操作失败: {}", e.getMessage());
@@ -364,11 +364,11 @@ public class SessionService {
     private List<Map<String, Object>> readRecentFromMysql(String sessionId, int rounds) {
         int limit = Math.max(1, rounds * 2);
         try {
-            LambdaQueryWrapper<AiMessage> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(AiMessage::getSessionId, sessionId)
-                    .orderByDesc(AiMessage::getSequence)
+            LambdaQueryWrapper<Message> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Message::getSessionId, sessionId)
+                    .orderByDesc(Message::getSequence)
                     .last("LIMIT " + limit);
-            List<AiMessage> messages = messageMapper.selectList(wrapper);
+            List<Message> messages = messageMapper.selectList(wrapper);
             if (messages.isEmpty()) return Collections.emptyList();
             Collections.reverse(messages); // 恢复时间正序（最新在后）
             return messages.stream().map(this::toMessageMap).collect(Collectors.toList());
@@ -500,9 +500,9 @@ public class SessionService {
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls) {
         return transactionTemplate.execute(status -> {
-            AiSession locked = sessionMapper.selectForUpdate(sessionId);
+            Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
-                AiSession placeholder = new AiSession();
+                Session placeholder = new Session();
                 placeholder.setId(sessionId);
                 placeholder.setMessageCount(0);
                 try {
@@ -517,7 +517,7 @@ public class SessionService {
             }
 
             int seq = messageMapper.maxSequencePhysical(sessionId) + 1;
-            AiMessage msg = new AiMessage();
+            Message msg = new Message();
             msg.setSessionId(sessionId);
             msg.setRole(role);
             msg.setContent(content);
@@ -531,7 +531,7 @@ public class SessionService {
             messageMapper.insert(msg);
 
             // 更新会话：message_count=seq、title（首条用户消息前 50 字）；软删行由 updateById 自动过滤不更新
-            AiSession update = new AiSession();
+            Session update = new Session();
             update.setId(sessionId);
             update.setMessageCount(seq);
             if ("user".equals(role) && content != null && !content.isBlank()
@@ -558,16 +558,16 @@ public class SessionService {
         String uid = normalizeUser(userId);
         try {
             // 先取该用户名下的会话 ID（Redis 按 sessionId 清理需要）
-            List<AiSession> own = sessionMapper.selectList(new LambdaQueryWrapper<AiSession>()
-                    .eq(AiSession::getUserId, uid));
-            List<String> ownIds = own.stream().map(AiSession::getId).toList();
+            List<Session> own = sessionMapper.selectList(new LambdaQueryWrapper<Session>()
+                    .eq(Session::getUserId, uid));
+            List<String> ownIds = own.stream().map(Session::getId).toList();
             // 逻辑删除该用户的会话与其下所有消息
             if (!ownIds.isEmpty()) {
-                messageMapper.delete(new LambdaQueryWrapper<AiMessage>()
-                        .in(AiMessage::getSessionId, ownIds));
+                messageMapper.delete(new LambdaQueryWrapper<Message>()
+                        .in(Message::getSessionId, ownIds));
             }
-            sessionMapper.delete(new LambdaQueryWrapper<AiSession>()
-                    .eq(AiSession::getUserId, uid));
+            sessionMapper.delete(new LambdaQueryWrapper<Session>()
+                    .eq(Session::getUserId, uid));
             // 清理该用户的 Redis 会话 key
             if (!ownIds.isEmpty()) {
                 Set<String> keys = ownIds.stream().map(KEY_PREFIX::concat).collect(java.util.stream.Collectors.toSet());
@@ -586,14 +586,14 @@ public class SessionService {
      * @return 实际删除条数
      */
     public int deleteRound(String sessionId, String assistantMessageId) {
-        AiMessage assistant = messageMapper.selectById(assistantMessageId);
+        Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null || !sessionId.equals(assistant.getSessionId())) return 0;
         List<String> ids = new ArrayList<>();
         ids.add(assistant.getId());
-        AiMessage userMsg = messageMapper.selectOne(new LambdaQueryWrapper<AiMessage>()
-                .eq(AiMessage::getSessionId, sessionId)
-                .eq(AiMessage::getSequence, assistant.getSequence() - 1)
-                .eq(AiMessage::getRole, "user")
+        Message userMsg = messageMapper.selectOne(new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, sessionId)
+                .eq(Message::getSequence, assistant.getSequence() - 1)
+                .eq(Message::getRole, "user")
                 .last("LIMIT 1"));
         if (userMsg != null) ids.add(userMsg.getId());
         int deleted = 0;
@@ -602,9 +602,9 @@ public class SessionService {
         }
         // 会话消息计数递减（best-effort，仅影响侧边栏展示）
         try {
-            AiSession session = sessionMapper.selectById(sessionId);
+            Session session = sessionMapper.selectById(sessionId);
             if (session != null && session.getMessageCount() != null) {
-                AiSession upd = new AiSession();
+                Session upd = new Session();
                 upd.setId(sessionId);
                 upd.setMessageCount(Math.max(0, session.getMessageCount() - ids.size()));
                 sessionMapper.updateById(upd);
@@ -622,21 +622,21 @@ public class SessionService {
      * @return 实际恢复条数（消息可能已被物理清理，恢复 0 条时前端提示已过撤销期）
      */
     public int undoDeleteRound(String sessionId, String assistantMessageId) {
-        AiMessage assistant = messageMapper.selectByIdIgnoreDeleted(assistantMessageId);
+        Message assistant = messageMapper.selectByIdIgnoreDeleted(assistantMessageId);
         if (assistant == null || !sessionId.equals(assistant.getSessionId())) return 0;
         // 已处于未删除状态 = 撤销已被执行过（重复撤销防御，防计数重复加回）
         if (assistant.getDeleted() == null || assistant.getDeleted() == 0) return 0;
         int restored = messageMapper.restoreById(assistant.getId());
-        AiMessage userMsg = messageMapper.selectBySeqIgnoreDeleted(sessionId,
+        Message userMsg = messageMapper.selectBySeqIgnoreDeleted(sessionId,
                 assistant.getSequence() - 1, "user");
         if (userMsg != null) {
             restored += messageMapper.restoreById(userMsg.getId());
         }
         // 计数加回（best-effort）
         try {
-            AiSession session = sessionMapper.selectById(sessionId);
+            Session session = sessionMapper.selectById(sessionId);
             if (session != null) {
-                AiSession upd = new AiSession();
+                Session upd = new Session();
                 upd.setId(sessionId);
                 int base = session.getMessageCount() == null ? 0 : session.getMessageCount();
                 upd.setMessageCount(base + (userMsg != null ? 2 : 1));
@@ -655,10 +655,10 @@ public class SessionService {
      */
     private List<Map<String, Object>> readFromMysql(String sessionId) {
         try {
-            LambdaQueryWrapper<AiMessage> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(AiMessage::getSessionId, sessionId)
-                    .orderByAsc(AiMessage::getSequence);
-            List<AiMessage> messages = messageMapper.selectList(wrapper);
+            LambdaQueryWrapper<Message> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Message::getSessionId, sessionId)
+                    .orderByAsc(Message::getSequence);
+            List<Message> messages = messageMapper.selectList(wrapper);
             if (messages.isEmpty()) return Collections.emptyList();
 
             return messages.stream().map(this::toMessageMap).collect(Collectors.toList());
@@ -671,7 +671,7 @@ public class SessionService {
     /**
      * 消息实体 → 前端展示 Map（含思考/图片/引用来源；字段名与 SSE done 事件一致）
      */
-    private Map<String, Object> toMessageMap(AiMessage m) {
+    private Map<String, Object> toMessageMap(Message m) {
         Map<String, Object> map = new HashMap<>();
         map.put("role", m.getRole());
         map.put("content", m.getContent());
@@ -762,9 +762,9 @@ public class SessionService {
         if (messages == null || messages.isEmpty()) return 0;
         try {
             return transactionTemplate.execute(status -> {
-                AiSession locked = sessionMapper.selectForUpdate(sessionId);
+                Session locked = sessionMapper.selectForUpdate(sessionId);
                 if (locked == null) {
-                    AiSession placeholder = new AiSession();
+                    Session placeholder = new Session();
                     placeholder.setId(sessionId);
                     placeholder.setMessageCount(0);
                     try {
@@ -784,7 +784,7 @@ public class SessionService {
                 Set<String> existingIds = msgIds.isEmpty() ? Collections.emptySet()
                         : new HashSet<>(messageMapper.selectExistingIdsIncludingDeleted(msgIds));
                 Set<String> contentKeys = new HashSet<>(messageMapper.selectList(
-                                new LambdaQueryWrapper<AiMessage>().eq(AiMessage::getSessionId, sessionId))
+                                new LambdaQueryWrapper<Message>().eq(Message::getSessionId, sessionId))
                         .stream()
                         .map(m -> messageKey(m.getRole(), m.getContent(), m.getImages()))
                         .toList());
@@ -805,7 +805,7 @@ public class SessionService {
                         continue; // 旧格式无 ID：按内容判重（历史行为）
                     }
 
-                    AiMessage msg = new AiMessage();
+                    Message msg = new Message();
                     if (msgId != null) {
                         msg.setId(msgId); // 与 Redis 侧 ID 一致：后续合并/幂等可追溯
                     }
@@ -840,7 +840,7 @@ public class SessionService {
 
                 // 同步会话计数/标题（仅非软删行；计数取 max 防止合并场景回写缩水——仅展示用）
                 if (added > 0 && locked != null && (locked.getDeleted() == null || locked.getDeleted() == 0)) {
-                    AiSession update = new AiSession();
+                    Session update = new Session();
                     update.setId(sessionId);
                     int base = locked.getMessageCount() == null ? 0 : locked.getMessageCount();
                     update.setMessageCount(Math.max(base, seq));

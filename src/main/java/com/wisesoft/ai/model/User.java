@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_user")
-public class AiUser {
+public class User {
 
     /** 用户标识（网关透传 X-User-Id） */
     @TableId(type = IdType.INPUT)

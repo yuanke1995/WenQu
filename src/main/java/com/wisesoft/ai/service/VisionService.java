@@ -3,7 +3,7 @@ package com.wisesoft.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -25,12 +25,12 @@ import java.util.Map;
 @Service
 public class VisionService {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ConfigService configService;
     private final ImageDescCache imageDescCache;
     private final RestClient restClient;
 
-    public VisionService(AiAppProperties properties, ConfigService configService, ImageDescCache imageDescCache) {
+    public VisionService(AppProperties properties, ConfigService configService, ImageDescCache imageDescCache) {
         this.properties = properties;
         this.configService = configService;
         this.imageDescCache = imageDescCache;

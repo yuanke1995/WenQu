@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiQaFeedback;
+import com.wisesoft.ai.model.QaFeedback;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 
@@ -13,7 +13,7 @@ import java.util.Map;
  * @author yuanke
  */
 @Mapper
-public interface AiQaFeedbackMapper extends BaseMapper<AiQaFeedback> {
+public interface QaFeedbackMapper extends BaseMapper<QaFeedback> {
 
     /** 反馈表聚合：总数 / 点赞数（rating=1） */
     @Select("SELECT COUNT(*) AS total, SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) AS likes FROM c_ai_qa_feedback")

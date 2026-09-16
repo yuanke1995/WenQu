@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_message")
-public class AiMessage {
+public class Message {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

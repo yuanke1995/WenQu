@@ -1,7 +1,7 @@
 package com.wisesoft.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.model.Knowledge;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -11,7 +11,7 @@ import org.apache.ibatis.annotations.Param;
  * @author yuanke
  */
 @Mapper
-public interface AiKnowledgeMapper extends BaseMapper<AiKnowledge> {
+public interface KnowledgeMapper extends BaseMapper<Knowledge> {
 
     /**
      * 物理删除某文档的全部知识块（版本回滚时释放主键，以便按快照原 id 重建）

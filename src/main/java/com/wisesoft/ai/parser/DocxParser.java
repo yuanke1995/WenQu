@@ -1,6 +1,6 @@
 package com.wisesoft.ai.parser;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.VisionService;
@@ -37,7 +37,7 @@ public class DocxParser implements DocumentParser {
     /** 允许提取的图片类型（浏览器与视觉模型可识别），EMF/WMF/PICT 等矢量图跳过 */
     private static final Set<String> ALLOWED_EXTS = Set.of("png", "jpg", "jpeg", "gif", "bmp", "webp");
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final VisionService visionService;
     private final ConfigService configService;
     private final ExecutorService visionExecutor;
@@ -67,7 +67,7 @@ public class DocxParser implements DocumentParser {
     }
 
 
-    public DocxParser(AiAppProperties properties, VisionService visionService, ConfigService configService) {
+    public DocxParser(AppProperties properties, VisionService visionService, ConfigService configService) {
         this.properties = properties;
         this.visionService = visionService;
         this.configService = configService;

@@ -1,6 +1,6 @@
 package com.wisesoft.ai.service;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
@@ -42,12 +42,12 @@ public class ConfigCryptoService {
     private static final String TRANSFORM = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding";
     private static final String ALGORITHM = "RSA";
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final Environment environment;
     private PrivateKey privateKey;
     private PublicKey publicKey;
 
-    public ConfigCryptoService(AiAppProperties properties, Environment environment) {
+    public ConfigCryptoService(AppProperties properties, Environment environment) {
         this.properties = properties;
         this.environment = environment;
     }

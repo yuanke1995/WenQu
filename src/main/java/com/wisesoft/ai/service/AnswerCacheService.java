@@ -2,8 +2,8 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wisesoft.ai.mapper.AiAnswerCacheMapper;
-import com.wisesoft.ai.model.AiAnswerCache;
+import com.wisesoft.ai.mapper.AnswerCacheMapper;
+import com.wisesoft.ai.model.AnswerCache;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -30,14 +30,14 @@ import java.util.Map;
 @Service
 public class AnswerCacheService {
 
-    private final AiAnswerCacheMapper cacheMapper;
+    private final AnswerCacheMapper cacheMapper;
     private final EmbeddingModel embeddingModel;
     private final ConfigService configService;
 
     /** 内存索引：全量缓存条目（volatile 整体替换，读多写少） */
     private volatile List<Entry> index = List.of();
 
-    public AnswerCacheService(AiAnswerCacheMapper cacheMapper, EmbeddingModel embeddingModel, ConfigService configService) {
+    public AnswerCacheService(AnswerCacheMapper cacheMapper, EmbeddingModel embeddingModel, ConfigService configService) {
         this.cacheMapper = cacheMapper;
         this.embeddingModel = embeddingModel;
         this.configService = configService;
@@ -51,10 +51,10 @@ public class AnswerCacheService {
     /** 从 DB 全量加载进内存（启动/清空后重建） */
     public void reload() {
         try {
-            List<AiAnswerCache> all = cacheMapper.selectList(new LambdaQueryWrapper<AiAnswerCache>()
-                    .orderByAsc(AiAnswerCache::getCreateTime));
+            List<AnswerCache> all = cacheMapper.selectList(new LambdaQueryWrapper<AnswerCache>()
+                    .orderByAsc(AnswerCache::getCreateTime));
             List<Entry> list = new ArrayList<>(all.size());
-            for (AiAnswerCache c : all) {
+            for (AnswerCache c : all) {
                 try {
                     list.add(new Entry(c.getId(), c.getQuestion(), parseVector(c.getEmbedding()), c));
                 } catch (Exception ignored) {
@@ -86,7 +86,7 @@ public class AnswerCacheService {
      * 行不存在说明内存索引滞后（其它实例 clearAll/淘汰）→ 整体失效本地索引并按未命中放行，
      * 保证多副本部署下绝不会返回"知识库已变更"的过期答案。
      */
-    public AiAnswerCache lookup(String question) {
+    public AnswerCache lookup(String question) {
         if (!enabled() || question == null || question.isBlank()) return null;
         if (index.isEmpty()) return null;
         float[] qv;
@@ -121,7 +121,7 @@ public class AnswerCacheService {
             log.debug("[ANSWER-CACHE] 未命中 best={} thr={}", String.format("%.4f", bestScore), thr);
             return null;
         }
-        AiAnswerCache hit = best.cache;
+        AnswerCache hit = best.cache;
         log.info("[ANSWER-CACHE] 命中 similarity={} question=[{}] → cache=[{}]", String.format("%.4f", bestScore), question, best.question);
         // 命中入库校验（原子自增二合一）：DB 行不存在 = 本实例内存索引滞后于共享库
         // （其它实例已 clearAll——知识库变更，或已按 LRU 淘汰该行）。此时内存条目已失效，
@@ -156,7 +156,7 @@ public class AnswerCacheService {
         ThreadPoolManager.execute(() -> {
             try {
                 float[] v = embeddingModel.embed(question);
-                AiAnswerCache c = new AiAnswerCache();
+                AnswerCache c = new AnswerCache();
                 c.setQuestion(question);
                 c.setEmbedding(JSON.toJSONString(v));
                 c.setAnswer(answer);
@@ -234,6 +234,6 @@ public class AnswerCacheService {
     }
 
     /** 内存索引条目 */
-    private record Entry(String id, String question, float[] vector, AiAnswerCache cache) {
+    private record Entry(String id, String question, float[] vector, AnswerCache cache) {
     }
 }

@@ -20,7 +20,7 @@ import java.nio.file.Paths;
 @RequiredArgsConstructor
 public class ImageWebConfig implements WebMvcConfigurer {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ImageUrlSigner imageUrlSigner;
 
     @Override

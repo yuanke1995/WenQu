@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_answer_cache")
-public class AiAnswerCache {
+public class AnswerCache {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;

@@ -1,7 +1,7 @@
 package com.wisesoft.ai.service;
 
-import com.wisesoft.ai.mapper.AiImageDescMapper;
-import com.wisesoft.ai.model.AiImageDesc;
+import com.wisesoft.ai.mapper.ImageDescMapper;
+import com.wisesoft.ai.model.ImageDesc;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -27,12 +27,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ImageDescCache {
 
     private final ConfigService configService;
-    private final AiImageDescMapper descMapper;
+    private final ImageDescMapper descMapper;
     /** prune 节流：每 N 次写入才执行一次清理（避免每次写都扫表） */
     private static final int PRUNE_INTERVAL = 100;
     private final AtomicInteger writeCount = new AtomicInteger();
 
-    public ImageDescCache(ConfigService configService, AiImageDescMapper descMapper) {
+    public ImageDescCache(ConfigService configService, ImageDescMapper descMapper) {
         this.configService = configService;
         this.descMapper = descMapper;
     }
@@ -65,7 +65,7 @@ public class ImageDescCache {
     public String get(String key) {
         if (key == null || key.isBlank()) return null;
         try {
-            AiImageDesc row = descMapper.selectById(key);
+            ImageDesc row = descMapper.selectById(key);
             if (row == null || row.getDescription() == null || row.getDescription().isBlank()) return null;
             if (ttlExpired(row.getUpdateTime())) return null; // 超 TTL：视为过期，重新描述并刷新
             try {

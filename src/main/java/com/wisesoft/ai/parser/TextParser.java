@@ -1,6 +1,6 @@
 package com.wisesoft.ai.parser;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +26,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class TextParser implements DocumentParser {
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
 
     @Override
     public boolean supports(String ext) {

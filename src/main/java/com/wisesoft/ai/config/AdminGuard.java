@@ -34,7 +34,7 @@ public class AdminGuard {
     /** 管理员访问口令请求头名 */
     public static final String HEADER = "X-Admin-Token";
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
 
     /** 是否为管理员请求（判定不抛异常、不落日志噪音，纯布尔） */
     public boolean isAdmin(HttpServletRequest request) {

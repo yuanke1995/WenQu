@@ -2,8 +2,8 @@ package com.wisesoft.ai.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wisesoft.ai.dto.ResultJson;
-import com.wisesoft.ai.mapper.AiUserMapper;
-import com.wisesoft.ai.model.AiUser;
+import com.wisesoft.ai.mapper.UserMapper;
+import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.service.AuthService;
 import com.wisesoft.ai.util.RequestUser;
 import com.wisesoft.ai.util.UserContext;
@@ -31,11 +31,11 @@ public class UserContextInterceptor implements HandlerInterceptor {
     /** 请求属性名：本次请求已通过登录令牌认证 */
     public static final String ATTR_AUTHENTICATED = "ai.authenticated";
 
-    private final AiUserMapper userMapper;
+    private final UserMapper userMapper;
     private final AuthService authService;
     private final ObjectMapper objectMapper;
 
-    public UserContextInterceptor(AiUserMapper userMapper, AuthService authService, ObjectMapper objectMapper) {
+    public UserContextInterceptor(UserMapper userMapper, AuthService authService, ObjectMapper objectMapper) {
         this.userMapper = userMapper;
         this.authService = authService;
         this.objectMapper = objectMapper;
@@ -47,7 +47,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
         if (token != null) {
             String uid = authService.uidFromToken(token);
             if (uid == null) return reject(response, "登录状态已失效，请重新登录");
-            AiUser u = safeLoad(uid);
+            User u = safeLoad(uid);
             if (u == null || (u.getStatus() != null && u.getStatus() == 0)) {
                 return reject(response, "账号不存在或已被禁用");
             }
@@ -59,7 +59,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
         String uid = UserContext.resolve(request);
         String dept = null;
         String role = "user";
-        AiUser u = safeLoad(uid);
+        User u = safeLoad(uid);
         // status=0（禁用）不授予任何身份权益：按未建档处理（部门=null、普通用户）
         if (u != null && (u.getStatus() == null || u.getStatus() != 0)) {
             dept = u.getDepartmentId();
@@ -74,7 +74,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
         RequestUser.clear();
     }
 
-    private AiUser safeLoad(String uid) {
+    private User safeLoad(String uid) {
         if (uid == null || uid.isBlank()) return null;
         try {
             return userMapper.selectById(uid);

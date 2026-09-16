@@ -1,6 +1,6 @@
 package com.wisesoft.ai.service;
 
-import com.wisesoft.ai.config.AiAppProperties;
+import com.wisesoft.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -39,7 +39,7 @@ public class ArtifactService {
     /** 文件名最大长度（含扩展名） */
     private static final int MAX_NAME_LEN = 80;
 
-    private final AiAppProperties properties;
+    private final AppProperties properties;
     private final ImageUrlSigner imageUrlSigner;
 
     /** 会话级 emitter 注册表：问答开始时登记，结束清理；供工具在流式执行中实时下发产物事件 */
@@ -48,7 +48,7 @@ public class ArtifactService {
     private static final ConcurrentHashMap<String, java.util.List<java.util.Map<String, Object>>> SESSION_ARTIFACTS =
             new ConcurrentHashMap<>();
 
-    public ArtifactService(AiAppProperties properties, ImageUrlSigner imageUrlSigner) {
+    public ArtifactService(AppProperties properties, ImageUrlSigner imageUrlSigner) {
         this.properties = properties;
         this.imageUrlSigner = imageUrlSigner;
     }

@@ -2,8 +2,8 @@ package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
-import com.wisesoft.ai.mapper.AiKnowledgeMapper;
-import com.wisesoft.ai.model.AiKnowledge;
+import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.service.DocumentMetaCache;
 import com.wisesoft.ai.service.HybridRetrievalService;
 import com.wisesoft.ai.service.KeywordExtractor;
@@ -38,7 +38,7 @@ public class RetrievalDebugController {
     private final RerankService rerankService;
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
-    private final AiKnowledgeMapper knowledgeMapper;
+    private final KnowledgeMapper knowledgeMapper;
 
     @Operation(summary = "检索链路调试",
             description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题")
@@ -56,7 +56,7 @@ public class RetrievalDebugController {
         result.put("keywordTerms", keywordExtractor.extract(query));
 
         // 1. 关键词命中（含命中率/标题命中）
-        List<AiKnowledge> kwDocs = hybridRetrievalService.keywordSearch(query);
+        List<Knowledge> kwDocs = hybridRetrievalService.keywordSearch(query);
         result.put("keywordHits", kwDocs.stream().map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("knowledgeId", k.getId());
@@ -80,7 +80,7 @@ public class RetrievalDebugController {
             String docId = doc.getMetadata().get("docId") == null ? "" : String.valueOf(doc.getMetadata().get("docId"));
             if (title.isEmpty() || docId.isEmpty()) {
                 try {
-                    AiKnowledge k = knowledgeMapper.selectById(kid);
+                    Knowledge k = knowledgeMapper.selectById(kid);
                     if (k != null) {
                         if (title.isEmpty()) title = k.getTitle() == null ? "" : k.getTitle();
                         if (docId.isEmpty() && k.getDocId() != null) docId = String.valueOf(k.getDocId());
