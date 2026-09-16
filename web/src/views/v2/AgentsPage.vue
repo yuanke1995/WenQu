@@ -268,7 +268,9 @@ const blankForm = () => ({
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
   builtinMode: 'inherit', builtinTools: [],
   skillMode: 'inherit', skills: [],
-  mcpMode: 'inherit', mcps: []
+  mcpMode: 'inherit', mcps: [],
+  // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
+  isSubagent: 0, subAgentIds: []
 })
 const form = ref(blankForm())
 
@@ -418,7 +420,7 @@ const save = async () => {
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
-    subAgentIds: f.isSubagent ? null : (f.subAgentIds.length ? f.subAgentIds.join(',') : '')
+    subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(',')
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」
