@@ -10,50 +10,60 @@
 
 | 模块 | 技术 |
 |------|------|
-| 后端 | Java 17 + Spring Boot 3.5.15 + Spring AI 1.1.8 |
-| ORM | MyBatis-Plus 3.5.12 |
-| 数据库 | OceanBase（MySQL 协议，库 `ai_doc_assistant`，可按环境调整） |
-| 向量库 | Redis Stack（RediSearch，docker 映射端口 **6380**，Jedis 客户端） |
-| LLM | 阿里云 MaaS 网关（OpenAI 兼容：chat=`qwen3.8-27b`，embedding=`qwen3.7-text-embedding-flash`，base-url 不含 `/v1`）；图片理解/OCR 走本地 Ollama `qwen3-vl:2b` |
+| 后端 | Java 17 + Spring Boot 3.5.15 + Spring AI 1.1.8（`spring-ai-bom` 统一版本） |
+| ORM | MyBatis-Plus 3.5.12（逻辑删除 `deleted`，驼峰映射） |
+| 数据库 | OceanBase（MySQL 协议，库 `ai_doc_assistant`，可按环境调整）；13 张 `c_ai_*` 表由启动自动建立 |
+| 向量库 | Redis Stack（RediSearch 向量索引，Jedis 客户端，索引 `ai-doc-index`；连接地址经 `REDIS_HOST`/`REDIS_PORT` 注入，默认 `127.0.0.1:6379`） |
+| LLM | 阿里云 MaaS 网关（OpenAI 兼容：chat=`qwen3.8-27b`，embedding=`qwen3.7-text-embedding-flash`，base-url 不含 `/v1`）；图片理解/OCR 可走本地 Ollama `qwen3-vl:2b` |
+| 智能体编排 | Spring AI Alibaba Agent Framework 1.1.2.3（`StateGraph` 多子智能体并行编排） |
+| MCP | `spring-ai-mcp`（MCP Java SDK 0.18.3）——外部工具服务器接入 |
 | 文档解析 | Apache POI 5.2.3（docx/xlsx）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
-| 前端 | Vue 3 + Vite 5 + Ant Design Vue 4 + markdown-it/DOMPurify/highlight.js（Node ≥ 18，建议 20/22） |
+| 序列化 / 文档 | fastjson2 2.0.31；springdoc-openapi 2.8.8（Swagger UI，生产默认关） |
+| 安全 | RSA 加密落库 API Key（`ConfigCryptoService`）+ SHA-256 哈希签发对外 API Key + 图片 HMAC 签名 URL |
+| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js（`.nvmrc` 固定 Node **18.19.0**，Node ≥18 均可） |
 
 ## 目录结构
 
 ```
-ai-doc-assistant/
-├── pom.xml                          # 后端 Maven 项目（spring-ai-bom 统一管理版本）
+WenQu/                               # 项目根（git 仓库名 WenQu；本地目录名可自定义）
+├── pom.xml                          # 后端 Maven 项目（com.wisesoft:wenqu，产物 target/wenqu.jar）
 ├── src/main/java/.../ai/
 │   ├── AiApplication.java           # 入口
-│   ├── config/                      # AiAppProperties / SecurityConfig / ImageWebConfig / GlobalExceptionHandler / ImageAuthInterceptor
-│   ├── controller/                  # Chat(SSE+会话+消息组) / Document / Qa(反馈+看板) / Config(模型配置) / AiKnowledge(知识块+缺口回流) / RetrievalDebug(检索调试) / Evaluation(检索评估) / AnswerCache(语义缓存) / SearchIndex(关键词索引)
-│   ├── service/                     # RagService / HybridRetrievalService / RerankService / KeywordExtractor / ImageFilterService
-│   │                                # KnowledgeRefService（引用识别+关联扩散）/ DocumentService / VisionService / UserImageService / SessionService / QaLogService / ConfigService / DocumentMetaCache / RateLimitService(限流) / AnswerCacheService(语义缓存) / RetrievalEvaluationService(检索评估) ...
-│   ├── parser/                      # DocumentParser 接口 + DocxParser / PdfParser(OCR) / ExcelParser / TextParser(txt/md/csv)
-│   ├── util/                        # TokenCounter（分语言 token 估算，上下文预算用）
-│   ├── model/ + mapper/ + dto/      # 实体（含 AiDocumentVersion）/ MyBatis-Plus Mapper / 传输对象
-├── src/main/resources/
+│   ├── config/                      # AiAppProperties / SecurityConfig(Token+普通用户白名单) / AdminGuard / ImageWebConfig+ImageAuthInterceptor / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler
+│   ├── controller/                  # 14 个控制器 / 85 个端点：
+│   │                                #   Chat(SSE+会话+消息组+引用溯源) / Document / Qa(反馈+看板) / Config(模型配置+重嵌入) / AiKnowledge(知识块+缺口回流)
+│   │                                #   Agent(智能体) / ApiKey / Mcp / Skill(技能包) / DescCache(图片描述缓存) / AnswerCache / SearchIndex / RetrievalDebug / Evaluation
+│   ├── service/                     # 主链路：RagService(问答编排) / HybridRetrievalService(混合检索+扩散汇总) / RerankService / KnowledgeRefService(引用识别+1-hop 扩散)
+│   │                                #   KeywordIndexService(mysql|meilisearch 双引擎) / KeywordExtractor(jieba) / VisionService / ImageFilterService / ImageDescCache / UserImageService
+│   │                                #   DocumentService(解析+向量化+全量重嵌入编排) / SessionService / QaLogService / ConfigService / RateLimitService / AnswerCacheService / RetrievalEvaluationService
+│   │                                # 智能体与工具：SubAgentOrchestrator(StateGraph 并行编排) / ArtifactService(产物交付) / BuiltinTools(计算器·日期) / KnowledgeRetrievalTool / PresentArtifactTool / SkillTools
+│   │                                #   AgentService / SkillService / McpClientService / ApiKeyService
+│   │                                # 基础设施：DynamicOpenAiChatModel / DynamicEmbeddingModel(配置指纹热切换) / ImageUrlSigner(HMAC) / ConfigCryptoService(RSA) / ConnectivityProbeService / DocumentMetaCache / ScheduleCenter(定时任务) / ThreadPoolManager(线程池)
+│   ├── parser/                      # DocumentParser 接口 + DocxParser(结构感知切分) / PdfParser(扫描件 OCR 降级) / ExcelParser / TextParser(txt/md/csv)
+│   ├── util/                        # TokenCounter(分语言 token 估算) / ImageCompressor(识别用压缩图) / UserContext(X-User-Id 解析)
+│   └── model/ + mapper/ + dto/      # 14 个实体（含 AiDocumentVersion / AiKnowledgeRef / AiAgent / AiApiKey / AiImageDesc）+ 12 个 Mapper + ResultJson·ChatRequest·ChatRef·SessionInfo
 ├── config/
 │   └── application-local.yml        # 本地开发私有配置（含密钥/数据目录，.gitignore 忽略；位于 Spring Boot 外部配置目录，不打进构建产物）
 ├── src/main/resources/
 │   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD/AI_TRUSTED_TOKEN 缺失 fail-fast）
-│   └── schema.sql                   # 建表脚本（启动自动执行，幂等可重复运行）
-├── data/                            # 运行时生成：files/{docId}/ 源文件 + images/{docId}/ 提取图 + images/chat/ 用户图
+│   └── schema.sql                   # 建表脚本（13 张表，启动自动执行，幂等可重复运行）
+├── data/                            # 运行时生成：files/{docId}/ 源文件 + images/{docId}/ 提取图 + images/chat/ 用户图 + artifacts/{sessionId}/ 交付产物 + secret/config-rsa.key + eval/ 评估集
 ├── deploy/nginx.conf                # 生产 nginx 参考配置
-└── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 22）
+└── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 18.19.0）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
-    └── src/views/                   # Chat(智能问答) / Documents(文档管理) / Dashboard(数据看板) / Settings(系统设置) / Evaluation(检索评估)
+    └── src/views/                   # 旧版：Chat / Documents / Dashboard / Settings / Evaluation
+                                     # 新版 v2/：V2Layout 三栏工作台 + ChatPage / AgentsPage(智能体) / DocumentsPage / DashboardPage / SettingsPage / EvaluationPage
 ```
 
 ## 启动方式
 
 ### 1. 环境准备
 
-**Redis Stack**（docker，端口映射 6380）：
+**Redis Stack**（RediSearch 向量索引）：
 ```bash
-docker run -d --name redis-stack -p 6380:6379 redis/redis-stack-server:latest
+docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
 ```
-> RedisVectorStore 自动配置使用 **Jedis** 客户端，项目已引入 `redis.clients:jedis` 且 `spring.data.redis.client-type: jedis`。
+> 宿主端口按实际部署自行映射，后端以 `REDIS_HOST`/`REDIS_PORT` 指向该端口（docker-compose 的映射见 `docker-compose.yml`）。RedisVectorStore 自动配置使用 **Jedis** 客户端，项目已引入 `redis.clients:jedis` 且 `spring.data.redis.client-type: jedis`。
 
 **本地 Ollama**（图片描述 / 扫描 PDF OCR）：安装 Ollama 并拉取视觉模型：
 ```bash
@@ -61,9 +71,9 @@ ollama pull qwen3-vl:2b
 ```
 > 建议设置环境变量 `OLLAMA_NUM_PARALLEL=4`（否则多图描述串行排队）；4GB 显存机器并发度建议 `vision.concurrency=2`。
 
-**数据库**：现有 OceanBase 库 `ai_doc_assistant`（库需预先存在，库名按实际环境配置）。表结构（`c_ai_document`/`c_ai_knowledge`/`c_ai_session`/`c_ai_message`/`c_ai_qa_log`/`c_ai_qa_feedback`/`c_ai_config`/`c_ai_document_version`/`c_ai_knowledge_ref`/`c_ai_answer_cache`）由应用启动自动执行 `schema.sql` 创建（全部 `CREATE TABLE IF NOT EXISTS`，重复启动安全）；也可手动执行：
+**数据库**：现有 OceanBase 库 `ai_doc_assistant`（库需预先存在，库名按实际环境配置）。表结构（`c_ai_document`/`c_ai_knowledge`/`c_ai_session`/`c_ai_message`/`c_ai_qa_log`/`c_ai_qa_feedback`/`c_ai_config`/`c_ai_document_version`/`c_ai_knowledge_ref`/`c_ai_answer_cache`/`c_ai_image_desc`（图片描述缓存）/`c_ai_api_key`（对外 Key）/`c_ai_agent`（智能体配置），共 13 张）由应用启动自动执行 `schema.sql` 创建（全部 `CREATE TABLE IF NOT EXISTS`，重复启动安全）；也可手动执行：
 ```bash
-mysql -h172.168.10.65 -P2881 -uroot -p ai_doc_assistant < src/main/resources/schema.sql
+mysql -h<db-host> -P<db-port> -uroot -p ai_doc_assistant < src/main/resources/schema.sql
 ```
 
 ### 2. 配置环境变量
@@ -74,31 +84,53 @@ export DB_PASSWORD=xxx                    # 数据库密码
 export AI_TRUSTED_TOKEN=xxx               # 内部鉴权 token（与平台网关一致，SecurityConfig 校验）
 
 # ===== 可选 =====
-export AI_DEEPSEEK_KEY=sk-xxxx            # chat 模型密钥（MaaS 网关；有默认空值，缺失不启动失败，但聊天不可用）
+export AI_CHAT_KEY=sk-xxxx                # chat 模型密钥（MaaS 网关；有默认空值，缺失不启动失败，但聊天不可用）
 export DB_HOST=127.0.0.1                  # 数据库主机（容器部署默认 mysql；外部 OceanBase 改为实际地址）
 export DB_PORT=3306                       # 数据库端口
 export DB_NAME=ai_doc_assistant           # 库名
 export DB_USERNAME=root                   # 用户名
 export REDIS_HOST=127.0.0.1
-export REDIS_PORT=6379               # Redis 端口（本机环境覆盖为 6380：docker 映射）
+export REDIS_PORT=6379                    # Redis 端口（按实际部署调整，容器化部署见 docker-compose）
 export AI_VISION_MODEL=qwen3-vl:2b        # 图片描述/OCR 模型（本地 Ollama）
 export AI_VISION_BASE_URL=http://localhost:11434  # 视觉地址（不含 /v1，代码自动拼）
 export AI_VISION_THINK=false              # 关闭 qwen3 思考模式（提速且输出稳定）
 export AI_IMAGES_DIR=./data               # 数据落盘目录（跨平台兜底；生产容器内为 /app/data）
-export AI_IMAGES_AUTH_ENABLED=true        # 图片访问鉴权（HMAC 签名 URL；默认已开启，本地开发在 config/application-local.yml 设 false）
+export AI_IMAGES_AUTH_ENABLED=true        # 图片访问鉴权（HMAC 签名 URL；默认开启，本地调试可置 false）
 export AI_QUERY_REWRITE_ENABLED=true      # 查询改写开关（默认开启）
 export AI_IMAGE_FILTER_ENABLED=true       # 回答图片相关性校验开关（默认开启）
 export AI_RATELIMIT_ENABLED=true          # 接口限流开关（Redis 固定窗口，按用户/IP；也可设置页改）
 export AI_RATELIMIT_CHAT=10               # 问答限频：次/分钟/用户（0=不限）
 export AI_RATELIMIT_UPLOAD=10             # 上传限频：次/分钟/用户（0=不限）
+export AI_RERANK_ENABLED=false            # 重排开关（需本地 reranker 服务，OpenAI 兼容 /v1/rerank）
+export AI_RERANK_BASE_URL=http://localhost:7997
+export AI_RERANK_MODEL=BAAI/bge-reranker-v2-m3
+export AI_KEYWORD_ENGINE=mysql            # 关键词召回引擎：mysql（LIKE 零依赖）| meilisearch
+export AI_MEILI_BASE_URL=http://localhost:7700
+export AI_MEILI_KEY=xxx                   # Meilisearch master key（仅 env/yml，不入库；compose 中必填）
+export AI_MEILI_INDEX=ai-doc-chunks       # 关键词索引名（只从 env/yml 读，永不入库）
+export AI_EMBEDDING_KEY=xxx               # 向量模型密钥（留空回落 AI_CHAT_KEY）
+export AI_EMBEDDING_BASE_URL=             # 向量模型网关地址（留空用默认 MaaS）
+export AI_EMBEDDING_MODEL=qwen3.7-text-embedding-flash
+export AI_INTENT_CLASSIFY_ENABLED=false   # 意图分类（chat/doc 分流，默认关）
+export AI_DEEP_REASONING_ENABLED=true     # 深度思考总开关
+export AI_DEEP_REASONING_MODE=model       # model=透传 enable_thinking / prompt=提示词引导
+export AI_CONTEXT_MODEL_WINDOWS="qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768"
+export AI_CONTEXT_COST_CAP=8000           # 上下文成本软上限（token）
+export AI_SESSION_ANONYMOUS_SHARED=true   # anonymous 存量会话池是否对具名用户可见（false=收紧越权面）
+export AI_VISION_API_KEY=ollama           # 视觉模型密钥（Ollama 不校验，占位值）
+export REDIS_PASSWORD=                    # Redis 密码（默认空）
+export REDIS_DB=0
 export LOG_LEVEL_APP=info                 # 应用日志级别
+export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
+export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
+export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
 export AI_ADMIN_USERS=""                  # 管理员用户白名单（逗号分隔 X-User-Id；"*"=全员管理员，单机自用）
 export AI_ADMIN_TOKEN=""                  # 管理员口令（请求头 X-Admin-Token；无网关/本地部署与前端 VITE_ADMIN_TOKEN 一致）
                                           # 两者任一命中即管理员；均未配置则管理端点默认 403（只问答可用的最小开放）
-export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（生产默认关，本地开发在 application-local.yml 已开启）
+export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
 
-**本地开发**：无需 export，把真实值直接写入项目根 `config/application-local.yml`（私有文件，已加入 .gitignore；Spring Boot 自动从外部 `config/` 目录加载，**不打进构建产物**——密钥不会随 jar 分发；**数据目录 `ai-app.images.dir` 也在此配置**，Windows 机器改成 `D:/workspace/ai-doc-assistant/data` 即可，天然区分平台。该文件同时可关闭图片鉴权 `auth-enabled: false` 保持本地开发便利），然后以 `local` profile 启动（application.yml 已默认激活 local）：
+**本地开发**：无需 export。密钥、数据目录等环境相关值放在项目根 `config/application-local.yml`（Spring Boot 外部配置目录，已被 .gitignore 忽略，**不打进构建产物**——密钥不会随 jar 分发），再以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
 - 命令行：`SPRING_PROFILES_ACTIVE=local mvn spring-boot:run`
 
@@ -120,13 +152,13 @@ docker compose up -d
 
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
-接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需在请求头携带 `X-Trusted-Token`）。**默认仅本地打开**：本地开发在 `config/application-local.yml` 已启用；生产 `SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），如需临时开启 export `SPRINGDOC_ENABLED=true`。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或由 nginx/网关注入鉴权。
+接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需在请求头携带 `X-Trusted-Token`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或由 nginx/网关注入鉴权。
 
 ### 4. 启动前端
 
 ```bash
 cd web
-nvm use            # 或使用 Node 20/22（.nvmrc 已固定 22）
+nvm use            # .nvmrc 固定 Node 18.19.0（Node ≥18 均可，建议 18/20/22）
 npm install
 npm run dev        # 访问 http://localhost:5800（端口被占直接报错，不会跳号）
 ```
@@ -141,6 +173,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 4. **数据看板**：统计卡片（问答量/满意率/引用率/无命中率，加载骨架不闪 0）+ 热门问题/无命中 TOP10 + **知识库缺口管理**（无命中问题一键入库，含向量召回）+ **差评样本回流**（看板还原差评问题与引用块，一键加入检索评估集）+ **检索质量自动体检**（定时按线上参数跑评估集并与上期对比，指标下滑即红黄灯预警，可手动触发；**评估集变更自动重置基线**——重新生成评估集后样本变化，本期记为新的基线，不再跨样本误报下滑）
 5. **系统设置**：**问答/视觉/向量三类模型均可跨厂商热切换**（网关地址/API Key/模型名，API Key 以 RSA 加密入库）+ 温度/System Prompt（角色段）/检索权重与行为参数/重排区间/解析并发与结构切分/上下文参数，**保存即生效**（DB 存储，折叠分组展示，顶部**锚点导航**快速定位 + 滚动高亮，参数带 `?` 说明，**调试/排障用开关以橙色「调试」徽标区别**——检索调试入口、降级提示、体检 LLM 评判）；其中**向量模型切换会先探测新配置**（不可达/维度非法一律拒绝保存），通过后自动全量重嵌入，面板内展示进度/维度变化/耗时/索引对账并可手动重试；问答输入框左侧深度思考开关（图标按钮，localStorage 记忆）；深度思考增强：**思考链注入最终回答**（推理过程截断作参考注入生成 prompt）、**思考关键词增强检索**（从思考全文提取词元补充召回，失败降级也复用）、**思考长度护栏**（默认 3000 字截断保留）、思考完成自动折叠、**自动路由**（autoRoute 可开：长问/多条件/对比类自动启用）
 6. **检索评估**（顶栏入口）：评估集从历史问答引用回放生成（问题→期望知识块，差评案例自动补充）→ **一键体检**（当前配置跑全量评估，红绿灯结论 + 落空/低分题目清单，零参数门槛）→ **对比调优**（+ 添加参数组选预设：关键词优先/向量优先/向量+重排/多路模拟，或自定义；空参数框灰色占位回显当前值）→ 结果表 **recall@k/MRR/命中率** 相对基线 ↑↓ 对比 + 自动结论，好的组**一键「应用此组」直接写入配置生效**（不污染评估，应用前可看逐问题明细）
+7. **智能体与外部工具**（新版 v2 工作台 `/v2/agents`，管理员；**下列能力默认全部关闭**，需先在设置页开启 `agent.enabled` / `tool.enabled` / `skill.enabled` / `mcp.enabled`）：**多智能体配置**——每个智能体可独立设 模型 / System Prompt / 知识范围 / 工具开关 / 技能 / MCP，并指定默认对话智能体（对话页顶部下拉切换，未选则用默认）；**子智能体编排**——标记为子智能体的配置可被主智能体按需并行委派（多视角子查询各自「检索 + 提炼」，再由汇总节点合并，去重与摘要在 `agent.*` 下配置）；**工具生态**——内置工具（计算器、日期）、知识检索工具（`knowledge_retrieval`，命中块自动续编 `[N]` 引用）、产物交付工具（`present_artifacts` 生成文件并实时以卡片下发）、技能包（Skills，按需读取 SKILL.md 全文的渐进披露模式）、MCP 外部工具（接入 MCP Server，工具调用过程经 `tool_status` 事件实时反馈）；**技能包管理**（内置 + 用户目录，支持新建、从 URL 安装、启停用、查看 SKILL.md）；**对外 API Key**（为第三方系统签发只具备问答链路权限的 Key，库内只存 SHA-256 哈希 + 前 8 位前缀，明文仅签发时返回一次，可改名/停用/删除）
 
 ## 核心功能
 
@@ -157,22 +190,31 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **数据闭环**：问答日志（含改写后问题/命中文档/耗时）+ 回答 👍👎 反馈 + 看板聚合；**无命中问题汇总 → 一键创建知识块（自动生成向量）**，形成"发现缺口→补充→验证"闭环；**差评回流**：看板差评样本还原问题与引用块 → 一键加入检索评估集（`POST /api/ai/eval/case` 单条增补），调参后可用真实坏例回归验证
 - **检索调试**：`POST /api/ai/debug/retrieval` 分步展示检索词元（分词结果）/关键词/向量/合并/重排/最终结果与命中率，前端问答页"检索调试"按钮可视化排查召回问题
 - **检索评估**：`POST /api/ai/eval/generate` 从历史问答引用（`c_ai_message.sources`）回放生成评估集（问题→期望知识块，失效期望块自动剔除并计数；差评回流单条增补）→ `POST /api/ai/eval/run` 批量参数组对比 **recall@k / MRR / 命中率** + 弃用文档召回断言；前端四件套：**一键体检**（当前配置全量评估 → 红绿灯结论 + 落空/低分题清单）、**预设参数组**（关键词优先/向量优先/向量+重排/多路模拟，空参数框占位回显当前值）、**一键应用**（好的组直接写入 `c_ai_config` 广播生效，检索 topK/阈值/关键词上限/重排区间等键已纳入在线白名单）、**自动结论**（相对基线 ↑↓ 与可应用建议）；**自动体检基线护栏**（报告携带评估集标识，重新生成评估集后样本变化，本期自动记为新的基线、不做跨样本 delta 判定，避免假性下滑；**每次回放前对期望块做存活校验**——文档删除/重解析后的失效标签运行期剔除、全失效 case 跳过，期望标签漂移同样记为新的基线，杜绝"内容漂移被误报为检索质量下滑"）；**LLM 评判检索充分性**（`eval.judgeEnabled` 调试开关：对每个 case 判“命中资料是否足以直接回答”，证据窗口与产品上下文上限一致（`context.maxContextHits` 条），评判模型可用 `eval.judgeModel` 独立配置（留空回落 `chat.model`），产出 judgeScore，作为 recall 之外的端到端度量）；参数覆盖走线程局部 override，**不写 DB 不污染生产配置**（multi 模式为确定性拆分近似，衡量多路合并机制而非 LLM 深度思考质量）
+- **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具与技能开关 / MCP / 是否子智能体 / 子智能体列表 / 是否默认）；每轮问答可带 `agentId` 指定智能体，未填维度继承全局配置；对话页顶部下拉切换（`GET /api/ai/agent/available` 为普通用户可访问的精简列表，只含 id/name/description/model/isDefault）
+- **子智能体编排（StateGraph）**：主智能体回答时把问题拆给若干子智能体**并行**执行「独立检索 + 提炼」，再由汇总节点合并回主流程（`SubAgentOrchestrator`，基于 Spring AI Alibaba StateGraph；`agent.enabled`/`agent.subAgents`/`agent.topKPerAgent`/`agent.digestEnabled` 可调，**总开关默认 false**）；工具调用过程经 SSE `tool_status` 事件实时反馈
+- **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（`@Tool knowledge_retrieval`，命中块注册进当前流 `sources` 并续编引用编号）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{sessionId}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（`SkillTools`，渐进披露读 `SKILL.md`，默认关）；开关集中在 `tool.*`，**总开关与四个子开关默认均为 false**
+- **技能包（Skills）**（`skill.enabled` 默认 false）：目录 + `SKILL.md` 形式的可插拔能力（内置目录 + 用户目录，默认 `./data/skills`），支持新建 / 从 URL 安装 / 启停用 / 删除 / 查看全文；可把技能说明注入 System Prompt（`skill.injectEnabled`/`skill.injectMaxChars`）或由模型按需读取（`skill.toolEnabled`）；`skill.disabledNames` 由系统写入
+- **MCP 外部工具**（`mcp.enabled` 默认 false）：接入任意 MCP Server（`mcp.servers` 为 `[{name,url,type}]`，type=streamable\|sse），提供连接状态（含每 server 工具数）、整体重连、以及**不落配置的临时连通性探测 + 工具清单**（`POST /api/ai/mcp/probe`）
+- **对外 API Key**：`c_ai_api_key` 只存 SHA-256 哈希 + 前 8 位前缀（明文仅签发时返回一次），权限固定为问答链路——**即便持有 Key 也访问不了管理端点**（仍 403）；支持改名、启停用（即刻吊销）、删除
+- **@ 引用（atRef）**：问答输入框可 @ 指定文档，被 @ 文档内与问题最相关的块**前置注入上下文**（`atRef.maxChunksPerDoc` 默认 3、`atRef.maxTotal` 默认 6，防 @ 块挤占普通检索命中）；请求体字段 `refs[]`（`ChatRef.type=doc`）
+- **意图分类（默认关）**：先判用户消息是 `chat`（问候/闲聊/与知识库无关）还是 `doc`（可能需要查手册），`chat` 分支走简短回应且不引用资料；`intent.enabled` 默认 false（`AI_INTENT_CLASSIFY_ENABLED` 可开），`intent.model` 可配更小更快的模型，超时按 `doc` 处理，消息带图时不分类
+- **图片描述缓存**：`c_ai_image_desc` 按**内容寻址**（`v{版本}_{sha256}`）持久化图片描述，同一张图跨文档/重解析不再重复调用视觉模型；`vision.descCacheVersion`（改动即全量重新描述）/`vision.descCacheTtlDays` 控制生命周期，运维端点可看统计、清理过期与旧版本、清空
 - **会话**：MySQL + Redis 双层存储，历史恢复（含图片/引用来源/messageId/检索状态行）、删除/清空、**搜索/置顶/收藏**、侧边栏拖拽伸缩（宽度记忆）、**按消息组删除问答**（多选模式：勾回答默认勾同组问题，支持撤销）、消息时间戳、推荐问题池（`chat.suggestedQuestions`，设置页编辑 + 看板热门问题一键加入，欢迎页展示）
 - **前端体验**：markdown-it + DOMPurify + highlight.js 安全渲染（代码块复制按钮、**长行自动折行 + 限高滚动**、**表格渲染容错**：LLM 在标题/列表后未留空行的表格自动补空行独立渲染、结尾孤立竖线清理）、重新生成/编辑重问（编辑图标悬浮气泡下方）、图片灯箱（**滚轮按幅度平滑缩放**：每 100 单位滚轮量 8%、单次 clamp ±30% 防惯性跳变）、发送后自动滚动到底部（不等首个 token）、问答 👍👎 反馈（**单选锁定**：评价后两按钮禁用不可再点，刷新/重进会话仍保持——历史消息回带既有评价）、断连自动重试内联提示、全局错误边界（渲染异常友好提示防白屏、401 统一提示）、图片加载失败占位图、上传进度条
 - **深度思考（生产级）**：思考流式展示（`model` 透传 reasoning_content / `prompt` 引导双模式）→ 提取 `<search>` 检索计划（精化 query + 子问题）→ 多路并行检索合并 → 复用上下文构建与回答流。增强：**思考链注入最终回答**（`injectThinking` 默认开：推理过程截断后作为参考注入生成 prompt，明确"以参考资料为准"，让"想过的拆解"作用于"答"）；**思考关键词增强检索**（`injectKeywords` 默认开：从思考全文提取词元补充多路检索，思考失败时也用于增强降级检索，思考不白费）；**失败细化降级**（超时/异常时已收集内容若含检索计划仍走多路，否则"原问题 + 思考词元"增强检索）；**思考长度护栏**（`maxThinkingChars` 默认 3000：超限截断思考流并保留已想内容，防刷爆上下文/token）；**前端思考完成自动折叠**（避免超长思维链刷屏，想看再点开）；**自动路由**（`autoRoute` 默认关：长问 ≥25 字或含多条件/对比/递进词自动启用深度思考，保守启发式避免常见问题全量思考成本翻倍）。全部参数在设置页"深度思考设置"（含"思考增强·护栏与路由"子分组）
 
 ## API 一览
 
-> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新；接口按"智能问答/文档管理/知识库/反馈与看板/系统配置/检索调试/检索评估/关键词索引/图片描述缓存"分组，Try-it-out 需携带 `X-Trusted-Token`）。下表为核心端点速查：
+> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新；接口按"智能问答/会话与消息组/文档管理/知识库/反馈与看板/系统配置/智能体/对外 API Key/MCP/技能包/检索调试/检索评估/关键词索引/图片描述缓存"分组，Try-it-out 需携带 `X-Trusted-Token`）。下表为核心端点速查（完整 85 个端点以 Swagger 为准）：
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/ai/chat` | SSE 流式问答（token/image/done/error 事件） |
+| `POST /api/ai/chat` | SSE 流式问答（`token`/`image`/`retrieved`/`thinking`/`tool_status`/`done`/`error` 事件，见下方 SSE 事件表） |
 | `GET /api/ai/sessions?keyword=`、`POST /api/ai/session/new`、`GET /api/ai/session/{id}`、`PUT /api/ai/session/{id}/rename` | 会话列表（支持关键词搜索）/ 新建 / 历史恢复 / 重命名（≤50 字，校验归属） |
 | `PUT /api/ai/session/{id}/pin`、`PUT /api/ai/session/{id}/favorite` | 置顶 / 收藏（`{pinned:true}` 或 `{favorite:true}`） |
 | `DELETE /api/ai/session/{id}`、`DELETE /api/ai/sessions` | 删除单会话（软删除会话+消息）/ 清空全部会话 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /api/ai/message-group/undo` | 按消息组删除问答（问题+回答）/ 撤销删除 |
-| `GET /api/ai/suggested`、`POST /api/ai/suggested` | 推荐问题池读取 / 追加（去重上限 8 条） |
+| `GET /api/ai/suggested`、`POST /api/ai/suggested` | 推荐问题池读取 / 追加（去重上限 8 条）。**两者权限不同**：`GET` 在普通用户白名单内（欢迎页展示），`POST` 属管理员端点 |
 | `GET /api/ai/analytics/badcases` | 差评坏例列表（还原问题与引用块，供回流评估集） |
 | `GET/DELETE /api/ai/answer-cache` | 语义缓存统计 / 清空 |
 | `POST /api/ai/document/upload`、`/upload/batch` | 上传文档（docx/pdf/xlsx，异步解析） |
@@ -189,6 +231,33 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `GET /api/ai/search-index/stats`、`POST /api/ai/search-index/reindex`、`DELETE /api/ai/search-index` | 关键词索引运维：状态统计（indexedCount vs mysqlCount 对比漂移）/ 全量重建（后台执行）/ 清空 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试（含检索词元） |
 | `POST /api/ai/eval/generate`、`GET /api/ai/eval/set`、`POST /api/ai/eval/run`、`POST /api/ai/eval/case`、`GET /api/ai/eval/last-report`、`POST /api/ai/eval/run-auto` | 检索量化评估：生成评估集 / 读取 / 批量参数组对比（recall@k/MRR/命中率 + 弃用文档断言）/ 差评增补 / 最近自动体检报告 / 手动触发自动体检 |
+| `GET /api/ai/auth/me` | 当前身份与权限（`{user, admin}`，前端据此显示/隐藏管理入口） |
+| `GET /api/ai/agent/list`、`GET /api/ai/agent/sub` | 智能体列表（默认在前）/ 可委派子智能体列表（`is_subagent=1`） |
+| `GET /api/ai/agent/available` | 对话页可用精简列表（**普通用户可访问**：id/name/description/model/isDefault） |
+| `POST /api/ai/agent`、`PUT /api/ai/agent/{id}`、`DELETE /api/ai/agent/{id}`、`POST /api/ai/agent/{id}/default` | 智能体：新建 / 编辑（仅更新出现的字段）/ 删除（物理删）/ 设为默认 |
+| `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/name`、`PUT /api/ai/api-key/{id}/disabled`、`DELETE /api/ai/api-key/{id}` | 对外 API Key：列表（不含明文与哈希）/ 签发（**明文仅此一次返回**）/ 改名 / 启停用（停用即吊销）/ 删除 |
+| `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP：连接状态（总开关 + 每 server 状态与工具数）/ 重连全部 / 临时探测（不落配置） |
+| `GET /api/ai/skill/list`、`GET /api/ai/skill/detail`、`POST /api/ai/skill`、`POST /api/ai/skill/install`、`PUT /api/ai/skill/{name}/disabled`、`DELETE /api/ai/skill/{name}` | 技能包：列表（内置 + 用户）/ 详情（含 SKILL.md 全文）/ 新建 / 从 URL 安装 / 启停用 / 删除（仅用户目录） |
+| `GET /api/ai/desc-cache/stats`、`POST /api/ai/desc-cache/prune`、`DELETE /api/ai/desc-cache` | 图片描述缓存运维：统计 / 清理过期与旧版本 / 清空 |
+| `POST /api/ai/sessions/batch-delete` | 批量删除会话（逐个校验归属） |
+| `GET /api/ai/document/{id}/source`、`POST /api/ai/document/{id}/backfill-descriptions` | 下载源文件（RFC5987 编码文件名）/ 补齐图片描述（后台补描述并回写向量与关键词索引） |
+| `POST /api/ai/config/probe`、`GET /api/ai/config/rerank/check`、`GET /api/ai/config/keyword/check`、`POST /api/ai/config/reset` | 通用连通性探测（先测后存：`{group,baseUrl,apiKey,model,path}` → `{available,latencyMs,detail}`，group ∈ chat/vision/embedding/rerank/keyword）/ 探测重排服务 / 探测 Meilisearch / 恢复分组默认值（不含 embedding 与密钥） |
+
+> 上表为速查，**并非全量**：代码共 14 个控制器、85 个端点，完整契约以 Swagger UI 为准。
+
+### SSE 事件（`POST /api/ai/chat`）
+
+| 事件 | 时机 | 载荷 |
+|------|------|------|
+| `token` | 流式生成逐片（语义缓存命中时一次性整段） | 回答文本增量 |
+| `image` | 生成之前 | 命中图片 URL 列表（按编号顺序，生产为 HMAC 签名 URL） |
+| `retrieved` | 检索 + 重排 + 上下文填充完成、生成之前 | 检索概览 `{keywords:搜索词元数, refs:参考段数, terms:主词元列表}`（随消息持久化；引用自检剔除后 `refs` 同步重算） |
+| `thinking` | 深度思考开启时 | 思考链增量 |
+| `tool_status` | Agent 调用工具 | 工具名 / 状态（done\|error）/ 结果或错误 |
+| `done` | 回答完成 | `sources`（签名后的引用来源）、`related`（相关追问）、`messageId`、`thinking`（正常路径汇总的完整思考链）；缓存命中路径另带 `finalContent`/`finalImages`/`degradations` |
+| `error` | 处理或下发异常 | 错误文案（系统繁忙 / 系统处理异常 / 回答下发失败等） |
+
+> **思考结束没有独立事件**：完整思考链在 `done.thinking` 一次性给出，不要再找 `thinking_done` 之类的事件名。
 
 ## 多副本部署要求
 
@@ -261,11 +330,23 @@ curl http://localhost:8090/api/ai/search-index/stats             # indexedCount 
 
 ## 产品化特性
 
-- **安全**：关键密钥零默认值（`DB_PASSWORD`/`AI_TRUSTED_TOKEN` 缺失 fail-fast，模型密钥允许空默认仅功能不可用）、token 恒定时间比较、图片访问 HMAC 签名 URL（`AI_IMAGES_AUTH_ENABLED=true`）、统一异常+参数校验（`@Valid`）、错误信息不泄露内部细节、**上传魔数校验**（文件头字节须与扩展名匹配，docx/xlsx=PK、pdf=%PDF，防伪造扩展名）、**接口限流**（问答/上传按用户/IP 固定窗口限频，超限 429，Redis 不可用自动放行）、**管理操作审计**（上传/删除/批量删除/回滚记录操作者 `[AUDIT]` 日志）
+- **安全**：关键密钥零默认值（`DB_PASSWORD`/`AI_TRUSTED_TOKEN` 缺失 fail-fast，模型密钥允许空默认仅功能不可用）、token 恒定时间比较、模型 API Key **RSA 加密入库 + 页面掩码回显**、**对外 API Key 只存 SHA-256 哈希 + 前 8 位前缀**（明文仅签发时返回一次，权限固定问答链路）、图片访问 HMAC 签名 URL（`AI_IMAGES_AUTH_ENABLED=true`）、统一异常+参数校验（`@Valid`）、错误信息不泄露内部细节、**上传魔数校验**（文件头字节须与扩展名匹配，docx/xlsx=PK、pdf=%PDF，防伪造扩展名）、**接口限流**（问答/上传按用户/IP 固定窗口限频，超限 429，Redis 不可用自动放行）、**内置计算器不执行任意代码**（递归下降自实现，仅 `+ - * / % ^` 与括号）、**产物交付文件名白名单净化**（`artifacts/` 静态映射前做扩展名白名单 + 名净化）、**管理操作审计**（上传/删除/批量删除/回滚记录操作者 `[AUDIT]` 日志）
 - **可靠性**：上传失败自动补偿清理（删向量+MySQL+图片）、脏解析记录清理、解析异步化（不阻塞上传）、**解析中删除文档立即中断**（内存标志 + 线程 interrupt + 阶段检查点，清理本次产物）、SSE 异步订阅支持停止生成、查询改写专用线程池（超时隔离 + daemon + PreDestroy 回收）
-- **可配置**：**问答/视觉/向量三类模型跨厂商热切换**（网关地址/API Key/模型名/接口路径，API Key RSA 加密入库）+ 温度/System Prompt 角色段/视觉提示词/检索权重与行为参数/重排区间/解析并发/上下文参数/关联扩散参数/限频/语义缓存/推荐问题池 **数据库存储、保存即生效**（`c_ai_config`，存量升级自动补默认项；检索 topK/向量阈值/关键词上限/重排区间等键支持在线修改，检索评估"应用此组"即写入这些键）；prompt 调整无需重启；检索/重排/解析/问答/关联扩散 5 组 30+ 项行为参数收口配置化（原硬编码移除）；**危险配置有前置护栏**——切 Meilisearch 先探可用性、切向量模型先探可达性与维度合法性，探测失败一律拒绝保存而非存下坏配置
+- **可配置**：**问答/视觉/向量三类模型跨厂商热切换**（网关地址/API Key/模型名/接口路径，API Key RSA 加密入库）+ 温度/System Prompt 角色段/视觉提示词/检索权重与行为参数/重排区间/解析并发/上下文参数/关联扩散参数/限频/语义缓存/推荐问题池 **数据库存储、保存即生效**（`c_ai_config`，存量升级自动补默认项；检索 topK/向量阈值/关键词上限/重排区间等键支持在线修改，检索评估"应用此组"即写入这些键）；prompt 调整无需重启；检索/重排/解析/问答/关联扩散 5 组 30+ 项行为参数收口配置化（原硬编码移除），另有 `tool.*`/`skill.*`/`agent.*`/`mcp.*` 四组能力开关；**危险配置有前置护栏**——切 Meilisearch 先探可用性、切向量模型先探可达性与维度合法性，探测失败一律拒绝保存而非存下坏配置
 - **可观测性**：`/actuator/health` 健康检查、日志级别环境变量化、MyBatis 日志走 slf4j、检索调试 API、Swagger UI 接口文档（springdoc 自动生成，随代码实时更新）；**降级提示统一开关**（fail-loud：所有回答降级事件——无命中/改写失败/图片剔除/未标注引用/缓存命中——默认不展示，全部写 `[FAIL-LOUD]` 日志；排障时开 `chat.showDebugDegradations` 才在回答下方显示）
 - **多用户与部署**：**会话按用户隔离**（网关透传 `X-User-Id`，列表/历史/删除/清空均校验归属；anonymous 为存量兼容池）、multi-stage Dockerfile（非 root 运行 + HEALTHCHECK + `JAVA_OPTS` 内存注入）、docker-compose（redis-stack + meilisearch + **内置 MySQL**，亦可经 `DB_HOST` 等指向外部 OceanBase）、nginx 参考配置（`deploy/nginx.conf`，SPA fallback + SSE 关缓冲 + 图片缓存）
+
+## 后台定时任务
+
+全部周期任务集中在 `ScheduleCenter`（**无 `@Scheduled`**）：单 daemon 线程按 **10s 节拍**轮询"是否到点"，间隔每次实时读配置（改配置即时生效、≤0 暂停），任务体提交线程池执行（慢任务不占调度线程），上一轮未结束则跳过（防重叠），失败仅告警并下轮重试；最小间隔护栏 1 分钟。
+
+| 任务 | 间隔键（默认） | 启动即跑 | 做什么 |
+|------|----------------|----------|--------|
+| 关键词索引精确对账 | `keyword.reconcileIntervalMs`(1h) | `keyword.reconcileOnStartup`(true) | 按 `(id, contentHash)` 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复漂移 |
+| 聊天图片目录清理 | `images.chatCleanupIntervalMs`(1d) | 否 | 删除超过 `images.chatRetentionMillis`（7 天）的用户聊天图片 |
+| 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 否 | 按线上参数跑评估集并与上期对比，结论落 `eval.lastReport`（评估集为空自动跳过；退化判定阈值 `eval.autoThresholdPct`=10%） |
+| 配置缓存兜底刷新 | 固定 5 分钟 | 否 | `ConfigService.reload()`——补齐 Redis 订阅断线期间错过的配置变更 |
+| 过期会话/消息清理 | `cleanup.sessionCleanupIntervalMs`(1d) | 否 | 物理删除逻辑删除超过 `sessionRetentionDays`（30 天）的会话与消息（保留期即"撤销删除"窗口） |
 
 ## 配置说明
 
@@ -273,30 +354,35 @@ curl http://localhost:8090/api/ai/search-index/stats             # indexedCount 
 
 ```yaml
 ai-app:
-  chunk: { max-size: 800, overlap: 100, structural: true, structural-ratio: 0.8 }   # 分块(重叠仅进向量化文本) + 结构感知切分（docx，需重解析生效）
+  chunk:
+    max-size: 800
+    overlap: 100                           # 分块重叠（只进向量化文本，不入库、不进指纹）
+    max-chunks: 3000                       # 单文档最大知识块数（0=不限制，防超大文档 embedding 数万次）
+    structural: true                       # 结构感知切分（docx，需重解析生效）
+    structural-ratio: 0.8
+    heading-depth: 4                       # 章节标题识别上限层级 1~6（需重解析生效）
+    # max-images: 100                      # 单文档最多提取图片数（0=不限制；代码默认 100，设置页可改）
   retrieval:
-    top-k: 5                               # 上下文用命中块数（重排候选另算）
-    vector-weight: 0.6                     # 混合检索：向量权重（DB c_ai_config 可覆盖，设置页保存即生效）
+    vector-weight: 0.6                     # 混合检索：向量权重
     keyword-weight: 0.4                    # 混合检索：关键词权重
     title-bonus: 0.1                       # 混合检索：标题命中奖励
-    # ---- 检索行为参数（DB c_ai_config 可覆盖，设置页保存即生效）----
-    # vecThreshold: 0.3                    # 向量相似度下限/归一化基准（0~1，唯一真源，评估"应用此组"可写）
-    # fusionMode: sum                      # 双路融合：sum=加权和(默认，含标题/位置奖励) / rrf=倒数排名融合(实验，按名次融合，用评估页对比验证)
-    rewrite-timeout-ms: 5000               # 查询改写超时（DB 可覆盖：retrieval.rewriteTimeoutMs，设置页可调）
-    # ---- 知识块关联检索（DB c_ai_config 可覆盖，设置页"知识块关联检索"小节） ----
-    # ref-detect-enabled: true             # 解析时引用识别（改后需重解析）
-    # ref-detect-mention: true             # 无动词章节提及识别（如 4.1.2 所述/《数据字典》/XX章节，仅精确匹配）
-    # ref-expand-enabled: true             # 检索时关联扩散+父章节带出总开关（保存即生效）
-    # ref-expand-max-hits: 3               # 扩散块数量上限
-    # ref-expand-max-tokens: 800           # 扩散块 token 汇总上限
-    # ref-expand-include-incoming: false   # 是否扩散入边（引用本块的块，默认关）
-    # ref-expand-parent-enabled: true      # 命中子章节时带出父章节上下文
-    # ref-expand-parent-mode: summary      # 父章节内容模式 title_only/summary/full
-    # ref-expand-parent-max-levels: 2      # 父章节向上带出级数
-    # ref-expand-parent-summary-chars: 200 # summary 模式截取字符数
-    # ref-expand-fuzzy-name: true          # 章节名弱匹配（contains）开关
+    rerank:                                # 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank）
+      enabled: ${AI_RERANK_ENABLED:false}
+      base-url: ${AI_RERANK_BASE_URL:http://localhost:7997}
+      model: ${AI_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+      timeout-ms: 5000
+  keyword:                                 # 关键词召回引擎（mysql=LIKE 零依赖；meilisearch=中文分词+相关度）
+    engine: ${AI_KEYWORD_ENGINE:mysql}     # 切 meilisearch 后需先 reindex；不可用时自动降级回 mysql
+    base-url: ${AI_MEILI_BASE_URL:http://localhost:7700}
+    api-key: ${AI_MEILI_KEY:}              # 仅 yml/env，密钥不入库
+    index: ${AI_MEILI_INDEX:ai-doc-chunks} # 索引名只从 yml/env 读，永不入库
+    timeout-millis: 1000                   # 辅助召回，超时即降级，不宜过大
+  ratelimit:                               # 接口限流（Redis 固定窗口，按用户/IP；Redis 不可用自动放行）
+    enabled: ${AI_RATELIMIT_ENABLED:true}
+    chat-per-minute: ${AI_RATELIMIT_CHAT:10}
+    upload-per-minute: ${AI_RATELIMIT_UPLOAD:10}
   context:                                 # 上下文与长度控制（设置页可调，保存即生效）
-    model-windows: "qwen-plus=131072,qwen3=131072,deepseek=65536,..."  # 模型窗口映射（按 chat.model 子串匹配）
+    model-windows: "qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768"  # 模型窗口映射（按 chat.model 子串匹配，未匹配用 default）
     default-window-tokens: 32768
     safety-factor: 0.7                     # 窗口安全系数（预算 = 窗口×系数 − 输出）
     cost-cap-tokens: 8000                  # 成本软上限（0=不限制）
@@ -313,11 +399,11 @@ ai-app:
     expire-minutes: 30
     anonymous-shared: ${AI_SESSION_ANONYMOUS_SHARED:true}  # anonymous 历史兼容池对具名用户共享可见；false=仅 anonymous（无 X-User-Id）调用方可访问（收紧越权面）
   images:
-    dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（开发在 application-local.yml 配绝对路径；生产 /app/data）
+    dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（默认 ./data 跨平台兜底；容器内由 AI_IMAGES_DIR 指定为 /app/data）
     max-width: 1280                         # 识别用压缩图最长边（qwen3-vl 最佳清晰度档，视觉 token 约 1600-2500；展示用原图不受限）
     quality: 0.9                            # JPEG 压缩质量（识别用；带透明通道自动转 PNG）
     url-prefix: /ai/images
-    auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}   # 图片访问鉴权默认开启（防漏配裸奔；本地开发在 config/application-local.yml 设 false）
+    auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}   # 图片访问鉴权默认开启（防漏配裸奔；本地调试可置 false）
     auth-expire-seconds: 3600
     image-filter:                          # 回答 [图片N] 相关性校验（防 LLM 错配）
       enabled: ${AI_IMAGE_FILTER_ENABLED:true}
@@ -334,30 +420,83 @@ ai-app:
     keep-alive-minutes: 30                 # 模型常驻内存（云端服务需设 0）
     think: ${AI_VISION_THINK:false}        # 关闭 qwen3 思考（实测 max_tokens 会导致空输出，勿加）
     num-ctx: 16384                         # Ollama 上下文窗口（1280px 图视觉 token 1600-2500，默认 4096 会截断；0=不设置）
-  query-rewrite:                           # 查询改写（默认开启）
+  query-rewrite:                           # 查询改写（默认开启，保存即生效）
     enabled: ${AI_QUERY_REWRITE_ENABLED:true}
     timeout-millis: 5000
-    # history-rounds / prompt / prompt-multi-turn 为代码默认值（AiAppProperties.QueryRewrite），yml 不覆盖
-  system-prompt: "你是\"问渠\"..."          # 回答角色段默认值（DB c_ai_config 可覆盖，保存即生效）
-  trusted-token: ${AI_TRUSTED_TOKEN}
+    # history-rounds(=2) / prompt / prompt-multi-turn 为代码默认值，DB 也可覆盖
+  intent:                                  # 意图分类（默认关闭）
+    enabled: ${AI_INTENT_CLASSIFY_ENABLED:false}
+    timeout-millis: 3000                   # 分类只输出一个单词；超时按 doc 处理
+    # model（留空回落 chat.model）/ prompt / chatPrompt 在 DB
+  deep-reasoning:                          # 深度思考
+    enabled: ${AI_DEEP_REASONING_ENABLED:true}
+    thinking-mode: ${AI_DEEP_REASONING_MODE:model}   # model=extraBody 透传 enable_thinking 取 reasoning_content / prompt=提示词引导写 content
+    enable-thinking: true
+    search-tag: search                     # 检索计划标签 <search>query|子问题1|子问题2</search>
+    max-sub-queries: 3
+    multi-retrieval: true                  # 多路并行检索
+    timeout-millis: 30000                  # 超时用已收集内容降级
+    max-thinking-tokens: 0                 # 0=不设（规避 qwen 思考模式 max_tokens 空输出）
+    # 细节键在 DB：maxThinkingChars(3000) / injectThinking(true) / injectThinkingMaxChars(800)
+    #              injectKeywords(true) / injectKeywordsMax(5) / autoRoute(false) 及 autoRoute* 阈值
+  system-prompt: "你是\"问渠\"..."          # 回答角色段默认值（DB chat.systemPrompt 可覆盖，保存即生效）
+  trusted-token: ${AI_TRUSTED_TOKEN}       # 无默认值，缺失 fail-fast
+  admin-users: ${AI_ADMIN_USERS:}          # 管理员白名单（逗号分隔 X-User-Id；"*"=全员管理员）
+  admin-token: ${AI_ADMIN_TOKEN:}          # 管理员口令（X-Admin-Token；无网关本地部署与前端 VITE_ADMIN_TOKEN 一致）
+  schema-auto-index: true                  # SchemaMigrator 启动时自动补索引（大表可设 false 由运维窗口期手工执行）
 
 spring:
   servlet.multipart: { max-file-size: 1024MB, max-request-size: 1100MB }  # 物理上限 1GB；业务上限由 c_ai_config upload.maxFileSize 控制（默认 200MB，设置页可调）
-  data.redis: { client-type: jedis, host: ${REDIS_HOST:127.0.0.1}, port: ${REDIS_PORT:6379} }  # 本机环境经 REDIS_PORT=6380 覆盖
+  data.redis: { client-type: jedis, host: ${REDIS_HOST:127.0.0.1}, port: ${REDIS_PORT:6379} }
   ai.openai:
-    api-key: ${AI_DEEPSEEK_KEY}
+    api-key: ${AI_CHAT_KEY}
     base-url: <MaaS 网关 /compatible-mode> # 不含 /v1（Spring AI 自动补）
     chat: { options: { model: qwen3.8-27b, temperature: 0.3 } }
     embedding: { base-url: ... , options: { model: qwen3.7-text-embedding-flash } }
   ai.vectorstore.redis: { initialize-schema: true, index-name: ai-doc-index, prefix: "ai:chunk:" }  # Spring AI 1.1 起属性为 index-name；initialize-schema 必须 true，否则全量重嵌入被护栏拒绝执行（DROP 后无法重建索引）
 ```
 
-> **模型配置以 DB 为准**：`spring.ai.openai.*`（问答）与 `spring.ai.openai.embedding.*`（向量）仅作 `c_ai_config` 未配置时的**回退默认值**；设置页保存后一律以 DB 为准，改 yml 不再生效。另有系统内部记录项 `embedding.dimensions`（当前向量索引维度，重嵌入成功后自动回写，设置页只读展示，不可手工修改）。检索质量相关 DB 键：`retrieval.vecThreshold`（向量相似度下限/归一化基准，唯一真源——0.5 以上区间真实生效，评估"应用此组"可写）、`retrieval.fusionMode`（双路融合 sum/rrf，实验）、`context.dedupEnabled/dedupThreshold/dedupPathThreshold`（信息增益去冗余）、`chat.citationCheckEnabled`（引用语义一致性自检）、`eval.judgeEnabled`（自动体检 LLM 评判，调试级）、`eval.judgeModel`（评判模型名，留空回落 `chat.model`）均已开放白名单与设置页（judgeModel 为 DB 只读项，直接写库生效）。深度思考增强键：`deepReasoning.injectThinking`（思考链注入最终回答，默认 true）/ `injectThinkingMaxChars`（注入长度上限 800）/ `injectKeywords`（思考关键词增强检索，默认 true）/ `injectKeywordsMax`（增强词元数 5）/ `maxThinkingChars`（思考流长度护栏 3000，0=不限）/ `autoRoute`（自动路由，默认 false）。过期数据清理：`cleanup.sessionRetentionDays`（软删会话/消息物理保留天数，默认 30，≤0 停用）、`cleanup.sessionCleanupIntervalMs`（默认每日）经 DB 写入生效。
+> **模型配置以 DB 为准**：`spring.ai.openai.*`（问答）与 `spring.ai.openai.embedding.*`（向量）仅作 `c_ai_config` 未配置时的**回退默认值**；设置页保存后一律以 DB 为准，改 yml 不再生效。
+
+### 仅存 DB 的配置键（`c_ai_config`）
+
+上面 `ai-app.*` 只是**能被 yml/env 覆盖的那部分**；实际大量参数只存在于 `c_ai_config`（由 `ConfigService.defaults()` 灌默认值、`EDITABLE` 白名单控制可改性，约 130 个键），**不写 yml 也能用，保存即生效**。按前缀列主要项（括号内为默认值）：
+
+| 前缀 | 主要键（默认值） | 生效方式 |
+|------|------------------|----------|
+| `chat.*` | `model`(qwen3.8-27b)、`temperature`(0.3)、`baseUrl`/`apiKey`/`completionsPath`(=/v1/chat/completions)、`systemPrompt`、`historyRounds`(5)、`pipelineThreads`(8)、`sseTimeoutMs`(300000)、`streamRetryCount`(1)、`remainTokenFloor`(800)、`truncateFallbackChars`(200)、`citationCheckEnabled`(true)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`showDebugDegradations`(false)、`retrievalDebugEnabled`(false)、`suggestedQuestions` | 保存即生效（模型四要素由 `DynamicOpenAiChatModel` 按配置指纹重建客户端） |
+| `embedding.*` | `model`/`baseUrl`/`apiKey`/`embeddingsPath`(=/v1/embeddings) | **保存即触发全量重嵌入**（先真实探测维度，通过才 DROP 索引重建；期间向量路降级关键词） |
+| `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`keywordMaxTerms`(6)、`keywordMaxTotal`(12)、`fusionMode`(sum)、`positionBonus`(0.03)、`sectionBonus`(0.01)、`strength`(balanced)、`searchTimeoutMs`(8000)、`keywordTimeoutMs`(800)、`rewriteTimeoutMs`(5000)、`rewriteFallbackMinHits`(2)、`rewriteFallbackWeakScore`(0.2)、`maxRefsPerBlock`(8)、`relatedCount`(3)、`refDetectEnabled`(true)、`refDetectMention`(true)、`refExpand*`（扩散开关 / 上限 3 块·800 token / 父章节 summary×2 级·200 字 / 弱匹配，共 9 项） | 多数保存即生效；`refDetectEnabled`/`refDetectMention` **需重解析** |
+| `chunk.*` | `maxSize`(800)、`headingDepth`(4)、`structural`(true)、`structuralRatio`(0.8)、`maxChunks`(3000)、`maxImages`(100) | **需重解析** |
+| `parse.*` | `concurrency`(2)、`embedBatchSize`(10)、`embedRetryCount`(1)、`ocrMinText`(20)、`ocrDpi`(200)、`recoverStuckOnStartup`(true) | 对后续解析生效；`recoverStuckOnStartup` 多副本应置 false |
+| `vision.*` | `prompt`、`concurrency`(2)、`userImageConcurrency`(2)、`retryCount`(1)、`think`(false)、`keepAliveMinutes`(30)、`numCtx`(16384)、`descCacheVersion`(1)、`descCacheTtlDays`(180) | 保存即生效；`descCacheVersion` bump 触发全量重新描述；**`vision.timeoutMillis` 需重启**（DB 默认 30000，yml 为 180000） |
+| `context.*` | `dedupEnabled`(true)、`dedupThreshold`(0.45)、`dedupPathThreshold`(0.28)（其余上下文参数同上方 yml 值） | 保存即生效 |
+| `atRef.*` | `maxChunksPerDoc`(3)、`maxTotal`(6) | 保存即生效 |
+| `rerank.*` | `minHits`(6)、`maxHits`(15)、`failCooldownMs`(60000) | 保存即生效 |
+| `keyword.*` | `failCooldownMs`(60000)、`reconcileOnStartup`(true)、`reconcileIntervalMs`(3600000) | 保存即生效；`reconcileOnStartup` 多副本应置 false |
+| `semanticCache.*` | `enabled`(true)、`threshold`(0.96)、`maxEntries`(500) | 保存即生效 |
+| `eval.*` | `judgeEnabled`(false)、`judgeModel`(空=回落 `chat.model`)、`autoIntervalMs`(86400000)、`autoThresholdPct`(10) | 保存即生效 |
+| `cleanup.*` | `sessionRetentionDays`(30)、`sessionCleanupIntervalMs`(86400000) | 保存即生效（≤0 停用） |
+| `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authEnabled`(Java/DB 默认 false，**yml/env 默认 true**)、`authExpireSeconds`(3600)、`chatRetentionMillis`(604800000=7 天)、`chatCleanupIntervalMs`(86400000) | 保存即生效（`dir`/`urlPrefix` 仅 yml） |
+| `upload.*` | `maxFileSize`(209715200=200MB) | 保存即生效 |
+| `cache.*` | `docMetaTtlSeconds`(600) | 保存即生效 |
+| `session.*` | `maxHistory`(10)、`expireMinutes`(30)、`anonymousShared`(true) | 保存即生效 |
+| `queryRewrite.*` / `imageFilter.*` / `intent.*` / `ratelimit.*` | 与上方 yml 同值；另有 `imageFilter.enabled/minHits/preContextChars`、`intent.model/prompt/chatPrompt`、`ratelimit.windowSeconds`(60) | 保存即生效 |
+| `tool.*` | `enabled`(**false**)、`knowledgeRetrieval.enabled`(false)/`maxHits`(5)、`artifact.enabled`(false)、`builtin.enabled`(false) | 保存即生效——**默认全关，需显式开启** |
+| `skill.*` | `enabled`(**false**)、`dir`(./data/skills)、`injectEnabled`(true)、`toolEnabled`(true)、`injectMaxChars`(1200)、`maxFileChars`(20000)、`disabledNames`(系统写入) | 保存即生效 |
+| `agent.*` | `enabled`(**false**)、`subAgents`(2，范围 2~4)、`topKPerAgent`(3)、`digestEnabled`(true) | 保存即生效 |
+| `mcp.*` | `enabled`(**false**)、`servers`(JSON 数组 `[{name,url,type}]`，type=streamable\|sse) | 保存后需 `POST /api/ai/mcp/reload` 重连 |
+
+> **只读 / 特殊项**：`embedding.dimensions`（当前向量索引维度，重嵌入成功后由系统回写，设置页只读、不在白名单）；`keyword.index` 永不入库（只从 yml/env 读）；密钥类 `chat.apiKey`/`vision.apiKey`/`embedding.apiKey`/`keyword.apiKey` **写入即 RSA 加密**，页面仅回显 `****后4位`，掩码原样提交不会覆盖真实 key（存量明文密钥启动自动迁移为密文）。
 
 > **System Prompt 外置边界**：仅"角色与回答风格"段可编辑（设置页）；引用 `[N]` / 图片 `[图片N]` / 追问 `<related>` 规则与后端解析器强耦合，保留代码固定，避免改坏导致解析失效。
 
 ## 已知注意事项
 
+- **智能体 / 工具 / 技能 / MCP 默认全关**：`agent.enabled`、`tool.enabled`（含 `knowledgeRetrieval`/`artifact`/`builtin` 三个子开关）、`skill.enabled`、`mcp.enabled` 默认均为 false——多智能体编排、工具调用、技能包、MCP 外部工具这些能力**开箱不生效**，需在设置页显式开启（子开关还需与总开关同时开启）。开启工具后模型可能调用工具，调用过程与失败均经 `tool_status` 事件可观
+- **需重解析才生效的配置**：`chunk.maxSize` / `chunk.headingDepth` / `chunk.structural` / `chunk.structuralRatio`、`retrieval.refDetectEnabled` / `retrieval.refDetectMention`、`vision.descCacheVersion`。只改配置不重解析，存量知识块与引用边不会重建（`refExpand*` 扩散类参数保存即生效，无需重解析）
+- **`vision.timeoutMillis` 三处默认值不一致，且改动需重启**：`application.yml` 为 `180000`（实际生效），Java 默认 `30000`、DB 默认 `30000`；视觉客户端在启动时构建，**该键需重启才生效**（其余 `vision.*` 键保存即生效）
+- **`.nvmrc` 固定 Node 18.19.0**：前端以仓库 `.nvmrc` 为准（Node ≥18 均可构建；早前文档写的 22 是错的）
 - **聊天模型**：当前使用 `qwen3.8-27b`。该 MaaS 网关对部分模型（如 `qwen-max`）返回 DashScope 原生格式（`{"text":...}`），Spring AI 无法解析（表现为 0 token 无回答）；需使用返回标准 OpenAI 格式的模型（`qwen-plus`、`qwen3.7-flash` 已实测兼容）
 - **结构切分/分词升级需重解析**：jieba 分词（关键词路即时生效）与结构感知切分（docx）需对存量文档**重解析**才重建知识块；切分后 `c_ai_message.sources` 的 knowledgeId 失效，**评估集需重新生成**（检索评估页"从历史问答重新生成"）
 - **引用识别需重解析**：交叉引用/提及识别在解析时建立 `c_ai_knowledge_ref`，修改 `refDetectEnabled/refDetectMention` 后需重解析；引用扩散/父章节带出（`refExpand*`）保存即生效

@@ -51,9 +51,9 @@ spring:
         transcription: false
       image: false
       moderation: false
-    # LLM 对话：DeepSeek（OpenAI 兼容协议）——以下仅作 DB 未配置时的兜底默认
+    # LLM 对话（OpenAI 兼容协议）——以下仅作 DB 未配置时的兜底默认
     openai:
-      api-key: ${AI_DEEPSEEK_KEY:}
+      api-key: ${AI_CHAT_KEY:}
       base-url: https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode
       chat:
         options:
@@ -61,7 +61,7 @@ spring:
           # qwen-plus 返回标准 OpenAI 格式，流式/非流式均兼容
           model: qwen3.8-27b
           temperature: 0.3
-      # Embedding 单独配置（DeepSeek 无 embedding，需用兼容 OpenAI 协议的向量服务）
+      # Embedding 单独配置（需用兼容 OpenAI 协议的向量服务；api-key 留空时回落 chat 密钥）
       embedding:
         api-key: ${AI_EMBEDDING_KEY:}
         base-url: ${AI_EMBEDDING_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}

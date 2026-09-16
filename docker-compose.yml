@@ -60,7 +60,7 @@ services:
       # 必填（无默认值，缺失将启动失败）
       DB_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
       AI_TRUSTED_TOKEN: ${AI_TRUSTED_TOKEN:?请设置 AI_TRUSTED_TOKEN}
-      AI_DEEPSEEK_KEY: ${AI_DEEPSEEK_KEY:?请设置 AI_DEEPSEEK_KEY}
+      AI_CHAT_KEY: ${AI_CHAT_KEY:?请设置 AI_CHAT_KEY}
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
       DB_HOST: ${DB_HOST:-mysql}
       DB_PORT: ${DB_PORT:-3306}
