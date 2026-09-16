@@ -5,7 +5,7 @@ import 'ant-design-vue/dist/reset.css'
 import './md.css'
 import App from './App.vue'
 import router from './router'
-import { ensureAuth } from './utils/auth'
+import { ensureAuth, isLoggedIn } from './utils/auth'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -67,8 +67,9 @@ window.addEventListener('app:forbidden', () => {
   message.error('无管理员权限，请先完成管理员验证')
 })
 
-// 首屏先确认身份/角色再挂载（避免 App 渲染后才异步拉取导致的"角色已就绪但菜单未刷新"时序问题；
-// auth 失败静默按普通用户处理，管理入口自然隐藏）
-ensureAuth().finally(() => {
+// 首屏先确认身份/角色再挂载（避免 App 渲染后才异步拉取导致的"角色已就绪但视图未刷新"时序问题）。
+// 已登录才拉取；未登录直接进登录页，避免无谓的 401 噪音。
+const boot = isLoggedIn() ? ensureAuth() : Promise.resolve()
+boot.finally(() => {
   app.use(Antd).use(router).mount('#app')
 })

@@ -347,7 +347,8 @@ const TOOL_LABELS = {
   currentDateTime: '获取当前时间',
   daysBetween: '计算日期差'
 }
-const MCP_CLIENT_PREFIX = 'a_d_a_'
+// ⚠️ 与 McpClientService 的 clientInfo name 对应：wen-qu → w_q_（改名时需同步）
+const MCP_CLIENT_PREFIX = 'w_q_'
 const toolLabel = n => TOOL_LABELS[n] || (n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n)
 const toolCallsView = list => {
   if (!Array.isArray(list)) return []
@@ -409,7 +410,7 @@ const pickAgent = id => {
 /** 底部「管理智能体」：跳到独立的一级页面 */
 const goManageAgents = () => {
   agentPickerOpen.value = false
-  router.push('/v2/agents')
+  router.push('/agents')
 }
 const loadAgents = async () => {
   try {
@@ -653,7 +654,7 @@ const switchSession = async sid => {
   if (loading.value) return
   currentSessionId.value = sid
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上
-  router.replace({ path: '/v2/chat', query: { sid } }).catch(() => {})
+  router.replace({ path: '/chat', query: { sid } }).catch(() => {})
   try {
     const r = await getHistory(sid)
     if (r.success && Array.isArray(r.data)) {
@@ -690,7 +691,7 @@ const createNewSession = async () => {
   if (emptySid) {
     if (currentSessionId.value !== emptySid) await switchSession(emptySid)
     else messages.value = []
-    router.replace({ path: '/v2/chat', query: { sid: emptySid } })
+    router.replace({ path: '/chat', query: { sid: emptySid } })
     focusInput()
     return
   }
@@ -700,7 +701,7 @@ const createNewSession = async () => {
     if (r.success && r.data?.sessionId) {
       currentSessionId.value = r.data.sessionId
       messages.value = []
-      router.replace({ path: '/v2/chat', query: { sid: r.data.sessionId } })
+      router.replace({ path: '/chat', query: { sid: r.data.sessionId } })
       await loadSessions()
       focusInput()
     }
@@ -714,18 +715,18 @@ const createNewSession = async () => {
 // 路由 query.sid 驱动：只处理"切到某个会话"；sid 清空（新建/删除当前会话）由 tick 信号接管，
 // 避免两条链路同时触发 autoPick / createNew 的竞态
 watch(() => route.query.sid, sid => {
-  if (route.path !== '/v2/chat' || !sid) return
+  if (route.path !== '/chat' || !sid) return
   if (sid !== currentSessionId.value) switchSession(sid)
 })
 // 侧边栏「新建对话」信号（消费后回写 seen，跨页积累的 tick 只消费一次）
 // 注意不依赖 route.query 状态：tick 触发时路由 push 可能尚未完成，条件里查 sid 会偶发落空
 watch(() => sessionStore.newChatTick, async tick => {
   sessionStore.newChatSeen = tick
-  if (route.path === '/v2/chat' && !loading.value) await createNewSession()
+  if (route.path === '/chat' && !loading.value) await createNewSession()
 })
 // 当前会话被删除 → 自动落到最近会话或新建
 watch(() => sessionStore.autoPickTick, async () => {
-  if (route.path === '/v2/chat' && !loading.value) await autoPick()
+  if (route.path === '/chat' && !loading.value) await autoPick()
 })
 const autoPick = async () => {
   const first = sessionStore.list.find(s => (s.messageCount ?? 0) > 0)
@@ -742,7 +743,7 @@ const handleDeleteSession = async sid => {
     if (sid === currentSessionId.value) {
       const remaining = sessionStore.list.filter(s => s.id !== sid && (s.messageCount ?? 0) > 0)
       if (remaining.length > 0) await switchSession(remaining[0].id)
-      else { messages.value = []; currentSessionId.value = null; router.replace('/v2/chat') }
+      else { messages.value = []; currentSessionId.value = null; router.replace('/chat') }
     }
     await loadSessions()
   } catch (e) { message.error(e.message || '删除失败') }

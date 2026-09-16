@@ -158,7 +158,7 @@
                   <a-segmented v-if="c.kind === 'switch'" v-model:value="form[c.key]" :options="SEG" size="small" />
                   <a-segmented v-else v-model:value="form[c.modeKey]" :options="SEG_MULTI" size="small" />
                 </div>
-                <!-- 「指定」模式：展开具体项多选（对齐语析的 skills / mcps 资源列表） -->
+                <!-- 「指定」模式：展开具体项多选（对齐通用智能体平台的 skills / mcps 资源列表） -->
                 <div v-if="needsPick(c)" class="ap-cap-pick">
                   <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
                             size="small" style="width:100%"
@@ -210,7 +210,7 @@ import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, lis
 const CAPS = [
   { key: 'toolKnowledge', label: '知识库检索', desc: '回答过程中可自主检索知识库补充依据', icon: FileSearchOutlined,
     kind: 'switch', path: ['tool', 'knowledgeRetrieval', 'enabled'], gate: ['tool', 'enabled'] },
-  // 以下三项是「多实例能力」：除总开关外，还能指定具体用哪几个（对齐语析的资源列表语义）
+  // 以下三项是「多实例能力」：除总开关外，还能指定具体用哪几个（对齐通用智能体平台的资源列表语义）
   { key: 'toolBuiltin', label: '内置高频工具', desc: '算术计算 / 当前时间 / 日期相差天数', icon: CalculatorOutlined,
     kind: 'list', modeKey: 'builtinMode', listKey: 'builtinTools', optionsKey: 'builtinOptions',
     path: ['tool', 'builtin', 'enabled'], gate: ['tool', 'enabled'] },

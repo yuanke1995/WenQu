@@ -12,32 +12,36 @@
       </div>
 
       <nav class="side-nav">
-        <button class="nav-item" :class="{ active: isActive('/v2/chat') && !route.query.sid }" @click="newChat" title="新建对话">
+        <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="newChat" title="新建对话">
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
         </button>
-        <button class="nav-item" :class="{ active: isActive('/v2/chat') }" @click="goChat" title="对话">
+        <button class="nav-item" :class="{ active: isActive('/chat') }" @click="goChat" title="对话">
           <message-outlined />
           <span v-if="!collapsed">对话</span>
         </button>
         <template v-if="isAdmin">
-          <button class="nav-item" :class="{ active: isActive('/v2/agents') }" @click="router.push('/v2/agents')" title="智能体">
+          <button class="nav-item" :class="{ active: isActive('/agents') }" @click="router.push('/agents')" title="智能体">
             <robot-outlined />
             <span v-if="!collapsed">智能体</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/v2/documents') }" @click="router.push('/v2/documents')" title="文档管理">
+          <button class="nav-item" :class="{ active: isActive('/documents') }" @click="router.push('/documents')" title="文档管理">
             <folder-outlined />
             <span v-if="!collapsed">文档管理</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/v2/dashboard') }" @click="router.push('/v2/dashboard')" title="数据看板">
+          <button class="nav-item" :class="{ active: isActive('/members') }" @click="router.push('/members')" title="成员管理">
+            <team-outlined />
+            <span v-if="!collapsed">成员管理</span>
+          </button>
+          <button class="nav-item" :class="{ active: isActive('/dashboard') }" @click="router.push('/dashboard')" title="数据看板">
             <bar-chart-outlined />
             <span v-if="!collapsed">数据看板</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/v2/evaluation') }" @click="router.push('/v2/evaluation')" title="检索评估">
+          <button class="nav-item" :class="{ active: isActive('/evaluation') }" @click="router.push('/evaluation')" title="检索评估">
             <experiment-outlined />
             <span v-if="!collapsed">检索评估</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/v2/settings') }" @click="router.push('/v2/settings')" title="系统设置">
+          <button class="nav-item" :class="{ active: isActive('/settings') }" @click="router.push('/settings')" title="系统设置">
             <setting-outlined />
             <span v-if="!collapsed">系统设置</span>
           </button>
@@ -49,7 +53,7 @@
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
           <div v-for="s in visibleSessionList" :key="s.id"
-               class="sess-item" :class="{ active: isActive('/v2/chat') && route.query.sid === s.id }"
+               class="sess-item" :class="{ active: isActive('/chat') && route.query.sid === s.id }"
                :title="s.title" @click="openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
             <span v-else class="sess-title">{{ s.title || '新对话' }}</span>
@@ -69,8 +73,11 @@
       <div class="side-foot">
         <span class="avatar">{{ (userName || '游')[0] }}</span>
         <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
+        <a-tooltip title="退出登录" placement="right">
+          <button class="v2-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
+        </a-tooltip>
         <a-tooltip v-if="!isAdmin" :title="collapsed ? '管理员验证' : ''" placement="right">
-          <button class="v2-icon-btn" style="margin-left:auto" @click="adminModal = true"><safety-certificate-outlined /></button>
+          <button class="v2-icon-btn" @click="adminModal = true"><safety-certificate-outlined /></button>
         </a-tooltip>
       </div>
     </aside>
@@ -91,9 +98,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi } from '../../api'
-import { ensureAuth, isAdminSync, setAdminToken } from '../../utils/auth'
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, SafetyCertificateOutlined, DownloadOutlined, TeamOutlined,
+         LogoutOutlined } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi } from '../../api'
+import { ensureAuth, isAdminSync, setAdminToken, clearAuth } from '../../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
 import { exportSessionMarkdown } from './exportMd'
 import './v2.css'
@@ -112,12 +120,12 @@ const toggleFold = () => {
 
 const visibleSessionList = computed(visibleSessions)
 const isActive = p => route.path === p
-const goChat = () => router.push(route.query.sid ? { path: '/v2/chat', query: { sid: route.query.sid } } : '/v2/chat')
+const goChat = () => router.push(route.query.sid ? { path: '/chat', query: { sid: route.query.sid } } : '/chat')
 const newChat = () => {
   sessionStore.newChatTick++
-  router.push('/v2/chat').catch(() => {})
+  router.push('/chat').catch(() => {})
 }
-const openSession = sid => router.push({ path: '/v2/chat', query: { sid } })
+const openSession = sid => router.push({ path: '/chat', query: { sid } })
 
 // 整会话导出 Markdown（无需先打开会话）
 const exportSessionMd = s => {
@@ -130,7 +138,7 @@ const delSession = async sid => {
     message.success('会话已删除')
     await loadSessions()
     if (route.query.sid === sid) {
-      router.push('/v2/chat').catch(() => {})
+      router.push('/chat').catch(() => {})
       sessionStore.autoPickTick++
     }
   } catch (e) { message.error(e.message || '删除失败') }
@@ -158,13 +166,18 @@ const verifyAdmin = async () => {
   } finally { adminVerifying.value = false }
 }
 
+// 退出登录：令牌无状态，清本地令牌并回登录页
+const doLogout = async () => {
+  try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
+  clearAuth()
+  message.success('已退出登录')
+  router.replace('/login')
+}
+
 onMounted(async () => {
-  await ensureAuth()
-  isAdmin.value = isAdminSync()
-  try {
-    const r = await import('../../api').then(m => m.getAuthMe())
-    if (r?.success && r.data?.user) userName.value = r.data.user
-  } catch (e) { /* 用户名仅展示用，失败静默 */ }
+  const info = await ensureAuth(true)
+  isAdmin.value = Boolean(info && info.admin)
+  userName.value = (info && (info.username || info.user)) || ''
   loadSessions()
 })
 </script>

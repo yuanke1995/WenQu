@@ -15,6 +15,10 @@ const ADMIN_TOKEN_ENV = import.meta.env.VITE_ADMIN_TOKEN || ''
 const adminToken = () => {
   try { return localStorage.getItem('ai_admin_token') || ADMIN_TOKEN_ENV || '' } catch (e) { return ADMIN_TOKEN_ENV }
 }
+// 登录令牌（本地登录后写入 localStorage('ai_token')；请求头 Authorization: Bearer <token>）
+const authToken = () => {
+  try { return localStorage.getItem('ai_token') || '' } catch (e) { return '' }
+}
 
 // 用户标识：localStorage 稳定 ID，经 X-User-Id 透传做会话隔离；
 // 生产环境由平台网关覆盖为真实用户身份（客户端值仅作本地/调试用途）
@@ -34,6 +38,8 @@ const authHeaders = extra => {
   if (TOKEN) h['X-Trusted-Token'] = TOKEN
   const at = adminToken()
   if (at) h['X-Admin-Token'] = at
+  const bt = authToken()
+  if (bt) h['Authorization'] = 'Bearer ' + bt
   return h
 }
 
@@ -78,6 +84,8 @@ function upload(path, formData, onProgress) {
     if (TOKEN) xhr.setRequestHeader('X-Trusted-Token', TOKEN)
     const at = adminToken()
     if (at) xhr.setRequestHeader('X-Admin-Token', at)
+    const bt = authToken()
+    if (bt) xhr.setRequestHeader('Authorization', 'Bearer ' + bt)
     xhr.timeout = 120000
     xhr.upload.onprogress = e => {
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
@@ -332,6 +340,17 @@ export const reparseDocument = id =>
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
 
+export const updateDocumentShare = (id, shareConfig) =>
+  request(`/document/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
+export const listDepartments = () => request('/department/list')
+export const listUsers = () => request('/user/list')
+export const createDepartment = body => request('/department', { method: 'POST', body: JSON.stringify(body) })
+export const updateDepartment = (id, body) => request(`/department/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteDepartment = id => request(`/department/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const createUser = body => request('/user', { method: 'POST', body: JSON.stringify(body) })
+export const updateUser = (uid, body) => request(`/user/${encodeURIComponent(uid)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteUser = uid => request(`/user/${encodeURIComponent(uid)}`, { method: 'DELETE' })
+
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>
   request('/feedback', {
@@ -476,3 +495,15 @@ export const runEvalAutoCheck = () => request('/eval/run-auto', { method: 'POST'
 
 /** 身份与权限：返回 { user, admin }——admin=true 时前端展示文档/看板/评估/设置等管理入口 */
 export const getAuthMe = () => request('/auth/me')
+
+// ---- 登录鉴权（本地登录） ----
+export const getFirstRun = () => request('/auth/first-run')
+export const loginApi = (identifier, password) =>
+  request('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password }) })
+export const initializeAdmin = (uid, username, password) =>
+  request('/auth/initialize', { method: 'POST', body: JSON.stringify({ uid, username, password }) })
+export const logoutApi = () => request('/auth/logout', { method: 'POST' })
+export const changePasswordApi = (oldPassword, newPassword) =>
+  request('/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) })
+export const resetUserPassword = (uid, password) =>
+  request(`/user/${encodeURIComponent(uid)}/password`, { method: 'PUT', body: JSON.stringify({ password }) })
