@@ -5,7 +5,7 @@ server:
 
 spring:
   application:
-    name: ai-doc-assistant
+    name: wenqu
   profiles:
     # 本地开发：local（每台机器独立的本地配置，位于项目根 config/application-local.yml——Spring Boot 外部配置目录，
     # 不进构建产物，含密钥与数据目录，已被 gitignore）

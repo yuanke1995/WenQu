@@ -3,8 +3,8 @@
     <!-- 左侧边栏：logo / 导航 / 最近会话 / 底部用户区（可折叠为图标条） -->
     <aside class="side" :class="{ collapsed }">
       <div class="side-logo">
-        <span class="logo-mark">文</span>
-        <span v-if="!collapsed" class="logo-name">AI 文档助手</span>
+        <span class="logo-mark">渠</span>
+        <span v-if="!collapsed" class="logo-name">问渠</span>
         <button class="v2-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
           <menu-unfold-outlined v-if="collapsed" />
           <menu-fold-outlined v-else />

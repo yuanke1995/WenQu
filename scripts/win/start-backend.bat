@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================
-REM  Start backend jar (ai-doc-assistant) - Windows
-REM  JAR: <project root>\target\ai-doc-assistant.jar
+REM  Start backend jar (wenqu) - Windows
+REM  JAR: <project root>\target\wenqu.jar
 REM  Before first run: fill DB_PASSWORD / AI_TRUSTED_TOKEN below
 REM  (same values as your IDEA run config / platform gateway)
 REM ============================================================
 setlocal
 set ROOT=%~dp0..\..
-set JAR=%ROOT%\target\ai-doc-assistant.jar
+set JAR=%ROOT%\target\wenqu.jar
 
 if not exist "%JAR%" (
     echo JAR not found. Build first:  mvn package
@@ -48,6 +48,6 @@ REM ---- JDK: prefer JAVA_HOME, fallback to PATH ----
 set JAVA_CMD=java
 if exist "%JAVA_HOME%\bin\java.exe" set JAVA_CMD=%JAVA_HOME%\bin\java.exe
 
-echo Starting ai-doc-assistant on :8090 (keep this window open)...
+echo Starting wenqu on :8090 (keep this window open)...
 "%JAVA_CMD%" -Xms256m -Xmx1024m -jar "%JAR%"
 pause

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Start backend jar (ai-doc-assistant) - macOS / Linux
-#  JAR: <project root>/target/ai-doc-assistant.jar
+#  Start backend jar (wenqu) - macOS / Linux
+#  JAR: <project root>/target/wenqu.jar
 #  Before first run: export DB_PASSWORD / AI_TRUSTED_TOKEN
 #  or fill the defaults below
 # ============================================================
 set -e
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-JAR="$ROOT/target/ai-doc-assistant.jar"
+JAR="$ROOT/target/wenqu.jar"
 
 # 切到项目根运行：Spring Boot 从 ./config/ 加载外部 application-local.yml（本地密钥不入 jar）
 cd "$ROOT"
@@ -43,5 +43,5 @@ else
   JAVA_CMD="$(command -v java || echo java)"
 fi
 
-echo "Starting ai-doc-assistant on :8090 (Ctrl+C to stop)..."
+echo "Starting wenqu on :8090 (Ctrl+C to stop)..."
 exec "$JAVA_CMD" -Xms256m -Xmx1024m -jar "$JAR"

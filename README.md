@@ -1,4 +1,8 @@
-# AI 文档助手
+# 问渠 WenQu · AI 文档问答助手
+
+> **问渠那得清如许，为有源头活水来。** —— 答案，自有源头。
+>
+> 中文名：**问渠** ｜ 英文名：**WenQu** ｜ 英文 slogan：*Ask the source.*
 
 独立 AI 服务，基于 Spring AI 实现 RAG 知识库问答。支持 Word/PDF/Excel/TXT/Markdown 文档解析（含扫描 PDF OCR、大文件流式解析）、混合检索 + 查询改写、**知识块关联检索（交叉引用 1-hop 扩散 + 父章节上下文带出）**、价值驱动上下文控制、**语义缓存加速**、回答中位置级展示文档原图（识别用压缩图、展示用原图的双图策略 + 相关性预筛防错配）、解析进度实时展示（含图片识别逐张进度）、引用溯源与**检索状态行（来源可点击弹原文）**、**差评回流闭环**、会话管理（搜索/置顶/收藏/按组删除）、文档版本管理、数据看板与知识缺口闭环、检索量化评估（一键体检 + 预设参数对比 + 一键应用），是面向"操作手册问答"场景的完整智能助手。
 
@@ -106,7 +110,7 @@ mvn spring-boot:run
 
 # 方式二：打包后运行
 mvn clean package -DskipTests
-java -jar target/ai-doc-assistant.jar
+java -jar target/wenqu.jar
 
 # 方式三：Docker Compose（含 redis-stack + meilisearch + 内置 MySQL，自包含）
 docker compose up -d
@@ -334,7 +338,7 @@ ai-app:
     enabled: ${AI_QUERY_REWRITE_ENABLED:true}
     timeout-millis: 5000
     # history-rounds / prompt / prompt-multi-turn 为代码默认值（AiAppProperties.QueryRewrite），yml 不覆盖
-  system-prompt: "你是\"小报\"..."          # 回答角色段默认值（DB c_ai_config 可覆盖，保存即生效）
+  system-prompt: "你是\"问渠\"..."          # 回答角色段默认值（DB c_ai_config 可覆盖，保存即生效）
   trusted-token: ${AI_TRUSTED_TOKEN}
 
 spring:

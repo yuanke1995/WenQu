@@ -23,8 +23,8 @@ public class OpenApiConfig {
     public OpenAPI aiDocOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("AI 文档助手 API")
-                        .description("AI 文档助手服务，基于 RAG 实现知识库问答。" +
+                        .title("问渠 WenQu API")
+                        .description("问渠（WenQu）—— AI 文档问答助手服务，基于 RAG 实现知识库问答。" +
                                 "支持文档解析、混合检索、流式回答、引用溯源、数据看板与知识缺口闭环。")
                         .version("1.0.1")
                         .contact(new Contact()

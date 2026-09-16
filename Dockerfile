@@ -10,7 +10,7 @@ RUN mvn -B clean package -DskipTests
 # ============ 运行阶段 ============
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /app/target/ai-doc-assistant-1.0.1-SNAPSHOT.jar app.jar
+COPY --from=build /app/target/wenqu.jar app.jar
 # curl 供 HEALTHCHECK 使用
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \

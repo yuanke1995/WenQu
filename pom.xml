@@ -12,10 +12,10 @@
     </parent>
 
     <groupId>com.wisesoft</groupId>
-    <artifactId>ai-doc-assistant</artifactId>
+    <artifactId>wenqu</artifactId>
     <version>1.0.1-SNAPSHOT</version>
-    <name>ai-doc-assistant</name>
-    <description>AI Doc Assistant - RAG Knowledge Assistant</description>
+    <name>wenqu</name>
+    <description>WenQu (问渠) - AI 文档问答助手 / RAG Knowledge Assistant</description>
 
     <properties>
         <java.version>17</java.version>
@@ -145,7 +145,7 @@
     </dependencyManagement>
 
     <build>
-        <finalName>ai-doc-assistant</finalName>
+        <finalName>wenqu</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

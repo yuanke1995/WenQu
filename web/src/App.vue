@@ -5,7 +5,7 @@
       <a-layout-header v-if="!isV2" class="header">
         <div class="logo">
           <robot-outlined style="color:#fff;font-size:20px;margin-right:8px" />
-          <span>AI 文档助手</span>
+          <span>问渠 WenQu</span>
         </div>
         <a-menu theme="dark" mode="horizontal" :selected-keys="[activeKey]" @click="onMenu" class="menu">
           <a-menu-item key="chat">智能问答</a-menu-item>

@@ -37,7 +37,7 @@
         <div class="messages" ref="box" @click="openPreview" @scroll="onMessagesScroll">
           <div v-if="messages.length === 0" class="welcome">
             <robot-outlined style="font-size:48px;color:#1677ff" />
-            <h2>你好！我是小报 👋</h2>
+            <h2>你好！我是问渠 👋</h2>
             <p>基于操作手册知识库回答你关于系统使用的问题</p>
             <div>
               <a-tag v-for="(q,i) in tips" :key="i" color="blue" style="cursor:pointer;margin:4px" @click="ask(q)">{{ q }}</a-tag>

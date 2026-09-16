@@ -10,7 +10,7 @@
 
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
-          <div class="welcome-mark">文</div>
+          <div class="welcome-mark">渠</div>
           <h2>有什么可以帮你？</h2>
           <p>基于知识库回答，支持图片提问与深度思考</p>
           <div class="welcome-tags">
