@@ -9,14 +9,14 @@
 
 用法：
   1) 装依赖（--target 装独立目录可避开沙箱删除拦截）：
-     D:\\Python311\\python.exe -m pip install --target D:\\workspace\\dtbd-ai-service\\.pyenv\\target torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://mirrors.aliyun.com/pypi/simple/
-     D:\\Python311\\python.exe -m pip install --target D:\\workspace\\dtbd-ai-service\\.pyenv\\target sentence-transformers -i https://mirrors.aliyun.com/pypi/simple/
+     D:\\Python311\\python.exe -m pip install --target D:\\workspace\\wenqu\\.pyenv\\target torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://mirrors.aliyun.com/pypi/simple/
+     D:\\Python311\\python.exe -m pip install --target D:\\workspace\\wenqu\\.pyenv\\target sentence-transformers -i https://mirrors.aliyun.com/pypi/simple/
   2) 下载模型（modelscope 国内源；约 1.1GB）：
-     set PYTHONPATH=D:\\workspace\\dtbd-ai-service\\.pyenv\\target
-     D:\\Python311\\python.exe -c "from modelscope import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3', local_dir=r'D:\\workspace\\dtbd-ai-service\\.pyenv\\model\\bge-reranker-v2-m3')"
+     set PYTHONPATH=D:\\workspace\\wenqu\\.pyenv\\target
+     D:\\Python311\\python.exe -c "from modelscope import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3', local_dir=r'D:\\workspace\\wenqu\\.pyenv\\model\\bge-reranker-v2-m3')"
   3) 启动：
-     set PYTHONPATH=D:\\workspace\\dtbd-ai-service\\.pyenv\\target
-     D:\\Python311\\python.exe D:\\workspace\\dtbd-ai-service\\scripts\\rerank_server.py --model D:\\workspace\\dtbd-ai-service\\.pyenv\\model\\bge-reranker-v2-m3 --port 7997
+     set PYTHONPATH=D:\\workspace\\wenqu\\.pyenv\\target
+     D:\\Python311\\python.exe D:\\workspace\\wenqu\\scripts\\rerank_server.py --model D:\\workspace\\wenqu\\.pyenv\\model\\bge-reranker-v2-m3 --port 7997
 
 对接：后端 RerankService provider=openai, base-url=http://localhost:7997, model=BAAI/bge-reranker-v2-m3
 """
