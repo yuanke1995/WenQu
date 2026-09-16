@@ -12,16 +12,18 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.context.annotation.Configuration;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.regex.Pattern;
 
 /**
  * 内部鉴权拦截器：两层控制
  * <ol>
- *   <li>平台信任 token：所有 /api/** 必须携带正确 X-Trusted-Token（来自平台网关/管理端，恒定时间比较防时序攻击）</li>
+ *   <li>API Key 认证：带对 X-Api-Key 且命中问答白名单 → 放行（管理端点不放行）</li>
  *   <li>权限模型：普通用户仅开放问答链路，其余端点需管理员
  *       （判定见 {@link AdminGuard}；未命中返回 403，fail-closed）</li>
  * </ol>
+ * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
+ * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
+ * 旧的 X-Trusted-Token 网关校验已移除——它会拦截登录引导端点造成「要先有 token 才能登录」的死锁。</p>
  *
  * @author yuanke
  */
@@ -40,10 +42,9 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     @PostConstruct
     public void validate() {
-        if (properties.getTrustedToken() == null || properties.getTrustedToken().isBlank()) {
-            throw new IllegalStateException(
-                    "缺少必要配置：AI_TRUSTED_TOKEN 环境变量未设置，服务拒绝启动");
-        }
+        // 不再强制要求 AI_TRUSTED_TOKEN：本地登录（JWT）已是主鉴权，信任 token 仅作图片签名种子（可缺省）。
+        // 旧的 X-Trusted-Token 网关校验已移除——否则登录引导端点（login/first-run/initialize）会被
+        // 前置的信任 token 拦截，形成「要先有 token 才能登录」的死锁。
     }
 
     @Override
@@ -115,29 +116,15 @@ public class SecurityConfig implements WebMvcConfigurer {
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
             String method = request.getMethod();
             String path = request.getRequestURI().substring(request.getContextPath().length());
-            // 1. 平台信任 token（恒定时间比较）
-            String token = request.getHeader("X-Trusted-Token");
-            String expected = properties.getTrustedToken();
-            boolean ok = token != null
-                    && MessageDigest.isEqual(
-                            token.getBytes(StandardCharsets.UTF_8),
-                            expected.getBytes(StandardCharsets.UTF_8));
-            if (!ok) {
-                // 1b. API Key（对外开放问答能力的入口）：仅放行「问答链路」白名单端点。
-                //     管理端点即便持有效 Key 也不放行——Key 泄露时危害被限制在问答能力内；
-                //     校验失败与无凭据返回同一 401 文案，不暴露服务支持哪些认证方式。
-                String plainKey = request.getHeader("X-Api-Key");
-                var rec = apiKeyService.verify(plainKey);
-                if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)) {
-                    request.setAttribute(ATTR_API_KEY_ID, rec.getId());
-                    apiKeyService.touchLastUsed(rec.getId());
-                    return true;
-                }
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(objectMapper.writeValueAsString(
-                        ResultJson.error("无权访问 AI 服务")));
-                return false;
+            // 1. API Key 认证（对外开放问答能力的入口）：带对 X-Api-Key 且命中问答白名单 → 放行。
+            //    不再要求 X-Trusted-Token——那是旧的网关注入机制，会拦截登录引导端点造成死锁。
+            //    未带 / 校验失败的 Key 不在此处拦截，继续走登录门禁与管理员判定。
+            String plainKey = request.getHeader("X-Api-Key");
+            var rec = apiKeyService.verify(plainKey);
+            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)) {
+                request.setAttribute(ATTR_API_KEY_ID, rec.getId());
+                apiKeyService.touchLastUsed(rec.getId());
+                return true;
             }
             // 2. 登录门禁：require-login=true 时，除登录引导端点外必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));

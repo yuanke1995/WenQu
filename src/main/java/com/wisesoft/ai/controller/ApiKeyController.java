@@ -3,10 +3,9 @@ package com.wisesoft.ai.controller;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.service.ApiKeyService;
-import com.wisesoft.ai.util.UserContext;
+import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,7 +21,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * API Key 管理接口（管理员）：签发 / 列表 / 启停 / 删除。
+ * API Key 管理接口（管理员）：签发 / 列表 / 启停 / 删除 / 共享范围。
  *
  * <p>Key 的权限固定为「问答链路」——持有 Key 的调用方走 X-Api-Key 头，
  * 仅能访问与普通用户等价的端点（问答/会话/反馈/引用溯源等），管理端点一律拒绝。
@@ -38,7 +37,7 @@ public class ApiKeyController {
 
     private final ApiKeyService apiKeyService;
 
-    @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态")
+    @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；按共享范围过滤（范围外不可见）")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(apiKeyService.list());
@@ -46,10 +45,12 @@ public class ApiKeyController {
 
     @Operation(summary = "签发 Key", description = "返回明文 apiKey——仅此一次，请立即保存；库里只存哈希")
     @PostMapping
-    public ResultJson create(@RequestBody Map<String, String> body, HttpServletRequest request) {
+    public ResultJson create(@RequestBody Map<String, String> body) {
         String name = body.get("name");
         LocalDateTime expireAt = parseExpire(body.get("expireAt"));
-        return ResultJson.ok(apiKeyService.create(name, expireAt, UserContext.resolve(request)));
+        // 归属用「当前登录身份」（RequestUser）：与文档/智能体的 created_by 口径一致，
+        // 否则创建者短路会因身份来源不同而失效
+        return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid()));
     }
 
     @Operation(summary = "重命名 Key", description = "改用途备注，不影响 Key 本身与调用方；body: {\"name\": \"…\"}")
@@ -74,6 +75,15 @@ public class ApiKeyController {
     public ResultJson delete(@PathVariable String id) {
         apiKeyService.delete(id);
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局）；"
+            + "非空须为 version 2 JSON，且管理范围不得宽于读取范围")
+    @PutMapping("/{id}/share")
+    public ResultJson updateShare(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        Object v = body == null ? null : body.get("shareConfig");
+        apiKeyService.updateShareConfig(id, v == null ? null : String.valueOf(v));
+        return ResultJson.ok("共享范围已保存");
     }
 
     /** 过期时间：接受 yyyy-MM-dd（当天 23:59:59 失效）或 yyyy-MM-ddTHH:mm[:ss]；空=长期有效 */

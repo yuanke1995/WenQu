@@ -944,11 +944,15 @@ public class DocumentService {
         AiDocument doc = documentMapper.selectById(docId);
         if (doc == null) throw new BizException("文档不存在");
         resourceVisibilityService.validateShareConfig(shareConfigJson);
-        doc.setShareConfig(shareConfigJson == null || shareConfigJson.isBlank() ? null : shareConfigJson);
-        documentMapper.updateById(doc);
+        String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
+        // 必须用 set(..., null) 显式置空：MyBatis-Plus 默认更新策略为 NOT_NULL，updateById 会跳过
+        // null 字段 → 「改回全员共享」会静默不生效（保存成功但范围没放开）
+        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getId, docId)
+                .set(AiDocument::getShareConfig, normalized));
         documentMetaCache.invalidate(docId);
         log.info("[AUDIT] 设置文档共享范围 operator={} docId={} scope={}", operator, docId,
-                doc.getShareConfig() == null ? "global" : "custom");
+                normalized == null ? "global" : "custom");
     }
 
     /**

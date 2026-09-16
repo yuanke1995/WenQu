@@ -51,13 +51,15 @@ public class ResourceVisibilityService {
         /** 知识库 / 文档：普通用户封顶只读，admin/superadmin 可管理 */
         KNOWLEDGE_BASE,
         /** 智能体 / 技能：全角色可管理 */
-        AGENT;
+        AGENT,
+        /** API Key：全角色可管理。共享的是「Key 记录」而非密钥本体（明文仅签发时返回一次，列表只有前缀） */
+        API_KEY;
 
         Permission roleCeiling(String role) {
             return switch (this) {
                 case KNOWLEDGE_BASE -> ("admin".equals(role) || "superadmin".equals(role))
                         ? Permission.MANAGE : Permission.READ;
-                case AGENT -> ("user".equals(role) || "admin".equals(role) || "superadmin".equals(role))
+                case AGENT, API_KEY -> ("user".equals(role) || "admin".equals(role) || "superadmin".equals(role))
                         ? Permission.MANAGE : Permission.READ;
             };
         }
@@ -71,7 +73,10 @@ public class ResourceVisibilityService {
         public boolean superadmin() { return "superadmin".equals(role); }
     }
 
-    /** 解析可见性所需的资源共享信息 */
+    /**
+     * 解析可见性所需的资源共享信息（文档 / 智能体 / API Key 通用载体）。
+     * <p>{@code shareConfig} 为 null/空 ＝ 未配置 ＝ 全局共享；{@code createdBy} 用于「创建者短路」。</p>
+     */
     public record DocShare(String shareConfig, String createdBy) {}
 
     @Data
@@ -156,9 +161,14 @@ public class ResourceVisibilityService {
         return granted.ordinal() <= ceiling.ordinal() ? granted : ceiling;
     }
 
-    /** 当前用户是否能读取该资源 */
+    /** 当前用户是否能读取该资源（知识库语义，兼容既有调用） */
     public boolean canRead(Principal p, String shareConfigJson, String createdBy) {
-        return resolve(p, shareConfigJson, createdBy, ResourceKind.KNOWLEDGE_BASE).ordinal() >= Permission.READ.ordinal();
+        return canRead(p, shareConfigJson, createdBy, ResourceKind.KNOWLEDGE_BASE);
+    }
+
+    /** 当前用户是否能读取该资源（按资源类型套角色上限） */
+    public boolean canRead(Principal p, String shareConfigJson, String createdBy, ResourceKind kind) {
+        return resolve(p, shareConfigJson, createdBy, kind).ordinal() >= Permission.READ.ordinal();
     }
 
     /** 当前用户是否能管理该资源 */
@@ -226,16 +236,23 @@ public class ResourceVisibilityService {
     }
 
     /**
-     * 给定候选文档 id → 共享信息映射，返回当前用户【可见】的文档 id 集合。
-     * 文档未配置共享（shareConfig 为空）或创建者/超管 → 始终可见。
+     * 给定候选文档 id → 共享信息映射，返回当前用户【可见】的文档 id 集合（知识库语义，兼容旧调用）。
      */
     public Set<String> filterVisibleDocIds(Principal p, Map<String, DocShare> docShares) {
-        if (docShares == null || docShares.isEmpty()) return Collections.emptySet();
+        return filterVisibleIds(p, docShares, ResourceKind.KNOWLEDGE_BASE);
+    }
+
+    /**
+     * 给定候选资源 id → 共享信息映射，返回当前用户【可见】的 id 集合。
+     * 资源未配置共享（shareConfig 为空）或创建者/超管 → 始终可见。
+     */
+    public Set<String> filterVisibleIds(Principal p, Map<String, DocShare> shares, ResourceKind kind) {
+        if (shares == null || shares.isEmpty()) return Collections.emptySet();
         Set<String> out = new LinkedHashSet<>();
-        for (Map.Entry<String, DocShare> e : docShares.entrySet()) {
+        for (Map.Entry<String, DocShare> e : shares.entrySet()) {
             DocShare ds = e.getValue();
             if (ds == null) { out.add(e.getKey()); continue; }
-            if (canRead(p, ds.shareConfig(), ds.createdBy())) out.add(e.getKey());
+            if (canRead(p, ds.shareConfig(), ds.createdBy(), kind)) out.add(e.getKey());
         }
         return out;
     }

@@ -79,4 +79,13 @@ public class AgentController {
         agentService.setDefault(id);
         return ResultJson.ok(Map.of("id", id, "isDefault", 1));
     }
+
+    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局共享）；"
+            + "非空须为 version 2 JSON，且管理范围不得宽于读取范围。共享范围之外的人不可见、不可用、不可管理该智能体")
+    @PutMapping("/{id}/share")
+    public ResultJson updateShare(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        Object v = body == null ? null : body.get("shareConfig");
+        agentService.updateShareConfig(id, v == null ? null : String.valueOf(v));
+        return ResultJson.ok("共享范围已保存");
+    }
 }
