@@ -336,7 +336,7 @@ import { RobotOutlined, SendOutlined, PauseCircleOutlined, LikeOutlined, Dislike
 
 // 工具名友好展示：内置工具映射中文，MCP 外部工具保留原名（Spring AI 自动加 server 前缀）
 const TOOL_LABELS = { searchKnowledge: '知识库精确检索', presentArtifact: '生成文件产物' }
-// MCP 工具的 Spring AI 防冲突前缀：McpClientService 的 clientInfo name "ai-doc-assistant"
+// MCP 工具的 Spring AI 防冲突前缀：McpClientService 的 clientInfo name "wen-qu"
 // 经 McpToolUtils.prefixedToolName 首字母缩写（按 -/_ 分段取首字母）→ "a_d_a_"。
 // 后端用全名保证唯一；前端展示剥离前缀，露出工具原名。
 const MCP_CLIENT_PREFIX = 'a_d_a_'

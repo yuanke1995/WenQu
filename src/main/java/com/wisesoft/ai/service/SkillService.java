@@ -248,7 +248,7 @@ public class SkillService {
                     .build();
             java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                     .timeout(java.time.Duration.ofSeconds(15))
-                    .header("User-Agent", "ai-doc-assistant-skill-installer")
+                    .header("User-Agent", "wen-qu-skill-installer")
                     .GET().build();
             java.net.http.HttpResponse<byte[]> resp = client.send(req,
                     java.net.http.HttpResponse.BodyHandlers.ofByteArray());

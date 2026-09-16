@@ -246,7 +246,7 @@ public class McpClientService {
 
     /** 按类型构建传输层并创建同步客户端（未 initialize） */
     private McpSyncClient connect(String name, String url, String type) {
-        McpSchema.Implementation clientInfo = new McpSchema.Implementation("ai-doc-assistant", "1.0.0");
+        McpSchema.Implementation clientInfo = new McpSchema.Implementation("wen-qu", "1.0.0");
         McpClient.SyncSpec spec = McpClient.sync(buildTransport(url, type))
                 .clientInfo(clientInfo)
                 .requestTimeout(REQUEST_TIMEOUT)
