@@ -152,9 +152,39 @@ public class AgentService {
             clearDefault();
             a.setIsDefault(1);
         }
-        mapper.updateById(a);
+        updateColumns(id, body, a);
         log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
         return a;
+    }
+
+    /**
+     * 显式 set body 中出现过的字段（**含 null**），只更新这些列。
+     * <p><b>不能用 {@code updateById}</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，会跳过 null 列，
+     * 于是「清空描述」「把能力改回跟随全局（tool*=null / *范围=null）」「知识库范围改回全部文档」
+     * 这类操作都会静默不生效——与 {@link #updateShareConfig} 同因，故一律用显式 set。</p>
+     */
+    private void updateColumns(String id, Map<String, Object> body, Agent a) {
+        Map<String, Object> b = body == null ? java.util.Collections.emptyMap() : body;
+        LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, id);
+        if (b.containsKey("name")) uw.set(Agent::getName, a.getName());
+        if (b.containsKey("description")) uw.set(Agent::getDescription, a.getDescription());
+        if (b.containsKey("model")) uw.set(Agent::getModel, a.getModel());
+        if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
+        if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
+        if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
+        if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
+        if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
+        if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
+        if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
+        if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
+        if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
+        if (b.containsKey("mcps")) uw.set(Agent::getMcps, a.getMcps());
+        if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
+        if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
+        if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
+        if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
+        uw.set(Agent::getUpdateTime, a.getUpdateTime());
+        mapper.update(null, uw);
     }
 
     /** 删除智能体（内置标记的禁止删除） */
