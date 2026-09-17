@@ -127,7 +127,6 @@ public class ConfigService {
             Map.entry("chat.maxImagesPerMessage", "对话：单条消息最多图片张数"),
             Map.entry("chat.maxImageMb", "对话：单张图片体积上限(MB)"),
             Map.entry("retrieval.relatedCount", "回答：末尾 <related> 相关追问的推荐条数"),
-            Map.entry("retrieval.strength", "检索强度预设：precision / balanced / recall / custom（切换会批量覆盖检索权重；手动改任一权重自动变 custom）"),
             // ===== 工具调用（Function Calling）：@Tool 工具开关，均需 tool.enabled 总开关开启才生效 =====
             Map.entry("tool.enabled", "工具调用：总开关（开启后模型可调用 @Tool 工具，如知识库精确检索、产物交付）"),
             Map.entry("tool.knowledgeRetrieval.enabled", "工具调用：知识库精确检索工具开关（模型可主动补充检索，需总开关开启）"),
@@ -562,7 +561,6 @@ public class ConfigService {
         d.put("parse.ocrDpi", "200");
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
-        d.put("retrieval.strength", "balanced");
         // 工具调用（Function Calling）总开关与知识库精确检索工具
         d.put("tool.enabled", "false");                    // 工具调用总开关（默认关，开启后模型可调用工具）
         d.put("tool.knowledgeRetrieval.enabled", "false"); // 知识库精确检索工具开关（需总开关开启）
