@@ -228,6 +228,8 @@ public class RagService {
     private static final Pattern relatedPattern = Pattern.compile("<related>([\\s\\S]*?)</related>");
     /** 全局编号后的图片占位：[图片N] 或 [图片N：描述]（描述内不含 ]；用于收集片段截取丢掉的图） */
     private static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
+    /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换为 IMG_NUMBER_PATTERN 形态） */
+    private static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
 
     private final ChatClient chatClient;
     private final SessionService sessionService;
@@ -395,6 +397,9 @@ public class RagService {
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
         }
+        // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
+        // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
+        final boolean knowledgeOff = agent != null && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
         // 知识库范围：all/空 → null（继承全局全部文档）；否则解析为文档 ID 集合，检索命中按此过滤
         final Set<String> scopeDocIds = (agent != null && agent.getKnowledgeScope() != null
                 && !agent.getKnowledgeScope().isBlank() && !"all".equalsIgnoreCase(agent.getKnowledgeScope().trim()))
@@ -428,7 +433,8 @@ public class RagService {
 
             // 0.5 意图分类：问候/闲聊/知识库无关话题跳过 RAG（改写/思考/检索/引用），直接对话。
             //     带图不分类（图片提问默认走视觉+RAG）；分类失败/超时/关闭一律继续走完整 RAG（fail-safe）
-            if (userImgs.isEmpty() && properties.getIntent().isEnabled()) {
+            //     智能体声明不使用知识库时无需分类——后续整条检索链路都会跳过，直接走生成
+            if (userImgs.isEmpty() && properties.getIntent().isEnabled() && !knowledgeOff) {
                 // 客户端断开短路：分类是 LLM 调用，断开后不再发起
                 if (clientDisconnected(emitter)) {
                     log.info("[SSE] 客户端断开，跳过意图分类: session={}", sessionId);
@@ -439,6 +445,16 @@ public class RagService {
                     runSmallTalkChat(sessionId, question, emitter, startTime, thinkingHolder, degradations, degradedCodes, agent);
                     return;
                 }
+            }
+
+            // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
+            //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
+            //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
+            if (knowledgeOff) {
+                log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路（@ 引用仍生效）", agent.getId());
+                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, refs, emitter, startTime,
+                        thinkingHolder, degradations, degradedCodes, agent, stageMs);
+                return;
             }
 
             // 0. 查询改写（支持多轮历史上下文；失败降级为原始问题并上报 fail-loud；M2：关闭时跳过历史查询）
@@ -655,7 +671,6 @@ public class RagService {
             Map<Integer, String> imgIndex = new LinkedHashMap<>();
             // 全局图片编号 → 描述（图片相关性校验用：LLM 输出标记后逐图比对）
             Map<Integer, String> imgDescIndex = new HashMap<>();
-            Pattern imgPattern = Pattern.compile("\\[图片(：.*?)?\\]");
             StringBuilder context = new StringBuilder();
             List<Map<String, Object>> sources = new ArrayList<>();
             int docNo = 1;
@@ -734,7 +749,7 @@ public class RagService {
                 // 避免"先输出后剔除"导致图闪一下再消失；图片仍留在 sources.images 供引用弹窗查看。
                 boolean imgPrefilter = retrievalQuery != null && retrievalQuery.length() >= 2;
                 int imgIdxForChunk = 0;
-                Matcher matcher = imgPattern.matcher(text);
+                Matcher matcher = IMG_PLACEHOLDER_PATTERN.matcher(text);
                 StringBuffer sb = new StringBuffer();
                 while (matcher.find()) {
                     if (imgIdxForChunk < urls.size()) {
@@ -2220,6 +2235,139 @@ public class RagService {
             emitter.onError(t -> st.disposeSafe());
         } catch (Exception e) {
             log.error("Small talk chat error", e);
+            sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
+            completeEmitter(emitter);
+        }
+    }
+
+    /**
+     * 「不使用知识库」分支（智能体 knowledgeDisabled=1）：纯角色对话，不跑改写/深度思考/检索/子代理编排。
+     * 与闲聊分支的差异：① 多轮历史照常注入；② 用户手动 @ 的文档仍取块前置（手动指定优先于智能体配置）；
+     * ③ 图片提问时图片描述随问题发给模型（多模态理解，不参与检索）。
+     * 复用主回答流：sources/retrieved 均空 → 前端检索状态行与引用区天然不渲染。
+     */
+    private void runNoKnowledgeChat(String sessionId, String question, List<UserImageService.UserImage> userImgs,
+                                    String imgDescText, List<ChatRef> refs, SseEmitter emitter, long startTime,
+                                    String[] thinkingHolder, List<Map<String, String>> degradations,
+                                    Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs) {
+        try {
+            // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答
+            StringBuilder system = new StringBuilder(resolveSystemPrompt(agent))
+                    .append("\n\n【本轮对话说明】\n")
+                    .append("本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，")
+                    .append("不要输出 [N] 来源标注（本轮没有参考资料）。");
+            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId,
+                    configService.getInt("chat.historyRounds", 5));
+            if (recentHistory == null) {
+                addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
+                recentHistory = List.of();
+            }
+            String historyText = buildHistoryText(recentHistory);
+            if (!historyText.isEmpty()) {
+                system.append("\n\n对话历史：\n").append(historyText);
+            }
+
+            // @ 引用文档块前置（手动指定的资料优先于配置；无 @ 引用则完全没有资料段）
+            String retrievalQuery = question;
+            List<HybridRetrievalService.Hit> atHits = buildAtRefHits(refs, retrievalQuery);
+            StringBuilder context = new StringBuilder();
+            List<Map<String, Object>> sources = new ArrayList<>();
+            Map<Integer, String> imgIndex = new LinkedHashMap<>();
+            Map<Integer, String> imgDescIndex = new HashMap<>();
+            int usedTokens = 0;
+            for (HybridRetrievalService.Hit h : atHits) {
+                String text = h.content() == null ? "" : h.content();
+                List<String> urls = h.images() == null ? List.of() : h.images();
+                // 图片占位编号（与主链路同规则；@ 块内图片按序编号，相关性预筛跳过——手动指定的资料默认相关）
+                Matcher matcher = IMG_PLACEHOLDER_PATTERN.matcher(text);
+                StringBuffer sb = new StringBuffer();
+                int imgIdxForChunk = 0;
+                while (matcher.find()) {
+                    if (imgIdxForChunk < urls.size()) {
+                        String raw = matcher.group();
+                        String desc = "";
+                        int colonIdx = raw.indexOf("：");
+                        if (colonIdx >= 0 && raw.length() > colonIdx + 2) {
+                            desc = raw.substring(colonIdx + 1, raw.length() - 1).trim();
+                        }
+                        int globalSeq = imgIndex.size() + 1;
+                        imgIndex.put(globalSeq, urls.get(imgIdxForChunk++));
+                        String replacement = desc.isEmpty()
+                                ? "[图片" + globalSeq + "]"
+                                : "[图片" + globalSeq + "：" + desc + "]";
+                        matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+                        imgDescIndex.put(globalSeq, desc);
+                    } else {
+                        matcher.appendReplacement(sb, matcher.group());
+                    }
+                }
+                matcher.appendTail(sb);
+                text = sb.toString();
+                if (h.titlePath() != null && !h.titlePath().isBlank()) {
+                    text = "【上下文】" + h.titlePath() + "\n\n" + text;
+                }
+                int tokens = TokenCounter.estimate(text);
+                Map<String, Object> src = new LinkedHashMap<>();
+                src.put("ref", sources.size() + 1);
+                src.put("knowledgeId", h.knowledgeId());
+                src.put("docId", h.docId());
+                src.put("fileName", documentMetaCache.getFileNames(
+                        Set.of(h.docId())).get(h.docId()));
+                src.put("title", h.title());
+                src.put("snippet", snippet(text));
+                src.put("images", urls);
+                src.put("origin", "AT_REF");
+                sources.add(src);
+                context.append("[").append(sources.size()).append("] ").append(text).append("\n");
+                usedTokens += tokens;
+            }
+            if (!atHits.isEmpty()) {
+                log.info("[NO-KB] @ 引用前置 {} 块（{} tokens）", atHits.size(), usedTokens);
+            }
+
+            // 拼装用户消息：问题 + 图片描述 + @ 资料段
+            StringBuilder userQuestion = new StringBuilder(question);
+            if (imgDescText != null && !imgDescText.isBlank()) {
+                userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            }
+            String user = context.length() == 0
+                    ? userQuestion.toString()
+                    : userQuestion + "\n\n参考资料：\n" + context;
+
+            // SSE 图片列表（@ 块命中的图）
+            if (!imgIndex.isEmpty()) {
+                List<String> signedUrls = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
+                sendSseEvent(emitter, "image", JSON.toJSONString(signedUrls), sessionId);
+            }
+
+            if (clientDisconnected(emitter)) {
+                log.info("[SSE] 客户端断开，终止本轮问答（无知识库分支，生成前）: session={}", sessionId);
+                return;
+            }
+            sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
+            stageMs.put("total", System.currentTimeMillis() - startTime);
+            // @ 块为空 → retrievedJson 为 null（前端检索状态行不渲染）；有 @ 块 → 正常渲染 refs 数
+            String retrievedJson = atHits.isEmpty() ? null
+                    : JSON.toJSONString(Map.of("keywords", 0, "refs", atHits.size(), "terms", List.of()));
+            AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
+                    imgIndex, imgDescIndex, sources, userImgs,
+                    startTime, question, thinkingHolder, degradations, degradedCodes, retrievedJson);
+            st.docMetaCache = documentMetaCache;
+            st.contextTokens = usedTokens;
+            st.budgetTokens = 0;
+            st.contextHits = atHits.size();
+            st.stageMs.putAll(stageMs);
+            st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
+            emitter.onCompletion(() -> st.disposeSafe());
+            emitter.onTimeout(() -> {
+                log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);
+                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
+                st.disposeSafe();
+                completeEmitter(emitter);
+            });
+            emitter.onError(t -> st.disposeSafe());
+        } catch (Exception e) {
+            log.error("No-knowledge chat error", e);
             sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
             completeEmitter(emitter);
         }

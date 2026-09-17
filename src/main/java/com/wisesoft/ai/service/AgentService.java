@@ -157,10 +157,15 @@ public class AgentService {
         return a;
     }
 
-    /** 删除智能体 */
+    /** 删除智能体（内置标记的禁止删除） */
     public void delete(String id) {
         Agent existing = mapper.selectById(id);
-        if (existing != null) ensureManageable(existing);
+        if (existing != null) {
+            ensureManageable(existing);
+            if (Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+                throw new BizException("内置智能体不可删除（如需调整请编辑其配置）");
+            }
+        }
         mapper.deleteById(id);
         log.info("[AGENT] 删除智能体 {}", id);
     }
@@ -214,6 +219,8 @@ public class AgentService {
         if (body.containsKey("model")) a.setModel(asText(body.get("model"), 255));
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
+        // 「不使用知识库」：纯角色智能体（法律顾问/写作助手等）——1=跳过检索链路；null 视为 0
+        if (body.containsKey("knowledgeDisabled")) a.setKnowledgeDisabled(toTri(body.get("knowledgeDisabled")));
         if (body.containsKey("toolKnowledge")) a.setToolKnowledge(toTri(body.get("toolKnowledge")));
         if (body.containsKey("toolBuiltin")) a.setToolBuiltin(toTri(body.get("toolBuiltin")));
         if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));

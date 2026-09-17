@@ -38,6 +38,16 @@ public class Agent {
     /** 知识库范围：all 或 文档 ID 逗号分隔（空=all，即继承全局全部文档） */
     private String knowledgeScope;
 
+    /**
+     * 不使用知识库：0=使用（默认，按 knowledgeScope 约束范围）；1=纯角色智能体，整条跳过检索链路
+     * （改写/深度思考检索/命中填充/子代理编排都不跑；用户手动 @ 的文档仍会被前置——手动指定优先于配置）。
+     * 用于「通用法律顾问 / 写作助手」这类不挂资料的角色；与 knowledgeScope 互斥，开启时忽略范围。
+     */
+    private Integer knowledgeDisabled;
+
+    /** 内置标记：1=系统内置（如默认「知识库助手」），禁止删除；0/NULL=普通智能体 */
+    private Integer isBuiltin;
+
     /** 知识库检索工具：1=开 0=关 NULL=继承 */
     private Integer toolKnowledge;
 
