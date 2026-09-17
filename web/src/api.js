@@ -416,12 +416,6 @@ export const deleteMessageGroup = assistantMessageId =>
 export const undoDeleteMessageGroup = assistantMessageId =>
   request('/message-group/undo', { method: 'POST', body: JSON.stringify({ messageId: assistantMessageId }) })
 
-/** 答案缓存统计（条数/阈值/开关） */
-export const getAnswerCacheStats = () => request('/answer-cache')
-
-/** 清空答案缓存 */
-export const clearAnswerCache = () => request('/answer-cache', { method: 'DELETE' })
-
 /** 按文档列出知识块（知识块预览） */
 export const listKnowledgeByDoc = docId => request('/knowledge/list?docId=' + encodeURIComponent(docId))
 

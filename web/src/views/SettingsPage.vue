@@ -228,21 +228,6 @@
                 </template>
               </template>
 
-              <!-- 语义缓存运维：运行统计 + 手动清空 -->
-              <a-form-item v-if="current === 'semanticCache'" label="缓存状态">
-                <div>
-                  <span v-if="cacheStats.count != null" style="color:var(--app-text2)">
-                    已缓存 <b style="color:var(--app-accent);font-weight:500">{{ cacheStats.count }}</b> 条（上限 {{ form.semanticCache?.maxEntries ?? '—' }}）
-                  </span>
-                  <span v-else style="color:var(--app-text3)">统计未加载</span>
-                  <a-popconfirm title="清空后缓存重新积累，确定清空？" ok-text="清空" cancel-text="取消" @confirm="doClearCache">
-                    <button class="app-btn danger small" style="margin-left:12px" :disabled="cacheClearing">{{ cacheClearing ? '清空中…' : '清空语义缓存' }}</button>
-                  </a-popconfirm>
-                  <button class="app-btn ghost small" style="margin-left:8px" @click="refreshCacheStats">刷新</button>
-                </div>
-                <div class="reembed-meta">清空后按提问重新积累；知识库变更（解析/删除/回滚/启停用）时后端会自动整体清空，一般无需手动操作。</div>
-              </a-form-item>
-
               <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
               <template v-if="current === 'apiKey'">
                 <!-- 工具栏：搜索 + 概览统计 + 主操作 -->
@@ -551,7 +536,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, getAnswerCacheStats, clearAnswerCache,
+import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare,
          listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
@@ -565,7 +550,7 @@ import { getMcpStatus, reloadMcp, probeMcp } from '../api'
 const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', mcp: 'MCP 外部工具',
-  semanticCache: '语义缓存', ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能 Skills',
+  ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能 Skills',
   agent: '并行检索'
 }
 const groupLabel = key => NAV_LABELS[key] || key
@@ -593,14 +578,13 @@ const PANEL_ALERTS = {
   chat: [{ type: 'info', msg: '问答模型支持跨厂商热切换：修改网关地址/API Key/模型名保存即生效免重启，API Key 以 RSA 加密入库。' }],
   vision: [{ type: 'info', msg: '视觉模型用于文档图片与用户图片的描述识别；关闭后图片仅展示、内容不进检索与引用。' }],
   chunk: [{ type: 'info', msg: '上传大小上限保存即生效；分块/图片上限只对重新解析/新上传文档生效，超限按保护策略截断入库。' }],
-  embedding: [{ type: 'warning', msg: '向量模型热切换说明：不同模型的向量数学上不可迁移。保存时会先探测新配置并校验维度，通过后自动重建索引并后台全量重嵌入；任务开始即清空语义缓存。重嵌入期间向量检索自动降级关键词路，服务不中断。' }],
+  embedding: [{ type: 'warning', msg: '向量模型热切换说明：不同模型的向量数学上不可迁移。保存时会先探测新配置并校验维度，通过后自动重建索引并后台全量重嵌入。重嵌入期间向量检索自动降级关键词路，服务不中断。' }],
   retrieval: [
     { type: 'info', msg: '融合分 = 向量权重×向量相似度 + 关键词权重×命中率 + 标题命中奖励。保存后立即生效。' },
     { type: 'info', msg: '重排：OpenAI 兼容 /v1/rerank 服务。未启动或不可用时自动回退融合分排序，不影响正常问答。' }
   ],
   context: [{ type: 'info', msg: '预算 = min(模型窗口×安全系数−输出限制, 成本上限)，知识块按相关度降序累积填充，超出自动裁剪。保存后立即生效。' }],
   deepReasoning: [{ type: 'info', msg: '深度思考：AI 先流式展示思维链，思考末尾输出检索计划（精化 query + 子问题）多路并行检索合并后回答。失败自动降级。' }],
-  semanticCache: [{ type: 'info', msg: '命中相似问题（≥阈值）时直接复用历史回答：省检索与 LLM 成本、秒级返回。知识库变更时自动整体清空，不会用过期答案。' }],
   ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
   maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
   apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }],
@@ -634,7 +618,6 @@ const fetchAndFill = async () => {
       }
       const em = d.embedding || {}
       embeddingDimensions.value = em.dimensions?.value || ''
-      refreshCacheStats()
       refreshReembedStatus()
       loadMcpStatus()
       initialPayload.value = buildPayload()
@@ -831,22 +814,6 @@ const onChatPresetChange = val => {
   form.value.chat.baseUrl = p.baseUrl
   form.value.chat.completionsPath = p.completionsPath
   message.info('已填充网关地址与补全路径，请补齐 API Key 与模型名后保存')
-}
-
-// ==================== 语义缓存统计与清空 ====================
-const cacheStats = ref({ count: null })
-const cacheClearing = ref(false)
-const refreshCacheStats = () => {
-  getAnswerCacheStats().then(r => { if (r.success) cacheStats.value = r.data }).catch(() => {})
-}
-const doClearCache = async () => {
-  cacheClearing.value = true
-  try {
-    const r = await clearAnswerCache()
-    if (r.success) { cacheStats.value = { count: 0 }; message.success('答案缓存已清空') }
-    else message.error(r.msg || '清空失败')
-  } catch (e) { message.error(e.message || '清空失败') }
-  finally { cacheClearing.value = false }
 }
 
 // ==================== 重嵌入状态 ====================

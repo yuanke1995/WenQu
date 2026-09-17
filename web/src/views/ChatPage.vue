@@ -911,7 +911,7 @@ const send = () => {
   const imgs = pendingImages.value.map(p => p.dataUrl)
   if ((!q && !imgs.length) || loading.value) return
   // @ 引用：只保留文本里仍存在的（用户可能删掉了某个 @xxx）；问题文本保留 @ 标记，
-  // 语义缓存与历史记录因此能区分"同一问题不同指定文档"
+  // 历史记录因此能区分"同一问题不同指定文档"
   const refs = atRefs.value.filter(r => q.includes('@' + r.name))
   text.value = ''
   pendingImages.value = []

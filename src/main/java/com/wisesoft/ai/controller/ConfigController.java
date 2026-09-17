@@ -137,7 +137,7 @@ public class ConfigController {
         }
     }
 
-    @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit/semanticCache）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
+    @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
     @PostMapping("/reset")
     public ResultJson resetGroup(@Parameter(description = "{\"groups\": [\"chat\"]}")
                                  @RequestBody Map<String, Object> body) {

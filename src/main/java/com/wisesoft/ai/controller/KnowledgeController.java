@@ -106,7 +106,6 @@ public class KnowledgeController {
         } catch (Exception e) {
             log.warn("[FAIL-LOUD] 知识块 {} 状态切换索引同步失败: {}", id, e.getMessage());
         }
-        documentService.invalidateAnswerCache();
         log.info("[AUDIT] 知识块{} operator={} id={} title={}", status == 1 ? "停用" : "启用",
                 RequestUser.uid(), id, k.getTitle());
         return ResultJson.ok("操作成功");

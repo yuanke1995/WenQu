@@ -78,7 +78,6 @@ public class DocumentService {
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final KnowledgeRefService knowledgeRefService;
-    private final AnswerCacheService answerCacheService;
     private final ResourceVisibilityService resourceVisibilityService;
     /** 向量模型（@Primary 为 DynamicEmbeddingModel）：重嵌入前探测新维度用 */
     private final org.springframework.ai.embedding.EmbeddingModel embeddingModel;
@@ -283,14 +282,8 @@ public class DocumentService {
      * 单知识块向量化并入库（供手动新增知识块复用；embedding 失败降级返回 false，不阻断入库）
      * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
      */
-    /** 供外部（知识块状态切换等）触发答案缓存整体失效 */
-    public void invalidateAnswerCache() {
-        answerCacheService.clearAll();
-    }
-
     public boolean embedAndStore(Knowledge k, String content) {
         try {
-            answerCacheService.clearAll();
             Map<String, Object> metadata = new HashMap<>();
             if (k.getDocId() != null) {
                 metadata.put("docId", k.getDocId());
@@ -325,7 +318,6 @@ public class DocumentService {
      *   <li>护栏：initialize-schema 必须为 true，否则 DROP 后无法重建索引（向量路永久不可用）</li>
      *   <li>护栏：探测新模型维度（不可达/维度非法即放弃，服务不降级），与 embedding.dimensions
      *       记录的旧维度比对记日志</li>
-     *   <li>清空语义缓存（旧模型问题向量即刻作废，避免整个重嵌窗口内命中错答案）</li>
      *   <li>DROP 向量索引（连数据）→ 按新维度重建 schema</li>
      *   <li>游标分批重新 embedding 全部知识块</li>
      *   <li>记录新维度到 embedding.dimensions（下次切换的旧维度基线）+ 索引文档数对账</li>
@@ -446,12 +438,6 @@ public class DocumentService {
         reembedStatus.newDim = newDim;
         log.info("[Reembed] 维度护栏通过: 旧索引维度={} → 新模型维度={}{}", reembedStatus.oldDim, newDim,
                 reembedStatus.oldDim > 0 && reembedStatus.oldDim != newDim ? "（维度变化，索引 schema 必须重建）" : "");
-        // 护栏3：先清语义缓存，再动向量索引。c_ai_answer_cache 存的是旧模型问题向量——
-        // 放到任务末尾清会留下一个数分钟长的错答窗口：期间新问题用新模型向量与旧向量比对，
-        // 维度不同时被 cosine 维度护栏挡掉（缓存加速失效），维度相同但语义空间不同时更危险
-        // （相似度可能越过阈值，直接返回一条语义无关的历史回答）。故必须在此刻清空。
-        answerCacheService.clearAll();
-        log.info("[Reembed] 语义缓存已清空（旧模型问题向量作废）");
         // 1. DROP 索引连数据：旧模型向量全部作废（维度不同时 RediSearch schema 也必须重建）
         try {
             rvs.getJedis().ftDropIndexDD(vectorIndexName);
@@ -784,8 +770,6 @@ public class DocumentService {
             doc.setStatus(0);
             doc.setFailReason(null);
             documentMapper.updateById(doc);
-            // 知识库变更：相似问题答案缓存整体失效（缓存答案对应旧知识库快照）
-            answerCacheService.clearAll();
             // 版本管理：成功解析后版本号 +1 并保存快照
             try {
                 int newVersion = (doc.getVersion() == null ? 0 : doc.getVersion()) + 1;
@@ -826,7 +810,6 @@ public class DocumentService {
                 // 重解析失败：未变旧块仍在（变更块已被 diff 清理），回退到生效状态继续可用
                 doc.setStatus(0);
                 doc.setFailReason("重解析失败，已保留上一版内容: " + truncate(e.getMessage()));
-                answerCacheService.clearAll();
             } else {
                 // 全新解析失败：无旧内容可回退，清理图片目录并置失败
                 cleanupImages(docId);
@@ -847,7 +830,6 @@ public class DocumentService {
      * 删除文档（向量/MySQL/图片分别清理）
      */
     public void delete(String docId) {
-        answerCacheService.clearAll();
         // 立即标记删除 + 中断解析线程（图片 join 等待立即响应，不再等阶段检查点）
         // 多实例语义：deletedFlags/parseThreads 为进程内存态——本实例解析的任务可立即中断；
         // 其他实例上运行的解析任务由 isDocAlive 的 DB 兜底感知（删除后 selectById 为 null），
@@ -917,7 +899,6 @@ public class DocumentService {
         doc.setStatus(status);
         documentMapper.updateById(doc);
         documentMetaCache.invalidate(docId);
-        answerCacheService.clearAll();
         // 关键词索引同步（best-effort，失败仅告警；检索侧 loadNonRetrievableDocIds 已兜底过滤弃用）
         try {
             if (status == 1) {
@@ -1031,11 +1012,6 @@ public class DocumentService {
         k.setVectorId(k.getId());
         knowledgeMapper.updateById(k);
         keywordIndexService.indexChunks(List.of(k)); // 关键词索引同步：按 id upsert（best-effort）
-        // 标题/内容确实变化才清答案缓存（编辑知识块与图片补描述回写均经此路径，缓存答案对应旧块快照，
-        // 不清除则改后旧答案仍可持续命中；其余知识库变更路径的 clearAll 语义一致）
-        if (!Objects.equals(oldTitle, newTitle) || !Objects.equals(oldContent, content)) {
-            answerCacheService.clearAll();
-        }
         // 3. 清理历史遗留的异 id 旧向量（正常链路 vectorId==knowledgeId，已被 upsert 覆盖，无需删除）
         if (oldVectorId != null && !oldVectorId.isBlank() && !oldVectorId.equals(k.getId())) {
             try {
@@ -1259,7 +1235,6 @@ public class DocumentService {
         if (configService.getBoolean("retrieval.refDetectEnabled")) {
             knowledgeRefService.rebuildByDocId(docId);
         }
-        answerCacheService.clearAll();
         log.info("[{}] 回滚到 v{} 完成: {} chunks", docId, version, snapshot.size());
     }
 

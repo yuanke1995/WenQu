@@ -32,7 +32,7 @@ import java.util.Set;
  * - vision.baseUrl / vision.apiKey 可编辑（VisionService 每次调用动态读取，保存即生效）
  * - embedding.* 可编辑（DynamicEmbeddingModel 热切换）但向量无法跨模型迁移：保存检测到变化时
  *   先探测新配置可达性，通过后自动触发全量重嵌入（DocumentService.reembedAll：DROP 向量索引 →
- *   重建 schema → 全量重算 → 清空语义缓存）
+ *   重建 schema → 全量重算）
  * - 敏感项（*.apiKey）RSA 加密入库（ConfigCryptoService）：启动自动迁移存量明文，读取透明解密
  *
  * @author yuanke
@@ -130,7 +130,6 @@ public class ConfigService {
             Map.entry("embedding.baseUrl", "向量模型网关地址(OpenAI 兼容)"),
             Map.entry("embedding.apiKey", "向量模型 API Key(RSA 加密入库)"),
             Map.entry("embedding.embeddingsPath", "向量化路径(默认 /v1/embeddings;智谱 /v4、千帆 /v2)"),
-            Map.entry("semanticCache.enabled", "语义缓存总开关（相似问题直接复用历史回答）"),
             // ===== 以下为「代码早已读取、此前未开放到设置页」的参数（补白名单，无需改读取点）=====
             Map.entry("retrieval.keywordTimeoutMs", "检索：关键词降级(MySQL LIKE)检索超时(ms,默认800；超时则本次跳过关键词路)"),
             Map.entry("retrieval.sectionBonus", "检索：文档前段(前2块)位置奖励(0~1,默认0.01)"),
@@ -316,7 +315,6 @@ public class ConfigService {
             Map.entry("cleanup.sessionCleanupIntervalMs", 3),
             Map.entry("cleanup.sessionRetentionDays", 3),
             Map.entry("cache.docMetaTtlSeconds", 3),
-            Map.entry("semanticCache.maxEntries", 3),
             // ===== 工具调用 / MCP（管理调优项）=====
             Map.entry("tool.enabled", 2),
             Map.entry("tool.knowledgeRetrieval.enabled", 2),
@@ -623,10 +621,6 @@ public class ConfigService {
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));
         d.put("ratelimit.uploadPerMinute", String.valueOf(properties.getRatelimit().getUploadPerMinute()));
-        // 语义缓存（相似问题直出历史答案；知识库变更时整体失效）
-        d.put("semanticCache.enabled", "true");
-        d.put("semanticCache.threshold", "0.96");
-        d.put("semanticCache.maxEntries", "500");
         d.put("eval.judgeEnabled", "false");   // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
         d.put("eval.judgeModel", "");              // 评判用独立模型（留空回落 chat.model）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
@@ -1038,18 +1032,9 @@ public class ConfigService {
                 throw new IllegalArgumentException("keyword.timeoutMillis 必须是整数");
             }
         }
-        String scThr = updates.get("semanticCache.threshold");
-        if (scThr != null && !scThr.isBlank()) {
-            try {
-                double t = Double.parseDouble(scThr);
-                if (t < 0.8 || t > 1.0) throw new IllegalArgumentException("semanticCache.threshold 需在 0.8~1 之间");
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("semanticCache.threshold 必须是数字");
-            }
-        }
         // 解析参数校验：非负整数（0 表示不限制）
         for (String iKey : new String[]{"chunk.maxChunks", "chunk.maxImages", "vision.concurrency",
-                "ratelimit.chatPerMinute", "ratelimit.uploadPerMinute", "semanticCache.maxEntries",
+                "ratelimit.chatPerMinute", "ratelimit.uploadPerMinute",
                 "parse.ocrMinText", "parse.embedRetryCount"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
@@ -1203,13 +1188,13 @@ public class ConfigService {
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
      *
-     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit/semanticCache）
+     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit）
      * @return 实际恢复的键值
      */
     public Map<String, String> resetDefaults(Collection<String> groups) {
         Set<String> allowed = new HashSet<>(List.of(
                 "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit", "semanticCache"));
+                "keyword", "context", "deepReasoning", "ratelimit"));
         Set<String> targets = new HashSet<>();
         for (String g : groups) {
             if (g == null || g.isBlank() || !allowed.contains(g)) {
@@ -1290,7 +1275,7 @@ public class ConfigService {
         Map<String, Object> result = new LinkedHashMap<>();
         // 分组需覆盖 defaults() 里所有前缀，否则该组配置永远回显不出来（前端只能退回硬编码默认值）
         String[] groups = {"chat", "vision", "embedding", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit", "semanticCache",
+                "keyword", "context", "deepReasoning", "ratelimit",
                 // 补漏：defaults() 中已有这些前缀，但此前未列入本数组，导致设置页永远只能回显前端硬编码默认值
                 "images", "session", "cleanup", "eval", "queryRewrite", "imageFilter", "cache",
                 // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
