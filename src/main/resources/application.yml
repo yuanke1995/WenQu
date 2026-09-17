@@ -119,12 +119,10 @@ ai-app:
     api-key: ${AI_MEILI_KEY:}
     index: ${AI_MEILI_INDEX:ai-doc-chunks}
     timeout-millis: 1000
-  # 会话
+  # 会话（会话严格按登录用户隔离；anonymous 名下的存量会话仅未登录调用方可访问）
   session:
     max-history: 10
     expire-minutes: 30
-    # anonymous 历史兼容池对具名用户共享可见；设 false 收紧为仅 anonymous（无 X-User-Id）调用方可访问
-    anonymous-shared: ${AI_SESSION_ANONYMOUS_SHARED:true}
   # 接口限流（Redis 固定窗口，按用户/IP；Redis 不可用自动放行）
   ratelimit:
     enabled: ${AI_RATELIMIT_ENABLED:true}
@@ -221,7 +219,7 @@ ai-app:
     jwt-secret: ${AI_JWT_SECRET:}
     # 令牌有效期（小时，默认 7 天）
     token-ttl-hours: ${AI_TOKEN_TTL_HOURS:168}
-    # 是否要求登录：true=除公开端点外必须持有效令牌；false=保留 X-User-Id 直连（网关模式/联调）
+    # 是否要求登录：true=除登录引导端点外必须持有效令牌；false=放行未登录请求（身份为 anonymous，仅能访问公开端点与历史兼容池）
     require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
     # 登录失败锁定
     max-login-failures: ${AI_MAX_LOGIN_FAILURES:5}

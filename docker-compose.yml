@@ -51,15 +51,14 @@ services:
   app:
     build: .
     container_name: wen-qu
-    # 默认仅绑定回环地址（127.0.0.1），配合平台网关/nginx 注入鉴权 token 对外提供服务，
-    # 避免 8090 直连暴露未受 token 保护的 Swagger/Actuator 等管理端点。
+    # 默认仅绑定回环地址（127.0.0.1），避免 8090 直连暴露 Swagger/Actuator 等管理端点；
+    # 对外提供服务请走 nginx/网关反向代理（浏览器只经 80/443，后端不直接暴露）。
     # 若确需对外直连后端（如内网无网关场景），export APP_PUBLISH=8090 后重新 up。
     ports:
       - "${APP_PUBLISH:-127.0.0.1:8090}:8090"
     environment:
       # 必填（无默认值，缺失将启动失败）
       DB_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
-      AI_TRUSTED_TOKEN: ${AI_TRUSTED_TOKEN:?请设置 AI_TRUSTED_TOKEN}
       AI_CHAT_KEY: ${AI_CHAT_KEY:?请设置 AI_CHAT_KEY}
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
       DB_HOST: ${DB_HOST:-mysql}

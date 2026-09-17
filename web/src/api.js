@@ -12,21 +12,8 @@ const authToken = () => {
   try { return localStorage.getItem('ai_token') || '' } catch (e) { return '' }
 }
 
-// 用户标识：localStorage 稳定 ID，经 X-User-Id 透传做会话隔离；
-// 生产环境由平台网关覆盖为真实用户身份（客户端值仅作本地/调试用途）
-const USER_ID = (() => {
-  try {
-    let id = localStorage.getItem('ai_user_id')
-    if (!id) {
-      id = (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10))
-      localStorage.setItem('ai_user_id', id)
-    }
-    return id
-  } catch (e) { return 'anonymous' }
-})()
-
 const authHeaders = extra => {
-  const h = { 'Content-Type': 'application/json', 'X-User-Id': USER_ID, ...(extra || {}) }
+  const h = { 'Content-Type': 'application/json', ...(extra || {}) }
   const bt = authToken()
   if (bt) h['Authorization'] = 'Bearer ' + bt
   return h
@@ -69,7 +56,6 @@ function upload(path, formData, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', BASE + path)
-    xhr.setRequestHeader('X-User-Id', USER_ID)
     const bt = authToken()
     if (bt) xhr.setRequestHeader('Authorization', 'Bearer ' + bt)
     xhr.timeout = 120000

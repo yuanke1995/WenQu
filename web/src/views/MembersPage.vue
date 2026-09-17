@@ -117,7 +117,7 @@
       <a-form layout="vertical" style="margin-top:4px">
         <a-form-item label="用户标识（uid）" :validate-status="uidError ? 'error' : ''" :help="uidError">
           <a-input v-model:value="userForm.uid" :disabled="userForm.isEdit"
-                   placeholder="与网关 X-User-Id 一致，如 alice" @change="uidError = ''" />
+                   placeholder="登录标识，如 alice（建后不可修改）" @change="uidError = ''" />
         </a-form-item>
         <a-form-item label="用户名">
           <a-input v-model:value="userForm.username" maxlength="100" placeholder="显示名称，如 张三" />

@@ -67,7 +67,7 @@ public class ResourceVisibilityService {
 
     public enum AccessLevel { GLOBAL, DEPARTMENT, USER }
 
-    /** 当前操作者抽象（从网关透传的 X-User-Id 派生） */
+    /** 当前操作者抽象（从登录态 RequestUser 派生） */
     public record Principal(String uid, String departmentId, String role) {
         public static final Principal ANONYMOUS = new Principal("anonymous", null, "user");
         public boolean superadmin() { return "superadmin".equals(role); }

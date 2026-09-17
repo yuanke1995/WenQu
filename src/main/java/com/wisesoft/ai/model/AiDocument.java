@@ -53,7 +53,7 @@ public class AiDocument {
     /** 当前版本号（每次成功解析+1，用于版本管理） */
     private Integer version;
 
-    /** 创建人（网关透传 X-User-Id） */
+    /** 创建人（登录用户 uid） */
     private String createdBy;
 
     /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */

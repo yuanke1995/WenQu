@@ -182,7 +182,6 @@ public class ConfigService {
             Map.entry("vision.numCtx", "视觉模型：Ollama 上下文窗口 num_ctx(0=不设置；默认 4096 会截断大图)"),
             Map.entry("session.maxHistory", "会话：保留最近对话轮数(Redis 降级时的历史条数上限)"),
             Map.entry("session.expireMinutes", "会话：缓存过期时间(分钟)"),
-            Map.entry("session.anonymousShared", "会话：匿名历史池是否对具名用户共享(存量升级兼容；false 可收紧越权面)"),
             // ===== 查询改写（QueryRewrite）与图片相关性校验（ImageFilter）：同样由 syncProperties 回写 =====
             Map.entry("queryRewrite.enabled", "查询改写：是否启用（把用户问句改写为检索关键词以提升召回；关闭则直接用原句）"),
             Map.entry("queryRewrite.prompt", "查询改写：单轮改写提示词（要求模型只输出改写后的检索关键词）"),
@@ -347,7 +346,6 @@ public class ConfigService {
             Map.entry("images.chatRetentionMillis", 3),
             Map.entry("session.maxHistory", 3),
             Map.entry("session.expireMinutes", 3),
-            Map.entry("session.anonymousShared", 3),
             Map.entry("eval.judgeEnabled", 3),
             Map.entry("eval.autoIntervalMs", 3),
             Map.entry("eval.autoThresholdPct", 3),
@@ -687,7 +685,6 @@ public class ConfigService {
         d.put("vision.numCtx", "16384");               // Ollama num_ctx
         d.put("session.maxHistory", "10");             // 会话保留轮数
         d.put("session.expireMinutes", "30");          // 会话过期(分钟)
-        d.put("session.anonymousShared", "true");      // 匿名历史池共享
         // 查询改写（默认值取 bean，单一来源；消费方 RagService 经 syncProperties 回写后热生效）
         d.put("queryRewrite.enabled", String.valueOf(properties.getQueryRewrite().isEnabled()));
         d.put("queryRewrite.historyRounds", String.valueOf(properties.getQueryRewrite().getHistoryRounds()));
@@ -767,7 +764,6 @@ public class ConfigService {
             AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
-            session.setAnonymousShared(pBool("session.anonymousShared", session.isAnonymousShared()));
             AppProperties.QueryRewrite qr = properties.getQueryRewrite();
             qr.setEnabled(pBool("queryRewrite.enabled", qr.isEnabled()));
             qr.setHistoryRounds(pInt("queryRewrite.historyRounds", qr.getHistoryRounds()));

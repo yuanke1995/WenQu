@@ -2,7 +2,6 @@ package com.wisesoft.ai.config;
 
 import com.wisesoft.ai.dto.ResultJson;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +22,7 @@ import java.util.regex.Pattern;
  * </ol>
  * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
  * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
- * 旧的 X-Trusted-Token 网关校验已移除——它会拦截登录引导端点造成「要先有 token 才能登录」的死锁。</p>
+ * 身份只认登录令牌，不接受任何客户端自报的用户标识请求头。</p>
  *
  * @author yuanke
  */
@@ -40,18 +39,12 @@ public class SecurityConfig implements WebMvcConfigurer {
     /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
     public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
 
-    @PostConstruct
-    public void validate() {
-        // 旧的 X-Trusted-Token 网关校验与 AI_TRUSTED_TOKEN 必填已移除——
-        // 本地登录（JWT）是唯一主鉴权；保留空方法以免移除调用点。
-    }
-
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；TrustedTokenInterceptor 后续据「是否已登录」与角色判定
+        // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；AccessControlInterceptor 后续据「是否已登录」与角色判定
         registry.addInterceptor(userContextInterceptor)
                 .addPathPatterns("/api/**");
-        registry.addInterceptor(new TrustedTokenInterceptor())
+        registry.addInterceptor(new AccessControlInterceptor())
                 .addPathPatterns("/api/**");
     }
 
@@ -110,13 +103,16 @@ public class SecurityConfig implements WebMvcConfigurer {
                 || path.equals("/api/ai/auth/logout"));
     }
 
-    class TrustedTokenInterceptor implements HandlerInterceptor {
+    /**
+     * 访问控制：API Key 放行 → 登录门禁 → 管理员判定（三层，fail-closed）。
+     * <p>身份一律取自 {@link UserContextInterceptor} 装载的登录态，不读取用户自报请求头。</p>
+     */
+    class AccessControlInterceptor implements HandlerInterceptor {
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
             String method = request.getMethod();
             String path = request.getRequestURI().substring(request.getContextPath().length());
             // 1. API Key 认证（对外开放问答能力的入口）：带对 X-Api-Key 且命中问答白名单 → 放行。
-            //    不再要求 X-Trusted-Token——那是旧的网关注入机制，会拦截登录引导端点造成死锁。
             //    未带 / 校验失败的 Key 不在此处拦截，继续走登录门禁与管理员判定。
             String plainKey = request.getHeader("X-Api-Key");
             var rec = apiKeyService.verify(plainKey);

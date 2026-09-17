@@ -16,7 +16,6 @@ import com.wisesoft.ai.service.RateLimitService;
 import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.service.AuthService;
 import com.wisesoft.ai.util.RequestUser;
-import com.wisesoft.ai.util.UserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -36,7 +35,7 @@ import java.util.Map;
 
 /**
  * AI 聊天控制器（SSE 流式）
- * 用户身份：网关透传 X-User-Id（无则 anonymous）；会话按用户隔离
+ * 用户身份：登录用户 uid（未登录为 anonymous）；会话按用户隔离
  *
  * @author yuanke
  */
@@ -71,9 +70,9 @@ public class ChatController {
             content = @Content(mediaType = "text/event-stream"))
     @PostMapping("/chat")
     public SseEmitter chat(@RequestBody @Valid ChatRequest request, HttpServletRequest httpRequest) {
-        String userId = UserContext.resolve(httpRequest);
+        String userId = RequestUser.uid();
         // 按用户限频（anonymous 落到 IP 维度，避免匿名共享池互相挤兑）
-        rateLimitService.checkRateLimit("chat", UserContext.ANONYMOUS.equals(userId)
+        rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
 
         String question = request.getQuestion().trim();
@@ -128,7 +127,7 @@ public class ChatController {
             @Parameter(description = "搜索关键词（可选，按标题/消息内容模糊匹配）")
             @RequestParam(value = "keyword", required = false) String keyword,
             HttpServletRequest httpRequest) {
-        List<SessionInfo> sessions = sessionService.listSessions(UserContext.resolve(httpRequest), keyword);
+        List<SessionInfo> sessions = sessionService.listSessions(RequestUser.uid(), keyword);
         return ResultJson.ok(sessions);
     }
 
@@ -139,7 +138,7 @@ public class ChatController {
             @RequestBody Map<String, Boolean> body,
             HttpServletRequest httpRequest) {
         boolean pinned = Boolean.TRUE.equals(body.get("pinned"));
-        sessionService.updatePin(UserContext.resolve(httpRequest), sessionId, pinned);
+        sessionService.updatePin(RequestUser.uid(), sessionId, pinned);
         return ResultJson.ok("操作成功");
     }
 
@@ -150,7 +149,7 @@ public class ChatController {
             @RequestBody Map<String, Boolean> body,
             HttpServletRequest httpRequest) {
         boolean favorite = Boolean.TRUE.equals(body.get("favorite"));
-        sessionService.updateFavorite(UserContext.resolve(httpRequest), sessionId, favorite);
+        sessionService.updateFavorite(RequestUser.uid(), sessionId, favorite);
         return ResultJson.ok("操作成功");
     }
 
@@ -167,7 +166,7 @@ public class ChatController {
         if (title.trim().length() > 50) {
             throw new BizException("标题过长（最多 50 字）");
         }
-        sessionService.renameSession(UserContext.resolve(httpRequest), sessionId, title);
+        sessionService.renameSession(RequestUser.uid(), sessionId, title);
         return ResultJson.ok("操作成功");
     }
 
@@ -176,7 +175,7 @@ public class ChatController {
     public ResultJson getHistory(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
             HttpServletRequest httpRequest) {
-        sessionService.assertOwned(sessionId, UserContext.resolve(httpRequest));
+        sessionService.assertOwned(sessionId, RequestUser.uid());
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
         // 历史图片存的是原始 URL，响应时动态签名（避免签名过期导致恢复会话图片 401）
         // 同步带回各回答消息的既有评价（fb）：前端"有/没帮助单选锁定"依赖此状态，刷新后不丢
@@ -227,14 +226,14 @@ public class ChatController {
     public ResultJson deleteSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
             HttpServletRequest httpRequest) {
-        sessionService.deleteSession(UserContext.resolve(httpRequest), sessionId);
+        sessionService.deleteSession(RequestUser.uid(), sessionId);
         return ResultJson.ok("会话已删除");
     }
 
     @Operation(summary = "清空会话", description = "清空当前用户名下的全部会话数据")
     @DeleteMapping("/sessions")
     public ResultJson clearAllSessions(HttpServletRequest httpRequest) {
-        sessionService.clearAll(UserContext.resolve(httpRequest));
+        sessionService.clearAll(RequestUser.uid());
         return ResultJson.ok("会话已清空");
     }
 
@@ -246,14 +245,14 @@ public class ChatController {
         List<String> ids = body.get("ids") instanceof List<?> list
                 ? list.stream().map(String::valueOf).toList() : List.of();
         if (ids.isEmpty()) throw new BizException("ids 不能为空");
-        int deleted = sessionService.batchDelete(UserContext.resolve(httpRequest), ids);
+        int deleted = sessionService.batchDelete(RequestUser.uid(), ids);
         return ResultJson.ok(Map.of("deleted", deleted));
     }
 
     @Operation(summary = "新建会话", description = "创建一个新的对话会话（归属当前用户），返回会话 ID")
     @PostMapping("/session/new")
     public ResultJson newSession(HttpServletRequest httpRequest) {
-        return ResultJson.ok(Map.of("sessionId", sessionService.createSession(UserContext.resolve(httpRequest))));
+        return ResultJson.ok(Map.of("sessionId", sessionService.createSession(RequestUser.uid())));
     }
 
     @Operation(summary = "知识块详情", description = "获取指定知识块的全文内容（引用溯源：弹窗展示来源知识块全文与图片）")
@@ -288,7 +287,7 @@ public class ChatController {
             HttpServletRequest httpRequest) {
         com.wisesoft.ai.model.Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null) throw new BizException(404, "消息不存在");
-        sessionService.assertOwned(assistant.getSessionId(), UserContext.resolve(httpRequest));
+        sessionService.assertOwned(assistant.getSessionId(), RequestUser.uid());
         int deleted = sessionService.deleteRound(assistant.getSessionId(), assistantMessageId);
         if (deleted == 0) throw new BizException(404, "消息不存在或已删除");
         return ResultJson.ok("已删除该轮对话");
@@ -305,7 +304,7 @@ public class ChatController {
         // 已软删消息的归属校验：忽略删除标记取回，会话本身仍须存在且属于当前用户
         com.wisesoft.ai.model.Message assistant = messageMapper.selectByIdIgnoreDeleted(messageId);
         if (assistant == null) throw new BizException(404, "消息不存在或已过撤销期");
-        sessionService.assertOwned(assistant.getSessionId(), UserContext.resolve(httpRequest));
+        sessionService.assertOwned(assistant.getSessionId(), RequestUser.uid());
         int restored = sessionService.undoDeleteRound(assistant.getSessionId(), messageId);
         if (restored == 0) throw new BizException(410, "已过撤销期，无法恢复");
         return ResultJson.ok(Map.of("restored", restored), "已恢复该轮对话");

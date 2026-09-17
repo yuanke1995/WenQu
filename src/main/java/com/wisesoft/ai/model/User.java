@@ -8,9 +8,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * AI 用户表（画像/归属；鉴权由前置网关完成，透传 X-User-Id，无密码字段）。
+ * AI 用户表（画像/归属 + 登录凭据：密码以 PBKDF2 加盐哈希存储，不明文落库）。
  * <p>
- * uid 与网关鉴权标识一致，由服务层在首次出现未知 X-User-Id 时自动建档。
+ * uid 即登录账号，由管理员在「成员管理」建档（不再自动建档，避免未知身份混入）。
  *
  * @author yuanke
  */
@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 @TableName("c_ai_user")
 public class User {
 
-    /** 用户标识（网关透传 X-User-Id） */
+    /** 用户标识（登录账号） */
     @TableId(type = IdType.INPUT)
     private String uid;
 

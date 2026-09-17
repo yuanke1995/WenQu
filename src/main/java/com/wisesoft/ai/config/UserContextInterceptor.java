@@ -6,7 +6,6 @@ import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.service.AuthService;
 import com.wisesoft.ai.util.RequestUser;
-import com.wisesoft.ai.util.UserContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
@@ -15,13 +14,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
 /**
  * 请求入口解析当前用户身份并装载到 {@link RequestUser}（ThreadLocal）。
  * <p>
- * 解析优先级：
- * <ol>
- *   <li>{@code Authorization: Bearer <JWT>}（本地登录）——令牌失效、或用户不存在/被禁用 → 直接 401</li>
- *   <li>回落 {@code X-User-Id}（网关按人透传 / 本地联调）；无则 {@code anonymous}</li>
- * </ol>
+ * 身份来源唯一：{@code Authorization: Bearer <JWT>}（本地登录）。令牌失效、或用户不存在/被禁用 → 直接 401。
+ * 未携带令牌 → {@link RequestUser#ANONYMOUS}（不读任何客户端自报请求头，避免伪造身份/越权提权）。
+ * <p>
  * 经令牌认证成功时在请求上打 {@link #ATTR_AUTHENTICATED} 标记，供 SecurityConfig 判断「是否已登录」。
- * 未建档用户按 departmentId=null / 普通用户处理。
  *
  * @author yuanke
  */
@@ -55,17 +51,9 @@ public class UserContextInterceptor implements HandlerInterceptor {
             RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
             return true;
         }
-        // 无令牌：回落 X-User-Id（网关直传 / 本地联调）
-        String uid = UserContext.resolve(request);
-        String dept = null;
-        String role = "user";
-        User u = safeLoad(uid);
-        // status=0（禁用）不授予任何身份权益：按未建档处理（部门=null、普通用户）
-        if (u != null && (u.getStatus() == null || u.getStatus() != 0)) {
-            dept = u.getDepartmentId();
-            if (u.getRole() != null && !u.getRole().isBlank()) role = u.getRole();
-        }
-        RequestUser.set(uid, dept, role);
+        // 无令牌：匿名。不再回落到客户端自报的 X-User-Id——那等价于把身份（含管理员角色）
+        // 交给请求方自行声明，require-login=false 时可伪造管理员。管理员只能靠登录令牌获得。
+        RequestUser.set(RequestUser.ANONYMOUS, null, "user");
         return true;
     }
 

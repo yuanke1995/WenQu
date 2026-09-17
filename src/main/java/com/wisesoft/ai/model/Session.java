@@ -20,7 +20,7 @@ public class Session {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 归属用户（网关透传 X-User-Id；anonymous=历史兼容池，全局可见） */
+    /** 归属用户（登录用户 uid；anonymous=历史兼容池，全局可见） */
     private String userId;
 
     /** 会话标题（取自首条用户问题前50字） */

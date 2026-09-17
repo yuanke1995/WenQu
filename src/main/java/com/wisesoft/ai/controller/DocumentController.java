@@ -5,7 +5,7 @@ import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.RateLimitService;
-import com.wisesoft.ai.util.UserContext;
+import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -24,7 +24,7 @@ import java.util.Map;
 /**
  * 文档管理控制器
  * 支持：单/批量上传（异步解析）、列表、删除、启停用、重解析
- * 文档为共享知识库（不做用户隔离）；管理操作记录操作者（X-User-Id）便于审计追溯
+ * 文档为共享知识库（不做用户隔离）；管理操作记录操作者（登录用户 uid）便于审计追溯
  *
  * @author yuanke
  */
@@ -64,7 +64,7 @@ public class DocumentController {
             throw new BizException("文档描述过长（最多 500 字）");
         }
         var doc = documentService.upload(file, description);
-        log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", UserContext.resolve(httpRequest),
+        log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
         return ResultJson.ok(doc, "已提交解析");
     }
@@ -95,7 +95,7 @@ public class DocumentController {
             }
             results.add(item);
         }
-        log.info("[AUDIT] 批量上传 operator={} count={}", UserContext.resolve(httpRequest), files.length);
+        log.info("[AUDIT] 批量上传 operator={} count={}", RequestUser.uid(), files.length);
         return ResultJson.ok(results);
     }
 
@@ -126,7 +126,7 @@ public class DocumentController {
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
             HttpServletRequest httpRequest) {
         documentService.delete(id);
-        log.info("[AUDIT] 删除文档 operator={} docId={}", UserContext.resolve(httpRequest), id);
+        log.info("[AUDIT] 删除文档 operator={} docId={}", RequestUser.uid(), id);
         return ResultJson.ok("删除成功");
     }
 
@@ -149,7 +149,7 @@ public class DocumentController {
             @RequestBody Map<String, String> body,
             HttpServletRequest httpRequest) {
         String shareConfig = body.get("shareConfig");
-        documentService.updateShareConfig(id, shareConfig, UserContext.resolve(httpRequest));
+        documentService.updateShareConfig(id, shareConfig, RequestUser.uid());
         return ResultJson.ok("操作成功");
     }
 
@@ -177,7 +177,7 @@ public class DocumentController {
             HttpServletRequest httpRequest) {
         List<String> ids = body.getOrDefault("ids", List.of());
         documentService.batchDelete(ids);
-        log.info("[AUDIT] 批量删除文档 operator={} count={} ids={}", UserContext.resolve(httpRequest), ids.size(), ids);
+        log.info("[AUDIT] 批量删除文档 operator={} count={} ids={}", RequestUser.uid(), ids.size(), ids);
         return ResultJson.ok("删除成功");
     }
 
@@ -203,7 +203,7 @@ public class DocumentController {
             results.add(item);
         }
         long ok = results.stream().filter(r -> Boolean.TRUE.equals(r.get("success"))).count();
-        log.info("[AUDIT] 批量重解析 operator={} total={} ok={}", UserContext.resolve(httpRequest), ids.size(), ok);
+        log.info("[AUDIT] 批量重解析 operator={} total={} ok={}", RequestUser.uid(), ids.size(), ok);
         return ResultJson.ok(results, "已提交 " + ok + "/" + ids.size() + " 个重解析");
     }
 
@@ -242,14 +242,14 @@ public class DocumentController {
         Integer version = body.get("version");
         if (version == null) throw new BizException("缺少 version 参数");
         documentService.rollback(id, version);
-        log.info("[AUDIT] 回滚文档版本 operator={} docId={} version={}", UserContext.resolve(httpRequest), id, version);
+        log.info("[AUDIT] 回滚文档版本 operator={} docId={} version={}", RequestUser.uid(), id, version);
         return ResultJson.ok("回滚成功");
     }
 
     /** 限流维度标识：有用户身份用 user:xxx，否则落到 IP 维度 */
     private String rateIdentity(HttpServletRequest request) {
-        String uid = UserContext.resolve(request);
-        if (!UserContext.ANONYMOUS.equals(uid)) return "user:" + uid;
+        String uid = RequestUser.uid();
+        if (!RequestUser.ANONYMOUS.equals(uid)) return "user:" + uid;
         String xff = request.getHeader("X-Forwarded-For");
         String ip = (xff != null && !xff.isBlank()) ? xff.split(",")[0].trim() : request.getRemoteAddr();
         return "ip:" + ip;

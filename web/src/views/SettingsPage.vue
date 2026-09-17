@@ -328,7 +328,7 @@
                     </div>
                     <ul class="key-usage-list">
                       <li><code>X-Api-Key: sk-…</code> 作为访问凭据，无需平台登录令牌</li>
-                      <li><code>X-User-Id</code> 仍用于会话隔离：同一个 Key 不同用户带不同值，会话互不串</li>
+                      <li>会话归属由服务端判定：未带登录令牌的调用共享 anonymous 兼容池，建议调用方各自登录或按 Key 隔离使用</li>
                       <li>权限仅限问答链路（问答 / 会话 / 反馈 / 引用溯源），管理端点一律拒绝</li>
                       <li>不再使用建议「停用」而非删除：停用可保留审计线索，删除记录即消失</li>
                     </ul>
@@ -995,7 +995,6 @@ const curlSample = computed(() => {
   return `curl -X POST http://<你的服务地址>/ai/api/ai/chat \\
   -H "Content-Type: application/json" \\
   -H "X-Api-Key: ${k}..." \\
-  -H "X-User-Id: user-001" \\
   -d '{"question":"如何创建评分组件？"}'`
 })
 const openCreateKey = () => {

@@ -12,7 +12,7 @@ import java.time.Duration;
  * 接口限流（Redis 固定窗口计数：INCR + 首次 EXPIRE）
  * <p>
  * - 维度：chat=按用户/IP 限频，upload=按用户/IP 限频（配置 ratelimit.chatPerMinute 等）
- * - 匿名请求（无 X-User-Id）落到 IP 维度，避免匿名共享池互相挤兑
+ * - 匿名请求（未登录）落到 IP 维度，避免匿名共享池互相挤兑
  * - 超限抛 BizException(429)，全局异常处理器转为 HTTP 429
  * - Redis 不可用时放行（限流是保护措施，不应比业务先挂）
  * - 孤儿键自愈：INCR 成功但 EXPIRE 失败的键（无 TTL）在下一次访问时补设过期，防止永久累积

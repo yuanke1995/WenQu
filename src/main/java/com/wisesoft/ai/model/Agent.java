@@ -96,7 +96,7 @@ public class Agent {
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
 
-    /** 创建人（网关透传 X-User-Id） */
+    /** 创建人（登录用户 uid） */
     private String createdBy;
 
     /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */

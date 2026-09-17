@@ -3,13 +3,16 @@ package com.wisesoft.ai.util;
 /**
  * 当前请求用户透传（ThreadLocal）。
  * <p>
- * 由 {@code UserContextInterceptor} 在请求入口按 X-User-Id 解析并装载（含部门/角色），
- * 业务层（创建资源写 created_by、检索层按可见范围过滤）直接读取，无需层层透传参数。
- * 参照项目既有 {@code SubAgentOrchestrator.CTX} 的 ThreadLocal 模式。
+ * 由 {@code UserContextInterceptor} 在请求入口解析登录令牌（{@code Authorization: Bearer <JWT>}）后装载
+ * （含部门/角色）；未登录一律为 {@link #ANONYMOUS}。业务层（创建资源写 created_by、检索层按可见范围过滤）
+ * 直接读取，无需层层透传参数。参照项目既有 {@code SubAgentOrchestrator.CTX} 的 ThreadLocal 模式。
  *
  * @author yuanke
  */
 public final class RequestUser {
+
+    /** 匿名兜底身份：未登录请求的归属（该名下会话为全局共享的历史兼容池） */
+    public static final String ANONYMOUS = "anonymous";
 
     private static final ThreadLocal<RequestUser> CURRENT = new ThreadLocal<>();
 
@@ -32,10 +35,10 @@ public final class RequestUser {
         CURRENT.remove();
     }
 
-    /** 当前用户标识；无上下文时回落 anonymous（与会话兼容池一致） */
+    /** 当前用户标识；未登录/无上下文时为 {@link #ANONYMOUS}（与会话兼容池一致） */
     public static String uid() {
         RequestUser u = CURRENT.get();
-        return u == null ? UserContext.ANONYMOUS : u.uid;
+        return u == null ? ANONYMOUS : u.uid;
     }
 
     public static String departmentId() {

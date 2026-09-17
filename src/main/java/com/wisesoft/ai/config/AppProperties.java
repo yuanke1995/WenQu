@@ -102,8 +102,6 @@ public class AppProperties {
         private int maxHistory = 10;
         /** 会话过期时间（分钟） */
         private int expireMinutes = 30;
-        /** anonymous 历史兼容池是否对具名用户共享可见（存量升级兼容；false 时仅 anonymous 调用方可访问，收紧越权面） */
-        private boolean anonymousShared = true;
     }
 
     @Data
@@ -297,7 +295,7 @@ public class AppProperties {
         private int tokenTtlHours = 168;
         /**
          * 是否要求登录：true（默认）＝除公开端点外必须持有效令牌；
-         * false＝保留 X-User-Id 直连（网关模式/联调），登录仅作可选。
+         * false＝放行未登录请求（身份为 anonymous，仅能访问公开端点与历史兼容池）。
          */
         private boolean requireLogin = true;
         /** 令牌签发者 */

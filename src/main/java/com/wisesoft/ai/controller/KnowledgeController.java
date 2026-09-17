@@ -15,6 +15,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.wisesoft.ai.util.RequestUser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -107,7 +108,7 @@ public class KnowledgeController {
         }
         documentService.invalidateAnswerCache();
         log.info("[AUDIT] 知识块{} operator={} id={} title={}", status == 1 ? "停用" : "启用",
-                httpRequest.getHeader("X-User-Id"), id, k.getTitle());
+                RequestUser.uid(), id, k.getTitle());
         return ResultJson.ok("操作成功");
     }
 

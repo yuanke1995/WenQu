@@ -41,7 +41,7 @@ public class ApiKey {
     /** 最近使用时间 */
     private LocalDateTime lastUsedAt;
 
-    /** 创建人（网关透传 X-User-Id） */
+    /** 创建人（登录用户 uid） */
     private String createdBy;
 
     /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */

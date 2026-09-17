@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import com.wisesoft.ai.util.RequestUser;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.*;
@@ -76,8 +77,8 @@ public class SessionService {
 
     /**
      * 归属校验：会话不存在抛 404；存在但不属于该用户则抛 403。
-     * anonymous 名下会话为历史兼容池：anonymousShared=true 时对所有用户可见（存量升级兼容），
-     * false 时仅 anonymous 调用方（无 X-User-Id 的请求）可访问，收紧跨用户越权面。新建会话严格隔离。
+     * anonymous 名下的存量会话仅未登录（anonymous）调用方可访问；登录用户一律严格隔离，
+     * 不允许读取他人（含历史匿名）会话。
      *
      * @return 校验通过的会话实体
      */
@@ -87,25 +88,24 @@ public class SessionService {
             throw new com.wisesoft.ai.common.BizException(404, "会话不存在或已被删除");
         }
         String owner = session.getUserId() == null || session.getUserId().isBlank()
-                ? com.wisesoft.ai.util.UserContext.ANONYMOUS : session.getUserId();
+                ? RequestUser.ANONYMOUS : session.getUserId();
         String uid = normalizeUser(userId);
-        boolean anonymousSession = com.wisesoft.ai.util.UserContext.ANONYMOUS.equals(owner);
+        boolean anonymousSession = RequestUser.ANONYMOUS.equals(owner);
         if (!owner.equals(uid) && !(anonymousSession && canAccessAnonymousPool(userId))) {
             throw new com.wisesoft.ai.common.BizException(403, "无权访问该会话");
         }
         return session;
     }
 
-    /** anonymous 池访问门槛：调用方自身为 anonymous，或配置开启历史兼容池共享 */
+    /** anonymous 池访问门槛：仅调用方自身为 anonymous（未登录）时可访问 */
     private boolean canAccessAnonymousPool(String userId) {
-        return com.wisesoft.ai.util.UserContext.ANONYMOUS.equals(normalizeUser(userId))
-                || properties.getSession().isAnonymousShared();
+        return RequestUser.ANONYMOUS.equals(normalizeUser(userId));
     }
 
     /** 用户标识规范化：空值归 anonymous */
     private String normalizeUser(String userId) {
         return userId == null || userId.isBlank()
-                ? com.wisesoft.ai.util.UserContext.ANONYMOUS : userId;
+                ? RequestUser.ANONYMOUS : userId;
     }
 
     /**
@@ -128,7 +128,7 @@ public class SessionService {
     }
 
     /**
-     * 查询会话列表（仅当前用户；配置开启时并入 anonymous 历史兼容池；支持关键词搜索），置顶优先、按更新时间倒序
+     * 查询会话列表（仅当前用户；未登录调用方额外并入 anonymous 存量会话；支持关键词搜索），置顶优先、按更新时间倒序
      *
      * @param keyword 可选，按标题或消息内容模糊匹配；空/空白返回全量
      */
@@ -138,7 +138,7 @@ public class SessionService {
             // 只看自己的会话（+ anonymous 历史兼容池，仅池访问放行时并入，防跨用户捞取）
             wrapper.eq(Session::getUserId, normalizeUser(userId));
             if (canAccessAnonymousPool(userId)) {
-                wrapper.or().eq(Session::getUserId, com.wisesoft.ai.util.UserContext.ANONYMOUS);
+                wrapper.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
             }
             if (keyword != null && !keyword.isBlank()) {
                 String esc = escapeLike(keyword.trim());

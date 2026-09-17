@@ -6,7 +6,7 @@ import com.wisesoft.ai.mapper.MessageMapper;
 import com.wisesoft.ai.model.Message;
 import com.wisesoft.ai.service.QaLogService;
 import com.wisesoft.ai.service.SessionService;
-import com.wisesoft.ai.util.UserContext;
+import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -50,7 +50,7 @@ public class QaController {
         if (msg == null) {
             throw new BizException(404, "消息不存在或已过撤销期");
         }
-        sessionService.assertOwned(msg.getSessionId(), UserContext.resolve(httpRequest));
+        sessionService.assertOwned(msg.getSessionId(), RequestUser.uid());
         qaLogService.feedback(messageId, rating, text);
         return ResultJson.ok("感谢反馈");
     }

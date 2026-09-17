@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '文档描述',
     `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
-    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（网关透传 X-User-Id）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (
 
 CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
-    `user_id`       VARCHAR(64)  NOT NULL DEFAULT 'anonymous' COMMENT '归属用户（网关透传X-User-Id；anonymous=历史兼容池全局可见）',
+    `user_id`       VARCHAR(64)  NOT NULL DEFAULT 'anonymous' COMMENT '归属用户（登录用户 uid；anonymous=历史兼容池全局可见）',
     `title`         VARCHAR(200) DEFAULT NULL COMMENT '会话标题 (取自首条用户问题)',
     `message_count` INT          DEFAULT 0 COMMENT '消息条数',
     `is_pinned`     INT          DEFAULT 0 COMMENT '置顶: 0=否, 1=是',
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
-    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（网关透传 X-User-Id）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `model`           VARCHAR(255) DEFAULT NULL COMMENT '模型覆盖（空=继承全局 chat.model）',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
@@ -241,8 +241,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
 
 -- ============================================
 -- 2026-09-16: 多用户协作（用户 + 部门 + 共享范围）
--- c_ai_user 仅存画像/归属，鉴权由前置网关完成（透传 X-User-Id）；无密码字段。
--- 首次出现未知 X-User-Id 时由服务层自动建档（与会话 anonymous 兼容池同理）。
+-- c_ai_user 存画像/归属与登录凭据（密码哈希加盐存储）；鉴权由本服务本地登录（JWT）完成。
+-- 用户由管理员在「成员管理」建档；未登录请求归属 anonymous（与会话兼容池同理）。
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_department` (
@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_department` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 部门表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_user` (
-    `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（网关透传 X-User-Id，与鉴权一致）',
+    `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（登录账号，与鉴权一致）',
     `username`     VARCHAR(100) DEFAULT NULL COMMENT '显示名称',
     `department_id` VARCHAR(50) DEFAULT NULL COMMENT '所属部门ID（外键 c_ai_department.id，可空=未分配）',
     `role`         VARCHAR(20)  NOT NULL DEFAULT 'user' COMMENT '角色: superadmin | admin | user',
