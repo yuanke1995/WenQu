@@ -4,15 +4,20 @@
       <h3 class="app-page-title">系统设置</h3>
       <span v-if="dirtyCount" class="dirty-hint">有 {{ dirtyCount }} 项已修改未保存</span>
       <button v-else class="head-hint-plain">修改后点右侧保存生效，悬停参数旁 ? 查看说明</button>
+      <!-- 基础模式只显示常用项（模型服务 + 回答行为）；细粒度调参收进高级模式，避免设置页膨胀 -->
+      <label class="adv-toggle" title="默认只显示常用配置；开启后显示全部调优参数">
+        <a-switch v-model:checked="advMode" size="small" />
+        <span>高级设置</span>
+      </label>
       <button class="app-btn" style="margin-left:auto" :disabled="!dirtyCount" :class="{ dis: !dirtyCount }" @click="save">
         <save-outlined /> 保存配置{{ dirtyCount ? `（${dirtyCount} 项改动）` : '' }}
       </button>
     </div>
 
     <div class="set-body">
-      <!-- 左侧分组导航 -->
+      <!-- 左侧分组导航（基础模式只列含常用项的分组） -->
       <nav class="set-nav">
-        <span v-for="p in PANELS" :key="p.key" class="set-nav-item" :class="{ active: current === p.key }" @click="current = p.key">
+        <span v-for="p in navPanels" :key="p.key" class="set-nav-item" :class="{ active: current === p.key }" @click="current = p.key">
           {{ groupLabel(p.key) }}
         </span>
       </nav>
@@ -22,6 +27,9 @@
         <a-spin :spinning="loading">
           <div class="set-panel-head">
             <h3 class="app-page-title">{{ currentPanel?.title }}</h3>
+            <span v-if="!advMode && hiddenHere > 0" class="adv-hidden-hint">
+              已隐藏 {{ hiddenHere }} 项高级配置（右上角「高级设置」可查看）
+            </span>
             <button v-if="!NO_RESET.includes(current)" class="app-btn ghost" :disabled="resettingKey === current" @click="onResetGroup(current)">
               恢复本组默认
             </button>
@@ -32,7 +40,7 @@
 
           <div class="app-card set-card">
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
-              <template v-for="(blk, i) in blocksOf(current)" :key="i">
+              <template v-for="(blk, i) in blocksOf(current, !advMode)" :key="i">
                 <div v-if="blk.type === 'sub' && current !== 'skills'" class="cfg-sub">{{ blk.title }}</div>
 
                 <!-- 向量模型组：索引状态与重嵌入（只读状态 + 手动触发） -->
@@ -550,7 +558,7 @@ import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine, ge
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd } from '../utils/markdown'
 import SchemaField from '../components/SchemaField.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm } from '../configSchema'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount } from '../configSchema'
 import { getMcpStatus, reloadMcp, probeMcp } from '../api'
 
 // 分组导航（沿用旧版锚点短名）
@@ -563,6 +571,19 @@ const NAV_LABELS = {
 const groupLabel = key => NAV_LABELS[key] || key
 const current = ref('chat')
 const currentPanel = computed(() => PANELS.find(p => p.key === current.value))
+
+// 高级设置模式（默认关，持久化）：关=只显示核心项（模型服务 + 回答行为），开=显示全部调优参数。
+// 对标成熟产品的设置体系——全局设置保持精简，细粒度参数按需展开，避免设置页被 180+ 项淹没。
+const advMode = ref(localStorage.getItem('app_adv_settings') === '1')
+const navPanels = computed(() => advMode.value ? PANELS : corePanels())
+const hiddenHere = computed(() => advMode.value ? 0 : hiddenFieldCount(current.value))
+watch(advMode, v => {
+  localStorage.setItem('app_adv_settings', v ? '1' : '0')
+  // 关掉高级模式时，若当前分组已不在导航中（纯高级分组），切到第一个核心分组，避免停在空白页
+  if (!v && !navPanels.value.some(p => p.key === current.value)) {
+    current.value = navPanels.value[0]?.key || current.value
+  }
+})
 
 // 无「恢复本组默认」的分组（API Key/技能由文件与数据库管理，与配置默认值无关）
 const NO_RESET = ['embedding', 'maintenance', 'apiKey', 'skills']
@@ -1317,6 +1338,16 @@ onUnmounted(() => {
 <style scoped>
 .dirty-hint { font-size: 12px; color: #a3691b; background: #faf3e6; border-radius: 6px; padding: 3px 10px; }
 .head-hint-plain { font-size: 12px; color: var(--app-text3); background: transparent; border: none; }
+/* 高级设置开关 + 隐藏项提示 */
+.adv-toggle {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3);
+  cursor: pointer; user-select: none; margin-left: 10px;
+}
+.adv-toggle:hover { color: var(--app-accent); }
+.adv-hidden-hint {
+  font-size: 11px; color: var(--app-text3); background: var(--app-accent-weak);
+  border-radius: 999px; padding: 3px 10px;
+}
 .app-btn.dis { background: #c6d4f2; cursor: not-allowed; }
 .set-body { flex: 1; min-height: 0; display: flex; }
 .set-nav {
