@@ -131,7 +131,24 @@ public class SubAgentOrchestrator {
         }
     }
 
-    private static final ThreadLocal<RunCtx> CTX = new ThreadLocal<>();
+    /**
+     * 本轮执行上下文经 state 传递的 key。
+     * <p><b>不能用 ThreadLocal</b>：并行节点由框架用 {@code Schedulers.parallel()} 调度
+     * （见 NodeExecutor：{@code subscribeOn(scheduler)}），跑在 reactor 线程池的工作线程上，
+     * 主线程设的 ThreadLocal 在那里 get() 返回 null → 分支静默不执行（表现为"编排完成但命中 0 块"）。
+     * state 是每次 invoke 传入的、随流程流转，天然跨线程可见，故用它承载上下文。
+     */
+    private static final String CTX_KEY = "__runCtx";
+
+    /** 从图节点的 state 中取本轮上下文（取不到返回 null，调用方按"跳过"处理） */
+    private static RunCtx ctxOf(OverAllState state) {
+        if (state == null) return null;
+        try {
+            return state.value(CTX_KEY).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     /** 并行编排入口（未挂子智能体）：走原有的「多视角并行检索」 */
     public Outcome run(String question) {
@@ -157,12 +174,17 @@ public class SubAgentOrchestrator {
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
         RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch);
-        CTX.set(ctx);
         try {
             CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
-            Optional<OverAllState> result = graph.invoke(Map.of("question", question));
+            // 上下文随 state 传入（并行节点跑在 reactor 线程池，不能用 ThreadLocal）
+            Map<String, Object> inputs = new HashMap<>();
+            inputs.put("question", question);
+            inputs.put(CTX_KEY, ctx);
+            Optional<OverAllState> result = graph.invoke(inputs);
             result.ifPresent(s -> s.value("digestText").ifPresent(v -> {
-                if (ctx.digests.isEmpty()) ctx.digests.add(String.valueOf(v));
+                // 仅当分支未产出要点时才收 merge 节点的文本；空串不收（否则"要点 1 条"实为空内容的假象）
+                String text = String.valueOf(v);
+                if (ctx.digests.isEmpty() && text != null && !text.isBlank()) ctx.digests.add(text);
             }));
             long ms = System.currentTimeMillis() - t0;
             log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
@@ -172,8 +194,6 @@ public class SubAgentOrchestrator {
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
             return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0, List.copyOf(ctx.branches));
-        } finally {
-            CTX.remove();
         }
     }
 
@@ -209,12 +229,14 @@ public class SubAgentOrchestrator {
                 Map<String, KeyStrategy> m = new HashMap<>();
                 m.put("question", KeyStrategy.REPLACE);
                 m.put("digestText", KeyStrategy.REPLACE);
+                // 本轮执行上下文经 state 传递（见 CTX_KEY 注释：并行节点跑在 reactor 线程池，ThreadLocal 不可用）
+                m.put(CTX_KEY, KeyStrategy.REPLACE);
                 return m;
             };
             StateGraph graph = new StateGraph("subagent-rag-" + n, ksf);
             // 汇总节点：把各子代理要点拼成一段文本（写在 state 里供调用方取）
             graph.addNode("merge", AsyncNodeAction.node_async(state -> {
-                RunCtx c = CTX.get();
+                RunCtx c = ctxOf(state);
                 String text = c == null || c.digests.isEmpty() ? "" : String.join("\n", c.digests);
                 return Map.of("digestText", text);
             }));
@@ -222,7 +244,7 @@ public class SubAgentOrchestrator {
             for (int i = 0; i < n; i++) {
                 final int idx = i;
                 graph.addNode("agent_" + i, AsyncNodeAction.node_async(state -> {
-                    RunCtx c = CTX.get();
+                    RunCtx c = ctxOf(state);
                     if (c != null) runAgent(idx, c);
                     return Map.of();   // 数据写进 RunCtx（图只负责调度与汇聚）
                 }));
