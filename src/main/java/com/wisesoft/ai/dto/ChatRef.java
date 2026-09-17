@@ -22,6 +22,6 @@ public class ChatRef {
     @Schema(description = "引用目标 ID（doc 时为文档 ID）", example = "7f60ac4462cfb6092dc1eac78926624b")
     private String id;
 
-    @Schema(description = "展示名（文档名），仅用于日志与前端回显", example = "操作手册.docx")
+    @Schema(description = "展示名（文档名），仅用于日志与前端回显", example = "示例文档.docx")
     private String name;
 }
