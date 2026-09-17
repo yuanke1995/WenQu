@@ -43,6 +43,44 @@ import java.util.stream.Collectors;
 @Service
 public class RagService {
 
+    /**
+     * 智能体可覆盖的检索参数白名单（只有这些键生效，防止越权改其他配置）；
+     * 与设置页「检索设置 / 重排服务」暴露的项保持一致。
+     */
+    private static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of(
+            "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
+            "retrieval.vectorTopK", "retrieval.keywordLimit",
+            "rerank.enabled", "rerank.model", "rerank.baseUrl");
+
+    /**
+     * 把智能体自定义的检索参数写成本轮线程的配置覆盖（复用 ConfigService 的线程局部覆盖机制）。
+     * <p>语义对齐同类产品的「按知识库配置检索」：未配置的项继承全局设置，配了的项只影响本智能体——
+     * 这样不同智能体可按自己的场景定制策略（法律助手提高阈值保精度、手册助手放宽保召回）。
+     * <p>用线程局部覆盖而不是改检索方法签名：检索在本轮问答线程内同步执行，覆盖值可见；
+     * 例外的多路并行检索跑在池化线程、取不到覆盖值（退化为全局配置），属可接受降级。
+     */
+    private void applyAgentQueryOverrides(Agent agent) {
+        String json = agent == null ? null : agent.getQueryParams();
+        if (json == null || json.isBlank()) return;
+        try {
+            Map<String, Object> m = JSON.parseObject(json);
+            if (m == null || m.isEmpty()) return;
+            Map<String, String> ov = new HashMap<>();
+            for (Map.Entry<String, Object> e : m.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) continue;
+                String v = String.valueOf(e.getValue()).trim();
+                if (!v.isEmpty()) ov.put(e.getKey(), v);
+            }
+            if (!ov.isEmpty()) {
+                configService.putOverrides(ov);
+                log.info("[AGENT] 应用智能体检索参数覆盖 {} 项: {}", ov.size(), ov.keySet());
+            }
+        } catch (Exception e) {
+            log.warn("[AGENT] 智能体检索参数解析失败（本轮使用全局检索配置）: {}", e.getMessage());
+        }
+    }
+
     /** 主 LLM 流式中断（未输出 token 时）自动重试次数（chat.streamRetryCount，默认 1；0=关闭） */
     private int streamRetryCount() { return configService.getInt("chat.streamRetryCount", 1); }
 
@@ -277,7 +315,15 @@ public class RagService {
         emitter.onError(t -> ACTIVE_SSE.remove(emitter));
         syncPipelineSize();
         try {
-            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, agentId, emitter));
+            pipelineExecutor.execute(() -> {
+                try {
+                    runChat(sessionId, question, userImages, useDeepThink, agentId, emitter);
+                } finally {
+                    // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
+                    // 否则下一轮请求会继承上一轮智能体的检索策略）
+                    configService.clearOverride();
+                }
+            });
         } catch (RejectedExecutionException e) {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -297,6 +343,8 @@ public class RagService {
         final Agent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
+            // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
+            applyAgentQueryOverrides(agent);
         }
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。

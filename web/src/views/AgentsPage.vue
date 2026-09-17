@@ -194,6 +194,25 @@
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
+            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索参数</h2>
+            <p class="ap-block-hint">
+              留空即继承「系统设置 → 检索设置」；只填需要为这个智能体单独调整的项
+              （例如法律类助手提高相似度阈值保精度、操作手册助手放宽阈值保召回）。
+            </p>
+            <div class="qp-grid">
+              <label v-for="f in QP_FIELDS" :key="f.key" class="qp-item">
+                <span class="qp-label">{{ f.label }}</span>
+                <a-input v-model:value="form.qp[f.key]" :placeholder="f.ph" allow-clear />
+              </label>
+              <label class="qp-item">
+                <span class="qp-label">重排服务</span>
+                <a-segmented v-model:value="form.qpRerank"
+                             :options="[{ label: '跟随全局', value: 'inherit' }, { label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]" />
+              </label>
+            </div>
+          </section>
+
+          <section class="app-card" v-if="!form.isSubagent">
             <h2 class="app-card-title"><star-outlined class="ap-sec-ic" />默认</h2>
             <a-checkbox v-model:checked="form.isDefault">设为默认智能体</a-checkbox>
             <span class="ap-block-hint" style="margin-left:8px">对话页打开时预选它（同一时间只有一个默认）</span>
@@ -285,8 +304,50 @@ const blankForm = () => ({
   skillMode: 'inherit', skills: [],
   mcpMode: 'inherit', mcps: [],
   // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
-  isSubagent: 0, subAgentIds: []
+  isSubagent: 0, subAgentIds: [],
+  // 检索参数覆盖：留空 = 继承全局「系统设置 → 检索设置」；非空的项才写入 queryParams
+  qp: blankQp(), qpRerank: 'inherit'
 })
+/** 检索参数覆盖：可覆盖的项（值即后端 ConfigService 的完整配置键） */
+const QP_FIELDS = [
+  { key: 'vectorWeight', label: '向量权重', path: 'retrieval.vectorWeight', ph: '0~1，留空继承全局' },
+  { key: 'keywordWeight', label: '关键词权重', path: 'retrieval.keywordWeight', ph: '0~1，留空继承全局' },
+  { key: 'vecThreshold', label: '相似度阈值', path: 'retrieval.vecThreshold', ph: '0~1，留空继承全局' },
+  { key: 'vectorTopK', label: '向量召回数', path: 'retrieval.vectorTopK', ph: '如 15，留空继承全局' },
+  { key: 'keywordLimit', label: '关键词召回数', path: 'retrieval.keywordLimit', ph: '如 20，留空继承全局' }
+]
+const blankQp = () => ({ vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null })
+
+/** queryParams(JSON 串) → 表单（未配置的项为 null = 继承全局） */
+function parseQueryParams (json) {
+  const qp = blankQp()
+  let ps = null
+  try { ps = json ? JSON.parse(json) : null } catch (e) { ps = null }
+  if (ps && typeof ps === 'object') {
+    for (const f of QP_FIELDS) {
+      const v = ps[f.path]
+      if (v !== undefined && v !== null && String(v).trim() !== '') qp[f.key] = v
+    }
+  }
+  // 重排三态：显式配过才显示"已覆盖"
+  let rr = 'inherit'
+  if (ps && ps['rerank.enabled'] !== undefined && ps['rerank.enabled'] !== null) {
+    rr = String(ps['rerank.enabled']) === 'true' ? 'on' : 'off'
+  }
+  return { qp, rr }
+}
+
+/** 表单 → queryParams(JSON 串)；全部留空返回空串（后端存 null = 全部继承全局设置） */
+function buildQueryParams (qp, rr) {
+  const o = {}
+  for (const f of QP_FIELDS) {
+    const v = qp ? qp[f.key] : null
+    if (v !== null && v !== undefined && String(v).trim() !== '') o[f.path] = String(v).trim()
+  }
+  if (rr === 'on' || rr === 'off') o['rerank.enabled'] = rr === 'on' ? 'true' : 'false'
+  return Object.keys(o).length ? JSON.stringify(o) : ''
+}
+
 const form = ref(blankForm())
 
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
@@ -440,7 +501,8 @@ const openEdit = a => {
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
     isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
-    subAgentIds: splitList(a.subAgentIds)
+    subAgentIds: splitList(a.subAgentIds),
+    ...(() => { const r = parseQueryParams(a.queryParams); return { qp: r.qp, qpRerank: r.rr } })()
   }
   // 三档：不使用知识库 > 指定文档（有范围）> 全部文档
   scopeMode.value = (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true)
@@ -469,7 +531,9 @@ const save = async () => {
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
-    subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(',')
+    subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(','),
+    // 检索参数覆盖：留空项不写入 → 继承全局；全空 → 空串 → 后端存 null
+    queryParams: buildQueryParams(f.qp, f.qpRerank)
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」
@@ -597,6 +661,10 @@ onMounted(reload)
 .ap-form { display: flex; flex-direction: column; gap: 12px; max-width: 820px; }
 .ap-form :deep(.ant-form-item) { margin-bottom: 12px; }
 .ap-block-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
+/* 检索参数覆盖：两列网格，留空=继承全局 */
+.qp-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 10px 18px; }
+.qp-item { display: flex; align-items: center; gap: 10px; }
+.qp-label { flex: none; width: 88px; font-size: 12.5px; color: var(--app-text2); }
 .ap-pick { margin-top: 12px; }
 .ap-sec-ic { font-size: 13px; color: var(--app-text3); }
 

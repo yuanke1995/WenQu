@@ -112,6 +112,13 @@ public class Agent {
     /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */
     private String shareConfig;
 
+    /**
+     * 本智能体的检索参数覆盖（JSON，键为 retrieval.* / rerank.* 的短名，如
+     * {"vectorWeight":0.8,"vecThreshold":0.35}；null/空=全部继承全局设置）。
+     * 用途：不同智能体可按自己的场景定制检索策略（如法律助手提高阈值保精度、手册助手放宽保召回）。
+     */
+    private String queryParams;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

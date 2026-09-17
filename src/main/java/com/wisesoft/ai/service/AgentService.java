@@ -183,6 +183,8 @@ public class AgentService {
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
+        // 检索参数覆盖（可清空：null = 全部继承全局设置）
+        if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
         uw.set(Agent::getUpdateTime, a.getUpdateTime());
         mapper.update(null, uw);
     }
@@ -264,6 +266,8 @@ public class AgentService {
         // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
         if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
+        // 检索参数覆盖（JSON 串：{"vectorWeight":0.8,...}；空串归一为 null = 全部继承全局设置）
+        if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
         return a;
     }
 
