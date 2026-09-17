@@ -78,22 +78,36 @@
                   </div>
                 </div>
               </div>
-              <!-- 多智能体编排视图（agent.enabled 开启、有子智能体/多视角分支时出现）：实时显示各分支检索状态 -->
-              <div v-if="m.role === 'ai' && m.subagents && m.subagents.length" class="subagent-panel">
-                <div class="subagent-head">
-                  <span class="subagent-title">{{ m.subagents.some(b => b.status === 'running') ? '并行检索中…' : '并行检索' }}</span>
-                  <span class="subagent-sum">{{ m.subagents.filter(b => b.status === 'done').length }}/{{ m.subagents.length }} 分支完成 · 共 {{ m.subagents.reduce((a,b)=>a+(b.hits||0),0) }} 块命中</span>
-                </div>
-                <div v-for="b in m.subagents" :key="b.id" class="subagent-row" :class="'st-' + (b.status || 'running')">
-                  <span class="subagent-state">
-                    <a-spin v-if="b.status === 'running'" size="small" />
-                    <check-outlined v-else-if="b.status === 'done'" class="sa-ok" />
-                    <close-circle-outlined v-else class="sa-err" />
+              <!-- 子智能体编排（仅【委派模式】显示：分支是有名字有职责的子智能体，信息才有用。
+                   多视角模式不显示——那只是把原问题换个问法，是实现细节，对用户没有信息价值） -->
+              <div v-if="m.role === 'ai' && subagentCard(m)" class="subagent-panel">
+                <div class="subagent-head" @click="m.saOpen = !m.saOpen">
+                  <span class="subagent-title">
+                    <robot-outlined class="sa-head-ic" />
+                    {{ subagentCard(m).title }}
                   </span>
-                  <span class="subagent-name" :title="b.name">{{ b.name }}</span>
-                  <span v-if="b.status === 'running'" class="subagent-dim">检索中…</span>
-                  <span v-else-if="b.status === 'failed'" class="subagent-dim sa-err">失败</span>
-                  <span v-else class="subagent-hits">{{ b.hits }} 块<template v-if="b.elapsedMs != null"> · {{ b.elapsedMs >= 1000 ? (b.elapsedMs / 1000).toFixed(1) + 's' : b.elapsedMs + 'ms' }}</template></span>
+                  <span class="subagent-sum">
+                    {{ subagentCard(m).done }}/{{ subagentCard(m).total }} 完成
+                    <down-outlined class="rt-arrow" :class="{ open: m.saOpen }" />
+                  </span>
+                </div>
+                <div v-if="m.saOpen" class="subagent-list">
+                  <div v-for="b in subagentCard(m).branches" :key="b.id" class="subagent-row" :class="'st-' + (b.status || 'running')">
+                    <div class="sa-row-head">
+                      <span class="subagent-state">
+                        <a-spin v-if="b.status === 'running'" size="small" />
+                        <check-outlined v-else-if="b.status === 'done'" class="sa-ok" />
+                        <close-circle-outlined v-else class="sa-err" />
+                      </span>
+                      <span class="subagent-name">{{ b.name }}</span>
+                      <span class="sa-status-tag" :class="'st-' + (b.status || 'running')">
+                        {{ b.status === 'running' ? '运行中' : (b.status === 'done' ? '已完成' : '失败') }}
+                      </span>
+                      <span v-if="b.status === 'done'" class="subagent-hits">{{ b.hits }} 块 · {{ fmtDuration(b.elapsedMs) }}</span>
+                    </div>
+                    <div v-if="b.description" class="sa-desc">{{ b.description }}</div>
+                    <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
+                  </div>
                 </div>
               </div>
               <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
@@ -470,6 +484,24 @@ const currentSessionTitle = computed(() => {
   return s?.title || '新对话'
 })
 const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && !m.loading).length)
+
+// ============ 子智能体编排卡片（仅委派模式显示） ============
+// 多视角模式（delegated=false）的分支只是把原问题换个问法，属实现细节，不展示；
+// 只有主智能体委派了真实子智能体（有名字、有职责）时，卡片才有信息价值。
+const fmtDuration = ms => ms == null ? '—' : (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms')
+function subagentCard (m) {
+  const all = (m && Array.isArray(m.subagents)) ? m.subagents : []
+  // 只要有任一分支标记了委派，就按委派模式渲染（后端按整轮是否委派置位，全部分支一致）
+  const branches = all.filter(b => b && b.delegated)
+  if (!branches.length) return null
+  const done = branches.filter(b => b.status === 'done').length
+  const running = branches.some(b => b.status === 'running')
+  const total = branches.length
+  const title = running ? `并行咨询 ${total} 个子智能体…` : `已咨询 ${total} 个子智能体`
+  // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）
+  if (m.saOpen === undefined) m.saOpen = running
+  return { branches, done, total, running, title }
+}
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
 const panelOpen = ref(localStorage.getItem('app_panel') !== '0')
@@ -1409,31 +1441,41 @@ onMounted(async () => {
 .rt-ref-tag { color: var(--app-accent); margin-right: 4px; }
 .rt-snip { color: var(--app-text3); margin-top: 2px; }
 
-/* 多智能体编排视图（并行检索分支状态） */
+/* 子智能体编排卡片（仅委派模式；对齐通用智能体平台的子任务卡片：名字+状态+任务描述+要点结果） */
 .subagent-panel {
   margin-top: 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
   background: var(--app-panel); overflow: hidden; width: 100%;
 }
 .subagent-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 12px; background: var(--app-accent-weak); font-size: 12px; color: var(--app-text2);
+  padding: 6px 12px; background: var(--app-accent-weak); font-size: 12px;
+  color: var(--app-text2); cursor: pointer; user-select: none;
 }
-.subagent-title { font-weight: 500; color: var(--app-text); }
-.subagent-sum { font-size: 11px; color: var(--app-text3); }
-.subagent-row {
-  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
-  border-top: 1px solid var(--app-border); font-size: 12px;
-}
-.subagent-row.st-running { color: var(--app-text2); }
-.subagent-row.st-done { color: var(--app-text); }
-.subagent-row.st-failed { color: var(--app-text3); }
+.subagent-head:hover { color: var(--app-accent); }
+.subagent-title { font-weight: 500; color: var(--app-text); display: inline-flex; align-items: center; gap: 6px; }
+.sa-head-ic { color: var(--app-accent); }
+.subagent-sum { font-size: 11px; color: var(--app-text3); display: inline-flex; align-items: center; gap: 5px; }
+.subagent-list { border-top: 1px solid var(--app-border); }
+.subagent-row { padding: 8px 12px; border-top: 1px dashed var(--app-border); font-size: 12px; }
+.subagent-row:first-child { border-top: none; }
+.sa-row-head { display: flex; align-items: center; gap: 8px; }
 .subagent-state { display: inline-flex; align-items: center; width: 16px; flex: none; }
 .subagent-state .sa-ok { color: var(--app-ok); }
 .subagent-state .sa-err { color: var(--app-danger); }
-.subagent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.subagent-dim { color: var(--app-text3); font-size: 11px; }
-.subagent-hits { color: var(--app-ok); font-size: 11px; }
-.subagent-hits .sa-err, .subagent-dim.sa-err { color: var(--app-danger); }
+.subagent-name { font-weight: 500; color: var(--app-text); }
+.sa-status-tag {
+  font-size: 10px; line-height: 1; padding: 2px 7px; border-radius: 999px; flex: none;
+  background: #f1f3f5; color: var(--app-text3);
+}
+.sa-status-tag.st-running { background: var(--app-accent-weak); color: var(--app-accent); }
+.sa-status-tag.st-done { background: #eaf5ec; color: var(--app-ok); }
+.sa-status-tag.st-failed { background: #fdeceb; color: var(--app-danger); }
+.subagent-hits { margin-left: auto; font-size: 11px; color: var(--app-text3); }
+.sa-desc { margin-top: 4px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
+.sa-digest {
+  margin-top: 5px; font-size: 11.5px; color: var(--app-text2); line-height: 1.6;
+  padding: 6px 9px; background: #f8f9fa; border-radius: 5px; white-space: pre-wrap;
+}
 
 .related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-label { font-size: 12px; color: var(--app-text3); }

@@ -606,6 +606,8 @@ public class RagService {
                     m.put("hits", branch.hits());
                     m.put("elapsedMs", branch.elapsedMs());
                     m.put("delegated", branch.delegated());
+                    m.put("description", branch.description());
+                    m.put("digest", branch.digest());
                     sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
                 });
                 if (!subOutcome.hits().isEmpty()) {

@@ -64,7 +64,8 @@ public class SubAgentOrchestrator {
      * @param digestText 各子代理的要点汇总（可为空串：未开启提炼或全部失败）
      * @param agents     实际执行的子代理数
      * @param elapsedMs  总耗时（用于日志/评估对比单路检索）
-     * @param branches   各分支最终状态（供编排视图渲染/持久化）：{id, name, status, hits, elapsedMs}
+     * @param branches   各分支最终状态（供编排视图渲染/持久化）：
+     *                    {id, name, status, hits, elapsedMs, delegated, digest, description}
      */
     public record Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs,
                           List<Map<String, Object>> branches) {
@@ -75,9 +76,14 @@ public class SubAgentOrchestrator {
 
     /**
      * 分支进度事件（编排视图实时展示用）：status ∈ running | done | failed。
-     * name 为分支显示名（委派=子智能体名，多视角=视角描述）；hits 为该分支本次命中块数。
+     * name 为分支显示名（委派=子智能体名，多视角=视角描述）；hits 为该分支本次命中块数；
+     * description 为"派它去干嘛"的任务描述；digest 为要点结果（仅 done 时有值）。
      */
-    public record BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated) {
+    public record BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated,
+                              String description, String digest) {
+        public BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated) {
+            this(idx, name, status, hits, elapsedMs, delegated, "", "");
+        }
     }
 
     /** 单轮执行上下文：图节点在编译期绑定，运行期参数经 ThreadLocal 传入（与 KnowledgeRetrievalTool 同模式） */
@@ -287,7 +293,8 @@ public class SubAgentOrchestrator {
             // 这才是"派给某个角色去查"，而不是"同一个问题换个问法"。未委派时才走多视角子查询。
             String subQuery = (sub == null && idx < ctx.subQueries.size()) ? ctx.subQueries.get(idx) : ctx.question;
             String name = ctx.branchName(idx);
-            ctx.emit(new BranchEvent(idx, name, "running", 0, System.currentTimeMillis() - ctx.t0, ctx.delegated));
+            String desc = branchDescription(sub, subQuery, ctx);
+            ctx.emit(new BranchEvent(idx, name, "running", 0, System.currentTimeMillis() - ctx.t0, ctx.delegated, desc, ""));
             int topK = Math.max(1, configService.getInt("agent.topKPerAgent", 3));
             List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery);
             if (sub != null) hits = inScope(hits, sub.scopeDocIds());
@@ -301,16 +308,19 @@ public class SubAgentOrchestrator {
                     if (++added >= topK) break;
                 }
             }
+            // 本分支的要点提炼结果（编排视图展示"这个角色查到了什么"；汇总文本仍并入 system 供主模型参考）
+            String branchDigest = "";
             if (configService.getBoolean("agent.digestEnabled") && !fresh.isEmpty()) {
                 String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt());
                 if (digest != null && !digest.isBlank()) {
+                    branchDigest = digest.strip();
                     synchronized (ctx) {
-                        ctx.digests.add("· " + (sub == null ? "" : "【" + sub.getName() + "】") + digest.strip());
+                        ctx.digests.add("· " + (sub == null ? "" : "【" + sub.getName() + "】") + branchDigest);
                     }
                 }
             }
             long doneMs = System.currentTimeMillis() - ctx.t0;
-            ctx.emit(new BranchEvent(idx, name, "done", fresh.size(), doneMs, ctx.delegated));
+            ctx.emit(new BranchEvent(idx, name, "done", fresh.size(), doneMs, ctx.delegated, desc, branchDigest));
             Map<String, Object> branch = new LinkedHashMap<>();
             branch.put("id", idx);
             branch.put("name", name);
@@ -318,6 +328,9 @@ public class SubAgentOrchestrator {
             branch.put("hits", fresh.size());
             branch.put("elapsedMs", doneMs);
             branch.put("delegated", ctx.delegated);
+            branch.put("digest", branchDigest);
+            // 任务描述（子任务卡片的核心信息：让用户看懂"派它去干嘛"）
+            branch.put("description", branchDescription(sub, subQuery, ctx));
             synchronized (ctx) {
                 ctx.branches.add(branch);
             }
@@ -332,10 +345,25 @@ public class SubAgentOrchestrator {
             branch.put("hits", 0);
             branch.put("elapsedMs", failMs);
             branch.put("delegated", ctx.delegated);
+            branch.put("digest", "");
+            branch.put("description", "");
             synchronized (ctx) {
                 ctx.branches.add(branch);
             }
         }
+    }
+
+    /**
+     * 分支的「任务描述」（编排视图展示，对齐通用智能体平台的子任务卡片）：
+     * 委派模式用子智能体的职责（描述/名称），多视角模式用该视角的检索词——让用户看懂这一路在查什么。
+     */
+    private static String branchDescription(Agent sub, String subQuery, RunCtx ctx) {
+        if (sub != null) {
+            String d = sub.getDescription() == null ? "" : sub.getDescription().trim();
+            if (!d.isEmpty()) return d.length() > 60 ? d.substring(0, 60) + "…" : d;
+            return "按「" + ctx.question + "」在其知识库范围内检索";
+        }
+        return "按视角检索：" + RunCtx.truncate(subQuery, 30);
     }
 
     /** 按知识库范围过滤命中（scope 为 null 表示不限制） */
