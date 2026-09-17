@@ -453,10 +453,10 @@ const currentSessionTitle = computed(() => {
 const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && !m.loading).length)
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
-const panelOpen = ref(localStorage.getItem('v2_panel') !== '0')
+const panelOpen = ref(localStorage.getItem('app_panel') !== '0')
 const togglePanel = () => {
   panelOpen.value = !panelOpen.value
-  localStorage.setItem('v2_panel', panelOpen.value ? '1' : '0')
+  localStorage.setItem('app_panel', panelOpen.value ? '1' : '0')
 }
 const modelLabel = ref('')
 /** 实际生效的模型：智能体指定了就用它的，否则回落到全局配置 */
