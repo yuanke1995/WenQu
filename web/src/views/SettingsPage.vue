@@ -596,8 +596,7 @@ const loading = ref(false)
 const saving = ref(false)
 
 // ==================== 表单状态与回填 ====================
-const form = ref({ ...buildDefaultForm(),
-  intent: { enabled: false, timeoutMillis: 3000, model: '', prompt: '', chatPrompt: '' } })
+const form = ref(buildDefaultForm())
 
 const fetchAndFill = async () => {
   loading.value = true

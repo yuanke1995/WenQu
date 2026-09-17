@@ -22,10 +22,6 @@ public class AppProperties {
     private Vision vision = new Vision();
     private Ratelimit ratelimit = new Ratelimit();
 
-    private QueryRewrite queryRewrite = new QueryRewrite();
-
-    private Intent intent = new Intent();
-
     private DeepReasoning deepReasoning = new DeepReasoning();
 
     private Context context = new Context();
@@ -80,8 +76,6 @@ public class AppProperties {
         private double vectorWeight = 0.6;
         /** 混合检索：关键词命中率权重（0~1） */
         private double keywordWeight = 0.4;
-        /** 混合检索：标题命中额外奖励（0~1，加在融合分上） */
-        private double titleBonus = 0.1;
         /** 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；Ollama 无 rerank 能力，勿配 Ollama 地址） */
         private Rerank rerank = new Rerank();
     }
@@ -171,24 +165,6 @@ public class AppProperties {
         private boolean think = false;
         /** 描述 prompt */
         private String prompt = "请简要描述这张图片的内容，如果是界面截图请提取关键文字和界面元素，如果是流程图请说明流程要点，50字以内。";
-    }
-
-    @Data
-    public static class QueryRewrite {
-        /** 是否启用查询改写 */
-        private boolean enabled = true;
-        /** 改写超时时间(ms) */
-        private int timeoutMillis = 5000;
-        /** 改写 prompt（单轮对话） */
-        private String prompt = "请将用户问题改写为一个更精准的检索关键词或短语，用于检索知识库。"
-                + "要求：1) 只输出改写后的文本，不要解释；2) 保留核心动作和对象，去除疑问语气；"
-                + "3) 如果是简单问题（如'有哪些功能'）可原样返回。";
-        /** 多轮对话参与改写的最近轮数 */
-        private int historyRounds = 2;
-        /** 改写 prompt（多轮对话，其中 %s 会被替换为对话历史） */
-        private String promptMultiTurn = "以下是一段对话历史。请根据上下文，将最后一条用户消息改写为一个独立、精准的检索关键词或短语，用于检索知识库。"
-                + "要求：1) 只输出改写后的文本，不要解释；2) 如果最后一条消息是追问（如'那删除呢'），结合历史补全为完整问题；"
-                + "3) 保留核心动作和对象。\n\n对话历史：\n%s";
     }
 
     /**

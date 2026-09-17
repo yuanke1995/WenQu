@@ -583,8 +583,6 @@ public class ConfigService {
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
         d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
 
-        // 意图分类：默认值与 AppProperties.Intent 保持一致；
-        // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
@@ -617,28 +615,10 @@ public class ConfigService {
             AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
-            AppProperties.QueryRewrite qr = properties.getQueryRewrite();
-            qr.setEnabled(pBool("queryRewrite.enabled", qr.isEnabled()));
-            qr.setHistoryRounds(pInt("queryRewrite.historyRounds", qr.getHistoryRounds()));
-            // 提示词：仅在 DB 给出非空值时回写，避免空串把默认提示词清掉
-            String qrPrompt = get("queryRewrite.prompt");
-            if (qrPrompt != null && !qrPrompt.isBlank()) qr.setPrompt(qrPrompt);
-            String qrPromptMt = get("queryRewrite.promptMultiTurn");
-            if (qrPromptMt != null && !qrPromptMt.isBlank()) qr.setPromptMultiTurn(qrPromptMt);
             AppProperties.ImageFilter imgFilter = properties.getImages().getImageFilter();
             imgFilter.setEnabled(pBool("imageFilter.enabled", imgFilter.isEnabled()));
             imgFilter.setMinHits(pInt("imageFilter.minHits", imgFilter.getMinHits()));
             imgFilter.setPreContextChars(pInt("imageFilter.preContextChars", imgFilter.getPreContextChars()));
-            AppProperties.Intent intent = properties.getIntent();
-            intent.setEnabled(pBool("intent.enabled", intent.isEnabled()));
-            intent.setTimeoutMillis(pInt("intent.timeoutMillis", intent.getTimeoutMillis()));
-            String intentModel = get("intent.model");
-            if (intentModel != null) intent.setModel(intentModel.trim());
-            // 提示词：仅在 DB 给出非空值时回写，避免空串把默认提示词清掉
-            String intentPrompt = get("intent.prompt");
-            if (intentPrompt != null && !intentPrompt.isBlank()) intent.setPrompt(intentPrompt);
-            String intentChatPrompt = get("intent.chatPrompt");
-            if (intentChatPrompt != null && !intentChatPrompt.isBlank()) intent.setChatPrompt(intentChatPrompt);
         } catch (Exception e) {
             log.warn("[Config] 回写 AppProperties 失败（沿用当前值）: {}", e.getMessage());
         }
@@ -805,7 +785,7 @@ public class ConfigService {
             throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
         }
         // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
+        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio"}) {
             String w = updates.get(wKey);
             if (w != null && !w.isBlank()) {
                 try {
@@ -841,24 +821,13 @@ public class ConfigService {
                 }
             }
         }
-        for (String iKey : new String[]{"rerank.minHits", "retrieval.rewriteFallbackMinHits", "rerank.failCooldownMs"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
         // 深度思考参数校验
         String mode = updates.get("deepReasoning.thinkingMode");
         if (mode != null && !mode.isBlank() && !"model".equals(mode) && !"prompt".equals(mode)) {
             throw new IllegalArgumentException("deepReasoning.thinkingMode 仅允许 model / prompt");
         }
         for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
-                "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax",
-                "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars"}) {
+                "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
@@ -870,32 +839,16 @@ public class ConfigService {
         }
         for (String bKey : new String[]{"deepReasoning.enabled", "deepReasoning.enableThinking", "deepReasoning.multiRetrieval",
                 "deepReasoning.injectThinking", "deepReasoning.injectKeywords", "deepReasoning.autoRoute",
-                "chunk.structural",
-                "retrieval.refDetectEnabled", "retrieval.refDetectMention", "retrieval.refExpandEnabled", "retrieval.refExpandIncludeIncoming",
-                "retrieval.refExpandParentEnabled", "retrieval.refExpandFuzzyName"}) {
+                "chunk.structural"}) {
             String v = updates.get(bKey);
             if (v != null && !v.isBlank() && !"true".equalsIgnoreCase(v) && !"false".equalsIgnoreCase(v)) {
                 throw new IllegalArgumentException(bKey + " 仅允许 true / false");
             }
         }
-        // 引用扩散父块模式校验
-        String rpm = updates.get("retrieval.refExpandParentMode");
-        if (rpm != null && !rpm.isBlank()
-                && !"title_only".equals(rpm) && !"summary".equals(rpm) && !"full".equals(rpm)) {
-            throw new IllegalArgumentException("retrieval.refExpandParentMode 仅允许 title_only / summary / full");
-        }
         // 重排参数校验
         String rb = updates.get("rerank.enabled");
         if (rb != null && !rb.isBlank() && !"true".equalsIgnoreCase(rb) && !"false".equalsIgnoreCase(rb)) {
             throw new IllegalArgumentException("rerank.enabled 仅允许 true / false");
-        }
-        String rt = updates.get("rerank.timeoutMillis");
-        if (rt != null && !rt.isBlank()) {
-            try {
-                if (Integer.parseInt(rt.trim()) < 1000) throw new IllegalArgumentException("rerank.timeoutMillis 不能小于 1000");
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("rerank.timeoutMillis 必须是整数");
-            }
         }
         // 关键词引擎校验
         String ke = updates.get("keyword.engine");

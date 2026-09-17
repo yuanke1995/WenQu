@@ -64,12 +64,9 @@
           <div class="group-params">
             <span class="p-item"><span class="p-label">向量权重</span><a-input-number v-model:value="g.vectorWeight" :step="0.05" :placeholder="cur('retrieval.vectorWeight')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">关键词权重</span><a-input-number v-model:value="g.keywordWeight" :step="0.05" :placeholder="cur('retrieval.keywordWeight')" style="width:90px" /></span>
-            <span class="p-item"><span class="p-label">标题奖励</span><a-input-number v-model:value="g.titleBonus" :step="0.01" :placeholder="cur('retrieval.titleBonus')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">向量阈值</span><a-input-number v-model:value="g.vecThreshold" :step="0.05" :placeholder="cur('retrieval.vecThreshold')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">关键词上限</span><a-input-number v-model:value="g.keywordLimit" :min="1" :placeholder="cur('retrieval.keywordLimit')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">topK</span><a-input-number v-model:value="g.topK" :min="1" :placeholder="cur('retrieval.vectorTopK')" style="width:90px" /></span>
-            <span class="p-item"><span class="p-label">重排下限</span><a-input-number v-model:value="g.rerankMinHits" :min="0" :placeholder="cur('rerank.minHits')" style="width:80px" /></span>
-            <span class="p-item"><span class="p-label">重排上限</span><a-input-number v-model:value="g.rerankMaxHits" :min="1" :placeholder="cur('rerank.maxHits')" style="width:80px" /></span>
             <span class="p-item"><span class="p-label">重排</span>
               <a-switch :checked="g.rerankEnabled ?? cur('rerank.enabled') === 'true'"
                         title="未手动拨动 = 跟随线上当前配置；拨动后为该组显式覆盖"
@@ -194,9 +191,9 @@ async function loadCur() {
 // 默认一组"当前配置"（全部参数留空 = 不覆盖）
 const defaultGroup = () => ({
   name: '当前配置', mode: 'normal',
-  vectorWeight: null, keywordWeight: null, titleBonus: null,
+  vectorWeight: null, keywordWeight: null,
   vecThreshold: null, keywordLimit: null, topK: null,
-  rerankMinHits: null, rerankMaxHits: null, rerankEnabled: null
+  rerankEnabled: null
 })
 const groups = ref([defaultGroup()])
 
@@ -204,7 +201,7 @@ const groups = ref([defaultGroup()])
 const PRESETS = {
   kw:     { name: '关键词优先', mode: 'normal', vectorWeight: 0.3, keywordWeight: 0.7 },
   vec:    { name: '向量优先', mode: 'normal', vectorWeight: 0.7, keywordWeight: 0.3 },
-  rerank: { name: '向量+重排', mode: 'normal', vectorWeight: 0.7, keywordWeight: 0.3, rerankEnabled: true, rerankMinHits: 5, rerankMaxHits: 20 },
+  rerank: { name: '向量+重排', mode: 'normal', vectorWeight: 0.7, keywordWeight: 0.3, rerankEnabled: true },
   multi:  { name: '多路模拟', mode: 'multi' },
   blank:  { name: '' }
 }
@@ -241,12 +238,9 @@ const metricCell = key => ({ record }) => {
 const APPLY_FIELDS = [
   ['vectorWeight', 'retrieval', 'vectorWeight', '向量权重'],
   ['keywordWeight', 'retrieval', 'keywordWeight', '关键词权重'],
-  ['titleBonus', 'retrieval', 'titleBonus', '标题奖励'],
   ['vecThreshold', 'retrieval', 'vecThreshold', '向量阈值'],
   ['keywordLimit', 'retrieval', 'keywordLimit', '关键词上限'],
   ['topK', 'retrieval', 'vectorTopK', '向量topK'],
-  ['rerankMinHits', 'rerank', 'minHits', '重排下限'],
-  ['rerankMaxHits', 'rerank', 'maxHits', '重排上限']
 ]
 const hasApplyable = g => {
   const p = g?.params || g || {}
@@ -336,9 +330,9 @@ const buildPayload = gs => ({
   groups: gs.map(g => ({
     name: g.name || '未命名',
     mode: g.mode,
-    vectorWeight: g.vectorWeight, keywordWeight: g.keywordWeight, titleBonus: g.titleBonus,
+    vectorWeight: g.vectorWeight, keywordWeight: g.keywordWeight,
     vecThreshold: g.vecThreshold, keywordLimit: g.keywordLimit, topK: g.topK,
-    rerankMinHits: g.rerankMinHits, rerankMaxHits: g.rerankMaxHits, rerankEnabled: g.rerankEnabled
+    rerankEnabled: g.rerankEnabled
   }))
 })
 

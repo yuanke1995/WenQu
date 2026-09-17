@@ -46,20 +46,17 @@ public class RetrievalEvaluationService {
 
     /** 评估参数组（null 表示不覆盖该项，用当前配置） */
     public record EvalParams(String name, String mode,
-                             Double vectorWeight, Double keywordWeight, Double titleBonus,
+                             Double vectorWeight, Double keywordWeight,
                              Double vecThreshold, Integer keywordLimit, Integer topK,
-                             Integer rerankMinHits, Integer rerankMaxHits, Boolean rerankEnabled) {
+                             Boolean rerankEnabled) {
         /** 转 ConfigService 线程局部 override map（null 项跳过） */
         public Map<String, String> toOverrides() {
             Map<String, String> m = new LinkedHashMap<>();
             if (vectorWeight != null) m.put("retrieval.vectorWeight", String.valueOf(vectorWeight));
             if (keywordWeight != null) m.put("retrieval.keywordWeight", String.valueOf(keywordWeight));
-            if (titleBonus != null) m.put("retrieval.titleBonus", String.valueOf(titleBonus));
             if (vecThreshold != null) m.put("retrieval.vecThreshold", String.valueOf(vecThreshold));
             if (keywordLimit != null) m.put("retrieval.keywordLimit", String.valueOf(keywordLimit));
             if (topK != null) m.put("retrieval.vectorTopK", String.valueOf(topK));
-            if (rerankMinHits != null) m.put("rerank.minHits", String.valueOf(rerankMinHits));
-            if (rerankMaxHits != null) m.put("rerank.maxHits", String.valueOf(rerankMaxHits));
             if (rerankEnabled != null) m.put("rerank.enabled", String.valueOf(rerankEnabled));
             return m;
         }
@@ -297,7 +294,7 @@ public class RetrievalEvaluationService {
         long start = System.currentTimeMillis();
         List<Integer> ks = kList == null || kList.isEmpty() ? List.of(5, 10, 20) : kList.stream().distinct().sorted().toList();
         List<EvalParams> gs = groups == null || groups.isEmpty()
-                ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null, null, null, null))
+                ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null))
                 : groups;
 
         // 期望块存活校验（与 generate 时口径一致）：文档删除/重解析后旧 ID 失效，

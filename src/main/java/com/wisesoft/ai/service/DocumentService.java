@@ -759,11 +759,6 @@ public class DocumentService {
             if (!statsDesc.isEmpty()) doneDesc += "；" + statsDesc;
             if (!swept) doneDesc += "；孤儿清扫失败";
             updateProgress(docId, 100, doneDesc);
-            // 引用关系重建（交叉引用识别）：块已全部入库（含 reused+newBlocks），此时重建引用最完整；
-            // 失败仅告警不阻断（检索侧降级为不扩散）
-            if (configService.getBoolean("retrieval.refDetectEnabled")) {
-            }
-
             doc.setChunkCount(chunks.size());
             doc.setStatus(0);
             doc.setFailReason(null);
@@ -1017,9 +1012,6 @@ public class DocumentService {
                 log.warn("清理旧向量失败 id={} oldVectorId={}: {}", id, oldVectorId, e.getMessage());
             }
         }
-        // 4. 引用关系：内容可能变化 → 重建该块出边（入边目标 id 不变，无需重建）
-        if (configService.getBoolean("retrieval.refDetectEnabled")) {
-        }
     }
 
     /**
@@ -1226,9 +1218,6 @@ public class DocumentService {
                 .gt(com.wisesoft.ai.model.AiDocumentVersion::getVersion, version));
         documentMetaCache.invalidate(docId);
         keywordIndexService.indexChunks(rebuilt); // 关键词索引同步：写入重建块（best-effort）
-        // 引用关系重建（回滚后块内容回到快照版本）
-        if (configService.getBoolean("retrieval.refDetectEnabled")) {
-        }
         log.info("[{}] 回滚到 v{} 完成: {} chunks", docId, version, snapshot.size());
     }
 

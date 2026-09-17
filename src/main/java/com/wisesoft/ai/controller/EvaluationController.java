@@ -104,12 +104,9 @@ public class EvaluationController {
                         o.getString("mode") == null ? "normal" : o.getString("mode"),
                         o.getDouble("vectorWeight"),
                         o.getDouble("keywordWeight"),
-                        o.getDouble("titleBonus"),
                         o.getDouble("vecThreshold"),
                         o.getInteger("keywordLimit"),
                         o.getInteger("topK"),
-                        o.getInteger("rerankMinHits"),
-                        o.getInteger("rerankMaxHits"),
                         o.getBoolean("rerankEnabled")));
             }
         }
