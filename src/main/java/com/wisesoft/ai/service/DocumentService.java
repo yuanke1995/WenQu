@@ -648,7 +648,7 @@ public class DocumentService {
                     if (bucket.isEmpty()) oldByHash.remove(hash);
                 }
                 if (match != null) {
-                    // 内容未变：保留 knowledgeId + 向量；仅更新 chunkIndex（位置奖励用）
+                    // 内容未变：保留 knowledgeId + 向量；仅更新 chunkIndex
                     staleOld.remove(match);
                     if (match.getChunkIndex() == null || match.getChunkIndex() != i) {
                         match.setChunkIndex(i);

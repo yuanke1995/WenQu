@@ -59,7 +59,7 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 混合检索结果（chunkIndex 用于位置奖励；titlePath 章节路径，检索侧拼装上下文用）
+     * 混合检索结果（titlePath 章节路径，检索侧拼装上下文用）
      */
     public record Hit(String knowledgeId, String docId, String title, String content,
                       List<String> images, double score, Integer chunkIndex, String titlePath) {
@@ -160,7 +160,7 @@ public class HybridRetrievalService {
             double score = vectorWeight * vecNorm;
             merged.put(kid, buildHit(doc, k, kid, score));
         }
-        // 关键词命中：score = 关键词权重 × 词频加权分 + 标题奖励；与向量命中叠加（相加）
+        // 关键词命中：score = 关键词权重 × 词频加权分；与向量命中叠加（相加）
         for (Knowledge k : kwDocs) {
             double hitRate = k.getKwScore(); // 词频加权归一化分（0~1，替代原词元占比）
             double score = keywordWeight * hitRate;
@@ -352,7 +352,7 @@ public class HybridRetrievalService {
         return result;
     }
 
-    /** 回填词元命中统计（titleHit 参与融合的标题奖励；hitTerms/totalTerms 供检索调试展示） */
+    /** 回填词元命中统计（hitTerms/totalTerms 供检索调试展示） */
     private void fillTermStats(Knowledge k, List<String> terms) {
         int hit = 0;
         for (String term : terms) {
