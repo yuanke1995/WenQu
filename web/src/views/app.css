@@ -1,86 +1,86 @@
-/* ==================== v2 工作台设计令牌 ====================
+/* ==================== 工作台设计令牌 ====================
  * 三栏布局新版界面：白底细边框、紧凑小字号、圆角卡片、蓝色主色。
  * 仅定义变量与少量通用类；组件级样式在各 .vue 的 scoped 块内。
- * 变量必须挂 :root：antd 弹窗/下拉/气泡均 teleport 到 body，不在 .v2-root
- * 子树内，挂 .v2-root 会导致弹窗内 var(--v2-*) 全部失效（按钮透明/边框消失）。 */
+ * 变量必须挂 :root：antd 弹窗/下拉/气泡均 teleport 到 body，不在 .app-root
+ * 子树内，挂 .app-root 会导致弹窗内 var(--app-*) 全部失效（按钮透明/边框消失）。 */
 :root {
-  --v2-bg: #f7f8fa;
-  --v2-panel: #ffffff;
-  --v2-border: #e6e9ed;
-  --v2-text: #1f2329;
-  --v2-text2: #5f6570;
-  --v2-text3: #98a0aa;
-  --v2-accent: #2e6be6;
-  --v2-accent-weak: #eef2f7;
-  --v2-danger: #d4552e;
-  --v2-ok: #3b8f4e;
-  --v2-radius: 10px;
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-border: #e6e9ed;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-weak: #eef2f7;
+  --app-danger: #d4552e;
+  --app-ok: #3b8f4e;
+  --app-radius: 10px;
 }
-.v2-root {
+.app-root {
   height: 100%;
   display: flex;
-  background: var(--v2-bg);
-  color: var(--v2-text);
+  background: var(--app-bg);
+  color: var(--app-text);
   font-size: 13px;
 }
 
 /* 通用页面骨架：顶标题栏 + 滚动内容区 */
-.v2-page { display: flex; flex-direction: column; height: 100%; min-width: 0; flex: 1; }
-.v2-page-head {
+.app-page { display: flex; flex-direction: column; height: 100%; min-width: 0; flex: 1; }
+.app-page-head {
   display: flex; align-items: center; gap: 12px;
-  padding: 12px 20px; background: var(--v2-panel);
-  border-bottom: 1px solid var(--v2-border); flex: none;
+  padding: 12px 20px; background: var(--app-panel);
+  border-bottom: 1px solid var(--app-border); flex: none;
 }
-.v2-page-title { font-size: 14px; font-weight: 500; margin: 0; }
-.v2-page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
+.app-page-title { font-size: 14px; font-weight: 500; margin: 0; }
+.app-page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
 
 /* 白卡片 */
-.v2-card {
-  background: var(--v2-panel); border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius); padding: 14px 16px;
+.app-card {
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: var(--app-radius); padding: 14px 16px;
 }
-.v2-card-title { font-size: 13px; font-weight: 500; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.app-card-title { font-size: 13px; font-weight: 500; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
 
 /* 状态胶囊（生效/解析中/失败/弃用等） */
-.v2-pill {
+.app-pill {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; white-space: nowrap;
 }
-.v2-pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.v2-pill.ok { color: var(--v2-ok); background: #eaf5ec; }
-.v2-pill.warn { color: #a3691b; background: #faf3e6; }
-.v2-pill.err { color: var(--v2-danger); background: #fbecea; }
-.v2-pill.muted { color: var(--v2-text3); background: #f1f3f5; }
+.app-pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.app-pill.ok { color: var(--app-ok); background: #eaf5ec; }
+.app-pill.warn { color: #a3691b; background: #faf3e6; }
+.app-pill.err { color: var(--app-danger); background: #fbecea; }
+.app-pill.muted { color: var(--app-text3); background: #f1f3f5; }
 
 /* 次级图标按钮（无边框，hover 浅蓝底） */
-.v2-icon-btn {
+.app-icon-btn {
   border: none; background: transparent; cursor: pointer; padding: 0;
-  width: 26px; height: 26px; border-radius: 6px; color: var(--v2-text3);
+  width: 26px; height: 26px; border-radius: 6px; color: var(--app-text3);
   display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
   transition: color .15s, background .15s;
 }
-.v2-icon-btn:hover { color: var(--v2-accent); background: var(--v2-accent-weak); }
-.v2-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
-.v2-icon-btn.danger:hover { color: var(--v2-danger); background: #fbecea; }
+.app-icon-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
+.app-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+.app-icon-btn.danger:hover { color: var(--app-danger); background: #fbecea; }
 
 /* 链接式小按钮（表格操作列） */
-.v2-link-btn {
+.app-link-btn {
   border: none; background: transparent; cursor: pointer; padding: 2px 4px;
-  color: var(--v2-accent); font-size: 12px;
+  color: var(--app-accent); font-size: 12px;
 }
-.v2-link-btn:hover { text-decoration: underline; }
-.v2-link-btn.danger { color: var(--v2-danger); }
-.v2-link-btn:disabled { color: var(--v2-text3); cursor: not-allowed; text-decoration: none; }
+.app-link-btn:hover { text-decoration: underline; }
+.app-link-btn.danger { color: var(--app-danger); }
+.app-link-btn:disabled { color: var(--app-text3); cursor: not-allowed; text-decoration: none; }
 
 /* 主色实心 / 幽灵小按钮 */
-.v2-btn {
+.app-btn {
   border: none; cursor: pointer; font-size: 12px; border-radius: 8px;
   padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px;
-  background: var(--v2-accent); color: #fff; transition: background .15s;
+  background: var(--app-accent); color: #fff; transition: background .15s;
 }
-.v2-btn:hover { background: #4a80ef; }
-.v2-btn:disabled { background: #c6d4f2; cursor: not-allowed; }
-.v2-btn.ghost { background: transparent; color: var(--v2-text2); border: 1px solid var(--v2-border); }
-.v2-btn.ghost:hover { color: var(--v2-accent); border-color: var(--v2-accent); background: var(--v2-accent-weak); }
-.v2-btn.danger { background: transparent; color: var(--v2-danger); border: 1px solid #eecdc2; }
-.v2-btn.danger:hover { background: #fbecea; }
+.app-btn:hover { background: #4a80ef; }
+.app-btn:disabled { background: #c6d4f2; cursor: not-allowed; }
+.app-btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.app-btn.ghost:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+.app-btn.danger { background: transparent; color: var(--app-danger); border: 1px solid #eecdc2; }
+.app-btn.danger:hover { background: #fbecea; }
