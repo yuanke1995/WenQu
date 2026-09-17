@@ -1100,7 +1100,24 @@ public class RagService {
                 // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
                 .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
                 .stream()
-                .content()
+                // 用 chatResponse 而非 content：流式中顺便捕获网关返回的真实 token usage（部分兼容网关
+                // 在末块 metadata.usage 里给出 completion_tokens；拿不到则回落 TokenCounter 估算）。
+                // 用 map 抽出 content 字符串，下游 doOnNext 逻辑（related 缓冲/剥离/发送）完全不变。
+                .chatResponse()
+                .map(resp -> {
+                    org.springframework.ai.chat.metadata.Usage usage = resp.getMetadata() == null
+                            ? null : resp.getMetadata().getUsage();
+                    if (usage != null) {
+                        Integer completion = usage.getCompletionTokens();
+                        if (completion != null && completion > 0) st.realOutputTokens = completion;
+                        Integer prompt = usage.getPromptTokens();
+                        if (prompt != null && prompt > 0) st.realPromptTokens = prompt;
+                    }
+                    Object output = resp.getResult() == null ? null : resp.getResult().getOutput();
+                    String delta = (output instanceof org.springframework.ai.chat.messages.AssistantMessage am
+                            ? (am.getText() == null ? "" : am.getText()) : "");
+                    return delta;
+                })
                 .doOnNext(token -> {
                     st.emitBuf.append(token);
                     String bufStr = st.emitBuf.toString();
@@ -1318,15 +1335,20 @@ public class RagService {
                             ? List.of() : artifactService.takeArtifacts(st.sessionId));
                     // 工具调用过程汇总（实时 tool_status 已逐条下发；此处兜底，前端 onDone 覆盖渲染）
                     donePayload.put("toolCalls", toolCallSnapshot);
-                    // Token 消耗可视化（1.9）：上下文实际/预算/填充块数 + 输出估算。
-                    // 输出用本地估算而非网关 usage——流式下多数兼容网关不返回 usage，估算稳定可得且量级一致
+                    // Token 消耗可视化（1.9）：上下文实际/预算/填充块数 + 输出。
+                    // 输出优先用网关真实 usage（部分兼容网关末块 metadata.usage 携带），拿不到回落本地估算；
+                    // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
                     Map<String, Object> tokens = new LinkedHashMap<>();
-                    int outputTokens = TokenCounter.estimate(answer);
+                    boolean realOutput = st.realOutputTokens > 0;
+                    int outputTokens = realOutput ? st.realOutputTokens : TokenCounter.estimate(answer);
+                    int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
                     tokens.put("context", st.contextTokens);
                     tokens.put("budget", st.budgetTokens);
                     tokens.put("hits", st.contextHits);
                     tokens.put("output", outputTokens);
-                    tokens.put("total", st.contextTokens + outputTokens);
+                    tokens.put("prompt", promptTokens);
+                    tokens.put("outputIsReal", realOutput);
+                    tokens.put("total", promptTokens + outputTokens);
                     donePayload.put("tokens", tokens);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
@@ -1372,6 +1394,9 @@ public class RagService {
         volatile int contextTokens;
         volatile int budgetTokens;
         volatile int contextHits;
+        /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
+        volatile int realPromptTokens;
+        volatile int realOutputTokens;
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,

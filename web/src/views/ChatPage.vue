@@ -63,7 +63,7 @@
               <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
               <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="!m.loading">，参考 {{ m.retrieved.refs }} 段资料</template></template>
+                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词，参考 {{ m.retrieved.refs }} 段资料<template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
                   <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
                   <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
                 </div>
@@ -103,8 +103,8 @@
                   </template>
                 </a-dropdown>
               </template>
-              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} / 预算 ${m.tokens.budget} · 输出 ${m.tokens.output} tokens（估算）`">
-                <span class="msg-tokens">≈{{ fmtTokens(m.tokens.total) }} tokens</span>
+              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} / 预算 ${m.tokens.budget} · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
+                <span class="msg-tokens">{{ m.tokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(m.tokens.total) }} tokens</span>
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
@@ -229,7 +229,8 @@
       <div class="rp-card">
         <div class="rp-label">最近一次检索</div>
         <template v-if="lastRetrieved || lastSources.length">
-          <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">资料 {{ lastRetrieved?.refs ?? lastSources.length }} 段</span></div>
+          <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
+          <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
           <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
           <template v-if="toolSearchQueries(lastAi).length">
             <div class="rp-divider"></div>
@@ -239,12 +240,12 @@
         </template>
         <div v-else class="rp-dim">本轮尚无检索记录</div>
       </div>
-      <!-- 本次用量（1.9 Token 消耗可视化）：估算值，上下文为实际填充、输出按正文估算 -->
+      <!-- 本次用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
       <div v-if="lastTokens" class="rp-card">
-        <div class="rp-label">本次用量（估算）</div>
-        <div class="rp-strong">{{ fmtTokens(lastTokens.total) }} tokens</div>
+        <div class="rp-label">本次用量{{ lastTokens.outputIsReal ? '（网关实测）' : '（估算）' }}</div>
+        <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
         <div class="rp-row"><span>上下文 {{ fmtTokens(lastTokens.context) }}</span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
-        <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 填充 {{ lastTokens.hits }} 块资料</div>
+        <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 上下文填入 {{ lastTokens.hits }} 块</div>
       </div>
       <div class="rp-card">
         <div class="rp-label">引用来源</div>
