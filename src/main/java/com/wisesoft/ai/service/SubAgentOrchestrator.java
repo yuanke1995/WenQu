@@ -388,7 +388,18 @@ public class SubAgentOrchestrator {
             String role = (rolePrompt == null || rolePrompt.isBlank()) ? "" : "你的分析视角：" + rolePrompt.trim() + "\n\n";
             String prompt = role + "下面是知识库中与「" + subQuery + "」相关的资料片段：\n\n" + sb
                     + "\n请用 2~3 条要点提炼其中与问题最相关的事实（只输出要点，每条一行，不要解释、不要补充资料外内容）。";
-            String out = chatClient.prompt().user(prompt).call().content();
+            // 必须设 options：chatClient 上注册了 ToolCall Advisor，裸调用会抛
+            // "ToolCall Advisor requires ToolCallingChatOptions to be set"（要点提炼曾长期静默失败）。
+            // 提炼要点是纯文本任务，显式关闭工具执行——避免子分支误触发工具调用、也省掉工具相关开销。
+            String out = chatClient.prompt()
+                    .user(prompt)
+                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                            .model(configService.get("chat.model"))
+                            .temperature(configService.getDouble("chat.temperature"))
+                            .internalToolExecutionEnabled(false)
+                            .build())
+                    .call()
+                    .content();
             return out == null ? null : out.replaceAll("[\\r\\n]+", " ").trim();
         } catch (Exception e) {
             // fail-loud：提炼失败用户侧表现为"卡片无要点"，必须留 warn 线索（debug 级别等于静默）
