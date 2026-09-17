@@ -34,7 +34,7 @@
                 </div>
                 <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
               </div>
-              <div class="md" :data-msg-index="i" v-html="renderMd(m.role === 'user' ? highlightAt(m.content) : m.content, m.images)"></div>
+              <div class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
               <a-spin v-if="m.loading && m.content" size="small" style="margin-top:4px" />
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length" class="tool-status-list">
@@ -168,24 +168,7 @@
           </div>
         </div>
         <div class="input-box">
-          <!-- @ 引用候选：输入 @ 触发（可指定参考文档），↑↓ 选择、Enter/Tab 确认、Esc 关闭 -->
-          <div v-if="atOpen && atItems.length" class="at-panel">
-            <div v-for="(d, di) in atItems" :key="d.id" class="at-item" :class="{ active: di === atIndex }"
-                 @mousedown.prevent="pickAt(d)">
-              <span class="at-ic">文</span>
-              <span class="at-name">{{ d.fileName }}</span>
-              <span v-if="d.chunkCount" class="at-meta">{{ d.chunkCount }} 块</span>
-            </div>
-            <div class="at-tip">↑↓ 选择 · Enter 确认 · Esc 关闭 · 被 @ 的文档会被优先参考</div>
-          </div>
-          <!-- 已选引用：整体可见、可一键移除（退格也能整块删除） -->
-          <div v-if="atRefs.length" class="at-chips">
-            <span v-for="r in atRefs" :key="r.id" class="at-chip" :title="'参考文档：' + r.name">
-              <span class="at-chip-name">@{{ r.name }}</span>
-              <span class="at-chip-del" @mousedown.prevent="removeAt(r)">×</span>
-            </span>
-          </div>
-          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？输入 @ 指定参考文档；Enter 发送，Shift+Enter 换行"
+          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @keydown="onInputKeydown" />
           <div class="input-toolbar">
@@ -369,7 +352,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listDocuments, listAvailableAgents } from '../api'
+         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listAvailableAgents } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -910,118 +893,20 @@ const send = () => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
   if ((!q && !imgs.length) || loading.value) return
-  // @ 引用：只保留文本里仍存在的（用户可能删掉了某个 @xxx）；问题文本保留 @ 标记，
-  // 历史记录因此能区分"同一问题不同指定文档"
-  const refs = atRefs.value.filter(r => q.includes('@' + r.name))
   text.value = ''
   pendingImages.value = []
-  atRefs.value = []
   const deep = deepThinkOn.value
   messages.value.push({ role: 'user', content: q, images: imgs, deepThink: deep, time: Date.now() })
-  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, refs)
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep)
 }
-// ==================== @ 引用：输入 @ 指定参考文档（被 @ 文档的块前置进上下文） ====================
-const docOptions = ref([])   // 可引用文档（已入库 status=0）
-const atOpen = ref(false)
-const atItems = ref([])
-const atIndex = ref(0)
-const atRefs = ref([])       // 已选 { type:'doc', id, name }
-let lastSentRefs = []        // 最近一次实际发送的 refs（连接中断自动重试时复用）
-
-const loadDocOptions = async () => {
-  try {
-    const r = await listDocuments()
-    if (r.success && Array.isArray(r.data)) {
-      docOptions.value = r.data.filter(d => d.status === 0)
-          .map(d => ({ id: d.id, fileName: d.fileName, chunkCount: d.chunkCount }))
-    }
-  } catch (e) { /* 候选拉不到不影响正常提问 */ }
-}
-/** 文本末尾的 @ 触发词（"@操" → "操"；无触发返回 null） */
-const atTrigger = () => {
-  const m = /@([^\s@]{0,40})$/.exec(text.value || '')
-  return m ? m[1] : null
-}
-const refreshAtCandidates = () => {
-  // 文本里已不存在的引用（手动删词/选中删除/命令退格）→ 同步摘掉标签，保持标签与文本一致
-  const t = text.value || ''
-  if (atRefs.value.length) {
-    const kept = atRefs.value.filter(r => t.includes('@' + r.name))
-    if (kept.length !== atRefs.value.length) atRefs.value = kept
-  }
-  const kw = atTrigger()
-  if (kw == null) { atOpen.value = false; return }
-  const k = kw.toLowerCase()
-  atItems.value = docOptions.value.filter(d => !k || (d.fileName || '').toLowerCase().includes(k)).slice(0, 8)
-  atIndex.value = 0
-  atOpen.value = atItems.value.length > 0
-}
-watch(text, () => refreshAtCandidates())
-const pickAt = d => {
-  if (!d) return
-  text.value = (text.value || '').replace(/@[^\s@]{0,40}$/, '@' + d.fileName + ' ')
-  if (!atRefs.value.some(r => r.id === d.id)) atRefs.value.push({ type: 'doc', id: d.id, name: d.fileName })
-  atOpen.value = false
-  nextTick(() => textareaRef.value?.focus?.())
-}
-/** 移除已选引用：同步删掉文本里的 @名称（含其后一个空格） */
-const removeAt = r => {
-  const t = text.value || ''
-  const idx = t.lastIndexOf('@' + r.name)
-  if (idx >= 0) {
-    let end = idx + 1 + r.name.length
-    if (t[end] === ' ') end++
-    text.value = t.slice(0, idx) + t.slice(end)
-  }
-  atRefs.value = atRefs.value.filter(x => x.id !== r.id)
-  nextTick(() => textareaRef.value?.focus?.())
-}
-/** 从文本解析 @ 名称并匹配成 refs（重新生成/历史消息复用场景） */
-const refsFromText = txt => {
-  const names = [...(txt || '').matchAll(/@([^\s@]{1,60})/g)].map(m => m[1])
-  if (!names.length) return []
-  return docOptions.value
-      .filter(d => d.fileName && names.some(n => d.fileName.includes(n)))
-      .map(d => ({ type: 'doc', id: d.id, name: d.fileName }))
-}
+// 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
-  // 候选浮层打开时：方向键/回车/Tab/Esc 由候选消费，不触发发送
-  if (atOpen.value && atItems.value.length) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); atIndex.value = (atIndex.value + 1) % atItems.value.length; return }
-    if (e.key === 'ArrowUp') { e.preventDefault(); atIndex.value = (atIndex.value - 1 + atItems.value.length) % atItems.value.length; return }
-    if (e.key === 'Tab') { e.preventDefault(); pickAt(atItems.value[atIndex.value]); return }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); pickAt(atItems.value[atIndex.value]); return }
-    if (e.key === 'Escape') { e.preventDefault(); atOpen.value = false; return }
-  }
-  // 退格整体删除 @ 引用：光标紧邻某个 @ 块末尾时，一次删掉整块（含尾随空格）并同步移除引用
-  if (e.key === 'Backspace' && !e.isComposing && atRefs.value.length) {
-    const ta = document.activeElement
-    if (ta && ta.tagName === 'TEXTAREA' && ta.selectionStart === ta.selectionEnd) {
-      const pos = ta.selectionStart
-      const before = (text.value || '').slice(0, pos)
-      // 取最长匹配：防同名前缀文档（如「手册」与「手册v2」）误删短的
-      const hit = atRefs.value
-          .map(r => ({ r, s: '@' + r.name }))
-          .filter(x => before.endsWith(x.s) || before.endsWith(x.s + ' '))
-          .sort((a, b) => b.s.length - a.s.length)[0]
-      if (hit) {
-        const start = before.endsWith(hit.s + ' ') ? pos - hit.s.length - 1 : pos - hit.s.length
-        e.preventDefault()
-        text.value = (text.value || '').slice(0, start) + (text.value || '').slice(pos)
-        atRefs.value = atRefs.value.filter(x => x.id !== hit.r.id)
-        nextTick(() => { try { ta.setSelectionRange(start, start) } catch (_) { /* 焦点已移走则忽略 */ } })
-        return
-      }
-    }
-  }
   if (e.key === 'Enter' && !e.shiftKey) {
     if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）不发送
     e.preventDefault()
     send()
   }
 }
-/** 用户消息里的 @引用 加粗高亮（走 markdown 渲染，无需额外白名单） */
-const highlightAt = c => (c || '').replace(/@([^\s@]{1,60})/g, '**@$1**')
 
 const fmtMsgTime = ts => {
   if (!ts) return ''
@@ -1036,8 +921,7 @@ const fmtMsgTime = ts => {
   return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
 }
 
-const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false, refs = []) => {
-  lastSentRefs = refs || []
+const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false) => {
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
     messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] })
@@ -1052,7 +936,6 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
   sendQuestion(currentSessionId.value, question, imgs, {
     signal: abortController.value.signal,
     deepThink,
-    refs,
     agentId: currentAgentId.value,
     onThinking: t => {
       const m = messages.value[idx]
@@ -1173,7 +1056,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         scroll()
         setTimeout(() => {
           if (idx < messages.value.length && messages.value[idx]?.role === 'ai' && messages.value[idx]?.loading) {
-            streamAnswer(question, imgs, idx, false, 0, deepThink, lastSentRefs)
+            streamAnswer(question, imgs, idx, false, 0, deepThink)
           } else {
             if (messages.value[idx]) messages.value[idx].retrying = false
             loading.value = false
@@ -1200,9 +1083,7 @@ const regenerate = mi => {
     if (messages.value[i].role === 'user') {
       const imgs = (messages.value[i].images || []).filter(u => u.startsWith('data:'))
       const deep = !!messages.value[i].deepThink
-      // 重新生成：从该轮用户问题里的 @ 标记还原引用（文档候选已加载时生效）
-      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep,
-          refsFromText(messages.value[i].content))
+      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep)
       return
     }
   }
@@ -1348,7 +1229,6 @@ onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('paste', onGlobalPaste)
   await loadSessions()
-  loadDocOptions()   // @ 引用候选（不阻塞首屏）
   loadAgents()       // 智能体下拉候选（不阻塞首屏）
   const sid = route.query.sid
   if (sid) {

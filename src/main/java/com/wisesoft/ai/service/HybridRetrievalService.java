@@ -25,9 +25,8 @@ import java.util.stream.Collectors;
  * <p>
  * - 向量：topK 可配（retrieval.vectorTopK，默认 15）+ 阈值放宽（0.3），分数归一化到 0~1（(score-0.3)/(1-0.3)）
  * - 关键词：词元 LIKE 召回 + 词频加权（tf×idf，标题词频×2，归一化 0~1）
- * - 融合：双命中**叠加**（向量分 + 关键词分 + 标题奖励），单路命中取各自权重分
- * - 位置：文档首块（chunkIndex=0）小幅加分，中部块相对降权
- * 权重来自 DB 配置 retrieval.*（设置页保存即生效；默认 0.6/0.4/0.1）
+ * - 融合：向量分 × 向量权重 + 关键词分 × 关键词权重（加权和），双命中叠加各自分量
+ * 权重来自 DB 配置 retrieval.*（设置页保存即生效；默认 0.6/0.4）
  *
  * @author yuanke
  */
@@ -114,7 +113,6 @@ public class HybridRetrievalService {
         // 权重动态读取（DB 配置，保存即生效；缺失时兜底 yml 默认值 0.6/0.4/0.1）
         double vectorWeight = configService.getDouble("retrieval.vectorWeight");
         double keywordWeight = configService.getDouble("retrieval.keywordWeight");
-        double titleBonus = configService.getDouble("retrieval.titleBonus");
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         Set<String> nonVisibleDocIds = loadNonVisibleDocIds();
@@ -137,12 +135,7 @@ public class HybridRetrievalService {
         Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
 
-        // 4. 合并去重 + 加权（默认 sum：A1 双命中叠加；可选 rrf 倒数排名融合，见下）
-        String fusionMode = configService.get("retrieval.fusionMode");
-        if ("rrf".equalsIgnoreCase(fusionMode)) {
-            return mergeByRrf(vectorDocs, kwDocs, kidMap, blockedDocIds, nonVisibleDocIds);
-        }
-
+        // 4. 合并去重 + 加权（向量权重 × 归一化向量分 + 关键词权重 × 词频加权分；双命中叠加）
         Map<String, Hit> merged = new LinkedHashMap<>();
 
         // 向量命中：score = 向量权重 × 归一化向量分；非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
@@ -170,8 +163,7 @@ public class HybridRetrievalService {
         // 关键词命中：score = 关键词权重 × 词频加权分 + 标题奖励；与向量命中叠加（相加）
         for (Knowledge k : kwDocs) {
             double hitRate = k.getKwScore(); // 词频加权归一化分（0~1，替代原词元占比）
-            double score = keywordWeight * hitRate
-                    + (k.isTitleHit() ? titleBonus : 0);
+            double score = keywordWeight * hitRate;
             merged.merge(k.getId(), buildHit(k, score), (oldHit, newHit) ->
                     new Hit(oldHit.knowledgeId(),
                             oldHit.docId() == null || oldHit.docId().isBlank() ? newHit.docId() : oldHit.docId(),
@@ -181,93 +173,13 @@ public class HybridRetrievalService {
                             oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath()));
         }
 
-        // A5：位置奖励（排序前统一加，保证分数与顺序一致）
         List<Hit> result = new ArrayList<>(merged.values());
-        for (int i = 0; i < result.size(); i++) {
-            Hit h = result.get(i);
-            double bonus = positionBonus(h.chunkIndex());
-            if (bonus != 0) {
-                result.set(i, new Hit(h.knowledgeId(), h.docId(), h.title(), h.content(), h.images(),
-                        h.score() + bonus, h.chunkIndex(), h.titlePath()));
-            }
-        }
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
         return result;
     }
 
     /**
-     * RRF 倒数排名融合（实验模式，retrieval.fusionMode=rrf）：
-     * 双路各自按"排序名次"贡献 1/(K+rank+1)（K=60，双命中叠加），规避关键词路命中集内归一化
-     * （顶命恒≈1）与向量路绝对归一化之间的标度错配导致的排序漂移。标题/位置奖励是分值加分语义，
-     * 不参与名次。单路为空时退化为另一路的纯名次排序。是否优于 sum 需用检索评估页参数组对比验证。
-     */
-    private List<Hit> mergeByRrf(List<Document> vectorDocs, List<Knowledge> kwDocs,
-                                 Map<String, Knowledge> kidMap, Set<String> blockedDocIds,
-                                 Set<String> nonVisibleDocIds) {
-        Map<String, Hit> base = new LinkedHashMap<>();
-        Map<String, Double> rrf = new HashMap<>();
-
-        // 向量路（升秩前先按分降序，防御存储返回乱序）
-        List<Document> vecRanked = vectorDocs.stream()
-                .sorted(Comparator.comparingDouble((Document d) -> parseScore(d.getScore())).reversed())
-                .toList();
-        int rank = 0;
-        for (Document doc : vecRanked) {
-            String kid = String.valueOf(doc.getId());
-            Knowledge k = kidMap.get(kid);
-            String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
-            if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
-                log.debug("[RAG] RRF 跳过非生效文档命中: docId={} kid={}", docId, kid);
-                continue;
-            }
-            if (k != null && k.getStatus() != null && k.getStatus() == 1) {
-                log.debug("[RAG] RRF 跳过已停用知识块: kid={}", kid);
-                continue;
-            }
-            base.put(kid, buildHit(doc, k, kid, 0));
-            rrf.merge(kid, 1.0 / (RRF_K + rank + 1), Double::sum);
-            rank++;
-        }
-
-        // 关键词路（词频加权分降序取秩；与 sum 路同样依赖关键词检索自身的 status 过滤）
-        List<Knowledge> kwRanked = kwDocs.stream()
-                .sorted(Comparator.comparingDouble(Knowledge::getKwScore).reversed())
-                .toList();
-        rank = 0;
-        for (Knowledge k : kwRanked) {
-            String kid = k.getId();
-            Hit kwHit = buildHit(k, 0);
-            if (base.containsKey(kid)) {
-                Hit old = base.get(kid);
-                base.put(kid, mergeHits(old, kwHit));
-            } else {
-                base.put(kid, kwHit);
-            }
-            rrf.merge(kid, 1.0 / (RRF_K + rank + 1), Double::sum);
-            rank++;
-        }
-
-        List<Hit> result = new ArrayList<>(base.size());
-        base.forEach((kid, h) -> result.add(new Hit(h.knowledgeId(), h.docId(), h.title(), h.content(), h.images(),
-                rrf.getOrDefault(kid, 0.0), h.chunkIndex(), h.titlePath())));
-        result.sort((a, b) -> Double.compare(b.score(), a.score()));
-        return result;
-    }
-
-    /** RRF 常数（标准 K=60）：名次贡献 1/(K+rank+1) */
-    private static final int RRF_K = 60;
-
-    /** 双路命中字段合并（与 sum 路 A1 合并器同语义：优先保留向量路实体，空字段回落关键词路） */
-    private Hit mergeHits(Hit oldHit, Hit newHit) {
-        return new Hit(oldHit.knowledgeId(),
-                oldHit.docId() == null || oldHit.docId().isBlank() ? newHit.docId() : oldHit.docId(),
-                oldHit.title(), oldHit.content(), oldHit.images(),
-                oldHit.score(), // 分数由 RRF 名次分统一回填，此处不叠加
-                oldHit.chunkIndex() == null ? newHit.chunkIndex() : oldHit.chunkIndex(),
-                oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath());
-    }
-
-    /** 多路并行检索线程池（daemon，供深度思考多路检索用） */
+     * 多路并行检索线程池（daemon，供深度思考多路检索用） */
     private final ExecutorService multiSearchPool = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "multi-search");
         t.setDaemon(true);
@@ -557,16 +469,6 @@ public class HybridRetrievalService {
         return count;
     }
 
-    /**
-     * 分块位置奖励（A5）：文档首块小幅加分，靠近开头微加，中部不奖励（相对降权）
-     */
-    private double positionBonus(Integer chunkIndex) {
-        if (chunkIndex == null) return 0;
-        if (chunkIndex == 0) return configService.getDouble("retrieval.positionBonus", 0.03);
-        if (chunkIndex <= 2) return configService.getDouble("retrieval.sectionBonus", 0.01);
-        return 0;
-    }
-
     private double parseScore(Double score) {
         return score == null ? 0 : score;
     }
@@ -701,64 +603,6 @@ public class HybridRetrievalService {
         }
         return new Hit(String.valueOf(k.getId()), String.valueOf(k.getDocId()),
                 k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath());
-    }
-
-    /**
-     * 文档内定向检索（@ 引用用）：用户 @ 了某篇文档时，取该文档内与问题最相关的若干块。
-     *
-     * <p>不走向量路：① 避免额外一次 embedding 调用（延迟与额度）；② 文档较大时向量 topK
-     * 可能整篇漏召回，而 @ 的语义是"这篇必看"，漏块等于违背用户意图。
-     * 实现：取该文档全部生效块 → 按问题词元命中数打分（标题命中 ×2）→ 取 topK；
-     * 全部 0 分（纯英文/生僻问法等词元不重叠）时按 chunkIndex 取文档开头若干块（通常含概述）。
-     *
-     * <p>分数给到固定高值（10.0，高于常规融合分）：保证 @ 块排序在最前、优先进入上下文，
-     * 但仍受 token 预算与信息增益去冗余约束，不会无上限挤占。
-     */
-    public List<Hit> searchInDoc(String query, String docId, int topK) {
-        if (docId == null || docId.isBlank() || topK <= 0) return List.of();
-        try {
-            QueryWrapper<Knowledge> wrapper = new QueryWrapper<Knowledge>()
-                    .eq("doc_id", docId)
-                    .and(w -> w.eq("status", 0).or().isNull("status"))
-                    .orderByAsc("chunk_index");
-            List<Knowledge> chunks = knowledgeMapper.selectList(wrapper);
-            if (chunks.isEmpty()) return List.of();
-
-            List<String> terms = keywordExtractor.extract(query == null ? "" : query);
-            List<Knowledge> ranked = chunks;
-            if (terms != null && !terms.isEmpty()) {
-                List<Knowledge> byTerm = new ArrayList<>(chunks);
-                byTerm.sort(Comparator
-                        .comparingInt((Knowledge k) -> -scoreTermHits(k, terms))
-                        .thenComparingInt(k -> k.getChunkIndex() == null ? 0 : k.getChunkIndex()));
-                // 首块 0 分说明无任何词元命中 → 退化为原文顺序（文档开头多为概述，比随机块有用）
-                if (!byTerm.isEmpty() && scoreTermHits(byTerm.get(0), terms) > 0) {
-                    ranked = byTerm;
-                }
-            }
-            List<Hit> out = new ArrayList<>();
-            for (Knowledge k : ranked.subList(0, Math.min(topK, ranked.size()))) {
-                out.add(buildHit(k, 10.0));
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("[AT-REF] 文档内检索失败 docId={}: {}", docId, e.getMessage());
-            return List.of();
-        }
-    }
-
-    /** @ 引用文档内排序分：命中词元数（标题命中 ×2，正文命中 ×1）；非最终检索分，仅用于文档内排序 */
-    private int scoreTermHits(Knowledge k, List<String> terms) {
-        String title = k.getTitle() == null ? "" : k.getTitle();
-        String content = k.getContent() == null ? "" : k.getContent();
-        if (content.length() > 4000) content = content.substring(0, 4000);
-        int s = 0;
-        for (String t : terms) {
-            if (t == null || t.isBlank()) continue;
-            if (title.contains(t)) s += 2;
-            if (content.contains(t)) s += 1;
-        }
-        return s;
     }
 
     private List<String> imagesFromMd(Map<String, Object> md) {

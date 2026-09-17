@@ -77,7 +77,6 @@ public class DocumentService {
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
-    private final KnowledgeRefService knowledgeRefService;
     private final ResourceVisibilityService resourceVisibilityService;
     /** 向量模型（@Primary 为 DynamicEmbeddingModel）：重嵌入前探测新维度用 */
     private final org.springframework.ai.embedding.EmbeddingModel embeddingModel;
@@ -763,7 +762,6 @@ public class DocumentService {
             // 引用关系重建（交叉引用识别）：块已全部入库（含 reused+newBlocks），此时重建引用最完整；
             // 失败仅告警不阻断（检索侧降级为不扩散）
             if (configService.getBoolean("retrieval.refDetectEnabled")) {
-                knowledgeRefService.rebuildByDocId(docId);
             }
 
             doc.setChunkCount(chunks.size());
@@ -870,7 +868,6 @@ public class DocumentService {
         }
         documentMetaCache.invalidate(docId);
         // 引用关系清理（纯派生数据，随文档删除）
-        knowledgeRefService.removeByDocId(docId);
         cleanupImages(docId);
         cleanupSourceFile(docId);
     }
@@ -1022,7 +1019,6 @@ public class DocumentService {
         }
         // 4. 引用关系：内容可能变化 → 重建该块出边（入边目标 id 不变，无需重建）
         if (configService.getBoolean("retrieval.refDetectEnabled")) {
-            knowledgeRefService.rebuildFromKnowledgeId(id, k.getDocId());
         }
     }
 
@@ -1060,7 +1056,6 @@ public class DocumentService {
             }
         }
         // 引用关系清理：块被删，其出边（引用他人）与入边（被他人引用）一并移除
-        knowledgeRefService.removeByKnowledgeId(id);
     }
 
     // ==================== 版本管理 ====================
@@ -1233,7 +1228,6 @@ public class DocumentService {
         keywordIndexService.indexChunks(rebuilt); // 关键词索引同步：写入重建块（best-effort）
         // 引用关系重建（回滚后块内容回到快照版本）
         if (configService.getBoolean("retrieval.refDetectEnabled")) {
-            knowledgeRefService.rebuildByDocId(docId);
         }
         log.info("[{}] 回滚到 v{} 完成: {} chunks", docId, version, snapshot.size());
     }

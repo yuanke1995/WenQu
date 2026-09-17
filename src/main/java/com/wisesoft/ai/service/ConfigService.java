@@ -75,21 +75,6 @@ public class ConfigService {
             Map.entry("upload.maxFileSize", "文档上传大小上限(字节,保存即生效)"),
             Map.entry("retrieval.vectorWeight", "混合检索：向量权重(0~1)"),
             Map.entry("retrieval.keywordWeight", "混合检索：关键词权重(0~1)"),
-            Map.entry("retrieval.titleBonus", "混合检索：标题命中奖励(0~1)"),
-            Map.entry("retrieval.rewriteTimeoutMs", "查询改写超时(毫秒,默认5000；本地模型慢可调大)"),
-            Map.entry("retrieval.rewriteFallbackMinHits", "改写回退：改写后检索命中块数低于此值→回退用原问题重检(0=关闭回退)"),
-            Map.entry("retrieval.rewriteFallbackWeakScore", "改写回退：改写后最高命中融合分低于此值→回退用原问题重检(0=关闭该判据)"),
-            Map.entry("retrieval.refDetectEnabled", "解析时识别知识块交叉引用(详见/参见X节,改后需重解析)"),
-            Map.entry("retrieval.refDetectMention", "识别无动词提及(如 4.1.2 所述/《数据字典》/XX章节,仅精确匹配)"),
-            Map.entry("retrieval.refExpandEnabled", "检索时关联块扩散+父章节带出总开关(保存即生效)"),
-            Map.entry("retrieval.refExpandMaxHits", "关联扩散块数量上限(默认3)"),
-            Map.entry("retrieval.refExpandMaxTokens", "关联扩散块token汇总上限(默认800)"),
-            Map.entry("retrieval.refExpandIncludeIncoming", "是否扩散入边(引用本块的块,默认关)"),
-            Map.entry("retrieval.refExpandParentEnabled", "命中子章节时带出父章节上下文(默认开)"),
-            Map.entry("retrieval.refExpandParentMode", "父章节内容模式: title_only/summary/full"),
-            Map.entry("retrieval.refExpandParentMaxLevels", "父章节向上带出级数(默认2)"),
-            Map.entry("retrieval.refExpandParentSummaryChars", "父章节summary模式截取字符数(默认200)"),
-            Map.entry("retrieval.refExpandFuzzyName", "章节名弱匹配(contains)开关(默认开)"),
             Map.entry("context.modelWindows", "上下文：模型窗口映射（模型名=token,逗号分隔）"),
             Map.entry("context.defaultWindowTokens", "上下文：模型默认窗口(token)"),
             Map.entry("context.safetyFactor", "上下文：窗口安全系数(0~1)"),
@@ -102,28 +87,19 @@ public class ConfigService {
             Map.entry("context.dedupEnabled", "上下文：信息增益去冗余（跳过与已选块语义重复的候选，防同一操作多块重复进上下文）"),
             Map.entry("context.dedupThreshold", "上下文：去冗余词元重叠阈值(0~1，默认0.45，越高越宽松)"),
             Map.entry("context.dedupPathThreshold", "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)"),
-            Map.entry("atRef.maxChunksPerDoc", "@ 引用：单个被 @ 文档取回的知识块数(默认3；取该文档内与问题最相关的块)"),
-            Map.entry("atRef.maxTotal", "@ 引用：单次问答注入的 @ 块总数上限(默认6；防 @ 块挤占普通检索命中)"),
             Map.entry("chat.citationCheckEnabled", "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）"),
             Map.entry("deepReasoning.enabled", "深度思考：总开关"),
             Map.entry("deepReasoning.autoRoute", "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）"),
             Map.entry("rerank.enabled", "重排：是否启用（需先启动本地 reranker 服务）"),
             Map.entry("rerank.baseUrl", "重排：服务地址"),
             Map.entry("rerank.model", "重排：模型名"),
-            Map.entry("rerank.timeoutMillis", "重排：单次超时(ms)"),
             Map.entry("retrieval.vecThreshold", "检索：向量相似度下限(0~1，评估对比后可应用)"),
             Map.entry("retrieval.keywordLimit", "检索：关键词召回词数上限"),
             Map.entry("retrieval.vectorTopK", "检索：向量召回 topK（评估对比后可应用）"),
-            Map.entry("retrieval.fusionMode", "检索：双路融合方式 sum=加权和(默认,含标题/位置奖励) / rrf=倒数排名融合(实验,按名次,可用评估页对比)"),
             Map.entry("retrieval.searchTimeoutMs", "检索：混合检索总超时(ms,含关键词并行)"),
-            Map.entry("retrieval.positionBonus", "检索：文档首块位置奖励(0~1)"),
-            Map.entry("rerank.minHits", "重排：触发候选数下限（评估对比后可应用）"),
-            Map.entry("rerank.maxHits", "重排：触发候选数上限（评估对比后可应用）"),
-            Map.entry("rerank.failCooldownMs", "重排：服务失败后冷却时间(ms)，冷却期内不再探测/调用"),
             Map.entry("keyword.engine", "关键词引擎：mysql / meilisearch（切换前先探测并重建索引）"),
             Map.entry("keyword.baseUrl", "关键词引擎：Meilisearch 服务地址"),
             Map.entry("keyword.apiKey", "关键词引擎：Meilisearch master key（RSA 加密入库,留空回退环境变量 AI_MEILI_KEY）"),
-            Map.entry("keyword.timeoutMillis", "关键词引擎：单次超时(ms)"),
             Map.entry("ratelimit.enabled", "接口限流总开关（Redis 固定窗口，按用户/IP）"),
             // 向量模型热切换（保存即生效 + 自动触发全量重嵌入，见 update）
             Map.entry("embedding.model", "向量模型名(保存后自动全量重嵌入,期间降级关键词检索)"),
@@ -131,13 +107,6 @@ public class ConfigService {
             Map.entry("embedding.apiKey", "向量模型 API Key(RSA 加密入库)"),
             Map.entry("embedding.embeddingsPath", "向量化路径(默认 /v1/embeddings;智谱 /v4、千帆 /v2)"),
             // ===== 以下为「代码早已读取、此前未开放到设置页」的参数（补白名单，无需改读取点）=====
-            Map.entry("retrieval.keywordTimeoutMs", "检索：关键词降级(MySQL LIKE)检索超时(ms,默认800；超时则本次跳过关键词路)"),
-            Map.entry("retrieval.sectionBonus", "检索：文档前段(前2块)位置奖励(0~1,默认0.01)"),
-            Map.entry("retrieval.keywordMaxTerms", "检索：关键词主词元数量上限(默认6，直接决定 LIKE/Meili 查询规模)"),
-            Map.entry("retrieval.keywordMaxTotal", "检索：关键词主词元+子词元总数上限(默认12)"),
-            Map.entry("keyword.failCooldownMs", "关键词引擎：调用失败后冷却时间(ms,默认60000)，冷却期内不再探测/调用、关键词路走 MySQL 兜底"),
-            Map.entry("keyword.reconcileOnStartup", "关键词索引：启动时对账并按(id,hash)修复漂移(多副本部署建议关，由运维单点执行)"),
-            Map.entry("keyword.reconcileIntervalMs", "关键词索引：周期对账间隔(ms，≤0=暂停，默认3600000)"),
             Map.entry("images.chatCleanupIntervalMs", "聊天图片：清理任务执行间隔(ms,默认86400000=每天)"),
             Map.entry("images.chatRetentionMillis", "聊天图片：保留时长(ms,默认604800000=7天；超期清理)"),
             // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AppProperties =====
@@ -153,20 +122,10 @@ public class ConfigService {
             Map.entry("vision.keepAliveMinutes", "视觉模型：Ollama 模型常驻时长(分钟，0=不发送；云端服务需设 0)"),
             Map.entry("vision.numCtx", "视觉模型：Ollama 上下文窗口 num_ctx(0=不设置；默认 4096 会截断大图)"),
             // ===== 查询改写（QueryRewrite）与图片相关性校验（ImageFilter）：同样由 syncProperties 回写 =====
-            Map.entry("queryRewrite.enabled", "查询改写：是否启用（把用户问句改写为检索关键词以提升召回；关闭则直接用原句）"),
-            Map.entry("queryRewrite.prompt", "查询改写：单轮改写提示词（要求模型只输出改写后的检索关键词）"),
-            Map.entry("queryRewrite.promptMultiTurn", "查询改写：多轮改写提示词（其中 %s 会被替换为对话历史）"),
-            Map.entry("queryRewrite.historyRounds", "查询改写：多轮改写时参考的最近对话轮数"),
             // ===== 意图分类（Intent）：闲聊/知识库无关消息跳过检索直接对话，由 syncProperties 回写 =====
-            Map.entry("intent.enabled", "意图分类：是否启用（纯文本消息先经 LLM 判断闲聊/知识库无关 vs 文档问答，前者跳过检索直接对话；失败自动降级文档问答）"),
-            Map.entry("intent.timeoutMillis", "意图分类：分类调用超时(ms，超时按文档问答处理)"),
-            Map.entry("intent.model", "意图分类：分类用模型（留空回落 chat.model，可配更小更快的模型）"),
-            Map.entry("intent.prompt", "意图分类：分类提示词（要求只输出 chat 或 doc 单词）"),
-            Map.entry("intent.chatPrompt", "意图分类：闲聊分支回答规则（拼在角色段后，保存即生效）"),
             // ===== 消费方直读 configService 的行为参数（原先写死在代码里）=====
             Map.entry("chat.maxImagesPerMessage", "对话：单条消息最多图片张数"),
             Map.entry("chat.maxImageMb", "对话：单张图片体积上限(MB)"),
-            Map.entry("retrieval.maxRefsPerBlock", "解析：单个知识块最多保留的引用条数（超出丢弃，显式引用优先）"),
             Map.entry("retrieval.relatedCount", "回答：末尾 <related> 相关追问的推荐条数"),
             Map.entry("retrieval.strength", "检索强度预设：precision / balanced / recall / custom（切换会批量覆盖检索权重；手动改任一权重自动变 custom）"),
             // ===== 工具调用（Function Calling）：@Tool 工具开关，均需 tool.enabled 总开关开启才生效 =====
@@ -243,10 +202,6 @@ public class ConfigService {
             Map.entry("parse.ocrDpi", 3),
             Map.entry("parse.recoverStuckOnStartup", 3),
             // ===== L3：关键词 / 重排 冷却与对账 =====
-            Map.entry("keyword.failCooldownMs", 3),
-            Map.entry("keyword.reconcileOnStartup", 3),
-            Map.entry("keyword.reconcileIntervalMs", 3),
-            Map.entry("rerank.failCooldownMs", 3),
             // ===== L3：上下文预算（maxContextHits / costCapTokens / dedupEnabled 留 L2）=====
             Map.entry("context.modelWindows", 3),
             Map.entry("context.defaultWindowTokens", 3),
@@ -257,8 +212,6 @@ public class ConfigService {
             Map.entry("context.snippetWindowChars", 3),
             Map.entry("context.dedupThreshold", 3),
             Map.entry("context.dedupPathThreshold", 3),
-            Map.entry("atRef.maxChunksPerDoc", 2),
-            Map.entry("atRef.maxTotal", 2),
             // ===== L3：深度思考细节（总开关/模式/自动路由留 L2）=====
             Map.entry("deepReasoning.timeoutMillis", 3),
             Map.entry("deepReasoning.maxThinkingTokens", 3),
@@ -273,27 +226,7 @@ public class ConfigService {
             Map.entry("deepReasoning.autoRouteLongChars", 3),
             Map.entry("deepReasoning.autoRouteKeywords", 3),
             // ===== L3：检索细节（权重/bonus/keywordLimit 等留 L2）=====
-            Map.entry("retrieval.rewriteTimeoutMs", 3),
-            Map.entry("retrieval.rewriteFallbackMinHits", 3),
-            Map.entry("retrieval.rewriteFallbackWeakScore", 3),
-            Map.entry("retrieval.refExpandMaxHits", 3),
-            Map.entry("retrieval.refExpandMaxTokens", 3),
-            Map.entry("retrieval.refExpandIncludeIncoming", 3),
-            Map.entry("retrieval.refExpandParentMode", 3),
-            Map.entry("retrieval.refExpandParentMaxLevels", 3),
-            Map.entry("retrieval.refExpandParentSummaryChars", 3),
-            Map.entry("retrieval.refExpandFuzzyName", 3),
-            Map.entry("retrieval.refDetectMention", 3),
-            Map.entry("retrieval.maxRefsPerBlock", 3),
-            Map.entry("retrieval.keywordTimeoutMs", 3),
             // ===== L3：查询改写 / 意图 / 图片过滤 细节（总开关留 L2）=====
-            Map.entry("queryRewrite.prompt", 3),
-            Map.entry("queryRewrite.promptMultiTurn", 3),
-            Map.entry("queryRewrite.historyRounds", 3),
-            Map.entry("intent.timeoutMillis", 3),
-            Map.entry("intent.model", 3),
-            Map.entry("intent.prompt", 3),
-            Map.entry("intent.chatPrompt", 3),
             Map.entry("imageFilter.minHits", 3),
             Map.entry("imageFilter.preContextChars", 3),
             // ===== L3：运维（限流 / 图片 / 会话 / 体检 / 清理 / 缓存）=====
@@ -530,27 +463,9 @@ public class ConfigService {
         d.put("upload.maxFileSize", String.valueOf(200L * 1024 * 1024));  // 业务上传上限（字节），默认 200MB
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
-        d.put("retrieval.titleBonus", String.valueOf(properties.getRetrieval().getTitleBonus()));
-        d.put("retrieval.rewriteTimeoutMs", String.valueOf(properties.getQueryRewrite().getTimeoutMillis())); // 查询改写超时(ms)
-        d.put("retrieval.rewriteFallbackMinHits", "2");    // 改写回退：命中块数下限（0=关闭回退）
-        d.put("retrieval.rewriteFallbackWeakScore", "0.2"); // 改写回退：最高融合分下限（0=关闭该判据）
-        d.put("retrieval.refDetectEnabled", "true");      // 解析时引用识别
-        d.put("retrieval.refDetectMention", "true");      // 无动词提及识别（如 4.1.2 所述/《数据字典》）
-        d.put("retrieval.refExpandEnabled", "true");      // 检索时关联扩散+父章节带出
-        d.put("retrieval.refExpandMaxHits", "3");         // 扩散块数量上限
-        d.put("retrieval.refExpandMaxTokens", "800");     // 扩散块 token 上限
-        d.put("retrieval.refExpandIncludeIncoming", "false"); // 入边扩散（默认关）
-        d.put("retrieval.refExpandParentEnabled", "true");   // 父章节带出
-        d.put("retrieval.refExpandParentMode", "summary");   // summary/title_only/full
-        d.put("retrieval.refExpandParentMaxLevels", "2");    // 父块级数
-        d.put("retrieval.refExpandParentSummaryChars", "200"); // summary 截取字符
-        d.put("retrieval.refExpandFuzzyName", "true");       // 章节名弱匹配
-        d.put("atRef.maxChunksPerDoc", "3");                 // @ 引用：单个文档取回块数
-        d.put("atRef.maxTotal", "6");                        // @ 引用：单次问答注入总块上限
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         d.put("rerank.model", properties.getRetrieval().getRerank().getModel());
-        d.put("rerank.timeoutMillis", String.valueOf(properties.getRetrieval().getRerank().getTimeoutMillis()));
         d.put("context.modelWindows", properties.getContext().getModelWindows());
         d.put("context.defaultWindowTokens", String.valueOf(properties.getContext().getDefaultWindowTokens()));
         d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
@@ -581,27 +496,14 @@ public class ConfigService {
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
-        d.put("retrieval.fusionMode", "sum");              // 双路融合：sum=加权和 / rrf=倒数排名（实验）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
-        d.put("retrieval.keywordTimeoutMs", "800");        // 关键词检索超时
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
-        d.put("retrieval.positionBonus", "0.03");          // 首块位置奖励
-        d.put("retrieval.sectionBonus", "0.01");           // 前段位置奖励
-        d.put("retrieval.keywordMaxTerms", "6");           // 关键词提取主词元上限
-        d.put("retrieval.keywordMaxTotal", "12");          // 关键词提取总词元上限
         d.put("retrieval.vectorTopK", "15");               // 向量检索召回上限（评估批量对比可覆盖）
         // 重排行为参数
-        d.put("rerank.minHits", "6");                      // 触发重排的候选下限
-        d.put("rerank.maxHits", "15");                     // 触发重排的候选上限
-        d.put("rerank.failCooldownMs", "60000");           // 重排失败后冷却再探测
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());
         d.put("keyword.baseUrl", properties.getKeyword().getBaseUrl());
         d.put("keyword.apiKey", properties.getKeyword().getApiKey());   // master key RSA 加密入库（设置页可改，改后客户端自动重建）；未配置时回退 env AI_MEILI_KEY
-        d.put("keyword.timeoutMillis", String.valueOf(properties.getKeyword().getTimeoutMillis()));
-        d.put("keyword.failCooldownMs", "60000");          // Meilisearch 失败后冷却再探测
-        d.put("keyword.reconcileOnStartup", "true");       // 启动索引对账：漂移自动重建（多副本部署可置 false 由运维单点执行）
-        d.put("keyword.reconcileIntervalMs", "3600000");   // 周期索引对账间隔(ms,≤0=暂停)：按(id,hash)精确比对并定向修复漂移（schedule 包调度）
         // 解析行为参数
         d.put("parse.concurrency", "2");                   // 文档解析并发数
         d.put("parse.ocrMinText", "20");                   // PDF 文本少于该长度判定扫描件触发 OCR
@@ -645,10 +547,6 @@ public class ConfigService {
         d.put("session.maxHistory", "10");             // 会话保留轮数
         d.put("session.expireMinutes", "30");          // 会话过期(分钟)
         // 查询改写（默认值取 bean，单一来源；消费方 RagService 经 syncProperties 回写后热生效）
-        d.put("queryRewrite.enabled", String.valueOf(properties.getQueryRewrite().isEnabled()));
-        d.put("queryRewrite.historyRounds", String.valueOf(properties.getQueryRewrite().getHistoryRounds()));
-        d.put("queryRewrite.prompt", properties.getQueryRewrite().getPrompt());
-        d.put("queryRewrite.promptMultiTurn", properties.getQueryRewrite().getPromptMultiTurn());
         // 图片相关性校验（读取点 RagService；defaults 取 bean）
         d.put("imageFilter.enabled", String.valueOf(properties.getImages().getImageFilter().isEnabled()));
         d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
@@ -659,7 +557,6 @@ public class ConfigService {
         d.put("deepReasoning.autoRouteKeywords", "如果,当,对比,区别,以及,同时,多个,分别,为什么");
         d.put("chat.maxImagesPerMessage", "9");
         d.put("chat.maxImageMb", "10");
-        d.put("retrieval.maxRefsPerBlock", "8");
         d.put("retrieval.relatedCount", "3");
         d.put("parse.embedBatchSize", "10");
         d.put("parse.ocrDpi", "200");
@@ -688,11 +585,6 @@ public class ConfigService {
 
         // 意图分类：默认值与 AppProperties.Intent 保持一致；
         // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）
-        d.put("intent.enabled", "false");                  // 意图分类总开关（默认关）
-        d.put("intent.timeoutMillis", "3000");             // 分类调用超时(ms)
-        d.put("intent.model", "");                         // 分类用模型（留空回落 chat.model）
-        d.put("intent.prompt", "");                        // 分类提示词（留空 = 用代码内置默认）
-        d.put("intent.chatPrompt", "");                    // 闲聊分支回答规则（留空 = 用代码内置默认）
         d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
         d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
         return d;
@@ -913,7 +805,7 @@ public class ConfigService {
             throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
         }
         // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.titleBonus", "retrieval.vecThreshold", "retrieval.positionBonus", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
+        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio", "retrieval.rewriteFallbackWeakScore"}) {
             String w = updates.get(wKey);
             if (w != null && !w.isBlank()) {
                 try {
@@ -966,8 +858,7 @@ public class ConfigService {
         }
         for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
                 "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax",
-                "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars",
-                "atRef.maxChunksPerDoc", "atRef.maxTotal"}) {
+                "retrieval.refExpandMaxHits", "retrieval.refExpandMaxTokens", "retrieval.refExpandParentMaxLevels", "retrieval.refExpandParentSummaryChars"}) {
             String v = updates.get(iKey);
             if (v != null && !v.isBlank()) {
                 try {
@@ -1010,11 +901,6 @@ public class ConfigService {
         String ke = updates.get("keyword.engine");
         if (ke != null && !ke.isBlank() && !"mysql".equalsIgnoreCase(ke) && !"meilisearch".equalsIgnoreCase(ke)) {
             throw new IllegalArgumentException("keyword.engine 仅允许 mysql / meilisearch");
-        }
-        // 检索融合方式校验（rrf 为实验模式：保存即生效，用评估页对比验证后再留用）
-        String fm = updates.get("retrieval.fusionMode");
-        if (fm != null && !fm.isBlank() && !"sum".equalsIgnoreCase(fm) && !"rrf".equalsIgnoreCase(fm)) {
-            throw new IllegalArgumentException("retrieval.fusionMode 仅允许 sum / rrf");
         }
         // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）
         if (ke != null && "meilisearch".equalsIgnoreCase(ke)) {
@@ -1277,22 +1163,17 @@ public class ConfigService {
         String[] groups = {"chat", "vision", "embedding", "chunk", "parse", "upload", "retrieval", "rerank",
                 "keyword", "context", "deepReasoning", "ratelimit",
                 // 补漏：defaults() 中已有这些前缀，但此前未列入本数组，导致设置页永远只能回显前端硬编码默认值
-                "images", "session", "cleanup", "eval", "queryRewrite", "imageFilter", "cache",
+                "images", "session", "cleanup", "eval", "imageFilter", "cache",
                 // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
                 "tool",
                 // MCP 外部工具分组：mcp.enabled / mcp.servers
                 "mcp",
                 // 技能（Skills）分组：skill.enabled / skill.dir / skill.inject* / skill.maxFileChars
                 "skill",
-                // @ 引用分组：atRef.maxChunksPerDoc / atRef.maxTotal
-                "atRef",
                 // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent /
                 // agent.digestEnabled / agent.autoRoute / agent.routeTimeoutMs
                 // （按 "agent." 前缀自动收集，新增键无需改本数组，但必须在 defaults() 里有条目）
-                "agent",
-                // 意图分类分组：intent.enabled / intent.timeoutMillis / intent.model / intent.prompt / intent.chatPrompt
-                // （此前未列入本数组 + defaults() 缺条目 → 开启后设置页永远回显"关"）
-                "intent"};
+                "agent"};
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defaults().entrySet()) {

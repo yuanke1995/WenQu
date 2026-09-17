@@ -2,7 +2,6 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.config.AppProperties;
-import com.wisesoft.ai.dto.ChatRef;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
@@ -44,9 +43,6 @@ import java.util.stream.Collectors;
 @Service
 public class RagService {
 
-    /** 重排触发区间（候选太少/太多无需重排）；rerank.minHits/maxHits 可调 */
-    private int rerankMinHits() { return configService.getInt("rerank.minHits", 6); }
-    private int rerankMaxHits() { return configService.getInt("rerank.maxHits", 15); }
     /** 主 LLM 流式中断（未输出 token 时）自动重试次数（chat.streamRetryCount，默认 1；0=关闭） */
     private int streamRetryCount() { return configService.getInt("chat.streamRetryCount", 1); }
 
@@ -65,10 +61,10 @@ public class RagService {
         }
     }
 
-    /** 重排（候选在区间内且服务可用才执行；不可用/不满足区间 → 保持融合分排序并 fail-loud 标记） */
+    /** 重排（服务可用就执行；不可用 → 保持融合分排序并 fail-loud 标记） */
     private List<HybridRetrievalService.Hit> rerankIfNeeded(List<HybridRetrievalService.Hit> hits, String query,
                                                              List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        if (hits.size() > rerankMinHits() && hits.size() <= rerankMaxHits()) {
+        if (!hits.isEmpty()) {
             String reason = rerankService.debugUnavailableReason();
             if (reason != null) {
                 addDegradation(degradations, degradedCodes, "rerankUnavailable",
@@ -81,45 +77,7 @@ public class RagService {
     }
 
     /** 改写结果（实际检索用 query + 命中） */
-    private record FallbackSearchResult(List<HybridRetrievalService.Hit> hits, String usedQuery) {
-    }
 
-    /**
-     * 改写跑偏回退：改写 query 与原文不同且"改写后召回质量差"时，丢弃改写结果、回退用原始问题重检。
-     * 质量判据（两者任一命中即回退，均可配置；判据值为 0 表示关闭对应判据）：
-     * 1) 命中块数 < retrieval.rewriteFallbackMinHits（默认 2）——改写词太窄/太偏，基本没召回到东西；
-     * 2) 最高命中融合分 < retrieval.rewriteFallbackWeakScore（默认 0.2）——召回了但整体相似度很弱。
-     * <p>
-     * 回退前清空本次诊断（diag.reset），以"最终用于回答的那次检索"状态为准；
-     * 回退属 fail-loud 事件，随回答标记（默认不展示，进 [FAIL-LOUD] 日志）。
-     */
-    private FallbackSearchResult searchWithRewriteFallback(String original, String rewritten, HybridRetrievalService.RetrievalDiag diag,
-                                                           List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        List<HybridRetrievalService.Hit> hits = hybridRetrievalService.search(rewritten, diag);
-        String used = rewritten;
-        boolean rewriteActive = rewritten != null && !rewritten.equals(original);
-        if (rewriteActive) {
-            int minHits = configService.getInt("retrieval.rewriteFallbackMinHits", 2);
-            double weakScore = configService.getDouble("retrieval.rewriteFallbackWeakScore", 0.2);
-            String reason = null;
-            if (minHits > 0 && hits.size() < minHits) {
-                reason = "召回仅 " + hits.size() + " 块（< " + minHits + "）";
-            } else if (weakScore > 0 && !hits.isEmpty() && hits.get(0).score() < weakScore) {
-                reason = "最高命中分 " + String.format("%.3f", hits.get(0).score()) + " 过低（< " + weakScore + "）";
-            }
-            if (reason != null) {
-                // 回退重检：原始问题（改写前语义），清空首次检索的诊断标记，避免污染最终回答状态
-                diag.reset();
-                List<HybridRetrievalService.Hit> back = hybridRetrievalService.search(original, diag);
-                log.info("[FAIL-LOUD] 查询改写跑偏，回退原问题检索: question=[{}]，原因: {}（改写命中 {} 块 → 原问命中 {} 块）",
-                        original, reason, hits.size(), back.size());
-                addDegradation(degradations, degradedCodes, "rewriteFallback",
-                        "问题改写后召回不足，已回退用原始问题检索");
-                return new FallbackSearchResult(back, original);
-            }
-        }
-        return new FallbackSearchResult(hits, used);
-    }
     /** 引用摘要截断长度 */
     private static final int SNIPPET_LEN = 80;
 
@@ -194,7 +152,6 @@ public class RagService {
     private final ConfigService configService;
     private final ImageFilterService imageFilterService;
     private final KeywordExtractor keywordExtractor;
-    private final KnowledgeRefService knowledgeRefService;
     /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认关闭） */
     private final KnowledgeRetrievalTool knowledgeRetrievalTool;
     /** 产物交付服务（会话 emitter 注册表 + 文件落盘 + SSE 下发） */
@@ -267,7 +224,6 @@ public class RagService {
                       ConfigService configService,
                       ImageFilterService imageFilterService,
                       KeywordExtractor keywordExtractor,
-                      KnowledgeRefService knowledgeRefService,
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       ArtifactService artifactService,
                       PresentArtifactTool presentArtifactTool,
@@ -290,7 +246,6 @@ public class RagService {
         this.configService = configService;
         this.imageFilterService = imageFilterService;
         this.keywordExtractor = keywordExtractor;
-        this.knowledgeRefService = knowledgeRefService;
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.artifactService = artifactService;
         this.presentArtifactTool = presentArtifactTool;
@@ -308,7 +263,7 @@ public class RagService {
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
     public void chat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                     List<ChatRef> refs, String agentId, SseEmitter emitter) {
+                     String agentId, SseEmitter emitter) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -321,10 +276,8 @@ public class RagService {
         emitter.onTimeout(() -> ACTIVE_SSE.remove(emitter));
         emitter.onError(t -> ACTIVE_SSE.remove(emitter));
         syncPipelineSize();
-        // lambda 引用需 effectively final：@ 引用列表用不可变副本传递
-        final List<ChatRef> finalRefs = refs == null ? List.of() : List.copyOf(refs);
         try {
-            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, finalRefs, agentId, emitter));
+            pipelineExecutor.execute(() -> runChat(sessionId, question, userImages, useDeepThink, agentId, emitter));
         } catch (RejectedExecutionException e) {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -338,7 +291,7 @@ public class RagService {
      * 问答流水线主体（独立线程执行）：图片处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
     private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                         List<ChatRef> refs, String agentId, SseEmitter emitter) {
+                         String agentId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         // 智能体（4.1）：选中后覆盖模型/提示词/工具/知识库范围；agentId 无效/缺失时视为无覆盖（继承全局）
         final Agent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
@@ -370,53 +323,18 @@ public class RagService {
                     .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
                     .collect(Collectors.joining("\n"));
 
-            // 0.5 意图分类：问候/闲聊/知识库无关话题跳过 RAG（改写/思考/检索/引用），直接对话。
-            //     带图不分类（图片提问默认走视觉+RAG）；分类失败/超时/关闭一律继续走完整 RAG（fail-safe）
-            //     智能体声明不使用知识库时无需分类——后续整条检索链路都会跳过，直接走生成
-            if (userImgs.isEmpty() && properties.getIntent().isEnabled() && !knowledgeOff) {
-                // 客户端断开短路：分类是 LLM 调用，断开后不再发起
-                if (clientDisconnected(emitter)) {
-                    log.info("[SSE] 客户端断开，跳过意图分类: session={}", sessionId);
-                    return;
-                }
-                IntentResult ir = classifyIntent(question);
-                if (ir.chat()) {
-                    runSmallTalkChat(sessionId, question, emitter, startTime, thinkingHolder, degradations, degradedCodes, agent);
-                    return;
-                }
-            }
-
             // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
             //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
             if (knowledgeOff) {
-                log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路（@ 引用仍生效）", agent.getId());
-                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, refs, emitter, startTime,
+                log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
+                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, emitter, startTime,
                         thinkingHolder, degradations, degradedCodes, agent, stageMs);
                 return;
             }
 
-            // 0. 查询改写（支持多轮历史上下文；失败降级为原始问题并上报 fail-loud；M2：关闭时跳过历史查询）
+            // 检索查询：直接使用原问题（不再做查询改写）
             String retrievalQuery = question;
-            if (properties.getQueryRewrite().isEnabled()) {
-                List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, properties.getQueryRewrite().getHistoryRounds());
-                if (recentHistory == null) {
-                    // M6 fail-loud：历史读取失败 → 本次无多轮记忆
-                    addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-                    recentHistory = List.of();
-                }
-                // 客户端断开短路：改写是 LLM 调用，断开后不再发起
-                if (clientDisconnected(emitter)) {
-                    log.info("[SSE] 客户端断开，跳过查询改写: session={}", sessionId);
-                    return;
-                }
-                RewriteResult rr = rewriteQuery(question, recentHistory);
-                retrievalQuery = rr.query();
-                if (rr.degraded()) {
-                    addDegradation(degradations, degradedCodes, "rewriteFailed", "问题改写失败，使用原问题检索");
-                }
-                stageMs.put("rewrite", System.currentTimeMillis() - startTime);
-            }
             // 图片描述参与检索：识别界面时描述含组件名，能显著提升召回
             if (!userImgs.isEmpty()) {
                 String descJoin = userImgs.stream().map(UserImageService.UserImage::desc)
@@ -495,14 +413,6 @@ public class RagService {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
-                } else if (userImgs.isEmpty()) {
-                    // 改写跑偏回退：改写是"优化"而非"承诺"——改写词跑偏（召回极少/最高分极弱）时
-                    // 回退用原始问题重检，避免"改写成功但改错方向"导致漏召回；仅改写真正生效时触发，
-                    // 且图片提问不回退（检索词含图片视觉描述，回退会丢掉视觉语义）。
-                    FallbackSearchResult sr = searchWithRewriteFallback(question, retrievalQuery, retrievalDiag,
-                            degradations, degradedCodes);
-                    hits = sr.hits();
-                    retrievalQuery = sr.usedQuery(); // 后续重排/上下文/日志统一用实际生效的 query
                 } else {
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
                 }
@@ -656,12 +566,9 @@ public class RagService {
             // 引用扩散 + 结构上下文扩展：命中 A → 带出被引块 B / 引用块 C（默认关）/ 父章节块。
             // 扩散块以 Hit 形态混入同一上下文循环，复用图片占位/截取/预算逻辑；任一环节失败降级为不扩散
             // （subOutcome 在检索阶段就已产出：子代理命中并入 mainHits、要点注入 system）
-            // @ 引用：用户手动 @ 的文档 → 该文档内相关块前置（"指定必被参考"，优先于普通命中）
-            List<HybridRetrievalService.Hit> atHits = buildAtRefHits(refs, retrievalQuery);
-            List<HybridRetrievalService.Hit> mainHits = new ArrayList<>(atHits);
-            Set<String> seenKid = atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
-                    .filter(Objects::nonNull).collect(Collectors.toSet());
-            // 子代理命中优先级仅次于 @ 引用（针对性视角检索，价值高于普通召回）；同样受智能体知识库范围约束
+            List<HybridRetrievalService.Hit> mainHits = new ArrayList<>();
+            Set<String> seenKid = new HashSet<>();
+            // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束
             if (subOutcome != null) {
                 for (HybridRetrievalService.Hit h : subOutcome.hits()) {
                     if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())
@@ -671,19 +578,14 @@ public class RagService {
                 }
             }
             for (HybridRetrievalService.Hit h : hits) {
-                // @ 块/子代理块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
+                // 子代理块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
                 if (h.knowledgeId() == null || seenKid.add(h.knowledgeId())) mainHits.add(h);
             }
-            Set<String> atKid = new HashSet<>(atHits.stream().map(HybridRetrievalService.Hit::knowledgeId)
-                    .filter(Objects::nonNull).collect(Collectors.toSet()));
-            KnowledgeRefService.ExpandResult expandResult = knowledgeRefService.expand(mainHits);
-            List<HybridRetrievalService.Hit> extraHits = expandResult.extra();
-            Map<String, String> refOrigins = new HashMap<>(expandResult.origins());
-            for (String kid : atKid) refOrigins.put(kid, "AT_REF"); // 前端引用弹窗可区分 @ 来源
+            // 关联块扩散已移除（对齐精简检索链路）：只使用主检索命中，不做引用关系扩散与父章节带出
+            Map<String, String> refOrigins = new HashMap<>();
             List<HybridRetrievalService.Hit> allHits = new ArrayList<>(mainHits);
-            allHits.addAll(extraHits);
-            int maxExtraHits = Math.max(1, configService.getInt("retrieval.refExpandMaxHits", 3));
-            int maxExtraTokens = configService.getInt("retrieval.refExpandMaxTokens", 800);
+            int maxExtraHits = 0;
+            int maxExtraTokens = 0;
             int extraUsed = 0;
             int extraTokensUsed = 0;
             // 批量预取引用文件名（原始命中 + 扩散块都可能有引用展示；冷缓存时一次 selectBatchIds）
@@ -2075,62 +1977,6 @@ public class RagService {
         }
     }
 
-    /** 查询改写结果：query + 是否降级（fail-loud：改写失败/空结果标记 degraded，调用方上报） */
-    public record RewriteResult(String query, boolean degraded) {
-    }
-
-    /**
-     * LLM 改写用户问题，优化检索精准度。支持多轮对话上下文（追问场景）。
-     * 失败/超时/空结果时降级为原始问题并标记 degraded（不再静默）。
-     */
-    private RewriteResult rewriteQuery(String question, List<Map<String, Object>> history) {
-        if (!properties.getQueryRewrite().isEnabled()) {
-            return new RewriteResult(question, false);
-        }
-        try {
-            // 构建 system prompt：根据是否有足够历史选择单轮或多轮改写
-            String systemPrompt;
-            boolean hasHistory = history != null && history.size() >= 2;
-            if (hasHistory) {
-                String historyText = formatHistory(history);
-                String template = properties.getQueryRewrite().getPromptMultiTurn();
-                systemPrompt = template.replace("%s", historyText);
-            } else {
-                systemPrompt = properties.getQueryRewrite().getPrompt();
-            }
-
-            String rewritten = CompletableFuture
-                    .supplyAsync(() -> chatClient.prompt()
-                            .system(systemPrompt)
-                            .user(question)
-                            .options(OpenAiChatOptions.builder()
-                                    .model(configService.get("chat.model"))
-                                    .temperature(configService.getDouble("chat.temperature"))
-                                    .build())
-                            .call()
-                            .content(), rewriteExecutor)
-                    .get(configService.getInt("retrieval.rewriteTimeoutMs",
-                            properties.getQueryRewrite().getTimeoutMillis()), TimeUnit.MILLISECONDS);
-            if (rewritten == null || rewritten.isBlank()) {
-                log.warn("[FAIL-LOUD] 查询改写返回空，使用原问题检索");
-                return new RewriteResult(question, true);
-            }
-            String trimmed = rewritten.trim();
-            log.info("[rewrite] history={} {} -> {}", hasHistory, question, trimmed);
-            return new RewriteResult(trimmed, false);
-        } catch (TimeoutException e) {
-            // TimeoutException.getMessage() 为 null → 明确报超时（本地模型响应慢的常见场景），排障不再看到裸 null
-            log.warn("[FAIL-LOUD] 查询改写超时（{}ms），使用原问题检索",
-                    configService.getInt("retrieval.rewriteTimeoutMs", properties.getQueryRewrite().getTimeoutMillis()));
-            return new RewriteResult(question, true);
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 查询改写失败（{}），使用原问题检索: {}",
-                    e.getClass().getSimpleName(), e.getMessage() == null ? "无详情" : e.getMessage());
-            log.debug("[rewrite] 改写失败详情", e);
-            return new RewriteResult(question, true);
-        }
-    }
-
     /**
      * 将对话历史格式化为 user/assistant 文本，用于多轮改写 prompt（M5：单条截断 200 字、总长 1500 字）
      */
@@ -2154,111 +2000,6 @@ public class RagService {
         return sb.toString();
     }
 
-    /** 意图分类结果：chat=true 闲聊/知识库无关（reason 记录判定来源，排障用：llm/timeout/error/unrecognized/disabled） */
-    private record IntentResult(boolean chat, String reason) {
-    }
-
-    /**
-     * LLM 意图分类：判断消息是「闲聊/知识库无关」（chat）还是「可能需要检索知识库」（doc）。
-     * 只要求输出一个单词：temperature 0 + 不透传 thinking（普通 call 无思考链，rewriteQuery 已验证），
-     * 不设 maxTokens（qwen 思考模型下 max_tokens 会导致空输出，与 Vision 同源的坑），
-     * 靠单单词 prompt + contains 判定控制成本。失败/超时/空结果/无法识别一律返回 doc（fail-safe：走现有 RAG，最坏等于现状）。
-     * 保守判定顺序：先 doc 后 chat，输出同时含两词时按 doc 处理。
-     */
-    private IntentResult classifyIntent(String question) {
-        long start = System.currentTimeMillis();
-        // 分类模型：intent.model 留空回落 chat.model（final 副本，lambda 中引用需 effectively final）
-        String modelCfg = configService.get("intent.model");
-        final String model = (modelCfg == null || modelCfg.isBlank()) ? configService.get("chat.model") : modelCfg;
-        try {
-            String out = CompletableFuture
-                    .supplyAsync(() -> chatClient.prompt()
-                            .system(properties.getIntent().getPrompt())
-                            .user(question)
-                            .options(OpenAiChatOptions.builder()
-                                    .model(model)
-                                    .temperature(0.0)
-                                    .build())
-                            .call()
-                            .content(), rewriteExecutor)
-                    .get(configService.getInt("intent.timeoutMillis",
-                            properties.getIntent().getTimeoutMillis()), TimeUnit.MILLISECONDS);
-            String trimmed = out == null ? "" : out.trim().toLowerCase();
-            long cost = System.currentTimeMillis() - start;
-            if (trimmed.contains("doc")) {
-                log.info("[INTENT] {} -> doc ({}ms)", question, cost);
-                return new IntentResult(false, "llm");
-            }
-            if (trimmed.contains("chat")) {
-                log.info("[INTENT] {} -> chat ({}ms)", question, cost);
-                return new IntentResult(true, "llm");
-            }
-            log.warn("[FAIL-LOUD] 意图分类输出无法识别（[{}]），按文档问题处理: {}", trimmed, question);
-            return new IntentResult(false, "unrecognized");
-        } catch (TimeoutException e) {
-            log.warn("[FAIL-LOUD] 意图分类超时（{}ms），按文档问题处理: {}",
-                    configService.getInt("intent.timeoutMillis", properties.getIntent().getTimeoutMillis()), question);
-            return new IntentResult(false, "timeout");
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 意图分类失败（{}），按文档问题处理: {}",
-                    e.getClass().getSimpleName(), e.getMessage() == null ? "无详情" : e.getMessage());
-            return new IntentResult(false, "error");
-        }
-    }
-
-    /**
-     * 闲聊分支（意图分类判 chat）：跳过改写/思考/检索/引用，直接流式对话。
-     * 复用主回答流（AnswerStreamState + buildAnswerStream）：无资料、无图片、不下发 retrieved 事件，
-     * 空 sources → 前端检索状态行天然不渲染（Chat.vue 条件 m.retrieved || sources.length 不成立）；
-     * 多轮历史照常注入保持会话连贯；回答照常落库/进语义缓存/问答日志（hitDocIds 为空）。
-     */
-    private void runSmallTalkChat(String sessionId, String question, SseEmitter emitter, long startTime,
-                                  String[] thinkingHolder, List<Map<String, String>> degradations,
-                                  Set<String> degradedCodes, Agent agent) {
-        try {
-            // 角色段（与主链路同源，保持人设一致）+ 闲聊分支规则（intent.chatPrompt，DB 可编辑保存即生效）
-            String rolePart = resolveSystemPrompt(agent);
-            StringBuilder system = new StringBuilder(rolePart)
-                    .append("\n\n【本轮对话说明】\n")
-                    .append(properties.getIntent().getChatPrompt());
-            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId,
-                    configService.getInt("chat.historyRounds", 5));
-            if (recentHistory == null) {
-                // M6 fail-loud：历史读取失败 → 本次对话无历史注入
-                addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-                recentHistory = List.of();
-            }
-            String historyText = buildHistoryText(recentHistory);
-            if (!historyText.isEmpty()) {
-                system.append("\n\n对话历史：\n").append(historyText);
-            }
-
-            // 生成前最后一道短路检查：流式回答是最长成本段，断开即不再发起
-            if (clientDisconnected(emitter)) {
-                log.info("[SSE] 客户端断开，终止本轮闲聊（生成前）: session={}", sessionId);
-                return;
-            }
-            sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
-            // 无资料/无图片/无检索状态行：空 sources + null retrievedJson（done/持久化路径均已空值兼容）
-            AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
-                    new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), List.of(),
-                    startTime, question, thinkingHolder, degradations, degradedCodes, null);
-            st.disposableRef.set(buildAnswerStream(system.toString(), question, st, agent));
-            emitter.onCompletion(() -> st.disposeSafe());
-            emitter.onTimeout(() -> {
-                log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);
-                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
-                st.disposeSafe();
-                completeEmitter(emitter);
-            });
-            emitter.onError(t -> st.disposeSafe());
-        } catch (Exception e) {
-            log.error("Small talk chat error", e);
-            sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
-            completeEmitter(emitter);
-        }
-    }
-
     /**
      * 「不使用知识库」分支（智能体 knowledgeDisabled=1）：纯角色对话，不跑改写/深度思考/检索/子代理编排。
      * 与闲聊分支的差异：① 多轮历史照常注入；② 用户手动 @ 的文档仍取块前置（手动指定优先于智能体配置）；
@@ -2266,7 +2007,7 @@ public class RagService {
      * 复用主回答流：sources/retrieved 均空 → 前端检索状态行与引用区天然不渲染。
      */
     private void runNoKnowledgeChat(String sessionId, String question, List<UserImageService.UserImage> userImgs,
-                                    String imgDescText, List<ChatRef> refs, SseEmitter emitter, long startTime,
+                                    String imgDescText, SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs) {
         try {
@@ -2286,82 +2027,12 @@ public class RagService {
                 system.append("\n\n对话历史：\n").append(historyText);
             }
 
-            // @ 引用文档块前置（手动指定的资料优先于配置；无 @ 引用则完全没有资料段）
-            String retrievalQuery = question;
-            List<HybridRetrievalService.Hit> atHits = buildAtRefHits(refs, retrievalQuery);
-            StringBuilder context = new StringBuilder();
-            List<Map<String, Object>> sources = new ArrayList<>();
-            Map<Integer, String> imgIndex = new LinkedHashMap<>();
-            Map<Integer, String> imgDescIndex = new HashMap<>();
-            // 文件名批量预取（冷缓存一次 selectBatchIds；过滤 null docId，Set.of 不接受 null 元素）
-            Set<String> refDocIds = atHits.stream().map(HybridRetrievalService.Hit::docId)
-                    .filter(d -> d != null && !d.isBlank()).collect(Collectors.toSet());
-            Map<String, String> fileNameMap = refDocIds.isEmpty()
-                    ? Map.of() : documentMetaCache.getFileNames(refDocIds);
-            int usedTokens = 0;
-            for (HybridRetrievalService.Hit h : atHits) {
-                String text = h.content() == null ? "" : h.content();
-                List<String> urls = h.images() == null ? List.of() : h.images();
-                // 图片占位编号（与主链路同规则；@ 块内图片按序编号，相关性预筛跳过——手动指定的资料默认相关）
-                Matcher matcher = IMG_PLACEHOLDER_PATTERN.matcher(text);
-                StringBuffer sb = new StringBuffer();
-                int imgIdxForChunk = 0;
-                while (matcher.find()) {
-                    if (imgIdxForChunk < urls.size()) {
-                        String raw = matcher.group();
-                        String desc = "";
-                        int colonIdx = raw.indexOf("：");
-                        if (colonIdx >= 0 && raw.length() > colonIdx + 2) {
-                            desc = raw.substring(colonIdx + 1, raw.length() - 1).trim();
-                        }
-                        int globalSeq = imgIndex.size() + 1;
-                        imgIndex.put(globalSeq, urls.get(imgIdxForChunk++));
-                        String replacement = desc.isEmpty()
-                                ? "[图片" + globalSeq + "]"
-                                : "[图片" + globalSeq + "：" + desc + "]";
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
-                        imgDescIndex.put(globalSeq, desc);
-                    } else {
-                        matcher.appendReplacement(sb, matcher.group());
-                    }
-                }
-                matcher.appendTail(sb);
-                text = sb.toString();
-                if (h.titlePath() != null && !h.titlePath().isBlank()) {
-                    text = "【上下文】" + h.titlePath() + "\n\n" + text;
-                }
-                int tokens = TokenCounter.estimate(text);
-                Map<String, Object> src = new LinkedHashMap<>();
-                src.put("ref", sources.size() + 1);
-                src.put("knowledgeId", h.knowledgeId());
-                src.put("docId", h.docId());
-                src.put("fileName", fileNameMap.get(h.docId()));
-                src.put("title", h.title());
-                src.put("snippet", snippet(text));
-                src.put("images", urls);
-                src.put("origin", "AT_REF");
-                sources.add(src);
-                context.append("[").append(sources.size()).append("] ").append(text).append("\n");
-                usedTokens += tokens;
-            }
-            if (!atHits.isEmpty()) {
-                log.info("[NO-KB] @ 引用前置 {} 块（{} tokens）", atHits.size(), usedTokens);
-            }
-
-            // 拼装用户消息：问题 + 图片描述 + @ 资料段
+            // 拼装用户消息：问题 + 图片描述（本轮无知识库，无参考资料段）
             StringBuilder userQuestion = new StringBuilder(question);
             if (imgDescText != null && !imgDescText.isBlank()) {
                 userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
             }
-            String user = context.length() == 0
-                    ? userQuestion.toString()
-                    : userQuestion + "\n\n参考资料：\n" + context;
-
-            // SSE 图片列表（@ 块命中的图）
-            if (!imgIndex.isEmpty()) {
-                List<String> signedUrls = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
-                sendSseEvent(emitter, "image", JSON.toJSONString(signedUrls), sessionId);
-            }
+            String user = userQuestion.toString();
 
             if (clientDisconnected(emitter)) {
                 log.info("[SSE] 客户端断开，终止本轮问答（无知识库分支，生成前）: session={}", sessionId);
@@ -2369,16 +2040,13 @@ public class RagService {
             }
             sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
             stageMs.put("total", System.currentTimeMillis() - startTime);
-            // @ 块为空 → retrievedJson 为 null（前端检索状态行不渲染）；有 @ 块 → 正常渲染 refs 数
-            String retrievedJson = atHits.isEmpty() ? null
-                    : JSON.toJSONString(Map.of("keywords", 0, "refs", atHits.size(), "terms", List.of()));
             AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
-                    imgIndex, imgDescIndex, sources, userImgs,
-                    startTime, question, thinkingHolder, degradations, degradedCodes, retrievedJson);
+                    new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), userImgs,
+                    startTime, question, thinkingHolder, degradations, degradedCodes, null);
             st.docMetaCache = documentMetaCache;
-            st.contextTokens = usedTokens;
+            st.contextTokens = 0;
             st.budgetTokens = 0;
-            st.contextHits = atHits.size();
+            st.contextHits = 0;
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
             emitter.onCompletion(() -> st.disposeSafe());
@@ -2394,33 +2062,5 @@ public class RagService {
             sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
             completeEmitter(emitter);
         }
-    }
-
-    // ==================== @ 引用（用户手动指定参考资料） ====================
-
-    /**
-     * 取回用户 @ 的文档内相关块，由 chat 前置进上下文（优先于普通检索命中）。
-     * 基础版仅支持文档级引用（type=doc）；每文档取块数与总上限由 atRef.* 配置控制（设置页可调）。
-     */
-    private List<HybridRetrievalService.Hit> buildAtRefHits(List<ChatRef> refs, String query) {
-        if (refs == null || refs.isEmpty()) return List.of();
-        int perDoc = configService.getInt("atRef.maxChunksPerDoc", 3);
-        int maxTotal = configService.getInt("atRef.maxTotal", 6);
-        List<HybridRetrievalService.Hit> out = new ArrayList<>();
-        List<String> names = new ArrayList<>();
-        for (ChatRef r : refs) {
-            if (r == null || r.getId() == null || r.getId().isBlank()) continue;
-            // 基础版：chunk 级（指定知识块）与 Skill 引用暂不支持，静默跳过不影响问答
-            if (r.getType() != null && !"doc".equalsIgnoreCase(r.getType())) continue;
-            List<HybridRetrievalService.Hit> hs = hybridRetrievalService.searchInDoc(query, r.getId(), perDoc);
-            names.add((r.getName() == null || r.getName().isBlank() ? r.getId() : r.getName()) + "×" + hs.size());
-            for (HybridRetrievalService.Hit h : hs) {
-                if (out.size() >= maxTotal) break;
-                out.add(h);
-            }
-            if (out.size() >= maxTotal) break;
-        }
-        log.info("[@REF] @ 引用注入 {} 块（{}）", out.size(), String.join("、", names));
-        return out;
     }
 }
