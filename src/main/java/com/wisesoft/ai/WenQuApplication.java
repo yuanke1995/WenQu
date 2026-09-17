@@ -11,9 +11,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication
 @MapperScan("com.wisesoft.ai.mapper")
-public class Application {
+public class WenQuApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
+        SpringApplication.run(WenQuApplication.class, args);
     }
 }
