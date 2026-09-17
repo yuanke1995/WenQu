@@ -132,19 +132,30 @@ public class SubAgentOrchestrator {
     }
 
     /**
-     * 本轮执行上下文经 state 传递的 key。
-     * <p><b>不能用 ThreadLocal</b>：并行节点由框架用 {@code Schedulers.parallel()} 调度
-     * （见 NodeExecutor：{@code subscribeOn(scheduler)}），跑在 reactor 线程池的工作线程上，
-     * 主线程设的 ThreadLocal 在那里 get() 返回 null → 分支静默不执行（表现为"编排完成但命中 0 块"）。
-     * state 是每次 invoke 传入的、随流程流转，天然跨线程可见，故用它承载上下文。
+     * 本轮执行上下文在 state 中的「钥匙」key（值是 ctxId 字符串，不是对象本身）。
+     * <p>两点约束，缺一不可（都是实测踩出来的）：
+     * <ol>
+     *   <li><b>不能用 ThreadLocal</b>：并行节点由框架用 {@code Schedulers.parallel()} 调度
+     *       （见 NodeExecutor：{@code subscribeOn(scheduler)}），跑在 reactor 线程池的工作线程上，
+     *       主线程设的 ThreadLocal 在那里 get() 返回 null → 分支静默不执行（"编排完成但命中 0 块"）。</li>
+     *   <li><b>不能把 RunCtx 直接放进 state</b>：框架会对 state 做 Jackson 序列化，而 RunCtx 含
+     *       onBranch 回调（lambda 捕获了 RagService → chatClient → 整条 Spring bean 链），
+     *       序列化时抛 InvalidDefinitionException（jdk.proxy2 无法构造 BeanSerializer）→ 整轮编排失败降级。
+     *       故 state 只放可安全序列化的 ctxId 字符串，真正的上下文存在 {@link #CTX_REGISTRY}。</li>
+     * </ol>
      */
-    private static final String CTX_KEY = "__runCtx";
+    private static final String CTX_KEY = "__runCtxId";
+
+    /** ctxId → 本轮上下文（仅存活于单次 run 期间，finally 中移除） */
+    private final Map<String, RunCtx> CTX_REGISTRY = new ConcurrentHashMap<>();
 
     /** 从图节点的 state 中取本轮上下文（取不到返回 null，调用方按"跳过"处理） */
-    private static RunCtx ctxOf(OverAllState state) {
+    private RunCtx ctxOf(OverAllState state) {
         if (state == null) return null;
         try {
-            return state.value(CTX_KEY).orElse(null);
+            Object v = state.value(CTX_KEY).orElse(null);
+            String id = v == null ? null : String.valueOf(v);
+            return id == null ? null : CTX_REGISTRY.get(id);
         } catch (Exception e) {
             return null;
         }
@@ -174,12 +185,14 @@ public class SubAgentOrchestrator {
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
         RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch);
+        // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
+        String ctxId = java.util.UUID.randomUUID().toString();
+        CTX_REGISTRY.put(ctxId, ctx);
         try {
             CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
-            // 上下文随 state 传入（并行节点跑在 reactor 线程池，不能用 ThreadLocal）
             Map<String, Object> inputs = new HashMap<>();
             inputs.put("question", question);
-            inputs.put(CTX_KEY, ctx);
+            inputs.put(CTX_KEY, ctxId);
             Optional<OverAllState> result = graph.invoke(inputs);
             result.ifPresent(s -> s.value("digestText").ifPresent(v -> {
                 // 仅当分支未产出要点时才收 merge 节点的文本；空串不收（否则"要点 1 条"实为空内容的假象）
@@ -194,6 +207,8 @@ public class SubAgentOrchestrator {
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
             return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0, List.copyOf(ctx.branches));
+        } finally {
+            CTX_REGISTRY.remove(ctxId);
         }
     }
 
