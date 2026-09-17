@@ -2274,6 +2274,11 @@ public class RagService {
             List<Map<String, Object>> sources = new ArrayList<>();
             Map<Integer, String> imgIndex = new LinkedHashMap<>();
             Map<Integer, String> imgDescIndex = new HashMap<>();
+            // 文件名批量预取（冷缓存一次 selectBatchIds；过滤 null docId，Set.of 不接受 null 元素）
+            Set<String> refDocIds = atHits.stream().map(HybridRetrievalService.Hit::docId)
+                    .filter(d -> d != null && !d.isBlank()).collect(Collectors.toSet());
+            Map<String, String> fileNameMap = refDocIds.isEmpty()
+                    ? Map.of() : documentMetaCache.getFileNames(refDocIds);
             int usedTokens = 0;
             for (HybridRetrievalService.Hit h : atHits) {
                 String text = h.content() == null ? "" : h.content();
@@ -2311,8 +2316,7 @@ public class RagService {
                 src.put("ref", sources.size() + 1);
                 src.put("knowledgeId", h.knowledgeId());
                 src.put("docId", h.docId());
-                src.put("fileName", documentMetaCache.getFileNames(
-                        Set.of(h.docId())).get(h.docId()));
+                src.put("fileName", fileNameMap.get(h.docId()));
                 src.put("title", h.title());
                 src.put("snippet", snippet(text));
                 src.put("images", urls);

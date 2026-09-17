@@ -39,9 +39,10 @@
             <div class="ap-card-head">
               <span class="ap-avatar"><robot-outlined /></span>
               <span class="ap-name" :title="a.name">{{ a.name }}</span>
-              <span v-if="isDefault(a) || a.isSubagent === 1" class="ap-card-tags">
+              <span v-if="isDefault(a) || a.isSubagent === 1 || isBuiltin(a)" class="ap-card-tags">
                 <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
                 <span v-if="a.isSubagent === 1" class="ap-tag-sub">子</span>
+                <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统内置，不可删除">内置</span>
               </span>
             </div>
             <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
@@ -55,9 +56,11 @@
               <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
               <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
               <button v-if="!isDefault(a) && a.isSubagent !== 1" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
-              <a-popconfirm title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
+              <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
+              <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                 <button class="app-link-btn danger" @click.stop>删除</button>
               </a-popconfirm>
+              <span v-else class="ap-builtin-hint">系统内置</span>
             </div>
           </article>
         </div>
@@ -128,6 +131,7 @@
             <a-radio-group v-model:value="scopeMode">
               <a-radio-button value="all">全部文档</a-radio-button>
               <a-radio-button value="pick">指定文档</a-radio-button>
+              <a-radio-button value="none">不使用知识库</a-radio-button>
             </a-radio-group>
             <div v-if="scopeMode === 'pick'" class="ap-pick">
               <a-select v-model:value="form.knowledgeScope" mode="multiple" :options="docOptions" allow-clear
@@ -136,6 +140,10 @@
               <div class="ap-block-hint" style="margin:6px 0 0">
                 已选 {{ form.knowledgeScope.length }} 篇；一篇都不选则该智能体检索不到任何内容。
               </div>
+            </div>
+            <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
+              纯角色智能体：完全不走资料检索，仅凭系统提示词与对话上下文作答。
+              适合通用法律顾问、写作助手这类不挂资料的场景；对话中手动 @ 的文档仍会被参考。
             </div>
           </section>
 
@@ -282,6 +290,8 @@ const blankForm = () => ({
 const form = ref(blankForm())
 
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
+/** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
+const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return agents.value
@@ -289,6 +299,7 @@ const filtered = computed(() => {
     String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw))
 })
 const scopeText = a => {
+  if (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true) return '不使用知识库'
   if (!a.knowledgeScope) return '全部文档'
   const n = String(a.knowledgeScope).split(',').filter(Boolean).length
   return n === 1 ? '限 1 篇文档' : `限 ${n} 篇文档`
@@ -332,6 +343,7 @@ const globalText = c => {
 
 // ==================== 生效摘要（实时随表单变化） ====================
 const summaryScope = computed(() => {
+  if (scopeMode.value === 'none') return '不使用知识库'
   if (scopeMode.value !== 'pick') return '全部文档'
   const n = (form.value.knowledgeScope || []).length
   return n ? `限 ${n} 篇文档` : '未选文档（检索不到内容）'
@@ -430,7 +442,9 @@ const openEdit = a => {
     isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds)
   }
-  scopeMode.value = scope.length ? 'pick' : 'all'
+  // 三档：不使用知识库 > 指定文档（有范围）> 全部文档
+  scopeMode.value = (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true)
+    ? 'none' : (scope.length ? 'pick' : 'all')
   editing.value = true
 }
 const closeEdit = () => { editing.value = false }
@@ -446,8 +460,10 @@ const save = async () => {
     description: f.description.trim(),
     model: f.model.trim(),
     systemPrompt: f.systemPrompt,
-    // 「全部文档」时清空范围（空 → 后端存 null → 继承全局知识库）；「指定文档」时存逗号串
+    // 「全部文档」时清空范围（空 → 后端存 null → 继承全局知识库）；「指定文档」时存逗号串；
+    // 「不使用知识库」时置 knowledgeDisabled=1 并清空范围（两者互斥，后端以开关为准）
     knowledgeScope: scopeMode.value === 'pick' ? (f.knowledgeScope || []).join(',') : '',
+    knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0,
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
     isDefault: f.isDefault ? 1 : 0,
@@ -540,6 +556,11 @@ onMounted(reload)
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: #f1f3f5; color: var(--app-text2);
 }
+.ap-tag-builtin {
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: #e8eefc; color: var(--app-accent);
+}
+.ap-builtin-hint { font-size: 11px; color: var(--app-text3); padding: 0 4px; }
 .ap-desc {
   font-size: 12px; color: var(--app-text2); line-height: 1.6; margin: 0; min-height: 32px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
