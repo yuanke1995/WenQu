@@ -391,7 +391,8 @@ public class SubAgentOrchestrator {
             String out = chatClient.prompt().user(prompt).call().content();
             return out == null ? null : out.replaceAll("[\\r\\n]+", " ").trim();
         } catch (Exception e) {
-            log.debug("[SUBAGENT] 要点提炼失败: {}", e.getMessage());
+            // fail-loud：提炼失败用户侧表现为"卡片无要点"，必须留 warn 线索（debug 级别等于静默）
+            log.warn("[SUBAGENT] 要点提炼失败（卡片将无要点，不影响主链路）: {}", e.getMessage());
             return null;
         }
     }
