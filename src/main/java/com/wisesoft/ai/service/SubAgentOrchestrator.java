@@ -85,7 +85,7 @@ public class SubAgentOrchestrator {
                     + "\n用户问题：" + question
                     + "\n\n请判断回答该问题需要咨询上述哪些助手，只选职责确实相关的（宁缺毋滥）。"
                     + "\n只输出一个 JSON 数组，元素为助手的 id 字符串；若都不相关则输出 []。不要输出任何解释文字。";
-            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 5000));
+            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
             String out = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> chatClient.prompt()
                             .user(prompt)

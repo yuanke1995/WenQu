@@ -729,7 +729,7 @@ public class ConfigService {
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
-        d.put("agent.routeTimeoutMs", "5000");             // 路由判定超时（超时回退全部候选）
+        d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
 
         // 意图分类：默认值与 AppProperties.Intent 保持一致；
         // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）

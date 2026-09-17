@@ -81,7 +81,7 @@
               <!-- 子智能体编排（仅【委派模式】显示：分支是有名字有职责的子智能体，信息才有用。
                    多视角模式不显示——那只是把原问题换个问法，是实现细节，对用户没有信息价值） -->
               <div v-if="m.role === 'ai' && subagentCard(m)" class="subagent-panel">
-                <div class="subagent-head" @click="m.saOpen = !m.saOpen">
+                <div class="subagent-head" @click="toggleSubagents(m)">
                   <span class="subagent-title">
                     <robot-outlined class="sa-head-ic" />
                     {{ subagentCard(m).title }}
@@ -509,9 +509,16 @@ function subagentCard (m) {
   const routeNote = (rt && rt.candidates > rt.picked)
     ? `从 ${rt.candidates} 个候选中挑选 ${rt.picked} 个相关的`
     : ''
-  // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）
+  // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）；
+  // 用户手动点过则尊重其选择（saTouched），不再自动改变
   if (m.saOpen === undefined) m.saOpen = running
   return { branches, done, total, running, title, routeNote }
+}
+
+/** 手动展开/收起编排卡片（标记 saTouched，避免生成完成后被自动收起打断阅读） */
+function toggleSubagents (m) {
+  m.saOpen = !m.saOpen
+  m.saTouched = true
 }
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
@@ -1147,6 +1154,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
       messages.value[idx].loading = false
+      // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
+      if (messages.value[idx].saOpen && !messages.value[idx].saTouched) messages.value[idx].saOpen = false
       messages.value[idx].sources = sources
       if (messages.value[idx].retrieved && Array.isArray(sources)) messages.value[idx].retrieved.refs = sources.length
       messages.value[idx].related = related

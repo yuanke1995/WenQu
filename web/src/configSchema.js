@@ -381,7 +381,7 @@ export const FIELDS = [
   { panel: "agent", section: 0, group: "agent", key: "topKPerAgent", path: "agent.topKPerAgent", label: "每代理取块数", type: "number", tips: "agentTopK", def: 3, min: 1, max: 10, step: 1, width: 200, note: "每个子代理取回命中块上限（跨代理自动去重）", vif: "agent.enabled", tier: 3 },
   { panel: "agent", section: 0, group: "agent", key: "digestEnabled", path: "agent.digestEnabled", label: "要点提炼", type: "switch", tips: "agentDigest", def: true, note: "开=每个子代理用模型提炼 2~3 条要点再汇总；关=只并行检索合并（零额外调用）", vif: "agent.enabled", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "autoRoute", path: "agent.autoRoute", label: "按需委派", type: "switch", tips: "agentAutoRoute", def: true, note: "开=主模型先从候选助手挑出相关的、只咨询选中的（省开销、卡片无无关角色）；关=每轮全部并行", vif: "agent.enabled", tier: 2 },
-  { panel: "agent", section: 0, group: "agent", key: "routeTimeoutMs", path: "agent.routeTimeoutMs", label: "路由超时(ms)", type: "number", tips: "agentRouteTimeout", def: 5000, min: 1000, max: 20000, step: 500, width: 200, note: "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）", vif: "agent.enabled", tier: 3 },
+  { panel: "agent", section: 0, group: "agent", key: "routeTimeoutMs", path: "agent.routeTimeoutMs", label: "路由超时(ms)", type: "number", tips: "agentRouteTimeout", def: 8000, min: 1000, max: 20000, step: 500, width: 200, note: "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）", vif: "agent.enabled", tier: 3 },
 ]
 
 /** 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入 */
