@@ -40,20 +40,20 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 │   │                                #   AgentService / SkillService / McpClientService / ApiKeyService
 │   │                                # 基础设施：DynamicOpenAiChatModel / DynamicEmbeddingModel(配置指纹热切换) / ImageUrlSigner(HMAC) / ConfigCryptoService(RSA) / ConnectivityProbeService / DocumentMetaCache / ScheduleCenter(定时任务) / ThreadPoolManager(线程池)
 │   ├── parser/                      # DocumentParser 接口 + DocxParser(结构感知切分) / PdfParser(扫描件 OCR 降级) / ExcelParser / TextParser(txt/md/csv)
-│   ├── util/                        # TokenCounter(分语言 token 估算) / ImageCompressor(识别用压缩图) / UserContext(X-User-Id 解析)
+│   ├── util/                        # TokenCounter(分语言 token 估算) / ImageCompressor(识别用压缩图) / RequestUser(登录态 ThreadLocal)
 │   └── model/ + mapper/ + dto/      # 14 个实体（含 AiDocumentVersion / AiKnowledgeRef / AiAgent / AiApiKey / AiImageDesc）+ 12 个 Mapper + ResultJson·ChatRequest·ChatRef·SessionInfo
 ├── config/
 │   └── application-local.yml        # 本地开发私有配置（含密钥/数据目录，.gitignore 忽略；位于 Spring Boot 外部配置目录，不打进构建产物）
 ├── src/main/resources/
-│   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD/AI_TRUSTED_TOKEN 缺失 fail-fast）
+│   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD 缺失 fail-fast；JWT 密钥建议显式配置）
 │   └── schema.sql                   # 建表脚本（13 张表，启动自动执行，幂等可重复运行）
 ├── data/                            # 运行时生成：files/{docId}/ 源文件 + images/{docId}/ 提取图 + images/chat/ 用户图 + artifacts/{sessionId}/ 交付产物 + secret/config-rsa.key + eval/ 评估集
 ├── deploy/nginx.conf                # 生产 nginx 参考配置
 └── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 18.19.0）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
-    ├── src/router.js                # 路由表（工作台 `/v2/*`；管理页路由带管理员守卫）
+    ├── src/router.js                # 路由表（/chat 工作台 + /login；管理页路由带管理员守卫）
     ├── src/api.js / configSchema.js # 接口封装 / 设置项 schema（分组、默认值、提交与校验）
-    └── src/views/v2/                # 工作台：V2Layout(侧边导航+最近会话) + ChatPage(对话) / AgentsPage(智能体)
+    └── src/views/                   # 工作台：AppLayout(侧边导航+最近会话) + ChatPage(对话) / AgentsPage(智能体) / MembersPage(成员管理)
                                      #   DocumentsPage(文档管理) / DashboardPage(数据看板) / EvaluationPage(检索评估) / SettingsPage(系统设置)
 ```
 
@@ -83,7 +83,6 @@ mysql -h<db-host> -P<db-port> -uroot -p ai_doc_assistant < src/main/resources/sc
 ```bash
 # ===== 必填（无默认值，缺失将启动失败 fail-fast）=====
 export DB_PASSWORD=xxx                    # 数据库密码
-export AI_TRUSTED_TOKEN=xxx               # 内部鉴权 token（与平台网关一致，SecurityConfig 校验）
 
 # ===== 可选 =====
 export AI_CHAT_KEY=sk-xxxx                # chat 模型密钥（MaaS 网关；有默认空值，缺失不启动失败，但聊天不可用）
@@ -118,7 +117,6 @@ export AI_DEEP_REASONING_ENABLED=true     # 深度思考总开关
 export AI_DEEP_REASONING_MODE=model       # model=透传 enable_thinking / prompt=提示词引导
 export AI_CONTEXT_MODEL_WINDOWS="qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768"
 export AI_CONTEXT_COST_CAP=8000           # 上下文成本软上限（token）
-export AI_SESSION_ANONYMOUS_SHARED=true   # anonymous 存量会话池是否对具名用户可见（false=收紧越权面）
 export AI_VISION_API_KEY=ollama           # 视觉模型密钥（Ollama 不校验，占位值）
 export REDIS_PASSWORD=                    # Redis 密码（默认空）
 export REDIS_DB=0
@@ -126,9 +124,7 @@ export LOG_LEVEL_APP=info                 # 应用日志级别
 export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
 export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
 export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
-export AI_ADMIN_USERS=""                  # 管理员用户白名单（逗号分隔 X-User-Id；"*"=全员管理员，单机自用）
-export AI_ADMIN_TOKEN=""                  # 管理员口令（请求头 X-Admin-Token；无网关/本地部署与前端 VITE_ADMIN_TOKEN 一致）
-                                          # 两者任一命中即管理员；均未配置则管理端点默认 403（只问答可用的最小开放）
+export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；留空则每次启动随机生成，重启后已发令牌失效）
 export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
 
@@ -154,7 +150,7 @@ docker compose up -d
 
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
-接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需在请求头携带 `X-Trusted-Token`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或由 nginx/网关注入鉴权。
+接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需先登录，在 Authorize 中填入 `Bearer <登录令牌>`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或经 nginx 反向代理。
 
 ### 4. 启动前端
 
@@ -162,14 +158,14 @@ docker compose up -d
 cd web
 nvm use            # .nvmrc 固定 Node 18.19.0（Node ≥18 均可，建议 18/20/22）
 npm install
-npm run dev        # 访问 http://localhost:5800/v2/chat（端口被占直接报错，不会跳号）
+npm run dev        # 访问 http://localhost:5800/chat（端口被占直接报错，不会跳号）
 ```
 
 Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web/.env.development`（开发）/ `web/.env.production`（生产，走平台网关路径）。
 
 ### 5. 使用流程
 
-启动前端后访问 `http://localhost:5800/v2/chat` 进入工作台。左侧是固定导航——**新建对话 / 对话 / 智能体 / 文档管理 / 数据看板 / 检索评估 / 系统设置**（除「对话」外均为管理页，仅管理员可见），下方「最近」列出会话（悬浮显示「导出 Markdown」「删除」），底部显示当前用户与**管理员验证**入口；左上角折叠按钮可把侧边栏收成图标条（状态记忆）。对话页为「消息流 + 可收起右侧状态栏」，其余页面为「页头 + 内容区」。
+启动前端后访问 `http://localhost:5800/chat`，未登录自动跳转 `/login`（首次使用按引导创建管理员账号）。左侧是固定导航——**新建对话 / 对话 / 智能体 / 成员管理 / 文档管理 / 数据看板 / 检索评估 / 系统设置**（除「对话」外均为管理页，仅管理员可见），下方「最近」列出会话（悬浮显示「导出 Markdown」「删除」），底部显示当前登录用户与自助改密入口；左上角折叠按钮可把侧边栏收成图标条（状态记忆）。对话页为「消息流 + 可收起右侧状态栏」，其余页面为「页头 + 内容区」。
 
 1. **文档管理**（侧边栏「文档管理」）：页头显示概览（`N 个文档 · N 个生效 · N 片段 · 占用 X`），右上角「上传文档」多选上传，或把文件拖到页面任意处（出现「松开鼠标上传到知识库」遮罩）；可先填「文档描述（可选）」随文件入库；「全局搜索」打开「知识块全局搜索」弹窗，按关键词跨全部文档搜索（含已停用）。列表按行展示 **文件名 / 片段 / 命中 / 大小 / 状态 / 上传时间 / 操作**——状态为「已入库 / 已弃用 / 解析失败（点开看原因）/ 解析中（进度条 + 当前阶段）」；行内操作：**知识块 / 版本 / 弃用（或「启用」）/ 下载 / 重解析 / 删除**，勾选多行后出现批量栏（**批量启用 / 批量弃用 / 批量删除 / 批量重解析 / 取消选择**）。
    - **「知识块预览」弹窗**：可按标题/内容过滤，切换 **「切片列表」与「结构导图」** 两种视图（导图按章节路径聚合成树，点章节名筛选切片，显示每节点块数 / tokens / 图片数），顶部实时统计「共 N 块 / 合计 tokens / 平均 / 未向量化 N 块」，点行内联展开完整内容，可**编辑单个知识块**（Markdown 工具栏 + 左写右看实时预览 + 图片点选插入 + 未保存关闭提醒，保存后自动重新向量化）、**删除**、**停用**（停用块不参与召回）。
@@ -223,7 +219,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ## API 一览
 
-> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新；接口按"智能问答/会话与消息组/文档管理/知识库/反馈与看板/系统配置/智能体/对外 API Key/MCP/技能包/检索调试/检索评估/关键词索引/图片描述缓存"分组，Try-it-out 需携带 `X-Trusted-Token`）。下表为核心端点速查（完整 85 个端点以 Swagger 为准）：
+> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新；接口按"智能问答/会话与消息组/文档管理/知识库/反馈与看板/系统配置/智能体/对外 API Key/MCP/技能包/检索调试/检索评估/关键词索引/图片描述缓存"分组，Try-it-out 需携带登录令牌 `Authorization: Bearer <token>`）。下表为核心端点速查（完整 85 个端点以 Swagger 为准）：
 
 | 端点 | 说明 |
 |------|------|
@@ -282,7 +278,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 支持多实例水平扩展，需满足以下约束（均已代码化治理）：
 
 1. **数据目录必须共享**：`AI_IMAGES_DIR` 指向所有实例都能访问的同一存储（源文件/提取图/评估集都在此）。docker-compose 用命名卷 `app-data:/app/data` 仅**同主机**多副本共享；跨主机（集群）需挂 NFS/对象存储等共享卷，否则副本 A 上传的文档在副本 B 无法重解析、图片 URL 在 B 侧 404
-2. **静态配置一致**：各副本的 yml/环境变量（数据库、Redis、`AI_TRUSTED_TOKEN`、模型密钥等）必须一致；动态配置（`c_ai_config`）无需手工同步——任意实例保存后经 **Redis pub/sub**（channel `ai:config:changed`）广播，其他实例立即重载缓存；订阅断线期间的变更由 **5 分钟兜底轮询**补齐
+2. **静态配置一致**：各副本的 yml/环境变量（数据库、Redis、`AI_JWT_SECRET`、模型密钥等）必须一致（**`AI_JWT_SECRET` 尤其必须一致**，否则令牌在不同副本间无法互认，用户会被随机踢下线）；动态配置（`c_ai_config`）无需手工同步——任意实例保存后经 **Redis pub/sub**（channel `ai:config:changed`）广播，其他实例立即重载缓存；订阅断线期间的变更由 **5 分钟兜底轮询**补齐
 3. **并发防护**：重解析用 **DB 状态机 CAS**（`SET status=2 WHERE status≠2`，原子）——两实例同时重解析同一文档只有一个成功，另一个返回"正在解析中"；解析队列有界（50）+ 图片描述线程池有界，超限拒绝/降级不失控
 4. **删除中断语义**：删除在任意实例生效——本实例解析的文档立即中断；其他实例上的解析由 DB 兜底在检查点（入库每 10 块/向量化每批）秒级停止清理，不产生孤儿数据
 5. **总并发核算**：解析并发为"副本数 × parse.concurrency"（默认 2/实例），embedding/Ollama 为共享瓶颈，多副本时需下调单实例并发或扩容推理资源
@@ -297,11 +293,11 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 **注意**：
 1. 平台网关需额外透传图片路径 `/ai/images/**`（生产开启图片鉴权时，图片 URL 带 HMAC 签名与过期时间，由本服务动态生成）
 2. SSE 接口（`/chat`）网关需关闭响应缓冲，否则流式 token 无法实时到达
-3. 内部 token `AI_TRUSTED_TOKEN` 由网关注入请求头，前端不携带共享密钥
-4. **用户身份透传**：网关鉴权后必须注入（并覆盖客户端自带的）`X-User-Id` 请求头作为用户标识——会话按该标识隔离（列表/删除/清空只作用于本人；anonymous 名下的存量会话为**升级兼容池**，默认对全员可见，设 `AI_SESSION_ANONYMOUS_SHARED=false` 收紧为仅 anonymous 调用方可访问）。前端在无网关的本地调试场景会用 localStorage 稳定 ID 自行携带该头。**生产网关若不注入，所有人共用 anonymous 池，等于无隔离**
+3. **登录态透传**：用户身份只认 `Authorization: Bearer <JWT>`（本地登录后写入前端 localStorage）。**反向代理必须原样转发该头**——若被 nginx 剥离，用户会退化为 anonymous，只能看到历史兼容池里的会话。会话严格按登录用户隔离（列表/删除/清空只作用于本人；anonymous 名下的存量会话仅未登录调用方可访问，登录后不可见）
+4. **不接受自报身份**：服务不读取任何客户端自报的用户标识请求头（旧的 `X-User-Id` 已废弃并移除），伪造身份头不再具有任何效果；代理层建议统一剥离未知身份头
 5. **接口限流**：问答/上传按"用户（无身份则按 IP）"做 Redis 固定窗口限频（默认 10 次/分钟，设置页可调，超限返回 429）；Redis 不可用自动放行
-6. **权限模型（用户问答 / 管理员运维）**：普通用户仅开放问答链路——`/chat`、会话管理、反馈提交、引用溯源（GET 单个知识块）、`/config/public`、`/suggested`、`/auth/me`。**其余端点（文档上传/删除、模型与系统配置、评估、看板、检索调试、索引重建、语义缓存/图片描述缓存运维等）仅管理员可访问**（403，fail-closed）。管理员判定：网关透传的 `X-User-Id` ∈ `AI_ADMIN_USERS` 白名单，或请求携带 `X-Admin-Token` == `AI_ADMIN_TOKEN`。前端在侧边栏底部用户区提供「管理员验证」入口（口令仅存本机 localStorage）；生产多用户建议用账号白名单而非共享口令
-7. **普通用户 UI 收敛**：前端 `/v2/agents`、`/v2/documents`、`/v2/dashboard`、`/v2/evaluation`、`/v2/settings` 路由带管理员守卫（`router.beforeEach` + `/auth/me`），非管理员侧边栏不展示这些入口、直达 URL 自动跳回对话页
+6. **权限模型（用户问答 / 管理员运维）**：普通用户仅开放问答链路——`/chat`、会话管理、反馈提交、引用溯源（GET 单个知识块）、`/config/public`、`/suggested`、`/auth/me`。**其余端点（文档上传/删除、模型与系统配置、评估、看板、检索调试、索引重建、语义缓存/图片描述缓存运维等）仅管理员可访问**（403，fail-closed）。管理员判定：登录用户角色为 `admin` / `superadmin`（唯一来源，无白名单/共享口令之类的旁路）；角色在「成员管理」中分配，改密在个人菜单中自助完成
+7. **普通用户 UI 收敛**：前端 `/agents`、`/members`、`/documents`、`/dashboard`、`/evaluation`、`/settings` 路由带管理员守卫（`router.beforeEach` + `/auth/me`），非管理员侧边栏不展示这些入口、直达 URL 自动跳回对话页
 
 ## 测试与验证
 
@@ -348,11 +344,11 @@ curl http://localhost:8090/api/ai/search-index/stats             # indexedCount 
 
 ## 产品化特性
 
-- **安全**：关键密钥零默认值（`DB_PASSWORD`/`AI_TRUSTED_TOKEN` 缺失 fail-fast，模型密钥允许空默认仅功能不可用）、token 恒定时间比较、模型 API Key **RSA 加密入库 + 页面掩码回显**、**对外 API Key 只存 SHA-256 哈希 + 前 8 位前缀**（明文仅签发时返回一次，权限固定问答链路）、图片访问 HMAC 签名 URL（`AI_IMAGES_AUTH_ENABLED=true`）、统一异常+参数校验（`@Valid`）、错误信息不泄露内部细节、**上传魔数校验**（文件头字节须与扩展名匹配，docx/xlsx=PK、pdf=%PDF，防伪造扩展名）、**接口限流**（问答/上传按用户/IP 固定窗口限频，超限 429，Redis 不可用自动放行）、**内置计算器不执行任意代码**（递归下降自实现，仅 `+ - * / % ^` 与括号）、**产物交付文件名白名单净化**（`artifacts/` 静态映射前做扩展名白名单 + 名净化）、**管理操作审计**（上传/删除/批量删除/回滚记录操作者 `[AUDIT]` 日志）
+- **安全**：关键密钥零默认值（`DB_PASSWORD` 缺失 fail-fast，模型密钥允许空默认仅功能不可用）、登录令牌 JWT 签名校验（HS256，签发/校验全链路在服务端，密钥由 `AI_JWT_SECRET` 提供）、密码 PBKDF2 加盐哈希存储 + 失败次数锁定、模型 API Key **RSA 加密入库 + 页面掩码回显**、**对外 API Key 只存 SHA-256 哈希 + 前 8 位前缀**（明文仅签发时返回一次，权限固定问答链路）、图片访问 HMAC 签名 URL（`AI_IMAGES_AUTH_ENABLED=true`）、统一异常+参数校验（`@Valid`）、错误信息不泄露内部细节、**上传魔数校验**（文件头字节须与扩展名匹配，docx/xlsx=PK、pdf=%PDF，防伪造扩展名）、**接口限流**（问答/上传按用户/IP 固定窗口限频，超限 429，Redis 不可用自动放行）、**内置计算器不执行任意代码**（递归下降自实现，仅 `+ - * / % ^` 与括号）、**产物交付文件名白名单净化**（`artifacts/` 静态映射前做扩展名白名单 + 名净化）、**管理操作审计**（上传/删除/批量删除/回滚记录操作者 `[AUDIT]` 日志）
 - **可靠性**：上传失败自动补偿清理（删向量+MySQL+图片）、脏解析记录清理、解析异步化（不阻塞上传）、**解析中删除文档立即中断**（内存标志 + 线程 interrupt + 阶段检查点，清理本次产物）、SSE 异步订阅支持停止生成、查询改写专用线程池（超时隔离 + daemon + PreDestroy 回收）
 - **可配置**：**问答/视觉/向量三类模型跨厂商热切换**（网关地址/API Key/模型名/接口路径，API Key RSA 加密入库）+ 温度/System Prompt 角色段/视觉提示词/检索权重与行为参数/重排区间/解析并发/上下文参数/关联扩散参数/限频/语义缓存/推荐问题池 **数据库存储、保存即生效**（`c_ai_config`，存量升级自动补默认项；检索 topK/向量阈值/关键词上限/重排区间等键支持在线修改，检索评估"应用此组"即写入这些键）；prompt 调整无需重启；检索/重排/解析/问答/关联扩散 5 组 30+ 项行为参数收口配置化（原硬编码移除），另有 `tool.*`/`skill.*`/`agent.*`/`mcp.*` 四组能力开关；**危险配置有前置护栏**——切 Meilisearch 先探可用性、切向量模型先探可达性与维度合法性，探测失败一律拒绝保存而非存下坏配置
 - **可观测性**：`/actuator/health` 健康检查、日志级别环境变量化、MyBatis 日志走 slf4j、检索调试 API、Swagger UI 接口文档（springdoc 自动生成，随代码实时更新）；**降级提示统一开关**（fail-loud：所有回答降级事件——无命中/改写失败/图片剔除/未标注引用/缓存命中——默认不展示，全部写 `[FAIL-LOUD]` 日志；排障时开 `chat.showDebugDegradations` 才在回答下方显示）
-- **多用户与部署**：**会话按用户隔离**（网关透传 `X-User-Id`，列表/历史/删除/清空均校验归属；anonymous 为存量兼容池）、multi-stage Dockerfile（非 root 运行 + HEALTHCHECK + `JAVA_OPTS` 内存注入）、docker-compose（redis-stack + meilisearch + **内置 MySQL**，亦可经 `DB_HOST` 等指向外部 OceanBase）、nginx 参考配置（`deploy/nginx.conf`，SPA fallback + SSE 关缓冲 + 图片缓存）
+- **多用户与部署**：**本地登录 + 会话按用户隔离**（身份取自登录令牌，列表/历史/删除/清空均校验归属；未登录请求归属 anonymous 存量池，且仅未登录可见）、multi-stage Dockerfile（非 root 运行 + HEALTHCHECK + `JAVA_OPTS` 内存注入）、docker-compose（redis-stack + meilisearch + **内置 MySQL**，亦可经 `DB_HOST` 等指向外部 OceanBase）、nginx 参考配置（`deploy/nginx.conf`，SPA fallback + SSE 关缓冲 + 图片缓存）
 
 ## 后台定时任务
 
@@ -415,7 +411,6 @@ ai-app:
   session:
     max-history: 10
     expire-minutes: 30
-    anonymous-shared: ${AI_SESSION_ANONYMOUS_SHARED:true}  # anonymous 历史兼容池对具名用户共享可见；false=仅 anonymous（无 X-User-Id）调用方可访问（收紧越权面）
   images:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（默认 ./data 跨平台兜底；容器内由 AI_IMAGES_DIR 指定为 /app/data）
     max-width: 1280                         # 识别用压缩图最长边（qwen3-vl 最佳清晰度档，视觉 token 约 1600-2500；展示用原图不受限）
@@ -458,9 +453,14 @@ ai-app:
     # 细节键在 DB：maxThinkingChars(3000) / injectThinking(true) / injectThinkingMaxChars(800)
     #              injectKeywords(true) / injectKeywordsMax(5) / autoRoute(false) 及 autoRoute* 阈值
   system-prompt: "你是\"问渠\"..."          # 回答角色段默认值（DB chat.systemPrompt 可覆盖，保存即生效）
-  trusted-token: ${AI_TRUSTED_TOKEN}       # 无默认值，缺失 fail-fast
-  admin-users: ${AI_ADMIN_USERS:}          # 管理员白名单（逗号分隔 X-User-Id；"*"=全员管理员）
-  admin-token: ${AI_ADMIN_TOKEN:}          # 管理员口令（X-Admin-Token；无网关本地部署与前端 VITE_ADMIN_TOKEN 一致）
+  # 本地登录鉴权（JWT + PBKDF2）——唯一认证体系：管理员由登录角色判定，API Key 仅开放问答链路
+  auth:
+    jwt-secret: ${AI_JWT_SECRET:}          # 令牌签名密钥：留空则自动生成随机值（重启后原令牌失效）；多副本部署必须一致
+    token-ttl-hours: ${AI_TOKEN_TTL_HOURS:168}
+    require-login: ${AI_AUTH_REQUIRE_LOGIN:true}  # true=除登录引导端点外必须持有效令牌；false=放行未登录（身份为 anonymous）
+    max-login-failures: ${AI_MAX_LOGIN_FAILURES:5}
+    lock-minutes: ${AI_LOCK_MINUTES:15}
+    min-password-length: ${AI_MIN_PASSWORD_LENGTH:6}
   schema-auto-index: true                  # SchemaMigrator 启动时自动补索引（大表可设 false 由运维窗口期手工执行）
 
 spring:
@@ -498,7 +498,7 @@ spring:
 | `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authEnabled`(Java/DB 默认 false，**yml/env 默认 true**)、`authExpireSeconds`(3600)、`chatRetentionMillis`(604800000=7 天)、`chatCleanupIntervalMs`(86400000) | 保存即生效（`dir`/`urlPrefix` 仅 yml） |
 | `upload.*` | `maxFileSize`(209715200=200MB) | 保存即生效 |
 | `cache.*` | `docMetaTtlSeconds`(600) | 保存即生效 |
-| `session.*` | `maxHistory`(10)、`expireMinutes`(30)、`anonymousShared`(true) | 保存即生效 |
+| `session.*` | `maxHistory`(10)、`expireMinutes`(30) | 保存即生效 |
 | `queryRewrite.*` / `imageFilter.*` / `intent.*` / `ratelimit.*` | 与上方 yml 同值；另有 `imageFilter.enabled/minHits/preContextChars`、`intent.model/prompt/chatPrompt`、`ratelimit.windowSeconds`(60) | 保存即生效 |
 | `tool.*` | `enabled`(**false**)、`knowledgeRetrieval.enabled`(false)/`maxHits`(5)、`artifact.enabled`(false)、`builtin.enabled`(false) | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`(**false**)、`dir`(./data/skills)、`injectEnabled`(true)、`toolEnabled`(true)、`injectMaxChars`(1200)、`maxFileChars`(20000)、`disabledNames`(系统写入) | 保存即生效 |
