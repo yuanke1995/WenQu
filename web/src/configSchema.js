@@ -177,6 +177,8 @@ export const TIPS = {
   "agentSubAgents": "子代理数量：每个子代理负责一个检索视角。2 个覆盖大多数问题；3~4 适合多条件/多主题的长问题。数量越多召回越全但越慢。",
   "agentTopK": "每个子代理取回的命中块数上限（跨代理自动去重，重复块只占一个引用编号）。",
   "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
+  "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
+  "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
   "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
   "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
 }
@@ -378,6 +380,8 @@ export const FIELDS = [
   { panel: "agent", section: 0, group: "agent", key: "subAgents", path: "agent.subAgents", label: "子代理数量", type: "number", tips: "agentSubAgents", def: 2, min: 2, max: 4, step: 1, width: 200, note: "2~4：越多召回越全，并发检索与提炼调用也越多", vif: "agent.enabled", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "topKPerAgent", path: "agent.topKPerAgent", label: "每代理取块数", type: "number", tips: "agentTopK", def: 3, min: 1, max: 10, step: 1, width: 200, note: "每个子代理取回命中块上限（跨代理自动去重）", vif: "agent.enabled", tier: 3 },
   { panel: "agent", section: 0, group: "agent", key: "digestEnabled", path: "agent.digestEnabled", label: "要点提炼", type: "switch", tips: "agentDigest", def: true, note: "开=每个子代理用模型提炼 2~3 条要点再汇总；关=只并行检索合并（零额外调用）", vif: "agent.enabled", tier: 2 },
+  { panel: "agent", section: 0, group: "agent", key: "autoRoute", path: "agent.autoRoute", label: "按需委派", type: "switch", tips: "agentAutoRoute", def: true, note: "开=主模型先从候选助手挑出相关的、只咨询选中的（省开销、卡片无无关角色）；关=每轮全部并行", vif: "agent.enabled", tier: 2 },
+  { panel: "agent", section: 0, group: "agent", key: "routeTimeoutMs", path: "agent.routeTimeoutMs", label: "路由超时(ms)", type: "number", tips: "agentRouteTimeout", def: 5000, min: 1000, max: 20000, step: 500, width: 200, note: "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）", vif: "agent.enabled", tier: 3 },
 ]
 
 /** 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入 */

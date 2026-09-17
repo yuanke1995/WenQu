@@ -49,12 +49,94 @@ public class SubAgentOrchestrator {
     /** 按子代理数缓存编译后的图（图结构随 N 变化；N 通常 2~4，缓存避免每轮重建） */
     private final Map<Integer, CompiledGraph> graphCache = new ConcurrentHashMap<>();
 
+    /** 委派路由专用线程池（带超时，避免路由模型卡住拖垮整轮问答；daemon 不阻碍 JVM 退出） */
+    private static final java.util.concurrent.ExecutorService ROUTE_EXECUTOR =
+            java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "subagent-router");
+                t.setDaemon(true);
+                return t;
+            });
+
     public SubAgentOrchestrator(HybridRetrievalService retrievalService, ConfigService configService,
                                ChatClient chatClient, KeywordExtractor keywordExtractor) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.chatClient = chatClient;
         this.keywordExtractor = keywordExtractor;
+    }
+
+    /**
+     * 按需委派路由：让主模型先从候选子智能体里挑出与问题相关的，只跑选中的。
+     * <p>背景：主智能体挂了 N 个子智能体时，若每轮全部并行，会出现"派了完全无关的角色"
+     * （如问表单操作却去查《刑法》），既浪费检索与提炼开销，也让编排卡片充满 0 命中的噪音。
+     * <p>降级：候选 ≤1 或未开启 agent.autoRoute → 原样返回；路由调用失败/超时/解析失败
+     * → 回退全部候选（编排是增强项，宁可多跑也不能缺失）。判定"都不需要"时返回空列表。
+     */
+    public List<Agent> route(String question, List<Agent> candidates) {
+        if (candidates == null || candidates.isEmpty()) return List.of();
+        if (candidates.size() == 1 || !configService.getBoolean("agent.autoRoute")) return candidates;
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (Agent a : candidates) {
+                sb.append("- ").append(a.getId()).append(" | ").append(a.getName()).append("：")
+                        .append(a.getDescription() == null ? "（无描述）" : a.getDescription()).append("\n");
+            }
+            String prompt = "你是任务分派员。可咨询的助手清单如下（每行：id | 名称：职责）：\n" + sb
+                    + "\n用户问题：" + question
+                    + "\n\n请判断回答该问题需要咨询上述哪些助手，只选职责确实相关的（宁缺毋滥）。"
+                    + "\n只输出一个 JSON 数组，元素为助手的 id 字符串；若都不相关则输出 []。不要输出任何解释文字。";
+            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 5000));
+            String out = java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> chatClient.prompt()
+                            .user(prompt)
+                            .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                    .model(configService.get("chat.model"))
+                                    .temperature(0.0)
+                                    .internalToolExecutionEnabled(false)
+                                    .build())
+                            .call()
+                            .content(), ROUTE_EXECUTOR)
+                    .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return parseRouteResult(out, candidates);
+        } catch (Exception e) {
+            log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), e.getMessage());
+            return candidates;
+        }
+    }
+
+    /**
+     * 解析路由结果（模型输出的 JSON 数组）：按 id 匹配，兼容模型返回名称的情况。
+     * 解析不出任何有效项时回退全部候选（宁可多跑不可漏）。
+     */
+    List<Agent> parseRouteResult(String out, List<Agent> candidates) {
+        if (out == null || out.isBlank()) return candidates;
+        try {
+            // 容忍 markdown 代码块包裹与前后缀文本：取第一个 [ 到最后一个 ]
+            String s = out.trim();
+            int lb = s.indexOf('[');
+            int rb = s.lastIndexOf(']');
+            if (lb < 0 || rb <= lb) return candidates;
+            String arr = s.substring(lb, rb + 1);
+            List<String> tokens = com.alibaba.fastjson2.JSON.parseArray(arr, String.class);
+            if (tokens == null) return candidates;
+            if (tokens.isEmpty()) return List.of();   // 模型明确判定"都不需要"
+            List<Agent> picked = new ArrayList<>();
+            for (Agent a : candidates) {
+                for (String t : tokens) {
+                    if (t == null || t.isBlank()) continue;
+                    String v = t.trim();
+                    if (v.equals(a.getId()) || v.equals(a.getName())) {
+                        picked.add(a);
+                        break;
+                    }
+                }
+            }
+            // 模型返回了非空数组但一个都对不上（可能编了名字）→ 回退全部，避免"以为派了实际没派"
+            return picked.isEmpty() ? candidates : picked;
+        } catch (Exception e) {
+            log.warn("[SUBAGENT] 路由结果解析失败，回退为全部候选: {}", e.getMessage());
+            return candidates;
+        }
     }
 
     /**

@@ -87,6 +87,7 @@
                     {{ subagentCard(m).title }}
                   </span>
                   <span class="subagent-sum">
+                    <span v-if="subagentCard(m).routeNote" class="sa-route-note">{{ subagentCard(m).routeNote }}</span>
                     {{ subagentCard(m).done }}/{{ subagentCard(m).total }} 完成
                     <down-outlined class="rt-arrow" :class="{ open: m.saOpen }" />
                   </span>
@@ -109,6 +110,11 @@
                     <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
                   </div>
                 </div>
+              </div>
+              <!-- 按需委派判定"都不需要咨询"时的说明（否则用户会疑惑为什么没有编排过程） -->
+              <div v-if="m.role === 'ai' && !subagentCard(m) && m.subagentRoute && m.subagentRoute.candidates > 0 && m.subagentRoute.picked === 0"
+                   class="subagent-skip">
+                已从 {{ m.subagentRoute.candidates }} 个候选择手中筛选：本问题无需咨询任何助手，直接作答
               </div>
               <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
                 <span class="related-label">猜你想问：</span>
@@ -498,9 +504,14 @@ function subagentCard (m) {
   const running = branches.some(b => b.status === 'running')
   const total = branches.length
   const title = running ? `并行咨询 ${total} 个子智能体…` : `已咨询 ${total} 个子智能体`
+  // 按需委派信息：从 N 个候选中挑了 M 个（让"挑选过程"可见，解释为什么只有这几个角色）
+  const rt = m.subagentRoute
+  const routeNote = (rt && rt.candidates > rt.picked)
+    ? `从 ${rt.candidates} 个候选中挑选 ${rt.picked} 个相关的`
+    : ''
   // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）
   if (m.saOpen === undefined) m.saOpen = running
-  return { branches, done, total, running, title }
+  return { branches, done, total, running, title, routeNote }
 }
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
@@ -731,6 +742,13 @@ const switchSession = async sid => {
               const r = m.retrieved ? JSON.parse(m.retrieved) : null
               return (r && Array.isArray(r.branches)) ? r.branches : []
             } catch (e) { return [] }
+          })(),
+          // 按需委派路由结果（同样随 retrieved 持久化）
+          subagentRoute: (() => {
+            try {
+              const r = m.retrieved ? JSON.parse(m.retrieved) : null
+              return (r && r.route) ? r.route : null
+            } catch (e) { return null }
           })()
         }))
       scrollForce()
@@ -1101,6 +1119,13 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         scroll()
       } catch (e) { /* 忽略 */ }
     },
+    onSubagentRoute: payload => {
+      try {
+        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!r) return
+        messages.value[idx].subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [] }
+      } catch (e) { /* 忽略 */ }
+    },
     onDone: contentJson => {
       let sources = [], related = [], messageId = null, degradations = []
       try {
@@ -1118,6 +1143,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.toolCalls) && p.toolCalls.length) messages.value[idx].toolCalls = p.toolCalls
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) messages.value[idx].subagents = p.subagentBranches
+        if (p.subagentRoute) messages.value[idx].subagentRoute = p.subagentRoute
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
       messages.value[idx].loading = false
@@ -1455,6 +1481,10 @@ onMounted(async () => {
 .subagent-title { font-weight: 500; color: var(--app-text); display: inline-flex; align-items: center; gap: 6px; }
 .sa-head-ic { color: var(--app-accent); }
 .subagent-sum { font-size: 11px; color: var(--app-text3); display: inline-flex; align-items: center; gap: 5px; }
+.sa-route-note {
+  font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-accent); margin-right: 4px;
+}
 .subagent-list { border-top: 1px solid var(--app-border); }
 .subagent-row { padding: 8px 12px; border-top: 1px dashed var(--app-border); font-size: 12px; }
 .subagent-row:first-child { border-top: none; }
@@ -1475,6 +1505,11 @@ onMounted(async () => {
 .sa-digest {
   margin-top: 5px; font-size: 11.5px; color: var(--app-text2); line-height: 1.6;
   padding: 6px 9px; background: #f8f9fa; border-radius: 5px; white-space: pre-wrap;
+}
+/* 按需委派判定"无需咨询任何助手"时的说明行 */
+.subagent-skip {
+  margin-top: 8px; font-size: 11.5px; color: var(--app-text3); line-height: 1.5;
+  padding: 6px 10px; background: #f8f9fa; border: 1px solid var(--app-border); border-radius: var(--app-radius);
 }
 
 .related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

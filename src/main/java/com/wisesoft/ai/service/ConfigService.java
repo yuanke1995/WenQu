@@ -226,6 +226,8 @@ public class ConfigService {
             Map.entry("agent.subAgents", "SubAgent 并行编排：子代理数量（2~4，默认 2）"),
             Map.entry("agent.topKPerAgent", "SubAgent 并行编排：每个子代理取回命中块数（默认 3）"),
             Map.entry("agent.digestEnabled", "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）"),
+            Map.entry("agent.autoRoute", "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）"),
+            Map.entry("agent.routeTimeoutMs", "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）"),
             // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
             Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
             Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
@@ -370,6 +372,8 @@ public class ConfigService {
             Map.entry("agent.subAgents", 2),
             Map.entry("agent.topKPerAgent", 3),
             Map.entry("agent.digestEnabled", 2),
+            Map.entry("agent.autoRoute", 2),
+            Map.entry("agent.routeTimeoutMs", 3),
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
@@ -724,6 +728,8 @@ public class ConfigService {
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
+        d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
+        d.put("agent.routeTimeoutMs", "5000");             // 路由判定超时（超时回退全部候选）
 
         // 意图分类：默认值与 AppProperties.Intent 保持一致；
         // prompt / chatPrompt 留空表示沿用代码内置默认（apply 时空串不会覆盖，见 applyIntentConfig）
@@ -1334,7 +1340,9 @@ public class ConfigService {
                 "skill",
                 // @ 引用分组：atRef.maxChunksPerDoc / atRef.maxTotal
                 "atRef",
-                // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent / agent.digestEnabled
+                // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent /
+                // agent.digestEnabled / agent.autoRoute / agent.routeTimeoutMs
+                // （按 "agent." 前缀自动收集，新增键无需改本数组，但必须在 defaults() 里有条目）
                 "agent",
                 // 意图分类分组：intent.enabled / intent.timeoutMillis / intent.model / intent.prompt / intent.chatPrompt
                 // （此前未列入本数组 + defaults() 缺条目 → 开启后设置页永远回显"关"）

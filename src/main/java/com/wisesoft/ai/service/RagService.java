@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -589,16 +590,12 @@ public class RagService {
             // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
             // 增强项：编排内部已把所有异常降级为空结果，失败不影响主链路
             SubAgentOrchestrator.Outcome subOutcome = null;
+            // 按需委派的路由结果（声明在 if 外：创建 AnswerStreamState 时要回填，供 done 下发与持久化）
+            Map<String, Object> subagentRouteInfo = null;
             if (configService.getBoolean("agent.enabled")) {
-                // 委派模式：主智能体挂了子智能体时由它们并行执行（各自范围 + 各自视角）；
-                // 未挂则沿用原有的「多视角并行检索」
-                List<Agent> delegated = resolveSubAgents(agent);
-                sendSseEvent(emitter, "stage", delegated.isEmpty()
-                        ? "正在并行检索多个视角…"
-                        : "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
-                // 编排视图：分支进度实时推 subagent 事件（前端在检索状态行下方渲染各分支状态）；
-                // 回调仅负责转发，不影响编排主流程（最终态由 Outcome.branches() 提供，兜底更可靠）
-                subOutcome = subAgentOrchestrator.run(question, delegated, branch -> {
+                List<Agent> candidates = resolveSubAgents(agent);
+                // 编排视图：分支进度实时推 subagent 事件（前端渲染子智能体卡片）
+                Consumer<SubAgentOrchestrator.BranchEvent> onBranch = branch -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", branch.idx());
                     m.put("name", branch.name());
@@ -609,8 +606,35 @@ public class RagService {
                     m.put("description", branch.description());
                     m.put("digest", branch.digest());
                     sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
-                });
-                if (!subOutcome.hits().isEmpty()) {
+                };
+                if (candidates.isEmpty()) {
+                    // 未挂子智能体 → 原有的「多视角并行检索」
+                    sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
+                    subOutcome = subAgentOrchestrator.run(question, null, onBranch);
+                } else {
+                    // 挂了子智能体 → 先由主模型按需挑选：只咨询与问题相关的角色，
+                    // 避免"全派"导致无关角色白跑（0 命中噪音 + 多余的检索与提炼开销）
+                    sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
+                    List<Agent> delegated = subAgentOrchestrator.route(question, candidates);
+                    if (delegated.size() != candidates.size()) {
+                        log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", candidates.size(), delegated.size(),
+                                delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
+                    }
+                    // 路由结果下发：让"挑选过程"可见（前端展示"从 N 个候选中挑选 M 个"）
+                    Map<String, Object> routeInfo = new LinkedHashMap<>();
+                    routeInfo.put("candidates", candidates.size());
+                    routeInfo.put("picked", delegated.size());
+                    routeInfo.put("names", delegated.stream().map(Agent::getName).toList());
+                    subagentRouteInfo = routeInfo;
+                    sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
+                    if (delegated.isEmpty()) {
+                        log.info("[SUBAGENT] 按需委派判定无需咨询任何助手，跳过并行编排（问题与各助手职责均不匹配）");
+                    } else {
+                        sendSseEvent(emitter, "stage", "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
+                        subOutcome = subAgentOrchestrator.run(question, delegated, onBranch);
+                    }
+                }
+                if (subOutcome != null && !subOutcome.hits().isEmpty()) {
                     log.info("[SUBAGENT] 命中并入主链路 {} 块（子代理 {} 个，耗时 {}ms）",
                             subOutcome.hits().size(), subOutcome.agents(), subOutcome.elapsedMs());
                 }
@@ -919,6 +943,7 @@ public class RagService {
             if (subOutcome != null && !subOutcome.branches().isEmpty()) {
                 st.subagentBranches = subOutcome.branches();
             }
+            st.subagentRoute = subagentRouteInfo;
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
@@ -1299,9 +1324,12 @@ public class RagService {
                             if (oldRefs == null || oldRefs != sources.size()) {
                                 rj.put("refs", sources.size());
                             }
-                            // 编排视图：分支最终状态随 retrieved 持久化（历史恢复时状态行下的编排面板仍可回显）
+                            // 编排视图：分支最终状态 + 按需委派路由结果随 retrieved 持久化（历史回显用）
                             if (!st.subagentBranches.isEmpty()) {
                                 rj.put("branches", st.subagentBranches);
+                            }
+                            if (st.subagentRoute != null) {
+                                rj.put("route", st.subagentRoute);
                             }
                             finalRetrievedJson = JSON.toJSONString(rj);
                         }
@@ -1354,6 +1382,10 @@ public class RagService {
                     // 编排视图：分支最终状态（前端 onDone 用它覆盖实时 subagent 事件、收敛到最终态）
                     if (!st.subagentBranches.isEmpty()) {
                         donePayload.put("subagentBranches", st.subagentBranches);
+                    }
+                    // 按需委派路由结果（前端展示"从 N 个候选中挑选 M 个"；picked=0 时提示未咨询）
+                    if (st.subagentRoute != null) {
+                        donePayload.put("subagentRoute", st.subagentRoute);
                     }
                     // 产物交付汇总（流式 artifact 事件已实时下发；此处兜底保证不丢失，url 已重新签名）
                     donePayload.put("artifacts", sessionArtifacts.isEmpty()
@@ -1424,6 +1456,8 @@ public class RagService {
         volatile int realOutputTokens;
         /** 编排视图：各子代理分支的最终状态（主链路编排完成后回填，随 done 下发并持久化） */
         volatile java.util.List<Map<String, Object>> subagentBranches = List.of();
+        /** 按需委派的路由结果（{candidates,picked,names}；未启用路由时为 null），随 done 下发并持久化 */
+        volatile Map<String, Object> subagentRoute = null;
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
