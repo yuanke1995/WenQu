@@ -596,7 +596,18 @@ public class RagService {
                 sendSseEvent(emitter, "stage", delegated.isEmpty()
                         ? "正在并行检索多个视角…"
                         : "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
-                subOutcome = subAgentOrchestrator.run(question, delegated);
+                // 编排视图：分支进度实时推 subagent 事件（前端在检索状态行下方渲染各分支状态）；
+                // 回调仅负责转发，不影响编排主流程（最终态由 Outcome.branches() 提供，兜底更可靠）
+                subOutcome = subAgentOrchestrator.run(question, delegated, branch -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", branch.idx());
+                    m.put("name", branch.name());
+                    m.put("status", branch.status());
+                    m.put("hits", branch.hits());
+                    m.put("elapsedMs", branch.elapsedMs());
+                    m.put("delegated", branch.delegated());
+                    sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
+                });
                 if (!subOutcome.hits().isEmpty()) {
                     log.info("[SUBAGENT] 命中并入主链路 {} 块（子代理 {} 个，耗时 {}ms）",
                             subOutcome.hits().size(), subOutcome.agents(), subOutcome.elapsedMs());
@@ -902,6 +913,10 @@ public class RagService {
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
             st.contextHits = docNo - 1;
+            // 编排视图：回填分支最终状态（subOutcome.branches 来自编排完成后的 ctx.branches，含各分支命中数）
+            if (subOutcome != null && !subOutcome.branches().isEmpty()) {
+                st.subagentBranches = subOutcome.branches();
+            }
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
@@ -1281,8 +1296,12 @@ public class RagService {
                             Integer oldRefs = rj.get("refs") instanceof Number n ? n.intValue() : null;
                             if (oldRefs == null || oldRefs != sources.size()) {
                                 rj.put("refs", sources.size());
-                                finalRetrievedJson = JSON.toJSONString(rj);
                             }
+                            // 编排视图：分支最终状态随 retrieved 持久化（历史恢复时状态行下的编排面板仍可回显）
+                            if (!st.subagentBranches.isEmpty()) {
+                                rj.put("branches", st.subagentBranches);
+                            }
+                            finalRetrievedJson = JSON.toJSONString(rj);
                         }
                     } catch (Exception ignored) {
                     }
@@ -1330,6 +1349,10 @@ public class RagService {
                             finalImgs.stream().map(imageUrlSigner::signUrl).toList());
                     donePayload.put("thinking", st.thinkingHolder[0]);
                     donePayload.put("degradations", st.degradations);
+                    // 编排视图：分支最终状态（前端 onDone 用它覆盖实时 subagent 事件、收敛到最终态）
+                    if (!st.subagentBranches.isEmpty()) {
+                        donePayload.put("subagentBranches", st.subagentBranches);
+                    }
                     // 产物交付汇总（流式 artifact 事件已实时下发；此处兜底保证不丢失，url 已重新签名）
                     donePayload.put("artifacts", sessionArtifacts.isEmpty()
                             ? List.of() : artifactService.takeArtifacts(st.sessionId));
@@ -1397,6 +1420,8 @@ public class RagService {
         /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
         volatile int realPromptTokens;
         volatile int realOutputTokens;
+        /** 编排视图：各子代理分支的最终状态（主链路编排完成后回填，随 done 下发并持久化） */
+        volatile java.util.List<Map<String, Object>> subagentBranches = List.of();
 
         AnswerStreamState(String sessionId, String question, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,

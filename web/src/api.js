@@ -88,7 +88,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent,
     deepThink = false, signal, idleTimeoutMs = 120000, refs = [], agentId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
@@ -154,6 +154,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'warn') { onWarn && onWarn(d.content) }
               else if (d.type === 'artifact') { onArtifact && onArtifact(d.content) } // content 为 {url,filename,description}
               else if (d.type === 'tool_status') { onToolStatus && onToolStatus(d.content) } // content 为 {name,status,elapsedMs,args,result|error}
+              else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated}
               else if (d.type === 'done') { end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
               else if (d.type === 'error') { end(); onError(d.content); return }
             } catch (e) {

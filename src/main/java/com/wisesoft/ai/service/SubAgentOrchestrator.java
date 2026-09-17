@@ -13,12 +13,14 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * SubAgent 并行编排（P3：4.3）——基于 Spring AI Alibaba 的 StateGraph。
@@ -62,8 +64,20 @@ public class SubAgentOrchestrator {
      * @param digestText 各子代理的要点汇总（可为空串：未开启提炼或全部失败）
      * @param agents     实际执行的子代理数
      * @param elapsedMs  总耗时（用于日志/评估对比单路检索）
+     * @param branches   各分支最终状态（供编排视图渲染/持久化）：{id, name, status, hits, elapsedMs}
      */
-    public record Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs) {
+    public record Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs,
+                          List<Map<String, Object>> branches) {
+        public Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs) {
+            this(hits, digestText, agents, elapsedMs, List.of());
+        }
+    }
+
+    /**
+     * 分支进度事件（编排视图实时展示用）：status ∈ running | done | failed。
+     * name 为分支显示名（委派=子智能体名，多视角=视角描述）；hits 为该分支本次命中块数。
+     */
+    public record BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated) {
     }
 
     /** 单轮执行上下文：图节点在编译期绑定，运行期参数经 ThreadLocal 传入（与 KnowledgeRetrievalTool 同模式） */
@@ -75,11 +89,45 @@ public class SubAgentOrchestrator {
         final List<HybridRetrievalService.Hit> collected = new ArrayList<>();
         final Set<String> seenKids = new LinkedHashSet<>();
         final List<String> digests = new ArrayList<>();
+        /** 分支进度回调（可为 null：不需要实时推送时传 null，如评估/调试场景） */
+        final Consumer<BranchEvent> onBranch;
+        /** 分支最终状态（保序，供 Outcome.branches 与编排视图持久化） */
+        final List<Map<String, Object>> branches = new ArrayList<>();
+        final long t0;
+        final boolean delegated;
 
-        RunCtx(String question, List<String> subQueries, List<Agent> subAgents) {
+        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
+            this.onBranch = onBranch;
+            this.t0 = System.currentTimeMillis();
+            this.delegated = subAgents != null && !subAgents.isEmpty();
+        }
+
+        /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
+        String branchName(int idx) {
+            if (delegated && idx < subAgents.size() && subAgents.get(idx) != null) {
+                return subAgents.get(idx).getName() == null || subAgents.get(idx).getName().isBlank()
+                        ? "子智能体 " + (idx + 1) : subAgents.get(idx).getName();
+            }
+            return "视角 " + (idx + 1) + " · " + truncate(idx < subQueries.size() ? subQueries.get(idx) : question, 16);
+        }
+
+        static String truncate(String s, int max) {
+            if (s == null) return "";
+            return s.length() > max ? s.substring(0, max) + "…" : s;
+        }
+
+        /** 发一个分支进度事件（幂等：回调为空或已失败时不发） */
+        void emit(BranchEvent e) {
+            if (onBranch != null) {
+                try {
+                    onBranch.accept(e);
+                } catch (Exception ignored) {
+                    // 回调失败不影响编排主流程（进度展示是增强项）
+                }
+            }
         }
     }
 
@@ -87,7 +135,12 @@ public class SubAgentOrchestrator {
 
     /** 并行编排入口（未挂子智能体）：走原有的「多视角并行检索」 */
     public Outcome run(String question) {
-        return run(question, null);
+        return run(question, null, null);
+    }
+
+    /** 并行编排入口（未挂子智能体，带进度回调）：走原有的「多视角并行检索」 */
+    public Outcome run(String question, Consumer<BranchEvent> onBranch) {
+        return run(question, null, onBranch);
     }
 
     /**
@@ -95,14 +148,15 @@ public class SubAgentOrchestrator {
      *
      * @param subAgents 主智能体委派的子智能体。为 null 或空时走原有的多视角策略；
      *                  非空时按子智能体数并行——每个子智能体用自己的知识库范围检索、按自己的角色提示词提炼
+     * @param onBranch  分支进度回调（编排视图实时展示；可为 null）
      */
-    public Outcome run(String question, List<Agent> subAgents) {
+    public Outcome run(String question, List<Agent> subAgents, Consumer<BranchEvent> onBranch) {
         boolean delegated = subAgents != null && !subAgents.isEmpty();
         int agents = delegated
                 ? Math.min(subAgents.size(), 4)
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
-        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents);
+        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch);
         CTX.set(ctx);
         try {
             CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
@@ -113,10 +167,11 @@ public class SubAgentOrchestrator {
             long ms = System.currentTimeMillis() - t0;
             log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
                     delegated ? "子智能体委派" : "多视角", agents, ctx.collected.size(), ctx.digests.size(), ms);
-            return new Outcome(List.copyOf(ctx.collected), String.join("\n", ctx.digests), agents, ms);
+            return new Outcome(List.copyOf(ctx.collected), String.join("\n", ctx.digests), agents, ms,
+                    List.copyOf(ctx.branches));
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
-            return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0);
+            return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0, List.copyOf(ctx.branches));
         } finally {
             CTX.remove();
         }
@@ -194,6 +249,8 @@ public class SubAgentOrchestrator {
             // 委派模式下各分支都用原问题：差异体现在「各自的知识库范围」与「各自的提炼视角」上——
             // 这才是"派给某个角色去查"，而不是"同一个问题换个问法"。未委派时才走多视角子查询。
             String subQuery = (sub == null && idx < ctx.subQueries.size()) ? ctx.subQueries.get(idx) : ctx.question;
+            String name = ctx.branchName(idx);
+            ctx.emit(new BranchEvent(idx, name, "running", 0, System.currentTimeMillis() - ctx.t0, ctx.delegated));
             int topK = Math.max(1, configService.getInt("agent.topKPerAgent", 3));
             List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery);
             if (sub != null) hits = inScope(hits, sub.scopeDocIds());
@@ -215,8 +272,32 @@ public class SubAgentOrchestrator {
                     }
                 }
             }
+            long doneMs = System.currentTimeMillis() - ctx.t0;
+            ctx.emit(new BranchEvent(idx, name, "done", fresh.size(), doneMs, ctx.delegated));
+            Map<String, Object> branch = new LinkedHashMap<>();
+            branch.put("id", idx);
+            branch.put("name", name);
+            branch.put("status", "done");
+            branch.put("hits", fresh.size());
+            branch.put("elapsedMs", doneMs);
+            branch.put("delegated", ctx.delegated);
+            synchronized (ctx) {
+                ctx.branches.add(branch);
+            }
         } catch (Exception e) {
             log.warn("[SUBAGENT] 分支 {} 执行失败（跳过）: {}", idx, e.getMessage());
+            long failMs = System.currentTimeMillis() - ctx.t0;
+            ctx.emit(new BranchEvent(idx, ctx.branchName(idx), "failed", 0, failMs, ctx.delegated));
+            Map<String, Object> branch = new LinkedHashMap<>();
+            branch.put("id", idx);
+            branch.put("name", ctx.branchName(idx));
+            branch.put("status", "failed");
+            branch.put("hits", 0);
+            branch.put("elapsedMs", failMs);
+            branch.put("delegated", ctx.delegated);
+            synchronized (ctx) {
+                ctx.branches.add(branch);
+            }
         }
     }
 

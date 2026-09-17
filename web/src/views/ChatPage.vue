@@ -78,6 +78,24 @@
                   </div>
                 </div>
               </div>
+              <!-- 多智能体编排视图（agent.enabled 开启、有子智能体/多视角分支时出现）：实时显示各分支检索状态 -->
+              <div v-if="m.role === 'ai' && m.subagents && m.subagents.length" class="subagent-panel">
+                <div class="subagent-head">
+                  <span class="subagent-title">{{ m.subagents.some(b => b.status === 'running') ? '并行检索中…' : '并行检索' }}</span>
+                  <span class="subagent-sum">{{ m.subagents.filter(b => b.status === 'done').length }}/{{ m.subagents.length }} 分支完成 · 共 {{ m.subagents.reduce((a,b)=>a+(b.hits||0),0) }} 块命中</span>
+                </div>
+                <div v-for="b in m.subagents" :key="b.id" class="subagent-row" :class="'st-' + (b.status || 'running')">
+                  <span class="subagent-state">
+                    <a-spin v-if="b.status === 'running'" size="small" />
+                    <check-outlined v-else-if="b.status === 'done'" class="sa-ok" />
+                    <close-circle-outlined v-else class="sa-err" />
+                  </span>
+                  <span class="subagent-name" :title="b.name">{{ b.name }}</span>
+                  <span v-if="b.status === 'running'" class="subagent-dim">检索中…</span>
+                  <span v-else-if="b.status === 'failed'" class="subagent-dim sa-err">失败</span>
+                  <span v-else class="subagent-hits">{{ b.hits }} 块<template v-if="b.elapsedMs != null"> · {{ b.elapsedMs >= 1000 ? (b.elapsedMs / 1000).toFixed(1) + 's' : b.elapsedMs + 'ms' }}</template></span>
+                </div>
+              </div>
               <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
                 <span class="related-label">猜你想问：</span>
                 <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
@@ -674,7 +692,14 @@ const switchSession = async sid => {
           time: m.createTime ? new Date(m.createTime).getTime() : null,
           artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
           toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
-          retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })()
+          retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
+          // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
+          subagents: (() => {
+            try {
+              const r = m.retrieved ? JSON.parse(m.retrieved) : null
+              return (r && Array.isArray(r.branches)) ? r.branches : []
+            } catch (e) { return [] }
+          })()
         }))
       scrollForce()
     } else {
@@ -958,9 +983,9 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
   lastSentRefs = refs || []
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
-    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] })
+    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] })
   } else {
-    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [] }
+    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] }
   }
   loading.value = true
   scrollForce()
@@ -1033,6 +1058,17 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         scroll()
       } catch (e) { /* 忽略 */ }
     },
+    onSubagent: payload => {
+      try {
+        const b = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!b || b.id == null) return
+        const list = messages.value[idx].subagents || (messages.value[idx].subagents = [])
+        const i = list.findIndex(x => x.id === b.id)
+        if (i >= 0) list[i] = { ...list[i], ...b }
+        else list.push(b)
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
     onDone: contentJson => {
       let sources = [], related = [], messageId = null, degradations = []
       try {
@@ -1048,6 +1084,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.finalImages)) messages.value[idx].images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) messages.value[idx].artifacts = p.artifacts
         if (Array.isArray(p.toolCalls) && p.toolCalls.length) messages.value[idx].toolCalls = p.toolCalls
+        // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
+        if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) messages.value[idx].subagents = p.subagentBranches
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
       messages.value[idx].loading = false
@@ -1370,6 +1408,32 @@ onMounted(async () => {
 .rt-ref:hover { color: var(--app-accent); }
 .rt-ref-tag { color: var(--app-accent); margin-right: 4px; }
 .rt-snip { color: var(--app-text3); margin-top: 2px; }
+
+/* 多智能体编排视图（并行检索分支状态） */
+.subagent-panel {
+  margin-top: 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
+  background: var(--app-panel); overflow: hidden; width: 100%;
+}
+.subagent-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; background: var(--app-accent-weak); font-size: 12px; color: var(--app-text2);
+}
+.subagent-title { font-weight: 500; color: var(--app-text); }
+.subagent-sum { font-size: 11px; color: var(--app-text3); }
+.subagent-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-top: 1px solid var(--app-border); font-size: 12px;
+}
+.subagent-row.st-running { color: var(--app-text2); }
+.subagent-row.st-done { color: var(--app-text); }
+.subagent-row.st-failed { color: var(--app-text3); }
+.subagent-state { display: inline-flex; align-items: center; width: 16px; flex: none; }
+.subagent-state .sa-ok { color: var(--app-ok); }
+.subagent-state .sa-err { color: var(--app-danger); }
+.subagent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-dim { color: var(--app-text3); font-size: 11px; }
+.subagent-hits { color: var(--app-ok); font-size: 11px; }
+.subagent-hits .sa-err, .subagent-dim.sa-err { color: var(--app-danger); }
 
 .related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-label { font-size: 12px; color: var(--app-text3); }
