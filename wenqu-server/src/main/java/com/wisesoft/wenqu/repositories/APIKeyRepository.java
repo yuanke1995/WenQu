@@ -126,8 +126,41 @@ public class APIKeyRepository {
         }
     }
 
-    /** 列出请求者可见的 API Key 并返回总数（已撤销的不列出）。 */
-    public Map<String, Object> listVisible(int requesterUserId, boolean isSuperadmin, int skip, int limit) {
+    /**
+     * APIKey.to_dict() 的键与时间格式照搬（参考实现 models_business.APIKey.to_dict）。
+     *
+     * <p>注意：不包含 key_hash 等机密列，与参考实现一致。
+     */
+    public static Map<String, Object> toDict(APIKey apiKey) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", apiKey.getId());
+        result.put("key_prefix", apiKey.getKeyPrefix());
+        result.put("name", apiKey.getName());
+        result.put("user_id", apiKey.getUserId());
+        result.put("department_id", apiKey.getDepartmentId());
+        result.put("expires_at", DateTimeUtils.formatUtcDatetime(apiKey.getExpiresAt()));
+        result.put("is_enabled", Boolean.TRUE.equals(apiKey.getIsEnabled()));
+        result.put("last_used_at", DateTimeUtils.formatUtcDatetime(apiKey.getLastUsedAt()));
+        result.put("created_by", apiKey.getCreatedBy());
+        result.put("created_at", DateTimeUtils.formatUtcDatetime(apiKey.getCreatedAt()));
+        return result;
+    }
+
+    /** APIKey.is_valid()：启用、未撤销、未过期。 */
+    public static boolean isValid(APIKey apiKey) {
+        if (!Boolean.TRUE.equals(apiKey.getIsEnabled())) {
+            return false;
+        }
+        if (apiKey.getRevokedAt() != null) {
+            return false;
+        }
+        if (apiKey.getExpiresAt() != null && DateTimeUtils.utcNowNaive().isAfter(apiKey.getExpiresAt())) {
+            return false;
+        }
+        return true;
+    }
+
+    /** 列出请求者可见的 API Key 并返回总数（已撤销的不列出）。 */    public Map<String, Object> listVisible(int requesterUserId, boolean isSuperadmin, int skip, int limit) {
         LambdaQueryWrapper<APIKey> wrapper = new LambdaQueryWrapper<APIKey>().isNull(APIKey::getRevokedAt);
         if (!isSuperadmin) {
             wrapper.eq(APIKey::getUserId, requesterUserId);

@@ -3,6 +3,7 @@ package com.wisesoft.wenqu.repositories;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.wenqu.common.DateTimeUtils;
+import com.wisesoft.wenqu.common.MinioUrls;
 import com.wisesoft.wenqu.models.APIKey;
 import com.wisesoft.wenqu.models.ScheduledAgentJob;
 import com.wisesoft.wenqu.models.User;
@@ -355,6 +356,34 @@ public class UserRepository {
     }
 
     // ==================== 内部工具 ====================
+
+    /**
+     * User.to_dict() 的键与时间格式照搬（参考实现 models_business.User.to_dict）。
+     *
+     * <p>includePassword 对应参考实现的 {@code to_dict(include_password=True)}；
+     * avatar 经 {@link MinioUrls#normalizePublicMinioUrl} 规范化（normalize_public_minio_url）。
+     */
+    public static Map<String, Object> toDict(User user, boolean includePassword) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", user.getId());
+        result.put("username", user.getUsername());
+        result.put("uid", user.getUid());
+        result.put("phone_number", user.getPhoneNumber());
+        result.put("avatar", MinioUrls.normalizePublicMinioUrl(user.getAvatar()));
+        result.put("role", user.getRole());
+        result.put("department_id", user.getDepartmentId());
+        result.put("created_at", DateTimeUtils.formatUtcDatetime(user.getCreatedAt()));
+        result.put("last_login", DateTimeUtils.formatUtcDatetime(user.getLastLogin()));
+        result.put("login_failed_count", user.getLoginFailedCount());
+        result.put("last_failed_login", DateTimeUtils.formatUtcDatetime(user.getLastFailedLogin()));
+        result.put("login_locked_until", DateTimeUtils.formatUtcDatetime(user.getLoginLockedUntil()));
+        result.put("is_deleted", user.getIsDeleted());
+        result.put("deleted_at", DateTimeUtils.formatUtcDatetime(user.getDeletedAt()));
+        if (includePassword) {
+            result.put("password_hash", user.getPasswordHash());
+        }
+        return result;
+    }
 
     /** 把 Map 写入用户实体（与 Python 的 setattr 语义一致：只写入出现的键）。 */
     static void applyUserFields(User user, Map<String, Object> data) {
