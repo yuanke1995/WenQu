@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.controller;
 
 import com.wisesoft.wenqu.common.ResultJson;
+import com.wisesoft.wenqu.service.ChunkPresets;
 import com.wisesoft.wenqu.service.HybridRetrievalService;
 import com.wisesoft.wenqu.service.KnowledgeBaseService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,6 +46,13 @@ public class KnowledgeBaseController {
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(kbService.listWithCounts());
+    }
+
+    @Operation(summary = "分块预设清单", description = "供设置界面渲染下拉（value/label/description）。"
+            + "预设决定切分方式，具体参数由 chunk_parser_config 按「知识库 → 文件 → 请求」深合并")
+    @GetMapping("/chunk-presets")
+    public ResultJson chunkPresets() {
+        return ResultJson.ok(ChunkPresets.getChunkPresetOptions());
     }
 
     @Operation(summary = "知识库详情")

@@ -76,6 +76,9 @@ public class DocumentService {
     private final List<DocumentParser> parsers;
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
+
+    /** 知识库服务：解析时按文档所属库读取分块参数（"怎么切块"归库管，库未配置则沿用全局） */
+    private final KnowledgeBaseService knowledgeBaseService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final ResourceVisibilityService resourceVisibilityService;
     /** 向量模型（@Primary 为 DynamicEmbeddingModel）：重嵌入前探测新维度用 */
@@ -307,6 +310,49 @@ public class DocumentService {
         }
     }
 
+    /** 窄化 Object → Map（预设解析结果里的 chunk_parser_config） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> mapOfObj(Object o) {
+        return (o instanceof Map) ? (Map<String, Object>) o : Map.of();
+    }
+
+    /** 分块参数取值：知识库级覆盖 > 传入的全局值；覆盖值非法（非数字）时回落全局，不阻断解析 */
+    private static int intParam(Map<String, Object> cfg, String key, int fallback) {
+        if (cfg == null) return fallback;
+        Object o = cfg.get(key);
+        if (o == null) return fallback;
+        if (o instanceof Number n) return n.intValue();
+        String v = String.valueOf(o).trim();
+        if (v.isEmpty()) return fallback;
+        try {
+            return Integer.parseInt(v);
+        } catch (NumberFormatException e) {
+            log.warn("[CHUNK] 知识库分块参数 {}={} 非法，回落全局值 {}", key, v, fallback);
+            return fallback;
+        }
+    }
+
+    /**
+     * 记录本次解析实际生效的预设、合并后参数与引擎版本（文件级快照）。
+     * <p>为什么需要：分块参数可随知识库调整，但**已索引的块不会自动重切**；
+     * 有快照才能回答"这批块是按什么参数切出来的"，据此判断是否需要重新解析。
+     * 写失败仅告警，不影响解析结果（快照是辅助信息，不是解析的必要产物）。
+     */
+    private void snapshotProcessingParams(String docId, Map<String, Object> chunkResolved) {
+        try {
+            // 快照 = 解析结果原文（chunk_preset_id / chunk_parser_config / chunk_engine_version）+ 时间
+            Map<String, Object> snap = new LinkedHashMap<>(chunkResolved);
+            snap.put("at", java.time.LocalDateTime.now().toString());
+            documentMapper.update(null,
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiDocument>()
+                            .eq(AiDocument::getId, docId)
+                            .set(AiDocument::getProcessingParams,
+                                    com.alibaba.fastjson2.JSON.toJSONString(snap)));
+        } catch (Exception e) {
+            log.warn("[{}] 解析参数快照写入失败（不影响解析结果）: {}", docId, e.getMessage());
+        }
+    }
+
     /**
      * 索引：为本文件下「尚未向量化」的知识块补做索引（幂等，可反复调用）。
      * <p>与 {@link #embedAndStore} 的分工：后者是单块原子能力，这里管"整个文件的索引补齐 + 结果回读"。
@@ -358,6 +404,7 @@ public class DocumentService {
         r.put("chunks", total);
         r.put("indexedChunks", indexed);
         r.put("indexed", total > 0 && indexed >= total);
+        r.put("processingParams", d.getProcessingParams());   // 本次解析的分块参数快照
         return r;
     }
 
@@ -659,9 +706,17 @@ public class DocumentService {
                     (percent, desc) -> updateProgress(docId, percent, desc));
             // 分块重叠：不再改写块正文（content 保持净内容），重叠尾巴作为 embedding 文本前缀在循环内计算——
             // 不入库、不进指纹，因此邻块变动不会连锁改变本块指纹（chunk.overlap 可调，0=关闭）
-            int overlap = configService.getInt("chunk.overlap", properties.getChunk().getOverlap());
+            // 分块参数解析：预设 → 知识库 → 文件 → 本次请求（深合并，后者覆盖前者）。
+            // 文件级与请求级参数当前未接入（无来源），先按参考实现同样的顺序保留扩展位。
+            Map<String, Object> chunkResolved = ChunkPresets.resolveChunkProcessingParams(
+                    knowledgeBaseService.chunkConfigOf(doc.getKbId()), null, null);
+            Map<String, Object> chunkCfg = mapOfObj(chunkResolved.get("chunk_parser_config"));
+            int overlap = intParam(chunkCfg, "chunk.overlap",
+                    configService.getInt("chunk.overlap", properties.getChunk().getOverlap()));
             // 截断保护：超大文档只保留前 maxChunks 块（防止 embedding 调用数万次/解析失控）
-            int maxChunks = configService.getInt("chunk.maxChunks");
+            int maxChunks = intParam(chunkCfg, "chunk.maxChunks", configService.getInt("chunk.maxChunks"));
+            // 参数快照：记录本次生效的预设、合并后参数与引擎版本
+            snapshotProcessingParams(docId, chunkResolved);
             int truncatedChunks = 0;
             if (maxChunks > 0 && chunks.size() > maxChunks) {
                 // fail-loud：截断不再静默——计数入终态 desc（"截断保留前N/共M块"）

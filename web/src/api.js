@@ -222,6 +222,8 @@ export const listDocuments = () => request('/document/list')
 // ==================== 知识库（检索作用域） ====================
 /** 知识库列表（含每个库的文档数） */
 export const listKnowledgeBases = () => request('/kb/list')
+/** 分块预设清单（value/label/description），供知识库分块配置的下拉使用 */
+export const getChunkPresets = () => request('/kb/chunk-presets')
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */

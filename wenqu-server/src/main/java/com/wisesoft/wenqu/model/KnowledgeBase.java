@@ -42,6 +42,12 @@ public class KnowledgeBase {
      */
     private String queryParams;
 
+    /**
+     * 分块参数（JSON：{"chunk.maxChunks":"300","chunk.overlap":"80",...}）。
+     * 空=继承全局分块设置。与 queryParams 分列：一个管"怎么切块"，一个管"怎么召回"。
+     */
+    private String chunkParams;
+
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;
 
