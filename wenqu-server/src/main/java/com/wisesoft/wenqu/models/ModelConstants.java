@@ -38,4 +38,38 @@ public final class ModelConstants {
     public static final String UNVIEWED_RUN_MARKER = "__unviewed__";
 
     private ModelConstants() {}
+
+    /**
+     * 从 AgentRun 权威时间点生成统一的阶段时延投影
+     * （参考实现 models_business.build_agent_run_timing）。
+     */
+    public static java.util.Map<String, Object> buildAgentRunTiming(
+            java.time.LocalDateTime createdAt,
+            java.time.LocalDateTime startedAt,
+            java.time.LocalDateTime preparedAt,
+            java.time.LocalDateTime firstOutputAt,
+            java.time.LocalDateTime finishedAt,
+            java.time.LocalDateTime firstModelRequestAt) {
+        java.util.Map<String, Object> timing = new java.util.LinkedHashMap<>();
+        timing.put("created_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(createdAt));
+        timing.put("started_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(startedAt));
+        timing.put("prepared_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(preparedAt));
+        timing.put("first_model_request_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(firstModelRequestAt));
+        timing.put("first_output_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(firstOutputAt));
+        timing.put("finished_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(finishedAt));
+        timing.put("dispatch_latency_ms", durationMs(createdAt, startedAt));
+        timing.put("preparation_latency_ms", durationMs(startedAt, preparedAt));
+        timing.put("first_model_request_latency_ms", durationMs(createdAt, firstModelRequestAt));
+        timing.put("model_first_output_latency_ms", durationMs(preparedAt, firstOutputAt));
+        timing.put("first_output_latency_ms", durationMs(createdAt, firstOutputAt));
+        timing.put("total_latency_ms", durationMs(createdAt, finishedAt));
+        return timing;
+    }
+
+    private static Long durationMs(java.time.LocalDateTime start, java.time.LocalDateTime end) {
+        if (start == null || end == null) {
+            return null;
+        }
+        return java.time.Duration.between(start, end).toMillis();
+    }
 }
