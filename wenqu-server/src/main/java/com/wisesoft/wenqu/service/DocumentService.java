@@ -308,6 +308,72 @@ public class DocumentService {
     }
 
     /**
+     * 索引：为本文件下「尚未向量化」的知识块补做索引（幂等，可反复调用）。
+     * <p>与 {@link #embedAndStore} 的分工：后者是单块原子能力，这里管"整个文件的索引补齐 + 结果回读"。
+     * 已索引的块直接跳过，因此重复调用不会重复扣费，也不会破坏已有向量。
+     */
+    public Map<String, Object> indexDocument(String docId) {
+        List<Knowledge> chunks = knowledgeMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
+                        .eq(Knowledge::getDocId, docId));
+        int indexed = 0, skipped = 0, failed = 0;
+        for (Knowledge k : chunks) {
+            if (k.getVectorId() != null && !k.getVectorId().isBlank()) { skipped++; continue; }
+            if (embedAndStore(k, k.getContent())) indexed++; else failed++;
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("docId", docId);
+        r.put("chunks", chunks.size());
+        r.put("indexed", indexed);   // 本次新索引
+        r.put("skipped", skipped);   // 已索引过，跳过
+        r.put("failed", failed);
+        return r;
+    }
+
+    /**
+     * 单个文件的处理状态（"状态可回读"的入口）：解析进度 + 知识块数 + 已索引块数。
+     * <p>解析完成不等于索引完成——这两个指标分别回读，调用方据此决定是否继续等或补索引。
+     *
+     * @return null 表示文件不存在
+     */
+    public Map<String, Object> documentStatus(String docId) {
+        AiDocument d = documentMapper.selectById(docId);
+        if (d == null) return null;
+        var q = new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
+                .eq(Knowledge::getDocId, docId);
+        long total = knowledgeMapper.selectCount(q);
+        long indexed = knowledgeMapper.selectCount(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
+                        .eq(Knowledge::getDocId, docId)
+                        .isNotNull(Knowledge::getVectorId)
+                        .ne(Knowledge::getVectorId, ""));
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("docId", docId);
+        r.put("fileName", d.getFileName());
+        r.put("kbId", d.getKbId());
+        r.put("status", d.getStatus());
+        r.put("statusText", statusText(d.getStatus()));
+        r.put("parseProgress", d.getParseProgress());
+        r.put("parseDesc", d.getParseDesc());
+        r.put("chunks", total);
+        r.put("indexedChunks", indexed);
+        r.put("indexed", total > 0 && indexed >= total);
+        return r;
+    }
+
+    /** 状态码文案（与 c_ai_document.status 的约定一致：0 生效 / 1 弃用 / 2 解析中 / 3 失败） */
+    private static String statusText(Integer s) {
+        if (s == null) return "未知";
+        return switch (s) {
+            case 0 -> "已入库";
+            case 1 -> "已弃用";
+            case 2 -> "解析中";
+            case 3 -> "解析失败";
+            default -> "状态 " + s;
+        };
+    }
+
+    /**
      * 全量重嵌入（向量模型热切换后自动触发，也可设置页手动触发）：
      * 向量无法跨模型迁移（不同模型向量空间数学不兼容，即使维度相同语义也不同），
      * 唯一正确做法是清空向量索引后用新模型全量重算。
