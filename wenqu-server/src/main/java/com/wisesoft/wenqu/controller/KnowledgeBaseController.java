@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.controller;
 
 import com.wisesoft.wenqu.common.ResultJson;
+import com.wisesoft.wenqu.model.KnowledgeBase;
 import com.wisesoft.wenqu.service.ChunkPresets;
 import com.wisesoft.wenqu.service.HybridRetrievalService;
 import com.wisesoft.wenqu.service.KnowledgeBaseService;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.wisesoft.wenqu.model.KnowledgeBase;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,105 +24,160 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 知识库接口（管理员）：列表 / 详情 / 新建 / 编辑 / 删除 / 文档归属移动。
+ * 知识库接口。
  * <p>
- * 知识库是检索的作用域与检索参数的归属：文档归属于库，智能体关联库，
- * 检索按库过滤、参数取库上的配置（留空继承全局）。
+ * 路径、请求字段与响应结构均与参考实现的 knowledge_router 对齐：
+ * <pre>
+ * GET    /knowledge/databases                        列表（{"databases":[...]}）
+ * POST   /knowledge/databases                        新建（database_name/description/kb_type/
+ *                                                    additional_params/embedding_model_spec/
+ *                                                    llm_model_spec/share_config）
+ * GET    /knowledge/databases/accessible             可访问列表（供智能体配置）
+ * GET    /knowledge/databases/{kb_id}                详情
+ * PUT    /knowledge/databases/{kb_id}                编辑（additional_params 为**合并**语义）
+ * DELETE /knowledge/databases/{kb_id}                删除
+ * GET    /knowledge/chunk-presets                    分块预设（{"chunk_presets":[...],"message":"success"}）
+ * GET    /knowledge/databases/{kb_id}/query-params   读检索参数
+ * PUT    /knowledge/databases/{kb_id}/query-params   写检索参数
+ * POST   /knowledge/databases/{kb_id}/query-test     检索测试
+ * </pre>
  *
  * @author yuanke
  */
 @RestController
-@RequestMapping("/api/ai/kb")
+@RequestMapping("/knowledge")
 @RequiredArgsConstructor
-@Tag(name = "知识库", description = "文档的容器；检索按库隔离，检索参数随库")
+@Tag(name = "知识库", description = "文档的容器、检索的作用域与参数归属")
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService kbService;
-
-    /** 检索链路：检索测试接口直接暴露召回结果，便于验证「按库隔离」是否真的生效 */
     private final HybridRetrievalService retrievalService;
 
-    @Operation(summary = "知识库列表", description = "含每个库的文档数量；默认库排在最前")
-    @GetMapping("/list")
-    public ResultJson list() {
-        return ResultJson.ok(kbService.listWithCounts());
+    // ==================== 知识库 ====================
+
+    @Operation(summary = "知识库列表", description = "响应结构 {\"databases\":[...]}")
+    @GetMapping("/databases")
+    public ResultJson listDatabases() {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (KnowledgeBase kb : kbService.list()) {
+            rows.add(kbService.serializeKnowledgeBase(kb));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("databases", rows);
+        return ResultJson.ok(body);
     }
 
-    @Operation(summary = "分块预设清单", description = "供设置界面渲染下拉（value/label/description）。"
-            + "预设决定切分方式，具体参数由 chunk_parser_config 按「知识库 → 文件 → 请求」深合并")
-    @GetMapping("/chunk-presets")
-    public ResultJson chunkPresets() {
-        return ResultJson.ok(ChunkPresets.getChunkPresetOptions());
+    @Operation(summary = "新建知识库", description = "body: database_name(必填)/description/kb_type/"
+            + "additional_params/embedding_model_spec/llm_model_spec/share_config")
+    @PostMapping("/databases")
+    public ResultJson createDatabase(@RequestBody Map<String, Object> body) {
+        String name = str(body.get("database_name"));
+        if (name == null || name.isBlank()) name = str(body.get("name"));
+        if (name == null || name.isBlank()) return ResultJson.error("database_name 不能为空");
+        KnowledgeBase kb = kbService.create(body, name);
+        Map<String, Object> r = kbService.serializeKnowledgeBase(kb);
+        r.put("files", new LinkedHashMap<>());   // 与参考实现一致：新建响应带空 files
+        return ResultJson.ok(r);
+    }
+
+    @Operation(summary = "可访问的知识库", description = "供智能体配置使用；响应 {\"databases\":[...]}")
+    @GetMapping("/databases/accessible")
+    public ResultJson accessibleDatabases() {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (KnowledgeBase kb : kbService.list()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", kb.getName());
+            m.put("kb_id", kb.getKbId());
+            m.put("description", kb.getDescription() == null ? "" : kb.getDescription());
+            m.put("created_by", kb.getCreatedBy());
+            m.put("kb_type", kb.getKbType() == null || kb.getKbType().isBlank() ? "milvus" : kb.getKbType());
+            m.put("supports_documents", true);
+            rows.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("databases", rows);
+        return ResultJson.ok(body);
     }
 
     @Operation(summary = "知识库详情")
-    @GetMapping("/{id}")
-    public ResultJson get(@PathVariable String id) {
-        Object kb = kbService.get(id);
-        return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kb);
+    @GetMapping("/databases/{kbId}")
+    public ResultJson getDatabase(@PathVariable String kbId) {
+        KnowledgeBase kb = kbService.get(kbId);
+        return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kbService.serializeKnowledgeBase(kb));
     }
 
-    @Operation(summary = "新建知识库", description = "body: name(必填)/description/queryParams/isDefault/shareConfig；"
-            + "queryParams 为 JSON 字符串，留空表示继承全局检索设置")
-    @PostMapping
-    public ResultJson create(@RequestBody Map<String, Object> body) {
-        if (body.get("name") == null || String.valueOf(body.get("name")).isBlank()) {
-            return ResultJson.error("知识库名称不能为空");
-        }
-        return ResultJson.ok(kbService.create(body, null));
+    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；"
+            + "additional_params 为**合并**语义（保留未提及的键，如 chunk_preset_id）")
+    @PutMapping("/databases/{kbId}")
+    public ResultJson updateDatabase(@PathVariable String kbId, @RequestBody Map<String, Object> body) {
+        KnowledgeBase kb = kbService.update(kbId, body);
+        return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kbService.serializeKnowledgeBase(kb));
     }
 
-    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams 传 null/空串表示清空并恢复继承全局")
-    @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
-        Object kb = kbService.update(id, body);
-        return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kb);
-    }
-
-    @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）")
-    @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
-        String reason = kbService.delete(id);
+    @Operation(summary = "删除知识库", description = "默认库、以及库下仍有文档时拒绝删除")
+    @DeleteMapping("/databases/{kbId}")
+    public ResultJson deleteDatabase(@PathVariable String kbId) {
+        String reason = kbService.delete(kbId);
         if (reason != null) return ResultJson.error(reason);
-        return ResultJson.ok(Map.of("id", id));
-    }
-
-    @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回默认库（即 kb_id 置空）")
-    @PutMapping("/doc/{docId}")
-    public ResultJson moveDoc(@PathVariable String docId, @RequestBody Map<String, Object> body) {
-        Object kbId = body.get("kbId");
-        boolean ok = kbService.moveDoc(docId, kbId == null ? null : String.valueOf(kbId));
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("docId", docId);
-        r.put("kbId", kbId);
-        return ok ? ResultJson.ok(r) : ResultJson.error("文档不存在");
+        r.put("kb_id", kbId);
+        return ResultJson.ok(r);
     }
 
-    /**
-     * 检索测试：不经问答链路，直接返回该知识库范围内的召回片段与分数。
-     * <p>用于验证两件事：①按库隔离是否生效（换库后命中集合应不同）；
-     * ②库上的检索参数是否作用于检索（改阈值后命中数应变化）。
-     * <p>范围口径与问答链路一致：库内文档集合（含默认库时并上 kb_id 为空的文档）；
-     * 库 ID 配错时得到空集合，不会退化为全库。
-     */
-    @Operation(summary = "检索测试", description = "body: {query(必填), topK(可选，默认 10)}；"
-            + "返回该库范围内的召回片段与分数，用于验证按库隔离与库级检索参数")
-    @PostMapping("/{id}/retrieve")
-    public ResultJson retrieve(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    // ==================== 分块预设 ====================
+
+    @Operation(summary = "分块预设清单", description = "响应 {\"chunk_presets\":[{value,label,description}],\"message\":\"success\"}")
+    @GetMapping("/chunk-presets")
+    public ResultJson chunkPresets() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("chunk_presets", ChunkPresets.getChunkPresetOptions());
+        body.put("message", "success");
+        return ResultJson.ok(body);
+    }
+
+    // ==================== 检索参数与检索测试 ====================
+
+    @Operation(summary = "读检索参数", description = "库级检索参数（空 = 未配置，回落全局）")
+    @GetMapping("/databases/{kbId}/query-params")
+    public ResultJson getQueryParams(@PathVariable String kbId) {
+        KnowledgeBase kb = kbService.get(kbId);
+        if (kb == null) return ResultJson.error("知识库不存在");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("kb_id", kbId);
+        body.put("query_params", kbService.parseQueryParamsPublic(kb.getQueryParams()));
+        return ResultJson.ok(body);
+    }
+
+    @Operation(summary = "写检索参数", description = "body 直接为参数对象（如 {\"retrieval.vecThreshold\":\"0.3\"}）；"
+            + "传空对象表示清空、恢复继承全局")
+    @PutMapping("/databases/{kbId}/query-params")
+    public ResultJson putQueryParams(@PathVariable String kbId, @RequestBody Map<String, Object> body) {
+        KnowledgeBase kb = kbService.saveQueryParams(kbId, body);
+        if (kb == null) return ResultJson.error("知识库不存在");
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("kb_id", kbId);
+        r.put("query_params", kbService.parseQueryParamsPublic(kb.getQueryParams()));
+        return ResultJson.ok(r);
+    }
+
+    @Operation(summary = "检索测试", description = "不经问答链路，直接返回该库范围内的召回片段与分数；"
+            + "body: {query(必填), topK(可选，默认 10)}")
+    @PostMapping("/databases/{kbId}/query-test")
+    public ResultJson queryTest(@PathVariable String kbId, @RequestBody Map<String, Object> body) {
         Object q = body == null ? null : body.get("query");
         String query = q == null ? "" : String.valueOf(q).trim();
         if (query.isEmpty()) return ResultJson.error("query 不能为空");
-        KnowledgeBase kb = kbService.get(id);
+        KnowledgeBase kb = kbService.get(kbId);
         if (kb == null) return ResultJson.error("知识库不存在");
         int topK = 10;
         Object tk = body == null ? null : body.get("topK");
         if (tk instanceof Number n) topK = Math.max(1, Math.min(50, n.intValue()));
 
-        Set<String> scope = kbService.docIdsOf(List.of(id));
+        Set<String> scope = kbService.docIdsOf(List.of(kbId));
         List<HybridRetrievalService.Hit> hits = retrievalService.search(query);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (HybridRetrievalService.Hit h : hits) {
-            if (h.docId() == null || !scope.contains(h.docId())) continue;   // 按库过滤
+            if (h.docId() == null || !scope.contains(h.docId())) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("knowledgeId", h.knowledgeId());
             m.put("docId", h.docId());
@@ -136,13 +191,17 @@ public class KnowledgeBaseController {
             if (rows.size() >= topK) break;
         }
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("kbId", id);
-        r.put("kbName", kb.getName());
+        r.put("kb_id", kbId);
+        r.put("name", kb.getName());
         r.put("query", query);
-        r.put("scopeDocCount", scope.size());   // 本库范围内的文档数（0 = 库是空的）
-        r.put("recalledTotal", hits.size());    // 过滤前总召回（用于对比隔离效果）
+        r.put("scopeDocCount", scope.size());
+        r.put("recalledTotal", hits.size());
         r.put("hitCount", rows.size());
         r.put("hits", rows);
         return ResultJson.ok(r);
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 }
