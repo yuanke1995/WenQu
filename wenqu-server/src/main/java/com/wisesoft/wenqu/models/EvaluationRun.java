@@ -24,7 +24,7 @@ public class EvaluationRun {
     @TableField("kb_id")
     private String kbId;  // 外键 → knowledge_bases.kb_id，非空
     @TableField("dataset_id")
-    private String datasetId;
+    private String datasetId;  // 外键 → evaluation_datasets.dataset_id
     private String status;  // 默认 "running"
     @TableField("retrieval_config")
     private String retrievalConfig;

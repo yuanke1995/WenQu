@@ -21,7 +21,7 @@ public class EvaluationDatasetItem {
     @TableField("item_id")
     private String itemId;  // 唯一，非空
     @TableField("dataset_id")
-    private String datasetId;
+    private String datasetId;  // 外键 → evaluation_datasets.dataset_id，非空
     @TableField("kb_id")
     private String kbId;  // 外键 → knowledge_bases.kb_id，非空
     @TableField("item_index")

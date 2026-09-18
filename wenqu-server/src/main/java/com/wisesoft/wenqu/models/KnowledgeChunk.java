@@ -40,7 +40,7 @@ public class KnowledgeChunk {
     @TableField("graph_indexed")
     private Boolean graphIndexed;  // 默认 False
     @TableField("graph_extraction_details")
-    private String graphExtractionDetails;
+    private String graphExtractionDetails;  // 非空，默认 lambda: {"status": "pending"
     @TableField("ent_ids")
     private String entIds;
     private String tags;

@@ -22,7 +22,7 @@ public class Skill {
     private String name;  // 非空
     private String description;  // 非空
     @TableField("source_type")
-    private String sourceType;
+    private String sourceType;  // 非空，默认 "upload"
     @TableField("tool_dependencies")
     private String toolDependencies;  // 非空，默认 list
     @TableField("mcp_dependencies")

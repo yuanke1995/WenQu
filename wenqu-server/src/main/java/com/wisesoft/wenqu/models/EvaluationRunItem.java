@@ -19,9 +19,9 @@ public class EvaluationRunItem {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
     @TableField("run_id")
-    private String runId;
+    private String runId;  // 外键 → evaluation_runs.run_id，非空
     @TableField("dataset_item_id")
-    private String datasetItemId;
+    private String datasetItemId;  // 外键 → evaluation_dataset_items.item_id
     @TableField("item_index")
     private Integer itemIndex;  // 非空
     @TableField("query_text")

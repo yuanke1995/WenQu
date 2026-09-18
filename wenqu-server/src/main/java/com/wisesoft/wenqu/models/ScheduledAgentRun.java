@@ -19,7 +19,7 @@ public class ScheduledAgentRun {
     @TableId(value = "id", type = IdType.AUTO)
     private String id;  // 主键
     @TableField("job_id")
-    private String jobId;
+    private String jobId;  // 外键 → scheduled_agent_jobs.id，非空
     @TableField("request_id")
     private String requestId;  // 非空
     @TableField("thread_id")

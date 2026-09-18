@@ -19,7 +19,7 @@ public class AgentRunAttempt {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
     @TableField("run_id")
-    private String runId;
+    private String runId;  // 外键 → agent_runs.id，非空
     @TableField("attempt_no")
     private Integer attemptNo;  // 非空
     @TableField("worker_id")
