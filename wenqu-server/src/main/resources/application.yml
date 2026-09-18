@@ -1,0 +1,61 @@
+server:
+  port: 8095
+  servlet:
+    context-path: /v2
+  # SSE 长连接：与问答流式输出配合，避免被容器超时切断
+  tomcat:
+    connection-timeout: 300s
+
+spring:
+  application:
+    name: wenqu-server
+  # 首期复用现有业务库（知识库/文档/会话表同源），便于与旧后端并行对比验证；
+  # 后续按新模型演进 schema 时再切换
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/ai_doc_assistant?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: ${WENQU_DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      timeout: 3s
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# 模型：与旧后端共用同一网关（OpenAI 兼容），值以数据库配置为准，这里只放最小兜底
+wenqu:
+  chat:
+    base-url: ${WENQU_LLM_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}
+    completions-path: /v1/chat/completions
+    api-key: ${WENQU_LLM_API_KEY:}
+    model: qwen3.7-flash-2026-07-15
+    temperature: 0.3
+  embedding:
+    base-url: ${WENQU_LLM_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}
+    embeddings-path: /v1/embeddings
+    api-key: ${WENQU_LLM_API_KEY:}
+    model: qwen3.7-text-embedding
+  jwt:
+    # 未配置时随机生成（重启后旧令牌失效）；生产请通过环境变量固定
+    secret: ${WENQU_JWT_SECRET:}
+
+logging:
+  level:
+    root: info
+    com.wisesoft.wenqu: debug
