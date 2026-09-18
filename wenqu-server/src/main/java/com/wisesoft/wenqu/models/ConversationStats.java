@@ -19,7 +19,7 @@ public class ConversationStats {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
     @TableField("conversation_id")
-    private String conversationId;
+    private Integer conversationId;  // 唯一，外键 → conversations.id，非空
     @TableField("message_count")
     private Integer messageCount;  // 默认 0
     @TableField("total_tokens")

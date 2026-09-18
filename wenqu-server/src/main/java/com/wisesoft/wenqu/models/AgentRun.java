@@ -23,11 +23,11 @@ public class AgentRun {
     @TableField("runtime_scope_id")
     private String runtimeScopeId;  // 非空
     @TableField("runtime_cleanup_pending")
-    private String runtimeCleanupPending;
+    private Boolean runtimeCleanupPending;  // 非空，默认 False
     @TableField("agent_slug")
     private String agentSlug;  // 非空
     private String uid;  // 非空
-    private String status;
+    private String status;  // 非空，默认 "pending"
     @TableField("request_id")
     private String requestId;  // 唯一，非空
     private String source;  // 非空，默认 "chat"
@@ -37,13 +37,13 @@ public class AgentRun {
     @TableField("origin_metadata")
     private String originMetadata;  // 非空，默认 dict
     @TableField("conversation_id")
-    private String conversationId;
+    private Integer conversationId;  // 外键 → conversations.id
     @TableField("created_by_run_id")
     private String createdByRunId;
     @TableField("subagent_thread_relation_id")
-    private String subagentThreadRelationId;
+    private Integer subagentThreadRelationId;  // 外键 → subagent_threads.id
     @TableField("run_type")
-    private String runType;
+    private String runType;  // 非空，默认 "chat"
     @TableField("input_message_id")
     private Integer inputMessageId;
     @TableField("output_message_id")

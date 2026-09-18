@@ -23,9 +23,9 @@ public class KnowledgeGraphTriple {
     @TableField("kb_id")
     private String kbId;  // 外键 → knowledge_bases.kb_id，非空
     @TableField("source_entity_id")
-    private String sourceEntityId;
+    private String sourceEntityId;  // 外键 → knowledge_graph_entities.entity_id，非空
     @TableField("target_entity_id")
-    private String targetEntityId;
+    private String targetEntityId;  // 外键 → knowledge_graph_entities.entity_id，非空
     @TableField("relation_type")
     private String relationType;  // 非空
     private String content;  // 非空

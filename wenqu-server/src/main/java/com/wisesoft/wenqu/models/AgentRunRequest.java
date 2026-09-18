@@ -32,14 +32,14 @@ public class AgentRunRequest {
     @TableField("origin_metadata")
     private String originMetadata;  // 非空，默认 dict
     @TableField("queue_policy")
-    private String queuePolicy;
-    private String status;
+    private String queuePolicy;  // 非空，默认 "enqueue"
+    private String status;  // 非空，默认 "queued"
     @TableField("input_message_id")
     private Integer inputMessageId;  // 外键 → messages.id，非空
     @TableField("dispatched_run_id")
     private String dispatchedRunId;  // 外键 → agent_runs.id
     @TableField("input_payload")
-    private String inputPayload;
+    private String inputPayload;  // 非空，默认 dict
     @TableField("error_message")
     private String errorMessage;
     @TableField("created_at")
@@ -47,5 +47,5 @@ public class AgentRunRequest {
     @TableField("dispatched_at")
     private LocalDateTime dispatchedAt;
     @TableField("updated_at")
-    private String updatedAt;
+    private LocalDateTime updatedAt;  // 非空，默认 utc_now_naive
 }

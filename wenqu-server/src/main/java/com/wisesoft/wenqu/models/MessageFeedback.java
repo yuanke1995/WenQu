@@ -19,7 +19,7 @@ public class MessageFeedback {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
     @TableField("message_id")
-    private String messageId;
+    private Integer messageId;  // 外键 → messages.id，非空
     private String uid;  // 非空
     private String rating;  // 非空
     private String reason;

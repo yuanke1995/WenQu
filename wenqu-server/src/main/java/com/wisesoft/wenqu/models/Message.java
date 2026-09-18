@@ -19,7 +19,7 @@ public class Message {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
     @TableField("conversation_id")
-    private String conversationId;
+    private Integer conversationId;  // 外键 → conversations.id，非空
     private String role;  // 非空
     private String content;  // 非空
     @TableField("message_type")

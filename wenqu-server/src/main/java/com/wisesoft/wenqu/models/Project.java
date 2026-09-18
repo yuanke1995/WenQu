@@ -18,7 +18,7 @@ public class Project {
 
     @TableId(value = "id", type = IdType.AUTO)
     private String id;  // 主键
-    private String uid;
+    private String uid;  // 外键 → users.uid，非空
     private String name;
     @TableField("selection_status")
     private String selectionStatus;  // 非空
@@ -34,5 +34,5 @@ public class Project {
     @TableField("created_at")
     private LocalDateTime createdAt;  // 非空，默认 utc_now_naive
     @TableField("updated_at")
-    private String updatedAt;
+    private LocalDateTime updatedAt;  // 非空，默认 utc_now_naive
 }

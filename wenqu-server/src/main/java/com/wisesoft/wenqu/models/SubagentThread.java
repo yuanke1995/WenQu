@@ -20,9 +20,9 @@ public class SubagentThread {
     private Integer id;  // 主键
     private String uid;  // 非空
     @TableField("parent_conversation_id")
-    private String parentConversationId;
+    private Integer parentConversationId;  // 外键 → conversations.id，非空
     @TableField("child_conversation_id")
-    private String childConversationId;
+    private Integer childConversationId;  // 唯一，外键 → conversations.id，非空
     @TableField("child_thread_id")
     private String childThreadId;  // 唯一，非空
     @TableField("subagent_slug")
