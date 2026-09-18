@@ -267,9 +267,9 @@ public class OptionsService {
             Object.class);
 
     /** OCR 引擎清单端口：knowledge.parser.capabilities 照搬后注册（缺省空集）。 */
-    private static volatile Supplier<Set<String>> ocrEngineIds = Set::of;
+    private static volatile Supplier<List<String>> ocrEngineIds = List::of;
 
-    public static void registerOcrEngineIds(Supplier<Set<String>> supplier) {
+    public static void registerOcrEngineIds(Supplier<List<String>> supplier) {
         ocrEngineIds = supplier;
     }
 
@@ -546,7 +546,7 @@ public class OptionsService {
             return normalizeHttpUrl(normalized);
         }
         if ("ocr_engine".equals(field.get("type")) && !normalized.isEmpty()) {
-            Set<String> engineIds = ocrEngineIds.get();
+            List<String> engineIds = ocrEngineIds.get();
             if (!"disable".equals(normalized) && !engineIds.contains(normalized)) {
                 throw new IllegalArgumentException("不支持的默认 OCR 引擎: " + normalized);
             }
