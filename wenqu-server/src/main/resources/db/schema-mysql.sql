@@ -278,7 +278,10 @@ CREATE TABLE IF NOT EXISTS `projects` (
   UNIQUE KEY `uq_projects_uid_idempotency_key` (`uid`, `idempotency_key`),
   KEY `idx_projects_uid` (`uid`),
   KEY `idx_projects_selection_status` (`selection_status`),
-  KEY `idx_projects_status` (`status`)
+  KEY `idx_projects_status` (`status`),
+  CONSTRAINT `ck_projects_selection_status` CHECK (selection_status IN ('implicit', 'selectable')),
+  CONSTRAINT `ck_projects_directory_mode` CHECK (directory_mode IN ('managed', 'linked')),
+  CONSTRAINT `ck_projects_status` CHECK (status IN ('active', 'deleted'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `departments` (
@@ -447,7 +450,8 @@ CREATE TABLE IF NOT EXISTS `messages` (
   PRIMARY KEY (`id`),
   KEY `idx_messages_conversation_id` (`conversation_id`),
   KEY `idx_messages_run_id` (`run_id`),
-  KEY `idx_messages_request_id` (`request_id`)
+  KEY `idx_messages_request_id` (`request_id`),
+  CONSTRAINT `ck_messages_execution_status` CHECK (execution_status IS NULL OR execution_status IN ('running', 'completed', 'failed', 'interrupted', 'abandoned'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 条件唯一索引（MySQL 不支持部分索引，未建）：uq_messages_run_role_operation_id (run_id, role, operation_id)
 -- 条件唯一索引（MySQL 不支持部分索引，未建）：ix_messages_run_sequence (run_id, sequence)
@@ -625,7 +629,8 @@ CREATE TABLE IF NOT EXISTS `scheduled_agent_jobs` (
   UNIQUE KEY `uq_scheduled_agent_jobs_uid_creation_request` (`uid`, `creation_request_id`),
   KEY `idx_scheduled_agent_jobs_uid` (`uid`),
   KEY `idx_scheduled_agent_jobs_project_id` (`project_id`),
-  KEY `idx_scheduled_agent_jobs_deleted_at` (`deleted_at`)
+  KEY `idx_scheduled_agent_jobs_deleted_at` (`deleted_at`),
+  CONSTRAINT `ck_scheduled_agent_jobs_tool_approval_mode` CHECK (tool_approval_mode IN ('default', 'always_trust'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `scheduled_agent_runs` (
@@ -745,7 +750,8 @@ CREATE TABLE IF NOT EXISTS `agent_runs` (
   KEY `idx_agent_runs_external_id` (`external_id`),
   KEY `idx_agent_runs_conversation_id` (`conversation_id`),
   KEY `idx_agent_runs_created_by_run_id` (`created_by_run_id`),
-  KEY `idx_agent_runs_subagent_thread_relation_id` (`subagent_thread_relation_id`)
+  KEY `idx_agent_runs_subagent_thread_relation_id` (`subagent_thread_relation_id`),
+  CONSTRAINT `ck_agent_runs_nonterminal_shape` CHECK (status IN ('completed', 'failed', 'cancelled', 'interrupted') OR ( runtime_scope_id <> '' AND conversation_thread_id <> '' AND ((run_type = 'chat' AND runtime_scope_id = conversation_thread_id AND created_by_run_id IS NULL AND subagent_thread_relation_id IS NULL) OR (run_type = 'resume' AND runtime_scope_id = conversation_thread_id AND created_by_run_id IS NOT NULL AND subagent_thread_relation_id IS NULL) OR (run_type = 'subagent' AND created_by_run_id IS NOT NULL AND subagent_thread_relation_id IS NOT NULL)) ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `agent_run_attempts` (

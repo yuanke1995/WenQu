@@ -16,7 +16,7 @@ import lombok.Data;
 @TableName("projects")
 public class Project {
 
-    @TableId(value = "id", type = IdType.AUTO)
+    @TableId(value = "id", type = IdType.INPUT)
     private String id;  // 主键
     private String uid;  // 外键 → users.uid，非空
     private String name;
