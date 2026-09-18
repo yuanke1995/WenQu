@@ -9,6 +9,18 @@ server:
 spring:
   application:
     name: wenqu-server
+  # 模型客户端由配置服务按数据库配置动态构建（同一网关可切 chat/embedding/rerank），
+  # 不使用 Spring AI 的自动配置——否则启动期会强制要求 spring.ai.openai.api-key。
+  # 后续需要向量存储时再按同一思路接入。
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
+      - org.springframework.ai.vectorstore.redis.autoconfigure.RedisVectorStoreAutoConfiguration
   # 首期复用现有业务库（知识库/文档/会话表同源），便于与旧后端并行对比验证；
   # 后续按新模型演进 schema 时再切换
   datasource:
