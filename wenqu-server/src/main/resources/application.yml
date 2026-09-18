@@ -51,9 +51,16 @@ wenqu:
     embeddings-path: /v1/embeddings
     api-key: ${WENQU_LLM_API_KEY:}
     model: qwen3.7-text-embedding
-  jwt:
-    # 未配置时随机生成（重启后旧令牌失效）；生产请通过环境变量固定
-    secret: ${WENQU_JWT_SECRET:}
+  auth:
+    # 未配置时启动期随机生成（重启后旧令牌失效）；生产请通过环境变量固定
+    jwt-secret: ${WENQU_JWT_SECRET:}
+    token-ttl-hours: 168
+    issuer: wenqu
+    audience: wenqu-api
+    require-login: true
+    max-login-failures: 5
+    lock-minutes: 15
+    min-password-length: 6
 
 logging:
   level:
