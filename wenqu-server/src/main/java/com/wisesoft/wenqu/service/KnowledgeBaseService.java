@@ -346,19 +346,19 @@ public class KnowledgeBaseService {
             for (AiDocument d : docs) {
                 totalSize += d.getFileSize() == null ? 0 : d.getFileSize();
                 chunkCount += d.getChunkCount() == null ? 0 : d.getChunkCount();
-                Integer st = d.getStatus();
-                if (st != null && st == 2) {          // 2 = 解析中
-                    processing++;
-                    pendingParse++;
-                }
+                // 计数口径与参考实现的两个待处理集合保持一致（待解析仅 uploaded；待索引含解析失败可重试）
+                String st = d.getStatus();
+                if (FileStatus.isPendingParse(st)) pendingParse++;
+                if (FileStatus.isPendingIndex(st)) pendingIndex++;
+                if (FileStatus.PARSING.equals(st) || FileStatus.INDEXING.equals(st)) processing++;
             }
-            // 待索引：有知识块但存在未向量化的块（采样该库文档的知识块统计）
+            // 另计向量缺口：文件状态都是终态、但仍有块未向量化时，也算存在待索引
             long totalChunks = knowledgeMapper.selectCount(
                     new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds));
             long indexedChunks = knowledgeMapper.selectCount(
                     new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds)
                             .isNotNull(Knowledge::getVectorId).ne(Knowledge::getVectorId, ""));
-            if (totalChunks > indexedChunks) pendingIndex = 1;   // 以"有未索引块"计一个待索引单位
+            if (totalChunks > indexedChunks) pendingIndex++;
             chunkCount = Math.max(chunkCount, totalChunks);
         }
         Map<String, Object> stats = new LinkedHashMap<>();

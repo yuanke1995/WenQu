@@ -1,0 +1,732 @@
+-- 由参考实现的 SQLAlchemy 模型生成（字段名照搬，类型做 MySQL 映射）
+-- 生成来源：storage/postgres/models_knowledge.py + models_business.py
+-- 说明：JSON_VALUE → JSON；DateTime(timezone=True) → DATETIME；Boolean → TINYINT(1)；
+--      外键关系保留为索引（不建物理外键，避免 MySQL 级联与业务删除逻辑打架）
+
+SET NAMES utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_bases` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `description` LONGTEXT,
+  `kb_type` VARCHAR(32) NOT NULL,
+  `embedding_model_spec` VARCHAR(255),
+  `llm_model_spec` VARCHAR(255),
+  `query_params` JSON,
+  `additional_params` JSON,
+  `share_config` JSON,
+  `mindmap` JSON,
+  `mindmap_file_ids` JSON,
+  `mindmap_metadata` JSON,
+  `sample_questions` JSON,
+  `created_by` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_knowledge_bases_kb_id` (`kb_id`),
+  KEY `idx_knowledge_bases_name` (`name`),
+  KEY `idx_knowledge_bases_kb_type` (`kb_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_files` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `file_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `parent_id` VARCHAR(64),
+  `filename` VARCHAR(512) NOT NULL,
+  `original_filename` VARCHAR(255),
+  `file_type` VARCHAR(255),
+  `path` VARCHAR(255),
+  `minio_url` VARCHAR(255),
+  `markdown_file` VARCHAR(255),
+  `status` VARCHAR(32) DEFAULT "uploaded",
+  `content_hash` VARCHAR(128),
+  `file_size` BIGINT,
+  `chunk_count` INT DEFAULT 0,
+  `token_count` BIGINT DEFAULT 0,
+  `content_type` VARCHAR(255),
+  `processing_params` JSON,
+  `is_folder` TINYINT(1) DEFAULT 0,
+  `error_message` LONGTEXT,
+  `processing_task_id` VARCHAR(64),
+  `processing_owner` VARCHAR(255),
+  `created_by` VARCHAR(255),
+  `updated_by` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_knowledge_files_file_id` (`file_id`),
+  KEY `idx_knowledge_files_kb_id` (`kb_id`),
+  KEY `idx_knowledge_files_parent_id` (`parent_id`),
+  KEY `idx_knowledge_files_status` (`status`),
+  KEY `idx_knowledge_files_content_hash` (`content_hash`),
+  KEY `idx_knowledge_files_processing_task_id` (`processing_task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_chunks` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `chunk_id` VARCHAR(128) NOT NULL,
+  `file_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `chunk_index` INT NOT NULL,
+  `content` LONGTEXT NOT NULL,
+  `start_char_pos` INT,
+  `end_char_pos` INT,
+  `start_token_pos` INT,
+  `end_token_pos` INT,
+  `graph_structure_indexed` TINYINT(1) NOT NULL DEFAULT 0,
+  `graph_indexed` TINYINT(1) DEFAULT 0,
+  `graph_extraction_details` VARCHAR(255),
+  `ent_ids` JSON,
+  `tags` JSON,
+  `extraction_result` JSON,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_knowledge_chunks_file_id` (`file_id`),
+  KEY `idx_knowledge_chunks_kb_id` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_graph_entities` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `entity_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `normalized_name` VARCHAR(512) NOT NULL,
+  `label` VARCHAR(128) NOT NULL,
+  `name` VARCHAR(512) NOT NULL,
+  `attributes` JSON,
+  `vector_status` VARCHAR(16) NOT NULL DEFAULT "pending",
+  `vector_attempt_count` INT NOT NULL DEFAULT 0,
+  `vector_last_error` LONGTEXT,
+  `vector_next_retry_at` DATETIME,
+  `vector_locked_until` DATETIME,
+  `vector_lock_token` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_knowledge_graph_entities_kb_id` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_graph_entity_mentions` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `entity_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `file_id` VARCHAR(64) NOT NULL,
+  `chunk_id` VARCHAR(128) NOT NULL,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_knowledge_graph_entity_mentions_entity_id` (`entity_id`),
+  KEY `idx_knowledge_graph_entity_mentions_kb_id` (`kb_id`),
+  KEY `idx_knowledge_graph_entity_mentions_file_id` (`file_id`),
+  KEY `idx_knowledge_graph_entity_mentions_chunk_id` (`chunk_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_graph_triples` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `triple_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `source_entity_id` VARCHAR(255),
+  `target_entity_id` VARCHAR(255),
+  `relation_type` VARCHAR(256) NOT NULL,
+  `content` LONGTEXT NOT NULL,
+  `vector_status` VARCHAR(16) NOT NULL DEFAULT "pending",
+  `vector_attempt_count` INT NOT NULL DEFAULT 0,
+  `vector_last_error` LONGTEXT,
+  `vector_next_retry_at` DATETIME,
+  `vector_locked_until` DATETIME,
+  `vector_lock_token` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_knowledge_graph_triples_kb_id` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `knowledge_graph_triple_mentions` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `triple_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `file_id` VARCHAR(64) NOT NULL,
+  `chunk_id` VARCHAR(128) NOT NULL,
+  `text` LONGTEXT,
+  `extractor_type` VARCHAR(255),
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_knowledge_graph_triple_mentions_triple_id` (`triple_id`),
+  KEY `idx_knowledge_graph_triple_mentions_kb_id` (`kb_id`),
+  KEY `idx_knowledge_graph_triple_mentions_file_id` (`file_id`),
+  KEY `idx_knowledge_graph_triple_mentions_chunk_id` (`chunk_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `evaluation_datasets` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `dataset_id` VARCHAR(64) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `description` LONGTEXT,
+  `item_count` INT DEFAULT 0,
+  `has_gold_chunks` TINYINT(1) DEFAULT 0,
+  `has_gold_answers` TINYINT(1) DEFAULT 0,
+  `build_metadata` JSON,
+  `created_by` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_evaluation_datasets_dataset_id` (`dataset_id`),
+  KEY `idx_evaluation_datasets_kb_id` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `evaluation_dataset_items` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `item_id` VARCHAR(64) NOT NULL,
+  `dataset_id` VARCHAR(255),
+  `kb_id` VARCHAR(80) NOT NULL,
+  `item_index` INT NOT NULL,
+  `query_text` LONGTEXT NOT NULL,
+  `gold_chunk_ids` JSON,
+  `gold_answer` LONGTEXT,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_evaluation_dataset_items_item_id` (`item_id`),
+  KEY `idx_evaluation_dataset_items_kb_id` (`kb_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `evaluation_runs` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `run_id` VARCHAR(64) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `kb_id` VARCHAR(80) NOT NULL,
+  `dataset_id` VARCHAR(255),
+  `status` VARCHAR(32) DEFAULT "running",
+  `retrieval_config` JSON,
+  `metrics` JSON,
+  `overall_score` DOUBLE,
+  `total_items` INT DEFAULT 0,
+  `completed_items` INT DEFAULT 0,
+  `started_at` DATETIME,
+  `completed_at` DATETIME,
+  `created_by` VARCHAR(255),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_evaluation_runs_run_id` (`run_id`),
+  KEY `idx_evaluation_runs_kb_id` (`kb_id`),
+  KEY `idx_evaluation_runs_status` (`status`),
+  KEY `idx_evaluation_runs_started_at` (`started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `evaluation_run_items` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `run_id` VARCHAR(255),
+  `dataset_item_id` VARCHAR(255),
+  `item_index` INT NOT NULL,
+  `query_text` LONGTEXT NOT NULL,
+  `gold_chunk_ids` JSON,
+  `gold_answer` LONGTEXT,
+  `generated_answer` LONGTEXT,
+  `retrieved_chunks` JSON,
+  `metrics` JSON,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `projects` (
+  `id` VARCHAR(64) NOT NULL,
+  `uid` VARCHAR(255),
+  `name` VARCHAR(255),
+  `selection_status` VARCHAR(20) NOT NULL,
+  `workdir_path` VARCHAR(512) NOT NULL,
+  `directory_mode` VARCHAR(20) NOT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT "active",
+  `deleted_at` DATETIME,
+  `idempotency_key` VARCHAR(128),
+  `created_at` DATETIME NOT NULL,
+  `updated_at` VARCHAR(255),
+  PRIMARY KEY (`id`),
+  KEY `idx_projects_selection_status` (`selection_status`),
+  KEY `idx_projects_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `departments` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(50) NOT NULL,
+  `description` VARCHAR(255),
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_departments_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `username` VARCHAR(255) NOT NULL,
+  `uid` VARCHAR(255) NOT NULL,
+  `phone_number` VARCHAR(255),
+  `avatar` VARCHAR(255),
+  `password_hash` VARCHAR(255) NOT NULL,
+  `role` VARCHAR(255) NOT NULL DEFAULT "user",
+  `department_id` INT,
+  `created_at` DATETIME,
+  `last_login` DATETIME,
+  `login_failed_count` INT NOT NULL DEFAULT 0,
+  `last_failed_login` DATETIME,
+  `login_locked_until` DATETIME,
+  `is_deleted` INT NOT NULL DEFAULT 0,
+  `deleted_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_users_username` (`username`),
+  UNIQUE KEY `uk_users_uid` (`uid`),
+  UNIQUE KEY `uk_users_phone_number` (`phone_number`),
+  KEY `idx_users_department_id` (`department_id`),
+  KEY `idx_users_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `agent_envs` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `uid` VARCHAR(255) NOT NULL,
+  `env` VARCHAR(255) NOT NULL,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_envs_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `user_config` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `uid` VARCHAR(255) NOT NULL,
+  `enable_memory` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_config_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `agents` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `slug` VARCHAR(80) NOT NULL,
+  `backend_id` VARCHAR(64) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `description` LONGTEXT,
+  `icon` VARCHAR(255),
+  `pics` VARCHAR(255) NOT NULL,
+  `config_json` VARCHAR(255) NOT NULL,
+  `share_config` JSON NOT NULL,
+  `is_default` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_subagent` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_by` VARCHAR(64),
+  `updated_by` VARCHAR(64),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agents_slug` (`slug`),
+  KEY `idx_agents_backend_id` (`backend_id`),
+  KEY `idx_agents_is_default` (`is_default`),
+  KEY `idx_agents_is_subagent` (`is_subagent`),
+  KEY `idx_agents_created_by` (`created_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `skills` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `slug` VARCHAR(128) NOT NULL,
+  `name` VARCHAR(128) NOT NULL,
+  `description` LONGTEXT NOT NULL,
+  `source_type` VARCHAR(255),
+  `tool_dependencies` VARCHAR(255) NOT NULL,
+  `mcp_dependencies` VARCHAR(255) NOT NULL,
+  `skill_dependencies` VARCHAR(255) NOT NULL,
+  `dir_path` VARCHAR(512) NOT NULL,
+  `version` VARCHAR(64),
+  `content_hash` VARCHAR(128),
+  `share_config` JSON NOT NULL,
+  `enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_by` VARCHAR(64),
+  `updated_by` VARCHAR(64),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_skills_slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `conversations` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `thread_id` VARCHAR(64) NOT NULL,
+  `creation_request_id` VARCHAR(64),
+  `uid` VARCHAR(64) NOT NULL,
+  `agent_id` VARCHAR(64) NOT NULL,
+  `title` VARCHAR(255),
+  `status` VARCHAR(20) DEFAULT "active",
+  `is_pinned` TINYINT(1) NOT NULL DEFAULT 0,
+  `last_viewed_run_id` VARCHAR(64),
+  `project_id` VARCHAR(64) NOT NULL,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  `extra_metadata` VARCHAR(255),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_conversations_thread_id` (`thread_id`),
+  KEY `idx_conversations_uid` (`uid`),
+  KEY `idx_conversations_agent_id` (`agent_id`),
+  KEY `idx_conversations_is_pinned` (`is_pinned`),
+  KEY `idx_conversations_project_id` (`project_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `subagent_threads` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `uid` VARCHAR(64) NOT NULL,
+  `parent_conversation_id` VARCHAR(255),
+  `child_conversation_id` VARCHAR(255),
+  `child_thread_id` VARCHAR(64) NOT NULL,
+  `subagent_slug` VARCHAR(64) NOT NULL,
+  `created_by_run_id` VARCHAR(64) NOT NULL,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_subagent_threads_child_thread_id` (`child_thread_id`),
+  KEY `idx_subagent_threads_uid` (`uid`),
+  KEY `idx_subagent_threads_subagent_slug` (`subagent_slug`),
+  KEY `idx_subagent_threads_created_by_run_id` (`created_by_run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `messages` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `conversation_id` VARCHAR(255),
+  `role` VARCHAR(20) NOT NULL,
+  `content` LONGTEXT NOT NULL,
+  `message_type` VARCHAR(30) DEFAULT "text",
+  `created_at` DATETIME,
+  `token_count` INT,
+  `extra_metadata` VARCHAR(255),
+  `image_content` LONGTEXT,
+  `run_id` VARCHAR(64),
+  `request_id` VARCHAR(64),
+  `delivery_status` VARCHAR(32) NOT NULL DEFAULT "complete",
+  `operation_id` VARCHAR(128),
+  `started_at` DATETIME,
+  `finished_at` DATETIME,
+  `duration_ms` BIGINT,
+  `sequence` BIGINT,
+  `execution_status` VARCHAR(32),
+  `usage` JSON,
+  PRIMARY KEY (`id`),
+  KEY `idx_messages_run_id` (`run_id`),
+  KEY `idx_messages_request_id` (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `tool_calls` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `message_id` INT NOT NULL,
+  `langgraph_tool_call_id` VARCHAR(100),
+  `tool_name` VARCHAR(100) NOT NULL,
+  `tool_input` VARCHAR(255),
+  `tool_output` LONGTEXT,
+  `status` VARCHAR(20) DEFAULT "pending",
+  `error_message` LONGTEXT,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_tool_calls_message_id` (`message_id`),
+  KEY `idx_tool_calls_langgraph_tool_call_id` (`langgraph_tool_call_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `conversation_stats` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `conversation_id` VARCHAR(255),
+  `message_count` INT DEFAULT 0,
+  `total_tokens` INT DEFAULT 0,
+  `model_used` VARCHAR(100),
+  `user_feedback` VARCHAR(255),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `operation_logs` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `operation` VARCHAR(255) NOT NULL,
+  `details` LONGTEXT,
+  `ip_address` VARCHAR(255),
+  `timestamp` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_operation_logs_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `message_feedbacks` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `message_id` VARCHAR(255),
+  `uid` VARCHAR(64) NOT NULL,
+  `rating` VARCHAR(10) NOT NULL,
+  `reason` LONGTEXT,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_message_feedbacks_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `mcp_servers` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `slug` VARCHAR(100) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `description` VARCHAR(500),
+  `transport` VARCHAR(20) NOT NULL,
+  `url` VARCHAR(500),
+  `command` VARCHAR(500),
+  `args` VARCHAR(255),
+  `env` VARCHAR(255),
+  `headers` VARCHAR(255),
+  `timeout` INT,
+  `sse_read_timeout` INT,
+  `tags` VARCHAR(255),
+  `icon` VARCHAR(50),
+  `enabled` INT NOT NULL DEFAULT 1,
+  `disabled_tools` VARCHAR(255),
+  `created_by` VARCHAR(100) NOT NULL,
+  `updated_by` VARCHAR(100) NOT NULL,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_mcp_servers_slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `model_providers` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `provider_id` VARCHAR(100) NOT NULL,
+  `display_name` VARCHAR(100) NOT NULL,
+  `provider_type` VARCHAR(32) NOT NULL DEFAULT "openai",
+  `default_protocol` VARCHAR(64),
+  `base_url` VARCHAR(500) NOT NULL,
+  `embedding_base_url` VARCHAR(500),
+  `rerank_base_url` VARCHAR(500),
+  `models_endpoint` VARCHAR(200),
+  `embedding_models_endpoint` VARCHAR(200),
+  `rerank_models_endpoint` VARCHAR(200),
+  `api_key_env` VARCHAR(128),
+  `api_key` VARCHAR(500),
+  `capabilities` VARCHAR(255) NOT NULL,
+  `enabled_models` VARCHAR(255) NOT NULL,
+  `headers_json` VARCHAR(255),
+  `extra_json` VARCHAR(255),
+  `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `is_builtin` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_by` VARCHAR(100),
+  `updated_by` VARCHAR(100),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_model_providers_provider_id` (`provider_id`),
+  KEY `idx_model_providers_is_enabled` (`is_enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `config_options` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `key` VARCHAR(100) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `description` LONGTEXT NOT NULL,
+  `params` VARCHAR(255) NOT NULL,
+  `value` VARCHAR(255) NOT NULL,
+  `created_by` VARCHAR(100),
+  `updated_by` VARCHAR(100),
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_config_options_key` (`key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `tasks` (
+  `id` VARCHAR(32) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `type` VARCHAR(64) NOT NULL,
+  `status` VARCHAR(32) NOT NULL DEFAULT "pending",
+  `progress` DOUBLE NOT NULL,
+  `message` LONGTEXT NOT NULL,
+  `payload` VARCHAR(255),
+  `result` VARCHAR(255),
+  `error` LONGTEXT,
+  `cancel_requested` INT NOT NULL DEFAULT 0,
+  `handler_version` INT NOT NULL DEFAULT 1,
+  `dedupe_key` VARCHAR(64),
+  `attempt_count` INT NOT NULL DEFAULT 0,
+  `worker_id` VARCHAR(128),
+  `heartbeat_at` DATETIME,
+  `lease_expires_at` DATETIME,
+  `timeout_seconds` DOUBLE NOT NULL,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  `started_at` DATETIME,
+  `completed_at` DATETIME,
+  PRIMARY KEY (`id`),
+  KEY `idx_tasks_type` (`type`),
+  KEY `idx_tasks_status` (`status`),
+  KEY `idx_tasks_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `scheduled_agent_jobs` (
+  `id` VARCHAR(64) NOT NULL,
+  `uid` VARCHAR(64) NOT NULL,
+  `creation_request_id` VARCHAR(64) NOT NULL,
+  `creation_intent_hash` VARCHAR(64) NOT NULL,
+  `project_id` VARCHAR(64) NOT NULL,
+  `agent_slug` VARCHAR(64) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `prompt` LONGTEXT NOT NULL,
+  `tool_approval_mode` VARCHAR(32) NOT NULL DEFAULT "default",
+  `model_spec` VARCHAR(512),
+  `cron_expression` VARCHAR(100) NOT NULL,
+  `timezone` VARCHAR(64) NOT NULL,
+  `enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `deleted_at` DATETIME,
+  `next_run_at` DATETIME NOT NULL,
+  `created_at` DATETIME NOT NULL,
+  `updated_at` DATETIME NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_scheduled_agent_jobs_uid` (`uid`),
+  KEY `idx_scheduled_agent_jobs_project_id` (`project_id`),
+  KEY `idx_scheduled_agent_jobs_deleted_at` (`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `scheduled_agent_runs` (
+  `id` VARCHAR(64) NOT NULL,
+  `job_id` VARCHAR(255),
+  `request_id` VARCHAR(64) NOT NULL,
+  `thread_id` VARCHAR(64) NOT NULL,
+  `trigger` VARCHAR(16) NOT NULL DEFAULT "scheduled",
+  `occurrence_key` VARCHAR(128) NOT NULL,
+  `scheduled_for` DATETIME NOT NULL,
+  `project_id` VARCHAR(64) NOT NULL,
+  `agent_slug` VARCHAR(64) NOT NULL,
+  `conversation_title` VARCHAR(255) NOT NULL,
+  `prompt` LONGTEXT NOT NULL,
+  `tool_approval_mode` VARCHAR(32) NOT NULL,
+  `model_spec` VARCHAR(512),
+  `status` VARCHAR(32) NOT NULL DEFAULT "dispatching",
+  `error_message` LONGTEXT,
+  `created_at` DATETIME NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `api_keys` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `key_hash` VARCHAR(64) NOT NULL,
+  `key_prefix` VARCHAR(16) NOT NULL,
+  `request_id` VARCHAR(64),
+  `intent_hash` VARCHAR(64),
+  `name` VARCHAR(100) NOT NULL,
+  `user_id` INT NOT NULL,
+  `department_id` INT,
+  `expires_at` DATETIME,
+  `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
+  `revoked_at` DATETIME,
+  `last_used_at` DATETIME,
+  `created_by` VARCHAR(64) NOT NULL,
+  `created_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_api_keys_key_hash` (`key_hash`),
+  UNIQUE KEY `uk_api_keys_request_id` (`request_id`),
+  KEY `idx_api_keys_user_id` (`user_id`),
+  KEY `idx_api_keys_department_id` (`department_id`),
+  KEY `idx_api_keys_revoked_at` (`revoked_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `cli_auth_sessions` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `device_code_hash` VARCHAR(64) NOT NULL,
+  `user_code` VARCHAR(16) NOT NULL,
+  `status` VARCHAR(32) NOT NULL DEFAULT "pending",
+  `key_name` VARCHAR(100) NOT NULL,
+  `approved_user_id` INT,
+  `api_key_id` INT,
+  `created_at` DATETIME NOT NULL,
+  `expires_at` DATETIME NOT NULL,
+  `approved_at` DATETIME,
+  `consumed_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cli_auth_sessions_device_code_hash` (`device_code_hash`),
+  UNIQUE KEY `uk_cli_auth_sessions_user_code` (`user_code`),
+  KEY `idx_cli_auth_sessions_status` (`status`),
+  KEY `idx_cli_auth_sessions_approved_user_id` (`approved_user_id`),
+  KEY `idx_cli_auth_sessions_api_key_id` (`api_key_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `agent_runs` (
+  `id` VARCHAR(64) NOT NULL,
+  `conversation_thread_id` VARCHAR(64) NOT NULL,
+  `runtime_scope_id` VARCHAR(64) NOT NULL,
+  `runtime_cleanup_pending` VARCHAR(255),
+  `agent_slug` VARCHAR(64) NOT NULL,
+  `uid` VARCHAR(64) NOT NULL,
+  `status` VARCHAR(255),
+  `request_id` VARCHAR(64) NOT NULL,
+  `source` VARCHAR(32) NOT NULL DEFAULT "chat",
+  `channel` VARCHAR(32) NOT NULL DEFAULT "web",
+  `external_id` VARCHAR(128),
+  `origin_metadata` VARCHAR(255) NOT NULL,
+  `conversation_id` VARCHAR(255),
+  `created_by_run_id` VARCHAR(64),
+  `subagent_thread_relation_id` VARCHAR(255),
+  `run_type` VARCHAR(255),
+  `input_message_id` INT,
+  `output_message_id` INT,
+  `input_payload` VARCHAR(255) NOT NULL,
+  `token_usage` JSON NOT NULL,
+  `langfuse_trace_id` VARCHAR(64),
+  `error_type` VARCHAR(64),
+  `error_message` LONGTEXT,
+  `worker_id` VARCHAR(128),
+  `heartbeat_at` DATETIME,
+  `lease_expires_at` DATETIME,
+  `manifest` VARCHAR(255),
+  `manifest_fingerprint` VARCHAR(64),
+  `manifest_recorded_at` DATETIME,
+  `started_at` DATETIME,
+  `prepared_at` DATETIME,
+  `first_model_request_at` DATETIME,
+  `first_output_at` DATETIME,
+  `finished_at` DATETIME,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_runs_request_id` (`request_id`),
+  KEY `idx_agent_runs_conversation_thread_id` (`conversation_thread_id`),
+  KEY `idx_agent_runs_runtime_scope_id` (`runtime_scope_id`),
+  KEY `idx_agent_runs_agent_slug` (`agent_slug`),
+  KEY `idx_agent_runs_uid` (`uid`),
+  KEY `idx_agent_runs_external_id` (`external_id`),
+  KEY `idx_agent_runs_created_by_run_id` (`created_by_run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `agent_run_attempts` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `run_id` VARCHAR(255),
+  `attempt_no` INT NOT NULL,
+  `worker_id` VARCHAR(128) NOT NULL,
+  `started_at` DATETIME NOT NULL,
+  `heartbeat_at` DATETIME,
+  `lease_expires_at` DATETIME,
+  `finished_at` DATETIME,
+  `outcome` VARCHAR(255),
+  `error_type` VARCHAR(64),
+  `error_message` LONGTEXT,
+  `created_at` DATETIME,
+  `updated_at` DATETIME,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `agent_run_requests` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `request_id` VARCHAR(64) NOT NULL,
+  `uid` VARCHAR(64) NOT NULL,
+  `agent_slug` VARCHAR(64) NOT NULL,
+  `conversation_thread_id` VARCHAR(64) NOT NULL,
+  `source` VARCHAR(32) NOT NULL DEFAULT "chat",
+  `channel` VARCHAR(32) NOT NULL DEFAULT "web",
+  `external_id` VARCHAR(128),
+  `origin_metadata` VARCHAR(255) NOT NULL,
+  `queue_policy` VARCHAR(255),
+  `status` VARCHAR(255),
+  `input_message_id` INT NOT NULL,
+  `dispatched_run_id` VARCHAR(64),
+  `input_payload` VARCHAR(255),
+  `error_message` LONGTEXT,
+  `created_at` DATETIME NOT NULL,
+  `dispatched_at` DATETIME,
+  `updated_at` VARCHAR(255),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_run_requests_request_id` (`request_id`),
+  KEY `idx_agent_run_requests_external_id` (`external_id`),
+  KEY `idx_agent_run_requests_input_message_id` (`input_message_id`),
+  KEY `idx_agent_run_requests_dispatched_run_id` (`dispatched_run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
