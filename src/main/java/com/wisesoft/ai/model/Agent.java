@@ -39,6 +39,14 @@ public class Agent {
     private String knowledgeScope;
 
     /**
+     * 关联的知识库ID（逗号分隔）：决定该助手能看到哪些资料——**这是知识库范围的主路径**。
+     * <p>空/NULL = 使用默认知识库；文档归属由 {@code c_ai_document.kb_id} 决定，
+     * 因此不需要（也不应该）再由智能体逐个指定文档。
+     * 原 {@link #knowledgeScope} 降级为「库内再细选文档」的可选项：先按库过滤，再按文档 ID 取交集。
+     */
+    private String knowledgeBaseIds;
+
+    /**
      * 不使用知识库：0=使用（默认，按 knowledgeScope 约束范围）；1=纯角色智能体，整条跳过检索链路
      * （改写/深度思考检索/命中填充/子代理编排都不跑；用户手动 @ 的文档仍会被前置——手动指定优先于配置）。
      * 用于「通用法律顾问 / 写作助手」这类不挂资料的角色；与 knowledgeScope 互斥，开启时忽略范围。

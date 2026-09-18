@@ -47,6 +47,9 @@ public class AiDocument {
     /** 文档描述 */
     private String description;
 
+    /** 所属知识库ID（空=归入默认知识库；检索按库过滤，决定该文档能被哪些助手召回） */
+    private String kbId;
+
     @TableLogic
     private Integer deleted;
 

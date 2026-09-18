@@ -171,6 +171,7 @@ public class AgentService {
         if (b.containsKey("model")) uw.set(Agent::getModel, a.getModel());
         if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
         if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
+        if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
         if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
         if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
         if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
@@ -251,6 +252,7 @@ public class AgentService {
         if (body.containsKey("model")) a.setModel(asText(body.get("model"), 255));
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
+        if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));
         // 「不使用知识库」：纯角色智能体（法律顾问/写作助手等）——1=跳过检索链路；null 视为 0
         if (body.containsKey("knowledgeDisabled")) a.setKnowledgeDisabled(toTri(body.get("knowledgeDisabled")));
         if (body.containsKey("toolKnowledge")) a.setToolKnowledge(toTri(body.get("toolKnowledge")));
