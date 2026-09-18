@@ -28,7 +28,16 @@ import java.time.LocalDateTime;
 public class KnowledgeBase {
 
     @TableId(type = IdType.ASSIGN_UUID)
-    private String id;
+    private String kbId;
+
+    /** 知识库类型（对应参考实现的 kb_type；本系统当前实现为 milvus 语义的向量库） */
+    private String kbType;
+
+    /** 向量模型规格（空=继承全局 embedding 配置） */
+    private String embeddingModelSpec;
+
+    /** LLM 模型规格（空=继承全局 chat 配置） */
+    private String llmModelSpec;
 
     /** 知识库名称 */
     private String name;

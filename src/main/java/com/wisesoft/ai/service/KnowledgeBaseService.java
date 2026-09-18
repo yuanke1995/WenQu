@@ -78,7 +78,7 @@ public class KnowledgeBaseService {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
         // 只在 body 中出现的字段才写（含显式 null = 清空该维度回退到继承）
-        LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getId, id);
+        LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getKbId, id);
         if (body.containsKey("name")) upd.set(KnowledgeBase::getName, str(body.get("name")));
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
         if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
@@ -141,8 +141,8 @@ public class KnowledgeBaseService {
                 def.setUpdateTime(now);
                 kbMapper.insert(def);
             }
-            cachedDefaultId = def.getId();
-            return def.getId();
+            cachedDefaultId = def.getKbId();
+            return def.getKbId();
         }
     }
 
@@ -192,8 +192,8 @@ public class KnowledgeBaseService {
     public Map<String, Integer> docCounts() {
         Map<String, Integer> m = new LinkedHashMap<>();
         for (KnowledgeBase kb : list()) {
-            long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, kb.getId()));
-            m.put(kb.getId(), (int) n);
+            long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, kb.getKbId()));
+            m.put(kb.getKbId(), (int) n);
         }
         long orphan = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().isNull(AiDocument::getKbId));
         if (orphan > 0) m.put(defaultId(), m.getOrDefault(defaultId(), 0) + (int) orphan);
@@ -206,7 +206,7 @@ public class KnowledgeBaseService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (KnowledgeBase kb : list()) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", kb.getId());
+            m.put("id", kb.getKbId());
             m.put("name", kb.getName());
             m.put("description", kb.getDescription());
             m.put("queryParams", kb.getQueryParams());
@@ -215,7 +215,7 @@ public class KnowledgeBaseService {
             m.put("shareConfig", kb.getShareConfig());
             m.put("createTime", kb.getCreateTime());
             m.put("updateTime", kb.getUpdateTime());
-            m.put("docCount", counts.getOrDefault(kb.getId(), 0));
+            m.put("docCount", counts.getOrDefault(kb.getKbId(), 0));
             out.add(m);
         }
         return out;

@@ -28,7 +28,16 @@ import java.time.LocalDateTime;
 public class KnowledgeBase {
 
     @TableId(type = IdType.ASSIGN_UUID)
-    private String id;
+    private String kbId;
+
+    /** 知识库类型（对应参考实现的 kb_type；本系统当前实现为 milvus 语义的向量库） */
+    private String kbType;
+
+    /** 向量模型规格（空=继承全局 embedding 配置） */
+    private String embeddingModelSpec;
+
+    /** LLM 模型规格（空=继承全局 chat 配置） */
+    private String llmModelSpec;
 
     /** 知识库名称 */
     private String name;
@@ -43,10 +52,10 @@ public class KnowledgeBase {
     private String queryParams;
 
     /**
-     * 分块参数（JSON：{"chunk.maxChunks":"300","chunk.overlap":"80",...}）。
+     * 附加配置（JSON：{chunk_preset_id, chunk_parser_config, ...}）。
      * 空=继承全局分块设置。与 queryParams 分列：一个管"怎么切块"，一个管"怎么召回"。
      */
-    private String chunkParams;
+    private String additionalParams;
 
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;

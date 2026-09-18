@@ -75,6 +75,7 @@ public class SubAgentOrchestrator {
     public List<Agent> route(String question, List<Agent> candidates) {
         if (candidates == null || candidates.isEmpty()) return List.of();
         if (candidates.size() == 1 || !configService.getBoolean("agent.autoRoute")) return candidates;
+        int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
         try {
             StringBuilder sb = new StringBuilder();
             for (Agent a : candidates) {
@@ -85,7 +86,6 @@ public class SubAgentOrchestrator {
                     + "\n用户问题：" + question
                     + "\n\n请判断回答该问题需要咨询上述哪些助手，只选职责确实相关的（宁缺毋滥）。"
                     + "\n只输出一个 JSON 数组，元素为助手的 id 字符串；若都不相关则输出 []。不要输出任何解释文字。";
-            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
             String out = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> chatClient.prompt()
                             .user(prompt)
@@ -98,10 +98,35 @@ public class SubAgentOrchestrator {
                             .content(), ROUTE_EXECUTOR)
                     .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             return parseRouteResult(out, candidates);
+        } catch (java.util.concurrent.TimeoutException te) {
+            // 超时单列一条：这是最常见的失败（主模型单次调用常 >5s），且 TimeoutException 没有 message，
+            // 若混进下面的通用 catch 只会打出 "null"，从日志里根本看不出原因（2026-09-17 实际踩到）
+            log.warn("[SUBAGENT] 委派路由超时（>{}ms），回退为全部候选（{} 个）——可在设置页调大「路由超时(ms)」",
+                    timeoutMs, candidates.size());
+            return candidates;
         } catch (Exception e) {
-            log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), e.getMessage());
+            log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), describe(e));
             return candidates;
         }
+    }
+
+    /**
+     * 异常摘要：类名 + message +（若有）最内层根因。
+     * <p>不能只打 {@code e.getMessage()}：TimeoutException / 部分 NullPointerException 的 message 为 null，
+     * 日志就只剩一个 "null"，等于没有信息（2026-09-17 实机踩到）。</p>
+     */
+    private static String describe(Throwable e) {
+        if (e == null) return "null";
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        StringBuilder sb = new StringBuilder(e.getClass().getSimpleName());
+        if (e.getMessage() != null && !e.getMessage().isBlank()) sb.append(": ").append(e.getMessage());
+        if (root != e) {
+            sb.append("（根因 ").append(root.getClass().getSimpleName());
+            if (root.getMessage() != null && !root.getMessage().isBlank()) sb.append(": ").append(root.getMessage());
+            sb.append("）");
+        }
+        return sb.toString();
     }
 
     /**
@@ -134,7 +159,7 @@ public class SubAgentOrchestrator {
             // 模型返回了非空数组但一个都对不上（可能编了名字）→ 回退全部，避免"以为派了实际没派"
             return picked.isEmpty() ? candidates : picked;
         } catch (Exception e) {
-            log.warn("[SUBAGENT] 路由结果解析失败，回退为全部候选: {}", e.getMessage());
+            log.warn("[SUBAGENT] 路由结果解析失败，回退为全部候选: {}", describe(e));
             return candidates;
         }
     }

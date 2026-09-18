@@ -3,8 +3,10 @@ package com.wisesoft.wenqu.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.wenqu.repository.AiDocumentMapper;
+import com.wisesoft.wenqu.repository.KnowledgeMapper;
 import com.wisesoft.wenqu.repository.KnowledgeBaseMapper;
 import com.wisesoft.wenqu.model.AiDocument;
+import com.wisesoft.wenqu.model.Knowledge;
 import com.wisesoft.wenqu.model.KnowledgeBase;
 import org.springframework.stereotype.Service;
 
@@ -31,12 +33,17 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
 
+    /** 知识块 Mapper：统计库内知识块数（chunk_count / 待索引判断） */
+    private final KnowledgeMapper knowledgeMapper;
+
     /** 默认库缓存（避免每次检索都查库；is_default 变更时由 update/create 失效） */
     private volatile String cachedDefaultId;
 
-    public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper) {
+    public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
+                                KnowledgeMapper knowledgeMapper) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
+        this.knowledgeMapper = knowledgeMapper;
     }
 
     // ==================== 读写 ====================
@@ -55,15 +62,18 @@ public class KnowledgeBaseService {
     }
 
     /** 新建：名称必填；isDefault=1 时先把其它库的默认标记清掉（保证唯一默认库） */
-    public KnowledgeBase create(Map<String, Object> body, String uid) {
+    public KnowledgeBase create(Map<String, Object> body, String name) {
         KnowledgeBase kb = new KnowledgeBase();
-        kb.setName(str(body.get("name")));
+        kb.setName(name);
         kb.setDescription(str(body.get("description")));
-        kb.setQueryParams(str(body.get("queryParams")));
-        kb.setChunkParams(str(body.get("chunkParams")));
-        kb.setIsDefault(toInt(body.get("isDefault"), 0));
-        kb.setShareConfig(str(body.get("shareConfig")));
-        kb.setCreatedBy(uid);
+        kb.setKbType(strOr(body.get("kb_type"), "milvus"));
+        kb.setEmbeddingModelSpec(str(body.get("embedding_model_spec")));
+        kb.setLlmModelSpec(str(body.get("llm_model_spec")));
+        kb.setQueryParams(jsonStr(body.get("query_params")));
+        kb.setAdditionalParams(jsonStr(body.get("additional_params")));
+        kb.setIsDefault(toInt(body.get("is_default"), 0));
+        kb.setShareConfig(jsonStr(body.get("share_config")));
+        kb.setCreatedBy(strOr(body.get("created_by"), "admin"));
         kb.setDeleted(0);
         LocalDateTime now = LocalDateTime.now();
         kb.setCreateTime(now);
@@ -79,12 +89,28 @@ public class KnowledgeBaseService {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
         // 只在 body 中出现的字段才写（含显式 null = 清空该维度回退到继承）
-        LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getId, id);
+        LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getKbId, id);
         if (body.containsKey("name")) upd.set(KnowledgeBase::getName, str(body.get("name")));
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
-        if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
-        if (body.containsKey("chunkParams")) upd.set(KnowledgeBase::getChunkParams, str(body.get("chunkParams")));
-        if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
+        if (body.containsKey("query_params")) upd.set(KnowledgeBase::getQueryParams, jsonStr(body.get("query_params")));
+        // additional_params 为**合并**语义：只覆盖 body 提到的键，保留其余（如 chunk_preset_id）
+        if (body.containsKey("additional_params")) {
+            Object inc = body.get("additional_params");
+            if (inc == null) {
+                upd.set(KnowledgeBase::getAdditionalParams, null);            // 显式清空
+            } else if (inc instanceof Map<?, ?> m) {
+                Map<String, Object> merged = parseJsonObj(kb.getAdditionalParams());
+                for (Map.Entry<?, ?> e : m.entrySet()) {
+                    merged.put(String.valueOf(e.getKey()), e.getValue());
+                }
+                upd.set(KnowledgeBase::getAdditionalParams,
+                        com.alibaba.fastjson2.JSON.toJSONString(merged));
+            }
+        }
+        if (body.containsKey("share_config")) upd.set(KnowledgeBase::getShareConfig, jsonStr(body.get("share_config")));
+        if (body.containsKey("kb_type")) upd.set(KnowledgeBase::getKbType, str(body.get("kb_type")));
+        if (body.containsKey("embedding_model_spec")) upd.set(KnowledgeBase::getEmbeddingModelSpec, str(body.get("embedding_model_spec")));
+        if (body.containsKey("llm_model_spec")) upd.set(KnowledgeBase::getLlmModelSpec, str(body.get("llm_model_spec")));
         if (body.containsKey("isDefault")) {
             int isDef = toInt(body.get("isDefault"), 0);
             if (isDef == 1) clearDefault();
@@ -143,8 +169,8 @@ public class KnowledgeBaseService {
                 def.setUpdateTime(now);
                 kbMapper.insert(def);
             }
-            cachedDefaultId = def.getId();
-            return def.getId();
+            cachedDefaultId = def.getKbId();
+            return def.getKbId();
         }
     }
 
@@ -194,8 +220,8 @@ public class KnowledgeBaseService {
     public Map<String, Integer> docCounts() {
         Map<String, Integer> m = new LinkedHashMap<>();
         for (KnowledgeBase kb : list()) {
-            long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, kb.getId()));
-            m.put(kb.getId(), (int) n);
+            long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, kb.getKbId()));
+            m.put(kb.getKbId(), (int) n);
         }
         long orphan = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().isNull(AiDocument::getKbId));
         if (orphan > 0) m.put(defaultId(), m.getOrDefault(defaultId(), 0) + (int) orphan);
@@ -208,17 +234,17 @@ public class KnowledgeBaseService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (KnowledgeBase kb : list()) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", kb.getId());
+            m.put("id", kb.getKbId());
             m.put("name", kb.getName());
             m.put("description", kb.getDescription());
             m.put("queryParams", kb.getQueryParams());
-            m.put("chunkParams", kb.getChunkParams());
+            m.put("additionalParams", kb.getAdditionalParams());
             m.put("isDefault", kb.getIsDefault());
             m.put("createdBy", kb.getCreatedBy());
             m.put("shareConfig", kb.getShareConfig());
             m.put("createTime", kb.getCreateTime());
             m.put("updateTime", kb.getUpdateTime());
-            m.put("docCount", counts.getOrDefault(kb.getId(), 0));
+            m.put("docCount", counts.getOrDefault(kb.getKbId(), 0));
             out.add(m);
         }
         return out;
@@ -234,13 +260,128 @@ public class KnowledgeBaseService {
     public Map<String, Object> chunkConfigOf(String kbId) {
         if (kbId == null || kbId.isBlank()) return Map.of();
         KnowledgeBase kb = kbMapper.selectById(kbId);
-        if (kb == null || kb.getChunkParams() == null || kb.getChunkParams().isBlank()) return Map.of();
+        if (kb == null || kb.getAdditionalParams() == null || kb.getAdditionalParams().isBlank()) return Map.of();
         try {
-            Map<String, Object> m = com.alibaba.fastjson2.JSON.parseObject(kb.getChunkParams());
+            Map<String, Object> m = com.alibaba.fastjson2.JSON.parseObject(kb.getAdditionalParams());
             return m == null ? Map.of() : m;
         } catch (Exception e) {
             // 配置损坏按"无覆盖"处理：解析是重活，不该被配置格式问题挡住
             return Map.of();
+        }
+    }
+
+    /** 读检索参数（供接口直接回传；空 = 未配置） */
+    public Map<String, Object> parseQueryParamsPublic(String json) {
+        return parseJsonObj(json);
+    }
+
+    /**
+     * 写检索参数（PUT /databases/{kb_id}/query-params）。
+     * <p>body 直接是参数对象；传空对象 = 清空（恢复继承全局）。
+     * 显式 set 以规避框架默认更新策略跳过 null 列的老问题。
+     *
+     * @return null 表示库不存在
+     */
+    public KnowledgeBase saveQueryParams(String kbId, Map<String, Object> params) {
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb == null) return null;
+        String json = (params == null || params.isEmpty())
+                ? null : com.alibaba.fastjson2.JSON.toJSONString(params);
+        kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getKbId, kbId)
+                .set(KnowledgeBase::getQueryParams, json)
+                .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
+        return kbMapper.selectById(kbId);
+    }
+
+    // ==================== 响应序列化与统计（字段与参考实现的响应结构对齐） ====================
+
+    /**
+     * 组装知识库响应对象，字段与参考实现的 serialize_knowledge_base 一一对应：
+     * kb_id / name / description / kb_type / embedding_model_spec / llm_model_spec /
+     * query_params / metadata / created_by / created_at / status / stats / row_count /
+     * share_config / additional_params。
+     * <p>未实现的附加项（mindmap/sample_questions/files）不输出——宁可缺字段，也不填假值。
+     */
+    public Map<String, Object> serializeKnowledgeBase(KnowledgeBase kb) {
+        Map<String, Object> stats = statsOf(kb.getKbId());
+        Map<String, Object> additional = parseJsonObj(kb.getAdditionalParams());
+        Map<String, Object> metadata = new LinkedHashMap<>(additional);
+        metadata.put("stats", stats);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("kb_id", kb.getKbId());
+        r.put("name", kb.getName());
+        r.put("description", kb.getDescription());
+        r.put("kb_type", kb.getKbType() == null || kb.getKbType().isBlank() ? "milvus" : kb.getKbType());
+        r.put("embedding_model_spec", kb.getEmbeddingModelSpec());
+        r.put("llm_model_spec", kb.getLlmModelSpec());
+        r.put("query_params", parseJsonObj(kb.getQueryParams()));
+        r.put("metadata", metadata);
+        r.put("created_by", kb.getCreatedBy());
+        r.put("created_at", kb.getCreateTime() == null ? null : kb.getCreateTime().toString());
+        r.put("status", "已连接");
+        r.put("stats", stats);
+        r.put("row_count", stats.get("row_count"));
+        r.put("share_config", kb.getShareConfig() == null || kb.getShareConfig().isBlank()
+                ? null : parseJsonObj(kb.getShareConfig()));
+        r.put("additional_params", additional);
+        return r;
+    }
+
+    /**
+     * 知识库统计，字段与参考实现的 _knowledge_base_stats 对齐：
+     * file_count / folder_count / row_count / total_size / chunk_count / token_count /
+     * pending_parse_count / pending_index_count / processing_count。
+     * <p>本系统无"文件夹"与"表格行"概念，folder_count 恒为 0、row_count 取文件数
+     * （与参考实现对非表格型知识库的回落一致）。
+     */
+    public Map<String, Object> statsOf(String kbId) {
+        Set<String> docIds = docIdsOf(List.of(kbId));
+        long fileCount = docIds.size();
+        long totalSize = 0, chunkCount = 0, tokenCount = 0, pendingParse = 0, pendingIndex = 0, processing = 0;
+        if (!docIds.isEmpty()) {
+            List<AiDocument> docs = docMapper.selectList(
+                    new LambdaQueryWrapper<AiDocument>().in(AiDocument::getId, docIds));
+            for (AiDocument d : docs) {
+                totalSize += d.getFileSize() == null ? 0 : d.getFileSize();
+                chunkCount += d.getChunkCount() == null ? 0 : d.getChunkCount();
+                Integer st = d.getStatus();
+                if (st != null && st == 2) {          // 2 = 解析中
+                    processing++;
+                    pendingParse++;
+                }
+            }
+            // 待索引：有知识块但存在未向量化的块（采样该库文档的知识块统计）
+            long totalChunks = knowledgeMapper.selectCount(
+                    new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds));
+            long indexedChunks = knowledgeMapper.selectCount(
+                    new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds)
+                            .isNotNull(Knowledge::getVectorId).ne(Knowledge::getVectorId, ""));
+            if (totalChunks > indexedChunks) pendingIndex = 1;   // 以"有未索引块"计一个待索引单位
+            chunkCount = Math.max(chunkCount, totalChunks);
+        }
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("file_count", fileCount);
+        stats.put("folder_count", 0);
+        stats.put("row_count", fileCount);
+        stats.put("total_size", totalSize);
+        stats.put("chunk_count", chunkCount);
+        stats.put("token_count", tokenCount);
+        stats.put("pending_parse_count", pendingParse);
+        stats.put("pending_index_count", pendingIndex);
+        stats.put("processing_count", processing);
+        return stats;
+    }
+
+    /** JSON 串 → Map（空/非法一律返回空 Map，调用方无需判空） */
+    private static Map<String, Object> parseJsonObj(String json) {
+        if (json == null || json.isBlank()) return new LinkedHashMap<>();
+        try {
+            Map<String, Object> m = com.alibaba.fastjson2.JSON.parseObject(json);
+            return m == null ? new LinkedHashMap<>() : m;
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
         }
     }
 
@@ -258,6 +399,24 @@ public class KnowledgeBaseService {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    private static String strOr(Object o, String fallback) {
+        return o == null || String.valueOf(o).isBlank() ? fallback : String.valueOf(o);
+    }
+
+    /**
+     * 把请求里的对象统一存成 JSON 文本：已是字符串则原样（调用方可能直接给了 JSON 串）；
+     * Map/List 等结构化对象序列化；null 保持 null（= 未配置）。
+     */
+    private static String jsonStr(Object o) {
+        if (o == null) return null;
+        if (o instanceof String s) return s.isBlank() ? null : s;
+        try {
+            return com.alibaba.fastjson2.JSON.toJSONString(o);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static int toInt(Object o, int def) {
