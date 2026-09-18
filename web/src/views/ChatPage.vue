@@ -269,11 +269,21 @@
         <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 上下文填入 {{ lastTokens.hits }} 块</div>
       </div>
       <div class="rp-card">
-        <div class="rp-label">引用来源</div>
-        <template v-if="lastSources.length">
-          <div v-for="(s, si) in lastSources" :key="si" class="rp-src" :title="'点击查看原文'" @click="openSource(s)">
-            <file-text-outlined class="rp-src-ic" />
-            <span class="rp-src-name">{{ s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识') }}{{ s.title ? ' §' + s.title : '' }}</span>
+        <div class="rp-label">引用来源<template v-if="groupedSources.length"> · {{ groupedSources.length }} 个文档</template></div>
+        <template v-if="groupedSources.length">
+          <div v-for="g in groupedSources" :key="g.key" class="rp-group">
+            <div class="rp-group-head" @click="g.open = !g.open" :title="g.open ? '收起片段' : '展开片段'">
+              <file-text-outlined class="rp-src-ic" />
+              <span class="rp-src-name">{{ g.fileName }}</span>
+              <span class="rp-count">{{ g.items.length }} 段</span>
+              <down-outlined class="rp-arrow" :class="{ open: g.open }" />
+            </div>
+            <div class="rp-group-body" :class="{ open: g.open }">
+              <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
+                   title="点击查看原文" @click.stop="openSource(s)">
+                <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
+              </div>
+            </div>
           </div>
         </template>
         <div v-else class="rp-dim">暂无引用</div>
@@ -525,6 +535,28 @@ const debugEntryVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
+// 引用来源按文档分组：先看到"引用了哪几个文档、各几段"，再按需展开看具体片段
+// （平铺 N 行时同一文档的片段会重复出现文件名，反而看不出引用了几个来源）
+const groupedSources = computed(() => {
+  const groups = []
+  const byKey = new Map()
+  for (const s of lastSources.value) {
+    const key = s.docId || ('__manual_' + (s.fileName || 'x'))
+    let g = byKey.get(key)
+    if (!g) {
+      g = {
+        key,
+        fileName: s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识'),
+        items: [],
+        open: true
+      }
+      byKey.set(key, g)
+      groups.push(g)
+    }
+    g.items.push(s)
+  }
+  return groups
+})
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
@@ -1572,6 +1604,16 @@ onMounted(async () => {
 .rp-tool-label { font-size: 11px; color: var(--app-accent); font-weight: 500; }
 .rp-tool-q { color: var(--app-text2); margin-top: 3px; }
 .rp-src { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
+/* 引用来源：按文档分组 + 片段可折叠（0fr→1fr 高度动画，与全站展开节奏一致） */
+.rp-group { margin-bottom: 2px; }
+.rp-group-head { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
+.rp-count { margin-left: auto; flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-arrow { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1); }
+.rp-arrow.open { transform: rotate(180deg); }
+.rp-group-body { display: grid; grid-template-rows: 0fr; overflow: hidden; transition: grid-template-rows .22s cubic-bezier(0.16, 1, 0.3, 1); }
+.rp-group-body.open { grid-template-rows: 1fr; }
+.rp-src-sub { padding: 3px 0 3px 20px; font-size: 11.5px; color: var(--app-text2); }
+@media (prefers-reduced-motion: reduce) { .rp-group-body, .rp-arrow { transition: none; } }
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
