@@ -219,6 +219,18 @@ export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', {
 /** 文档列表 */
 export const listDocuments = () => request('/document/list')
 
+// ==================== 知识库（检索作用域） ====================
+/** 知识库列表（含每个库的文档数） */
+export const listKnowledgeBases = () => request('/kb/list')
+/** 新建知识库：{name, description, queryParams, isDefault} */
+export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
+/** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */
+export const updateKnowledgeBase = (id, body) => request(`/kb/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+/** 删除知识库（默认库或库内仍有文档时后端会拒绝并返回原因） */
+export const deleteKnowledgeBase = id => request(`/kb/${id}`, { method: 'DELETE' })
+/** 移动文档到知识库；kbId 传空表示移回默认库 */
+export const moveDocToKb = (docId, kbId) => request(`/kb/doc/${docId}`, { method: 'PUT', body: JSON.stringify({ kbId: kbId || null }) })
+
 /**
  * 下载文档源文件（个人文件区：取回上传的原始文件）。
  * 走 fetch 带鉴权头取 blob（直接 a[href] 无法带 Authorization/管理员口令），再触发浏览器下载。

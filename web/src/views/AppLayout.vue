@@ -25,6 +25,10 @@
             <robot-outlined />
             <span v-if="!collapsed">智能体</span>
           </button>
+          <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
+            <database-outlined />
+            <span v-if="!collapsed">知识库</span>
+          </button>
           <button class="nav-item" :class="{ active: isActive('/documents') }" @click="router.push('/documents')" title="文档管理">
             <folder-outlined />
             <span v-if="!collapsed">文档管理</span>

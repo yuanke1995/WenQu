@@ -6,6 +6,7 @@ import Login from './views/LoginPage.vue'
 import AppLayout from './views/AppLayout.vue'
 import Chat from './views/ChatPage.vue'
 import Agents from './views/AgentsPage.vue'
+import KnowledgeBase from './views/KnowledgeBasePage.vue'
 import Documents from './views/DocumentsPage.vue'
 import Dashboard from './views/DashboardPage.vue'
 import Settings from './views/SettingsPage.vue'
@@ -19,6 +20,7 @@ const router = createRouter({
     { path: '/login', component: Login, meta: { title: '登录' } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
     { path: '/agents', component: AppLayout, children: [{ path: '', component: Agents }], meta: { requiresAdmin: true, title: '智能体' } },
+    { path: '/knowledge', component: AppLayout, children: [{ path: '', component: KnowledgeBase }], meta: { requiresAdmin: true, title: '知识库' } },
     { path: '/documents', component: AppLayout, children: [{ path: '', component: Documents }], meta: { requiresAdmin: true, title: '文档管理' } },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },
     { path: '/dashboard', component: AppLayout, children: [{ path: '', component: Dashboard }], meta: { requiresAdmin: true, title: '数据看板' } },

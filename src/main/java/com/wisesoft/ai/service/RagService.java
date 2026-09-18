@@ -3,6 +3,7 @@ package com.wisesoft.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Agent;
+import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -27,6 +28,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -53,32 +56,65 @@ public class RagService {
             "rerank.enabled", "rerank.model", "rerank.baseUrl");
 
     /**
-     * 把智能体自定义的检索参数写成本轮线程的配置覆盖（复用 ConfigService 的线程局部覆盖机制）。
-     * <p>语义对齐同类产品的「按知识库配置检索」：未配置的项继承全局设置，配了的项只影响本智能体——
-     * 这样不同智能体可按自己的场景定制策略（法律助手提高阈值保精度、手册助手放宽保召回）。
+     * 本轮检索参数覆盖，优先级：**全局设置 &lt; 知识库 &lt; 智能体**（后者覆盖前者）。
+     * <p>知识库是检索参数的归属（不同资料性质可配不同策略：法律库提高阈值保精度、手册库放宽保召回）；
+     * 智能体级是"调用方覆盖"，用于个别助手临时偏离所属库的策略。未配置的项一律继承更外层。
      * <p>用线程局部覆盖而不是改检索方法签名：检索在本轮问答线程内同步执行，覆盖值可见；
      * 例外的多路并行检索跑在池化线程、取不到覆盖值（退化为全局配置），属可接受降级。
      */
-    private void applyAgentQueryOverrides(Agent agent) {
-        String json = agent == null ? null : agent.getQueryParams();
-        if (json == null || json.isBlank()) return;
+    private void applyQueryOverrides(Agent agent) {
+        if (agent == null) return;
+        Map<String, String> ov = new LinkedHashMap<>();
+        List<String> sources = new ArrayList<>();
+        // 1) 知识库级：智能体关联的每个库都可能有自己的检索策略
+        for (String kbId : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds())) {
+            KnowledgeBase kb = knowledgeBaseService.get(kbId);
+            if (kb == null || kb.getQueryParams() == null || kb.getQueryParams().isBlank()) continue;
+            Map<String, String> p = parseQueryParams(kb.getQueryParams());
+            if (p.isEmpty()) continue;
+            // 多库对同一键配置不同值：按库顺序取后者，并留日志（不静默取错）
+            for (Map.Entry<String, String> e : p.entrySet()) {
+                String prev = ov.get(e.getKey());
+                if (prev != null && !prev.equals(e.getValue())) {
+                    log.warn("[KB] 多个知识库对 {} 配置了不同值（{} → {}），按库顺序取后者",
+                            e.getKey(), prev, e.getValue());
+                }
+            }
+            ov.putAll(p);
+            sources.add(kb.getName() == null ? kbId : kb.getName());
+        }
+        // 2) 智能体级：覆盖库级
+        ov.putAll(parseQueryParams(agent.getQueryParams()));
+        if (!ov.isEmpty()) {
+            configService.putOverrides(ov);
+            log.info("[AGENT] 应用检索参数覆盖 {} 项（知识库 {} + 智能体）: {}",
+                    ov.size(), sources.isEmpty() ? "无" : String.join("、", sources), ov.keySet());
+        }
+    }
+
+    /**
+     * 解析检索参数 JSON → 覆盖表；**白名单之外的键一律丢弃**（防止借参数覆盖改到无关配置），
+     * 解析失败只忽略该来源、不中断问答。
+     */
+    private Map<String, String> parseQueryParams(String json) {
+        Map<String, String> ov = new LinkedHashMap<>();
+        if (json == null || json.isBlank()) return ov;
         try {
             Map<String, Object> m = JSON.parseObject(json);
-            if (m == null || m.isEmpty()) return;
-            Map<String, String> ov = new HashMap<>();
+            if (m == null) return ov;
             for (Map.Entry<String, Object> e : m.entrySet()) {
                 if (e.getKey() == null || e.getValue() == null) continue;
-                if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) continue;
+                if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) {
+                    log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
+                    continue;
+                }
                 String v = String.valueOf(e.getValue()).trim();
                 if (!v.isEmpty()) ov.put(e.getKey(), v);
             }
-            if (!ov.isEmpty()) {
-                configService.putOverrides(ov);
-                log.info("[AGENT] 应用智能体检索参数覆盖 {} 项: {}", ov.size(), ov.keySet());
-            }
         } catch (Exception e) {
-            log.warn("[AGENT] 智能体检索参数解析失败（本轮使用全局检索配置）: {}", e.getMessage());
+            log.warn("[AGENT] 检索参数解析失败（忽略该来源，使用上层配置）: {}", e.getMessage());
         }
+        return ov;
     }
 
     /** 主 LLM 流式中断（未输出 token 时）自动重试次数（chat.streamRetryCount，默认 1；0=关闭） */
@@ -349,7 +385,7 @@ public class RagService {
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
             // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
-            applyAgentQueryOverrides(agent);
+            applyQueryOverrides(agent);
         }
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
