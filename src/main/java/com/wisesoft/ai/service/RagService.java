@@ -196,6 +196,9 @@ public class RagService {
     private final ArtifactService artifactService;
     /** MCP 客户端服务（外部 MCP server 工具接入；mcp.* 配置，默认关） */
     private final McpClientService mcpClientService;
+
+    /** 知识库服务：解析「智能体关联的知识库 → 允许检索的文档集合」，检索按库隔离 */
+    private final KnowledgeBaseService knowledgeBaseService;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
@@ -270,7 +273,8 @@ public class RagService {
                       SkillTools skillTools,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
-                      McpClientService mcpClientService) {
+                      McpClientService mcpClientService,
+                      KnowledgeBaseService knowledgeBaseService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -293,6 +297,7 @@ public class RagService {
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
         this.mcpClientService = mcpClientService;
+        this.knowledgeBaseService = knowledgeBaseService;
     }
 
     /**
@@ -349,12 +354,8 @@ public class RagService {
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
         final boolean knowledgeOff = agent != null && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
-        // 知识库范围：all/空 → null（继承全局全部文档）；否则解析为文档 ID 集合，检索命中按此过滤
-        final Set<String> scopeDocIds = (agent != null && agent.getKnowledgeScope() != null
-                && !agent.getKnowledgeScope().isBlank() && !"all".equalsIgnoreCase(agent.getKnowledgeScope().trim()))
-                ? Arrays.stream(agent.getKnowledgeScope().split(","))
-                    .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet())
-                : null;
+        // 检索范围：智能体关联的知识库（主路径）→ 库内文档；knowledgeScope 降级为「库内再细选文档」
+        final Set<String> scopeDocIds = resolveScopeDocIds(agent);
         // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
         final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
@@ -1540,6 +1541,41 @@ public class RagService {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * 解析本轮允许检索的文档集合（返回 null = 不额外限制，仍受可见性约束）。
+     * <p>两级范围，概念上不重叠：
+     * <ol>
+     *   <li><b>知识库级（主路径）</b>：智能体关联的 {@code knowledgeBaseIds} → 各库文档 ID 的并集。
+     *       文档归谁由它属于哪个库决定，不需要再由智能体逐个指定文档。</li>
+     *   <li><b>文档级细选（可选）</b>：{@code knowledgeScope} 非空时，与库级结果取交集，
+     *       用于"库内只要某几个文档"的场景。</li>
+     * </ol>
+     * 注意：库 ID 配错时得到的是空集合，检索结果自然为空——**不会退化为全库**，
+     * 避免配置错误静默放宽检索范围。
+     */
+    private Set<String> resolveScopeDocIds(Agent agent) {
+        if (agent == null) return null;
+        Set<String> byKb = null;
+        String kbIds = agent.getKnowledgeBaseIds();
+        if (kbIds != null && !kbIds.isBlank()) {
+            Set<String> ids = KnowledgeBaseService.splitIds(kbIds);
+            if (!ids.isEmpty()) byKb = knowledgeBaseService.docIdsOf(ids);
+        }
+        // 文档级细选：沿用原语义（null/空/all = 不限制）
+        Set<String> fine = null;
+        String scope = agent.getKnowledgeScope();
+        if (scope != null && !scope.isBlank() && !"all".equalsIgnoreCase(scope.trim())) {
+            fine = Arrays.stream(scope.split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
+        }
+        if (byKb != null && fine != null) {
+            Set<String> merged = new java.util.HashSet<>(byKb);
+            merged.retainAll(fine);
+            return merged;
+        }
+        return byKb != null ? byKb : fine;
     }
 
     /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */
