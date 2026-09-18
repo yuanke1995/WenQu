@@ -1,7 +1,10 @@
 -- 由参考实现的 SQLAlchemy 模型生成（字段名照搬，类型做 MySQL 映射）
 -- 生成来源：storage/postgres/models_knowledge.py + models_business.py
 -- 说明：JSON_VALUE → JSON；DateTime(timezone=True) → DATETIME；Boolean → TINYINT(1)；
---      外键关系保留为索引（不建物理外键，避免 MySQL 级联与业务删除逻辑打架）
+--      外键关系保留为索引（不建物理外键，避免 MySQL 级联与业务删除逻辑打架）；
+--      唯一约束与索引取自 Column 声明、类级 __table_args__ 与模块级 Index 声明；
+--      MySQL 不支持部分索引（带 where 条件的唯一索引），此类约束以注释保留，
+--      并在应用层保证（见各表下的说明），不降级为全局唯一以免约束比参考实现更严。
 
 SET NAMES utf8mb4;
 
@@ -84,8 +87,13 @@ CREATE TABLE IF NOT EXISTS `knowledge_chunks` (
   `created_at` DATETIME,
   `updated_at` DATETIME,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_knowledge_chunks_chunk_id` (`chunk_id`),
   KEY `idx_knowledge_chunks_file_id` (`file_id`),
-  KEY `idx_knowledge_chunks_kb_id` (`kb_id`)
+  KEY `idx_knowledge_chunks_kb_id` (`kb_id`),
+  KEY `ix_knowledge_chunks_file_id` (`file_id`),
+  KEY `ix_knowledge_chunks_kb_id` (`kb_id`),
+  KEY `ix_knowledge_chunks_graph_indexed` (`graph_indexed`),
+  KEY `ix_knowledge_chunks_graph_structure_indexed` (`graph_structure_indexed`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `knowledge_graph_entities` (
@@ -105,7 +113,11 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_entities` (
   `created_at` DATETIME,
   `updated_at` DATETIME,
   PRIMARY KEY (`id`),
-  KEY `idx_knowledge_graph_entities_kb_id` (`kb_id`)
+  UNIQUE KEY `uq_knowledge_graph_entities_entity_id` (`entity_id`),
+  UNIQUE KEY `uq_knowledge_graph_entities_identity` (`kb_id`, `normalized_name`, `label`),
+  KEY `idx_knowledge_graph_entities_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_entities_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_entities_vector_pending` (`kb_id`, `vector_status`, `vector_next_retry_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `knowledge_graph_entity_mentions` (
@@ -116,10 +128,14 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_entity_mentions` (
   `chunk_id` VARCHAR(128) NOT NULL,
   `created_at` DATETIME,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_knowledge_graph_entity_mentions_entity_chunk` (`entity_id`, `chunk_id`),
   KEY `idx_knowledge_graph_entity_mentions_entity_id` (`entity_id`),
   KEY `idx_knowledge_graph_entity_mentions_kb_id` (`kb_id`),
   KEY `idx_knowledge_graph_entity_mentions_file_id` (`file_id`),
-  KEY `idx_knowledge_graph_entity_mentions_chunk_id` (`chunk_id`)
+  KEY `idx_knowledge_graph_entity_mentions_chunk_id` (`chunk_id`),
+  KEY `ix_knowledge_graph_entity_mentions_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_entity_mentions_file_id` (`file_id`),
+  KEY `ix_knowledge_graph_entity_mentions_chunk_id` (`chunk_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `knowledge_graph_triples` (
@@ -139,7 +155,10 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_triples` (
   `created_at` DATETIME,
   `updated_at` DATETIME,
   PRIMARY KEY (`id`),
-  KEY `idx_knowledge_graph_triples_kb_id` (`kb_id`)
+  UNIQUE KEY `uq_knowledge_graph_triples_triple_id` (`triple_id`),
+  KEY `idx_knowledge_graph_triples_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_triples_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_triples_vector_pending` (`kb_id`, `vector_status`, `vector_next_retry_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `knowledge_graph_triple_mentions` (
@@ -152,10 +171,14 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_triple_mentions` (
   `extractor_type` VARCHAR(255),
   `created_at` DATETIME,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_knowledge_graph_triple_mentions_triple_chunk` (`triple_id`, `chunk_id`),
   KEY `idx_knowledge_graph_triple_mentions_triple_id` (`triple_id`),
   KEY `idx_knowledge_graph_triple_mentions_kb_id` (`kb_id`),
   KEY `idx_knowledge_graph_triple_mentions_file_id` (`file_id`),
-  KEY `idx_knowledge_graph_triple_mentions_chunk_id` (`chunk_id`)
+  KEY `idx_knowledge_graph_triple_mentions_chunk_id` (`chunk_id`),
+  KEY `ix_knowledge_graph_triple_mentions_kb_id` (`kb_id`),
+  KEY `ix_knowledge_graph_triple_mentions_file_id` (`file_id`),
+  KEY `ix_knowledge_graph_triple_mentions_chunk_id` (`chunk_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `evaluation_datasets` (
@@ -188,7 +211,9 @@ CREATE TABLE IF NOT EXISTS `evaluation_dataset_items` (
   `created_at` DATETIME,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_evaluation_dataset_items_item_id` (`item_id`),
-  KEY `idx_evaluation_dataset_items_kb_id` (`kb_id`)
+  UNIQUE KEY `uq_evaluation_dataset_items_dataset_index` (`dataset_id`, `item_index`),
+  KEY `idx_evaluation_dataset_items_kb_id` (`kb_id`),
+  KEY `ix_evaluation_dataset_items_dataset_index` (`dataset_id`, `item_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `evaluation_runs` (
@@ -225,7 +250,9 @@ CREATE TABLE IF NOT EXISTS `evaluation_run_items` (
   `retrieved_chunks` JSON,
   `metrics` JSON,
   `created_at` DATETIME,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_evaluation_run_items_run_index` (`run_id`, `item_index`),
+  KEY `ix_evaluation_run_items_run_index` (`run_id`, `item_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `projects` (
@@ -241,6 +268,8 @@ CREATE TABLE IF NOT EXISTS `projects` (
   `created_at` DATETIME NOT NULL,
   `updated_at` VARCHAR(255),
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_projects_id_uid` (`id`, `uid`),
+  UNIQUE KEY `uq_projects_uid_idempotency_key` (`uid`, `idempotency_key`),
   KEY `idx_projects_selection_status` (`selection_status`),
   KEY `idx_projects_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -321,6 +350,7 @@ CREATE TABLE IF NOT EXISTS `agents` (
   KEY `idx_agents_is_subagent` (`is_subagent`),
   KEY `idx_agents_created_by` (`created_by`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 条件唯一索引（MySQL 不支持部分索引，未建）：uq_agents_default (is_default)
 
 CREATE TABLE IF NOT EXISTS `skills` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -360,6 +390,7 @@ CREATE TABLE IF NOT EXISTS `conversations` (
   `extra_metadata` VARCHAR(255),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_conversations_thread_id` (`thread_id`),
+  UNIQUE KEY `uq_conversations_uid_creation_request_id` (`uid`, `creation_request_id`),
   KEY `idx_conversations_uid` (`uid`),
   KEY `idx_conversations_agent_id` (`agent_id`),
   KEY `idx_conversations_is_pinned` (`is_pinned`),
@@ -407,6 +438,8 @@ CREATE TABLE IF NOT EXISTS `messages` (
   KEY `idx_messages_run_id` (`run_id`),
   KEY `idx_messages_request_id` (`request_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 条件唯一索引（MySQL 不支持部分索引，未建）：uq_messages_run_role_operation_id (run_id, role, operation_id)
+-- 条件唯一索引（MySQL 不支持部分索引，未建）：ix_messages_run_sequence (run_id, sequence)
 
 CREATE TABLE IF NOT EXISTS `tool_calls` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -549,9 +582,11 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   `started_at` DATETIME,
   `completed_at` DATETIME,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tasks_active_dedupe` (`type`, `dedupe_key`),
   KEY `idx_tasks_type` (`type`),
   KEY `idx_tasks_status` (`status`),
-  KEY `idx_tasks_created_at` (`created_at`)
+  KEY `idx_tasks_created_at` (`created_at`),
+  KEY `ix_tasks_status_lease_expires` (`status`, `lease_expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `scheduled_agent_jobs` (
@@ -573,6 +608,7 @@ CREATE TABLE IF NOT EXISTS `scheduled_agent_jobs` (
   `created_at` DATETIME NOT NULL,
   `updated_at` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_scheduled_agent_jobs_uid_creation_request` (`uid`, `creation_request_id`),
   KEY `idx_scheduled_agent_jobs_uid` (`uid`),
   KEY `idx_scheduled_agent_jobs_project_id` (`project_id`),
   KEY `idx_scheduled_agent_jobs_deleted_at` (`deleted_at`)
@@ -595,7 +631,12 @@ CREATE TABLE IF NOT EXISTS `scheduled_agent_runs` (
   `status` VARCHAR(32) NOT NULL DEFAULT "dispatching",
   `error_message` LONGTEXT,
   `created_at` DATETIME NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_scheduled_agent_runs_job_occurrence` (`job_id`, `occurrence_key`),
+  UNIQUE KEY `uq_scheduled_agent_runs_request` (`request_id`),
+  UNIQUE KEY `uq_scheduled_agent_runs_thread` (`thread_id`),
+  KEY `ix_scheduled_agent_runs_job_created` (`job_id`, `created_at`),
+  KEY `ix_scheduled_agent_runs_dispatching` (`status`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `api_keys` (
@@ -702,7 +743,9 @@ CREATE TABLE IF NOT EXISTS `agent_run_attempts` (
   `error_message` LONGTEXT,
   `created_at` DATETIME,
   `updated_at` DATETIME,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_agent_run_attempts_run_attempt_no` (`run_id`, `attempt_no`),
+  KEY `ix_agent_run_attempts_open` (`run_id`, `finished_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `agent_run_requests` (
