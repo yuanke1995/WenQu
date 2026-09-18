@@ -49,5 +49,6 @@ public class Message {
     private Long sequence;
     @TableField("execution_status")
     private String executionStatus;
+    @TableField("`usage`")
     private String usage;
 }

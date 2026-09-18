@@ -24,6 +24,7 @@ public class ScheduledAgentRun {
     private String requestId;  // 非空
     @TableField("thread_id")
     private String threadId;  // 非空
+    @TableField("`trigger`")
     private String trigger;  // 非空，默认 "scheduled"
     @TableField("occurrence_key")
     private String occurrenceKey;  // 非空
