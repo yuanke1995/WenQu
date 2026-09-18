@@ -16,7 +16,7 @@ import lombok.Data;
 @TableName("tasks")
 public class TaskRecord {
 
-    @TableId(value = "id", type = IdType.AUTO)
+    @TableId(value = "id", type = IdType.INPUT)
     private String id;  // 主键
     private String name;  // 非空
     private String type;  // 非空

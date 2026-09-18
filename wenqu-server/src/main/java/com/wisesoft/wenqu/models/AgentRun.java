@@ -16,7 +16,7 @@ import lombok.Data;
 @TableName("agent_runs")
 public class AgentRun {
 
-    @TableId(value = "id", type = IdType.AUTO)
+    @TableId(value = "id", type = IdType.INPUT)
     private String id;  // 主键
     @TableField("conversation_thread_id")
     private String conversationThreadId;  // 非空

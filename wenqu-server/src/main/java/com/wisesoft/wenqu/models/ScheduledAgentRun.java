@@ -16,7 +16,7 @@ import lombok.Data;
 @TableName("scheduled_agent_runs")
 public class ScheduledAgentRun {
 
-    @TableId(value = "id", type = IdType.AUTO)
+    @TableId(value = "id", type = IdType.INPUT)
     private String id;  // 主键
     @TableField("job_id")
     private String jobId;  // 外键 → scheduled_agent_jobs.id，非空
