@@ -50,6 +50,9 @@ public class AiDocument {
     /** 所属知识库ID（空=归入默认知识库；检索按库过滤，决定该文档能被哪些助手召回） */
     private String kbId;
 
+    /** 本次解析所用参数快照(JSON)；用于回溯"这批块是按什么分块参数切出来的" */
+    private String processingParams;
+
     @TableLogic
     private Integer deleted;
 

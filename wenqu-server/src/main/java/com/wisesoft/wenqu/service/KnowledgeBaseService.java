@@ -60,6 +60,7 @@ public class KnowledgeBaseService {
         kb.setName(str(body.get("name")));
         kb.setDescription(str(body.get("description")));
         kb.setQueryParams(str(body.get("queryParams")));
+        kb.setChunkParams(str(body.get("chunkParams")));
         kb.setIsDefault(toInt(body.get("isDefault"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setCreatedBy(uid);
@@ -82,6 +83,7 @@ public class KnowledgeBaseService {
         if (body.containsKey("name")) upd.set(KnowledgeBase::getName, str(body.get("name")));
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
         if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
+        if (body.containsKey("chunkParams")) upd.set(KnowledgeBase::getChunkParams, str(body.get("chunkParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
         if (body.containsKey("isDefault")) {
             int isDef = toInt(body.get("isDefault"), 0);
@@ -210,6 +212,7 @@ public class KnowledgeBaseService {
             m.put("name", kb.getName());
             m.put("description", kb.getDescription());
             m.put("queryParams", kb.getQueryParams());
+            m.put("chunkParams", kb.getChunkParams());
             m.put("isDefault", kb.getIsDefault());
             m.put("createdBy", kb.getCreatedBy());
             m.put("shareConfig", kb.getShareConfig());
@@ -219,6 +222,26 @@ public class KnowledgeBaseService {
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 取某知识库的**分块配置原文**：{@code {"chunk_preset_id":"laws","chunk_parser_config":{...}}}。
+     * 空 Map = 该库未配置，调用方沿用预设默认值与全局设置。
+     * <p>本方法只负责"取出配置"，**合并顺序与生效值由 {@link ChunkPresets#resolveChunkProcessingParams}
+     * 统一决定**——参数解析只允许有一处实现，避免各调用点各写一套合并规则。
+     * <p>键名与参考实现保持一致（snake_case），便于配置可读性与跨实现对照。
+     */
+    public Map<String, Object> chunkConfigOf(String kbId) {
+        if (kbId == null || kbId.isBlank()) return Map.of();
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb == null || kb.getChunkParams() == null || kb.getChunkParams().isBlank()) return Map.of();
+        try {
+            Map<String, Object> m = com.alibaba.fastjson2.JSON.parseObject(kb.getChunkParams());
+            return m == null ? Map.of() : m;
+        } catch (Exception e) {
+            // 配置损坏按"无覆盖"处理：解析是重活，不该被配置格式问题挡住
+            return Map.of();
+        }
     }
 
     // ==================== 内部工具 ====================
