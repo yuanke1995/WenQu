@@ -546,7 +546,7 @@ public class HybridRetrievalService {
                 // 降级方案：查全部候选 docId（id,status），内存过滤非生效（status!=0）
                 List<AiDocument> all = documentMapper.selectList(
                         new QueryWrapper<AiDocument>().select("id", "status").in("id", docIds));
-                return all.stream().filter(d -> d.getStatus() != null && d.getStatus() != 0)
+                return all.stream().filter(d -> !FileStatus.INDEXED.equals(d.getStatus()))
                         .map(d -> String.valueOf(d.getId()))
                         .collect(Collectors.toSet());
             } catch (Exception ex) {

@@ -251,7 +251,7 @@ public class DocumentService {
         doc.setFileName(fileName);
         doc.setFileType(ext);
         doc.setFileSize(file.getSize());
-        doc.setStatus(2); // 解析中
+        doc.setStatus(FileStatus.PARSING); // 解析中
         doc.setDescription(description);
         doc.setCreatedBy(RequestUser.uid());
         documentMapper.insert(doc);
@@ -398,7 +398,7 @@ public class DocumentService {
         r.put("fileName", d.getFileName());
         r.put("kbId", d.getKbId());
         r.put("status", d.getStatus());
-        r.put("statusText", statusText(d.getStatus()));
+        r.put("statusText", FileStatus.text(d.getStatus()));
         r.put("parseProgress", d.getParseProgress());
         r.put("parseDesc", d.getParseDesc());
         r.put("chunks", total);
@@ -408,17 +408,6 @@ public class DocumentService {
         return r;
     }
 
-    /** 状态码文案（与 c_ai_document.status 的约定一致：0 生效 / 1 弃用 / 2 解析中 / 3 失败） */
-    private static String statusText(Integer s) {
-        if (s == null) return "未知";
-        return switch (s) {
-            case 0 -> "已入库";
-            case 1 -> "已弃用";
-            case 2 -> "解析中";
-            case 3 -> "解析失败";
-            default -> "状态 " + s;
-        };
-    }
 
     /**
      * 全量重嵌入（向量模型热切换后自动触发，也可设置页手动触发）：
@@ -881,7 +870,7 @@ public class DocumentService {
             if (!swept) doneDesc += "；孤儿清扫失败";
             updateProgress(docId, 100, doneDesc);
             doc.setChunkCount(chunks.size());
-            doc.setStatus(0);
+            doc.setStatus(FileStatus.INDEXED);
             doc.setFailReason(null);
             documentMapper.updateById(doc);
             // 版本管理：成功解析后版本号 +1 并保存快照
@@ -922,12 +911,12 @@ public class DocumentService {
             keywordIndexService.deleteChunks(aiDocs.stream().map(Document::getId).toList());
             if (hadExistingContent) {
                 // 重解析失败：未变旧块仍在（变更块已被 diff 清理），回退到生效状态继续可用
-                doc.setStatus(0);
+                doc.setStatus(FileStatus.INDEXED);
                 doc.setFailReason("重解析失败，已保留上一版内容: " + truncate(e.getMessage()));
             } else {
                 // 全新解析失败：无旧内容可回退，清理图片目录并置失败
                 cleanupImages(docId);
-                doc.setStatus(3);
+                doc.setStatus(FileStatus.ERROR_PARSING);
                 doc.setFailReason(truncate(e.getMessage()));
             }
             documentMapper.updateById(doc);
@@ -1004,17 +993,19 @@ public class DocumentService {
      * 解析中（status=2）禁止启停用：解析完成会把状态覆写回 0 并重灌索引，启停用意图会被静默丢弃
      * （与 updateKnowledge/rollback 的解析中拦截一致）。
      */
-    public void updateStatus(String docId, int status) {
+    public void updateStatus(String docId, String status) {
         AiDocument doc = documentMapper.selectById(docId);
         if (doc == null) throw new BizException("文档不存在");
-        if (status != 0 && status != 1) throw new BizException("非法状态");
-        if (doc.getStatus() != null && doc.getStatus() == 2) throw new BizException("文档解析中，暂不可启停用");
+        if (!FileStatus.INDEXED.equals(status) && !FileStatus.DEPRECATED.equals(status)) {
+            throw new BizException("非法状态（仅支持 indexed / deprecated）");
+        }
+        if (FileStatus.PARSING.equals(doc.getStatus())) throw new BizException("文档解析中，暂不可启停用");
         doc.setStatus(status);
         documentMapper.updateById(doc);
         documentMetaCache.invalidate(docId);
         // 关键词索引同步（best-effort，失败仅告警；检索侧 loadNonRetrievableDocIds 已兜底过滤弃用）
         try {
-            if (status == 1) {
+            if (FileStatus.DEPRECATED.equals(status)) {
                 keywordIndexService.deleteByDoc(docId);
                 log.info("[{}] 文档已弃用，关键词索引已移除", docId);
             } else {
@@ -1067,7 +1058,7 @@ public class DocumentService {
     /**
      * 批量启停用（ids 非空；任一失败不中断）
      */
-    public void batchUpdateStatus(List<String> ids, int status) {
+    public void batchUpdateStatus(List<String> ids, String status) {
         if (ids == null || ids.isEmpty()) return;
         for (String id : ids) {
             try {
@@ -1091,7 +1082,7 @@ public class DocumentService {
         if (content == null || content.isBlank()) throw new BizException("内容不能为空");
         if (k.getDocId() != null) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
-            if (doc != null && doc.getStatus() == 2) throw new BizException("文档解析中，暂不可编辑知识块");
+            if (doc != null && FileStatus.PARSING.equals(doc.getStatus())) throw new BizException("文档解析中，暂不可编辑知识块");
         }
 
         String oldVectorId = k.getVectorId();
@@ -1143,7 +1134,7 @@ public class DocumentService {
         if (k == null) throw new BizException("知识块不存在");
         if (k.getDocId() != null) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
-            if (doc != null && doc.getStatus() == 2) throw new BizException("文档解析中，暂不可删除知识块");
+            if (doc != null && FileStatus.PARSING.equals(doc.getStatus())) throw new BizException("文档解析中，暂不可删除知识块");
         }
 
         if (k.getVectorId() != null && !k.getVectorId().isBlank()) {
@@ -1233,7 +1224,7 @@ public class DocumentService {
     public void rollback(String docId, int version) {
         AiDocument doc = documentMapper.selectById(docId);
         if (doc == null) throw new BizException("文档不存在");
-        if (doc.getStatus() != null && doc.getStatus() == 2) throw new BizException("文档解析中，暂不可回滚");
+        if (FileStatus.PARSING.equals(doc.getStatus())) throw new BizException("文档解析中，暂不可回滚");
 
         com.wisesoft.wenqu.model.AiDocumentVersion v = versionMapper.selectOne(
                 new LambdaQueryWrapper<com.wisesoft.wenqu.model.AiDocumentVersion>()
@@ -1331,7 +1322,7 @@ public class DocumentService {
         // 4. 更新文档状态 + 清理较新版本行
         doc.setChunkCount(snapshot.size());
         doc.setVersion(version);
-        doc.setStatus(0);
+        doc.setStatus(FileStatus.INDEXED);
         doc.setFailReason(null);
         documentMapper.updateById(doc);
         versionMapper.delete(new LambdaQueryWrapper<com.wisesoft.wenqu.model.AiDocumentVersion>()
@@ -1420,13 +1411,13 @@ public class DocumentService {
         // 也不清空图片目录：内容寻址文件名下，未变图片文件保留供复用块引用，变更/删除图的旧文件由 processUpload 成功后孤儿清扫
         // 提交前保存"解析前"状态：下方 setStatus(2) 会改写内存对象，队列满恢复分支必须用此原值，
         // 否则恢复语句把状态重置回 2（沿用 doc.getStatus() 的原实现会让文档永久卡在"解析中"）
-        int origStatus = doc.getStatus() == null ? 0 : doc.getStatus();
+        String origStatus = doc.getStatus() == null ? FileStatus.UPLOADED : doc.getStatus();
         // 队列满恢复时一并回滚解析态字段：下方 updateProgress 会把 parse_desc 改写为"重新解析中"，
         // 只回滚 status 会让已入库文档悬浮显示"重新解析中"（终态与描述不一致）
         Integer origProgress = doc.getParseProgress();
         String origParseDesc = doc.getParseDesc();
         String origFailReason = doc.getFailReason();
-        doc.setStatus(2);
+        doc.setStatus(FileStatus.PARSING);
         doc.setFailReason(null);
         documentMapper.updateById(doc);
         documentMetaCache.invalidate(docId);
@@ -1462,10 +1453,10 @@ public class DocumentService {
         if (existing.isEmpty()) return null;
         // 优先最近一条生效(status=0)，其次最近一条失败(status=3)：复用后走 diff 增量，避免误删仍有内容的生效文档
         AiDocument target = existing.stream()
-                .filter(d -> d.getStatus() != null && d.getStatus() == 0)
+                .filter(d -> FileStatus.INDEXED.equals(d.getStatus()))
                 .findFirst()
                 .orElseGet(() -> existing.stream()
-                        .filter(d -> d.getStatus() != null && d.getStatus() == 3)
+                        .filter(d -> FileStatus.ERROR_PARSING.equals(d.getStatus()))
                         .findFirst().orElse(null));
         String targetId = target == null ? "" : target.getId();
         for (AiDocument d : existing) {
@@ -1483,7 +1474,7 @@ public class DocumentService {
     private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description,
                                        DocumentParser parser) throws Exception {
         String docId = existing.getId();
-        int origStatus = existing.getStatus() == null ? 0 : existing.getStatus();
+        String origStatus = existing.getStatus() == null ? FileStatus.UPLOADED : existing.getStatus();
         // 未成功提交时一并回滚解析态字段：fail_reason 下方会置 null、parse_desc 会被改写为
         // "已提交,等待解析"，只回滚 status 会留下终态与描述不一致的脏数据
         Integer origProgress = existing.getParseProgress();
@@ -1504,7 +1495,7 @@ public class DocumentService {
             // 更新元数据并置解析中
             existing.setFileSize(file.getSize());
             existing.setDescription(description);
-            existing.setStatus(2);
+            existing.setStatus(FileStatus.PARSING);
             existing.setFailReason(null);
             documentMapper.updateById(existing);
             documentMetaCache.invalidate(docId);
