@@ -91,7 +91,7 @@ public class KnowledgeController {
         if (k == null) throw new BizException(404, "知识块不存在");
         if (k.getDocId() != null && !k.getDocId().isBlank()) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
-            if (doc != null && doc.getStatus() != null && doc.getStatus() == 2) {
+            if (doc != null && com.wisesoft.ai.service.FileStatus.PARSING.equals(doc.getStatus())) {
                 throw new BizException("文档解析中，暂不可操作");
             }
         }

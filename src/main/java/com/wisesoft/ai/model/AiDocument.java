@@ -29,10 +29,10 @@ public class AiDocument {
     /** 分块数量 */
     private Integer chunkCount;
 
-    /** 状态: 0=生效, 1=已弃用, 2=解析中, 3=解析失败 */
-    private Integer status;
+    /** 处理状态：见 FileStatus（uploaded/parsing/parsed/error_parsing/indexing/indexed/error_indexing） */
+    private String status;
 
-    /** 解析失败原因（status=3 时可见） */
+    /** 处理失败原因（状态为 error_parsing / error_indexing 时可见） */
     private String failReason;
 
     /** 解析进度 0-100（解析中递增） */

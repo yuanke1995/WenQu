@@ -134,9 +134,9 @@ public class DocumentController {
     @PutMapping("/{id}/status")
     public ResultJson updateStatus(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
-            @RequestBody Map<String, Integer> body) {
-        Integer status = body.get("status");
-        if (status == null) throw new BizException("缺少 status 参数");
+            @RequestBody Map<String, Object> body) {
+        String status = body.get("status") == null ? null : String.valueOf(body.get("status"));
+        if (status == null || status.isBlank()) throw new BizException("缺少 status 参数");
         documentService.updateStatus(id, status);
         return ResultJson.ok("操作成功");
     }
@@ -215,7 +215,7 @@ public class DocumentController {
         Object idsObj = body.get("ids");
         List<String> ids = idsObj instanceof List<?> list
                 ? list.stream().map(String::valueOf).toList() : List.of();
-        int status = body.get("status") == null ? 0 : Integer.parseInt(String.valueOf(body.get("status")));
+        String status = body.get("status") == null ? null : String.valueOf(body.get("status"));
         documentService.batchUpdateStatus(ids, status);
         return ResultJson.ok("操作成功");
     }
