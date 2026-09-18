@@ -38,6 +38,7 @@
         <div class="doc-row head-row">
           <span class="col-check"></span>
           <span class="col-name">文件名</span>
+          <span class="col-kb">知识库</span>
           <span class="col-num">片段</span>
           <span class="col-num">命中</span>
           <span class="col-size">大小</span>
@@ -52,6 +53,11 @@
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
               <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
               <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
+            </span>
+            <span class="col-kb">
+              <a-select :value="kbOf(d)" size="small" style="width:100%" :options="kbSelectOptions"
+                        :title="'切换所属知识库：决定哪些助手能检索到该文档'"
+                        @change="v => onMoveKb(d, v)" />
             </span>
             <span class="col-num">{{ d.chunkCount || 0 }}</span>
             <span class="col-num">{{ d.hitCount || 0 }}</span>
@@ -309,7 +315,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare } from '../api'
+         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
@@ -364,12 +370,37 @@ const toggleSelect = (id, e) => {
   else if (at >= 0) selectedKeys.value.splice(at, 1)
 }
 
-onMounted(() => { fetchList(); loadUploadCfg(); window.addEventListener('paste', onPaste) })
+onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); window.addEventListener('paste', onPaste) })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('paste', onPaste)
   window.removeEventListener('keydown', onKbImgKeydown)
 })
+
+// ==================== 知识库归属（文档属于哪个库，决定能被哪些助手检索到） ====================
+const kbases = ref([])
+const defaultKbId = computed(() => (kbases.value.find(k => k.isDefault === 1) || {}).id || '')
+const kbSelectOptions = computed(() =>
+  kbases.value.map(k => ({ value: k.id, label: k.name + (k.docCount != null ? `（${k.docCount}）` : '') })))
+/** 文档当前所属库：kb_id 为空即默认库（后端把"未指定"视作归入默认库） */
+const kbOf = d => d.kbId || defaultKbId.value
+async function fetchKbs () {
+  try {
+    const r = await listKnowledgeBases()
+    if (r && r.success !== false) kbases.value = r.data || []
+  } catch (e) { /* 拉取失败不影响文档管理主流程，仅归属列留空 */ }
+}
+/** 切换文档归属：选默认库时后端存 null（与"未指定"等价） */
+const onMoveKb = async (d, v) => {
+  const target = v === defaultKbId.value ? null : v
+  const name = (kbases.value.find(k => k.id === v) || {}).name || '默认知识库'
+  try {
+    const r = await moveDocToKb(d.id, target)
+    if (r && r.success === false) { message.warning(r.msg || '移动失败'); return }
+    message.success('已移动到「' + name + '」')
+    await fetchList()
+  } catch (e) { message.error('移动失败') }
+}
 
 async function fetchList () {
   loading.value = true
@@ -994,6 +1025,7 @@ const fmtTime = t => {
 .head-row { font-size: 11px; color: var(--app-text3); background: #fafbfc; border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.col-kb { width: 150px; flex: none; }
 .file-ic {
   width: 34px; height: 24px; border-radius: 5px; font-size: 9px; font-weight: 500; flex: none;
   display: inline-flex; align-items: center; justify-content: center; letter-spacing: .5px;

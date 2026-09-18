@@ -127,18 +127,19 @@
 
           <section class="app-card">
             <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />知识库范围</h2>
-            <p class="ap-block-hint">限定这个智能体能检索到的内容，用于把不同角色限制在各自的资料范围内。</p>
+            <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的**知识库**（文档归属哪个库在「文档管理」里设置）。</p>
             <a-radio-group v-model:value="scopeMode">
-              <a-radio-button value="all">全部文档</a-radio-button>
-              <a-radio-button value="pick">指定文档</a-radio-button>
+              <a-radio-button value="all">全部知识库</a-radio-button>
+              <a-radio-button value="pick">指定知识库</a-radio-button>
               <a-radio-button value="none">不使用知识库</a-radio-button>
             </a-radio-group>
             <div v-if="scopeMode === 'pick'" class="ap-pick">
-              <a-select v-model:value="form.knowledgeScope" mode="multiple" :options="docOptions" allow-clear
+              <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
                         show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                        placeholder="选择允许检索的文档" />
+                        placeholder="选择允许检索的知识库" />
               <div class="ap-block-hint" style="margin:6px 0 0">
-                已选 {{ form.knowledgeScope.length }} 篇；一篇都不选则该智能体检索不到任何内容。
+                已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则该智能体检索不到任何内容。
+                选定后还可在下方「检索参数」覆盖该库的策略（留空即用知识库自己的配置）。
               </div>
             </div>
             <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
@@ -235,7 +236,7 @@ import {
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
 } from '@ant-design/icons-vue'
-import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listDocuments, getConfig,
+import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 
@@ -280,7 +281,7 @@ const loading = ref(false)
 const saving = ref(false)
 const keyword = ref('')
 const agents = ref([])
-const docOptions = ref([])
+const kbOptions = ref([])
 const cfg = ref({})
 const globalModel = ref('未配置')
 // 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
@@ -296,7 +297,7 @@ const editing = ref(false)
 const editingId = ref('')
 const scopeMode = ref('all')
 const blankForm = () => ({
-  name: '', description: '', model: '', systemPrompt: '', knowledgeScope: [], isDefault: false,
+  name: '', description: '', model: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
@@ -361,9 +362,9 @@ const filtered = computed(() => {
 })
 const scopeText = a => {
   if (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true) return '不使用知识库'
-  if (!a.knowledgeScope) return '全部文档'
-  const n = String(a.knowledgeScope).split(',').filter(Boolean).length
-  return n === 1 ? '限 1 篇文档' : `限 ${n} 篇文档`
+  const n = String(a.knowledgeBaseIds || '').split(',').filter(Boolean).length
+  if (!n) return '全部知识库'
+  return n === 1 ? '限 1 个知识库' : `限 ${n} 个知识库`
 }
 
 // ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
@@ -406,7 +407,7 @@ const globalText = c => {
 const summaryScope = computed(() => {
   if (scopeMode.value === 'none') return '不使用知识库'
   if (scopeMode.value !== 'pick') return '全部文档'
-  const n = (form.value.knowledgeScope || []).length
+  const n = (form.value.knowledgeBaseIds || []).length
   return n ? `限 ${n} 篇文档` : '未选文档（检索不到内容）'
 })
 /** 能力当前状态：开关型看三态值，多实例看模式（'1'/'pick'=开，'0'/'none'=关，其余=跟随全局） */
@@ -434,12 +435,15 @@ const reload = async () => {
   loading.value = true
   try {
     const [ar, dr, cr, sr, mr, xr] = await Promise.all([
-      listAgents(), listDocuments(), getConfig(), listSkills(), getMcpStatus(), listSubAgents()
+      listAgents(), listKnowledgeBases(), getConfig(), listSkills(), getMcpStatus(), listSubAgents()
     ])
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
       const list = Array.isArray(dr.data) ? dr.data : (dr.data.list || [])
-      docOptions.value = list.map(d => ({ value: d.id, label: d.fileName || d.name || d.id }))
+      kbOptions.value = list.map(k => ({
+        value: k.id,
+        label: k.name + (k.docCount != null ? `（${k.docCount} 个文档）` : '')
+      }))
     }
     if (cr.success && cr.data) {
       cfg.value = cr.data
@@ -484,13 +488,13 @@ const modeOf = tri => {
 
 const openEdit = a => {
   editingId.value = a.id
-  const scope = splitList(a.knowledgeScope)
+  const kbs = splitList(a.knowledgeBaseIds)
   form.value = {
     name: a.name || '',
     description: a.description || '',
     model: a.model || '',
     systemPrompt: a.systemPrompt || '',
-    knowledgeScope: scope,
+    knowledgeBaseIds: kbs,
     isDefault: isDefault(a),
     toolKnowledge: triStr(a.toolKnowledge),
     toolBuiltin: triStr(a.toolBuiltin),
@@ -504,9 +508,9 @@ const openEdit = a => {
     subAgentIds: splitList(a.subAgentIds),
     ...(() => { const r = parseQueryParams(a.queryParams); return { qp: r.qp, qpRerank: r.rr } })()
   }
-  // 三档：不使用知识库 > 指定文档（有范围）> 全部文档
+  // 三档：不使用知识库 > 指定知识库（选了库）> 全部知识库
   scopeMode.value = (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true)
-    ? 'none' : (scope.length ? 'pick' : 'all')
+    ? 'none' : (kbs.length ? 'pick' : 'all')
   editing.value = true
 }
 const closeEdit = () => { editing.value = false }
@@ -522,9 +526,9 @@ const save = async () => {
     description: f.description.trim(),
     model: f.model.trim(),
     systemPrompt: f.systemPrompt,
-    // 「全部文档」时清空范围（空 → 后端存 null → 继承全局知识库）；「指定文档」时存逗号串；
-    // 「不使用知识库」时置 knowledgeDisabled=1 并清空范围（两者互斥，后端以开关为准）
-    knowledgeScope: scopeMode.value === 'pick' ? (f.knowledgeScope || []).join(',') : '',
+    // 「全部知识库」时清空（空 → 后端存 null → 不限制）；「指定知识库」时存逗号串；
+    // 「不使用知识库」时置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
+    knowledgeBaseIds: scopeMode.value === 'pick' ? (f.knowledgeBaseIds || []).join(',') : '',
     knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0,
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
