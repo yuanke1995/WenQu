@@ -18,6 +18,7 @@ public class ConfigOption {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;  // 主键
+    @TableField("`key`")
     private String key;  // 唯一，非空
     private String name;  // 非空
     private String description;  // 非空，默认 ""
