@@ -15,6 +15,7 @@ import java.util.Set;
  * module_path/class_name 逐字照搬）、按扩展名查询引擎。
  *
  * <p>说明：module_path/class_name 是参考实现 Python 解析器的动态装配坐标；
+ * <p>必要替换：module_path 的包前缀按本产品命名（参考实现使用其自身包坐标）；
  * Java 解析器引擎尚未照搬，本类先落能力声明数据面，供设置项校验、附件解析
  * 方案枚举与 ocr_service（照搬时）消费。
  */
@@ -57,25 +58,25 @@ public final class ParserCapabilities {
         Map<String, ParserCapability> capabilities = new LinkedHashMap<>();
         capabilities.put("rapid_ocr", new ParserCapability(
                 "rapid_ocr", "RapidOCR (ONNX)", STANDARD_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.rapid_ocr", "RapidOCRParser"));
+                "wenqu.knowledge.parser.rapid_ocr", "RapidOCRParser"));
         capabilities.put("mineru_ocr", new ParserCapability(
                 "mineru_ocr", "MinerU OCR", STANDARD_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.mineru", "MinerUParser"));
+                "wenqu.knowledge.parser.mineru", "MinerUParser"));
         capabilities.put("mineru_official", new ParserCapability(
                 "mineru_official", "MinerU Official API", MINERU_OFFICIAL_EXTENSIONS,
-                "yuxi.knowledge.parser.mineru_official", "MinerUOfficialParser"));
+                "wenqu.knowledge.parser.mineru_official", "MinerUOfficialParser"));
         capabilities.put("pp_structure_v3_ocr", new ParserCapability(
                 "pp_structure_v3_ocr", "PP-Structure-V3", STANDARD_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.pp_structure_v3", "PPStructureV3Parser"));
+                "wenqu.knowledge.parser.pp_structure_v3", "PPStructureV3Parser"));
         capabilities.put("deepseek_ocr", new ParserCapability(
                 "deepseek_ocr", "DeepSeek OCR", DEEPSEEK_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.deepseek_ocr", "DeepSeekOCRParser"));
+                "wenqu.knowledge.parser.deepseek_ocr", "DeepSeekOCRParser"));
         capabilities.put("paddleocr_vl_1_6", new ParserCapability(
                 "paddleocr_vl_1_6", "PaddleOCR-VL-1.6", STANDARD_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.paddleocr_api", "PaddleOCRVLParser"));
+                "wenqu.knowledge.parser.paddleocr_api", "PaddleOCRVLParser"));
         capabilities.put("paddleocr_pp_ocrv6", new ParserCapability(
                 "paddleocr_pp_ocrv6", "PP-OCRv6", STANDARD_OCR_EXTENSIONS,
-                "yuxi.knowledge.parser.paddleocr_api", "PaddleOCRPPOCRv6Parser"));
+                "wenqu.knowledge.parser.paddleocr_api", "PaddleOCRPPOCRv6Parser"));
         PARSER_CAPABILITIES = Collections.unmodifiableMap(capabilities);
 
         // 向 OptionsService 的 ocr_engine 校验端口注册真实引擎清单（缺省空集的解除点）
