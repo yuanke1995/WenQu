@@ -127,7 +127,7 @@
 
           <section class="app-card">
             <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />知识库范围</h2>
-            <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的**知识库**（文档归属哪个库在「文档管理」里设置）。</p>
+            <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的「知识库」（文档归属哪个库，在「文档管理」里设置）。</p>
             <a-radio-group v-model:value="scopeMode">
               <a-radio-button value="all">全部知识库</a-radio-button>
               <a-radio-button value="pick">指定知识库</a-radio-button>
