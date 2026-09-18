@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.controller;
 
 import com.wisesoft.wenqu.common.ResultJson;
+import com.wisesoft.wenqu.service.HybridRetrievalService;
 import com.wisesoft.wenqu.service.KnowledgeBaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,8 +15,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.wisesoft.wenqu.model.KnowledgeBase;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 知识库接口（管理员）：列表 / 详情 / 新建 / 编辑 / 删除 / 文档归属移动。
@@ -32,6 +37,9 @@ import java.util.Map;
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService kbService;
+
+    /** 检索链路：检索测试接口直接暴露召回结果，便于验证「按库隔离」是否真的生效 */
+    private final HybridRetrievalService retrievalService;
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；默认库排在最前")
     @GetMapping("/list")
@@ -80,5 +88,53 @@ public class KnowledgeBaseController {
         r.put("docId", docId);
         r.put("kbId", kbId);
         return ok ? ResultJson.ok(r) : ResultJson.error("文档不存在");
+    }
+
+    /**
+     * 检索测试：不经问答链路，直接返回该知识库范围内的召回片段与分数。
+     * <p>用于验证两件事：①按库隔离是否生效（换库后命中集合应不同）；
+     * ②库上的检索参数是否作用于检索（改阈值后命中数应变化）。
+     * <p>范围口径与问答链路一致：库内文档集合（含默认库时并上 kb_id 为空的文档）；
+     * 库 ID 配错时得到空集合，不会退化为全库。
+     */
+    @Operation(summary = "检索测试", description = "body: {query(必填), topK(可选，默认 10)}；"
+            + "返回该库范围内的召回片段与分数，用于验证按库隔离与库级检索参数")
+    @PostMapping("/{id}/retrieve")
+    public ResultJson retrieve(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        Object q = body == null ? null : body.get("query");
+        String query = q == null ? "" : String.valueOf(q).trim();
+        if (query.isEmpty()) return ResultJson.error("query 不能为空");
+        KnowledgeBase kb = kbService.get(id);
+        if (kb == null) return ResultJson.error("知识库不存在");
+        int topK = 10;
+        Object tk = body == null ? null : body.get("topK");
+        if (tk instanceof Number n) topK = Math.max(1, Math.min(50, n.intValue()));
+
+        Set<String> scope = kbService.docIdsOf(List.of(id));
+        List<HybridRetrievalService.Hit> hits = retrievalService.search(query);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (HybridRetrievalService.Hit h : hits) {
+            if (h.docId() == null || !scope.contains(h.docId())) continue;   // 按库过滤
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("knowledgeId", h.knowledgeId());
+            m.put("docId", h.docId());
+            m.put("title", h.title());
+            m.put("titlePath", h.titlePath());
+            m.put("chunkIndex", h.chunkIndex());
+            m.put("score", h.score());
+            String c = h.content() == null ? "" : h.content();
+            m.put("content", c.length() > 300 ? c.substring(0, 300) + "…" : c);
+            rows.add(m);
+            if (rows.size() >= topK) break;
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("kbId", id);
+        r.put("kbName", kb.getName());
+        r.put("query", query);
+        r.put("scopeDocCount", scope.size());   // 本库范围内的文档数（0 = 库是空的）
+        r.put("recalledTotal", hits.size());    // 过滤前总召回（用于对比隔离效果）
+        r.put("hitCount", rows.size());
+        r.put("hits", rows);
+        return ResultJson.ok(r);
     }
 }

@@ -9,18 +9,29 @@ server:
 spring:
   application:
     name: wenqu-server
-  # 模型客户端由配置服务按数据库配置动态构建（同一网关可切 chat/embedding/rerank），
-  # 不使用 Spring AI 的自动配置——否则启动期会强制要求 spring.ai.openai.api-key。
-  # 后续需要向量存储时再按同一思路接入。
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
-      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
-      - org.springframework.ai.vectorstore.redis.autoconfigure.RedisVectorStoreAutoConfiguration
+  # 模型 bean 一律关闭自动装配：问答/向量客户端由 DynamicOpenAiChatModel、DynamicEmbeddingModel
+  # 按数据库配置动态构建（密钥加密入库，yml 不落明文）。
+  # 注意不能用 spring.autoconfigure.exclude 排除自动配置类——那会连向量存储的自动配置一起失去，
+  # 检索链路将因缺少 VectorStore bean 而启动失败。用 model.*=false 只关模型、保留向量存储装配。
+  ai:
+    model:
+      chat: false
+      embedding: false
+      audio:
+        speech: false
+        transcription: false
+      image: false
+      moderation: false
+    openai:
+      # 可为空：模型 bean 已关闭；仅供需要连接信息的基础设施读取
+      api-key: ${WENQU_LLM_API_KEY:}
+      base-url: ${WENQU_LLM_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}
+    vectorstore:
+      redis:
+        # Spring AI 1.1：index 更名 index-name；initialize-schema 默认 false，需显式开启
+        initialize-schema: true
+        index-name: ai-doc-index
+        prefix: "ai:chunk:"
   # 首期复用现有业务库（知识库/文档/会话表同源），便于与旧后端并行对比验证；
   # 后续按新模型演进 schema 时再切换
   datasource:
@@ -33,8 +44,12 @@ spring:
       minimum-idle: 2
   data:
     redis:
-      host: 127.0.0.1
-      port: 6379
+      # 必须显式指定 jedis：Spring AI 的 Redis 向量存储依赖 JedisConnectionFactory，
+      # 而 Spring Boot 默认使用 Lettuce，不指定会导致 VectorStore 自动配置不生效。
+      client-type: jedis
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
       timeout: 3s
   servlet:
     multipart:

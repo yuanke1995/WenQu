@@ -5,35 +5,288 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * 服务端配置绑定（前缀 {@code wenqu}）。
- * <p>
- * 只放**启动期需要**的固定配置（密钥、令牌参数、口令策略）。业务可变配置（模型地址、
- * 检索参数等）不在这里，它们以数据库为唯一事实源、由配置服务统一读取，避免出现两份默认值。
+ * AI 应用自定义配置
+ *
+ * @author yuanke
  */
 @Data
 @Component
 @ConfigurationProperties(prefix = "wenqu")
 public class AppProperties {
 
+    private Chunk chunk = new Chunk();
+    private Retrieval retrieval = new Retrieval();
+    private Keyword keyword = new Keyword();
+    private Session session = new Session();
+    private Images images = new Images();
+    private Vision vision = new Vision();
+    private Ratelimit ratelimit = new Ratelimit();
+
+    private DeepReasoning deepReasoning = new DeepReasoning();
+
+    private Context context = new Context();
+
     private Auth auth = new Auth();
 
+    /** 主回答 System Prompt 角色段（DB 可编辑覆盖，保存即生效；此处为兜底默认值） */
+    private String systemPrompt = "你是\"问渠\"（WenQu），一个基于知识库资料回答问题的 AI 助手。"
+            + "回答应准确、简洁，优先依据参考资料，不要编造不存在的内容；"
+            + "若本轮参考资料未覆盖该问题，如实说明没有找到依据，并给出可行的下一步建议（换个问法、"
+            + "补充资料或转由对应的专业助手回答），不要臆测，也不要仅因话题超出某个文档范围就拒答。";
+
+    @Data
+    public static class Chunk {
+        /** 分块最大字符数 */
+        private int maxSize = 800;
+        /** 分块重叠字符数 */
+        private int overlap = 100;
+        /** 单文档解析的最大知识块数（0=不限制；防止超大文档 embedding 调用数万次） */
+        private int maxChunks = 3000;
+        /** 单文档最多提取图片数（0=不限制；防止图片爆炸导致视觉描述数小时） */
+        private int maxImages = 100;
+        /** 结构感知切分：标题/段落边界优先断块 + 章节标题路径注入（docx 生效，需重解析） */
+        private boolean structural = true;
+        /** 结构切分边界阈值比例（达到 maxSize×该比例时优先在段落边界断块） */
+        private double structuralRatio = 0.8;
+        /** 章节标题识别上限层级（1~6）：调大后更深层的小节/条目标题独立成块并进章节路径（改后需重解析生效） */
+        private int headingDepth = 4;
+    }
+
+    /**
+     * 关键词召回引擎：mysql（LIKE，零依赖但全表扫描）/ meilisearch（外部索引，中文分词 + BM25 相关度）。
+     * 引擎/地址/超时可经设置页动态调整；apiKey 只从 env/yml 读取，不落 c_ai_config（避免密钥明文入库）。
+     */
+    @Data
+    public static class Keyword {
+        /** 召回引擎：mysql | meilisearch（默认 mysql，切换后需先 reindex 建索引） */
+        private String engine = "mysql";
+        /** Meilisearch 服务地址 */
+        private String baseUrl = "http://localhost:7700";
+        /** Meilisearch master key（仅 env/yml 配置，不入 DB） */
+        private String apiKey = "";
+        /** 索引名 */
+        private String index = "ai-doc-chunks";
+        /** 单次请求超时(ms)：关键词路是辅助召回，超时即降级，不宜过大 */
+        private int timeoutMillis = 1000;
+    }
+
+    @Data
+    public static class Retrieval {
+        /** 混合检索：向量相似度权重（0~1） */
+        private double vectorWeight = 0.6;
+        /** 混合检索：关键词命中率权重（0~1） */
+        private double keywordWeight = 0.4;
+        /** 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；Ollama 无 rerank 能力，勿配 Ollama 地址） */
+        private Rerank rerank = new Rerank();
+    }
+
+    @Data
+    public static class Rerank {
+        /** 是否启用重排（需先启动本地 reranker 服务：scripts/win|mac/start_rerank_server.*） */
+        private boolean enabled = false;
+        /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank） */
+        private String baseUrl = "http://localhost:7997";
+        /** rerank 模型名 */
+        private String model = "BAAI/bge-reranker-v2-m3";
+        /** 单次重排超时(ms) */
+        private int timeoutMillis = 5000;
+    }
+
+    @Data
+    public static class Session {
+        /** 保留最近对话轮数 */
+        private int maxHistory = 10;
+        /** 会话过期时间（分钟） */
+        private int expireMinutes = 30;
+    }
+
+    @Data
+    public static class Ratelimit {
+        /** 接口限流总开关（Redis 固定窗口，按用户/IP；Redis 不可用自动放行） */
+        private boolean enabled = true;
+        /** 问答限频：次/分钟/用户（0=不限） */
+        private int chatPerMinute = 10;
+        /** 上传限频：次/分钟/用户（0=不限） */
+        private int uploadPerMinute = 10;
+    }
+
+    @Data
+    public static class Images {
+        /** 图片存储根目录，默认 ./data（相对应用工作目录） */
+        private String dir = "data";
+        /** 图片最长边像素，超过则等比缩小（0=不压缩） */
+        private int maxWidth = 1280;
+        /** JPEG 压缩质量（0~1） */
+        private float quality = 0.9f;
+        /** 图片 URL 访问前缀（含 context-path /ai） */
+        private String urlPrefix = "/ai/images";
+        /** 图片访问鉴权开关（HMAC 签名 URL，生产开启） */
+        private boolean authEnabled = false;
+        /** 签名 URL 有效期（秒） */
+        private long authExpireSeconds = 3600;
+        /** 回答中 [图片N] 标记与图片描述的相关性校验（LLM 偶发错配兜底） */
+        private ImageFilter imageFilter = new ImageFilter();
+    }
+
+    @Data
+    public static class ImageFilter {
+        /** 是否启用图片相关性校验 */
+        private boolean enabled = true;
+        /** 关键词命中数阈值（≥1 即相关，保守防误杀） */
+        private int minHits = 1;
+        /** 校验取标记前文的最大字符数 */
+        private int preContextChars = 100;
+    }
+
+    @Data
+    public static class Vision {
+        /** 图片描述模型（全模态，已实测返回标准 OpenAI 格式；求快可换 qwen3-omni-flash） */
+        private String model = "";
+        /** 视觉模型 base-url（与 chat 同网关） */
+        private String baseUrl = "";
+        /** 视觉模型 API Key */
+        private String apiKey = "";
+        /** 是否启用图片描述（关闭则只提取图片不调模型） */
+        private boolean enabled = true;
+        /** 单张图片描述超时(ms) */
+        private int timeoutMillis = 30000;
+        /** 图片描述并发度（本地 Ollama 需设置 OLLAMA_NUM_PARALLEL 才能并行推理） */
+        private int concurrency = 4;
+        /** 单张图片失败重试次数（Ollama 偶发 500/超时，重试可显著降低降级率） */
+        private int retryCount = 1;
+        /** Ollama keep_alive 保持模型常驻(分钟)，0=不发送（云端服务不支持此参数需设 0） */
+        private int keepAliveMinutes = 30;
+        /** Ollama 上下文窗口 num_ctx：1280px 识别图视觉 token 约 1600-2500，默认 4096 会截断；0=不设置 */
+        private int numCtx = 16384;
+        /**
+         * 关闭思考模式（qwen3 系列默认思考，关闭后提速且输出稳定）。
+         * 注意：max_tokens 在该思考模型下会导致空输出，本项目不发送 max_tokens
+         */
+        private boolean think = false;
+        /** 描述 prompt */
+        private String prompt = "请简要描述这张图片的内容，如果是界面截图请提取关键文字和界面元素，如果是流程图请说明流程要点，50字以内。";
+    }
+
+    /**
+     * 意图分类：纯文本消息先经 LLM 判断「闲聊/知识库无关」（chat）还是「可能需要检索知识库」（doc），
+     * chat 跳过改写/思考/检索/引用直达对话，doc 走完整 RAG 链路。
+     * 失败/超时/输出无法识别一律降级为 doc（fail-safe，最坏等于现状）。
+     */
+    @Data
+    public static class Intent {
+        /** 是否启用意图分类（默认关闭，AI_INTENT_CLASSIFY_ENABLED 可开） */
+        private boolean enabled = false;
+        /** 分类超时时间(ms)：分类只输出一个单词，超时不宜过大，超时按 doc 处理 */
+        private int timeoutMillis = 3000;
+        /** 分类用模型（留空回落 chat.model，可配更小更快的模型） */
+        private String model = "";
+        /** 分类 prompt（要求只输出 chat 或 doc 单词；拿不准输出 doc） */
+        private String prompt = "你是意图分类器，判断用户消息是否需要检索知识库资料来回答。只输出一个单词：chat 或 doc，不要任何解释。\n"
+                + "输出 chat：问候/寒暄/致谢/告别（你好、hi、在吗、谢谢、再见）、纯闲聊，"
+                + "以及明确与知识库主题无关的话题（天气、时事新闻、其他产品等）。\n"
+                + "输出 doc：凡是可能需要依据知识库资料回答的问题，包括功能说明、配置方法、操作步骤、"
+                + "报错处理，以及知识库覆盖的专业领域问题（如法律法规、制度规范、业务规则等）。\n"
+                + "注意：专业领域问题（法律、制度等）属于 doc，不要因为不像操作类问题就判成 chat。\n"
+                + "拿不准时一律输出 doc。";
+        /** chat 分支（闲聊/知识库无关）回答规则：拼在角色段之后，DB 可编辑保存即生效 */
+        private String chatPrompt = "当前用户消息不涉及知识库内容（问候、寒暄或与知识库主题无关的话题）。"
+                + "请自然友好地用简短篇幅回应，不要引用任何资料。"
+                + "若用户询问与知识库无关的问题，可简要回应，并说明你是\"问渠\"、擅长依据知识库资料回答问题，"
+                + "引导用户提出知识库覆盖范围内的问题。"
+                + "不要编造资料内容，不要输出 [N] 或 [图片N] 标记。";
+    }
+
+    /**
+     * 深度思考（生产级）：
+     * 阶段1 思考流式输出思维链（enable_thinking 透传 / 提示词引导双模式）
+     * → 阶段2 从思考文本提取 <search> 检索计划（精化 query + 子问题）
+     * → 阶段3 多路并行检索合并 → 复用现有上下文构建与回答流
+     */
+    @Data
+    public static class DeepReasoning {
+        /** 总开关（前端开关关闭时不进本流程） */
+        private boolean enabled = true;
+        /** 思考模式：model=extraBody 透传 enable_thinking 从 reasoning_content 提取；prompt=提示词引导输出到 content */
+        private String thinkingMode = "model";
+        /** 是否透传 enable_thinking=true（thinkingMode=model 时生效） */
+        private boolean enableThinking = true;
+        /** 思考引导 prompt（要求先分析不答答案，末尾输出 <search> 检索计划） */
+        private String prompt = "你是一个严谨的分析助手。请只输出对用户问题的深度思考过程，不要直接给出最终答案。"
+                + "要求：1) 先拆解问题关键点，分析可能的知识来源与回答方向；2) 思考要条理清晰、覆盖全面；"
+                + "3) 思考结束后，在最后单独一行输出检索计划，严格按格式：\n"
+                + "<search>精化后的检索query|子问题1|子问题2</search>\n"
+                + "第一个是用于检索知识库的精化查询短语，| 分隔的子问题是需要分别检索的子问题（最多3个）。";
+        /** 检索计划标签名（<search>/</search>） */
+        private String searchTag = "search";
+        /** 最大子问题数（不含精化 query） */
+        private int maxSubQueries = 3;
+        /** 多路并行检索开关 */
+        private boolean multiRetrieval = true;
+        /** 思考阶段超时(ms)，超时用已有内容降级 */
+        private int timeoutMillis = 30000;
+        /** 思考输出上限 token（0=不设，规避 qwen 思考模式 max_tokens 空输出） */
+        private int maxThinkingTokens = 0;
+        /** 思考流长度上限（字符，0=不限制）：超限中断思考流并保留已收集内容，避免刷爆上下文/token */
+        private int maxThinkingChars = 3000;
+        /** 思考链注入最终回答（把推理过程截断后作为参考注入生成 prompt，让"想过的"作用于"答"） */
+        private boolean injectThinking = true;
+        /** 思考链注入回答的长度上限（字符） */
+        private int injectThinkingMaxChars = 800;
+        /** 思考关键词增强检索（从思考全文提取词元补充到检索 query，提升召回） */
+        private boolean injectKeywords = true;
+        /** 思考关键词增强的词元数上限 */
+        private int injectKeywordsMax = 5;
+        /** 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考 */
+        private boolean autoRoute = false;
+    }
+
+    /**
+     * 上下文与长度控制（价值驱动填充）：
+     * 预算 = min(模型窗口 × 安全系数 − 预留输出, 成本软上限)；块按相关度降序累积填充，历史按预算裁剪
+     */
+    @Data
+    public static class Context {
+        /** 模型上下文窗口映射（格式 "模型名子串=token,模型名子串=token"，按当前 chat.model 子串匹配；未匹配用默认值） */
+        private String modelWindows = "qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768";
+        /** 未匹配到模型时的默认窗口（token） */
+        private int defaultWindowTokens = 32768;
+        /** 窗口安全系数（0~1，预留余量防超窗） */
+        private double safetyFactor = 0.7;
+        /** 成本软上限（token，0=不限制）：即使模型窗口很大，单次请求输入也不超过此值，防止账单失控 */
+        private int costCapTokens = 8000;
+        /** 输出限制 maxTokens（同时从窗口预算中预留） */
+        private int maxOutputTokens = 2000;
+        /** 注入对话历史的 token 上限（超出按"保留用户问题优先"裁剪） */
+        private int historyMaxTokens = 1200;
+        /** 单条历史消息截断字符数 */
+        private int historyPerMsgChars = 200;
+        /** 知识块命中片段窗口（字符，命中关键词前后各取 N 字；0=整块塞入） */
+        private int snippetWindowChars = 150;
+        /** 上下文填充的最大块数（兜底上限，防候选极多时预算失控） */
+        private int maxContextHits = 8;
+    }
+
+    /** 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现，不引入第三方依赖） */
     @Data
     public static class Auth {
-        /** JWT 签名密钥（环境变量 WENQU_JWT_SECRET）。留空则启动时随机生成并告警，重启后原令牌失效 */
+        /** JWT 签名密钥（env AI_JWT_SECRET）。留空则开发期自动生成随机值并告警（重启后原令牌失效） */
         private String jwtSecret = "";
-        /** 令牌有效期（小时，默认 168 = 7 天） */
+        /** 令牌有效期（小时，默认 7 天） */
         private int tokenTtlHours = 168;
-        /** 是否要求登录：true（默认）＝除公开端点外必须持有效令牌 */
+        /**
+         * 是否要求登录：true（默认）＝除公开端点外必须持有效令牌；
+         * false＝放行未登录请求（身份为 anonymous，仅能访问公开端点与历史兼容池）。
+         */
         private boolean requireLogin = true;
         /** 令牌签发者 */
         private String issuer = "wenqu";
         /** 令牌受众 */
         private String audience = "wenqu-api";
-        /** 连续登录失败达该次数后锁定（0 = 不锁定） */
+        /** 登录失败锁定阈值（连续失败次数，0=不锁定） */
         private int maxLoginFailures = 5;
         /** 锁定时长（分钟） */
         private int lockMinutes = 15;
-        /** 初始化管理员时要求的最小口令长度 */
+        /** 初始化管理员时要求的最小密码长度 */
         private int minPasswordLength = 6;
     }
 }
