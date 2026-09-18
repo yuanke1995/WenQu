@@ -22,8 +22,8 @@ import java.util.UUID;
  * <ul>
  *   <li>dataclass 字段元数据 → {@link FieldDef} 声明表（键序与默认值照搬）；
  *       {@code default_factory=lambda: str(uuid4())} → 每实例生成一次 UUID。
- *   <li>常量 {@code DEFAULT_YUXI_SUMMARY_PROMPT} 按产品命名替换为
- *       {@code DEFAULT_SUMMARY_PROMPT}（提示词正文逐字保留）。
+ *   <li>常量名按本产品命名：摘要提示词常量为 {@code DEFAULT_SUMMARY_PROMPT}
+ *       （提示词正文逐字保留）。
  *   <li>模块级函数 {@code resolve_agent_resource_options} / {@code normalize_agent_context_config} /
  *       {@code prepare_agent_runtime_context} 依赖 toolkits.service、knowledge.runtime、
  *       agents.mcp.service、agents.skills.service/runtime、backends.knowledge_base_backend
