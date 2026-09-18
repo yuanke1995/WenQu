@@ -2,6 +2,7 @@ package com.wisesoft.wenqu.repositories;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.wisesoft.wenqu.common.DateTimeUtils;
 import com.wisesoft.wenqu.models.Conversation;
 import com.wisesoft.wenqu.models.Project;
 import com.wisesoft.wenqu.repository.port.ConversationMapper;
@@ -139,6 +140,36 @@ public class ProjectRepository {
         }
         sql.append(")) ORDER BY c.updated_at DESC, c.id DESC");
         return jdbc.queryForList(sql.toString(), args.toArray());
+    }
+
+    /**
+     * Project.to_dict() 的键与时间格式照搬（参考实现 models_business.Project.to_dict）。
+     */
+    public static Map<String, Object> toDict(Project project) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", project.getId());
+        result.put("uid", project.getUid());
+        result.put("name", project.getName());
+        result.put("selection_status", project.getSelectionStatus());
+        result.put("workdir_path", project.getWorkdirPath());
+        result.put("directory_mode", project.getDirectoryMode());
+        result.put("status", project.getStatus());
+        result.put("deleted_at", DateTimeUtils.formatUtcDatetime(project.getDeletedAt()));
+        result.put("created_at", DateTimeUtils.formatUtcDatetime(project.getCreatedAt()));
+        result.put("updated_at", DateTimeUtils.formatUtcDatetime(project.getUpdatedAt()));
+        return result;
+    }
+
+    /** 重命名等场景的字段更新（显式 SET，未列字段不动）。 */
+    @Transactional
+    public Project updateProject(Project project) {
+        projectMapper.update(
+                null,
+                new LambdaUpdateWrapper<Project>()
+                        .eq(Project::getId, project.getId())
+                        .set(Project::getName, project.getName())
+                        .set(Project::getUpdatedAt, project.getUpdatedAt()));
+        return project;
     }
 
     /** 在调用方事务内软删除项目及其全部对话，返回受影响的对话数。 */
