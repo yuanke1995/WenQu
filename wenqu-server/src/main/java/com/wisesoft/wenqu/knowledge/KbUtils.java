@@ -26,7 +26,8 @@ public final class KbUtils {
             throw new IllegalArgumentException("知识库图片对象名必须符合 {kb_id}/kb-images/{filename} 格式");
         }
         // Python quote(relative_path, safe='/')：保留斜杠，其余字符百分号编码
-        return "/api/knowledge/databases/" + kbId + "/" + com.wisesoft.wenqu.common.UrlQuote.quote(relativePath, "/");
+        return "/api/knowledge/databases/" + kbId + "/images/"
+                + com.wisesoft.wenqu.common.UrlQuote.quote(relativePath, "/");
     }
 
     /** 检测是否是本系统生成的 MinIO 存储 URL。 */
