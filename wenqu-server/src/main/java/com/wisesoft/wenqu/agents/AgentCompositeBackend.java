@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.agents;
 
 import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend;
+import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxProvider;
 import com.wisesoft.wenqu.agents.backends.sandbox.SandboxFsBackend;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,9 +52,11 @@ public class AgentCompositeBackend {
             Collections.unmodifiableSet(new HashSet<>(Set.of("open_kb_document")));
 
     private final SkillService skillService;
+    private final ProvisionerSandboxProvider sandboxProvider;
 
-    public AgentCompositeBackend(SkillService skillService) {
+    public AgentCompositeBackend(SkillService skillService, ProvisionerSandboxProvider sandboxProvider) {
         this.skillService = skillService;
+        this.sandboxProvider = sandboxProvider;
     }
 
     /** 在 Agent Run 初始化时同步当前用户获授权的共享 Skill 投影（对应 sync_agent_context_skills）。 */
@@ -64,7 +67,7 @@ public class AgentCompositeBackend {
 
     /** 按已准备的 Agent context 构造本 Run 独享的 backend（对应 create_agent_composite_backend）。 */
     public SandboxFsBackend createAgentCompositeBackend(BaseContext context) {
-        return BackendScope.fromSources(context, "agent context").createBackend();
+        return BackendScope.fromSources(context, "agent context").createBackend(sandboxProvider);
     }
 
     /**
@@ -144,11 +147,11 @@ public class AgentCompositeBackend {
         }
 
         /** 构造本 Run 独享的 backend（对应 create_backend）。 */
-        public SandboxFsBackend createBackend() {
+        public SandboxFsBackend createBackend(ProvisionerSandboxProvider sandboxProvider) {
             if (workdirRelativePath == null || workdirRelativePath.isEmpty()) {
                 throw new IllegalArgumentException("workdir path is required in runtime context");
             }
-            return new ProvisionerSandboxBackend(runtimeScopeId, uid, workdirRelativePath, true);
+            return new ProvisionerSandboxBackend(sandboxProvider, runtimeScopeId, uid, workdirRelativePath, true, true);
         }
 
         private static String stringValue(BaseContext source, String key) {
