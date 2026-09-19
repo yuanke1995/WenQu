@@ -58,6 +58,31 @@ public class ModelMessageAuditCollector {
         this.workerId = workerId;
     }
 
+    /**
+     * AgentRun 因果归属访问器。
+     *
+     * <p>参考实现以**属性**形式暴露（{@code model_audit.run_id}），供
+     * {@code _build_tool_message_audit_collector} 复用已校验的归属；Java 侧以同名方法呈现。
+     */
+    public String runId() {
+        return runId;
+    }
+
+    /** 见 {@link #runId()}。 */
+    public String requestId() {
+        return requestId;
+    }
+
+    /** 见 {@link #runId()}。 */
+    public String threadId() {
+        return threadId;
+    }
+
+    /** 见 {@link #runId()}。 */
+    public String workerId() {
+        return workerId;
+    }
+
     /** 消费一条 raw messages ProtocolEvent；非生命周期消息保持无副作用。 */
     public void consume(Object rawMessage, Map<String, Object> rawMetadata) {
         if (!(rawMessage instanceof Map<?, ?> messageMap)

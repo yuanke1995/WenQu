@@ -170,6 +170,55 @@ public class ModelMessageAuditRepository {
         return message;
     }
 
+    /**
+     * 用终态 State 补全同一稳定来源键的 Model 审计消息（对应
+     * {@code chat_service._reconcile_model_audit_message} 的写入面）。
+     *
+     * <p><b>与 {@link #finish} 的差别（照搬参考实现语义，勿合并）</b>：本方法<b>不做</b>
+     * lifecycle 状态机校验（不要求当前是 running、不比对 usage/duration），因为它的用途是
+     * "Checkpoint 里同一 operation_id 的最后一条 AIMessage 覆盖审计事实"；参考实现同样只
+     * 覆盖 content / extra_metadata，并在原状态为 running 时补终态与
+     * {@code finished_by_reconcile} 标记。缺失审计事实时返回 {@code null}（不新建）。
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Message reconcileFromState(
+            String runId, String operationId, String content, Map<String, Object> metadata) {
+        Message message = getInternal(runId, operationId);
+        if (message == null) {
+            return null;
+        }
+
+        JSONObject mergedMetadata = RepoValues.parseObject(message.getExtraMetadata());
+        if (metadata != null) {
+            mergedMetadata.putAll(metadata);
+        }
+        boolean running = "running".equals(message.getExecutionStatus());
+        if (running) {
+            // 参考实现里 metadata 与 message.extra_metadata 是同一对象引用，
+            // 故该标记会随同一次写入落库。
+            mergedMetadata.put("finished_by_reconcile", true);
+        }
+
+        LambdaUpdateWrapper<Message> update = new LambdaUpdateWrapper<Message>()
+                .eq(Message::getId, message.getId())
+                .set(Message::getContent, content)
+                .set(Message::getExtraMetadata, JSON.toJSONString(mergedMetadata));
+        LocalDateTime finishedAt = null;
+        if (running) {
+            finishedAt = DateTimeUtils.utcNowNaive();
+            update.set(Message::getExecutionStatus, "completed").set(Message::getFinishedAt, finishedAt);
+        }
+        messageMapper.update(null, update);
+
+        message.setContent(content);
+        message.setExtraMetadata(JSON.toJSONString(mergedMetadata));
+        if (running) {
+            message.setExecutionStatus("completed");
+            message.setFinishedAt(finishedAt);
+        }
+        return message;
+    }
+
     /** 按同一 Run 的稳定来源键读取审计消息。 */
     public Message get(String runId, String operationId) {
         return getInternal(runId, operationId);

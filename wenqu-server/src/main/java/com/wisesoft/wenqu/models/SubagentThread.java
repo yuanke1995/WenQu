@@ -4,7 +4,10 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.wisesoft.wenqu.common.DateTimeUtils;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import lombok.Data;
 
 /**
@@ -33,4 +36,22 @@ public class SubagentThread {
     private LocalDateTime createdAt;  // 默认 utc_now_naive
     @TableField("updated_at")
     private LocalDateTime updatedAt;  // 默认 utc_now_naive
+
+    /**
+     * 参考实现的 {@code SubagentThread.to_dict()}：键名与键序逐字照搬，
+     * 时间列经 {@code format_utc_datetime} → {@link DateTimeUtils#formatUtcDatetime(LocalDateTime)}。
+     */
+    public Map<String, Object> toDict() {
+        Map<String, Object> dict = new LinkedHashMap<>();
+        dict.put("id", id);
+        dict.put("uid", uid);
+        dict.put("parent_conversation_id", parentConversationId);
+        dict.put("child_conversation_id", childConversationId);
+        dict.put("child_thread_id", childThreadId);
+        dict.put("subagent_slug", subagentSlug);
+        dict.put("created_by_run_id", createdByRunId);
+        dict.put("created_at", DateTimeUtils.formatUtcDatetime(createdAt));
+        dict.put("updated_at", DateTimeUtils.formatUtcDatetime(updatedAt));
+        return dict;
+    }
 }

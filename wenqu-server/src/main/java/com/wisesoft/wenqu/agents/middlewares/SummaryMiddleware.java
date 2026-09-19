@@ -211,7 +211,17 @@ public class SummaryMiddleware extends ModelInterceptor {
         String offload(List<Message> messages, String sessionId);
     }
 
-    /** 压缩事件推送端口（对应参考实现 {@code get_stream_writer()}）。 */
+    /**
+     * 压缩事件推送端口（对应参考实现 {@code get_stream_writer()}，其发射侧为
+     * {@code _emit_compression(status, **extra)}）。
+     *
+     * <p><b>实现契约（接线时必须遵守）</b>：实现方负责把 {@code status} 与 {@code extra} 包成
+     * 参考实现同形的 payload —— {@code {"type": "wenqu.context_compression", "status": status, **extra}}，
+     * 并投递给流式输出通道。其中事件类型的字面量是**品牌替换**后的值
+     * （参考实现为 {@code "yuxi.context_compression"}；生产者与消费者同处后端、前端无引用，
+     * 见 {@link com.wisesoft.wenqu.service.ChatService} 的 {@code contextCompressionPayload}）。
+     * 两侧字面量必须一致，否则压缩事件会在消费者侧被静默丢弃（收到但不转发）。
+     */
     @FunctionalInterface
     public interface CompressionEventSink {
         void emit(String status, Map<String, Object> extra);
