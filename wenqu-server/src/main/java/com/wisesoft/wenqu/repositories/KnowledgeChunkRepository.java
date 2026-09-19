@@ -10,6 +10,7 @@ import com.wisesoft.wenqu.models.KnowledgeChunk;
 import com.wisesoft.wenqu.repository.port.KnowledgeChunkMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -135,6 +136,48 @@ public class KnowledgeChunkRepository {
                 new LambdaQueryWrapper<KnowledgeChunk>()
                         .eq(KnowledgeChunk::getKbId, kbId)
                         .orderByAsc(KnowledgeChunk::getId));
+    }
+
+    /**
+     * kb 作用域的关键词召回（为检索面 aquery 的 keyword / hybrid 分支提供召回）。
+     *
+     * <p><b>必要替换（引擎差异，显式标注）</b>：参考实现的关键词召回走 Milvus 稀疏向量 BM25
+     * （{@code anns_field=CONTENT_SPARSE_FIELD} + {@code drop_ratio_search}），本工程未引入稀疏向量索引，
+     * 改在 knowledge_chunks 表内做 kb 作用域的多词包含匹配，命中打分由调用方统一计算。
+     * 返回顺序按主键升序（与 BM25 的相关度排序不同），排序同样由调用方统一重排。
+     *
+     * @param kbId    知识库 ID
+     * @param terms   查询词（已抽取，非空）
+     * @param fileIds 文件范围；{@code null} 表示不限，空集合表示必然无命中
+     * @param limit   召回上限
+     */
+    public List<KnowledgeChunk> searchByKeywords(
+            String kbId, List<String> terms, Collection<String> fileIds, int limit) {
+        if (kbId == null || terms == null || terms.isEmpty() || limit <= 0) {
+            return Collections.emptyList();
+        }
+        if (fileIds != null && fileIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        LambdaQueryWrapper<KnowledgeChunk> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(KnowledgeChunk::getKbId, kbId);
+        if (fileIds != null) {
+            wrapper.in(KnowledgeChunk::getFileId, fileIds);
+        }
+        wrapper.and(nested -> {
+            boolean first = true;
+            for (String term : terms) {
+                if (first) {
+                    nested.like(KnowledgeChunk::getContent, term);
+                    first = false;
+                } else {
+                    nested.or().like(KnowledgeChunk::getContent, term);
+                }
+            }
+        });
+        wrapper.orderByAsc(KnowledgeChunk::getId);
+        wrapper.last("LIMIT " + limit);
+        return chunkMapper.selectList(wrapper);
     }
 
     /** 按 chunk_id 列表取知识块（保持入参顺序，缺失的跳过）。 */

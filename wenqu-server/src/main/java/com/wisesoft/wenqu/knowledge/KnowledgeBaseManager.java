@@ -13,7 +13,6 @@ import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
 import com.wisesoft.wenqu.repositories.RepoValues;
 import com.wisesoft.wenqu.repositories.UserRepository;
-import com.wisesoft.wenqu.service.HybridRetrievalService;
 import com.wisesoft.wenqu.service.KnowledgeFolderService;
 import java.security.SecureRandom;
 import java.time.ZoneOffset;
@@ -26,7 +25,6 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
@@ -48,8 +46,9 @@ import org.springframework.stereotype.Service;
  * <p>必要替换（逐条标注）：
  * <ul>
  *   <li>异步：参考实现全为 async/await；本工程为同步阻塞调用，由任务线程与 Web 请求线程承载。
- *   <li>检索入口 {@link #retrieve}：参考实现走 executor.aquery（Milvus 混合检索 + 图谱增强）；
- *       本工程复用既有的 {@link HybridRetrievalService}（向量 + 关键词 + 重排），并按 kb 范围过滤。
+ *   <li>检索入口 {@link #aquery}/{@link #retrieve}：参考实现走 executor.aquery（向量 + 关键词 +
+ *       图谱增强 + 重排，参数化检索）；本工程由 {@link KnowledgeBaseRuntime#aquery} 承载同一参数面，
+ *       底层以本工程的 VectorStore 与 knowledge_chunks 召回（引擎差异在 Runtime 内逐条标注）。
  *   <li>并发：参考实现用 asyncio.gather 并行列表与统计；本工程顺序执行，语义一致。
  * </ul>
  *
@@ -81,7 +80,6 @@ public class KnowledgeBaseManager {
     private final KnowledgeBaseRuntime runtime;
     private final KnowledgeBaseCache kbCache;
     private final KnowledgeFolderService folderService;
-    private final ObjectProvider<HybridRetrievalService> retrievalServiceProvider;
 
     public KnowledgeBaseManager(
             KnowledgeBaseRepository kbRepository,
@@ -89,15 +87,13 @@ public class KnowledgeBaseManager {
             UserRepository userRepository,
             KnowledgeBaseRuntime runtime,
             KnowledgeBaseCache kbCache,
-            KnowledgeFolderService folderService,
-            ObjectProvider<HybridRetrievalService> retrievalServiceProvider) {
+            KnowledgeFolderService folderService) {
         this.kbRepository = kbRepository;
         this.fileRepository = fileRepository;
         this.userRepository = userRepository;
         this.runtime = runtime;
         this.kbCache = kbCache;
         this.folderService = folderService;
-        this.retrievalServiceProvider = retrievalServiceProvider;
     }
 
     /** {@code get_database_document_support} 的返回值（Java 无元组，改用 record 承载）。 */
@@ -531,16 +527,26 @@ public class KnowledgeBaseManager {
         runtime.updateFileParams(kbId, fileId, params, operatorId);
     }
 
-    /** 检索（对应 retrieve：按 kb 加载运行配置后执行检索并构造输出）。 */
+    /**
+     * 查询知识库并返回原始 chunk 列表（对应 manager.aquery：取运行配置后转交执行器）。
+     *
+     * <p>与 {@link #retrieve} 的分工同参考实现：本方法不套 {@code build_search_output} 投影，
+     * 评测、外部检索等需要原始字段（score / distance / 各召回路径分数）的调用方走这里。
+     */
+    public List<Map<String, Object>> aquery(String queryText, String kbId, Map<String, Object> kwargs) {
+        KnowledgeBaseConfig config = getKbConfig(kbId);
+        return runtime.aquery(queryText, kbId, false, config, kwargs);
+    }
+
+    /**
+     * 检索（对应 retrieve：按 kb 加载运行配置后执行检索并构造输出）。
+     *
+     * <p>参考实现固定传 {@code agent_call=True}（执行器保留该形参但实现体未使用）。
+     */
     public Map<String, Object> retrieve(String kbId, String query, Map<String, Object> options) {
-        getKbConfig(kbId);
-        HybridRetrievalService retrievalService = retrievalServiceProvider.getIfAvailable();
-        if (retrievalService == null) {
-            throw new IllegalStateException("检索服务不可用");
-        }
-        List<HybridRetrievalService.Hit> hits = retrievalService.search(query);
+        List<Map<String, Object>> results = runtime.aquery(query, kbId, true, getKbConfig(kbId), options);
         // buildSearchOutput 在入参非列表时原样返回（对齐参考实现的 | Any），此处窄化为 Map 输出
-        return asMap(KnowledgeFileViews.buildSearchOutput(kbId, hits));
+        return asMap(KnowledgeFileViews.buildSearchOutput(kbId, results));
     }
 
     /** 知识库检索参数定义，并合并当前保存值（对应 get_kb_query_params_config）。 */

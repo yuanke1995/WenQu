@@ -138,6 +138,14 @@ public class EvaluationRepository {
                 new LambdaQueryWrapper<EvaluationDataset>().eq(EvaluationDataset::getDatasetId, datasetId));
     }
 
+    /** 行锁读取数据集（对应参考实现的 {@code with_for_update()}）。 */
+    public EvaluationDataset getDatasetForUpdate(String datasetId) {
+        return datasetMapper.selectOne(
+                new LambdaQueryWrapper<EvaluationDataset>()
+                        .eq(EvaluationDataset::getDatasetId, datasetId)
+                        .last("FOR UPDATE"));
+    }
+
     public List<EvaluationDataset> listDatasets(String kbId) {
         return datasetMapper.selectList(
                 new LambdaQueryWrapper<EvaluationDataset>()
@@ -187,6 +195,12 @@ public class EvaluationRepository {
 
     public EvaluationRun getRun(String runId) {
         return runMapper.selectOne(new LambdaQueryWrapper<EvaluationRun>().eq(EvaluationRun::getRunId, runId));
+    }
+
+    /** 行锁读取运行记录（对应参考实现的 {@code with_for_update()}）。 */
+    public EvaluationRun getRunForUpdate(String runId) {
+        return runMapper.selectOne(
+                new LambdaQueryWrapper<EvaluationRun>().eq(EvaluationRun::getRunId, runId).last("FOR UPDATE"));
     }
 
     public List<EvaluationRun> listRuns(String kbId) {
