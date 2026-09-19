@@ -160,17 +160,17 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 - [ ] model_request_timing — callbacks/model_request_timing.py
 ### mcp（1）
 - [x] service — mcp/service.py（**全量 671 行**：`McpService`（内置同步 / 客户端装配 `McpClientBundle` / 工具缓存与统计 / 配置 CRUD / 启用开关 / 工具开关 / 统一入口三函数）+ `McpTool`（langchain tool 最小面：name/description/args_schema/可变 metadata/handle_tool_error + 调用）+ `McpServerViews`（`to_dict`/`to_mcp_config`/`serialize_mcp_server` 与 JSON 列反序列化）+ `MCPServerNotFoundException` / `McpBuiltinImmutableException`；`MCPServerRepository` 逐条对位参考实现里出现过的查询；启动组件见 `config/McpStartupInitializer`（对应 lifespan 的 `builtin_mcp_servers`，required=False）。**跨语言对拍**：`to_camel_case` / `json.dumps(sort_keys,ensure_ascii,separators)` / `sha256[:16]` 29/29 行逐字节一致）
-### middlewares（10，批次①已落地 5，剩余 5）
+### middlewares（10，批次①②已落地 6，剩余 4）
 - [x] context — middlewares/context.py → `ContextAwareInterceptor`（合并 @dynamic_prompt + @wrap_model_call）
 - [x] dynamic_tool — middlewares/dynamic_tool.py → `DynamicToolMiddleware`（工具筛选 + 哨兵）
 - [x] memory — middlewares/memory.py → `MemoryMiddleware`（3 受限工具 + ThreadLocal ToolRuntime）
 - [x] network_retry — middlewares/network_retry.py → `NetworkRetryMiddleware`（预算/次数双轨重试）
 - [x] steer — middlewares/steer.py → `SteerMiddleware`（jump_to 同形）
-- [ ] model_input — middlewares/model_input.py
-- [ ] skills — middlewares/skills.py
-- [ ] subagent_task — middlewares/subagent_task.py
-- [ ] summary — middlewares/summary.py
-- [ ] token_usage — middlewares/token_usage.py
+- [x] token_usage — middlewares/token_usage.py → `TokenUsageMiddleware`（纯函数聚合数学 37/37 PASS）
+- [ ] model_input — middlewares/model_input.py（**阻塞**：ocr_parse_file 需 backends/sandbox 未搬）
+- [ ] skills — middlewares/skills.py（可移植提示词+门控，Command 写回需适配）
+- [ ] subagent_task — middlewares/subagent_task.py（**阻塞**：subagent_run_service 未搬）
+- [ ] summary — middlewares/summary.py（deepagents summarization 基类 + 流式 writer，框架差异大）
 ### skills（3，repository.py 已搬）
 - [x] remote_install — skills/remote_install.py（**纯函数面全量**：`_normalize_source` / `_normalize_skill_name` / `_clean_cli_output`（ANSI + 控制序列 + 装饰符清洗 + `str.splitlines` 语义）/ `_parse_available_skills` / `_parse_search_skills` / `allowed_hosts`（OptionsService.REMOTE_SKILL_SOURCE_POLICY）；常量 7 项逐字对齐。**能力缺口（已标注）**：三个沙盒入口（list/prepare/search）保留签名与非法来源校验后抛 `SkillRemoteExecutionUnavailableException`（外置 provisioner 沙盒未部署，同 dify/notion 口径）；`search("")` 与「skills 列表为空」等参考实现不依赖沙盒的分支照旧生效）
 - [ ] runtime — skills/runtime.py
@@ -266,6 +266,7 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | 2026-09-19 | §一 批次⑰：`artifact_service.py` 全量 → ArtifactService（artifact 下载 / 预览 / 保存工作区 6 函数）。依赖面 `FilePreviewService`/`WorkdirService`/`SkillService`/`SafeFiles`/`BackendPaths`/`Workspace` 全部就位、**无 langchain 依赖故可直搬**。**参考实现 test_artifact_service.py 契约对拍 28/28 PASS** —— 路径允许/拒绝矩阵、`Content-Disposition` 百分号编码三断言（attachment 前缀 / 无 CR·LF / **不含原始文件名**）、`copyArtifactToPath` 的 404/400/403/413 映射、有界复制字节一致。全量编译 361 源文件 0 错误 | `0d8a1ba` |
 | 2026-09-19 | §三 批次⑱（**引擎底座，非照搬项**）：以 spring-ai-alibaba 的 graph-core / agent-framework 为底座，把参考实现消费的 LangGraph 图 + `create_agent` ReAct 循环 + 中间件挂载点 + checkpointer + `astream_events("v3")` 事件词汇桥接为 `agents/engine/`：`GraphFactory`（`create_agent` 等价入口）/ `GraphPort`（`astreamMessages`/`astreamEvents`/`ainvoke`/`agetState`/`updateState`）/ `AgentEventStream`（事件词汇合成，数据源为节点输出的 `StreamingOutput.message()`）/ `GraphCodec`（承载类 ↔ 框架消息/配置/状态互转）+ 承载类 `AIMessage`/`GraphStateSnapshot`；`BaseAgent.agetState` 改返回快照载体。**类名按职责命名，不含实现框架名**。能力差异 5 类逐条标注（默认 MemorySaver 致 `hasCheckpointer` 恒真 / `recursionLimit` 编译期 / tools 事件 input 恒空 / values 仅图末一次 / 无 checkpoint 的 thread `updateState` 显式抛错）。验证：367 源文件 javac 0 错误；stub 模型端到端验证台 **40/40 PASS** | `eae0a77` |
 | 2026-09-19 | §三 批次①（middlewares 第一批 5/10）：`context`→`ContextAwareInterceptor`（合并 @dynamic_prompt+@wrap_model_call）、`steer`→`SteerMiddleware`（`@HookPositions({BEFORE_MODEL,AFTER_MODEL})`、`canJumpTo=[end]`、读 metadata.context.run_id → `{jump_to:"end"}` 与框架 ReactAgent 读 state.jump_to 逐字同形）、`dynamic_tool`→`DynamicToolMiddleware`（工具筛选 + `EMPTY_TOOL_SENTINEL` 兜底框架"空列表=不过滤"差异、McpTool 适配 ToolCallback）、`network_retry`→`NetworkRetryMiddleware`（网络预算退避 + 非网络次数双轨）、`memory`→`MemoryMiddleware`（3 受限工具 + ThreadLocal 模拟 ToolRuntime）。**NetworkRetry 父类 `ModelRetryMiddleware`（langchain 1.3.17）语义逐字对齐**：`max_retries`=初始调用之后的重试次数(总=max+1)、`on_failure` 默认 continue(返回错误 AIMessage)/error(重抛)、退避 `initial*factor^n` 上限+±25% jitter、`ModelError.is_retryable` 对位 Non/TransientAiException、不可重试异常立即上抛不进 on_failure、状态码优先于文本。验证台 **51/51 PASS**（D 段 16 项对拍参考实现单测契约）；全量 373 源文件 0 错误 | `77ca2e3` |
+| 2026-09-19 | §三 批次②（middlewares 第 6 个）：`token_usage`→`TokenUsageMiddleware`。**框架差距实证**：`wrap_model_call` 返回 `Command(update=...)` 直接写回 LangGraph state → 本工程 `ModelInterceptor` 无此能力，把快照构建抽成**纯函数** `buildSnapshot()` 经 request context 传递、由构图方落 state。usage 元数据从 `ChatResponse.getMetadata().getUsage()`（非 AIMessage.usage_metadata）。纯函数聚合数学（分桶/累计/黑名单剔除/缓存命中/complete 判定）逐字对齐。验证台 `TokenUsageHarness` **37/37 PASS**（对拍 test_token_usage_middleware.py）；全量 374 源文件 0 错误 | `25a35c7` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**已可无阻塞直搬**：`scheduled_agent_router`、`agent_invocation_call_router`、`agent_invocation_eval_router`（三者阻塞项均在 §一 且已落地）；`agent_router` 的 §一 侧亦已解除，但其余项仍受 §三 影响需逐条复核。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
