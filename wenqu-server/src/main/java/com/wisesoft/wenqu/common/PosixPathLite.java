@@ -41,6 +41,25 @@ public final class PosixPathLite {
         return last.substring(dot);
     }
 
+    /** pathlib.Path.name：最后一段文件名（含扩展名；为空返回原串）。 */
+    public static String nameOf(String value) {
+        if (value == null) {
+            return "";
+        }
+        int slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+        return slash >= 0 ? value.substring(slash + 1) : value;
+    }
+
+    /** pathlib.Path.stem：最后一段文件名去掉扩展名（无扩展名/隐藏名返回整段）。 */
+    public static String stemOf(String value) {
+        String name = nameOf(value);
+        int dot = name.lastIndexOf('.');
+        if (dot <= 0) {
+            return name;
+        }
+        return name.substring(0, dot);
+    }
+
     public static PosixPathLite parse(String value) {
         String text = value == null ? "" : value;
         boolean absolute = text.startsWith("/");
