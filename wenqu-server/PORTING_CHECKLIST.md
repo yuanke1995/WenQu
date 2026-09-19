@@ -185,3 +185,4 @@
 |------|------|--------|
 | 2026-09-19 | （清单建立，无新增搬移） | — |
 | 2026-09-19 | RAGFlow 分块家族 9/12：dispatcher/nlp/presets/book/general/laws/qa/separator/md_parser_utils/semantic_utils | `ec74d88` |
+| 2026-09-19 | RAGFlow 分块家族补齐 3/12 + 预设真正分流：semantic/table_utils + ChunkPresets.mapToInternalParserId 修正 | `9299405` |
