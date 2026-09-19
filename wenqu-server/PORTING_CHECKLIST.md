@@ -56,20 +56,20 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
   当前 `deps-check` 的缺口为 0（223 个闭包 artifact、199 条第三方 import 全部有归属）。
 
 ## 进度概览
-- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **knowledge/utils 全 5/5（batch⑩ 补齐 mindmap_utils + sample_question_utils 的高层 DB/LLM 面 → KnowledgeContentService）** / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 26/33（routers 19 + utils 5）**
-- 🔲 剩余：5 大块，**49 项待办 + 1 项部分完成**（§一 12 / §二 2 / §三 30 / §五 8，另 `[~]`：lifespan）。**knowledge_router 已解锁并全量落地（批次⑩）**；其余 router 阻塞在 §一 的 agents 服务与 §三 的 agents 运行时（middlewares / toolkits / backends / skills/runtime）——**必须先搬 §三 才能解锁 §一，再解锁 §五**。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
+- ✅ 已完成：repositories(26) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(22) / agents 前置层(13) / knowledge 解析面(17) / storage(minio) / **services 36-43** / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **knowledge/utils 全 5/5（batch⑩ 补齐 mindmap_utils + sample_question_utils 的高层 DB/LLM 面 → KnowledgeContentService）** / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 26/33（routers 19 + utils 5）**
+- 🔲 剩余：5 大块，**43 项待办 + 1 项部分完成**（§一 6 / §二 2 / §三 30 / §五 8，另 `[~]`：lifespan）。**§一 agents 服务侧已全部落地（批次⑫~⑮ → agent_run_service / agent_config_service / agent_run_manifest_service / agent_request_queue_service / agent_request_service / scheduled_agent_service）**，`agent_router`、`agent_invocation_call_router`、`agent_invocation_eval_router`、`scheduled_agent_router` 的阻塞点已解除；剩余 router 仍阻塞在 §三 的 agents 运行时（middlewares / toolkits / backends）与 §一的 chat/artifact/context_compression。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
 
 ---
 
-## 一、services 剩余（13）
+## 一、services 剩余（6）
 参考路径前缀 `package/<ref>/services/`
-- [ ] agent_config_service — agent_config_service.py
-- [ ] agent_request_service — agent_request_service.py
-- [ ] agent_request_queue_service — agent_request_queue_service.py
-- [ ] agent_run_service — agent_run_service.py
-- [ ] agent_run_manifest_service — agent_run_manifest_service.py
+- [x] agent_config_service — agent_config_service.py（AgentConfigService：`prepare_agent_config_write` 的写入口径；`preload_skills` 归并到 `skills`，用 `BaseContext.filterConfigByRole` + `AgentContextService.resolveAgentResourceOptions`）
+- [x] agent_request_service — agent_request_service.py（AgentRequestService：`RunOrigin`/`AgentRequestInput` 记录 + `submitAgentRequest`；origin 校验、request_id 幂等三分支、会话创建、Workdir 绑定）
+- [x] agent_request_queue_service — agent_request_queue_service.py（AgentRequestQueueService：排队策略与状态常量、steer/取消/续跑、SSE `streamRequestEvents`、`dispatchNextRequest`/`recoverPendingDispatches`/`_dispatchLockedHead` 唯一键竞争判定）
+- [x] agent_run_service — agent_run_service.py（AgentRunService：模型/审批解析、`resolveAgentRunConfig`、`buildRunResponse`、事件压缩、`persistAgentRunRecord` 嵌套事务 + 唯一键幂等、`enqueueAgentRun`/`commitAndEnqueue`、`getAgentRunView`/`getAgentRunResult`/`cancelAgentRunView`、SSE `streamAgentRunEvents`（轮询 + 心跳 + `end` 补偿））
+- [x] agent_run_manifest_service — agent_run_manifest_service.py（AgentRunManifestService：`MANIFEST_SCHEMA_VERSION=2`、`computeManifestFingerprint`/`computeConfigDigest`、`resolveCodeRevision` 读 `WENQU_CODE_REVISION`、`prepareRunExecution`；依赖 `common/CanonicalJson`）
 - [ ] subagent_run_service — subagent_run_service.py
-- [ ] scheduled_agent_service — scheduled_agent_service.py
+- [x] scheduled_agent_service — scheduled_agent_service.py（ScheduledAgentService：校验/幂等/派发/worker 领取全量 21 函数；依赖自实现 `common/CronSchedule`（croniter 等价，能力差异已标注）+ `ScheduledAgentRepository`/`UserRepository.lockActiveByUid`）
 - [ ] run_worker — run_worker.py
 - [ ] arq_worker — arq_worker.py
 - [x] knowledge_task_service — knowledge_task_service.py（KnowledgeTaskService：5 个任务处理函数 + 失败钩子）
@@ -247,19 +247,23 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | 2026-09-19 | **首次实跑（服务真起 + 登录 + 打接口）**：修 7 处只在运行期成立的缺陷（PosixPathLite.join 空基越界 → initBuiltinSkills 必抛；javac 残留 .class 致 Mapper bean 冲突；同名 Mapper 跨包 → 全限定 bean 名生成器；MilvusGraphService/TaskService 多构造器缺 @Autowired；Neo4jAutoConfiguration 强制建 Driver；UserContextInterceptor 只认单一令牌契约致参考契约全 401；KnowledgeBaseController 缺 `/api` 前缀）。补齐启动组件至 5/11，运行期派生目录进 .gitignore。冒烟 16/16 + 读写往返 12/12 通过 | `ef528ce` |
 | 2026-09-19 | §二 批次⑩：`utils/mindmap_utils.py` + `utils/sample_question_utils.py` 的**高层 DB/LLM 面** → `knowledge/KnowledgeContentService`（10 + 2 函数）→ **解锁 `knowledge_router`** → `KnowledgeBaseController` 全量重写至新知识库宇宙（`knowledge_bases` 表 + Repository/Manager/Runtime）**56/56 端点**；参考实现 9 个模块级函数 + 5 个常量 → `service/KnowledgeRouteSupport`（与 ExternalKbController 共享）。端点集合对拍 56==56 零差异；全量编译 343 源文件 0 错误；实跑冒烟 10/10 只读端点 + 错误码通过（422/404/401/501 均符合预期），建库 400 系参考实现 `manager.py:507` 的 `if not embedding_model_spec: raise` 语义，与参考一致（非缺陷） | `5a81263` |
 | 2026-09-19 | §三 批次⑪：`agents/base.py` → **BaseAgent**（含 4 个模块级纯函数）+ `backends/knowledge_base_backend.py` → KnowledgeBaseBackend；新增承载类 `ModelDumpable`/`ToolMessage`/`GraphCommand`；`BaseContext` 补 `setDynamic`/`getDynamic`（对应 `setattr/getattr` 非声明字段，`set()` 只写声明字段会静默失效）；图引擎收敛为 `AgentsGraphPort` 端口（无实现）。**核查发现 §三 整体阻塞于 `langgraph`+`deepagents`+`langchain_core` 三套缺失框架**，已写入清单专项说明 | `38ecdaf` |
+| 2026-09-19 | §一+§三 批次⑫：`agent_run_service.py` 全量 → AgentRunService（+ `ArqPort` 端口、`AgentRunCreationScope`/`AgentRunWaitTimeout`）；agents 运行时数据面三件套 `agents/context.py` → AgentContextService、`agents/skills/runtime.py` → SkillRuntime、`agents/buildin/__init__.py` → AgentManager；`common/ApiHttpException` 补便捷工厂、`BaseAgent.resolveContextSchema()`、`AgentRun.toDict()` | `ba0db81` |
+| 2026-09-19 | §一 批次⑬：`agent_config_service.py` → AgentConfigService、`agent_run_manifest_service.py` → AgentRunManifestService；新增 `common/CanonicalJson`（`json.dumps(sort_keys=True, separators=(",",":"))` 的 Java 载体）；**功能性修正**：`AgentRunService.canonicalJson` 原用 fastjson（不排序键）致 resume 的 request_id 幂等失效，改走 CanonicalJson | `9d5a5d3` |
+| 2026-09-19 | §一 批次⑭：`agent_request_queue_service.py` → AgentRequestQueueService（排队策略/steer/SSE/派发与恢复）、`agent_request_service.py` → AgentRequestService（RunOrigin + AgentRequestInput + submitAgentRequest）；`AgentRunRequestRepository` 补 `listQueuedScopes`/`updateQueueState`、`AgentRunRepository` 补 `listPendingDispatchScopes`、`AgentRunRequest.toDict()` | `93ae913` |
+| 2026-09-19 | §一 批次⑮：`scheduled_agent_service.py` 全量 → ScheduledAgentService（21 函数：校验 / 幂等创建 / 更新 / 软删 / 立即运行 / 派发 / 失败结算 / 恢复 / 到期领取）+ 自实现 `common/CronSchedule`（croniter 等价，能力差异已标注）；`ScheduledAgentJob`/`ScheduledAgentRun` 补 `toDict()`，`ScheduledAgentRepository` 补 `getJobById`/`lockRun`/`updateJob`/`updateRun` 并让 `listRecentRuns`/`getRequestAndRun` 带出 `error_message`/`finished_at`（终端状态事实源），`UserRepository` 补 `lockActiveByUid`。**参考实现 test_scheduled_agent_service.py 断言对拍 19/19 PASS**，并以 Python 基线交叉核对 `buildRequestId` 摘要段与 `intentHash` 逐字节一致 | `4138d33` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
-> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何剩余 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
+> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**已可无阻塞直搬**：`scheduled_agent_router`、`agent_invocation_call_router`、`agent_invocation_eval_router`（三者阻塞项均在 §一 且已落地）；`agent_router` 的 §一 侧亦已解除，但其余项仍受 §三 影响需逐条复核。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
 | knowledge_router | ~~mindmap_utils/sample_question_utils 的高层 DB/LLM 函数~~ **均已搬完（批次⑩ → KnowledgeContentService）→ knowledge_router 已解锁并全量落地（56/56 端点）** | §二 |
-| scheduled_agent_router | `scheduled_agent_service` | §一 |
+| scheduled_agent_router | ~~`scheduled_agent_service`~~ **已搬完（批次⑮）→ 阻塞解除** | §一 |
 | chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
-| agent_router | `agent_config_service` / `agent_request_service` / `agent_request_queue_service` / `agent_run_service` / `agents/buildin` | §一 + §三 |
-| agent_invocation_call_router | `agent_request_service` | §一 |
-| agent_invocation_channel_router | 上列 + `channel_command_service`（已搬）+ `chat_service` | §一 |
-| agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
+| agent_router | ~~agent_config_service / agent_request_service / agent_request_queue_service / agent_run_service / agents/buildin~~ **§一 侧均已搬完（批次⑫⑬⑭ + AgentManager）→ 阻塞解除** | §一 + §三 |
+| agent_invocation_call_router | ~~`agent_request_service`~~ **已搬完（批次⑭）→ 阻塞解除** | §一 |
+| agent_invocation_channel_router | 上列（已解除）+ `channel_command_service`（已搬）+ `chat_service` | §一 |
+| agent_invocation_eval_router | ~~`agent_request_service` / `agent_run_service`~~ **均已搬完（批次⑫⑭）→ 阻塞解除** | §一 |
 | skill_router | ~~`agents/skills/service.py` / `remote_install.py`~~ **均已搬完（批次九）→ skill_router 已解锁并落地** | §三 |
 
 ## ⚠️ §三 的根本阻塞：第三方运行时框架缺失（2026-09-19 核查）
