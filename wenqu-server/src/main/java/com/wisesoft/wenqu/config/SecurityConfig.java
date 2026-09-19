@@ -14,14 +14,21 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 /**
- * 内部鉴权拦截器：两层控制
+ * 内部鉴权拦截器：按路由契约分两道闸
  * <ol>
- *   <li>API Key 认证：带对 X-Api-Key 且命中问答白名单 → 放行（管理端点不放行）</li>
- *   <li>权限模型：普通用户仅开放问答链路，其余端点需管理员
- *       （判定见 {@link AdminGuard}；未命中返回 403，fail-closed）</li>
+ *   <li><b>登录门禁</b>（{@code /api/**}，全局唯一）：require-login 开启时，除登录引导端点
+ *       （login/first-run/initialize/logout）外均需有效登录令牌 —— 对应参考实现各路由
+ *       {@code Depends(get_required_user)} 的「必须登录」前置。</li>
+ *   <li><b>管理员闸</b>（仅 {@code /api/ai/**}，即本产品既有契约路由）：普通用户仅开放问答链路，
+ *       其余端点需管理员（判定见 {@link AdminGuard}；未命中返回 403，fail-closed）。</li>
  * </ol>
- * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
- * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
+ * <p>参考实现契约路由（{@code /api/knowledge/**}、{@code /api/dashboard/**}、{@code /api/tasks} 等）
+ * **不套**这道粗粒度管理员闸：它们的权限粒度由路由方法首行的
+ * {@link AuthGuards#requireUser()} / {@link AuthGuards#requireAdmin()} /
+ * {@link AuthGuards#requireSuperadmin()} 显式声明（与参考实现的 Depends 调用点一一对应），
+ * 管理员闸若一并套上会把参考实现中的普通用户端点（如 {@code /api/projects}、{@code /api/mention/*}）
+ * 误判为 403。</p>
+ * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成。
  * 身份只认登录令牌，不接受任何客户端自报的用户标识请求头。</p>
  *
  * @author yuanke
@@ -37,11 +44,15 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；AccessControlInterceptor 后续据「是否已登录」与角色判定
+        // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；后续两道闸据「是否已登录」与角色判定
         registry.addInterceptor(userContextInterceptor)
                 .addPathPatterns("/api/**");
-        registry.addInterceptor(new AccessControlInterceptor())
+        // 登录门禁：全部 /api/**（两套路由契约共用）
+        registry.addInterceptor(new LoginGateInterceptor())
                 .addPathPatterns("/api/**");
+        // 管理员闸：仅本产品既有契约路由（/api/ai/**）；参考实现契约路由在方法上自声明权限
+        registry.addInterceptor(new AdminGateInterceptor())
+                .addPathPatterns("/api/ai/**");
     }
 
     /**
@@ -90,25 +101,33 @@ public class SecurityConfig implements WebMvcConfigurer {
     /**
      * 登录引导端点：未登录也必须可访问，否则无法登录（否则死锁）。
      * 其余端点在校验完平台信任 token 后，若开启 require-login 则要求携带有效登录令牌。
+     *
+     * <p>另含参考实现中本就无 Depends 的公开端点（{@code /api/system/health}、{@code /ready}、
+     * {@code /discovery}、{@code /info}）——它们在参考实现里同样不要求登录。
      */
     private static boolean isAuthBootstrapEndpoint(String method, String path) {
         if (path == null) return false;
         if ("GET".equals(method) && path.equals("/api/ai/auth/first-run")) return true;
+        if ("GET".equals(method) && path.startsWith("/api/system/")) {
+            return path.equals("/api/system/health")
+                    || path.equals("/api/system/ready")
+                    || path.equals("/api/system/discovery")
+                    || path.equals("/api/system/info");
+        }
         return "POST".equals(method) && (path.equals("/api/ai/auth/login")
                 || path.equals("/api/ai/auth/initialize")
                 || path.equals("/api/ai/auth/logout"));
     }
 
     /**
-     * 访问控制：API Key 放行 → 登录门禁 → 管理员判定（三层，fail-closed）。
+     * 登录门禁：require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
      * <p>身份一律取自 {@link UserContextInterceptor} 装载的登录态，不读取用户自报请求头。</p>
      */
-    class AccessControlInterceptor implements HandlerInterceptor {
+    class LoginGateInterceptor implements HandlerInterceptor {
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
             String method = request.getMethod();
             String path = request.getRequestURI().substring(request.getContextPath().length());
-            // 1. 登录门禁：require-login=true 时，除登录引导端点外必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));
             if (properties.getAuth().isRequireLogin() && !authenticated && !isAuthBootstrapEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -117,7 +136,19 @@ public class SecurityConfig implements WebMvcConfigurer {
                         ResultJson.error(401, "请先登录")));
                 return false;
             }
-            // 2. 问答用户白名单之外 → 管理员判定（fail-closed：普通用户不隐式获得管理权）
+            return true;
+        }
+    }
+
+    /**
+     * 管理员闸（仅 {@code /api/ai/**}）：问答用户白名单之外一律管理员判定，fail-closed
+     * ——普通用户不隐式获得管理权。
+     */
+    class AdminGateInterceptor implements HandlerInterceptor {
+        @Override
+        public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+            String method = request.getMethod();
+            String path = request.getRequestURI().substring(request.getContextPath().length());
             if (!isPublicUserEndpoint(method, path) && !adminGuard.isAdmin(request)) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
