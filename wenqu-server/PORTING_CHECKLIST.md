@@ -14,7 +14,7 @@
 
 ## 进度概览
 - ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 20/33（routers 15 + utils 5）**
-- 🔲 剩余：6 大块，约 **81** 个条目（见下）。§五 剩余 13 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
+- 🔲 剩余：5 大块，**62 项待办 + 3 项部分完成**（§一 12 / §二 6 / §三 32 / §五 12，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。§五 剩余 12 项中 **knowledge_eval_router 已解除阻塞**（其余仍等 §一/§二/§三）。
 
 ---
 
@@ -65,23 +65,24 @@
 - [ ] metrics — eval/metrics.py
 - [ ] service — eval/service.py
 ### graphs（6）
-- [ ] extractors/base — graphs/extractors/base.py
-- [ ] extractors/factory — graphs/extractors/factory.py
-- [ ] extractors/llm — graphs/extractors/llm.py
-- [ ] graph_utils — graphs/graph_utils.py
-- [ ] milvus_graph_service — graphs/milvus_graph_service.py
-- [ ] milvus_graph_vector_store — graphs/milvus_graph_vector_store.py
+- [x] extractors/base — graphs/extractors/base.py（extractors/GraphExtractor）
+- [x] extractors/factory — graphs/extractors/factory.py（extractors/GraphExtractorFactory）
+- [x] extractors/llm — graphs/extractors/llm.py（extractors/LlmGraphExtractor）
+- [x] graph_utils — graphs/graph_utils.py（GraphUtils）
+- [x] milvus_graph_service — graphs/milvus_graph_service.py（MilvusGraphService）
+- [x] milvus_graph_vector_store — graphs/milvus_graph_vector_store.py（GraphVectorStore；后端由 Spring AI VectorStore 承载，能力差异已标注）
+> 以上 6 项 + storage/neo4j 由 `688abda` 一次搬完（含 KnowledgeGraphRetrieval ← implementations/milvus.py 的检索融合函数）。
 ### implementations（4）
 - [ ] dify — implementations/dify.py（参数面已搬入 KnowledgeBaseTypeParams；aquery 依赖外部 Dify HTTP 接口，未搬）
 - [x] milvus — implementations/milvus.py（执行器由既有 Spring 内核 VectorStore / KnowledgeChunkRepository / HybridRetrievalService 承载；类型参数与检索参数清单 → KnowledgeBaseTypeParams）
 - [ ] notion — implementations/notion.py（参数面已搬入 KnowledgeBaseTypeParams；aquery 依赖外部 Notion HTTP 接口，未搬）
 - [x] read_only_connectors — implementations/read_only_connectors.py（ReadOnlyConnectors：只读能力判定与报错文案）
 ### utils 剩余（5，kb_utils/pdf_utils 已搬）
-- [ ] mindmap_utils — utils/mindmap_utils.py
-- [ ] sample_question_utils — utils/sample_question_utils.py
+- [~] mindmap_utils — utils/mindmap_utils.py（**部分**：纯函数面已搬入 KnowledgeMindmap；`generate_database_mindmap`/`get_database_mindmap_data`/`get_mindmap_database_files`/`get_mindmap_diff`/`update_mindmap_incremental`/`get_mindmap_databases_overview`/`remove_file_from_mindmap`/`batch_remove_files_from_mindmap` 等**高层 DB/LLM 函数未搬** → 仍挡 knowledge_router）
+- [~] sample_question_utils — utils/sample_question_utils.py（**部分**：纯函数面已搬入 KnowledgeSampleQuestions；`generate_database_sample_questions`/`get_database_sample_questions` 未搬）
 - [x] security — utils/security.py（KnowledgeSecurity）
-- [ ] url_fetcher — utils/url_fetcher.py
-- [ ] url_validator — utils/url_validator.py
+- [x] url_fetcher — utils/url_fetcher.py（KnowledgeUrlFetcher）
+- [x] url_validator — utils/url_validator.py（KnowledgeUrlValidator；白名单环境变量已去品牌化为 `WENQU_URL_WHITELIST`）
 
 ## 三、agents 运行时（约 32，仅前置层已搬）
 > 已搬：context.py→BaseContext / state.py→AgentState / tool_approval.py→ToolApproval / backends/paths.py→BackendPaths / chatbot/prompt.py→ChatbotPrompt / skills/repository.py→SkillRepository / toolkits/registry.py→ToolkitsRegistry / toolkits/utils.py→ToolkitsUtils
@@ -130,9 +131,9 @@
 
 ## 四、storage 后端（3，minio 已搬）
 参考路径前缀 `package/<ref>/storage/`
-- [ ] postgres/manager — postgres/manager.py（Spring/MyBatis 接管，可标记为 N/A）
-- [ ] neo4j/manager — neo4j/manager.py（知识图谱）
-- [ ] redis/manager — redis/manager.py
+- [x] postgres/manager — postgres/manager.py（Spring/MyBatis 接管，标记为 N/A）
+- [x] neo4j/manager — neo4j/manager.py（storage/neo4j/Neo4jConnectionManager，`688abda`）
+- [x] redis/manager — redis/manager.py（Spring StringRedisTemplate 接管，标记为 N/A）
 > 注：`storage_migrations/`（5）由 actable/Spring 接管，可不做。
 
 ## 五、server/API 层（33）
@@ -154,7 +155,7 @@
 - [x] graph_router — routers/graph_router.py（GraphController；`/api/graph`）
 - [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
 - [ ] knowledge_eval_router — routers/knowledge_eval_router.py
-- [ ] knowledge_router — routers/knowledge_router.py
+- [~] knowledge_router — routers/knowledge_router.py（**部分 11/57 端点**：KnowledgeBaseController 已有 `/knowledge/databases` 系列 CRUD + chunk-presets + query-params + query-test；**剩余挡在 mindmap_utils/sample_question_utils 的高层函数**）
 - [ ] mcp_router — routers/mcp_router.py
 - [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
 - [x] model_provider_router — routers/model_provider_router.py（ModelProviderController；`/api/system/model-providers`，9 端点：列表 / 新建 / 详情 / 更新 / 删除 / 远端模型拉取 / 缓存刷新 / 分组模型 v2 / 连通性状态）＋ providers 数据面全量（`models/providers/{service,cache,builtin,repository}.py` → ModelProviderService / ModelProviderCache / BuiltinProviders（25 家）/ ModelProviderRepository，加 `models/{chat,embed,rerank}.py` 的 spec 选择与连通性测试面 → ModelSelectors；**25 家内置供应商逐字对齐，含注释掉未启用的 anthropic/google 条目亦未收录**）
@@ -193,16 +194,16 @@
 | 2026-09-19 | §五 批次五：routers 1（tool）+ tools/service 数据面 | `a75818c` |
 | 2026-09-19 | §五 批次四：routers 1（external_kb） | `62608ad` |
 | 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | `20015b5` |
-| 2026-09-19 | §五 批次六：model_provider_router + providers 数据面全量（ModelInfo/BuiltinProviders/ModelProviderCache/ModelSelectors + ModelProviderService 重写 + ModelProviderRepository 补全）；`_normalize_payload` 跨语言对拍 26/26 逐字一致 | — |
+| 2026-09-19 | §五 批次六：model_provider_router + providers 数据面全量（ModelInfo/BuiltinProviders/ModelProviderCache/ModelSelectors + ModelProviderService 重写 + ModelProviderRepository 补全）；`_normalize_payload` 跨语言对拍 26/26 逐字一致 | `055b57f` |
 
 ## 挡在后面的依赖（routers 剩余 10 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
-| knowledge_router | mindmap_utils/sample_question_utils 的高层函数（workspace_service 已解除） | §二 |
+| knowledge_router | mindmap_utils/sample_question_utils 的高层 DB/LLM 函数（workspace_service、graphs、url_fetcher 均已解除） | §二 |
 | scheduled_agent_router | `scheduled_agent_service` | §一 |
-| knowledge_eval_router | `knowledge/eval/service.py` + `benchmark_generation.py` | §二 |
+| knowledge_eval_router | ~~`knowledge/eval/service.py` + `benchmark_generation.py`~~ **已解除**（graphs 于 `688abda` 落地，`models select_model` 于 `055b57f` 落地）→ 下一批次 | §二 |
 | chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
 | agent_router | `agent_config_service` / `agent_request_service` / `agent_request_queue_service` / `agent_run_service` / `agents/buildin` | §一 + §三 |
 | agent_invocation_call_router | `agent_request_service` | §一 |
