@@ -1338,8 +1338,15 @@ public class AgentRunService {
         return copy;
     }
 
+    /**
+     * resume 载荷的规范化序列化（对应参考实现
+     * {@code json.dumps(resume, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)}）。
+     *
+     * <p>必须键排序：request_id 由该字符串派生，同一份决策换键序必须得到同一 request_id，
+     * 否则幂等失效（会重复创建 run）。
+     */
     static String canonicalJson(Object payload) {
-        return JSON.toJSONString(payload);
+        return com.wisesoft.wenqu.common.CanonicalJson.dumps(payload);
     }
 
     /** 便捷构造 409 详情（供同包其它服务复用）。 */
