@@ -191,4 +191,49 @@ public class AgentRunRequestRepository {
         request.setUpdatedAt(now);
         return request;
     }
+
+    /**
+     * 全表范围内 queued 请求的作用域去重投影（对应参考实现
+     * {@code select(AgentRunRequest.uid, agent_slug, conversation_thread_id).where(status==queued).distinct()}）。
+     *
+     * <p>供恢复扫描枚举"可能残留待派发队头"的线程；返回顺序与数据库一致（不额外排序，
+     * 与参考实现的 {@code distinct()} 同口径）。
+     */
+    public List<String[]> listQueuedScopes() {
+        List<Map<String, Object>> rows = requestMapper.selectMaps(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AgentRunRequest>()
+                        .select("DISTINCT uid", "agent_slug", "conversation_thread_id")
+                        .eq("status", STATUS_QUEUED));
+        List<String[]> scopes = new java.util.ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            scopes.add(new String[] {
+                str(row.get("uid")), str(row.get("agent_slug")), str(row.get("conversation_thread_id"))
+            });
+        }
+        return scopes;
+    }
+
+    /**
+     * 就地写回请求的队列表字段（对应参考实现"改 ORM 属性 + {@code db.flush()}"）。
+     *
+     * <p>用显式 {@code SET} 而非 {@code updateById}：后者按 NOT_NULL 策略跳过 null 列，
+     * 一旦将来出现可清空字段会静默失效（本项目已为此统一口径）。
+     */
+    @Transactional
+    public void updateQueueState(AgentRunRequest request) {
+        LocalDateTime now = request.getUpdatedAt() == null ? DateTimeUtils.utcNowNaive() : request.getUpdatedAt();
+        requestMapper.update(
+                null,
+                new LambdaUpdateWrapper<AgentRunRequest>()
+                        .eq(AgentRunRequest::getId, request.getId())
+                        .set(AgentRunRequest::getQueuePolicy, request.getQueuePolicy())
+                        .set(AgentRunRequest::getStatus, request.getStatus())
+                        .set(AgentRunRequest::getInputPayload, request.getInputPayload())
+                        .set(AgentRunRequest::getUpdatedAt, now));
+        request.setUpdatedAt(now);
+    }
+
+    private static String str(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
 }
