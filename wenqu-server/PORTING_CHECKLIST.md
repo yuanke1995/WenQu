@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 18/33（routers 13 + utils 5）**
-- 🔲 剩余：6 大块，约 **83** 个条目（见下）。§五 剩余 15 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 19/33（routers 14 + utils 5）**
+- 🔲 剩余：6 大块，约 **82** 个条目（见下）。§五 剩余 14 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
 
 ---
 
@@ -126,7 +126,7 @@
 - [ ] buildin/tools — toolkits/buildin/tools.py
 - [ ] debug/tools — toolkits/debug/tools.py
 - [ ] kbs/tools — toolkits/kbs/tools.py
-- [ ] service — toolkits/service.py
+- [ ] service — toolkits/service.py（ToolkitsService：get_tool_metadata/get_tool_instances_by_category/extract_tool_info/ensure_metadata_loaded 已搬；resolve_configured_runtime_tools 依赖 mcp/service.py 与 skills/runtime.py，未搬）
 
 ## 四、storage 后端（3，minio 已搬）
 参考路径前缀 `package/<ref>/storage/`
@@ -163,7 +163,7 @@
 - [ ] skill_router — routers/skill_router.py
 - [x] system_router — routers/system_router.py（SystemController；`/api/system`）
 - [x] system_task_router — routers/system_task_router.py（TaskController；`/api/tasks`）
-- [ ] tool_router — routers/tool_router.py
+- [x] tool_router — routers/tool_router.py（ToolController；`/api/system/tools`，2 端点）
 - [x] user_router — routers/user_router.py（UserController；`/api/user`）
 - [x] workspace_router — routers/workspace_router.py（WorkspaceController；两个同前缀 router 合并为 `/api/workspace`，含 knowledge 只读三端点）
 ### server/utils（6）
@@ -190,10 +190,11 @@
 | 2026-09-19 | knowledge 根核心 9/9（base/manager/factory/runtime/read_models/schemas/preview/cache/security）+ implementations/milvus/read_only_connectors + KnowledgeTaskService | `77bbe8f` |
 | 2026-09-19 | §五 批次一：server/utils 5/6（access_log/auth_middleware/common_utils/knowledge_permissions/knowledge_response）+ routers 7（mention/project/system_task/knowledge_dashboard/dashboard/graph/filesystem）+ 平台差异载体（GlobalExceptionHandler/ApiHttpException/AuthGuards/CorsConfig/LoginRateLimitFilter） | `bac62c1` |
 | 2026-09-19 | §五 批次二：routers 3（user/auth_dept/system）+ storage/MinioUploads（upload_image_to_minio）+ config/LogPaths + config/StartupState + common/AppVersion + info.template.yaml | — |
-| 2026-09-19 | §五 批次四：routers 1（external_kb） | `{HASH}` |
+| 2026-09-19 | §五 批次五：routers 1（tool）+ tools/service 数据面 | `{HASH5}` |
+| 2026-09-19 | §五 批次四：routers 1（external_kb） | `62608ad` |
 | 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | `20015b5` |
 
-## 挡在后面的依赖（routers 剩余 12 个的阻塞点）
+## 挡在后面的依赖（routers 剩余 11 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
 
 | router | 阻塞项 | 归属 |
@@ -209,4 +210,3 @@
 | agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
 | mcp_router | `agents/mcp/service.py` | §三 |
 | skill_router | `agents/skills/service.py` / `remote_install.py` | §三 |
-| tool_router | `agents/toolkits/service.py` | §三 |

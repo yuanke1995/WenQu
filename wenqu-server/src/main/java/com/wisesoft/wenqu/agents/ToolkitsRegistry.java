@@ -54,6 +54,16 @@ public final class ToolkitsRegistry {
 
         /** 参数 schema（dict 或 pydantic model 的 schema()，此处统一为 Map）。 */
         Map<String, Object> getArgsSchema();
+
+        /**
+         * 工具对象自身的 metadata（langchain tool 的 {@code tool_obj.metadata}）。
+         *
+         * <p>平台差异：参考实现用 {@code getattr(tool_obj, "metadata", {}) or {}} 动态取用，
+         * Java 无此机制，故在接口上显式给出默认实现（缺省空表），语义等价。
+         */
+        default Map<String, Object> getMetadata() {
+            return Map.of();
+        }
     }
 
     /** 全局注册表: tool_name -> ToolExtraMetadata。 */
