@@ -2,10 +2,7 @@ package com.wisesoft.wenqu.agents;
 
 import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend;
 import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxProvider;
-import com.wisesoft.wenqu.agents.backends.sandbox.SandboxFsBackend;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Service;
@@ -14,27 +11,45 @@ import org.springframework.stereotype.Service;
  * Agent 运行时 CompositeBackend 构造（对应参考实现 agents/backends/composite.py）。
  *
  * <p>逐字对齐：文件系统工具 allowlist {@code _AGENT_FS_TOOLS}（显式排除 destructive delete）、
- * 工具结果裁剪豁免集 {@code _TOOL_RESULT_EVICTION_EXEMPT_TOOLS}（在 deepagents 内建豁免之上额外
- * 豁免 open_kb_document，避免 read_file/offload 循环）、{@code _BackendScope} 数据类
- * （runtime_scope_id / workdir_relative_path / uid 三字段 + workdir_path 派生 +
- * from_sources 多源解析）、三个模块级工厂函数
+ * {@code _BackendScope} 数据类（runtime_scope_id / workdir_relative_path / uid 三字段 +
+ * workdir_path / artifacts_root 两个派生 + from_sources 多源解析）、三个模块级工厂函数
  * （sync_agent_context_skills / create_agent_composite_backend / create_agent_filesystem_middleware）。
+ * 工具结果裁剪豁免集 {@code _TOOL_RESULT_EVICTION_EXEMPT_TOOLS} 落在
+ * {@link FilesystemMiddleware#TOOL_RESULT_EVICTION_EXEMPT_TOOLS}（该类即参考实现的
+ * {@code FilesystemMiddleware}，同属 composite.py 模块）。
+ *
+ * <h3>构件映射（引擎面已具备等价构件，故本模块为「真接线」而非配置载体）</h3>
+ * <table border="1">
+ *   <caption>参考实现 → 本工程</caption>
+ *   <tr><th>参考实现（deepagents / 本模块）</th><th>本工程</th></tr>
+ *   <tr><td>{@code CompositeBackend(default=..., routes={}, artifacts_root=...)}</td>
+ *       <td>default → {@link ProvisionerSandboxBackend}；{@code artifacts_root} →
+ *           {@link BackendScope#artifactsRoot()}；{@code routes={}} 为空路由表，
+ *           引擎面无 CompositeBackend 实体亦无语义损失（见下能力差异 1）</td></tr>
+ *   <tr><td>{@code FilesystemMiddleware}（工具供给 + 大结果裁剪）</td>
+ *       <td>{@link FilesystemMiddleware}（裁剪，ToolInterceptor）+ 工具注册处（工具供给，见能力差异 2）</td></tr>
+ *   <tr><td>{@code FilesystemMiddleware.wrap_tool_call}</td>
+ *       <td>{@code ToolInterceptor.interceptToolCall}（框架 spring-ai-alibaba agent-framework）</td></tr>
+ *   <tr><td>{@code refresh_user_skill_projection_async}</td>
+ *       <td>{@link SkillService#refreshUserSkillProjectionAsync}</td></tr>
+ *   <tr><td>{@code runtime_workdir_path}</td><td>{@link BackendPaths#runtimeWorkdirPath}</td></tr>
+ * </table>
  *
  * <h3>能力差异（显式标注）</h3>
- * <ul>
- *   <li>{@code deepagents.backends.CompositeBackend} 与 {@code FilesystemMiddleware} 在本工程
- *       未照搬（框架已由 spring-ai-alibaba 桥接）。本工程的文件系统工具以注册到图引擎的
- *       ToolCallback 承载，不再有 CompositeBackend 这一概念实体；故 {@code createBackend()}
- *       直接返回 {@link ProvisionerSandboxBackend}（实现 {@link SandboxFsBackend} 契约），
- *       deepagents 的 routes / artifacts_root 包裹属能力差异（artifacts_root 仅作为
- *       {@link BackendScope#artifactsRoot()} 派生值保留，供后续 Filesystem/Summarization
- *       中间件等价体参考）。</li>
- *   <li>deepagents 内建 {@code TOOLS_EXCLUDED_FROM_EVICTION} 的具体成员未知，本工程仅落地
- *       已知的 Yuxi 增量（{@code open_kb_document}）；与 deepagents 基类的并集在引擎面
- *       FilesystemMiddleware 等价体里按框架既定豁免集处理。</li>
- *   <li>{@code refresh_user_skill_projection_async} → {@link SkillService#refreshUserSkillProjectionAsync}。</li>
- *   <li>{@code runtime_workdir_path} → {@link BackendPaths#runtimeWorkdirPath}。</li>
- * </ul>
+ * <ol>
+ *   <li>{@code deepagents.backends.CompositeBackend} 未照搬：本调用点 {@code routes={}}，
+ *       其唯一实际作用是「default + artifacts_root」聚合，已由
+ *       {@link BackendScope#createBackend} 与 {@link BackendScope#artifactsRoot()} 分别承载；
+ *       若将来出现非空 routes，需另建路由 backend（当前无此需求）。</li>
+ *   <li>{@code deepagents.middleware.filesystem.FilesystemMiddleware} 未照搬：其工具本体（绑定
+ *       backend 的 ls/read_file/write_file/edit_file/glob/grep/execute）属第三方实现；框架的
+ *       {@code FilesystemInterceptor} 提供的是<b>本地文件系统</b>工具且 builder 的 backend 字段未被使用，
+ *       不能承载沙盒 backend，故不采用。本模块保留 {@code _AGENT_FS_TOOLS} 声明（去 disabled_tools）
+ *       交给工具注册处，由后者构建绑定 {@link ProvisionerSandboxBackend} 的回调。</li>
+ *   <li>{@code create_agent_filesystem_middleware} 的返回对象在参考实现里一个中间件同时承担
+ *       「工具供给」与「大结果裁剪」；本工程拆为两处（裁剪在
+ *       {@link FilesystemMiddleware}，工具供给在注册处），故本方法只返回裁剪拦截器。</li>
+ * </ol>
  */
 @Service
 public class AgentCompositeBackend {
@@ -42,14 +57,6 @@ public class AgentCompositeBackend {
     /** 文件工具 allowlist：显式排除 destructive delete（参考实现未实现 delete，且删除需审批/审计）。 */
     public static final List<String> AGENT_FS_TOOLS = List.of(
             "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute");
-
-    /**
-     * 工具结果裁剪豁免集：在 deepagents 内建豁免之上额外豁免 open_kb_document。
-     * 能力差异：deepagents 基类的 {@code TOOLS_EXCLUDED_FROM_EVICTION} 成员未知，此处仅落已知增量；
-     * 与基类并集在引擎面 FilesystemMiddleware 等价体按框架既定豁免集处理。
-     */
-    public static final Set<String> TOOL_RESULT_EVICTION_EXEMPT_TOOLS =
-            Collections.unmodifiableSet(new HashSet<>(Set.of("open_kb_document")));
 
     private final SkillService skillService;
     private final ProvisionerSandboxProvider sandboxProvider;
@@ -66,16 +73,31 @@ public class AgentCompositeBackend {
     }
 
     /** 按已准备的 Agent context 构造本 Run 独享的 backend（对应 create_agent_composite_backend）。 */
-    public SandboxFsBackend createAgentCompositeBackend(BaseContext context) {
+    public ProvisionerSandboxBackend createAgentCompositeBackend(BaseContext context) {
         return BackendScope.fromSources(context, "agent context").createBackend(sandboxProvider);
     }
 
     /**
-     * 构造文件系统中间件（对应 create_agent_filesystem_middleware）。
-     * 在 ToolNode 注册前排除禁用工具；实际工具结果 token 裁剪由引擎面承载（见 YuxiFilesystemMiddleware）。
+     * 取当前 context 的 {@code artifacts_root}（= {@code <runtime workdir>/outputs}）。
+     * 参考实现从 CompositeBackend 实例读取该值，本工程无该实体，故显式暴露给中间件装配处。
      */
-    public YuxiFilesystemMiddleware createAgentFilesystemMiddleware(
-            Integer toolTokenLimitBeforeEvict, SandboxFsBackend backend, Set<String> disabledTools) {
+    public static String artifactsRoot(BaseContext context) {
+        return BackendScope.fromSources(context, "agent context").artifactsRoot();
+    }
+
+    /**
+     * 构造文件系统中间件（对应 create_agent_filesystem_middleware），在工具注册前排除禁用工具。
+     *
+     * @param toolTokenLimitBeforeEvict 大工具结果裁剪预算；null 表示关闭裁剪
+     * @param backend 本 Run 独享的沙盒 backend（来自 {@link #createAgentCompositeBackend}）
+     * @param artifactsRoot 本 Run 的 artifacts 根（来自 {@link #artifactsRoot}）
+     * @param disabledTools 需排除的文件工具名集合（参考实现 {@code disabled_tools=frozenset()}）
+     */
+    public FilesystemMiddleware createAgentFilesystemMiddleware(
+            Integer toolTokenLimitBeforeEvict,
+            ProvisionerSandboxBackend backend,
+            String artifactsRoot,
+            Set<String> disabledTools) {
         Set<String> disabled = disabledTools == null ? Set.of() : disabledTools;
         List<String> tools = new ArrayList<>();
         for (String name : AGENT_FS_TOOLS) {
@@ -83,7 +105,7 @@ public class AgentCompositeBackend {
                 tools.add(name);
             }
         }
-        return new YuxiFilesystemMiddleware(backend, toolTokenLimitBeforeEvict, tools);
+        return new FilesystemMiddleware(toolTokenLimitBeforeEvict, backend, artifactsRoot, tools);
     }
 
     // ==================== _BackendScope ====================
@@ -146,8 +168,13 @@ public class AgentCompositeBackend {
             return new BackendScope(runtimeScopeId, relativePath, uid);
         }
 
-        /** 构造本 Run 独享的 backend（对应 create_backend）。 */
-        public SandboxFsBackend createBackend(ProvisionerSandboxProvider sandboxProvider) {
+        /**
+         * 构造本 Run 独享的 backend（对应 create_backend）。
+         *
+         * <p>参考实现此处 {@code create_if_missing=True}，{@code inherit_env} 取构造默认值 True，
+         * 两者等价于本工程的 {@code (true, true)}。
+         */
+        public ProvisionerSandboxBackend createBackend(ProvisionerSandboxProvider sandboxProvider) {
             if (workdirRelativePath == null || workdirRelativePath.isEmpty()) {
                 throw new IllegalArgumentException("workdir path is required in runtime context");
             }
@@ -161,50 +188,6 @@ public class AgentCompositeBackend {
             }
             value = value.strip();
             return value.isEmpty() ? null : value;
-        }
-    }
-
-    // ==================== YuxiFilesystemMiddleware ====================
-
-    /**
-     * 文件系统中间件配置载体（对应参考实现 YuxiFilesystemMiddleware，继承 deepagents FilesystemMiddleware）。
-     *
-     * <p>能力差异：参考实现在工具结果落入模型上下文前做 token 预算裁剪
-     * （wrap_tool_call → _intercept_large_tool_result）。该裁剪由我们桥接的引擎框架承载，
-     * 此处仅暴露豁免判定与预算开关，供构图时装配，不重复实现裁剪算法。
-     */
-    public static final class YuxiFilesystemMiddleware {
-        private final SandboxFsBackend backend;
-        private final Integer toolTokenLimitBeforeEvict;
-        private final List<String> tools;
-
-        public YuxiFilesystemMiddleware(
-                SandboxFsBackend backend, Integer toolTokenLimitBeforeEvict, List<String> tools) {
-            this.backend = backend;
-            this.toolTokenLimitBeforeEvict = toolTokenLimitBeforeEvict;
-            this.tools = tools;
-        }
-
-        public SandboxFsBackend getBackend() {
-            return backend;
-        }
-
-        public Integer getToolTokenLimitBeforeEvict() {
-            return toolTokenLimitBeforeEvict;
-        }
-
-        public List<String> getTools() {
-            return tools;
-        }
-
-        /** 该工具结果是否豁免裁剪（对应 wrap_tool_call 中的豁免判断）。 */
-        public boolean isEvictionExempt(String toolName) {
-            return TOOL_RESULT_EVICTION_EXEMPT_TOOLS.contains(toolName);
-        }
-
-        /** 是否启用裁剪（tool_token_limit_before_evict 非空）。 */
-        public boolean evictionEnabled() {
-            return toolTokenLimitBeforeEvict != null;
         }
     }
 }
