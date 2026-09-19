@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 19/33（routers 14 + utils 5）**
-- 🔲 剩余：6 大块，约 **82** 个条目（见下）。§五 剩余 14 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 20/33（routers 15 + utils 5）**
+- 🔲 剩余：6 大块，约 **81** 个条目（见下）。§五 剩余 13 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
 
 ---
 
@@ -157,7 +157,7 @@
 - [ ] knowledge_router — routers/knowledge_router.py
 - [ ] mcp_router — routers/mcp_router.py
 - [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
-- [ ] model_provider_router — routers/model_provider_router.py
+- [x] model_provider_router — routers/model_provider_router.py（ModelProviderController；`/api/system/model-providers`，9 端点：列表 / 新建 / 详情 / 更新 / 删除 / 远端模型拉取 / 缓存刷新 / 分组模型 v2 / 连通性状态）＋ providers 数据面全量（`models/providers/{service,cache,builtin,repository}.py` → ModelProviderService / ModelProviderCache / BuiltinProviders（25 家）/ ModelProviderRepository，加 `models/{chat,embed,rerank}.py` 的 spec 选择与连通性测试面 → ModelSelectors；**25 家内置供应商逐字对齐，含注释掉未启用的 anthropic/google 条目亦未收录**）
 - [x] project_router — routers/project_router.py（ProjectController；`/api/projects`）
 - [ ] scheduled_agent_router — routers/scheduled_agent_router.py
 - [ ] skill_router — routers/skill_router.py
@@ -193,14 +193,14 @@
 | 2026-09-19 | §五 批次五：routers 1（tool）+ tools/service 数据面 | `a75818c` |
 | 2026-09-19 | §五 批次四：routers 1（external_kb） | `62608ad` |
 | 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | `20015b5` |
+| 2026-09-19 | §五 批次六：model_provider_router + providers 数据面全量（ModelInfo/BuiltinProviders/ModelProviderCache/ModelSelectors + ModelProviderService 重写 + ModelProviderRepository 补全）；`_normalize_payload` 跨语言对拍 26/26 逐字一致 | — |
 
-## 挡在后面的依赖（routers 剩余 11 个的阻塞点）
+## 挡在后面的依赖（routers 剩余 10 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
 | knowledge_router | mindmap_utils/sample_question_utils 的高层函数（workspace_service 已解除） | §二 |
-| model_provider_router | `models/providers/service.py` + `cache.py` 全量（现有 ModelProviderService 仅 3 个方法） | §二 |
 | scheduled_agent_router | `scheduled_agent_service` | §一 |
 | knowledge_eval_router | `knowledge/eval/service.py` + `benchmark_generation.py` | §二 |
 | chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
