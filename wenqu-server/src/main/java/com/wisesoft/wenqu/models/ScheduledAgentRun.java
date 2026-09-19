@@ -46,4 +46,21 @@ public class ScheduledAgentRun {
     private String errorMessage;
     @TableField("created_at")
     private LocalDateTime createdAt;  // 非空，默认 utc_now_naive
+
+    /** 字典投影（参考实现 {@code ScheduledAgentRun.to_dict()}；键集合与顺序逐字对齐）。 */
+    public java.util.Map<String, Object> toDict() {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("id", id);
+        data.put("job_id", jobId);
+        data.put("request_id", requestId);
+        data.put("thread_id", threadId);
+        data.put("trigger", trigger);
+        data.put("scheduled_for", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(scheduledFor));
+        data.put("status", status);
+        data.put("run_id", null);
+        data.put("error_message", errorMessage);
+        data.put("created_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(createdAt));
+        data.put("completed_at", null);
+        return data;
+    }
 }
