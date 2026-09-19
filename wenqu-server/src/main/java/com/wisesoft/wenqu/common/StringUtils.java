@@ -12,6 +12,27 @@ public final class StringUtils {
 
     private StringUtils() {}
 
+    /**
+     * Python 内置 {@code repr(list[str])} 的等价输出（单引号包裹、逗号加空格）。
+     *
+     * <p>平台差异载体：参考实现有若干处把列表直接插值进错误/提示文案
+     * （如 {@code f"...不在 provider 能力 {sorted(capabilities)} 内"}），
+     * Python 会渲染成 {@code ['chat']}。Java 无此机制，故显式实现同一渲染规则，
+     * 保证这些用户可见文案与参考实现逐字一致。
+     */
+    public static String pythonListRepr(java.util.Collection<String> values) {
+        StringBuilder builder = new StringBuilder("[");
+        boolean first = true;
+        for (String value : values) {
+            if (!first) {
+                builder.append(", ");
+            }
+            builder.append('\'').append(value).append('\'');
+            first = false;
+        }
+        return builder.append(']').toString();
+    }
+
     /** 截断结果：文本与是否发生截断。 */
     public record Truncated(String text, boolean truncated) {}
 
