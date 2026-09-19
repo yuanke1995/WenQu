@@ -12,6 +12,7 @@ import com.wisesoft.wenqu.repository.KnowledgeMapper;
 import com.wisesoft.wenqu.model.AiDocument;
 import com.wisesoft.wenqu.model.Knowledge;
 import com.wisesoft.wenqu.model.Chunk;
+import com.wisesoft.wenqu.knowledge.chunking.ragflow.RagflowChunkDispatcher;
 import com.wisesoft.wenqu.parser.DocumentParser;
 import com.wisesoft.wenqu.parser.DocxParser;
 import com.wisesoft.wenqu.thread.ThreadPoolManager;
@@ -314,6 +315,63 @@ public class DocumentService {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> mapOfObj(Object o) {
         return (o instanceof Map) ? (Map<String, Object>) o : Map.of();
+    }
+
+    /**
+     * 将解析器产出的结构化块交给 RAGFlow 分块家族按预设重切（对应参考实现
+     * milvus.py::_split_text_into_chunks → chunk_markdown(markdown, file_id, filename, params)）。
+     * <p>做法：把解析块重建为 markdown → 调 {@link RagflowChunkDispatcher#chunkMarkdown} 得平面文本块
+     * → 转回 {@link Chunk}（RAGFlow 块无标题/章节路径/图片，指纹按纯正文）。失败或为空时回退空表，
+     * 由调用方决定保留解析器默认分块。
+     */
+    private List<Chunk> ragflowRechunk(String docId, String fileName, List<Chunk> parsedChunks,
+                                       Map<String, Object> chunkResolved) {
+        try {
+            String markdown = rebuildMarkdownFromChunks(parsedChunks);
+            if (markdown == null || markdown.isBlank()) {
+                return new ArrayList<>();
+            }
+            List<Map<String, Object>> records = RagflowChunkDispatcher.chunkMarkdown(
+                    markdown, docId, fileName, chunkResolved);
+            List<Chunk> out = new ArrayList<>();
+            for (Map<String, Object> rec : records) {
+                Object content = rec.get("content");
+                String c = content == null ? "" : content.toString().strip();
+                if (c.isEmpty()) {
+                    continue;
+                }
+                // RAGFlow 块是平面文本：title/titlePath 置空（buildEmbedText/contentHash 均兼容 null）
+                out.add(new Chunk(null, c, List.of(), null));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[{}] RAGFlow 预设分块失败（{}），回退解析器默认分块", docId, e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /** 把解析器结构化块重建为 markdown（章节路径 → # 标题链 + 正文），供 RAGFlow 分块算法消费。 */
+    private static String rebuildMarkdownFromChunks(List<Chunk> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Chunk c : chunks) {
+            if (c.titlePath() != null && !c.titlePath().isBlank()) {
+                String[] parts = c.titlePath().split("/");
+                for (int i = 0; i < parts.length; i++) {
+                    String p = parts[i].strip();
+                    if (!p.isEmpty()) {
+                        sb.append("#".repeat(Math.min(i + 1, 6))).append(" ").append(p).append("\n");
+                    }
+                }
+            }
+            if (c.title() != null && !c.title().isBlank()) {
+                sb.append("# ").append(c.title()).append("\n");
+            }
+            sb.append(c.content()).append("\n\n");
+        }
+        return sb.toString();
     }
 
     /** 分块参数取值：知识库级覆盖 > 传入的全局值；覆盖值非法（非数字）时回落全局，不阻断解析 */
@@ -699,6 +757,23 @@ public class DocumentService {
             // 文件级与请求级参数当前未接入（无来源），先按参考实现同样的顺序保留扩展位。
             Map<String, Object> chunkResolved = ChunkPresets.resolveChunkProcessingParams(
                     knowledgeBaseService.chunkConfigOf(doc.getKbId()), null, null);
+            // RAGFlow 分块预设接线：当预设为具体算法（book/laws/qa/separator/semantic，非默认 naive）时，
+            // 把解析出的内容重建为 markdown，交给 RAGFlow 分块家族按预设重切，替换解析器的默认分块。
+            // 对应参考实现 milvus.py::_split_text_into_chunks → chunk_markdown(markdown, file_id, filename, params)。
+            // 默认 general 预设保留解析器的结构感知分块（含标题/章节路径）；指定预设时由 RAGFlow 算法
+            // （问答抽取/语义聚类/法规/分隔符/书籍）主导，产出平面文本块（无标题/章节路径，指纹按纯正文）。
+            String activeParserId = com.wisesoft.wenqu.service.ChunkPresets.mapToInternalParserId(
+                    (String) chunkResolved.get("chunk_preset_id"));
+            if (!"naive".equals(activeParserId)) {
+                List<Chunk> ragflowChunks = ragflowRechunk(docId, fileName, chunks, chunkResolved);
+                if (!ragflowChunks.isEmpty()) {
+                    log.info("[{}] 分块预设 {} 走 RAGFlow 分块: {} 块（原解析器 {} 块）", docId, activeParserId,
+                            ragflowChunks.size(), chunks.size());
+                    chunks = ragflowChunks;
+                } else {
+                    log.warn("[{}] 分块预设 {} RAGFlow 分块为空，保留解析器默认分块", docId, activeParserId);
+                }
+            }
             Map<String, Object> chunkCfg = mapOfObj(chunkResolved.get("chunk_parser_config"));
             int overlap = intParam(chunkCfg, "chunk.overlap",
                     configService.getInt("chunk.overlap", properties.getChunk().getOverlap()));
