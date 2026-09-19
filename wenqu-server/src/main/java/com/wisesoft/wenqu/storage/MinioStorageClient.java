@@ -75,6 +75,22 @@ public class MinioStorageClient {
             "parsed", "knowledgebases",
             "images", "kb-images");
 
+    private static volatile MinioStorageClient sharedInstance;
+
+    @jakarta.annotation.PostConstruct
+    void holdSharedInstance() {
+        sharedInstance = this;
+    }
+
+    /**
+     * 对应参考实现 {@code storage.minio.get_minio_client()}：进程内单例。
+     * Spring 上下文未就绪时按环境变量即时构造（与参考实现首次调用时创建的语义一致）。
+     */
+    public static MinioStorageClient getInstance() {
+        MinioStorageClient client = sharedInstance;
+        return client != null ? client : new MinioStorageClient();
+    }
+
     private final String endpoint;
     private final String accessKey;
     private final String secretKey;
