@@ -45,4 +45,25 @@ public class ScheduledAgentJob {
     private LocalDateTime createdAt;  // 非空，默认 utc_now_naive
     @TableField("updated_at")
     private LocalDateTime updatedAt;  // 非空，默认 utc_now_naive
+
+    /** 字典投影（参考实现 {@code ScheduledAgentJob.to_dict()}；键集合与顺序逐字对齐）。 */
+    public java.util.Map<String, Object> toDict() {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("id", id);
+        data.put("uid", uid);
+        data.put("project_id", projectId);
+        data.put("agent_slug", agentSlug);
+        data.put("name", name);
+        data.put("prompt", prompt);
+        data.put("tool_approval_mode", toolApprovalMode);
+        data.put("model_spec", modelSpec);
+        data.put("cron_expression", cronExpression);
+        data.put("timezone", timezone);
+        data.put("enabled", Boolean.TRUE.equals(enabled));
+        data.put("deleted_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(deletedAt));
+        data.put("next_run_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(nextRunAt));
+        data.put("created_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(createdAt));
+        data.put("updated_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(updatedAt));
+        return data;
+    }
 }

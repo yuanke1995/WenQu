@@ -109,7 +109,8 @@ public class ScheduledAgentRepository {
         args.addAll(jobIds);
         String sql =
                 "SELECT sr.*, rq.id AS rq_id, rq.status AS rq_status, rq.dispatched_run_id AS rq_dispatched_run_id, "
-                        + "ar.id AS ar_id, ar.status AS ar_status FROM ("
+                        + "rq.error_message AS rq_error_message, ar.id AS ar_id, ar.status AS ar_status, "
+                        + "ar.error_message AS ar_error_message, ar.finished_at AS ar_finished_at FROM ("
                         + "SELECT id AS scheduled_run_id, ROW_NUMBER() OVER ("
                         + "PARTITION BY job_id ORDER BY scheduled_for DESC, id DESC) AS position "
                         + "FROM scheduled_agent_runs WHERE job_id IN ("
@@ -146,16 +147,29 @@ public class ScheduledAgentRepository {
                 request.put("id", row.get("rq_id"));
                 request.put("status", row.get("rq_status"));
                 request.put("dispatched_run_id", row.get("rq_dispatched_run_id"));
+                request.put("error_message", row.get("rq_error_message"));
             }
             Map<String, Object> agentRun = null;
             if (row.get("ar_id") != null) {
                 agentRun = new LinkedHashMap<>();
                 agentRun.put("id", row.get("ar_id"));
                 agentRun.put("status", row.get("ar_status"));
+                agentRun.put("error_message", row.get("ar_error_message"));
+                agentRun.put("finished_at", RepoValues.toLocalDateTime(row.get("ar_finished_at")));
             }
             result.add(new RunWithLinks(run, request, agentRun));
         }
         return result;
+    }
+
+    /** 按稳定 ID 读取一次触发意图。 */
+    public ScheduledAgentRun getRun(String runId) {
+        return runMapper.selectById(runId);
+    }
+
+    /** 按主键读取任务（对应参考实现 {@code db.get(ScheduledAgentJob, job_id)}）。 */
+    public ScheduledAgentJob getJobById(String jobId) {
+        return jobMapper.selectById(jobId);
     }
 
     /** 读取触发记录对应的统一 Request/Run。 */
@@ -163,7 +177,9 @@ public class ScheduledAgentRepository {
         List<Map<String, Object>> rows =
                 jdbc.queryForList(
                         "SELECT rq.id AS rq_id, rq.status AS rq_status, rq.dispatched_run_id AS rq_dispatched_run_id, "
-                                + "ar.id AS ar_id, ar.status AS ar_status FROM agent_run_requests rq "
+                                + "rq.error_message AS rq_error_message, ar.id AS ar_id, ar.status AS ar_status, "
+                                + "ar.error_message AS ar_error_message, ar.finished_at AS ar_finished_at "
+                                + "FROM agent_run_requests rq "
                                 + "LEFT JOIN agent_runs ar ON ar.id = rq.dispatched_run_id WHERE rq.request_id = ?",
                         requestId);
         if (rows.isEmpty()) {
@@ -174,11 +190,14 @@ public class ScheduledAgentRepository {
         request.put("id", row.get("rq_id"));
         request.put("status", row.get("rq_status"));
         request.put("dispatched_run_id", row.get("rq_dispatched_run_id"));
+        request.put("error_message", row.get("rq_error_message"));
         Map<String, Object> agentRun = null;
         if (row.get("ar_id") != null) {
             agentRun = new LinkedHashMap<>();
             agentRun.put("id", row.get("ar_id"));
             agentRun.put("status", row.get("ar_status"));
+            agentRun.put("error_message", row.get("ar_error_message"));
+            agentRun.put("finished_at", RepoValues.toLocalDateTime(row.get("ar_finished_at")));
         }
         return new RunWithLinks(null, request, agentRun);
     }
@@ -224,9 +243,51 @@ public class ScheduledAgentRepository {
         return run;
     }
 
-    /** 按稳定 ID 读取一次触发意图。 */
-    public ScheduledAgentRun getRun(String runId) {
-        return runMapper.selectById(runId);
+    /**
+     * 按稳定 ID 加锁读取一次触发意图
+     * （对应参考实现 {@code select(ScheduledAgentRun).where(id==…).with_for_update()}）。
+     */
+    @Transactional
+    public ScheduledAgentRun lockRun(String runId) {
+        return runMapper.selectOne(
+                new LambdaQueryWrapper<ScheduledAgentRun>().eq(ScheduledAgentRun::getId, runId).last("FOR UPDATE"));
+    }
+
+    /**
+     * 就地写回任务的计划相关字段（对应参考实现"改 ORM 属性 + commit"）。
+     *
+     * <p>用显式 {@code SET}：{@code deleted_at} 等列本身可空，走 {@code updateById} 的 NOT_NULL
+     * 策略会跳过本应写入的 null（本项目统一口径）。
+     */
+    @Transactional
+    public void updateJob(ScheduledAgentJob job) {
+        jobMapper.update(
+                null,
+                new LambdaUpdateWrapper<ScheduledAgentJob>()
+                        .eq(ScheduledAgentJob::getId, job.getId())
+                        .set(ScheduledAgentJob::getProjectId, job.getProjectId())
+                        .set(ScheduledAgentJob::getAgentSlug, job.getAgentSlug())
+                        .set(ScheduledAgentJob::getName, job.getName())
+                        .set(ScheduledAgentJob::getPrompt, job.getPrompt())
+                        .set(ScheduledAgentJob::getToolApprovalMode, job.getToolApprovalMode())
+                        .set(ScheduledAgentJob::getModelSpec, job.getModelSpec())
+                        .set(ScheduledAgentJob::getCronExpression, job.getCronExpression())
+                        .set(ScheduledAgentJob::getTimezone, job.getTimezone())
+                        .set(ScheduledAgentJob::getEnabled, job.getEnabled())
+                        .set(ScheduledAgentJob::getNextRunAt, job.getNextRunAt())
+                        .set(ScheduledAgentJob::getDeletedAt, job.getDeletedAt())
+                        .set(ScheduledAgentJob::getUpdatedAt, job.getUpdatedAt()));
+    }
+
+    /** 就地写回触发记录的状态字段（对应参考实现"改 ORM 属性 + commit"）。 */
+    @Transactional
+    public void updateRun(ScheduledAgentRun run) {
+        runMapper.update(
+                null,
+                new LambdaUpdateWrapper<ScheduledAgentRun>()
+                        .eq(ScheduledAgentRun::getId, run.getId())
+                        .set(ScheduledAgentRun::getStatus, run.getStatus())
+                        .set(ScheduledAgentRun::getErrorMessage, run.getErrorMessage()));
     }
 
     /** 读取仍处于派发中且创建时间早于给定时刻的记录。 */
