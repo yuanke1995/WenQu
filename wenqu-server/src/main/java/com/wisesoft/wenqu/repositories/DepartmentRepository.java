@@ -169,7 +169,9 @@ public class DepartmentRepository {
     }
 
     /** Department.to_dict() 的键与时间格式照搬。 */
-    static Map<String, Object> toDict(Department department) {
+    // 可见性调整（平台差异）：参考实现的路由层直接调用该序列化函数组装响应，
+    // Spring 侧路由在 controller 包，故由包内私有放宽为 public；逻辑不变。
+    public static Map<String, Object> toDict(Department department) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", department.getId());
         result.put("name", department.getName());

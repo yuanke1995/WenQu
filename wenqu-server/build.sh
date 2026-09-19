@@ -37,7 +37,7 @@ mkdir -p "$MODULE/target/classes"
 echo "编译 $(wc -l < /tmp/wenqu-server-srcs.txt | tr -d ' ') 个源文件（-parameters 已启用）…"
 "$JAVA_HOME/bin/javac" -encoding UTF-8 -nowarn -parameters \
   -cp "$CP" -d "$MODULE/target/classes" @/tmp/wenqu-server-srcs.txt
-cp "$MODULE/src/main/resources/application.yml" "$MODULE/target/classes/"
+cp -R "$MODULE/src/main/resources/." "$MODULE/target/classes/"
 echo "✓ 编译完成 → $MODULE/target/classes"
 
 if [ "$1" = "run" ]; then

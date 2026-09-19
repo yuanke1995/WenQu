@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service
-- 🔲 剩余：6 大块，约 **101** 个条目（见下）
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service / **§五 API 层 15/33（routers 10 + utils 5）**
+- 🔲 剩余：6 大块，约 **86** 个条目（见下）。§五 剩余 18 项中，**仅 auth_router / external_kb_router 无阻塞**，其余 16 项均等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
 
 ---
 
@@ -145,34 +145,34 @@
 - [ ] agent_invocation_channel_router — routers/agent_invocation_channel_router.py
 - [ ] agent_invocation_eval_router — routers/agent_invocation_eval_router.py
 - [ ] agent_router — routers/agent_router.py
-- [ ] auth_dept_router — routers/auth_dept_router.py
+- [x] auth_dept_router — routers/auth_dept_router.py（DepartmentController；`/api/departments`）
 - [ ] auth_router — routers/auth_router.py
 - [ ] chat_router — routers/chat_router.py
-- [ ] dashboard_router — routers/dashboard_router.py
+- [x] dashboard_router — routers/dashboard_router.py（DashboardController；`/api/dashboard`）
 - [ ] external_kb_router — routers/external_kb_router.py
-- [ ] filesystem_router — routers/filesystem_router.py
-- [ ] graph_router — routers/graph_router.py
-- [ ] knowledge_dashboard_router — routers/knowledge_dashboard_router.py
+- [x] filesystem_router — routers/filesystem_router.py（FilesystemController；`/api/viewer/filesystem`）
+- [x] graph_router — routers/graph_router.py（GraphController；`/api/graph`）
+- [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
 - [ ] knowledge_eval_router — routers/knowledge_eval_router.py
 - [ ] knowledge_router — routers/knowledge_router.py
 - [ ] mcp_router — routers/mcp_router.py
-- [ ] mention_router — routers/mention_router.py
+- [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
 - [ ] model_provider_router — routers/model_provider_router.py
-- [ ] project_router — routers/project_router.py
+- [x] project_router — routers/project_router.py（ProjectController；`/api/projects`）
 - [ ] scheduled_agent_router — routers/scheduled_agent_router.py
 - [ ] skill_router — routers/skill_router.py
-- [ ] system_router — routers/system_router.py
-- [ ] system_task_router — routers/system_task_router.py
+- [x] system_router — routers/system_router.py（SystemController；`/api/system`）
+- [x] system_task_router — routers/system_task_router.py（TaskController；`/api/tasks`）
 - [ ] tool_router — routers/tool_router.py
-- [ ] user_router — routers/user_router.py
+- [x] user_router — routers/user_router.py（UserController；`/api/user`）
 - [ ] workspace_router — routers/workspace_router.py
 ### server/utils（6）
-- [ ] access_log_middleware — utils/access_log_middleware.py
-- [ ] auth_middleware — utils/auth_middleware.py
-- [ ] common_utils — utils/common_utils.py
-- [ ] knowledge_permissions — utils/knowledge_permissions.py
-- [ ] knowledge_response — utils/knowledge_response.py
-- [ ] lifespan — utils/lifespan.py
+- [x] access_log_middleware — utils/access_log_middleware.py（config/AccessLogFilter）
+- [x] auth_middleware — utils/auth_middleware.py（config/AuthGuards）
+- [x] common_utils — utils/common_utils.py（setup_logging → resources/logback-spring.xml）
+- [x] knowledge_permissions — utils/knowledge_permissions.py（permissions/KnowledgePermissions）
+- [x] knowledge_response — utils/knowledge_response.py（common/KnowledgeResponseSerializer）
+- [ ] lifespan — utils/lifespan.py（仅 app.state 两个字段由 config/StartupState 承载，其余未搬）
 
 ---
 
@@ -188,3 +188,26 @@
 | 2026-09-19 | RAGFlow 分块家族补齐 3/12 + 预设真正分流：semantic/table_utils + ChunkPresets.mapToInternalParserId 修正 | `9299405` |
 | 2026-09-19 | DocumentService 接入 RAGFlow 预设打通闭环 + RagflowNlp 正则 `{,2}`→`{0,2}` 方言修复 | `dddf719` |
 | 2026-09-19 | knowledge 根核心 9/9（base/manager/factory/runtime/read_models/schemas/preview/cache/security）+ implementations/milvus/read_only_connectors + KnowledgeTaskService | `77bbe8f` |
+| 2026-09-19 | §五 批次一：server/utils 5/6（access_log/auth_middleware/common_utils/knowledge_permissions/knowledge_response）+ routers 7（mention/project/system_task/knowledge_dashboard/dashboard/graph/filesystem）+ 平台差异载体（GlobalExceptionHandler/ApiHttpException/AuthGuards/CorsConfig/LoginRateLimitFilter） | — |
+| 2026-09-19 | §五 批次二：routers 3（user/auth_dept/system）+ storage/MinioUploads（upload_image_to_minio）+ config/LogPaths + config/StartupState + common/AppVersion + info.template.yaml | — |
+
+## 挡在后面的依赖（routers 剩余 15 个的阻塞点）
+> 依据：逐 router 提取 `from yuxi.…` 模块清单，与本工程已有类比对。**只有 `auth_router` 与 `external_kb_router` 当前无阻塞**。
+
+| router | 阻塞项 | 归属 |
+|---|---|---|
+| auth_router | 无 | — |
+| external_kb_router | 无（base/read_models/runtime 均已搬） | — |
+| knowledge_router | `workspace_service.read_workspace_file_bytes`；mindmap_utils/sample_question_utils 的高层函数 | §一 / §二 |
+| workspace_router | `workspace_service` | §一 |
+| model_provider_router | `models/providers/service.py` + `cache.py` 全量（现有 ModelProviderService 仅 3 个方法） | §二 |
+| scheduled_agent_router | `scheduled_agent_service` | §一 |
+| knowledge_eval_router | `knowledge/eval/service.py` + `benchmark_generation.py` | §二 |
+| chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
+| agent_router | `agent_config_service` / `agent_request_service` / `agent_request_queue_service` / `agent_run_service` / `agents/buildin` | §一 + §三 |
+| agent_invocation_call_router | `agent_request_service` | §一 |
+| agent_invocation_channel_router | 上列 + `channel_command_service`（已搬）+ `chat_service` | §一 |
+| agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
+| mcp_router | `agents/mcp/service.py` | §三 |
+| skill_router | `agents/skills/service.py` / `remote_install.py` | §三 |
+| tool_router | `agents/toolkits/service.py` | §三 |

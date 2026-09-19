@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  日志格式装配：承载参考实现 server/utils/common_utils.py 的 setup_logging()、
+  server/utils/access_log_middleware.py 的 access_logger 配置，以及 package/utils/logging_config.py
+  的 setup_logger() 文件输出（三者都是 Python logging 级别的事实，
+  Java/Spring 下的等价承载是日志框架配置——平台差异，不改格式与级别）。
+
+  对照：
+  - 根 logger     -> level INFO，格式 "%Y-%m-%d %H:%M:%S %LEVEL: %message"
+  - access_logger -> level INFO，格式 "%m-%d %H:%M:%S %LEVEL: %message"，不向根 logger 传播
+                    （参考实现中 uvicorn.access 的 handler 被清空，访问日志只由该 logger 输出）
+  - 文件 logger   -> 参考实现 loguru 文件格式 "{time} - {level} - {file}:{line} - {message}"，
+                    rotation 10MB / retention 30 days / utf-8；
+                    文件名为 {运行目录}/logs/wenqu-{日期}.log（品牌前缀为本产品标识，必要替换）。
+
+  日志目录：环境变量 WENQU_LOG_DIR（缺省 ./logs），与 config/LogPaths.java 保持一致；
+  /api/system/logs 读取的正是该文件。
+-->
+<configuration>
+
+    <timestamp key="DATE" datePattern="yyyy-MM-dd"/>
+    <property name="LOG_DIR" value="${WENQU_LOG_DIR:-./logs}"/>
+    <property name="LOG_FILE" value="${LOG_DIR}/wenqu-${DATE}.log"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level: %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="ACCESS" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{MM-dd HH:mm:ss} %-5level: %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${LOG_FILE}.%i.gz</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>20</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} - %level - %file:%line - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <logger name="access_logger" level="INFO" additivity="false">
+        <appender-ref ref="ACCESS"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

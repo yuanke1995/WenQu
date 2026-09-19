@@ -1,0 +1,31 @@
+# 单位信息配置文件
+# 用于配置网站的基本信息、品牌信息等
+#
+# 移植说明：结构、键名与注释逐字沿用参考实现的 info.template.yaml；
+# 品牌字段（organization.name / branding.name / footer.copyright 及版本占位符）
+# 按本产品标识替换——「必要替换」中的品牌前缀一类。
+# 描述性文案（title / subtitle / subtitles）属产品文案，结构照搬，措辞按本产品定位填写。
+
+# 组织信息
+organization:
+  name: "问渠"               # 完整组织名称
+  logo: "/favicon.svg"       # Logo文件路径（放在 web/public 目录下）
+  avatar: "/favicon.svg"      # 头像文件路径（放在 web/public 目录下）
+  login_bg: "/login-bg.jpg"  # 登录背景图片路径（放在 web/public 目录下）
+
+# 项目信息
+branding:
+  name: "WenQu"
+  title: "答案，自有源头"     # 系统标题
+  subtitle: "问渠 · Ask the source."   # 副标题（subtitles 为空时使用）
+  subtitles:
+    - "答案，自有源头"
+    - "知识库、知识图谱与智能体一站式承载"
+    - "每个回答都可溯源，每份知识都有出处"
+    - "内网私有部署，数据不出你的边界"
+
+# 页脚信息
+footer:
+  copyright: "© 问渠 2026 v{{WENQU_VERSION}}"
+  user_agreement_url: "/protocols/user-agreement.template.html"
+  privacy_policy_url: "/protocols/privacy-policy.template.html"
