@@ -715,8 +715,8 @@ public class ModelProviderService {
             ModelSelectors.ChatAdapter model = modelSelectors.selectModel(spec);
             List<Map<String, Object>> testMessages =
                     List.of(Map.<String, Object>of("role", "user", "content", "Say 1"));
-            String content = model.call(testMessages);
-            if (content != null && !content.isEmpty()) {
+            ModelSelectors.GeneralResponse response = model.call(testMessages, false);
+            if (response != null && response.content != null && !response.content.isEmpty()) {
                 Map<String, Object> available = new LinkedHashMap<>();
                 available.put("spec", spec);
                 available.put("status", "available");

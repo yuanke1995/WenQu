@@ -709,6 +709,16 @@ public class ModelSelectors {
 
     // ==================== models/chat.py ====================
 
+    /** 非流式调用的返回载体（对应参考实现 {@code GeneralResponse}：只有 content + is_full）。 */
+    public static final class GeneralResponse {
+        public final String content;
+        public final boolean isFull = false;
+
+        public GeneralResponse(String content) {
+            this.content = content;
+        }
+    }
+
     /** 聊天调用适配器（参考实现 {@code LangChainChatAdapter} 的非流式路径）。 */
     public static class ChatAdapter {
         private final OpenAiChatModel model;
@@ -721,13 +731,22 @@ public class ModelSelectors {
             this.baseUrl = baseUrl;
         }
 
-        /** 非流式调用，返回助手正文；异常信息格式与参考实现一致。 */
-        public String call(List<Map<String, Object>> messages) {
-            try {
-                List<Message> converted = new ArrayList<>();
-                for (Map<String, Object> message : messages) {
-                    Object role = message.get("role");
-                    Object content = message.get("content");
+        /**
+         * 入参归一化（对应参考实现 {@code _normalize_messages}）：
+         * 字符串 → 原样交给模型（LangChain 视为单条 user 消息）；列表 → 按 role 逐条转换。
+         */
+        private List<Message> normalizeMessages(Object message) {
+            if (message instanceof String text) {
+                return List.of(new UserMessage(text));
+            }
+            List<Message> converted = new ArrayList<>();
+            if (message instanceof List<?> rawList) {
+                for (Object rawItem : rawList) {
+                    if (!(rawItem instanceof Map<?, ?> item)) {
+                        continue;
+                    }
+                    Object role = item.get("role");
+                    Object content = item.get("content");
                     String text = content == null ? "" : String.valueOf(content);
                     if ("assistant".equals(role)) {
                         converted.add(new AssistantMessage(text));
@@ -737,13 +756,35 @@ public class ModelSelectors {
                         converted.add(new UserMessage(text));
                     }
                 }
+            }
+            return converted;
+        }
+
+        /** 对应 {@code call(message, stream=False)}。 */
+        public GeneralResponse call(Object message) {
+            return call(message, false);
+        }
+
+        /**
+         * 对应 {@code call(message, stream=False)}。
+         *
+         * <p>能力差异（已显式标注）：参考实现的 {@code stream=True} 分支返回异步生成器
+         * （{@code _stream_response}），本工程尚未移植流式路径，此处显式拒绝而非静默降级。
+         */
+        public GeneralResponse call(Object message, boolean stream) {
+            if (stream) {
+                throw new UnsupportedOperationException(
+                        "参考实现 LangChainChatAdapter 的流式分支（_stream_response）尚未移植");
+            }
+            List<Message> messages = normalizeMessages(message);
+            try {
                 OpenAiChatOptions options =
                         OpenAiChatOptions.builder().model(modelName).build();
-                ChatResponse response = model.call(new Prompt(converted, options));
+                ChatResponse response = model.call(new Prompt(messages, options));
                 if (response == null || response.getResult() == null) {
                     return null;
                 }
-                return response.getResult().getOutput().getText();
+                return new GeneralResponse(response.getResult().getOutput().getText());
             } catch (Exception exc) {
                 String error =
                         "Error calling model: "
