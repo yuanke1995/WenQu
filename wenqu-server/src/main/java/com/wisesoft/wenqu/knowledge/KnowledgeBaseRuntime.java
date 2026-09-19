@@ -10,6 +10,7 @@ import com.wisesoft.wenqu.knowledge.chunking.ragflow.RagflowNlp;
 import com.wisesoft.wenqu.models.KnowledgeBase;
 import com.wisesoft.wenqu.models.KnowledgeChunk;
 import com.wisesoft.wenqu.models.KnowledgeFile;
+import com.wisesoft.wenqu.knowledge.graphs.MilvusGraphService;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseCache;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeChunkRepository;
@@ -27,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
@@ -76,6 +78,12 @@ public class KnowledgeBaseRuntime {
     private final OptionsService optionsService;
     private final VectorStore vectorStore;
     private final MinioStorageClient minioStorageClient;
+    /**
+     * 图谱服务。用 {@link ObjectProvider} 取用而非直接注入字段：
+     * 图谱能力依赖 Neo4j（未部署时连接懒建即失败），此引用在删除/重建文件时才真正用到，
+     * 延迟获取可保证未部署图谱时其余知识库功能不受影响。
+     */
+    private final ObjectProvider<MilvusGraphService> graphServiceProvider;
 
     public KnowledgeBaseRuntime(
             KnowledgeFileRepository fileRepository,
@@ -85,7 +93,8 @@ public class KnowledgeBaseRuntime {
             OcrService ocrService,
             OptionsService optionsService,
             VectorStore vectorStore,
-            MinioStorageClient minioStorageClient) {
+            MinioStorageClient minioStorageClient,
+            ObjectProvider<MilvusGraphService> graphServiceProvider) {
         this.fileRepository = fileRepository;
         this.chunkRepository = chunkRepository;
         this.kbRepository = kbRepository;
@@ -94,6 +103,7 @@ public class KnowledgeBaseRuntime {
         this.optionsService = optionsService;
         this.vectorStore = vectorStore;
         this.minioStorageClient = minioStorageClient;
+        this.graphServiceProvider = graphServiceProvider;
     }
 
     // ==================== 配置 ====================
@@ -549,6 +559,15 @@ public class KnowledgeBaseRuntime {
 
     /** 删除单个文件的全部 chunk 与向量（对应 delete_file_chunks_only）。 */
     public void deleteFileChunksOnly(String kbId, String fileId) {
+        // 已建图谱的文件先清图谱痕迹（Neo4j 边/孤儿实体 + 图谱向量），失败即抛出以便任务重试
+        if (chunkRepository.countGraphIndexedByFileId(fileId) > 0) {
+            MilvusGraphService graphService = graphServiceProvider.getIfAvailable();
+            if (graphService == null) {
+                throw new IllegalStateException(
+                        "文件已构建图谱但图谱服务不可用，无法删除图谱数据: file_id=" + fileId);
+            }
+            graphService.deleteFileGraph(kbId, fileId);
+        }
         List<KnowledgeChunk> existing = chunkRepository.listByFileId(fileId);
         if (!existing.isEmpty()) {
             List<String> vectorIds = new ArrayList<>();
@@ -828,10 +847,6 @@ public class KnowledgeBaseRuntime {
 
     /** 删除文件（对应 milvus.delete_file）。 */
     public void deleteFile(String kbId, String fileId) {
-        int graphIndexed = chunkRepository.countGraphIndexedByFileId(fileId);
-        if (graphIndexed > 0) {
-            log.warn("File {} has graph-indexed chunks; graph data deletion is not ported, skip", fileId);
-        }
         deleteFileChunksOnly(kbId, fileId);
         Map<String, Object> reset = new LinkedHashMap<>();
         reset.put("chunk_count", 0);

@@ -2,6 +2,7 @@ package com.wisesoft.wenqu.service;
 
 import com.wisesoft.wenqu.knowledge.KbUtils;
 import com.wisesoft.wenqu.knowledge.KnowledgeBaseRuntime;
+import com.wisesoft.wenqu.knowledge.graphs.MilvusGraphService;
 import com.wisesoft.wenqu.models.TaskRecord;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
 import java.util.ArrayList;
@@ -40,9 +41,10 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>能力差异（如实标注，不谎称已支持）：
- * {@link #runKnowledgeGraph} 依赖参考实现的 knowledge/graphs/milvus_graph_service（图谱构建 /
- * 向量索引修复），该模块尚未移植，故本方法显式抛出 {@link UnsupportedOperationException}，
- * 使任务以明确错误失败而非静默返回零值假装完成。
+ * {@link #runKnowledgeGraph} 由 {@link MilvusGraphService} 承载（图谱构建 / 向量索引修复），
+ * 其向量后端由本工程的 Spring AI VectorStore 承载，图数据库为 Neo4j（bolt 连接，
+ * 参数与环境变量口径与参考实现一致）。未部署 Neo4j 时连接懒建，应用照常启动，
+ * 仅图谱任务在真正执行时失败。
  */
 @Service
 public class KnowledgeTaskService {
@@ -61,14 +63,17 @@ public class KnowledgeTaskService {
     private final KnowledgeBaseRuntime knowledgeBase;
     private final KnowledgeFolderService knowledgeFolderService;
     private final KnowledgeFileRepository knowledgeFileRepository;
+    private final MilvusGraphService graphService;
 
     public KnowledgeTaskService(
             KnowledgeBaseRuntime knowledgeBase,
             KnowledgeFolderService knowledgeFolderService,
-            KnowledgeFileRepository knowledgeFileRepository) {
+            KnowledgeFileRepository knowledgeFileRepository,
+            MilvusGraphService graphService) {
         this.knowledgeBase = knowledgeBase;
         this.knowledgeFolderService = knowledgeFolderService;
         this.knowledgeFileRepository = knowledgeFileRepository;
+        this.graphService = graphService;
     }
 
     // ==================== 失败钩子 ====================
@@ -395,14 +400,37 @@ public class KnowledgeTaskService {
     /**
      * 图谱构建 / 向量索引修复（对应 run_knowledge_graph）。
      *
-     * <p>能力差异：依赖 knowledge/graphs/milvus_graph_service（reconcile_vectors /
-     * build_pending_chunks），该模块尚未移植。此处显式失败，使任务状态如实反映"未实现"，
-     * 不返回零值假装完成。
+     * <p>{@code action == "reconcile"} 时先修复图谱向量索引再构建待处理 chunk；
+     * 否则仅构建待处理 chunk。进度与结果口径与参考实现一致。
      */
-    public Object runKnowledgeGraph(TaskService.TaskContext context) {
-        String kbId = str(context.payload().get("kb_id"));
-        throw new UnsupportedOperationException(
-                "图谱服务尚未移植（knowledge/graphs/milvus_graph_service），无法执行知识图谱任务: kb_id=" + kbId);
+    public Object runKnowledgeGraph(TaskService.TaskContext context) throws Exception {
+        Map<String, Object> payload = context.payload();
+        String kbId = str(payload.get("kb_id"));
+        if ("reconcile".equals(str(payload.get("action")))) {
+            String mode = str(payload.get("reconcile_mode"));
+            if (mode == null || mode.isEmpty()) {
+                mode = "failed";
+            }
+            boolean allVectors = "all_vectors".equals(mode);
+            context.setProgress(5.0, "准备修复图谱向量索引");
+            Map<String, Object> reconcileResult = graphService.reconcileVectors(kbId, allVectors);
+            Map<String, Object> result = graphService.buildPendingChunks(kbId, context);
+            context.raiseIfCancelled();
+            result.put("reconcile", reconcileResult);
+            context.setResult(result);
+            context.setProgress(100.0, "图谱向量索引修复完成");
+            return result;
+        }
+
+        context.setProgress(5.0, "准备构建图谱");
+        Map<String, Object> result = graphService.buildPendingChunks(kbId, context);
+        context.raiseIfCancelled();
+        context.setResult(result);
+        context.setProgress(
+                100.0,
+                "图谱构建执行完成，成功 " + result.get("success")
+                        + " 个，抽取失败 " + result.get("extraction_failed") + " 个");
+        return result;
     }
 
     // ==================== 工具 ====================
