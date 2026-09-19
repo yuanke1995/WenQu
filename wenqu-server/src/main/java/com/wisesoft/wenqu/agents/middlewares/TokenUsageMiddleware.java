@@ -74,7 +74,7 @@ public class TokenUsageMiddleware extends ModelInterceptor {
     public static final Map<String, Integer> ZERO_TOTAL = Map.of("input_tokens", 0, "output_tokens", 0, "total_tokens", 0);
 
     /** 快照里保留的上下文估算字段（与参考实现逐字一致）。 */
-    static final Set<String> TOKEN_USAGE_CONTEXT_FIELDS = Set.of(
+    public static final Set<String> TOKEN_USAGE_CONTEXT_FIELDS = Set.of(
             "state_message_count", "state_message_count_before_call",
             "state_messages_tokens", "state_messages_tokens_before_call",
             "llm_message_count", "llm_messages_tokens",

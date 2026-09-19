@@ -342,6 +342,11 @@ public abstract class BaseAgent {
     /** {@code self.graph = None}（will be covered by get_graph）。 */
     private AgentsGraphPort graph;
 
+    /** 读取后端声明的能力清单（对应参考实现类属性 {@code capabilities} 的跨包访问）。 */
+    public List<String> getCapabilities() {
+        return capabilities == null ? List.of() : capabilities;
+    }
+
     /**
      * 读取后端声明的上下文 schema 类（对应参考实现类属性 {@code context_schema} 的跨包访问）。
      *
