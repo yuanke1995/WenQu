@@ -445,7 +445,7 @@ public class Workspace {
             return metadata;
         } catch (FileAlreadyExistsException exc) {
             // 参考实现把 FileExistsError 直接上抛给调用方；Java 侧以运行时异常承载
-            throw new IllegalStateException(exc.getMessage(), exc);
+            throw new AlreadyExistsRuntime(exc.getMessage(), exc);
         } catch (IOException exc) {
             throw new IllegalStateException(exc.getMessage(), exc);
         } finally {
@@ -478,7 +478,7 @@ public class Workspace {
             return metadata(attrs);
         } catch (FileAlreadyExistsException exc) {
             // 参考实现 os.mkdir 的 FileExistsError 直接上抛
-            throw new IllegalStateException(exc.getMessage(), exc);
+            throw new AlreadyExistsRuntime(exc.getMessage(), exc);
         } catch (IOException exc) {
             throw new IllegalStateException(exc.getMessage(), exc);
         }
@@ -567,6 +567,17 @@ public class Workspace {
     /** PermissionError 的运行时承载（参考实现 OS 异常直接上抛给调用方）。 */
     public static final class PermissionDeniedRuntime extends RuntimeException {
         PermissionDeniedRuntime(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /**
+     * FileExistsError 的运行时承载（参考实现 OS 异常直接上抛给调用方；
+     * Java 侧的 FileAlreadyExistsException 与之对应，此前被并入 IllegalStateException 而丢失了
+     * 「同名冲突」与「一般 IO 故障」的区分，调用方无法按参考实现给出 400 同名提示，故单独承载）。
+     */
+    public static final class AlreadyExistsRuntime extends RuntimeException {
+        AlreadyExistsRuntime(String message, Throwable cause) {
             super(message, cause);
         }
     }

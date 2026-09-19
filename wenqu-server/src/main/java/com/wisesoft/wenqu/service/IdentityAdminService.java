@@ -194,8 +194,10 @@ public class IdentityAdminService {
      *
      * <p>queryForList 的列名为 snake_case，与 to_dict 键名一致；时间列由 JDBC 映射为
      * LocalDateTime，此处统一转参考实现的 UTC ISO 字符串；avatar 经 MinioUrls 规范化。
+     *
+     * <p>供 /api/auth 路由（列表与分页端点逐行 {@code user.to_dict()}）复用。
      */
-    static Map<String, Object> userDictFromRow(Map<String, Object> row) {
+    public static Map<String, Object> userDictFromRow(Map<String, Object> row) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", row.get("id"));
         result.put("username", row.get("username"));

@@ -355,6 +355,76 @@ public class UserRepository {
         return count == null ? 0 : count.intValue();
     }
 
+    /**
+     * 以「整实体落库」语义保存用户（对应参考实现 {@code repositories/user_repository.save(user)} 的
+     * {@code session.flush()}：SQLAlchemy 按变更跟踪把被置为 {@code None} 的列一并写为 {@code NULL}）。
+     *
+     * <p>本工程的 {@link #save(User)}（{@code updateById}）默认 NOT_NULL 策略会跳过 null 列，
+     * 导致 {@code reset_failed_login()}、清空手机号/头像这类「清空」语义静默不生效，
+     * 故登录/资料链路一律走本方法（与本仓库既有的显式 set 约定一致）。
+     */
+    public User saveAllColumns(User user) {
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getId, user.getId())
+                .set(User::getUsername, user.getUsername())
+                .set(User::getUid, user.getUid())
+                .set(User::getPhoneNumber, user.getPhoneNumber())
+                .set(User::getAvatar, user.getAvatar())
+                .set(User::getPasswordHash, user.getPasswordHash())
+                .set(User::getRole, user.getRole())
+                .set(User::getDepartmentId, user.getDepartmentId())
+                .set(User::getCreatedAt, user.getCreatedAt())
+                .set(User::getLastLogin, user.getLastLogin())
+                .set(User::getLoginFailedCount, user.getLoginFailedCount())
+                .set(User::getLastFailedLogin, user.getLastFailedLogin())
+                .set(User::getLoginLockedUntil, user.getLoginLockedUntil())
+                .set(User::getIsDeleted, user.getIsDeleted())
+                .set(User::getDeletedAt, user.getDeletedAt()));
+        return user;
+    }
+
+    // ==================== 模型行为（models_business.User 的方法） ====================
+
+    /** 参考实现 models_business.MAX_LOGIN_FAILED_ATTEMPTS。 */
+    public static final int MAX_LOGIN_FAILED_ATTEMPTS = 5;
+
+    /** 参考实现 models_business.LOGIN_LOCK_DURATION_SECONDS。 */
+    public static final int LOGIN_LOCK_DURATION_SECONDS = 300;
+
+    /** User.is_login_locked()：是否处于登录锁定状态。 */
+    public static boolean isLoginLocked(User user) {
+        if (user.getLoginLockedUntil() == null) {
+            return false;
+        }
+        return utcNow().isBefore(user.getLoginLockedUntil());
+    }
+
+    /** User.get_remaining_lock_time()：剩余锁定秒数（下限 0）。 */
+    public static int getRemainingLockTime(User user) {
+        if (user.getLoginLockedUntil() == null) {
+            return 0;
+        }
+        long seconds = java.time.Duration.between(utcNow(), user.getLoginLockedUntil()).getSeconds();
+        return (int) Math.max(0L, seconds);
+    }
+
+    /** User.increment_failed_login()：失败计数 +1，达到阈值即按失败时刻锁定。 */
+    public static void incrementFailedLogin(User user) {
+        int count = (user.getLoginFailedCount() == null ? 0 : user.getLoginFailedCount()) + 1;
+        user.setLoginFailedCount(count);
+        user.setLastFailedLogin(utcNow());
+        if (count >= MAX_LOGIN_FAILED_ATTEMPTS) {
+            user.setLoginLockedUntil(user.getLastFailedLogin().plusSeconds(LOGIN_LOCK_DURATION_SECONDS));
+        }
+    }
+
+    /** User.reset_failed_login()：重置登录失败相关字段。 */
+    public static void resetFailedLogin(User user) {
+        user.setLoginFailedCount(0);
+        user.setLastFailedLogin(null);
+        user.setLoginLockedUntil(null);
+    }
+
     // ==================== 内部工具 ====================
 
     /**

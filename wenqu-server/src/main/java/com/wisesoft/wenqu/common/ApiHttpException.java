@@ -18,6 +18,10 @@ import java.util.Map;
  * <p>平台差异说明：FastAPI 的 HTTPException 是框架内建能力，Java/Spring MVC 无对应类型，
  * 故新增本类 + {@code GlobalExceptionHandler} 的分支来承载同样的「状态码 + detail + headers」语义，
  * **不改变任何路由的错误码与错误文案**。
+ *
+ * <p>{@code detail} 在参考实现里可以是字符串，也可以是结构化对象（如 CLI 授权链路的
+ * {@code {"error": code, "message": message}}）；故除字符串 detail 外，另设
+ * {@link #getDetailObject()} 承载对象型 detail（两者互斥，对象优先）。
  */
 public class ApiHttpException extends RuntimeException {
 
@@ -27,14 +31,27 @@ public class ApiHttpException extends RuntimeException {
     /** 附加响应头（可为 null） */
     private final transient Map<String, String> headers;
 
+    /** 对象型 detail（对应参考实现 HTTPException 的 dict detail；为 null 时用字符串 detail） */
+    private final transient Object detailObject;
+
     public ApiHttpException(int status, String detail) {
-        this(status, detail, null);
+        this(status, detail, null, null);
     }
 
     public ApiHttpException(int status, String detail, Map<String, String> headers) {
+        this(status, detail, headers, null);
+    }
+
+    public ApiHttpException(int status, String detail, Map<String, String> headers, Object detailObject) {
         super(detail);
         this.status = status;
         this.headers = headers == null ? null : new LinkedHashMap<>(headers);
+        this.detailObject = detailObject;
+    }
+
+    /** 对象型 detail 的构造入口（参考实现 raise HTTPException(status, detail={...})）。 */
+    public static ApiHttpException objectDetail(int status, String message, Object detailObject) {
+        return new ApiHttpException(status, message, null, detailObject);
     }
 
     public int getStatus() {
@@ -43,5 +60,9 @@ public class ApiHttpException extends RuntimeException {
 
     public Map<String, String> getHeaders() {
         return headers;
+    }
+
+    public Object getDetailObject() {
+        return detailObject;
     }
 }
