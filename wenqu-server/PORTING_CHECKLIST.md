@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **§五 API 层 22/33（routers 17 + utils 5）**
-- 🔲 剩余：5 大块，**55 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 31 / §五 10，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery` 与 `agents/mcp/service.py` 两个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 skills。
+- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 25/33（routers 18 + utils 5）**
+- 🔲 剩余：5 大块，**52 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 29 / §五 9，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery`、`agents/mcp/service.py`、`agents/skills/{service,remote_install}.py` 三个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 剩余中间件（skills 家族只剩 runtime.py）。
 
 ---
 
@@ -119,9 +119,9 @@
 - [ ] summary — middlewares/summary.py
 - [ ] token_usage — middlewares/token_usage.py
 ### skills（3，repository.py 已搬）
-- [ ] remote_install — skills/remote_install.py
+- [x] remote_install — skills/remote_install.py（**纯函数面全量**：`_normalize_source` / `_normalize_skill_name` / `_clean_cli_output`（ANSI + 控制序列 + 装饰符清洗 + `str.splitlines` 语义）/ `_parse_available_skills` / `_parse_search_skills` / `allowed_hosts`（OptionsService.REMOTE_SKILL_SOURCE_POLICY）；常量 7 项逐字对齐。**能力缺口（已标注）**：三个沙盒入口（list/prepare/search）保留签名与非法来源校验后抛 `SkillRemoteExecutionUnavailableException`（外置 provisioner 沙盒未部署，同 dify/notion 口径）；`search("")` 与「skills 列表为空」等参考实现不依赖沙盒的分支照旧生效）
 - [ ] runtime — skills/runtime.py
-- [ ] service — skills/service.py
+- [x] service — skills/service.py（**全量 1827 行 → 2699 行 Java**：90 个参考函数 90/90 对位（仅 `_user_skills_file_lock` 因 Java 无上下文管理器而落为回调式 `withUserSkillsFileLock`）；常量（slug 正则 / 26 项文本扩展名白名单 / 内置操作者与管理员角色 / 默认与内置共享配置 / 草稿 TTL 3600 / 个人来源类型 / 存储锁 `0x5958534B`）逐字一致；内置 skill 清单 5 条（image-gen/html-preview/deep-research/knowledge-base/mysql-reporter 的 slug + description + version + 三类依赖）逐字对齐；必要替换 3 类（锁键前缀 `wenqu:skills:user-projection:v1:`、PG 事务级建议锁→MySQL 会话级 `GET_LOCK`/`RELEASE_LOCK`、内置描述品牌词→「问渠」）与能力差异 8 类（AsyncSession 形参 / to_thread / gather / fcntl.flock / threading.Lock / to_dict / 内置目录 classpath 化 / YAML）全部已在类注释标注。**内置 skill 资源**复制到 `src/main/resources/skills/`（9 文件，`__init__.py` 除外））
 ### toolkits（5，registry.py/utils.py 已搬）
 - [ ] buildin/install_skill — toolkits/buildin/install_skill.py
 - [ ] buildin/tools — toolkits/buildin/tools.py
@@ -161,7 +161,7 @@
 - [x] model_provider_router — routers/model_provider_router.py（ModelProviderController；`/api/system/model-providers`，9 端点：列表 / 新建 / 详情 / 更新 / 删除 / 远端模型拉取 / 缓存刷新 / 分组模型 v2 / 连通性状态）＋ providers 数据面全量（`models/providers/{service,cache,builtin,repository}.py` → ModelProviderService / ModelProviderCache / BuiltinProviders（25 家）/ ModelProviderRepository，加 `models/{chat,embed,rerank}.py` 的 spec 选择与连通性测试面 → ModelSelectors；**25 家内置供应商逐字对齐，含注释掉未启用的 anthropic/google 条目亦未收录**）
 - [x] project_router — routers/project_router.py（ProjectController；`/api/projects`）
 - [ ] scheduled_agent_router — routers/scheduled_agent_router.py
-- [ ] skill_router — routers/skill_router.py
+- [x] skill_router — routers/skill_router.py（SkillController；参考实现两个 router（`/system/skills` + `/skills`）合并为一个类（类级无 `@RequestMapping`，逐方法声明完整路径，避免 Spring 多前缀凭空生成路径），对外即 `/api/system/skills` 与 `/api/skills`。**26 端点逐一对应**前端 `web/src/apis/skill_api.js` 的 26 处调用（路由集合对拍 0 差异）；响应体 `{"success":true,"data":…}`（非本产品 ResultJson），卡片/管理列表加 `allowed_access_levels`、草稿确认与批量删除加 `summary`；错误码照搬 `_raise_from_value_error`（含「不存在/无权」→404，否则 400）；请求体必填 → 422、字段级校验 → 422（`loc=["body",字段]`）、**空串放行**（`content:""` 保存空文件、`path:""`/`source:""` 由服务层判 400））
 - [x] system_router — routers/system_router.py（SystemController；`/api/system`）
 - [x] system_task_router — routers/system_task_router.py（TaskController；`/api/tasks`）
 - [x] tool_router — routers/tool_router.py（ToolController；`/api/system/tools`，2 端点）
@@ -200,9 +200,10 @@
 | 2026-09-19 | §五 批次七（续）：**检索面 aquery 补齐**（`KnowledgeBaseRuntime.aquery`：合并 kwargs→final_top_k/similarity_threshold/search_mode/use_reranker/use_graph_retrieval/recall_top_k/file_name 过滤，vector（VectorStore 超采样 + 内存 kb/file 过滤）/keyword（`KnowledgeChunkRepository.searchByKeywords`）/hybrid（0.7:0.3 加权融合）+ 图谱融合 + hydrateChunkSources + 重排；必要替换与能力差异均已在类注释标注）→ `KnowledgeBaseManager.aquery/retrieve` 改为委托；`knowledge/eval` 3 模块全搬（EvalBenchmarkGeneration / EvalEvaluator / EvalService）+ `EvalTaskService`（dataset_generation / rag_evaluation 两个 Durable Task Handler）+ `EvaluationRepository` 补 `getDatasetForUpdate`/`getRunForUpdate`；`knowledge_eval_router` → KnowledgeEvalController（`/api/evaluation`，11 端点，`{"message":"success","data":...}` 响应体 + `require_evaluation_dataset_read/manage` 依赖等价物） | `0477f43` |
 
 | 2026-09-19 | §五 批次八：`agents/mcp/service.py` 全量 → McpService / McpTool / McpClientBundle / McpServerViews（+ MCPServerRepository 逐条对位、启动组件 McpStartupInitializer ← lifespan 的 `builtin_mcp_servers`）→ **解锁 `mcp_router`** → McpController（10 端点）。跨语言对拍：驼峰化 / Python 风格 JSON dumps / 配置哈希 29/29 行逐字节一致；路由对拍 10/10；mcp_servers 造行 + 三条查询语义 + ensure_builtin 三步终态 + 清理（剩 0 行） | `fa3f111` |
+| 2026-09-19 | §三 批次九：`agents/skills/service.py`（1827 行，90 函数 90/90）+ `agents/skills/remote_install.py` + 内置 skill 资源（`src/main/resources/skills/` 5 技能 9 文件）→ **解锁 `skill_router`** → SkillController（26 端点，两个参考 router 合并为一个类）。路由集合对拍 26/26 零差异；函数级覆盖对拍 90/90（唯一差异项 `_user_skills_file_lock` → 回调式）；内置清单/常量逐字对齐 | `待填` |
 
-## 挡在后面的依赖（routers 剩余 8 个的阻塞点）
-> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery` 阻塞、`mcp_router` 的 mcp/service 阻塞均已解除并搬完。）
+## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
+> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何剩余 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
@@ -213,4 +214,4 @@
 | agent_invocation_call_router | `agent_request_service` | §一 |
 | agent_invocation_channel_router | 上列 + `channel_command_service`（已搬）+ `chat_service` | §一 |
 | agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
-| skill_router | `agents/skills/service.py` / `remote_install.py` | §三 |
+| skill_router | ~~`agents/skills/service.py` / `remote_install.py`~~ **均已搬完（批次九）→ skill_router 已解锁并落地** | §三 |

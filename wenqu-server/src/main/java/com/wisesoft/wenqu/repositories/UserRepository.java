@@ -110,6 +110,19 @@ public class UserRepository {
         return userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUid, uid));
     }
 
+    /**
+     * 列出全部未删除用户（按 id 升序）。
+     *
+     * <p>逐字对位参考实现 agents/skills/service.py 的
+     * {@code select(User.uid).where(User.is_deleted == 0).order_by(User.id)}。
+     * uid 列在此以实体承载（MyBatis-Plus 投影到实体比裸列更贴合本工程仓储风格）。
+     */
+    public List<User> listActiveOrderedById() {
+        return userMapper.selectList(new LambdaQueryWrapper<User>()
+                .eq(User::getIsDeleted, 0)
+                .orderByAsc(User::getId));
+    }
+
     /** 批量获取指定 uid 的用户（去重排序后查询）。 */
     public List<User> listByUids(List<String> uids) {
         TreeSet<String> normalized = new TreeSet<>();
