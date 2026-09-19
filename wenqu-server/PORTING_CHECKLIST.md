@@ -12,9 +12,33 @@
 - 参考实现产品名、包名等标识词在代码与注释中一律清除（第三方库名如 pypinyin 不算）。
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
+## 本地启动与实跑验收（2026-09-19 首次跑通）
+
+本机无 maven，用 `wenqu-server/build.sh` 代替 `mvn`（javac + `~/.m2` 依赖 jar 拼 classpath）：
+
+```bash
+cd wenqu-server
+bash build.sh          # 全量编译到 target/classes（每次先清空 target/classes，见脚本注释）
+bash build.sh run      # 编译后启动，监听 8095，上下文路径 /v2
+```
+
+- 前置：MySQL `127.0.0.1:3306/ai_doc_assistant`、Redis `127.0.0.1:6379` 可用；**不需要** Neo4j
+  （连接为按需懒建，`Neo4jAutoConfiguration` 已排除）。
+- `build.sh run` 已内置固定密钥（`SERVER_PORT` / `WENQU_JWT_SECRET` / `JWT_SECRET_KEY` / `WENQU_INSTANCE_ID`），
+  否则每次重启令牌全失效，联调时表现为「刚登录又被踢回登录页」。
+- 管理员账户：首次 `POST /v2/api/auth/initialize`（`{"uid":"admin","password":"..."}`）建号，
+  之后 `POST /v2/api/auth/token` 登录取令牌。
+- **两套并存的登录契约**：`/api/auth/**`（JWT `sub` = `users.id`）与 `/api/ai/auth/**`
+  （`sub` = `c_ai_user.uid`），`config/UserContextInterceptor` 两者都认。
+- **前端联调口径**：本仓库 `web/` 是旧版前端（代理 `localhost:8090/ai`，指向旧后端），对不上本服务。
+  参考前端的开发服务器按 `^/api` → `VITE_API_URL` 代理，故设 `VITE_API_URL=http://127.0.0.1:8095/v2` 即可联调。
+- 已知非阻塞现象：`GET /api/system/ready` 返回 **503**（`checks.worker = WorkerUnavailableError`）——
+  run 队列 worker 进程未搬，参考实现在无 worker 时同样 503；前端不消费该端点。
+- 运行期派生目录 `skill-sources/`、`skill-projections/`、`user-data/` 由启动流程生成，已 gitignore。
+
 ## 进度概览
 - ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 25/33（routers 18 + utils 5）**
-- 🔲 剩余：5 大块，**52 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 29 / §五 9，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery`、`agents/mcp/service.py`、`agents/skills/{service,remote_install}.py` 三个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 剩余中间件（skills 家族只剩 runtime.py）。
+- 🔲 剩余：5 大块，**52 项待办 + 4 项部分完成**（§一 12 / §二 2 / §三 29 / §五 9，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils、lifespan）。**检索面 `aquery`、`agents/mcp/service.py`、`agents/skills/{service,remote_install}.py` 三个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 剩余中间件（skills 家族只剩 runtime.py）。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
 
 ---
 
@@ -173,7 +197,7 @@
 - [x] common_utils — utils/common_utils.py（setup_logging → resources/logback-spring.xml）
 - [x] knowledge_permissions — utils/knowledge_permissions.py（permissions/KnowledgePermissions）
 - [x] knowledge_response — utils/knowledge_response.py（common/KnowledgeResponseSerializer）
-- [ ] lifespan — utils/lifespan.py（仅 app.state 两个字段由 config/StartupState 承载，其余未搬）
+- [~] lifespan — utils/lifespan.py（**启动组件已搬 5/11**：`builtin_mcp_servers`（config/McpStartupInitializer，required=false）、`builtin_skills` + `default_agents` + `model_providers` + `model_cache`（config/StartupDataInitializer，四者 required=true 按原顺序串行）+ `ensure_options_in_db`（config/OptionStartupInitializer，参考实现里是裸调用）＋`app.state` 两字段（config/StartupState）。**未搬 3 项**：`security_secrets`（AuthUtils.requireSecuritySecrets 已就绪，但接上会新增「必须配置 JWT_SECRET_KEY / API_KEY_DERIVATION_SECRET / SANDBOX_PROVISIONER_TOKEN 三个 ≥32 位且互不相同的密钥」这一启动前置——参考实现即如此，是否照搬待定）、`knowledge_base`（参考实现按 kb_type 预建共享执行器并在类型不受支持时 fail-fast；本工程 KnowledgeBaseFactory 有 `isTypeSupported`，但运行时是「单一通用执行器按 kbId 懒解析」，无逐类型实例可预建，等价实现方式待定）、`sandbox_provider`（本工程未部署 provisioner 沙盒，无对应实现）。另有 run 队列 worker 进程（services/run_worker.py）未搬，故 `/api/system/ready` 的 `worker` 检查恒为 error → 整体 503，与参考实现在无 worker 时行为一致）
 
 ---
 
@@ -201,6 +225,7 @@
 
 | 2026-09-19 | §五 批次八：`agents/mcp/service.py` 全量 → McpService / McpTool / McpClientBundle / McpServerViews（+ MCPServerRepository 逐条对位、启动组件 McpStartupInitializer ← lifespan 的 `builtin_mcp_servers`）→ **解锁 `mcp_router`** → McpController（10 端点）。跨语言对拍：驼峰化 / Python 风格 JSON dumps / 配置哈希 29/29 行逐字节一致；路由对拍 10/10；mcp_servers 造行 + 三条查询语义 + ensure_builtin 三步终态 + 清理（剩 0 行） | `fa3f111` |
 | 2026-09-19 | §三 批次九：`agents/skills/service.py`（1827 行，90 函数 90/90）+ `agents/skills/remote_install.py` + 内置 skill 资源（`src/main/resources/skills/` 5 技能 9 文件）→ **解锁 `skill_router`** → SkillController（26 端点，两个参考 router 合并为一个类）。路由集合对拍 26/26 零差异；函数级覆盖对拍 90/90（唯一差异项 `_user_skills_file_lock` → 回调式）；内置清单/常量逐字对齐 | `2916c3f` |
+| 2026-09-19 | **首次实跑（服务真起 + 登录 + 打接口）**：修 7 处只在运行期成立的缺陷（PosixPathLite.join 空基越界 → initBuiltinSkills 必抛；javac 残留 .class 致 Mapper bean 冲突；同名 Mapper 跨包 → 全限定 bean 名生成器；MilvusGraphService/TaskService 多构造器缺 @Autowired；Neo4jAutoConfiguration 强制建 Driver；UserContextInterceptor 只认单一令牌契约致参考契约全 401；KnowledgeBaseController 缺 `/api` 前缀）。补齐启动组件至 5/11，运行期派生目录进 .gitignore。冒烟 16/16 + 读写往返 12/12 通过 | `ef528ce` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何剩余 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
