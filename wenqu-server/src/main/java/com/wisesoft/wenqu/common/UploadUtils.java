@@ -3,7 +3,10 @@ package com.wisesoft.wenqu.common;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * 上传读取工具（utils/upload_utils.py 的 read_upload_with_limit 全量移植）。
@@ -45,6 +48,36 @@ public final class UploadUtils {
             String tooLargeMessage) throws IOException {
         try (InputStream in = upload.getInputStream()) {
             return readUploadWithLimit(in, maxSizeBytes, tooLargeMessage);
+        }
+    }
+
+    /** 把上传流式写入 buffer，带大小上限（参考实现 write_upload_to_buffer）；超限抛 {@link SizeLimitExceededException}。 */
+    public static long writeUploadToBuffer(
+            InputStream upload, OutputStream buffer, long maxSizeBytes, String tooLargeMessage) throws IOException {
+        byte[] chunk = new byte[CHUNK_SIZE];
+        long written = 0;
+        int read;
+        while ((read = upload.read(chunk)) > 0) {
+            written += read;
+            if (written > maxSizeBytes) {
+                throw new SizeLimitExceededException(tooLargeMessage);
+            }
+            buffer.write(chunk, 0, read);
+        }
+        buffer.flush();
+        return written;
+    }
+
+    /** Spring MultipartFile 写入目标路径（参考实现 write_upload_to_path）。 */
+    public static long writeUploadToPath(
+            org.springframework.web.multipart.MultipartFile upload,
+            Path dest,
+            long maxSizeBytes,
+            String tooLargeMessage) throws IOException {
+        try (OutputStream out = Files.newOutputStream(dest)) {
+            try (InputStream in = upload.getInputStream()) {
+                return writeUploadToBuffer(in, out, maxSizeBytes, tooLargeMessage);
+            }
         }
     }
 

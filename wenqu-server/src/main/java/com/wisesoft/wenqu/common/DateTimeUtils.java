@@ -30,6 +30,7 @@ public final class DateTimeUtils {
     public static final ZoneId SHANGHAI_TZ = ZoneId.of("Asia/Shanghai");
 
     private static final String ISO_Z_SUFFIX = "+00:00";
+    private static final DateTimeFormatter BASE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private DateTimeUtils() {}
 
@@ -189,13 +190,21 @@ public final class DateTimeUtils {
         return end.toInstant().toEpochMilli() - start.toInstant().toEpochMilli();
     }
 
-    /** Format a Unix timestamp as an ISO 8601 UTC datetime string. */
+    /** Format a Unix timestamp as an ISO 8601 UTC datetime string (参考实现 utc_isoformat_from_timestamp). */
     public static String utcIsoformatFromTimestamp(Number timestamp) {
         if (timestamp == null) {
             return null;
         }
-        return OffsetDateTime.ofInstant(Instant.ofEpochSecond(timestamp.longValue()), UTC)
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        long seconds = timestamp.longValue();
+        double fraction = timestamp.doubleValue() - seconds;
+        int nanos = (int) Math.round(fraction * 1_000_000_000.0);
+        Instant instant = Instant.ofEpochSecond(seconds, nanos);
+        OffsetDateTime odt = instant.atOffset(ZoneOffset.UTC);
+        String base = odt.toLocalDateTime().format(BASE_FORMATTER);
+        if (nanos == 0) {
+            return base + "+00:00";
+        }
+        return base + "." + String.format("%06d", nanos / 1000) + "+00:00";
     }
 
     /**
