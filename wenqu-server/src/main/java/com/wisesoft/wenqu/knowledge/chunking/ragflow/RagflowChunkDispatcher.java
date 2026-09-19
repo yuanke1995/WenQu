@@ -79,8 +79,8 @@ public final class RagflowChunkDispatcher {
             case "separator":
                 return SeparatorChunkParser.chunkMarkdown(markdownContent, parserConfig);
             case "semantic":
-                // semantic 解析器为下一批移植项；未就绪时回落通用切分（与参考 dispatcher 默认分支一致）
-                return GeneralChunkParser.chunkMarkdown(markdownContent, parserConfig);
+                // 语义解析器：embed_fn 不自动加载外部模型 → 走按 token 合并的降级切分
+                return SemanticChunkParser.chunkMarkdown(markdownContent, parserConfig, null);
             case "naive":
             default:
                 return GeneralChunkParser.chunkMarkdown(markdownContent, parserConfig);

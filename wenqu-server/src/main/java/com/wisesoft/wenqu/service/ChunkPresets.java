@@ -24,10 +24,11 @@ import java.util.Map;
  *
  * <h3>当前实现的兑现范围（差异如实标注，不隐瞒）</h3>
  * 参考实现的预设各自对应一种独立切分器（问答结构抽取、语义聚类、严格分隔符等）。
- * 本系统当前只有一种切分实现：**结构感知切分 + 长度兜底**。
- * 因此 {@link #mapToInternalParserId} 对暂未提供独立实现的预设返回通用标识，
- * 其行为等同通用切分，**参数仍可按层配置**。此处保留全部预设 id 与文案（与参考实现一致），
- * 未实现的算法不删除、也不谎称已支持。
+ * 本系统已按预设各自落地对应解析器（见 {@code knowledge/chunking/ragflow/} 家族）：
+ * book / laws / qa / separator / semantic 各有独立实现；general 映射到通用实现（naive）。
+ * {@link #mapToInternalParserId} 按参考语义返回各预设的内部实现标识，由调度器路由。
+ * 语义聚类（semantic）的嵌入/聚类环节按能力差异降级为按 token 合并，参数仍可按层配置。
+ * 此处保留全部预设 id 与文案（与参考实现一致）。
  */
 public final class ChunkPresets {
 
@@ -88,13 +89,16 @@ public final class ChunkPresets {
     }
 
     /**
-     * 预设 → 内部切分实现标识。
-     * <p>本系统仅提供通用切分实现，故除通用外的预设当前返回通用标识（行为等同通用切分）；
-     * 参数差异仍通过 chunk_parser_config 生效。
+     * 预设 → 内部切分实现标识（对应参考实现 map_to_internal_parser_id）。
+     * <p>语义：normalize 后，若等于默认预设（general）则返回通用实现标识（naive）；
+     * 其余预设返回其自身 id（book/laws/qa/separator/semantic），由调度器路由到对应解析器。
      */
     public static String mapToInternalParserId(String presetId) {
         String normalized = normalizeChunkPresetId(presetId);
-        return GENERAL_INTERNAL_PARSER_ID;
+        if (DEFAULT_CHUNK_PRESET_ID.equals(normalized)) {
+            return GENERAL_INTERNAL_PARSER_ID;
+        }
+        return normalized;
     }
 
     /** 预设默认参数：与参考实现一致，**返回空字典**（预设不携带参数） */
