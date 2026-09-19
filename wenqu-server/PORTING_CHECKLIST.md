@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase）
-- 🔲 剩余：6 大块，约 **122** 个条目（见下）
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 9/12（零依赖直译，见下）
+- 🔲 剩余：6 大块，约 **113** 个条目（见下）
 
 ---
 
@@ -47,18 +47,18 @@
 - [ ] runtime — runtime.py
 - [ ] schemas — schemas.py
 ### chunking/ragflow_like（12）
-- [ ] dispatcher — chunking/ragflow_like/dispatcher.py
-- [ ] nlp — chunking/ragflow_like/nlp.py
-- [ ] presets — chunking/ragflow_like/presets.py
-- [ ] parsers/book — chunking/ragflow_like/parsers/book.py
-- [ ] parsers/general — chunking/ragflow_like/parsers/general.py
-- [ ] parsers/laws — chunking/ragflow_like/parsers/laws.py
-- [ ] parsers/qa — chunking/ragflow_like/parsers/qa.py
-- [ ] parsers/semantic — chunking/ragflow_like/parsers/semantic.py
-- [ ] parsers/separator — chunking/ragflow_like/parsers/separator.py
-- [ ] utils/md_parser — chunking/ragflow_like/utils/md_parser_utils.py
-- [ ] utils/semantic — chunking/ragflow_like/utils/semantic_utils.py
-- [ ] utils/table — chunking/ragflow_like/utils/table_utils.py
+- [x] dispatcher — chunking/ragflow_like/dispatcher.py（RagflowChunkDispatcher）
+- [x] nlp — chunking/ragflow_like/nlp.py（RagflowNlp）
+- [x] presets — chunking/ragflow_like/presets.py（service/ChunkPresets，本会话前已搬）
+- [x] parsers/book — chunking/ragflow_like/parsers/book.py（BookChunkParser）
+- [x] parsers/general — chunking/ragflow_like/parsers/general.py（GeneralChunkParser）
+- [x] parsers/laws — chunking/ragflow_like/parsers/laws.py（LawsChunkParser）
+- [x] parsers/qa — chunking/ragflow_like/parsers/qa.py（QaChunkParser）
+- [ ] parsers/semantic — chunking/ragflow_like/parsers/semantic.py（下批；依赖 markdown-it token 流 → 需能力替换）
+- [x] parsers/separator — chunking/ragflow_like/parsers/separator.py（SeparatorChunkParser）
+- [x] utils/md_parser — chunking/ragflow_like/utils/md_parser_utils.py（RagflowMdParserUtils）
+- [x] utils/semantic — chunking/ragflow_like/utils/semantic_utils.py（RagflowSemanticUtils；聚类用 sklearn → 降级按 token 合并）
+- [ ] utils/table — chunking/ragflow_like/utils/table_utils.py（下批；依赖 bs4 → 需能力替换）
 ### eval（4）
 - [ ] benchmark_generation — eval/benchmark_generation.py
 - [ ] evaluator — eval/evaluator.py
@@ -184,3 +184,4 @@
 | 日期 | 条目 | commit |
 |------|------|--------|
 | 2026-09-19 | （清单建立，无新增搬移） | — |
+| 2026-09-19 | RAGFlow 分块家族 9/12：dispatcher/nlp/presets/book/general/laws/qa/separator/md_parser_utils/semantic_utils | `ec74d88` |
