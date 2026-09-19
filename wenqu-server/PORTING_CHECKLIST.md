@@ -56,8 +56,8 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
   当前 `deps-check` 的缺口为 0（223 个闭包 artifact、199 条第三方 import 全部有归属）。
 
 ## 进度概览
-- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 25/33（routers 18 + utils 5）**
-- 🔲 剩余：5 大块，**52 项待办 + 4 项部分完成**（§一 12 / §二 2 / §三 29 / §五 9，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils、lifespan）。**检索面 `aquery`、`agents/mcp/service.py`、`agents/skills/{service,remote_install}.py` 三个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 剩余中间件（skills 家族只剩 runtime.py）。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
+- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **knowledge/utils 全 5/5（batch⑩ 补齐 mindmap_utils + sample_question_utils 的高层 DB/LLM 面 → KnowledgeContentService）** / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 26/33（routers 19 + utils 5）**
+- 🔲 剩余：5 大块，**49 项待办 + 1 项部分完成**（§一 12 / §二 2 / §三 30 / §五 8，另 `[~]`：lifespan）。**knowledge_router 已解锁并全量落地（批次⑩）**；其余 router 阻塞在 §一 的 agents 服务与 §三 的 agents 运行时（middlewares / toolkits / backends / skills/runtime）——**必须先搬 §三 才能解锁 §一，再解锁 §五**。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
 
 ---
 
@@ -121,8 +121,8 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 - [ ] notion — implementations/notion.py（参数面已搬入 KnowledgeBaseTypeParams；aquery 依赖外部 Notion HTTP 接口，未搬）
 - [x] read_only_connectors — implementations/read_only_connectors.py（ReadOnlyConnectors：只读能力判定与报错文案）
 ### utils 剩余（5，kb_utils/pdf_utils 已搬）
-- [~] mindmap_utils — utils/mindmap_utils.py（**部分**：纯函数面已搬入 KnowledgeMindmap；`generate_database_mindmap`/`get_database_mindmap_data`/`get_mindmap_database_files`/`get_mindmap_diff`/`update_mindmap_incremental`/`get_mindmap_databases_overview`/`remove_file_from_mindmap`/`batch_remove_files_from_mindmap` 等**高层 DB/LLM 函数未搬** → 仍挡 knowledge_router）
-- [~] sample_question_utils — utils/sample_question_utils.py（**部分**：纯函数面已搬入 KnowledgeSampleQuestions；`generate_database_sample_questions`/`get_database_sample_questions` 未搬）
+- [x] mindmap_utils — utils/mindmap_utils.py（纯函数面 KnowledgeMindmap；**高层 DB/LLM 面**全部搬入 `knowledge/KnowledgeContentService`：`listMindmapFilesPage`/`loadMindmapCurrentFiles`/`getMindmapDatabaseFiles`/`getMindmapDiff`/`updateMindmapIncremental`/`generateDatabaseMindmap`/`getMindmapDatabasesOverview`/`getDatabaseMindmapData`/`removeFileFromMindmap`/`batchRemoveFilesFromMindmap`）
+- [x] sample_question_utils — utils/sample_question_utils.py（纯函数面 KnowledgeSampleQuestions；**高层面**搬入 `knowledge/KnowledgeContentService`：`generateDatabaseSampleQuestions`/`getDatabaseSampleQuestions`）
 - [x] security — utils/security.py（KnowledgeSecurity）
 - [x] url_fetcher — utils/url_fetcher.py（KnowledgeUrlFetcher）
 - [x] url_validator — utils/url_validator.py（KnowledgeUrlValidator；白名单环境变量已去品牌化为 `WENQU_URL_WHITELIST`）
@@ -198,7 +198,7 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 - [x] graph_router — routers/graph_router.py（GraphController；`/api/graph`）
 - [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
 - [x] knowledge_eval_router — routers/knowledge_eval_router.py（KnowledgeEvalController；`/api/evaluation`，11 端点：数据集 upload/list/detail/download/delete/generate/resume + 评估 run 发起/历史/结果/删除）
-- [~] knowledge_router — routers/knowledge_router.py（**部分 11/57 端点**：KnowledgeBaseController 已有 `/knowledge/databases` 系列 CRUD + chunk-presets + query-params + query-test；**剩余挡在 mindmap_utils/sample_question_utils 的高层函数**）
+- [x] knowledge_router — routers/knowledge_router.py（KnowledgeBaseController **全量重写至新知识库宇宙**（`knowledge_bases` 表 + KnowledgeBaseRepository/Manager/Runtime + KnowledgeResponseSerializer），**56/56 端点**（26 GET + 23 POST + 4 PUT + 3 DELETE；脚本对拍参考 56 = Java 56，缺失 0 / 多余 0）。**清单原记「57 个端点」为早期误计，实为 56**，已同步修正类 Javadoc 与 KnowledgeRouteSupport 注释。参考实现单文件里的 9 个模块级函数 + 5 个常量提取到 `service/KnowledgeRouteSupport`（与 ExternalKbController 共享，避免错误码分叉）；mindmap/sample-questions 的 DB+LLM 高点由 `knowledge/KnowledgeContentService` 承载。差异项：①`agent_manager.reload_all()`（§三等 agents 运行时，未搬）不调用——本工程运行时按 kbId 懒解析，无陈旧缓存；②`export` 在参考实现是基类空实现、Milvus 未覆写 → 映射 501；③SSE 用 `StreamingResponseBody` 手写 `data: {json}\n\n` 帧；④前端 `upload-folder`/`process-folder` 在参考后端**不存在**（前端死代码），未实现）
 - [x] mcp_router — routers/mcp_router.py（McpController；`/api/system/mcp-servers`，10 端点：列表（普通用户脱敏 5 字段）/新建/详情/更新/删除/连通性测试/启用开关/工具清单/工具刷新/单工具开关；错误码 400/403/404/422/500 与文案逐字对齐，`extra="forbid"` → 422）
 - [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
 - [x] model_provider_router — routers/model_provider_router.py（ModelProviderController；`/api/system/model-providers`，9 端点：列表 / 新建 / 详情 / 更新 / 删除 / 远端模型拉取 / 缓存刷新 / 分组模型 v2 / 连通性状态）＋ providers 数据面全量（`models/providers/{service,cache,builtin,repository}.py` → ModelProviderService / ModelProviderCache / BuiltinProviders（25 家）/ ModelProviderRepository，加 `models/{chat,embed,rerank}.py` 的 spec 选择与连通性测试面 → ModelSelectors；**25 家内置供应商逐字对齐，含注释掉未启用的 anthropic/google 条目亦未收录**）
@@ -245,13 +245,14 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | 2026-09-19 | §五 批次八：`agents/mcp/service.py` 全量 → McpService / McpTool / McpClientBundle / McpServerViews（+ MCPServerRepository 逐条对位、启动组件 McpStartupInitializer ← lifespan 的 `builtin_mcp_servers`）→ **解锁 `mcp_router`** → McpController（10 端点）。跨语言对拍：驼峰化 / Python 风格 JSON dumps / 配置哈希 29/29 行逐字节一致；路由对拍 10/10；mcp_servers 造行 + 三条查询语义 + ensure_builtin 三步终态 + 清理（剩 0 行） | `fa3f111` |
 | 2026-09-19 | §三 批次九：`agents/skills/service.py`（1827 行，90 函数 90/90）+ `agents/skills/remote_install.py` + 内置 skill 资源（`src/main/resources/skills/` 5 技能 9 文件）→ **解锁 `skill_router`** → SkillController（26 端点，两个参考 router 合并为一个类）。路由集合对拍 26/26 零差异；函数级覆盖对拍 90/90（唯一差异项 `_user_skills_file_lock` → 回调式）；内置清单/常量逐字对齐 | `2916c3f` |
 | 2026-09-19 | **首次实跑（服务真起 + 登录 + 打接口）**：修 7 处只在运行期成立的缺陷（PosixPathLite.join 空基越界 → initBuiltinSkills 必抛；javac 残留 .class 致 Mapper bean 冲突；同名 Mapper 跨包 → 全限定 bean 名生成器；MilvusGraphService/TaskService 多构造器缺 @Autowired；Neo4jAutoConfiguration 强制建 Driver；UserContextInterceptor 只认单一令牌契约致参考契约全 401；KnowledgeBaseController 缺 `/api` 前缀）。补齐启动组件至 5/11，运行期派生目录进 .gitignore。冒烟 16/16 + 读写往返 12/12 通过 | `ef528ce` |
+| 2026-09-19 | §二 批次⑩：`utils/mindmap_utils.py` + `utils/sample_question_utils.py` 的**高层 DB/LLM 面** → `knowledge/KnowledgeContentService`（10 + 2 函数）→ **解锁 `knowledge_router`** → `KnowledgeBaseController` 全量重写至新知识库宇宙（`knowledge_bases` 表 + Repository/Manager/Runtime）**56/56 端点**；参考实现 9 个模块级函数 + 5 个常量 → `service/KnowledgeRouteSupport`（与 ExternalKbController 共享）。端点集合对拍 56==56 零差异；全量编译 343 源文件 0 错误；实跑冒烟 10/10 只读端点 + 错误码通过（422/404/401/501 均符合预期），建库 400 系参考实现 `manager.py:507` 的 `if not embedding_model_spec: raise` 语义，与参考一致（非缺陷） | `5a81263` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何剩余 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
-| knowledge_router | mindmap_utils/sample_question_utils 的高层 DB/LLM 函数（~~`aquery`~~ 已补齐：`KnowledgeBaseRuntime.aquery` 供 manager.aquery/retrieve 共用） | §二 |
+| knowledge_router | ~~mindmap_utils/sample_question_utils 的高层 DB/LLM 函数~~ **均已搬完（批次⑩ → KnowledgeContentService）→ knowledge_router 已解锁并全量落地（56/56 端点）** | §二 |
 | scheduled_agent_router | `scheduled_agent_service` | §一 |
 | chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
 | agent_router | `agent_config_service` / `agent_request_service` / `agent_request_queue_service` / `agent_run_service` / `agents/buildin` | §一 + §三 |
