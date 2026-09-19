@@ -56,9 +56,10 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
   当前 `deps-check` 的缺口为 0（223 个闭包 artifact、199 条第三方 import 全部有归属）。
 
 ## 进度概览
-- ✅ 已完成：repositories(26) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(22) / agents 前置层(13) / knowledge 解析面(17) / storage(minio) / **services 38-43** / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **knowledge/utils 全 5/5（batch⑩ 补齐 mindmap_utils + sample_question_utils 的高层 DB/LLM 面 → KnowledgeContentService）** / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 26/33（routers 19 + utils 5）**
+- ✅ 已完成：repositories(26) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(22) / agents 前置层(13) / knowledge 解析面(17) / storage(minio) / **services 38-43** / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **knowledge/utils 全 5/5（batch⑩ 补齐 mindmap_utils + sample_question_utils 的高层 DB/LLM 面 → KnowledgeContentService）** / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 26/33（routers 19 + utils 5）** / **§三 引擎底座（`agents/engine` 4 类 + `AIMessage`/`GraphStateSnapshot`，非照搬项，`eae0a77`）**
 - 🔲 剩余：5 大块，**41 项待办 + 1 项部分完成**（§一 4 / §二 2 / §三 27 / §五 8，另 `[~]`：lifespan；经脚本核验 4+2+27+8=41）。**§一 agents 服务侧已全部落地（批次⑫~⑰ → agent_run_service / agent_config_service / agent_run_manifest_service / agent_request_queue_service / agent_request_service / scheduled_agent_service / subagent_run_service / artifact_service）**，`agent_router`、`agent_invocation_call_router`、`agent_invocation_eval_router`、`scheduled_agent_router` 的阻塞点已解除；剩余 router 仍阻塞在 §三 的 agents 运行时（middlewares / toolkits / backends）与 §一的 chat/context_compression。**服务已能实跑**（启动组件 5/11，见「本地启动与实跑验收」）。
 - 📌 §一 剩余 4 项的可行性已逐条复核（2026-09-19）：`artifact_service` 已搬完；`chat_service`（1625 行，流式事件翻译核心）与 `context_compression_service`（依赖 `agents/middlewares` + `backends/sandbox`）**硬阻塞于 §三 的 langchain/langgraph 框架**；`run_worker`/`arq_worker` 属 ARQ/引擎面。**结论：§一 的「数据面可移植项」至此全部搬完，继续推进 §一 的边际收益已转为 §三 的前置投入。**
+- 📌 **§三 引擎底座已落地（2026-09-19，`eae0a77`）**：以 spring-ai-alibaba 的 graph-core / agent-framework 为底座，把参考实现消费的 LangGraph 图 / `create_agent` ReAct 循环 / checkpointer / `astream_events("v3")` 事件词汇桥接为 `agents/engine/`（`GraphFactory`/`GraphPort`/`AgentEventStream`/`GraphCodec`）。**§一 的 `chat_service` / `context_compression_service` 的「引擎面不可用」这一阻塞点因此解除**，但它们自身所需的上层中间件仍在 §三（见下「落地方式」表）。
 
 ---
 
@@ -128,9 +129,17 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 - [x] url_fetcher — utils/url_fetcher.py（KnowledgeUrlFetcher）
 - [x] url_validator — utils/url_validator.py（KnowledgeUrlValidator；白名单环境变量已去品牌化为 `WENQU_URL_WHITELIST`）
 
-## 三、agents 运行时（约 32，仅前置层已搬）
+## 三、agents 运行时（约 32，前置层 + 引擎底座已搬）
 > 已搬：context.py→BaseContext / state.py→AgentState / tool_approval.py→ToolApproval / backends/paths.py→BackendPaths / chatbot/prompt.py→ChatbotPrompt / skills/repository.py→SkillRepository / toolkits/registry.py→ToolkitsRegistry / toolkits/utils.py→ToolkitsUtils
+>
+> **另新增「引擎底座」**（参考实现无对应文件 —— 它是 LangGraph / DeepAgents / LangChain 三套第三方框架的 Java 等价物，见下 `engine` 小节）。
+> 底座落地后，本节剩余条目由「硬阻塞」转为「可逐条照搬」，落地方式见各条目旁注。
+
 参考路径前缀 `package/<ref>/agents/`
+
+### engine（新增，非照搬项：第三方框架的 Java 等价底座）
+- [x] 图引擎桥接 — `agents/engine/`（**GraphFactory / GraphPort / AgentEventStream / GraphCodec**）+ 承载类 `agents/AIMessage`、`agents/GraphStateSnapshot`：以 spring-ai-alibaba 的 graph-core / agent-framework 为底座，对齐参考实现的「LangGraph 图 + `create_agent` ReAct 循环 + 中间件链 + checkpointer + `astream_events(version='v3')` 事件流」。映射逐条：`create_agent(...)` → `GraphFactory.builder()`；`StateGraph`/`CompiledGraph` → `GraphPort`；`AsyncPostgresSaver` → checkpointer（本工程 MySQL）；`AgentMiddleware` → `Hook`（BEFORE/AFTER_AGENT、BEFORE/AFTER_MODEL）+ `ModelInterceptor`（≈`wrap_model_call`）/ `ToolInterceptor`（≈`wrap_tool_call`）；`astream(stream_mode='messages')` → `GraphPort.astreamMessages`；`astream_events("v3")` → `GraphPort.astreamEvents`；`Annotated[list, merge_artifacts]` → 状态键策略。类名按职责命名，不含实现框架名（框架信息只在类注释的「实现底座」说明里）。**事件数据源必须是节点输出的 `StreamingOutput.message()`** —— `state()` 是共享可变引用，实测同一节点多次产出的内容随读取时机变化，不可用于取消息。能力差异 5 类（引擎 CompileConfig 恒带默认 MemorySaver 致 `hasCheckpointer` 恒真、`recursionLimit` 为编译期配置、tools 事件 `input` 恒为空表、`values` 只在图结束产出一次、对无 checkpoint 的 thread `updateState` 显式抛错）均已逐条标注在各实现类注释。验证：367 源文件 javac 0 错误；stub 模型端到端验证台 **40/40 PASS**（构图与懒编译 / recursionLimit 透传 / ReAct 循环含真实工具执行 / checkpointer 跨调用 / 事件词汇与载荷形状 / 编解码往返）。`eae0a77`
+
 ### root（1）
 - [x] base — base.py（**BaseAgent**：4 个模块级纯函数 `jsonSafe`/`normalizeToolEventData`/`subagentRouteForNamespace`/`recursionLimitFromContext` + `get_info`/`stream_messages`/`_stream_input_with_state`/`stream_messages_with_state`/`stream_resume_with_state`/`invoke_messages`/`reload_graph`/`get_graph`(抽象)/`_get_checkpointer`/`load_metadata`。**图引擎收敛为 `AgentsGraphPort` 端口**（astreamMessages/astreamEvents/ainvoke/agetState），与 `AgentStateRepository.StateGraphPort` 同口径；端口**无实现**（引擎未照搬）。语言差异：Python 异步生成器 → 回调 sink；`asyncio.create_task` 并发收集子智能体路由 → 后台线程 + `ConcurrentHashMap` + `interrupt` 收尾；2 元组产出 → `{"message":…,"metadata":…}`；`hasattr(model_dump)` → `ModelDumpable` 接口；`resolve_agent_resource_options` → `AgentResourceOptionsResolver` 接缝。新增承载类 `ModelDumpable`/`ToolMessage`/`GraphCommand`）
 ### backends（6，paths.py 已搬）
@@ -255,6 +264,7 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 
 | 2026-09-19 | §一 批次⑯：`subagent_run_service.py` 全量 → SubagentRunService（`SubagentStartResult` / `SubagentRunBusy` 异常、`subagentRunUrls` / `serializeSubagentRunState`（键序 + null 过滤）、`start` 三阶段事务拆分、`getRunForCreator` / `createRunRecord` / `ensureChildConversation` / `validateThreadRelation` / `ensureThreadRelation`、`translateCreationError`）。**参考实现 test_subagent_run_service.py 契约对拍 16/16 PASS**，`hash_id` / `subagent_child_thread_id` 与 Python `hashlib` 基线逐字节一致。同时解除 `chat_service` 对该模块的 import 依赖 | `9ee0c06` |
 | 2026-09-19 | §一 批次⑰：`artifact_service.py` 全量 → ArtifactService（artifact 下载 / 预览 / 保存工作区 6 函数）。依赖面 `FilePreviewService`/`WorkdirService`/`SkillService`/`SafeFiles`/`BackendPaths`/`Workspace` 全部就位、**无 langchain 依赖故可直搬**。**参考实现 test_artifact_service.py 契约对拍 28/28 PASS** —— 路径允许/拒绝矩阵、`Content-Disposition` 百分号编码三断言（attachment 前缀 / 无 CR·LF / **不含原始文件名**）、`copyArtifactToPath` 的 404/400/403/413 映射、有界复制字节一致。全量编译 361 源文件 0 错误 | `0d8a1ba` |
+| 2026-09-19 | §三 批次⑱（**引擎底座，非照搬项**）：以 spring-ai-alibaba 的 graph-core / agent-framework 为底座，把参考实现消费的 LangGraph 图 + `create_agent` ReAct 循环 + 中间件挂载点 + checkpointer + `astream_events("v3")` 事件词汇桥接为 `agents/engine/`：`GraphFactory`（`create_agent` 等价入口）/ `GraphPort`（`astreamMessages`/`astreamEvents`/`ainvoke`/`agetState`/`updateState`）/ `AgentEventStream`（事件词汇合成，数据源为节点输出的 `StreamingOutput.message()`）/ `GraphCodec`（承载类 ↔ 框架消息/配置/状态互转）+ 承载类 `AIMessage`/`GraphStateSnapshot`；`BaseAgent.agetState` 改返回快照载体。**类名按职责命名，不含实现框架名**。能力差异 5 类逐条标注（默认 MemorySaver 致 `hasCheckpointer` 恒真 / `recursionLimit` 编译期 / tools 事件 input 恒空 / values 仅图末一次 / 无 checkpoint 的 thread `updateState` 显式抛错）。验证：367 源文件 javac 0 错误；stub 模型端到端验证台 **40/40 PASS** | `eae0a77` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**已可无阻塞直搬**：`scheduled_agent_router`、`agent_invocation_call_router`、`agent_invocation_eval_router`（三者阻塞项均在 §一 且已落地）；`agent_router` 的 §一 侧亦已解除，但其余项仍受 §三 影响需逐条复核。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
@@ -263,17 +273,17 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 |---|---|---|
 | knowledge_router | ~~mindmap_utils/sample_question_utils 的高层 DB/LLM 函数~~ **均已搬完（批次⑩ → KnowledgeContentService）→ knowledge_router 已解锁并全量落地（56/56 端点）** | §二 |
 | scheduled_agent_router | ~~`scheduled_agent_service`~~ **已搬完（批次⑮）→ 阻塞解除** | §一 |
-| chat_router | ~~`artifact_service`~~ **已搬完（批次⑰）**；仍余 `chat_service` / `context_compression_service`（二者硬阻塞于 §三 langchain/langgraph） | §一 + §三 |
+| chat_router | ~~`artifact_service`~~ **已搬完（批次⑰）**；仍余 `chat_service` / `context_compression_service`（**二者的引擎面阻塞已解除**：§三 底座 `eae0a77` 提供了构图 / 调用 / 取状态 / 事件流；`context_compression_service` 仍依赖 §三 的 `middlewares/*` 具体实现） | §一 + §三 |
 | agent_router | ~~agent_config_service / agent_request_service / agent_request_queue_service / agent_run_service / agents/buildin~~ **§一 侧均已搬完（批次⑫⑬⑭ + AgentManager）→ 阻塞解除** | §一 + §三 |
 | agent_invocation_call_router | ~~`agent_request_service`~~ **已搬完（批次⑭）→ 阻塞解除** | §一 |
 | agent_invocation_channel_router | 上列（已解除）+ `channel_command_service`（已搬）+ `chat_service` | §一 |
 | agent_invocation_eval_router | ~~`agent_request_service` / `agent_run_service`~~ **均已搬完（批次⑫⑭）→ 阻塞解除** | §一 |
 | skill_router | ~~`agents/skills/service.py` / `remote_install.py`~~ **均已搬完（批次九）→ skill_router 已解锁并落地** | §三 |
 
-## ⚠️ §三 的根本阻塞：第三方运行时框架缺失（2026-09-19 核查）
+## §三 的根本阻塞与解法：第三方运行时框架（2026-09-19 核查 → 2026-09-19 底座已落地）
 
 清点 §三 全部待办文件的 import 后确认：**§三 不是"把 Python 照搬成 Java"，而是把一整套
-第三方 Agent 运行时框架重写到 Java**。参考实现依赖三套框架，本工程**一套都没有**：
+第三方 Agent 运行时框架重写到 Java**。参考实现依赖三套框架，本工程原本**一套都没有**：
 
 | 依赖 | 用途 | 涉及 §三 条目 |
 |---|---|---|
@@ -282,11 +292,22 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | `langchain_core` | 消息类型（`ToolMessage` 等）、`BaseTool`、tool schema | `middlewares/*`、`toolkits/*`、`callbacks/*` |
 
 **已照搬的部分只在"数据面"**：消息/状态/上下文/端口/纯函数/常量/文案，均逐字对齐。
-**未照搬的是"引擎面"**：图执行、checkpoint、流式事件、中间件挂载、工具注册表。
-本工程对此的既有口径是 **端口 + 显式标注的能力差异**（见 `BaseContext` / `AgentState` /
+**引擎面**（图执行、checkpoint、流式事件、中间件挂载）本批次改为**桥接而非重写**：
+以既有 Java 原生等价框架（spring-ai-alibaba 的 graph-core / agent-framework）为底座，
+收敛为参考实现所消费的端口与事件词汇（见上 `engine` 小节，`eae0a77`）。
+本工程对框架面的既有口径仍是 **端口 + 显式标注的能力差异**（见 `BaseContext` / `AgentState` /
 `AgentStateRepository.StateGraphPort` / `dify` / `notion` / `sandbox` / `skill_remote_install`），
-`AgentsGraphPort` 继续沿用该口径。
+`AgentsGraphPort` 继续沿用该口径 —— 只是现在它**有了实现**。
 
-**结论**：§三 剩余 28 项若继续逐文件照搬，产出的多数是**无法运行**的引擎面脚手架；
-要让 agents 真正跑起来，需要的是**实现一套 Java 图引擎 + 中间件宿主**，属独立工程，
-不是"移植"。此项待决策后再动工（是否继续按端口口径铺完 §三，还是先做引擎）。
+**结论（已决策并已落地底座）**：§三 剩余 27 项不能靠"逐文件直译"产出可运行代码，
+需要先有 **Java 图引擎 + 中间件宿主**；该底座已就位，剩余条目的落地方式如下：
+
+| 原依赖 | 剩余条目的落地方式 |
+|---|---|
+| `langgraph`（图执行 / checkpoint / 流式） | 用 `GraphFactory` 构图 + `GraphPort` 调用/取状态/订阅事件，无需自研引擎 |
+| `langchain_core`（消息与工具类型） | 承载类（`AIMessage`/`ToolMessage`/`ModelDumpable`）与框架消息双向互转（`GraphCodec`） |
+| `deepagents` 中间件 | 用 `Hook`（BEFORE/AFTER_AGENT、BEFORE/AFTER_MODEL）+ `ModelInterceptor`/`ToolInterceptor`；框架内另有 todo-list / 模型重试 / 人工审批等同类可对位 |
+| `deepagents.backends`（文件系统 / 沙盒） | 落为本工程工具回调（`ToolCallback`）注册进 `GraphFactory`，路径面接 `BackendPaths` |
+
+**下一步真正的工作量**：按上表逐中间件落地 `middlewares/*`（10）与 `buildin/{chatbot,subagent}/graph.py`、
+`backends/*` —— 这是解除 `chat_service` / `context_compression_service` 阻塞的前置。
