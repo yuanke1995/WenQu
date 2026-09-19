@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 9/12（零依赖直译，见下）
-- 🔲 剩余：6 大块，约 **113** 个条目（见下）
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下）
+- 🔲 剩余：6 大块，约 **110** 个条目（见下）
 
 ---
 
@@ -54,11 +54,11 @@
 - [x] parsers/general — chunking/ragflow_like/parsers/general.py（GeneralChunkParser）
 - [x] parsers/laws — chunking/ragflow_like/parsers/laws.py（LawsChunkParser）
 - [x] parsers/qa — chunking/ragflow_like/parsers/qa.py（QaChunkParser）
-- [ ] parsers/semantic — chunking/ragflow_like/parsers/semantic.py（下批；依赖 markdown-it token 流 → 需能力替换）
+- [x] parsers/semantic — chunking/ragflow_like/parsers/semantic.py（SemanticChunkParser；markdown-it→RagflowMdTokenizer 纯扫描近似，bs4→RagflowTableUtils 纯字符串解析，embed_fn 降级按 token 合并）
 - [x] parsers/separator — chunking/ragflow_like/parsers/separator.py（SeparatorChunkParser）
 - [x] utils/md_parser — chunking/ragflow_like/utils/md_parser_utils.py（RagflowMdParserUtils）
 - [x] utils/semantic — chunking/ragflow_like/utils/semantic_utils.py（RagflowSemanticUtils；聚类用 sklearn → 降级按 token 合并）
-- [ ] utils/table — chunking/ragflow_like/utils/table_utils.py（下批；依赖 bs4 → 需能力替换）
+- [x] utils/table — chunking/ragflow_like/utils/table_utils.py（RagflowTableUtils；bs4 → 纯字符串解析）
 ### eval（4）
 - [ ] benchmark_generation — eval/benchmark_generation.py
 - [ ] evaluator — eval/evaluator.py
