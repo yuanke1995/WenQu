@@ -132,6 +132,66 @@ public class SummaryMiddleware extends ModelInterceptor {
         return drained;
     }
 
+    /**
+     * 按 Agent 运行时配置创建自动与主动压缩共用的摘要器（对应参考实现
+     * {@code agents/middlewares/summary.py} 的 {@code create_summary_middleware_from_context}）。
+     *
+     * <h3>逐参对齐</h3>
+     * <table border="1">
+     *   <caption>参考实现 → 本工程</caption>
+     *   <tr><th>{@code create_summary_middleware_from_context} 参数</th><th>本工程取值处</th></tr>
+     *   <tr><td>{@code trigger=("tokens", summary_threshold * 1024)}</td>
+     *       <td>不在此处传参 —— {@link #thresholdClauses(ModelRequest)} 运行时从
+     *           {@code BaseContext.summary_threshold} 换算（同一换算口径：KB × 1024）</td></tr>
+     *   <tr><td>{@code keep=("messages", summary_keep_messages)}</td>
+     *       <td>同上口径：由 context 的 {@code summary_keep_messages} 承载</td></tr>
+     *   <tr><td>{@code summary_prompt=summary_prompt or DEFAULT_YUXI_SUMMARY_PROMPT}</td>
+     *       <td>{@code BaseContext.summary_prompt}（默认值即
+     *           {@link BaseContext#DEFAULT_SUMMARY_PROMPT}）</td></tr>
+     *   <tr><td>{@code trim_tokens_to_summarize=trigger_tokens}</td>
+     *       <td>摘要/落盘未注入（见类注释能力差异 1），该参数无消费方，不传</td></tr>
+     *   <tr><td>{@code tool_result_offload_token_limit=summary_tool_result_token_limit}</td>
+     *       <td>{@link #createFromContext} 的第三个观测量，逐字取 context 同名键
+     *           （默认 {@link #DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS}）</td></tr>
+     *   <tr><td>{@code backend=backend}</td>
+     *       <td>{@link ToolResultBackend} 端口（由构图方用本 Run 独享的沙盒 backend 适配）</td></tr>
+     *   <tr><td>{@code model=load_chat_model(…)}</td>
+     *       <td><b>不传</b>：本工程 {@link SummaryGenerator} 需要一个模型调用体，
+     *           而参考实现由未搬的 {@code SummarizationMiddleware} 基类持有，见下。</td></tr>
+     * </table>
+     *
+     * <h3>能力差异（显式标注，沿用类注释能力差异 1）</h3>
+     * <p>{@code summaryGenerator} 与 {@code historyOffloader} 传 {@code null}：
+     * 参考实现在基类 {@code _create_summary} / {@code _offload_to_backend} 中实现，
+     * 这两个方法依赖 {@code SummarizationMiddleware} 与 {@code ContextSize} 语义
+     * （未照搬，见类注释）。此时 {@link #canSummarize()} 为 {@code false}，
+     * 本中间件退化为「工具入参截断 + 工具结果压缩」的确定性部分，<b>不</b>生成摘要、
+     * <b>不</b>落历史 —— 这是显式降级，不是静默成功。
+     * {@code eventSink} 仍照常注入（压缩开始/完成事件照发）。
+     *
+     * @param context 本 Run 的 Agent context
+     * @param backend 工具结果落盘端口（形状对应 {@code backend.write}）
+     * @param eventSink 压缩事件推送端口（形状对应 {@code get_stream_writer()}）；可为 null
+     */
+    public static SummaryMiddleware createFromContext(
+            BaseContext context, ToolResultBackend backend, CompressionEventSink eventSink) {
+        Integer toolResultOffloadTokenLimit =
+                DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS;
+        if (context != null) {
+            Object configured = context.get("summary_tool_result_token_limit");
+            if (configured instanceof Number number) {
+                toolResultOffloadTokenLimit = number.intValue();
+            }
+        }
+        return new SummaryMiddleware(
+                backend,
+                null,
+                null,
+                eventSink,
+                toolResultOffloadTokenLimit,
+                DEFAULT_TOOL_ARG_MAX_LENGTH);
+    }
+
     /** 工具结果落盘端口（对应参考实现 {@code backend.write}）。 */
     @FunctionalInterface
     public interface ToolResultBackend {
