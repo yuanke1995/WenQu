@@ -18,9 +18,25 @@
 
 ```bash
 cd wenqu-server
-bash build.sh          # 全量编译到 target/classes（每次先清空 target/classes，见脚本注释）
-bash build.sh run      # 编译后启动，监听 8095，上下文路径 /v2
+bash build.sh             # 全量编译到 target/classes（每次先清空，见脚本注释）
+bash build.sh start       # 编译后【后台】启动，监听 8095，上下文 /v2（日志 run/server.log）
+bash build.sh status      # 端口 / PID / 健康检查
+bash build.sh stop        # 停止（按端口找监听者，不依赖 pid 文件）
+bash build.sh restart     # stop + start
+bash build.sh deps-check  # 对账「pom 依赖闭包」与「源码 import」
+bash build.sh run         # 【前台】启动（占住终端，仅调试时用）
 ```
+
+- **别用 `run` 当常驻服务**：它是前台进程，Ctrl+C、关窗口、或另开终端再跑一次，都会制造
+  「Port 8095 already in use」的假故障；而后台实例一旦脱离终端，`ps` 未必看得见，
+  表现为「明明没跑却又起不来」。`status` / `stop` 按端口判定，不依赖 pid 文件。
+- **工作目录必须是模块根 `wenqu-server/`**：`RuntimePaths` 里 `skill-sources` / `skill-projections` /
+  `user-data` / `data` 都是相对路径。IDE 默认 cwd 是项目根，会把运行期目录写到仓库根，
+  与 `build.sh` 启动产生的副本分裂成两套。已提供 `.idea/runConfigurations/WenquServerApplication.xml`
+  （指定 `WORKING_DIRECTORY=$PROJECT_DIR$/wenqu-server` 与固定密钥）。
+- ⚠️ **classpath 有两条互不一致的来源**：`build.sh` 用「`~/.m2` 全量」，IDEA / Maven 用「`pom.xml` 闭包」。
+  任何躺在 m2 里却没写进 pom 的 jar，都会造成「命令行编得过、IDEA 报找不到符号」。
+  凡改动源码引入新依赖，先 `bash build.sh deps-check` 对账再补 pom。
 
 - 前置：MySQL `127.0.0.1:3306/ai_doc_assistant`、Redis `127.0.0.1:6379` 可用；**不需要** Neo4j
   （连接为按需懒建，`Neo4jAutoConfiguration` 已排除）。
@@ -34,7 +50,10 @@ bash build.sh run      # 编译后启动，监听 8095，上下文路径 /v2
   参考前端的开发服务器按 `^/api` → `VITE_API_URL` 代理，故设 `VITE_API_URL=http://127.0.0.1:8095/v2` 即可联调。
 - 已知非阻塞现象：`GET /api/system/ready` 返回 **503**（`checks.worker = WorkerUnavailableError`）——
   run 队列 worker 进程未搬，参考实现在无 worker 时同样 503；前端不消费该端点。
-- 运行期派生目录 `skill-sources/`、`skill-projections/`、`user-data/` 由启动流程生成，已 gitignore。
+- 运行期派生目录 `skill-sources/`、`skill-projections/`、`user-data/`、`data/`（含启动期生成的
+  `data/secret/config-rsa.key`）、`logs/`、`run/` 均由启动流程生成，已 gitignore。
+- 依赖清单以 **`pom.xml` 为准**：`build.sh` 的全量 classpath 只是「能编过」的宽松近似。
+  当前 `deps-check` 的缺口为 0（223 个闭包 artifact、199 条第三方 import 全部有归属）。
 
 ## 进度概览
 - ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **agents/skills 2/3（service + remote_install）** / **§五 API 层 25/33（routers 18 + utils 5）**
