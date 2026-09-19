@@ -326,6 +326,19 @@ public class BaseContext {
         return filtered;
     }
 
+    /**
+     * 仅用于写入：按 Context 字段 metadata.auth 过滤可修改配置
+     * （对应参考实现 {@code filter_config_by_role(config_json, role, context_schema=None)}）。
+     *
+     * <p>能力差异（显式标注）：参考实现的 {@code context_schema} 用于决定"哪些字段算已声明"，
+     * 本工程的声明字段表是 {@link #FIELD_DEFS} 这一张**静态表**，尚无携带额外字段的子类 schema，
+     * 故 schema 入参仅为签名对齐而保留，解析结果与不传时一致。
+     */
+    public static Map<String, Object> filterConfigByRole(
+            Map<String, Object> configJson, String role, Class<? extends BaseContext> contextSchema) {
+        return filterConfigByRole(configJson, role);
+    }
+
     /** 仅用于写入：按 Context 字段 metadata.auth 过滤可修改配置。 */
     public static Map<String, Object> filterConfigByRole(Map<String, Object> configJson, String role) {
         Map<String, Object> filtered = filterDeclaredConfig(configJson);
