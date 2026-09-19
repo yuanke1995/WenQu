@@ -26,26 +26,29 @@ import java.util.Set;
 /**
  * 知识库接口。
  * <p>
- * 路径、请求字段与响应结构均与参考实现的 knowledge_router 对齐：
+ * 路径、请求字段与响应结构均与参考实现的 knowledge_router 对齐（前缀 {@code /api/knowledge}，
+ * 即参考实现 knowledge_router 的 {@code APIRouter(prefix="/api/knowledge")}）：
  * <pre>
- * GET    /knowledge/databases                        列表（{"databases":[...]}）
- * POST   /knowledge/databases                        新建（database_name/description/kb_type/
- *                                                    additional_params/embedding_model_spec/
- *                                                    llm_model_spec/share_config）
- * GET    /knowledge/databases/accessible             可访问列表（供智能体配置）
- * GET    /knowledge/databases/{kb_id}                详情
- * PUT    /knowledge/databases/{kb_id}                编辑（additional_params 为**合并**语义）
- * DELETE /knowledge/databases/{kb_id}                删除
- * GET    /knowledge/chunk-presets                    分块预设（{"chunk_presets":[...],"message":"success"}）
- * GET    /knowledge/databases/{kb_id}/query-params   读检索参数
- * PUT    /knowledge/databases/{kb_id}/query-params   写检索参数
- * POST   /knowledge/databases/{kb_id}/query-test     检索测试
+ * GET    /api/knowledge/databases                        列表（{"databases":[...]}）
+ * POST   /api/knowledge/databases                        新建（database_name/description/kb_type/
+ *                                                        additional_params/embedding_model_spec/
+ *                                                        llm_model_spec/share_config）
+ * GET    /api/knowledge/databases/accessible             可访问列表（供智能体配置）
+ * GET    /api/knowledge/databases/{kb_id}                详情
+ * PUT    /api/knowledge/databases/{kb_id}                编辑（additional_params 为**合并**语义）
+ * DELETE /api/knowledge/databases/{kb_id}                删除
+ * GET    /api/knowledge/chunk-presets                    分块预设（{"chunk_presets":[...],"message":"success"}）
+ * GET    /api/knowledge/databases/{kb_id}/query-params   读检索参数
+ * PUT    /api/knowledge/databases/{kb_id}/query-params   写检索参数
+ * POST   /api/knowledge/databases/{kb_id}/query-test     检索测试
  * </pre>
+ * 注：类级前缀曾误写为 {@code /knowledge}（漏 {@code /api}），导致参考前端的
+ * {@code /api/knowledge/**} 调用一律 404；已按参考实现的对齐路径修正。
  *
  * @author yuanke
  */
 @RestController
-@RequestMapping("/knowledge")
+@RequestMapping("/api/knowledge")
 @RequiredArgsConstructor
 @Tag(name = "知识库", description = "文档的容器、检索的作用域与参数归属")
 public class KnowledgeBaseController {

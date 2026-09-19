@@ -912,9 +912,9 @@ public class SkillService {
         return specs;
     }
 
-    /** {@code _build_builtin_skill_dir_path}。 */
+    /** {@code _build_builtin_skill_dir_path}：{@code (Path("shared") / slug).as_posix()}。 */
     private static String buildBuiltinSkillDirPath(String slug) {
-        return PosixPathLite.parse("shared").join("", List.of(slug));
+        return PosixPathLite.parse("shared").join(List.of(slug)).asPosix();
     }
 
     // ---------------------------------------------------------------- 目录工具

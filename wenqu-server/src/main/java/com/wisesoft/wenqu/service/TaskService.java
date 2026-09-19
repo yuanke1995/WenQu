@@ -22,6 +22,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,6 +63,15 @@ public class TaskService {
     private final ScheduledExecutorService heartbeatExecutor;
     private final double defaultTimeoutSeconds;
 
+    /**
+     * 容器装配用构造器（两参）。
+     *
+     * <p>参考实现的 {@code Tasker} 只有一个构造器带默认值（{@code default_timeout_seconds=...}）；
+     * Java 无默认参数，故拆成两参 / 三参两个重载。重载并存时 Spring 无法自行判断注入哪一个
+     * （启动期表现为 {@code No default constructor found}），故显式标注 {@link Autowired}
+     * 指定容器用两参版本；三参版本供需要自定义超时的调用方（含同包测试）显式使用。
+     */
+    @Autowired
     public TaskService(TaskRepository repo, TaskQueueService taskQueueService) {
         this(repo, taskQueueService, TASKER_DEFAULT_TIMEOUT_SECONDS);
     }

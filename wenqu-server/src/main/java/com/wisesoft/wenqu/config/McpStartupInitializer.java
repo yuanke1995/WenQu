@@ -30,8 +30,11 @@ import org.springframework.stereotype.Component;
  * 本工程的 §五 入口（{@code main.py} / {@code lifespan.py}）尚未照搬，故先以独立的
  * {@link ApplicationReadyEvent} 监听器承载该组件——照搬入口时这一块<b>无需再写</b>，
  * 直接沿用本类即可（{@link StartupState#register} 的键名与参考实现一致：
- * {@code builtin_mcp_servers}）。执行顺序用 {@link Order} 提到最高优先级，
- * 使组件状态在 {@link StartupState#markStartupComplete()} 置位<b>之前</b>登记，
+ * {@code builtin_mcp_servers}）。执行顺序用 {@link Order} 显式声明，与参考实现 lifespan
+ * 的先后一致：{@link OptionStartupInitializer}（容器 refresh 期）→ 本组件 →
+ * {@link StartupDataInitializer}（{@code builtin_skills} → {@code default_agents} →
+ * {@code model_providers} → {@code model_cache}）。
+ * 三个顺序都放在 {@link StartupState#markStartupComplete()} 置位<b>之前</b>，
  * 与参考实现「先跑组件、末尾才把 startup_complete 置真」的顺序一致。
  *
  * <p>与参考实现同名的另一处调用点是 {@code services/run_worker.py} 的 worker 启动流程；
@@ -56,7 +59,7 @@ public class McpStartupInitializer {
 
     /** 应用就绪时同步内置 MCP 定义（失败只降级记录，不阻断启动）。 */
     @EventListener(ApplicationReadyEvent.class)
-    @Order(Ordered.HIGHEST_PRECEDENCE)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 1)
     public void initializeBuiltinMcpServers() {
         try {
             mcpService.ensureBuiltinMcpServersInDb();

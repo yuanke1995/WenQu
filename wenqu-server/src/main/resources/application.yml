@@ -9,6 +9,21 @@ server:
 spring:
   application:
     name: wenqu-server
+  # 只排除 Spring Boot 的 Neo4j 自动装配，其余自动配置不受影响。
+  #
+  # 为什么必须排除：参考实现的 Neo4j 连接是「property 懒加载」——只有真正用到图谱能力时
+  # 才建连接，未部署 Neo4j 时应用照常启动（见 storage/neo4j/Neo4jConnectionManager 的类注释，
+  # 本工程同一语义）。而 Spring Boot 只要在 classpath 上探测到 org.neo4j.driver.Driver 类，
+  # 就会用默认 spring.neo4j.uri=bolt://localhost:7687 立刻建一个 Driver 单例 bean，
+  # actuator 还会连带注册 neo4j 健康检查：
+  #   - 未装 Neo4j 时启动直接失败（本工程没有任何代码注入该 bean，纯属被自动装配牵连）；
+  #   - 即便装了，也在启动期建立参考实现中不存在的进程级连接，与懒加载语义不符。
+  # 因此这里把该自动配置（及其健康检查，见 management.health.neo4j）关掉。
+  # 注意：不要图省事用 `spring.autoconfigure.exclude` 去排一大片类——排除向量存储等自动配置
+  # 会导致检索链路缺少必需 bean 而启动失败，只排下面这一个类才是安全的。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration
   # 模型 bean 一律关闭自动装配：问答/向量客户端由 DynamicOpenAiChatModel、DynamicEmbeddingModel
   # 按数据库配置动态构建（密钥加密入库，yml 不落明文）。
   # 注意不能用 spring.autoconfigure.exclude 排除自动配置类——那会连向量存储的自动配置一起失去，
@@ -93,3 +108,11 @@ logging:
   level:
     root: info
     com.wisesoft.wenqu: debug
+
+# 关掉 Neo4j 健康检查：它与上面的 Neo4jAutoConfiguration 是一对——Driver bean 已被排除，
+# 健康检查再去找 Driver 只会让启动期多一个失败点。图谱能力自身的可用性由
+# Neo4jConnectionManager 在调用时决定（连不上就抛错，不影响进程启动）。
+management:
+  health:
+    neo4j:
+      enabled: false

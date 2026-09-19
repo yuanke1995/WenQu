@@ -1,5 +1,6 @@
 package com.wisesoft.wenqu;
 
+import com.wisesoft.wenqu.config.QualifiedMapperBeanNameGenerator;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -17,7 +18,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * </ul>
  */
 @SpringBootApplication
-@MapperScan("com.wisesoft.wenqu.repository")
+@MapperScan(
+        basePackages = "com.wisesoft.wenqu.repository",
+        nameGenerator = QualifiedMapperBeanNameGenerator.class)
 public class WenquServerApplication {
 
     public static void main(String[] args) {
