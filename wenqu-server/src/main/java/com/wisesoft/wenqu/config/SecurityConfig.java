@@ -104,6 +104,15 @@ public class SecurityConfig implements WebMvcConfigurer {
      *
      * <p>另含参考实现中本就无 Depends 的公开端点（{@code /api/system/health}、{@code /ready}、
      * {@code /discovery}、{@code /info}）——它们在参考实现里同样不要求登录。
+     *
+     * <p>{@code /api/auth/**}（参考实现 {@code auth_router}）中同样未声明任何用户依赖的端点也必须放行，
+     * 否则登录、首次初始化、CLI 设备码换密钥与 OIDC 回调链路全部死锁：
+     * <ul>
+     *   <li>POST {@code /token}、{@code /initialize}；</li>
+     *   <li>POST {@code /cli/sessions}、{@code /cli/sessions/token}（CLI 未登录侧）；</li>
+     *   <li>POST {@code /oidc/exchange-code}；</li>
+     *   <li>GET {@code /check-first-run}、{@code /oidc/config}、{@code /oidc/login-url}、{@code /oidc/callback}。</li>
+     * </ul>
      */
     private static boolean isAuthBootstrapEndpoint(String method, String path) {
         if (path == null) return false;
@@ -113,6 +122,22 @@ public class SecurityConfig implements WebMvcConfigurer {
                     || path.equals("/api/system/ready")
                     || path.equals("/api/system/discovery")
                     || path.equals("/api/system/info");
+        }
+        if (path.startsWith("/api/auth/")) {
+            if ("POST".equals(method)) {
+                return path.equals("/api/auth/token")
+                        || path.equals("/api/auth/initialize")
+                        || path.equals("/api/auth/cli/sessions")
+                        || path.equals("/api/auth/cli/sessions/token")
+                        || path.equals("/api/auth/oidc/exchange-code");
+            }
+            if ("GET".equals(method)) {
+                return path.equals("/api/auth/check-first-run")
+                        || path.equals("/api/auth/oidc/config")
+                        || path.equals("/api/auth/oidc/login-url")
+                        || path.equals("/api/auth/oidc/callback");
+            }
+            return false;
         }
         return "POST".equals(method) && (path.equals("/api/ai/auth/login")
                 || path.equals("/api/ai/auth/initialize")

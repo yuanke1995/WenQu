@@ -8,6 +8,7 @@ import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -38,16 +39,47 @@ public class GlobalExceptionHandler {
 
     /**
      * 参考实现契约：HTTPException(status_code, detail, headers) → {@code {"detail": ...}} + 状态码 + 响应头。
+     *
+     * <p>{@code detail} 可为字符串或结构化对象（对象优先，对应参考实现 CLI 授权链路的 dict detail）。
      */
     @ExceptionHandler(ApiHttpException.class)
     public ResponseEntity<Map<String, Object>> handleApiHttp(ApiHttpException e) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("detail", e.getMessage());
+        body.put("detail", e.getDetailObject() != null ? e.getDetailObject() : e.getMessage());
         ResponseEntity.BodyBuilder builder = ResponseEntity.status(e.getStatus());
         if (e.getHeaders() != null) {
             e.getHeaders().forEach(builder::header);
         }
         return builder.body(body);
+    }
+
+    /**
+     * 必填请求参数缺失（对应 FastAPI 必填 Query/Form 缺失的 422）。
+     *
+     * <p>平台差异：此处不引入本处理器时 Spring 会落到 {@code Exception} 兜底返回 500，
+     * 与参考实现的 422 不符，故显式映射；detail 为文本（参考实现为结构化列表，见类注解）。
+     */
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException e) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("detail", "缺少必填参数: " + e.getParameterName()));
+    }
+
+    /** 请求参数类型不匹配（对应 FastAPI 的 422）。 */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("detail", "参数类型错误: " + e.getName()));
+    }
+
+    /** 请求体缺失或无法解析（对应 FastAPI 的 422）。 */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException e) {
+        log.debug("请求体无法解析: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("detail", "请求体缺失或格式错误"));
     }
 
     /**

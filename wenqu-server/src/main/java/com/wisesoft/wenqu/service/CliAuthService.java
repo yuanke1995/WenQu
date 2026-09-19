@@ -282,4 +282,25 @@ public class CliAuthService {
         cliAuthSessionMapper.updateById(session);
         return buildCliExchangeResult(session);
     }
+
+    /**
+     * CLIAuthSession.to_dict() 的键与时间格式照搬（参考实现 models_business.CLIAuthSession）。
+     *
+     * <p>注意：参考实现的路由用 {@code response_model} 过滤响应，实际下发字段由各响应模型决定，
+     * 调用方需按响应模型投影。
+     */
+    public static Map<String, Object> toDict(CLIAuthSession session) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", session.getId());
+        result.put("user_code", session.getUserCode());
+        result.put("status", session.getStatus());
+        result.put("key_name", session.getKeyName());
+        result.put("approved_user_id", session.getApprovedUserId());
+        result.put("api_key_id", session.getApiKeyId());
+        result.put("created_at", DateTimeUtils.formatUtcDatetime(session.getCreatedAt()));
+        result.put("expires_at", DateTimeUtils.formatUtcDatetime(session.getExpiresAt()));
+        result.put("approved_at", DateTimeUtils.formatUtcDatetime(session.getApprovedAt()));
+        result.put("consumed_at", DateTimeUtils.formatUtcDatetime(session.getConsumedAt()));
+        return result;
+    }
 }
