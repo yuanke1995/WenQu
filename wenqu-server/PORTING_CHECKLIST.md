@@ -196,7 +196,7 @@
 | 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | `20015b5` |
 | 2026-09-19 | §五 批次六：model_provider_router + providers 数据面全量（ModelInfo/BuiltinProviders/ModelProviderCache/ModelSelectors + ModelProviderService 重写 + ModelProviderRepository 补全）；`_normalize_payload` 跨语言对拍 26/26 逐字一致 | `055b57f` |
 | 2026-09-19 | 清单滞后项修正（graphs 6 / utils 2 / storage 3 实为已搬） | `55993b0` |
-| 2026-09-19 | 批次七（部分）：`knowledge/eval/metrics.py` → EvalMetrics + common/LooseJson；**修正批次六签名偏差** `ChatAdapter.call(message, stream=False)`（参考实现 message 可为 str 或消息列表，返回 GeneralResponse.content） | — |
+| 2026-09-19 | 批次七（部分）：`knowledge/eval/metrics.py` → EvalMetrics + common/LooseJson；**修正批次六签名偏差** `ChatAdapter.call(message, stream=False)`（参考实现 message 可为 str 或消息列表，返回 GeneralResponse.content） | `766cf2b` |
 
 ## 挡在后面的依赖（routers 剩余 10 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
