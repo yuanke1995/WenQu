@@ -23,6 +23,7 @@ import org.neo4j.driver.types.Node;
 import org.neo4j.driver.types.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -90,6 +91,15 @@ public class MilvusGraphService {
 
     private volatile Neo4jConnectionManager connection;
 
+    /**
+     * 容器装配用构造器（四参）。
+     *
+     * <p>参考实现是单个构造器带默认值（{@code kb_id=None}）；Java 无默认参数，故拆成四参 / 五参
+     * 两个重载。重载并存会让 Spring 无法自行判断注入哪一个（表现为启动期
+     * {@code No default constructor found}），因此这里显式标注 {@link Autowired} 指定容器用四参版本，
+     * 五参版本仅供需要绑定 kb_id 的调用方显式 new 使用。
+     */
+    @Autowired
     public MilvusGraphService(
             KnowledgeBaseRepository kbRepository,
             KnowledgeChunkRepository chunkRepository,

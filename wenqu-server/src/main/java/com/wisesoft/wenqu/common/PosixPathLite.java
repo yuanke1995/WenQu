@@ -124,16 +124,23 @@ public final class PosixPathLite {
         return segments.subList(0, ancestor.segments.size()).equals(ancestor.segments);
     }
 
-    /** 以 root 为基连接各组件（对应 Path.joinpath(*parts)）。 */
-    public String join(String rootDirectory, List<String> parts) {
-        StringBuilder builder = new StringBuilder(rootDirectory);
+    /**
+     * 以当前路径为基连接各组件（对应 {@code Path.joinpath(*parts)}，即 {@code Path(a) / b} 链）。
+     *
+     * <p>空基路径（{@code parse("")}）只返回组件本身；绝对路径基（{@code "/"}）不会产生 {@code //}。
+     */
+    public PosixPathLite join(List<String> parts) {
+        List<String> merged = new ArrayList<>(segments);
         for (String part : parts) {
-            if (builder.charAt(builder.length() - 1) != '/') {
-                builder.append('/');
+            PosixPathLite child = parse(part == null ? "" : part);
+            if (child.absolute) {
+                // 子路径为绝对路径时整体替换（与 pathlib 一致）
+                merged = new ArrayList<>(child.segments);
+                return new PosixPathLite(true, merged);
             }
-            builder.append(part);
+            merged.addAll(child.segments);
         }
-        return builder.toString();
+        return new PosixPathLite(absolute, merged);
     }
 
     @Override

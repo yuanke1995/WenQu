@@ -11,8 +11,15 @@
 #     javac 手编若不加，Controller 运行时抛
 #     "Name for argument of type [java.lang.String] not specified"。
 #
+#  ⚠️ 每次编译前清空 target/classes（等价 `mvn clean compile`），不可省略：
+#     javac 是增量写盘、不删除已不存在的源文件对应的旧 .class。本工程做过一次
+#     包内搬迁（repository/*Mapper → repository/port/*Mapper），旧包下的 .class 残留在
+#     target/classes 里，会被 Spring 的 MapperScannerConfigurer 一并扫到，启动即报
+#     ConflictingBeanDefinitionException（如同名类同时存在于两个包）。
+#     同理，曾经踩过"残留双主类 .class 导致 single main class 报错"。
+#
 #  用法：
-#    bash build.sh          # 编译到 target/classes
+#    bash build.sh          # 全量编译到 target/classes
 #    bash build.sh run      # 编译后启动（前台）
 # ============================================================
 set -e
@@ -32,6 +39,7 @@ fi
 
 find "$MODULE/src/main/java" -name "*.java" > /tmp/wenqu-server-srcs.txt
 CP="$(tr '\n' ':' < "$DEPS")"
+rm -rf "$MODULE/target/classes"
 mkdir -p "$MODULE/target/classes"
 
 echo "编译 $(wc -l < /tmp/wenqu-server-srcs.txt | tr -d ' ') 个源文件（-parameters 已启用）…"
@@ -41,7 +49,15 @@ cp -R "$MODULE/src/main/resources/." "$MODULE/target/classes/"
 echo "✓ 编译完成 → $MODULE/target/classes"
 
 if [ "$1" = "run" ]; then
-  # 端口必须显式指定：环境注入的 SERVER__PORT 会经 relaxed binding 覆盖 server.port
-  SERVER_PORT=8095 WENQU_JWT_SECRET="${WENQU_JWT_SECRET:-v2-local-secret-32-characters!!!}" \
+  # 端口必须显式指定：环境注入的 SERVER__PORT 会经 relaxed binding 覆盖 server.port。
+  # 三个密钥必须显式固定，否则联调时会出现「刚登录又被踢回登录页」：
+  #   WENQU_JWT_SECRET  —— 既有契约（/api/ai/auth/*）的 HS256 签名密钥，未配置时启动期随机生成；
+  #   JWT_SECRET_KEY    —— 参考实现契约（/api/auth/*）的签名密钥，未配置时开发环境随机生成；
+  #   WENQU_INSTANCE_ID —— 参考实现契约 JWT 的 issuer 后缀（iss=wenqu-know:<实例ID>），未配置时随机。
+  # 三者都只在「进程内」记忆，重启即变，已发出的令牌全部失效。这里给本地开发固定值。
+  SERVER_PORT=8095 \
+  WENQU_JWT_SECRET="${WENQU_JWT_SECRET:-wenqu-local-dev-jwt-secret-32-chars!!}" \
+  JWT_SECRET_KEY="${JWT_SECRET_KEY:-wenqu-local-dev-signing-key-32-chars!!}" \
+  WENQU_INSTANCE_ID="${WENQU_INSTANCE_ID:-local}" \
     "$JAVA_HOME/bin/java" -cp "$MODULE/target/classes:$CP" com.wisesoft.wenqu.WenquServerApplication
 fi

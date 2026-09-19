@@ -1,0 +1,7 @@
+target/
+
+# 运行期产物：均由启动流程从 src/main/resources/skills 与内置样板复制/生成，
+# 不随源码演进，不进版本库（与仓库根 .gitignore 的 data/ 同一口径）。
+skill-sources/
+skill-projections/
+user-data/
