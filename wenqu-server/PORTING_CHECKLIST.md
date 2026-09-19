@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **§五 API 层 21/33（routers 16 + utils 5）**
-- 🔲 剩余：5 大块，**57 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 32 / §五 11，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery` 已补齐（`KnowledgeBaseRuntime.aquery`，选项透传 + 原始 chunk 列表）→ eval 与 knowledge_router 的检索阻塞解除；knowledge_router 剩余阻塞仍是 mindmap/sample_question 高层函数。**
+- ✅ 已完成：repositories(24) / models(10) / config(4) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / agents/mcp 1/1 / **§五 API 层 22/33（routers 17 + utils 5）**
+- 🔲 剩余：5 大块，**55 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 31 / §五 10，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery` 与 `agents/mcp/service.py` 两个阻塞均已解除并搬完**；knowledge_router 剩余阻塞是 mindmap/sample_question 高层函数，其余 router 阻塞在 §一 的 agents 服务与 §三 skills。
 
 ---
 
@@ -106,7 +106,7 @@
 ### callbacks（1）
 - [ ] model_request_timing — callbacks/model_request_timing.py
 ### mcp（1）
-- [ ] service — mcp/service.py
+- [x] service — mcp/service.py（**全量 671 行**：`McpService`（内置同步 / 客户端装配 `McpClientBundle` / 工具缓存与统计 / 配置 CRUD / 启用开关 / 工具开关 / 统一入口三函数）+ `McpTool`（langchain tool 最小面：name/description/args_schema/可变 metadata/handle_tool_error + 调用）+ `McpServerViews`（`to_dict`/`to_mcp_config`/`serialize_mcp_server` 与 JSON 列反序列化）+ `MCPServerNotFoundException` / `McpBuiltinImmutableException`；`MCPServerRepository` 逐条对位参考实现里出现过的查询；启动组件见 `config/McpStartupInitializer`（对应 lifespan 的 `builtin_mcp_servers`，required=False）。**跨语言对拍**：`to_camel_case` / `json.dumps(sort_keys,ensure_ascii,separators)` / `sha256[:16]` 29/29 行逐字节一致）
 ### middlewares（10）
 - [ ] context — middlewares/context.py
 - [ ] dynamic_tool — middlewares/dynamic_tool.py
@@ -156,7 +156,7 @@
 - [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
 - [x] knowledge_eval_router — routers/knowledge_eval_router.py（KnowledgeEvalController；`/api/evaluation`，11 端点：数据集 upload/list/detail/download/delete/generate/resume + 评估 run 发起/历史/结果/删除）
 - [~] knowledge_router — routers/knowledge_router.py（**部分 11/57 端点**：KnowledgeBaseController 已有 `/knowledge/databases` 系列 CRUD + chunk-presets + query-params + query-test；**剩余挡在 mindmap_utils/sample_question_utils 的高层函数**）
-- [ ] mcp_router — routers/mcp_router.py
+- [x] mcp_router — routers/mcp_router.py（McpController；`/api/system/mcp-servers`，10 端点：列表（普通用户脱敏 5 字段）/新建/详情/更新/删除/连通性测试/启用开关/工具清单/工具刷新/单工具开关；错误码 400/403/404/422/500 与文案逐字对齐，`extra="forbid"` → 422）
 - [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
 - [x] model_provider_router — routers/model_provider_router.py（ModelProviderController；`/api/system/model-providers`，9 端点：列表 / 新建 / 详情 / 更新 / 删除 / 远端模型拉取 / 缓存刷新 / 分组模型 v2 / 连通性状态）＋ providers 数据面全量（`models/providers/{service,cache,builtin,repository}.py` → ModelProviderService / ModelProviderCache / BuiltinProviders（25 家）/ ModelProviderRepository，加 `models/{chat,embed,rerank}.py` 的 spec 选择与连通性测试面 → ModelSelectors；**25 家内置供应商逐字对齐，含注释掉未启用的 anthropic/google 条目亦未收录**）
 - [x] project_router — routers/project_router.py（ProjectController；`/api/projects`）
@@ -199,8 +199,10 @@
 | 2026-09-19 | 批次七（部分）：`knowledge/eval/metrics.py` → EvalMetrics + common/LooseJson；**修正批次六签名偏差** `ChatAdapter.call(message, stream=False)`（参考实现 message 可为 str 或消息列表，返回 GeneralResponse.content） | `766cf2b` |
 | 2026-09-19 | §五 批次七（续）：**检索面 aquery 补齐**（`KnowledgeBaseRuntime.aquery`：合并 kwargs→final_top_k/similarity_threshold/search_mode/use_reranker/use_graph_retrieval/recall_top_k/file_name 过滤，vector（VectorStore 超采样 + 内存 kb/file 过滤）/keyword（`KnowledgeChunkRepository.searchByKeywords`）/hybrid（0.7:0.3 加权融合）+ 图谱融合 + hydrateChunkSources + 重排；必要替换与能力差异均已在类注释标注）→ `KnowledgeBaseManager.aquery/retrieve` 改为委托；`knowledge/eval` 3 模块全搬（EvalBenchmarkGeneration / EvalEvaluator / EvalService）+ `EvalTaskService`（dataset_generation / rag_evaluation 两个 Durable Task Handler）+ `EvaluationRepository` 补 `getDatasetForUpdate`/`getRunForUpdate`；`knowledge_eval_router` → KnowledgeEvalController（`/api/evaluation`，11 端点，`{"message":"success","data":...}` 响应体 + `require_evaluation_dataset_read/manage` 依赖等价物） | `0477f43` |
 
-## 挡在后面的依赖（routers 剩余 9 个的阻塞点）
-> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery` 阻塞已解除，已搬。）
+| 2026-09-19 | §五 批次八：`agents/mcp/service.py` 全量 → McpService / McpTool / McpClientBundle / McpServerViews（+ MCPServerRepository 逐条对位、启动组件 McpStartupInitializer ← lifespan 的 `builtin_mcp_servers`）→ **解锁 `mcp_router`** → McpController（10 端点）。跨语言对拍：驼峰化 / Python 风格 JSON dumps / 配置哈希 29/29 行逐字节一致；路由对拍 10/10；mcp_servers 造行 + 三条查询语义 + ensure_builtin 三步终态 + 清理（剩 0 行） | `待填` |
+
+## 挡在后面的依赖（routers 剩余 8 个的阻塞点）
+> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery` 阻塞、`mcp_router` 的 mcp/service 阻塞均已解除并搬完。）
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
@@ -211,5 +213,4 @@
 | agent_invocation_call_router | `agent_request_service` | §一 |
 | agent_invocation_channel_router | 上列 + `channel_command_service`（已搬）+ `chat_service` | §一 |
 | agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
-| mcp_router | `agents/mcp/service.py` | §三 |
 | skill_router | `agents/skills/service.py` / `remote_install.py` | §三 |
