@@ -24,6 +24,8 @@
         <mybatis-plus.version>3.5.12</mybatis-plus.version>
         <poi.version>5.2.3</poi.version>
         <lombok.version>1.18.46</lombok.version>
+        <!-- Neo4j Java Driver：参考实现约束为 neo4j>=5.28.1，此处取本机仓库已有版本 -->
+        <neo4j.version>5.28.5</neo4j.version>
     </properties>
 
     <dependencies>
@@ -81,6 +83,15 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- 图数据库：Neo4j（知识图谱的读写，对应参考实现的 storage/neo4j 与 knowledge/graphs）。
+             连接为按需懒建，未部署 Neo4j 时应用照常启动；因此这里不需要任何 spring.neo4j.* 配置，
+             Neo4jAutoConfiguration 也已排除（见 application.yml）。 -->
+        <dependency>
+            <groupId>org.neo4j.driver</groupId>
+            <artifactId>neo4j-java-driver</artifactId>
+            <version>${neo4j.version}</version>
         </dependency>
 
         <!-- 文档解析：Word / PDF -->
