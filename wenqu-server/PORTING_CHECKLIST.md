@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 17/33（routers 12 + utils 5）**
-- 🔲 剩余：6 大块，约 **84** 个条目（见下）。§五 剩余 16 项中，**仅 external_kb_router 无阻塞**，其余 15 项均等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 18/33（routers 13 + utils 5）**
+- 🔲 剩余：6 大块，约 **83** 个条目（见下）。§五 剩余 15 项**全部**等 §一/§二/§三 先落地（见文末「挡在后面的依赖」）。
 
 ---
 
@@ -149,7 +149,7 @@
 - [x] auth_router — routers/auth_router.py（AuthRouterController；`/api/auth`，与既有 `/api/ai/auth` 并存。22 个端点：token/cli 会话 4 个/check-first-run/initialize/me/profile/users 4 个/access-options/validate-username/check-uid/upload-avatar/impersonate/oidc 4 个）
 - [ ] chat_router — routers/chat_router.py
 - [x] dashboard_router — routers/dashboard_router.py（DashboardController；`/api/dashboard`）
-- [ ] external_kb_router — routers/external_kb_router.py
+- [x] external_kb_router — routers/external_kb_router.py（ExternalKbController；`/api/knowledge/databases/external*`，5 端点：列出可见库 / 文件列表 / 检索 / 打开文件 / 文件内查找）
 - [x] filesystem_router — routers/filesystem_router.py（FilesystemController；`/api/viewer/filesystem`）
 - [x] graph_router — routers/graph_router.py（GraphController；`/api/graph`）
 - [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
@@ -190,14 +190,14 @@
 | 2026-09-19 | knowledge 根核心 9/9（base/manager/factory/runtime/read_models/schemas/preview/cache/security）+ implementations/milvus/read_only_connectors + KnowledgeTaskService | `77bbe8f` |
 | 2026-09-19 | §五 批次一：server/utils 5/6（access_log/auth_middleware/common_utils/knowledge_permissions/knowledge_response）+ routers 7（mention/project/system_task/knowledge_dashboard/dashboard/graph/filesystem）+ 平台差异载体（GlobalExceptionHandler/ApiHttpException/AuthGuards/CorsConfig/LoginRateLimitFilter） | `bac62c1` |
 | 2026-09-19 | §五 批次二：routers 3（user/auth_dept/system）+ storage/MinioUploads（upload_image_to_minio）+ config/LogPaths + config/StartupState + common/AppVersion + info.template.yaml | — |
-| 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | 本次 |
+| 2026-09-19 | §五 批次四：routers 1（external_kb） | `{HASH}` |
+| 2026-09-19 | §五 批次三：workspace_service（9/9 函数）+ auth_router（AuthRouterController 22 端点 + CLI 会话/OIDC/头像上传）+ workspace_router（WorkspaceController 含 knowledge 只读三端点） | `20015b5` |
 
-## 挡在后面的依赖（routers 剩余 13 个的阻塞点）
-> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前仅 `external_kb_router` 无阻塞**。
+## 挡在后面的依赖（routers 剩余 12 个的阻塞点）
+> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
-| external_kb_router | 无（base/read_models/runtime 均已搬） | — |
 | knowledge_router | mindmap_utils/sample_question_utils 的高层函数（workspace_service 已解除） | §二 |
 | model_provider_router | `models/providers/service.py` + `cache.py` 全量（现有 ModelProviderService 仅 3 个方法） | §二 |
 | scheduled_agent_router | `scheduled_agent_service` | §一 |
