@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下）
-- 🔲 剩余：6 大块，约 **110** 个条目（见下）
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 29-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service
+- 🔲 剩余：6 大块，约 **101** 个条目（见下）
 
 ---
 
@@ -29,7 +29,7 @@
 - [ ] scheduled_agent_service — scheduled_agent_service.py
 - [ ] run_worker — run_worker.py
 - [ ] arq_worker — arq_worker.py
-- [ ] knowledge_task_service — knowledge_task_service.py
+- [x] knowledge_task_service — knowledge_task_service.py（KnowledgeTaskService：5 个任务处理函数 + 失败钩子）
 - [ ] chat_service — chat_service.py
 - [ ] context_compression_service — context_compression_service.py
 - [ ] artifact_service — artifact_service.py
@@ -38,14 +38,14 @@
 ## 二、knowledge 核心（约 40，parser 子包与 kb_utils/pdf_utils 已搬）
 参考路径前缀 `package/yuxi/knowledge/`
 ### 根核心（9）
-- [ ] base — base.py
-- [ ] cache — cache.py
-- [ ] factory — factory.py（KB 工厂，区别于 parser/factory.py）
-- [ ] manager — manager.py
-- [ ] preview — preview.py
-- [ ] read_models — read_models.py
-- [ ] runtime — runtime.py
-- [ ] schemas — schemas.py
+- [x] base — base.py（KnowledgeBaseRuntime + KnowledgeBaseException）
+- [x] cache — cache.py（repositories/KnowledgeBaseCache，本会话前已搬）
+- [x] factory — factory.py（KnowledgeBaseFactory，区别于 parser/factory.py）
+- [x] manager — manager.py（KnowledgeBaseManager）
+- [x] preview — preview.py（KnowledgeFilePreviewService）
+- [x] read_models — read_models.py（KnowledgeBaseConfig / KnowledgeBaseSummary / KnowledgeBaseDetail）
+- [x] runtime — runtime.py（KnowledgeBaseRegistrar，Spring 启动时注册）
+- [x] schemas — schemas.py（KbToolSchemas）
 ### chunking/ragflow_like（12）
 - [x] dispatcher — chunking/ragflow_like/dispatcher.py（RagflowChunkDispatcher）
 - [x] nlp — chunking/ragflow_like/nlp.py（RagflowNlp）
@@ -72,14 +72,14 @@
 - [ ] milvus_graph_service — graphs/milvus_graph_service.py
 - [ ] milvus_graph_vector_store — graphs/milvus_graph_vector_store.py
 ### implementations（4）
-- [ ] dify — implementations/dify.py
-- [ ] milvus — implementations/milvus.py
-- [ ] notion — implementations/notion.py
-- [ ] read_only_connectors — implementations/read_only_connectors.py
+- [ ] dify — implementations/dify.py（参数面已搬入 KnowledgeBaseTypeParams；aquery 依赖外部 Dify HTTP 接口，未搬）
+- [x] milvus — implementations/milvus.py（执行器由既有 Spring 内核 VectorStore / KnowledgeChunkRepository / HybridRetrievalService 承载；类型参数与检索参数清单 → KnowledgeBaseTypeParams）
+- [ ] notion — implementations/notion.py（参数面已搬入 KnowledgeBaseTypeParams；aquery 依赖外部 Notion HTTP 接口，未搬）
+- [x] read_only_connectors — implementations/read_only_connectors.py（ReadOnlyConnectors：只读能力判定与报错文案）
 ### utils 剩余（5，kb_utils/pdf_utils 已搬）
 - [ ] mindmap_utils — utils/mindmap_utils.py
 - [ ] sample_question_utils — utils/sample_question_utils.py
-- [ ] security — utils/security.py
+- [x] security — utils/security.py（KnowledgeSecurity）
 - [ ] url_fetcher — utils/url_fetcher.py
 - [ ] url_validator — utils/url_validator.py
 
@@ -187,3 +187,4 @@
 | 2026-09-19 | RAGFlow 分块家族 9/12：dispatcher/nlp/presets/book/general/laws/qa/separator/md_parser_utils/semantic_utils | `ec74d88` |
 | 2026-09-19 | RAGFlow 分块家族补齐 3/12 + 预设真正分流：semantic/table_utils + ChunkPresets.mapToInternalParserId 修正 | `9299405` |
 | 2026-09-19 | DocumentService 接入 RAGFlow 预设打通闭环 + RagflowNlp 正则 `{,2}`→`{0,2}` 方言修复 | `dddf719` |
+| 2026-09-19 | knowledge 根核心 9/9（base/manager/factory/runtime/read_models/schemas/preview/cache/security）+ implementations/milvus/read_only_connectors + KnowledgeTaskService | `77bbe8f` |
