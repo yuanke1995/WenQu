@@ -271,6 +271,28 @@ public class BaseContext {
         update(context == null ? new LinkedHashMap<>() : context);
     }
 
+    // ==================== 动态属性（对应 setattr/getattr 非声明字段） ====================
+
+    /**
+     * 非声明字段的动态属性表。
+     *
+     * <p>参考实现允许 {@code setattr(context, "_visible_knowledge_bases", ...)} 这类
+     * 动态属性（见 {@code backends/knowledge_base_backend.py}）。本工程的 {@link #set(String, Object)}
+     * 只写已声明字段（{@code values.containsKey} 判定）——若把动态属性也交给它，
+     * 会**静默不生效**。故动态属性单列一表，语义与 {@code setattr/getattr} 对齐。
+     */
+    private final Map<String, Object> dynamicValues = new LinkedHashMap<>();
+
+    /** 对应 {@code setattr(context, key, value)}：非声明字段同样可写。 */
+    public void setDynamic(String key, Object value) {
+        dynamicValues.put(key, value);
+    }
+
+    /** 对应 {@code getattr(context, key, default)}。 */
+    public Object getDynamic(String key, Object defaultValue) {
+        return dynamicValues.containsKey(key) ? dynamicValues.get(key) : defaultValue;
+    }
+
     // ==================== 配置过滤 ====================
 
     /** 读取持久配置时仅保留 Schema 可配置字段，不按角色修改权限裁剪。 */

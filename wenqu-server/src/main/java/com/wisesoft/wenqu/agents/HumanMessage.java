@@ -15,7 +15,7 @@ import java.util.Map;
  * {@link #rawMessage()} 对应 {@code model_dump()}（type 固定 "human"），
  * {@link #validate(Object)} 对应 {@code model_validate()}（非法输入抛错）。
  */
-public final class HumanMessage {
+public final class HumanMessage implements ModelDumpable {
 
     private final Object content;
 
@@ -41,6 +41,12 @@ public final class HumanMessage {
         dump.put("content", content);
         dump.put("type", "human");
         return dump;
+    }
+
+    /** model_dump()：与 {@link #rawMessage()} 同形状（消息类上两者返回一致）。 */
+    @Override
+    public Map<String, Object> modelDump() {
+        return rawMessage();
     }
 
     /** model_validate(raw)：从持久化字典恢复；langchain 校验失败时抛 IllegalArgumentException。 */
