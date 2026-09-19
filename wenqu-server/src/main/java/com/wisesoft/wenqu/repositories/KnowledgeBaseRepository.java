@@ -191,6 +191,13 @@ public class KnowledgeBaseRepository {
                 case "query_params" -> kb.setQueryParams(RepoValues.toJsonText(value));
                 case "additional_params" -> kb.setAdditionalParams(RepoValues.toJsonText(value));
                 case "share_config" -> kb.setShareConfig(RepoValues.toJsonText(value));
+                // 思维导图与示例问题：参考实现由 setattr 直写同名模型属性（值本身是 dict / list），
+                // 本层落库为 JSON 文本列。缺这几个分支时 update 会**静默丢弃**这些字段
+                // （mindmap 生成、增量更新、示例问题生成都会"返回成功但刷新后为空"）。
+                case "mindmap" -> kb.setMindmap(RepoValues.toJsonText(value));
+                case "mindmap_file_ids" -> kb.setMindmapFileIds(RepoValues.toJsonText(value));
+                case "mindmap_metadata" -> kb.setMindmapMetadata(RepoValues.toJsonText(value));
+                case "sample_questions" -> kb.setSampleQuestions(RepoValues.toJsonText(value));
                 case "created_by" -> kb.setCreatedBy(RepoValues.asString(value));
                 case "created_at" -> kb.setCreatedAt(RepoValues.toLocalDateTime(value));
                 case "updated_at" -> kb.setUpdatedAt(RepoValues.toLocalDateTime(value));

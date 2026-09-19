@@ -208,6 +208,31 @@ public final class DateTimeUtils {
     }
 
     /**
+     * Python {@code datetime.isoformat()} 的等价输出（UTC，时区后缀为 {@code +00:00}）：
+     * 秒总是输出，微秒非零时才带 6 位小数（不裁尾随零）。
+     *
+     * <p>必要替换：Java 的 {@code DateTimeFormatter.ISO_OFFSET_DATE_TIME} 对 {@link ZoneOffset#UTC}
+     * 输出 {@code Z}，而 Python 的 {@code isoformat()} 输出 {@code +00:00}；且 Java 会裁掉微秒的
+     * 尾随零。两者差异会落到响应体（如思维导图的 {@code mindmap_metadata.generated_at}），故显式拼装。
+     */
+    public static String pythonIsoformatUtc(OffsetDateTime value) {
+        OffsetDateTime normalized = ensureUtc(value == null ? utcNow() : value);
+        LocalDateTime local = normalized.toLocalDateTime();
+        int micro = local.getNano() / 1_000;
+        StringBuilder builder = new StringBuilder(
+                local.format(BASE_FORMATTER));
+        if (micro != 0) {
+            builder.append('.').append(String.format("%06d", micro));
+        }
+        return builder.append(ISO_Z_SUFFIX).toString();
+    }
+
+    /** {@link #pythonIsoformatUtc(OffsetDateTime)} 的当前时间入口（对应 {@code datetime.now(UTC).isoformat()}）。 */
+    public static String pythonIsoformatUtc() {
+        return pythonIsoformatUtc((OffsetDateTime) null);
+    }
+
+    /**
      * Python {@code datetime.isoformat()} 的等价输出（naive 本地时间，无时区后缀）：
      * 秒总是输出，微秒非零时才带小数（Java {@code LocalDateTime.toString()} 会省略秒，不能直接用）。
      */
