@@ -221,6 +221,42 @@ public class BaseContext {
         return names;
     }
 
+    // ==================== 子类上下文字段（对应 dataclass 继承新增字段） ====================
+
+    /**
+     * 子类（{@link ChatBotContext} / {@link SubAgentContext}）声明的额外字段。
+     *
+     * <p>平台差异（必要替换）：参考实现用 dataclass 继承（{@code class ChatBotContext(BaseContext)}）
+     * 叠加字段，Java 的字段声明表是 {@link BaseContext} 的静态表，继承无法叠加，故由子类在构造期
+     * 调 {@link #declareExtraField} 登记（只影响该实例，不污染基类声明表）。
+     */
+    private final Map<String, FieldDef> extraFieldDefs = new LinkedHashMap<>();
+
+    /** 子类登记额外字段（键名、默认值、元数据与参考实现 dataclass field 逐字对齐）。 */
+    protected void declareExtraField(String name, Object defaultValue, Map<String, Object> metadata) {
+        extraFieldDefs.put(name, new FieldDef(name, defaultValue, metadata));
+        values.put(name, defaultValue);
+    }
+
+    /** 本实例可见的声明字段（基类 + 子类额外，子类同名覆盖基类）。 */
+    public List<FieldDef> declaredFields() {
+        Map<String, FieldDef> merged = new LinkedHashMap<>();
+        for (FieldDef field : fields()) {
+            merged.put(field.name(), field);
+        }
+        merged.putAll(extraFieldDefs);
+        return new ArrayList<>(merged.values());
+    }
+
+    /** {@link #declaredFields()} 的字段名集合。 */
+    public Set<String> declaredFieldNames() {
+        Set<String> names = new LinkedHashSet<>(declaredFields().size());
+        for (FieldDef field : declaredFields()) {
+            names.add(field.name());
+        }
+        return names;
+    }
+
     // ==================== 运行时字段值 ====================
 
     private final Map<String, Object> values = new LinkedHashMap<>();
