@@ -267,6 +267,29 @@ public class AgentRunRepository {
                         .last("LIMIT 1"));
     }
 
+    /**
+     * 全表范围内 pending run 的作用域投影（对应参考实现
+     * {@code select(AgentRun.uid, AgentRun.agent_slug, AgentRun.conversation_thread_id).where(AgentRun.status == "pending")}）。
+     *
+     * <p>供恢复扫描枚举"已落库但未投递"的线程；参考实现未加 distinct，
+     * 去重由调用方在同一集合内完成（保持同一语义）。
+     */
+    public List<String[]> listPendingDispatchScopes() {
+        List<Map<String, Object>> rows = runMapper.selectMaps(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AgentRun>()
+                        .select("uid", "agent_slug", "conversation_thread_id")
+                        .eq("status", "pending"));
+        List<String[]> scopes = new java.util.ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            scopes.add(new String[] {
+                row.get("uid") == null ? "" : String.valueOf(row.get("uid")),
+                row.get("agent_slug") == null ? "" : String.valueOf(row.get("agent_slug")),
+                row.get("conversation_thread_id") == null ? "" : String.valueOf(row.get("conversation_thread_id"))
+            });
+        }
+        return scopes;
+    }
+
     /** 登记一条 run 记录；输入正文和图片应通过 inputMessageId 指向 Message。 */
     @Transactional
     public AgentRun createRun(

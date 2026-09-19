@@ -48,4 +48,51 @@ public class AgentRunRequest {
     private LocalDateTime dispatchedAt;
     @TableField("updated_at")
     private LocalDateTime updatedAt;  // 非空，默认 utc_now_naive
+
+    /**
+     * 字典投影（参考实现 {@code AgentRunRequest.to_dict()}）。
+     *
+     * <p>键集合与顺序逐字对齐；JSON 文本列还原为对象（空/非法 → {@code {}}），
+     * 时间列按 UTC ISO 输出（{@code format_utc_datetime}）。
+     */
+    public java.util.Map<String, Object> toDict() {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("request_id", requestId);
+        data.put("uid", uid);
+        data.put("agent_slug", agentSlug);
+        data.put("thread_id", conversationThreadId);
+        data.put("source", source);
+        data.put("channel", channel);
+        data.put("external_id", externalId);
+        data.put("origin_metadata", jsonColumn(originMetadata));
+        data.put("queue_policy", queuePolicy);
+        data.put("status", status);
+        data.put("input_message_id", inputMessageId);
+        data.put("dispatched_run_id", dispatchedRunId);
+        data.put("error_message", errorMessage);
+        data.put("created_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(createdAt));
+        data.put("dispatched_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(dispatchedAt));
+        data.put("updated_at", com.wisesoft.wenqu.common.DateTimeUtils.formatUtcDatetime(updatedAt));
+        return data;
+    }
+
+    /** 解析 JSON 文本列（参考实现 {@code self.origin_metadata or {}}）。 */
+    private static java.util.Map<String, Object> jsonColumn(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return new java.util.LinkedHashMap<>();
+        }
+        try {
+            Object parsed = com.alibaba.fastjson2.JSON.parse(raw);
+            if (parsed instanceof java.util.Map<?, ?> map) {
+                java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+                for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+                    result.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+                return result;
+            }
+        } catch (RuntimeException ignored) {
+            // 与参考实现一致：非法 JSON 不抛出，按空对象处理
+        }
+        return new java.util.LinkedHashMap<>();
+    }
 }
