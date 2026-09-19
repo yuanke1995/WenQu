@@ -333,6 +333,17 @@ public abstract class BaseAgent {
     /** {@code self.graph = None}（will be covered by get_graph）。 */
     private AgentsGraphPort graph;
 
+    /**
+     * 读取后端声明的上下文 schema 类（对应参考实现类属性 {@code context_schema} 的跨包访问）。
+     *
+     * <p>参考实现里调用点是 {@code agent_backend.context_schema()}——属性本身是类对象，括号是
+     * 对类做实例化；Java 侧把「取类」与「实例化」拆开：本方法只负责取类，实例化由调用方
+     * {@code getDeclaredConstructor().newInstance()} 完成（语义等价，异常类型按 Java 惯例映射）。
+     */
+    public Class<? extends BaseContext> resolveContextSchema() {
+        return contextSchema;
+    }
+
     /** checkpointer 提供方接缝（对应 {@code pg_manager.get_langgraph_checkpointer()}）。 */
     protected CheckpointerProvider checkpointerProvider;
 
