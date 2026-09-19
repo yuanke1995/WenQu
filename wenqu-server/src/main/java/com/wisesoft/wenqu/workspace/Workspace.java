@@ -565,7 +565,7 @@ public class Workspace {
     }
 
     /** PermissionError 的运行时承载（参考实现 OS 异常直接上抛给调用方）。 */
-    static final class PermissionDeniedRuntime extends RuntimeException {
+    public static final class PermissionDeniedRuntime extends RuntimeException {
         PermissionDeniedRuntime(String message, Throwable cause) {
             super(message, cause);
         }
