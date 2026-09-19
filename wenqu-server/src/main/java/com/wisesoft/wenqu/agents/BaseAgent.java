@@ -36,8 +36,9 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code graph.ainvoke(...)} → {@link AgentsGraphPort#ainvoke}</li>
  *   <li>{@code graph.aget_state(config)} → {@link AgentsGraphPort#agetState}</li>
  * </ul>
- * 端口**已声明但无实现**，故本类在引擎照搬到位前不可运行；引擎落地时只需提供实现，
- * 本类不再改动。
+ * 端口实现由 {@code agents/engine/GraphPort} 提供 —— 引擎底座为
+ * <b>Spring AI + spring-ai-alibaba</b>（{@code CompiledGraph} / {@code ReactAgent}），
+ * 与参考实现的 LangGraph 是同一套图模型概念，本类不感知具体引擎。
  *
  * <h3>语言差异（只翻译语法，不改语义）</h3>
  * <ul>
@@ -261,8 +262,16 @@ public abstract class BaseAgent {
         /** {@code graph.ainvoke(\{"messages": messages\}, context=..., config=...)}。 */
         Object ainvoke(List<Object> messages, BaseContext context, Map<String, Object> config);
 
-        /** {@code graph.aget_state(config)}：返回当前 state（对应 checkpoint 快照）。 */
-        Map<String, Object> agetState(Map<String, Object> config);
+        /**
+         * {@code graph.aget_state(config)}：返回当前 checkpoint 快照。
+         *
+         * <p>返回体是 {@link GraphStateSnapshot} 而非裸 Map：参考实现的消费面是
+         * {@code state.values}（{@code chat_service.py:717} 取 {@code values["messages"]}、
+         * :857 取 {@code values["__interrupt__"]}）与 {@code state.tasks[].interrupts}
+         * （:852 {@code _extract_interrupt_info}）。若在这里退化成 Map，该形状差异会扩散到
+         * 每一个消费者，故按参考实现保留快照对象。
+         */
+        GraphStateSnapshot agetState(Map<String, Object> config);
     }
 
     /**
