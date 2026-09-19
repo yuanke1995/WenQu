@@ -26,6 +26,21 @@ public final class PosixPathLite {
         this.normalized = absolute ? "/" + String.join("/", segments) : String.join("/", segments);
     }
 
+    /** pathlib.Path.suffix：最后一段的扩展名（含点，无扩展名/隐藏名为空）。 */
+    public static String suffixOf(String value) {
+        String last = value;
+        int slash = Math.max(last.lastIndexOf('/'), last.lastIndexOf('\\'));
+        if (slash >= 0) {
+            last = last.substring(slash + 1);
+        }
+        int dot = last.lastIndexOf('.');
+        if (dot <= 0) {
+            // ".bashrc" 之类的隐藏名没有扩展名
+            return "";
+        }
+        return last.substring(dot);
+    }
+
     public static PosixPathLite parse(String value) {
         String text = value == null ? "" : value;
         boolean absolute = text.startsWith("/");
