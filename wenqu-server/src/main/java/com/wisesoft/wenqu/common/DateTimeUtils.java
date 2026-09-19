@@ -197,4 +197,24 @@ public final class DateTimeUtils {
         return OffsetDateTime.ofInstant(Instant.ofEpochSecond(timestamp.longValue()), UTC)
                 .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
     }
+
+    /**
+     * Python {@code datetime.isoformat()} 的等价输出（naive 本地时间，无时区后缀）：
+     * 秒总是输出，微秒非零时才带小数（Java {@code LocalDateTime.toString()} 会省略秒，不能直接用）。
+     */
+    public static String localIsoformat(LocalDateTime value) {
+        if (value == null) {
+            return null;
+        }
+        int micro = value.getNano() / 1_000;
+        StringBuilder builder = new StringBuilder();
+        builder.append(String.format("%04d-%02d-%02dT%02d:%02d:%02d",
+                value.getYear(), value.getMonthValue(), value.getDayOfMonth(),
+                value.getHour(), value.getMinute(), value.getSecond()));
+        if (micro != 0) {
+            // Python isoformat(auto)：微秒非零时固定输出 6 位（不裁尾随零）
+            builder.append('.').append(String.format("%06d", micro));
+        }
+        return builder.toString();
+    }
 }
