@@ -131,10 +131,10 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 > 已搬：context.py→BaseContext / state.py→AgentState / tool_approval.py→ToolApproval / backends/paths.py→BackendPaths / chatbot/prompt.py→ChatbotPrompt / skills/repository.py→SkillRepository / toolkits/registry.py→ToolkitsRegistry / toolkits/utils.py→ToolkitsUtils
 参考路径前缀 `package/<ref>/agents/`
 ### root（1）
-- [ ] base — base.py（Agent 基类）
+- [x] base — base.py（**BaseAgent**：4 个模块级纯函数 `jsonSafe`/`normalizeToolEventData`/`subagentRouteForNamespace`/`recursionLimitFromContext` + `get_info`/`stream_messages`/`_stream_input_with_state`/`stream_messages_with_state`/`stream_resume_with_state`/`invoke_messages`/`reload_graph`/`get_graph`(抽象)/`_get_checkpointer`/`load_metadata`。**图引擎收敛为 `AgentsGraphPort` 端口**（astreamMessages/astreamEvents/ainvoke/agetState），与 `AgentStateRepository.StateGraphPort` 同口径；端口**无实现**（引擎未照搬）。语言差异：Python 异步生成器 → 回调 sink；`asyncio.create_task` 并发收集子智能体路由 → 后台线程 + `ConcurrentHashMap` + `interrupt` 收尾；2 元组产出 → `{"message":…,"metadata":…}`；`hasattr(model_dump)` → `ModelDumpable` 接口；`resolve_agent_resource_options` → `AgentResourceOptionsResolver` 接缝。新增承载类 `ModelDumpable`/`ToolMessage`/`GraphCommand`）
 ### backends（6，paths.py 已搬）
-- [ ] composite — backends/composite.py
-- [ ] knowledge_base_backend — backends/knowledge_base_backend.py
+- [ ] composite — backends/composite.py（**挡在 `deepagents.backends.CompositeBackend` + `deepagents.middleware.filesystem.FilesystemMiddleware`**，见下「挡在后面的依赖」）
+- [x] knowledge_base_backend — backends/knowledge_base_backend.py（KnowledgeBaseBackend：`resolve_visible_knowledge_bases_for_context` 单函数 → `@Service`，注入 KnowledgeBaseManager；`setattr(context,"_visible_knowledge_bases",…)` → `BaseContext.setDynamic`（本工程 `set()` 只写已声明字段，动态属性单列一表避免静默失效））
 - [ ] sandbox/backend — backends/sandbox/backend.py
 - [ ] sandbox/download — backends/sandbox/download.py
 - [ ] sandbox/provider — backends/sandbox/provider.py
@@ -246,6 +246,7 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | 2026-09-19 | §三 批次九：`agents/skills/service.py`（1827 行，90 函数 90/90）+ `agents/skills/remote_install.py` + 内置 skill 资源（`src/main/resources/skills/` 5 技能 9 文件）→ **解锁 `skill_router`** → SkillController（26 端点，两个参考 router 合并为一个类）。路由集合对拍 26/26 零差异；函数级覆盖对拍 90/90（唯一差异项 `_user_skills_file_lock` → 回调式）；内置清单/常量逐字对齐 | `2916c3f` |
 | 2026-09-19 | **首次实跑（服务真起 + 登录 + 打接口）**：修 7 处只在运行期成立的缺陷（PosixPathLite.join 空基越界 → initBuiltinSkills 必抛；javac 残留 .class 致 Mapper bean 冲突；同名 Mapper 跨包 → 全限定 bean 名生成器；MilvusGraphService/TaskService 多构造器缺 @Autowired；Neo4jAutoConfiguration 强制建 Driver；UserContextInterceptor 只认单一令牌契约致参考契约全 401；KnowledgeBaseController 缺 `/api` 前缀）。补齐启动组件至 5/11，运行期派生目录进 .gitignore。冒烟 16/16 + 读写往返 12/12 通过 | `ef528ce` |
 | 2026-09-19 | §二 批次⑩：`utils/mindmap_utils.py` + `utils/sample_question_utils.py` 的**高层 DB/LLM 面** → `knowledge/KnowledgeContentService`（10 + 2 函数）→ **解锁 `knowledge_router`** → `KnowledgeBaseController` 全量重写至新知识库宇宙（`knowledge_bases` 表 + Repository/Manager/Runtime）**56/56 端点**；参考实现 9 个模块级函数 + 5 个常量 → `service/KnowledgeRouteSupport`（与 ExternalKbController 共享）。端点集合对拍 56==56 零差异；全量编译 343 源文件 0 错误；实跑冒烟 10/10 只读端点 + 错误码通过（422/404/401/501 均符合预期），建库 400 系参考实现 `manager.py:507` 的 `if not embedding_model_spec: raise` 语义，与参考一致（非缺陷） | `5a81263` |
+| 2026-09-19 | §三 批次⑪：`agents/base.py` → **BaseAgent**（含 4 个模块级纯函数）+ `backends/knowledge_base_backend.py` → KnowledgeBaseBackend；新增承载类 `ModelDumpable`/`ToolMessage`/`GraphCommand`；`BaseContext` 补 `setDynamic`/`getDynamic`（对应 `setattr/getattr` 非声明字段，`set()` 只写声明字段会静默失效）；图引擎收敛为 `AgentsGraphPort` 端口（无实现）。**核查发现 §三 整体阻塞于 `langgraph`+`deepagents`+`langchain_core` 三套缺失框架**，已写入清单专项说明 | `38ecdaf` |
 
 ## 挡在后面的依赖（routers 剩余 7 个的阻塞点）
 > 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何剩余 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery`、`mcp_router` 的 mcp/service、`skill_router` 的 skills/{service,remote_install} 三个阻塞均已解除并搬完。）
@@ -260,3 +261,24 @@ bash build.sh run         # 【前台】启动（占住终端，仅调试时用�
 | agent_invocation_channel_router | 上列 + `channel_command_service`（已搬）+ `chat_service` | §一 |
 | agent_invocation_eval_router | `agent_request_service` / `agent_run_service` | §一 |
 | skill_router | ~~`agents/skills/service.py` / `remote_install.py`~~ **均已搬完（批次九）→ skill_router 已解锁并落地** | §三 |
+
+## ⚠️ §三 的根本阻塞：第三方运行时框架缺失（2026-09-19 核查）
+
+清点 §三 全部待办文件的 import 后确认：**§三 不是"把 Python 照搬成 Java"，而是把一整套
+第三方 Agent 运行时框架重写到 Java**。参考实现依赖三套框架，本工程**一套都没有**：
+
+| 依赖 | 用途 | 涉及 §三 条目 |
+|---|---|---|
+| `langgraph` | 编译图引擎：`CompiledStateGraph`（`astream`/`astream_events`/`ainvoke`/`aget_state`）、`Command`、`CustomTransformer`、checkpointer | `root/base.py`（已用 `AgentsGraphPort` 端口收敛）、`buildin/*`、全部 `middlewares/*` |
+| `deepagents` | Agent 框架：`backends.CompositeBackend`、`middleware.filesystem.FilesystemMiddleware`（含 `FsToolName`/`TOOLS_EXCLUDED_FROM_EVICTION`）、subagent/summarization 中间件基类 | `backends/composite`、`backends/sandbox/*`、`middlewares/{skills,subagent_task,summary,model_input,dynamic_tool,memory,steer,context,network_retry,token_usage}`、`toolkits/*` |
+| `langchain_core` | 消息类型（`ToolMessage` 等）、`BaseTool`、tool schema | `middlewares/*`、`toolkits/*`、`callbacks/*` |
+
+**已照搬的部分只在"数据面"**：消息/状态/上下文/端口/纯函数/常量/文案，均逐字对齐。
+**未照搬的是"引擎面"**：图执行、checkpoint、流式事件、中间件挂载、工具注册表。
+本工程对此的既有口径是 **端口 + 显式标注的能力差异**（见 `BaseContext` / `AgentState` /
+`AgentStateRepository.StateGraphPort` / `dify` / `notion` / `sandbox` / `skill_remote_install`），
+`AgentsGraphPort` 继续沿用该口径。
+
+**结论**：§三 剩余 28 项若继续逐文件照搬，产出的多数是**无法运行**的引擎面脚手架；
+要让 agents 真正跑起来，需要的是**实现一套 Java 图引擎 + 中间件宿主**，属独立工程，
+不是"移植"。此项待决策后再动工（是否继续按端口口径铺完 §三，还是先做引擎）。
