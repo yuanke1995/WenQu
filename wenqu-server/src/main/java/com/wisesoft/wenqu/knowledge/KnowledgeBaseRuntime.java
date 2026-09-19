@@ -10,6 +10,7 @@ import com.wisesoft.wenqu.knowledge.chunking.ragflow.RagflowNlp;
 import com.wisesoft.wenqu.models.KnowledgeBase;
 import com.wisesoft.wenqu.models.KnowledgeChunk;
 import com.wisesoft.wenqu.models.KnowledgeFile;
+import com.wisesoft.wenqu.knowledge.graphs.KnowledgeGraphRetrieval;
 import com.wisesoft.wenqu.knowledge.graphs.MilvusGraphService;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseCache;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
@@ -17,9 +18,13 @@ import com.wisesoft.wenqu.repositories.KnowledgeChunkRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
 import com.wisesoft.wenqu.repositories.RepoValues;
 import com.wisesoft.wenqu.service.FileStatus;
+import com.wisesoft.wenqu.service.KeywordExtractor;
+import com.wisesoft.wenqu.service.ModelSelectors;
 import com.wisesoft.wenqu.service.OcrService;
 import com.wisesoft.wenqu.storage.MinioStorageClient;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +32,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
@@ -70,6 +76,21 @@ public class KnowledgeBaseRuntime {
     /** 入库分批大小（对应参考实现 MILVUS_CHUNK_EMBED_BATCH_SIZE）。 */
     private static final int CHUNK_EMBED_BATCH_SIZE = 32;
 
+    /** 向量召回过采样倍数（见 {@link #vectorRecall} 的必要替换说明）。 */
+    private static final int VECTOR_RECALL_OVERSAMPLE = 8;
+
+    /** 向量召回扫描下限（见 {@link #vectorRecall} 的必要替换说明）。 */
+    private static final int VECTOR_RECALL_MIN_SCAN = 200;
+
+    /** 文件名过滤扫描上限（与 KnowledgeBaseManager 的同名口径一致）。 */
+    private static final int KB_FILE_SEARCH_SCAN_LIMIT = 3000;
+
+    /** 重排分批大小（参考实现 models/rerank.py 的 {@code acompute_score} 默认值）。 */
+    private static final int RERANK_BATCH_SIZE = 32;
+
+    /** 重排单条截断长度（参考实现 models/rerank.py 的 {@code acompute_score} 默认值）。 */
+    private static final int RERANK_MAX_LENGTH = 512;
+
     private final KnowledgeFileRepository fileRepository;
     private final KnowledgeChunkRepository chunkRepository;
     private final KnowledgeBaseRepository kbRepository;
@@ -85,6 +106,18 @@ public class KnowledgeBaseRuntime {
      */
     private final ObjectProvider<MilvusGraphService> graphServiceProvider;
 
+    /**
+     * 图谱召回入口。同样用 {@link ObjectProvider} 延迟获取：图谱检索只在
+     * {@code use_graph_retrieval=true} 时参与，未部署 Neo4j 不应影响普通检索。
+     */
+    private final ObjectProvider<KnowledgeGraphRetrieval> graphRetrievalProvider;
+
+    /** 查询词抽取（关键词/混合检索分支使用）。 */
+    private final KeywordExtractor keywordExtractor;
+
+    /** 重排模型选择器（对应参考实现 models/rerank.py 的 {@code get_reranker}）。 */
+    private final ModelSelectors modelSelectors;
+
     public KnowledgeBaseRuntime(
             KnowledgeFileRepository fileRepository,
             KnowledgeChunkRepository chunkRepository,
@@ -94,7 +127,10 @@ public class KnowledgeBaseRuntime {
             OptionsService optionsService,
             VectorStore vectorStore,
             MinioStorageClient minioStorageClient,
-            ObjectProvider<MilvusGraphService> graphServiceProvider) {
+            ObjectProvider<MilvusGraphService> graphServiceProvider,
+            ObjectProvider<KnowledgeGraphRetrieval> graphRetrievalProvider,
+            KeywordExtractor keywordExtractor,
+            ModelSelectors modelSelectors) {
         this.fileRepository = fileRepository;
         this.chunkRepository = chunkRepository;
         this.kbRepository = kbRepository;
@@ -104,6 +140,9 @@ public class KnowledgeBaseRuntime {
         this.vectorStore = vectorStore;
         this.minioStorageClient = minioStorageClient;
         this.graphServiceProvider = graphServiceProvider;
+        this.graphRetrievalProvider = graphRetrievalProvider;
+        this.keywordExtractor = keywordExtractor;
+        this.modelSelectors = modelSelectors;
     }
 
     // ==================== 配置 ====================
@@ -501,6 +540,506 @@ public class KnowledgeBaseRuntime {
     public List<String> listDocumentFileIdsByStatuses(String kbId, List<String> statuses,
                                                       String afterFileId, int limit) {
         return fileRepository.listFileIdsByExactStatuses(kbId, statuses, afterFileId, limit);
+    }
+
+    // ==================== 检索（aquery） ====================
+
+    /**
+     * 查询知识库，返回**原始** chunk 字典列表（对应 implementations/milvus.py 的 {@code aquery}）。
+     *
+     * <p>与 {@code KnowledgeBaseManager#retrieve} 的区别：本方法不做输出投影，返回 chunk 原始结构
+     * （{@code content / metadata / score} 及 {@code distance}、各召回路径分数），供评测、
+     * 外部知识库检索等需要原始字段的调用方使用；{@code retrieve} 在其之上套一层
+     * {@code build_search_output}。参考实现的 manager 正是这样分工（retrieve = aquery + 投影）。
+     *
+     * <p><b>必要替换（引擎差异，逐条标注）</b>：
+     * <ul>
+     *   <li>向量召回：参考实现在 Milvus 集合内按 kb_id 隔离，可用 expr 过滤 file_id；本工程向量库是
+     *       全局单索引（metadata 未声明索引字段，检索侧无法过滤），故过采样后内存过滤
+     *       （见 {@link #vectorRecall}）。</li>
+     *   <li>关键词召回：参考实现走 Milvus 稀疏向量 BM25；本工程改在 knowledge_chunks 表做
+     *       kb 作用域包含匹配（见 {@link #keywordRecall}）。</li>
+     *   <li>混合召回：参考实现用 Milvus {@code WeightedRanker(vector_weight, bm25_weight)}；
+     *       本工程按「归一化分数加权和」融合，权重默认值（0.7 / 0.3）与参考实现一致。</li>
+     *   <li>查询参数取值：{@code bool(...)} 的真值语义（{@code "false"} 字符串为真、空串为假）
+     *       由 {@link #flagOf} 复现，不做字符串解析。</li>
+     * </ul>
+     *
+     * @param queryText 查询文本
+     * @param kbId      知识库 ID
+     * @param agentCall 是否由智能体调用（参考实现保留该形参但实现体未使用，此处同样忽略）
+     * @param config    知识库运行配置；为空时按 kbId 回源
+     * @param kwargs    单次查询的临时参数（优先级高于持久化 query_options）
+     */
+    public List<Map<String, Object>> aquery(
+            String queryText,
+            String kbId,
+            boolean agentCall,
+            KnowledgeBaseConfig config,
+            Map<String, Object> kwargs) {
+        KnowledgeBaseConfig effectiveConfig = config == null ? getKbConfig(kbId) : config;
+
+        // 合并查询参数：kwargs（临时参数）优先级高于 query_params（持久化参数）
+        Map<String, Object> merged = new LinkedHashMap<>(effectiveConfig.queryOptions());
+        if (kwargs != null) {
+            merged.putAll(kwargs);
+        }
+
+        int finalTopK = Math.max(intOf(merged, "final_top_k", 10), 1);
+        double similarityThreshold = doubleOf(merged, "similarity_threshold", 0.2);
+        boolean includeDistances = flagOf(merged, "include_distances", true);
+        String searchMode = strOf(merged, "search_mode", "vector").toLowerCase();
+        if (!"vector".equals(searchMode) && !"keyword".equals(searchMode) && !"hybrid".equals(searchMode)) {
+            searchMode = "vector";
+        }
+        boolean useReranker = flagOf(merged, "use_reranker", false);
+        boolean useGraphRetrieval = flagOf(merged, "use_graph_retrieval", false);
+        int recallTopK;
+        if (useReranker || useGraphRetrieval) {
+            recallTopK = Math.max(intOf(merged, "recall_top_k", 50), finalTopK);
+        } else {
+            recallTopK = finalTopK;
+        }
+
+        // 文件名过滤（对应 _build_file_name_expr）：null=不限；空列表=指定了但无匹配 → 必然为空
+        List<String> fileIds = matchedFileIds(kbId, merged.get("file_name"));
+        if (fileIds != null && fileIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<Map<String, Object>> retrievedChunks = new ArrayList<>();
+        if ("vector".equals(searchMode)) {
+            for (Document document : vectorRecall(queryText, kbId, fileIds, recallTopK)) {
+                double similarity = document.getScore() == null ? 0.0 : document.getScore();
+                if (similarity < similarityThreshold) {
+                    continue;
+                }
+                retrievedChunks.add(fromDocument(document, similarity, null, includeDistances));
+            }
+            log.debug("Vector query response: {} chunks found (after similarity filtering)",
+                    retrievedChunks.size());
+        } else if ("keyword".equals(searchMode)) {
+            int bm25TopK = Math.max(intOf(merged, "bm25_top_k", recallTopK), 1);
+            for (ScoredChunk scored : keywordRecall(kbId, queryText, fileIds, bm25TopK)) {
+                retrievedChunks.add(fromChunk(scored.chunk(), scored.score(), "bm25_score", includeDistances));
+            }
+            log.debug("Keyword query response: {} chunks found", retrievedChunks.size());
+        } else {
+            int bm25TopK = Math.max(intOf(merged, "bm25_top_k", recallTopK), 1);
+            double vectorWeight = doubleOf(merged, "vector_weight", 0.7);
+            double bm25Weight = doubleOf(merged, "bm25_weight", 0.3);
+
+            Map<String, Map<String, Object>> fused = new LinkedHashMap<>();
+            Map<String, Double> fusedScores = new LinkedHashMap<>();
+            for (Document document : vectorRecall(queryText, kbId, fileIds, recallTopK)) {
+                double similarity = document.getScore() == null ? 0.0 : document.getScore();
+                Map<String, Object> chunk = fromDocument(document, similarity, null, includeDistances);
+                String key = chunkKey(chunk);
+                if (key == null) {
+                    continue;
+                }
+                fused.put(key, chunk);
+                fusedScores.put(key, vectorWeight * similarity);
+            }
+            for (ScoredChunk scored : keywordRecall(kbId, queryText, fileIds, bm25TopK)) {
+                Map<String, Object> chunk = fromChunk(scored.chunk(), scored.score(), null, includeDistances);
+                String key = chunkKey(chunk);
+                if (key == null) {
+                    continue;
+                }
+                if (fused.containsKey(key)) {
+                    fusedScores.put(key, fusedScores.get(key) + bm25Weight * scored.score());
+                } else {
+                    fused.put(key, chunk);
+                    fusedScores.put(key, bm25Weight * scored.score());
+                }
+            }
+            List<Map.Entry<String, Double>> ranked = new ArrayList<>(fusedScores.entrySet());
+            ranked.sort((left, right) -> Double.compare(right.getValue(), left.getValue()));
+            for (Map.Entry<String, Double> entry : ranked) {
+                double score = entry.getValue();
+                if (score < similarityThreshold) {
+                    continue;
+                }
+                Map<String, Object> chunk = fused.get(entry.getKey());
+                chunk.put("score", score);
+                chunk.put("hybrid_score", score);
+                retrievedChunks.add(chunk);
+            }
+            log.debug("Hybrid query response: {} chunks found", retrievedChunks.size());
+        }
+
+        if (useGraphRetrieval) {
+            KnowledgeGraphRetrieval graphRetrieval = graphRetrievalProvider.getIfAvailable();
+            if (graphRetrieval != null) {
+                List<Map<String, Object>> graphChunks = graphRetrieval.retrieveGraphChunks(
+                        queryText, kbId, retrievedChunks, merged, effectiveConfig.embeddingModelSpec());
+                if (!graphChunks.isEmpty()) {
+                    double graphWeight = doubleOf(merged, "graph_weight", 1.0);
+                    retrievedChunks = KnowledgeGraphRetrieval.fuseChunkRankings(
+                            retrievedChunks, graphChunks, graphWeight);
+                }
+            }
+        }
+
+        if (retrievedChunks.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        hydrateChunkSources(kbId, retrievedChunks);
+
+        if (!useReranker) {
+            return truncate(retrievedChunks, finalTopK);
+        }
+
+        // 使用重排序模型
+        String rerankerModel = strOf(merged, "reranker_model", "");
+        if (rerankerModel.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Reranker model must be specified when use_reranker=True. "
+                            + "Please provide reranker_model in query parameters.");
+        }
+
+        try {
+            ModelSelectors.BaseReranker reranker = modelSelectors.getReranker(rerankerModel);
+            long rerankStart = System.currentTimeMillis();
+            List<String> payload = new ArrayList<>();
+            payload.add(queryText);
+            for (Map<String, Object> chunk : retrievedChunks) {
+                payload.add(chunk.get("content") == null ? "" : String.valueOf(chunk.get("content")));
+            }
+            List<Double> rerankScores =
+                    reranker.acomputeScore(payload, RERANK_BATCH_SIZE, RERANK_MAX_LENGTH, true);
+            for (int index = 0; index < retrievedChunks.size() && index < rerankScores.size(); index++) {
+                retrievedChunks.get(index).put("rerank_score", rerankScores.get(index));
+            }
+            // 排序键：优先 rerank_score，缺失时回落 score（对应 Python 的 sort key）
+            Comparator<Map<String, Object>> order =
+                    (left, right) -> Double.compare(orderScore(right), orderScore(left));
+            retrievedChunks.sort(order);
+            log.info("Reranking completed for {} in {}s with model {}",
+                    kbId, (System.currentTimeMillis() - rerankStart) / 1000.0, rerankerModel);
+        } catch (Exception exc) {
+            log.error("Reranking failed: {}, falling back to vector scores", exc.getMessage());
+        }
+
+        // 统一返回结果
+        return truncate(retrievedChunks, finalTopK);
+    }
+
+    /** 检索召回命中（chunk 记录 + 召回分数）。 */
+    private record ScoredChunk(KnowledgeChunk chunk, double score) {}
+
+    /**
+     * 向量召回（对应 Milvus {@code collection.search} 的 vector 分支）。
+     *
+     * <p><b>必要替换（引擎差异，显式标注）</b>：参考实现在 Milvus 集合内按 kb_id 隔离、可用
+     * expr 过滤 file_id；本工程向量库是全局单索引（{@code RedisVectorStore} 未声明 metadata
+     * 索引字段，检索侧无法过滤），因此改为**过采样后按 metadata 过滤**：先取
+     * {@code max(topK × VECTOR_RECALL_OVERSAMPLE, VECTOR_RECALL_MIN_SCAN)} 条，再按
+     * {@code kb_id} 与 file_id 范围筛出前 topK 条。该替换会损失一部分召回率，但保证结果集
+     * 与参考实现同口径（同一知识库、同一文件范围）。
+     */
+    private List<Document> vectorRecall(String queryText, String kbId, List<String> fileIds, int topK) {
+        int scan = Math.max(topK * VECTOR_RECALL_OVERSAMPLE, VECTOR_RECALL_MIN_SCAN);
+        SearchRequest request = SearchRequest.builder()
+                .query(queryText)
+                .topK(scan)
+                .similarityThresholdAll()
+                .build();
+        List<Document> documents = vectorStore.similaritySearch(request);
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+        List<Document> matched = new ArrayList<>();
+        for (Document document : documents) {
+            Map<String, Object> metadata = document.getMetadata();
+            if (metadata == null) {
+                continue;
+            }
+            Object kbIdValue = metadata.get("kb_id");
+            if (kbIdValue == null || !kbId.equals(String.valueOf(kbIdValue))) {
+                continue;
+            }
+            if (fileIds != null) {
+                Object fileIdValue = metadata.get("file_id");
+                if (fileIdValue == null || !fileIds.contains(String.valueOf(fileIdValue))) {
+                    continue;
+                }
+            }
+            matched.add(document);
+            if (matched.size() >= topK) {
+                break;
+            }
+        }
+        return matched;
+    }
+
+    /**
+     * 关键词召回（对应 Milvus {@code collection.search} 的 BM25 分支）。
+     *
+     * <p><b>必要替换（引擎差异，显式标注）</b>：参考实现用稀疏向量 BM25 打分并支持
+     * {@code drop_ratio_search}；本工程在 knowledge_chunks 表做 kb 作用域包含匹配，
+     * 分数按「命中词数 / 查询词数」归一化（0~1，与 BM25 分同量纲用于加权融合）。
+     */
+    private List<ScoredChunk> keywordRecall(
+            String kbId, String queryText, List<String> fileIds, int topK) {
+        List<String> terms = keywordExtractor.extract(queryText);
+        if (terms == null || terms.isEmpty()) {
+            return List.of();
+        }
+        List<KnowledgeChunk> chunks = chunkRepository.searchByKeywords(kbId, terms, fileIds, topK);
+        List<ScoredChunk> scored = new ArrayList<>();
+        for (KnowledgeChunk chunk : chunks) {
+            String content = chunk.getContent() == null ? "" : chunk.getContent();
+            int hitCount = 0;
+            for (String term : terms) {
+                if (term != null && !term.isEmpty() && content.contains(term)) {
+                    hitCount += 1;
+                }
+            }
+            scored.add(new ScoredChunk(chunk, hitCount / (double) terms.size()));
+        }
+        return scored;
+    }
+
+    /** 从向量命中构造 chunk 结构（对应 {@code _build_chunk_from_hit}）。 */
+    private static Map<String, Object> fromDocument(
+            Document document, double score, String scoreField, boolean includeDistances) {
+        Map<String, Object> metadata =
+                document.getMetadata() == null ? Map.of() : document.getMetadata();
+        return buildChunk(
+                document.getText(),
+                metadata.get("chunk_id"),
+                metadata.get("file_id"),
+                metadata.get("chunk_index"),
+                score,
+                scoreField,
+                includeDistances,
+                metadata.get("distance"));
+    }
+
+    /** 从 chunk 记录构造 chunk 结构（对应 {@code _build_chunk_from_record}）。 */
+    private static Map<String, Object> fromChunk(
+            KnowledgeChunk chunk, double score, String scoreField, boolean includeDistances) {
+        return buildChunk(
+                chunk.getContent(),
+                chunk.getChunkId(),
+                chunk.getFileId(),
+                chunk.getChunkIndex(),
+                score,
+                scoreField,
+                includeDistances,
+                null);
+    }
+
+    /**
+     * 知识库统一返回的 chunk 结构。
+     *
+     * <p>键与顺序对齐 {@code _build_chunk_from_hit}：metadata 为
+     * {@code source / chunk_id / file_id / chunk_index}，可选 {@code score_field}（bm25_score /
+     * hybrid_score / graph_score）与 {@code distance}（受 {@code include_distances} 控制）。
+     */
+    private static Map<String, Object> buildChunk(
+            String content,
+            Object chunkId,
+            Object fileId,
+            Object chunkIndex,
+            double score,
+            String scoreField,
+            boolean includeDistances,
+            Object distance) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("source", "未知来源");
+        metadata.put("chunk_id", chunkId);
+        metadata.put("file_id", fileId);
+        metadata.put("chunk_index", chunkIndex);
+
+        Map<String, Object> chunk = new LinkedHashMap<>();
+        chunk.put("content", content == null ? "" : content);
+        chunk.put("metadata", metadata);
+        chunk.put("score", score);
+        if (scoreField != null && !scoreField.isBlank()) {
+            chunk.put(scoreField, score);
+        }
+        if (includeDistances) {
+            chunk.put("distance", distance);
+        }
+        return chunk;
+    }
+
+    /** 融合去重键：取 {@code metadata.chunk_id}，缺失时回落 {@code file_id:chunk_index}。 */
+    @SuppressWarnings("unchecked")
+    private static String chunkKey(Map<String, Object> chunk) {
+        Object rawMetadata = chunk.get("metadata");
+        if (!(rawMetadata instanceof Map<?, ?>)) {
+            return null;
+        }
+        Map<String, Object> metadata = (Map<String, Object>) rawMetadata;
+        Object chunkId = metadata.get("chunk_id");
+        if (chunkId != null) {
+            return String.valueOf(chunkId);
+        }
+        Object fileId = metadata.get("file_id");
+        Object chunkIndex = metadata.get("chunk_index");
+        if (fileId == null && chunkIndex == null) {
+            return null;
+        }
+        return fileId + ":" + chunkIndex;
+    }
+
+    /**
+     * 文件名过滤命中集合（对应 {@code _build_file_name_expr}）。
+     *
+     * <p>必要替换（引擎差异）：参考实现返回 Milvus 表达式字符串（{@code file_id == "x"} /
+     * {@code file_id in [...]} / 无匹配时的 {@code __no_matching_file__} 哨兵），本工程检索侧
+     * 无法下推表达式，故改返回命中的 file_id 列表：{@code null} 表示未指定 file_name（不过滤），
+     * 空列表表示指定了但无匹配（调用方据此直接返回空结果，与哨兵表达式等价）。
+     */
+    private List<String> matchedFileIds(String kbId, Object fileName) {
+        if (fileName == null || String.valueOf(fileName).isEmpty()) {
+            return null;
+        }
+        return fileRepository.listFileIdsByFilenameContains(
+                kbId, String.valueOf(fileName), KB_FILE_SEARCH_SCAN_LIMIT);
+    }
+
+    /**
+     * 回填 chunk 来源文件名（对应 {@code _hydrate_chunk_sources}）。
+     *
+     * <p>优先委托图谱检索组件内的同一实现；该组件不可用时（例如图谱相关 bean 因依赖缺失未装配）
+     * 退回本地等价逻辑，保证检索来源不因图谱未部署而缺失。
+     */
+    private void hydrateChunkSources(String kbId, List<Map<String, Object>> chunks) {
+        KnowledgeGraphRetrieval graphRetrieval = graphRetrievalProvider.getIfAvailable();
+        if (graphRetrieval != null) {
+            graphRetrieval.hydrateChunkSources(kbId, chunks);
+            return;
+        }
+        List<String> fileIds = new ArrayList<>();
+        for (Map<String, Object> chunk : chunks) {
+            Object rawMetadata = chunk.get("metadata");
+            if (!(rawMetadata instanceof Map<?, ?> metadata)) {
+                continue;
+            }
+            Object fileId = metadata.get("file_id");
+            if (fileId == null || String.valueOf(fileId).isEmpty()) {
+                continue;
+            }
+            String text = String.valueOf(fileId);
+            if (!fileIds.contains(text)) {
+                fileIds.add(text);
+            }
+        }
+        if (fileIds.isEmpty()) {
+            return;
+        }
+        fileIds.sort(String::compareTo);
+
+        Map<String, String> filenames = fileRepository.getFilenamesByFileIds(kbId, fileIds);
+        for (Map<String, Object> chunk : chunks) {
+            Object rawMetadata = chunk.get("metadata");
+            if (!(rawMetadata instanceof Map<?, ?>)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> metadata = (Map<String, Object>) rawMetadata;
+            Object fileId = metadata.get("file_id");
+            String name = fileId == null ? null : filenames.get(String.valueOf(fileId));
+            metadata.put("source", (name == null || name.isEmpty()) ? "未知来源" : name);
+        }
+    }
+
+    /** 取前 limit 条（对应 Python 的 {@code chunks[:limit]}，返回新列表）。 */
+    private static List<Map<String, Object>> truncate(List<Map<String, Object>> chunks, int limit) {
+        if (chunks.size() <= limit) {
+            return chunks;
+        }
+        return new ArrayList<>(chunks.subList(0, limit));
+    }
+
+    /** 重排后的排序键：优先 rerank_score，缺失时回落 score。 */
+    private static double orderScore(Map<String, Object> chunk) {
+        Object rerankScore = chunk.get("rerank_score");
+        if (rerankScore instanceof Number number) {
+            return number.doubleValue();
+        }
+        Object score = chunk.get("score");
+        return score instanceof Number number ? number.doubleValue() : 0.0;
+    }
+
+    /**
+     * 复现 Python {@code bool(params.get(key, default))} 的取值语义。
+     *
+     * <p>注意：Python 里非空字符串一律为真，故 {@code "false"} 也是真——不做字符串解析，
+     * 避免出现与参考实现相反的行为。
+     */
+    private static boolean flagOf(Map<String, Object> params, String key, boolean defaultValue) {
+        if (!params.containsKey(key)) {
+            return defaultValue;
+        }
+        Object value = params.get(key);
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        if (value instanceof Number number) {
+            return number.doubleValue() != 0;
+        }
+        if (value instanceof CharSequence text) {
+            return text.length() > 0;
+        }
+        if (value instanceof Collection<?> collection) {
+            return !collection.isEmpty();
+        }
+        if (value instanceof Map<?, ?> map) {
+            return !map.isEmpty();
+        }
+        return true;
+    }
+
+    /** 整数取值（对应 Python {@code int(params.get(key, default))}，非法值回落默认值）。 */
+    private static int intOf(Map<String, Object> params, String key, int defaultValue) {
+        Object value = params.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number number) {
+            return (int) number.doubleValue();
+        }
+        try {
+            return (int) Double.parseDouble(String.valueOf(value).strip());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    /** 浮点取值（对应 Python {@code float(params.get(key, default))}，非法值回落默认值）。 */
+    private static double doubleOf(Map<String, Object> params, String key, double defaultValue) {
+        Object value = params.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value).strip());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    /** 字符串取值（键缺失或空串时回落默认值，与 Python {@code params.get(key, default)} 等价）。 */
+    private static String strOf(Map<String, Object> params, String key, String defaultValue) {
+        Object value = params.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        String text = String.valueOf(value);
+        return text.isEmpty() ? defaultValue : text;
     }
 
     // ==================== 向量入库 ====================

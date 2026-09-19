@@ -13,8 +13,8 @@
 - 参考 `services/viewer_filesystem_service.py`（批次⑳）为对拍范本。
 
 ## 进度概览
-- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / **§五 API 层 20/33（routers 15 + utils 5）**
-- 🔲 剩余：5 大块，**58 项待办 + 6 项部分完成**（§一 12 / §二 5 / §三 32 / §五 12，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils、eval 的 evaluator/benchmark_generation/service）。**新增阻塞：eval 与 knowledge_router 都要检索面 `aquery`（选项透传 + 原始 chunk 列表），见文末阻塞表。**
+- ✅ 已完成：repositories(23) / models(10) / config(3) / permissions(2) / workspace 前置(3) / common 工具(20) / agents 前置层(10) / knowledge 解析面(17) / storage(minio) / services 30-43 / 3 个 controller（Auth/Document/KnowledgeBase） / RAGFlow 分块家族 12/12（全量直译，见下） / knowledge 根核心 9/9 + knowledge_task_service + workspace_service / knowledge/eval 4/4 / **§五 API 层 21/33（routers 16 + utils 5）**
+- 🔲 剩余：5 大块，**57 项待办 + 3 项部分完成**（§一 12 / §二 2 / §三 32 / §五 11，另 `[~]`：knowledge_router、mindmap_utils、sample_question_utils）。**检索面 `aquery` 已补齐（`KnowledgeBaseRuntime.aquery`，选项透传 + 原始 chunk 列表）→ eval 与 knowledge_router 的检索阻塞解除；knowledge_router 剩余阻塞仍是 mindmap/sample_question 高层函数。**
 
 ---
 
@@ -61,9 +61,9 @@
 - [x] utils/table — chunking/ragflow_like/utils/table_utils.py（RagflowTableUtils；bs4 → 纯字符串解析）
 ### eval（4）
 - [x] metrics — eval/metrics.py（knowledge/eval/EvalMetrics：RetrievalMetrics / AnswerMetrics / EvaluationMetricsCalculator；json_repair.loads → common/LooseJson 近似，能力差异已标注）
-- [~] evaluator — eval/evaluator.py（**未搬**：依赖 `manager.aquery` 等价物，见文末阻塞表）
-- [~] benchmark_generation — eval/benchmark_generation.py（**未搬**：同上 + `MilvusGraphService.query_and_rank_chunks_by_ppr` 已就绪）
-- [~] service — eval/service.py（**未搬**：同上）
+- [x] evaluator — eval/evaluator.py（knowledge/eval/EvalEvaluator：normalize_query_result / build_answer_prompt / generate_answer_if_needed / evaluate_question / aggregate_metrics；检索面走 `kbManager.aquery`）
+- [x] benchmark_generation — eval/benchmark_generation.py（knowledge/eval/EvalBenchmarkGeneration：collect_kb_chunks / select_neighbor_chunks_by_kb_query / select_graph_enhanced_chunks（走 MilvusGraphService.queryAndRankChunksByPpr）/ build_benchmark_generation_prompt / iter_generated_benchmark_items；asyncio Queue → 线程池 + 按下标 Future.get 保序）
+- [x] service — eval/service.py（knowledge/eval/EvalService：数据集 upload/list/detail/export/delete/generate/resume + 评估 run/list/results/delete + 两个长任务体 generateDatasetTask/runEvaluationTask；任务 Handler 见 EvalTaskService）
 ### graphs（6）
 - [x] extractors/base — graphs/extractors/base.py（extractors/GraphExtractor）
 - [x] extractors/factory — graphs/extractors/factory.py（extractors/GraphExtractorFactory）
@@ -154,7 +154,7 @@
 - [x] filesystem_router — routers/filesystem_router.py（FilesystemController；`/api/viewer/filesystem`）
 - [x] graph_router — routers/graph_router.py（GraphController；`/api/graph`）
 - [x] knowledge_dashboard_router — routers/knowledge_dashboard_router.py（KnowledgeDashboardController；`/api/dashboard/stats/knowledge`）
-- [ ] knowledge_eval_router — routers/knowledge_eval_router.py
+- [x] knowledge_eval_router — routers/knowledge_eval_router.py（KnowledgeEvalController；`/api/evaluation`，11 端点：数据集 upload/list/detail/download/delete/generate/resume + 评估 run 发起/历史/结果/删除）
 - [~] knowledge_router — routers/knowledge_router.py（**部分 11/57 端点**：KnowledgeBaseController 已有 `/knowledge/databases` 系列 CRUD + chunk-presets + query-params + query-test；**剩余挡在 mindmap_utils/sample_question_utils 的高层函数**）
 - [ ] mcp_router — routers/mcp_router.py
 - [x] mention_router — routers/mention_router.py（MentionController；`/api/mention`）
@@ -197,15 +197,15 @@
 | 2026-09-19 | §五 批次六：model_provider_router + providers 数据面全量（ModelInfo/BuiltinProviders/ModelProviderCache/ModelSelectors + ModelProviderService 重写 + ModelProviderRepository 补全）；`_normalize_payload` 跨语言对拍 26/26 逐字一致 | `055b57f` |
 | 2026-09-19 | 清单滞后项修正（graphs 6 / utils 2 / storage 3 实为已搬） | `55993b0` |
 | 2026-09-19 | 批次七（部分）：`knowledge/eval/metrics.py` → EvalMetrics + common/LooseJson；**修正批次六签名偏差** `ChatAdapter.call(message, stream=False)`（参考实现 message 可为 str 或消息列表，返回 GeneralResponse.content） | `766cf2b` |
+| 2026-09-19 | §五 批次七（续）：**检索面 aquery 补齐**（`KnowledgeBaseRuntime.aquery`：合并 kwargs→final_top_k/similarity_threshold/search_mode/use_reranker/use_graph_retrieval/recall_top_k/file_name 过滤，vector（VectorStore 超采样 + 内存 kb/file 过滤）/keyword（`KnowledgeChunkRepository.searchByKeywords`）/hybrid（0.7:0.3 加权融合）+ 图谱融合 + hydrateChunkSources + 重排；必要替换与能力差异均已在类注释标注）→ `KnowledgeBaseManager.aquery/retrieve` 改为委托；`knowledge/eval` 3 模块全搬（EvalBenchmarkGeneration / EvalEvaluator / EvalService）+ `EvalTaskService`（dataset_generation / rag_evaluation 两个 Durable Task Handler）+ `EvaluationRepository` 补 `getDatasetForUpdate`/`getRunForUpdate`；`knowledge_eval_router` → KnowledgeEvalController（`/api/evaluation`，11 端点，`{\"message\":\"success\",\"data\":...}` 响应体 + `require_evaluation_dataset_read/manage` 依赖等价物） | — |
 
-## 挡在后面的依赖（routers 剩余 10 个的阻塞点）
-> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。
+## 挡在后面的依赖（routers 剩余 9 个的阻塞点）
+> 依据：逐 router 提取 `from <ref>.…` 模块清单，与本工程已有类比对。**当前无任何 router 可无阻塞直搬**，全部等下列条目先落地。（`knowledge_eval_router` 的检索面 `aquery` 阻塞已解除，已搬。）
 
 | router | 阻塞项 | 归属 |
 |---|---|---|
-| knowledge_router | mindmap_utils/sample_question_utils 的高层 DB/LLM 函数（workspace_service、graphs、url_fetcher 均已解除） | §二 |
+| knowledge_router | mindmap_utils/sample_question_utils 的高层 DB/LLM 函数（~~`aquery`~~ 已补齐：`KnowledgeBaseRuntime.aquery` 供 manager.aquery/retrieve 共用） | §二 |
 | scheduled_agent_router | `scheduled_agent_service` | §一 |
-| knowledge_eval_router | ~~`knowledge/eval/service.py` + `benchmark_generation.py`~~ → **真实阻塞是检索面 `aquery`**：eval 直接调 `kb_manager.aquery(query, kb_id, **检索选项)` 拿**原始 chunk dict 列表**（`metadata.chunk_id/file_id/chunk_index` + `content`）；本工程 `KnowledgeBaseManager.retrieve` 实为 `manager.retrieve`（走 `build_search_output` 包成 Map）且**忽略 options**，底层是自建 `HybridRetrievalService.Hit` 形状，二者不可互换。**需先补 `manager.aquery` 等价物（选项透传 + 原始 chunk 列表）**。`evaluator.py`/`metrics.py` 与 graphs 的依赖均已就绪 | §二 |
 | chat_router | `chat_service` / `artifact_service` / `context_compression_service` | §一 |
 | agent_router | `agent_config_service` / `agent_request_service` / `agent_request_queue_service` / `agent_run_service` / `agents/buildin` | §一 + §三 |
 | agent_invocation_call_router | `agent_request_service` | §一 |
