@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>对应参考实现 {@code server/utils/lifespan.py} 中的这一段：
  * <pre>
- * from yuxi.config.options import ensure_options_in_db, invalidate_option_cache, system_options
+ * # 参考实现 config/options.py 的 ensure_options_in_db / invalidate_option_cache / system_options
  *
  * async with pg_manager.get_async_session_context() as session:
  *     await ensure_options_in_db(session)

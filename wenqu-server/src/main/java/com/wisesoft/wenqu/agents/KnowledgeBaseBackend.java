@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
  *
  * <h3>平台差异（必要替换）</h3>
  * <ul>
- *   <li>{@code from yuxi.knowledge.runtime import knowledge_base} 的函数内迟延导入 →
+ *   <li>参考实现 {@code knowledge/runtime.py} 的模块级 {@code knowledge_base} 的函数内迟延导入 →
  *       构造注入 {@link KnowledgeBaseManager}（本工程知识库运行时即由它承载）。</li>
  *   <li>{@code await knowledge_base.get_databases_by_uid(...)} → 同步调用
  *       {@link KnowledgeBaseManager#getDatabasesByUid(String)}（本工程无异步 DB 层）。</li>

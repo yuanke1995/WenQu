@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
  *
  * <h3>平台差异（必要替换）</h3>
  * <ul>
- *   <li>{@code from yuxi.… import …} 的函数内迟延导入（避免循环依赖）→ 构造注入
+ *   <li>参考实现各处的函数内迟延导入（避免循环依赖）→ 构造注入
  *       {@link AgentRepository} / {@link UserRepository} / {@link McpService} /
  *       {@link SkillService} / {@link KnowledgeBaseManager} / {@link OptionsService}。</li>
  *   <li>{@code await …} 全链路同步化（本工程无异步 DB 层，调用方线程承担同一阻塞语义）。</li>

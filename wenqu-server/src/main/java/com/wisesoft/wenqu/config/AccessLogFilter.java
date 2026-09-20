@@ -21,12 +21,18 @@ import java.io.IOException;
  * <p>日志使用独立 logger {@code access_logger}（对应参考实现中不向根 logger 传播的专用 logger，
  * 其 handler 格式 {@code %m-%d %H:%M:%S} 见 {@code logback-spring.xml}）。
  *
+ * <p><b>在过滤器链中的位置</b>：参考实现的中间件装配序是（先加的在内层）
+ * CORS → 本类 → {@code LoginRateLimitMiddleware}，故请求执行序为
+ * {@link LoginRateLimitFilter} → 本类 → CORS → 路由。本工程以 {@code @Order} 升序表达同一顺序：
+ * {@link LoginRateLimitFilter} 取 {@code +10}、本类取 {@code +20}。因此本类只记录<b>通过限流</b>的请求
+ * ——被限流短路的 429 在更外层即返回，与参考实现一致。
+ *
  * <p>平台差异（必要替换）：FastAPI/Starlette 的 {@code BaseHTTPMiddleware} → Spring 的
  * {@link OncePerRequestFilter}；{@code request.scope["http_version"]} → {@code request.getProtocol()}
  * 去掉 {@code HTTP/} 前缀（拼接后形态一致）。
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+@Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class AccessLogFilter extends OncePerRequestFilter {
 
     /** 专用访问日志记录器（对应参考实现的 access_logger）。 */

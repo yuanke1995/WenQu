@@ -9,8 +9,8 @@ import java.util.Map;
  * {@link AgentRepository.BackendInfoProvider} 的装配实现：把仓储的后端能力查询接到
  * {@link AgentManager} 上。
  *
- * <p>参考实现里 {@code AgentRepository.serialize} 直接 {@code from yuxi.agents.buildin import
- * agent_manager} 后取 {@code agent_manager.get_agent(agent.backend_id).get_info(...)}
+ * <p>参考实现里 {@code AgentRepository.serialize} 直接迟延导入 {@code agents/buildin} 包的
+ * {@code agent_manager} 后取 {@code agent_manager.get_agent(agent.backend_id).get_info(...)}
  * （见 {@code repositories/agent_repository.py} 的 {@code serialize}）。本工程把该依赖收敛为
  * {@code BackendInfoProvider} 扩展点（{@code repositories} 层不反向依赖 {@code agents} 层），
  * 本类即那个扩展点的实现——装配后 {@code serialize} 的行为与参考实现一致。

@@ -28,6 +28,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>仅在 {@code (归一化路径, 方法)} 命中限流端点集合时生效，其余请求直接放行。</li>
  * </ul>
  *
+ * <p><b>在过滤器链中的位置（照搬参考实现的中间件叠放顺序）</b>：参考实现的
+ * {@code app.add_middleware()} 是<b>栈式</b>（后添加者包在更外层、先执行），装配序为
+ * CORS → {@code AccessLogMiddleware} → {@code LoginRateLimitMiddleware}，故实际请求执行序是
+ * <b>本类 → {@link AccessLogFilter} → CORS → 路由</b>。本工程用 {@code @Order} 值升序表达同一顺序，
+ * 因此本类取 {@code +10}、{@link AccessLogFilter} 取 {@code +20}（勿对调：对调后限流短路的 429
+ * 会被访问日志记录，而参考实现里该请求在限流层即返回，<b>不产生</b>访问日志）。
+ * CORS 在本工程由 {@code HandlerMapping} 处理，天然位于所有 {@code Filter} 之后，与参考实现
+ * 「CORS 最内层」的位置一致。
+ *
  * <p>平台差异（必要替换）：
  * <ol>
  *   <li>{@code BaseHTTPMiddleware} → Spring {@link OncePerRequestFilter}；{@code asyncio.Lock} →
@@ -39,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ol>
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 20)
+@Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class LoginRateLimitFilter extends OncePerRequestFilter {
 
     /** 窗口内允许的最大登录尝试次数（参考实现 RATE_LIMIT_MAX_ATTEMPTS）。 */
