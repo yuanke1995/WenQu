@@ -19,7 +19,7 @@ test('项目状态优先展示运行中，其次展示未读完成', () => {
 
 test('项目视图按项目顺序分组并把 implicit 对话放在最后', () => {
   const projects = [
-    { id: 'project-a', name: 'Yuxi', selection_status: 'selectable', status: 'active' },
+    { id: 'project-a', name: '问渠', selection_status: 'selectable', status: 'active' },
     { id: 'project-b', name: '论文', selection_status: 'selectable', status: 'active' },
     { id: 'deleted', name: '已删除', selection_status: 'selectable', status: 'deleted' }
   ]

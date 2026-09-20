@@ -18,12 +18,9 @@ export const modelAvatars = {
   ark: avatar('volcengine-color', '#fff', 0.75, 'none'),
   dashscope: avatar('bailian-color', '#fff', 0.75, 'none'),
   deepseek: avatar('deepseek', '#4d6bfe'),
-  fluxionai: {
-    icon: 'https://xerrors.oss-cn-shanghai.aliyuncs.com/github/%E4%B8%8B%E8%BD%BD.jpeg',
-    background: '#fff',
-    scale: 1,
-    filter: 'none'
-  },
+  // 原为上游托管的图片资源（外部 OSS 链接），改用内置通用图标：
+  // 既不依赖外部站点（避免图源失效/外链），也不在代码里留下第三方项目域名。
+  fluxionai: avatar('default', '#fff', 0.75, 'none'),
   google: avatar('google-color', '#fff', 0.75, 'none'),
   minimax: avatar('minimax', 'linear-gradient(to right, #e2167e, #fe603c)'),
   'minimax-cn': avatar('minimax', 'linear-gradient(to right, #e2167e, #fe603c)'),

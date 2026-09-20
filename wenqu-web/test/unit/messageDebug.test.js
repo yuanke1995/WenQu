@@ -493,7 +493,7 @@ test('Model 与 Tool 审计按 sequence 形成交错时间线并展示真实工�
       run_id: 'run-1',
       operation_id: 'call-1',
       tool_name: 'search',
-      tool_input: { q: 'Yuxi' },
+      tool_input: { q: '问渠' },
       content: '查询结果',
       sequence: 6,
       duration_ms: 125,
@@ -531,7 +531,7 @@ test('失败 Tool 审计展示错误而不把 running wall-clock 推算成耗时
       run_id: 'run-1',
       operation_id: 'call-error',
       tool_name: 'search',
-      tool_input: { q: 'Yuxi' },
+      tool_input: { q: '问渠' },
       error_message: 'provider unavailable',
       execution_status: 'failed'
     }

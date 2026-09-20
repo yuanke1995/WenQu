@@ -905,7 +905,7 @@ defineExpose({
               API Key
               <a
                 v-if="providerForm.provider_id === 'fluxionai'"
-                href="https://fluxionai.space/register?source=github&campaign=yuxi&promo=YUXI"
+                href="https://fluxionai.space/register?source=github&campaign=wenqu&promo=WENQU"
                 target="_blank"
                 rel="noopener noreferrer"
               >
