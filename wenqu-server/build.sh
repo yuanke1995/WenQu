@@ -72,6 +72,12 @@ CP="$(tr '\n' ':' < "$DEPS")"
 #   WENQU_JWT_SECRET  —— 既有契约（/api/ai/auth/*）的 HS256 签名密钥；
 #   JWT_SECRET_KEY    —— 照搬契约（/api/auth/*）的签名密钥；
 #   WENQU_INSTANCE_ID —— 照搬契约 JWT 的 issuer 后缀（iss=wenqu-know:<实例ID>）。
+#
+# SANDBOX_PROVISIONER_TOKEN 属同一类「部署变量」：ProvisionerSandboxProvider 在构造期
+# 校验它 ≥32 字符——这与参考实现一致（server/utils/lifespan.py 把 sandbox_provider 登记为
+# required=True 的启动组件，init_sandbox_provider 只构造 provider、不建立连接，缺失即启动失败，
+# 属 fail-closed 而非缺陷）。因此本地**未部署** provisioner 也必须给一个占位值，否则服务起不来；
+# 沙盒能力要等真正调用时才因 provisioner 不可达而报错。
 # 另外 SERVER__PORT 必须剔除：会话注入的 SERVER__PORT 会经 Spring relaxed binding
 # 抢走 server.port，只留下面显式的 SERVER_PORT。
 JWT_ENVS=(
@@ -79,6 +85,7 @@ JWT_ENVS=(
   "WENQU_JWT_SECRET=${WENQU_JWT_SECRET:-wenqu-local-dev-jwt-secret-32-chars!!}"
   "JWT_SECRET_KEY=${JWT_SECRET_KEY:-wenqu-local-dev-signing-key-32-chars!!}"
   "WENQU_INSTANCE_ID=${WENQU_INSTANCE_ID:-local}"
+  "SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN:-wenqu-local-dev-sandbox-provisioner-token}"
 )
 
 listener_pid() {

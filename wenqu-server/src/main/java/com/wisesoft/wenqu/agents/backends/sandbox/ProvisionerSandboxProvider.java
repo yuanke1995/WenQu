@@ -9,6 +9,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -69,7 +70,21 @@ public class ProvisionerSandboxProvider {
         }
     }
 
-    /** Spring 装配构造：自环境变量读取 token / url / 超时。 */
+    /**
+     * Spring 装配构造：自环境变量读取 token / url / 超时。
+     *
+     * <p><b>@Autowired 不可省</b>：本类还有一个仅供测试的 {@code package-private} 构造器
+     * （直接注入 client，对应参考单测 {@code ProvisionerSandboxProvider.__new__}），
+     * 于是构造器数量 ≥2。Spring 4.3+ 只对「唯一构造器」自动装配，多构造器且无标注时会退回找
+     * 无参构造器，启动报 {@code No default constructor found}。这里显式标注容器用本构造器。
+     *
+     * <p>token 校验（{@link #sandboxProvisionerToken()}）在构造期执行，与参考实现一致：
+     * 参考实现把 {@code sandbox_provider} 登记为 {@code required=True} 的 lifespan 启动组件
+     * （{@code server/utils/lifespan.py}），而 {@code init_sandbox_provider()} 只构造 provider、
+     * <b>不建立连接</b>。故缺 {@code SANDBOX_PROVISIONER_TOKEN}（≥32 字符）时启动失败是
+     * 参考实现的既有语义（fail-closed），不是缺陷——部署侧需要提供该变量，见 {@code build.sh}。
+     */
+    @Autowired
     public ProvisionerSandboxProvider(AgentEnvRepository agentEnvRepository) {
         this.client = new SandboxProvisionerClient(
                 resolveProvisionerUrl(),
