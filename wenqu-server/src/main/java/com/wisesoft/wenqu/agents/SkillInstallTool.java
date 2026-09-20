@@ -38,8 +38,11 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  * <ol>
  *   <li><b>Command 状态写回</b>：参考实现把 ToolMessage 塞进 {@code Command.update["messages"]}；
  *       本工程工具只能返回字符串，故返回 content 本身（模型可见内容一致），由构图方包成 ToolMessage。</li>
- *   <li><b>沙盒路径安装不可用</b>：{@code ProvisionerSandboxBackend} /
- *       {@code download_sandbox_directory}（{@code backends/sandbox}）未搬。本类保留 slug 校验与
+ *   <li><b>沙盒路径安装尚未接线</b>：{@code ProvisionerSandboxBackend} /
+ *       {@code download_sandbox_directory}（{@code backends/sandbox}）
+ *       **已随 §三 backends 落地**（{@code agents/backends/sandbox/}，含
+ *       {@link com.wisesoft.wenqu.agents.backends.sandbox.SandboxDownload#downloadSandboxDirectory}），
+ *       但本类该分支未接线（原文写「未搬」，2026-09-20 更正）。本类保留 slug 校验与
  *       路径白名单校验（{@link #prepareSkillFromSandbox}），到「下载目录」这一步抛
  *       {@link IllegalStateException} —— 与参考实现 ValueError 一样被外层捕获成
  *       {@code 安装异常：…} 文案，不静默成功（同 {@code dify} / {@code notion} 口径）。</li>
@@ -264,7 +267,7 @@ public final class SkillInstallTool implements ToolDefinition, ToolCallback {
         if (!allowed) {
             throw new IllegalArgumentException("不支持的沙盒路径: " + sandboxPath + "。" + SANDBOX_PATH_HINT);
         }
-        throw new IllegalStateException("沙盒后端未部署，无法从沙盒路径安装 Skill（backends/sandbox 未照搬）");
+        throw new IllegalStateException("沙盒校验未接线，无法从沙盒路径安装 Skill");
     }
 
     private static Map<String, Object> toMap(Object value) {

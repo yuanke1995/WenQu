@@ -56,11 +56,12 @@ import org.springframework.util.MimeType;
  *
  * <h3>能力差异（显式标注）</h3>
  * <ol>
- *   <li><b>{@code ocr_parse_file} 工具本体未搬</b>：该工具在参考实现位于
- *       {@code agents/toolkits/buildin/tools.py}，依赖 {@code backends/sandbox}（未搬）。
- *       本类只保留工具名常量 {@link #OCR_TOOL_NAME} 与 {@link #getToolNames()} 的声明口径
- *       （与参考实现 {@code tools = [ocr_parse_file]} 对位），不注册可执行实例 ——
- *       与 {@code dify} / {@code notion} / {@code skill_remote_install} 同口径。</li>
+ *   <li><b>{@code ocr_parse_file} 未注册可执行实例</b>：该工具在参考实现位于
+ *       {@code agents/toolkits/buildin/tools.py}，本体依赖沙盒（{@code backends/sandbox}
+ *       **已随 §三 backends 落地**，见 {@code agents/backends/sandbox/}；原文写「未搬」，
+ *       2026-09-20 更正 → 是「未接线」）。本类只保留工具名常量 {@link #OCR_TOOL_NAME} 与
+ *       {@link #getToolNames()} 的声明口径（与参考实现 {@code tools = [ocr_parse_file]} 对位），
+ *       不注册可执行实例 —— 与 {@code dify} / {@code notion} / {@code skill_remote_install} 同口径。</li>
  *   <li><b>图片块以 {@link Media} 承载</b>：参考实现把原始 dict 直接塞进
  *       {@code HumanMessage(content_blocks=[...])}；本工程 {@link UserMessage} 只能带
  *       {@link Media}，故 {@link #toMedia(Map)} 负责把 {@code base64}/{@code url} 转成 Media，

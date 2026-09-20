@@ -51,10 +51,18 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  *   <li><b>Tavily 供应商不可用</b>：{@code langchain_tavily.TavilySearch} 无对应实现，
  *       provider 解析保留其映射与展示名，但选中 tavily 时不注册工具（与
  *       {@code dify} / {@code notion} 同口径）。</li>
- *   <li><b>{@code present_artifacts} / {@code ocr_parse_file} 的沙盒校验不可用</b>：
- *       {@code ProvisionerSandboxBackend.regular_file_exists}（{@code backends/sandbox} 未搬）。
- *       路径白名单与 {@code ..} 穿越校验（纯函数，参考实现 ValueError 文案逐字）全部保留；
- *       到「文件是否存在」这一步抛 {@link IllegalStateException}，调用方按错误处理。</li>
+ *   <li><b>{@code present_artifacts} / {@code ocr_parse_file} 的沙盒「文件是否存在」校验尚未接线</b>：
+ *       参考实现在路径白名单通过后构造
+ *       {@code ProvisionerSandboxBackend(thread_id, uid, workdir_path, create_if_missing=True)}
+ *       并调用 {@code regular_file_exists}，不存在则抛「文件不存在或不是普通文件: …」
+ *       （见参考实现 {@code agents/toolkits/buildin/tools.py:218-246}）。
+ *       路径白名单与 {@code ..} 穿越校验（纯函数，参考实现 ValueError 文案逐字）已全部保留；
+ *       因该步未接线，末尾抛 {@link IllegalStateException}，调用方按错误处理。
+ *       <b>注（2026-09-20 更正）</b>：本条原文写「{@code backends/sandbox} 未搬」，
+ *       但沙盒数据面**已随 §三 backends 落地**（{@code agents/backends/sandbox/} 15 个类，
+ *       其中 {@link com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend#regularFileExists}
+ *       正是本处所需方法），故此处缺口是「**未接线**」而非「未搬」；
+ *       运行时仍取不到沙盒的根因是**外部 provisioner 服务未部署**（同 {@code SkillRemoteInstall}）。</li>
  *   <li><b>OCR 引擎解析未搬</b>：{@code services/ocr_service.py}（{@code parse_document} /
  *       {@code resolve_ocr_engine_id}）未搬，故 {@code ocrParseFile} 只完成校验与输出路径计算
  *       （{@link #nextOcrOutputPath} / {@link #safeOcrOutputStem}），解析步骤不可用。</li>
@@ -394,7 +402,7 @@ public final class BuildinTools {
             throw new IllegalArgumentException("文件不在当前用户可见范围内: " + normalizedInput);
         }
         throw new IllegalStateException(
-                "沙盒后端未部署，无法校验文件是否存在（backends/sandbox 未照搬）：" + normalizedInput);
+                "沙盒校验未接线，无法判断文件是否存在：" + normalizedInput);
     }
 
     /** 对应参考实现 {@code present_artifacts}。 */

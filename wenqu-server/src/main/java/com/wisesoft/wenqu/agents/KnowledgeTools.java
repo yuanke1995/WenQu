@@ -38,8 +38,9 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  *
  * <h3>能力差异（显式标注）</h3>
  * <ol>
- *   <li><b>{@code download_kb_file} 的沙盒落盘不可用</b>：参考实现写入
- *       {@code ProvisionerSandboxBackend}（{@code backends/sandbox} 未搬）。本类保留工具签名、
+ *   <li><b>{@code download_kb_file} 的沙盒落盘尚未接线</b>：参考实现写入
+ *       {@code ProvisionerSandboxBackend}（该沙盒数据面**已随 §三 backends 落地**，见
+ *       {@code agents/backends/sandbox/}；原文写「未搬」，2026-09-20 更正 → 是「未接线」）。本类保留工具签名、
  *       可见性校验、下载与路径计算（{@link #resolveDownloadOutputPath}），但在缺少沙盒后端时返回
  *       明确的不可用文案，不静默成功（与 {@code dify} / {@code notion} / {@code skill_remote_install}
  *       同口径）。</li>
@@ -445,7 +446,7 @@ public final class KnowledgeTools {
         result.put("media_type", data.get("media_type"));
         result.put("size_bytes", data.get("content") instanceof byte[] bytes ? bytes.length : 0);
         result.put("saved_as", PosixPathLite.nameOf(outputPath));
-        return "沙盒后端未部署，无法下载知识库原始文件（backends/sandbox 未照搬）；"
+        return "沙盒校验未接线，无法下载知识库原始文件；"
                 + "已解析的目标路径：" + outputPath;
     }
 

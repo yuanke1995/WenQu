@@ -35,9 +35,14 @@ import com.wisesoft.wenqu.config.OptionsService;
  * 见参考实现 agents/backends/sandbox/provider.py:99-101）。
  * 本工程未部署该外部服务，故这三个入口保留签名与非法来源校验，实际执行抛
  * {@link SkillRemoteExecutionUnavailableException}。这与清单 §二
- * 「dify/notion：参数面已搬入、外部 HTTP 接口未搬」的处理口径一致。
- * 沙盒数据面（backend/download/provider/provisioner_client，约 1764 行）未搬，
- * 需要时另行立项。
+ * 「dify/notion：**判定范围外（决定不搬）**」同属「**如实降级、显式拒绝、不静默成功**」的口径
+ * （彼处缺的是无账号可验证的外部 SaaS 接口，此处缺的是未部署的外部 provisioner 服务）。
+ *
+ * <p>注：沙盒数据面（backend / download / provider / provisioner_client，约 1764 行）
+ * **已随 §三 backends 落地**于 {@code agents/backends/sandbox/}（15 个类，并已被
+ * {@code RunWorker} / {@code ContextCompressionService} / {@code AgentCompositeBackend} 接线）。
+ * 故本类不可用的**唯一原因是外部 provisioner 服务未部署**，不是代码缺失——
+ * 部署该服务后即可接线，本类无需改动。
  */
 @Component
 public class SkillRemoteInstall {
