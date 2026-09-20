@@ -129,10 +129,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <h3>能力差异（显式标注，非遗漏）</h3>
  * <ul>
- *   <li><b>worker 启动入口未接线</b>：{@link #workerStartup} / {@link #workerShutdown} 已就位，
- *       但由 §五 {@code worker_main} 承载调用（参考实现是独立进程入口 {@code worker_main.py}）。
- *       在此期间 Run 可正常执行，只是收敛循环与 worker 健康租约尚未续租
- *       （{@code /api/system/ready} 的 worker 检查因此仍为 error，与「无 worker 启动」一致）。</li>
+ *   <li><b>worker 启动入口已接线</b>：{@link #workerStartup} / {@link #workerShutdown} 由
+ *       {@code WenquWorkerApplication}（worker 进程入口，对应参考实现 {@code server/worker_main.py}）
+ *       在启动/关闭时调用，收敛循环与 worker 健康租约因此开始续租
+ *       —— 只要 worker 进程在跑，{@code /api/system/ready} 的 worker 检查即具备就绪条件
+ *       （读写两侧经同一 Redis 健康键，见 {@code RunQueueService.WORKER_HEALTH_KEY}）。
+ *       注意：api 进程（{@code WenquServerApplication}）<b>不会</b>调用这两个方法 ——
+ *       参考实现的 lifespan 与 {@code _worker_startup} 是两套启动逻辑，分属两个进程。</li>
  *   <li><b>job 超时看门狗自 {@code run_ctx.start()} 起计</b>：参考实现的 ARQ {@code job_timeout}
  *       覆盖整个 job（含前置校验），本工程的前置校验发生在此之前，故超时窗口不含校验阶段。</li>
  *   <li><b>取消瞬间已并发的生产失败</b>：参考实现关闭执行链时以 {@code aclose()} 的异常优先；

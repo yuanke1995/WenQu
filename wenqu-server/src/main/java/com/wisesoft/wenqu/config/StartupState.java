@@ -17,6 +17,12 @@ import java.util.Map;
  *
  * <p>组件登记入口供各依赖在启动自检时写入（{@code register}），键与
  * {@code ReadinessService.componentSnapshot} 约定一致：{@code {名称: {status, required, code?}}}。
+ *
+ * <p><b>故意不加进程角色条件</b>：{@code app.state} 是 api 进程独有的应用状态，worker 进程
+ * （{@link ProcessRole#WORKER}）里写入方（{@link StartupDataInitializer} / {@link McpStartupInitializer}）
+ * 与读取方（{@code SystemController}）一个都不生效，故本类在 worker 进程里是个无人读写的空壳，
+ * 无行为差异。之所以仍保持无条件注册：{@code SystemController} 等 HTTP 层 Bean 在
+ * {@code WebApplicationType.NONE} 下照旧会被创建，若本类缺席它们会直接装配失败。
  */
 @Component
 public class StartupState {

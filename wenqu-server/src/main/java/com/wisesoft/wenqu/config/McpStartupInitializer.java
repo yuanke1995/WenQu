@@ -2,6 +2,7 @@ package com.wisesoft.wenqu.config;
 
 import com.wisesoft.wenqu.agents.McpService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
@@ -37,12 +38,17 @@ import org.springframework.stereotype.Component;
  * 三个顺序都放在 {@link StartupState#markStartupComplete()} 置位<b>之前</b>，
  * 与参考实现「先跑组件、末尾才把 startup_complete 置真」的顺序一致。
  *
- * <p>与参考实现同名的另一处调用点是 {@code services/run_worker.py} 的 worker 启动流程；
- * 因 {@code ensure_builtin_mcp_servers_in_db} 幂等，且本工程目前只有 API 进程，
- * 不另开 worker 侧调用点（待 run_worker 照搬时按其原位调用同一方法）。
+ * <p>与参考实现同名的另一处调用点是 {@code services/run_worker.py} 的 worker 启动流程
+ * （{@code _worker_startup} 里的「可选组件」分支）；本工程同样按其原位调用同一方法 ——
+ * 落在 {@code RunWorker.workerStartup}，且与参考实现同口径（失败只告警、不中断 worker 启动）。
+ * 故本类只属 api 进程，以 {@link ProcessRole} 限定；worker 进程的那次调用由 {@code RunWorker} 承担。
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(
+        name = ProcessRole.PROPERTY,
+        havingValue = ProcessRole.SERVER,
+        matchIfMissing = true)
 public class McpStartupInitializer {
 
     /** 启动组件名（与参考实现的 {@code name="builtin_mcp_servers"} 逐字一致）。 */

@@ -8,6 +8,7 @@ import com.wisesoft.wenqu.service.ModelProviderService;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
@@ -60,8 +61,18 @@ import org.springframework.stereotype.Component;
  *
  * <p>执行顺序：{@link OptionStartupInitializer}（容器 refresh 期）→ {@code builtin_mcp_servers}
  * （{@link McpStartupInitializer}）→ <b>本类</b>，与参考实现 lifespan 的先后一致。
+ *
+ * <p><b>只在 api 进程执行</b>（{@link ProcessRole}）：参考实现里这四个组件全在
+ * {@code server/utils/lifespan.py}，而 {@code server/worker_main.py} 不装配 lifespan ——
+ * worker 进程只跑 {@code _worker_startup}，其中与本类重叠的仅 {@code builtin_skills} 一项
+ * （落在 {@code RunWorker.workerStartup}）；{@code default_agents} / {@code model_providers} /
+ * {@code model_cache} 在参考实现的 worker 进程里<b>不执行</b>，故本类不得在 worker 进程生效。
  */
 @Component
+@ConditionalOnProperty(
+        name = ProcessRole.PROPERTY,
+        havingValue = ProcessRole.SERVER,
+        matchIfMissing = true)
 public class StartupDataInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(StartupDataInitializer.class);

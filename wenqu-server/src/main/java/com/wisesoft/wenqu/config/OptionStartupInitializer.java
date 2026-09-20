@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.config;
 
 import jakarta.annotation.PostConstruct;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -31,8 +32,17 @@ import org.springframework.stereotype.Component;
  *
  * <p>执行顺序（与参考实现 lifespan 一致）：本类（配置定义）→ {@code builtin_mcp_servers}
  * → {@code builtin_skills} → {@code model_providers}。
+ *
+ * <p><b>只在 api 进程执行</b>（{@link ProcessRole}）：本类的这两步是 lifespan 的对位。
+ * worker 进程的 {@code _worker_startup} 里也有同样两步（同一个 {@code ensure_options_in_db}），
+ * 已落在 {@code RunWorker.workerStartup}，故本类在 worker 进程应被排除，
+ * 否则同一件事在 worker 启动时会做两遍。
  */
 @Component
+@ConditionalOnProperty(
+        name = ProcessRole.PROPERTY,
+        havingValue = ProcessRole.SERVER,
+        matchIfMissing = true)
 public class OptionStartupInitializer {
 
     private final OptionsService optionsService;
