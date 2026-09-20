@@ -81,11 +81,18 @@ import org.springframework.web.multipart.MultipartFile;
  * {@code Depends(get_superadmin_user)} → {@link AuthGuards#requireSuperadmin()}。部分服务方法接收
  * {@link User} 实体，此处经 {@link UserRepository#getByUid} 由当前 uid 还原（与既有控制器先例一致）。
  *
+ * <p>路径前缀：参考实现在 {@code server/main.py} 里用 {@code app.include_router(router, prefix="/api")}
+ * 把全部业务路由统一挂到 {@code /api} 之下，而 {@code chat_router} 自身前缀为 {@code /chat}，
+ * 故对外真实路径是 {@code /api/chat/**}（前端 {@code web/src/apis/agent_api.js} 按此调用）。
+ * 本类的 {@code /api} 前缀不可省略：一是要与前端契约一致，二是 {@link com.wisesoft.wenqu.config.SecurityConfig}
+ * 的 {@code UserContextInterceptor} / 登录门禁只覆盖 {@code /api/**}，挂在 {@code /chat/**} 会让
+ * {@link AuthGuards#requireUser()} 拿不到登录态而恒返回 401。
+ *
  * @author yuanke
  */
 @Slf4j
 @RestController
-@RequestMapping("/chat")
+@RequestMapping("/api/chat")
 @RequiredArgsConstructor
 @Tag(name = "ChatController", description = "对话线程 / 附件 / 反馈 / 多模态图片")
 public class ChatController {

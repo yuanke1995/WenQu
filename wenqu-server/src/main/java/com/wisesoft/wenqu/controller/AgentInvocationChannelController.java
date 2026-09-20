@@ -55,7 +55,7 @@ import org.springframework.web.bind.annotation.RestController;
  * @author yuanke
  */
 @RestController
-@RequestMapping("/agent-invocation/channel")
+@RequestMapping("/api/agent-invocation/channel")
 @RequiredArgsConstructor
 @Tag(name = "AgentInvocationChannelController", description = "纯文本 Channel 消息入口")
 public class AgentInvocationChannelController {
@@ -67,7 +67,7 @@ public class AgentInvocationChannelController {
     private final UserRepository userRepository;
 
     /** 处理纯文本 Channel 消息或最小 slash command。 */
-    @Operation(summary = "Channel 消息", description = "POST /agent-invocation/channel/messages")
+    @Operation(summary = "Channel 消息", description = "POST /api/agent-invocation/channel/messages")
     @PostMapping("/messages")
     public Map<String, Object> receiveChannelMessage(
             @RequestBody(required = false) Map<String, Object> body) {
