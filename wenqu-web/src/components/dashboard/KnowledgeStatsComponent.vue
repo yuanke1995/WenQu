@@ -1,0 +1,185 @@
+<template>
+  <a-card title="知识库使用情况" :loading="loading" class="dashboard-card">
+    <!-- 知识库概览 -->
+    <div class="dashboard-card-metric-grid">
+      <DashboardMetricCard
+        :icon="Database"
+        :value="formatNumber(knowledgeStats?.total_databases)"
+        label="知识库总数"
+        tone="info"
+        compact
+      />
+      <DashboardMetricCard
+        :icon="FileText"
+        :value="formatNumber(knowledgeStats?.total_files)"
+        label="文件总数"
+        tone="success"
+        compact
+      />
+      <DashboardMetricCard
+        :icon="HardDrive"
+        :value="formattedStorage.value"
+        :label="`存储容量 (${formattedStorage.unit})`"
+        tone="warning"
+        compact
+      />
+    </div>
+
+    <a-divider />
+
+    <div class="file-distribution">
+      <h4>文件类型分布</h4>
+      <template v-if="fileTypeData.length">
+        <div class="donut-wrap">
+          <div ref="fileTypeChartRef" class="file-type-chart"></div>
+          <div class="donut-summary">
+            <span>文件总数</span>
+            <strong>{{ totalFiles.toLocaleString() }}</strong>
+          </div>
+        </div>
+        <ul class="file-type-legend" aria-label="文件类型数量与占比">
+          <li v-for="(item, index) in fileTypeData" :key="item.name">
+            <span class="legend-swatch" :style="{ backgroundColor: getColorByIndex(index) }"></span>
+            <span class="legend-name">{{ item.name }}</span>
+            <span class="legend-value">{{ item.value.toLocaleString() }}</span>
+            <span class="legend-percent">{{
+              item.value / totalFiles < 0.001
+                ? '<0.1%'
+                : `${((item.value / totalFiles) * 100).toFixed(1)}%`
+            }}</span>
+          </li>
+        </ul>
+      </template>
+      <a-empty v-else description="暂无文件类型数据" />
+    </div>
+  </a-card>
+</template>
+
+<script setup>
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import * as echarts from '@/utils/dashboardCharts'
+import { getColorByIndex, getColorPalette } from '@/utils/chartColors'
+import { useThemeStore } from '@/stores/theme'
+import { formatNumber, formatStorageSize } from '@/utils/dashboard'
+import { Database, FileText, HardDrive } from '@lucide/vue'
+import DashboardMetricCard from './DashboardMetricCard.vue'
+
+const props = defineProps({
+  knowledgeStats: { type: Object, default: () => ({}) },
+  loading: { type: Boolean, default: false }
+})
+const themeStore = useThemeStore()
+const fileTypeChartRef = ref(null)
+let fileTypeChart = null
+let resizeObserver = null
+const formattedStorage = computed(() => formatStorageSize(props.knowledgeStats?.total_storage_size))
+const fileTypeData = computed(() =>
+  Object.entries(props.knowledgeStats?.file_type_distribution || {})
+    .map(([name, value]) => ({ name: name || '未知', value: Number(value) }))
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+)
+const totalFiles = computed(() => fileTypeData.value.reduce((sum, item) => sum + item.value, 0))
+
+/** 更新圆环，明细由独立 DOM 展示，避免图例覆盖图形。 */
+async function updateChart() {
+  await nextTick()
+  resizeObserver?.disconnect()
+  fileTypeChart?.dispose()
+  fileTypeChart = null
+  if (!fileTypeChartRef.value) return
+  fileTypeChart = echarts.init(fileTypeChartRef.value)
+  fileTypeChart.setOption({
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)', renderMode: 'richText' },
+    series: [
+      {
+        name: '文件类型',
+        type: 'pie',
+        radius: ['58%', '82%'],
+        center: ['50%', '50%'],
+        label: { show: false },
+        labelLine: { show: false },
+        data: fileTypeData.value,
+        color: getColorPalette()
+      }
+    ]
+  })
+  resizeObserver = new ResizeObserver(() => fileTypeChart?.resize())
+  resizeObserver.observe(fileTypeChartRef.value)
+}
+
+/** 释放图表实例与尺寸观察器。 */
+function cleanup() {
+  resizeObserver?.disconnect()
+  fileTypeChart?.dispose()
+  fileTypeChart = null
+}
+watch([() => props.knowledgeStats, () => props.loading, () => themeStore.isDark], updateChart, {
+  deep: true
+})
+onMounted(updateChart)
+onBeforeUnmount(cleanup)
+defineExpose({ cleanup })
+</script>
+
+<style scoped lang="less">
+.file-distribution h4,
+.legend-value {
+  color: var(--color-text);
+}
+.donut-wrap {
+  position: relative;
+  height: 220px;
+}
+.file-type-chart {
+  width: 100%;
+  height: 100%;
+}
+.donut-summary {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  strong {
+    margin-top: 4px;
+    font-size: 24px;
+    color: var(--color-text);
+  }
+}
+.file-type-legend {
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+  li {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto 52px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 13px;
+  }
+}
+.legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.legend-name {
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+.legend-value,
+.legend-percent {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.legend-percent {
+  color: var(--color-text-secondary);
+}
+</style>
