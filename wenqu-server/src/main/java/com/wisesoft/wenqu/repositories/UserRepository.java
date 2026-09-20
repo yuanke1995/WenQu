@@ -111,6 +111,16 @@ public class UserRepository {
     }
 
     /**
+     * 按 uid 读取未删除用户
+     * （对位参考实现 {@code select(User).where(User.uid == uid, User.is_deleted == 0)}）。
+     */
+    public User getActiveByUid(String uid) {
+        return userMapper.selectOne(new LambdaQueryWrapper<User>()
+                .eq(User::getUid, uid)
+                .eq(User::getIsDeleted, 0));
+    }
+
+    /**
      * 按 uid 加锁读取未删除用户
      * （对位参考实现 {@code select(User).where(User.uid == …, User.is_deleted == 0).with_for_update()}）。
      */

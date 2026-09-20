@@ -887,6 +887,33 @@ public class AgentRunRepository {
                         .last("LIMIT " + limit));
     }
 
+    /** 在 runtime cleanup 事务内加锁读取 Run（对应 worker 侧 cleanup fence 里的 {@code with_for_update}）。 */
+    public AgentRun lockRunForRuntimeCleanup(String runId) {
+        return lockRun(runId);
+    }
+
+    /** runtime scope 内除指定 Run 外是否仍有未终态 Run（对应 cleanup 的「其他执行者仍活跃」判据）。 */
+    public boolean hasNonTerminalRunInRuntimeScope(String runtimeScopeId, String excludeRunId) {
+        Long count = runMapper.selectCount(new LambdaQueryWrapper<AgentRun>()
+                .eq(AgentRun::getRuntimeScopeId, String.valueOf(runtimeScopeId))
+                .ne(AgentRun::getId, excludeRunId)
+                .notIn(AgentRun::getStatus, TERMINAL_RUN_STATUSES));
+        return count != null && count > 0;
+    }
+
+    /** 在 cleanup fence 内确认后清除待清理标记（对应 {@code current.runtime_cleanup_pending = False}）。 */
+    @Transactional
+    public boolean clearRuntimeCleanupPending(String runId, LocalDateTime now) {
+        LocalDateTime currentTime = now == null ? DateTimeUtils.utcNowNaive() : now;
+        return runMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<AgentRun>()
+                                .eq(AgentRun::getId, runId)
+                                .set(AgentRun::getRuntimeCleanupPending, false)
+                                .set(AgentRun::getUpdatedAt, currentTime))
+                > 0;
+    }
+
     /** 由当前 lease owner 在首次执行前 write-once 固化运行清单。 */
     @Transactional
     public RunResult recordRunManifest(
