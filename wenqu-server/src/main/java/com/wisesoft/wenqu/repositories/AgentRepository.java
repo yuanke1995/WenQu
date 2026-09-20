@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -203,17 +204,25 @@ public class AgentRepository {
     }
 
     private final AgentMapper agentMapper;
-    private final BackendInfoProvider backendInfoProvider;
+    private final ObjectProvider<BackendInfoProvider> backendInfoProvider;
 
     /**
-     * 后端信息提供者按可选依赖注入：参考实现的注册表随 agents 运行时模块提供，
-     * 本工程尚未照搬该模块，故用 ObjectProvider 承载——未装配时 serialize 走"后端不存在"分支。
+     * 后端信息提供者按可选依赖注入：参考实现的 {@code serialize} 在运行期迟延导入
+     * {@code agents.buildin.agent_manager}（见 {@code repositories/agent_repository.py}），
+     * 本工程用 {@link ObjectProvider} 承载同一迟延语义——未装配时 serialize 走"后端不存在"分支。
+     *
+     * <p><b>必须在构造器里保持未解析</b>：{@link BackendInfoProvider} 的实现
+     * （{@code AgentBackendInfoProvider}）反过来依赖 {@code AgentManager}，而
+     * {@code AgentManager} → {@code ChatbotAgent} → {@code AgentCompositeBackend} →
+     * {@code SkillService} → 本类。构造期调用 {@code getIfAvailable()} 会把注入点"拉直"成
+     * 装配期强依赖，形成 Spring 单例环（已实测报 BeanCurrentlyInCreationException）。
+     * 故此处只存 provider，解析一律推迟到 {@link #serialize} 的调用点。
      */
     public AgentRepository(
             AgentMapper agentMapper,
-            org.springframework.beans.factory.ObjectProvider<BackendInfoProvider> backendInfoProvider) {
+            ObjectProvider<BackendInfoProvider> backendInfoProvider) {
         this.agentMapper = agentMapper;
-        this.backendInfoProvider = backendInfoProvider.getIfAvailable();
+        this.backendInfoProvider = backendInfoProvider;
     }
 
     // ==================== 模块级函数（对应参考实现的同名函数） ====================
@@ -727,14 +736,16 @@ public class AgentRepository {
         data.put("permission_locked", isBuiltin);
 
         Map<String, Object> backendInfo = null;
-        if (backendInfoProvider != null) {
+        // 迟延解析（不得提到构造器里，否则形成装配期单例环；见构造器注释）。
+        BackendInfoProvider provider = backendInfoProvider.getIfAvailable();
+        if (provider != null) {
             String cacheKey = agent.getBackendId() + "|" + includeConfigurableItems + "|" + user.role();
             if (backendInfoCache != null) {
                 backendInfo = backendInfoCache.get(cacheKey);
             }
             if (backendInfo == null) {
                 backendInfo =
-                        backendInfoProvider.getInfo(
+                        provider.getInfo(
                                 agent.getBackendId(), includeConfigurableItems, user.role());
                 if (backendInfoCache != null && backendInfo != null) {
                     backendInfoCache.put(cacheKey, backendInfo);

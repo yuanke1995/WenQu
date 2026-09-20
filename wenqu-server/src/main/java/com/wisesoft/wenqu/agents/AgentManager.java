@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
@@ -20,7 +21,7 @@ import org.springframework.stereotype.Service;
  * {@code chatbot}/{@code subagent} 子包并导入其中的 {@link BaseAgent} 子类。
  * 这两个子包的等价物在本工程是 {@link ChatbotAgent} 与 {@link SubAgentBackend}——
  * 它们都需要构造期注入（backend / 模型 / 工具注册表 / 仓库），反射无参构造不可行，
- * 故改由 Spring 容器按 {@code List<BaseAgent>} 注入后登记（见 {@link #AgentManager(List)}）。
+ * 故改由 Spring 容器按 {@code ObjectProvider<BaseAgent>} 提供后登记（见 {@link #AgentManager}）。
  *
  * <p>未由容器装配的类仍可按 {@link #registerAgent(Class)} 登记，此时
  * {@link #getAgent(String)} 走反射构造路径（保留参考实现的注册语义）。
@@ -45,6 +46,12 @@ public class AgentManager {
     private final Map<String, Class<? extends BaseAgent>> classes = new LinkedHashMap<>();
     private final Map<String, BaseAgent> instances = new LinkedHashMap<>();
 
+    /** 内置后端 bean 的迟延来源（见构造器注释：不得在构造期解析成强依赖）。 */
+    private final ObjectProvider<BaseAgent> agentBeanProvider;
+
+    /** 是否已把容器里的内置后端登记进 {@link #classes}/{@link #instances}。 */
+    private boolean agentBeansRegistered;
+
     /**
      * 从 Spring 容器装配已就绪的后端实例（对应参考实现
      * {@code auto_discover_agents()} 遍历 {@code buildin/} 子包的等价物）。
@@ -52,17 +59,33 @@ public class AgentManager {
      * <p>参考实现按目录顺序导入两个子包并注册其 {@code BaseAgent} 子类；
      * 本工程的两个内置后端（{@link ChatbotAgent} / {@link SubAgentBackend}）是
      * Spring 单例（构造期需要注入 backend/模型/工具注册表等依赖，反射无参构造不可行），
-     * 故由容器按 {@code List<BaseAgent>} 注入后登记。
+     * 故由容器提供后登记。
      *
-     * <p>能力差异（显式标注）：注入顺序由 Spring 决定（按 bean 名），
-     * 与参考实现的目录遍历顺序不保证一致；{@link #getAgentsInfo} 的输出顺序随之不同。
+     * <p><b>为什么收 {@link ObjectProvider} 而不是 {@code List<BaseAgent>}</b>：
+     * 两个内置后端反向依赖 {@code service} 层的运行期服务（{@code AgentRunService} /
+     * {@code SubagentRunService} / {@code AgentRequestQueueService}），而这些服务又注入本类。
+     * 直接收 {@code List<BaseAgent>} 会把「本类 → 内置后端 → 那些服务 → 本类」拉成装配期
+     * 强依赖环（已实测报 {@code BeanCurrentlyInCreationException}）。参考实现是运行期
+     * 迟延导入（{@code agent_manager.get_agent(...)}），并无装配期环，故此处用
+     * {@link ObjectProvider} 还原同一迟延语义：登记推迟到首次访问（见
+     * {@link #ensureAgentBeansRegistered()}）。
      */
-    public AgentManager(List<BaseAgent> agentBeans) {
-        if (agentBeans != null) {
-            for (BaseAgent agent : agentBeans) {
-                registerInstance(agent);
-            }
+    public AgentManager(ObjectProvider<BaseAgent> agentBeanProvider) {
+        this.agentBeanProvider = agentBeanProvider;
+    }
+
+    /**
+     * 首次访问时登记容器里的内置后端（迟延解析点；幂等，见构造器注释）。
+     *
+     * <p>与参考实现的差异：参考实现在 lifespan 的 {@code init_all_agents} 里显式注册并实例化；
+     * 本工程因运行时也需「未显式初始化即可用」（如构图、控制器直接取后端），改为首次访问时补齐。
+     */
+    private synchronized void ensureAgentBeansRegistered() {
+        if (agentBeansRegistered || agentBeanProvider == null) {
+            return;
         }
+        agentBeanProvider.orderedStream().forEach(this::registerInstance);
+        agentBeansRegistered = true;
     }
 
     /** 注册一个已构造好的智能体实例（Spring 注入路径；对应参考实现的 {@code _instances} 填充）。 */
@@ -82,6 +105,7 @@ public class AgentManager {
 
     /** 实例化全部已注册智能体（对应 {@code init_all_agents}）。 */
     public synchronized void initAllAgents() {
+        ensureAgentBeansRegistered();
         for (String agentId : new ArrayList<>(classes.keySet())) {
             getAgent(agentId);
         }
@@ -98,6 +122,7 @@ public class AgentManager {
     }
 
     public synchronized BaseAgent getAgent(String agentId, boolean reload, boolean reloadGraph) {
+        ensureAgentBeansRegistered();
         Class<? extends BaseAgent> agentClass = classes.get(agentId);
         if (agentClass == null) {
             log.debug("智能体后端未注册: {}", agentId);
@@ -133,6 +158,7 @@ public class AgentManager {
 
     /** 全部已实例化智能体（对应 {@code get_agents}）。 */
     public synchronized List<BaseAgent> getAgents() {
+        ensureAgentBeansRegistered();
         return new ArrayList<>(instances.values());
     }
 
@@ -154,6 +180,7 @@ public class AgentManager {
 
     /** 已注册的后端 id 集合（对应 {@code self._classes.keys()}）。 */
     public synchronized List<String> registeredIds() {
+        ensureAgentBeansRegistered();
         return new ArrayList<>(classes.keySet());
     }
 
@@ -161,11 +188,12 @@ public class AgentManager {
      * 自动发现并注册内置智能体（对应 {@code auto_discover_agents}）。
      *
      * <p>能力差异：Java 无运行时扫描包目录的等价机制。本工程的两个内置后端
-     * （{@link ChatbotAgent} / {@link SubAgentBackend}）已由 Spring 容器装配并登记
-     * （见 {@link #AgentManager(List)}），故本方法只作兼容入口：对尚未登记的类
+     * （{@link ChatbotAgent} / {@link SubAgentBackend}）已由 Spring 容器装配，并在首次访问时
+     * 登记（见 {@link #ensureAgentBeansRegistered()}），故本方法只作兼容入口：对尚未登记的类
      * 由调用方按 {@link #registerAgent(Class)} 显式补登。
      */
     public void autoDiscoverAgents() {
+        ensureAgentBeansRegistered();
         log.debug("内置智能体自动发现：由 Spring 装配完成，当前已登记 {} 个后端 {}", classes.size(), classes.keySet());
     }
 }
