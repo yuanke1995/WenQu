@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -95,6 +96,12 @@ public class ModelSelectors {
             Set.of(429, 500, 502, 503, 504);
 
     private final ModelProviderCache modelProviderCache;
+
+    /** spec 指纹 → 已构造的聊天客户端（见 {@link #buildChatModel(String)}）。 */
+    private final Map<String, OpenAiChatModel> chatModelCache = new ConcurrentHashMap<>();
+
+    /** 上述缓存的条目上限（供应商数量小，超过即整体清空重建）。 */
+    private static final int CHAT_MODEL_CACHE_MAX = 64;
 
     public ModelSelectors(ModelProviderCache modelProviderCache) {
         this.modelProviderCache = modelProviderCache;
@@ -801,10 +808,43 @@ public class ModelSelectors {
 
     /** 按 spec 选择聊天模型（参考实现 {@code select_model}）。 */
     public ChatAdapter selectModel(String modelSpec) {
+        ModelInfo info = requireChatModel(modelSpec);
+        return new ChatAdapter(buildChatModel(info), info.modelId(), info.baseUrl());
+    }
+
+    /**
+     * 按 spec 构造聊天客户端：baseUrl / apiKey / model 三要素全部取自 spec 所属的供应商行
+     * （对应参考实现 {@code load_chat_model} 按 {@code ModelInfo} 实例化的那一面）。
+     *
+     * <p>对话与智能体主链路由此获得"切前端选的模型即切实际出海口"的行为；供应商行的地址或密钥
+     * 变更体现为指纹变化，下一次构图自动换新客户端（与 {@code DynamicOpenAiChatModel} 的热切换同口径）。
+     *
+     * @param modelSpec 模型 spec（{@code provider_id:model_id}）
+     * @throws IllegalArgumentException spec 为空 / 未收录 / 不是 chat 模型 / provider_type 不支持
+     */
+    public OpenAiChatModel buildChatModel(String modelSpec) {
+        ModelInfo info = requireChatModel(modelSpec);
+        String key = specFingerprint(info);
+        OpenAiChatModel cached = chatModelCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        // 条目数封顶：只可能由频繁改供应商配置累积，整体清空即可（容量小、重建无网络开销）
+        if (chatModelCache.size() > CHAT_MODEL_CACHE_MAX) {
+            chatModelCache.clear();
+        }
+        OpenAiChatModel created = buildChatModel(info);
+        chatModelCache.put(key, created);
+        return created;
+    }
+
+    /**
+     * 取 spec 对应的 chat 模型信息并校验（参考实现 {@code models/chat.py} 的取值 + type 检查）。
+     */
+    private ModelInfo requireChatModel(String modelSpec) {
         if (modelSpec == null || modelSpec.isEmpty()) {
             throw new IllegalArgumentException("model_spec 不能为空");
         }
-
         ModelInfo info = modelProviderCache.getModelInfo(modelSpec);
         if (info == null) {
             List<ModelInfo> available = modelProviderCache.getAllSpecs("chat");
@@ -820,15 +860,27 @@ public class ModelSelectors {
                             + "): "
                             + StringUtils.pythonListRepr(availableIds));
         }
-
         if (!"chat".equals(info.modelType())) {
             throw new IllegalArgumentException(
                     "Model " + modelSpec + " is not a chat model (type=" + info.modelType() + ")");
         }
-
         log.info("Selecting model: {} (provider_type={})", modelSpec, info.providerType());
+        return info;
+    }
 
-        return new ChatAdapter(buildChatModel(info), info.modelId(), info.baseUrl());
+    /** 供应商三要素指纹：任一变化即重建客户端（key 不入这种内存结构以外的地方，故可直接参与拼接）。 */
+    private static String specFingerprint(ModelInfo info) {
+        return info.spec()
+                + "|"
+                + info.baseUrl()
+                + "|"
+                + info.apiKey()
+                + "|"
+                + info.providerType()
+                + "|"
+                + info.headers()
+                + "|"
+                + info.requestBodyOverrides();
     }
 
     /**
