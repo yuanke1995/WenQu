@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.wisesoft.wenqu.models.KnowledgeChunk;
 import com.wisesoft.wenqu.repositories.KnowledgeChunkRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
-import com.wisesoft.wenqu.service.HybridRetrievalService;
+import com.wisesoft.wenqu.models.RetrievalHit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -36,7 +36,7 @@ import java.util.Map;
  *       本工程后端为 Spring AI {@code VectorStore}，由 {@link GraphVectorStore} 以 kb_id
  *       过滤承载；入参/返回字段/排序语义保持一致。</li>
  *   <li>参考实现的 base 召回来自 Milvus Hit（{@code _build_chunk_from_hit}），本工程 base 召回
- *       来自 {@link HybridRetrievalService#search(String)} 的 {@code Hit}，故
+ *       来自基础召回的 {@link RetrievalHit}，故
  *       {@link #buildChunkFromHit} 的入参类型随之替换为该 record，字段映射逐项对齐。</li>
  *   <li>图谱检索整体 fail-soft：任一步异常都返回空列表并记日志，不打断主检索
  *       （与参考实现 {@code except Exception: return []} 一致）。</li>
@@ -210,7 +210,7 @@ public class KnowledgeGraphRetrieval {
      * 把基础召回结果转成知识库统一返回结构（对应 {@code _build_chunk_from_hit}）。
      *
      * <p>必要替换：参考实现入参是 Milvus {@code hit}（取 {@code hit.entity.file_id /
-     * chunk_id / chunk_index / content}），本工程基础召回是 {@link HybridRetrievalService.Hit}，
+     * chunk_id / chunk_index / content}），本工程基础召回是 {@link RetrievalHit}，
      * 字段逐一对应。
      *
      * @param hit       基础召回命中
@@ -218,7 +218,7 @@ public class KnowledgeGraphRetrieval {
      * @param scoreField 额外写回的分数键（如 {@code bm25_score} / {@code hybrid_score}），可为空
      */
     public static Map<String, Object> buildChunkFromHit(
-            HybridRetrievalService.Hit hit, double score, String scoreField) {
+            RetrievalHit hit, double score, String scoreField) {
         Map<String, Object> metadata = baseMetadata(hit.knowledgeId(), hit.docId(), hit.chunkIndex());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("content", hit.content() == null ? "" : hit.content());

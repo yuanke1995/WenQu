@@ -273,10 +273,6 @@ public class ConfigService {
     private final Environment environment;
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
-    /** @Lazy 打破循环依赖：KeywordIndexService 构造依赖本类，仅引擎切换校验/重建时使用 */
-    private final KeywordIndexService keywordIndexService;
-    /** @Lazy 打破循环依赖：DocumentService 构造依赖本类，仅向量模型切换触发全量重嵌入时使用 */
-    private final DocumentService documentService;
     /** 敏感项（*.apiKey）RSA 加解密 */
     private final ConfigCryptoService crypto;
 
@@ -287,16 +283,12 @@ public class ConfigService {
 
     public ConfigService(ConfigMapper configMapper, AppProperties properties, Environment environment,
                          StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                         @org.springframework.context.annotation.Lazy KeywordIndexService keywordIndexService,
-                         @org.springframework.context.annotation.Lazy DocumentService documentService,
                          ConfigCryptoService crypto) {
         this.configMapper = configMapper;
         this.properties = properties;
         this.environment = environment;
         this.redisTemplate = redisTemplate;
         this.redisProperties = redisProperties;
-        this.keywordIndexService = keywordIndexService;
-        this.documentService = documentService;
         this.crypto = crypto;
     }
 
@@ -853,14 +845,8 @@ public class ConfigService {
         if (ke != null && !ke.isBlank() && !"mysql".equalsIgnoreCase(ke) && !"meilisearch".equalsIgnoreCase(ke)) {
             throw new IllegalArgumentException("keyword.engine 仅允许 mysql / meilisearch");
         }
-        // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）
-        if (ke != null && "meilisearch".equalsIgnoreCase(ke)) {
-            if (!keywordIndexService.checkAvailable()) {
-                String reason = keywordIndexService.debugUnavailableReason();
-                throw new IllegalArgumentException("Meilisearch 服务不可用（" + (reason == null ? "探测失败" : reason)
-                        + "），请先启动 Meilisearch（docker compose 或本地）再切换");
-            }
-        }
+        // 注：关键词引擎的可用性探测与全量重建原由 KeywordIndexService 承担（MySQL LIKE / Meilisearch 两路）；
+        //     该服务随旧文档链（c_ai_document）一并下线，故此处只保留取值合法性校验。
         String kt = updates.get("keyword.timeoutMillis");
         if (kt != null && !kt.isBlank()) {
             try {
@@ -996,22 +982,8 @@ public class ConfigService {
         log.info("模型配置已更新: {}", updates.keySet());
         // 广播其他实例刷新（多副本部署配置同步）
         publishConfigChanged();
-        // 向量模型切换：自动触发全量重嵌入（异步后台；期间向量检索降级关键词路，不影响服务可用）。
-        // 多副本部署：Redis 索引共享，由保存配置的实例单点执行即可，其余实例 DynamicEmbeddingModel
-        // 自行重建客户端后与新索引自然对齐
-        if (embeddingChanged) {
-            documentService.reembedAllAsync();
-            log.info("[Config] 向量模型已切换，自动触发全量重嵌入");
-        }
-        // 自动全量重建（仅真实切换 mysql→meilisearch 时；reindexAll 内部有防重入与可用性检查）
-        if (engineSwitchedToMeili) {
-            try {
-                keywordIndexService.reindexAll();
-                log.info("[Config] 关键词引擎已切换至 Meilisearch，自动触发索引全量重建");
-            } catch (Exception e) {
-                log.warn("[Config] 自动触发索引重建失败（可稍后手动调 /api/ai/search-index/reindex）: {}", e.getMessage());
-            }
-        }
+        // 注：全量重嵌入原由 DocumentService.reembedAllAsync 触发，关键词索引全量重建原由
+        //     KeywordIndexService.reindexAll 触发；两者均随旧文档链下线移除，此处只保留配置更新与广播。
         return updates;
     }
 

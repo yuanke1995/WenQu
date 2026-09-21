@@ -38,7 +38,10 @@ spring:
       image: false
       moderation: false
     openai:
-      # 可为空：模型 bean 已关闭；仅供需要连接信息的基础设施读取
+      # 模型（OpenAI 兼容）：与旧后端共用同一网关。值以数据库配置为准（c_ai_config.chat.*，
+      # 由 DynamicOpenAiChatModel 在每次请求前读取），这里只放最小兜底 —— 数据库没有该配置时才落到它，
+      # 免得 Spring AI 自动配置回落成默认网关。临时覆盖用环境变量 WENQU_LLM_BASE_URL。
+      # 注：对话/智能体的出海口不走这里，由 model_providers 的供应商行决定（ModelSelectors#buildChatModel）。
       api-key: ${WENQU_LLM_API_KEY:}
       base-url: ${WENQU_LLM_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}
     vectorstore:
@@ -47,10 +50,10 @@ spring:
         initialize-schema: true
         index-name: ai-doc-index
         prefix: "ai:chunk:"
-  # 首期复用现有业务库（知识库/文档/会话表同源），便于与旧后端并行对比验证；
-  # 后续按新模型演进 schema 时再切换
+  # 2026-09-21：业务库切到 wenqu（干净库，只有 db/schema-mysql.sql 的 36 张表、无 c_ai_*，
+  # 数据按新表逐表迁入）。回滚只需把库名改回 ai_doc_assistant（旧库未做任何删除，保留原样）。
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/ai_doc_assistant?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/wenqu?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: ${WENQU_DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
