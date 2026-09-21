@@ -17,13 +17,16 @@
 #                  docker compose up -d --build
 #
 # 用法：
-#   bash run.sh install    # 建 .venv 并安装依赖
-#   bash run.sh start      # 后台启动
-#   bash run.sh stop       # 停止
+#   bash run.sh install     # 建 .venv 并安装依赖（仅 memory 后端需要）
+#   bash run.sh start       # memory 后端：后台启动
+#   bash run.sh stop        # 停止 memory 后端
 #   bash run.sh restart
-#   bash run.sh status     # 进程状态 + /health 探测
-#   bash run.sh logs       # 跟踪日志
-#   bash run.sh foreground # 前台启动（调试用）
+#   bash run.sh status      # 状态 + /health 探测（两种后端通用）
+#   bash run.sh logs        # 跟踪 memory 后端日志
+#   bash run.sh foreground  # memory 后端前台启动（调试用）
+#   bash run.sh docker-up   # docker 后端：docker compose up -d（真沙盒）
+#   bash run.sh docker-down # docker 后端：docker compose down
+#   bash run.sh docker-logs # docker 后端：跟踪容器日志
 #
 set -euo pipefail
 
@@ -77,6 +80,11 @@ is_running() {
   kill -0 "$pid" 2>/dev/null
 }
 
+# 两种后端互斥（都占 $PORT），启动前先看端口是否已被别人占住。
+port_in_use() {
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
+}
+
 start() {
   if [ ! -x "$PY" ]; then
     echo "未找到 $PY，请先执行：bash run.sh install" >&2
@@ -85,6 +93,12 @@ start() {
   if is_running; then
     echo "已在运行（pid=$(cat "$PID_FILE")）"
     return 0
+  fi
+  if port_in_use; then
+    echo "$PORT 已被占用（多半是 docker 后端在跑）——" >&2
+    echo "  想用 docker 后端：bash run.sh status" >&2
+    echo "  想切回 memory：   bash run.sh docker-down && bash run.sh start" >&2
+    exit 1
   fi
   echo "==> 启动 provisioner：backend=$PROVISIONER_BACKEND bind=$BIND_HOST:$PORT"
   cd "$HERE"
@@ -125,11 +139,70 @@ stop() {
   echo "==> 已停止"
 }
 
+foreground() {
+  cd "$HERE"
+  exec "$PY" -m uvicorn app:app --host "$BIND_HOST" --port "$PORT"
+}
+
+# ==================== docker 后端（真沙盒） ====================
+
+# Docker Desktop 的 CLI 不在默认 PATH 里，逐个候选目录兜底。
+ensure_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    for candidate in /Applications/Docker.app/Contents/Resources/bin /usr/local/bin /opt/homebrew/bin; do
+      if [ -x "$candidate/docker" ]; then
+        PATH="$candidate:$PATH"
+        export PATH
+        break
+      fi
+    done
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "找不到 docker 命令，请确认 Docker Desktop 已安装并启动" >&2
+    return 1
+  fi
+}
+
+compose() {
+  ensure_docker || exit 1
+  ( cd "$HERE" && docker compose "$@" )
+}
+
+docker_up() {
+  ensure_docker || exit 1
+  if is_running; then
+    echo "memory 后端正在占用 $PORT，先执行：bash run.sh stop" >&2
+    exit 1
+  fi
+  echo "==> docker 后端（真沙盒）：docker compose up -d"
+  compose up -d
+  compose ps
+}
+
+docker_down() {
+  echo "==> 停止 docker 后端"
+  compose down
+}
+
+docker_logs() {
+  compose logs -f --tail=50
+}
+
+# 报告 8002 端口当前由哪种后端占用（两种后端互斥）。
 status() {
   if is_running; then
-    echo "进程：运行中（pid=$(cat "$PID_FILE")）"
+    echo "memory 后端：运行中（pid=$(cat "$PID_FILE")）"
   else
-    echo "进程：未运行"
+    echo "memory 后端：未运行"
+  fi
+  if ensure_docker >/dev/null 2>&1; then
+    local container
+    container="$(docker ps --filter "name=^wenqu-sandbox-provisioner$" --format '{{.Status}}' 2>/dev/null | head -1)"
+    if [ -n "$container" ]; then
+      echo "docker 后端：运行中（$container）"
+    else
+      echo "docker 后端：未运行"
+    fi
   fi
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 \
@@ -140,12 +213,7 @@ status() {
   else
     echo "健康：不可达（HTTP $code）"
   fi
-  echo "后端：$PROVISIONER_BACKEND   公网URL：$PROVISIONER_PUBLIC_URL"
-}
-
-foreground() {
-  cd "$HERE"
-  exec "$PY" -m uvicorn app:app --host "$BIND_HOST" --port "$PORT"
+  echo "公网URL：$PROVISIONER_PUBLIC_URL（API 侧 SANDBOX_PROVISIONER_URL 应与之一致）"
 }
 
 case "${1:-start}" in
@@ -156,8 +224,11 @@ case "${1:-start}" in
   status) status ;;
   logs) tail -f "$LOG_FILE" ;;
   foreground) foreground ;;
+  docker-up) docker_up ;;
+  docker-down) docker_down ;;
+  docker-logs) docker_logs ;;
   *)
-    echo "用法：bash run.sh {install|start|stop|restart|status|logs|foreground}" >&2
+    echo "用法：bash run.sh {install|start|stop|restart|status|logs|foreground|docker-up|docker-down|docker-logs}" >&2
     exit 1
     ;;
 esac
