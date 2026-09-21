@@ -110,7 +110,10 @@ public class KnowledgeBaseCache {
         snapshot.put("kb_id", row.getKbId());
         snapshot.put("kb_type", row.getKbType() == null || row.getKbType().isEmpty() ? "milvus" : row.getKbType());
         snapshot.put("embedding_model_spec", row.getEmbeddingModelSpec());
-        snapshot.put("query_params", row.getQueryParams());
+        // 参考实现的 row.query_params 是 JSONB 映射（dict），本工程实体为 JSON 文本，
+        // 必须先解析再入快照：否则读取路径的 toMap() 会把字符串按非 Map 丢弃，
+        // 运行配置静默回落到默认值（表现为「检索参数保存成功但读回来还是默认值」）。
+        snapshot.put("query_params", parseObject(row.getQueryParams()));
         snapshot.put("additional_params", additionalParams);
         return snapshot;
     }

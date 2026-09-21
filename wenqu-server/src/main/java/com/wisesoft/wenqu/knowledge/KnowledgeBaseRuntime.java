@@ -16,6 +16,7 @@ import com.wisesoft.wenqu.repositories.KnowledgeBaseCache;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeChunkRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
+import com.wisesoft.wenqu.repositories.ModelProviderCache;
 import com.wisesoft.wenqu.repositories.RepoValues;
 import com.wisesoft.wenqu.service.FileStatus;
 import com.wisesoft.wenqu.service.KeywordExtractor;
@@ -118,6 +119,9 @@ public class KnowledgeBaseRuntime {
     /** 重排模型选择器（对应参考实现 models/rerank.py 的 {@code get_reranker}）。 */
     private final ModelSelectors modelSelectors;
 
+    /** 模型缓存：检索参数里的 {@code reranker_model} 选项由当前重排模型清单动态供给。 */
+    private final ModelProviderCache modelProviderCache;
+
     public KnowledgeBaseRuntime(
             KnowledgeFileRepository fileRepository,
             KnowledgeChunkRepository chunkRepository,
@@ -130,7 +134,8 @@ public class KnowledgeBaseRuntime {
             ObjectProvider<MilvusGraphService> graphServiceProvider,
             ObjectProvider<KnowledgeGraphRetrieval> graphRetrievalProvider,
             KeywordExtractor keywordExtractor,
-            ModelSelectors modelSelectors) {
+            ModelSelectors modelSelectors,
+            ModelProviderCache modelProviderCache) {
         this.fileRepository = fileRepository;
         this.chunkRepository = chunkRepository;
         this.kbRepository = kbRepository;
@@ -143,6 +148,7 @@ public class KnowledgeBaseRuntime {
         this.graphRetrievalProvider = graphRetrievalProvider;
         this.keywordExtractor = keywordExtractor;
         this.modelSelectors = modelSelectors;
+        this.modelProviderCache = modelProviderCache;
     }
 
     // ==================== 配置 ====================
@@ -174,7 +180,11 @@ public class KnowledgeBaseRuntime {
         Map<String, Object> additionalParams =
                 KnowledgeBaseTypeParams.normalizeAdditionalParams(kbType, toMap(snapshot.get("additional_params")));
         additionalParams.remove("stats");
-        Map<String, Object> queryParams = toMap(snapshot.get("query_params"));
+        // 快照中的 query_params 应为对象（见 KnowledgeBaseCache#serializeKbConfig）；
+        // 兼容 TTL 内可能残留的旧快照（JSON 文本形态）再做一次解析，解析失败回落默认值。
+        Object rawQueryParams = snapshot.get("query_params");
+        Map<String, Object> queryParams =
+                rawQueryParams instanceof String text ? parseJsonMap(text) : toMap(rawQueryParams);
         if (queryParams.isEmpty()) {
             queryParams = new LinkedHashMap<>(KnowledgeBaseTypeParams.defaultQueryParams(kbType));
         }
@@ -187,9 +197,14 @@ public class KnowledgeBaseRuntime {
         return KnowledgeBaseTypeParams.createParamsConfig(getKbConfig(kbId).kbType());
     }
 
-    /** 知识库类型的查询参数配置（对应 get_query_params_config）。 */
+    /**
+     * 知识库类型的查询参数配置（对应 get_query_params_config）。
+     *
+     * <p>{@code reranker_model} 的选项由当前重排模型清单动态供给。
+     */
     public Map<String, Object> getQueryParamsConfig(String kbId) {
-        return KnowledgeBaseTypeParams.queryParamsConfig(getKbConfig(kbId).kbType());
+        return KnowledgeBaseTypeParams.queryParamsConfig(
+                getKbConfig(kbId).kbType(), modelProviderCache.getAllSpecs("rerank"));
     }
 
     /** 知识库类型的查询参数默认值（对应 get_default_query_params）。 */

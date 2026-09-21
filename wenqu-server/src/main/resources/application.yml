@@ -107,7 +107,7 @@ wenqu:
 logging:
   level:
     root: info
-    com.wisesoft.wenqu: debug
+    com.wisesoft.wenqu: info
 
 # 关掉 Neo4j 健康检查：它与上面的 Neo4jAutoConfiguration 是一对——Driver bean 已被排除，
 # 健康检查再去找 Driver 只会让启动期多一个失败点。图谱能力自身的可用性由

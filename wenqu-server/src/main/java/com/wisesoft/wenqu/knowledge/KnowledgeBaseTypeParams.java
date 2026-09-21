@@ -1,5 +1,6 @@
 package com.wisesoft.wenqu.knowledge;
 
+import com.wisesoft.wenqu.models.ModelInfo;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,9 +18,10 @@ import java.util.Map;
  *   <li>Python 用 {@code @dataclass field(metadata=...)} 声明 {@code MilvusRetrievalConfig}，
  *       本工程无 dataclass，改为显式 List/Map 常量——字段名、label、type、min/max/step、
  *       depend_on、默认值、选项文案逐字对齐 {@code _retrieval_config_options()} 的产出。
- *   <li>{@code options_provider="rerank_models"} 在参考实现里由 {@code model_cache} 动态供给重排模型清单；
- *       本工程重排模型来源是设置页配置，此处输出空 options（不伪造模型清单），
- *       与「Dify/Notion 只读连接器未实现」同属如实降级。
+ *   <li>{@code options_provider="rerank_models"}（{@code reranker_model} 的选项来源）在参考实现里由
+ *       {@code model_cache.get_all_specs("rerank")} 动态供给；本工程因该工具类为静态方法、
+ *       无依赖注入，改由调用方把当前重排模型清单传入
+ *       {@link #queryParamsConfig(String, java.util.List)} 后填充，产出结构不变。
  *   <li>{@code Get DEFAULT_QUERY_PARAMS} 只提取带 {@code default} 的项，与参考实现口径一致。
  * </ul>
  */
@@ -27,65 +29,109 @@ public final class KnowledgeBaseTypeParams {
 
     private KnowledgeBaseTypeParams() {}
 
-    /** MILVUS：查询参数配置字段（对应 MilvusRetrievalConfig + _retrieval_config_options）。 */
-    private static final List<Map<String, Object>> MILVUS_QUERY_OPTIONS = List.of(
-            option("search_mode", "检索模式", "select", "vector",
-                    Map.of("options", List.of(
-                            selectItem("vector", "向量检索", "仅使用向量相似度检索"),
-                            selectItem("keyword", "BM25 全文检索", "仅使用 Milvus BM25 检索"),
-                            selectItem("hybrid", "混合检索", "Milvus 向量检索与 BM25 融合检索"))),
-                    Map.of("description", "选择检索模式")),
-            option("final_top_k", "最终返回 Chunk 数", "number", 10,
-                    Map.of("min", 1, "max", 100),
-                    Map.of("description", "重排序后返回给前端的文档数量")),
-            option("similarity_threshold", "相似度阈值（0-1）", "number", 0.0d,
-                    Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
-                    Map.of("description", "过滤相似度低于此值的结果")),
-            option("bm25_top_k", "BM25 召回数量", "number", 50,
-                    Map.of("min", 1, "max", 200),
-                    Map.of("description", "BM25 全文检索和混合检索中的 BM25 候选数量")),
-            option("vector_weight", "向量检索权重", "number", 0.7d,
-                    Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
-                    Map.of("description", "混合检索中向量召回结果的融合权重")),
-            option("bm25_weight", "BM25 权重", "number", 0.3d,
-                    Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
-                    Map.of("description", "混合检索中 BM25 召回结果的融合权重")),
-            option("bm25_drop_ratio_search", "BM25 稀疏项丢弃比例", "number", 0.0d,
-                    Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
-                    Map.of("description", "BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回")),
-            option("include_distances", "显示相似度", "boolean", Boolean.TRUE,
-                    Map.of(),
-                    Map.of("description", "在结果中显示相似度分数")),
-            option("use_graph_retrieval", "启用图检索", "boolean", Boolean.FALSE,
-                    Map.of(),
-                    Map.of("description", "是否启用实体和三元组扩散检索")),
-            option("graph_entity_top_k", "图实体召回数量", "number", 10,
-                    Map.of("min", 1, "max", 100, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "通过 Query 召回的实体数量")),
-            option("graph_triple_top_k", "图三元组召回数量", "number", 10,
-                    Map.of("min", 1, "max", 100, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "通过 Query 召回的三元组数量")),
-            option("graph_max_nodes", "图检索最大节点数", "number", 10000,
-                    Map.of("min", 100, "max", 50000, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "2-hop 扩散子图最多读取的节点数量")),
-            option("graph_top_k", "图召回 Chunk 数", "number", 20,
-                    Map.of("min", 1, "max", 200, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "PPR 后从图谱路径召回的 Chunk 数量")),
-            option("graph_weight", "图检索融合权重", "number", 1.0d,
-                    Map.of("min", 0.0d, "max", 5.0d, "step", 0.1d, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "排名融合时图检索结果的权重")),
-            option("ppr_damping", "PPR 阻尼系数", "number", 0.85d,
-                    Map.of("min", 0.1d, "max", 0.99d, "step", 0.01d, "depend_on", List.of("use_graph_retrieval", true)),
-                    Map.of("description", "Personalized PageRank 的阻尼系数")),
-            option("use_reranker", "启用重排序", "boolean", Boolean.FALSE,
-                    Map.of(),
-                    Map.of("description", "是否使用精排模型对检索结果进行重排序")),
-            option("reranker_model", "重排序模型", "select", "",
-                    Map.of("depend_on", List.of("use_reranker", true), "options", List.of()),
-                    Map.of("description", "选择用于本次查询的重排序模型")),
-            option("recall_top_k", "召回数量", "number", 50,
-                    Map.of("min", 10, "max", 200, "depend_on", List.of("use_reranker", true)),
-                    Map.of("description", "向量检索或混合检索保留的候选数量（启用重排序时有效）")));
+    /**
+     * MILVUS：查询参数配置字段（对应 MilvusRetrievalConfig + _retrieval_config_options）。
+     *
+     * <p>每次调用重建列表（与参考实现逐字段遍历 metadata 产出选项的语义一致，且不共享可变实例——
+     * 调用方会就地把当前保存值写回 {@code default}）。
+     *
+     * <p>{@code options_provider="rerank_models"} 分支：{@code reranker_model} 的选项由
+     * {@code rerankModels} 动态填充，与参考实现的
+     * {@code [{"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")]}
+     * 逐项对应。
+     */
+    private static List<Map<String, Object>> milvusQueryOptions(List<ModelInfo> rerankModels) {
+        return List.of(
+                option("search_mode", "检索模式", "select", "vector",
+                        Map.of("options", List.of(
+                                selectItem("vector", "向量检索", "仅使用向量相似度检索"),
+                                selectItem("keyword", "BM25 全文检索", "仅使用 Milvus BM25 检索"),
+                                selectItem("hybrid", "混合检索", "Milvus 向量检索与 BM25 融合检索"))),
+                        Map.of("description", "选择检索模式")),
+                option("final_top_k", "最终返回 Chunk 数", "number", 10,
+                        Map.of("min", 1, "max", 100),
+                        Map.of("description", "重排序后返回给前端的文档数量")),
+                option("similarity_threshold", "相似度阈值（0-1）", "number", 0.0d,
+                        Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
+                        Map.of("description", "过滤相似度低于此值的结果")),
+                option("bm25_top_k", "BM25 召回数量", "number", 50,
+                        Map.of("min", 1, "max", 200),
+                        Map.of("description", "BM25 全文检索和混合检索中的 BM25 候选数量")),
+                option("vector_weight", "向量检索权重", "number", 0.7d,
+                        Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
+                        Map.of("description", "混合检索中向量召回结果的融合权重")),
+                option("bm25_weight", "BM25 权重", "number", 0.3d,
+                        Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
+                        Map.of("description", "混合检索中 BM25 召回结果的融合权重")),
+                option("bm25_drop_ratio_search", "BM25 稀疏项丢弃比例", "number", 0.0d,
+                        Map.of("min", 0.0d, "max", 1.0d, "step", 0.1d),
+                        Map.of("description", "BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回")),
+                option("include_distances", "显示相似度", "boolean", Boolean.TRUE,
+                        Map.of(),
+                        Map.of("description", "在结果中显示相似度分数")),
+                option("use_graph_retrieval", "启用图检索", "boolean", Boolean.FALSE,
+                        Map.of(),
+                        Map.of("description", "是否启用实体和三元组扩散检索")),
+                option("graph_entity_top_k", "图实体召回数量", "number", 10,
+                        Map.of("min", 1, "max", 100, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "通过 Query 召回的实体数量")),
+                option("graph_triple_top_k", "图三元组召回数量", "number", 10,
+                        Map.of("min", 1, "max", 100, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "通过 Query 召回的三元组数量")),
+                option("graph_max_nodes", "图检索最大节点数", "number", 10000,
+                        Map.of("min", 100, "max", 50000, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "2-hop 扩散子图最多读取的节点数量")),
+                option("graph_top_k", "图召回 Chunk 数", "number", 20,
+                        Map.of("min", 1, "max", 200, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "PPR 后从图谱路径召回的 Chunk 数量")),
+                option("graph_weight", "图检索融合权重", "number", 1.0d,
+                        Map.of("min", 0.0d, "max", 5.0d, "step", 0.1d, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "排名融合时图检索结果的权重")),
+                option("ppr_damping", "PPR 阻尼系数", "number", 0.85d,
+                        Map.of("min", 0.1d, "max", 0.99d, "step", 0.01d, "depend_on", List.of("use_graph_retrieval", true)),
+                        Map.of("description", "Personalized PageRank 的阻尼系数")),
+                option("use_reranker", "启用重排序", "boolean", Boolean.FALSE,
+                        Map.of(),
+                        Map.of("description", "是否使用精排模型对检索结果进行重排序")),
+                option("reranker_model", "重排序模型", "select", "",
+                        rerankerModelOption(rerankModels),
+                        Map.of("description", "选择用于本次查询的重排序模型")),
+                option("recall_top_k", "召回数量", "number", 50,
+                        Map.of("min", 10, "max", 200, "depend_on", List.of("use_reranker", true)),
+                        Map.of("description", "向量检索或混合检索保留的候选数量（启用重排序时有效）")));
+    }
+
+    /**
+     * {@code reranker_model} 选项的额外字段：{@code depend_on} 与动态填充的 {@code options}。
+     *
+     * <p>用显式表承载而非 {@code Map.of(...)} 内联：两个值的静态类型不同
+     * （{@code List<Object>} 与 {@code List<Map<String, Object>>}），内联会依赖目标类型推断，
+     * 显式表更稳且与其它选项的写法区分开。
+     */
+    private static Map<String, Object> rerankerModelOption(List<ModelInfo> rerankModels) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("depend_on", List.of("use_reranker", true));
+        extra.put("options", rerankModelOptions(rerankModels));
+        return extra;
+    }
+
+    /**
+     * 重排模型下拉项（对应参考实现 {@code options_provider="rerank_models"} 的产出结构：
+     * {@code {"label": info.display_name, "value": info.spec}}）。
+     */
+    private static List<Map<String, Object>> rerankModelOptions(List<ModelInfo> rerankModels) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        if (rerankModels == null) {
+            return items;
+        }
+        for (ModelInfo info : rerankModels) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("label", info.displayName());
+            item.put("value", info.spec());
+            items.add(item);
+        }
+        return items;
+    }
 
     /** DIFY：创建参数配置（对应 DifyKB.get_create_params_config）。 */
     private static final List<Map<String, Object>> DIFY_CREATE_OPTIONS = List.of(
@@ -160,15 +206,25 @@ public final class KnowledgeBaseTypeParams {
 
     // ==================== 查询参数配置 ====================
 
-    /** 查询参数配置（对应 get_query_params_config）。 */
+    /** 查询参数配置（对应 get_query_params_config）；不含动态选项，重排模型清单为空。 */
     public static Map<String, Object> queryParamsConfig(String kbType) {
+        return queryParamsConfig(kbType, List.of());
+    }
+
+    /**
+     * 查询参数配置（对应 get_query_params_config）。
+     *
+     * <p>{@code rerankModels} 供 {@code options_provider="rerank_models"} 动态填充选项；
+     * 调用方应传入当前模型缓存中的重排模型清单（见 {@code ModelProviderCache#getAllSpecs(String)}）。
+     */
+    public static Map<String, Object> queryParamsConfig(String kbType, List<ModelInfo> rerankModels) {
         String type = normalizeKbType(kbType);
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("type", type);
         config.put("options", switch (type) {
             case "dify" -> DIFY_QUERY_OPTIONS;
             case "notion" -> NOTION_QUERY_OPTIONS;
-            default -> MILVUS_QUERY_OPTIONS;
+            default -> milvusQueryOptions(rerankModels);
         });
         return config;
     }

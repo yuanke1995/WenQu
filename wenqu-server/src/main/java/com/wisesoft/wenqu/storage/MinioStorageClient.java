@@ -133,9 +133,12 @@ public class MinioStorageClient {
             synchronized (this) {
                 current = client;
                 if (current == null) {
+                    // minio-java 8.x 的 endpoint() 需要完整 URL（含 http:// 或 https://），
+                    // 裸 host:port 会被 SDK 主机名校验拒绝（invalid hostname）。
+                    // 因此不要把 scheme 去掉，直接把 MINIO_URI 原样传给 endpoint()。
                     String endpoint = this.endpoint;
-                    if (endpoint.contains("://")) {
-                        endpoint = endpoint.substring(endpoint.indexOf("://") + 3);
+                    if (!endpoint.contains("://")) {
+                        endpoint = "http://" + endpoint;
                     }
                     current = MinioClient.builder()
                             .endpoint(endpoint)

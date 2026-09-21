@@ -130,7 +130,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
     /** OpenAI SDK 风格版本段尾缀：…/v1 ~ …/v9（如 /compatible-mode/v1、/api/paas/v4、/api/v3、/v2） */
     private static final java.util.regex.Pattern VERSION_SUFFIX = java.util.regex.Pattern.compile("^(.+)/v([1-9])$");
     /** Spring AI 默认补全路径（与 OpenAiApi 默认一致） */
-    private static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
+    static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
 
     /** DB 配置优先（ConfigService 内含 defaults 兜底），空值再回退 Spring AI 原生属性（保持 yml/env 语义） */
     private String resolve(String cfgKey, String envKey) {

@@ -11,6 +11,7 @@ import com.wisesoft.wenqu.permissions.ShareableResource;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseCache;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
+import com.wisesoft.wenqu.repositories.ModelProviderCache;
 import com.wisesoft.wenqu.repositories.RepoValues;
 import com.wisesoft.wenqu.repositories.UserRepository;
 import com.wisesoft.wenqu.service.KnowledgeFolderService;
@@ -80,6 +81,8 @@ public class KnowledgeBaseManager {
     private final KnowledgeBaseRuntime runtime;
     private final KnowledgeBaseCache kbCache;
     private final KnowledgeFolderService folderService;
+    /** 模型缓存：检索参数里的 {@code reranker_model} 选项由当前重排模型清单动态供给。 */
+    private final ModelProviderCache modelProviderCache;
 
     public KnowledgeBaseManager(
             KnowledgeBaseRepository kbRepository,
@@ -87,13 +90,15 @@ public class KnowledgeBaseManager {
             UserRepository userRepository,
             KnowledgeBaseRuntime runtime,
             KnowledgeBaseCache kbCache,
-            KnowledgeFolderService folderService) {
+            KnowledgeFolderService folderService,
+            ModelProviderCache modelProviderCache) {
         this.kbRepository = kbRepository;
         this.fileRepository = fileRepository;
         this.userRepository = userRepository;
         this.runtime = runtime;
         this.kbCache = kbCache;
         this.folderService = folderService;
+        this.modelProviderCache = modelProviderCache;
     }
 
     /** {@code get_database_document_support} 的返回值（Java 无元组，改用 record 承载）。 */
@@ -549,11 +554,18 @@ public class KnowledgeBaseManager {
         return asMap(KnowledgeFileViews.buildSearchOutput(kbId, results));
     }
 
-    /** 知识库检索参数定义，并合并当前保存值（对应 get_kb_query_params_config）。 */
+    /**
+     * 知识库检索参数定义，并合并当前保存值（对应 get_kb_query_params_config）。
+     *
+     * <p>{@code reranker_model} 的选项由当前重排模型清单动态供给（对应参考实现的
+     * {@code options_provider="rerank_models"}）。
+     */
     public Map<String, Object> getKbQueryParamsConfig(String kbId) {
         KnowledgeBaseConfig config = getKbConfig(kbId);
-        Map<String, Object> result = KnowledgeBaseTypeParams.queryParamsConfig(config.kbType());
-        Map<String, Object> saved = config.queryParams() == null ? Map.of() : config.queryParams();
+        Map<String, Object> result =
+                KnowledgeBaseTypeParams.queryParamsConfig(
+                        config.kbType(), modelProviderCache.getAllSpecs("rerank"));
+        Map<String, Object> saved = config.queryOptions();
         if (result.get("options") instanceof List<?> rawOptions) {
             for (Object raw : rawOptions) {
                 if (raw instanceof Map<?, ?> option) {
@@ -574,16 +586,13 @@ public class KnowledgeBaseManager {
         if (params == null) {
             return;
         }
-        KnowledgeBaseConfig config = getKbConfig(kbId);
-        Map<String, Object> merged = new LinkedHashMap<>();
-        if (config.queryParams() != null) {
-            merged.putAll(config.queryParams());
+        // 参考实现：KnowledgeBaseRepository().merge_query_params_options(kb_id, params)
+        // —— 在行锁内先失效缓存，再把入参合并进 query_params.options 子对象（而非顶层），
+        // 且不重算整份参数；取不到记录时抛 KBNotFoundError。
+        KnowledgeBase updated = kbRepository.mergeQueryParamsOptions(kbId, params);
+        if (updated == null) {
+            throw new KnowledgeBaseException.KBNotFoundError("Database " + kbId + " not found");
         }
-        merged.putAll(params);
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("query_params", merged);
-        kbRepository.update(kbId, data);
-        kbCache.deleteCachedKbConfig(kbId);
     }
 
     /** 导出知识库数据（对应 export_data；本工程暂未提供导出器）。 */
@@ -595,9 +604,27 @@ public class KnowledgeBaseManager {
     /** 文件记录 → 列表项（对应 _file_record_list_item）。 */
     public Map<String, Object> fileRecordListItem(KnowledgeFile record, Map<String, Integer> childCounts,
                                                   User creator) {
+        return fileRecordListItem(record, childCounts, creator, null);
+    }
+
+    /**
+     * 文件记录 → 列表项（对应 {@code _file_record_list_item}）。
+     *
+     * <p>必要替换：参考实现的该函数对 {@code is_virtual_folder}/{@code path_prefix}/
+     * {@code virtual_children_count} 一律 {@code getattr(record, ..., 默认值)} 动态取值 ——
+     * 这三个字段只有目录视图（无状态筛选的默认视图）返回的行才带。Java 侧未把它们建模进实体，
+     * 故由 {@code directoryRow} 显式透传原始行；实体分支传 {@code null}，退化为参考实现的默认值。
+     */
+    public Map<String, Object> fileRecordListItem(KnowledgeFile record, Map<String, Integer> childCounts,
+                                                  User creator, Map<String, Object> directoryRow) {
         Map<String, Integer> counts = childCounts == null ? Map.of() : childCounts;
         String fileId = record.getFileId();
-        int childCount = counts.getOrDefault(fileId, 0);
+        // 参考实现：int(getattr(record, "virtual_children_count", 0) or child_counts.get(file_id, 0))
+        Long virtualChildrenCount =
+                directoryRow == null ? null : RepoValues.toLong(directoryRow.get("virtual_children_count"));
+        int childCount = virtualChildrenCount != null && virtualChildrenCount > 0
+                ? virtualChildrenCount.intValue()
+                : counts.getOrDefault(fileId, 0);
         Integer createdBy = null;
         String createdAt = "";
         String updatedAt = "";
@@ -623,8 +650,9 @@ public class KnowledgeBaseManager {
                 (record.getMinioUrl() != null && !record.getMinioUrl().isEmpty())
                         || (record.getPath() != null && !record.getPath().isEmpty()));
         item.put("has_parsed_markdown", record.getMarkdownFile() != null && !record.getMarkdownFile().isEmpty());
-        item.put("is_virtual_folder", false);
-        item.put("path_prefix", null);
+        item.put("is_virtual_folder",
+                directoryRow != null && Boolean.TRUE.equals(RepoValues.toBoolean(directoryRow.get("is_virtual_folder"))));
+        item.put("path_prefix", directoryRow == null ? null : directoryRow.get("path_prefix"));
         return item;
     }
 
@@ -705,6 +733,7 @@ public class KnowledgeBaseManager {
                 kbId, parentId, pathPrefix, status, normalizedPage, normalizedPageSize,
                 effectiveRecursive, filesOnly);
         List<KnowledgeFile> records = documentsOf(pageResult);
+        Map<String, Map<String, Object>> directoryRows = directoryRowExtras(pageResult);
         int total = intOf(pageResult.get("total"));
         Map<String, Object> stats = includeStats ? fileRepository.getKbFileStats(kbId) : null;
 
@@ -731,7 +760,8 @@ public class KnowledgeBaseManager {
 
         List<Map<String, Object>> items = new ArrayList<>();
         for (KnowledgeFile record : records) {
-            items.add(fileRecordListItem(record, childCounts, creators.get(record.getCreatedBy())));
+            items.add(fileRecordListItem(record, childCounts, creators.get(record.getCreatedBy()),
+                    directoryRows.get(record.getFileId())));
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -1158,6 +1188,16 @@ public class KnowledgeBaseManager {
 
     /** 从仓储分页结果中取出记录列表（键名 items/list 兼容）。 */
     @SuppressWarnings("unchecked")
+    /**
+     * 列表记录归一：实体分支（MyBatis 查询）直接透传，目录视图分支（{@code jdbc.queryForList} 行）
+     * 转为等价的轻量记录。
+     *
+     * <p>必要替换：参考实现的两个分支都返回"行对象"（ORM 实体与 SQLAlchemy Row 同形，均以属性访问），
+     * {@code _file_record_list_item} 用 {@code getattr} 取值；Java 侧目录视图只能拿到 {@code Map}。
+     * 此处原先只接受 {@code KnowledgeFile}，会把整页目录视图记录**静默丢弃**（表现为
+     * {@code total=1} 但 {@code items=[]}，默认视图恒空），故显式转换；仅目录视图才有的三个字段
+     * 由 {@link #directoryRowExtras(Map)} 另外透传给列表项构造。
+     */
     private static List<KnowledgeFile> documentsOf(Map<String, Object> page) {
         Object records = page.get("items");
         if (records == null) {
@@ -1168,11 +1208,69 @@ public class KnowledgeBaseManager {
             for (Object item : list) {
                 if (item instanceof KnowledgeFile file) {
                     result.add(file);
+                } else if (item instanceof Map<?, ?> row) {
+                    result.add(fileRecordOf(row));
                 }
             }
             return result;
         }
         return List.of();
+    }
+
+    /** 目录视图行 → 轻量文件记录（只取与实体同名的列；虚拟字段走 {@link #directoryRowExtras(Map)}）。 */
+    private static KnowledgeFile fileRecordOf(Map<?, ?> row) {
+        KnowledgeFile file = new KnowledgeFile();
+        file.setFileId(textOf(row.get("file_id")));
+        file.setFilename(textOf(row.get("filename")));
+        file.setFileType(textOf(row.get("file_type")));
+        file.setStatus(textOf(row.get("status")));
+        file.setCreatedAt(utcOf(row.get("created_at")));
+        file.setUpdatedAt(utcOf(row.get("updated_at")));
+        file.setFileSize(RepoValues.toLong(row.get("file_size")));
+        file.setChunkCount(RepoValues.toInt(row.get("chunk_count")));
+        file.setTokenCount(RepoValues.toLong(row.get("token_count")));
+        file.setCreatedBy(textOf(row.get("created_by")));
+        file.setIsFolder(RepoValues.toBoolean(row.get("is_folder")));
+        file.setParentId(textOf(row.get("parent_id")));
+        file.setPath(textOf(row.get("path")));
+        file.setMinioUrl(textOf(row.get("minio_url")));
+        file.setMarkdownFile(textOf(row.get("markdown_file")));
+        return file;
+    }
+
+    /** 目录视图原始行（按 file_id 索引）：只有这类行带虚拟文件夹三字段。非目录视图返回空表。 */
+    private static Map<String, Map<String, Object>> directoryRowExtras(Map<String, Object> page) {
+        Object records = page.get("items");
+        if (records == null) {
+            records = page.get("records");
+        }
+        Map<String, Map<String, Object>> extras = new LinkedHashMap<>();
+        if (records instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> raw && raw.get("file_id") != null) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> entry : raw.entrySet()) {
+                        if (entry.getKey() != null) {
+                            row.put(String.valueOf(entry.getKey()), entry.getValue());
+                        }
+                    }
+                    extras.put(String.valueOf(raw.get("file_id")), row);
+                }
+            }
+        }
+        return extras;
+    }
+
+    private static String textOf(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    /** JDBC 行时间列 → LocalDateTime（MySQL 驱动通常已给 LocalDateTime，Timestamp 兜底）。 */
+    private static java.time.LocalDateTime utcOf(Object value) {
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toLocalDateTime();
+        }
+        return RepoValues.toLocalDateTime(value);
     }
 
     private static int intOf(Object value) {

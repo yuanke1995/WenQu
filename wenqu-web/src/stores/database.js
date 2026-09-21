@@ -181,9 +181,11 @@ export const useDatabaseStore = defineStore('database', () => {
       await databaseApi.updateDatabase(kbId.value, formData)
       message.success('知识库信息更新成功')
       await getDatabaseInfo() // Load query params after updating database info
+      return true
     } catch (error) {
       console.error(error)
       message.error(error.message || '更新失败')
+      return false
     } finally {
       state.lock = false
     }

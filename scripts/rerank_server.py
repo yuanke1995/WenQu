@@ -18,7 +18,15 @@
      set PYTHONPATH=D:\\workspace\\wenqu\\.pyenv\\target
      D:\\Python311\\python.exe D:\\workspace\\wenqu\\scripts\\rerank_server.py --model D:\\workspace\\wenqu\\.pyenv\\model\\bge-reranker-v2-m3 --port 7997
 
-对接：后端 RerankService provider=openai, base-url=http://localhost:7997, model=BAAI/bge-reranker-v2-m3
+对接（wenqu 模型供应商管理页 agent-manage?tab=providers）：
+  新增供应商 → provider_type=openai、capabilities 勾选 rerank、api_key 填任意非空值
+  （本地服务不校验 token）、rerank_base_url 填【完整端点】http://localhost:7997/v1/rerank
+  （必须含 /v1/rerank 路径，不是只填主机根地址；参考 BuiltinProviders 里 SiliconFlow/DashScope
+  的 rerank_base_url 同样带完整路径，OpenAIReranker 直接 POST 到该 base_url）。
+  再在「管理模型」里手动添加：id=BAAI/bge-reranker-v2-m3、type=rerank。
+  模型 spec = <provider_id>:BAAI/bge-reranker-v2-m3，知识库检索配置里填这个 spec 即启用重排。
+  注：旧 RerankService（src/main 的 ai-doc-assistant）用 host-only base-url + .uri("/v1/rerank")，
+  与 wenqu 模型供应商体系的「rerank_base_url 即完整端点」约定不同，不要混用。
 """
 import argparse
 import json

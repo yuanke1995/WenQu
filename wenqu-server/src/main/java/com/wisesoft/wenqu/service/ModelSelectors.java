@@ -849,9 +849,22 @@ public class ModelSelectors {
                             + "本工程聊天层为 OpenAI 兼容实现");
         }
 
+        // base_url 常已带版本后缀（DashScope 是 .../compatible-mode/v1，OpenAI 是 .../v1），
+        // 而 Spring AI 的 completionsPath 默认就是 "/v1/chat/completions" —— 直接拼会得到
+        // ".../compatible-mode/v1/v1/chat/completions"，网关返回 404（空 message，极易误判成
+        // "模型不存在"）。这里与 DynamicOpenAiChatModel 复用同一套归一化：把版本后缀从
+        // base_url 摘出来，交给 completionsPath 承载。
+        String[] np =
+                DynamicOpenAiChatModel.normalize(
+                        info.baseUrl(),
+                        null,
+                        DynamicOpenAiChatModel.DEFAULT_COMPLETIONS_PATH,
+                        "/chat/completions");
+
         OpenAiApi.Builder apiBuilder =
                 OpenAiApi.builder()
-                        .baseUrl(dockerSafeUrl(info.baseUrl()))
+                        .baseUrl(dockerSafeUrl(np[0]))
+                        .completionsPath(np[1])
                         .apiKey(info.apiKey() == null ? "" : info.apiKey());
 
         Map<String, String> headers = new LinkedHashMap<>();

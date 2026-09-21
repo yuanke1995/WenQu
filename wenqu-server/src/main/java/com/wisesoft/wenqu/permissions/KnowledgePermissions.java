@@ -45,6 +45,11 @@ public final class KnowledgePermissions {
         return dbInfo;
     }
 
+    /** 解析当前用户对指定知识库的有效权限（对应 {@code resolve_knowledge_base_permission(current_user, database)}）。 */
+    public static ResourcePermission resolveKnowledgeBasePermission(KnowledgeBaseDetail detail) {
+        return ResourcePermissions.resolveKnowledgeBasePermission(currentSubject(), shareable(detail));
+    }
+
     /**
      * 校验管理员对指定知识库的读取权限（对应 require_knowledge_base_read：先 get_admin_user 再判读权限）。
      *

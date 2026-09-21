@@ -286,7 +286,9 @@ public class KnowledgeBaseController {
         if (database == null) {
             throw new ApiHttpException(404, "Database not found");
         }
-        ResourcePermission permission = database.effectivePermission();
+        // 参考实现在路由层解析有效权限（resolve_knowledge_base_permission）后传入序列化；
+        // 详情对象本身不带 effective_permission，直接读取恒为 null 会丢失 can_manage。
+        ResourcePermission permission = KnowledgePermissions.resolveKnowledgeBasePermission(database);
         return KnowledgeResponseSerializer.serializeKnowledgeBase(
                 database, permission, permission != ResourcePermission.MANAGE, false);
     }

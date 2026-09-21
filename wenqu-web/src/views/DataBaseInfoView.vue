@@ -1086,7 +1086,10 @@ const handleEditSubmit = async () => {
       }
     }
 
-    await store.updateDatabaseInfo(updateData)
+    const saved = await store.updateDatabaseInfo(updateData)
+    // 保存成功后关闭配置弹窗：原先保存后弹窗保持打开且无成功反馈，用户会重复点击保存
+    // （表现为同一接口被调用两次）。参考实现同样不自动关闭，此处按交互反馈调整。
+    if (saved) editModalVisible.value = false
   } catch (err) {
     editModalTab.value = 'basic'
     console.error('表单验证失败:', err)
