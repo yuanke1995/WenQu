@@ -16,8 +16,9 @@ import java.util.Map;
  *
  * <p>必要替换：Python httpx → JDK {@link HttpClient}；{@code RuntimeError} →
  * {@link SandboxProvisionerException}。
- * 能力差异：本工程未部署 provisioner（lifespan 的 sandbox_provider 未搬），故构造出的客户端
- * 仅在调用时才失败——连接 / 写入 / 连接池仍快速失败，符合参考实现超时语义
+ * 能力差异：本工程的 provisioner 已随工程搬运至 {@code deploy/sandbox-provisioner/}
+ * （{@code app.py} 照搬 + 自建 {@code run.sh}，由部署侧启停），故构造出的客户端
+ * 在服务不可达时**仅在调用时才失败**——连接 / 写入 / 连接池仍快速失败，符合参考实现超时语义
  * （create 的 read 不设上限，对齐 {@code httpx.Timeout(timeout_seconds, read=None)}，故传 null）。
  */
 public class SandboxProvisionerClient {

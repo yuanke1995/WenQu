@@ -76,8 +76,8 @@ CP="$(tr '\n' ':' < "$DEPS")"
 # SANDBOX_PROVISIONER_TOKEN 属同一类「部署变量」：ProvisionerSandboxProvider 在构造期
 # 校验它 ≥32 字符——这与参考实现一致（server/utils/lifespan.py 把 sandbox_provider 登记为
 # required=True 的启动组件，init_sandbox_provider 只构造 provider、不建立连接，缺失即启动失败，
-# 属 fail-closed 而非缺陷）。因此本地**未部署** provisioner 也必须给一个占位值，否则服务起不来；
-# 沙盒能力要等真正调用时才因 provisioner 不可达而报错。
+# 属 fail-closed 而非缺陷）。本地 provisioner 已随工程搬运，用 deploy/sandbox-provisioner/run.sh
+# 启动（默认 PROVISIONER_BACKEND=memory，无需容器运行时；真沙盒需 docker 后端 + 容器镜像）。
 # 另外 SERVER__PORT 必须剔除：会话注入的 SERVER__PORT 会经 Spring relaxed binding
 # 抢走 server.port，只留下面显式的 SERVER_PORT。
 JWT_ENVS=(
@@ -86,6 +86,21 @@ JWT_ENVS=(
   "JWT_SECRET_KEY=${JWT_SECRET_KEY:-wenqu-local-dev-signing-key-32-chars!!}"
   "WENQU_INSTANCE_ID=${WENQU_INSTANCE_ID:-local}"
   "SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN:-wenqu-local-dev-sandbox-provisioner-token}"
+  # 沙盒 provisioner 地址（本地由 deploy/sandbox-provisioner/run.sh 启动，默认 memory 后端）。
+  # **必须用回环 IP 而不是容器服务名 sandbox-provisioner**：本机没有该 DNS 记录，且回环地址
+  # 在 macOS 系统代理的例外列表内——否则出站请求会被代理接走并伪答 502（曾表现为
+  # RunWorker 每 30s 刷一条 "failed to discover sandbox ...: 502"）。
+  "SANDBOX_PROVISIONER_URL=${SANDBOX_PROVISIONER_URL:-http://127.0.0.1:8002}"
+  # worker 进程启动（RunWorker.workerStartup → require_security_secrets）要求的安全密钥：
+  # 与 JWT_SECRET_KEY / SANDBOX_PROVISIONER_TOKEN 互不相同、均 ≥32 字符。本地固定值即可，
+  # 生产环境务必换成持久随机值（API Key 派生根密钥，重启会变会导致已派生 key 失配）。
+  "API_KEY_DERIVATION_SECRET=${API_KEY_DERIVATION_SECRET:-wenqu-local-dev-apikey-deriv-secret-32!!}"
+  # 本地文档存储：默认 MinIO root 账号 minioadmin/minioadmin 与代码默认值一致，
+  # 仅需把 URI 从 Docker 服务名 minio:9000 覆盖为本地 http://localhost:9000。
+  # 注意 MinIOStorageClient 在构造期读取，改后必须重启后端才生效。
+  "MINIO_URI=${MINIO_URI:-http://localhost:9000}"
+  "MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}"
+  "MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}"
 )
 
 listener_pid() {

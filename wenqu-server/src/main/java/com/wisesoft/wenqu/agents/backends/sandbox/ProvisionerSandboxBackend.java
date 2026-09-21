@@ -32,10 +32,11 @@ import java.util.HexFormat;
  * <h3>能力差异（显式标注）</h3>
  * <ul>
  *   <li>参考实现继承 deepagents 的沙盒 backend 基类并经 {@code agent_sandbox} Python SDK 持有一个
- *       {@code Sandbox} / {@code AsyncSandbox} 远程 client。本工程未照搬 deepagents 框架、也未部署沙盒
- *       runtime，故 I/O 动词（read_file / shell.exec_command / list_path / find_files / write_file /
- *       str_replace_editor / upload_file / download_file）统一经 {@link SandboxRuntimeClient} 接口隔离；
- *       {@link #buildClient} 在未部署时抛 {@link SandboxProvisionerException}——<b>绝不静默成功</b>。</li>
+ *       {@code Sandbox} / {@code AsyncSandbox} 远程 client。本工程未照搬 deepagents 框架，I/O 动词
+ *       （read_file / shell.exec_command / list_path / find_files / write_file / str_replace_editor /
+ *       upload_file / download_file）经 {@link SandboxRuntimeClient} 接口隔离，{@link #buildClient} 返回
+ *       {@link AgentSandboxRuntimeClient}（按 SDK 的 wire 契约重建 file / shell 两组端点）。
+ *       运行仍以沙盒 runtime 在线为前提，不可达时按异常上抛——<b>绝不静默成功</b>。</li>
  *   <li>{@code deepagents.backends.sandbox.MAX_BINARY_BYTES} 为框架常量，本工程以 {@link #MAX_BINARY_BYTES}
  *       取代并标注（预览上限）。</li>
  *   <li>{@code deepagents.backends.utils._get_file_type} 为 magic 嗅探，本工程以扩展名启发式
@@ -384,9 +385,10 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     /** 构造沙盒 runtime 远程 client（对应 _build_client / _build_async_client）。 */
     SandboxRuntimeClient buildClient(String sandboxUrl) {
-        throw new SandboxProvisionerException(
-                "agent-sandbox 未在 Java 依赖中照搬（沙盒 runtime 未部署）：无法构造 Sandbox runtime client，"
-                        + "对应 sandbox_url=" + sandboxUrl);
+        return new AgentSandboxRuntimeClient(
+                sandboxUrl,
+                ProvisionerSandboxProvider.sandboxProvisionerToken(),
+                Duration.ofSeconds(commandTimeoutSeconds));
     }
 
     /** 显式确保本实例 sandbox 已创建并返回稳定 ID（对应 ensure_available）。 */

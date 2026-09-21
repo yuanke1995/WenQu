@@ -43,6 +43,17 @@ public class ProvisionerSandboxProvider {
     private static final String PROVIDER_NAME = "provisioner";
     private static final String DEFAULT_PROVISIONER_URL = "http://sandbox-provisioner:8002";
 
+    /**
+     * 对应参考实现 {@code ProvisionerClient} 的 {@code timeout_seconds} 默认值。
+     *
+     * <p>参考实现的 provider 构造客户端时**只显式传** {@code delete_timeout_seconds}
+     * （{@code provider.py} 的 {@code ProvisionerClient(provisioner_url, token=…,
+     * delete_timeout_seconds=get_int_env(…, 120))}），{@code timeout_seconds} 走类默认值 20，
+     * 且未给它留环境变量覆盖——故此处写字面量常量，不再读第二个环境变量。
+     * 该值作用于 health / discover / touch（create 的 read 不设上限，delete 用 deleteTimeout）。
+     */
+    private static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 20;
+
     private final SandboxProvisionerClient client;
     private final AgentEnvRepository agentEnvRepository;
     private final ReentrantLock lock = new ReentrantLock();
@@ -89,7 +100,7 @@ public class ProvisionerSandboxProvider {
         this.client = new SandboxProvisionerClient(
                 resolveProvisionerUrl(),
                 sandboxProvisionerToken(),
-                intEnv("SANDBOX_PROVISIONER_DELETE_TIMEOUT_SECONDS", 120),
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
                 intEnv("SANDBOX_PROVISIONER_DELETE_TIMEOUT_SECONDS", 120));
         this.agentEnvRepository = agentEnvRepository;
         this.touchIntervalSeconds = intEnv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS", 30);

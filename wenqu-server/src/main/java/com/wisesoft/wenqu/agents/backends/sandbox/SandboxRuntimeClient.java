@@ -8,10 +8,9 @@ import java.util.List;
  * 沙盒 runtime 远程客户端（对应参考实现 backend.py 经 {@code agent_sandbox} Python SDK 持有的
  * {@code Sandbox} / {@code AsyncSandbox} 文件与 shell 端点表面）。
  *
- * <p>必要替换：Python SDK {@code agent_sandbox} 不在本工程 Java 依赖中（能力差异，沙盒 runtime
- * 未部署），故以接口契约形式保留其 wire 表面；实际实现（经 JDK HttpClient 与沙盒 runtime 的
- * 文件/shell HTTP 接口对话）在能力差异解除前由 {@link ProvisionerSandboxBackend#buildClient}
- * 统一抛 {@link SandboxProvisionerException}——<b>绝不静默成功</b>。
+ * <p>必要替换：Python SDK {@code agent_sandbox} 不在本工程 Java 依赖中，故按其 wire 表面重建为接口
+ * 契约；实现见 {@link AgentSandboxRuntimeClient}（JDK HttpClient 与沙盒 runtime 的文件 / shell
+ * HTTP 接口对话）。运行期不可达时按异常上抛——<b>绝不静默成功</b>。
  *
  * <p>方法的返回对象逐字段对齐参考实现 {@code result.data.*}：
  * <ul>
