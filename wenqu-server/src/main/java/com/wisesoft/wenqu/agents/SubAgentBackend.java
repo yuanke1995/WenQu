@@ -108,7 +108,8 @@ public class SubAgentBackend extends BaseAgent {
             UserRepository userRepository,
             SubagentRunService subagentRunService,
             AgentRunService agentRunService,
-            ModelProviderCache modelProviderCache) {
+            ModelProviderCache modelProviderCache,
+            MysqlLanggraphCheckpointerProvider checkpointerProvider) {
         this.compositeBackend = compositeBackend;
         this.agentChatModel = agentChatModel;
         this.mcpService = mcpService;
@@ -118,6 +119,9 @@ public class SubAgentBackend extends BaseAgent {
         this.subagentRunService = subagentRunService;
         this.agentRunService = agentRunService;
         this.modelProviderCache = modelProviderCache;
+        // 与 ChatbotAgent 同一套进程级 checkpointer：子智能体线程也要能跨轮续跑
+        // （子线程 id 是 64 位，落的是 saver 的 thread_name VARCHAR(255)，容得下）。
+        this.checkpointerProvider = checkpointerProvider;
 
         this.name = AGENT_NAME;
         this.description = AGENT_DESCRIPTION;

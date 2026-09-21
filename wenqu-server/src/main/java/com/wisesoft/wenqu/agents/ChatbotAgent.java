@@ -113,7 +113,8 @@ public class ChatbotAgent extends BaseAgent {
             SubagentRunService subagentRunService,
             AgentRunService agentRunService,
             AgentRequestQueueService requestQueueService,
-            ModelProviderCache modelProviderCache) {
+            ModelProviderCache modelProviderCache,
+            MysqlLanggraphCheckpointerProvider checkpointerProvider) {
         this.compositeBackend = compositeBackend;
         this.agentChatModel = agentChatModel;
         this.mcpService = mcpService;
@@ -125,6 +126,9 @@ public class ChatbotAgent extends BaseAgent {
         this.agentRunService = agentRunService;
         this.requestQueueService = requestQueueService;
         this.modelProviderCache = modelProviderCache;
+        // 进程级持久化 checkpointer（对应蓝本 pg_manager.get_langgraph_checkpointer()）：
+        // 不装配的话构图会退回"每次新建的 MemorySaver"，对话记忆与 checkpoint 面全部落空。
+        this.checkpointerProvider = checkpointerProvider;
 
         this.name = AGENT_NAME;
         this.description = AGENT_DESCRIPTION;

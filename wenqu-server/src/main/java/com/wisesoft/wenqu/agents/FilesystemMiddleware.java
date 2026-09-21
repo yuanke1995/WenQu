@@ -61,6 +61,17 @@ import java.util.Set;
  *   <li><b>裁剪器落盘路径</b>：框架 {@code LargeResultEvictionInterceptor} 的落盘目录硬编码为
  *       {@code user.dir/large_tool_results/}，经 {@link SandboxFilesystemBackendAdapter} 重映射到
  *       {@code <artifacts_root>/large_tool_results/}（详见该适配器注释）。</li>
+ *   <li><b>豁免集用一次 {@code excludeTools(Set)} 给出，不链 {@code excludeFilesystemTools()}</b>
+ *       （框架缺陷，必要替换）：框架里 {@code excludeFilesystemTools()} 的实现是
+ *       {@code excludeTools(Set.of("ls","read_file","write_file","edit_file","glob","grep"))} ——
+ *       {@code Set.of} 是<b>不可变</b>集合；而同类的 {@code excludeTool(String)} 实现是
+ *       {@code this.excludedTools.add(toolName)}。于是
+ *       {@code .excludeFilesystemTools().excludeTool("open_kb_document")} 这种链式写法
+ *       <b>必然</b>抛 {@code UnsupportedOperationException}（实测：构造函数抛出，导致每次构图失败、
+ *       流式对话整体不可用）。本类改为一次 {@code excludeTools(TOOL_RESULT_EVICTION_EXEMPT_TOOLS)}：
+ *       集合内容与「6 个文件工具 ∪ open_kb_document」完全一致，
+ *       且 {@code excludeTools} 是整体赋值（Builder 只存引用、构造期再 {@code new HashSet<>} 拷贝），
+ *       不可变入参安全。</li>
  * </ol>
  */
 public class FilesystemMiddleware extends ToolInterceptor {
@@ -104,10 +115,13 @@ public class FilesystemMiddleware extends ToolInterceptor {
         this.toolTokenLimitBeforeEvict = toolTokenLimitBeforeEvict;
         this.backend = new SandboxFilesystemBackendAdapter(backend, artifactsRoot);
         this.tools = tools == null ? List.of() : List.copyOf(tools);
+        // 豁免集用「集合整体赋值」一步给出，别去链 excludeFilesystemTools() + excludeTool()：
+        // 框架的 excludeFilesystemTools() 内部是 excludeTools(Set.of(...))（不可变集合），
+        // 而它的 excludeTool(String) 是往该集合 add ⇒ 链式调用必抛
+        // UnsupportedOperationException（见类注释「必要替换」第 3 条）。
         this.evictionInterceptor = LargeResultEvictionInterceptor.builder()
                 .toolTokenLimitBeforeEvict(toolTokenLimitBeforeEvict)
-                .excludeFilesystemTools()
-                .excludeTool("open_kb_document")
+                .excludeTools(TOOL_RESULT_EVICTION_EXEMPT_TOOLS)
                 .backend(this.backend)
                 .build();
     }

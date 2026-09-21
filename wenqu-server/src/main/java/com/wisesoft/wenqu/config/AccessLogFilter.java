@@ -52,14 +52,14 @@ public class AccessLogFilter extends OncePerRequestFilter {
             String query = request.getQueryString();
             String path = request.getRequestURI();
             String full = (query == null || query.isEmpty()) ? path : path + "?" + query;
-            ACCESS_LOGGER.info("{}:{} - \"{} {} HTTP/{}\" {} - {}ms",
-                    clientIp,
-                    port > 0 ? String.valueOf(port) : "unknown",
-                    request.getMethod(),
-                    full,
-                    httpVersion(request),
-                    response.getStatus(),
-                    processTimeMs);
+//            ACCESS_LOGGER.info("{}:{} - \"{} {} HTTP/{}\" {} - {}ms",
+//                    clientIp,
+//                    port > 0 ? String.valueOf(port) : "unknown",
+//                    request.getMethod(),
+//                    full,
+//                    httpVersion(request),
+//                    response.getStatus(),
+//                    processTimeMs);
         }
     }
 

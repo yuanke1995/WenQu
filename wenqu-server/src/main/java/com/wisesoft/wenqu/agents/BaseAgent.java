@@ -1,5 +1,8 @@
 package com.wisesoft.wenqu.agents;
 
+import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
+import com.wisesoft.wenqu.agents.engine.GraphCodec;
 import com.wisesoft.wenqu.common.ThreadUtils;
 import com.wisesoft.wenqu.common.HashUtils;
 import java.util.ArrayList;
@@ -770,6 +773,38 @@ public abstract class BaseAgent {
      */
     protected Object getCheckpointer() {
         return checkpointerProvider == null ? null : checkpointerProvider.getLanggraphCheckpointer();
+    }
+
+    /**
+     * {@code _read_checkpoint_state} 的读取面：直接读当前 checkpointer 的 checkpoint 快照。
+     *
+     * <p>对应参考实现
+     * {@code checkpointer.aget_tuple({"configurable": {uid, thread_id, checkpoint_ns}})} ——
+     * <b>不经构图</b>：参考实现的读取只依赖进程级 checkpointer，与图无关，故本路径既不校验
+     * {@code _runtime_prepared}，也不触碰 sandbox / 工具 / skill 解析（那些是构图期副作用）。
+     *
+     * <p><b>必要替换（显式标注）</b>：引擎的 {@code CompiledGraph.getState(config)} 在无
+     * checkpoint 时抛 {@code Missing Checkpoint!}，而参考实现 {@code aget_tuple} 返回
+     * {@code None} 后由调用方走"空快照"分支。本方法取 saver 的 {@code get(config)}
+     * （返回 {@link java.util.Optional}），无 checkpoint 时返回
+     * {@link GraphStateSnapshot#empty()}，与参考实现的 {@code saved is None} 同型。
+     *
+     * <p><b>注意（未接线，非本方法缺陷）</b>：{@link #checkpointerProvider} 当前未装配，
+     * 引擎缺省 saver 是每次构图新建的 {@code MemorySaver}（进程内无共享存储），
+     * 故本方法实际恒返回空快照。装配进程级（持久化）checkpointer 后，本路径即自然生效。
+     */
+    public GraphStateSnapshot readCheckpointSnapshot(Map<String, Object> config) {
+        Object saverObject = getCheckpointer();
+        if (!(saverObject instanceof BaseCheckpointSaver saver)) {
+            return GraphStateSnapshot.empty();
+        }
+        RunnableConfig runnableConfig = GraphCodec.toRunnableConfig(config);
+        Map<String, Object> snapshotConfig = new LinkedHashMap<>();
+        snapshotConfig.put("configurable", GraphCodec.configurable(config));
+        return saver.get(runnableConfig)
+                .map(checkpoint -> GraphStateSnapshot.of(
+                        checkpoint.getState(), null, List.of(), snapshotConfig))
+                .orElseGet(GraphStateSnapshot::empty);
     }
 
     /** {@code load_metadata}：从 Agent 类属性加载 metadata（非 dict 时告警并回落空表）。 */

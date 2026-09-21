@@ -5,6 +5,16 @@
 --      唯一约束与索引取自 Column 声明、类级 __table_args__ 与模块级 Index 声明；
 --      MySQL 不支持部分索引（带 where 条件的唯一索引），此类约束以注释保留，
 --      并在应用层保证（见各表下的说明），不降级为全局唯一以免约束比参考实现更严。
+--      时间列精度：参考实现的 TIMESTAMP/TIMESTAMPTZ 是**微秒**精度，MySQL DATETIME 默认只到秒，
+--      且写入时小数点后 .5 会**进位**到下一秒 —— 于是"先取库里的秒级值、再和内存里的当前时间比"
+--      这类守卫（agent_runs 的三处 recordPrepared/recordFirstModelRequest/recordFirstOutput）
+--      会偶发判出"事件时间早于起点"而抛错（实测：claim 发生在 .9s，prepared 回调在 .95s，
+--      库里 started_at 进位成下一秒 ⇒ 守卫认为早 1 秒）。故 agent_runs / agent_run_attempts
+--      的事件时间列一律用 DATETIME(6)。
+--      JSON 列默认值：参考实现落在库侧的默认（建表/ALTER 里的 DEFAULT）以 MySQL 表达式默认还原，
+--      如 JSON_OBJECT() / JSON_ARRAY() / JSON_OBJECT('status','pending','attempt_count',0)；
+--      仅存在于 ORM 侧（Column(default=...)）而没有库侧默认的列不在此补，由应用层负责写入；
+--      参考实现显式 DROP DEFAULT 的列（agents / skills 的 share_config）同样保持无默认。
 
 SET NAMES utf8mb4;
 
@@ -80,7 +90,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_chunks` (
   `end_token_pos` INT,
   `graph_structure_indexed` TINYINT(1) NOT NULL DEFAULT 0,
   `graph_indexed` TINYINT(1) DEFAULT 0,
-  `graph_extraction_details` JSON NOT NULL,
+  `graph_extraction_details` JSON NOT NULL DEFAULT (JSON_OBJECT('status', 'pending', 'attempt_count', 0)),
   `ent_ids` JSON,
   `tags` JSON,
   `extraction_result` JSON,
@@ -320,7 +330,7 @@ CREATE TABLE IF NOT EXISTS `users` (
 CREATE TABLE IF NOT EXISTS `agent_envs` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `uid` VARCHAR(255) NOT NULL,
-  `env` JSON NOT NULL,
+  `env` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `created_at` DATETIME,
   `updated_at` DATETIME,
   PRIMARY KEY (`id`),
@@ -344,8 +354,8 @@ CREATE TABLE IF NOT EXISTS `agents` (
   `name` VARCHAR(100) NOT NULL,
   `description` LONGTEXT,
   `icon` VARCHAR(255),
-  `pics` JSON NOT NULL,
-  `config_json` JSON NOT NULL,
+  `pics` JSON NOT NULL DEFAULT (JSON_ARRAY()),
+  `config_json` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `share_config` JSON NOT NULL,
   `is_default` TINYINT(1) NOT NULL DEFAULT 0,
   `is_subagent` TINYINT(1) NOT NULL DEFAULT 0,
@@ -368,9 +378,9 @@ CREATE TABLE IF NOT EXISTS `skills` (
   `name` VARCHAR(128) NOT NULL,
   `description` LONGTEXT NOT NULL,
   `source_type` VARCHAR(32) NOT NULL DEFAULT 'upload',
-  `tool_dependencies` JSON NOT NULL,
-  `mcp_dependencies` JSON NOT NULL,
-  `skill_dependencies` JSON NOT NULL,
+  `tool_dependencies` JSON NOT NULL DEFAULT (JSON_ARRAY()),
+  `mcp_dependencies` JSON NOT NULL DEFAULT (JSON_ARRAY()),
+  `skill_dependencies` JSON NOT NULL DEFAULT (JSON_ARRAY()),
   `dir_path` VARCHAR(512) NOT NULL,
   `version` VARCHAR(64),
   `content_hash` VARCHAR(128),
@@ -547,8 +557,8 @@ CREATE TABLE IF NOT EXISTS `model_providers` (
   `rerank_models_endpoint` VARCHAR(200),
   `api_key_env` VARCHAR(128),
   `api_key` VARCHAR(500),
-  `capabilities` JSON NOT NULL,
-  `enabled_models` JSON NOT NULL,
+  `capabilities` JSON NOT NULL DEFAULT (JSON_ARRAY()),
+  `enabled_models` JSON NOT NULL DEFAULT (JSON_ARRAY()),
   `headers_json` JSON,
   `extra_json` JSON,
   `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
@@ -567,8 +577,8 @@ CREATE TABLE IF NOT EXISTS `config_options` (
   `key` VARCHAR(100) NOT NULL,
   `name` VARCHAR(100) NOT NULL,
   `description` LONGTEXT NOT NULL,
-  `params` JSON NOT NULL,
-  `value` JSON NOT NULL,
+  `params` JSON NOT NULL DEFAULT (JSON_OBJECT()),
+  `value` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `created_by` VARCHAR(100),
   `updated_by` VARCHAR(100),
   `created_at` DATETIME,
@@ -714,7 +724,7 @@ CREATE TABLE IF NOT EXISTS `agent_runs` (
   `source` VARCHAR(32) NOT NULL DEFAULT 'chat',
   `channel` VARCHAR(32) NOT NULL DEFAULT 'web',
   `external_id` VARCHAR(128),
-  `origin_metadata` JSON NOT NULL,
+  `origin_metadata` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `conversation_id` INT,
   `created_by_run_id` VARCHAR(64),
   `subagent_thread_relation_id` INT,
@@ -722,23 +732,23 @@ CREATE TABLE IF NOT EXISTS `agent_runs` (
   `input_message_id` INT,
   `output_message_id` INT,
   `input_payload` JSON NOT NULL,
-  `token_usage` JSON NOT NULL,
+  `token_usage` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `langfuse_trace_id` VARCHAR(64),
   `error_type` VARCHAR(64),
   `error_message` LONGTEXT,
   `worker_id` VARCHAR(128),
-  `heartbeat_at` DATETIME,
-  `lease_expires_at` DATETIME,
+  `heartbeat_at` DATETIME(6),
+  `lease_expires_at` DATETIME(6),
   `manifest` JSON,
   `manifest_fingerprint` JSON,
-  `manifest_recorded_at` DATETIME,
-  `started_at` DATETIME,
-  `prepared_at` DATETIME,
-  `first_model_request_at` DATETIME,
-  `first_output_at` DATETIME,
-  `finished_at` DATETIME,
-  `created_at` DATETIME,
-  `updated_at` DATETIME,
+  `manifest_recorded_at` DATETIME(6),
+  `started_at` DATETIME(6),
+  `prepared_at` DATETIME(6),
+  `first_model_request_at` DATETIME(6),
+  `first_output_at` DATETIME(6),
+  `finished_at` DATETIME(6),
+  `created_at` DATETIME(6),
+  `updated_at` DATETIME(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_agent_runs_request_id` (`request_id`),
   KEY `idx_agent_runs_conversation_thread_id` (`conversation_thread_id`),
@@ -759,15 +769,15 @@ CREATE TABLE IF NOT EXISTS `agent_run_attempts` (
   `run_id` VARCHAR(64) NOT NULL,
   `attempt_no` INT NOT NULL,
   `worker_id` VARCHAR(128) NOT NULL,
-  `started_at` DATETIME NOT NULL,
-  `heartbeat_at` DATETIME,
-  `lease_expires_at` DATETIME,
-  `finished_at` DATETIME,
+  `started_at` DATETIME(6) NOT NULL,
+  `heartbeat_at` DATETIME(6),
+  `lease_expires_at` DATETIME(6),
+  `finished_at` DATETIME(6),
   `outcome` VARCHAR(32),
   `error_type` VARCHAR(64),
   `error_message` LONGTEXT,
-  `created_at` DATETIME,
-  `updated_at` DATETIME,
+  `created_at` DATETIME(6),
+  `updated_at` DATETIME(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_agent_run_attempts_run_attempt_no` (`run_id`, `attempt_no`),
   KEY `idx_agent_run_attempts_run_id` (`run_id`),
@@ -783,19 +793,36 @@ CREATE TABLE IF NOT EXISTS `agent_run_requests` (
   `source` VARCHAR(32) NOT NULL DEFAULT 'chat',
   `channel` VARCHAR(32) NOT NULL DEFAULT 'web',
   `external_id` VARCHAR(128),
-  `origin_metadata` JSON NOT NULL,
+  `origin_metadata` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `queue_policy` VARCHAR(16) NOT NULL DEFAULT 'enqueue',
   `status` VARCHAR(32) NOT NULL DEFAULT 'queued',
   `input_message_id` INT NOT NULL,
   `dispatched_run_id` VARCHAR(64),
-  `input_payload` JSON NOT NULL,
+  `input_payload` JSON NOT NULL DEFAULT (JSON_OBJECT()),
   `error_message` LONGTEXT,
-  `created_at` DATETIME NOT NULL,
-  `dispatched_at` DATETIME,
-  `updated_at` DATETIME NOT NULL,
+  `created_at` DATETIME(6) NOT NULL,
+  `dispatched_at` DATETIME(6),
+  `updated_at` DATETIME(6) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_agent_run_requests_request_id` (`request_id`),
   KEY `idx_agent_run_requests_external_id` (`external_id`),
   KEY `idx_agent_run_requests_input_message_id` (`input_message_id`),
   KEY `idx_agent_run_requests_dispatched_run_id` (`dispatched_run_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================================
+-- 引擎自持的两张表（本脚本不建、也不要手工改结构）
+-- --------------------------------------------------------------------------------------------
+-- 进程级 checkpointer（com.wisesoft.wenqu.agents.MysqlLanggraphCheckpointerProvider）用的是
+-- spring-ai-alibaba-graph-core 自带的 MysqlSaver，它启动时自建并自行维护：
+--     GRAPH_THREAD     (thread_id VARCHAR(36) PK, thread_name VARCHAR(255), is_released)
+--     GRAPH_CHECKPOINT (checkpoint_id VARCHAR(36) PK, thread_id, node_id, next_node_id,
+--                       state_data JSON, saved_at TIMESTAMP)
+-- 我们的线程 id 落的是 thread_name（VARCHAR(255)）：主对话 36 位 UUID、子智能体 64 位，都容得下。
+--
+-- 唯一需要偏离引擎 DDL 的地方：saved_at 被它定义成秒级 TIMESTAMP，而它判定"最新 checkpoint"
+-- 正是 `ORDER BY saved_at DESC LIMIT 1`；一次 run 一秒内会连写多个 checkpoint，
+-- 同秒行序未定义（实测同秒连写两笔后回读，3 次有 2 次取到旧的那笔 ⇒ 续跑从旧快照起）。
+-- provider 启动时会幂等校正为微秒精度；若手工建库后发现精度不是 6，执行：
+--   ALTER TABLE GRAPH_CHECKPOINT MODIFY COLUMN saved_at TIMESTAMP(6) NULL DEFAULT CURRENT_TIMESTAMP(6);
+-- ============================================================================================

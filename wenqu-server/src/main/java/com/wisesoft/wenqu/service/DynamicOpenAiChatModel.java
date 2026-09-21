@@ -65,10 +65,20 @@ public class DynamicOpenAiChatModel implements ChatModel {
         return current().stream(prompt);
     }
 
+    /**
+     * 委托实例的默认 options（本类自身不设模型名，模型名由 per-request options 提供）。
+     *
+     * <p>未构建委托时（构图期先读一次默认 options，此时还没发过请求）返回空
+     * {@link OpenAiChatOptions}，而<b>不是</b> {@code ChatOptions.builder().build()}：
+     * 后者是 {@code DefaultChatOptions}，与委托的类型不一致。spring-ai-alibaba 的
+     * {@code AgentLlmNode#buildChatOptions} 对「非 {@code ToolCallingChatOptions}」会告警并
+     * 重建只带 toolCallbacks 的 options（模型名随之丢失，请求被上游判 400）；
+     * `DefaultBuilder` 也要求两者类型一致才能正确合并。
+     */
     @Override
     public ChatOptions getDefaultOptions() {
         OpenAiChatModel m = delegate;
-        return m != null ? m.getDefaultOptions() : ChatOptions.builder().build();
+        return m != null ? m.getDefaultOptions() : OpenAiChatOptions.builder().build();
     }
 
     /** 读当前配置，网关三要素任一变化即重建底层客户端（重建为本地对象构建，无网络开销） */

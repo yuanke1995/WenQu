@@ -86,10 +86,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       它在首次模型调用时原子完成"记录 + 持久化"，故本类<b>不再</b>持有该参数，
  *       也没有 {@code _persist_model_request_timing} 的同名调用点（能力差异，非遗漏）。</li>
  *   <li><b>checkpoint 读取入口</b>：参考实现的 {@code _read_checkpoint_state} 直接取进程级
- *       checkpointer（{@code pg_manager.get_langgraph_checkpointer()}）的 {@code aget_tuple}。
- *       本工程无进程级 checkpointer 入口（{@code BaseAgent.checkpointerProvider} 未装配，
- *       构图使用引擎缺省 saver），故改为"按 thread 解析 Agent → 构图 → {@code agetState}"；
- *       读不到历史时与参考实现的 {@code saved is None} 分支同型（返回空 values + 无中断）。</li>
+ *       checkpointer（{@code pg_manager.get_langgraph_checkpointer()}）的 {@code aget_tuple}，
+ *       <b>不经构图</b>。本工程对应 {@link BaseAgent#readCheckpointSnapshot}：取 saver 的
+ *       {@code get(config)}（引擎 {@code CompiledGraph.getState} 在无 checkpoint 时会抛
+ *       {@code Missing Checkpoint!}，与参考实现的 {@code saved is None} 分支不同型，故不走它），
+ *       无 checkpoint 时返回空 values + 无中断。
+ *       <p><b>未接线（非本路径缺陷）</b>：{@code BaseAgent.checkpointerProvider} 当前未装配，
+ *       引擎缺省 saver 是"每次构图新建"的 {@code MemorySaver}（进程内无共享存储），
+ *       因此该读取实际恒为空快照 —— 待装配进程级（持久化）checkpointer 后自动生效。</li>
  *   <li><b>中断信息取值面</b>：参考实现从 {@code saved.pending_writes} 里找
  *       {@code __interrupt__} channel；本工程 {@link GraphStateSnapshot#extractInterruptInfo()}
  *       先看 {@code tasks} 再回落 {@code values["__interrupt__"]}（引擎 {@code tasks} 恒空，
@@ -2073,8 +2077,8 @@ public class ChatService {
      * 读取完整 checkpoint 快照与同批中断；调用方先校验线程可见性
      * （对应 {@code _read_checkpoint_state}）。
      *
-     * <p>必要替换：参考实现直接取进程级 checkpointer 的 {@code aget_tuple}；本工程无该入口，
-     * 改为"按 Conversation 解析 Agent → 构图 → {@code agetState}"（见类注释第 5 条）。
+     * <p>不经构图，直读进程级 checkpointer（{@link BaseAgent#readCheckpointSnapshot}，见类注释第 5 条）；
+     * Agent 解析保留为"该对话的智能体仍存在且可见"的校验。
      */
     public CheckpointState readCheckpointState(String uid, String threadId, Conversation conversation, User user) {
         Agent agentItem = agentRepository.getVisibleBySlug(
@@ -2086,10 +2090,6 @@ public class ChatService {
         if (backend == null) {
             throw new IllegalStateException("智能体后端不存在，无法读取 checkpoint: " + agentItem.getBackendId());
         }
-        BaseContext context = agentRunService.loadAgentRunContext(agentItem, backend);
-        context.set("uid", uid);
-        context.set("thread_id", threadId);
-
         Map<String, Object> config = new LinkedHashMap<String, Object>();
         Map<String, Object> configurable = new LinkedHashMap<String, Object>();
         configurable.put("uid", uid);
@@ -2097,7 +2097,9 @@ public class ChatService {
         configurable.put("checkpoint_ns", "");
         config.put("configurable", configurable);
 
-        GraphStateSnapshot snapshot = backend.getGraph(context).agetState(config);
+        // 不经构图：参考实现的读取只依赖进程级 checkpointer（_read_checkpoint_state），
+        // 构图会连带 sandbox / 工具 / skill 解析，且要求 context 已 _runtime_prepared。
+        GraphStateSnapshot snapshot = backend.readCheckpointSnapshot(config);
         // 面板只展示完整快照，pending writes 中的业务增量留给执行图合并。
         return new CheckpointState(snapshot.values(), snapshot.extractInterruptInfo());
     }
