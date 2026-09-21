@@ -8,11 +8,13 @@
 # 二是回环地址在 macOS 系统代理的例外列表内，可绕开代理对出站请求的劫持。
 #
 # 后端模式（PROVISIONER_BACKEND）：
-#   memory  —— 默认。沙盒记录只存进程内存，不需要容器运行时；管理面
-#              （create/discover/touch/delete）完全可用，但没有真实沙盒实例，
-#              沙盒内文件与 shell 调用会失败。
-#   docker  —— 真沙盒。需要容器运行时 + 挂载 /var/run/docker.sock + 拉取
-#              SANDBOX_IMAGE 镜像（见下方 DOCKER_* 变量）。
+#   memory  —— 默认，由本脚本在宿主机直接起。沙盒记录只存进程内存，不需要容器
+#              运行时；管理面（create/discover/touch/delete）完全可用，但没有真实
+#              沙盒实例，沙盒内文件与 shell 调用会失败。
+#   docker  —— 真沙盒，**不用本脚本**：容器后端在构造期要 inspect 自身容器来反推
+#              宿主路径（创建兄弟容器需要宿主绝对路径），必须跑在容器里，因此改用
+#              同目录的 docker-compose.yml：
+#                  docker compose up -d --build
 #
 # 用法：
 #   bash run.sh install    # 建 .venv 并安装依赖
