@@ -18,6 +18,7 @@ import com.wisesoft.wenqu.repositories.KnowledgeChunkRepository;
 import com.wisesoft.wenqu.repositories.KnowledgeFileRepository;
 import com.wisesoft.wenqu.repositories.ModelProviderCache;
 import com.wisesoft.wenqu.repositories.RepoValues;
+import com.wisesoft.wenqu.service.DynamicEmbeddingModel;
 import com.wisesoft.wenqu.service.FileStatus;
 import com.wisesoft.wenqu.service.KeywordExtractor;
 import com.wisesoft.wenqu.service.ModelSelectors;
@@ -63,8 +64,12 @@ import org.springframework.stereotype.Service;
  *   <li>向量库：参考实现为 Milvus collection（按 embedding 维度建集合、双写 PostgreSQL+Milvus）；
  *       本工程使用 Spring AI 的 {@link VectorStore}（Redis 向量库）单写，chunk 元数据仍落
  *       knowledge_chunks 表，与参考实现「关系库为准 + 向量库为索引」的双写语义等价。
- *   <li>embedding 函数：参考实现按 embedding_model_spec 动态选模型；本工程沿用全局
- *       VectorStore 已绑定的 embedding 模型，故 spec 仅用于记录，不切换模型。
+ *   <li>embedding 函数：参考实现按 {@code embedding_model_spec} 动态选模型；本工程的向量库是全局单例
+ *       （{@code RedisVectorStore} 绑定一个 {@code @Primary} 的 {@link DynamicEmbeddingModel}），
+ *       故改为在<b>检索/入库的调用点</b>用 {@link DynamicEmbeddingModel#withSpec} 把客户端切到该知识库的 spec
+ *       （spec → 供应商行的 base_url/api_key/model），语义与「按 KB 建实例」等价。
+ *       2026-09-22 接线前 spec 只落库不生效，向量化一律走全局 {@code embedding.*} 配置；
+ *       而新栈里那组配置没有任何来源（{@code c_ai_config} 已不在业务库、yml/env 未配），表现为向量化 401。
  *   <li>异步：参考实现全异步（asyncio）；本工程为同步阻塞调用，由任务线程承载。
  *   <li>并发锁：参考实现用 asyncio.gather 双写；本工程顺序写（失败即回滚已写 chunk）。
  * </ul>
@@ -99,6 +104,12 @@ public class KnowledgeBaseRuntime {
     private final OcrService ocrService;
     private final OptionsService optionsService;
     private final VectorStore vectorStore;
+    /**
+     * 向量模型（全局单例，{@code @Primary}）。检索/入库前用
+     * {@link DynamicEmbeddingModel#withSpec} 把它切到当前知识库的 {@code embedding_model_spec}
+     * —— 对应参考实现「按 spec 建 KB 实例、每个 KB 一套 embedding 函数」。
+     */
+    private final DynamicEmbeddingModel embeddingModel;
     private final MinioStorageClient minioStorageClient;
     /**
      * 图谱服务。用 {@link ObjectProvider} 取用而非直接注入字段：
@@ -130,6 +141,7 @@ public class KnowledgeBaseRuntime {
             OcrService ocrService,
             OptionsService optionsService,
             VectorStore vectorStore,
+            DynamicEmbeddingModel embeddingModel,
             MinioStorageClient minioStorageClient,
             ObjectProvider<MilvusGraphService> graphServiceProvider,
             ObjectProvider<KnowledgeGraphRetrieval> graphRetrievalProvider,
@@ -143,6 +155,7 @@ public class KnowledgeBaseRuntime {
         this.ocrService = ocrService;
         this.optionsService = optionsService;
         this.vectorStore = vectorStore;
+        this.embeddingModel = embeddingModel;
         this.minioStorageClient = minioStorageClient;
         this.graphServiceProvider = graphServiceProvider;
         this.graphRetrievalProvider = graphRetrievalProvider;
@@ -762,7 +775,8 @@ public class KnowledgeBaseRuntime {
                 .topK(scan)
                 .similarityThresholdAll()
                 .build();
-        List<Document> documents = vectorStore.similaritySearch(request);
+        List<Document> documents = embeddingModel.withSpec(
+                getKbConfig(kbId).embeddingModelSpec(), () -> vectorStore.similaritySearch(request));
         if (documents == null || documents.isEmpty()) {
             return List.of();
         }
@@ -1072,10 +1086,18 @@ public class KnowledgeBaseRuntime {
                 metadata.put("kb_id", kbId);
                 metadata.put("chunk_id", chunk.get("chunk_id"));
                 metadata.put("chunk_index", chunk.get("chunk_index"));
-                documents.add(new Document(content, metadata));
+                // 向量键必须用 chunk_id（而不是让框架生成 UUID）：RedisVectorStore 的 key 是
+                // prefix + document.getId()，而删除侧（deleteFileChunksOnly）按 chunk_id 删
+                // —— 用 UUID 会导致「删不掉 + 重入库累积孤儿向量」（2026-09-22 实测：同一文件
+                // 先后 32/74 块两次入库，Redis 里留下 106 条）。
+                documents.add(new Document(
+                        String.valueOf(chunk.get("chunk_id")), content, metadata));
             }
             try {
-                vectorStore.add(documents);
+                embeddingModel.withSpec(getKbConfig(kbId).embeddingModelSpec(), () -> {
+                    vectorStore.add(documents);
+                    return null;
+                });
             } catch (Exception exception) {
                 // 双写失败即回滚已写 chunk（对应参考实现的双写回滚语义）
                 log.error("Chunk vector write failed for file {}, rolling back chunks: {}",

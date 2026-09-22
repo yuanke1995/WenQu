@@ -76,8 +76,9 @@ import java.util.UUID;
  *       {@code context_schema} 入参仅用于签名对齐，解析结果与不传 schema 时一致
  *       （与 {@link BaseContext#filterConfigByRole} 的既有标注同源）。</li>
  *   <li>{@code backend.get_info(user_role=…, db=…, user=…)}：本工程 {@link BaseAgent#getInfo}
- *       的对应入参是资源选项解析器，尚未装配（见 {@code AgentBackendInfoProvider} 的类注释），
- *       传 {@code null} 即跳过资源选项注入。</li>
+ *       的对应入参是 {@code AgentResourceOptionsResolver}，已由 {@code AgentBackendInfoProvider}
+ *       装配为 {@code AgentContextService#resolveAgentResourceOptions(…, uid)} 的委托，
+ *       候选资源按当前用户可见集合注入（见该类类注释）。</li>
  * </ul>
  *
  * @author yuanke

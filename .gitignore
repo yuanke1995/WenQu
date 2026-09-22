@@ -31,6 +31,8 @@ package-lock.json
 /data.ms/VERSION
 /docs/
 /dump/
+# 本地数据库备份等临时产物（dump 少数了个 s，这里补齐）
+/dumps/
 # 仓库根误产出的运行期目录：skill-projections / skill-sources / user-data 都是 RuntimePaths
 # 相对 cwd 解析的路径，工作目录若为项目根就会在此生成（正确位置在 wenqu-server/ 下，
 # 两套副本互不可见）。加忽略规则避免误提交。

@@ -199,8 +199,16 @@ public class AgentRepository {
 
     /** 后端能力信息提供者（对应参考实现的智能体注册表，见类注释的"能力差异"）。 */
     public interface BackendInfoProvider {
-        /** 返回 capabilities / metadata / configurable_items 三项（键名照搬）。 */
-        Map<String, Object> getInfo(String backendId, boolean includeConfigurableItems, String userRole);
+        /**
+         * 返回 capabilities / metadata / configurable_items 三项（键名照搬）。
+         *
+         * <p>{@code uid} 用于解析「当前用户可见」的候选资源（知识库 / MCP / Skill / 子智能体）——
+         * 参考实现的 {@code get_info} 就是带着 {@code user} 调
+         * {@code resolve_agent_resource_options}；故缓存键必须同时含 role 与 uid，
+         * 否则会把某个用户的可选资源集合串给另一个用户。
+         */
+        Map<String, Object> getInfo(
+                String backendId, boolean includeConfigurableItems, String userRole, String uid);
     }
 
     private final AgentMapper agentMapper;
@@ -739,14 +747,15 @@ public class AgentRepository {
         // 迟延解析（不得提到构造器里，否则形成装配期单例环；见构造器注释）。
         BackendInfoProvider provider = backendInfoProvider.getIfAvailable();
         if (provider != null) {
-            String cacheKey = agent.getBackendId() + "|" + includeConfigurableItems + "|" + user.role();
+            String cacheKey = agent.getBackendId() + "|" + includeConfigurableItems + "|"
+                    + user.role() + "|" + user.uid();
             if (backendInfoCache != null) {
                 backendInfo = backendInfoCache.get(cacheKey);
             }
             if (backendInfo == null) {
                 backendInfo =
                         provider.getInfo(
-                                agent.getBackendId(), includeConfigurableItems, user.role());
+                                agent.getBackendId(), includeConfigurableItems, user.role(), user.uid());
                 if (backendInfoCache != null && backendInfo != null) {
                     backendInfoCache.put(cacheKey, backendInfo);
                 }

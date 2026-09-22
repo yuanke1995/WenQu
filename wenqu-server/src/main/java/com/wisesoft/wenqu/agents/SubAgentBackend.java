@@ -57,7 +57,8 @@ import org.springframework.stereotype.Service;
  *   <li>{@code disabled_tools = _disabled_tools_for(tool_approval_mode)}</li>
  *   <li>{@code backend = create_agent_composite_backend(context)}</li>
  *   <li>{@code tools=_filter_disabled_tools(await resolve_configured_runtime_tools(context), disabled_tools)}
- *       —— 与主智能体的差别：子智能体在图<b>构图期</b>就把禁用工具从工具表里摘掉</li>
+ *       —— 与主智能体的差别：子智能体在图<b>构图期</b>就把禁用工具从工具表里摘掉；
+ *       两者都在构图期经 {@link ToolRuntimeBinder#bindRuntimeTools} 绑定本次 Run 的 {@code ToolRuntime}</li>
  *   <li>{@code middleware=await _build_middlewares(context, backend, tool_approval_mode)}</li>
  * </ol>
  *
@@ -98,6 +99,7 @@ public class SubAgentBackend extends BaseAgent {
     private final SubagentRunService subagentRunService;
     private final AgentRunService agentRunService;
     private final ModelProviderCache modelProviderCache;
+    private final ToolRuntimeBinder toolRuntimeBinder;
 
     public SubAgentBackend(
             AgentCompositeBackend compositeBackend,
@@ -109,6 +111,7 @@ public class SubAgentBackend extends BaseAgent {
             SubagentRunService subagentRunService,
             AgentRunService agentRunService,
             ModelProviderCache modelProviderCache,
+            ToolRuntimeBinder toolRuntimeBinder,
             MysqlLanggraphCheckpointerProvider checkpointerProvider) {
         this.compositeBackend = compositeBackend;
         this.agentChatModel = agentChatModel;
@@ -119,6 +122,7 @@ public class SubAgentBackend extends BaseAgent {
         this.subagentRunService = subagentRunService;
         this.agentRunService = agentRunService;
         this.modelProviderCache = modelProviderCache;
+        this.toolRuntimeBinder = toolRuntimeBinder;
         // 与 ChatbotAgent 同一套进程级 checkpointer：子智能体线程也要能跨轮续跑
         // （子线程 id 是 64 位，落的是 saver 的 thread_name VARCHAR(255)，容得下）。
         this.checkpointerProvider = checkpointerProvider;
@@ -175,14 +179,15 @@ public class SubAgentBackend extends BaseAgent {
         List<Interceptor> interceptors = new ArrayList<>();
         buildMiddlewares(context, backend, approvalMode, disabledTools, interceptors);
 
-        List<?> runtimeTools = ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime);
+        List<Object> runtimeTools = ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime);
         return GraphFactory.builder()
                 .name(name)
                 .description(description)
                 .model(AgentGraphSupport.loadModel(agentChatModel, context))
                 .systemPrompt(ChatbotPrompt.buildPromptWithContext(AgentGraphSupport.promptContext(context)))
                 .tools(AgentGraphSupport.toToolCallbacks(
-                        SubAgentToolFilterMiddleware.filterDisabledTools(runtimeTools, disabledTools)))
+                        SubAgentToolFilterMiddleware.filterDisabledTools(
+                                toolRuntimeBinder.bindRuntimeTools(runtimeTools, context), disabledTools)))
                 .hooks(hooks)
                 .interceptors(interceptors)
                 .saver((BaseCheckpointSaver) getCheckpointer())

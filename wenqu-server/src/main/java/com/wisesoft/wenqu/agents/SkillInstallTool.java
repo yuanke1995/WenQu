@@ -11,6 +11,8 @@ import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * 安装技能工具（对应参考实现 {@code agents/toolkits/buildin/install_skill.py}）。
@@ -27,8 +29,10 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  *
  * <h3>必要替换</h3>
  * <ol>
- *   <li>{@code runtime: ToolRuntime} / {@code tool_call_id} → {@link #CONTEXT} 线程绑定
- *       + {@link #TOOL_CALL_ID}（与 {@code MemoryMiddleware} / {@code KnowledgeTools} 同一手法）。</li>
+ *   <li>{@code runtime: ToolRuntime} → {@link #runtimeContext} 实例字段 + {@link #boundTo}
+ *       （与 {@link KnowledgeTools} 同一手法：构图方按 Run 派生绑定副本）。
+ *       {@code InjectedToolCallId} 在 Spring AI 的 {@link ToolCallback} 上没有入参对位，
+ *       且本工程返回 content 而非 {@code Command}（见能力差异 1），故不再承载该值。</li>
  *   <li>{@code Command(update={"messages":[ToolMessage(...)]})} → 工具直接返回该 ToolMessage 的
  *       content 文本（见能力差异 1）。</li>
  *   <li>{@code tempfile.TemporaryDirectory} → {@link Files#createTempDirectory}。</li>
@@ -51,6 +55,7 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  * </ol>
  */
 @Slf4j
+@Component
 public final class SkillInstallTool implements ToolDefinition, ToolCallback {
 
     /** 参考实现 {@code SANDBOX_PATH_HINT}（逐字）。 */
@@ -69,18 +74,23 @@ public final class SkillInstallTool implements ToolDefinition, ToolCallback {
               "skill_names":{"type":"array","items":{"type":"string"},"description":"Git 安装时指定要安装的 skill slug 列表（至少一个）。Sandbox 路径安装时忽略此参数。"}
             },"required":["source"]}""";
 
-    /** 当前调用的运行时上下文（对应 {@code ToolRuntime.context}）。 */
-    static final ThreadLocal<BaseContext> CONTEXT = new ThreadLocal<>();
-
-    /** 当前调用的 tool_call_id（对应 {@code InjectedToolCallId}）。 */
-    static final ThreadLocal<String> TOOL_CALL_ID = new ThreadLocal<>();
-
     private final SkillService skillService;
     private final SkillRemoteInstall remoteInstall;
 
+    /** 本次 Run 的运行时上下文（对应参考实现按调用注入的 {@code ToolRuntime.context}）。 */
+    private final BaseContext runtimeContext;
+
+    /** 容器装配用主构造器（本类另有私有的「绑定副本」构造器，故显式标注 {@link Autowired}）。 */
+    @Autowired
     public SkillInstallTool(SkillService skillService, SkillRemoteInstall remoteInstall) {
+        this(skillService, remoteInstall, null);
+    }
+
+    private SkillInstallTool(
+            SkillService skillService, SkillRemoteInstall remoteInstall, BaseContext runtimeContext) {
         this.skillService = skillService;
         this.remoteInstall = remoteInstall;
+        this.runtimeContext = runtimeContext;
     }
 
     /** 注册到 {@link ToolkitsRegistry}（对应 {@code @tool(category="buildin", ...)} 装饰器）。 */
@@ -90,11 +100,9 @@ public final class SkillInstallTool implements ToolDefinition, ToolCallback {
         return this;
     }
 
-    /** 绑定一次工具调用的运行时上下文与 tool_call_id。 */
-    public SkillInstallTool bind(BaseContext context, String toolCallId) {
-        CONTEXT.set(context);
-        TOOL_CALL_ID.set(toolCallId == null ? "" : toolCallId);
-        return this;
+    /** 派生绑定到本次 Run 的工具副本（对应参考实现按调用注入的 {@code ToolRuntime}）。 */
+    public SkillInstallTool boundTo(BaseContext context) {
+        return new SkillInstallTool(skillService, remoteInstall, context);
     }
 
     @Override
@@ -133,8 +141,7 @@ public final class SkillInstallTool implements ToolDefinition, ToolCallback {
                 }
             }
         }
-        String toolCallId = TOOL_CALL_ID.get();
-        return runInstallTask(KnowledgeTools.stringArg(args, "source"), skillNames, toolCallId == null ? "" : toolCallId);
+        return runInstallTask(KnowledgeTools.stringArg(args, "source"), skillNames, "");
     }
 
     /**
@@ -143,7 +150,7 @@ public final class SkillInstallTool implements ToolDefinition, ToolCallback {
      * <p>返回值为本该写进 {@code Command.update["messages"][0].content} 的文本（见类注释「能力差异 1」）。
      */
     public String runInstallTask(String rawSource, List<String> skillNames, String toolCallId) {
-        BaseContext runtimeContext = CONTEXT.get();
+        BaseContext runtimeContext = this.runtimeContext;
         if (runtimeContext != null && Boolean.TRUE.equals(
                 runtimeContext.getDynamic("is_subagent_runtime", Boolean.FALSE))) {
             return "错误：install_skill 只能在主智能体中使用，子智能体无法安装 Skill";

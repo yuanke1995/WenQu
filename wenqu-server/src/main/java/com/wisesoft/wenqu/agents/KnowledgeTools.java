@@ -29,10 +29,12 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  * <ol>
  *   <li>{@code @tool(category=..., tags=..., display_name=...)} → 显式构造
  *       {@link ToolkitsRegistry.ToolExtraMetadata} 并 {@link ToolkitsRegistry#register}。</li>
- *   <li>{@code runtime: ToolRuntime}（LangGraph 注入）→ {@link #CONTEXT} 线程绑定
- *       （与 {@code MemoryMiddleware} 的 ThreadLocal 手法一致），由构图方在执行前
- *       {@link #bind} 一次。</li>
- *   <li>{@code knowledge_base}（模块级单例）→ {@link KnowledgeBaseManager}（{@link #MANAGER} 绑定）。</li>
+ *   <li>{@code runtime: ToolRuntime}（LangGraph 按调用注入）→ {@link ToolRuntime} 作为
+ *       <b>执行体的显式入参</b>（与参考实现各工具函数的 {@code runtime} 形参逐位对位）；
+ *       构图方按本次 Run 用 {@link KnowledgeTool#boundTo} 派生绑定副本，
+ *       注册表里保留的是不带 runtime 的原型（与 {@code @tool} 装饰器收集的对象同义）。</li>
+ *   <li>{@code knowledge_base}（模块级单例，函数内迟延导入）→ {@link ToolRuntime#manager()}
+ *       （本工程知识库运行时即 {@link KnowledgeBaseManager}）。</li>
  *   <li>pydantic {@code args_schema} → JSON Schema 常量字符串（字段名与必填项逐字对齐）。</li>
  * </ol>
  *
@@ -51,17 +53,23 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
 @Slf4j
 public final class KnowledgeTools {
 
-    /** 当前调用的运行时上下文（对应 {@code ToolRuntime.context}）。 */
-    static final ThreadLocal<BaseContext> CONTEXT = new ThreadLocal<>();
-
-    /** 当前调用的知识库门面（对应 {@code yuxi.knowledge.runtime.knowledge_base}）。 */
-    static final ThreadLocal<KnowledgeBaseManager> MANAGER = new ThreadLocal<>();
-
-    /** 当前调用的可见知识库解析后端（可为 null）。 */
-    static final ThreadLocal<KnowledgeBaseBackend> BACKEND = new ThreadLocal<>();
-
-    /** 当前调用的知识库仓储（{@code get_mindmap} 读 {@code mindmap} 列用）。 */
-    static final ThreadLocal<KnowledgeBaseRepository> REPOSITORY = new ThreadLocal<>();
+    /**
+     * 一次工具调用所需的运行时依赖（对应参考实现由 LangGraph 注入的 {@code ToolRuntime}）。
+     *
+     * <p>参考实现里 {@code runtime} 是各工具函数的形参 —— 即「每次调用各自携带一份 runtime」。
+     * 本工程把它还原成显式数据载体：{@link #getCommonKbTools()} 产出的注册表原型不带 runtime，
+     * 构图方在构图时用 {@link KnowledgeTool#boundTo} 派生绑定副本后再交给引擎执行。
+     *
+     * @param context    运行时上下文（{@code runtime.context}）
+     * @param manager    知识库门面（对位模块级单例 {@code yuxi.knowledge.runtime.knowledge_base}）
+     * @param backend    可见知识库解析后端（{@code runtime.backend}，可为 null）
+     * @param repository 知识库仓储（{@code get_mindmap} 读 {@code mindmap} 列用）
+     */
+    public record ToolRuntime(
+            BaseContext context,
+            KnowledgeBaseManager manager,
+            KnowledgeBaseBackend backend,
+            KnowledgeBaseRepository repository) {}
 
     /** 参考实现 {@code list_kbs} 的入参 schema。 */
     static final String LIST_KBS_SCHEMA = schema(Map.of("dummy", stringProperty("Dummy parameter - ignore")), List.of());
@@ -119,23 +127,6 @@ public final class KnowledgeTools {
             List.of("kb_id", "file_id"));
 
     private KnowledgeTools() {}
-
-    /** 绑定一次工具调用所需的运行时依赖（对应 {@code ToolRuntime} 注入）。 */
-    public static void bind(BaseContext context, KnowledgeBaseManager manager, KnowledgeBaseBackend backend) {
-        bind(context, manager, backend, null);
-    }
-
-    /** 绑定一次工具调用所需的运行时依赖（含知识库仓储，对应 {@code ToolRuntime} 注入）。 */
-    public static void bind(
-            BaseContext context,
-            KnowledgeBaseManager manager,
-            KnowledgeBaseBackend backend,
-            KnowledgeBaseRepository repository) {
-        CONTEXT.set(context);
-        MANAGER.set(manager);
-        BACKEND.set(backend);
-        REPOSITORY.set(repository);
-    }
 
     /**
      * 对应参考实现 {@code get_common_kb_tools}：返回 7 个通用知识库工具（按参考实现的顺序）。
@@ -205,11 +196,11 @@ public final class KnowledgeTools {
         return tools;
     }
 
-    /** 供构图方注册进引擎的 {@link ToolCallback} 视图（7 个，顺序同参考实现）。 */
-    public static List<ToolCallback> getToolCallbacks() {
+    /** 供构图方注册进引擎的「已绑定本次 Run runtime」的 {@link ToolCallback} 视图（7 个，顺序同参考实现）。 */
+    public static List<ToolCallback> getToolCallbacks(ToolRuntime runtime) {
         List<ToolCallback> callbacks = new ArrayList<>();
         for (KnowledgeTool tool : getCommonKbTools()) {
-            callbacks.add(tool);
+            callbacks.add(tool.boundTo(runtime));
         }
         return callbacks;
     }
@@ -217,12 +208,13 @@ public final class KnowledgeTools {
     // ==================== 7 个工具执行体 ====================
 
     /** 对应 {@code list_kbs}。 */
-    static Object listKbs(BaseContext context, Map<String, Object> args) {
+    static Object listKbs(ToolRuntime runtime, Map<String, Object> args) {
+        BaseContext context = runtime == null ? null : runtime.context();
         String uid = context == null ? null : context.getString("uid");
         if (uid == null || uid.isEmpty()) {
             return "无法获取用户信息";
         }
-        List<Map<String, Object>> available = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> available = resolveVisibleKnowledgeBasesForQuery(runtime);
         if (available.isEmpty()) {
             return "当前没有可访问的知识库";
         }
@@ -240,12 +232,12 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code get_mindmap}。 */
-    static Object getMindmap(BaseContext context, Map<String, Object> args) {
+    static Object getMindmap(ToolRuntime runtime, Map<String, Object> args) {
         String kbName = stringArg(args, "kb_name");
         if (kbName == null || kbName.isEmpty()) {
             return "请提供知识库名称";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         Map<String, Object> target = null;
         for (Map<String, Object> kb : visible) {
             if (kbName.equals(kb.get("name"))) {
@@ -258,7 +250,7 @@ public final class KnowledgeTools {
         }
         String targetKbId = String.valueOf(target.get("kb_id"));
         try {
-            KnowledgeBaseRepository repository = REPOSITORY.get();
+            KnowledgeBaseRepository repository = runtime == null ? null : runtime.repository();
             KnowledgeBase kb = repository == null ? null : repository.getByKbId(targetKbId);
             if (kb == null) {
                 return "知识库 " + target.get("name") + " 不存在";
@@ -277,7 +269,7 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code query_kb}。 */
-    static Object queryKb(BaseContext context, Map<String, Object> args) {
+    static Object queryKb(ToolRuntime runtime, Map<String, Object> args) {
         String kbId = stringArg(args, "kb_id");
         String queryText = stringArg(args, "query_text");
         if (kbId == null || kbId.isEmpty()) {
@@ -286,7 +278,7 @@ public final class KnowledgeTools {
         if (queryText == null || queryText.isEmpty()) {
             return "请提供查询内容";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         String error = findQueryTarget(kbId, visible);
         if (error != null) {
             return error;
@@ -297,7 +289,7 @@ public final class KnowledgeTools {
             if (fileName != null && !fileName.isEmpty()) {
                 options.put("file_name", fileName);
             }
-            return MANAGER.get().retrieve(kbId, queryText, options);
+            return runtime.manager().retrieve(kbId, queryText, options);
         } catch (RuntimeException exc) {
             log.error("检索失败: {}", exc.getMessage());
             return "检索失败: " + exc;
@@ -305,7 +297,7 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code open_kb_document}。 */
-    static Object openKbDocument(BaseContext context, Map<String, Object> args) {
+    static Object openKbDocument(ToolRuntime runtime, Map<String, Object> args) {
         String kbId = normalize(stringArg(args, "kb_id"));
         String fileId = normalize(stringArg(args, "file_id"));
         if (kbId.isEmpty()) {
@@ -314,7 +306,7 @@ public final class KnowledgeTools {
         if (fileId.isEmpty()) {
             return "请提供 file_id";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         String error = findQueryTarget(kbId, visible);
         if (error != null) {
             return error;
@@ -323,7 +315,7 @@ public final class KnowledgeTools {
             Integer line = intArg(args, "line");
             int startOffset = line != null ? line - 1 : intArg(args, "offset", 0);
             int windowSize = intArg(args, "window_size", 1800);
-            return MANAGER.get().openDocument(kbId, fileId, startOffset, windowSize);
+            return runtime.manager().openDocument(kbId, fileId, startOffset, windowSize);
         } catch (RuntimeException exc) {
             log.error("打开知识库文档失败: {}", exc.getMessage());
             return "打开知识库文档失败: " + exc;
@@ -331,7 +323,7 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code find_kb_document}。 */
-    static Object findKbDocument(BaseContext context, Map<String, Object> args) {
+    static Object findKbDocument(ToolRuntime runtime, Map<String, Object> args) {
         String kbId = normalize(stringArg(args, "kb_id"));
         String fileId = normalize(stringArg(args, "file_id"));
         if (kbId.isEmpty()) {
@@ -344,13 +336,13 @@ public final class KnowledgeTools {
         if (patterns.isEmpty()) {
             return "请提供 patterns";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         String error = findQueryTarget(kbId, visible);
         if (error != null) {
             return error;
         }
         try {
-            return MANAGER.get().findInDocument(
+            return runtime.manager().findInDocument(
                     kbId,
                     fileId,
                     patterns,
@@ -365,13 +357,13 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code search_file}。 */
-    static Object searchFile(BaseContext context, Map<String, Object> args) {
+    static Object searchFile(ToolRuntime runtime, Map<String, Object> args) {
         String kbName = stringArg(args, "kb_name");
         String query = stringArg(args, "query");
         if ((kbName == null || kbName.isEmpty()) && (query == null || query.isEmpty())) {
             return "请提供知识库名称或搜索关键词，不能同时为空";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         if (visible.isEmpty()) {
             return "无法获取当前会话可访问的知识库";
         }
@@ -388,7 +380,7 @@ public final class KnowledgeTools {
         } else {
             targetKbs.addAll(visible);
         }
-        KnowledgeBaseManager manager = MANAGER.get();
+        KnowledgeBaseManager manager = runtime.manager();
         List<Map<String, Object>> searchable = new ArrayList<>();
         for (Map<String, Object> kb : targetKbs) {
             if (manager.databaseTypeSupportsDocuments(String.valueOf(kb.get("kb_type")))) {
@@ -409,7 +401,7 @@ public final class KnowledgeTools {
     }
 
     /** 对应 {@code download_kb_file}（沙盒落盘见类注释「能力差异 1」）。 */
-    static Object downloadKbFile(BaseContext context, Map<String, Object> args) {
+    static Object downloadKbFile(ToolRuntime runtime, Map<String, Object> args) {
         String kbId = normalize(stringArg(args, "kb_id"));
         String fileId = normalize(stringArg(args, "file_id"));
         if (kbId.isEmpty()) {
@@ -418,12 +410,12 @@ public final class KnowledgeTools {
         if (fileId.isEmpty()) {
             return "请提供 file_id";
         }
-        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(context);
+        List<Map<String, Object>> visible = resolveVisibleKnowledgeBasesForQuery(runtime);
         String error = findQueryTarget(kbId, visible);
         if (error != null) {
             return error;
         }
-        KnowledgeBaseManager manager = MANAGER.get();
+        KnowledgeBaseManager manager = runtime.manager();
         Map<String, Object> data;
         try {
             data = manager.getFileDownload(kbId, fileId, "original");
@@ -433,7 +425,7 @@ public final class KnowledgeTools {
             log.error("下载知识库原始文件失败: {}", exc.getMessage());
             return "下载知识库原始文件失败: " + exc;
         }
-        SandboxScope scope = runtimeSandboxScope(context);
+        SandboxScope scope = runtimeSandboxScope(runtime);
         if (scope == null) {
             return "无法获取当前会话的沙盒上下文，缺少 thread_id 或 uid";
         }
@@ -453,7 +445,8 @@ public final class KnowledgeTools {
     // ==================== 共享 helper（对应参考实现细节层） ====================
 
     /** 对应参考实现 {@code _resolve_visible_knowledge_bases_for_query}。 */
-    static List<Map<String, Object>> resolveVisibleKnowledgeBasesForQuery(BaseContext context) {
+    static List<Map<String, Object>> resolveVisibleKnowledgeBasesForQuery(ToolRuntime runtime) {
+        BaseContext context = runtime == null ? null : runtime.context();
         if (context == null) {
             return List.of();
         }
@@ -472,7 +465,7 @@ public final class KnowledgeTools {
             }
         }
         try {
-            KnowledgeBaseBackend backend = BACKEND.get();
+            KnowledgeBaseBackend backend = runtime.backend();
             return backend == null ? List.of() : backend.resolveVisibleKnowledgeBasesForContext(context);
         } catch (RuntimeException exc) {
             log.warn("解析会话可见知识库失败: {}", exc.getMessage());
@@ -497,7 +490,8 @@ public final class KnowledgeTools {
     }
 
     /** 对应参考实现 {@code _runtime_sandbox_scope}。 */
-    static SandboxScope runtimeSandboxScope(BaseContext context) {
+    static SandboxScope runtimeSandboxScope(ToolRuntime runtime) {
+        BaseContext context = runtime == null ? null : runtime.context();
         if (context == null) {
             return null;
         }
@@ -581,6 +575,10 @@ public final class KnowledgeTools {
     /**
      * 知识库工具载体：同时实现 {@link ToolDefinition}（注册表/元数据面）与
      * {@link ToolCallback}（框架执行面）。
+     *
+     * <p>注册表里保存的是 {@code runtime == null} 的<b>原型</b>（与参考实现 {@code @tool}
+     * 装饰器收集到的对象同义，只用于名字/描述/schema 与门控）；执行期必须先经
+     * {@link #boundTo(ToolRuntime)} 得到携带本次 Run 依赖的副本。
      */
     public static final class KnowledgeTool implements ToolDefinition, ToolCallback {
 
@@ -591,14 +589,31 @@ public final class KnowledgeTools {
         private final String displayName;
         private final KnowledgeToolBody body;
 
+        /** 本次 Run 的运行时依赖（对应参考实现按调用注入的 {@code ToolRuntime}）。 */
+        private final ToolRuntime runtime;
+
         KnowledgeTool(String name, String description, String argsSchema,
                 String category, String displayName, KnowledgeToolBody body) {
+            this(name, description, argsSchema, category, displayName, body, null);
+        }
+
+        private KnowledgeTool(String name, String description, String argsSchema,
+                String category, String displayName, KnowledgeToolBody body, ToolRuntime runtime) {
             this.name = name;
             this.description = description;
             this.argsSchema = argsSchema;
             this.category = category;
             this.displayName = displayName;
             this.body = body;
+            this.runtime = runtime;
+        }
+
+        /**
+         * 派生绑定到本次 Run 的工具副本（对应参考实现里 LangGraph 把 {@code runtime}
+         * 作为调用入参注入到每个工具函数）。
+         */
+        public KnowledgeTool boundTo(ToolRuntime runtime) {
+            return new KnowledgeTool(name, description, argsSchema, category, displayName, body, runtime);
         }
 
         @Override
@@ -635,17 +650,20 @@ public final class KnowledgeTools {
 
         @Override
         public String call(String toolInput) {
-            BaseContext context = CONTEXT.get();
+            if (runtime == null) {
+                log.warn("Knowledge tool {} called without runtime binding", name);
+                return "知识库工具缺少运行时绑定（构图方必须先 boundTo）";
+            }
             Map<String, Object> args = parseArgs(toolInput);
-            Object result = body.run(context, args);
+            Object result = body.run(runtime, args);
             return result instanceof String text ? text : JSON.toJSONString(result);
         }
     }
 
-    /** 工具执行体（对应参考实现各工具的 {@code coroutine}）。 */
+    /** 工具执行体（对应参考实现各工具的 {@code coroutine}；{@code runtime} 为显式入参）。 */
     @FunctionalInterface
     interface KnowledgeToolBody {
-        Object run(BaseContext context, Map<String, Object> args);
+        Object run(ToolRuntime runtime, Map<String, Object> args);
     }
 
     // ==================== 小工具 ====================

@@ -44,7 +44,9 @@ import org.springframework.stereotype.Service;
  *       {@link AgentCompositeBackend#createAgentCompositeBackend}</li>
  *   <li>{@code model=load_chat_model(…)} → {@link AgentGraphSupport#loadModel}</li>
  *   <li>{@code tools=await resolve_configured_runtime_tools(context)} →
- *       {@link ToolkitsService#resolveConfiguredRuntimeTools} → {@link AgentGraphSupport#toToolCallbacks}</li>
+ *       {@link ToolkitsService#resolveConfiguredRuntimeTools} →
+ *       {@link ToolRuntimeBinder#bindRuntimeTools}（按本次 Run 绑定 {@code ToolRuntime}）→
+ *       {@link AgentGraphSupport#toToolCallbacks}</li>
  *   <li>{@code system_prompt=build_prompt_with_context(context)} →
  *       {@link ChatbotPrompt#buildPromptWithContext}</li>
  *   <li>{@code middleware=await _build_middlewares(context, backend)} → {@link #buildMiddlewares}</li>
@@ -101,6 +103,7 @@ public class ChatbotAgent extends BaseAgent {
     private final AgentRunService agentRunService;
     private final AgentRequestQueueService requestQueueService;
     private final ModelProviderCache modelProviderCache;
+    private final ToolRuntimeBinder toolRuntimeBinder;
 
     public ChatbotAgent(
             AgentCompositeBackend compositeBackend,
@@ -114,6 +117,7 @@ public class ChatbotAgent extends BaseAgent {
             AgentRunService agentRunService,
             AgentRequestQueueService requestQueueService,
             ModelProviderCache modelProviderCache,
+            ToolRuntimeBinder toolRuntimeBinder,
             MysqlLanggraphCheckpointerProvider checkpointerProvider) {
         this.compositeBackend = compositeBackend;
         this.agentChatModel = agentChatModel;
@@ -126,6 +130,7 @@ public class ChatbotAgent extends BaseAgent {
         this.agentRunService = agentRunService;
         this.requestQueueService = requestQueueService;
         this.modelProviderCache = modelProviderCache;
+        this.toolRuntimeBinder = toolRuntimeBinder;
         // 进程级持久化 checkpointer（对应蓝本 pg_manager.get_langgraph_checkpointer()）：
         // 不装配的话构图会退回"每次新建的 MemorySaver"，对话记忆与 checkpoint 面全部落空。
         this.checkpointerProvider = checkpointerProvider;
@@ -152,13 +157,16 @@ public class ChatbotAgent extends BaseAgent {
         List<Interceptor> interceptors = new ArrayList<>();
         buildMiddlewares(context, backend, hooks, interceptors);
 
+        // 工具面：按配置解析 → 绑定本次 Run 的 ToolRuntime（参考实现里该绑定由 LangGraph 按调用注入）
+        List<Object> tools = toolRuntimeBinder.bindRuntimeTools(
+                ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime), context);
+
         return GraphFactory.builder()
                 .name(name)
                 .description(description)
                 .model(AgentGraphSupport.loadModel(agentChatModel, context))
                 .systemPrompt(ChatbotPrompt.buildPromptWithContext(AgentGraphSupport.promptContext(context)))
-                .tools(AgentGraphSupport.toToolCallbacks(
-                        ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime)))
+                .tools(AgentGraphSupport.toToolCallbacks(tools))
                 .hooks(hooks)
                 .interceptors(interceptors)
                 .saver((BaseCheckpointSaver) getCheckpointer())

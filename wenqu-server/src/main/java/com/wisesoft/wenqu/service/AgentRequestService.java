@@ -511,7 +511,14 @@ public class AgentRequestService {
                 if ("reject".equals(policy)) {
                     conversationRepository.setModelSpec(conversation, resolvedModelSpec);
                 }
-                return new PersistOutcome(persistedRequest, dispatched);
+                // 参考实现依赖 SQLAlchemy identity map：mark_dispatched 改的就是 persisted_request
+                // 同一实例，故随后返回的 request_view 天然带 status=dispatched + run_id + stream_url。
+                // MyBatis 每次查询都新建对象，不重读会让响应停留在 queued/run_id=null ——
+                // 前端据此走排队分支，而线程队列快照此刻已无该请求可订阅，
+                // 于是永远不会打开 run 事件流，回答只能在切线程重载历史后才可见。
+                AgentRunRequest dispatchedRequest = requestRepository.getByRequestId(requestId);
+                return new PersistOutcome(
+                        dispatchedRequest != null ? dispatchedRequest : persistedRequest, dispatched);
             }
 
             if ("reject".equals(policy)) {

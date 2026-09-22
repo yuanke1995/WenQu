@@ -11,6 +11,7 @@ import com.wisesoft.wenqu.agents.BaseContext;
 import com.wisesoft.wenqu.agents.GraphStateSnapshot;
 import com.wisesoft.wenqu.agents.HumanMessage;
 import com.wisesoft.wenqu.agents.ModelDumpable;
+import com.wisesoft.wenqu.agents.engine.GraphCodec;
 import com.wisesoft.wenqu.common.ApiHttpException;
 import com.wisesoft.wenqu.common.DateTimeUtils;
 import com.wisesoft.wenqu.common.JsonValues;
@@ -1101,14 +1102,33 @@ public class ChatService {
         String lastStateAiId = null;
         Message lastAiMessage = null;
 
+        int stateIndex = -1;
         for (Object msg : messages) {
+            stateIndex++;
             Map<String, Object> msgDict;
             if (msg instanceof ModelDumpable dumpable) {
                 msgDict = dumpable.modelDump();
+            } else if (msg instanceof org.springframework.ai.chat.messages.Message springAiMessage) {
+                // 引擎 checkpoint 的 state.messages 存的是 Spring AI 原生消息（UserMessage /
+                // AssistantMessage / ToolResponseMessage），不是 LangChain 的 model_dump() 形态。
+                // 用同一套桥接转成承载类再 dump；否则整条消息会落入下面的 else 被静默丢弃，
+                // 末条 AIMessage 随之丢失，completed 时无 assistant 输出可绑定
+                //（"AgentRun 完成前必须绑定同一 Run 的有效 assistant 输出消息"）。
+                Object carrier = GraphCodec.toCarrier(springAiMessage);
+                if (!(carrier instanceof ModelDumpable carrierDumpable)) {
+                    continue;
+                }
+                msgDict = carrierDumpable.modelDump();
             } else if (msg instanceof Map<?, ?> map) {
                 msgDict = copyMap(map);
             } else {
                 continue;
+            }
+            // Spring AI 的 AbstractMessage 没有 id 字段，而参考实现的「已持久化来源键」去重依赖
+            // msg_dict["id"]（能力差异，显式补齐）：按 state 内位置派生一个跨 replay 复现的稳定键。
+            // 用位置而非内容，避免相同答复被误判为已存在而跳过末条输出。
+            if (msgDict.get("id") == null) {
+                msgDict.put("id", "lg:" + stateIndex);
             }
 
             String msgType = msgDict.get("type") == null ? "unknown" : String.valueOf(msgDict.get("type"));
