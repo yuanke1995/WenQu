@@ -26,9 +26,9 @@ import org.slf4j.LoggerFactory;
  * 图片处理（utils/image_processor.py 全量移植）：格式校验、EXIF 方向修正、缩略图生成、
  * 超限压缩，返回 base64 内容 + 元信息。
  *
- * <p>被 {@code ChatController} 的 {@code POST /image/upload} 使用；与既有的
- * {@link ImageCompressor}（docx 解析与图片描述补齐共用，失败回退原图、无质量/尺寸递降）
- * 语义不同，故<b>不复用</b>后者。
+ * <p>被 {@code ChatController} 的 {@code POST /image/upload} 使用；与早期那份
+ * {@code ImageCompressor}（docx 解析与图片描述补齐共用，失败回退原图、无质量/尺寸递降）
+ * 语义不同，故<b>不复用</b>后者 —— 后者已随旧文档解析链一并移除。
  *
  * <h3>必要替换（Pillow → JDK ImageIO）</h3>
  * <ul>

@@ -7,7 +7,7 @@ package com.wisesoft.wenqu.service;
  * {@code c_ai_user} 表。旧契约层整体下线后，那些能力随 {@code AuthController}
  * （{@code /api/ai/auth/**}）、{@code UserMapper}、{@code model.User} 一并移除；
  * 本类只保留这一个**不带状态的静态方法**，因为它被新契约的权限判定直接引用：
- * {@code AdminGuard} / {@code AuthGuards} / {@code McpController}。
+ * {@code AuthGuards} / {@code McpController}。
  *
  * <p>类名保持不变是为了不改动上述三处引用；由于不再需要依赖注入，这里也不再是 Spring bean
  * （去掉 {@code @Service}），调用方一律走 {@code AuthService.isAdminRole(...)} 静态调用。

@@ -17,13 +17,14 @@ import reactor.core.publisher.Flux;
 
 /**
  * 动态 OpenAI 兼容 ChatModel：LLM 网关三要素（baseUrl / apiKey / completionsPath）全部来自
- * c_ai_config（设置页保存即生效），跨厂商热切换（DeepSeek/智谱GLM/百炼Qwen/Kimi/豆包/混元/千帆/
+ * 配置服务 {@link ConfigService} 的 {@code chat.baseUrl / chat.apiKey / chat.completionsPath}
+ * （值取自 yml/env 与环境变量，不再落库），跨厂商热切换（DeepSeek/智谱GLM/百炼Qwen/Kimi/豆包/混元/千帆/
  * MiniMax/SiliconFlow/Ollama 等 OpenAI 兼容端点）无需重启服务。
  * <p>
  * - 每次请求前校验配置指纹（baseUrl|completionsPath|apiKey），变化即重建底层 {@link OpenAiChatModel}；
- *   配置变更经由 ConfigService 本地保存 / Redis 广播 reload / 周期兜底 reload 刷新缓存，下一次请求自动感知
- * - 模型名与温度仍由 RagService 以 per-request options 传递（chat.model 逻辑不变）
- * - DB 未配置时回退 yml/env 的 spring.ai.openai.base-url / api-key（与原自动配置行为一致）
+ *   配置值由 {@link ConfigService} 在启动时从 yml/env 载入内存缓存
+ * - 模型名与温度仍由调用方以 per-request options 传递（chat.model 逻辑不变）
+ * - 未配置时回退 yml/env 的 spring.ai.openai.base-url / api-key（与原自动配置行为一致）
  * - 替换 Spring AI 自动配置的单例 ChatModel：RagService 注入基于本类的 ChatClient（DynamicChatClientConfig）
  *
  * @author yuanke

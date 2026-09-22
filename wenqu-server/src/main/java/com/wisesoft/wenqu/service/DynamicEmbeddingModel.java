@@ -17,7 +17,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 动态 OpenAI 兼容 EmbeddingModel：向量模型四要素（model / baseUrl / apiKey / embeddingsPath）
- * 全部来自 c_ai_config（设置页保存即生效，@Primary 使自动配置的 RedisVectorStore 注入本类），切换向量厂商无需重启服务。
+ * 全部来自配置服务 {@link ConfigService} 的 {@code embedding.*}（值取自 yml/env 与环境变量，不再落库；
+ * {@code @Primary} 使自动配置的 RedisVectorStore 注入本类），切换向量厂商无需重启服务。
  * <p>
  * - 每次调用前校验配置指纹，变化即重建底层 {@link OpenAiEmbeddingModel}（本地构建，无网络开销）
  * - 路径归一化复用 {@link DynamicOpenAiChatModel#normalize}（智谱 /v4/embeddings、千帆 /v2/embeddings 等）

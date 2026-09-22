@@ -1,39 +1,28 @@
 package com.wisesoft.wenqu.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.wenqu.config.AppProperties;
-import com.wisesoft.wenqu.repository.ConfigMapper;
-import com.wisesoft.wenqu.model.Config;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.core.env.Environment;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPubSub;
 
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * 模型配置服务：DB（c_ai_config）存储 + 内存缓存
+ * 配置读取服务：**只读默认值 + 内存缓存**，不再落库。
  * <p>
- * - 启动时表空则从 yml/env 默认值灌入
- * - 可编辑白名单：chat.model / chat.baseUrl / chat.apiKey / chat.completionsPath / chat.temperature /
- *   vision.model / vision.prompt 等（保存即生效）
- * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
- *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）
- * - vision.baseUrl / vision.apiKey 可编辑（VisionService 每次调用动态读取，保存即生效）
- * - embedding.* 可编辑（DynamicEmbeddingModel 热切换）但向量无法跨模型迁移：保存检测到变化时
- *   先探测新配置可达性，通过后自动触发全量重嵌入（DocumentService.reembedAll：DROP 向量索引 →
- *   重建 schema → 全量重算）
- * - 敏感项（*.apiKey）RSA 加密入库（ConfigCryptoService）：启动自动迁移存量明文，读取透明解密
+ * 2026-09-22 修订：原实现的存储载体是 {@code c_ai_config}（老产品配置表，RSA 加密入库 + Redis 广播
+ * 多实例同步）。业务库迁到 wenqu 之后该表不再存在，且本服务已没有配置写入入口，因此把持久化那一面
+ * （{@code ConfigMapper} / {@code model.Config} / {@code ConfigCryptoService} / Redis 广播）整体移除：
+ * <ul>
+ *   <li>启动即把 {@link #defaults()} 灌进内存缓存，随后同步一次 {@code AppProperties}；</li>
+ *   <li>对外读取接口（{@code get} / {@code getInt} / {@code getDouble} / {@code getLong} /
+ *       {@code getBoolean} / {@code snapshot}）签名与语义不变，消费方零改动；</li>
+ *   <li>运行时行为与迁库后完全一致 —— 表不存在时本来就读空回落默认值。</li>
+ * </ul>
+ * 需要真正可编辑的运行时配置，走新栈的 {@code config_options} 表（{@code OptionsService}）。
  *
  * @author yuanke
  */
@@ -268,152 +257,21 @@ public class ConfigService {
             Map.entry("mcp.enabled", 2),
             Map.entry("mcp.servers", 2));
 
-    private final ConfigMapper configMapper;
     private final AppProperties properties;
     private final Environment environment;
-    private final StringRedisTemplate redisTemplate;
-    private final RedisProperties redisProperties;
-    /** 敏感项（*.apiKey）RSA 加解密 */
-    private final ConfigCryptoService crypto;
-
-    /** 配置变更广播 channel（多实例同步：任意实例保存配置 → 其他实例订阅后重载缓存） */
-    public static final String CONFIG_CHANNEL = "ai:config:changed";
-
+    /** 从 yml/env 读取默认值（见类注释：已不再落库） */
     private volatile Map<String, String> cache = new HashMap<>();
 
-    public ConfigService(ConfigMapper configMapper, AppProperties properties, Environment environment,
-                         StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                         ConfigCryptoService crypto) {
-        this.configMapper = configMapper;
+    public ConfigService(AppProperties properties, Environment environment) {
         this.properties = properties;
         this.environment = environment;
-        this.redisTemplate = redisTemplate;
-        this.redisProperties = redisProperties;
-        this.crypto = crypto;
     }
 
     @jakarta.annotation.PostConstruct
     public void init() {
-        // 缺失的默认项自动补入（存量升级场景：新增 key 自动注入，不覆盖已有配置）
-        ensureDefaults();
-        reload();
-        // 存量明文密钥（历史版本明文入库的 *.apiKey）自动迁移为 RSA 密文
-        migratePlainSecrets();
-        startRedisConfigSync();
+        cache = defaults();
+        syncProperties();
         log.info("模型配置加载完成，共 {} 项", cache.size());
-    }
-
-    /**
-     * 存量明文密钥迁移：*.apiKey 非 RSA: 前缀的值加密回写 DB 与缓存。
-     * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
-     * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
-     */
-    private void migratePlainSecrets() {
-        try {
-            Map<String, String> encrypted = new HashMap<>();
-            for (Map.Entry<String, String> e : cache.entrySet()) {
-                String k = e.getKey();
-                String v = e.getValue();
-                if (k.endsWith(".apiKey") && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
-                    encrypted.put(k, crypto.encrypt(v));
-                }
-            }
-            if (encrypted.isEmpty()) {
-                return;
-            }
-            for (Map.Entry<String, String> e : encrypted.entrySet()) {
-                Config c = configMapper.selectById(e.getKey());
-                if (c != null) {
-                    c.setConfigValue(e.getValue());
-                    configMapper.updateById(c);
-                }
-            }
-            Map<String, String> newCache = new HashMap<>(cache);
-            newCache.putAll(encrypted);
-            cache = newCache;
-            syncProperties();
-            log.info("[Config] 存量明文密钥已迁移为 RSA 加密存储: {}", encrypted.keySet());
-        } catch (Exception e) {
-            log.warn("[Config] 明文密钥加密迁移失败（不影响启动，读取兼容明文）: {}", e.getMessage());
-        }
-    }
-
-    /** 全量重读 c_ai_config 进缓存（本地更新 / Redis 订阅通知 / schedule 包周期兜底均调用） */
-    public void reload() {
-        try {
-            List<Config> all = configMapper.selectList(new LambdaQueryWrapper<Config>());
-            Map<String, String> map = new HashMap<>();
-            for (Config c : all) {
-                map.put(c.getConfigKey(), c.getConfigValue());
-            }
-            cache = map;
-            syncProperties();
-        } catch (Exception e) {
-            log.warn("[Config] 配置重载失败: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * 多实例配置同步：daemon 线程订阅 Redis channel，任意实例保存配置后广播，
-     * 本实例收到即全量重载缓存（保存即生效跨实例成立）。Redis 不可用时仅告警不影响启动。
-     * 订阅线程是永久阻塞的事件监听（不适合进线程池）；周期兜底 reload
-     * （订阅断线期间错过的变更由轮询补齐，每 5 分钟）已移至 schedule 包 ScheduleCenter。
-     */
-    private void startRedisConfigSync() {
-        Thread t = new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
-                try (Jedis jedis = new Jedis(redisProperties.getHost(), redisProperties.getPort(), 5000)) {
-                    if (redisProperties.getPassword() != null && !redisProperties.getPassword().isBlank()) {
-                        jedis.auth(redisProperties.getPassword());
-                    }
-                    jedis.subscribe(new JedisPubSub() {
-                        @Override
-                        public void onMessage(String channel, String message) {
-                            reload();
-                            log.info("[Config] 收到配置变更广播，已刷新缓存");
-                        }
-                    }, CONFIG_CHANNEL);
-                } catch (Exception e) {
-                    log.warn("[Config] Redis 配置同步订阅中断，5s 后重连: {}", e.getMessage());
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        }, "config-redis-sync");
-        t.setDaemon(true);
-        t.start();
-    }
-
-    /** 本地保存后广播（其他实例订阅刷新；Redis 异常不影响保存结果） */
-    private void publishConfigChanged() {
-        try {
-            redisTemplate.convertAndSend(CONFIG_CHANNEL, "changed");
-        } catch (Exception e) {
-            log.debug("[Config] 配置变更广播失败: {}", e.getMessage());
-        }
-    }
-
-    /** 遍历 defaults()，DB 中缺失的 key 自动灌入默认值（单条失败不影响其余） */
-    private void ensureDefaults() {
-        for (Map.Entry<String, String> e : defaults().entrySet()) {
-            try {
-                Long cnt = configMapper.selectCount(new LambdaQueryWrapper<Config>()
-                        .eq(Config::getConfigKey, e.getKey()));
-                if (cnt == null || cnt == 0) {
-                    Config c = new Config();
-                    c.setConfigKey(e.getKey());
-                    // 敏感项默认值灌入即加密（RSA: 前缀密文）
-                    c.setConfigValue(e.getKey().endsWith(".apiKey") ? crypto.encrypt(e.getValue()) : e.getValue());
-                    c.setRemark(EDITABLE.getOrDefault(e.getKey(), "只读配置"));
-                    configMapper.insert(c);
-                }
-            } catch (Exception ex) {
-                log.warn("配置默认值灌入失败: {} error={}", e.getKey(), ex.getMessage());
-            }
-        }
     }
 
     /** 从 yml/env 读取默认值 */
@@ -660,14 +518,15 @@ public class ConfigService {
 
     /**
      * 读取配置（线程局部覆盖 → 缓存 → 默认值）。
-     * 敏感项（*.apiKey）RSA 密文在此透明解密：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
+     *
+     * <p>注：旧实现在此对 {@code *.apiKey} 做 RSA 透明解密（库里存密文、消费方拿明文）。落库那一面
+     * 移除后，取值就是 yml/env 的原样值，不再存在密文形态。
      */
     public String get(String key) {
         Map<String, String> ov = OVERRIDE.get();
         if (ov != null && ov.containsKey(key)) return ov.get(key);
         String v = cache.get(key);
-        if (v == null) v = defaults().getOrDefault(key, "");
-        return key.endsWith(".apiKey") ? crypto.decrypt(v) : v;
+        return v == null ? defaults().getOrDefault(key, "") : v;
     }
 
     public double getDouble(String key) {
@@ -729,353 +588,6 @@ public class ConfigService {
             return Boolean.parseBoolean(get(key).trim());
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    /** 保存可编辑项（白名单校验）→ 写 DB + 刷新缓存 */
-    public Map<String, String> update(Map<String, Map<String, String>> groups) {
-        Map<String, String> updates = new HashMap<>();
-        if (groups != null) {
-            for (Map.Entry<String, Map<String, String>> g : groups.entrySet()) {
-                String prefix = g.getKey() + ".";
-                for (Map.Entry<String, String> kv : g.getValue().entrySet()) {
-                    String fullKey = prefix + kv.getKey();
-                    if (EDITABLE.containsKey(fullKey)) {
-                        updates.put(fullKey, kv.getValue() == null ? "" : kv.getValue().trim());
-                    }
-                }
-            }
-        }
-        // 校验：仅当本次提交包含 chat.model 时才要求非空（避免只想改检索权重等其他项时被阻塞）
-        String model = updates.get("chat.model");
-        if (updates.containsKey("chat.model") && (model == null || model.isBlank())) {
-            throw new IllegalArgumentException("chat.model 不能为空");
-        }
-        String temp = updates.get("chat.temperature");
-        if (temp != null && !temp.isBlank()) {
-            double t = Double.parseDouble(temp);
-            if (t < 0 || t > 2) throw new IllegalArgumentException("temperature 需在 0~2 之间");
-        }
-        // LLM 网关地址校验：http(s) 开头、去尾部斜杠。路径拼接容错（…/v1、…/v4 等版本段、
-        // 完整端点粘贴）统一由 DynamicOpenAiChatModel.normalize 处理，此处不做改写，避免双处逻辑漂移
-        String cb = updates.get("chat.baseUrl");
-        if (cb != null && !cb.isBlank()) {
-            String url = cb.trim();
-            while (url.endsWith("/")) {
-                url = url.substring(0, url.length() - 1);
-            }
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                throw new IllegalArgumentException("chat.baseUrl 需以 http:// 或 https:// 开头");
-            }
-            updates.put("chat.baseUrl", url);
-        }
-        // 补全路径校验：留空（用默认 /v1/chat/completions）或以 / 开头
-        String cp = updates.get("chat.completionsPath");
-        if (cp != null && !cp.isBlank() && !cp.trim().startsWith("/")) {
-            throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
-        }
-        // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio"}) {
-            String w = updates.get(wKey);
-            if (w != null && !w.isBlank()) {
-                try {
-                    double v = Double.parseDouble(w);
-                    if (v < 0 || v > 1) throw new IllegalArgumentException(wKey + " 需在 0~1 之间");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(wKey + " 必须是数字");
-                }
-            }
-        }
-        // 上下文长度参数校验：必须是非负整数
-        for (String iKey : new String[]{"context.defaultWindowTokens", "context.costCapTokens", "context.maxOutputTokens",
-                "context.historyMaxTokens", "context.historyPerMsgChars", "context.snippetWindowChars", "context.maxContextHits",
-                "chat.historyRounds", "chat.remainTokenFloor", "chat.truncateFallbackChars"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 检索/重排数值参数校验：正整数（minHits 允许 0=从不触发）
-        for (String iKey : new String[]{"retrieval.keywordLimit", "retrieval.vectorTopK", "rerank.maxHits",
-                "retrieval.searchTimeoutMs"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 1) throw new IllegalArgumentException(iKey + " 需 ≥1");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 深度思考参数校验
-        String mode = updates.get("deepReasoning.thinkingMode");
-        if (mode != null && !mode.isBlank() && !"model".equals(mode) && !"prompt".equals(mode)) {
-            throw new IllegalArgumentException("deepReasoning.thinkingMode 仅允许 model / prompt");
-        }
-        for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
-                "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        for (String bKey : new String[]{"deepReasoning.enabled", "deepReasoning.enableThinking", "deepReasoning.multiRetrieval",
-                "deepReasoning.injectThinking", "deepReasoning.injectKeywords", "deepReasoning.autoRoute",
-                "chunk.structural"}) {
-            String v = updates.get(bKey);
-            if (v != null && !v.isBlank() && !"true".equalsIgnoreCase(v) && !"false".equalsIgnoreCase(v)) {
-                throw new IllegalArgumentException(bKey + " 仅允许 true / false");
-            }
-        }
-        // 重排参数校验
-        String rb = updates.get("rerank.enabled");
-        if (rb != null && !rb.isBlank() && !"true".equalsIgnoreCase(rb) && !"false".equalsIgnoreCase(rb)) {
-            throw new IllegalArgumentException("rerank.enabled 仅允许 true / false");
-        }
-        // 关键词引擎校验
-        String ke = updates.get("keyword.engine");
-        if (ke != null && !ke.isBlank() && !"mysql".equalsIgnoreCase(ke) && !"meilisearch".equalsIgnoreCase(ke)) {
-            throw new IllegalArgumentException("keyword.engine 仅允许 mysql / meilisearch");
-        }
-        // 注：关键词引擎的可用性探测与全量重建原由 KeywordIndexService 承担（MySQL LIKE / Meilisearch 两路）；
-        //     该服务随旧文档链（c_ai_document）一并下线，故此处只保留取值合法性校验。
-        String kt = updates.get("keyword.timeoutMillis");
-        if (kt != null && !kt.isBlank()) {
-            try {
-                if (Integer.parseInt(kt.trim()) < 200) throw new IllegalArgumentException("keyword.timeoutMillis 不能小于 200");
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("keyword.timeoutMillis 必须是整数");
-            }
-        }
-        // 解析参数校验：非负整数（0 表示不限制）
-        for (String iKey : new String[]{"chunk.maxChunks", "chunk.maxImages", "vision.concurrency",
-                "ratelimit.chatPerMinute", "ratelimit.uploadPerMinute",
-                "parse.ocrMinText", "parse.embedRetryCount"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 并发数校验：必须 ≥1（0 会让解析/图片识别线程池无工作线程，任务永久排队）
-        for (String iKey : new String[]{"parse.concurrency", "vision.userImageConcurrency"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 1) throw new IllegalArgumentException(iKey + " 需 ≥1");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 上传上限校验：必须 ≥1MB 且 ≤1GB（物理上限由 multipart 兜底）
-        String uf = updates.get("upload.maxFileSize");
-        if (uf != null && !uf.isBlank()) {
-            try {
-                long v = Long.parseLong(uf.trim());
-                if (v < 1024 * 1024 || v > 1024L * 1024 * 1024) {
-                    throw new IllegalArgumentException("upload.maxFileSize 需在 1MB ~ 1GB 之间");
-                }
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("upload.maxFileSize 必须是整数(字节)");
-            }
-        }
-
-        // 掩码回写保护：snapshot 对 *.apiKey 脱敏为 "****后4位"，前端未修改 key 时会把掩码原样提交；
-        // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
-        updates.entrySet().removeIf(kv ->
-                kv.getKey().endsWith(".apiKey") && kv.getValue() != null && kv.getValue().startsWith("****"));
-
-        // 视觉模型网关地址校验：http(s) 开头、去尾部斜杠（路径容错由 VisionService 拼接处理）
-        String vb = updates.get("vision.baseUrl");
-        if (vb != null && !vb.isBlank()) {
-            String url = vb.trim();
-            while (url.endsWith("/")) {
-                url = url.substring(0, url.length() - 1);
-            }
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                throw new IllegalArgumentException("vision.baseUrl 需以 http:// 或 https:// 开头");
-            }
-            updates.put("vision.baseUrl", url);
-        }
-
-        // 向量模型热切换：任一 embedding.* 提交时，用「新配置」真实探测一次 embedding
-        // （校验地址/Key/模型名可达；失败拒绝保存——避免配错后自动触发的全量重嵌任务必然失败）。
-        // 向量无法跨模型迁移（向量空间不兼容），真正切换后自动触发全量重嵌入。
-        boolean embeddingChanged = false;
-        if (updates.keySet().stream().anyMatch(k -> k.startsWith("embedding."))) {
-            String newModel = updates.getOrDefault("embedding.model", get("embedding.model")).trim();
-            String newBase = updates.getOrDefault("embedding.baseUrl", get("embedding.baseUrl")).trim();
-            // 未提交新 key（掩码已过滤）时回退当前值（get 透明解密为明文）
-            String newKey = updates.getOrDefault("embedding.apiKey", get("embedding.apiKey"));
-            String newPath = updates.getOrDefault("embedding.embeddingsPath", "").trim();
-            embeddingChanged = !newModel.equals(get("embedding.model").trim())
-                    || !newBase.equals(get("embedding.baseUrl").trim())
-                    || updates.containsKey("embedding.apiKey")
-                    || !newPath.equals(get("embedding.embeddingsPath").trim());
-            if (embeddingChanged) {
-                int probeDim;
-                try {
-                    probeDim = DynamicEmbeddingModel.probe(newBase, newKey, newModel, newPath);
-                } catch (Exception e) {
-                    String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-                    throw new IllegalArgumentException("新向量模型探测失败（" + msg
-                            + "），请检查网关地址/API Key/模型名；向量模型保存即触发全量重嵌入，配置错误将被拒绝");
-                }
-                // 维度护栏：探测维度非法直接拒绝（否则重建索引时 schema 维度非法，向量路整体不可用）
-                if (probeDim <= 0) {
-                    throw new IllegalArgumentException("新向量模型返回维度非法(" + probeDim
-                            + ")，疑似网关返回格式不兼容 OpenAI embeddings，已拒绝保存");
-                }
-                int recordedDim = getInt("embedding.dimensions", 0);
-                log.info("[Config] 新向量模型探测通过，维度 {}（当前索引记录维度 {}）：{}", probeDim, recordedDim,
-                        recordedDim > 0 && recordedDim != probeDim
-                                ? "维度变化，索引 schema 必须重建" : "维度未变，但跨模型向量空间不兼容，仍需全量重嵌入");
-            }
-        }
-
-        // 敏感 key RSA 加密入库：明文→密文（已加密值原样保留；空值不加密直接存空）
-        for (Map.Entry<String, String> kv : updates.entrySet()) {
-            String v = kv.getValue();
-            if (kv.getKey().endsWith(".apiKey") && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
-                kv.setValue(crypto.encrypt(v));
-            }
-        }
-
-        for (Map.Entry<String, String> kv : updates.entrySet()) {
-            Config c = configMapper.selectById(kv.getKey());
-            if (c == null) {
-                c = new Config();
-                c.setConfigKey(kv.getKey());
-                c.setConfigValue(kv.getValue());
-                c.setRemark(EDITABLE.get(kv.getKey()));
-                configMapper.insert(c);
-            } else {
-                c.setConfigValue(kv.getValue());
-                configMapper.updateById(c);
-            }
-        }
-        // 引擎切换检测：仅当 keyword.engine 值真正变化（如 mysql→meilisearch）才全量重建。
-        // 必须在刷新缓存前取旧值——前端保存总是提交当前 engine 值，若无条件重建，
-        // 每次"改任意配置保存"都会误触发全量灌库（资源浪费 + 日志误导）
-        boolean engineSwitchedToMeili = false;
-        if (updates.containsKey("keyword.engine") && "meilisearch".equalsIgnoreCase(updates.get("keyword.engine"))) {
-            String oldEngine = get("keyword.engine"); // 刷新前 cache 仍是旧值
-            engineSwitchedToMeili = oldEngine == null || !"meilisearch".equalsIgnoreCase(oldEngine);
-        }
-        // 刷新缓存
-        Map<String, String> newCache = new HashMap<>(cache);
-        newCache.putAll(updates);
-        cache = newCache;
-        syncProperties();
-        log.info("模型配置已更新: {}", updates.keySet());
-        // 广播其他实例刷新（多副本部署配置同步）
-        publishConfigChanged();
-        // 注：全量重嵌入原由 DocumentService.reembedAllAsync 触发，关键词索引全量重建原由
-        //     KeywordIndexService.reindexAll 触发；两者均随旧文档链下线移除，此处只保留配置更新与广播。
-        return updates;
-    }
-
-    /**
-     * 将指定分组恢复为出厂默认值（defaults() 值写库 + 刷新缓存 + Redis 广播）。
-     * <ul>
-     *   <li>白名单分组与 snapshot 对齐，但<b>排除 embedding</b>：向量模型恢复会触发全量重嵌入，
-     *       必须走设置页正常流程（探测→确认）；</li>
-     *   <li><b>跳过 *.apiKey</b>：密钥以 RSA 加密存于 DB，恢复默认不得清空用户已配置的模型密钥
-     *       （env 回退值可能为空导致模型不可用）；</li>
-     *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
-     * </ul>
-     *
-     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit）
-     * @return 实际恢复的键值
-     */
-    public Map<String, String> resetDefaults(Collection<String> groups) {
-        Set<String> allowed = new HashSet<>(List.of(
-                "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit"));
-        Set<String> targets = new HashSet<>();
-        for (String g : groups) {
-            if (g == null || g.isBlank() || !allowed.contains(g)) {
-                throw new IllegalArgumentException("不支持恢复默认的分组: " + g);
-            }
-            targets.add(g);
-        }
-        if (targets.isEmpty()) {
-            throw new IllegalArgumentException("请至少指定一个分组");
-        }
-        Map<String, String> defs = defaults();
-        Map<String, String> next = new HashMap<>(cache);
-        Map<String, String> reset = new LinkedHashMap<>();
-        for (Map.Entry<String, String> e : defs.entrySet()) {
-            String k = e.getKey();
-            int dot = k.indexOf('.');
-            if (dot <= 0 || !targets.contains(k.substring(0, dot))) continue;
-            if (k.endsWith(".apiKey")) continue; // 密钥不随"恢复默认"清空
-            String v = e.getValue();
-            try {
-                Config c = configMapper.selectById(k);
-                if (c == null) {
-                    c = new Config();
-                    c.setConfigKey(k);
-                    c.setConfigValue(v);
-                    c.setRemark(EDITABLE.getOrDefault(k, "只读配置"));
-                    configMapper.insert(c);
-                } else {
-                    c.setConfigValue(v);
-                    configMapper.updateById(c);
-                }
-            } catch (Exception ex) {
-                log.warn("[Config] 恢复默认写库失败 {}: {}", k, ex.getMessage());
-                continue;
-            }
-            next.put(k, v);
-            reset.put(k, v);
-        }
-        cache = next;
-        syncProperties();
-        publishConfigChanged();
-        log.info("[Config] 分组恢复默认完成: {}（{} 项）", targets, reset.size());
-        return reset;
-    }
-
-    /**
-     * 系统内部回写（不经 EDITABLE 白名单）：供运行流程记录"既成事实"型配置，
-     * 当前唯一用途是全量重嵌入成功后回写 embedding.dimensions（当前索引维度）。
-     * 与 update() 的区别：不做业务校验、不加密、不触发重嵌入/重建索引等联动，
-     * 只落库 + 刷新本地缓存 + 广播其他副本。失败仅告警（记录性数据，不阻断主流程）。
-     */
-    public void putInternal(String key, String value) {
-        try {
-            Config c = configMapper.selectById(key);
-            if (c == null) {
-                c = new Config();
-                c.setConfigKey(key);
-                c.setConfigValue(value);
-                c.setRemark("只读配置");
-                configMapper.insert(c);
-            } else {
-                c.setConfigValue(value);
-                configMapper.updateById(c);
-            }
-            Map<String, String> newCache = new HashMap<>(cache);
-            newCache.put(key, value);
-            cache = newCache;
-            syncProperties();
-            publishConfigChanged();
-            log.info("[Config] 系统内部记录已更新: {}={}", key, value);
-        } catch (Exception e) {
-            log.warn("[Config] 系统内部记录写入失败: {}={} error={}", key, value, e.getMessage());
         }
     }
 
