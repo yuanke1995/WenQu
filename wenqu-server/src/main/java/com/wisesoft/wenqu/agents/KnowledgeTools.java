@@ -137,29 +137,34 @@ public final class KnowledgeTools {
                 "list_kbs",
                 "列出当前用户可访问的知识库列表\n\n"
                         + "返回用户基于权限可访问的知识库名称列表。这个列表是根据用户的角色和部门信息过滤后的结果，\n"
-                        + "但不包括用户在当前对话中未启用的知识库。",
+                        + "但不包括用户在当前对话中未启用的知识库。\n\n"
+                        + "Returns:\n用户可访问的知识库名称列表（字符串格式）",
                 LIST_KBS_SCHEMA,
                 "knowledge", "列出知识库",
                 KnowledgeTools::listKbs));
         tools.add(new KnowledgeTool(
                 "get_mindmap",
                 "获取指定知识库的思维导图结构\n\n"
-                        + "当用户想要了解知识库的整体结构、文件分类、知识架构时使用此工具。",
+                        + "当用户想要了解知识库的整体结构、文件分类、知识架构时使用此工具。\n"
+                        + "返回知识库的思维导图层级结构。\n\n"
+                        + "Args:\nkb_name: 知识库名称\n\n"
+                        + "Returns:\n知识库的思维导图结构（文本格式）",
                 GET_MINDMAP_SCHEMA,
                 "knowledge", "获取思维导图",
                 KnowledgeTools::getMindmap));
         tools.add(new KnowledgeTool(
                 "query_kb",
                 "在指定知识库中检索内容\n\n"
-                        + "当用户需要查询具体内容时使用此工具。返回结果中的 file_id 可继续用于 "
-                        + "find_kb_document 或 open_kb_document。",
+                        + "当用户需要查询具体内容时使用此工具。kb_id 是知识库资源 ID，也就是 kb_id；返回结果中的\n"
+                        + "file_id 可继续用于 find_kb_document 或 open_kb_document。",
                 QUERY_KB_SCHEMA,
                 "knowledge", "检索知识库",
                 KnowledgeTools::queryKb));
         tools.add(new KnowledgeTool(
                 "open_kb_document",
                 "按行窗口打开知识库文档原文\n\n"
-                        + "当 query_kb 返回的片段不足以回答问题，或需要查看某个文档的上下文时使用。",
+                        + "当 query_kb 返回的片段不足以回答问题，或需要查看某个文档的上下文时使用。\n"
+                        + "kb_id 是知识库资源 ID，也就是 kb_id；file_id 是知识库文件 ID。",
                 OPEN_KB_DOCUMENT_SCHEMA,
                 "knowledge", "打开知识库文档",
                 KnowledgeTools::openKbDocument));
@@ -172,14 +177,26 @@ public final class KnowledgeTools {
                 KnowledgeTools::findKbDocument));
         tools.add(new KnowledgeTool(
                 "search_file",
-                "搜索知识库中的文件\n\n如果不指定知识库，将搜索所有可访问的知识库；如果不指定搜索关键词，将返回所有文件。",
+                "搜索知识库中的文件\n\n"
+                        + "当用户需要查找特定文件时使用此工具。可以指定知识库名称和搜索关键词。\n"
+                        + "如果不指定知识库，将搜索所有可访问的知识库。\n"
+                        + "如果不指定搜索关键词，将返回所有文件。\n\n"
+                        + "Args:\n"
+                        + "kb_name: 知识库名称，为空时搜索所有知识库\n"
+                        + "query: 搜索关键词，为空时返回所有文件\n"
+                        + "offset: 偏移量，从 0 开始\n"
+                        + "limit: 返回数量限制，默认 300\n\n"
+                        + "Returns:\n匹配的文件列表和分页信息",
                 SEARCH_FILE_SCHEMA,
                 "knowledge", "搜索知识库文件",
                 KnowledgeTools::searchFile));
         tools.add(new KnowledgeTool(
                 "download_kb_file",
                 "下载知识库文件的原始二进制（pdf/docx/xlsx 等）到沙盒 outputs 目录。\n\n"
-                        + "当后续需要对原始文件结构做处理时使用；query_kb/open_kb_document 只返回文本切片。",
+                        + "当后续需要对原始文件结构做处理时使用：例如用 openpyxl/pandas 读取 xlsx 单元格、\n"
+                        + "用 pdfplumber/python-docx 重新解析版面。query_kb/open_kb_document 只返回文本切片，\n"
+                        + "无法满足这类需要文件对象的场景。返回的 virtual_path 是沙盒内可见路径，可直接在代码中读取。\n"
+                        + "kb_id 是知识库资源 ID；file_id 来自 query_kb 或 search_file 的返回结果。",
                 DOWNLOAD_KB_FILE_SCHEMA,
                 "knowledge", "下载知识库文件",
                 KnowledgeTools::downloadKbFile));

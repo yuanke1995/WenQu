@@ -76,6 +76,14 @@ public class SandboxFilesystemBackendAdapter implements FilesystemBackend {
         return result.fileData.content == null ? "" : result.fileData.content;
     }
 
+    /**
+     * 读取文件并保留完整结果（窗口元数据 / 编码 / 错误），供 {@code read_file} 工具按
+     * deepagents 的状态头格式组装输出（{@code read} 只返回纯正文，丢失了元数据）。
+     */
+    public ProvisionerSandboxBackend.ReadResult readResult(String filePath, int offset, Integer limit) {
+        return backend.read(filePath, offset, limit);
+    }
+
     @Override
     public WriteResult write(String filePath, String content) {
         String target = remapFrameworkPath(filePath);

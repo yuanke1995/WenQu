@@ -197,6 +197,7 @@ public class MinerUParser extends BaseDocumentProcessor {
             byte[] fileBytes = Files.readAllBytes(file);
             HttpResponse<byte[]> response = HttpUtil.postMultipart(
                     parseEndpoint,
+                    Map.of(),
                     Map.of("files", file.getFileName().toString()),
                     fileBytes,
                     data,

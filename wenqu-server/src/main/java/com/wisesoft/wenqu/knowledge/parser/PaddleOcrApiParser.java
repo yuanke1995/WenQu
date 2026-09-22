@@ -200,7 +200,9 @@ public class PaddleOcrApiParser extends BaseDocumentProcessor {
                     "optionalPayload",
                     com.alibaba.fastjson2.JSON.toJSONString(optionalPayload));
             HttpResponse<byte[]> multipartResponse = HttpUtil.postMultipart(
-                    apiUrl, Map.of("file", Path.of(filePath).getFileName().toString()), fileContent,
+                    apiUrl,
+                    baseHeaders,
+                    Map.of("file", Path.of(filePath).getFileName().toString()), fileContent,
                     dataFields, Duration.ofSeconds(60));
             statusCode = multipartResponse.statusCode();
             responseBody = new String(multipartResponse.body(), StandardCharsets.UTF_8);
@@ -428,6 +430,12 @@ public class PaddleOcrApiParser extends BaseDocumentProcessor {
                         }
                         text = text.replace("](" + imagePath + ")", "](" + uploadedUrl + ")");
                         text = text.replace(String.valueOf(imageUrl), uploadedUrl);
+                        // 能力补齐（显式标注，蓝本 paddleocr_api.py 无此两行）：PaddleOCR-VL 当前对版式
+                        // 元素返回 HTML 形式 <img src="imgs/…">，蓝本只替换 markdown 形式与远程 URL，
+                        // 对 HTML src 不生效 ⇒ 图片已上传但正文引用留在相对路径。按蓝本
+                        // _upload_markdown_image「把图片链接改写为代理 URL」的意图补上 src 替换。
+                        text = text.replace("src=\"" + imagePath + "\"", "src=\"" + uploadedUrl + "\"");
+                        text = text.replace("src='" + imagePath + "'", "src='" + uploadedUrl + "'");
                     }
 
                     if (!text.strip().isEmpty()) {

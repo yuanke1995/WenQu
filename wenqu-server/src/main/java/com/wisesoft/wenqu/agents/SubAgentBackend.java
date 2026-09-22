@@ -187,7 +187,8 @@ public class SubAgentBackend extends BaseAgent {
                 .systemPrompt(ChatbotPrompt.buildPromptWithContext(AgentGraphSupport.promptContext(context)))
                 .tools(AgentGraphSupport.toToolCallbacks(
                         SubAgentToolFilterMiddleware.filterDisabledTools(
-                                toolRuntimeBinder.bindRuntimeTools(runtimeTools, context), disabledTools)))
+                                toolRuntimeBinder.bindRuntimeTools(runtimeTools, context, interceptors),
+                                disabledTools)))
                 .hooks(hooks)
                 .interceptors(interceptors)
                 .saver((BaseCheckpointSaver) getCheckpointer())

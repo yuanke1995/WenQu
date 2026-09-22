@@ -1,6 +1,7 @@
 package com.wisesoft.wenqu.config;
 
 import com.wisesoft.wenqu.agents.BuildinTools;
+import com.wisesoft.wenqu.agents.FilesystemTools;
 import com.wisesoft.wenqu.agents.KnowledgeTools;
 import com.wisesoft.wenqu.agents.SkillInstallTool;
 import com.wisesoft.wenqu.agents.ToolkitsRegistry;
@@ -53,8 +54,9 @@ public class AgentToolkitInitializer {
         int knowledgeCount = KnowledgeTools.registerAll().size();
         boolean webSearchRegistered = BuildinTools.registerWebSearchTool() != null;
         skillInstallTool.register();
+        FilesystemTools.register();
         log.info(
-                "Toolkits registry initialized: knowledge={}, web_search={}, install_skill=1, total={}",
+                "Toolkits registry initialized: knowledge={}, web_search={}, install_skill=1, read_file=1, total={}",
                 knowledgeCount, webSearchRegistered, ToolkitsRegistry.getAllToolInstances().size());
     }
 }

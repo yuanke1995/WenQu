@@ -79,6 +79,7 @@ final class HttpUtil {
      */
     static HttpResponse<byte[]> postMultipart(
             String url,
+            Map<String, String> headers,
             Map<String, String> fileFields,
             byte[] fileContent,
             Map<String, Object> dataFields,
@@ -108,11 +109,14 @@ final class HttpUtil {
         }
         body.writeBytes(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+        // 与 requests 一致：multipart 请求同样要带上调用方的头（如 PaddleOCR 的 Authorization）
+        java.util.Map<String, String> safeHeaders =
+                headers == null ? java.util.Map.of() : headers;
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                 .timeout(timeout)
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
-                .build();
-        return CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()));
+        safeHeaders.forEach(builder::header);
+        return CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
     }
 }

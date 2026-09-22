@@ -2,6 +2,7 @@ package com.wisesoft.wenqu.agents;
 
 import com.wisesoft.wenqu.knowledge.KnowledgeBaseManager;
 import com.wisesoft.wenqu.repositories.KnowledgeBaseRepository;
+import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -44,13 +45,20 @@ public class ToolRuntimeBinder {
     }
 
     /** 绑定本次 Run 的运行时依赖；返回顺序与入参一致。 */
-    public List<Object> bindRuntimeTools(List<?> tools, BaseContext context) {
+    public List<Object> bindRuntimeTools(List<?> tools, BaseContext context, List<Interceptor> interceptors) {
         List<Object> bound = new ArrayList<>();
         if (tools == null) {
             return bound;
         }
         KnowledgeTools.ToolRuntime runtime = new KnowledgeTools.ToolRuntime(
                 context, knowledgeBaseManager, knowledgeBaseBackend, knowledgeBaseRepository);
+        // 文件工具（read_file 等）绑定本 Run 的沙盒 backend；allowlist 由
+        // FilesystemMiddleware.getTools() 声明（_AGENT_FS_TOOLS 去 disabled）。
+        FilesystemMiddleware fsMiddleware = interceptors == null ? null : interceptors.stream()
+                .filter(FilesystemMiddleware.class::isInstance)
+                .map(FilesystemMiddleware.class::cast)
+                .findFirst()
+                .orElse(null);
         for (Object tool : tools) {
             if (tool instanceof KnowledgeTools.KnowledgeTool knowledgeTool) {
                 bound.add(knowledgeTool.boundTo(runtime));
@@ -59,6 +67,12 @@ public class ToolRuntimeBinder {
             if (tool instanceof ToolkitsRegistry.ToolDefinition definition
                     && SkillInstallTool.TOOL_NAME.equals(definition.getName())) {
                 bound.add(skillInstallTool.boundTo(context));
+                continue;
+            }
+            if (tool instanceof FilesystemTools.ReadFileTool readFileTool) {
+                if (fsMiddleware != null && fsMiddleware.getTools().contains(FilesystemTools.READ_FILE_TOOL)) {
+                    bound.add(readFileTool.boundTo(fsMiddleware.getBackend()));
+                }
                 continue;
             }
             bound.add(tool);

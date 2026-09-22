@@ -159,7 +159,8 @@ public class ChatbotAgent extends BaseAgent {
 
         // 工具面：按配置解析 → 绑定本次 Run 的 ToolRuntime（参考实现里该绑定由 LangGraph 按调用注入）
         List<Object> tools = toolRuntimeBinder.bindRuntimeTools(
-                ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime), context);
+                ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime),
+                context, interceptors);
 
         return GraphFactory.builder()
                 .name(name)
