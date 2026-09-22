@@ -916,6 +916,14 @@ public class ConversationRepository {
         return toolCall;
     }
 
+    /** 更新消息正文（本项目增量：completed 落库时把检索命中的手册截图补进回答尾部）。 */
+    public void updateMessageContent(Integer messageId, String content) {
+        LambdaUpdateWrapper<Message> update = new LambdaUpdateWrapper<Message>()
+                .eq(Message::getId, messageId)
+                .set(Message::getContent, content);
+        messageMapper.update(null, update);
+    }
+
     // ==================== 附件 ====================
 
     public List<Map<String, Object>> getAttachments(Integer conversationId) {

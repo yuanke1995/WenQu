@@ -34,6 +34,7 @@ import com.wisesoft.wenqu.repositories.ToolMessageAuditRepository;
 import com.wisesoft.wenqu.service.AgentRunManifestService.PreparedRunExecution;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1094,6 +1095,8 @@ public class ChatService {
             }
         }
         Set<String> currentToolOperationIds = new LinkedHashSet<>(currentToolAuditsByOperation.keySet());
+        // 本项目增量：收集本次 Run 检索结果里的知识库截图代理 URL 及其上下文（保底图文交错用）
+        LinkedHashMap<String, String> kbImageContexts = new LinkedHashMap<>();
         Map<String, Message> reconciledAudits = new LinkedHashMap<String, Message>();
         Map<String, Map<String, Object>> stateModelMessages =
                 new LinkedHashMap<String, Map<String, Object>>();
@@ -1165,6 +1168,7 @@ public class ChatService {
                 lastAiMessage = saveAiMessage(
                         threadId, msgDict, traceInfo, runId, requestId, !hasRun);
             } else if ("tool".equals(msgType)) {
+                collectKbImageContexts(msgDict, kbImageContexts);
                 String toolCallId = JsonValues.text(msgDict.get("tool_call_id"));
                 if (hasRun && currentToolOperationIds.contains(toolCallId)) {
                     // Checkpoint 包含线程完整历史；同一来源键只对账最后一次 ToolMessage。
@@ -1207,6 +1211,9 @@ public class ChatService {
                 lastAiMessage = terminalAiMessage;
             }
             if (lastAiMessage != null) {
+                if (completeRun && !kbImageContexts.isEmpty()) {
+                    interleaveKbImages(lastAiMessage, kbImageContexts);
+                }
                 JSONObject lastMetadata = parseJsonObject(lastAiMessage.getExtraMetadata());
                 boolean hasToolCalls = JsonValues.truthy(lastMetadata.get("tool_calls"));
                 boolean shouldPublish = !ModelConstants.MODEL_AUDIT_MESSAGE_TYPE.equals(lastAiMessage.getMessageType())
@@ -1237,6 +1244,125 @@ public class ChatService {
             return terminalStatus != null;
         }
         return false;
+    }
+
+    // =========================================================================
+    // === 本项目增量：回答补附知识库截图 ===
+    // =========================================================================
+
+    private static final java.util.regex.Pattern KB_IMAGE_URL_PATTERN =
+            java.util.regex.Pattern.compile(
+                    "(?i)/api/knowledge/databases/[^\"\\\\\\s<>)]+/images/[^\"\\\\\\s<>)]+"
+                            + "\\.(?:jpg|jpeg|png|gif|webp|bmp)");
+
+    private static final int KB_IMAGE_MAX = 6;
+
+    /** 从工具结果（query_kb / search_file 返回的 chunk 正文）收集手册截图代理 URL，
+     * 并记录 URL 前面的上下文文字（用于在回答里定位贴图位置），按出现顺序去重。 */
+    private static void collectKbImageContexts(Map<String, Object> msgDict, LinkedHashMap<String, String> target) {
+        if (target.size() >= KB_IMAGE_MAX || msgDict == null) {
+            return;
+        }
+        String raw = String.valueOf(msgDict);
+        java.util.regex.Matcher matcher = KB_IMAGE_URL_PATTERN.matcher(raw);
+        while (matcher.find() && target.size() < KB_IMAGE_MAX) {
+            String url = matcher.group();
+            if (target.containsKey(url)) {
+                continue;
+            }
+            int from = Math.max(0, matcher.start() - 160);
+            String context = raw.substring(from, matcher.start());
+            context = context.replace("\\\"", "\"").replace("\\n", "\n");
+            context = context.replaceAll("<[^>]*>", " ");
+            context = context.replaceAll("[^\\u4e00-\\u9fffA-Za-z0-9]+", " ").trim();
+            if (context.length() > 60) {
+                context = context.substring(context.length() - 60);
+            }
+            target.put(url, context);
+        }
+    }
+
+    /**
+     * 本项目增量（用户需求：回答需<b>图文交错</b>贴出操作手册截图；参考实现无此行为，
+     * 模型侧 KB_IMAGE_PROMPT 引导其就近贴图，但模型执行不稳定，本方法保底）。
+     *
+     * <p>每张截图在 chunk 里都带着它前面的说明文字；把该文字与回答的各段落做
+     * CJK 二元组重合度匹配，将截图插入重合度最高（≥0.3）的段落后——即「哪段在讲这张图，
+     * 图就贴在哪段后面」。已由模型贴过的 URL 跳过；标题/分隔线/表格块不插图；
+     * 找不到合适位置的截图才落到结尾「相关操作截图」。
+     */
+    private void interleaveKbImages(Message lastAiMessage, LinkedHashMap<String, String> kbImageContexts) {
+        String content = lastAiMessage.getContent();
+        if (content == null || content.isBlank() || kbImageContexts.isEmpty()) {
+            return;
+        }
+        List<String> blocks = new ArrayList<>(List.of(content.split("\n\n+")));
+        boolean changed = false;
+        List<String> leftovers = new ArrayList<>();
+        for (Map.Entry<String, String> entry : kbImageContexts.entrySet()) {
+            String url = entry.getKey();
+            if (content.contains(url)) {
+                continue; // 模型已自行贴过这张
+            }
+            Set<String> snippet = kbImageBigrams(entry.getValue());
+            int bestIndex = -1;
+            double bestScore = 0;
+            for (int i = 0; i < blocks.size(); i++) {
+                String block = blocks.get(i);
+                if (block.startsWith("#") || block.startsWith("---") || block.startsWith("|")
+                        || block.contains("<img")) {
+                    continue; // 标题/分隔线/表格/已有图的块不插
+                }
+                double score = kbImageOverlap(snippet, kbImageBigrams(block));
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIndex = i;
+                }
+            }
+            String img = "<img src=\"" + url + "\" width=\"70%\" />";
+            if (bestIndex >= 0 && bestScore >= 0.3) {
+                blocks.add(bestIndex + 1, img);
+                changed = true;
+            } else {
+                leftovers.add(url);
+            }
+        }
+        if (!changed && leftovers.isEmpty()) {
+            return;
+        }
+        StringBuilder updated = new StringBuilder(String.join("\n\n", blocks));
+        if (!leftovers.isEmpty()) {
+            updated.append("\n\n---\n\n**相关操作截图**\n");
+            for (String url : leftovers) {
+                updated.append("\n<img src=\"").append(url).append("\" width=\"70%\" />");
+            }
+        }
+        lastAiMessage.setContent(updated.toString());
+        conversationRepository.updateMessageContent(lastAiMessage.getId(), lastAiMessage.getContent());
+    }
+
+    /** 中文/字母数字二元组（中文无分词，二元组重合度足够定位同主题段落）。 */
+    private static Set<String> kbImageBigrams(String text) {
+        String t = text == null ? "" : text.replaceAll("[^\\u4e00-\\u9fffA-Za-z0-9]+", "");
+        Set<String> set = new HashSet<>();
+        for (int i = 0; i + 1 < t.length(); i++) {
+            set.add(t.substring(i, i + 2));
+        }
+        return set;
+    }
+
+    /** 重合系数：交集 / 较小集合大小（短上文 vs 长段落，避免长文稀释）。 */
+    private static double kbImageOverlap(Set<String> snippet, Set<String> block) {
+        if (snippet.isEmpty() || block.isEmpty()) {
+            return 0;
+        }
+        int hit = 0;
+        for (String gram : snippet) {
+            if (block.contains(gram)) {
+                hit++;
+            }
+        }
+        return (double) hit / Math.min(snippet.size(), block.size());
     }
 
     // =========================================================================

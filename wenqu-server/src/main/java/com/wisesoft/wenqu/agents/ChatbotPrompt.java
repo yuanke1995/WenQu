@@ -50,6 +50,21 @@ public final class ChatbotPrompt {
             每个待办任务名称必须简短，控制在 20 个中文汉字以内。
             """;
 
+    /**
+     * 本项目增量（参考实现提示词无此段）：产品要求回答中贴出知识库文档里的操作截图。
+     * 检索 chunk 的正文自带 <img src="/api/knowledge/databases/…"> 形式的图片引用
+     * （解析引擎抽取并经后端鉴权代理），前端按该 URL 渲染；不加指引时模型倾向纯文字作答。
+     */
+    public static final String KB_IMAGE_PROMPT = """
+
+            <| 知识库图片 |>
+            知识库检索结果里包含文档的截图或插图（形如 <img src="/api/knowledge/databases/…">，或 ![](…) 形式）时，
+            必须把这些图片原样贴进回答中它所说明的步骤或段落旁边：
+            - 直接保留原始图片标签，不要改写 src，不要转成文字描述，也不要只写「如下图」却不附图
+            - 只贴与回答内容相关的图片，不要虚构不存在的图片
+            - 图片跟随它说明的内容就近放置，不要统一堆在回答结尾
+            """;
+
     private static final DateTimeFormatter CURRENT_DATE_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -88,6 +103,7 @@ public final class ChatbotPrompt {
                 """.formatted(workdirPath, workdirPath, workdirPath);
         String systemPrompt = currentDate + "\n\n" + PROMPT.strip() + "\n\n"
                 + filesystemPrompt.strip() + "\n\n"
+                + KB_IMAGE_PROMPT.strip() + "\n\n"
                 + (context.getSystemPrompt() == null ? "" : context.getSystemPrompt());
         return systemPrompt.strip();
     }
