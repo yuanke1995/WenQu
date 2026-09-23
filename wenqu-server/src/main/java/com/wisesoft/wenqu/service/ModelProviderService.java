@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 模型供应商服务（models/providers/service.py 逐函数翻译）。
@@ -49,6 +50,11 @@ import org.springframework.stereotype.Service;
  *   <li>{@code db.flush() + db.refresh()} 的可见性语义 → 本工程每次 Mapper 调用即提交，
  *       写后回读即等价。
  * </ul>
+ *
+ * <p>能力差异（本工程新增，参考实现无此环节）：模型清单缩小、供应商停用、供应商删除
+ * 这三种「模型下线」发生时，会同事务调用 {@link ModelReferenceCleanupService} 撤下已下线
+ * 模型在 system_options / agents / conversations / scheduled_agent_jobs 里的引用，
+ * 避免留下取得到却用不了的悬空模型（详见该类的类注释）。
  */
 @Service
 public class ModelProviderService {
@@ -88,14 +94,17 @@ public class ModelProviderService {
     private final ModelProviderRepository modelProviderRepository;
     private final ModelProviderCache modelProviderCache;
     private final ModelSelectors modelSelectors;
+    private final ModelReferenceCleanupService modelReferenceCleanup;
 
     public ModelProviderService(
             ModelProviderRepository modelProviderRepository,
             ModelProviderCache modelProviderCache,
-            ModelSelectors modelSelectors) {
+            ModelSelectors modelSelectors,
+            ModelReferenceCleanupService modelReferenceCleanup) {
         this.modelProviderRepository = modelProviderRepository;
         this.modelProviderCache = modelProviderCache;
         this.modelSelectors = modelSelectors;
+        this.modelReferenceCleanup = modelReferenceCleanup;
     }
 
     // ==================== 归一化与校验 ====================
@@ -496,6 +505,7 @@ public class ModelProviderService {
     }
 
     /** 更新独立模型供应商配置；供应商不存在时返回 null。 */
+    @Transactional
     public ModelProvider updateProviderConfig(
             String providerId, Map<String, Object> data, String username) {
         ModelProvider provider = modelProviderRepository.getModelProvider(providerId);
@@ -503,6 +513,18 @@ public class ModelProviderService {
             return null;
         }
         Map<String, Object> payload = normalizePayload(data, true);
+        // 供应商被停用时它的模型都不再进入模型目录（{@code ModelProviderCache.rebuild} 只收录
+        // 已启用供应商），与「从清单里删除」是同一种下线，因此两种变更都按清除判处。
+        boolean disabling =
+                payload.containsKey("is_enabled")
+                        && !Boolean.parseBoolean(String.valueOf(payload.get("is_enabled")))
+                        && Boolean.TRUE.equals(provider.getIsEnabled());
+        Set<String> specsBefore =
+                payload.containsKey("enabled_models") || disabling
+                        ? modelSpecs(
+                                providerId,
+                                jsonOrDefault(provider.getEnabledModels(), new ArrayList<>()))
+                        : Set.of();
         // partial 更新时仅传 enabled_models，结合 DB 中现有 capabilities 校验
         if (payload.containsKey("enabled_models") && !payload.containsKey("capabilities")) {
             List<String> existingCaps =
@@ -523,14 +545,59 @@ public class ModelProviderService {
             validateRequestBodyOverridesScope(asModelList(enabledModels), asString(providerType));
         }
         payload.put("updated_by", username);
-        return modelProviderRepository.updateModelProvider(provider, payload);
+        ModelProvider updated = modelProviderRepository.updateModelProvider(provider, payload);
+        if (!specsBefore.isEmpty()) {
+            Set<String> specsAfter =
+                    disabling || !payload.containsKey("enabled_models")
+                            ? Set.of()
+                            : modelSpecs(providerId, payload.get("enabled_models"));
+            Set<String> removed = new LinkedHashSet<>(specsBefore);
+            removed.removeAll(specsAfter);
+            if (!removed.isEmpty()) {
+                log.info(
+                        "供应商 {} 下线模型 {}：{}",
+                        providerId,
+                        removed,
+                        ModelReferenceCleanupService.describe(
+                                modelReferenceCleanup.cleanupRemovedSpecs(removed, username)));
+            }
+        }
+        return updated;
     }
 
-    /** 删除独立模型供应商配置；供应商不存在时返回 false。 */
+    /** 供应商 + 模型清单 → model spec 集合（{@code provider_id:model_id}）。 */
+    private static Set<String> modelSpecs(String providerId, Object enabledModels) {
+        Set<String> specs = new LinkedHashSet<>();
+        for (Map<String, Object> model : asModelList(enabledModels)) {
+            String modelId = asString(model.get("id"));
+            if (!modelId.isEmpty()) {
+                specs.add(providerId + ":" + modelId);
+            }
+        }
+        return specs;
+    }
+
+    /**
+     * 删除独立模型供应商配置；供应商不存在时返回 false。
+     *
+     * <p>整个供应商消失意味着它的全部模型都下线，因此在删行之前先把这些 spec 的引用撤下
+     * （删除表中的行之后就再没有可比对的新清单了）。
+     */
+    @Transactional
     public boolean deleteProviderConfig(String providerId) {
         ModelProvider provider = modelProviderRepository.getModelProvider(providerId);
         if (provider == null) {
             return false;
+        }
+        Set<String> specs =
+                modelSpecs(providerId, jsonOrDefault(provider.getEnabledModels(), new ArrayList<>()));
+        if (!specs.isEmpty()) {
+            log.info(
+                    "供应商 {} 删除，其 {} 个模型下线：{}",
+                    providerId,
+                    specs.size(),
+                    ModelReferenceCleanupService.describe(
+                            modelReferenceCleanup.cleanupRemovedSpecs(specs, "system")));
         }
         modelProviderRepository.deleteModelProvider(provider);
         return true;

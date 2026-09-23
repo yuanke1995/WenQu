@@ -175,8 +175,40 @@ const providerContainsDefaultModel = (providerId) => getDefaultModelProviderId()
 const isDefaultModel = (providerId, modelId) =>
   defaultModelSpec.value === buildModelSpec(providerId, modelId)
 
-const warnDefaultModelProtected = () => {
-  message.warning('当前默认模型正在使用该供应商或模型，请先切换默认模型')
+/** 系统配置里所有存模型 spec 的项（模型下线时后端会把这些引用一并撤下）。 */
+const SYSTEM_MODEL_CONFIG_LABELS = {
+  default_model: '默认对话模型',
+  fast_model: '快速响应模型',
+  embed_model: '默认 Embedding 模型',
+  reranker: '默认 Re-Ranker 模型'
+}
+
+/** 模型引用被后端撤下后，本地的配置快照需要同步，否则设置页仍显示已下线的模型。 */
+const refreshSystemConfig = async () => {
+  try {
+    await configStore.refreshConfig()
+  } catch (error) {
+    console.warn('刷新系统配置失败:', error)
+  }
+}
+
+/** 移除前把影响面讲清楚：当前哪些系统配置项正在引用这个模型。 */
+const describeModelImpact = (providerId, modelId) => {
+  if (modelId && isDefaultModel(providerId, modelId)) {
+    return '该模型当前是被启用的默认对话模型，移除后该配置项会置空并回落到系统默认，可到设置页重新指定。'
+  }
+  const spec = buildModelSpec(providerId, modelId)
+  const usedAs = Object.entries(SYSTEM_MODEL_CONFIG_LABELS)
+    .filter(([key]) => configStore.config?.[key] === spec)
+    .map(([, label]) => label)
+  if (!usedAs.length) return ''
+  return `该模型当前被用作${usedAs.join('、')}，移除后这些配置项会置空并回落到系统默认，可到设置页重新指定。`
+}
+
+/** 供应商下线（删除或停用）的影响面说明。 */
+const describeProviderImpact = (providerId) => {
+  if (!providerContainsDefaultModel(providerId)) return ''
+  return '该供应商正在承载默认对话模型，操作后该配置项会置空并回落到系统默认，可到设置页重新指定。'
 }
 
 const isModelTesting = (providerId, modelId) =>
@@ -396,21 +428,14 @@ const createProvider = async () => {
 }
 
 const saveProvider = async () => {
-  if (
-    editingProviderId.value &&
-    providerContainsDefaultModel(providerForm.provider_id) &&
-    providerForm.is_enabled === false
-  ) {
-    warnDefaultModelProtected()
-    return
-  }
-
   saving.value = true
   try {
     await modelProviderApi.updateProvider(providerForm.provider_id, buildProviderPayload())
     message.success('供应商已保存')
     showProviderModal.value = false
     await loadProviders()
+    // 停用时后端会撤下该供应商模型的引用，快照同步后才能显示回落后的默认值
+    await refreshSystemConfig()
   } catch (error) {
     message.error(error.message || '保存失败')
   } finally {
@@ -434,14 +459,12 @@ const saveProviderAndEnable = async () => {
 }
 
 const deleteProvider = async (provider) => {
-  if (providerContainsDefaultModel(provider.provider_id)) {
-    warnDefaultModelProtected()
-    return
-  }
+  // 后端会连同该供应商模型的引用一起撤下，所以这里只是说明影响，不再拦着不让删
+  const impact = describeProviderImpact(provider.provider_id)
 
   Modal.confirm({
     title: `删除 ${provider.display_name}`,
-    content: '删除后不会影响当前系统正在使用的旧模型配置。',
+    content: impact || '删除后该供应商的模型将不再可用，引用它们的配置会同步撤下。',
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
@@ -458,6 +481,7 @@ const deleteProvider = async (provider) => {
           editingProviderId.value = null
         }
         await loadProviders()
+        await refreshSystemConfig()
       } catch (error) {
         message.error(error.message || '删除失败')
       }
@@ -663,6 +687,8 @@ const saveModelConfig = async () => {
     showModelModal.value = false
     isCreating.value = false
     await loadProviders()
+    // 编辑时若模型 id 被改写，旧 spec 的引用同样会被后端撤下，这里同步快照
+    await refreshSystemConfig()
     // Refresh current provider reference
     currentProviderForModels.value = providers.value.find(
       (p) => p.provider_id === currentProviderForModels.value.provider_id
@@ -677,14 +703,16 @@ const saveModelConfig = async () => {
 const removeModel = async (providerId, modelId) => {
   const provider = providers.value.find((p) => p.provider_id === providerId)
   if (!provider) return
-  if (isDefaultModel(providerId, modelId)) {
-    warnDefaultModelProtected()
-    return
-  }
+
+  // 后端会在模型下线同时撤下它的引用（system_options / 智能体 / 会话 / 定时任务），
+  // 因此这里只需要把影响面说清楚，不必禁止移除。
+  const impact = describeModelImpact(providerId, modelId)
 
   Modal.confirm({
     title: '移除模型',
-    content: `确定要移除模型 ${modelId} 吗？`,
+    content: impact
+      ? `确定要移除模型 ${modelId} 吗？${impact}`
+      : `确定要移除模型 ${modelId} 吗？`,
     okText: '移除',
     okType: 'danger',
     cancelText: '取消',
@@ -694,6 +722,8 @@ const removeModel = async (providerId, modelId) => {
         await modelProviderApi.updateProvider(providerId, { enabled_models: enabledModels })
         message.success('模型已移除')
         await loadProviders()
+        // 模型引用被后端撤下后，本地配置快照要同步，否则设置页仍显示已下线的模型
+        await refreshSystemConfig()
         // Refresh current provider reference if modal is open
         if (currentProviderForModels.value?.provider_id === providerId) {
           currentProviderForModels.value = providers.value.find((p) => p.provider_id === providerId)
