@@ -29,7 +29,11 @@ public final class ChatbotPrompt {
             保持专业严谨，减少使用 Emoji
             """;
 
-    /** 效果不好，暂时不启用 */
+    /**
+     * 引用来源格式。参考实现定义了本段但 {@code build_prompt_with_context} 未接线
+     * （其注释称「效果不好，暂时不启用」），故回答无引用标注。经用户要求本项目启用
+     * （决策依据：知识库问答需要注明出处），接线点见 {@link #buildPromptWithContext}。
+     */
     public static final String SOURCE_CITE_PROMPT = """
 
             <| 引用来源 |>
@@ -104,6 +108,7 @@ public final class ChatbotPrompt {
         String systemPrompt = currentDate + "\n\n" + PROMPT.strip() + "\n\n"
                 + filesystemPrompt.strip() + "\n\n"
                 + KB_IMAGE_PROMPT.strip() + "\n\n"
+                + SOURCE_CITE_PROMPT.strip() + "\n\n"
                 + (context.getSystemPrompt() == null ? "" : context.getSystemPrompt());
         return systemPrompt.strip();
     }
