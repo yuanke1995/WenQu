@@ -186,12 +186,23 @@ export class MessageProcessor {
       })
     }
 
+    // 知识库 id → 名称映射：query_kb / search_file 的结果只带 kb_id，需要反查库名
+    const databaseNamesByKbId = new Map(
+      (databases || [])
+        .filter((db) => db && typeof db.kb_id === 'string' && typeof db.name === 'string')
+        .map((db) => [db.kb_id, db.name])
+    )
+    // 本工程知识库检索工具名（对应后端 KnowledgeTools 注册名）
+    const kbToolNames = new Set(['query_kb', 'search_file'])
+    const isKbTool = (name) => kbToolNames.has(name)
+
     for (const msg of conv.messages) {
       if (!msg || msg.type !== 'ai' || !Array.isArray(msg.tool_calls)) continue
 
       for (const toolCall of msg.tool_calls) {
-        const kbName = toolCall?.name || toolCall?.function?.name
-        if (!databaseNames.has(kbName)) continue
+        const toolName = toolCall?.name || toolCall?.function?.name
+        const legacyName = databaseNames.has(toolName) ? toolName : null
+        if (!legacyName && !kbToolNames.has(toolName)) continue
 
         const content = toolCall?.tool_call_result?.content
         const parsed = parseToolResultContent(content)
@@ -199,14 +210,21 @@ export class MessageProcessor {
 
         // Milvus / Dify: 直接是 chunks 数组
         if (Array.isArray(parsed)) {
-          for (const chunk of parsed) appendChunk(chunk, kbName)
+          if (!legacyName) continue
+          for (const chunk of parsed) appendChunk(chunk, legacyName)
           continue
         }
 
+        // query_kb / search_file：结果形如 { kb_id, results: [...] }（或 data.chunks 包装），
+        // 库名优先由结果里的 kb_id 反查；反查不到时退回「工具名==库名」的旧约定
         const wrappedChunks = parsed?.data?.chunks
-        if (Array.isArray(wrappedChunks)) {
-          for (const chunk of wrappedChunks) appendChunk(chunk, kbName)
-        }
+        const directChunks = Array.isArray(parsed?.results) ? parsed.results : null
+        const chunks = directChunks || wrappedChunks || []
+        const resolvedName = isKbTool(toolName)
+          ? (parsed?.kb_id && databaseNamesByKbId.get(parsed.kb_id)) || legacyName
+          : legacyName
+        if (!resolvedName) continue
+        for (const chunk of chunks) appendChunk(chunk, resolvedName)
       }
     }
 
