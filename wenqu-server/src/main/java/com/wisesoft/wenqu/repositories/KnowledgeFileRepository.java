@@ -787,7 +787,8 @@ public class KnowledgeFileRepository {
                 return null;
             }
             applyFileFields(fileRecord, sanitized);
-            fileMapper.updateById(fileRecord);
+            fileMapper.update(null, applyFieldSets(
+                    kbId, fileId, allowedStatuses, processingTaskId, processingOwner, sanitized));
             return fileRecord;
         }
 
@@ -796,8 +797,66 @@ public class KnowledgeFileRepository {
             return null;
         }
         applyFileFields(record, sanitized);
-        fileMapper.updateById(record);
+        fileMapper.update(null, applyFieldSets(
+                kbId, fileId, allowedStatuses, processingTaskId, processingOwner, sanitized));
         return record;
+    }
+
+    /**
+     * 按白名单键构造显式 SET 更新（null 也写入）。
+     *
+     * <p>不要改回 {@code applyFileFields + updateById}：MyBatis-Plus 默认 NOT_NULL 策略会跳过
+     * 实体里的 null 字段，导致成功分支的 {@code error_message: null} 落不到库——解析失败后重试
+     * 成功的文件会一直挂着旧错误文案（与「清空/恢复继承禁 updateById」同一口径）。
+     */
+    private LambdaUpdateWrapper<KnowledgeFile> applyFieldSets(
+            String kbId,
+            String fileId,
+            Set<String> allowedStatuses,
+            String processingTaskId,
+            String processingOwner,
+            Map<String, Object> data) {
+        LambdaUpdateWrapper<KnowledgeFile> update = new LambdaUpdateWrapper<KnowledgeFile>()
+                .eq(KnowledgeFile::getKbId, kbId)
+                .eq(KnowledgeFile::getFileId, fileId)
+                .in(KnowledgeFile::getStatus, new java.util.TreeSet<>(allowedStatuses));
+        if (processingTaskId != null) {
+            update.eq(KnowledgeFile::getProcessingTaskId, processingTaskId);
+        }
+        if (processingOwner != null) {
+            update.eq(KnowledgeFile::getProcessingOwner, processingOwner);
+        }
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            Object value = entry.getValue();
+            switch (entry.getKey()) {
+                case "kb_id" -> update.set(KnowledgeFile::getKbId, RepoValues.asString(value));
+                case "parent_id" -> update.set(KnowledgeFile::getParentId, RepoValues.asString(value));
+                case "filename" -> update.set(KnowledgeFile::getFilename, RepoValues.asString(value));
+                case "original_filename" -> update.set(KnowledgeFile::getOriginalFilename, RepoValues.asString(value));
+                case "file_type" -> update.set(KnowledgeFile::getFileType, RepoValues.asString(value));
+                case "path" -> update.set(KnowledgeFile::getPath, RepoValues.asString(value));
+                case "minio_url" -> update.set(KnowledgeFile::getMinioUrl, RepoValues.asString(value));
+                case "markdown_file" -> update.set(KnowledgeFile::getMarkdownFile, RepoValues.asString(value));
+                case "status" -> update.set(KnowledgeFile::getStatus, RepoValues.asString(value));
+                case "content_hash" -> update.set(KnowledgeFile::getContentHash, RepoValues.asString(value));
+                case "file_size" -> update.set(KnowledgeFile::getFileSize, RepoValues.toLong(value));
+                case "chunk_count" -> update.set(KnowledgeFile::getChunkCount, RepoValues.toInt(value));
+                case "token_count" -> update.set(KnowledgeFile::getTokenCount, RepoValues.toLong(value));
+                case "content_type" -> update.set(KnowledgeFile::getContentType, RepoValues.asString(value));
+                case "processing_params" -> update.set(KnowledgeFile::getProcessingParams, RepoValues.toJsonText(value));
+                case "is_folder" -> update.set(KnowledgeFile::getIsFolder, RepoValues.toBoolean(value));
+                case "error_message" -> update.set(KnowledgeFile::getErrorMessage, RepoValues.asString(value));
+                case "processing_task_id" -> update.set(KnowledgeFile::getProcessingTaskId, RepoValues.asString(value));
+                case "processing_owner" -> update.set(KnowledgeFile::getProcessingOwner, RepoValues.asString(value));
+                case "created_by" -> update.set(KnowledgeFile::getCreatedBy, RepoValues.asString(value));
+                case "updated_by" -> update.set(KnowledgeFile::getUpdatedBy, RepoValues.asString(value));
+                case "updated_at" -> update.set(KnowledgeFile::getUpdatedAt, RepoValues.toLocalDateTime(value));
+                default -> {
+                    // 白名单外：已在上游过滤，不会到达
+                }
+            }
+        }
+        return update;
     }
 
     /** 仅收敛仍由指定任务拥有的文件中间态，返回受影响行数。 */
