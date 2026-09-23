@@ -91,11 +91,14 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '^/api': {
-          target: env.VITE_API_URL || 'http://api:5050',
+          // 默认值是本机的 wenqu-server（application.yml: server.port=8095）。
+          // 早前默认写的是容器编排中的服务名 http://api:5050，脱离 compose 后
+          // DNS 无法解析，dev 代理全部 502；改用本地地址，仍可用 VITE_API_URL 覆盖。
+          target: env.VITE_API_URL || 'http://127.0.0.1:8095',
           changeOrigin: true
         },
         '^/minio/public/': {
-          target: env.VITE_MINIO_URL || 'http://minio:9000',
+          target: env.VITE_MINIO_URL || 'http://127.0.0.1:9000',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/minio/, '')
         }
