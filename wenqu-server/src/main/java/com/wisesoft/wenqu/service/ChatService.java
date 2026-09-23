@@ -1289,7 +1289,7 @@ public class ChatService {
      * <p>每张截图在 chunk 里都带着它前面的说明文字；把该文字与回答的各段落做
      * CJK 二元组重合度匹配，将截图插入重合度最高（≥0.3）的段落后——即「哪段在讲这张图，
      * 图就贴在哪段后面」。已由模型贴过的 URL 跳过；标题/分隔线/表格块不插图；
-     * 找不到合适位置的截图才落到结尾「相关操作截图」。
+     * 找不到合适位置的截图直接丢弃（不堆在结尾）。
      */
     private void interleaveKbImages(Message lastAiMessage, LinkedHashMap<String, String> kbImageContexts) {
         String content = lastAiMessage.getContent();
@@ -1298,7 +1298,6 @@ public class ChatService {
         }
         List<String> blocks = new ArrayList<>(List.of(content.split("\n\n+")));
         boolean changed = false;
-        List<String> leftovers = new ArrayList<>();
         for (Map.Entry<String, String> entry : kbImageContexts.entrySet()) {
             String url = entry.getKey();
             if (content.contains(url)) {
@@ -1319,25 +1318,16 @@ public class ChatService {
                     bestIndex = i;
                 }
             }
-            String img = "<img src=\"" + url + "\" width=\"70%\" />";
             if (bestIndex >= 0 && bestScore >= 0.3) {
-                blocks.add(bestIndex + 1, img);
+                blocks.add(bestIndex + 1, "<img src=\"" + url + "\" width=\"70%\" />");
                 changed = true;
-            } else {
-                leftovers.add(url);
             }
+            // 找不到合适位置的截图直接丢弃：宁缺毋滥，不在结尾堆无关图
         }
-        if (!changed && leftovers.isEmpty()) {
+        if (!changed) {
             return;
         }
-        StringBuilder updated = new StringBuilder(String.join("\n\n", blocks));
-        if (!leftovers.isEmpty()) {
-            updated.append("\n\n---\n\n**相关操作截图**\n");
-            for (String url : leftovers) {
-                updated.append("\n<img src=\"").append(url).append("\" width=\"70%\" />");
-            }
-        }
-        lastAiMessage.setContent(updated.toString());
+        lastAiMessage.setContent(String.join("\n\n", blocks));
         conversationRepository.updateMessageContent(lastAiMessage.getId(), lastAiMessage.getContent());
     }
 
