@@ -1,41 +1,22 @@
-node_modules/
-dist/
-target/
+# 各子工程（wenqu-server / wenqu-web）自带的 .gitignore 已覆盖构建产物与运行期目录，
+# 这里的规则只处理跨工程、跨语言的通用项（不带前导斜杠的规则对任意层级生效）。
 *.log
+.DS_Store
+
+# 编辑器 / IDE
 .idea/
 *.iml
 .vscode/
-.DS_Store
-# 运行时产物与本地敏感配置
-data/
-config/application-local.yml
+
+# Python（scripts/ 下的本地重排服务）
+__pycache__/
+/.pyenv/
+
+# 本地环境与敏感配置
 .env
 .env.local
 .env.*.local
-__pycache__/
+config/application-local.yml
+
+# 工作区工具目录
 /.workbuddy/
-/.qoder/
-/.pyenv/
-/.zcode/
-/.md/
-/.vite/
-# npm 在仓库根误生成的锁文件（前端锁文件在 web/ 内管理）；web/package-lock.json 因历史原因已被跟踪，不受此规则影响
-package-lock.json
-/data.ms/auth/data.mdb
-/data.ms/indexes/b59230e2-ffa9-48cc-b1be-574663dc302a/data.mdb
-/data.ms/tasks/data.mdb
-/data.ms/instance-uid
-/data.ms/auth/lock.mdb
-/data.ms/indexes/b59230e2-ffa9-48cc-b1be-574663dc302a/lock.mdb
-/data.ms/tasks/lock.mdb
-/data.ms/VERSION
-/docs/
-/dump/
-# 本地数据库备份等临时产物（dump 少数了个 s，这里补齐）
-/dumps/
-# 仓库根误产出的运行期目录：skill-projections / skill-sources / user-data 都是 RuntimePaths
-# 相对 cwd 解析的路径，工作目录若为项目根就会在此生成（正确位置在 wenqu-server/ 下，
-# 两套副本互不可见）。加忽略规则避免误提交。
-/skill-projections/
-/skill-sources/
-/user-data/
