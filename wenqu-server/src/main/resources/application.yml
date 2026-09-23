@@ -1,12 +1,19 @@
 server:
   port: 8095
   servlet:
-    context-path: /v2
+    context-path: /
   # SSE 长连接：与问答流式输出配合，避免被容器超时切断
   tomcat:
     connection-timeout: 300s
 
 spring:
+  # SSE 事件流（/api/agent/**/events、知识库向量化进度）是长连接：一次 run 的工具调用链
+  # 常持续数分钟。未显式配置时 Tomcat 用自带默认 asyncTimeout=30s，到点就以
+  # AsyncRequestTimeoutException 掐断正在推流的响应，前端表现为应答中途失败。
+  # 参考实现是 Python 生成器流，没有这层超时概念，故属必要替换。
+  mvc:
+    async:
+      request-timeout: 1800000
   application:
     name: wenqu-server
   # 只排除 Spring Boot 的 Neo4j 自动装配，其余自动配置不受影响。

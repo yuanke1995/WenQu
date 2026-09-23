@@ -13,6 +13,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -150,6 +151,21 @@ public class GlobalExceptionHandler {
         log.debug("非法 multipart 请求: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ResultJson.error(400, "请求格式错误：需要 multipart/form-data 文件上传"));
+    }
+
+    /**
+     * 异步请求超时（SSE 事件流被容器到点掐断）。
+     *
+     * <p>{@code StreamingResponseBody} 的 SSE 流由容器异步超时到点后触发本异常。此时响应
+     * 已按 {@code text/event-stream} 提交且多半已写出部分帧，不可能改写成 JSON 错误体：
+     * 落到 {@link #handleUnknown(Exception)} 会二次抛 {@code HttpMessageNotWritableException}
+     * （{@code No converter for ResultJson with preset Content-Type 'text/event-stream'}），
+     * 日志里是两条异常、客户端只看到一个断掉的流。这里显式收尾——记录日志、不写 body，
+     * 由容器销毁异步上下文；正常推流时不会走到这里（超时阈值见 {@code spring.mvc.async}）。
+     */
+    @ExceptionHandler(AsyncRequestTimeoutException.class)
+    public void handleAsyncTimeout(AsyncRequestTimeoutException e) {
+        log.warn("异步请求超时（SSE 事件流被容器 async timeout 终止）");
     }
 
     /**
