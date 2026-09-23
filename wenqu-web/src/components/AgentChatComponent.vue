@@ -678,17 +678,18 @@
                           v-for="file in currentArtifactFiles"
                           :key="file.path"
                           type="button"
-                          class="state-list-item state-list-item--button state-list-item--artifact"
+                          class="state-list-item state-list-item--button"
                           :title="`打开 ${file.name}`"
                           @click="openPanelPreview(file)"
                         >
                           <FileTypeIcon
                             :name="file.name || file.path"
-                            :size="15"
+                            :size="18"
                             class="state-list-item-icon"
                           />
                           <div class="state-list-item-body">
                             <div class="state-list-item-title">{{ file.name }}</div>
+                            <div class="state-list-item-meta">{{ file.meta }}</div>
                           </div>
                         </button>
                       </div>
@@ -765,7 +766,9 @@
                                 class="state-subagent-status-icon state-subagent-running-icon"
                               />
                             </div>
-                            <div class="state-list-item-meta">{{ run.description }}</div>
+                            <div class="state-list-item-meta">
+                              {{ run.description || getSubagentRunMeta(run) }}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1173,6 +1176,13 @@ const getPanelFileName = (file) => {
   return '未知文件'
 }
 
+const getArtifactMetaLabel = (path) => {
+  const filename = getPanelFileName({ path })
+  if (!filename.includes('.')) return '交付文件'
+  const extension = filename.split('.').pop()
+  return extension ? `交付文件 · ${extension.toUpperCase()}` : '交付文件'
+}
+
 const getSubagentRunName = (run) => {
   const subagentSlug = run?.subagent_slug ? String(run.subagent_slug) : ''
   return (
@@ -1193,6 +1203,11 @@ const getSubagentIconSrc = (run) => {
 
 const getSubagentDefaultIconSrc = (run) =>
   run?.subagent_slug ? generatePixelAvatar(run.subagent_slug) : ''
+
+const getSubagentRunMeta = (run) => {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts.length : 0
+  return artifacts ? `${artifacts} 个产物` : run?.id || ''
+}
 
 const normalizePanelPath = (path) => String(path || '').replace(/\/+$/, '')
 
@@ -1770,7 +1785,8 @@ const currentArtifactFiles = computed(() =>
     .filter(Boolean)
     .map((path) => ({
       path,
-      name: getPanelFileName({ path })
+      name: getPanelFileName({ path }),
+      meta: getArtifactMetaLabel(path)
     }))
 )
 /** 返回待办状态的无障碍文案。 */
