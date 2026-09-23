@@ -15,6 +15,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { renderMarkdown } from '@/utils/markdown_preview'
+import { getCachedKbImageUrl, isKbImageProxyPath, loadKbImageUrl } from '@/utils/kbImageCache'
 import { HTML_PREVIEW_MAX_HEIGHT, HTML_PREVIEW_MIN_HEIGHT } from '@/utils/htmlPreviewRenderer'
 import 'katex/dist/katex.min.css'
 const props = defineProps({
@@ -38,12 +39,9 @@ const shikiTheme = computed(() => (themeStore.isDark ? 'github-dark' : 'github-l
 const previewRef = ref(null)
 const copiedTimers = new WeakMap()
 const htmlPreviewFrames = new Map()
-const kbImageBlobUrls = new Set()
 let pendingMarkdownHtml = null
 
 const HTML_PREVIEW_HEIGHT_MESSAGE = 'wenqu-html-preview-height'
-
-const KB_IMAGE_PROXY_PATH_RE = /\/api\/knowledge\/databases\/[^/]+\/images\//
 
 const getHtmlPreviewCssNumber = (slot, property, fallback) => {
   const preview = slot.closest('.html-preview-render')
@@ -315,34 +313,46 @@ const enhanceHtmlPreviews = () => {
   })
 }
 
-const revokeKbImageBlobUrls = () => {
-  kbImageBlobUrls.forEach((url) => URL.revokeObjectURL(url))
-  kbImageBlobUrls.clear()
-}
-
+/**
+ * 把知识库图片换成带鉴权下载来的 Blob URL。
+ *
+ * <p>关键约束：流式期间这段 DOM 每次增量都会重建，所以这里<b>不能</b>在每次重建时
+ * 销毁上一次的 Blob URL 再重新下载（那会让已显示的图片闪白，并被下一次重建打断，
+ * 直到流停住才来得及显示）。做法改为按图片地址复用缓存：
+ * 命中缓存时同步赋值 {@code img.src}，图片立刻就有内容，不存在空窗。
+ */
 const enhanceKbImages = () => {
   const root = previewRef.value
   if (!root) return
 
   root.querySelectorAll('img').forEach((img) => {
     const src = img.getAttribute('src')
-    if (!src || !KB_IMAGE_PROXY_PATH_RE.test(src) || img.dataset.kbImageLoaded) return
+    // 半截 URL（流式输出中途）不算，避免每个字符都触发一次下载。
+    if (!src || !isKbImageProxyPath(src)) return
 
+    const cachedUrl = getCachedKbImageUrl(src)
+    if (cachedUrl) {
+      if (img.getAttribute('src') !== cachedUrl) img.src = cachedUrl
+      img.style.visibility = 'visible'
+      img.dataset.kbImageLoaded = 'true'
+      return
+    }
+
+    if (img.dataset.kbImageLoading) return
     img.dataset.kbImageLoading = 'true'
-    fetch(src, { headers: userStore.getAuthHeaders() })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.blob()
-      })
-      .then((blob) => {
+    // 直接写原地址会先发一次无鉴权请求（401/破图），故在拿到 Blob 前先隐藏。
+    img.style.visibility = 'hidden'
+
+    loadKbImageUrl(src, userStore.getAuthHeaders())
+      .then((objectUrl) => {
         if (!img.isConnected) return
-        const objectUrl = URL.createObjectURL(blob)
-        kbImageBlobUrls.add(objectUrl)
         img.src = objectUrl
+        img.style.visibility = 'visible'
         img.dataset.kbImageLoaded = 'true'
       })
       .catch((error) => {
         console.error('加载知识库图片失败:', src, error)
+        img.style.visibility = 'visible'
       })
       .finally(() => {
         delete img.dataset.kbImageLoading
@@ -365,7 +375,6 @@ window.addEventListener('message', handleHtmlPreviewHeight)
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleHtmlPreviewHeight)
   htmlPreviewFrames.clear()
-  revokeKbImageBlobUrls()
 })
 
 watch(
@@ -378,7 +387,6 @@ watch(
 
     if (!content) {
       htmlPreviewFrames.clear()
-      revokeKbImageBlobUrls()
       replaceHtmlPreservingPreviews('')
       return
     }
@@ -386,7 +394,6 @@ watch(
     const html = await renderMarkdown(content, { theme })
     if (!expired) {
       replaceHtmlPreservingPreviews(html)
-      revokeKbImageBlobUrls()
       cleanupHtmlPreviewFrames()
 
       await nextTick()
