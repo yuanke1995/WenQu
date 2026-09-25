@@ -27,12 +27,15 @@ public class VisionService {
 
     private final AppProperties properties;
     private final ConfigService configService;
+    private final ModelRegistryService modelRegistryService;
     private final ImageDescCache imageDescCache;
     private final RestClient restClient;
 
-    public VisionService(AppProperties properties, ConfigService configService, ImageDescCache imageDescCache) {
+    public VisionService(AppProperties properties, ConfigService configService,
+                         ModelRegistryService modelRegistryService, ImageDescCache imageDescCache) {
         this.properties = properties;
         this.configService = configService;
+        this.modelRegistryService = modelRegistryService;
         this.imageDescCache = imageDescCache;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
@@ -47,7 +50,12 @@ public class VisionService {
      * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）
      */
     public String describe(byte[] imageBytes, String ext) {
-        return describe(imageBytes, ext, configService.get("vision.prompt"));
+        return describe(imageBytes, ext, configService.get("vision.prompt"), null);
+    }
+
+    /** 默认描述提示词（供调用方组合带路由覆盖的 describe 重载） */
+    public String defaultPrompt() {
+        return configService.get("vision.prompt");
     }
 
     /**
@@ -56,6 +64,14 @@ public class VisionService {
      * 未命中调 VLM，成功写缓存。失败自动重试 retryCount 次（Ollama 偶发 500/超时）
      */
     public String describe(byte[] imageBytes, String ext, String prompt) {
+        return describe(imageBytes, ext, prompt, null);
+    }
+
+    /**
+     * 带路由覆盖的图片描述：refOverride 非空时解析该引用为视觉网关（聊天上传图片的个人默认模型），
+     * 解析失败回落全局 visionRoute；空 = 全局。文档入库等无用户上下文场景传 null。
+     */
+    public String describe(byte[] imageBytes, String ext, String prompt, String refOverride) {
         // L12 fail-loud：vision.enabled 配置化（设置页可改，保存即生效；未配置时回退 yml/环境变量值）
         String cfgEnabled = configService.get("vision.enabled");
         boolean enabled = cfgEnabled == null ? properties.getVision().isEnabled() : Boolean.parseBoolean(cfgEnabled.trim());
@@ -65,7 +81,8 @@ public class VisionService {
             }
             return "";
         }
-        String model = configService.get("vision.model");
+        ModelRegistryService.ModelRoute route = routeFor(refOverride);
+        String model = route.modelId();
         String cacheKey = imageDescCache.key(imageBytes, prompt, model);
         if (cacheKey != null) {
             String cached = imageDescCache.get(cacheKey);
@@ -80,7 +97,7 @@ public class VisionService {
         String result = "";
         for (int attempt = 0; attempt <= retry; attempt++) {
             try {
-                String desc = callOnce(imageBytes, ext, prompt);
+                String desc = callOnce(imageBytes, ext, prompt, route);
                 if (desc != null && !desc.isBlank()) {
                     result = desc;
                     break;
@@ -100,13 +117,23 @@ public class VisionService {
         return result;
     }
 
-    private String callOnce(byte[] imageBytes, String ext, String prompt) {
+    /** 路由解析：refOverride 非空时按引用取供应商网关（解析失败回落全局并告警），空走全局 visionRoute */
+    private ModelRegistryService.ModelRoute routeFor(String refOverride) {
+        if (refOverride == null || refOverride.isBlank()) return modelRegistryService.visionRoute();
+        ModelRegistryService.ModelRoute r = modelRegistryService.resolveReference(refOverride.trim());
+        if (r == null) {
+            log.warn("[Vision] 个人视觉模型引用解析失败，回落全局: {}", refOverride);
+            return modelRegistryService.visionRoute();
+        }
+        return r;
+    }
+
+    private String callOnce(byte[] imageBytes, String ext, String prompt, ModelRegistryService.ModelRoute route) {
         String mime = mimeOf(ext);
         String base64 = Base64.getEncoder().encodeToString(imageBytes);
 
         Map<String, Object> body = new HashMap<>();
-        // 模型配置界面：视觉模型名动态读 DB（保存即生效）
-        body.put("model", configService.get("vision.model"));
+        body.put("model", route.modelId());
         // qwen3 系列默认思考模式：关闭以提速且输出稳定（实测 max_tokens 在思考模型下会导致空输出，保持 0 不发送）
         if (!properties.getVision().isThink()) {
             body.put("think", false);
@@ -127,17 +154,11 @@ public class VisionService {
                         Map.of("url", "data:" + mime + ";base64," + base64)),
                 Map.of("type", "text", "text", prompt)))));
 
-        // 网关地址/Key 动态读 DB（vision.baseUrl / vision.apiKey，保存即生效；get 对 apiKey 透明解密），
-        // DB 未配置时回退 yml/env；路径容错与 chat 同规则（版本尾缀/完整端点自动识别，支持智谱 /v4 等）
-        String baseUrl = configService.get("vision.baseUrl");
-        if (baseUrl == null || baseUrl.isBlank()) {
-            baseUrl = properties.getVision().getBaseUrl();
-        }
-        String apiKey = configService.get("vision.apiKey");
-        if (apiKey == null || apiKey.isBlank()) {
-            apiKey = properties.getVision().getApiKey();
-        }
-        String[] np = DynamicOpenAiChatModel.normalize(baseUrl, "",
+        // 网关地址/Key 来自视觉路由（引用→供应商网关；遗留→vision.baseUrl/apiKey，get 对 apiKey 透明解密），
+        // 路径容错与 chat 同规则（版本尾缀/完整端点自动识别，支持智谱 /v4 等）
+        String baseUrl = route.baseUrl();
+        String apiKey = route.apiKey();
+        String[] np = DynamicOpenAiChatModel.normalize(baseUrl, route.completionsPath(),
                 "/v1/chat/completions", "/chat/completions");
         String url = np[0] + np[1];
 

@@ -175,8 +175,9 @@
             <div class="toolbar-left">
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
                 <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen }"
-                        title="选择智能体：按预设覆盖模型 / 提示词 / 知识库范围 / 能力">
+                        title="选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）">
                   <robot-outlined class="agent-pill-ic" />
+                  <span v-if="currentAgentId" class="agent-pill-dot"></span>
                   <span class="agent-pill-name">{{ currentAgentName }}</span>
                   <down-outlined class="agent-pill-caret" />
                 </button>
@@ -188,6 +189,7 @@
                     </div>
                     <div class="agent-menu-list">
                       <div v-if="!agentList.length" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+                        <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">默认（全局配置）</span>
                           <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
@@ -196,12 +198,13 @@
                       </div>
                       <div v-for="a in agentList" :key="a.id" class="agent-mi"
                            :class="{ active: currentAgentId === a.id }" @click="pickAgent(a.id)">
+                        <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">
                             {{ a.name }}
                             <span v-if="a.isDefault" class="agent-mi-badge">默认</span>
                           </span>
-                          <span class="agent-mi-desc">{{ agentSummary(a) }}</span>
+                          <span v-if="a.description" class="agent-mi-desc">{{ a.description }}</span>
                         </div>
                         <check-outlined v-if="currentAgentId === a.id" class="agent-mi-check" />
                       </div>
@@ -221,7 +224,11 @@
                 <button class="app-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }" @click="toggleDeepThink"><bulb-outlined /></button>
               </a-tooltip>
             </div>
-            <span class="model-name">{{ effectiveModel }}</span>
+            <div class="toolbar-right">
+              <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+                           :placeholder="effectiveModelLabel || '选择模型'"
+                           :width="190" :disabled="loading" />
+            </div>
             <button v-if="loading" class="send-btn stop" title="停止生成" @click="stop"><pause-circle-outlined /></button>
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
           </div>
@@ -241,8 +248,9 @@
         <div class="rp-row rp-agent-row">
           <span>模型</span>
           <span class="rp-val" :title="effectiveModel">
-            <span class="rp-val-text">{{ effectiveModel || '—' }}</span>
-            <span v-if="currentAgentModelOverridden" class="rp-tag">智能体指定</span>
+            <ProviderIcon :icon="effectiveModelIcon" :name="effectiveModelProvider" :size="14" style="margin-right:4px" />
+            <span class="rp-val-text">{{ effectiveModelLabel || '—' }}</span>
+            <span v-if="modelSourceLabel" class="rp-tag">{{ modelSourceLabel }}</span>
           </span>
         </div>
         <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
@@ -362,11 +370,15 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listAvailableAgents } from '../api'
+         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listAvailableAgents,
+         getUserPreference } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
 import { fmtTokens } from '../utils/token'
+import { loadModelIndex } from '../utils/modelRef'
+import ModelSelect from '../components/ModelSelect.vue'
+import ProviderIcon from '../components/ProviderIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -425,13 +437,6 @@ const currentAgentName = computed(() => {
   const a = agentList.value.find(x => x.id === currentAgentId.value)
   return a ? a.name : '默认（全局配置）'
 })
-/** 下拉每一项的副标题：描述为主，模型差异次之 */
-const agentSummary = a => {
-  const parts = []
-  if (a.description) parts.push(a.description)
-  if (a.model) parts.push('模型 ' + a.model)
-  return parts.join(' · ') || '未填写描述'
-}
 /** 选中智能体：写入当前会话记忆并给出即时反馈 */
 const pickAgent = id => {
   currentAgentId.value = id || ''
@@ -520,16 +525,39 @@ const togglePanel = () => {
   panelOpen.value = !panelOpen.value
   localStorage.setItem('app_panel', panelOpen.value ? '1' : '0')
 }
-const modelLabel = ref('')
-/** 实际生效的模型：智能体指定了就用它的，否则回落到全局配置 */
-const effectiveModel = computed(() => {
-  const a = agentList.value.find(x => x.id === currentAgentId.value)
-  return (a && a.model) ? a.model : modelLabel.value
+// ==================== 模型切换：会话级覆盖 > 智能体 > 个人默认 > 全局 ====================
+const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
+const currentOverrideModel = computed({
+  get: () => modelMap.value[currentSessionId.value] || '',
+  set: v => { modelMap.value = { ...modelMap.value, [currentSessionId.value]: v || '' } }
 })
-/** 模型是否来自智能体覆盖（状态栏打标用） */
-const currentAgentModelOverridden = computed(() => {
-  const a = agentList.value.find(x => x.id === currentAgentId.value)
-  return !!(a && a.model)
+const userDefaultModel = ref('')    // 个人默认模型（个人设置，后端 /user/preference）
+const modelIndex = ref({})          // 引用 → { displayName, providerName, icon }（展示映射）
+
+/** 实际生效的模型（引用或遗留名）：会话覆盖 > 个人默认（智能体不绑模型、全局兜底已移除；空=未指定，发送时引导选择） */
+const effectiveModel = computed(() => {
+  return currentOverrideModel.value || userDefaultModel.value
+})
+/** 生效模型的展示名（引用串在模型库里映射成 友好名；查不到回退原值） */
+const effectiveModelLabel = computed(() => {
+  const v = effectiveModel.value
+  if (!v) return ''
+  const info = modelIndex.value[v]
+  return info ? info.displayName : v
+})
+const effectiveModelIcon = computed(() => {
+  const info = modelIndex.value[effectiveModel.value]
+  return info ? info.icon : ''
+})
+const effectiveModelProvider = computed(() => {
+  const info = modelIndex.value[effectiveModel.value]
+  return info ? info.providerName : ''
+})
+/** 生效模型来源（状态栏打标）：会话指定 / 个人默认；都没有则不显示标签 */
+const modelSourceLabel = computed(() => {
+  if (currentOverrideModel.value) return '会话指定'
+  if (userDefaultModel.value) return '个人默认'
+  return ''
 })
 const debugEntryVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
@@ -925,6 +953,11 @@ const send = () => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
   if ((!q && !imgs.length) || loading.value) return
+  // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
+  if (!effectiveModel.value) {
+    message.warning('未指定模型：请在右上角选择模型，或在个人设置/智能体中配置默认模型')
+    return
+  }
   text.value = ''
   pendingImages.value = []
   const deep = deepThinkOn.value
@@ -969,6 +1002,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
     signal: abortController.value.signal,
     deepThink,
     agentId: currentAgentId.value,
+    // 会话级模型覆盖：仅用户手动切换时传（空=后端按 智能体>个人默认>全局 链路解析）
+    model: currentOverrideModel.value || '',
     onThinking: t => {
       const m = messages.value[idx]
       m.thinking = (m.thinking || '') + t
@@ -1278,9 +1313,12 @@ onMounted(async () => {
   }).catch(() => {})
   getConfig().then(r => {
     if (!r.success) return
-    modelLabel.value = r.data?.chat?.model?.value || ''
     debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
   }).catch(() => {})
+  getUserPreference().then(r => {
+    userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
+  }).catch(() => {})
+  loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
 })
 </script>
 
@@ -1509,43 +1547,52 @@ onMounted(async () => {
 .at-chip-del:hover { opacity: 1; color: var(--app-danger); }
 .input-area { resize: none; padding: 6px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
 .input-area:focus { border: none; box-shadow: none; }
-.input-toolbar { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
-.toolbar-left { display: flex; align-items: center; gap: 2px; }
+.input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
 .model-name {
   margin-left: auto; font-size: 11px; color: var(--app-text3); margin-right: 8px; user-select: none;
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 智能体胶囊入口：默认态轻描淡写，选中态用主色表明「这一轮按它走」 */
+/* 智能体胶囊：ZCode 幽灵风格——平时只有灰字+小箭头，hover/展开才出现浅灰底 */
 .agent-pill {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px;
-  padding: 0 8px 0 9px; border-radius: 999px; border: 1px solid var(--app-border);
-  background: var(--app-panel); color: var(--app-text2); font-size: 12px; cursor: pointer;
-  transition: border-color .15s, background .15s, color .15s;
+  display: inline-flex; align-items: center; gap: 5px; max-width: 260px; height: 28px;
+  padding: 0 8px 0 12px; border-radius: 999px; border: none;
+  background: transparent; color: var(--app-text3); font-size: 13px; font-weight: 400; cursor: pointer;
+  transition: background .15s, color .15s;
 }
-.agent-pill:hover { border-color: #c9d3e0; color: var(--app-text); background: #fafbfc; }
-.agent-pill.on { border-color: #bcd0f7; background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
-.agent-pill.open { border-color: var(--app-accent); }
-.agent-pill-ic { font-size: 13px; flex: none; }
+.agent-pill:hover, .agent-pill.open { background: #f2f3f5; color: var(--app-text); }
+.agent-pill.on .agent-pill-ic, .agent-pill.on .agent-pill-name { color: var(--app-text); }
+.agent-pill-ic { font-size: 14px; flex: none; }
+.agent-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none; }
 .agent-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-pill-caret { font-size: 10px; opacity: .6; flex: none; }
+.agent-pill-caret { font-size: 12px; opacity: .55; flex: none; }
 
 /* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
 .agent-menu {
-  min-width: 320px; max-width: 400px; background: var(--app-panel);
-  border: 1px solid var(--app-border); border-radius: 12px; padding: 6px;
+  min-width: 340px; max-width: 420px; background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: 14px; padding: 6px;
   box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
 }
-.agent-menu-head { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 8px; }
+.agent-menu-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 8px; }
 .agent-menu-head > span:first-child { font-size: 12px; font-weight: 500; color: var(--app-text); }
 .agent-menu-hint { font-size: 11px; color: var(--app-text3); }
-.agent-menu-list { max-height: 300px; overflow-y: auto; }
-.agent-mi { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 9px; cursor: pointer; }
+.agent-menu-list { max-height: 320px; overflow-y: auto; }
+.agent-mi { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
 .agent-mi:hover { background: #f5f7fa; }
 .agent-mi.active { background: var(--app-accent-weak); }
-.agent-mi-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* 头像徽标：给每行一个视觉锚点，选中态随主色 */
+.agent-mi-ava {
+  flex: none; width: 26px; height: 26px; border-radius: 8px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 13px;
+  background: #eef1f5; color: var(--app-text3);
+  transition: background .15s, color .15s;
+}
+.agent-mi.active .agent-mi-ava { background: var(--app-accent-weak); color: var(--app-accent); }
+.agent-mi-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .agent-mi-name {
-  display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--app-text);
+  display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: var(--app-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .agent-mi.active .agent-mi-name { color: var(--app-accent); font-weight: 500; }
@@ -1557,7 +1604,7 @@ onMounted(async () => {
   font-size: 11px; color: var(--app-text3); line-height: 1.5;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.agent-mi-check { color: var(--app-accent); font-size: 12px; flex: none; }
+.agent-mi-check { color: var(--app-accent); font-size: 12px; flex: none; margin-top: 5px; }
 .agent-mi-empty { padding: 14px 10px; font-size: 12px; color: var(--app-text3); text-align: center; }
 .agent-menu-foot {
   display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px 9px;

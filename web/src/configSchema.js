@@ -3,20 +3,10 @@
 // 字段含义：panel=所属折叠面板 section=面板内分节 group/key=后端分组与键 path=form 内路径 tier=1必需 2调优 3工程
 
 export const TIPS = {
-  "chatModel": "切换回答所用的底层大模型（命名与所选厂商一致，如 deepseek-chat / glm-4.5 / qwen-plus / moonshot-v1-8k / doubao-pro-32k）。不同模型的能力、速度、成本差异很大；更换后请同步确认下方「模型窗口映射」包含该模型，否则按默认窗口计算上下文预算。跨厂商切换后若深度思考报错（enable_thinking 仅 qwen3 系支持），请将「深度思考-思考模式」切为 prompt 或关闭透传。",
-  "chatPreset": "常见国产模型厂商预设：选择后自动填充网关地址与补全路径（API Key 与模型名需自行补齐）。覆盖 DeepSeek、智谱 GLM、阿里百炼 Qwen、Kimi、豆包（火山方舟）、腾讯混元、百度千帆、MiniMax、SiliconFlow（一个 Key 访问多个开源模型）与本地 Ollama，均为 OpenAI 兼容端点。",
-  "chatBaseUrl": "OpenAI 兼容网关地址，不含补全路径。三种填法自动识别：① 网关根地址（如 https://api.deepseek.com）；② OpenAI SDK 风格版本尾缀（…/v1、…/compatible-mode/v1、智谱 …/v4、方舟 …/v3、千帆 …/v2，版本段自动移入补全路径）；③ 完整端点（以 /chat/completions 结尾）。修改保存后下一次回答即走新网关，免重启。",
-  "chatCompletionsPath": "对话补全路径，默认 /v1/chat/completions。非 /v1 网关需调整：智谱 GLM /v4/chat/completions、火山方舟 /v3/chat/completions、百度千帆 /v2/chat/completions；选择厂商预设会自动填充，手动填写带版本尾缀的 baseUrl 时也可留空自动识别。",
-  "chatApiKey": "所选厂商的 API Key（格式以厂商为准，讯飞星火为 key:secret 拼接形式）。以 RSA 加密后存储，页面上仅显示 ****掩码；未修改时无需重新输入。切换厂商后请换对应 Key，否则网关 401。",
   "temperature": "控制回答的随机性（0~2）：越低回答越稳定、严谨、贴近资料原文（知识库问答建议 0.2~0.4）；越高越有创造性，但也更容易偏离事实或编造内容。注意部分厂商范围更窄（如智谱 0~1），超出会报错。",
   "systemPrompt": "定义 AI 的角色与回答风格，会注入每次问答的系统提示。改动立即影响所有回答的语气与行为；引用标注、配图、追问的硬性规则由系统固定，不可在此修改。",
-  "visionModel": "图片识别所用的多模态模型，影响文档截图、流程图的描述质量（描述越准，回答配图与检索召回越准）。换云端多模态（如 GLM-4V / qwen-vl-max / GPT-4o）需同步修改下方网关地址与 API Key。",
-  "visionBaseUrl": "视觉模型 OpenAI 兼容网关地址。本地 Ollama 用 http://localhost:11434；云端同对话模型厂商（…/v1、…/v4 等版本尾缀自动识别）。修改保存后下一次图片描述即走新网关，免重启。",
-  "visionApiKey": "视觉模型 API Key（RSA 加密存储，页面仅显示 ****掩码，未修改无需重输）。本地 Ollama 不校验密钥可留空；切换云端服务后请换对应 Key。",
-  "embeddingModel": "向量化所用模型，决定知识块与提问的语义表示。切换保存时会真实探测新配置（不可达/Key 错误将拒绝保存），通过后自动清空向量索引并后台全量重嵌入——不同模型向量不可迁移，这是必要步骤；期间检索降级关键词路。",
-  "embeddingBaseUrl": "向量模型 OpenAI 兼容网关地址（可与对话模型不同厂商，如对话用 DeepSeek、向量用百炼）。…/v1、…/v4 等版本尾缀自动识别。",
-  "embeddingApiKey": "向量模型 API Key（RSA 加密存储，页面仅显示 ****掩码，未修改无需重输）。注意：与对话模型的 Key 通常不同，切换厂商时务必同步更换。",
-  "embeddingPath": "向量化接口路径，默认 /v1/embeddings。智谱 /v4/embeddings、百度千帆 /v2/embeddings；baseUrl 填了版本尾缀时可留空自动识别。",
+  "visionModel": "图片识别所用的多模态模型，影响文档截图、流程图的描述质量（描述越准，回答配图与检索召回越准）。从模型供应商中「视觉」类型模型里选择；网关与密钥由供应商统一管理。",
+  "embeddingModel": "向量化所用模型，决定知识块与提问的语义表示。从模型供应商中「向量」类型模型里选择；切换保存时会真实探测新模型（不可达将拒绝保存），通过后自动全量重嵌入——不同模型向量不可迁移；期间检索降级关键词路。",
   "embeddingDimensions": "当前向量索引的维度，由系统在全量重嵌入成功后自动记录，不可手工修改。切换向量模型时用它与新模型探测维度比对：维度变化说明索引 schema 必须重建（重嵌入会自动做）。显示\"未记录\"表示本库尚未跑过重嵌入，不影响使用。",
   "visionPrompt": "图片描述的要求（如提取关键文字/界面元素、说明流程要点）。改动影响图片描述的内容倾向，进而影响检索与配图准确性。",
   "visionConcurrency": "文档解析时图片描述的最大并发数。调高解析更快，但占用更多显存/推理资源（本地 Ollama 需设 OLLAMA_NUM_PARALLEL 才能并行）；调低更稳。",
@@ -26,9 +16,8 @@ export const TIPS = {
   "uploadMaxSize": "文档上传大小上限（MB）。保存即生效（新上传按新限制校验）；物理上限 1GB 由容器兜底，不可超过。",
   "vectorWeight": "向量语义相似度在最终排序分中的占比。调高更侧重\"意思相近\"的匹配（适合口语化、换说法的提问）；过高可能引入字面无关但语义相近的块。",
   "keywordWeight": "关键词精确命中在排序分中的占比。调高更侧重\"字面命中\"（适合知识库资料中的专有名词、按钮名）；过高会漏掉语义相关但字面不同的内容。",
-  "rerankEnabled": "对混合检索候选再做一次精排（真交叉编码）。需先启动本地服务 scripts/win 或 scripts/mac 的 start_rerank_server（bge-reranker-v2-m3）；服务不可用时自动回退融合分排序。",
-  "rerankBaseUrl": "重排服务地址（OpenAI 兼容 /v1/rerank），默认本地 http://localhost:7997。",
-  "rerankModel": "重排模型名，与本地服务一致即可，默认 BAAI/bge-reranker-v2-m3。",
+  "rerankEnabled": "对混合检索候选再做一次精排（真交叉编码）。从模型供应商中「重排」类型模型里选择；未启用或服务不可用时自动回退融合分排序。",
+  "rerankModel": "重排模型：从模型供应商中「重排」类型模型里选择；留空时走本地 reranker 服务（scripts/win 或 scripts/mac 的 start_rerank_server，bge-reranker-v2-m3）。",
   "modelWindows": "声明各模型的上下文窗口大小（token），格式\"模型名=token\"逗号分隔，按当前模型名的包含关系匹配。设置过大有超窗报错风险，过小会浪费模型能力。",
   "defaultWindow": "当「模型窗口映射」未匹配到当前模型时使用的窗口大小兜底值。",
   "safetyFactor": "上下文预算 = 窗口 × 安全系数 − 输出限制。系数越高单次可塞入更多知识块和历史，但越接近模型窗口上限；建议 0.6~0.8。",
@@ -168,10 +157,6 @@ export const PANELS = [
 ]
 
 export const FIELDS = [
-  { panel: "chat", section: 0, group: "chat", key: "model", path: "chat.model", label: "模型名", type: "text", tips: "chatModel", def: "", ph: "如 deepseek-chat / glm-4.5 / qwen-plus，与所选厂商一致", core: true, tier: 1 },
-  { panel: "chat", section: 0, group: "chat", key: "baseUrl", path: "chat.baseUrl", label: "网关地址 Base URL", type: "text", tips: "chatBaseUrl", def: "", width: 420, ph: "如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀或完整端点也能自动识别", core: true, tier: 1 },
-  { panel: "chat", section: 0, group: "chat", key: "completionsPath", path: "chat.completionsPath", label: "补全路径", type: "text", tips: "chatCompletionsPath", def: "", width: 420, ph: "默认 /v1/chat/completions；智谱 /v4、方舟 /v3、千帆 /v2（留空自动识别）", tier: 2 },
-  { panel: "chat", section: 0, group: "chat", key: "apiKey", path: "chat.apiKey", label: "API Key", type: "password", tips: "chatApiKey", def: "", width: 420, ph: "未修改时显示 ****掩码，无需重新输入（RSA 加密入库）", core: true, tier: 1 },
   { panel: "chat", section: 1, group: "chat", key: "temperature", path: "chat.temperature", label: "温度", type: "number", tips: "temperature", def: 0.3, min: 0, max: 2, step: 0.1, width: 200, tier: 1 },
   { panel: "chat", section: 1, group: "chat", key: "systemPrompt", path: "chat.systemPrompt", label: "System Prompt", type: "textarea", tips: "systemPrompt", def: "", rows: 4, ph: "AI 助手的角色与回答风格（引用/图片/追问规则由系统固定，不可修改）", tier: 1 },
   { panel: "chat", section: 1, group: "chat", key: "suggestedQuestions", path: "chat.suggestedQuestions", label: "推荐问题池", type: "textarea", tips: "suggestedQuestions", def: "", rows: 4, ph: "每行一个问题，欢迎页展示前 8 条（数据看板热门问题也可一键加入）", tier: 1 },
@@ -188,9 +173,7 @@ export const FIELDS = [
   { panel: "chat", section: 5, group: "chat", key: "retrievalDebugEnabled", path: "chat.retrievalDebugEnabled", label: "检索调试入口", type: "switch", tips: "retrievalDebugEnabled", def: false, debug: true, tier: 3 },
   { panel: "chat", section: 5, group: "chat", key: "showDebugDegradations", path: "chat.showDebugDegradations", label: "降级提示", type: "switch", tips: "showDebugDegradations", def: false, note: "默认关闭：回答下方不显示任何降级提示（无命中/改写失败/图片剔除/缓存命中等）；调试排障时开启可见全部原因", debug: true, tier: 3 },
   { panel: "vision", section: -1, group: "vision", key: "enabled", path: "vision.enabled", label: "启用图片描述", type: "switch", tips: "visionEnabled", def: true, tier: 1 },
-  { panel: "vision", section: 0, group: "vision", key: "model", path: "vision.model", label: "模型名", type: "text", tips: "visionModel", def: "", ph: "如 qwen3-vl:2b", core: true, tier: 2 },
-  { panel: "vision", section: 0, group: "vision", key: "baseUrl", path: "vision.baseUrl", label: "网关地址 Base URL", type: "text", tips: "visionBaseUrl", def: "", width: 420, ph: "如 http://localhost:11434（Ollama）或 https://open.bigmodel.cn/api/paas", core: true, tier: 2 },
-  { panel: "vision", section: 0, group: "vision", key: "apiKey", path: "vision.apiKey", label: "API Key", type: "password", tips: "visionApiKey", def: "", width: 420, ph: "未修改时显示 ****掩码（Ollama 无需 Key 可留空；RSA 加密入库）", core: true, tier: 2 },
+  { panel: "vision", section: 0, group: "vision", key: "model", path: "vision.model", label: "视觉模型", type: "model", modelType: "vision", allowClear: true, tips: "visionModel", def: "", width: 420, core: true, tier: 2 },
   { panel: "vision", section: 1, group: "vision", key: "prompt", path: "vision.prompt", label: "识别提示词", type: "textarea", tips: "visionPrompt", def: "", rows: 3, ph: "图片描述提示词（50字内描述界面/元素）", tier: 2 },
   { panel: "vision", section: 1, group: "vision", key: "concurrency", path: "vision.concurrency", label: "图片描述并发", type: "number", tips: "visionConcurrency", def: 4, min: 1, max: 16, width: 200, tier: 3 },
   { panel: "vision", section: 1, group: "vision", key: "userImageConcurrency", path: "vision.userImageConcurrency", label: "用户图片并发", type: "number", tips: "userImageConcurrency", def: 2, min: 1, max: 16, width: 200, tier: 3 },
@@ -213,10 +196,7 @@ export const FIELDS = [
   { panel: "chunk", section: 2, group: "chunk", key: "structural", path: "chunk.structural", label: "结构感知切分", type: "switch", tips: "chunkStructural", def: true, note: "标题/段落边界优先 + 章节路径注入，需重解析生效", tier: 2 },
   { panel: "chunk", section: 2, group: "chunk", key: "structuralRatio", path: "chunk.structuralRatio", label: "边界阈值比例", type: "number", tips: "chunkStructuralRatio", def: 0.8, min: 0.5, max: 1, step: 0.05, width: 200, note: "达到 maxSize×比例 时优先在段落边界断块", vif: "chunk.structural", tier: 2 },
   { panel: "chunk", section: 2, group: "chunk", key: "headingDepth", path: "chunk.headingDepth", label: "标题识别层级", type: "number", tips: "chunkHeadingDepth", def: 4, min: 1, max: 6, step: 1, width: 200, note: "章节路径识别到几级标题；改后需重解析生效", vif: "chunk.structural", tier: 2 },
-  { panel: "embedding", section: 0, group: "embedding", key: "model", path: "embedding.model", label: "模型名", type: "text", tips: "embeddingModel", def: "", width: 420, ph: "如 text-embedding-v4 / embedding-3 / bge-m3，与所选厂商一致", core: true, tier: 1 },
-  { panel: "embedding", section: 0, group: "embedding", key: "baseUrl", path: "embedding.baseUrl", label: "网关地址 Base URL", type: "text", tips: "embeddingBaseUrl", def: "", width: 420, ph: "OpenAI 兼容网关；…/v1、…/v4 等版本尾缀自动识别", core: true, tier: 1 },
-  { panel: "embedding", section: 0, group: "embedding", key: "embeddingsPath", path: "embedding.embeddingsPath", label: "向量化路径", type: "text", tips: "embeddingPath", def: "", width: 420, ph: "默认 /v1/embeddings；智谱 /v4/embeddings、千帆 /v2/embeddings（留空自动识别）", tier: 2 },
-  { panel: "embedding", section: 0, group: "embedding", key: "apiKey", path: "embedding.apiKey", label: "API Key", type: "password", tips: "embeddingApiKey", def: "", width: 420, ph: "未修改时显示 ****掩码，无需重新输入（RSA 加密入库）", core: true, tier: 1 },
+  { panel: "embedding", section: 0, group: "embedding", key: "model", path: "embedding.model", label: "向量模型", type: "model", modelType: "embedding", tips: "embeddingModel", def: "", width: 420, note: "切换保存时自动探测并全量重嵌入（期间向量检索降级关键词路）", core: true, tier: 1 },
   { panel: "retrieval", section: 0, group: "keyword", key: "engine", path: "keyword.engine", label: "关键词引擎", type: "select", tips: "keywordEngine", def: "mysql", width: 220, options: [{"value":"mysql","label":"mysql（LIKE，零依赖，库大时慢）"},{"value":"meilisearch","label":"meilisearch（中文分词+相关度，推荐）"}], tier: 2 },
   { panel: "retrieval", section: 0, group: "keyword", key: "baseUrl", path: "keyword.baseUrl", label: "引擎服务地址", type: "text", tips: "keywordBaseUrl", def: "http://localhost:7700", width: 320, ph: "http://localhost:7700", tier: 2 },
   { panel: "retrieval", section: 0, group: "keyword", key: "apiKey", path: "keyword.apiKey", label: "引擎 Key", type: "password", tips: "keywordApiKey", def: "", width: 320, ph: "Meilisearch master key（服务端未设置可留空）", tier: 2 },
@@ -227,8 +207,7 @@ export const FIELDS = [
   { panel: "retrieval", section: 1, group: "retrieval", key: "keywordLimit", path: "retrieval.keywordLimit", label: "关键词召回上限", type: "number", tips: "keywordLimit", def: 20, min: 1, step: 5, width: 200, tier: 2 },
   { panel: "retrieval", section: 1, group: "retrieval", key: "searchTimeoutMs", path: "retrieval.searchTimeoutMs", label: "检索超时(ms)", type: "number", tips: "retrievalTimeout", def: 8000, min: 500, step: 500, width: 200, note: "混合检索总超时", tier: 2 },
   { panel: "retrieval", section: 5, group: "rerank", key: "enabled", path: "retrieval.rerank.enabled", label: "启用重排", type: "switch", tips: "rerankEnabled", def: false, note: "开启前自动校验服务可用性", tier: 2 },
-  { panel: "retrieval", section: 5, group: "rerank", key: "model", path: "retrieval.rerank.model", label: "模型名", type: "text", tips: "rerankModel", def: "BAAI/bge-reranker-v2-m3", width: 320, ph: "BAAI/bge-reranker-v2-m3", tier: 2 },
-  { panel: "retrieval", section: 5, group: "rerank", key: "baseUrl", path: "retrieval.rerank.baseUrl", label: "服务地址", type: "text", tips: "rerankBaseUrl", def: "http://localhost:7997", width: 320, ph: "http://localhost:7997", tier: 2 },
+  { panel: "retrieval", section: 5, group: "rerank", key: "model", path: "retrieval.rerank.model", label: "重排模型", type: "model", modelType: "rerank", allowClear: true, tips: "rerankModel", def: "", width: 320, tier: 2 },
   { panel: "context", section: 0, group: "context", key: "modelWindows", path: "context.modelWindows", label: "模型窗口映射", type: "text", tips: "modelWindows", def: "", ph: "模型名=token,逗号分隔，如 qwen3=131072", tier: 3 },
   { panel: "context", section: 0, group: "context", key: "defaultWindowTokens", path: "context.defaultWindowTokens", label: "默认窗口 token", type: "number", tips: "defaultWindow", def: 32768, min: 1000, step: 1000, width: 200, tier: 3 },
   { panel: "context", section: 0, group: "context", key: "safetyFactor", path: "context.safetyFactor", label: "窗口安全系数", type: "number", tips: "safetyFactor", def: 0.7, min: 0.1, max: 1, step: 0.05, width: 200, tier: 3 },
@@ -276,14 +255,14 @@ export const FIELDS = [
  * 新增配置项默认进高级（不进此清单即隐藏），避免设置页再次膨胀。
  */
 export const CORE_PATHS = new Set([
-  // 主回答模型
-  'chat.model', 'chat.baseUrl', 'chat.apiKey', 'chat.temperature', 'chat.systemPrompt',
+  // 主回答模型（网关/密钥在「模型供应商」页管理）
+  'chat.temperature', 'chat.systemPrompt',
   // 向量模型（切换需全量重嵌入，属管理员必知）
-  'embedding.model', 'embedding.baseUrl', 'embedding.apiKey',
+  'embedding.model',
   // 视觉模型（图片问答）
-  'vision.enabled', 'vision.model', 'vision.baseUrl', 'vision.apiKey',
-  // 重排（检索质量关键，需独立服务）
-  'retrieval.rerank.enabled', 'retrieval.rerank.model', 'retrieval.rerank.baseUrl',
+  'vision.enabled', 'vision.model',
+  // 重排（检索质量关键）
+  'retrieval.rerank.enabled', 'retrieval.rerank.model',
 ])
 
 /** 字段是否属核心（基础模式可见）；path 缺省时按 group.key 拼 */

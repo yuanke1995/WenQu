@@ -217,14 +217,6 @@
                       </a-tooltip>
                     </template>
                   </SchemaField>
-                  <!-- 厂商预设：紧跟问答模型名之后 -->
-                  <a-form-item v-if="current === 'chat' && blk.field.group === 'chat' && blk.field.key === 'model'">
-                    <template #label>
-                      <a-tooltip :title="TIPS.chatPreset" placement="top">厂商预设 <question-circle-outlined class="tip-icon" /></a-tooltip>
-                    </template>
-                    <a-select v-model:value="chatPreset" style="width:340px" :options="chatPresetOptions"
-                              placeholder="选择厂商自动填充网关地址与补全路径" @change="onChatPresetChange" />
-                  </a-form-item>
                 </template>
               </template>
 
@@ -536,7 +528,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { getConfig, saveConfig, resetConfig, checkRerank, checkKeywordEngine,
+import { getConfig, saveConfig, resetConfig, checkKeywordEngine,
          getReembedStatus, triggerReembed, probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare,
          listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
@@ -704,17 +696,14 @@ const onResetGroup = key => {
 }
 
 // ==================== 测试连接（先测后存） ====================
+// 模型网关的连通性测试已随 baseUrl/API Key 迁至「模型供应商」页（先测后存）；
+// 这里保留关键词引擎探测。
 const probeStates = ref({
-  chat: { loading: false, result: null },
-  vision: { loading: false, result: null },
-  embedding: { loading: false, result: null },
-  rerank: { loading: false, result: null },
   keyword: { loading: false, result: null }
 })
-const probeLabels = { chat: '对话模型', vision: '视觉模型', embedding: '向量模型', rerank: '重排服务', keyword: '关键词引擎' }
+const probeLabels = { keyword: '关键词引擎' }
 const PROBE_BY_KEY = {
-  'chat.baseUrl': 'chat', 'vision.baseUrl': 'vision', 'embedding.baseUrl': 'embedding',
-  'keyword.baseUrl': 'keyword', 'rerank.baseUrl': 'rerank'
+  'keyword.baseUrl': 'keyword'
 }
 const probeKey = f => PROBE_BY_KEY[f.group + '.' + f.key] || ''
 
@@ -723,15 +712,7 @@ const doProbe = async group => {
   if (!s || s.loading) return
   const f = form.value
   const payload = { group }
-  if (group === 'chat') {
-    Object.assign(payload, { baseUrl: f.chat.baseUrl, apiKey: f.chat.apiKey, model: f.chat.model, path: f.chat.completionsPath })
-  } else if (group === 'vision') {
-    Object.assign(payload, { baseUrl: f.vision.baseUrl, apiKey: f.vision.apiKey, model: f.vision.model })
-  } else if (group === 'embedding') {
-    Object.assign(payload, { baseUrl: f.embedding.baseUrl, apiKey: f.embedding.apiKey, model: f.embedding.model, path: f.embedding.embeddingsPath })
-  } else if (group === 'rerank') {
-    Object.assign(payload, { baseUrl: f.retrieval.rerank.baseUrl, model: f.retrieval.rerank.model })
-  } else if (group === 'keyword') {
+  if (group === 'keyword') {
     Object.assign(payload, { baseUrl: f.keyword.baseUrl, apiKey: f.keyword.apiKey })
   }
   s.loading = true
@@ -749,19 +730,13 @@ const doProbe = async group => {
 
 // 被探测项改动后清空旧探测结果
 watch(
-  () => [
-    form.value.chat.baseUrl, form.value.chat.completionsPath, form.value.chat.model, form.value.chat.apiKey,
-    form.value.vision.baseUrl, form.value.vision.model, form.value.vision.apiKey,
-    form.value.embedding.baseUrl, form.value.embedding.embeddingsPath, form.value.embedding.model, form.value.embedding.apiKey,
-    form.value.retrieval.rerank.baseUrl, form.value.retrieval.rerank.model,
-    form.value.keyword.baseUrl, form.value.keyword.apiKey
-  ],
+  () => [form.value.keyword.baseUrl, form.value.keyword.apiKey],
   () => {
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }
 )
 
-// ==================== 枚举变更校验 / 厂商预设 ====================
+// ==================== 枚举变更校验 ====================
 const onFieldChange = (field, v) => {
   if (field.group === 'keyword' && field.key === 'engine') onKeywordEngineChange(v)
 }
@@ -779,40 +754,6 @@ const onKeywordEngineChange = async val => {
     form.value.keyword.engine = 'mysql'
     message.error('Meilisearch 校验失败：' + (e.message || '服务不可用'))
   }
-}
-
-const chatPreset = ref('custom')
-const chatPresets = {
-  deepseek: { baseUrl: 'https://api.deepseek.com', completionsPath: '/v1/chat/completions' },
-  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas', completionsPath: '/v4/chat/completions' },
-  dashscope: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode', completionsPath: '/v1/chat/completions' },
-  moonshot: { baseUrl: 'https://api.moonshot.cn', completionsPath: '/v1/chat/completions' },
-  ark: { baseUrl: 'https://ark.cn-beijing.volces.com/api', completionsPath: '/v3/chat/completions' },
-  hunyuan: { baseUrl: 'https://api.hunyuan.cloud.tencent.com', completionsPath: '/v1/chat/completions' },
-  qianfan: { baseUrl: 'https://qianfan.baidubce.com', completionsPath: '/v2/chat/completions' },
-  minimax: { baseUrl: 'https://api.minimax.chat', completionsPath: '/v1/chat/completions' },
-  siliconflow: { baseUrl: 'https://api.siliconflow.cn', completionsPath: '/v1/chat/completions' },
-  ollama: { baseUrl: 'http://localhost:11434', completionsPath: '/v1/chat/completions' }
-}
-const chatPresetOptions = [
-  { value: 'custom', label: '自定义 / 保持现状' },
-  { value: 'deepseek', label: 'DeepSeek（api.deepseek.com）' },
-  { value: 'zhipu', label: '智谱 GLM（open.bigmodel.cn）' },
-  { value: 'dashscope', label: '阿里百炼 Qwen（dashscope）' },
-  { value: 'moonshot', label: 'Kimi 月之暗面（moonshot）' },
-  { value: 'ark', label: '豆包/火山方舟（volces.com）' },
-  { value: 'hunyuan', label: '腾讯混元（hunyuan）' },
-  { value: 'qianfan', label: '百度千帆 v2（qianfan）' },
-  { value: 'minimax', label: 'MiniMax（minimax.chat）' },
-  { value: 'siliconflow', label: 'SiliconFlow 硅基流动（多模型聚合）' },
-  { value: 'ollama', label: '本地 Ollama（localhost:11434）' }
-]
-const onChatPresetChange = val => {
-  const p = chatPresets[val]
-  if (!p) return
-  form.value.chat.baseUrl = p.baseUrl
-  form.value.chat.completionsPath = p.completionsPath
-  message.info('已填充网关地址与补全路径，请补齐 API Key 与模型名后保存')
 }
 
 // ==================== 重嵌入状态 ====================

@@ -78,7 +78,6 @@ public class AgentService {
             m.put("id", a.getId());
             m.put("name", a.getName());
             m.put("description", a.getDescription());
-            m.put("model", a.getModel());
             m.put("isDefault", a.getIsDefault() == null ? 0 : a.getIsDefault());
             out.add(m);
         }
@@ -168,7 +167,6 @@ public class AgentService {
         LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, id);
         if (b.containsKey("name")) uw.set(Agent::getName, a.getName());
         if (b.containsKey("description")) uw.set(Agent::getDescription, a.getDescription());
-        if (b.containsKey("model")) uw.set(Agent::getModel, a.getModel());
         if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
         if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
         if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
@@ -249,7 +247,6 @@ public class AgentService {
             a.setName(name);
         }
         if (body.containsKey("description")) a.setDescription(asText(body.get("description"), 500));
-        if (body.containsKey("model")) a.setModel(asText(body.get("model"), 255));
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
         if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));

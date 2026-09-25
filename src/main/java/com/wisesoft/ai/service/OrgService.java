@@ -32,6 +32,7 @@ public class OrgService {
     private final DepartmentMapper departmentMapper;
     private final UserMapper userMapper;
     private final AuthService authService;
+    private final ModelRegistryService modelRegistryService;
 
     // ==================== 部门 ====================
 
@@ -128,6 +129,62 @@ public class OrgService {
         }
         userMapper.deleteById(uid);
         log.info("[AUDIT] 删除用户 uid={}", uid);
+    }
+
+    // ==================== 个人偏好（个人设置） ====================
+
+    /**
+     * 个人偏好读取：三类个人默认模型（chat/vision/rerank，引用，空=跟随系统全局）+ 可用聊天模型清单
+     */
+    public java.util.Map<String, Object> getPreference(String uid) {
+        User u = userMapper.selectById(uid);
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("defaultModel", u == null ? null : u.getDefaultModel());
+        m.put("defaultVisionModel", u == null ? null : u.getDefaultVisionModel());
+        m.put("defaultRerankModel", u == null ? null : u.getDefaultRerankModel());
+        m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT));
+        return m;
+    }
+
+    /**
+     * 设置个人默认模型（三元组全量保存）：每个值 null=不修改，空串=清除（跟随系统全局），引用=设置。
+     * 校验引用有效且登记类型与槽位一致（防选到不可用模型）。向量模型不提供个人默认（全库向量空间须一致）。
+     */
+    public void setPreference(String uid, String chatRef, String visionRef, String rerankRef) {
+        User u = userMapper.selectById(uid);
+        if (u == null) throw new BizException("用户不存在");
+        if (chatRef != null) {
+            String v = chatRef.trim();
+            validateDefaultModel(v, ModelRegistryService.TYPE_CHAT, "聊天");
+            u.setDefaultModel(v.isEmpty() ? null : v);
+        }
+        if (visionRef != null) {
+            String v = visionRef.trim();
+            validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉");
+            u.setDefaultVisionModel(v.isEmpty() ? null : v);
+        }
+        if (rerankRef != null) {
+            String v = rerankRef.trim();
+            validateDefaultModel(v, ModelRegistryService.TYPE_RERANK, "重排");
+            u.setDefaultRerankModel(v.isEmpty() ? null : v);
+        }
+        userMapper.updateById(u);
+        log.info("[AUDIT] 个人默认模型已更新 uid={} chat={} vision={} rerank={}", uid,
+                chatRef == null ? "(未改)" : chatRef.isBlank() ? "(清空)" : chatRef,
+                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef,
+                rerankRef == null ? "(未改)" : rerankRef.isBlank() ? "(清空)" : rerankRef);
+    }
+
+    /** 校验个人默认模型引用：存在且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */
+    private void validateDefaultModel(String ref, String expectedType, String label) {
+        if (ref.isEmpty()) return;
+        if (modelRegistryService.resolveReference(ref) == null) {
+            throw new BizException("默认模型无效或已被删除，请重新选择");
+        }
+        String type = modelRegistryService.referenceType(ref);
+        if (type != null && !expectedType.equals(type)) {
+            throw new BizException("个人默认" + label + "模型需为" + label + "类型（当前所选为 " + type + " 类型）");
+        }
     }
 
     // ==================== 校验工具 ====================

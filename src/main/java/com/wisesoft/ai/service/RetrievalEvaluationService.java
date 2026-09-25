@@ -656,18 +656,20 @@ public class RetrievalEvaluationService {
      * LLM 评判检索充分性：对每个 case 用当前线上参数检索 top 命中，由评判模型判"命中资料是否足以直接回答该问题"，
      * 汇总为 judgeScore（0~1）。这是对 recall@k 的补充：recall 度量"期望块是否在结果里"，judge 度量"用户能否从结果得到答案"。
      * 证据窗口与产品上下文一致（context.maxContextHits 条，默认 8）：只给 top3 会把真实可答的 case 判成"不足"，系统性低估。
-     * 评判模型可用 eval.judgeModel 独立配置（未配置回落 chat.model），避免与被评判的问答模型强耦合。
+     * 评判模型由 eval.judgeModel 独立配置（chat.model 全局兜底已退役）；未配置时无法计算，返回 null（体检结果标注跳过）。
      * 单 case 单次调用（temperature=0）；检索无命中按"不足以回答"计（退化检索正是该指标要暴露的）；失败的单 case 跳过不计。
-     * 返回 null 表示无法计算（空集/全部失败）。
+     * 返回 null 表示无法计算（空集/未配置评判模型/全部失败）。
      */
     private Double judgeCoverage(List<EvalCase> cases) {
         if (cases.isEmpty()) return null;
         int covered = 0;
         int judged = 0;
         int evidenceWindow = Math.max(1, configService.getInt("context.maxContextHits", 8));
-        String chatModel = configService.get("chat.model");
-        String judgeModel = configService.get("eval.judgeModel");
-        String model = judgeModel == null || judgeModel.isBlank() ? chatModel : judgeModel;
+        String model = configService.get("eval.judgeModel");
+        if (model == null || model.isBlank()) {
+            log.warn("[Eval] 检索充分性评判跳过：未配置 eval.judgeModel（chat.model 全局兜底已移除）");
+            return null;
+        }
         for (EvalCase c : cases) {
             try {
                 List<HybridRetrievalService.Hit> hits = retrievalService.search(c.question());

@@ -72,7 +72,7 @@ public class SubAgentOrchestrator {
      * <p>降级：候选 ≤1 或未开启 agent.autoRoute → 原样返回；路由调用失败/超时/解析失败
      * → 回退全部候选（编排是增强项，宁可多跑也不能缺失）。判定"都不需要"时返回空列表。
      */
-    public List<Agent> route(String question, List<Agent> candidates) {
+    public List<Agent> route(String question, List<Agent> candidates, String resolvedModel) {
         if (candidates == null || candidates.isEmpty()) return List.of();
         if (candidates.size() == 1 || !configService.getBoolean("agent.autoRoute")) return candidates;
         try {
@@ -90,7 +90,7 @@ public class SubAgentOrchestrator {
                     .supplyAsync(() -> chatClient.prompt()
                             .user(prompt)
                             .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                                    .model(configService.get("chat.model"))
+                                    .model(resolvedModel)
                                     .temperature(0.0)
                                     .internalToolExecutionEnabled(false)
                                     .build())
@@ -183,14 +183,18 @@ public class SubAgentOrchestrator {
         final List<Map<String, Object>> branches = new ArrayList<>();
         final long t0;
         final boolean delegated;
+        /** 主链路已解析的本轮生效模型（会话覆盖 > 智能体 > 个人默认），供要点提炼等辅助调用复用 */
+        final String resolvedModel;
 
-        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch) {
+        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
+               String resolvedModel) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
             this.onBranch = onBranch;
             this.t0 = System.currentTimeMillis();
             this.delegated = subAgents != null && !subAgents.isEmpty();
+            this.resolvedModel = resolvedModel;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -251,12 +255,12 @@ public class SubAgentOrchestrator {
 
     /** 并行编排入口（未挂子智能体）：走原有的「多视角并行检索」 */
     public Outcome run(String question) {
-        return run(question, null, null);
+        return run(question, null, null, "");
     }
 
     /** 并行编排入口（未挂子智能体，带进度回调）：走原有的「多视角并行检索」 */
     public Outcome run(String question, Consumer<BranchEvent> onBranch) {
-        return run(question, null, onBranch);
+        return run(question, null, onBranch, "");
     }
 
     /**
@@ -266,13 +270,13 @@ public class SubAgentOrchestrator {
      *                  非空时按子智能体数并行——每个子智能体用自己的知识库范围检索、按自己的角色提示词提炼
      * @param onBranch  分支进度回调（编排视图实时展示；可为 null）
      */
-    public Outcome run(String question, List<Agent> subAgents, Consumer<BranchEvent> onBranch) {
+    public Outcome run(String question, List<Agent> subAgents, Consumer<BranchEvent> onBranch, String resolvedModel) {
         boolean delegated = subAgents != null && !subAgents.isEmpty();
         int agents = delegated
                 ? Math.min(subAgents.size(), 4)
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
-        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch);
+        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel);
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
@@ -378,7 +382,11 @@ public class SubAgentOrchestrator {
             String desc = branchDescription(sub, subQuery, ctx);
             ctx.emit(new BranchEvent(idx, name, "running", 0, System.currentTimeMillis() - ctx.t0, ctx.delegated, desc, ""));
             int topK = Math.max(1, configService.getInt("agent.topKPerAgent", 3));
-            List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery);
+            // 分支按各自知识库的向量模型分组检索（未挂库的分支查全局索引组）
+            java.util.Collection<String> branchKbIds = sub == null || sub.getKnowledgeBaseIds() == null
+                    || sub.getKnowledgeBaseIds().isBlank()
+                    ? null : KnowledgeBaseService.splitIds(sub.getKnowledgeBaseIds());
+            List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery, null, branchKbIds);
             if (sub != null) hits = inScope(hits, sub.scopeDocIds());
             List<HybridRetrievalService.Hit> fresh = new ArrayList<>();
             synchronized (ctx) {
@@ -393,7 +401,7 @@ public class SubAgentOrchestrator {
             // 本分支的要点提炼结果（编排视图展示"这个角色查到了什么"；汇总文本仍并入 system 供主模型参考）
             String branchDigest = "";
             if (configService.getBoolean("agent.digestEnabled") && !fresh.isEmpty()) {
-                String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt());
+                String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt(), ctx.resolvedModel);
                 if (digest != null && !digest.isBlank()) {
                     branchDigest = digest.strip();
                     synchronized (ctx) {
@@ -458,7 +466,7 @@ public class SubAgentOrchestrator {
      * 用 LLM 把命中片段提炼成要点（非流式、短输出）：让汇总进上下文的资料更精炼，
      * 而不是把每个子代理的原始片段都塞进主链路。失败返回 null（不影响主流程）。
      */
-    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits, String rolePrompt) {
+    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits, String rolePrompt, String resolvedModel) {
         try {
             StringBuilder sb = new StringBuilder();
             for (HybridRetrievalService.Hit h : hits) {
@@ -476,7 +484,7 @@ public class SubAgentOrchestrator {
             String out = chatClient.prompt()
                     .user(prompt)
                     .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                            .model(configService.get("chat.model"))
+                            .model(resolvedModel)
                             .temperature(configService.getDouble("chat.temperature"))
                             .internalToolExecutionEnabled(false)
                             .build())

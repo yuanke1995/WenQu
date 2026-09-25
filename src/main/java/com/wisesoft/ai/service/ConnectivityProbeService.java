@@ -27,7 +27,8 @@ import java.util.Map;
  * <ul>
  *   <li>chat / vision：向补全地址发一次最小 chat 补全（max_tokens=8）——同时验证 地址、版本段路径、Key、模型名；</li>
  *   <li>embedding：复用 {@link DynamicEmbeddingModel#probe}，额外返回模型向量维度；</li>
- *   <li>rerank：GET {baseUrl}/v1/models（OpenAI 兼容，与 RerankService 探测一致）；</li>
+ *   <li>rerank：真实 POST {baseUrl}/rerank 一次（与 {@link RerankService} 同款载荷；Key 非空时附带 Bearer，
+ *       云端 rerank 网关必需——GET /models 不带 Key 会被判 401）；</li>
  *   <li>keyword：GET {baseUrl}/health 探活 + GET {baseUrl}/indexes（带 master key）验证密钥是否被接受。</li>
  * </ul>
  *
@@ -67,7 +68,7 @@ public class ConnectivityProbeService {
                 case "chat" -> chatProbe("chat", baseUrl, apiKey, model, path, start);
                 case "vision" -> chatProbe("vision", baseUrl, apiKey, model, null, start);
                 case "embedding" -> embeddingProbe(baseUrl, apiKey, model, path, start);
-                case "rerank" -> rerankProbe(baseUrl, model, start);
+                case "rerank" -> rerankProbe(baseUrl, apiKey, model, start);
                 case "keyword" -> keywordProbe(baseUrl, apiKey, start);
                 default -> fail(start, "不支持的探测类型：" + group);
             };
@@ -116,12 +117,23 @@ public class ConnectivityProbeService {
         return ok(start, "可用，向量维度 " + dim);
     }
 
-    /** 重排服务探测：GET {baseUrl}/v1/models（与 RerankService 一致） */
-    private Map<String, Object> rerankProbe(String baseUrl, String model, long start) {
+    /**
+     * 重排模型探测：真实 POST {base}/rerank 一次（与 {@link RerankService} 运行时同款载荷），
+     * 同时验证地址、路径、Key、模型名。本地 reranker 无 Key 时不带 Authorization。
+     */
+    private Map<String, Object> rerankProbe(String baseUrl, String apiKey, String model, long start) {
         String base = value(baseUrl, "rerank.baseUrl");
         if (base.isBlank()) return fail(start, "服务地址为空");
-        String url = stripTrailingSlash(base) + "/v1/models";
-        return get(url, null, start, "重排服务 " + url);
+        String mdl = model == null || model.isBlank() ? nvl(configService.get("rerank.model")) : model.trim();
+        if (mdl.isBlank()) return fail(start, "模型名为空");
+        // 与 RerankService 一致：版本段尾缀（…/v1、…/v4）自动移入重排路径（本地地址保持 /v1/rerank）
+        String[] np = DynamicOpenAiChatModel.normalize(base, "", "/v1/rerank", "/rerank");
+        String url = np[0] + np[1];
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", mdl);
+        body.put("query", "连通性探测");
+        body.put("documents", List.of("这是一条用于连通性探测的测试文档。"));
+        return post(url, apiKey, body, start, "重排地址 " + url);
     }
 
     /**

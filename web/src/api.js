@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = ''
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -112,7 +112,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId, question, images, deepThink, agentId: agentId || '' }),
+    body: JSON.stringify({ sessionId, question, images, deepThink, agentId: agentId || '', model: model || '' }),
     signal: inner.signal
   }).then(res => {
     if (!res.ok) {
@@ -493,3 +493,34 @@ export const changePasswordApi = (oldPassword, newPassword) =>
   request('/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) })
 export const resetUserPassword = (uid, password) =>
   request(`/user/${encodeURIComponent(uid)}/password`, { method: 'PUT', body: JSON.stringify({ password }) })
+
+// ---- 模型供应商（供应商管理页 + 各处模型选择器） ----
+export const listProviders = () => request('/provider')
+export const createProvider = body => request('/provider', { method: 'POST', body: JSON.stringify(body) })
+export const updateProvider = (id, body) => request(`/provider/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const setProviderEnabled = (id, enabled) =>
+  request(`/provider/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
+export const deleteProvider = id => request(`/provider/${id}`, { method: 'DELETE' })
+export const listProviderModels = id => request(`/provider/${id}/models`)
+export const saveProviderModels = (id, models) =>
+  request(`/provider/${id}/models`, { method: 'PUT', body: JSON.stringify(models) })
+/** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 可传掩码（后端用库中真实 Key） */
+export const fetchProviderModels = (baseUrl, apiKey, providerId) =>
+  request('/provider/models/fetch', { method: 'POST', body: JSON.stringify({ baseUrl, apiKey, providerId }), timeout: 20000 })
+/** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank） */
+export const testProvider = body =>
+  request('/provider/test', { method: 'POST', body: JSON.stringify(body), timeout: 20000 })
+/** 可用模型清单（登录即可用；type 过滤如 chat/vision/embedding/rerank）：[{providerId,name,icon,models:[{ref,modelId,displayName,type}]}]。
+ *  此处解包信封直接返回数组（ModelSelect/modelRef 两处消费方都按数组用，漏解包会静默变空态） */
+export const listAvailableModels = async (type = '') => {
+  const r = await request('/provider/available' + (type ? '?type=' + encodeURIComponent(type) : ''))
+  return (r && r.success && Array.isArray(r.data)) ? r.data : []
+}
+
+// ---- 个人偏好（个人设置：默认模型） ----
+export const getUserPreference = () => request('/user/preference')
+export const setUserPreference = payload =>
+  request('/user/preference', {
+    method: 'PUT',
+    body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
+  })

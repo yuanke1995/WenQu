@@ -47,7 +47,6 @@
             </div>
             <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
             <div class="ap-chips">
-              <span class="ap-chip">{{ a.model || '跟随全局模型' }}</span>
               <span class="ap-chip">{{ scopeText(a) }}</span>
               <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
               <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
@@ -85,8 +84,6 @@
           <span class="ap-summary-avatar"><robot-outlined /></span>
           <span class="ap-summary-name">{{ form.name || '未命名智能体' }}</span>
           <span class="ap-summary-sep">·</span>
-          <span class="ap-summary-item">{{ form.model || globalModel }}</span>
-          <span class="ap-summary-sep">·</span>
           <span class="ap-summary-item">{{ summaryScope }}</span>
           <span class="ap-summary-sep">·</span>
           <span class="ap-summary-item" :class="{ 'is-accent': capsTouched }">{{ summaryCaps }}</span>
@@ -114,11 +111,8 @@
           </section>
 
           <section class="app-card">
-            <h2 class="app-card-title"><thunderbolt-outlined class="ap-sec-ic" />模型与提示词</h2>
-            <p class="ap-block-hint">留空表示沿用系统设置里的全局值，不覆盖。</p>
-            <a-form-item label="模型">
-              <a-input v-model:value="form.model" :maxlength="255" :placeholder="'跟随全局：' + globalModel" />
-            </a-form-item>
+            <h2 class="app-card-title"><thunderbolt-outlined class="ap-sec-ic" />提示词</h2>
+            <p class="ap-block-hint">智能体不再绑定聊天模型：回答用哪套模型由用户在对话页选择或个人设置默认。</p>
             <a-form-item label="系统提示词" style="margin-bottom:0">
               <a-textarea v-model:value="form.systemPrompt" :rows="6"
                           placeholder="填写后完全替换全局系统提示词；留空沿用全局" />
@@ -239,6 +233,7 @@ import {
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
+import ProviderIcon from '../components/ProviderIcon.vue'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -283,7 +278,7 @@ const keyword = ref('')
 const agents = ref([])
 const kbOptions = ref([])
 const cfg = ref({})
-const globalModel = ref('未配置')
+
 // 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
 const builtinOptions = ref(BUILTIN_TOOL_OPTIONS)
 const skillOptions = ref([])
@@ -297,7 +292,7 @@ const editing = ref(false)
 const editingId = ref('')
 const scopeMode = ref('all')
 const blankForm = () => ({
-  name: '', description: '', model: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
+  name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
@@ -447,8 +442,6 @@ const reload = async () => {
     }
     if (cr.success && cr.data) {
       cfg.value = cr.data
-      const m = cr.data.chat?.model?.value
-      globalModel.value = m ? String(m) : '未配置'
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
     if (sr && sr.success && Array.isArray(sr.data)) {
@@ -492,7 +485,6 @@ const openEdit = a => {
   form.value = {
     name: a.name || '',
     description: a.description || '',
-    model: a.model || '',
     systemPrompt: a.systemPrompt || '',
     knowledgeBaseIds: kbs,
     isDefault: isDefault(a),
@@ -524,7 +516,6 @@ const save = async () => {
   const payload = {
     name: f.name.trim(),
     description: f.description.trim(),
-    model: f.model.trim(),
     systemPrompt: f.systemPrompt,
     // 「全部知识库」时清空（空 → 后端存 null → 不限制）；「指定知识库」时存逗号串；
     // 「不使用知识库」时置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
@@ -585,6 +576,7 @@ const doSetDefault = async id => {
 }
 
 onMounted(reload)
+onMounted(async () => { })
 </script>
 
 <style scoped>

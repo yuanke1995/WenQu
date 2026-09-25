@@ -31,4 +31,7 @@ public class ChatRequest {
 
     @Schema(description = "智能体 ID（P3：4.1 Agent 配置）；非空时该轮问答按智能体覆盖模型/提示词/工具/知识库范围，未填维度继承全局")
     private String agentId;
+
+    @Schema(description = "会话级模型覆盖（引用 providerId/modelId 或遗留模型名；仅用户在聊天页手动切换时传，空=跟随智能体/个人默认/全局）")
+    private String model;
 }

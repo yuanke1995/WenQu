@@ -15,15 +15,19 @@ import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * 动态 OpenAI 兼容 ChatModel：LLM 网关三要素（baseUrl / apiKey / completionsPath）全部来自
- * c_ai_config（设置页保存即生效），跨厂商热切换（DeepSeek/智谱GLM/百炼Qwen/Kimi/豆包/混元/千帆/
- * MiniMax/SiliconFlow/Ollama 等 OpenAI 兼容端点）无需重启服务。
+ * 动态 OpenAI 兼容 ChatModel（多供应商路由）：模型引用感知的客户端路由器。
  * <p>
- * - 每次请求前校验配置指纹（baseUrl|completionsPath|apiKey），变化即重建底层 {@link OpenAiChatModel}；
- *   配置变更经由 ConfigService 本地保存 / Redis 广播 reload / 周期兜底 reload 刷新缓存，下一次请求自动感知
- * - 模型名与温度仍由 RagService 以 per-request options 传递（chat.model 逻辑不变）
- * - DB 未配置时回退 yml/env 的 spring.ai.openai.base-url / api-key（与原自动配置行为一致）
+ * - 请求 options.model 为模型引用（{@code {providerId}/{modelId}}）时，经
+ *   {@link ModelRegistryService#chatRoute} 解析出对应供应商网关（baseUrl/apiKey/completionsPath），
+ *   按「归一化 baseUrl|path|apiKey」指纹缓存并委派对应 {@link OpenAiChatModel} 实例；
+ *   下发前把 options.model 改写为裸模型名（引用前缀不透传给网关）
+ * - 遗留纯模型名 / 解析失败 → 全局 chat.* 网关（c_ai_config 三要素，保存即热生效），与原行为一致
+ * - 网关地址/密钥变更（设置页或供应商管理保存）后指纹变化 → 自动构建新客户端，旧实例由缓存淘汰
+ * - 默认网关配置变更经由 ConfigService 本地保存 / Redis 广播 reload / 周期兜底 reload 刷新，下一次请求自动感知
  * - 替换 Spring AI 自动配置的单例 ChatModel：RagService 注入基于本类的 ChatClient（DynamicChatClientConfig）
  *
  * @author yuanke
@@ -35,20 +39,19 @@ public class DynamicOpenAiChatModel implements ChatModel {
     /** 配置为空时与 Spring AI 默认一致的兜底网关地址 */
     private static final String DEFAULT_BASE_URL = "https://api.openai.com";
 
-    private final ConfigService configService;
+    private final ModelRegistryService registry;
     private final Environment environment;
     /** 容器存在则复用（与自动配置构建的 ChatModel 行为一致），缺失时用 builder 内部默认值 */
     private final RetryTemplate retryTemplate;
     private final ObservationRegistry observationRegistry;
 
-    /** 当前委托实例的配置指纹（baseUrl|completionsPath|apiKey），变化即重建 */
-    private volatile String delegateKey = "";
-    private volatile OpenAiChatModel delegate;
+    /** 客户端缓存：指纹（归一化 baseUrl|path|apiKey）→ 实例（供应商数量级，无需淘汰） */
+    private final Map<String, OpenAiChatModel> delegates = new ConcurrentHashMap<>();
 
-    public DynamicOpenAiChatModel(ConfigService configService, Environment environment,
+    public DynamicOpenAiChatModel(ModelRegistryService registry, Environment environment,
                                   ObjectProvider<RetryTemplate> retryTemplate,
                                   ObjectProvider<ObservationRegistry> observationRegistry) {
-        this.configService = configService;
+        this.registry = registry;
         this.environment = environment;
         this.retryTemplate = retryTemplate.getIfAvailable();
         this.observationRegistry = observationRegistry.getIfAvailable();
@@ -56,41 +59,54 @@ public class DynamicOpenAiChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        return current().call(prompt);
+        ModelRegistryService.ModelRoute route = registry.chatRoute(modelOf(prompt));
+        return current(route).call(rewriteModel(prompt, route));
     }
 
     /** 必须覆写：接口 default 实现抛 UnsupportedOperationException（不支持流式） */
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
-        return current().stream(prompt);
+        ModelRegistryService.ModelRoute route = registry.chatRoute(modelOf(prompt));
+        return current(route).stream(rewriteModel(prompt, route));
     }
 
     @Override
     public ChatOptions getDefaultOptions() {
-        OpenAiChatModel m = delegate;
+        // 无请求上下文：用全局路由的默认 options（与原单委托行为一致，仅作兜底）
+        OpenAiChatModel m = delegates.get(registry.chatRoute("").chatFingerprint());
         return m != null ? m.getDefaultOptions() : ChatOptions.builder().build();
     }
 
-    /** 读当前配置，网关三要素任一变化即重建底层客户端（重建为本地对象构建，无网络开销） */
-    private OpenAiChatModel current() {
-        String baseUrl = resolve("chat.baseUrl", "spring.ai.openai.base-url");
-        String apiKey = resolve("chat.apiKey", "spring.ai.openai.api-key");
-        String completionsPath = resolve("chat.completionsPath", "");
-        // 指纹用归一化后的值：不同写法但拼接结果相同（…/v1 vs 根地址+默认path）不触发重建
-        String[] np = normalize(baseUrl, completionsPath, DEFAULT_COMPLETIONS_PATH, "/chat/completions");
-        String key = np[0] + "|" + np[1] + "|" + apiKey;
-        OpenAiChatModel m = delegate;
-        if (m != null && key.equals(delegateKey)) {
+    /** 请求模型名（options.model，可能为引用/遗留名/null） */
+    private static String modelOf(Prompt prompt) {
+        return prompt.getOptions() instanceof OpenAiChatOptions o ? o.getModel() : null;
+    }
+
+    /** 引用 → 裸模型名：引用前缀（providerId/）不透传给网关；遗留名原样 */
+    private static Prompt rewriteModel(Prompt prompt, ModelRegistryService.ModelRoute route) {
+        if (prompt.getOptions() instanceof OpenAiChatOptions o && o.getModel() != null) {
+            OpenAiChatOptions copy = OpenAiChatOptions.fromOptions(o);
+            copy.setModel(route.modelId());
+            return new Prompt(prompt.getInstructions(), copy);
+        }
+        return prompt;
+    }
+
+    /** 按路由指纹取客户端（缓存命中复用；未命中构建并缓存，本地构建无网络开销） */
+    private OpenAiChatModel current(ModelRegistryService.ModelRoute route) {
+        String key = route.chatFingerprint();
+        OpenAiChatModel m = delegates.get(key);
+        if (m != null) {
             return m;
         }
         synchronized (this) {
-            m = delegate;
-            if (m != null && key.equals(delegateKey)) {
+            m = delegates.get(key);
+            if (m != null) {
                 return m;
             }
-            m = build(np[0], np[1], apiKey);
-            delegate = m;
-            delegateKey = key;
+            String[] np = normalize(route.baseUrl(), route.completionsPath(), DEFAULT_COMPLETIONS_PATH, "/chat/completions");
+            m = build(np[0], np[1], route.apiKey());
+            delegates.put(key, m);
             return m;
         }
     }
@@ -103,7 +119,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
      *    → 版本段移入 path（根地址+默认path 的拼接结果不变，无损容错）；
      * 显式配置 path 时仅去 baseUrl 尾部斜杠（完全尊重用户拼接结果）。
      * 例：https://open.bigmodel.cn/api/paas/v4 + 默认path → …/api/paas + /v4/chat/completions。
-     * chat 与 embedding 共用（DynamicEmbeddingModel 亦调用）。
+     * chat 与 embedding 共用（DynamicEmbeddingModel/ModelRegistryService 亦调用）。
      */
     static String[] normalize(String baseUrl, String completionsPath, String defaultPath, String tail) {
         String url = baseUrl == null ? "" : baseUrl.trim();
@@ -130,16 +146,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
     /** OpenAI SDK 风格版本段尾缀：…/v1 ~ …/v9（如 /compatible-mode/v1、/api/paas/v4、/api/v3、/v2） */
     private static final java.util.regex.Pattern VERSION_SUFFIX = java.util.regex.Pattern.compile("^(.+)/v([1-9])$");
     /** Spring AI 默认补全路径（与 OpenAiApi 默认一致） */
-    private static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
-
-    /** DB 配置优先（ConfigService 内含 defaults 兜底），空值再回退 Spring AI 原生属性（保持 yml/env 语义） */
-    private String resolve(String cfgKey, String envKey) {
-        String v = configService.get(cfgKey);
-        if ((v == null || v.isBlank()) && !envKey.isEmpty()) {
-            v = environment.getProperty(envKey, "");
-        }
-        return v == null ? "" : v.trim();
-    }
+    static final String DEFAULT_COMPLETIONS_PATH = "/v1/chat/completions";
 
     /** baseUrl/path 需已归一化（normalize） */
     private OpenAiChatModel build(String baseUrl, String completionsPath, String apiKey) {
@@ -159,8 +166,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
         if (observationRegistry != null) {
             builder.observationRegistry(observationRegistry);
         }
-        log.info("[ChatModel] LLM 客户端已{}: baseUrl={}, completionsPath={}, apiKey={}",
-                delegate == null ? "构建" : "重建（配置热切换）",
+        log.info("[ChatModel] LLM 客户端已构建: baseUrl={}, completionsPath={}, apiKey={}",
                 baseUrl.isEmpty() ? DEFAULT_BASE_URL : baseUrl,
                 completionsPath.isBlank() ? "/v1/chat/completions" : completionsPath,
                 mask(apiKey));

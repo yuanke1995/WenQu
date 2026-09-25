@@ -43,6 +43,19 @@ public class User {
     /** 锁定至（失败过多时；空=未锁定） */
     private LocalDateTime lockedUntil;
 
+    /** 个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）。
+     *  updateStrategy=ALWAYS：清空默认需把该列置 null，MP 默认策略会跳过 null 字段导致清空失效 */
+    @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String defaultModel;
+
+    /** 个人默认视觉模型（聊天上传图片理解；空=跟随系统全局）。清空同上需 ALWAYS */
+    @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String defaultVisionModel;
+
+    /** 个人默认重排模型（聊天检索重排；空=跟随系统全局）。清空同上需 ALWAYS */
+    @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String defaultRerankModel;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

@@ -117,7 +117,8 @@ public class ChatController {
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
         SseEmitter emitter = new SseEmitter(sseTimeout);
-        ragService.chat(sessionId, question, images, request.isDeepThink(), request.getAgentId(), emitter);
+        ragService.chat(sessionId, question, images, request.isDeepThink(), request.getAgentId(),
+                request.getModel(), userId, emitter);
         return emitter;
     }
 

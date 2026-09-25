@@ -11,6 +11,7 @@ import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.Knowledge;
+import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.Chunk;
 import com.wisesoft.ai.parser.DocumentParser;
 import com.wisesoft.ai.parser.DocxParser;
@@ -70,6 +71,8 @@ public class DocumentService {
     private final KnowledgeMapper knowledgeMapper;
     private final com.wisesoft.ai.mapper.AiDocumentVersionMapper versionMapper;
     private final VectorStore vectorStore;
+    private final KbVectorStoreRegistry kbVectorStores;
+    private final com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper;
     private final AppProperties properties;
     private final DocumentMetaCache documentMetaCache;
     private final com.wisesoft.ai.mapper.QaLogMapper qaLogMapper;
@@ -78,8 +81,8 @@ public class DocumentService {
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final ResourceVisibilityService resourceVisibilityService;
-    /** 向量模型（@Primary 为 DynamicEmbeddingModel）：重嵌入前探测新维度用 */
-    private final org.springframework.ai.embedding.EmbeddingModel embeddingModel;
+    /** 向量模型（@Primary 即 DynamicEmbeddingModel）：重嵌入前探测新维度用；forRef 支持 KB 绑定模型 */
+    private final DynamicEmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
     private final DocxParser docxParser;
     /** Redis：全量重嵌入分布式互斥锁（多副本共享库时防两个实例互删对方正在重建的索引） */
@@ -281,6 +284,25 @@ public class DocumentService {
      * 单知识块向量化并入库（供手动新增知识块复用；embedding 失败降级返回 false，不阻断入库）
      * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
      */
+    /**
+     * 按文档路由向量库：doc.kbId → 所属知识库绑定的向量模型（KbVectorStoreRegistry）。
+     * 跟随全局的库落全局索引；绑定了自定义向量模型的库落各自的独立索引。
+     * 文档行查不到（已删）回落全局——此时写入了也无害（会被后续 delete 清理）。
+     */
+    private VectorStore storeOf(String docId) {
+        String kbId = null;
+        if (docId != null && !docId.isBlank()) {
+            AiDocument doc = documentMapper.selectById(docId);
+            kbId = doc == null ? null : doc.getKbId();
+        }
+        return kbVectorStores.storeForKb(kbId);
+    }
+
+    /** 文档行读取（跨库向量迁移判断用；不存在返回 null） */
+    public AiDocument getDoc(String docId) {
+        return docId == null || docId.isBlank() ? null : documentMapper.selectById(docId);
+    }
+
     public boolean embedAndStore(Knowledge k, String content) {
         try {
             Map<String, Object> metadata = new HashMap<>();
@@ -295,7 +317,7 @@ public class DocumentService {
             if (k.getImages() != null) {
                 metadata.put("images", k.getImages());
             }
-            vectorStore.add(List.of(new Document(k.getId(),
+            storeOf(k.getDocId()).add(List.of(new Document(k.getId(),
                     buildEmbedText(k.getTitle(), k.getTitlePath(), content, null), metadata)));
             k.setVectorId(k.getId());
             knowledgeMapper.updateById(k);
@@ -397,6 +419,183 @@ public class DocumentService {
         }
     }
 
+    /** 绑定了自定义向量模型的知识库下的全部文档 ID（全局重嵌入时这些库要跳过） */
+    private java.util.Set<String> customEmbeddingDocIds() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        List<KnowledgeBase> customKbs = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getDeleted, 0)
+                .isNotNull(KnowledgeBase::getEmbeddingRef)
+                .ne(KnowledgeBase::getEmbeddingRef, "")
+                .select(KnowledgeBase::getId));
+        for (KnowledgeBase kb : customKbs) {
+            for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .eq(AiDocument::getKbId, kb.getId())
+                    .select(AiDocument::getId))) {
+                if (d.getId() != null) out.add(d.getId());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 按库重嵌入（异步）：知识库切换/清空绑定向量模型后调用。
+     * 旧向量随旧索引/全局索引清除后，全部块按新模型重新向量化写回，并回写本库维度。
+     * 逐库执行（分布式锁与全量重嵌入互斥）；失败仅记日志——可在修复后再次触发。
+     *
+     * @param docIds 该库全部文档 ID（调用方经 KnowledgeBaseService.docIdsOf 取好；空库=仅建/删索引）
+     */
+    public void reembedKbAsync(String kbId, List<String> docIds, String oldRef, String newRef) {
+        Thread t = new Thread(() -> {
+            if (!acquireReembedLock()) {
+                log.warn("[FAIL-LOUD] [KB-Reembed] 全量重嵌入正在进行，知识库 {} 的按库重嵌未执行（请稍后重试）", kbId);
+                return;
+            }
+            try {
+                reembedKb(kbId, docIds == null ? List.of() : docIds, oldRef, newRef);
+            } catch (Exception e) {
+                log.error("[FAIL-LOUD] [KB-Reembed] 知识库 {} 按库重嵌失败: {}", kbId, e.getMessage(), e);
+            } finally {
+                releaseReembedLock();
+            }
+        }, "reembed-kb-" + kbId);
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void reembedKb(String kbId, List<String> docIds, String oldRef, String newRef) {
+        String old = oldRef == null ? "" : oldRef.trim();
+        String neu = newRef == null ? "" : newRef.trim();
+        // 1. 新模型维度护栏：探测失败则回退本库 embedding_ref 到旧值（保留旧向量，功能不降级）
+        int newDim;
+        try {
+            newDim = neu.isBlank() ? embeddingModel.dimensions() : embeddingModel.forRef(neu).dimensions();
+        } catch (Exception e) {
+            throw new IllegalStateException("新向量模型维度探测失败（" + e.getMessage() + "），本库保持原绑定", e);
+        }
+        if (newDim <= 0) throw new IllegalStateException("新向量模型返回维度非法(" + newDim + ")，本库保持原绑定");
+
+        List<Knowledge> rows = docIds.isEmpty() ? List.of() : knowledgeMapper.selectList(
+                new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds));
+
+        // 2. 清旧向量：旧绑定=跟随全局 → 从全局索引按 id 删除；旧绑定=自定义 → DROP 本库独立索引（连数据）
+        List<String> vectorIds = rows.stream().map(Knowledge::getVectorId)
+                .filter(java.util.Objects::nonNull).filter(v -> !v.isBlank()).toList();
+        if (old.isBlank()) {
+            if (!vectorIds.isEmpty()) {
+                try {
+                    vectorStore.delete(vectorIds);
+                } catch (Exception e) {
+                    log.warn("[KB-Reembed] 旧全局向量删除失败（可能有残留，可手动清理）: {}", e.getMessage());
+                }
+            }
+        } else {
+            kbVectorStores.dropKbIndex(kbId);
+        }
+        if (!neu.isBlank()) {
+            kbVectorStores.remove(kbId); // 下次访问按新模型重建
+        }
+
+        // 3. 按新模型全量重嵌本库
+        VectorStore target = neu.isBlank() ? vectorStore : kbVectorStores.storeForKb(kbId);
+        int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
+        int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
+        int done = 0;
+        int failed = 0;
+        for (int i = 0; i < rows.size(); i += batchSize) {
+            List<Knowledge> batch = rows.subList(i, Math.min(i + batchSize, rows.size()));
+            List<org.springframework.ai.document.Document> docs = new ArrayList<>(batch.size());
+            for (Knowledge k : batch) {
+                Map<String, Object> metadata = new HashMap<>();
+                if (k.getDocId() != null) metadata.put("docId", k.getDocId());
+                metadata.put("title", k.getTitle() == null ? "" : k.getTitle());
+                metadata.put("knowledgeId", k.getId());
+                if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) metadata.put("titlePath", k.getTitlePath());
+                if (k.getImages() != null) metadata.put("images", k.getImages());
+                docs.add(new org.springframework.ai.document.Document(k.getId(),
+                        buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata));
+            }
+            try {
+                vectorAddWithRetryInto(target, "kb-" + kbId, docs, embedRetry);
+                done += docs.size();
+            } catch (Exception e) {
+                failed += docs.size();
+                log.warn("[FAIL-LOUD] [KB-Reembed] 批次重嵌失败（{} 块）: {}", docs.size(), e.getMessage());
+            }
+        }
+        // 4. 回写本库维度（设置页/排查展示）
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb != null) {
+            kb.setEmbeddingDimensions(newDim);
+            kb.setUpdateTime(java.time.LocalDateTime.now());
+            kbMapper.updateById(kb);
+        }
+        log.info("[KB-Reembed] 知识库 {} 重嵌完成: 模型 {}，成功 {} 块，失败 {} 块，维度 {}", kbId, neu, done, failed, newDim);
+    }
+
+    /**
+     * 单文档跨库向量迁移（异步）：moveDoc 前后两库向量模型不同时调用——
+     * 从原库索引删除该文档向量，按新库模型重新向量化写入；两库模型相同则无需调用。
+     */
+    public void migrateDocAsync(String docId, String fromKbId, String toKbId) {
+        Thread t = new Thread(() -> {
+            try {
+                String fromRef = kbRefOf(fromKbId);
+                String toRef = kbRefOf(toKbId);
+                if (fromRef.equals(toRef)) return; // 同一向量空间，向量无需迁移
+                VectorStore from = fromRef.isBlank() ? vectorStore : kbVectorStores.storeForKb(fromKbId);
+                VectorStore to = toRef.isBlank() ? vectorStore : kbVectorStores.storeForKb(toKbId);
+                List<Knowledge> rows = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+                        .eq(Knowledge::getDocId, docId));
+                List<String> vectorIds = rows.stream().map(Knowledge::getVectorId)
+                        .filter(java.util.Objects::nonNull).filter(v -> !v.isBlank()).toList();
+                if (!vectorIds.isEmpty()) {
+                    from.delete(vectorIds);
+                }
+                for (Knowledge k : rows) {
+                    Map<String, Object> metadata = new HashMap<>();
+                    if (k.getDocId() != null) metadata.put("docId", k.getDocId());
+                    metadata.put("title", k.getTitle() == null ? "" : k.getTitle());
+                    metadata.put("knowledgeId", k.getId());
+                    if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) metadata.put("titlePath", k.getTitlePath());
+                    if (k.getImages() != null) metadata.put("images", k.getImages());
+                    to.add(List.of(new org.springframework.ai.document.Document(k.getId(),
+                            buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata)));
+                }
+                log.info("[DOC-MIGRATE] 文档 {} 向量已迁移: {} → {}（{} 块）", docId, fromRef, toRef, rows.size());
+            } catch (Exception e) {
+                log.error("[FAIL-LOUD] [DOC-MIGRATE] 文档 {} 跨库向量迁移失败（新库仅关键词可召回，可重新解析补齐）: {}",
+                        docId, e.getMessage(), e);
+            }
+        }, "migrate-doc-" + docId);
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** 库 ID → 其绑定向量模型引用（未绑定/库不存在返回空串） */
+    private String kbRefOf(String kbId) {
+        if (kbId == null || kbId.isBlank()) return "";
+        com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(kbId);
+        return kb == null || kb.getEmbeddingRef() == null ? "" : kb.getEmbeddingRef();
+    }
+
+    /** 向量化单批写入（指定目标库的重载，供按库重嵌使用） */
+    private void vectorAddWithRetryInto(VectorStore store, String tag, List<org.springframework.ai.document.Document> batch,
+                                        int retryCount) {
+        Exception lastErr = null;
+        for (int attempt = 0; attempt <= retryCount; attempt++) {
+            try {
+                store.add(batch);
+                return;
+            } catch (Exception e) {
+                lastErr = e;
+                if (attempt < retryCount) {
+                    log.warn("[FAIL-LOUD] [{}] 向量化批次失败（第 {} 次重试）: {}", tag, attempt + 1, e.getMessage());
+                }
+            }
+        }
+        throw lastErr == null ? new IllegalStateException("向量化失败") : new IllegalStateException(lastErr.getMessage(), lastErr);
+    }
+
     public ReembedStatus getReembedStatus() {
         return reembedStatus;
     }
@@ -446,19 +645,27 @@ public class DocumentService {
         }
         // 2. 重建索引 schema：embeddingModel（DynamicEmbeddingModel）此时已是新配置，dimensions() 为新维度
         rvs.afterPropertiesSet();
-        // 3. 游标分批全量重嵌（id 升序、LIMIT 翻页，逻辑删除由 MyBatis-Plus 自动过滤；与解析链路同批大小与重试）
+        // 3. 游标分批全量重嵌（id 升序、LIMIT 翻页，逻辑删除由 MyBatis-Plus 自动过滤；与解析链路同批大小与重试）。
+        // 只重嵌「跟随全局向量模型」的库：绑定了自定义向量模型的库有各自独立索引，不受全局切换影响。
+        java.util.Set<String> customDocIds = customEmbeddingDocIds();
         int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
         String lastId = "";
         while (true) {
-            List<Knowledge> batch = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
+            List<Knowledge> rawBatch = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
                     .gt(Knowledge::getId, lastId)
                     .orderByAsc(Knowledge::getId)
                     .last("LIMIT " + batchSize));
-            if (batch.isEmpty()) {
+            if (rawBatch.isEmpty()) {
                 break;
             }
-            lastId = batch.get(batch.size() - 1).getId();
+            lastId = rawBatch.get(rawBatch.size() - 1).getId();
+            List<Knowledge> batch = rawBatch.stream()
+                    .filter(k -> !customDocIds.contains(k.getDocId()))
+                    .toList();
+            if (batch.isEmpty()) {
+                continue;
+            }
             reembedStatus.total = Math.max(reembedStatus.total, reembedStatus.done + batch.size());
             List<Document> docs = new ArrayList<>(batch.size());
             for (Knowledge k : batch) {
@@ -530,7 +737,7 @@ public class DocumentService {
         log.info("[{}] 解析过程中文档已被删除，停止解析并清理本次产物", docId);
         try {
             List<String> vectorIds = aiDocs.stream().map(Document::getId).toList();
-            if (!vectorIds.isEmpty()) vectorStore.delete(vectorIds);
+            if (!vectorIds.isEmpty()) storeOf(docId).delete(vectorIds);
         } catch (Exception e) {
             log.warn("[{}] 补偿删除向量失败: {}", docId, e.getMessage());
         }
@@ -547,10 +754,12 @@ public class DocumentService {
      * 绝不静默丢块（否则文档置成功但部分块仅关键词可召回）。
      */
     private void vectorAddWithRetry(String docId, List<Document> batch, int retryCount) {
+        // 按文档路由向量库（每批解析一次归属；批内同文档，一次 selectById 开销可忽略）
+        VectorStore store = storeOf(docId);
         Exception lastErr = null;
         for (int attempt = 0; attempt <= retryCount; attempt++) {
             try {
-                vectorStore.add(batch);
+                store.add(batch);
                 return;
             } catch (Exception e) {
                 lastErr = e;
@@ -732,7 +941,7 @@ public class DocumentService {
                         .filter(Objects::nonNull).filter(s -> !s.isBlank()).toList();
                 if (!delIds.isEmpty()) {
                     try {
-                        vectorStore.delete(delIds);
+                        storeOf(docId).delete(delIds);
                     } catch (Exception e) {
                         log.warn("[{}] 增量清理旧向量失败: {}", docId, e.getMessage());
                     }
@@ -786,7 +995,7 @@ public class DocumentService {
             // 补偿清理：只清理本次新增的 aiDocs（删向量 + 物理删行），保留 diff 复用/已存在的旧块
             try {
                 List<String> vectorIds = aiDocs.stream().map(Document::getId).toList();
-                if (!vectorIds.isEmpty()) vectorStore.delete(vectorIds);
+                if (!vectorIds.isEmpty()) storeOf(docId).delete(vectorIds);
             } catch (Exception ex) {
                 log.warn("[{}] 补偿删除向量失败: {}", docId, ex.getMessage());
             }
@@ -843,7 +1052,7 @@ public class DocumentService {
                     .filter(Objects::nonNull).filter(s -> !s.isBlank()).toList();
             if (!vectorIds.isEmpty()) {
                 try {
-                    vectorStore.delete(vectorIds);
+                    storeOf(docId).delete(vectorIds);
                 } catch (Exception e) {
                     deletedFlags.remove(docId); // 删除未完成，撤销删除标志避免误停后续解析
                     log.error("[{}] 删除向量失败，已中止删除（MySQL 记录保留，可重试）: {}", docId, e.getMessage());
@@ -988,7 +1197,7 @@ public class DocumentService {
             if (k.getImages() != null && !k.getImages().isBlank()) {
                 metadata.put("images", k.getImages());
             }
-            vectorStore.add(List.of(new Document(k.getId(),
+            storeOf(k.getDocId()).add(List.of(new Document(k.getId(),
                     buildEmbedText(newTitle, k.getTitlePath(), content, null), metadata)));
         } catch (Exception e) {
             log.warn("知识块重新向量化失败 id={}: {}", id, e.getMessage());
@@ -1007,7 +1216,7 @@ public class DocumentService {
         // 3. 清理历史遗留的异 id 旧向量（正常链路 vectorId==knowledgeId，已被 upsert 覆盖，无需删除）
         if (oldVectorId != null && !oldVectorId.isBlank() && !oldVectorId.equals(k.getId())) {
             try {
-                vectorStore.delete(List.of(oldVectorId));
+                storeOf(k.getDocId()).delete(List.of(oldVectorId));
             } catch (Exception e) {
                 log.warn("清理旧向量失败 id={} oldVectorId={}: {}", id, oldVectorId, e.getMessage());
             }
@@ -1027,7 +1236,7 @@ public class DocumentService {
 
         if (k.getVectorId() != null && !k.getVectorId().isBlank()) {
             try {
-                vectorStore.delete(List.of(k.getVectorId()));
+                storeOf(k.getDocId()).delete(List.of(k.getVectorId()));
             } catch (Exception e) {
                 log.warn("删除知识块向量失败 id={}: {}", id, e.getMessage());
             }
@@ -1173,11 +1382,11 @@ public class DocumentService {
                 List<org.springframework.ai.document.Document> batch = aiDocs.subList(i, end);
                 batch.forEach(d -> written.add(d.getId()));
                 try {
-                    vectorStore.add(batch);
+                    storeOf(docId).add(batch);
                 } catch (Exception e) {
                     log.warn("[{}] 回滚向量化失败 {}-{}，重试一次: {}", docId, i + 1, end, e.getMessage());
                     try {
-                        vectorStore.add(batch);
+                        storeOf(docId).add(batch);
                     } catch (Exception e2) {
                         log.error("[{}] 回滚向量化重试仍失败 {}-{}: {}", docId, i + 1, end, e2.getMessage());
                         restoreVectorsAfterRollbackFail(docId, currentRows, written);
@@ -1196,7 +1405,7 @@ public class DocumentService {
                 .toList();
         if (!staleVectorIds.isEmpty()) {
             try {
-                vectorStore.delete(staleVectorIds);
+                storeOf(docId).delete(staleVectorIds);
             } catch (Exception e) {
                 log.warn("[{}] 回滚删除多余向量失败: {}", docId, e.getMessage());
             }
@@ -1236,7 +1445,7 @@ public class DocumentService {
             List<String> toDelete = new ArrayList<>(rowVectorIds);
             toDelete.addAll(orphanIds);
             if (!toDelete.isEmpty()) {
-                vectorStore.delete(toDelete);
+                storeOf(docId).delete(toDelete);
             }
         } catch (Exception e) {
             log.warn("[{}] 回滚失败后清理向量异常: {}", docId, e.getMessage());

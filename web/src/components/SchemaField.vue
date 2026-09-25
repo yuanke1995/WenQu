@@ -18,6 +18,13 @@
       <a-switch v-model:checked="value" />
     </template>
 
+    <!-- 模型选择（模型供应商库）：值为引用 providerId/modelId，带品牌图标按供应商分组 -->
+    <template v-else-if="field.type === 'model'">
+      <ModelSelect v-model="value" :type="field.modelType || 'chat'"
+                   :allow-clear="!!field.allowClear" :width="field.width || 420"
+                   :admin-tip-visible="true" />
+    </template>
+
     <template v-else-if="field.type === 'number'">
       <a-input-number v-model:value="value" :min="field.min" :max="field.max" :step="field.step"
                       :style="{ width: (field.width || 200) + 'px' }" />
@@ -60,6 +67,7 @@
 import { computed } from 'vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { FIELDS } from '../configSchema'
+import ModelSelect from './ModelSelect.vue'
 
 const props = defineProps({
   field: { type: Object, required: true },

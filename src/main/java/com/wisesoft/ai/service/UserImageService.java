@@ -55,12 +55,20 @@ public class UserImageService {
      * 单张处理失败/队列满被拒：跳过该项并告警（fail-loud），不影响其余图片与回答主流程。
      */
     public List<UserImage> process(List<String> dataUrls) {
+        return process(dataUrls, null);
+    }
+
+    /**
+     * 带个人视觉模型覆盖：visionRef 非空时图片描述走该引用（聊天用户的个人默认视觉模型），
+     * 空 = 全局 vision 配置。processOne/describe 链路透传。
+     */
+    public List<UserImage> process(List<String> dataUrls, String visionRef) {
         if (dataUrls == null || dataUrls.isEmpty()) return List.of();
         List<CompletableFuture<UserImage>> futures = dataUrls.stream()
                 .filter(u -> u != null && u.startsWith("data:"))
                 .map(u -> {
                     try {
-                        return CompletableFuture.supplyAsync(() -> processOne(u), imageExecutor);
+                        return CompletableFuture.supplyAsync(() -> processOne(u, visionRef), imageExecutor);
                     } catch (RejectedExecutionException e) {
                         log.warn("[FAIL-LOUD] 用户图片处理队列繁忙，跳过 1 张: {}", e.getMessage());
                         return null;
@@ -109,7 +117,7 @@ public class UserImageService {
         }
     }
 
-    private UserImage processOne(String dataUrl) {
+    private UserImage processOne(String dataUrl, String visionRef) {
         try {
             // 解析 data:image/png;base64,xxx
             int comma = dataUrl.indexOf(',');
@@ -128,7 +136,7 @@ public class UserImageService {
             if (bytes.length == 0) return null;
 
             String url = persist(bytes, ext);
-            String desc = visionService.describe(bytes, ext);
+            String desc = visionService.describe(bytes, ext, visionService.defaultPrompt(), visionRef);
             return new UserImage(url, desc);
         } catch (Exception e) {
             // L3 fail-loud：用户上传图片处理失败（描述生成失败会在回答 prompt 显示"无法识别"，此处升级明确告警）

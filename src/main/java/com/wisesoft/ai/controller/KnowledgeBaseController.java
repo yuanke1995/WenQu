@@ -1,6 +1,8 @@
 package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.dto.ResultJson;
+import com.wisesoft.ai.model.KnowledgeBase;
+import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.KnowledgeBaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,6 +35,7 @@ import java.util.Map;
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService kbService;
+    private final DocumentService documentService;
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；默认库排在最前")
     @GetMapping("/list")
@@ -56,11 +60,23 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kbService.create(body, null));
     }
 
-    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams 传 null/空串表示清空并恢复继承全局")
+    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams 传 null/空串表示清空并恢复继承全局；"
+            + "embeddingRef（绑定向量模型）变更时自动按库重嵌入（异步，模型不可达则保持原绑定）")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        KnowledgeBase before = kbService.get(id);
         Object kb = kbService.update(id, body);
-        return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kb);
+        if (kb == null) return ResultJson.error("知识库不存在");
+        // 向量模型绑定变更：异步按库重嵌（旧向量随旧索引清除，全部块按新模型写回）
+        if (before != null) {
+            String oldRef = before.getEmbeddingRef() == null ? "" : before.getEmbeddingRef();
+            String newRef = ((KnowledgeBase) kb).getEmbeddingRef() == null ? "" : ((KnowledgeBase) kb).getEmbeddingRef();
+            if (!oldRef.equals(newRef)) {
+                List<String> docIds = new java.util.ArrayList<>(kbService.docIdsOf(java.util.List.of(id)));
+                documentService.reembedKbAsync(id, docIds, oldRef, newRef);
+            }
+        }
+        return ResultJson.ok(kb);
     }
 
     @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）")
@@ -71,11 +87,19 @@ public class KnowledgeBaseController {
         return ResultJson.ok(Map.of("id", id));
     }
 
-    @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回默认库（即 kb_id 置空）")
+    @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回默认库（即 kb_id 置空）；"
+            + "前后两库向量模型不同时自动异步迁移该文档向量")
     @PutMapping("/doc/{docId}")
     public ResultJson moveDoc(@PathVariable String docId, @RequestBody Map<String, Object> body) {
         Object kbId = body.get("kbId");
-        boolean ok = kbService.moveDoc(docId, kbId == null ? null : String.valueOf(kbId));
+        String toKbId = kbId == null ? null : String.valueOf(kbId);
+        // 记录迁移前归属（含历史文档 kb_id 为空=默认库），移动后按前后两库的向量模型判断是否迁移向量
+        com.wisesoft.ai.model.AiDocument before = documentService.getDoc(docId);
+        String fromKbId = before == null ? null : before.getKbId();
+        boolean ok = kbService.moveDoc(docId, toKbId);
+        if (ok) {
+            documentService.migrateDocAsync(docId, fromKbId, toKbId);
+        }
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("docId", docId);
         r.put("kbId", kbId);

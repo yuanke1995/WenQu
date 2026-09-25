@@ -287,9 +287,52 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
+    `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
+    `default_vision_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认视觉模型（引用 providerId/modelId；空=跟随系统全局，聊天上传图片理解用）',
+    `default_rerank_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认重排模型（引用 providerId/modelId；空=跟随系统全局，检索重排用）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),
     UNIQUE KEY `uk_username` (`username`),
     KEY `idx_department` (`department_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
+
+-- ============================================
+-- 2026-09-25: 模型供应商管理（多供应商 + 模型库分类型）
+-- 供应商 = OpenAI 兼容网关（baseUrl + apiKey + 路径覆盖）；模型库按类型（chat/vision/embedding/rerank/other）
+-- 分类登记。模型引用格式 `{providerId}/{modelId}` 贯穿 chat.model / agent.model / 用户偏好等所有存模型处；
+-- 遗留纯模型名仍按全局 chat.* 网关解析（兼容存量数据）。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_provider` (
+    `id`               VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `name`             VARCHAR(100) NOT NULL COMMENT '供应商显示名（如 DeepSeek / 智谱GLM）',
+    `icon`             VARCHAR(255) DEFAULT NULL COMMENT '图标：内置图标key（deepseek/zhipu/...）或 http(s) 图片URL（空=前端字母头像）',
+    `base_url`         VARCHAR(512) NOT NULL COMMENT '网关地址（OpenAI 兼容）',
+    `api_key`          TEXT         DEFAULT NULL COMMENT 'API Key（RSA 加密存储，RSA: 前缀）',
+    `completions_path` VARCHAR(255) DEFAULT NULL COMMENT '聊天补全路径（空=默认 /v1/chat/completions）',
+    `embeddings_path`  VARCHAR(255) DEFAULT NULL COMMENT '向量路径（空=默认 /v1/embeddings）',
+    `api_type`         VARCHAR(32)  DEFAULT 'openai' COMMENT '协议类型（预留: openai=OpenAI 兼容）',
+    `enabled`          INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后其模型不可选）',
+    `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `sort_order`       INT          DEFAULT 0 COMMENT '排序（小在前）',
+    `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
+    `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型供应商表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_model` (
+    `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `provider_id`  VARCHAR(50)  NOT NULL COMMENT '所属供应商（c_ai_provider.id）',
+    `model_id`     VARCHAR(255) NOT NULL COMMENT '模型名（调用 API 时 model 参数原样透传）',
+    `display_name` VARCHAR(255) DEFAULT NULL COMMENT '展示名（空=同 model_id）',
+    `model_type`   VARCHAR(16)  DEFAULT 'chat' COMMENT '类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 other=其他',
+    `enabled`      INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',
+    `remark`       VARCHAR(255) DEFAULT NULL COMMENT '备注（如上下文窗口说明）',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_provider_model` (`provider_id`, `model_id`),
+    KEY `idx_provider` (`provider_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型库表（按类型登记供应商可用模型）';

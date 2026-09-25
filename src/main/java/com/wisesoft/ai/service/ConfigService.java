@@ -25,8 +25,8 @@ import java.util.Set;
  * 模型配置服务：DB（c_ai_config）存储 + 内存缓存
  * <p>
  * - 启动时表空则从 yml/env 默认值灌入
- * - 可编辑白名单：chat.model / chat.baseUrl / chat.apiKey / chat.completionsPath / chat.temperature /
- *   vision.model / vision.prompt 等（保存即生效）
+ * - 可编辑白名单：chat.baseUrl / chat.apiKey / chat.completionsPath / chat.temperature /
+ *   vision.model / vision.prompt 等（保存即生效；chat.model 已退役，全局兜底移除）
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）
  * - vision.baseUrl / vision.apiKey 可编辑（VisionService 每次调用动态读取，保存即生效）
@@ -41,12 +41,10 @@ import java.util.Set;
 @Service
 public class ConfigService {
 
-    /** 可编辑白名单 */
+    /** 可编辑白名单（模型网关三要素已迁至「模型供应商」页：chat/vision/embedding/rerank 的
+     *  baseUrl/apiKey/路径不再可编辑，模型键存引用 {providerId}/{modelId}，遗留纯模型名兼容；
+     *  chat.model 已退役——全局兜底移除，模型解析链止于「会话覆盖 > 智能体 > 个人默认」） */
     private static final Map<String, String> EDITABLE = Map.ofEntries(
-            Map.entry("chat.model", "智能问答模型名"),
-            Map.entry("chat.baseUrl", "LLM 网关地址(OpenAI 兼容,不含 /v1;跨厂商热切换,保存即生效)"),
-            Map.entry("chat.apiKey", "LLM API Key(RSA 加密入库;保存即生效)"),
-            Map.entry("chat.completionsPath", "对话补全路径(默认 /v1/chat/completions;GLM 等非 /v1 网关需改)"),
             Map.entry("chat.temperature", "回答温度(0~2)"),
             Map.entry("chat.systemPrompt", "AI助手系统提示词（角色与回答风格）"),
             Map.entry("chat.pipelineThreads", "问答流水线线程数(保存即生效)"),
@@ -59,9 +57,7 @@ public class ConfigService {
             Map.entry("chat.remainTokenFloor", "上下文填充保留下限(token)：预算扣掉固定部分后至少保留该值给知识块"),
             Map.entry("chat.truncateFallbackChars", "知识块超预算截断兜底字符数(块级截断每块仍保留的最小片段)"),
             Map.entry("vision.enabled", "视觉模型总开关（false 时图片不生成描述）"),
-            Map.entry("vision.model", "视觉识别模型名"),
-            Map.entry("vision.baseUrl", "视觉模型网关地址(OpenAI 兼容,保存即生效)"),
-            Map.entry("vision.apiKey", "视觉模型 API Key(RSA 加密入库,保存即生效)"),
+            Map.entry("vision.model", "视觉模型（引用 providerId/modelId，模型供应商页选择）"),
             Map.entry("vision.prompt", "视觉识别提示词"),
             Map.entry("vision.concurrency", "图片描述并发数（保存即生效）"),
             Map.entry("vision.userImageConcurrency", "用户上传图片识别并发数（保存即生效）"),
@@ -91,8 +87,7 @@ public class ConfigService {
             Map.entry("deepReasoning.enabled", "深度思考：总开关"),
             Map.entry("deepReasoning.autoRoute", "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）"),
             Map.entry("rerank.enabled", "重排：是否启用（需先启动本地 reranker 服务）"),
-            Map.entry("rerank.baseUrl", "重排：服务地址"),
-            Map.entry("rerank.model", "重排：模型名"),
+            Map.entry("rerank.model", "重排模型（引用 providerId/modelId，模型供应商页选择；遗留值走 rerank.baseUrl 本地服务）"),
             Map.entry("retrieval.vecThreshold", "检索：向量相似度下限(0~1，评估对比后可应用)"),
             Map.entry("retrieval.keywordLimit", "检索：关键词召回词数上限"),
             Map.entry("retrieval.vectorTopK", "检索：向量召回 topK（评估对比后可应用）"),
@@ -102,10 +97,7 @@ public class ConfigService {
             Map.entry("keyword.apiKey", "关键词引擎：Meilisearch master key（RSA 加密入库,留空回退环境变量 AI_MEILI_KEY）"),
             Map.entry("ratelimit.enabled", "接口限流总开关（Redis 固定窗口，按用户/IP）"),
             // 向量模型热切换（保存即生效 + 自动触发全量重嵌入，见 update）
-            Map.entry("embedding.model", "向量模型名(保存后自动全量重嵌入,期间降级关键词检索)"),
-            Map.entry("embedding.baseUrl", "向量模型网关地址(OpenAI 兼容)"),
-            Map.entry("embedding.apiKey", "向量模型 API Key(RSA 加密入库)"),
-            Map.entry("embedding.embeddingsPath", "向量化路径(默认 /v1/embeddings;智谱 /v4、千帆 /v2)"),
+            Map.entry("embedding.model", "向量模型（引用 providerId/modelId，供应商页选择；切换自动全量重嵌入）"),
             // ===== 以下为「代码早已读取、此前未开放到设置页」的参数（补白名单，无需改读取点）=====
             Map.entry("images.chatCleanupIntervalMs", "聊天图片：清理任务执行间隔(ms,默认86400000=每天)"),
             Map.entry("images.chatRetentionMillis", "聊天图片：保留时长(ms,默认604800000=7天；超期清理)"),
@@ -159,7 +151,6 @@ public class ConfigService {
      */
     private static final Map<String, Integer> TIER = Map.ofEntries(
             // ===== L1 必需（15 项）=====
-            Map.entry("chat.model", 1),
             Map.entry("chat.baseUrl", 1),
             Map.entry("chat.apiKey", 1),
             Map.entry("chat.temperature", 1),
@@ -280,6 +271,9 @@ public class ConfigService {
     /** 敏感项（*.apiKey）RSA 加解密 */
     private final ConfigCryptoService crypto;
 
+    /** 供应商注册中心（向量路由解析；@Lazy 破循环：注册中心构造依赖本类） */
+    private final ModelRegistryService modelRegistryService;
+
     /** 配置变更广播 channel（多实例同步：任意实例保存配置 → 其他实例订阅后重载缓存） */
     public static final String CONFIG_CHANNEL = "ai:config:changed";
 
@@ -289,6 +283,7 @@ public class ConfigService {
                          StringRedisTemplate redisTemplate, RedisProperties redisProperties,
                          @org.springframework.context.annotation.Lazy KeywordIndexService keywordIndexService,
                          @org.springframework.context.annotation.Lazy DocumentService documentService,
+                         @org.springframework.context.annotation.Lazy ModelRegistryService modelRegistryService,
                          ConfigCryptoService crypto) {
         this.configMapper = configMapper;
         this.properties = properties;
@@ -297,6 +292,7 @@ public class ConfigService {
         this.redisProperties = redisProperties;
         this.keywordIndexService = keywordIndexService;
         this.documentService = documentService;
+        this.modelRegistryService = modelRegistryService;
         this.crypto = crypto;
     }
 
@@ -427,7 +423,7 @@ public class ConfigService {
     /** 从 yml/env 读取默认值 */
     private Map<String, String> defaults() {
         Map<String, String> d = new LinkedHashMap<>();
-        d.put("chat.model", env("spring.ai.openai.chat.options.model", "qwen3.8-27b"));
+        // chat.model 已退役（全局兜底移除）：不再注入默认值，存量库中的旧行成为孤儿数据（无读取方）
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
         d.put("chat.systemPrompt", properties.getSystemPrompt());
         d.put("chat.baseUrl", env("spring.ai.openai.base-url", ""));
@@ -523,7 +519,7 @@ public class ConfigService {
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));
         d.put("ratelimit.uploadPerMinute", String.valueOf(properties.getRatelimit().getUploadPerMinute()));
         d.put("eval.judgeEnabled", "false");   // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
-        d.put("eval.judgeModel", "");              // 评判用独立模型（留空回落 chat.model）
+        d.put("eval.judgeModel", "");              // 评判用独立模型（留空=跳过 LLM 自动评判）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
         // 定时维护（schedule 包读取；≤0=暂停对应任务）
@@ -754,11 +750,6 @@ public class ConfigService {
                 }
             }
         }
-        // 校验：仅当本次提交包含 chat.model 时才要求非空（避免只想改检索权重等其他项时被阻塞）
-        String model = updates.get("chat.model");
-        if (updates.containsKey("chat.model") && (model == null || model.isBlank())) {
-            throw new IllegalArgumentException("chat.model 不能为空");
-        }
         String temp = updates.get("chat.temperature");
         if (temp != null && !temp.isBlank()) {
             double t = Double.parseDouble(temp);
@@ -924,8 +915,10 @@ public class ConfigService {
             updates.put("vision.baseUrl", url);
         }
 
-        // 向量模型热切换：任一 embedding.* 提交时，用「新配置」真实探测一次 embedding
-        // （校验地址/Key/模型名可达；失败拒绝保存——避免配错后自动触发的全量重嵌任务必然失败）。
+        // 向量模型热切换：任一 embedding.* 提交时，比较新旧「向量路由指纹」（引用解析到供应商网关后的
+        // baseUrl|path|model|key）——迁移把配置值改写为引用时解析结果不变、不会误触发全量重嵌入，
+        // 模型/网关真变时才联动。用「新路由」真实探测一次 embedding（校验地址/Key/模型名可达；
+        // 失败拒绝保存——避免配错后自动触发的全量重嵌任务必然失败）。
         // 向量无法跨模型迁移（向量空间不兼容），真正切换后自动触发全量重嵌入。
         boolean embeddingChanged = false;
         if (updates.keySet().stream().anyMatch(k -> k.startsWith("embedding."))) {
@@ -934,14 +927,15 @@ public class ConfigService {
             // 未提交新 key（掩码已过滤）时回退当前值（get 透明解密为明文）
             String newKey = updates.getOrDefault("embedding.apiKey", get("embedding.apiKey"));
             String newPath = updates.getOrDefault("embedding.embeddingsPath", "").trim();
-            embeddingChanged = !newModel.equals(get("embedding.model").trim())
-                    || !newBase.equals(get("embedding.baseUrl").trim())
-                    || updates.containsKey("embedding.apiKey")
-                    || !newPath.equals(get("embedding.embeddingsPath").trim());
+            ModelRegistryService.ModelRoute oldRoute = modelRegistryService.embeddingRoute(
+                    get("embedding.model"), get("embedding.baseUrl"), get("embedding.apiKey"), get("embedding.embeddingsPath"));
+            ModelRegistryService.ModelRoute newRoute = modelRegistryService.embeddingRoute(newModel, newBase, newKey, newPath);
+            embeddingChanged = !oldRoute.embeddingFingerprint().equals(newRoute.embeddingFingerprint());
             if (embeddingChanged) {
                 int probeDim;
                 try {
-                    probeDim = DynamicEmbeddingModel.probe(newBase, newKey, newModel, newPath);
+                    probeDim = DynamicEmbeddingModel.probe(newRoute.baseUrl(), newRoute.apiKey(),
+                            newRoute.modelId(), newRoute.embeddingsPath());
                 } catch (Exception e) {
                     String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                     throw new IllegalArgumentException("新向量模型探测失败（" + msg

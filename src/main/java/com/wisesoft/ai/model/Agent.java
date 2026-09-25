@@ -29,8 +29,6 @@ public class Agent {
     /** 描述 */
     private String description;
 
-    /** 模型覆盖（空=继承全局 chat.model） */
-    private String model;
 
     /** 系统提示词覆盖（空=继承全局 chat.systemPrompt） */
     private String systemPrompt;

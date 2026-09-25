@@ -30,13 +30,16 @@ public class KnowledgeBaseService {
 
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
+    private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
 
     /** 默认库缓存（避免每次检索都查库；is_default 变更时由 update/create 失效） */
     private volatile String cachedDefaultId;
 
-    public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper) {
+    public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
+                                com.wisesoft.ai.service.ModelRegistryService modelRegistryService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
+        this.modelRegistryService = modelRegistryService;
     }
 
     // ==================== 读写 ====================
@@ -62,6 +65,7 @@ public class KnowledgeBaseService {
         kb.setQueryParams(str(body.get("queryParams")));
         kb.setIsDefault(toInt(body.get("isDefault"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
+        kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef"))));
         kb.setCreatedBy(uid);
         kb.setDeleted(0);
         LocalDateTime now = LocalDateTime.now();
@@ -83,6 +87,11 @@ public class KnowledgeBaseService {
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
         if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
+        if (body.containsKey("embeddingRef")) {
+            upd.set(KnowledgeBase::getEmbeddingRef, validateEmbeddingRef(str(body.get("embeddingRef"))));
+            // 模型切换后维度以重嵌结果为准，先清掉旧记录
+            upd.set(KnowledgeBase::getEmbeddingDimensions, null);
+        }
         if (body.containsKey("isDefault")) {
             int isDef = toInt(body.get("isDefault"), 0);
             if (isDef == 1) clearDefault();
@@ -112,6 +121,31 @@ public class KnowledgeBaseService {
         kbMapper.updateById(kb);
         cachedDefaultId = null;
         return null;
+    }
+
+    /**
+     * 校验并归一化本库绑定向量模型引用：空=跟随全局（合法）；非空必须是有效的 embedding 类型引用。
+     * @return 归一化后的引用（trim 后；空串表示跟随全局）
+     */
+    public String validateEmbeddingRef(String ref) {
+        String v = ref == null ? "" : ref.trim();
+        if (v.isEmpty()) return "";
+        if (modelRegistryService.resolveReference(v) == null) {
+            throw new com.wisesoft.ai.common.BizException("向量模型无效或已被删除，请重新选择");
+        }
+        String type = modelRegistryService.referenceType(v);
+        if (type != null && !com.wisesoft.ai.service.ModelRegistryService.TYPE_EMBEDDING.equals(type)) {
+            throw new com.wisesoft.ai.common.BizException("知识库向量模型需为向量类型（当前所选为 " + type + " 类型）");
+        }
+        return v;
+    }
+
+    /** 绑定了自定义向量模型的未删除知识库（per-KB 向量索引按此枚举） */
+    public List<KnowledgeBase> listCustomEmbedding() {
+        return kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getDeleted, 0)
+                .isNotNull(KnowledgeBase::getEmbeddingRef)
+                .ne(KnowledgeBase::getEmbeddingRef, ""));
     }
 
     // ==================== 检索侧支撑 ====================

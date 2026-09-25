@@ -41,6 +41,7 @@ public class HybridRetrievalService {
     private double vecThreshold() { return configService.getDouble("retrieval.vecThreshold", 0.3); }
 
     private final VectorStore vectorStore;
+    private final KbVectorStoreRegistry kbVectorStores;
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
     private final KeywordExtractor keywordExtractor;
@@ -108,8 +109,12 @@ public class HybridRetrievalService {
         return search(query, null);
     }
 
-    /** 带诊断的混合检索（fail-loud：单路失败/降级写入 diag，由调用方转回答级警示） */
+    /** 带诊断的混合检索（fail-loud：单路失败/降级写入 diag，由调用方转回答级警示）；kbIds 限定检索的知识库（空=全部） */
     public List<Hit> search(String query, RetrievalDiag diag) {
+        return search(query, diag, null);
+    }
+
+    public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
         // 权重动态读取（DB 配置，保存即生效；缺失时兜底 yml 默认值 0.6/0.4/0.1）
         double vectorWeight = configService.getDouble("retrieval.vectorWeight");
         double keywordWeight = configService.getDouble("retrieval.keywordWeight");
@@ -117,8 +122,8 @@ public class HybridRetrievalService {
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         Set<String> nonVisibleDocIds = loadNonVisibleDocIds();
 
-        // 1. 向量召回（放大召回率）
-        List<Document> vectorDocs = vectorSearch(query, diag);
+        // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
+        List<Document> vectorDocs = vectorSearch(query, diag, kbIds);
 
         // 2. 关键词召回（并行，超时兜底）
         List<Knowledge> kwDocs = keywordSearch(query, diag);
@@ -217,14 +222,18 @@ public class HybridRetrievalService {
 
     /** 带诊断的多路检索（fail-loud：超时/失败降级首路写入 diag） */
     public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag) {
+        return searchMulti(queries, diag, null);
+    }
+
+    public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag, java.util.Collection<String> kbIds) {
         if (queries == null || queries.isEmpty()) return List.of();
         List<String> qs = queries.stream().map(String::trim).filter(q -> !q.isBlank()).distinct().toList();
         if (qs.size() <= 1) {
-            return qs.isEmpty() ? List.of() : search(qs.get(0), diag);
+            return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds);
         }
         try {
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
-                    .map(q -> CompletableFuture.supplyAsync(() -> search(q, diag), multiSearchPool))
+                    .map(q -> CompletableFuture.supplyAsync(() -> search(q, diag, kbIds), multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(configService.getInt("retrieval.searchTimeoutMs", 8000), TimeUnit.MILLISECONDS);
@@ -243,7 +252,7 @@ public class HybridRetrievalService {
             // L1 fail-loud：多路检索超时/失败，降级首路（不再静默）
             if (diag != null) diag.multiTimeout();
             log.warn("[FAIL-LOUD] 多路检索超时/失败，降级首路: {}", e.getMessage());
-            return search(qs.get(0), diag);
+            return search(qs.get(0), diag, kbIds);
         }
     }
 
@@ -251,17 +260,19 @@ public class HybridRetrievalService {
      * 向量召回（独立方法，供检索调试复用）
      */
     public List<Document> vectorSearch(String query) {
-        return vectorSearch(query, null);
+        return vectorSearch(query, null, null);
     }
 
-    /** 带诊断的向量召回（fail-loud：失败写入 diag） */
-    public List<Document> vectorSearch(String query, RetrievalDiag diag) {
+    /** 带诊断的向量召回（fail-loud：失败写入 diag）；kbIds 限定知识库（空=全部库分组检索） */
+    public List<Document> vectorSearch(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
         // 全量重嵌入期间（任一实例执行 DROP/重建索引中）：向量索引不存在或半成品，
         // 直接跳过向量路（安静降级关键词路），避免对半成品索引检索产生错误/空召回与噪音告警
         if (reembedInProgress()) {
             log.debug("[RAG] 全量重嵌入进行中，向量路本次跳过（关键词路继续）");
             return List.of();
         }
+        List<VectorStore> stores = resolveVectorStores(kbIds);
+        if (stores.isEmpty()) return List.of();
         try {
             SearchRequest req = SearchRequest.builder()
                     .query(query)
@@ -271,13 +282,43 @@ public class HybridRetrievalService {
                     // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
                     .similarityThreshold(vecThreshold())
                     .build();
-            return vectorStore.similaritySearch(req);
+            // 单库（绝大多数场景：无自定义向量模型库，或范围命中单一库）直接查，保持原行为
+            if (stores.size() == 1) return stores.get(0).similaritySearch(req);
+            // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
+            Map<String, Document> merged = new LinkedHashMap<>();
+            for (VectorStore st : stores) {
+                try {
+                    for (Document d : st.similaritySearch(req)) {
+                        merged.merge(String.valueOf(d.getId()), d, (a, b) ->
+                                parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
+                    }
+                } catch (Exception e) {
+                    log.warn("[FAIL-LOUD] 向量检索失败（单库，其余库继续）: {}", e.getMessage());
+                }
+            }
+            List<Document> out = new ArrayList<>(merged.values());
+            out.sort((a, b) -> Double.compare(parseScore(b.getScore()), parseScore(a.getScore())));
+            return out;
         } catch (Exception e) {
             // M4 fail-loud：向量路失败不再静默空
             if (diag != null) diag.vectorFailed(e.getMessage());
             log.warn("[FAIL-LOUD] 向量检索失败: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** 目标知识库集合 → 去重后的向量库实例（跟随全局的库共享全局索引；绑定了模型的库各用独立索引） */
+    private List<VectorStore> resolveVectorStores(java.util.Collection<String> kbIds) {
+        if (kbIds == null || kbIds.isEmpty()) return kbVectorStores.allStores();
+        java.util.LinkedHashMap<VectorStore, Boolean> out = new java.util.LinkedHashMap<>();
+        for (String kbId : kbIds) {
+            try {
+                out.put(kbVectorStores.storeForKb(kbId), Boolean.TRUE);
+            } catch (Exception e) {
+                log.warn("[FAIL-LOUD] 知识库 {} 向量库构建失败（跳过该库）: {}", kbId, e.getMessage());
+            }
+        }
+        return out.isEmpty() ? List.of(vectorStore) : new ArrayList<>(out.keySet());
     }
 
     /**

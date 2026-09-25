@@ -12,6 +12,8 @@ import Dashboard from './views/DashboardPage.vue'
 import Settings from './views/SettingsPage.vue'
 import Evaluation from './views/EvaluationPage.vue'
 import Members from './views/MembersPage.vue'
+import Providers from './views/ProvidersPage.vue'
+import Profile from './views/ProfilePage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -19,7 +21,9 @@ const router = createRouter({
     { path: '/', redirect: '/chat' },
     { path: '/login', component: Login, meta: { title: '登录' } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
+    { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
     { path: '/agents', component: AppLayout, children: [{ path: '', component: Agents }], meta: { requiresAdmin: true, title: '智能体' } },
+    { path: '/providers', component: AppLayout, children: [{ path: '', component: Providers }], meta: { requiresAdmin: true, title: '模型供应商' } },
     { path: '/knowledge', component: AppLayout, children: [{ path: '', component: KnowledgeBase }], meta: { requiresAdmin: true, title: '知识库' } },
     { path: '/documents', component: AppLayout, children: [{ path: '', component: Documents }], meta: { requiresAdmin: true, title: '文档管理' } },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },

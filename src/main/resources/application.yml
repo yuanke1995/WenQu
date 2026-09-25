@@ -21,7 +21,9 @@ spring:
   # 数据库（独立库；主机/端口/库名环境变量化以支持容器部署，密码必须通过 DB_PASSWORD 提供，缺失启动即失败）
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:ai_doc_assistant}?useUnicode=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&nullCatalogMeansCurrent=true
+    # allowPublicKeyRetrieval=true：MySQL 8 默认认证插件 caching_sha2_password 在非 SSL 连接上
+    # 需取服务端 RSA 公钥加密密码，Connector/J 默认禁止 → 报 "Public Key Retrieval is not allowed"
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:ai_doc_assistant}?useUnicode=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&nullCatalogMeansCurrent=true
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD}
 

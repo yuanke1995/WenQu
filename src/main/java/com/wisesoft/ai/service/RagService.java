@@ -137,14 +137,20 @@ public class RagService {
 
     /** 重排（服务可用就执行；不可用 → 保持融合分排序并 fail-loud 标记） */
     private List<HybridRetrievalService.Hit> rerankIfNeeded(List<HybridRetrievalService.Hit> hits, String query,
-                                                             List<Map<String, String>> degradations, Set<String> degradedCodes) {
+                                                             List<Map<String, String>> degradations, Set<String> degradedCodes,
+                                                             String userRerankRef) {
         if (!hits.isEmpty()) {
-            String reason = rerankService.debugUnavailableReason();
-            if (reason != null) {
-                addDegradation(degradations, degradedCodes, "rerankUnavailable",
-                        "重排不可用（" + reason + "），按融合分排序");
+            // 个人重排模型路径不走全局探测/冷却状态，因此仅对全局路径做不可用降级提示
+            if (userRerankRef != null && !userRerankRef.isBlank()) {
+                hits = rerankService.rank(hits, query, userRerankRef);
             } else {
-                hits = rerankService.rank(hits, query);
+                String reason = rerankService.debugUnavailableReason();
+                if (reason != null) {
+                    addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                            "重排不可用（" + reason + "），按融合分排序");
+                } else {
+                    hits = rerankService.rank(hits, query);
+                }
             }
         }
         return hits;
@@ -235,6 +241,9 @@ public class RagService {
 
     /** 知识库服务：解析「智能体关联的知识库 → 允许检索的文档集合」，检索按库隔离 */
     private final KnowledgeBaseService knowledgeBaseService;
+
+    /** 用户表（个人默认模型解析） */
+    private final com.wisesoft.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
@@ -310,7 +319,8 @@ public class RagService {
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
                       McpClientService mcpClientService,
-                      KnowledgeBaseService knowledgeBaseService) {
+                      KnowledgeBaseService knowledgeBaseService,
+                      com.wisesoft.ai.mapper.UserMapper userMapper) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -334,15 +344,17 @@ public class RagService {
         this.agentService = agentService;
         this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
+        this.userMapper = userMapper;
     }
 
     /**
      * 处理用户问题（可含上传图片），通过 SSE 流式返回。
      * deepThink=true 时先流式输出思考过程（thinking 事件），提取检索计划后多路检索再回答。
+     * modelOverride 为聊天页的会话级模型覆盖（引用或遗留名，仅用户手动切换时传）；userId 用于解析个人默认模型。
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
     public void chat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                     String agentId, SseEmitter emitter) {
+                     String agentId, String modelOverride, String userId, SseEmitter emitter) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -358,7 +370,7 @@ public class RagService {
         try {
             pipelineExecutor.execute(() -> {
                 try {
-                    runChat(sessionId, question, userImages, useDeepThink, agentId, emitter);
+                    runChat(sessionId, question, userImages, useDeepThink, agentId, modelOverride, userId, emitter);
                 } finally {
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
@@ -378,7 +390,7 @@ public class RagService {
      * 问答流水线主体（独立线程执行）：图片处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
     private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
-                         String agentId, SseEmitter emitter) {
+                         String agentId, String modelOverride, String userId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         // 智能体（4.1）：选中后覆盖模型/提示词/工具/知识库范围；agentId 无效/缺失时视为无覆盖（继承全局）
         final Agent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
@@ -386,6 +398,26 @@ public class RagService {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
             // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
             applyQueryOverrides(agent);
+        }
+        // 本轮生效模型（会话覆盖 > 智能体 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用；
+        // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
+        // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
+        final java.util.Collection<String> scopeKbIds =
+                (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
+                        ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
+        // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 视觉/重排个人默认（本轮图片理解/重排用）
+        final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
+        final String resolvedModel = resolveModel(modelOverride, prefUser);
+        final String userVisionRef = prefUser == null || prefUser.getDefaultVisionModel() == null
+                ? "" : prefUser.getDefaultVisionModel();
+        final String userRerankRef = prefUser == null || prefUser.getDefaultRerankModel() == null
+                ? "" : prefUser.getDefaultRerankModel();
+        if (resolvedModel.isBlank()) {
+            log.warn("[FAIL-LOUD] 未配置任何模型（会话/智能体/个人默认均未指定）: session={}", sessionId);
+            sendSseEvent(emitter, "error",
+                    "未指定模型：请在对话右上角选择模型，或在个人设置/智能体中配置默认模型", sessionId);
+            completeEmitter(emitter);
+            return;
         }
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
@@ -403,7 +435,7 @@ public class RagService {
             // 0. 进度提示：理解问题阶段（图片描述/改写都有耗时，先给用户反馈）
             sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
             // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）
-            List<UserImageService.UserImage> userImgs = userImageService.process(userImages);
+            List<UserImageService.UserImage> userImgs = userImageService.process(userImages, userVisionRef);
             String imgDescText = userImgs.isEmpty() ? "" : userImgs.stream()
                     .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
                     .collect(Collectors.joining("\n"));
@@ -447,7 +479,7 @@ public class RagService {
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
             if (deepThink && configService.getBoolean("deepReasoning.enabled")) {
-                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, emitter);
+                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, emitter, resolvedModel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
                 if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
@@ -466,17 +498,17 @@ public class RagService {
                         if (!thinkTerms.isEmpty()) {
                             queries.add(String.join(" ", thinkTerms));
                         }
-                        hits = hybridRetrievalService.searchMulti(queries, retrievalDiag);
+                        hits = hybridRetrievalService.searchMulti(queries, retrievalDiag, scopeKbIds);
                         rankQuery = dr.refinedQuery();
                     } else {
                         retrievalQuery = thinkTerms.isEmpty()
                                 ? dr.refinedQuery()
                                 : dr.refinedQuery() + " " + String.join(" ", thinkTerms);
-                        hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
+                        hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
                         rankQuery = retrievalQuery;
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
-                    hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes);
+                    hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes, userRerankRef);
                     hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
                     log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, thinkTerms={}, hits={}",
                             dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
@@ -496,12 +528,12 @@ public class RagService {
                 // 深度思考失败但产生了思考内容：用"原问题 + 思考词元"检索，思考不算白费（比纯普通检索召回更好）
                 if (deepThink && !thinkTerms.isEmpty()) {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
-                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
-                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
+                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes, userRerankRef);
                 } else {
-                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag);
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
                 }
-                hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
+                hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes, userRerankRef);
                 hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
@@ -543,12 +575,12 @@ public class RagService {
                 if (candidates.isEmpty()) {
                     // 未挂子智能体 → 原有的「多视角并行检索」
                     sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
-                    subOutcome = subAgentOrchestrator.run(question, null, onBranch);
+                    subOutcome = subAgentOrchestrator.run(question, null, onBranch, resolvedModel);
                 } else {
                     // 挂了子智能体 → 先由主模型按需挑选：只咨询与问题相关的角色，
                     // 避免"全派"导致无关角色白跑（0 命中噪音 + 多余的检索与提炼开销）
                     sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
-                    List<Agent> delegated = subAgentOrchestrator.route(question, candidates);
+                    List<Agent> delegated = subAgentOrchestrator.route(question, candidates, resolvedModel);
                     if (delegated.size() != candidates.size()) {
                         log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", candidates.size(), delegated.size(),
                                 delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
@@ -564,7 +596,7 @@ public class RagService {
                         log.info("[SUBAGENT] 按需委派判定无需咨询任何助手，跳过并行编排（问题与各助手职责均不匹配）");
                     } else {
                         sendSseEvent(emitter, "stage", "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
-                        subOutcome = subAgentOrchestrator.run(question, delegated, onBranch);
+                        subOutcome = subAgentOrchestrator.run(question, delegated, onBranch, resolvedModel);
                     }
                 }
                 if (subOutcome != null && !subOutcome.hits().isEmpty()) {
@@ -634,7 +666,7 @@ public class RagService {
             }
 
             // 3. 价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)；减去 system/问题固定部分后，按相关度累积填充知识块
-            int budget = resolveContextBudget();
+            int budget = resolveContextBudget(resolvedModel);
             int fixedTokens = TokenCounter.estimate(system.toString()) + TokenCounter.estimate(userQuestion.toString());
             int remainTokens = Math.max(configService.getInt("chat.remainTokenFloor", 800), budget - fixedTokens);
 
@@ -860,6 +892,7 @@ public class RagService {
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
             st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
+            st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 智能体 > 个人默认）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1052,8 +1085,9 @@ public class RagService {
                 .system(system)
                 .user(user)
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
+                // st.model 为本轮解析好的模型（引用或遗留名，供应商路由由 DynamicOpenAiChatModel 按引用完成）
                 .options(OpenAiChatOptions.builder()
-                        .model(resolveModel(agent))
+                        .model(st.model)
                         .temperature(configService.getDouble("chat.temperature"))
                         .maxTokens(configService.getInt("context.maxOutputTokens"))
                         .build())
@@ -1224,7 +1258,7 @@ public class RagService {
                     // 一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
                     if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
                         try {
-                            CitationCheckResult ccr = citationConsistencyCheck(answer, sources, st.question);
+                            CitationCheckResult ccr = citationConsistencyCheck(answer, sources, st.question, st.model);
                             if (ccr.droppedCount() > 0) {
                                 answer = ccr.text();
                                 sources = ccr.sources();
@@ -1362,6 +1396,8 @@ public class RagService {
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
+        /** 本轮生效模型（会话覆盖 > 智能体 > 个人默认 > 全局；主链路解析后回填，生成流按此发送） */
+        volatile String model;
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
@@ -1507,15 +1543,35 @@ public class RagService {
 
     /**
      * 计算上下文预算（token）：min(模型窗口 × 安全系数 − 预留输出, 成本软上限)
-     * 模型窗口按当前 chat.model 子串匹配 model-windows 映射，未匹配用默认窗口
+     * 模型窗口按本轮生效模型（resolvedModel）子串匹配 model-windows 映射，未匹配用默认窗口
      * 参数走 ConfigService（DB 设置页保存即生效，yml 兜底）
      */
     // ---- 智能体（4.1）覆盖解析辅助 ----
 
-    /** 模型：智能体显式填写则用智能体模型，否则继承全局 chat.model */
-    private String resolveModel(Agent agent) {
-        return (agent != null && agent.getModel() != null && !agent.getModel().isBlank())
-                ? agent.getModel() : configService.get("chat.model");
+    /**
+     * 模型解析链（优先级从高到低）：会话级覆盖（聊天页手动切换）> 用户个人默认模型。
+     * 值为引用（providerId/modelId）或遗留纯模型名均可，供应商网关路由由 DynamicOpenAiChatModel 按引用解析；
+     * 智能体不再绑定聊天模型、全局 chat.model 兜底已移除——均未配置时返回空串，由调用方 fail-loud 引导配置。
+     */
+    private String resolveModel(String modelOverride, com.wisesoft.ai.model.User prefUser) {
+        if (modelOverride != null && !modelOverride.isBlank()) return modelOverride.trim();
+        if (prefUser != null && prefUser.getDefaultModel() != null && !prefUser.getDefaultModel().isBlank()) {
+            return prefUser.getDefaultModel();
+        }
+        return "";
+    }
+
+    /** 个人偏好用户行（含三类个人默认模型）；匿名/未登录/查询失败返回 null（全部走空语义） */
+    private com.wisesoft.ai.model.User loadPrefUser(String userId) {
+        if (userId == null || userId.isBlank() || com.wisesoft.ai.util.RequestUser.ANONYMOUS.equals(userId)) {
+            return null;
+        }
+        try {
+            return userMapper.selectById(userId);
+        } catch (Exception e) {
+            log.debug("[PREF] 个人偏好加载失败（视为未配置）: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值） */
@@ -1626,7 +1682,7 @@ public class RagService {
         return scoped;
     }
 
-    private int resolveContextBudget() {
+    private int resolveContextBudget(String resolvedModel) {
         String modelWindows = configService.get("context.modelWindows");
         int defaultWindow = configService.getInt("context.defaultWindowTokens");
         double safetyFactor = configService.getDouble("context.safetyFactor");
@@ -1634,7 +1690,7 @@ public class RagService {
         int costCap = configService.getInt("context.costCapTokens");
 
         int window = defaultWindow;
-        String model = configService.get("chat.model");
+        String model = resolvedModel;
         if (model != null && !model.isBlank() && modelWindows != null) {
             for (String entry : modelWindows.split(",")) {
                 String[] kv = entry.trim().split("=");
@@ -1818,7 +1874,8 @@ public class RagService {
      * 复用 ImageFilterService.precedingContext 取 [N] 前文（[N] 通常在句末，前文即"这句话"）；
      * 前文为空（无法界定句子）的引用放行（宁漏勿杀）。失败/超时由调用方 catch 保持原回答。
      */
-    private CitationCheckResult citationConsistencyCheck(String answer, List<Map<String, Object>> sources, String question) {
+    private CitationCheckResult citationConsistencyCheck(String answer, List<Map<String, Object>> sources,
+                                                         String question, String resolvedModel) {
         // 1. 收集每个编号首次出现的"前文句子"（重复引用按首次判定）
         Map<Integer, String> sentenceByRef = new LinkedHashMap<>();
         Matcher m = CITE_PATTERN.matcher(answer);
@@ -1848,7 +1905,7 @@ public class RagService {
                 .system("你是回答引用的质检员，只判断引用是否被证据直接支撑，输出最简结果。")
                 .user(prompt.toString())
                 .options(OpenAiChatOptions.builder()
-                        .model(configService.get("chat.model"))
+                        .model(resolvedModel)
                         .temperature(0.0)
                         .maxTokens(64)
                         .build())
@@ -1908,7 +1965,8 @@ public class RagService {
      * 失败/超时/未提取到计划 → 返回 ok=false + 已收集思考增量（调用方用思考词元增强降级检索）
      * 思考长度护栏（maxThinkingChars）：超限中断思考流但保留已收集内容继续走计划提取，不整段丢弃
      */
-    private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText, SseEmitter emitter) {
+    private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText,
+                                            SseEmitter emitter, String resolvedModel) {
         String thinkingMode = configService.get("deepReasoning.thinkingMode");
         boolean enableThinking = configService.getBoolean("deepReasoning.enableThinking");
         boolean multiRetrieval = configService.getBoolean("deepReasoning.multiRetrieval");
@@ -1929,7 +1987,7 @@ public class RagService {
         }
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(configService.get("chat.model"))
+                .model(resolvedModel)
                 .temperature(configService.getDouble("chat.temperature"));
         // qwen 思考模式 max_tokens 会导致空输出：默认不设，仅显式配置 >0 时才设
         if (maxThinkingTokens > 0) {

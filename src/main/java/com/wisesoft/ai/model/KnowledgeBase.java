@@ -42,6 +42,13 @@ public class KnowledgeBase {
      */
     private String queryParams;
 
+    /** 本库绑定向量模型（引用 providerId/modelId；空=跟随系统全局 embedding.model）。
+     * 向量一致性约束是"单库"级：同库所有块必须同一向量模型，换模型触发本库重嵌入。 */
+    private String embeddingRef;
+
+    /** 本库向量索引维度（绑定/切换向量模型重嵌后回写；空=未记录） */
+    private Integer embeddingDimensions;
+
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;
 

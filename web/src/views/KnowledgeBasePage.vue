@@ -16,6 +16,10 @@
             <span class="kb-name">{{ record.name }}</span>
             <a-tag v-if="record.isDefault === 1" color="blue" style="margin-left:6px">默认</a-tag>
           </template>
+          <template v-else-if="column.key === 'embeddingRef'">
+            <span v-if="record.embeddingRef">{{ modelRefInfo(record.embeddingRef)?.displayName || record.embeddingRef }}</span>
+            <span v-else style="color:var(--app-text3)">跟随全局</span>
+          </template>
           <template v-else-if="column.key === 'docCount'">
             <span :class="{ 'kb-zero': !record.docCount }">{{ record.docCount }} 个文档</span>
           </template>
@@ -45,6 +49,11 @@
                       placeholder='JSON，如 {"retrieval.vecThreshold":"0.3"}；留空=继承全局检索设置' />
           <div class="kb-hint">只对检索/重排类键生效；留空恢复继承。配错不会放宽范围，只会让结果变少。</div>
         </a-form-item>
+        <a-form-item label="向量模型">
+          <ModelSelect v-model="form.embeddingRef" type="embedding" inherit-label="跟随全局"
+                       :width="320" :admin-tip-visible="true" />
+          <div class="kb-hint">绑定后本库文档按此模型向量化与检索（改模型会自动按库重嵌入）；留空跟随系统全局。</div>
+        </a-form-item>
         <a-form-item label="设为默认库">
           <a-switch v-model:checked="form.isDefault" />
           <span class="kb-hint" style="margin-left:8px">新建文档默认归属、未指定库时的兜底</span>
@@ -59,6 +68,8 @@ import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase } from '../api'
+import ModelSelect from '../components/ModelSelect.vue'
+import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 
 const list = ref([])
 const loading = ref(false)
@@ -72,16 +83,18 @@ const cols = [
   { title: '描述', key: 'description', dataIndex: 'description', ellipsis: true },
   { title: '文档', key: 'docCount', dataIndex: 'docCount', width: 110 },
   { title: '检索参数', key: 'queryParams', width: 110 },
+  { title: '向量模型', key: 'embeddingRef', width: 130 },
   { title: '操作', key: 'action', width: 120 }
 ]
 
 function blank () {
-  return { name: '', description: '', queryParams: '', isDefault: false }
+  return { name: '', description: '', queryParams: '', embeddingRef: '', isDefault: false }
 }
 
 const load = async () => {
   loading.value = true
   try {
+    loadModelIndex().catch(() => {})
     const r = await listKnowledgeBases()
     list.value = (r && r.data) || []
   } catch (e) {
@@ -103,6 +116,7 @@ const openEdit = row => {
     name: row.name || '',
     description: row.description || '',
     queryParams: row.queryParams || '',
+    embeddingRef: row.embeddingRef || '',
     isDefault: row.isDefault === 1
   }
   showEdit.value = true
@@ -119,6 +133,7 @@ const save = async () => {
       name: form.value.name.trim(),
       description: form.value.description || null,
       queryParams: form.value.queryParams || null,
+      embeddingRef: form.value.embeddingRef || '',
       isDefault: form.value.isDefault ? 1 : 0
     }
     const r = editing.value

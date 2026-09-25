@@ -66,6 +66,23 @@ public class UserController {
         return ResultJson.ok("已删除");
     }
 
+    @Operation(summary = "个人偏好读取", description = "本人个人设置：defaultModel（个人默认聊天模型引用，空=跟随系统全局）+ models（可用聊天模型清单，选择器数据源）")
+    @GetMapping("/preference")
+    public ResultJson preference() {
+        return ResultJson.ok(orgService.getPreference(com.wisesoft.ai.util.RequestUser.uid()));
+    }
+
+    @Operation(summary = "设置个人默认模型", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\",\"defaultRerankModel\":\"引用\"}；"
+            + "字段缺省(null)=不修改，空串=清除（跟随系统全局）；个人默认在智能体未指定时生效（聊天模型），视觉/重排分别用于聊天图片理解与检索重排")
+    @PutMapping("/preference")
+    public ResultJson setPreference(@RequestBody Map<String, Object> body) {
+        orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
+                body.containsKey("defaultModel") ? str(body.get("defaultModel")) : null,
+                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null,
+                body.containsKey("defaultRerankModel") ? str(body.get("defaultRerankModel")) : null);
+        return ResultJson.ok("已保存");
+    }
+
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
     }

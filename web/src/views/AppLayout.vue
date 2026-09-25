@@ -25,6 +25,10 @@
             <robot-outlined />
             <span v-if="!collapsed">智能体</span>
           </button>
+          <button class="nav-item" :class="{ active: isActive('/providers') }" @click="router.push('/providers')" title="模型供应商">
+            <cloud-server-outlined />
+            <span v-if="!collapsed">模型供应商</span>
+          </button>
           <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
             <database-outlined />
             <span v-if="!collapsed">知识库</span>
@@ -80,8 +84,8 @@
         <a-tooltip title="退出登录" placement="right">
           <button class="app-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
         </a-tooltip>
-        <a-tooltip title="修改密码" placement="right">
-          <button class="app-icon-btn" @click="pwdModal = true"><lock-outlined /></button>
+        <a-tooltip title="个人设置" placement="right">
+          <button class="app-icon-btn" @click="goProfile" title="个人设置"><user-outlined /></button>
         </a-tooltip>
       </div>
     </aside>
@@ -89,21 +93,6 @@
     <!-- 主内容区 -->
     <div class="main"><router-view /></div>
 
-    <!-- 修改密码（用户自助） -->
-    <a-modal v-model:open="pwdModal" title="修改密码" :confirm-loading="pwdSaving" ok-text="保存" cancel-text="取消" width="420px" @ok="submitPwd">
-      <a-form layout="vertical" style="margin-top:4px">
-        <a-form-item label="当前密码" required>
-          <a-input-password v-model:value="pwdForm.oldPassword" placeholder="请输入当前密码" @pressEnter="submitPwd" />
-        </a-form-item>
-        <a-form-item label="新密码" required>
-          <a-input-password v-model:value="pwdForm.newPassword" placeholder="至少 6 位" @change="pwdError = ''" @pressEnter="submitPwd" />
-        </a-form-item>
-        <a-form-item label="确认新密码" required style="margin-bottom:0">
-          <a-input-password v-model:value="pwdForm.confirm" placeholder="再次输入新密码" @pressEnter="submitPwd" />
-        </a-form-item>
-      </a-form>
-      <p v-if="pwdError" class="pwd-err">{{ pwdError }}</p>
-    </a-modal>
   </div>
 </template>
 
@@ -112,9 +101,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
-         LogoutOutlined, LockOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, changePasswordApi } from '../api'
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CloudServerOutlined,
+         LogoutOutlined, UserOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi } from '../api'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
 import { exportSessionMarkdown } from './exportMd'
@@ -158,31 +147,8 @@ const delSession = async sid => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// 修改密码（用户自助，接 POST /auth/password；成功后强制重新登录）
-const pwdModal = ref(false)
-const pwdSaving = ref(false)
-const pwdError = ref('')
-const pwdForm = ref({ oldPassword: '', newPassword: '', confirm: '' })
-const submitPwd = async () => {
-  const f = pwdForm.value
-  pwdError.value = ''
-  if (!f.oldPassword) { pwdError.value = '请输入当前密码'; return }
-  if (!f.newPassword || f.newPassword.length < 6) { pwdError.value = '新密码至少 6 位'; return }
-  if (f.newPassword !== f.confirm) { pwdError.value = '两次输入的新密码不一致'; return }
-  pwdSaving.value = true
-  try {
-    const r = await changePasswordApi(f.oldPassword, f.newPassword)
-    if (r && r.success) {
-      message.success('密码已修改，请重新登录')
-      pwdModal.value = false
-      clearAuth()
-      router.push('/login')
-    } else {
-      message.error((r && r.msg) || '修改失败')
-    }
-  } catch (e) { message.error(e.message || '修改失败') }
-  finally { pwdSaving.value = false }
-}
+// 个人设置：独立页（默认模型三类 + 修改密码）
+const goProfile = () => router.push('/profile')
 
 // 退出登录：令牌无状态，清本地令牌并回登录页
 const doLogout = async () => {
@@ -201,6 +167,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.pref-section { margin-bottom: 4px; }
+.pref-label { font-weight: 600; margin-bottom: 8px; }
+.pref-row { display: flex; align-items: center; gap: 8px; }
+.pref-hint { font-size: 12px; color: var(--app-text3, #999); margin-top: 6px; }
+.pwd-err { color: #e64340; font-size: 12px; margin: 0 0 8px; }
 .side {
   width: 200px; flex: none; display: flex; flex-direction: column;
   background: var(--app-panel); border-right: 1px solid var(--app-border);
