@@ -66,7 +66,7 @@
             <span class="col-num">{{ d.hitCount || 0 }}</span>
             <span class="col-size">{{ fmtSize(d.fileSize) }}</span>
             <span class="col-status">
-              <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="d.parseDesc || ''">
+              <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="chipTip(d)">
                 <span v-if="d.status === 0" class="app-pill ok">已入库</span>
                 <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
                 <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
@@ -340,6 +340,14 @@ const loadUploadCfg = async () => {
 }
 
 // 文件类型图标配色
+/** 状态芯片悬浮：只展示终态描述（解析完成/解析失败…）。
+ *  历史数据可能残留"重新解析中"等过程态描述而状态已是已入库——与状态矛盾的过程态不出悬浮 */
+const chipTip = d => {
+  const desc = d.parseDesc || ''
+  if (d.status === 3) return d.failReason || desc || ''
+  return desc.startsWith('解析完成') || desc.startsWith('解析失败') ? desc : ''
+}
+
 const typeColor = t => {
   const map = {
     docx: { bg: '#e6f1fb', fg: '#185fa5' }, doc: { bg: '#e6f1fb', fg: '#185fa5' },
