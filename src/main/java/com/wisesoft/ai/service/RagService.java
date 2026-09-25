@@ -460,7 +460,7 @@ public class RagService {
             if (knowledgeOff) {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
                 runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, emitter, startTime,
-                        thinkingHolder, degradations, degradedCodes, agent, stageMs);
+                        thinkingHolder, degradations, degradedCodes, agent, stageMs, resolvedModel);
                 return;
             }
 
@@ -2205,7 +2205,8 @@ public class RagService {
     private void runNoKnowledgeChat(String sessionId, String question, List<UserImageService.UserImage> userImgs,
                                     String imgDescText, SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
-                                    Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs) {
+                                    Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
+                                    String resolvedModel) {
         try {
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答
             StringBuilder system = new StringBuilder(resolveSystemPrompt(agent))
@@ -2240,6 +2241,9 @@ public class RagService {
                     new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), userImgs,
                     startTime, question, thinkingHolder, degradations, degradedCodes, null);
             st.docMetaCache = documentMetaCache;
+            // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
+            // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
+            st.model = resolvedModel;
             st.contextTokens = 0;
             st.budgetTokens = 0;
             st.contextHits = 0;
