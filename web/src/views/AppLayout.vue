@@ -33,10 +33,6 @@
             <database-outlined />
             <span v-if="!collapsed">知识库</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/documents') }" @click="router.push('/documents')" title="文档管理">
-            <folder-outlined />
-            <span v-if="!collapsed">文档管理</span>
-          </button>
           <button class="nav-item" :class="{ active: isActive('/members') }" @click="router.push('/members')" title="成员管理">
             <team-outlined />
             <span v-if="!collapsed">成员管理</span>

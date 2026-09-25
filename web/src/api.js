@@ -217,7 +217,7 @@ export const clearAllSessionsApi = () => request('/sessions', { method: 'DELETE'
 export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 
 /** 文档列表 */
-export const listDocuments = () => request('/document/list')
+export const listDocuments = kbId => request('/document/list' + (kbId ? '?kbId=' + encodeURIComponent(kbId) : ''))
 
 // ==================== 知识库（检索作用域） ====================
 /** 知识库列表（含每个库的文档数） */
@@ -294,18 +294,20 @@ export const updateApiKeyShare = (id, shareConfig) =>
   request(`/api-key/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 
 /** 上传文档（onProgress 接收 0-100 百分比） */
-export function uploadDocument(file, description, onProgress) {
+export function uploadDocument(file, description, onProgress, kbId) {
   const fd = new FormData()
   fd.append('file', file)
   if (description) fd.append('description', description)
+  if (kbId) fd.append('kbId', kbId)
   return upload('/document/upload', fd, onProgress)
 }
 
 /** 批量上传（onProgress 接收 0-100 百分比；description 可选，应用到所有文件） */
-export function uploadDocumentsBatch(files, onProgress, description) {
+export function uploadDocumentsBatch(files, onProgress, description, kbId) {
   const fd = new FormData()
   files.forEach(f => fd.append('file', f))
   if (description) fd.append('description', description)
+  if (kbId) fd.append('kbId', kbId)
   return upload('/document/upload/batch', fd, onProgress)
 }
 

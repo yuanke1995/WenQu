@@ -8,32 +8,33 @@
       </button>
     </div>
 
-    <div class="app-card">
-      <a-table :columns="cols" :data-source="list" :loading="loading" row-key="id"
-               :pagination="false" size="small">
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'name'">
-            <span class="kb-name">{{ record.name }}</span>
-            <a-tag v-if="record.isDefault === 1" color="blue" style="margin-left:6px">默认</a-tag>
-          </template>
-          <template v-else-if="column.key === 'embeddingRef'">
-            <span v-if="record.embeddingRef">{{ modelRefInfo(record.embeddingRef)?.displayName || record.embeddingRef }}</span>
-            <span v-else style="color:var(--app-text3)">跟随全局</span>
-          </template>
-          <template v-else-if="column.key === 'docCount'">
-            <span :class="{ 'kb-zero': !record.docCount }">{{ record.docCount }} 个文档</span>
-          </template>
-          <template v-else-if="column.key === 'queryParams'">
-            <span v-if="record.queryParams" class="kb-params" :title="record.queryParams">已自定义</span>
-            <span v-else class="kb-dim">继承全局</span>
-          </template>
-          <template v-else-if="column.key === 'action'">
-            <button class="app-link-btn" @click="openEdit(record)">编辑</button>
-            <button class="app-link-btn danger" :disabled="record.isDefault === 1" @click="onDelete(record)">删除</button>
-          </template>
-        </template>
-      </a-table>
-    </div>
+    <a-spin :spinning="loading">
+      <div class="kb-cards">
+        <div v-for="kb in list" :key="kb.id" class="app-card kb-card" @click="openDocs(kb)">
+          <div class="kb-card-head">
+            <database-outlined class="kb-card-ic" />
+            <span class="kb-name">{{ kb.name }}</span>
+            <a-tag v-if="kb.isDefault === 1" color="blue" style="margin-left:auto">默认</a-tag>
+          </div>
+          <p class="kb-card-desc" :title="kb.description || ''">{{ kb.description || '暂无描述' }}</p>
+          <div class="kb-card-meta">
+            <span :class="{ 'kb-zero': !kb.docCount }">{{ kb.docCount }} 个文档</span>
+            <span class="kb-meta-sep">·</span>
+            <span v-if="kb.embeddingRef" :title="kb.embeddingRef">{{ modelRefInfo(kb.embeddingRef)?.displayName || '自定义向量模型' }}</span>
+            <span v-else>跟随全局向量</span>
+            <span class="kb-meta-sep">·</span>
+            <span v-if="kb.queryParams" class="kb-params" :title="kb.queryParams">检索参数已自定义</span>
+            <span v-else class="kb-dim">继承全局检索</span>
+          </div>
+          <div class="kb-card-actions" @click.stop>
+            <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
+            <button class="app-link-btn danger" :disabled="kb.isDefault === 1" @click="onDelete(kb)">删除</button>
+            <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
+          </div>
+        </div>
+        <div v-if="!loading && !list.length" class="kb-empty">还没有知识库，点右上角「新建知识库」创建</div>
+      </div>
+    </a-spin>
 
     <a-modal v-model:open="showEdit" :title="editing ? '编辑知识库' : '新建知识库'"
              :confirm-loading="saving" @ok="save">
@@ -66,10 +67,14 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined } from '@ant-design/icons-vue'
+import { useRouter } from 'vue-router'
+import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
+
+const router = useRouter()
+const openDocs = kb => router.push(`/knowledge/${kb.id}/docs`)
 
 const list = ref([])
 const loading = ref(false)
@@ -77,15 +82,6 @@ const saving = ref(false)
 const showEdit = ref(false)
 const editing = ref(null)
 const form = ref(blank())
-
-const cols = [
-  { title: '名称', key: 'name', dataIndex: 'name' },
-  { title: '描述', key: 'description', dataIndex: 'description', ellipsis: true },
-  { title: '文档', key: 'docCount', dataIndex: 'docCount', width: 110 },
-  { title: '检索参数', key: 'queryParams', width: 110 },
-  { title: '向量模型', key: 'embeddingRef', width: 130 },
-  { title: '操作', key: 'action', width: 120 }
-]
 
 function blank () {
   return { name: '', description: '', queryParams: '', embeddingRef: '', isDefault: false }
@@ -172,9 +168,25 @@ onMounted(load)
 
 <style scoped>
 .kb-page { padding: 4px 2px; }
-.kb-name { font-weight: 500; }
-.kb-dim { color: var(--app-text3); font-size: 12px; }
-.kb-params { color: var(--app-ok); font-size: 12px; }
+.kb-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px; align-items: stretch;
+}
+.kb-card { cursor: pointer; display: flex; flex-direction: column; gap: 8px; transition: border-color .15s, box-shadow .15s; }
+.kb-card:hover { border-color: var(--app-accent); box-shadow: 0 4px 16px -6px rgba(46, 107, 230, .25); }
+.kb-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.kb-card-ic { color: var(--app-accent); font-size: 16px; flex: none; }
+.kb-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-card-desc {
+  margin: 0; font-size: 12px; color: var(--app-text3); line-height: 1.6; min-height: 38px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.kb-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--app-text2); }
+.kb-meta-sep { color: var(--app-text3); }
+.kb-card-actions { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--app-border); padding-top: 8px; margin-top: auto; }
+.kb-dim { color: var(--app-text3); font-size: 11px; }
+.kb-params { color: var(--app-ok); font-size: 11px; }
 .kb-zero { color: var(--app-text3); }
+.kb-empty { grid-column: 1 / -1; text-align: center; color: var(--app-text3); font-size: 12px; padding: 40px 0; }
 .kb-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 4px; }
 </style>

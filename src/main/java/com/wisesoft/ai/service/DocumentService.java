@@ -209,7 +209,7 @@ public class DocumentService {
     /**
      * 上传文档：校验格式 → 同名替换 → 源文件落盘 → 建记录(解析中) → 异步解析
      */
-    public AiDocument upload(MultipartFile file, String description) throws Exception {
+    public AiDocument upload(MultipartFile file, String description, String kbId) throws Exception {
         String fileName = file.getOriginalFilename();
         if (fileName == null || fileName.isBlank()) {
             throw new BizException("文件名为空");
@@ -226,10 +226,18 @@ public class DocumentService {
 
         // 同名串行：并发上传同一文件名时，避免双方都判定"无可复用"而各建一条文档（本实例内互斥；
         // 跨实例仍靠 tryLockParsing 的 CAS 兜底，最坏情况产生一条重复记录，可手动删除）
+        // 目标知识库校验（kbId 空 = 归入默认库）：不存在/已删除拒绝，避免上传进黑洞
+        String targetKbId = kbId == null || kbId.isBlank() ? null : kbId.trim();
+        if (targetKbId != null) {
+            com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(targetKbId);
+            if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
+                throw new BizException("目标知识库不存在或已删除");
+            }
+        }
         Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
         try {
             synchronized (lock) {
-                return doUpload(file, fileName, ext, description, parser);
+                return doUpload(file, fileName, ext, description, parser, targetKbId);
             }
         } finally {
             uploadLocks.remove(fileName, lock);
@@ -238,12 +246,23 @@ public class DocumentService {
 
     /** 上传主体（已按文件名串行）：优先复用同名文档走 diff，否则新建 */
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
-                                DocumentParser parser) throws Exception {
+                                DocumentParser parser, String targetKbId) throws Exception {
         // 同名文档优先复用其 docId 走 diff 重解析（upsert 语义：文档身份/knowledgeId 稳定，未变块增量复用、只重嵌变更处）；
         // 无可复用（无同名，或同名均解析中已清理）时走全新上传
         AiDocument reusable = reusableTarget(fileName);
         if (reusable != null) {
-            return replaceExisting(reusable, file, description, parser);
+            AiDocument doc = replaceExisting(reusable, file, description, parser);
+            // 同名复用是 upsert 语义：文档身份不变；目标库与现归属不同时移动归属（向量模型不同会异步迁移向量）
+            if (targetKbId != null && !targetKbId.equals(doc.getKbId())) {
+                String fromKbId = doc.getKbId();
+                documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getId, doc.getId())
+                        .set(AiDocument::getKbId, targetKbId)
+                        .set(AiDocument::getUpdateTime, java.time.LocalDateTime.now()));
+                doc.setKbId(targetKbId);
+                migrateDocAsync(doc.getId(), fromKbId, targetKbId);
+            }
+            return doc;
         }
 
         // 全新上传：源文件落盘（异步解析需要；重解析复用）
@@ -253,6 +272,7 @@ public class DocumentService {
         doc.setFileSize(file.getSize());
         doc.setStatus(2); // 解析中
         doc.setDescription(description);
+        doc.setKbId(targetKbId);
         doc.setCreatedBy(RequestUser.uid());
         documentMapper.insert(doc);
         documentMetaCache.invalidate(doc.getId());
@@ -1080,9 +1100,36 @@ public class DocumentService {
      * 文档列表
      */
     public List<AiDocument> list() {
+        return list(null);
+    }
+
+    /**
+     * 按知识库过滤的文档列表（KB 卡片点进后的文档管理页用）。
+     * 默认库语义与检索侧一致：kb_id = kbId，且 kbId 为默认库时并上 kb_id IS NULL 的历史文档。
+     * kbId 空 = 不过滤（全部文档）。
+     */
+    public List<AiDocument> list(String kbId) {
         LambdaQueryWrapper<AiDocument> wrapper = new LambdaQueryWrapper<>();
+        if (kbId != null && !kbId.isBlank()) {
+            wrapper.and(w -> {
+                w.eq(AiDocument::getKbId, kbId);
+                if (kbId.equals(defaultKbIdOf())) {
+                    w.or().isNull(AiDocument::getKbId);
+                }
+            });
+        }
         wrapper.orderByDesc(AiDocument::getCreateTime);
         return documentMapper.selectList(wrapper);
+    }
+
+    /** 默认知识库 ID（is_default=1 且未删除；查不到返回 null） */
+    private String defaultKbIdOf() {
+        com.wisesoft.ai.model.KnowledgeBase def = kbMapper.selectOne(
+                new LambdaQueryWrapper<com.wisesoft.ai.model.KnowledgeBase>()
+                        .eq(com.wisesoft.ai.model.KnowledgeBase::getIsDefault, 1)
+                        .eq(com.wisesoft.ai.model.KnowledgeBase::getDeleted, 0)
+                        .last("LIMIT 1"));
+        return def == null ? null : def.getId();
     }
 
     /**

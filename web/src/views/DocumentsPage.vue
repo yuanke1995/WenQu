@@ -1,7 +1,10 @@
 <template>
   <div class="app-page" @dragover.prevent @dragenter.prevent="dragDepth++" @dragleave.prevent="dragDepth = Math.max(0, dragDepth - 1)" @drop.prevent="onDrop">
     <div class="app-page-head">
-      <h3 class="app-page-title">文档管理</h3>
+      <a-breadcrumb>
+        <a-breadcrumb-item><a @click="router.push('/knowledge')">知识库</a></a-breadcrumb-item>
+        <a-breadcrumb-item>{{ currentKbName }}</a-breadcrumb-item>
+      </a-breadcrumb>
       <span class="head-stat">{{ summaryText }}</span>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
@@ -311,6 +314,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { UploadOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
@@ -344,6 +348,15 @@ const typeColor = t => {
   return map[(t || '').toLowerCase()] || { bg: '#f1f3f5', fg: '#5f6570' }
 }
 
+const route = useRoute()
+const router = useRouter()
+/** 当前所在知识库（路由参数）：列表/上传都限定在该库 */
+const currentKbId = computed(() => String(route.params.kbId || ''))
+const currentKbName = computed(() => {
+  const k = kbases.value.find(x => x.id === currentKbId.value)
+  return k ? k.name : '知识库'
+})
+
 const list = ref([])
 const loading = ref(false)
 const uploading = ref(false)
@@ -371,6 +384,7 @@ const toggleSelect = (id, e) => {
 }
 
 onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); window.addEventListener('paste', onPaste) })
+watch(currentKbId, () => { fetchList() })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('paste', onPaste)
@@ -405,7 +419,7 @@ const onMoveKb = async (d, v) => {
 async function fetchList () {
   loading.value = true
   try {
-    const [r, stats] = await Promise.all([listDocuments(), getDocumentStats()])
+    const [r, stats] = await Promise.all([listDocuments(route.params.kbId), getDocumentStats()])
     if (r.success) {
       const hitMap = (stats && stats.success && stats.data) ? stats.data : {}
       list.value = (r.data || []).map(d => ({ ...d, hitCount: hitMap[d.id] || 0 }))
@@ -444,7 +458,7 @@ async function beforeUpload (fileList) {
   uploading.value = true
   uploadPercent.value = 0
   try {
-    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc.value?.trim() || undefined)
+    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc.value?.trim() || undefined, route.params.kbId)
     if (r.success) {
       const failed = (r.data || []).filter(x => !x.success)
       if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)

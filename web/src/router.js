@@ -24,8 +24,12 @@ const router = createRouter({
     { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
     { path: '/agents', component: AppLayout, children: [{ path: '', component: Agents }], meta: { requiresAdmin: true, title: '智能体' } },
     { path: '/providers', component: AppLayout, children: [{ path: '', component: Providers }], meta: { requiresAdmin: true, title: '模型供应商' } },
-    { path: '/knowledge', component: AppLayout, children: [{ path: '', component: KnowledgeBase }], meta: { requiresAdmin: true, title: '知识库' } },
-    { path: '/documents', component: AppLayout, children: [{ path: '', component: Documents }], meta: { requiresAdmin: true, title: '文档管理' } },
+    { path: '/knowledge', component: AppLayout, children: [
+      { path: '', component: KnowledgeBase },
+      { path: ':kbId/docs', component: Documents, meta: { title: '文档管理' } }
+    ], meta: { requiresAdmin: true, title: '知识库' } },
+    // 文档管理并入知识库（卡片点进）；旧入口重定向
+    { path: '/documents', redirect: '/knowledge' },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },
     { path: '/dashboard', component: AppLayout, children: [{ path: '', component: Dashboard }], meta: { requiresAdmin: true, title: '数据看板' } },
     { path: '/settings', component: AppLayout, children: [{ path: '', component: Settings }], meta: { requiresAdmin: true, title: '系统设置' } },
