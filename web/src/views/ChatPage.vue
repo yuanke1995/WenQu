@@ -220,8 +220,11 @@
               <a-tooltip title="上传图片（最多 5 张）">
                 <button class="app-icon-btn" @click="pickImages"><picture-outlined /></button>
               </a-tooltip>
-              <a-tooltip :title="deepThinkOn ? '深度思考：已开启' : '深度思考：已关闭'">
-                <button class="app-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }" @click="toggleDeepThink"><bulb-outlined /></button>
+              <a-tooltip v-if="thinkCap.visible"
+                         :title="thinkCap.locked ? '该模型始终深度思考' : (deepThinkOn ? '深度思考：已开启' : '深度思考：已关闭')">
+                <button class="app-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }"
+                        :style="thinkCap.locked ? 'opacity:.55;cursor:default' : ''"
+                        :disabled="thinkCap.locked" @click="toggleDeepThink"><bulb-outlined /></button>
               </a-tooltip>
             </div>
             <div class="toolbar-right">
@@ -413,11 +416,35 @@ const toolSearchQueries = m => {
 
 const text = ref('')
 const textareaRef = ref(null)
-const deepThinkOn = ref(localStorage.getItem('ai_deep_think') === '1')
+/** 深度思考按生效模型的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
+ *  模型不在模型库（遗留裸名）按可开关处理。开关记忆按模型分开存（ai_deep_think: {ref:0|1}，
+ *  旧版单个 '1'/'0' 迁移为所有模型的初始默认）。 */
+const THINK_CAPS = {
+  none: { visible: false, locked: false, on: false },
+  switchable: { visible: true, locked: false, on: null }, // on=null → 读按模型记忆
+  always: { visible: true, locked: true, on: true }
+}
+const effectiveThinking = computed(() => modelIndex.value[effectiveModel.value]?.thinking || 'switchable')
+const thinkCap = computed(() => THINK_CAPS[effectiveThinking.value] || THINK_CAPS.switchable)
+const deepThinkDefaults = (() => {
+  try {
+    const raw = localStorage.getItem('ai_deep_think')
+    if (raw === '1' || raw === '0') return { __default: raw === '1' } // 旧版全局开关 → 迁移为默认值
+    const parsed = raw ? JSON.parse(raw) : {}
+    return typeof parsed === 'object' && parsed ? parsed : {}
+  } catch (e) { return {} }
+})()
+const deepThinkMap = ref({ ...deepThinkDefaults })
+const deepThinkOn = computed(() => {
+  if (thinkCap.value.locked) return true
+  const explicit = deepThinkMap.value[effectiveModel.value]
+  if (explicit !== undefined) return explicit === 1
+  return deepThinkMap.value.__default === true
+})
 const toggleDeepThink = () => {
-  if (loading.value) return
-  deepThinkOn.value = !deepThinkOn.value
-  localStorage.setItem('ai_deep_think', deepThinkOn.value ? '1' : '0')
+  if (loading.value || thinkCap.value.locked || !thinkCap.value.visible) return
+  deepThinkMap.value = { ...deepThinkMap.value, [effectiveModel.value]: deepThinkOn.value ? 0 : 1 }
+  try { localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value)) } catch (e) { /* 存储不可用忽略 */ }
 }
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length))
 

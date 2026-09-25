@@ -35,6 +35,9 @@ public class QaLog {
     /** 是否有引用标注 */
     private Integer hasCitation;
 
+    /** 深度思考是否生效（1=是 0=否；按生效模型的思考能力归一后的结果） */
+    private Integer deepThink;
+
     /** 回答耗时(ms) */
     private Integer elapsedMs;
 

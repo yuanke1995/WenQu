@@ -255,6 +255,7 @@ public class RagService {
     private final SubAgentOrchestrator subAgentOrchestrator;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
+    private final ModelRegistryService modelRegistryService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -320,7 +321,8 @@ public class RagService {
                       AgentService agentService,
                       McpClientService mcpClientService,
                       KnowledgeBaseService knowledgeBaseService,
-                      com.wisesoft.ai.mapper.UserMapper userMapper) {
+                      com.wisesoft.ai.mapper.UserMapper userMapper,
+                      ModelRegistryService modelRegistryService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -345,6 +347,7 @@ public class RagService {
         this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
+        this.modelRegistryService = modelRegistryService;
     }
 
     /**
@@ -413,11 +416,22 @@ public class RagService {
         final String userRerankRef = prefUser == null || prefUser.getDefaultRerankModel() == null
                 ? "" : prefUser.getDefaultRerankModel();
         if (resolvedModel.isBlank()) {
-            log.warn("[FAIL-LOUD] 未配置任何模型（会话/智能体/个人默认均未指定）: session={}", sessionId);
+            log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
             sendSseEvent(emitter, "error",
-                    "未指定模型：请在对话右上角选择模型，或在个人设置/智能体中配置默认模型", sessionId);
+                    "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型", sessionId);
             completeEmitter(emitter);
             return;
+        }
+        // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
+        final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
+        final boolean useDeepThink;
+        if (ModelRegistryService.THINK_NONE.equals(modelThinking)) {
+            if (deepThink) log.info("[THINK] 模型 {} 不支持思考，深度思考已忽略", resolvedModel);
+            useDeepThink = false;
+        } else if (ModelRegistryService.THINK_ALWAYS.equals(modelThinking)) {
+            useDeepThink = true;
+        } else {
+            useDeepThink = deepThink;
         }
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
@@ -478,7 +492,7 @@ public class RagService {
             String thinkingInject = "";
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
-            if (deepThink && configService.getBoolean("deepReasoning.enabled")) {
+            if (useDeepThink && configService.getBoolean("deepReasoning.enabled")) {
                 DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, emitter, resolvedModel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
@@ -526,7 +540,7 @@ public class RagService {
             if (hits == null) {
                 sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                 // 深度思考失败但产生了思考内容：用"原问题 + 思考词元"检索，思考不算白费（比纯普通检索召回更好）
-                if (deepThink && !thinkTerms.isEmpty()) {
+                if (useDeepThink && !thinkTerms.isEmpty()) {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes, userRerankRef);
@@ -892,7 +906,8 @@ public class RagService {
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
             st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
-            st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 智能体 > 个人默认）
+            st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
+            st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1316,7 +1331,8 @@ public class RagService {
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
                     qaLogService.logAsync(st.sessionId, st.question, answer, hitDocIds,
                             !st.sources.isEmpty(), System.currentTimeMillis() - st.startTime,
-                            st.queryForLog, st.stageMs.isEmpty() ? null : JSON.toJSONString(st.stageMs));
+                            st.queryForLog, st.stageMs.isEmpty() ? null : JSON.toJSONString(st.stageMs),
+                            st.deepThink);
 
                     // done 事件：引用来源/相关推荐/消息ID + 校验修正后的内容/图片 + 思考全文 + 本轮全部降级事件（fail-loud）
                     Map<String, Object> donePayload = new LinkedHashMap<>();
@@ -1398,6 +1414,8 @@ public class RagService {
         volatile Map<String, String> docFileNames;
         /** 本轮生效模型（会话覆盖 > 智能体 > 个人默认 > 全局；主链路解析后回填，生成流按此发送） */
         volatile String model;
+        /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
+        volatile boolean deepThink;
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。

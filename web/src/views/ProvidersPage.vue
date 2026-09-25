@@ -144,6 +144,10 @@
             <a-select v-model:value="record.modelType" size="small" :options="typeOptions" style="width:100px"
                       @change="clearTestState(record)" />
           </template>
+          <template v-else-if="column.key === 'thinking'">
+            <a-select v-model:value="record.thinking" size="small" :options="thinkingOptions"
+                      style="width:100%" :disabled="record.modelType !== 'chat'" />
+          </template>
           <template v-else-if="column.key === 'enabled'">
             <a-switch v-model:checked="record.enabled" size="small" />
           </template>
@@ -429,10 +433,19 @@ let rowSeq = 0
 
 const modelCols = [
   { title: '模型名', key: 'modelId' },
-  { title: '展示名', key: 'displayName', width: 140 },
-  { title: '类型', key: 'modelType', width: 100 },
-  { title: '启用', key: 'enabled', width: 60 },
-  { title: '操作', key: 'action', width: 150 }
+  { title: '展示名', key: 'displayName', width: 120 },
+  { title: '类型', key: 'modelType', width: 92 },
+  { title: '思考', key: 'thinking', width: 96 },
+  { title: '启用', key: 'enabled', width: 56 },
+  { title: '操作', key: 'action', width: 148 }
+]
+
+// 思考能力选项（auto=按模型名判定）；仅对聊天模型有意义，其他类型存了也不生效
+const thinkingOptions = [
+  { label: '自动', value: 'auto' },
+  { label: '不支持', value: 'none' },
+  { label: '可开关', value: 'switchable' },
+  { label: '恒思考', value: 'always' }
 ]
 
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */
@@ -504,7 +517,8 @@ const openModels = async p => {
     models.value = ((r && r.data) || []).map(m => ({
       rowKey: 'db-' + m.id, id: m.id,
       modelId: m.modelId, displayName: m.displayName || '',
-      modelType: m.modelType || 'chat', enabled: m.enabled !== false, isNew: false
+      modelType: m.modelType || 'chat', thinking: m.thinking || 'auto',
+      enabled: m.enabled !== false, isNew: false
     }))
   } catch (e) {
     message.error(e.message || '模型列表加载失败')
@@ -533,7 +547,7 @@ const onFetch = async () => {
 const addCandidate = c => {
   if (inModels(c.modelId)) return
   models.value.push({
-    rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '',
+    rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '', thinking: 'auto',
     modelType: c.guessedType, enabled: true, isNew: true
   })
 }
@@ -550,7 +564,7 @@ const importAllCandidates = () => {
 
 const addManualRow = () => {
   models.value.push({
-    rowKey: 'new-' + (++rowSeq), modelId: '', displayName: '',
+    rowKey: 'new-' + (++rowSeq), modelId: '', displayName: '', thinking: 'auto',
     modelType: 'chat', enabled: true, isNew: true
   })
 }
@@ -567,6 +581,7 @@ const saveModels = async () => {
       modelId: m.modelId.trim(),
       displayName: (m.displayName || '').trim() || null,
       modelType: m.modelType || 'chat',
+      thinking: m.modelType === 'chat' ? (m.thinking || 'auto') : 'auto',
       enabled: m.enabled !== false
     }))
   savingModels.value = true

@@ -14,7 +14,7 @@ export async function loadModelIndex(force = false) {
     const index = {}
     for (const g of groups || []) {
       for (const m of g.models || []) {
-        index[m.ref] = { displayName: m.displayName, providerName: g.name, icon: g.icon, type: m.type }
+        index[m.ref] = { displayName: m.displayName, providerName: g.name, icon: g.icon, type: m.type, thinking: m.thinking }
       }
     }
     cache = { ts: Date.now(), index }

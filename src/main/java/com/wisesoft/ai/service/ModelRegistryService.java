@@ -341,12 +341,62 @@ public class ModelRegistryService {
             m.put("modelId", mi.getModelId());
             m.put("displayName", mi.getDisplayName());
             m.put("modelType", mi.getModelType());
+            m.put("thinking", resolveThinking(mi));
             m.put("enabled", !Integer.valueOf(0).equals(mi.getEnabled()));
             m.put("remark", mi.getRemark());
             result.add(m);
         }
         result.sort(Comparator.comparing(m -> String.valueOf(m.get("modelId"))));
         return result;
+    }
+
+    /** 思考能力合法值：auto=按模型名判定（存储默认） none=不支持 switchable=可开关 always=恒思考 */
+    public static final String THINK_AUTO = "auto";
+    public static final String THINK_NONE = "none";
+    public static final String THINK_SWITCHABLE = "switchable";
+    public static final String THINK_ALWAYS = "always";
+    public static final List<String> THINKING_LEVELS =
+            List.of(THINK_AUTO, THINK_NONE, THINK_SWITCHABLE, THINK_ALWAYS);
+
+    /** 恒思考模型的名称特征（DeepSeek-R1 / QwQ / OpenAI o 系 / 带 thinking 字样） */
+    private static final List<String> ALWAYS_THINK_TOKENS = List.of("r1", "qwq", "thinking");
+    private static final List<String> ALWAYS_THINK_PREFIXES = List.of("o1", "o3", "o4");
+    /** 可开关思考模型的名称特征（qwen3 / glm-4+ / doubao-seed / deepseek-v3 / claude / gemini 等） */
+    private static final List<String> SWITCHABLE_THINK_TOKENS =
+            List.of("qwen3", "glm-4", "glm-5", "doubao-seed", "deepseek-v3", "claude", "gemini", "hybrid");
+
+    /**
+     * 按模型名启发式判定思考能力（仅 thinking=auto 档兜底；管理员在模型库可显式覆盖）：
+     * 命中恒思考特征 → always；命中可开关特征 → switchable；其余 → none。
+     */
+    public static String guessThinking(String modelId) {
+        String m = (modelId == null ? "" : modelId).toLowerCase();
+        for (String t : ALWAYS_THINK_TOKENS) if (m.contains(t)) return THINK_ALWAYS;
+        for (String p : ALWAYS_THINK_PREFIXES) if (m.startsWith(p)) return THINK_ALWAYS;
+        for (String t : SWITCHABLE_THINK_TOKENS) if (m.contains(t)) return THINK_SWITCHABLE;
+        return THINK_NONE;
+    }
+
+    /** 解析登记行的最终思考能力：auto → 按模型名启发式；空 → auto */
+    public static String resolveThinking(ModelInfo mi) {
+        String v = mi == null || mi.getThinking() == null || mi.getThinking().isBlank()
+                ? THINK_AUTO : mi.getThinking();
+        return THINK_AUTO.equals(v) ? guessThinking(mi.getModelId()) : v;
+    }
+
+    /**
+     * 按模型引用解析思考能力（问答入口归一 deepThink 用）：
+     * 引用 → 查模型库登记（auto/空 → 启发式）；引用无效或遗留裸名 → switchable（保持现状行为）。
+     */
+    public String referenceThinking(String modelValue) {
+        ModelRegistryService.ModelRoute r = resolveReference(modelValue);
+        if (r == null) return THINK_SWITCHABLE;
+        for (ModelInfo mi : models) {
+            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
+                return resolveThinking(mi);
+            }
+        }
+        return THINK_SWITCHABLE;
     }
 
     /**
@@ -371,6 +421,7 @@ public class ModelRegistryService {
                 m.put("displayName", mi.getDisplayName() == null || mi.getDisplayName().isBlank()
                         ? mi.getModelId() : mi.getDisplayName());
                 m.put("type", mi.getModelType());
+                m.put("thinking", resolveThinking(mi));
                 ms.add(m);
             }
             if (ms.isEmpty()) continue;
@@ -495,6 +546,8 @@ public class ModelRegistryService {
             mi.setModelId(modelId.trim());
             mi.setDisplayName(str(item.get("displayName")));
             mi.setModelType(type);
+            String thinking = str(item.get("thinking"));
+            mi.setThinking(THINKING_LEVELS.contains(thinking) ? thinking : "auto");
             Object en = item.get("enabled");
             mi.setEnabled(en == null || Boolean.parseBoolean(String.valueOf(en)) ? 1 : 0);
             mi.setRemark(str(item.get("remark")));
