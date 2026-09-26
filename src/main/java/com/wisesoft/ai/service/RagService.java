@@ -393,10 +393,17 @@ public class RagService {
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
+                // 流水线线程**没有请求上下文**：检索的文档可见性过滤（HybridRetrievalService
+                // .loadNonVisibleDocIds 读 RequestUser）会拿到 anonymous ⇒ 配了共享范围（department/user）
+                // 的文档被判为不可见并被过滤，表现就是"共享给我的资料，我在问答里检索不到"。
+                // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
+                // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
+                boolean identity = loadIdentity(userId);
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, useDeepThink,
                             agentId, modelOverride, userId, emitter);
                 } finally {
+                    if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
                     configService.clearOverride();
@@ -1749,6 +1756,36 @@ public class RagService {
     }
 
     /** 个人偏好用户行（含三类个人默认模型）；匿名/未登录/查询失败返回 null（全部走空语义） */
+    /**
+     * 在流水线线程内装载本轮用户身份（uid / 部门 / 角色），供检索的文档可见性过滤按**真实用户**判定。
+     * <p>背景：问答流水线跑在独立线程池、没有请求上下文，而 {@code HybridRetrievalService.loadNonVisibleDocIds()}
+     * 是从 {@code RequestUser} 取身份的 ⇒ 只会拿到 anonymous。其后果是：配了共享范围
+     * （{@code access_level=department/user}）的文档，对**包括被授权者在内**的所有人都判为不可见并被过滤——
+     * 也就是"共享给我、或我自己限定范围的资料，在问答里检索不到"。
+     * <p>身份从用户档案读，与调用线程无关：网页问答（Tomcat 线程）与定时任务（池线程，uid 由参数传入）
+     * 走同一来源；代价是每轮多一次用户表主键查询（与 runChat 内取个人偏好那次同表主键查询同一量级）。
+     *
+     * @return 是否已装载（未装载时调用方不需要清理）
+     */
+    private boolean loadIdentity(String userId) {
+        if (userId == null || userId.isBlank()
+                || com.wisesoft.ai.util.RequestUser.ANONYMOUS.equals(userId)) {
+            // 匿名池（历史兼容会话）：保持 anonymous 语义，不做任何提升
+            return false;
+        }
+        try {
+            com.wisesoft.ai.model.User u = userMapper.selectById(userId);
+            if (u == null) return false;
+            com.wisesoft.ai.util.RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
+            return true;
+        } catch (Exception e) {
+            // 装载失败按匿名继续（不打断问答），但必须留痕：否则又变成"共享资料检索不到"且无迹可查
+            log.warn("[FAIL-LOUD] 流水线线程装载用户身份失败（本轮检索可见性按匿名判定）uid={}: {}",
+                    userId, e.getMessage());
+            return false;
+        }
+    }
+
     private com.wisesoft.ai.model.User loadPrefUser(String userId) {
         if (userId == null || userId.isBlank() || com.wisesoft.ai.util.RequestUser.ANONYMOUS.equals(userId)) {
             return null;
