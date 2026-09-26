@@ -88,6 +88,45 @@ public class VisionService {
                     refOverride == null || refOverride.isBlank() ? "未绑定/未设置个人默认" : "引用无效");
             return "";
         }
+        return callWithCache(imageBytes, ext, prompt, route, false);
+    }
+
+    /**
+     * OCR 专用严格通道（扫描件 PDF 用）：与 {@link #describe} 的"失败返回空串降级"不同，
+     * 本方法 <b>fail-loud 不降级</b>——
+     * <ul>
+     *   <li>总开关关闭 / 当前线程未设置解析期视觉模型 / 引用无效 → 抛 IllegalStateException
+     *       （扫描件没有模型就识别不出内容，解析必须失败并告知原因）；</li>
+     *   <li>调用失败（重试后仍异常）→ 抛 IllegalStateException（丢页 = 内容静默残缺，不可接受）；</li>
+     *   <li>返回 "" 仅表示模型正常响应但判定页上没有文字（空白页/封面图，合法）。</li>
+     * </ul>
+     */
+    public String describeOcr(byte[] imageBytes, String ext, String prompt) {
+        if (imageBytes == null || imageBytes.length == 0) return "";
+        String cfgEnabled = configService.get("vision.enabled");
+        boolean enabled = cfgEnabled == null ? properties.getVision().isEnabled() : Boolean.parseBoolean(cfgEnabled.trim());
+        if (!enabled) {
+            throw new IllegalStateException("视觉模型总开关已关闭（vision.enabled=false），扫描件无法 OCR；请在系统设置开启或为该库更换非扫描文档");
+        }
+        ModelRegistryService.ModelRoute route = routeFor(PARSE_REF.get());
+        if (route == null) {
+            throw new IllegalStateException("所属知识库未绑定图片描述模型（知识库编辑 → 解析参数 → 图片描述模型），扫描件无法 OCR");
+        }
+        return callWithCache(imageBytes, ext, prompt, route, true);
+    }
+
+    /** 当前线程是否设置了可解析的解析期视觉模型（扫描件 OCR 的前置检查，未就绪直接失败避免白渲染） */
+    public boolean parseVisionAvailable() {
+        String ref = PARSE_REF.get();
+        return ref != null && !ref.isBlank() && modelRegistryService.resolveReference(ref.trim()) != null;
+    }
+
+    /**
+     * 视觉调用核心（缓存 + 重试）：strict=false 时失败/空返回 ""（宽松降级，图片描述用）；
+     * strict=true 时调用失败抛 IllegalStateException（OCR 用），返回 "" 仅代表模型确认页上无文字。
+     */
+    private String callWithCache(byte[] imageBytes, String ext, String prompt,
+                                 ModelRegistryService.ModelRoute route, boolean strict) {
         String model = route.modelId();
         String cacheKey = imageDescCache.key(imageBytes, prompt, model);
         if (cacheKey != null) {
@@ -116,6 +155,10 @@ public class VisionService {
             }
         }
         if (result.isBlank()) {
+            if (strict && lastErr != null) {
+                throw new IllegalStateException("视觉模型调用失败（重试 " + retry + " 次后仍失败）: "
+                        + (lastErr.getMessage() == null ? lastErr.getClass().getSimpleName() : lastErr.getMessage()), lastErr);
+            }
             log.warn("图片描述最终失败: {}", lastErr == null ? "空响应" : lastErr.getMessage());
         } else if (cacheKey != null) {
             imageDescCache.put(cacheKey, result, model);

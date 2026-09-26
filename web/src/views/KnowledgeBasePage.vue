@@ -104,7 +104,10 @@
             <ModelSelect v-model="form.p.visionRef" type="vision" width="100%" inherit-label="不描述图片" />
           </a-form-item>
         </div>
-        <div class="kb-hint" style="margin:4px 0 0">改解析参数后需重新解析文档才会生效（不自动重解析全库）。</div>
+        <div class="kb-hint" style="margin:4px 0 0">
+          改解析参数后需重新解析文档才会生效（不自动重解析全库）；扫描件/图片型 PDF 的 OCR 依赖「图片描述模型」——
+          <span class="kb-warn">未绑定时该类文档会解析失败</span>（不产出残缺内容）。
+        </div>
 
         <a-form-item label="设为默认库" style="margin-top:12px">
           <a-switch v-model:checked="form.isDefault" />
