@@ -8,7 +8,6 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -59,15 +58,13 @@ public class PresentArtifactTool {
             return "无法定位当前会话，产物交付失败";
         }
         try {
-            String url = artifactService.write(sessionId, filename, content);
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("url", url);
-            payload.put("filename", filename == null ? "" : filename);
-            payload.put("description", description == null ? "" : description);
-            // 实时推送给前端（客户端断开则静默忽略，不影响工具返回值）
-            artifactService.publish(sessionId, "artifact", JSON.toJSONString(payload));
+            // 落盘 + 登记 c_ai_artifact（归属取会话的 user_id），返回 {id,url,filename,ext,size,description}
+            java.util.Map<String, Object> info =
+                    artifactService.write(sessionId, filename, content, description);
+            // 实时推送给前端（客户端断开则静默忽略，不影响工具返回值）；payload 即产物卡片所需字段
+            artifactService.publish(sessionId, "artifact", JSON.toJSONString(info));
             return "已生成产物：" + (description == null ? "" : description)
-                    + " 访问地址：" + url;
+                    + " 访问地址：" + info.get("url");
         } catch (IllegalArgumentException | IllegalStateException e) {
             return "产物生成失败：" + e.getMessage();
         }

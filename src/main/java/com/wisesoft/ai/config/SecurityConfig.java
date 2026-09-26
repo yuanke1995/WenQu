@@ -98,6 +98,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 知识库对他人封顶只读）。这里按端点精确放行；不匹配的（如 /agent/{id}/default 设默认、
         // /document/stats 命中统计、/knowledge/list 知识块批量）仍走管理员判定，fail-closed。
         if (isKbOrDocEndpoint(method, path) || isAgentSelfEndpoint(method, path)) return true;
+        // 产物交付（我的产物）：普通用户可看/删**自己的**产物（ArtifactController 内按 uid 归属校验，
+        // 管理员可越权）；文件下载走 /artifacts/** 签名地址，不经过本拦截器。
+        if (path.equals("/api/ai/artifact") || path.startsWith("/api/ai/artifact/")) return true;
         // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
         if ("GET".equals(method)) {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);

@@ -1,5 +1,6 @@
 package com.wisesoft.ai.schedule;
 
+import com.wisesoft.ai.service.ArtifactService;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
@@ -46,6 +47,7 @@ public class ScheduleCenter {
     private final UserImageService userImageService;
     private final RetrievalEvaluationService evalService;
     private final SessionService sessionService;
+    private final ArtifactService artifactService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -56,12 +58,13 @@ public class ScheduleCenter {
 
     public ScheduleCenter(ConfigService configService, KeywordIndexService keywordIndexService,
                           UserImageService userImageService, RetrievalEvaluationService evalService,
-                          SessionService sessionService) {
+                          SessionService sessionService, ArtifactService artifactService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
         this.evalService = evalService;
         this.sessionService = sessionService;
+        this.artifactService = artifactService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -93,6 +96,18 @@ public class ScheduleCenter {
                 () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
                 () -> false,
                 () -> sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30)));
+        // 产物超期清理：删超期产物的文件与记录（保留期/间隔配置化；保留期 ≤0 = 不清理）。
+        // 产物按用户归属持久化，不清理就会随使用无限增长——与聊天图片清理同一口径。
+        register("产物超期清理",
+                () -> configService.getInt("artifact.cleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> {
+                    int days = configService.getInt("artifact.retentionDays", 90);
+                    int cleaned = artifactService.cleanupExpired(days);
+                    if (cleaned > 0) {
+                        log.info("[ARTIFACT] 超期产物已清理 {} 件（保留 {} 天）", cleaned, days);
+                    }
+                });
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

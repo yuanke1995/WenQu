@@ -106,7 +106,8 @@
         "自动体检（检索质量回归）",
         "聊天图片清理",
         "会话参数与清理",
-        "文档名缓存（多副本一致性）"
+        "文档名缓存（多副本一致性）",
+        "产物清理（模型生成的可下载文件）"
       ]
     }
   ],
@@ -1407,6 +1408,39 @@
       "note": "逗号分隔，精确匹配域名（不做后缀匹配，www 等子域需单列）；留空 = 关闭远程安装",
       "backendKey": "skill.remoteAllowedHosts",
       "tier": 2
+    },
+    {
+      "panel": "maintenance",
+      "section": 5,
+      "group": "artifact",
+      "key": "retentionDays",
+      "path": "artifact.retentionDays",
+      "label": "产物保留天数",
+      "type": "number",
+      "tips": "artifactRetention",
+      "def": 90,
+      "min": 0,
+      "step": 30,
+      "width": 200,
+      "note": "0=不清理；超期产物的文件与记录一起删除（按用户归属保存，故保留期即用户的取回窗口）",
+      "backendKey": "artifact.retentionDays",
+      "tier": 3
+    },
+    {
+      "panel": "maintenance",
+      "section": 5,
+      "group": "artifact",
+      "key": "cleanupIntervalMs",
+      "path": "artifact.cleanupIntervalMs",
+      "label": "清理任务间隔(ms)",
+      "type": "number",
+      "tips": "artifactCleanupInterval",
+      "def": 86400000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "backendKey": "artifact.cleanupIntervalMs",
+      "tier": 3
     }
   ],
   "tips": {
@@ -1533,7 +1567,9 @@
     "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
     "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
     "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。",
-    "skillRemoteAllowedHosts": "从 URL 安装技能时允许的来源域名（逗号分隔，**精确匹配 host**、不做后缀匹配——所以 www 这类子域要单独列出）。GitHub 必须用 raw 链接，故默认含 raw.githubusercontent.com。留空即关闭远程安装：个人仍能用内置技能与自己编写的技能，只是不能再从网上下载。"
+    "skillRemoteAllowedHosts": "从 URL 安装技能时允许的来源域名（逗号分隔，**精确匹配 host**、不做后缀匹配——所以 www 这类子域要单独列出）。GitHub 必须用 raw 链接，故默认含 raw.githubusercontent.com。留空即关闭远程安装：个人仍能用内置技能与自己编写的技能，只是不能再从网上下载。",
+    "artifactRetention": "模型生成的可下载文件（Markdown/CSV/JSON/HTML 产物）的保留天数：超期后文件与记录一起删除。产物按**用户**归属保存（会话被清理也不影响取回），所以保留期就是用户能回溯下载的时间窗口。0 = 永不自动清理。",
+    "artifactCleanupInterval": "产物超期清理任务的执行间隔（毫秒，≤0 = 暂停该任务）。默认 86400000（每天）扫一次。"
   },
   "corePaths": [
     "chat.temperature",
@@ -1621,6 +1657,8 @@
     "agent.autoRoute": "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）",
     "agent.routeTimeoutMs": "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）",
     "agent.autoDispatch": "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）",
-    "skill.remoteAllowedHosts": "技能（Skills）：远程安装来源域名白名单（逗号分隔，空=关闭远程安装）"
+    "skill.remoteAllowedHosts": "技能（Skills）：远程安装来源域名白名单（逗号分隔，空=关闭远程安装）",
+    "artifact.retentionDays": "产物保留天数（0=不清理）",
+    "artifact.cleanupIntervalMs": "产物超期清理任务间隔(ms，≤0=暂停)"
   }
 }

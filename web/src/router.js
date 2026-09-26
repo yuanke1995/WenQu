@@ -14,6 +14,7 @@ import Evaluation from './views/EvaluationPage.vue'
 import Members from './views/MembersPage.vue'
 import Permissions from './views/PermissionsPage.vue'
 import Profile from './views/ProfilePage.vue'
+import Artifacts from './views/ArtifactsPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -33,6 +34,7 @@ const router = createRouter({
     ], meta: { title: '知识库' } },
     // 文档管理并入知识库（卡片点进）；旧入口重定向
     { path: '/documents', redirect: '/knowledge' },
+    { path: '/artifacts', component: AppLayout, children: [{ path: '', component: Artifacts }], meta: { title: '我的产物' } },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },
     { path: '/permissions', component: AppLayout, children: [{ path: '', component: Permissions }], meta: { requiresAdmin: true, title: '权限管理' } },
     { path: '/dashboard', component: AppLayout, children: [{ path: '', component: Dashboard }], meta: { requiresAdmin: true, title: '数据看板' } },

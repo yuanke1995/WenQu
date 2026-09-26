@@ -308,6 +308,8 @@ public class ConfigService {
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
+        d.put("artifact.retentionDays", "90");                 // 产物保留天数（0=不清理）
+        d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
         d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)

@@ -453,3 +453,26 @@ CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
     `api_id`    VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
     PRIMARY KEY (`role_code`, `api_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定';
+
+-- ============================================
+-- 2026-09-26: 产物交付（present_artifacts）落库
+-- 模型在回答中生成的文件产物（md/txt/csv/json/html）按**用户**归属持久化，
+-- 供「我的产物」列表/下载/删除与超期清理；文件本体落在 {images.dir}/artifacts 下按
+-- {uid}/{yyyyMM}/{id}_{名称} 组织——id 前缀同时解决"同一会话同名产物互相覆盖"。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `session_id`  VARCHAR(64)  DEFAULT NULL COMMENT '产生该产物的会话（可空：会话清理后成果仍归人）',
+    `filename`    VARCHAR(120) NOT NULL COMMENT '产物文件名（已净化，含扩展名）',
+    `ext`         VARCHAR(10)  DEFAULT NULL COMMENT '扩展名（小写，无点）',
+    `size`        INT          DEFAULT 0 COMMENT '字节数',
+    `object_key`  VARCHAR(255) NOT NULL COMMENT '存储相对路径 artifacts/{uid}/{yyyyMM}/{id}_{name}',
+    `description` VARCHAR(255) DEFAULT NULL COMMENT '给用户的产物说明',
+    `deleted`     INT          DEFAULT 0 COMMENT '软删: 0=正常 1=已删除（文件同时删除）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_uid_time` (`uid`, `create_time`),
+    KEY `idx_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产物交付表（模型生成的可下载文件）';
