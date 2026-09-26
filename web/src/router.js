@@ -21,7 +21,9 @@ const router = createRouter({
     { path: '/login', component: Login, meta: { title: '登录' } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
     { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
-    { path: '/agents', component: AppLayout, children: [{ path: '', component: AgentsHub }], meta: { requiresAdmin: true, title: '智能体' } },
+    // 智能体工作台不再要求管理员：技能 Skills 与 MCP 是个人资产，所有人都要能进来管自己的；
+    // 其中的「模型供应商 / 智能体」Tab 在页内按管理员身份显隐（见 AgentsHubPage）
+    { path: '/agents', component: AppLayout, children: [{ path: '', component: AgentsHub }], meta: { title: '智能体' } },
     // 模型供应商并入智能体页 Tab（?tab=providers）；旧入口重定向
     { path: '/providers', redirect: { path: '/agents', query: { tab: 'providers' } } },
     { path: '/knowledge', component: AppLayout, children: [

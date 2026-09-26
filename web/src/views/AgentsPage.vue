@@ -261,10 +261,12 @@ const CAPS = [
     path: ['tool', 'builtin', 'enabled'], gate: ['tool', 'enabled'] },
   { key: 'toolArtifact', label: '产物交付', desc: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片', icon: FileDoneOutlined,
     kind: 'switch', path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
-  { key: 'toolSkill', label: '技能 Skills', desc: '注入技能清单，模型可按需读取技能全文', icon: AppstoreOutlined,
+  // 技能与 MCP 是**个人资产**（每人管自己的）：智能体这里选的是「名字」，
+  // 实际生效时会与当前问答用户自己的技能/MCP 求交集——别人没有同名资源则该项对他不生效。
+  { key: 'toolSkill', label: '技能 Skills', desc: '按技能名限定范围（技能归个人：只对装了同名技能的问答者生效）', icon: AppstoreOutlined,
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     path: ['skill', 'enabled'] },
-  { key: 'toolMcp', label: 'MCP 外部工具', desc: '连接外部 MCP Server，把它的工具交给模型', icon: ApiOutlined,
+  { key: 'toolMcp', label: 'MCP 外部工具', desc: '按服务名限定范围（MCP 归个人：只对登记了同名服务的问答者生效）', icon: ApiOutlined,
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     path: ['mcp', 'enabled'] }
 ]
@@ -478,8 +480,10 @@ const reload = async () => {
       cfg.value = cr.data
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
-    if (sr && sr.success && Array.isArray(sr.data)) {
-      skillOptions.value = sr.data.filter(s => !s.disabled).map(s => ({ value: s.name, label: s.name }))
+    // /skill/list 返回的是 { skills: [...] }（不是数组）——按数组判定会让「指定技能」永远没有可选项
+    if (sr && sr.success && sr.data) {
+      const list = Array.isArray(sr.data.skills) ? sr.data.skills : []
+      skillOptions.value = list.filter(s => !s.disabled).map(s => ({ value: s.name, label: s.name }))
     }
     if (mr && mr.success && mr.data) {
       mcpOptions.value = (mr.data.servers || []).map(s => ({

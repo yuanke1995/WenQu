@@ -20,11 +20,12 @@
           <message-outlined />
           <span v-if="!collapsed">对话</span>
         </button>
+        <!-- 「智能体」对所有人可见：页内的技能 Skills / MCP Tab 是个人资产，每人管自己的 -->
+        <button class="nav-item" :class="{ active: isActive('/agents') }" @click="router.push('/agents')" title="智能体">
+          <robot-outlined />
+          <span v-if="!collapsed">智能体</span>
+        </button>
         <template v-if="isAdmin">
-          <button class="nav-item" :class="{ active: isActive('/agents') }" @click="router.push('/agents')" title="智能体">
-            <robot-outlined />
-            <span v-if="!collapsed">智能体</span>
-          </button>
           <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
             <database-outlined />
             <span v-if="!collapsed">知识库</span>

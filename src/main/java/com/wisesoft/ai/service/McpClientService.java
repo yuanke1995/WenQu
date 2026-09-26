@@ -1,7 +1,8 @@
 package com.wisesoft.ai.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wisesoft.ai.mapper.UserMcpMapper;
+import com.wisesoft.ai.model.UserMcp;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
@@ -20,20 +21,20 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * MCP（Model Context Protocol）客户端管理：把用户在设置页配置的外部 MCP Server 的工具
- * 动态接入 Function Calling 链路（"工具生态层"——用户可自行添加外部工具，无需改代码）。
+ * MCP（Model Context Protocol）客户端管理：把用户登记的 MCP Server 的工具动态接入 Function Calling
+ * 链路（"工具生态层"——用户可自行添加外部工具，无需改代码）。
  * <p>
- * 配置来源（c_ai_config，设置页可改）：
- * - {@code mcp.enabled}：总开关（默认关）；
- * - {@code mcp.servers}：JSON 数组 {@code [{"name":"xx","url":"http://host:port/path","type":"streamable|sse"}]}。
+ * <b>归属：每人连自己的服务</b>。原形态是「管理员在系统设置里配一个全局 JSON 数组 + 全局总开关」，
+ * 现改为 {@code c_ai_user_mcp} 按 uid 登记，连接池也按 uid 分池——取工具时只 disasters 自己那份，
+ * 不会因为别人连了什么服务而影响自己。
  * <p>
  * 连接策略（容错优先，MCP 故障绝不影响问答主链路）：
- * - 服务启动后首次使用时按配置懒连接；单个 server 连接/初始化失败仅告警并跳过；
- * - 配置变更通过 {@link #reload()} 重建（旧连接 closeGracefully）；
- * - 连接结果缓存（成功/失败），失败带冷却：{@link #connectionStates()} 供管理接口/状态展示。
+ * - 首次取工具时按该用户的配置懒连接；单个 server 连接/初始化失败仅告警并跳过；
+ * - 该用户的配置发生变化（增删改/启停）由指纹比对自动重建连接（旧连接 closeGracefully）；
+ * - 某个用户长时间不用（{@link #IDLE_EVICT_MILLIS}）其连接池会被关闭回收，避免长连接无限堆积。
  * <p>
  * 工具暴露：每个成功连接的 server 的工具列表转 {@link SyncMcpToolCallback}（Spring AI ToolCallback），
- * 由 {@code RagService.enabledTools()} 合并进请求；工具名自动带 server 前缀防冲突（Spring AI 默认行为）。
+ * 由 {@code RagService.enabledToolCallbacks()} 合并进请求；工具名自动带 server 前缀防冲突（Spring AI 默认行为）。
  *
  * @author yuanke
  */
@@ -45,108 +46,120 @@ public class McpClientService {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     /** 工具调用请求超时（秒） */
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
-    /** 最多接入的 server 数（防误配超长数组拖垮启动/问答） */
+    /** 每个用户最多接入的 server 数（防误配超长列表拖垮问答） */
     private static final int MAX_SERVERS = 10;
+    /** 空闲连接池回收阈值：该用户的连接超过这个时长没被用过就关掉（SSE/streamable 是长连接，不能无限留着） */
+    private static final long IDLE_EVICT_MILLIS = Duration.ofMinutes(30).toMillis();
 
-    private final ConfigService configService;
+    private final UserMcpMapper userMcpMapper;
 
-    /** name → 已连接客户端（reload 时整体替换） */
-    private final Map<String, McpSyncClient> clients = new ConcurrentHashMap<>();
-    /** name → 连接状态（connected / failed:原因 / disabled），供状态查询与管理界面展示 */
-    private final Map<String, String> states = new ConcurrentHashMap<>();
-    /** 配置指纹：servers JSON 变化才触发 reload */
-    private volatile String lastConfigFingerprint = "";
-    /** name → 配置里的地址/类型（管理界面展示用；与 clients/states 同生命周期，reload 时重建） */
-    private final Map<String, String> serverUrls = new LinkedHashMap<>();
-    private final Map<String, String> serverTypes = new LinkedHashMap<>();
+    /** 连接池按用户隔离：uid → 该用户的连接与状态 */
+    private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    public McpClientService(ConfigService configService) {
-        this.configService = configService;
+    public McpClientService(UserMcpMapper userMcpMapper) {
+        this.userMcpMapper = userMcpMapper;
     }
 
     /**
-     * 返回当前所有 MCP 工具（供 RagService.enabledTools() 合并）。
-     * 内部先按配置对齐连接（懒加载 + 配置变更重连），连接失败的 server 工具自动跳过。
+     * 返回某用户当前所有已启用 MCP 服务的工具（供 RagService.enabledToolCallbacks() 合并）。
+     * 内部先按该用户的配置对齐连接（懒加载 + 配置变更重连），连接失败的 server 工具自动跳过。
+     *
+     * @param uid 归属用户（只取这个人的服务）
      */
-    public List<ToolCallback> toolCallbacks() {
-        return toolCallbacks(null);
+    public List<ToolCallback> toolCallbacks(String uid) {
+        return toolCallbacks(uid, null);
     }
 
     /**
      * 同上，但只取指定 server 的工具（智能体级「具体项筛选」）。
      *
-     * @param onlyServers null=不筛选（全部已启用 server）；空集合=一个都不取；非空=只取这些 server
+     * @param uid         归属用户
+     * @param onlyServers null=不筛选（该用户全部已启用服务）；空集合=一个都不取；非空=只取这些（按服务名）
      */
-    public List<ToolCallback> toolCallbacks(java.util.Set<String> onlyServers) {
-        if (!configService.getBoolean("mcp.enabled")) {
-            return List.of();
-        }
+    public List<ToolCallback> toolCallbacks(String uid, java.util.Set<String> onlyServers) {
         if (onlyServers != null && onlyServers.isEmpty()) {
             return List.of(); // 智能体显式"不使用任何 MCP"：连接都不必建立
         }
-        ensureConnections();
+        if (uid == null || uid.isBlank()) return List.of();
+        ensureConnections(uid);
+        UserPool pool = pools.get(uid);
+        if (pool == null) return List.of();
         List<ToolCallback> callbacks = new ArrayList<>();
-        for (Map.Entry<String, McpSyncClient> entry : clients.entrySet()) {
-            if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
-            McpSyncClient client = entry.getValue();
-            try {
-                List<McpSchema.Tool> tools = client.listTools().tools();
-                for (McpSchema.Tool tool : tools) {
-                    callbacks.add(new SyncMcpToolCallback(client, tool));
+        synchronized (pool) {
+            for (Map.Entry<String, McpSyncClient> entry : pool.clients.entrySet()) {
+                if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
+                McpSyncClient client = entry.getValue();
+                try {
+                    for (McpSchema.Tool tool : client.listTools().tools()) {
+                        callbacks.add(new SyncMcpToolCallback(client, tool));
+                    }
+                } catch (Exception e) {
+                    log.warn("[MCP] uid={} 拉取 server {} 工具列表失败（跳过该 server）: {}",
+                            uid, entry.getKey(), e.getMessage());
+                    pool.states.put(entry.getKey(), "failed:" + e.getMessage());
                 }
-            } catch (Exception e) {
-                String name = client.getServerInfo() != null ? client.getServerInfo().name() : "unknown";
-                log.warn("[MCP] 拉取 server {} 工具列表失败（跳过该 server）: {}", name, e.getMessage());
-                states.put(name, "failed:" + e.getMessage());
             }
         }
         return callbacks;
     }
 
-    /** 当前连接状态快照（name → connected/failed:…/disabled），供设置页/管理接口展示 */
-    public Map<String, String> connectionStates() {
-        ensureConnections();
-        return new LinkedHashMap<>(states);
-    }
-
     /**
-     * 管理界面快照：按配置顺序列出每个 server 的地址/类型/连接状态/可用工具。
-     * 总开关关闭或没配 server 时返回空列表（前端据此显示"未启用/未配置"）。
+     * 某用户的服务一览：每条服务的名称/地址/类型/启停/连接状态/可用工具。
+     * 没登记服务时返回空列表（前端据此显示"还没有 MCP 服务"）。
+     *
+     * @param uid 归属用户
      */
-    public List<Map<String, Object>> serverStatuses() {
-        ensureConnections();
+    public List<Map<String, Object>> serverStatuses(String uid) {
+        if (uid == null || uid.isBlank()) return List.of();
+        ensureConnections(uid);
+        UserPool pool = pools.get(uid);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (String name : serverUrls.keySet()) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", name);
-            m.put("url", serverUrls.get(name));
-            m.put("type", serverTypes.get(name));
-            String st = states.get(name);
-            m.put("state", st == null ? "unknown" : st);
-            m.put("connected", "connected".equals(st));
-            List<Map<String, String>> tools = new ArrayList<>();
-            McpSyncClient c = clients.get(name);
-            if (c != null) {
-                try {
-                    for (McpSchema.Tool t : c.listTools().tools()) {
-                        tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+        synchronized (pool) {
+            for (UserMcp row : pool.rows) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", row.getId());
+                m.put("name", row.getName());
+                m.put("url", row.getUrl());
+                m.put("type", row.getType());
+                m.put("enabled", Integer.valueOf(1).equals(row.getEnabled()));
+                String st = pool.states.get(row.getName());
+                // 停用不建立连接，也不该报"失败"——给出明确语义
+                m.put("state", Integer.valueOf(1).equals(row.getEnabled()) ? (st == null ? "unknown" : st) : "disabled");
+                m.put("connected", "connected".equals(st));
+                List<Map<String, String>> tools = new ArrayList<>();
+                McpSyncClient c = pool.clients.get(row.getName());
+                if (c != null) {
+                    try {
+                        for (McpSchema.Tool t : c.listTools().tools()) {
+                            tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+                        }
+                    } catch (Exception ignore) {
+                        // 拉列表失败不阻断状态展示（工具列表为空，连接状态仍以 states 为准）
                     }
-                } catch (Exception ignore) {
-                    // 拉列表失败不阻断状态展示（工具列表为空，连接状态仍以 states 为准）
                 }
+                m.put("tools", tools);
+                m.put("toolCount", tools.size());
+                out.add(m);
             }
-            m.put("tools", tools);
-            m.put("toolCount", tools.size());
-            out.add(m);
         }
         return out;
     }
 
     /**
-     * 临时连接测试（设置页"测试连接"用）：**不落配置、不进客户端池**，连上后取工具清单即关闭。
-     * 用于"先测再存"，避免用户填错地址还得先保存再回来删。
+     * 重连某个用户的全部服务（增删/改地址后想立刻生效时用；不重建也会在下一次取工具时按指纹自动生效）。
+     */
+    public void reload(String uid) {
+        if (uid == null || uid.isBlank()) return;
+        UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
+        synchronized (pool) {
+            pool.fingerprint = ""; // 清指纹 → ensureConnections 重建
+        }
+        ensureConnections(uid);
+    }
+
+    /**
+     * 临时连接测试（"添加服务"弹窗里用）：**不落配置、不进该用户的连接池**，连上取工具清单即关闭。
+     * 用于"先测再存"，避免填错地址还得先保存再回来删。
      */
     public Map<String, Object> probe(String url, String type) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -190,58 +203,91 @@ public class McpClientService {
         return one.length() > 100 ? one.substring(0, 100) + "…" : one;
     }
 
-    /** 配置变更后强制重建全部连接（设置页保存 mcp.* 后调用或下次取工具时按指纹自动触发） */
-    public synchronized void reload() {
-        lastConfigFingerprint = ""; // 清指纹 → 下次 ensureConnections 重建
-        ensureConnections();
+    /** 按该用户当前配置对齐连接（懒加载；配置指纹变化才重建） */
+    private void ensureConnections(String uid) {
+        UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
+        evictIdlePools();
+        synchronized (pool) {
+            pool.lastAccess = System.currentTimeMillis();
+            List<UserMcp> rows = userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
+                    .eq(UserMcp::getUid, uid).orderByAsc(UserMcp::getCreateTime));
+            if (rows.size() > MAX_SERVERS) {
+                rows = rows.subList(0, MAX_SERVERS);
+                log.warn("[MCP] uid={} 登记的 server 超过上限 {}，其余忽略", uid, MAX_SERVERS);
+            }
+            String fingerprint = fingerprintOf(rows);
+            if (fingerprint.equals(pool.fingerprint)) {
+                return; // 配置未变，沿用现有连接
+            }
+            closePool(pool);
+            pool.fingerprint = fingerprint;
+            pool.rows = new ArrayList<>(rows);
+            for (UserMcp row : rows) {
+                String name = row.getName();
+                String url = row.getUrl();
+                String type = row.getType() == null || row.getType().isBlank() ? "streamable" : row.getType();
+                if (name == null || name.isBlank() || url == null || url.isBlank()) continue;
+                if (!Integer.valueOf(1).equals(row.getEnabled())) {
+                    pool.states.put(name, "disabled");   // 停用的服务直接跳过连接
+                    continue;
+                }
+                try {
+                    McpSyncClient client = connect(name, url, type);
+                    client.initialize();
+                    pool.clients.put(name, client);
+                    pool.states.put(name, "connected");
+                    log.info("[MCP] uid={} server {} ({}) 连接成功，工具 {} 个",
+                            uid, name, type, client.listTools().tools().size());
+                } catch (Exception e) {
+                    pool.states.put(name, "failed:" + e.getMessage());
+                    log.warn("[MCP] uid={} server {} ({}) 连接失败（跳过，不影响问答）: {}",
+                            uid, name, type, e.getMessage());
+                }
+            }
+        }
     }
 
-    /** 按当前配置对齐连接（懒加载；配置指纹变化才重建） */
-    private synchronized void ensureConnections() {
-        String serversJson = configService.get("mcp.servers");
-        String fingerprint = configService.getBoolean("mcp.enabled") + "|" + serversJson;
-        if (fingerprint.equals(lastConfigFingerprint)) {
-            return; // 配置未变，沿用现有连接
-        }
-        // 1) 关闭旧连接
-        clients.forEach((name, c) -> {
+    /** 关闭并清空某个连接池（保留行信息本身由调用方重建） */
+    private void closePool(UserPool pool) {
+        pool.clients.forEach((name, c) -> {
             try {
                 c.closeGracefully();
-            } catch (Exception ignore) { /* 关闭失败不影响重建 */ }
+            } catch (Exception ignore) {
+                // 关闭失败不影响重建
+            }
         });
-        clients.clear();
-        states.clear();
-        serverUrls.clear();
-        serverTypes.clear();
-        lastConfigFingerprint = fingerprint;
-        // 2) 解析配置
-        if (!configService.getBoolean("mcp.enabled") || serversJson == null || serversJson.isBlank()) {
-            return;
-        }
-        List<Map<String, String>> servers = parseServers(serversJson);
-        // 3) 逐个连接（单个失败不影响其他）
-        for (Map<String, String> s : servers) {
-            String name = s.get("name");
-            String url = s.get("url");
-            String type = s.getOrDefault("type", "streamable");
-            if (name == null || name.isBlank() || url == null || url.isBlank()) {
-                continue;
-            }
-            // 先登记配置元信息：连接失败也能在管理界面看到这条 server 与其原因
-            serverUrls.put(name, url);
-            serverTypes.put(name, type);
-            try {
-                McpSyncClient client = connect(name, url, type);
-                client.initialize();
-                clients.put(name, client);
-                states.put(name, "connected");
-                log.info("[MCP] server {} ({}) 连接成功，工具 {} 个", name, type,
-                        client.listTools().tools().size());
-            } catch (Exception e) {
-                states.put(name, "failed:" + e.getMessage());
-                log.warn("[MCP] server {} ({}) 连接失败（跳过，不影响问答）: {}", name, type, e.getMessage());
+        pool.clients.clear();
+        pool.states.clear();
+        pool.rows = List.of();
+    }
+
+    /**
+     * 回收长时间未使用的用户连接池：SSE/streamable 都是有状态长连接，用户下线不再问答后
+     * 不能一直挂着（尤其 SSE 会占用服务端连接槽）。仅回收空闲的，正在用的不受影响。
+     */
+    private void evictIdlePools() {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, UserPool> e : pools.entrySet()) {
+            UserPool pool = e.getValue();
+            if (now - pool.lastAccess < IDLE_EVICT_MILLIS) continue;
+            synchronized (pool) {
+                if (now - pool.lastAccess < IDLE_EVICT_MILLIS) continue;
+                closePool(pool);
+                pool.fingerprint = "";
+                pools.remove(e.getKey(), pool);
+                log.info("[MCP] 用户 {} 的 MCP 连接池空闲超时已回收", e.getKey());
             }
         }
+    }
+
+    /** 配置指纹：服务名/地址/类型/启停任一变化都要重建连接 */
+    private String fingerprintOf(List<UserMcp> rows) {
+        StringBuilder sb = new StringBuilder();
+        for (UserMcp r : rows) {
+            sb.append(r.getName()).append('|').append(r.getUrl()).append('|')
+                    .append(r.getType()).append('|').append(r.getEnabled()).append(";");
+        }
+        return sb.toString();
     }
 
     /** 按类型构建传输层并创建同步客户端（未 initialize） */
@@ -265,7 +311,6 @@ public class McpClientService {
                 base = url.substring(0, pathStart);
                 String path = url.substring(pathStart);
                 ssePath = path.endsWith("/sse") ? path : path + "/sse";
-                // 完整 URL 已含端点时直接用
                 if (path.endsWith("/sse")) {
                     ssePath = path;
                 }
@@ -290,32 +335,20 @@ public class McpClientService {
                 .build();
     }
 
-    /** 解析 servers JSON 数组；元素仅取 name/url/type 三个字符串字段；畸形配置返回空列表（不抛错） */
-    private List<Map<String, String>> parseServers(String json) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            if (!root.isArray()) {
-                log.warn("[MCP] mcp.servers 配置不是 JSON 数组，忽略（当前值前 80 字符: {}）",
-                        json.substring(0, Math.min(80, json.length())));
-                return List.of();
-            }
-            List<Map<String, String>> out = new ArrayList<>();
-            int i = 0;
-            for (JsonNode n : root) {
-                if (++i > MAX_SERVERS) {
-                    log.warn("[MCP] servers 超过上限 {}，其余忽略", MAX_SERVERS);
-                    break;
-                }
-                Map<String, String> s = new LinkedHashMap<>();
-                s.put("name", n.path("name").asText(null));
-                s.put("url", n.path("url").asText(null));
-                s.put("type", n.path("type").asText("streamable"));
-                out.add(s);
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("[MCP] mcp.servers 解析失败（忽略）: {}", e.getMessage());
-            return List.of();
-        }
+    /**
+     * 单个用户的连接池：连接、状态与本次对齐的配置快照。
+     * 所有读写都在 pool 监视器内（避免同一用户并发取工具时重复重连）。
+     */
+    private static final class UserPool {
+        /** 本次对齐的配置指纹（变化即重建） */
+        String fingerprint = "";
+        /** 最近一次被使用的时间（闲置回收用） */
+        long lastAccess = System.currentTimeMillis();
+        /** name → 已连接客户端 */
+        final Map<String, McpSyncClient> clients = new LinkedHashMap<>();
+        /** name → 连接状态（connected / failed:原因 / disabled） */
+        final Map<String, String> states = new LinkedHashMap<>();
+        /** 本次对齐的服务清单（状态展示按此顺序） */
+        List<UserMcp> rows = new ArrayList<>();
     }
 }

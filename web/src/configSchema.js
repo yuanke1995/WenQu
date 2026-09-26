@@ -117,11 +117,9 @@ export const TIPS = {
   "toolKnowledgeRetrievalMaxHits": "精确检索工具单次返回的知识块上限（1~5）。调大单次信息更全但占用上下文预算；模型可能多次调用，注意累计开销。",
   "toolArtifactEnabled": "产物交付工具：开启后模型可按需生成 Markdown/CSV/JSON/HTML 等文件（如导出清单、对比表），以可下载卡片形式附在回答中并随会话持久化。需总开关开启；默认关闭。",
   "toolBuiltinEnabled": "内置高频工具：开启后模型可调用「算术表达式计算」「当前日期时间」「日期相差天数」三个内置工具。模型口算与「不知道今天几号」是两类常见硬伤——涉及金额合计、百分比、工期/有效期推算时交给工具算，比让模型自己算可靠得多。表达式求值由后端自实现解析（不引入脚本引擎，仅数字与 + - * / % ^ 括号，无代码执行能力）。需总开关开启；默认关闭。",
-  "skillEnabled": "技能（Skills）总开关。技能 = 一个目录 + SKILL.md（frontmatter 写 name/description/version，正文写做法）：把「这类问题该怎么做」固化成可复用的说明，不必每次在提问里重复交代。开启后系统提示会注入技能清单，模型判断问题属于某技能领域时再用 readSkill 读取它的全文——因此装多少技能都不会拖慢每一次问答。技能只作为文本指令使用，不会执行目录里的脚本。默认关闭。",
-  "skillDir": "用户技能目录：每个子目录放一个 SKILL.md 即多一个技能；与内置技能同目录名时用户目录优先（可用于覆盖内置做法）。改目录后立即生效，无需重启。",
-  "skillInject": "把「技能名 + 一行描述」注入系统提示。描述是模型判断「要不要读这个技能」的唯一依据——描述写得含糊（如只写“规范”），技能就基本不会被用到。",
-  "skillInjectMax": "技能清单注入系统提示的字符上限：技能很多时超出部分只列到截断（不会挤占知识块与历史的预算）。",
-  "skillTool": "readSkill 工具：模型主动取回某个技能的完整内容。需要「工具调用」总开关同时开启；关闭后技能清单仍会注入，但模型无法读取正文。",
+  // 技能总开关 / 技能目录 / 注入开关 / readSkill 工具开关已随「技能下沉为个人资产」移除：
+  // 技能内容在「智能体 → 技能 Skills」里每人自己管理（谁装谁用、停用由本人控），这里只剩两项预算参数。
+  "skillInjectMax": "技能清单注入系统提示的字符上限：每个人在「智能体 → 技能 Skills」里装的技能都会汇总进清单，超出部分只列到截断（不会挤占知识块与历史的预算）。",
   "skillMaxFile": "单个技能全文读取上限（字符）：技能内容过长时截断，防止一个技能吃掉整个上下文预算。",
   "agentEnabled": "并行检索总开关。开启后每轮问答先把问题拆成多个视角（全句语义 / 关键词精确 / 长问题子句），交给多个子代理并行检索、各自提炼要点，再汇总进上下文——多条件、跨章节的复杂问题召回更全。代价：首字延迟变长（多 2~4 路检索，开启提炼时再多 2~4 次短调用）。默认关闭；建议先小范围对比效果。若当前智能体已配置子智能体，则优先委派子智能体（各按自己的知识库范围与角色视角检索），此处作为未配置子智能体时的默认策略。",
   "agentSubAgents": "子代理数量：每个子代理负责一个检索视角。2 个覆盖大多数问题；3~4 适合多条件/多主题的长问题。数量越多召回越全但越慢。",
@@ -130,8 +128,7 @@ export const TIPS = {
   "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
   "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
   "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。",
-  "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
-  "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
+  // mcpEnabled / mcpServers 已移除：MCP Server 由每个用户在「智能体 → MCP 外部工具」里自己登记
 }
 
 export const PANELS = [
@@ -142,9 +139,9 @@ export const PANELS = [
   { key: "context", title: "上下文与长度控制", sections: ["窗口与预算（决定单次请求上下文长度）","历史裁剪 · 命中片段与填充","信息增益去冗余","@ 引用（输入框手动指定参考资料）"] },
   { key: "deepReasoning", title: "深度思考设置", sections: ["思考模式与引导","检索计划 · 多路与超时","思考增强 · 护栏与路由"] },
   { key: "tool", title: "工具调用（Function Calling）", sections: ["总开关","子工具（需总开关开启）"] },
-  { key: "mcp", title: "MCP 外部工具（用户可自行扩展）", sections: ["MCP 服务管理（连接外部工具 Server）"] },
   { key: "apiKey", title: "API Key 管理（对外开放问答能力）", sections: [] },
-  { key: "skills", title: "技能 Skills（可插拔能力包）", sections: ["总开关与目录", "行为开关（渐进披露）"] },
+  // 技能内容与 MCP Server 已迁到「智能体」页的个人 Tab；这里只剩技能的上下文预算参数
+  { key: "skills", title: "技能（Skills）预算参数（技能内容归个人）", sections: ["上下文预算"] },
   // 改名说明：子智能体已迁到「智能体」页面按角色委派，这里保留的是"没配子智能体时"的默认并行策略
   { key: "agent", title: "并行检索（未配置子智能体时的默认策略）", sections: ["总开关与并行度"] },
   { key: "ratelimit", title: "接口限流（防滥用）", sections: [] },
@@ -219,17 +216,11 @@ export const FIELDS = [
   { panel: "tool", section: 1, group: "tool", key: "knowledgeRetrieval.maxHits", path: "tool.knowledgeRetrieval.maxHits", label: "单次命中块上限", type: "number", tips: "toolKnowledgeRetrievalMaxHits", def: 5, min: 1, max: 5, width: 200, note: "工具单次返回的知识块数上限（1~5）", vif: "tool.enabled && tool.knowledgeRetrieval.enabled", tier: 3 },
   { panel: "tool", section: 1, group: "tool", key: "artifact.enabled", path: "tool.artifact.enabled", label: "产物交付工具", type: "switch", tips: "toolArtifactEnabled", def: false, note: "模型可生成 Markdown/CSV/JSON/HTML 文件并以可下载卡片附在回答中（默认关）", vif: "tool.enabled", tier: 2 },
   { panel: "tool", section: 1, group: "tool", key: "builtin.enabled", path: "tool.builtin.enabled", label: "内置高频工具（计算/时间）", type: "switch", tips: "toolBuiltinEnabled", def: false, note: "算术表达式计算、当前日期时间、日期相差天数——模型口算与「今天几号」的硬伤交给工具（默认关）", vif: "tool.enabled", tier: 2 },
-  { panel: "mcp", section: 0, group: "mcp", key: "enabled", path: "mcp.enabled", label: "MCP 总开关", type: "switch", tips: "mcpEnabled", def: false, note: "连接下方 MCP Server 并把其工具暴露给模型（默认关）", tier: 2 },
-  { panel: "mcp", section: 0, group: "mcp", key: "servers", path: "mcp.servers", label: "MCP Server 列表", type: "textarea", tips: "mcpServers", def: "", rows: 5, ph: '[{"name":"时间工具","url":"http://127.0.0.1:8931","type":"streamable"}]', note: "JSON 数组，每项 {name,url,type}；type 可选 streamable/sse；连接失败自动跳过", vif: "mcp.enabled", tier: 2 },
   { panel: "ratelimit", section: -1, group: "ratelimit", key: "enabled", path: "ratelimit.enabled", label: "总开关", type: "switch", tips: "rlEnabled", def: true, core: true, tier: 2 },
   { panel: "maintenance", section: 2, group: "images", key: "chatCleanupIntervalMs", path: "images.chatCleanupIntervalMs", label: "清理任务间隔(ms)", type: "number", tips: "chatImgCleanupInterval", def: 86400000, min: 0, step: 3600000, width: 200, note: "≤0 = 暂停清理，默认 86400000（每天）", tier: 3 },
   { panel: "maintenance", section: 2, group: "images", key: "chatRetentionMillis", path: "images.chatRetentionMillis", label: "图片保留时长(ms)", type: "number", tips: "chatImgRetention", def: 604800000, min: 0, step: 86400000, width: 220, note: "默认 604800000（7 天），超期清理聊天上传图", tier: 3 },
-  { panel: "skills", section: 0, group: "skill", key: "enabled", path: "skill.enabled", label: "总开关", type: "switch", tips: "skillEnabled", def: false, core: true, note: "开启后：系统提示注入技能清单，模型可调用 readSkill 读取技能全文（默认关）", tier: 2 },
-  { panel: "skills", section: 0, group: "skill", key: "dir", path: "skill.dir", label: "用户技能目录", type: "text", tips: "skillDir", def: "./data/skills", width: 320, ph: "./data/skills", vif: "skill.enabled", tier: 2 },
-  { panel: "skills", section: 1, group: "skill", key: "injectEnabled", path: "skill.injectEnabled", label: "注入技能清单", type: "switch", tips: "skillInject", def: true, note: "把「技能名+描述」注入系统提示：模型据此判断该不该读某个技能", vif: "skill.enabled", tier: 2 },
-  { panel: "skills", section: 1, group: "skill", key: "injectMaxChars", path: "skill.injectMaxChars", label: "清单字符上限", type: "number", tips: "skillInjectMax", def: 1200, min: 200, step: 100, width: 200, vif: "skill.enabled && skill.injectEnabled", tier: 3 },
-  { panel: "skills", section: 1, group: "skill", key: "toolEnabled", path: "skill.toolEnabled", label: "readSkill 工具", type: "switch", tips: "skillTool", def: true, note: "让模型主动读取技能全文（需「工具调用」总开关同时开启）", vif: "skill.enabled", tier: 2 },
-  { panel: "skills", section: 1, group: "skill", key: "maxFileChars", path: "skill.maxFileChars", label: "技能读取上限", type: "number", tips: "skillMaxFile", def: 20000, min: 500, step: 1000, width: 200, note: "单个技能全文读取字符上限，超出截断", vif: "skill.enabled && skill.toolEnabled", tier: 3 },
+  { panel: "skills", section: 0, group: "skill", key: "injectMaxChars", path: "skill.injectMaxChars", label: "清单字符上限", type: "number", tips: "skillInjectMax", def: 1200, min: 200, step: 100, width: 200, tier: 3 },
+  { panel: "skills", section: 0, group: "skill", key: "maxFileChars", path: "skill.maxFileChars", label: "技能读取上限", type: "number", tips: "skillMaxFile", def: 20000, min: 500, step: 1000, width: 200, note: "单个技能全文读取字符上限，超出截断", tier: 3 },
   { panel: "agent", section: 0, group: "agent", key: "enabled", path: "agent.enabled", label: "总开关", type: "switch", tips: "agentEnabled", def: false, core: true, note: "开启后每轮问答先并行多视角检索再汇总（默认关，会增加首字延迟）", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "subAgents", path: "agent.subAgents", label: "子代理数量", type: "number", tips: "agentSubAgents", def: 2, min: 2, max: 4, step: 1, width: 200, note: "2~4：越多召回越全，并发检索与提炼调用也越多", vif: "agent.enabled", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "topKPerAgent", path: "agent.topKPerAgent", label: "每代理取块数", type: "number", tips: "agentTopK", def: 3, min: 1, max: 10, step: 1, width: 200, note: "每个子代理取回命中块上限（跨代理自动去重）", vif: "agent.enabled", tier: 3 },

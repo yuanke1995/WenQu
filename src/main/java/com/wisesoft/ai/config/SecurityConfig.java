@@ -77,9 +77,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
-        // 对话页技能菜单：只读精简列表（未停用技能的名称/描述/来源，不含正文），问答用户可用；
-        // 管理端 /api/ai/skill/list、/skill/detail 等仍走管理员判定。
-        if ("GET".equals(method) && path.equals("/api/ai/skill/available")) return true;
+        // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：
+        // 每个登录用户增删改查自己的，控制器统一按 RequestUser.uid() 过滤（看不到也改不了别人的），
+        // 因此不再要求管理员；未登录请求受 require-login 门禁保护（放行时归属 anonymous）。
+        if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
+        if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;
         // 个人偏好（本人默认模型）：读改自己的设置

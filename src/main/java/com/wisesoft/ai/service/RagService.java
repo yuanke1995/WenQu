@@ -234,7 +234,7 @@ public class RagService {
     private final KnowledgeRetrievalTool knowledgeRetrievalTool;
     /** 产物交付服务（会话 emitter 注册表 + 文件落盘 + SSE 下发） */
     private final ArtifactService artifactService;
-    /** MCP 客户端服务（外部 MCP server 工具接入；mcp.* 配置，默认关） */
+    /** MCP 客户端服务（外部 MCP server 工具接入；按用户隔离连接池，各人连各人的服务） */
     private final McpClientService mcpClientService;
 
     /** 知识库服务：解析「智能体关联的知识库 → 允许检索的文档集合」，检索按库隔离 */
@@ -246,9 +246,8 @@ public class RagService {
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
     private final BuiltinTools builtinTools;
-    /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（skill.enabled 控制，默认关） */
+    /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
     private final SkillService skillService;
-    private final SkillTools skillTools;
     /** 聊天附件（文档类）：解码/解析为纯文本注入本轮上下文（图片走 images 多模态，不经此服务） */
     private final ChatAttachmentService chatAttachmentService;
     /** SubAgent 并行编排（4.3）：多视角并行检索 + 要点提炼（agent.enabled 控制，默认关） */
@@ -318,7 +317,6 @@ public class RagService {
                       PresentArtifactTool presentArtifactTool,
                       BuiltinTools builtinTools,
                       SkillService skillService,
-                      SkillTools skillTools,
                       ChatAttachmentService chatAttachmentService,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
@@ -345,7 +343,6 @@ public class RagService {
         this.presentArtifactTool = presentArtifactTool;
         this.builtinTools = builtinTools;
         this.skillService = skillService;
-        this.skillTools = skillTools;
         this.chatAttachmentService = chatAttachmentService;
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
@@ -473,14 +470,14 @@ public class RagService {
             }
 
             // 0.2 用户本轮主动选用的技能（输入框「+」菜单）：全文注入本轮 system prompt
-            String userSkillText = buildUserSkillText(skills);
+            String userSkillText = buildUserSkillText(userId, skills);
 
             // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
             //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
             if (knowledgeOff) {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
-                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, attachmentText, userSkillText,
+                runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
                         attachmentsMeta, emitter, startTime, thinkingHolder, degradations, degradedCodes,
                         agent, stageMs, resolvedModel);
                 return;
@@ -658,14 +655,13 @@ public class RagService {
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
                     .append(relatedPromptLine());
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
-            // 清单为空的段落不追加（未装技能时对提示词零影响）
-            if (toolOn(agent, "skill.enabled", agent == null ? null : agent.getToolSkill())
-                    && configService.getBoolean("skill.injectEnabled")) {
+            // 清单为空的段落不追加（没装技能时对提示词零影响）；注入的是本用户自己的技能。
+            if (skillOn(agent)) {
                 // 智能体级筛选：skills 为 null → 注入全部启用技能；空串 → 一个都不注入；逗号串 → 只注入这些。
                 // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
                 // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
                 Set<String> onlySkills = agent == null ? null : scopeOf(agent.getSkills());
-                String skillBlock = skillService.promptBlock(
+                String skillBlock = skillService.promptBlock(userId,
                         configService.getInt("skill.injectMaxChars", 1200), onlySkills);
                 if (!skillBlock.isEmpty()) {
                     system.append("\n\n").append(skillBlock);
@@ -933,7 +929,7 @@ public class RagService {
                 return;
             }
             sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
-            AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
+            AnswerStreamState st = new AnswerStreamState(sessionId, question, userId, emitter,
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
@@ -976,7 +972,7 @@ public class RagService {
     /**
      * 判断并返回本次问答启用的工具回调列表（统一 ToolCallback 形态）。
      * 仅当 tool.enabled（总开关）开启时才暴露工具；各子工具开关决定具体暴露哪些。
-     * MCP 工具另需 mcp.enabled + mcp.servers 配置（外部 server 连接失败自动跳过）。
+     * MCP 工具取自当前用户名下的 server（外部 server 连接失败自动跳过）。
      * 内置 @Tool 对象经 ToolCallbacks.from() 转成 MethodToolCallback——注意 ChatClient 的
      * .tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛 IllegalStateException
      * （"No @Tool annotated methods found... use .toolCallbacks() instead"），故统一走 .toolCallbacks()。
@@ -984,9 +980,10 @@ public class RagService {
      */
     /**
      * 启用工具列表（按智能体覆盖）。智能体工具开关为三态：agent 中显式设了 1/0 则强制覆盖，
-     * 否则继承全局 tool./mcp./skill. 开关。工具总开关 tool.enabled 仍由全局控制（智能体不开关总闸）。
+     * 否则继承全局 tool.* 开关。工具总开关 tool.enabled 仍由全局控制（智能体不开关总闸）。
+     * 技能与 MCP 已于 2026-09-26 下沉为个人资产，因此按 userId 取：只读**这个人**的技能、只连**这个人**的 MCP。
      */
-    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent) {
+    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent, String userId) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         if (!configService.getBoolean("tool.enabled")) {
             return callbacks;
@@ -1005,23 +1002,24 @@ public class RagService {
                 }
             }
         }
-        // 技能取回工具（Skills 渐进披露的取回端）：agent 未指定时按 skill.enabled && skill.toolEnabled 判定
+        // 技能取回工具（Skills 渐进披露的取回端）：智能体未指定时按本人是否有可用技能判定。
+        // 技能无全局开关了（谁装谁用、停用由本人控），工具实例按本次问答用户创建——技能是个人资产，不能跨账户读取。
         boolean skillToolOn = (agent != null && agent.getToolSkill() != null)
                 ? agent.getToolSkill() == 1
-                : (configService.getBoolean("skill.enabled") && configService.getBoolean("skill.toolEnabled"));
+                : configService.getBoolean("tool.enabled");
         if (skillToolOn) {
             callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(skillTools)));
+                    org.springframework.ai.support.ToolCallbacks.from(new SkillTools(skillService, userId))));
         }
         if (toolOn(agent, "tool.artifact.enabled", agent == null ? null : agent.getToolArtifact())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
         }
-        // MCP 外部工具（工具生态层）：mcp.enabled 总开关 + servers 配置；失败容错由 McpClientService 兜底
-        if (toolOn(agent, "mcp.enabled", agent == null ? null : agent.getToolMcp())) {
+        // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
+        if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {
             try {
-                // 具体项筛选：agent.mcps 为 null → 连全部已启用 server；否则只连选中的那几个
-                callbacks.addAll(mcpClientService.toolCallbacks(agent == null ? null : scopeOf(agent.getMcps())));
+                // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
+                callbacks.addAll(mcpClientService.toolCallbacks(userId, agent == null ? null : scopeOf(agent.getMcps())));
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
@@ -1150,7 +1148,7 @@ public class RagService {
                 // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。
                 // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
-                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent), st))
+                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent, st.userId), st))
                 // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
                 .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
                 .stream()
@@ -1432,6 +1430,8 @@ public class RagService {
     private static final class AnswerStreamState {
         final String sessionId;
         final String question;
+        /** 本轮所属用户 uid：技能/MCP 都是个人资产，取工具与取技能时只认它 */
+        final String userId;
         final SseEmitter emitter;
         final Map<Integer, String> imgIndex;
         final Map<Integer, String> imgDescIndex;
@@ -1480,13 +1480,14 @@ public class RagService {
         /** 按需委派的路由结果（{candidates,picked,names}；未启用路由时为 null），随 done 下发并持久化 */
         volatile Map<String, Object> subagentRoute = null;
 
-        AnswerStreamState(String sessionId, String question, SseEmitter emitter,
+        AnswerStreamState(String sessionId, String question, String userId, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
                           List<Map<String, Object>> sources, List<UserImageService.UserImage> userImgs,
                           long startTime, String queryForLog, String[] thinkingHolder,
                           List<Map<String, String>> degradations, Set<String> degradedCodes, String retrievedJson) {
             this.sessionId = sessionId;
             this.question = question;
+            this.userId = userId;
             this.emitter = emitter;
             this.imgIndex = imgIndex;
             this.imgDescIndex = imgDescIndex;
@@ -1702,6 +1703,16 @@ public class RagService {
     private boolean toolOn(Agent agent, String globalKey, Integer agentFlag) {
         if (agent != null && agentFlag != null) return agentFlag == 1;
         return configService.getBoolean(globalKey);
+    }
+
+    /**
+     * 技能开关三态解析（区别于 toolOn）：技能现在是**个人资产**，没有全局「总开关」——
+     * 用户装了技能就是要用的，是否停用由用户在自己的技能列表里决定（见 SkillService.setDisabled）。
+     * 因此智能体未显式指定时一律注入；只有智能体显式设了 0/1 才覆盖。
+     */
+    private boolean skillOn(Agent agent) {
+        if (agent != null && agent.getToolSkill() != null) return agent.getToolSkill() == 1;
+        return true;
     }
 
     /**
@@ -2309,21 +2320,21 @@ public class RagService {
     /**
      * 用户本轮主动选用的技能（输入框「+」菜单）：把技能全文注入本轮 system prompt。
      * 与 promptBlock 的清单渐进披露互补：清单靠模型按需 readSkill，这里是用户显式点名、直接全文前置。
-     * 只接受存在且未停用的技能（按 frontmatter 名匹配，输入框技能列表同源）；不依赖 skill.injectEnabled 开关。
+     * 只接受**本用户**名下存在且未停用的技能（按 frontmatter 名匹配，输入框技能列表同源）。
      */
-    private String buildUserSkillText(List<String> skills) {
+    private String buildUserSkillText(String userId, List<String> skills) {
         if (skills == null || skills.isEmpty()) return "";
         Set<String> wanted = new HashSet<>(skills);
         StringBuilder sb = new StringBuilder();
         int n = 0;
-        for (SkillService.Skill s : skillService.list()) {
-            if (!wanted.contains(s.name()) || skillService.isDisabled(s)) continue;
-            String content = skillService.readContent(s.dirName());
+        for (SkillService.SkillState st : skillService.listWithState(userId)) {
+            if (!wanted.contains(st.skill().name()) || st.disabled()) continue;
+            String content = skillService.readContent(userId, st.skill().dirName());
             if (content.startsWith("错误：")) {
-                log.warn("[SKILL] 用户指定技能 {} 内容读取失败，跳过: {}", s.name(), content);
+                log.warn("[SKILL] 用户指定技能 {} 内容读取失败，跳过: {}", st.skill().name(), content);
                 continue;
             }
-            sb.append("\n### 技能：").append(s.name()).append("\n\n").append(content).append('\n');
+            sb.append("\n### 技能：").append(st.skill().name()).append("\n\n").append(content).append('\n');
             n++;
         }
         if (n == 0) return "";
@@ -2338,7 +2349,8 @@ public class RagService {
      * ③ 图片提问时图片描述随问题发给模型（多模态理解，不参与检索）。
      * 复用主回答流：sources/retrieved 均空 → 前端检索状态行与引用区天然不渲染。
      */
-    private void runNoKnowledgeChat(String sessionId, String question, List<UserImageService.UserImage> userImgs,
+    private void runNoKnowledgeChat(String sessionId, String question, String userId,
+                                    List<UserImageService.UserImage> userImgs,
                                     String imgDescText, String attachmentText, String userSkillText,
                                     List<Map<String, Object>> attachmentsMeta, SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
@@ -2381,7 +2393,7 @@ public class RagService {
             }
             sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
             stageMs.put("total", System.currentTimeMillis() - startTime);
-            AnswerStreamState st = new AnswerStreamState(sessionId, question, emitter,
+            AnswerStreamState st = new AnswerStreamState(sessionId, question, userId, emitter,
                     new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), userImgs,
                     startTime, question, thinkingHolder, degradations, degradedCodes, null);
             st.docMetaCache = documentMetaCache;

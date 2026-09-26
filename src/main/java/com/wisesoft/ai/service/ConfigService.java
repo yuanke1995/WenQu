@@ -118,23 +118,19 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.maxHits", "工具调用：精确检索工具单次返回命中块上限(1~5)"),
             Map.entry("tool.artifact.enabled", "工具调用：产物交付工具开关（模型可生成 Markdown/CSV/JSON/HTML 文件并推送给用户，需总开关开启；默认关）"),
             Map.entry("tool.builtin.enabled", "工具调用：内置高频工具开关（算术计算/当前时间/日期差，需总开关开启；默认关）"),
-            Map.entry("skill.enabled", "技能（Skills）：总开关。技能=目录+SKILL.md 的纯文本能力包，开启后按需注入/读取"),
-            Map.entry("skill.dir", "技能（Skills）：用户技能目录（放 {技能名}/SKILL.md 即多一个技能；同名覆盖内置）"),
-            Map.entry("skill.injectEnabled", "技能（Skills）：把「技能名+描述」清单注入系统提示（渐进披露，正文由模型按需 readSkill 取）"),
-            Map.entry("skill.toolEnabled", "技能（Skills）：readSkill 工具开关（模型主动取技能全文，需工具总开关）"),
+            // ===== 技能（Skills）：内容本身是个人资产（c_ai_user_skill，见 SkillService），
+            // 这里只留与内容无关的预算类参数（注入上限 / 单技能读取截断），仍由管理员控上下文成本 =====
             Map.entry("skill.injectMaxChars", "技能（Skills）：清单注入字符上限（防技能过多挤占上下文）"),
             Map.entry("skill.maxFileChars", "技能（Skills）：单个技能全文读取上限（字符，超出截断）"),
-            Map.entry("skill.disabledNames", "技能（Skills）：已停用技能目录名列表（JSON 数组，系统写入）"),
             Map.entry("agent.enabled", "SubAgent 并行编排：总开关（多视角并行检索 + 要点提炼；默认关，开启后每轮多 2~4 次提炼调用）"),
             Map.entry("agent.subAgents", "SubAgent 并行编排：子代理数量（2~4，默认 2）"),
             Map.entry("agent.topKPerAgent", "SubAgent 并行编排：每个子代理取回命中块数（默认 3）"),
             Map.entry("agent.digestEnabled", "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）"),
             Map.entry("agent.autoRoute", "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）"),
             Map.entry("agent.routeTimeoutMs", "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）"),
-            Map.entry("agent.autoDispatch", "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）"),
-            // ===== MCP 外部工具（Model Context Protocol）：接入用户自配的 MCP Server，工具自动注册进 Function Calling =====
-            Map.entry("mcp.enabled", "MCP 外部工具：总开关（开启后尝试连接下方 MCP Server 并把其工具暴露给模型；连接失败自动跳过不影响问答）"),
-            Map.entry("mcp.servers", "MCP 外部工具：Server 列表 JSON（[{\"name\":\"名称\",\"url\":\"http://host:port/mcp\",\"type\":\"streamable\"}]，type 可选 streamable/sse；保存后下一轮问答生效）"));
+            Map.entry("agent.autoDispatch", "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）"));
+            // MCP 外部工具：原先的 mcp.enabled / mcp.servers 全局项已随「MCP 下沉为个人资产」移除
+            // ——Server 列表在各人的 c_ai_user_mcp 里（谁能连自己说了算），平台层面只剩 tool.enabled 总开关。
 
     /**
      * 参数分层（仅影响设置页可见性，不影响任何读取链路）：
@@ -236,10 +232,6 @@ public class ConfigService {
             Map.entry("tool.knowledgeRetrieval.maxHits", 3),
             Map.entry("tool.artifact.enabled", 2),
             Map.entry("tool.builtin.enabled", 2),
-            Map.entry("skill.enabled", 2),
-            Map.entry("skill.dir", 2),
-            Map.entry("skill.injectEnabled", 2),
-            Map.entry("skill.toolEnabled", 2),
             Map.entry("skill.injectMaxChars", 3),
             Map.entry("skill.maxFileChars", 3),
             Map.entry("agent.enabled", 2),
@@ -247,9 +239,7 @@ public class ConfigService {
             Map.entry("agent.topKPerAgent", 3),
             Map.entry("agent.digestEnabled", 2),
             Map.entry("agent.autoRoute", 2),
-            Map.entry("agent.routeTimeoutMs", 3),
-            Map.entry("mcp.enabled", 2),
-            Map.entry("mcp.servers", 2));
+            Map.entry("agent.routeTimeoutMs", 3));
 
     private final ConfigMapper configMapper;
     private final AppProperties properties;
@@ -542,13 +532,9 @@ public class ConfigService {
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
         d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
         d.put("tool.builtin.enabled", "false");            // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
-        d.put("skill.enabled", "false");                   // 技能总开关（默认关；开启后按需注入清单 + readSkill 工具）
-        d.put("skill.dir", "./data/skills");               // 用户技能目录（{技能名}/SKILL.md）
-        d.put("skill.injectEnabled", "true");              // 清单注入系统提示（渐进披露）
-        d.put("skill.toolEnabled", "true");                // readSkill 工具（需工具总开关）
+        // 技能的内容与启停已在个人表 c_ai_user_skill / c_ai_skill_disabled（谁装谁管），此处只剩两项预算参数
         d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
         d.put("skill.maxFileChars", "20000");              // 单技能全文读取上限
-        d.put("skill.disabledNames", "[]");                // 已停用技能（系统写入）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
@@ -556,9 +542,7 @@ public class ConfigService {
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
         d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）
-
-        d.put("mcp.enabled", "false");                     // MCP 外部工具总开关（默认关；连接外部 MCP Server 并暴露其工具）
-        d.put("mcp.servers", "[]");                        // MCP Server 列表 JSON（[{name,url,type}]，type=streamable|sse）
+        // mcp.enabled / mcp.servers 已移除：MCP Server 改为每人自己的 c_ai_user_mcp（见 McpClientService）
         return d;
     }
 
@@ -1046,9 +1030,7 @@ public class ConfigService {
                 "images", "session", "cleanup", "eval", "imageFilter", "cache",
                 // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
                 "tool",
-                // MCP 外部工具分组：mcp.enabled / mcp.servers
-                "mcp",
-                // 技能（Skills）分组：skill.enabled / skill.dir / skill.inject* / skill.maxFileChars
+                // 技能分组：只剩预算类参数（injectMaxChars / maxFileChars），技能内容本身在个人表
                 "skill",
                 // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent /
                 // agent.digestEnabled / agent.autoRoute / agent.routeTimeoutMs

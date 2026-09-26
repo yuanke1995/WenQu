@@ -1,7 +1,11 @@
 package com.wisesoft.ai.service;
 
-import com.alibaba.fastjson2.JSON;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.SkillDisabledMapper;
+import com.wisesoft.ai.mapper.UserSkillMapper;
+import com.wisesoft.ai.model.SkillDisabled;
+import com.wisesoft.ai.model.UserSkill;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -13,37 +17,36 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Skills 插件机制（4.5 基础版）：技能 = 一个目录 + {@code SKILL.md}。
+ * Skills 插件机制：技能 = 一段可复用的做法说明（SKILL.md 文本 = YAML frontmatter + Markdown 正文）。
  *
- * <p>SKILL.md 结构：YAML frontmatter（{@code name}/{@code description}/{@code version}）+ Markdown 正文（技能指令）。
- *
- * <p>两层来源，同名时用户层覆盖内置层（对应"个人技能覆盖共享"）：
+ * <p><b>归属：每个用户管自己的技能</b>（原「管理员在服务器上放目录 + 全局停用名单」的形态已废弃）：
  * <ul>
- *   <li>内置：{@code classpath:skills/*&#47;SKILL.md}（随发布分发）</li>
- *   <li>用户：{@code skill.dir}（默认 {@code ./data/skills}，设置页可改）</li>
+ *   <li>内置：{@code classpath:skills/*&#47;SKILL.md}（随发布分发，所有人可见、不可删，可各自停用）；</li>
+ *   <li>个人：{@code c_ai_user_skill}，按 uid 隔离（自建或 URL 安装），停用随行。</li>
  * </ul>
  *
  * <p>渐进披露（progressive disclosure）：默认只把「技能名 + 一行描述」注入 system prompt，
  * 正文由模型按需调用 {@code readSkill} 工具取回——避免把所有技能正文塞进每次请求的上下文。
  *
  * <p><b>安全边界</b>：技能只被当**纯文本**读取，任何脚本内容都不会被执行；
- * 技能名走白名单字符集 + 目录穿越校验；单文件读取长度有上限；删除只允许删用户目录下的技能。
+ * 技能名走白名单字符集；单技能读取长度有上限（{@code skill.maxFileChars}）；
+ * URL 安装限 http/https + 体积上限 + frontmatter 校验。
  *
  * @author yuanke
  */
@@ -59,126 +62,132 @@ public class SkillService {
     private static final String SKILL_FILE = "SKILL.md";
 
     private final ConfigService configService;
+    private final UserSkillMapper userSkillMapper;
+    private final SkillDisabledMapper skillDisabledMapper;
 
     /**
      * 技能元信息（不含正文，列表用）。
      *
-     * @param name        技能名（frontmatter 优先，缺失时用目录名）
+     * @param name        技能名（frontmatter 优先，缺失时用技能标识）
      * @param description 一行描述（注入 system prompt 用）
      * @param version     版本（frontmatter，可空）
-     * @param hash        SKILL.md 内容 SHA-256 前 8 位（内容变更可见）
-     * @param source      builtin（内置）/ user（用户目录）
-     * @param dirName     目录名（定位文件用）
-     * @param size        SKILL.md 字节数
+     * @param hash        内容 SHA-256 前 8 位（内容变更可见）
+     * @param source      builtin（内置）/ user（自建）/ url（URL 安装）
+     * @param dirName     技能标识（定位技能用）
+     * @param size        内容字节数
      */
     public record Skill(String name, String description, String version, String hash,
                         String source, String dirName, long size) {
     }
 
-    /** 技能目录（用户层）。配置缺失时兜底 ./data/skills */
-    private Path userDir() {
-        String d = configService.get("skill.dir");
-        if (d == null || d.isBlank()) d = "./data/skills";
-        return Paths.get(d).toAbsolutePath().normalize();
-    }
-
-    /** 用户技能目录的绝对路径（管理界面展示"往哪放 SKILL.md"） */
-    public String userDirPath() {
-        return userDir().toString();
+    /** 技能 + 停用状态：一次查库得到全量视图，避免"列 N 个技能再逐个判定停用"的 N+1 */
+    public record SkillState(Skill skill, boolean disabled) {
     }
 
     /**
-     * 列出全部技能（内置 + 用户，用户层同名覆盖），按名称排序；不含正文。
+     * 列出当前用户可见技能及其停用状态（内置 + 个人，同名时个人优先），按名称排序。
+     *
+     * @param uid 归属用户
      */
-    public List<Skill> list() {
-        Map<String, Skill> byName = new LinkedHashMap<>();
+    public List<SkillState> listWithState(String uid) {
+        Set<String> builtinDisabled = builtinDisabledDirNames(uid);
+        Map<String, SkillState> byDir = new LinkedHashMap<>();
         // 1) 内置层（classpath，fat jar 内也可扫）
         try {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
             for (Resource r : resolver.getResources("classpath*:skills/*/" + SKILL_FILE)) {
                 try (InputStream in = r.getInputStream()) {
-                    String raw = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                    Skill s = parse(raw, dirNameOf(r), "builtin");
-                    byName.put(s.dirName(), s);
+                    Skill s = parse(new String(in.readAllBytes(), StandardCharsets.UTF_8), dirNameOf(r), "builtin");
+                    byDir.put(s.dirName(), new SkillState(s, builtinDisabled.contains(s.dirName())));
                 }
             }
         } catch (Exception e) {
             log.warn("[SKILL] 内置技能扫描失败（跳过）: {}", e.getMessage());
         }
-        // 2) 用户层（同名覆盖内置）
-        Path base = userDir();
-        if (Files.isDirectory(base)) {
-            try (var dirs = Files.list(base)) {
-                for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
-                    Path f = dir.resolve(SKILL_FILE);
-                    if (!Files.isRegularFile(f)) {
-                        log.debug("[SKILL] 目录 {} 缺少 {}，跳过", dir.getFileName(), SKILL_FILE);
-                        continue;
-                    }
-                    try {
-                        String raw = Files.readString(f, StandardCharsets.UTF_8);
-                        Skill s = parse(raw, dir.getFileName().toString(), "user");
-                        byName.put(s.dirName(), s);
-                    } catch (Exception e) {
-                        log.warn("[SKILL] 技能 {} 解析失败（跳过）: {}", dir.getFileName(), e.getMessage());
-                    }
-                }
+        // 2) 个人层（同名覆盖内置）
+        for (UserSkill row : ownRows(uid)) {
+            if (row.getContent() == null) continue;
+            try {
+                Skill s = parse(row.getContent(), row.getDirName(), sourceOf(row));
+                byDir.put(s.dirName(), new SkillState(s, Integer.valueOf(1).equals(row.getDisabled())));
             } catch (Exception e) {
-                log.warn("[SKILL] 用户技能目录扫描失败: {}", e.getMessage());
+                log.warn("[SKILL] 个人技能 {} 解析失败（跳过）: {}", row.getDirName(), e.getMessage());
             }
         }
-        List<Skill> out = new ArrayList<>(byName.values());
-        out.sort(Comparator.comparing(Skill::name));
+        List<SkillState> out = new ArrayList<>(byDir.values());
+        out.sort(Comparator.comparing(st -> st.skill().name()));
         return out;
     }
 
-    /** 按目录名查技能元信息 */
-    public Skill find(String dirName) {
-        return list().stream().filter(s -> s.dirName().equals(dirName)).findFirst().orElse(null);
+    /** 仅元信息的简版列表（调用方不关心停用时用） */
+    public List<Skill> list(String uid) {
+        return listWithState(uid).stream().map(SkillState::skill).toList();
+    }
+
+    /** 按技能标识查元信息（找不到返回 null） */
+    public Skill find(String uid, String dirName) {
+        return list(uid).stream().filter(s -> s.dirName().equals(dirName)).findFirst().orElse(null);
+    }
+
+    /** 按技能标识查一行个人技能（内置技能返回 null） */
+    public SkillState findState(String uid, String dirName) {
+        return listWithState(uid).stream().filter(st -> st.skill().dirName().equals(dirName))
+                .findFirst().orElse(null);
     }
 
     /**
-     * 读取技能全文（含 frontmatter，模型看到的是完整技能说明），长度受 {@code skill.maxFileChars} 限制。
+     * 读取技能全文（含 frontmatter；模型看到的是完整技能说明），长度受 {@code skill.maxFileChars} 限制。
      * 找不到、被停用或超长时返回可读提示（工具调用结果直接回给模型，不抛异常）。
+     *
+     * @param uid        归属用户（技能现在是个人资产，别人看不到）
+     * @param nameOrDir  技能标识或 frontmatter 里的显示名
      */
-    public String readContent(String nameOrDir) {
+    public String readContent(String uid, String nameOrDir) {
         if (nameOrDir == null || nameOrDir.isBlank()) return "错误：技能名为空";
-        Skill s = find(nameOrDir.trim());
-        if (s == null) {
-            // 允许按 frontmatter 里的显示名匹配（模型更容易复述 name 而非法定目录名）
-            s = list().stream().filter(x -> x.name().equals(nameOrDir.trim())).findFirst().orElse(null);
-        }
-        if (s == null) return "错误：没有名为「" + nameOrDir + "」的技能。可用技能见系统提示中的技能清单。";
-        if (isDisabled(s)) return "错误：技能「" + s.name() + "」已被停用。";
-        try {
-            String raw = readRaw(s);
-            int max = Math.max(500, configService.getInt("skill.maxFileChars", 20000));
-            if (raw.length() > max) {
-                return raw.substring(0, max) + "\n\n…（技能内容过长已截断，仅返回前 " + max + " 字符）";
+        List<SkillState> all = listWithState(uid);
+        Skill hit = null;
+        boolean disabled = false;
+        for (SkillState st : all) {
+            if (st.skill().dirName().equals(nameOrDir.trim())) {
+                hit = st.skill();
+                disabled = st.disabled();
+                break;
             }
-            return raw;
-        } catch (Exception e) {
-            return "错误：技能内容读取失败：" + e.getMessage();
         }
+        if (hit == null) {
+            // 允许按 frontmatter 里的显示名匹配（模型更容易复述 name 而非技能标识）
+            for (SkillState st : all) {
+                if (st.skill().name().equals(nameOrDir.trim())) {
+                    hit = st.skill();
+                    disabled = st.disabled();
+                    break;
+                }
+            }
+        }
+        if (hit == null) return "错误：没有名为「" + nameOrDir + "」的技能。可用技能见系统提示中的技能清单。";
+        if (disabled) return "错误：技能「" + hit.name() + "」已被停用。";
+        String raw = readRaw(uid, hit);
+        if (raw == null) return "错误：技能内容读取失败：技能记录不存在";
+        int max = Math.max(500, configService.getInt("skill.maxFileChars", 20000));
+        if (raw.length() > max) {
+            return raw.substring(0, max) + "\n\n…（技能内容过长已截断，仅返回前 " + max + " 字符）";
+        }
+        return raw;
     }
 
     /**
      * 生成注入 system prompt 的技能清单块（只含名称与描述，控制字符数上限）。
-     * 无启用技能时返回空串（调用方不追加段落）。
-     */
-    public String promptBlock(int maxChars) {
-        return promptBlock(maxChars, null);
-    }
-
-    /**
-     * 同上，但只注入指定技能（智能体级「具体项筛选」）。
+     * 该用户无启用技能时返回空串（调用方不追加段落）。
      *
-     * @param only null=不筛选（全部启用技能）；空集合=不注入任何技能；非空=只注入这些（按技能名匹配）
+     * @param uid      归属用户：注入的是**这个人**的技能
+     * @param maxChars 清单字符上限
+     * @param only     null=不筛选（全部启用技能）；空集合=不注入任何技能；非空=只注入这些（按技能名匹配）
      */
-    public String promptBlock(int maxChars, java.util.Set<String> only) {
+    public String promptBlock(String uid, int maxChars, Set<String> only) {
         if (only != null && only.isEmpty()) return "";
-        List<Skill> enabled = list().stream()
-                .filter(s -> !isDisabled(s))
+        List<Skill> enabled = listWithState(uid).stream()
+                .filter(st -> !st.disabled())
+                .map(SkillState::skill)
                 .filter(s -> only == null || only.contains(s.name()))
                 .toList();
         if (enabled.isEmpty()) return "";
@@ -196,16 +205,45 @@ public class SkillService {
     }
 
     /**
-     * 从 URL 安装技能（4.5 收尾）：只接受 http/https 上的 **SKILL.md 纯文本**。
+     * 创建个人技能。
+     *
+     * @param uid   归属用户
+     * @param name  技能名（同时作为技能标识）
+     * @param description 一句话描述（模型靠它决定是否读取）
+     * @param content Markdown 正文（不含 frontmatter，由本方法补齐）
+     */
+    public Skill create(String uid, String name, String description, String content) {
+        String n = name == null ? "" : name.trim();
+        if (!NAME_OK.matcher(n).matches()) {
+            throw new BizException("技能名仅支持中英文、数字、下划线与连字符（1~64 字符）");
+        }
+        if (builtinDirNames().contains(n)) {
+            throw new BizException("已存在同名内置技能，请换个名字");
+        }
+        if (ownRow(uid, n) != null) {
+            throw new BizException("已存在同名技能，请换个名字或先删除");
+        }
+        String body = content == null || content.isBlank()
+                ? "# " + n + "\n\n在此写这个技能的具体做法：什么场景用、按什么步骤、输出要什么格式。\n"
+                : content.trim() + "\n";
+        String md = frontmatter(n, description, "1.0.0") + body;
+        String desc = (description == null || description.isBlank()) ? firstLine(body) : description.trim();
+        saveRow(newRow(uid, n, n, desc, md, "user", "1.0.0"));
+        log.info("[SKILL] 创建个人技能 uid={} skill={}（{} 字节）", uid, n, md.length());
+        return parse(md, n, "user");
+    }
+
+    /**
+     * 从 URL 安装技能：只接受 http/https 上的 **SKILL.md 纯文本**，装到当前用户名下。
      *
      * <p>安全边界：协议白名单（杜绝 file:// 等）、响应体大小上限、连接与读取超时，
-     * 内容仅作为文本落盘（**不执行**）；要求内容自带 frontmatter（含 name/description），
+     * 内容仅作为文本入库（**不执行**）；要求内容自带 frontmatter（含 name/description），
      * 缺 frontmatter 直接报错而不是猜——避免装进来一个模型永远看不到的"哑技能"。
      *
      * @param url          技能文件地址（GitHub 请用 raw 链接）
-     * @param nameOverride 显式技能名（可空；空则用 frontmatter 里的 name）
+     * @param nameOverride 技能标识（可空；空则用 frontmatter 里的 name）
      */
-    public Skill installFromUrl(String url, String nameOverride) {
+    public Skill installFromUrl(String uid, String url, String nameOverride) {
         if (url == null || url.isBlank()) throw new BizException("请填写技能文件地址");
         String u = url.trim();
         if (!u.startsWith("http://") && !u.startsWith("https://")) {
@@ -216,7 +254,7 @@ public class SkillService {
             throw new BizException("技能文件缺少 frontmatter（应以 --- 开头并包含 name / description），"
                     + "请确认链接指向 SKILL.md 原文");
         }
-        Skill meta = parse(content, "", "user");
+        Skill meta = parse(content, "", "url");
         String dir = (nameOverride != null && !nameOverride.isBlank()) ? nameOverride.trim() : meta.name();
         if (dir == null || dir.isBlank() || !NAME_OK.matcher(dir).matches()) {
             throw new BizException("无法从内容确定技能名，请显式填写名称（中英文/数字/下划线/连字符，1~64 字符）");
@@ -224,19 +262,135 @@ public class SkillService {
         if (meta.description().isBlank()) {
             throw new BizException("技能缺少 description——模型靠它判断何时读取该技能，请在技能文件 frontmatter 里补上");
         }
-        Path base = userDir();
-        Path d = base.resolve(dir).normalize();
-        if (!d.startsWith(base)) throw new BizException("非法的技能名");
-        Path f = d.resolve(SKILL_FILE);
-        if (Files.exists(f)) throw new BizException("已存在同名技能（" + dir + "），请换个名称或先删除");
+        if (ownRow(uid, dir) != null) throw new BizException("已存在同名技能（" + dir + "），请换个名称或先删除");
+        saveRow(newRow(uid, dir, meta.name(), meta.description(), content, "url", meta.version()));
+        log.info("[SKILL] uid={} 从 URL 安装技能 {} ← {}", uid, dir, u);
+        return parse(content, dir, "url");
+    }
+
+    /**
+     * 启用/停用技能：个人技能改行状态，内置技能记到个人停用表（内置技能本身不可改）。
+     */
+    public void setDisabled(String uid, String dirName, boolean disabled) {
+        UserSkill row = ownRow(uid, dirName);
+        if (row != null) {
+            row.setDisabled(disabled ? 1 : 0);
+            userSkillMapper.updateById(row);
+            return;
+        }
+        if (!builtinDirNames().contains(dirName)) throw new BizException("技能不存在");
+        if (disabled) {
+            if (skillDisabledMapper.selectOne(new LambdaQueryWrapper<SkillDisabled>()
+                    .eq(SkillDisabled::getUid, uid).eq(SkillDisabled::getDirName, dirName)
+                    .last("limit 1")) == null) {
+                SkillDisabled d = new SkillDisabled();
+                d.setUid(uid);
+                d.setDirName(dirName);
+                skillDisabledMapper.insert(d);
+            }
+        } else {
+            skillDisabledMapper.delete(new LambdaQueryWrapper<SkillDisabled>()
+                    .eq(SkillDisabled::getUid, uid).eq(SkillDisabled::getDirName, dirName));
+        }
+    }
+
+    /** 删除个人技能（内置技能不可删：只能停用） */
+    public void delete(String uid, String dirName) {
+        UserSkill row = ownRow(uid, dirName);
+        if (row == null) {
+            throw new BizException(builtinDirNames().contains(dirName)
+                    ? "内置技能不可删除（可停用）" : "技能不存在");
+        }
+        userSkillMapper.deleteById(row.getId());
+        log.info("[SKILL] 删除个人技能 uid={} skill={}", uid, dirName);
+    }
+
+    // ==================== 内部 ====================
+
+    /** 个人技能行（按技能标识查） */
+    private UserSkill ownRow(String uid, String dirName) {
+        if (uid == null || dirName == null) return null;
+        return userSkillMapper.selectOne(new LambdaQueryWrapper<UserSkill>()
+                .eq(UserSkill::getUid, uid).eq(UserSkill::getDirName, dirName).last("limit 1"));
+    }
+
+    /** 当前用户的全部个人技能行 */
+    private List<UserSkill> ownRows(String uid) {
+        if (uid == null) return List.of();
+        return userSkillMapper.selectList(new LambdaQueryWrapper<UserSkill>()
+                .eq(UserSkill::getUid, uid).orderByAsc(UserSkill::getCreateTime));
+    }
+
+    /** 该用户停用了哪些内置技能 */
+    private Set<String> builtinDisabledDirNames(String uid) {
+        if (uid == null) return Set.of();
         try {
-            Files.createDirectories(d);
-            Files.writeString(f, content, StandardCharsets.UTF_8);
+            return skillDisabledMapper.selectList(new LambdaQueryWrapper<SkillDisabled>()
+                            .eq(SkillDisabled::getUid, uid))
+                    .stream().map(SkillDisabled::getDirName).collect(java.util.stream.Collectors.toSet());
+        } catch (Exception e) {
+            log.warn("[SKILL] 内置技能停用标记读取失败（按未停用处理）: {}", e.getMessage());
+            return Set.of();
+        }
+    }
+
+    /** 内置技能标识集合（同名不可新建） */
+    private Set<String> builtinDirNames() {
+        Set<String> out = new HashSet<>();
+        try {
+            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            for (Resource r : resolver.getResources("classpath*:skills/*/" + SKILL_FILE)) {
+                out.add(dirNameOf(r));
+            }
+        } catch (Exception e) {
+            log.warn("[SKILL] 内置技能扫描失败: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /** 读全文：内置走 classpath，个人库读 content 列 */
+    private String readRaw(String uid, Skill s) {
+        if ("builtin".equals(s.source())) {
+            try {
+                PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+                Resource r = resolver.getResource("classpath:skills/" + s.dirName() + "/" + SKILL_FILE);
+                try (InputStream in = r.getInputStream()) {
+                    return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            } catch (Exception e) {
+                log.warn("[SKILL] 内置技能 {} 读取失败: {}", s.dirName(), e.getMessage());
+                return null;
+            }
+        }
+        UserSkill row = ownRow(uid, s.dirName());
+        return row == null ? null : row.getContent();
+    }
+
+    private UserSkill newRow(String uid, String dirName, String display, String desc, String content,
+                             String source, String version) {
+        UserSkill row = new UserSkill();
+        row.setId(UUID.randomUUID().toString());
+        row.setUid(uid);
+        row.setDirName(dirName);
+        row.setName(display);
+        row.setDescription(desc);
+        row.setVersion(version == null || version.isBlank() ? "1.0.0" : version);
+        row.setContent(content);
+        row.setSource(source);
+        row.setDisabled(0);
+        return row;
+    }
+
+    private void saveRow(UserSkill row) {
+        try {
+            userSkillMapper.insert(row);
         } catch (Exception e) {
             throw new BizException("技能写入失败：" + e.getMessage());
         }
-        log.info("[SKILL] 从 URL 安装技能 {} ← {}", dir, u);
-        return parse(content, dir, "user");
+    }
+
+    private static String sourceOf(UserSkill row) {
+        return row.getSource() == null || row.getSource().isBlank() ? "user" : row.getSource();
     }
 
     /** 下载 SKILL.md 文本（超时 + 大小上限；不跟随重定向到非 http/https） */
@@ -267,112 +421,6 @@ public class SkillService {
         }
     }
 
-    /** 创建用户技能（写 {skill.dir}/{name}/SKILL.md） */
-    public Skill create(String name, String description, String content) {
-        String n = name == null ? "" : name.trim();
-        if (!NAME_OK.matcher(n).matches()) {
-            throw new BizException("技能名仅支持中英文、数字、下划线与连字符（1~64 字符）");
-        }
-        if (findByDirName(n) != null && "builtin".equals(findByDirName(n).source())) {
-            throw new BizException("已存在同名内置技能，请换个名字");
-        }
-        Path base = userDir();
-        Path dir = base.resolve(n).normalize();
-        if (!dir.startsWith(base)) {
-            throw new BizException("非法的技能名");   // 双保险：白名单之外仍校验不越出根目录
-        }
-        Path f = dir.resolve(SKILL_FILE);
-        if (Files.exists(f)) {
-            throw new BizException("已存在同名技能，请换个名字或先删除");
-        }
-        String body = content == null || content.isBlank()
-                ? "# " + n + "\n\n在此写这个技能的具体做法：什么场景用、按什么步骤、输出要什么格式。\n"
-                : content.trim() + "\n";
-        String md = "---\n"
-                + "name: " + n + "\n"
-                + "description: " + (description == null ? "" : description.trim().replaceAll("\\s+", " ")) + "\n"
-                + "version: 1.0.0\n"
-                + "createdAt: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n"
-                + "---\n\n" + body;
-        try {
-            Files.createDirectories(dir);
-            Files.writeString(f, md, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new BizException("技能写入失败：" + e.getMessage());
-        }
-        log.info("[SKILL] 创建用户技能 {}（{} 字节）", n, md.length());
-        return parse(md, n, "user");
-    }
-
-    /** 删除用户技能（内置技能不可删）；递归删除前已限定在 {skill.dir}/{白名单名} 之下 */
-    public void delete(String name) {
-        Skill s = find(name);
-        if (s == null) throw new BizException("技能不存在");
-        if ("builtin".equals(s.source())) throw new BizException("内置技能不可删除（可在用户目录建同名技能覆盖）");
-        Path base = userDir();
-        Path dir = base.resolve(s.dirName()).normalize();
-        if (!dir.startsWith(base) || dir.equals(base)) throw new BizException("非法的技能路径");
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.deleteIfExists(p);
-                } catch (Exception ignore) {
-                    // 单个文件删不掉不阻断整体（下次扫描会再列出）
-                }
-            });
-        } catch (Exception e) {
-            throw new BizException("技能删除失败：" + e.getMessage());
-        }
-        setDisabled(s.dirName(), false);   // 顺手清掉停用标记，避免残留
-        log.info("[SKILL] 删除用户技能 {}", s.dirName());
-    }
-
-    /** 是否被停用（停用名单存配置 skill.disabledNames，JSON 数组） */
-    public boolean isDisabled(Skill s) {
-        return disabledNames().contains(s.dirName());
-    }
-
-    public void setDisabled(String dirName, boolean disabled) {
-        Skill s = find(dirName);
-        if (s == null) throw new BizException("技能不存在");
-        List<String> names = new ArrayList<>(disabledNames());
-        if (disabled) {
-            if (!names.contains(s.dirName())) names.add(s.dirName());
-        } else {
-            names.remove(s.dirName());
-        }
-        configService.putInternal("skill.disabledNames", JSON.toJSONString(names));
-    }
-
-    // ==================== 内部 ====================
-
-    private List<String> disabledNames() {
-        try {
-            String v = configService.get("skill.disabledNames");
-            if (v == null || v.isBlank()) return List.of();
-            List<String> l = JSON.parseArray(v, String.class);
-            return l == null ? List.of() : l;
-        } catch (Exception e) {
-            log.warn("[SKILL] skill.disabledNames 解析失败（按未停用处理）: {}", e.getMessage());
-            return List.of();
-        }
-    }
-
-    private Skill findByDirName(String dirName) {
-        return list().stream().filter(s -> s.dirName().equals(dirName)).findFirst().orElse(null);
-    }
-
-    private String readRaw(Skill s) throws Exception {
-        if ("builtin".equals(s.source())) {
-            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-            Resource r = resolver.getResource("classpath:skills/" + s.dirName() + "/" + SKILL_FILE);
-            try (InputStream in = r.getInputStream()) {
-                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            }
-        }
-        return Files.readString(userDir().resolve(s.dirName()).resolve(SKILL_FILE), StandardCharsets.UTF_8);
-    }
-
     /** 从资源 URL 取技能目录名（如 .../skills/step-by-step-answering/SKILL.md → step-by-step-answering） */
     private String dirNameOf(Resource r) {
         try {
@@ -384,7 +432,7 @@ public class SkillService {
                 if (prev >= 0 && prev + 1 < dir.length()) return dir.substring(prev + 1);
             }
         } catch (Exception e) {
-            // jar 内 URL 解析失败：退化为 unknown（技能仍会被列出，只是目录名不理想）
+            // jar 内 URL 解析失败：退化为 unknown（技能仍会被列出，只是标识不理想）
         }
         return "unknown";
     }
@@ -403,7 +451,7 @@ public class SkillService {
                     version = str(fm.get("version"), "");
                 }
             } catch (Exception e) {
-                log.warn("[SKILL] {} 的 frontmatter 解析失败（仅用目录名）: {}", fallbackDir, e.getMessage());
+                log.warn("[SKILL] {} 的 frontmatter 解析失败（仅用技能标识）: {}", fallbackDir, e.getMessage());
             }
         } else if (raw.startsWith("---")) {
             log.warn("[SKILL] {} 的 frontmatter 未闭合（缺少结束 ---），已按无 frontmatter 处理", fallbackDir);
@@ -411,6 +459,24 @@ public class SkillService {
         if (name == null || name.isBlank()) name = fallbackDir;
         return new Skill(name.trim(), desc.trim(), version.trim(), sha8(raw), source, fallbackDir,
                 raw.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    private static String frontmatter(String name, String description, String version) {
+        return "---\n"
+                + "name: " + name + "\n"
+                + "description: " + (description == null ? "" : description.trim().replaceAll("\\s+", " ")) + "\n"
+                + "version: " + version + "\n"
+                + "createdAt: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n"
+                + "---\n\n";
+    }
+
+    /** 正文首行当默认描述（用户没写描述时至少不是空的） */
+    private static String firstLine(String body) {
+        for (String line : body.split("\n")) {
+            String t = line.replace("#", "").trim();
+            if (!t.isBlank()) return t.length() > 200 ? t.substring(0, 200) : t;
+        }
+        return "";
     }
 
     private static String str(Object o, String def) {

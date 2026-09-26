@@ -260,12 +260,17 @@ export async function downloadDocumentSource (id, fileName) {
   URL.revokeObjectURL(url)
 }
 
-// ==================== MCP 外部工具（设置页管理界面） ====================
+// ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
 export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', body: JSON.stringify({ url, type }) })
+export const addMcpServer = body => request('/mcp/servers', { method: 'POST', body: JSON.stringify(body) })
+export const updateMcpServer = (id, body) => request('/mcp/servers/' + id, { method: 'PUT', body: JSON.stringify(body) })
+export const setMcpServerEnabled = (id, enabled) =>
+  request(`/mcp/servers/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
+export const deleteMcpServer = id => request('/mcp/servers/' + id, { method: 'DELETE' })
 
-// ==================== 技能（Skills） ====================
+// ==================== 技能（Skills）（个人资产：每人管自己的技能） ====================
 export const listSkills = () => request('/skill/list')
 export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))
 export const createSkill = body => request('/skill', { method: 'POST', body: JSON.stringify(body) })

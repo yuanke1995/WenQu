@@ -341,3 +341,51 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
     UNIQUE KEY `uk_provider_model` (`provider_id`, `model_id`),
     KEY `idx_provider` (`provider_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型库表（按类型登记供应商可用模型）';
+
+-- ============================================
+-- 2026-09-26: 技能（Skills）与 MCP Server 下沉为「个人资产」
+-- 变更背景：这两类资源原先是管理员在系统设置里维护的**全局**资源——技能落在服务器目录
+--   skill.dir（{技能名}/SKILL.md）+ 全局停用名单 skill.disabledNames，MCP 落在全局配置
+--   mcp.servers（JSON 数组）+ mcp.enabled；普通用户既看不见也改不了（/api/ai/skill/** 与
+--   /api/ai/mcp/** 对非管理员返回 403）。现改为按 uid 归属，每人各管各的。
+--   系统设置只保留与"内容无关"的预算类参数（skill.injectMaxChars / skill.maxFileChars）
+--   与工具调用总开关 tool.enabled；技能是否使用、MCP 连哪些服务器由用户自己决定。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_user_skill` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `dir_name`    VARCHAR(64)  NOT NULL COMMENT '技能标识（详情/停用/删除的主键；沿用原「技能目录名」口径：中英文/数字/下划线/连字符）',
+    `name`        VARCHAR(200) NOT NULL COMMENT '技能显示名（frontmatter name，注入系统提示用）',
+    `description` VARCHAR(500) DEFAULT NULL COMMENT '一句话描述（模型据此判断要不要读取该技能）',
+    `version`     VARCHAR(32)  DEFAULT NULL COMMENT '版本（frontmatter version）',
+    `content`     MEDIUMTEXT   NOT NULL COMMENT 'SKILL.md 全文（含 YAML frontmatter；只作纯文本读取，不执行其中任何内容）',
+    `source`      VARCHAR(20)  DEFAULT 'user' COMMENT '来源: user=自建 url=URL 安装',
+    `disabled`    INT          DEFAULT 0 COMMENT '停用: 0=生效 1=停用（停用后不注入清单、readSkill 也拒绝读取）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_uid_dir` (`uid`, `dir_name`),
+    KEY `idx_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人技能表（ Skills：能力包正文，按用户隔离，替代原服务器技能目录）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_skill_disabled` (
+    `uid`         VARCHAR(64) NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `dir_name`    VARCHAR(64) NOT NULL COMMENT '内置技能标识（classpath skills/{dirName}/SKILL.md 的目录名）',
+    `create_time` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`uid`, `dir_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内置技能的个人停用标记（内置技能随版本分发、所有人可见，是否停用由各人自定）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `name`        VARCHAR(60)  NOT NULL COMMENT '服务显示名（个人维度唯一；同时作为工具名前缀防冲突）',
+    `url`         VARCHAR(512) NOT NULL COMMENT '服务地址（可含路径；streamable 默认端点 /mcp、sse 默认 /sse）',
+    `type`        VARCHAR(16)  DEFAULT 'streamable' COMMENT '传输类型: streamable | sse',
+    `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后不建立连接、不暴露其工具）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_uid_name` (`uid`, `name`),
+    KEY `idx_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人 MCP Server 表（替代原全局配置 mcp.servers）';
