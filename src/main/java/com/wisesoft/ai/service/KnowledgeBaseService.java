@@ -261,6 +261,9 @@ public class KnowledgeBaseService {
             m.put("description", kb.getDescription());
             m.put("queryParams", kb.getQueryParams());
             m.put("parseParams", kb.getParseParams());
+            // 向量模型引用要随列表下发：卡片展示绑定模型名 + 编辑弹窗回显（缺失会被当成"未绑定"）
+            m.put("embeddingRef", kb.getEmbeddingRef());
+            m.put("embeddingDimensions", kb.getEmbeddingDimensions());
             m.put("isDefault", kb.getIsDefault());
             m.put("createdBy", kb.getCreatedBy());
             m.put("shareConfig", kb.getShareConfig());

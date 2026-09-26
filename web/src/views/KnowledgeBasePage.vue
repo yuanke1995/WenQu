@@ -55,53 +55,53 @@
         <a-divider class="kb-divider" plain>检索参数（留空 = 继承全局设置）</a-divider>
         <div class="kb-param-grid">
           <a-form-item label="向量权重" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.q.vectorWeight" :min="0" :max="1" :step="0.05" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.q.vectorWeight" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vectorWeight')" />
           </a-form-item>
           <a-form-item label="关键词权重" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.q.keywordWeight" :min="0" :max="1" :step="0.05" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.q.keywordWeight" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'keywordWeight')" />
           </a-form-item>
           <a-form-item label="向量阈值" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vecThreshold')" />
           </a-form-item>
           <a-form-item label="向量召回上限" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.q.vectorTopK" :min="1" :max="100" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.q.vectorTopK" :min="1" :max="100" style="width:100%" :placeholder="numPh('retrieval', 'vectorTopK')" />
           </a-form-item>
           <a-form-item label="关键词召回上限" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.q.keywordLimit" :min="1" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.q.keywordLimit" :min="1" style="width:100%" :placeholder="numPh('retrieval', 'keywordLimit')" />
           </a-form-item>
           <a-form-item label="重排" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-select v-model:value="form.q.rerankEnabled" style="width:100%" :options="triOptions" placeholder="继承" allow-clear />
+            <a-select v-model:value="form.q.rerankEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('rerank', 'enabled')" allow-clear />
           </a-form-item>
           <a-form-item label="重排模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <ModelSelect v-model="form.q.rerankModel" type="rerank" :width="200" inherit-label="不重排" />
+            <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="不重排" />
           </a-form-item>
         </div>
 
         <a-divider class="kb-divider" plain>解析参数（留空 = 继承全局模板；仅对之后解析的文档生效）</a-divider>
         <div class="kb-param-grid">
           <a-form-item label="分块最大字符" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.maxSize" :min="200" :step="100" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.maxSize" :min="200" :step="100" style="width:100%" :placeholder="numPh('chunk', 'maxSize')" />
           </a-form-item>
           <a-form-item label="分块重叠字符" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.overlap" :min="0" :step="20" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.overlap" :min="0" :step="20" style="width:100%" :placeholder="numPh('chunk', 'overlap')" />
           </a-form-item>
           <a-form-item label="最大知识块数" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.maxChunks" :min="0" :step="100" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.maxChunks" :min="0" :step="100" style="width:100%" :placeholder="numPh('chunk', 'maxChunks')" />
           </a-form-item>
           <a-form-item label="最多提取图片" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.maxImages" :min="0" :step="10" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.maxImages" :min="0" :step="10" style="width:100%" :placeholder="numPh('chunk', 'maxImages')" />
           </a-form-item>
           <a-form-item label="结构感知切分" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-select v-model:value="form.p.structural" style="width:100%" :options="triOptions" placeholder="继承" allow-clear />
+            <a-select v-model:value="form.p.structural" style="width:100%" :options="triOptions" :placeholder="triPh('chunk', 'structural')" allow-clear />
           </a-form-item>
           <a-form-item label="边界阈值比例" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.structuralRatio" :min="0.5" :max="1" :step="0.05" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.structuralRatio" :min="0.5" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('chunk', 'structuralRatio')" />
           </a-form-item>
           <a-form-item label="标题识别层级" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <a-input-number v-model:value="form.p.headingDepth" :min="1" :max="6" style="width:100%" placeholder="继承" />
+            <a-input-number v-model:value="form.p.headingDepth" :min="1" :max="6" style="width:100%" :placeholder="numPh('chunk', 'headingDepth')" />
           </a-form-item>
           <a-form-item label="图片描述模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-            <ModelSelect v-model="form.p.visionRef" type="vision" :width="200" inherit-label="不描述图片" />
+            <ModelSelect v-model="form.p.visionRef" type="vision" width="100%" inherit-label="不描述图片" />
           </a-form-item>
         </div>
         <div class="kb-hint" style="margin:4px 0 0">改解析参数后需重新解析文档才会生效（不自动重解析全库）。</div>
@@ -217,11 +217,32 @@ const load = async () => {
   }
 }
 
+// 全局配置缓存：占位符展示"继承的全局值" + 新建库预填解析模板（一次拉取，两处共用）
+const globalCfg = ref({})
+const loadGlobalCfg = async () => {
+  if (Object.keys(globalCfg.value).length) return
+  try {
+    const r = await getConfig()
+    globalCfg.value = (r && r.data) || {}
+  } catch (e) { /* 拉取失败占位符退化为"继承" */ }
+}
+const gval = (group, key) => String(globalCfg.value[group]?.[key]?.value ?? '').trim()
+/** 数字类占位符：显示当前全局值（留空继承它） */
+const numPh = (group, key) => {
+  const v = gval(group, key)
+  return v === '' ? '继承' : `全局 ${v}`
+}
+/** 开关类占位符：显示全局当前状态（开/关） */
+const triPh = (group, key) => {
+  const v = gval(group, key)
+  return v === '' ? '继承' : `全局（${v === 'true' ? '开' : '关'}）`
+}
+
 /** 新建时用全局解析模板预填（对齐"全局设置是新建库默认模板"的语义；检索参数仍留空=继承） */
 const prefillFromGlobal = async () => {
   try {
-    const r = await getConfig()
-    const d = r?.data || {}
+    await loadGlobalCfg()
+    const d = globalCfg.value
     const get = (group, key) => d[group]?.[key]?.value
     const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
     const p = form.value.p
@@ -240,13 +261,14 @@ const openCreate = () => {
   editing.value = null
   form.value = blank()
   showEdit.value = true
-  prefillFromGlobal()
+  loadGlobalCfg().then(() => prefillFromGlobal())
 }
 
 const openEdit = row => {
   editing.value = row
   form.value = hydrateForm(row)
   showEdit.value = true
+  loadGlobalCfg()
 }
 
 const save = async () => {
@@ -300,7 +322,7 @@ const onDelete = async row => {
   }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadGlobalCfg() })
 </script>
 
 <style scoped>

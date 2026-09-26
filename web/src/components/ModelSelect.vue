@@ -1,7 +1,7 @@
 <template>
   <a-select
     :value="modelValue || undefined"
-    :style="{ width: (pill ? pillWidth : width || 320) + 'px' }"
+    :style="{ width: pill ? pillWidth + 'px' : (typeof width === 'string' ? width : (width || 320) + 'px') }"
     :placeholder="placeholder || '选择模型'"
     :disabled="disabled"
     :loading="loading"
@@ -70,7 +70,8 @@ const props = defineProps({
   /** 胶囊形态：28px 高全圆角，弱化边框（对话工具栏） */
   pill: { type: Boolean, default: false },
   placeholder: { type: String, default: '' },
-  width: { type: Number, default: 320 },
+  /** 宽度：数字=像素；字符串原样使用（如 "100%" 适配表单栅格） */
+  width: { type: [Number, String], default: 320 },
   disabled: { type: Boolean, default: false },
   /** 空数据时是否提示管理员去「模型供应商」页登记（非管理员界面可不提示） */
   adminTipVisible: { type: Boolean, default: false },
