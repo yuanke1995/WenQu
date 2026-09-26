@@ -8,7 +8,6 @@
     :allow-clear="allowClear"
     :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue }"
     popup-class-name="ms-dropdown"
-    dropdown-class-name="ms-dropdown"
     option-label-prop="label"
     show-search
     option-filter-prop="label"
