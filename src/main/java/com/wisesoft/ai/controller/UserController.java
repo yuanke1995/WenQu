@@ -25,6 +25,7 @@ public class UserController {
 
     private final OrgService orgService;
     private final com.wisesoft.ai.service.AuthService authService;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
     @Operation(summary = "用户列表", description = "返回全部用户（按用户名升序）")
     @GetMapping("/list")
@@ -46,8 +47,8 @@ public class UserController {
     public ResultJson resetPassword(
             @Parameter(description = "用户标识") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
-        // 自助改密：非管理员只允许改自己的（uid 来自路径，但必须与登录态一致，防止代改）
-        if (!com.wisesoft.ai.service.AuthService.isAdminRole(com.wisesoft.ai.util.RequestUser.role())
+        // 自助改密：非管理员级角色只允许改自己的（uid 来自路径，但必须与登录态一致，防止代改）
+        if (!roleService.isAdminCode(com.wisesoft.ai.util.RequestUser.role())
                 && !com.wisesoft.ai.util.RequestUser.uid().equals(uid)) {
             return ResultJson.error(403, "仅可修改自己的密码");
         }

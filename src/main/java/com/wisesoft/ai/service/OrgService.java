@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Set;
 
 /**
  * 组织管理：部门与用户的增删改查（供「成员管理」页与「共享范围」选择器使用）。
@@ -25,7 +24,6 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class OrgService {
 
-    private static final Set<String> ROLES = Set.of("superadmin", "admin", "user");
     private static final String UID_PATTERN = "[A-Za-z0-9_@.\\-]+";
     private static final int NAME_MAX = 100;
 
@@ -33,6 +31,7 @@ public class OrgService {
     private final UserMapper userMapper;
     private final AuthService authService;
     private final ModelRegistryService modelRegistryService;
+    private final RoleService roleService;
 
     // ==================== 部门 ====================
 
@@ -41,34 +40,47 @@ public class OrgService {
                 new LambdaQueryWrapper<Department>().orderByAsc(Department::getName));
     }
 
-    public Department createDepartment(String name, String description) {
+    /** 新建部门（树形：parentId 空=根；父须存在） */
+    public Department createDepartment(String name, String description, String parentId) {
         String n = normalizeName(name, "部门名称");
         ensureDeptNameUnique(n, null);
         Department d = new Department();
+        d.setParentId(validateDeptParent(parentId, null));
         d.setName(n);
         d.setDescription(trimOrNull(description));
         departmentMapper.insert(d);
-        log.info("[AUDIT] 新建部门 id={} name={}", d.getId(), n);
+        log.info("[AUDIT] 新建部门 id={} name={} parent={}", d.getId(), n, d.getParentId());
         return d;
     }
 
-    public void updateDepartment(String id, String name, String description) {
+    /** 修改部门：父级变更做环检测（父不能是自己或自己的后代） */
+    public void updateDepartment(String id, String name, String description, String parentId) {
         Department d = departmentMapper.selectById(id);
         if (d == null) throw new BizException("部门不存在");
         String n = normalizeName(name, "部门名称");
         ensureDeptNameUnique(n, id);
+        d.setParentId(validateDeptParent(parentId, id));
         d.setName(n);
         d.setDescription(trimOrNull(description));
         departmentMapper.updateById(d);
+        log.info("[AUDIT] 编辑部门 id={} name={} parent={}", id, n, d.getParentId());
     }
 
-    /** 删除部门：先校验无用户挂靠；物理删除（见 DepartmentMapper 注释，规避软删 + uk_name 的名称占位问题） */
+    /**
+     * 删除部门：先校验无用户挂靠、无子部门；物理删除
+     * （见 DepartmentMapper 注释，规避软删 + uk_name 的名称占位问题）。
+     */
     public void deleteDepartment(String id) {
         Department d = departmentMapper.selectById(id);
         if (d == null) throw new BizException("部门不存在");
         Long used = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getDepartmentId, id));
         if (used != null && used > 0) {
             throw new BizException("该部门下仍有 " + used + " 名用户，请先调整其归属");
+        }
+        Long children = departmentMapper.selectCount(
+                new LambdaQueryWrapper<Department>().eq(Department::getParentId, id));
+        if (children != null && children > 0) {
+            throw new BizException("该部门下仍有 " + children + " 个子部门，请先删除或移出子部门");
         }
         departmentMapper.hardDeleteById(id);
         log.info("[AUDIT] 删除部门 id={} name={}", id, d.getName());
@@ -81,7 +93,7 @@ public class OrgService {
                 new LambdaQueryWrapper<User>().orderByAsc(User::getUsername));
     }
 
-    /** 新建用户（必须设置初始密码，否则无法登录） */
+    /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色） */
     public User createUser(String uid, String username, String departmentId, String role, String password) {
         String u = normalizeUid(uid);
         if (userMapper.selectById(u) != null) throw new BizException("该用户标识已存在");
@@ -108,9 +120,9 @@ public class OrgService {
         String r = normalizeRole(role);
         ensureDeptExists(departmentId);
         if (status != null && status != 0 && status != 1) throw new BizException("非法状态");
-        // 最后一名 superadmin 不可降级，避免把自己锁死
-        if ("superadmin".equals(user.getRole()) && !"superadmin".equals(r) && isLastSuperadmin()) {
-            throw new BizException("至少保留一名超级管理员，无法降级最后一名");
+        // 最后一名管理员级账号不可降级为普通角色，避免把自己锁死（RBAC 化：superadmin 或 admin_flag=1）
+        if (roleService.isAdminCode(user.getRole()) && !roleService.isAdminCode(r) && isLastAdminAccount()) {
+            throw new BizException("至少保留一名管理员级账号，无法降级最后一名");
         }
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, uid);
@@ -124,8 +136,8 @@ public class OrgService {
     public void deleteUser(String uid) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
-        if ("superadmin".equals(user.getRole()) && isLastSuperadmin()) {
-            throw new BizException("至少保留一名超级管理员，无法删除最后一名");
+        if (roleService.isAdminCode(user.getRole()) && isLastAdminAccount()) {
+            throw new BizException("至少保留一名管理员级账号，无法删除最后一名");
         }
         userMapper.deleteById(uid);
         log.info("[AUDIT] 删除用户 uid={}", uid);
@@ -199,10 +211,26 @@ public class OrgService {
         return u;
     }
 
-    private static String normalizeRole(String role) {
-        String r = (role == null || role.isBlank()) ? "user" : role.trim();
-        if (!ROLES.contains(r)) throw new BizException("角色不合法（superadmin/admin/user）");
+    /** 角色校验（RBAC）：须为角色表中启用的角色（内置三角色由种子兜底恒存在） */
+    private String normalizeRole(String role) {
+        String r = (role == null || role.isBlank()) ? "user" : role.trim().toLowerCase();
+        if (!roleService.existsActive(r)) throw new BizException("角色不存在或已停用（请先在权限管理中创建）");
         return r;
+    }
+
+    /** 部门父级校验：存在性 + 环检测（父不能是自己或自己的后代；深度硬上限防脏数据成环） */
+    private String validateDeptParent(String parentId, String selfId) {
+        String p = trimOrNull(parentId);
+        if (p == null) return null;
+        if (p.equals(selfId)) throw new BizException("父部门不能是自己");
+        if (departmentMapper.selectById(p) == null) throw new BizException("指定的父部门不存在");
+        String cursor = p;
+        for (int i = 0; i < 50 && cursor != null; i++) {
+            if (cursor.equals(selfId)) throw new BizException("父部门不能是其自身的后代（会成环）");
+            Department cur = departmentMapper.selectById(cursor);
+            cursor = cur == null ? null : cur.getParentId();
+        }
+        return p;
     }
 
     private void ensureDeptNameUnique(String name, String excludeId) {
@@ -226,8 +254,11 @@ public class OrgService {
         if (departmentMapper.selectById(d) == null) throw new BizException("指定部门不存在");
     }
 
-    private boolean isLastSuperadmin() {
-        Long c = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getRole, "superadmin"));
+    /** 是否仅剩这一名管理员级账号（role 为 superadmin/admin 或自定义 admin_flag=1 的用户数 ≤1） */
+    private boolean isLastAdminAccount() {
+        List<String> adminCodes = roleService.adminCodes();
+        if (adminCodes.isEmpty()) return false;
+        Long c = userMapper.selectCount(new LambdaQueryWrapper<User>().in(User::getRole, adminCodes));
         return c != null && c <= 1;
     }
 

@@ -14,11 +14,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 /**
- * 内部鉴权拦截器：两层控制
+ * 内部鉴权拦截器：三层控制
  * <ol>
  *   <li>API Key 认证：带对 X-Api-Key 且命中问答白名单 → 放行（管理端点不放行）</li>
- *   <li>权限模型：普通用户仅开放问答链路，其余端点需管理员
- *       （判定见 {@link AdminGuard}；未命中返回 403，fail-closed）</li>
+ *   <li>登录门禁：require-login=true 时除登录引导端点外须持有效登录令牌</li>
+ *   <li>权限模型（2026-09-26 RBAC 化）：白名单端点全员可用；其余端点
+ *       管理员级角色直通，非管理员角色按角色绑定的接口（c_ai_role_api）匹配，
+ *       未授权 403 fail-closed（判定见 {@link com.wisesoft.ai.service.RoleService}）</li>
  * </ol>
  * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
  * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
@@ -32,9 +34,9 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     private final AppProperties properties;
     private final ObjectMapper objectMapper;
-    private final AdminGuard adminGuard;
     private final com.wisesoft.ai.service.ApiKeyService apiKeyService;
     private final UserContextInterceptor userContextInterceptor;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
     /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
     public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
@@ -176,13 +178,23 @@ public class SecurityConfig implements WebMvcConfigurer {
                         ResultJson.error(401, "请先登录")));
                 return false;
             }
-            // 3. 问答用户白名单之外 → 管理员判定（fail-closed：普通用户不隐式获得管理权）
-            if (!isPublicUserEndpoint(method, path) && !adminGuard.isAdmin(request)) {
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(objectMapper.writeValueAsString(
-                        ResultJson.error(403, "仅管理员可访问该功能")));
-                return false;
+            // 3. 问答用户白名单之外 → RBAC 判定（fail-closed）：
+            //    ① 管理员级角色（内置 superadmin/admin 或自定义 admin_flag=1）直通；
+            //    ② 其余角色按 c_ai_role_api 绑定匹配（method + AntPathMatcher，/{id} 占位可匹配），
+            //       未绑定一律 403——权限在权限管理页「角色 → 接口权限」里显式授予。
+            //    OPTIONS 预检放行（浏览器 CORS 预检不携带语义，交给 CORS 配置处理）。
+            if (!isPublicUserEndpoint(method, path)) {
+                String role = com.wisesoft.ai.util.RequestUser.role();
+                boolean pass = "OPTIONS".equals(method)
+                        || roleService.isAdminCode(role)
+                        || roleService.canAccess(role, method, path);
+                if (!pass) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(objectMapper.writeValueAsString(
+                            ResultJson.error(403, "无权访问该功能（角色未授权，可在权限管理中为角色绑定该接口）")));
+                    return false;
+                }
             }
             return true;
         }

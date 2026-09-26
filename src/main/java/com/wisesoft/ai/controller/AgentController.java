@@ -41,6 +41,7 @@ public class AgentController {
 
     private final AgentService agentService;
     private final ResourceVisibilityService visibility;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
     /** 当前登录态的权限主体 */
     private ResourceVisibilityService.Principal principal() {
@@ -48,10 +49,10 @@ public class AgentController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 当前用户能否管理该智能体（管理员照旧全量；普通用户=创建者或共享 manage 命中） */
+    /** 当前用户能否管理该智能体（管理员级角色照旧全量；普通用户=创建者或共享 manage 命中） */
     private boolean canManage(com.wisesoft.ai.model.Agent a) {
         if (a == null) return false;
-        if (com.wisesoft.ai.service.AuthService.isAdminRole(RequestUser.role())) return true;
+        if (roleService.isAdminCode(RequestUser.role())) return true;
         return visibility.canManage(principal(), a.getShareConfig(), a.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.AGENT);
     }
@@ -60,7 +61,7 @@ public class AgentController {
     @GetMapping("/list")
     public ResultJson list() {
         List<?> agents = agentService.list();
-        if (!com.wisesoft.ai.service.AuthService.isAdminRole(RequestUser.role())) {
+        if (!roleService.isAdminCode(RequestUser.role())) {
             var p = principal();
             agents = agents.stream().filter(o -> {
                 com.wisesoft.ai.model.Agent a = (com.wisesoft.ai.model.Agent) o;

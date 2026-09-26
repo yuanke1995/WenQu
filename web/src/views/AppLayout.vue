@@ -16,38 +16,12 @@
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
         </button>
-        <button class="nav-item" :class="{ active: isActive('/chat') }" @click="goChat" title="对话">
-          <message-outlined />
-          <span v-if="!collapsed">对话</span>
+        <!-- 导航由 /auth/me 下发的菜单树渲染（RBAC：按角色绑定下发，权限管理页维护） -->
+        <button v-for="m in navMenus" :key="m.id" class="nav-item"
+                :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="m.name">
+          <component :is="iconOf(m.icon)" />
+          <span v-if="!collapsed">{{ m.name }}</span>
         </button>
-        <!-- 「智能体」对所有人可见：页内的技能 Skills / MCP Tab 是个人资产，每人管自己的 -->
-        <button class="nav-item" :class="{ active: isActive('/agents') }" @click="router.push('/agents')" title="智能体">
-          <robot-outlined />
-          <span v-if="!collapsed">智能体</span>
-        </button>
-        <!-- 知识库对所有人可见：普通用户看到的是共享范围内的库（可自建自管自己的库） -->
-        <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
-          <database-outlined />
-          <span v-if="!collapsed">知识库</span>
-        </button>
-        <template v-if="isAdmin">
-          <button class="nav-item" :class="{ active: isActive('/members') }" @click="router.push('/members')" title="成员管理">
-            <team-outlined />
-            <span v-if="!collapsed">成员管理</span>
-          </button>
-          <button class="nav-item" :class="{ active: isActive('/dashboard') }" @click="router.push('/dashboard')" title="数据看板">
-            <bar-chart-outlined />
-            <span v-if="!collapsed">数据看板</span>
-          </button>
-          <button class="nav-item" :class="{ active: isActive('/evaluation') }" @click="router.push('/evaluation')" title="检索评估">
-            <experiment-outlined />
-            <span v-if="!collapsed">检索评估</span>
-          </button>
-          <button class="nav-item" :class="{ active: isActive('/settings') }" @click="router.push('/settings')" title="系统设置">
-            <setting-outlined />
-            <span v-if="!collapsed">系统设置</span>
-          </button>
-        </template>
       </nav>
 
       <div v-if="!collapsed" class="side-label">最近</div>
@@ -96,7 +70,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
-         LogoutOutlined, UserOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+         LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi } from '../api'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions } from './store'
@@ -108,6 +82,16 @@ const router = useRouter()
 const isAdmin = ref(isAdminSync())
 const userName = ref('')
 
+// 侧边栏菜单：/auth/me 下发的菜单树（顶级渲染为导航项；子级预留，当前侧边栏一层平铺）
+const ICONS = {
+  MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined, BarChartOutlined,
+  ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined, PlusOutlined,
+  FolderOutlined, UserOutlined, FileOutlined
+}
+const iconOf = name => ICONS[name] || FileOutlined
+// ensureAuth 填充的是模块级缓存（非响应式），故挂载后显式赋值
+const navMenus = ref([])
+
 // 侧边栏折叠（持久化）
 const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
 const toggleFold = () => {
@@ -117,7 +101,6 @@ const toggleFold = () => {
 
 const visibleSessionList = computed(visibleSessions)
 const isActive = p => route.path === p
-const goChat = () => router.push(route.query.sid ? { path: '/chat', query: { sid: route.query.sid } } : '/chat')
 const newChat = () => {
   sessionStore.newChatTick++
   router.push('/chat').catch(() => {})
@@ -156,6 +139,7 @@ onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
   userName.value = (info && (info.username || info.user)) || ''
+  navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
   loadSessions()
 })
 </script>

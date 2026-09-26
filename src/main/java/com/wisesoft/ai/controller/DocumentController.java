@@ -40,11 +40,12 @@ public class DocumentController {
     private final RateLimitService rateLimitService;
     private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
     private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
-    // ==================== 资源级权限（普通用户自建自管，管理员全量） ====================
+    // ==================== 资源级权限（普通用户自建自管，管理员级全量） ====================
 
     private boolean admin() {
-        return com.wisesoft.ai.service.AuthService.isAdminRole(RequestUser.role());
+        return roleService.isAdminCode(RequestUser.role());
     }
 
     private com.wisesoft.ai.service.ResourceVisibilityService.Principal principal() {

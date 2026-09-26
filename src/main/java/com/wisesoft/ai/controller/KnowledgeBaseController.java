@@ -46,9 +46,10 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseService kbService;
     private final DocumentService documentService;
     private final ResourceVisibilityService visibility;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
     private boolean admin() {
-        return AuthService.isAdminRole(RequestUser.role());
+        return roleService.isAdminCode(RequestUser.role());
     }
 
     private ResourceVisibilityService.Principal principal() {

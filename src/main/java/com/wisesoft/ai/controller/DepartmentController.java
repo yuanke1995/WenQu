@@ -23,24 +23,25 @@ public class DepartmentController {
 
     private final OrgService orgService;
 
-    @Operation(summary = "部门列表", description = "返回全部部门（按名称升序）")
+    @Operation(summary = "部门列表", description = "返回全部部门（按名称升序，平铺；含 parentId，前端组树/TreeSelect）")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(orgService.listDepartments());
     }
 
-    @Operation(summary = "新建部门", description = "{\"name\": \"研发部\", \"description\": \"可选\"}")
+    @Operation(summary = "新建部门", description = "{\"name\": \"研发部\", \"description\": \"可选\", \"parentId\": \"可选，父部门ID\"}")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
-        return ResultJson.ok(orgService.createDepartment(body.get("name"), body.get("description")), "已创建");
+        return ResultJson.ok(orgService.createDepartment(body.get("name"), body.get("description"),
+                body.get("parentId")), "已创建");
     }
 
-    @Operation(summary = "修改部门", description = "{\"name\": \"研发部\", \"description\": \"可选\"}")
+    @Operation(summary = "修改部门", description = "{\"name\": \"研发部\", \"description\": \"可选\", \"parentId\": \"可选，父部门ID（变更做环检测）\"}")
     @PutMapping("/{id}")
     public ResultJson update(
             @Parameter(description = "部门 ID") @PathVariable("id") String id,
             @RequestBody Map<String, String> body) {
-        orgService.updateDepartment(id, body.get("name"), body.get("description"));
+        orgService.updateDepartment(id, body.get("name"), body.get("description"), body.get("parentId"));
         return ResultJson.ok("已保存");
     }
 

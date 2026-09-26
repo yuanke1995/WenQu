@@ -30,6 +30,7 @@ public class AuthService {
 
     private final UserMapper userMapper;
     private final AppProperties properties;
+    private final RoleService roleService;
 
     /** 运行时解析后的签名密钥（未配置时开发期随机生成） */
     private volatile String resolvedSecret;
@@ -163,17 +164,22 @@ public class AuthService {
         log.info("[AUDIT] 重置密码 uid={}", uid);
     }
 
-    /** 用户公开信息（不含敏感字段） */
+    /** 用户公开信息（不含敏感字段；admin 按管理员级角色判定，含自定义 admin_flag=1） */
     public Map<String, Object> userInfo(User u) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("uid", u.getUid());
         m.put("username", u.getUsername());
         m.put("role", u.getRole() == null ? "user" : u.getRole());
         m.put("departmentId", u.getDepartmentId());
-        m.put("admin", isAdminRole(u.getRole()));
+        m.put("admin", roleService.isAdminCode(u.getRole()));
         return m;
     }
 
+    /**
+     * 内置管理员角色（历史口径保留：仅 admin/superadmin 两值）。
+     * <p>统一的管理员级判定请走 {@link RoleService#isAdminCode}（含自定义 admin_flag=1 角色）；
+     * 本静态方法仅保留给无注入场景的语义兜底。</p>
+     */
     public static boolean isAdminRole(String role) {
         return "admin".equals(role) || "superadmin".equals(role);
     }
@@ -195,7 +201,7 @@ public class AuthService {
             m.put("role", u.getRole() == null ? "user" : u.getRole());
             m.put("departmentId", u.getDepartmentId());
         }
-        m.put("admin", adminFromGuard || (u != null && isAdminRole(u.getRole())));
+        m.put("admin", adminFromGuard || (u != null && roleService.isAdminCode(u.getRole())));
         return m;
     }
 

@@ -273,14 +273,16 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
 
 CREATE TABLE IF NOT EXISTS `c_ai_department` (
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
+    `parent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '父部门ID（c_ai_department.id，空=根节点；2026-09-26 升级树形）',
     `name`         VARCHAR(100) NOT NULL COMMENT '部门名称',
     `description`  VARCHAR(255) DEFAULT NULL COMMENT '部门描述',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 部门表';
+    UNIQUE KEY `uk_name` (`name`),
+    KEY `idx_parent` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 部门表（树形：parent_id 空为根）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（登录账号，与鉴权一致）',
@@ -389,3 +391,64 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     UNIQUE KEY `uk_uid_name` (`uid`, `name`),
     KEY `idx_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人 MCP Server 表（替代原全局配置 mcp.servers）';
+
+-- ============================================
+-- 2026-09-26: RBAC 权限管理（角色 / 菜单 / 接口）
+-- 模型：c_ai_user.role 引用 c_ai_role.code（单角色）；
+-- 角色（非管理员级）按 c_ai_role_menu 控制侧边栏菜单、按 c_ai_role_api 控制可调接口
+-- （拦截器 AntPathMatcher 匹配 method+path，未绑定一律 403 fail-closed；
+--   superadmin 与 admin_flag=1 的角色直通全部接口与菜单）。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_role` (
+    `code`        VARCHAR(20)  NOT NULL COMMENT '角色编码（c_ai_user.role 的值域，小写字母开头）',
+    `name`        VARCHAR(50)  NOT NULL COMMENT '角色名称',
+    `description` VARCHAR(255) DEFAULT NULL COMMENT '角色描述',
+    `admin_flag`  INT          DEFAULT 0 COMMENT '管理员级: 1=视同管理员（放行全部接口与菜单；仅自定义角色可改）',
+    `builtin`     INT          DEFAULT 0 COMMENT '内置角色: 1=预置（superadmin/admin/user，不可删、admin_flag/状态不可改）',
+    `status`      INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=停用（停用后该角色仅保留问答白名单能力）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 角色表（RBAC：单角色，绑定菜单与接口）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_menu` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键（内置菜单固定 id 如 menu-chat，自定义为 UUID）',
+    `parent_id`   VARCHAR(50)  DEFAULT NULL COMMENT '父菜单ID（空=顶级）',
+    `name`        VARCHAR(50)  NOT NULL COMMENT '菜单名称',
+    `icon`        VARCHAR(50)  DEFAULT NULL COMMENT '图标名（@ant-design/icons-vue 组件名，如 SettingOutlined）',
+    `path`        VARCHAR(200) DEFAULT NULL COMMENT '前端路由路径（如 /members）',
+    `sort_order`  INT          DEFAULT 0 COMMENT '排序（小在前）',
+    `visible`     INT          DEFAULT 1 COMMENT '是否显示: 1=显示, 0=隐藏（隐藏后不进侧边栏，仍可作权限归属）',
+    `builtin`     INT          DEFAULT 0 COMMENT '内置菜单: 1=预置不可删除',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`     INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_parent` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 菜单表（侧边栏数据源，按角色绑定下发）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_api` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `method`      VARCHAR(10)  NOT NULL COMMENT 'HTTP 方法（大写；ALL=任意方法）',
+    `path`        VARCHAR(200) NOT NULL COMMENT '接口路径（应用内路径，如 /api/ai/agent/{id}）',
+    `name`        VARCHAR(100) DEFAULT NULL COMMENT '接口名称（展示用）',
+    `module`      VARCHAR(50)  DEFAULT NULL COMMENT '所属模块（Controller 分组，可编辑）',
+    `builtin`     INT          DEFAULT 0 COMMENT '扫描登记: 1=启动期自动登记（路径删除后重启会重新登记）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_method_path` (`method`, `path`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 接口表（RBAC 鉴权数据源）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_role_menu` (
+    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
+    `menu_id`   VARCHAR(50) NOT NULL COMMENT '菜单ID（c_ai_menu.id）',
+    PRIMARY KEY (`role_code`, `menu_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-菜单绑定';
+
+CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
+    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
+    `api_id`    VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
+    PRIMARY KEY (`role_code`, `api_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定';

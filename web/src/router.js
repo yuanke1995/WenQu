@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ensureAuth, isAdminSync, isLoggedIn } from './utils/auth'
+import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath } from './utils/auth'
 import Login from './views/LoginPage.vue'
 // 工作台（三栏布局）：侧边栏 + 内容区
 import AppLayout from './views/AppLayout.vue'
@@ -12,6 +12,7 @@ import Dashboard from './views/DashboardPage.vue'
 import Settings from './views/SettingsPage.vue'
 import Evaluation from './views/EvaluationPage.vue'
 import Members from './views/MembersPage.vue'
+import Permissions from './views/PermissionsPage.vue'
 import Profile from './views/ProfilePage.vue'
 
 const router = createRouter({
@@ -33,6 +34,7 @@ const router = createRouter({
     // 文档管理并入知识库（卡片点进）；旧入口重定向
     { path: '/documents', redirect: '/knowledge' },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },
+    { path: '/permissions', component: AppLayout, children: [{ path: '', component: Permissions }], meta: { requiresAdmin: true, title: '权限管理' } },
     { path: '/dashboard', component: AppLayout, children: [{ path: '', component: Dashboard }], meta: { requiresAdmin: true, title: '数据看板' } },
     { path: '/settings', component: AppLayout, children: [{ path: '', component: Settings }], meta: { requiresAdmin: true, title: '系统设置' } },
     { path: '/evaluation', component: AppLayout, children: [{ path: '', component: Evaluation }], meta: { requiresAdmin: true, title: '检索评估' } },
@@ -41,15 +43,17 @@ const router = createRouter({
   ]
 })
 
-// 路由守卫：先要求登录（本地登录令牌），再对管理页要求管理员
+// 路由守卫：先要求登录（本地登录令牌），再对权限受控页校验——
+// 管理员级角色（admin/superadmin 或自定义 admin_flag=1）放行；
+// 普通角色若其角色绑定的菜单包含该路径（RBAC 授权）也放行，否则回对话页
 router.beforeEach(async to => {
   if (to.path === '/login') return true
   if (!isLoggedIn()) return { path: '/login', replace: true }
   if (!to.meta.requiresAdmin) return true
-  // 未拉取过身份则先向 /auth/me 确认
+  // 未拉取过身份则先向 /auth/me 确认（同时下发菜单树）
   await ensureAuth()
-  if (isAdminSync()) return true
-  message.warning('该功能仅管理员可用')
+  if (isAdminSync() || menuHasPath(to.path)) return true
+  message.warning('暂无该功能的访问权限（可联系管理员在权限管理中为角色授权）')
   return { path: '/chat', replace: true }
 })
 

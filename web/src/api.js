@@ -359,6 +359,27 @@ export const createUser = body => request('/user', { method: 'POST', body: JSON.
 export const updateUser = (uid, body) => request(`/user/${encodeURIComponent(uid)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteUser = uid => request(`/user/${encodeURIComponent(uid)}`, { method: 'DELETE' })
 
+// ==================== RBAC 权限管理（菜单 / 接口 / 角色） ====================
+export const listMenus = () => request('/menu/list')
+export const createMenu = body => request('/menu', { method: 'POST', body: JSON.stringify(body) })
+export const updateMenu = (id, body) => request(`/menu/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteMenu = id => request(`/menu/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const listApis = () => request('/api/list')
+export const createApi = body => request('/api', { method: 'POST', body: JSON.stringify(body) })
+export const updateApi = (id, body) => request(`/api/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteApi = id => request(`/api/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const listRoles = () => request('/role/list')
+export const listRoleOptions = () => request('/role/options')
+export const createRole = body => request('/role', { method: 'POST', body: JSON.stringify(body) })
+export const updateRole = (code, body) => request(`/role/${encodeURIComponent(code)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, { method: 'DELETE' })
+export const getRoleMenus = code => request(`/role/${encodeURIComponent(code)}/menus`)
+export const saveRoleMenus = (code, menuIds) =>
+  request(`/role/${encodeURIComponent(code)}/menus`, { method: 'PUT', body: JSON.stringify({ menuIds }) })
+export const getRoleApis = code => request(`/role/${encodeURIComponent(code)}/apis`)
+export const saveRoleApis = (code, apiIds) =>
+  request(`/role/${encodeURIComponent(code)}/apis`, { method: 'PUT', body: JSON.stringify({ apiIds }) })
+
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>
   request('/feedback', {

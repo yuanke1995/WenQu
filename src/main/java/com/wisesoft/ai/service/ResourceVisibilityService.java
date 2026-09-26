@@ -24,13 +24,16 @@ import java.util.*;
  *   <li>创建者（created_by == uid）→ MANAGE（短路）</li>
  *   <li>manage_scope 命中 且（read_scope 缺失 或 read 也命中）→ MANAGE</li>
  *   <li>read_scope 命中 → READ；否则 NONE</li>
- *   <li>第 3~4 步结果再套 <b>角色上限</b>（{@link ResourceKind#roleCeiling}）取小</li>
+ *   <li>第 3~4 步结果再套 <b>角色上限</b>（{@link #roleCeiling}）取小</li>
  * </ol>
  * 语义要点：
  * <ul>
  *   <li>{@code access_level=global} → 全员命中；{@code department} 比对用户部门；{@code user} 比对 uid</li>
  *   <li>scope 为 {@code null}（未声明）→ <b>不命中任何人</b>：故「manage_scope 缺失」＝除超管/创建者外无人可管理</li>
  *   <li>share_config 为 <b>空</b>（未配置）→ 视作 global（兼容存量数据），与「显式声明 manage_scope=global」等价</li>
+ *   <li>角色上限（RBAC 化，2026-09-26）：管理员级角色（内置 admin/superadmin 或自定义 admin_flag=1）
+ *       各资源均 MANAGE 上限；普通角色 KNOWLEDGE_BASE 封顶 READ、AGENT/API_KEY 为 MANAGE
+ *       （个人资产语义：任何已启用角色都能管理自己创建的智能体/Key）</li>
  *   <li><b>刻意比对标实现宽松的一点</b>：未声明 {@code version} 的历史配置在<b>读取</b>时不报错（按内容解析），
  *       但<b>写入</b>（{@link #validateShareConfig}）强制要求 {@code version=2}</li>
  * </ul>
@@ -43,26 +46,34 @@ public class ResourceVisibilityService {
     private static final ObjectMapper OM = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
+    /** 角色判定（RBAC）：管理员级 / 角色存在性。RoleService 仅依赖 Mapper，无循环依赖 */
+    private final RoleService roleService;
+
+    public ResourceVisibilityService(RoleService roleService) {
+        this.roleService = roleService;
+    }
+
     /** 权限等级（ordinal 顺序用于比较大小） */
     public enum Permission { NONE, READ, MANAGE }
 
-    /** 资源类型 → 角色权限上限 */
+    /** 资源类型（角色上限见 {@link #roleCeiling}） */
     public enum ResourceKind {
-        /** 知识库 / 文档：普通用户封顶只读，admin/superadmin 可管理 */
+        /** 知识库 / 文档：普通角色封顶只读，管理员级可管理 */
         KNOWLEDGE_BASE,
         /** 智能体 / 技能：全角色可管理 */
         AGENT,
         /** API Key：全角色可管理。共享的是「Key 记录」而非密钥本体（明文仅签发时返回一次，列表只有前缀） */
-        API_KEY;
+        API_KEY
+    }
 
-        Permission roleCeiling(String role) {
-            return switch (this) {
-                case KNOWLEDGE_BASE -> ("admin".equals(role) || "superadmin".equals(role))
-                        ? Permission.MANAGE : Permission.READ;
-                case AGENT, API_KEY -> ("user".equals(role) || "admin".equals(role) || "superadmin".equals(role))
-                        ? Permission.MANAGE : Permission.READ;
-            };
-        }
+    /** 角色权限上限（RBAC 化）：管理员级恒 MANAGE；普通角色按资源类型区分（见类注释） */
+    Permission roleCeiling(ResourceKind kind, String role) {
+        boolean admin = roleService.isAdminCode(role);
+        return switch (kind) {
+            case KNOWLEDGE_BASE -> admin ? Permission.MANAGE : Permission.READ;
+            case AGENT, API_KEY -> (admin || roleService.existsActive(role))
+                    ? Permission.MANAGE : Permission.READ;
+        };
     }
 
     public enum AccessLevel { GLOBAL, DEPARTMENT, USER }
@@ -157,7 +168,7 @@ public class ResourceVisibilityService {
         } else {
             granted = Permission.NONE;
         }
-        Permission ceiling = kind.roleCeiling(p.role());
+        Permission ceiling = roleCeiling(kind, p.role());
         return granted.ordinal() <= ceiling.ordinal() ? granted : ceiling;
     }
 

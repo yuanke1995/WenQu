@@ -57,12 +57,20 @@ public class ChatController {
     private final QaLogService qaLogService;
     private final AdminGuard adminGuard;
     private final AuthService authService;
+    private final com.wisesoft.ai.service.MenuService menuService;
 
-    /** 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用） */
-    @Operation(summary = "当前身份与权限", description = "返回当前登录用户（uid/username/role/departmentId）与是否管理员（admin=true 时前端展示文档/看板/评估/设置等管理入口）")
+    /**
+     * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
+     * 2026-09-26 RBAC：响应追加 {@code menus}（当前角色可见的侧边栏菜单树，前端动态渲染导航）；
+     * {@code admin} 按管理员级角色判定（含自定义 admin_flag=1 角色）。
+     */
+    @Operation(summary = "当前身份与权限", description = "返回当前登录用户（uid/username/role/departmentId）、是否管理员（admin）"
+            + "与可见菜单树（menus，按角色绑定下发，前端侧边栏数据源）")
     @GetMapping("/auth/me")
     public ResultJson authMe(HttpServletRequest httpRequest) {
-        return ResultJson.ok(authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest)));
+        Map<String, Object> me = authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest));
+        me.put("menus", menuService.visibleMenusFor(RequestUser.role()));
+        return ResultJson.ok(me);
     }
 
     @Operation(summary = "SSE 流式问答",
