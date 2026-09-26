@@ -28,40 +28,50 @@
           <button class="app-btn small" @click="openCreate">新建第一个智能体</button>
         </div>
 
-        <div v-else-if="!filtered.length" class="ap-empty">
+        <div v-else-if="!sections.length" class="ap-empty">
           <div class="ap-empty-t">没有匹配的智能体</div>
           <div class="ap-empty-d">没有名称或描述包含「{{ keyword }}」的智能体。</div>
           <button class="app-btn ghost small" @click="keyword = ''">清除搜索</button>
         </div>
 
-        <div v-else class="ap-grid">
-          <article v-for="a in filtered" :key="a.id" class="ap-card" @click="openEdit(a)">
-            <div class="ap-card-head">
-              <span class="ap-avatar"><robot-outlined /></span>
-              <span class="ap-name" :title="a.name">{{ a.name }}</span>
-              <span v-if="isDefault(a) || a.isSubagent === 1 || isBuiltin(a)" class="ap-card-tags">
-                <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
-                <span v-if="a.isSubagent === 1" class="ap-tag-sub">子</span>
-                <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统内置，不可删除">内置</span>
-              </span>
+        <!-- 子智能体不再与主智能体混排：主智能体一组，子智能体单独一组 -->
+        <div v-else class="ap-groups">
+          <section v-for="sec in sections" :key="sec.key" class="ap-group">
+            <!-- 只剩主智能体一组时不显示组头，保持与旧版一致 -->
+            <div v-if="sections.length > 1 || sec.key !== 'main'" class="ap-group-head">
+              <span class="ap-group-title">{{ sec.title }}</span>
+              <span v-if="sec.hint" class="ap-group-hint">{{ sec.hint }}</span>
+              <span class="ap-group-count">{{ sec.members.length }}</span>
             </div>
-            <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
-            <div class="ap-chips">
-              <span class="ap-chip">{{ scopeText(a) }}</span>
-              <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
-              <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
+            <div class="ap-grid">
+              <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card" @click="openEdit(a)">
+                <div class="ap-card-head">
+                  <span class="ap-avatar"><robot-outlined /></span>
+                  <span class="ap-name" :title="a.name">{{ a.name }}</span>
+                  <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
+                    <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
+                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统内置，不可删除">内置</span>
+                  </span>
+                </div>
+                <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
+                <div class="ap-chips">
+                  <span class="ap-chip">{{ scopeText(a) }}</span>
+                  <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
+                  <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
+                </div>
+                <div class="ap-card-foot">
+                  <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
+                  <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
+                  <button v-if="!isSub(a) && !isDefault(a)" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
+                  <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
+                  <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
+                    <button class="app-link-btn danger" @click.stop>删除</button>
+                  </a-popconfirm>
+                  <span v-else class="ap-builtin-hint">系统内置</span>
+                </div>
+              </article>
             </div>
-            <div class="ap-card-foot">
-              <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
-              <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
-              <button v-if="!isDefault(a) && a.isSubagent !== 1" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
-              <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
-              <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
-                <button class="app-link-btn danger" @click.stop>删除</button>
-              </a-popconfirm>
-              <span v-else class="ap-builtin-hint">系统内置</span>
-            </div>
-          </article>
+          </section>
         </div>
       </div>
     </template>
@@ -354,11 +364,30 @@ const form = ref(blankForm())
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
 const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
-const filtered = computed(() => {
+/** 子智能体：不直接参与对话，只能被主智能体委派 */
+const isSub = a => a.isSubagent === 1 || a.isSubagent === true
+/** 逗号串 → 数组（具体项） */
+const splitList = v => (v ? String(v).split(',').filter(Boolean) : [])
+const matchKw = a => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return agents.value
-  return agents.value.filter(a =>
-    String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw))
+  if (!kw) return true
+  return String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw)
+}
+/**
+ * 列表分组：主智能体一组，子智能体单独一组，互不混排。
+ * 搜索关键词同时作用于所有组，过滤后为空的组不显示。
+ */
+const sections = computed(() => {
+  const secs = []
+  const mains = agents.value.filter(a => !isSub(a) && matchKw(a))
+  if (mains.length) {
+    secs.push({ key: 'main', title: '主智能体', hint: '可在对话页直接选用', members: mains })
+  }
+  const subs = agents.value.filter(a => isSub(a) && matchKw(a))
+  if (subs.length) {
+    secs.push({ key: 'sub', title: '子智能体', hint: '不直接参与对话，供主智能体并行委派', members: subs })
+  }
+  return secs
 })
 const scopeText = a => {
   if (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true) return '不使用知识库'
@@ -475,8 +504,6 @@ const openCreate = () => {
   scopeMode.value = 'all'
   editing.value = true
 }
-/** 逗号串 → 数组（具体项） */
-const splitList = v => (v ? String(v).split(',').filter(Boolean) : [])
 /** 总开关三态 → 多实例能力的模式：'none' 不使用 / 'pick' 指定 / 'inherit' 跟随全局 */
 const modeOf = tri => {
   if (tri === 0 || tri === '0') return 'none'
@@ -594,6 +621,20 @@ onMounted(async () => { })
 .ap-empty-t { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
 .ap-empty-d { font-size: 12px; color: var(--app-text2); line-height: 1.7; max-width: 460px; margin: 0 auto 14px; }
 
+/* 分组列表：主智能体一组，子智能体按委派它的主智能体成组 */
+.ap-groups { display: flex; flex-direction: column; gap: 24px; }
+.ap-group { display: flex; flex-direction: column; gap: 10px; }
+.ap-group-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ap-group-title { font-size: 13px; font-weight: 600; flex: none; }
+.ap-group-hint {
+  font-size: 12px; color: var(--app-text3); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ap-group-count {
+  flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  background: #f1f3f5; color: var(--app-text2);
+}
+
 /* 卡片列表 */
 .ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .ap-card {
@@ -616,10 +657,6 @@ onMounted(async () => { })
 .ap-tag-default {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: #eaf5ec; color: var(--app-ok);
-}
-.ap-tag-sub {
-  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: #f1f3f5; color: var(--app-text2);
 }
 .ap-tag-builtin {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
