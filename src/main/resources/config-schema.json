@@ -80,9 +80,10 @@
     },
     {
       "key": "skills",
-      "title": "技能（Skills）预算参数（技能内容归个人）",
+      "title": "技能（Skills）预算与安装策略（技能内容归个人）",
       "sections": [
-        "上下文预算"
+        "上下文预算",
+        "远程安装（来源白名单）"
       ]
     },
     {
@@ -1390,6 +1391,22 @@
       "note": "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）",
       "vif": "agent.enabled",
       "tier": 3
+    },
+    {
+      "panel": "skills",
+      "section": 1,
+      "group": "skill",
+      "key": "remoteAllowedHosts",
+      "path": "skill.remoteAllowedHosts",
+      "label": "允许的安装来源域名",
+      "type": "text",
+      "tips": "skillRemoteAllowedHosts",
+      "def": "github.com,raw.githubusercontent.com,modelscope.cn,www.modelscope.cn",
+      "width": 460,
+      "ph": "github.com,raw.githubusercontent.com,modelscope.cn,www.modelscope.cn",
+      "note": "逗号分隔，精确匹配域名（不做后缀匹配，www 等子域需单列）；留空 = 关闭远程安装",
+      "backendKey": "skill.remoteAllowedHosts",
+      "tier": 2
     }
   ],
   "tips": {
@@ -1515,7 +1532,8 @@
     "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
     "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
     "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
-    "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。"
+    "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。",
+    "skillRemoteAllowedHosts": "从 URL 安装技能时允许的来源域名（逗号分隔，**精确匹配 host**、不做后缀匹配——所以 www 这类子域要单独列出）。GitHub 必须用 raw 链接，故默认含 raw.githubusercontent.com。留空即关闭远程安装：个人仍能用内置技能与自己编写的技能，只是不能再从网上下载。"
   },
   "corePaths": [
     "chat.temperature",
@@ -1602,6 +1620,7 @@
     "agent.digestEnabled": "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）",
     "agent.autoRoute": "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）",
     "agent.routeTimeoutMs": "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）",
-    "agent.autoDispatch": "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）"
+    "agent.autoDispatch": "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）",
+    "skill.remoteAllowedHosts": "技能（Skills）：远程安装来源域名白名单（逗号分隔，空=关闭远程安装）"
   }
 }

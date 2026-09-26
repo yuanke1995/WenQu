@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -249,6 +250,7 @@ public class SkillService {
         if (!u.startsWith("http://") && !u.startsWith("https://")) {
             throw new BizException("仅支持 http/https 地址（GitHub 页面链接请换成 raw 链接）");
         }
+        requireAllowedHost(u);
         String content = download(u);
         if (!content.stripLeading().startsWith("---")) {
             throw new BizException("技能文件缺少 frontmatter（应以 --- 开头并包含 name / description），"
@@ -400,6 +402,36 @@ public class SkillService {
     }
 
     /** 下载 SKILL.md 文本（超时 + 大小上限；不跟随重定向到非 http/https） */
+    /**
+     * 远程安装来源白名单（{@code skill.remoteAllowedHosts}，逗号分隔）：**精确匹配 host**、不做后缀匹配，
+     * 避免 {@code evil-github.com} / {@code github.com.attacker.net} 这类伪装；白名单为空 = 关闭远程安装。
+     * <p>与平台版（跑沙箱拉整仓库目录）的差异：本工程只下载单个 SKILL.md 文本，所以不额外限制路径写法与
+     * 端口（raw 链接形态五花八门），host 白名单就是"允许从哪儿拉"的唯一边界。
+     */
+    private void requireAllowedHost(String url) {
+        String configured = configService.get("skill.remoteAllowedHosts");
+        Set<String> allowed = new LinkedHashSet<>();
+        if (configured != null) {
+            for (String item : configured.split(",")) {
+                String h = item.trim().toLowerCase();
+                if (!h.isEmpty()) allowed.add(h);
+            }
+        }
+        if (allowed.isEmpty()) {
+            throw new BizException("远程安装已关闭（允许的来源域名列表为空，可在系统设置「技能」里配置）");
+        }
+        String host;
+        try {
+            host = new java.net.URI(url).getHost();
+        } catch (Exception e) {
+            throw new BizException("技能文件地址不合法：" + e.getMessage());
+        }
+        if (host == null || !allowed.contains(host.toLowerCase())) {
+            throw new BizException("不允许的来源域名：" + (host == null ? url : host)
+                    + "（允许：" + String.join("、", allowed) + "）");
+        }
+    }
+
     private String download(String url) {
         try {
             java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()

@@ -48,10 +48,11 @@ import java.util.stream.Collectors;
 public class RagService {
 
     /**
-     * 智能体可覆盖的检索参数白名单（只有这些键生效，防止越权改其他配置）；
+     * 智能体/知识库可覆盖的检索参数白名单（只有这些键生效，防止越权改其他配置）；
      * 与设置页「检索设置 / 重排服务」暴露的项保持一致。
+     * <p>public：知识库新建表单的"默认值模板"端点需要按同一白名单取全局值（见 KnowledgeBaseController）。
      */
-    private static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of(
+    public static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of(
             "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
             "retrieval.vectorTopK", "retrieval.keywordLimit",
             "rerank.enabled", "rerank.model", "rerank.baseUrl");

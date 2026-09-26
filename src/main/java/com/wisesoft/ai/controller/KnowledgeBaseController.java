@@ -47,6 +47,8 @@ public class KnowledgeBaseController {
     private final DocumentService documentService;
     private final ResourceVisibilityService visibility;
     private final com.wisesoft.ai.service.RoleService roleService;
+    /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
+    private final com.wisesoft.ai.service.ConfigService configService;
 
     private boolean admin() {
         return roleService.isAdminCode(RequestUser.role());
@@ -70,6 +72,24 @@ public class KnowledgeBaseController {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) throw new BizException("知识库不存在");
         return kb;
+    }
+
+    /**
+     * 知识库参数默认值（**普通用户可读**）：新建知识库时以当前全局值为模板预填表单。
+     * <p>为什么不复用 {@code GET /config}：那是管理端点（普通用户 403），而知识库自建已对普通用户开放，
+     * 普通用户却看不到"当前全局值是多少"——正是"设置页写的是新建库预填、实际只有管理员能预填"的根因。
+     * 这里只回检索/解析参数（不含 gateway 地址与任何密钥），普通用户拿到也只是"知道自己库将按什么默认值跑"。
+     */
+    @Operation(summary = "知识库参数默认值", description = "检索/解析参数的当前全局值（新建库模板预填 + 表单占位符展示）")
+    @GetMapping("/param-defaults")
+    public ResultJson paramDefaults() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, configService.get(k));
+        for (String k : com.wisesoft.ai.service.RagService.AGENT_QUERY_PARAM_KEYS) {
+            if (k.endsWith(".baseUrl")) continue;   // 网关地址不外发给普通用户（表单也没有该字段）
+            out.put(k, configService.get(k));
+        }
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；默认库排在最前；普通用户只返回共享范围内可见的库")

@@ -54,7 +54,7 @@
           <div class="kb-hint">必选：本库文档按此模型向量化与检索（不同模型的向量空间不兼容，无法跨模型混用）；换模型会自动按库重嵌入，期间该库检索降级关键词路。</div>
         </a-form-item>
 
-        <a-divider class="kb-divider" plain>检索参数（留空 = 继承全局设置）</a-divider>
+        <a-divider class="kb-divider" plain>检索参数（新建时按当前全局值预填；改成自己的值即独立保存，清空则跟随全局）</a-divider>
         <div class="kb-param-grid">
           <a-form-item label="向量权重" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <a-input-number v-model:value="form.q.vectorWeight" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vectorWeight')" />
@@ -79,7 +79,7 @@
           </a-form-item>
         </div>
 
-        <a-divider class="kb-divider" plain>解析参数（留空 = 继承全局模板；仅对之后解析的文档生效）</a-divider>
+        <a-divider class="kb-divider" plain>解析参数（新建时按当前全局模板预填；仅对之后解析的文档生效）</a-divider>
         <div class="kb-param-grid">
           <a-form-item label="分块最大字符" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <a-input-number v-model:value="form.p.maxSize" :min="200" :step="100" style="width:100%" :placeholder="numPh('chunk', 'maxSize')" />
@@ -126,7 +126,7 @@ import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
-import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getConfig } from '../api'
+import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getKbParamDefaults } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync, ensureAuth } from '../utils/auth'
@@ -228,18 +228,17 @@ const load = async () => {
   }
 }
 
-// 全局配置缓存：占位符展示"继承的全局值" + 新建库预填解析模板（一次拉取，两处共用）
-// /config 是管理端点：普通用户不拉（占位符退化为"继承"，预填跳过），避免 403 触发全局误报提示
-const globalCfg = ref({})
-const loadGlobalCfg = async () => {
-  if (!isAdminSync()) return
-  if (Object.keys(globalCfg.value).length) return
-  try {
-    const r = await getConfig()
-    globalCfg.value = (r && r.data) || {}
-  } catch (e) { /* 拉取失败占位符退化为"继承" */ }
+// 全局参数默认值缓存（扁平的「后端键 → 值」）：占位符展示"继承的全局值" + 新建库模板预填。
+// 走 /kb/param-defaults（普通用户可读）而不是管理端点 /config：知识库已对普通用户开放自建，
+// 用 /config 会让普通用户永远看不到默认值（403，还会触发全局误报提示）。
+const flatCfg = ref({})
+const loadParamDefaults = async () => {
+  if (Object.keys(flatCfg.value).length) return
+  const r = await getKbParamDefaults()
+  flatCfg.value = (r && r.data) || {}
 }
-const gval = (group, key) => String(globalCfg.value[group]?.[key]?.value ?? '').trim()
+const flatVal = key => String(flatCfg.value[key] ?? '').trim()
+const gval = (group, key) => flatVal(group + '.' + key)
 /** 数字类占位符：显示当前全局值（留空继承它） */
 const numPh = (group, key) => {
   const v = gval(group, key)
@@ -251,37 +250,47 @@ const triPh = (group, key) => {
   return v === '' ? '继承' : `全局（${v === 'true' ? '开' : '关'}）`
 }
 
-/** 新建时用全局解析模板预填（对齐"全局设置是新建库默认模板"的语义；检索参数仍留空=继承） */
+/**
+ * 新建：以当前全局值为**模板**预填解析与检索参数（保存即固化到本库；之后改全局设置不会回溯
+ * 影响已建库——要跟随就清空对应项后保存，空值即"不写覆盖"）。任一字段留空 = 该库该项跟随全局。
+ */
 const prefillFromGlobal = async () => {
-  try {
-    await loadGlobalCfg()
-    const d = globalCfg.value
-    const get = (group, key) => d[group]?.[key]?.value
-    const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
-    const p = form.value.p
-    p.maxSize = num(get('chunk', 'maxSize'))
-    p.overlap = num(get('chunk', 'overlap'))
-    p.maxChunks = num(get('chunk', 'maxChunks'))
-    p.maxImages = num(get('chunk', 'maxImages'))
-    const structural = get('chunk', 'structural')
-    p.structural = structural === undefined || structural === '' ? null : String(structural)
-    p.structuralRatio = num(get('chunk', 'structuralRatio'))
-    p.headingDepth = num(get('chunk', 'headingDepth'))
-  } catch (e) { /* 预填失败不阻塞新建（留空=继承） */ }
+  await loadParamDefaults()
+  const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
+  const q = form.value.q
+  const p = form.value.p
+  // 解析参数（模板）
+  p.maxSize = num(flatVal('chunk.maxSize'))
+  p.overlap = num(flatVal('chunk.overlap'))
+  p.maxChunks = num(flatVal('chunk.maxChunks'))
+  p.maxImages = num(flatVal('chunk.maxImages'))
+  const structural = flatVal('chunk.structural')
+  p.structural = structural === '' ? null : structural
+  p.structuralRatio = num(flatVal('chunk.structuralRatio'))
+  p.headingDepth = num(flatVal('chunk.headingDepth'))
+  // 检索参数（模板）：此前只预填解析参数，检索参数要用户自己猜当前生效值
+  q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
+  q.keywordWeight = num(flatVal('retrieval.keywordWeight'))
+  q.vecThreshold = num(flatVal('retrieval.vecThreshold'))
+  q.vectorTopK = num(flatVal('retrieval.vectorTopK'))
+  q.keywordLimit = num(flatVal('retrieval.keywordLimit'))
+  const rerankEnabled = flatVal('rerank.enabled')
+  q.rerankEnabled = rerankEnabled === '' ? null : rerankEnabled
+  q.rerankModel = flatVal('rerank.model')
 }
 
 const openCreate = () => {
   editing.value = null
   form.value = blank()
   showEdit.value = true
-  loadGlobalCfg().then(() => prefillFromGlobal())
+  prefillFromGlobal().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
 }
 
 const openEdit = row => {
   editing.value = row
   form.value = hydrateForm(row)
   showEdit.value = true
-  loadGlobalCfg()
+  loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
 }
 
 const save = async () => {
@@ -337,7 +346,7 @@ const onDelete = async row => {
 
 onMounted(() => {
   load()
-  loadGlobalCfg()
+  loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
   ensureAuth().then(me => { myUid.value = me.user || '' })
 })
 </script>

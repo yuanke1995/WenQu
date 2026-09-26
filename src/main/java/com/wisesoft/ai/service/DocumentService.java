@@ -856,8 +856,11 @@ public class DocumentService {
         if (!visionRef.isBlank()) visionService.startParseScope(visionRef);
     }
 
-    /** 知识库解析参数白名单（与设置页"文档解析"暴露项一致 + 本库图片描述视觉模型） */
-    private static final Set<String> PARSE_PARAM_KEYS = Set.of(
+    /**
+     * 知识库解析参数白名单（与设置页"文档解析"暴露项一致 + 本库图片描述视觉模型）。
+     * <p>public：知识库新建表单的"默认值模板"端点需要按同一白名单取全局值（见 KnowledgeBaseController）。
+     */
+    public static final Set<String> PARSE_PARAM_KEYS = Set.of(
             "chunk.maxSize", "chunk.overlap", "chunk.maxChunks", "chunk.maxImages",
             "chunk.structural", "chunk.structuralRatio", "chunk.headingDepth");
 

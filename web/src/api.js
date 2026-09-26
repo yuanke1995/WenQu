@@ -229,6 +229,10 @@ export const listDocuments = kbId => request('/document/list' + (kbId ? '?kbId='
 // ==================== 知识库（检索作用域） ====================
 /** 知识库列表（含每个库的文档数） */
 export const listKnowledgeBases = () => request('/kb/list')
+
+// 知识库参数默认值（检索/解析参数的当前全局值）：新建库模板预填 + 表单占位符展示。
+// 普通用户可读（/config 是管理端点会 403），知识库已对普通用户开放自建。
+export const getKbParamDefaults = () => request('/kb/param-defaults')
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */
