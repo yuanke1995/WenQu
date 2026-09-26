@@ -75,6 +75,12 @@ public class ToolRuntimeBinder {
                 }
                 continue;
             }
+            if (tool instanceof BuildinTools.PresentArtifactsTool presentArtifactsTool) {
+                // 产物登记需要沙盒做「普通文件」校验（BuildinTools 能力差异 3，2026-09-23 接线）
+                bound.add(presentArtifactsTool.boundTo(
+                        fsMiddleware == null ? null : fsMiddleware.getBackend(), context));
+                continue;
+            }
             bound.add(tool);
         }
         return bound;

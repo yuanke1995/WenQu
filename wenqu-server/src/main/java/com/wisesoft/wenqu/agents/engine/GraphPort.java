@@ -6,7 +6,9 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.wisesoft.wenqu.agents.BaseAgent;
+import com.wisesoft.wenqu.agents.AgentStateWriteback;
 import com.wisesoft.wenqu.agents.BaseContext;
+import com.wisesoft.wenqu.agents.middlewares.ContextAwareInterceptor;
 import com.wisesoft.wenqu.agents.GraphCommand;
 import com.wisesoft.wenqu.agents.GraphStateSnapshot;
 import com.wisesoft.wenqu.repositories.AgentStateRepository;
@@ -156,8 +158,13 @@ public final class GraphPort
             BaseContext context,
             Map<String, Object> config,
             BiConsumer<Object, Map<String, Object>> sink) {
-        RunnableConfig runnableConfig = GraphCodec.toRunnableConfig(config);
-        log.debug("astreamMessages: agent={} thread={}", agentName, runnableConfig.threadId().orElse(null));
+        RunnableConfig runnableConfig =
+                withRuntimeContext(GraphCodec.toRunnableConfig(config), context);
+        log.info(
+                "[GraphPort] astreamMessages: agent={} thread={} runtimeContextKeys={}",
+                agentName,
+                runnableConfig.threadId().orElse(null),
+                runnableConfig.context().keySet());
 
         AgentEventStream stream = new AgentEventStream(
                 compiledGraph.stream(graphInput(messages), runnableConfig), runnableConfig);
@@ -190,7 +197,8 @@ public final class GraphPort
             Map<String, Object> config,
             String version,
             List<Object> transformers) {
-        RunnableConfig runnableConfig = GraphCodec.toRunnableConfig(config);
+        RunnableConfig runnableConfig =
+                withRuntimeContext(GraphCodec.toRunnableConfig(config), context);
         log.debug("astreamEvents: agent={} version={} thread={}",
                 agentName, version, runnableConfig.threadId().orElse(null));
         return new AgentEventStream(
@@ -199,10 +207,35 @@ public final class GraphPort
 
     @Override
     public Object ainvoke(List<Object> messages, BaseContext context, Map<String, Object> config) {
-        RunnableConfig runnableConfig = GraphCodec.toRunnableConfig(config);
+        RunnableConfig runnableConfig =
+                withRuntimeContext(GraphCodec.toRunnableConfig(config), context);
         log.debug("ainvoke: agent={} thread={}", agentName, runnableConfig.threadId().orElse(null));
         Optional<OverAllState> state = compiledGraph.invoke(graphInput(messages), runnableConfig);
         return state.map(GraphCodec::stateToMap).orElseGet(LinkedHashMap::new);
+    }
+
+    /**
+     * 把本次 Run 的运行时上下文注入 {@link RunnableConfig#context()}。
+     *
+     * <p><b>平台差异（2026-09-23 接线）</b>：参考实现里 {@code runtime.context} 由 LangGraph
+     * 在执行期注入中间件与工具（{@code request.runtime.context}）。本工程的框架会把
+     * {@code RunnableConfig.context()} <b>整体</b>作为 {@code ModelRequest.context} 交给拦截器
+     * （见 {@code AgentLlmNode} 字节码：{@code RunnableConfig.context()} →
+     * {@code ModelRequest.Builder.context(...)}），但调用层此前<b>从未填过它</b>，后果是：
+     * <ul>
+     *   <li>{@code TokenUsageMiddleware} 取不到上下文 → 用量快照恒为 null（状态面板无 token 数据）；</li>
+     *   <li>{@code SteerMiddleware} 的 {@code runIdOf} 取不到 run_id → JumpTo 恒不触发（steer 静默失效）；</li>
+     *   <li>{@code AgentStateWritebackHook} 取不到 BaseContext → 状态写回落空。</li>
+     * </ul>
+     * 故在三个调用入口统一补齐（键与 {@link ContextAwareInterceptor#CONTEXT_KEY} 一致）。
+     */
+    private static RunnableConfig withRuntimeContext(RunnableConfig config, BaseContext context) {
+        if (config != null && context != null) {
+            // 值形态按消费者约定：TokenUsageMiddleware 读的是 Map（messages/model/token_usage/…），
+            // 表内另以 base_context 键携带 BaseContext 本体供对象语义的组件取用。
+            config.context().put(ContextAwareInterceptor.CONTEXT_KEY, AgentStateWriteback.runtimeInputs(context));
+        }
+        return config;
     }
 
     @Override

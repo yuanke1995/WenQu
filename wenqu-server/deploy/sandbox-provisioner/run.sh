@@ -87,7 +87,7 @@ port_in_use() {
 
 start() {
   if [ ! -x "$PY" ]; then
-    echo "未找到 $PY，请先执行：bash run.sh install" >&2
+    echo "未找到 ${PY}，请先执行：bash run.sh install" >&2
     exit 1
   fi
   if is_running; then
@@ -171,7 +171,7 @@ compose() {
 docker_up() {
   ensure_docker || exit 1
   if is_running; then
-    echo "memory 后端正在占用 $PORT，先执行：bash run.sh stop" >&2
+    echo "memory 后端正在占用 ${PORT}，先执行：bash run.sh stop" >&2
     exit 1
   fi
   echo "==> docker 后端（真沙盒）：docker compose up -d"
@@ -199,7 +199,7 @@ status() {
     local container
     container="$(docker ps --filter "name=^wenqu-sandbox-provisioner$" --format '{{.Status}}' 2>/dev/null | head -1)"
     if [ -n "$container" ]; then
-      echo "docker 后端：运行中（$container）"
+      echo "docker 后端：运行中（${container}）"
     else
       echo "docker 后端：未运行"
     fi
@@ -211,9 +211,9 @@ status() {
   if [ "$code" = "200" ]; then
     echo "健康：200 OK（http://$BIND_HOST:$PORT/health）"
   else
-    echo "健康：不可达（HTTP $code）"
+    echo "健康：不可达（HTTP ${code}）"
   fi
-  echo "公网URL：$PROVISIONER_PUBLIC_URL（API 侧 SANDBOX_PROVISIONER_URL 应与之一致）"
+  echo "公网URL：${PROVISIONER_PUBLIC_URL}（API 侧 SANDBOX_PROVISIONER_URL 应与之一致）"
 }
 
 case "${1:-start}" in

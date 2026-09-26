@@ -8,6 +8,7 @@ import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend;
 import com.wisesoft.wenqu.agents.engine.GraphFactory;
 import com.wisesoft.wenqu.agents.engine.GraphPort;
+import com.wisesoft.wenqu.agents.middlewares.AgentStateWritebackHook;
 import com.wisesoft.wenqu.agents.middlewares.ImageInputCompatibilityMiddleware;
 import com.wisesoft.wenqu.agents.middlewares.NetworkRetryMiddleware;
 import com.wisesoft.wenqu.agents.middlewares.SkillsMiddleware;
@@ -177,7 +178,7 @@ public class SubAgentBackend extends BaseAgent {
 
         List<Hook> hooks = new ArrayList<>();
         List<Interceptor> interceptors = new ArrayList<>();
-        buildMiddlewares(context, backend, approvalMode, disabledTools, interceptors);
+        buildMiddlewares(context, backend, approvalMode, disabledTools, hooks, interceptors);
 
         List<Object> runtimeTools = ToolkitsService.resolveConfiguredRuntimeTools(context, mcpService, skillRuntime);
         return GraphFactory.builder()
@@ -208,7 +209,12 @@ public class SubAgentBackend extends BaseAgent {
             ProvisionerSandboxBackend backend,
             String approvalMode,
             Set<String> disabledTools,
+            List<Hook> hooks,
             List<Interceptor> interceptors) {
+        // 平台差异：token_usage / artifacts / subagent_runs / todos 的写回钩子
+        // （参考实现由 Command(update=...) 完成，见 AgentStateWriteback 类注释）。
+        hooks.add(new AgentStateWritebackHook());
+
         String artifactsRoot = AgentCompositeBackend.artifactsRoot(context);
         interceptors.add(compositeBackend.createAgentFilesystemMiddleware(
                 AgentGraphSupport.toolTokenLimitBeforeEvict(context),
@@ -225,6 +231,9 @@ public class SubAgentBackend extends BaseAgent {
 
         interceptors.add(TodoListInterceptor.builder()
                 .systemPrompt(ChatbotPrompt.TODO_MID_PROMPT)
+                // 平台差异：同 ChatbotAgent，待办经事件回调转交写回缓冲。
+                .todoEventHandler(todos -> AgentStateWriteback.put(
+                        context, AgentState.AgentStatePayload.TODOS, ChatbotAgent.todoPayloads(todos)))
                 .build());
         interceptors.add(PatchToolCallsInterceptor.builder().build());
 

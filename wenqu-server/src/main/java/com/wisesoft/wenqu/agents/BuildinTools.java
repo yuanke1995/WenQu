@@ -2,6 +2,7 @@ package com.wisesoft.wenqu.agents;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.wenqu.agents.ToolkitsRegistry.ToolDefinition;
+import com.wisesoft.wenqu.agents.backends.sandbox.SandboxFilesystemBackendAdapter;
 import com.wisesoft.wenqu.common.PosixPathLite;
 import com.wisesoft.wenqu.common.QuestionUtils;
 import java.net.URI;
@@ -51,18 +52,15 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
  *   <li><b>Tavily 供应商不可用</b>：{@code langchain_tavily.TavilySearch} 无对应实现，
  *       provider 解析保留其映射与展示名，但选中 tavily 时不注册工具（与
  *       {@code dify} / {@code notion} 同口径）。</li>
- *   <li><b>{@code present_artifacts} / {@code ocr_parse_file} 的沙盒「文件是否存在」校验尚未接线</b>：
- *       参考实现在路径白名单通过后构造
- *       {@code ProvisionerSandboxBackend(thread_id, uid, workdir_path, create_if_missing=True)}
- *       并调用 {@code regular_file_exists}，不存在则抛「文件不存在或不是普通文件: …」
- *       （见参考实现 {@code agents/toolkits/buildin/tools.py:218-246}）。
- *       路径白名单与 {@code ..} 穿越校验（纯函数，参考实现 ValueError 文案逐字）已全部保留；
- *       因该步未接线，末尾抛 {@link IllegalStateException}，调用方按错误处理。
- *       <b>注（2026-09-20 更正）</b>：本条原文写「{@code backends/sandbox} 未搬」，
- *       但沙盒数据面**已随 §三 backends 落地**（{@code agents/backends/sandbox/} 15 个类，
- *       其中 {@link com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend#regularFileExists}
- *       正是本处所需方法），故此处缺口是「**未接线**」而非「未搬」；
- *       运行时仍取不到沙盒的根因是**外部 provisioner 服务未部署**（同 {@code SkillRemoteInstall}）。</li>
+ *   <li><b>{@code present_artifacts} 的沙盒「文件是否存在」校验</b>：参考实现在路径白名单通过后
+ *       构造 {@code ProvisionerSandboxBackend(...)} 并调用 {@code regular_file_exists}，
+ *       不存在则抛「文件不存在或不是普通文件: …」（见参考实现 {@code agents/toolkits/buildin/tools.py:238-246}）。
+ *       路径白名单与 {@code ..} 穿越校验（纯函数，参考实现 ValueError 文案逐字）一直保留。
+ *       <b>本条已于 2026-09-23 接线</b>：{@link PresentArtifactsTool} 经
+ *       {@code SandboxFilesystemBackendAdapter#regularFileExists} 真实查询沙盒；
+ *       未绑定 backend 时按"文件不存在"处理（不静默放行）。
+ *       （原注：缺口是「未接线」而非「未搬」，沙盒数据面已随 §三 backends 落地；
+ *       运行时仍取不到沙盒的根因是外部 provisioner 服务未部署，同 {@code SkillRemoteInstall}。）</li>
  *   <li><b>OCR 引擎解析未搬</b>：{@code services/ocr_service.py}（{@code parse_document} /
  *       {@code resolve_ocr_engine_id}）未搬，故 {@code ocrParseFile} 只完成校验与输出路径计算
  *       （{@link #nextOcrOutputPath} / {@link #safeOcrOutputStem}），解析步骤不可用。</li>
@@ -386,8 +384,9 @@ public final class BuildinTools {
     public record ArtifactCommand(List<String> artifacts, String message) {
     }
 
-    /** 对应参考实现 {@code _normalize_presented_artifact_path}（沙盒校验见能力差异 3）。 */
-    static String normalizePresentedArtifactPath(String filepath, BaseContext context) {
+    /** 对应参考实现 {@code _normalize_presented_artifact_path}。 */
+    static String normalizePresentedArtifactPath(
+            String filepath, BaseContext context, Predicate<String> fileExists) {
         resolveRuntimeSandboxScope(context);
         String normalizedInput = filepath == null ? "" : filepath.strip();
         if (normalizedInput.isEmpty()) {
@@ -401,20 +400,121 @@ public final class BuildinTools {
         if (workdirPath.isEmpty() || !allowed) {
             throw new IllegalArgumentException("文件不在当前用户可见范围内: " + normalizedInput);
         }
-        throw new IllegalStateException(
-                "沙盒校验未接线，无法判断文件是否存在：" + normalizedInput);
+        // 沙盒「是否为普通文件」校验（参考实现 tools.py:244-245 的 regular_file_exists）。
+        // 能力差异 3 于 2026-09-23 接线：沙盒数据面已落地，此处改为真实查询；
+        // 未绑定 backend（fileExists 为 null）时按"文件不存在"处理，不静默放行。
+        if (fileExists == null || !fileExists.test(normalizedPath)) {
+            throw new IllegalArgumentException("文件不存在或不是普通文件: " + normalizedInput);
+        }
+        return normalizedPath;
     }
 
     /** 对应参考实现 {@code present_artifacts}。 */
-    static ArtifactCommand presentArtifacts(List<String> filepaths, BaseContext context) {
+    static ArtifactCommand presentArtifacts(
+            List<String> filepaths, BaseContext context, Predicate<String> fileExists) {
         try {
             List<String> normalized = new ArrayList<>();
             for (String filepath : filepaths == null ? List.<String>of() : filepaths) {
-                normalized.add(normalizePresentedArtifactPath(filepath, context));
+                normalized.add(normalizePresentedArtifactPath(filepath, context, fileExists));
             }
             return new ArtifactCommand(normalized, "已将交付物展示给用户");
         } catch (IllegalArgumentException exc) {
             return new ArtifactCommand(List.of(), "Error: " + exc.getMessage());
+        }
+    }
+
+    /** 注册 {@code present_artifacts}（category=buildin）。 */
+    public static PresentArtifactsTool registerPresentArtifactsTool() {
+        PresentArtifactsTool tool = new PresentArtifactsTool(null, null);
+        ToolkitsRegistry.register(tool, new ToolkitsRegistry.ToolExtraMetadata(
+                "buildin", List.of("文件", "交付物"), "展示交付物", "", ""));
+        return tool;
+    }
+
+    /**
+     * {@code present_artifacts} 工具本体（每 Run 经 {@code boundTo} 绑定沙盒 backend 与运行时上下文）。
+     *
+     * <p>对应参考实现 {@code present_artifacts}（tools.py:271-287）：把已生成的普通文件登记进
+     * {@code artifacts} 并回一句 ToolMessage 文本。参考实现靠
+     * {@code Command(update={"artifacts": ..., "messages": [...]})} 写 state，
+     * 本工程工具只能返回字符串，故 artifacts 经 {@link AgentStateWriteback} 暂存、
+     * 由 {@code AgentStateWritebackHook} 落回 OverAllState（与参考实现落点等价）。
+     */
+    public static final class PresentArtifactsTool implements ToolDefinition, ToolCallback {
+
+        private final SandboxFilesystemBackendAdapter backend;
+        private final BaseContext context;
+
+        public PresentArtifactsTool(SandboxFilesystemBackendAdapter backend, BaseContext context) {
+            this.backend = backend;
+            this.context = context;
+        }
+
+        public PresentArtifactsTool boundTo(SandboxFilesystemBackendAdapter backendValue, BaseContext contextValue) {
+            return new PresentArtifactsTool(backendValue, contextValue);
+        }
+
+        @Override
+        public String getName() {
+            return PRESENT_ARTIFACTS_TOOL;
+        }
+
+        @Override
+        public String getDescription() {
+            return PRESENT_ARTIFACTS_DESCRIPTION;
+        }
+
+        @Override
+        public Map<String, Object> getArgsSchema() {
+            return JSON.parseObject(PRESENT_ARTIFACTS_SCHEMA);
+        }
+
+        public String getCategory() {
+            return "buildin";
+        }
+
+        public String getDisplayName() {
+            return "展示交付物";
+        }
+
+        @Override
+        public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
+            return DefaultToolDefinition.builder()
+                    .name(PRESENT_ARTIFACTS_TOOL)
+                    .description(PRESENT_ARTIFACTS_DESCRIPTION)
+                    .inputSchema(PRESENT_ARTIFACTS_SCHEMA)
+                    .build();
+        }
+
+        @Override
+        public String call(String toolInput) {
+            Map<String, Object> args;
+            try {
+                args = JSON.parseObject(toolInput == null ? "{}" : toolInput,
+                        new com.alibaba.fastjson2.TypeReference<Map<String, Object>>() {});
+            } catch (RuntimeException exc) {
+                return "Error: invalid tool input: " + exc.getMessage();
+            }
+            List<String> filepaths = new ArrayList<>();
+            Object raw = args == null ? null : args.get("filepaths");
+            if (raw instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item != null) {
+                        filepaths.add(String.valueOf(item));
+                    }
+                }
+            }
+            ArtifactCommand command = presentArtifacts(filepaths, context, this::regularFileExists);
+            if (command.artifacts().isEmpty()) {
+                return command.message();
+            }
+            AgentStateWriteback.addArtifacts(context, command.artifacts());
+            return command.message();
+        }
+
+        /** 沙盒普通文件校验（未绑定 backend 时返回 false：宁可不展示，也不登记不存在的文件）。 */
+        private boolean regularFileExists(String virtualPath) {
+            return backend != null && backend.regularFileExists(virtualPath);
         }
     }
 

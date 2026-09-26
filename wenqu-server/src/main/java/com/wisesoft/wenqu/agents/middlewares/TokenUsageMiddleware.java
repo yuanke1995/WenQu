@@ -4,6 +4,9 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ModelCallHandler;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelInterceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelResponse;
+import com.wisesoft.wenqu.agents.AgentState;
+import com.wisesoft.wenqu.agents.AgentStateWriteback;
+import com.wisesoft.wenqu.agents.BaseContext;
 import com.wisesoft.wenqu.repositories.ModelProviderCache;
 import com.wisesoft.wenqu.models.ModelInfo;
 import java.time.OffsetDateTime;
@@ -116,8 +119,22 @@ public class TokenUsageMiddleware extends ModelInterceptor {
             Map<String, Object> context = new LinkedHashMap<>(request.getContext());
             context.put(SNAPSHOT_KEY, snapshot);
             request = ModelRequest.builder(request).context(context).build();
+            // 平台差异（见类注释「能力差异 1」的落点）：参考实现由框架把
+            // Command(update={"token_usage": ...}) 写回 state；本工程把快照同时写进
+            // Run 级写回缓冲，由 AgentStateWritebackHook 在 AFTER_MODEL 落回 OverAllState。
+            BaseContext baseContext = baseContextOf(context);
+            if (baseContext != null) {
+                AgentStateWriteback.put(
+                        baseContext, AgentState.AgentStatePayload.TOKEN_USAGE, snapshot);
+            }
         }
         return response;
+    }
+
+    /** 取 request context 里的运行时上下文（键与 {@link ContextAwareInterceptor#CONTEXT_KEY} 一致）。 */
+    private static BaseContext baseContextOf(Map<String, Object> context) {
+        Object value = context == null ? null : context.get(CONTEXT_KEY);
+        return value instanceof BaseContext baseContext ? baseContext : null;
     }
 
     /**

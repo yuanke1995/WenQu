@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.ModelRequest;
 import com.alibaba.cloud.ai.graph.agent.interceptor.ModelResponse;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONWriter;
+import com.wisesoft.wenqu.agents.AgentStateWriteback;
 import com.wisesoft.wenqu.agents.BaseContext;
 import com.wisesoft.wenqu.models.Agent;
 import com.wisesoft.wenqu.models.AgentRun;
@@ -301,10 +302,30 @@ public class SubAgentMiddleware extends ModelInterceptor {
 
     @Override
     public ModelResponse interceptModel(ModelRequest request, ModelCallHandler handler) {
+        // 平台差异（见类注释「能力差异 1」的落点）：参考实现由框架把
+        // Command(update={"subagent_runs": [...]}) 写回 state；本工程在此把上一次工具调用
+        // 攒下的载体转交给 Run 级写回缓冲，由 AgentStateWritebackHook 落回 OverAllState。
+        // 时机：本方法每次模型调用前执行，而工具执行发生在上一次模型调用之后，故增量必被取走。
+        flushPendingCommandsToWriteback();
         ModelRequest updated = ModelRequest.builder(request)
                 .systemMessage(MemoryMiddleware.appendToSystemMessage(request.getSystemMessage(), systemPrompt))
                 .build();
         return handler.call(updated);
+    }
+
+    /** 把待落 state 的 {@code subagent_runs} 增量转交写回缓冲。 */
+    private void flushPendingCommandsToWriteback() {
+        List<ToolCommand> commands = drainPendingCommands();
+        if (commands.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> runs = new ArrayList<>();
+        for (ToolCommand command : commands) {
+            if (command != null && command.subagentRun() != null) {
+                runs.add(command.subagentRun());
+            }
+        }
+        AgentStateWriteback.addSubagentRuns(parentContext, runs);
     }
 
     // ==================== Command 载体 ====================

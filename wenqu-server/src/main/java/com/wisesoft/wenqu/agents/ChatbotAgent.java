@@ -8,6 +8,7 @@ import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.wisesoft.wenqu.agents.backends.sandbox.ProvisionerSandboxBackend;
 import com.wisesoft.wenqu.agents.engine.GraphFactory;
 import com.wisesoft.wenqu.agents.engine.GraphPort;
+import com.wisesoft.wenqu.agents.middlewares.AgentStateWritebackHook;
 import com.wisesoft.wenqu.agents.middlewares.ImageInputCompatibilityMiddleware;
 import com.wisesoft.wenqu.agents.middlewares.MemoryMiddleware;
 import com.wisesoft.wenqu.agents.middlewares.NetworkRetryMiddleware;
@@ -24,8 +25,13 @@ import com.wisesoft.wenqu.service.AgentRequestQueueService;
 import com.wisesoft.wenqu.service.MemoryService;
 import com.wisesoft.wenqu.service.SubagentRunService;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -82,6 +88,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class ChatbotAgent extends BaseAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatbotAgent.class);
 
     /** 参考实现 {@code ChatbotAgent.name}（逐字）。 */
     public static final String AGENT_NAME = "智能助手";
@@ -188,6 +196,9 @@ public class ChatbotAgent extends BaseAgent {
             List<Hook> hooks,
             List<Interceptor> interceptors) {
         hooks.add(new SteerMiddleware(requestQueueService));
+        // 平台差异：把 token_usage / artifacts / subagent_runs / todos 的增量写回 state
+        // （参考实现由 Command(update=...) 完成，见 AgentStateWriteback 类注释）。
+        hooks.add(new AgentStateWritebackHook());
 
         String artifactsRoot = AgentCompositeBackend.artifactsRoot(context);
         interceptors.add(compositeBackend.createAgentFilesystemMiddleware(
@@ -216,6 +227,10 @@ public class ChatbotAgent extends BaseAgent {
 
         interceptors.add(TodoListInterceptor.builder()
                 .systemPrompt(ChatbotPrompt.TODO_MID_PROMPT)
+                // 平台差异：参考实现里 write_todos 返回 Command(update={"todos": ...}) 直接写 state；
+                // 本工程经框架的 TodoEventHandler 回传，再交由写回钩子落回 OverAllState。
+                .todoEventHandler(todos -> AgentStateWriteback.put(
+                        context, AgentState.AgentStatePayload.TODOS, todoPayloads(todos)))
                 .build());
         interceptors.add(PatchToolCallsInterceptor.builder().build());
 
@@ -231,11 +246,38 @@ public class ChatbotAgent extends BaseAgent {
         String approvalMode = ToolApproval.normalizeToolApprovalMode(
                 context.getDynamic("tool_approval_mode", ToolApproval.DEFAULT_TOOL_APPROVAL_MODE));
         ToolApproval.createToolApprovalInterruptOn(approvalMode, AgentGraphSupport.promptContext(context).getWorkdirPath());
+
+        log.info(
+                "[Middlewares] 构图装配完成: hooks={}, interceptors={}",
+                hooks.stream().map(hook -> hook.getClass().getSimpleName()).toList(),
+                interceptors.size());
     }
 
     /** 工具结果落盘端口：把 {@code backend.write} 的 error 文本原样上报（对应 {@code backend.write} 返回面）。 */
     private static SummaryMiddleware.ToolResultBackend summaryToolResultBackend(ProvisionerSandboxBackend backend) {
         return (path, content) -> backend.write(path, content).error;
+    }
+
+    /**
+     * 把框架的待办条目转成前端消费的结构（对应参考实现 {@code state["todos"]} 的 {@code {content, status}}）。
+     *
+     * <p>status 用 {@code TodoStatus} 枚举名小写（{@code pending} / {@code in_progress} / {@code completed}），
+     * 与前端 {@code getTodoStatusLabel} 的取值一致。
+     */
+    public static List<Map<String, Object>> todoPayloads(List<TodoListInterceptor.Todo> todos) {
+        List<Map<String, Object>> payloads = new ArrayList<>();
+        for (TodoListInterceptor.Todo todo : todos == null ? List.<TodoListInterceptor.Todo>of() : todos) {
+            if (todo == null) {
+                continue;
+            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("content", todo.getContent() == null ? "" : todo.getContent());
+            item.put(
+                    "status",
+                    todo.getStatus() == null ? "pending" : todo.getStatus().name().toLowerCase(Locale.ROOT));
+            payloads.add(item);
+        }
+        return payloads;
     }
 
     /** {@code getattr(context, key, default)} 的整数读取。 */

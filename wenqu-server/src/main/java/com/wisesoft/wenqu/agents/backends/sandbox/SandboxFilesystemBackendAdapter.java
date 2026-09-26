@@ -64,6 +64,16 @@ public class SandboxFilesystemBackendAdapter implements FilesystemBackend {
         return largeResultsRoot;
     }
 
+    /**
+     * 沙盒内「是否为普通文件」校验（对应参考实现 {@code backend.regular_file_exists}）。
+     *
+     * <p>供 {@code present_artifacts} / {@code ocr_parse_file} 的可见性校验使用
+     * （见 {@code BuildinTools} 能力差异 3）。
+     */
+    public boolean regularFileExists(String filePath) {
+        return backend != null && backend.regularFileExists(filePath);
+    }
+
     @Override
     public String read(String filePath, int offset, int limit) {
         ProvisionerSandboxBackend.ReadResult result = backend.read(filePath, offset, limit);
