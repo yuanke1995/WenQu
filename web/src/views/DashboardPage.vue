@@ -44,13 +44,7 @@
         <div class="app-card">
           <div class="app-card-title">热门问题 TOP10</div>
           <a-table :data-source="summary.topQuestions || []" :columns="qCols" size="small"
-                   row-key="question" :pagination="false" :loading="analyticsLoading" :locale="{ emptyText: '暂无数据' }">
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'action'">
-                <button class="app-link-btn" :disabled="addingSuggested === record.question" @click="addRecommended(record.question)">设为推荐</button>
-              </template>
-            </template>
-          </a-table>
+                   row-key="question" :pagination="false" :loading="analyticsLoading" :locale="{ emptyText: '暂无数据' }" />
         </div>
         <div class="app-card">
           <div class="app-card-title">无命中问题 TOP10<span class="card-sub">建议补充知识库</span></div>
@@ -115,12 +109,11 @@
 <script setup>
 import { ref, computed, onMounted, h } from 'vue'
 import { message } from 'ant-design-vue'
-import { getAnalytics, getUnmatchedQuestions, createKnowledge, addSuggested, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck } from '../api'
+import { getAnalytics, getUnmatchedQuestions, createKnowledge, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck } from '../api'
 
 const qCols = [
   { title: '问题', dataIndex: 'question', key: 'question', ellipsis: true },
-  { title: '次数', dataIndex: 'count', key: 'count', width: 70 },
-  { title: '操作', key: 'action', width: 90 }
+  { title: '次数', dataIndex: 'count', key: 'count', width: 70 }
 ]
 const noHitCols = [
   { title: '问题', dataIndex: 'question', key: 'question', ellipsis: true },
@@ -185,18 +178,6 @@ const doAutoCheck = async () => {
     } else message.error(r.msg || '体检失败')
   } catch (e) { message.error(e.message || '体检失败') }
   finally { checkLoading.value = false }
-}
-
-// 热门问题一键加入推荐池
-const addingSuggested = ref('')
-const addRecommended = async question => {
-  addingSuggested.value = question
-  try {
-    const r = await addSuggested(question)
-    if (r.success) message.success('已加入推荐问题池，欢迎页将展示')
-    else message.error(r.msg || '加入失败')
-  } catch (e) { message.error(e.message || '加入失败') }
-  finally { addingSuggested.value = '' }
 }
 
 // 差评样本

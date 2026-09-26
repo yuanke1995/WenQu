@@ -12,10 +12,7 @@
         <div v-if="messages.length === 0" class="welcome">
           <div class="welcome-mark">渠</div>
           <h2>有什么可以帮你？</h2>
-          <p>基于知识库回答，支持图片提问与深度思考</p>
-          <div class="welcome-tags">
-            <span v-for="(q, i) in tips" :key="i" class="welcome-tag" @click="ask(q)">{{ q }}</span>
-          </div>
+          <p>智能体与知识库问答，支持图片提问与深度思考</p>
         </div>
 
         <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
@@ -388,7 +385,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listAvailableAgents,
+         getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
          getUserPreference } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
@@ -639,10 +636,6 @@ const groupedSources = computed(() => {
 })
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
-
-// 推荐问题（DB 配置，失败回退内置默认）
-const FALLBACK_TIPS = ['系统有哪些功能？', '如何创建一个新表单？', '字段验证怎么设置？', '什么是填报周期？']
-const tips = ref(FALLBACK_TIPS)
 
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
@@ -1370,9 +1363,6 @@ onMounted(async () => {
     await autoPick()
   }
   focusInput()
-  getSuggested().then(r => {
-    if (r.success && Array.isArray(r.data) && r.data.length) tips.value = r.data
-  }).catch(() => {})
   getConfig().then(r => {
     if (!r.success) return
     debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
@@ -1404,12 +1394,6 @@ onMounted(async () => {
 }
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
 .welcome p { color: var(--app-text3); margin: 0 0 18px; }
-.welcome-tags { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-.welcome-tag {
-  font-size: 12px; color: var(--app-text2); background: var(--app-bg);
-  border: 1px solid var(--app-border); border-radius: 999px; padding: 5px 14px; cursor: pointer;
-}
-.welcome-tag:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
 
 .row { display: flex; margin-bottom: 20px; justify-content: center; }
 .msg-block { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: min(94%, 860px); width: 100%; }

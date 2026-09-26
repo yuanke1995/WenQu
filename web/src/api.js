@@ -410,13 +410,6 @@ export const saveConfig = payload => request('/config', { method: 'PUT', body: J
 export const resetConfig = groups =>
   request('/config/reset', { method: 'POST', body: JSON.stringify({ groups }) })
 
-/** 推荐问题列表（欢迎页展示，DB 配置） */
-export const getSuggested = () => request('/suggested')
-
-/** 加入推荐问题（看板热门问题一键加入；返回更新后列表） */
-export const addSuggested = question =>
-  request('/suggested', { method: 'POST', body: JSON.stringify({ question }) })
-
 /** 删除一轮对话（按对话组：回答 ID + 其前面的用户问题一起软删除） */
 export const deleteMessageGroup = assistantMessageId =>
   request(`/message-group/${assistantMessageId}`, { method: 'DELETE' })

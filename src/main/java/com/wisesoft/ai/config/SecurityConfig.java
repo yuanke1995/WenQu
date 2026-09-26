@@ -49,11 +49,11 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 普通用户问答端点白名单判断：白名单内无需管理员；其余（文档/配置/评估/看板/索引/知识管理/推荐写入等）默认需管理员。
+     * 普通用户问答端点白名单判断：白名单内无需管理员；其余（文档/配置/评估/看板/索引/知识管理等）默认需管理员。
      * <p>
      * 白名单 = 问答链路的最小闭环：
      * chat、会话（列表/新建/历史/删除/置顶收藏/重命名/批量/组删除撤销）、反馈提交、
-     * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、推荐问题读取（GET /suggested）、身份查询（/auth/me）、
+     * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、身份查询（/auth/me）、
      * 对话页智能体下拉（GET /agent/available，只读精简字段）。
      */
     private static final Pattern KNOWLEDGE_SINGLE_GET = Pattern.compile("/api/ai/knowledge/([^/]+)");
@@ -73,7 +73,6 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/auth/me")) return true;
         // 登录相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）
         if (isAuthEndpoint(path)) return true;
-        if ("GET".equals(method) && path.equals("/api/ai/suggested")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/config/public")) return true;
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。

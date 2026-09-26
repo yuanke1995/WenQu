@@ -48,7 +48,6 @@ export const TIPS = {
   "streamRetryCount": "主 LLM 流式生成在\"未输出任何内容\"时中断的自动重试次数（0=关闭）。已输出内容后中断不重试（避免重复内容）；重试仍失败会在回答下方给出警示。",
   "sseTimeoutMs": "问答 SSE 连接超时（毫秒）：超过后回答被截断，前端提示\"回答超时已截断\"。深度思考+长回答场景可调大，默认 300000（5 分钟）。",
   "retrievalDebugEnabled": "检索调试入口开关（内部排障用）：开启后回答操作菜单显示「检索调试」，可分步查看关键词/向量/重排召回结果；面向用户的部署建议保持关闭。",
-  "suggestedQuestions": "欢迎页展示的推荐问题（新用户引导）。每行一条、最多 8 条；数据看板的热门问题可一键加入。改动保存后，用户下次进入问答页生效。",
   "showDebugDegradations": "回答下方是否显示降级提示（无命中/查询改写失败/图片剔除/未标注引用/缓存命中等）。默认关：回答区不显示任何降级提示（排障信息仍写 [FAIL-LOUD] 日志）；调试排障时开启即可看到全部降级原因。",
   "citationCheck": "引用语义一致性自检：回答生成后，把每条 [N] 引用的前文句子与其来源片段交给模型判断是否被直接支撑，剔除\"编号存在但内容与该块无关\"的引用并重编编号。提升引用可信度，代价是每轮回答多一次校验调用（约数秒延迟）。",
   "judgeEnabled": "自动体检的 LLM 评判（调试度量）：体检时对每个 case 判断\"当前检索的 top 命中资料是否足以直接回答该问题\"，汇总为 judgeScore 写入体检报告，用于评估检索结果的实际可用性。每 case 一次模型调用，评估集大时体检耗时明显增加。",
@@ -155,7 +154,6 @@ export const PANELS = [
 export const FIELDS = [
   { panel: "chat", section: 1, group: "chat", key: "temperature", path: "chat.temperature", label: "温度", type: "number", tips: "temperature", def: 0.3, min: 0, max: 2, step: 0.1, width: 200, tier: 1 },
   { panel: "chat", section: 1, group: "chat", key: "systemPrompt", path: "chat.systemPrompt", label: "System Prompt", type: "textarea", tips: "systemPrompt", def: "", rows: 4, ph: "AI 助手的角色与回答风格（引用/图片/追问规则由系统固定，不可修改）", tier: 1 },
-  { panel: "chat", section: 1, group: "chat", key: "suggestedQuestions", path: "chat.suggestedQuestions", label: "推荐问题池", type: "textarea", tips: "suggestedQuestions", def: "", rows: 4, ph: "每行一个问题，欢迎页展示前 8 条（数据看板热门问题也可一键加入）", tier: 1 },
   { panel: "chat", section: 1, group: "chat", key: "citationCheckEnabled", path: "chat.citationCheckEnabled", label: "引用一致性自检", type: "switch", tips: "citationCheck", def: true, note: "生成后校验每条 [N] 引用是否被引用内容支撑，剔除语义不符的引用并重编编号（增加一次校验调用延迟）", tier: 2 },
   { panel: "chat", section: 1, group: "retrieval", key: "relatedCount", path: "retrieval.relatedCount", label: "相关追问条数", type: "number", tips: "relatedCount", def: 3, min: 1, max: 8, width: 200, note: "回答末尾 <related> 推荐的用户可能追问数", tier: 2 },
   { panel: "chat", section: 2, group: "chat", key: "historyRounds", path: "chat.historyRounds", label: "多轮记忆轮数", type: "number", tips: "historyRounds", def: 5, min: 0, max: 20, width: 200, core: true, tier: 1 },

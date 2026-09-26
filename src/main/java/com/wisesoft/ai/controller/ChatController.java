@@ -278,9 +278,6 @@ public class ChatController {
         return ResultJson.ok(m);
     }
 
-    /** 推荐问题池单条上限（与欢迎页展示数量一致，配置里超出的行忽略） */
-    private static final int SUGGESTED_MAX = 8;
-
     @Operation(summary = "删除一轮对话", description = "按对话组删除：指定该轮回答（assistant 消息）ID，连同其前面的用户问题一起软删除，并清理 Redis 兜底缓存。立即生效，前端 5 秒内可调撤销接口恢复")
     @DeleteMapping("/message-group/{assistantMessageId}")
     public ResultJson deleteMessageGroup(
@@ -309,35 +306,6 @@ public class ChatController {
         int restored = sessionService.undoDeleteRound(assistant.getSessionId(), messageId);
         if (restored == 0) throw new BizException(410, "已过撤销期，无法恢复");
         return ResultJson.ok(Map.of("restored", restored), "已恢复该轮对话");
-    }
-
-    @Operation(summary = "推荐问题列表", description = "获取欢迎页展示的推荐问题（DB 配置 chat.suggestedQuestions，每行一条，最多 8 条）")
-    @GetMapping("/suggested")
-    public ResultJson suggested() {
-        return ResultJson.ok(parseSuggested(configService.get("chat.suggestedQuestions")));
-    }
-
-    @Operation(summary = "加入推荐问题", description = "向推荐问题池追加一条问题（去重、超出 8 条时挤掉最早的），数据看板热门问题一键加入用")
-    @PostMapping("/suggested")
-    public ResultJson addSuggested(
-            @Parameter(description = "{\"question\": \"问题文本\"}") @RequestBody Map<String, String> body) {
-        String q = body.getOrDefault("question", "").trim();
-        if (q.isEmpty()) throw new BizException("问题不能为空");
-        if (q.length() > 100) throw new BizException("问题过长（最多100字）");
-        List<String> list = new java.util.ArrayList<>(parseSuggested(configService.get("chat.suggestedQuestions")));
-        list.removeIf(s -> s.equals(q));
-        list.add(0, q);
-        while (list.size() > SUGGESTED_MAX) list.remove(list.size() - 1);
-        configService.update(Map.of("chat", Map.of("suggestedQuestions", String.join("\n", list))));
-        return ResultJson.ok(list, "已加入推荐");
-    }
-
-    /** 推荐问题配置解析：按行拆分、去空白、截前 8 条 */
-    private List<String> parseSuggested(String config) {
-        if (config == null || config.isBlank()) return List.of();
-        return java.util.Arrays.stream(config.split("\n"))
-                .map(String::trim).filter(s -> !s.isEmpty())
-                .limit(SUGGESTED_MAX).toList();
     }
 
     /** 客户端真实 IP（nginx 反代场景取 X-Forwarded-For 首段，兜底 remoteAddr） */

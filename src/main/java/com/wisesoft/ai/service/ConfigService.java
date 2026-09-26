@@ -49,7 +49,6 @@ public class ConfigService {
             Map.entry("chat.streamRetryCount", "主 LLM 流式中断自动重试次数(未输出token时,0=关闭)"),
             Map.entry("chat.sseTimeoutMs", "问答 SSE 超时(毫秒,默认300000)"),
             Map.entry("chat.showDebugDegradations", "回答提示显示调试级降级信息（默认关：只显示用户级）"),
-            Map.entry("chat.suggestedQuestions", "推荐问题池（每行一个，欢迎页展示，最多8条；看板热门问题可一键加入）"),
             Map.entry("chat.retrievalDebugEnabled", "检索调试入口（内部排障用，默认隐藏；开启后回答操作菜单显示「检索调试」）"),
             Map.entry("chat.historyRounds", "多轮记忆注入轮数（问答时注入最近几轮对话作为上下文）"),
             Map.entry("chat.remainTokenFloor", "上下文填充保留下限(token)：预算扣掉固定部分后至少保留该值给知识块"),
@@ -145,12 +144,11 @@ public class ConfigService {
      * 未列出的 key 一律按 2 处理。
      */
     private static final Map<String, Integer> TIER = Map.ofEntries(
-            // ===== L1 必需（15 项）=====
+            // ===== L1 必需（14 项）=====
             Map.entry("chat.baseUrl", 1),
             Map.entry("chat.apiKey", 1),
             Map.entry("chat.temperature", 1),
             Map.entry("chat.systemPrompt", 1),
-            Map.entry("chat.suggestedQuestions", 1),
             Map.entry("chat.historyRounds", 1),
             Map.entry("embedding.baseUrl", 1),
             Map.entry("embedding.apiKey", 1),
@@ -494,7 +492,6 @@ public class ConfigService {
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.showDebugDegradations", "false");      // 回答提示：调试级降级信息开关（默认只显示用户级）
-        d.put("chat.suggestedQuestions", "系统有哪些功能？\n如何创建一个新表单？\n字段验证怎么设置？\n什么是填报周期？");  // 欢迎页推荐问题（每行一个）
         d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关）
         // 接口限流（按用户/IP 固定窗口）
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
