@@ -419,9 +419,7 @@ public class RagService {
             applyQueryOverrides(agent);
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
-        final java.util.Collection<String> scopeKbIds =
-                (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
-                        ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
+        final java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
         // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
         final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
         final boolean useDeepThink;
@@ -906,6 +904,8 @@ public class RagService {
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
             st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
+            st.toolScopeKbIds = scopeKbIds; // 精确检索工具与主链路同库界（库隔离）
+            st.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
@@ -1027,10 +1027,12 @@ public class RagService {
                     long begin = System.currentTimeMillis();
                     recordToolStatus(st, name, toolInput, "start", null, 0);
                     // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
-                    // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源
+                    // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
+                    // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
                     boolean kbTool = "searchKnowledge".equals(name);
                     if (kbTool) {
                         KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
+                        KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
                     }
                     try {
                         String result = cb.call(toolInput, toolContext);
@@ -1042,6 +1044,7 @@ public class RagService {
                     } finally {
                         if (kbTool) {
                             KnowledgeRetrievalTool.clearSourceRegistrar();
+                            KnowledgeRetrievalTool.clearKbScope();
                         }
                     }
                 }
@@ -1412,6 +1415,9 @@ public class RagService {
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
+        /** 精确检索工具的检索范围（与主链路同库界，工具执行线程内生效）：kbIds 限定库，docIds 后过滤命中 */
+        volatile java.util.Collection<String> toolScopeKbIds;
+        volatile Set<String> toolScopeDocIds;
         /** 本轮生效模型（会话覆盖 > 个人默认；智能体不绑定模型。主链路解析后回填，生成流按此发送） */
         volatile String model;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
@@ -1703,6 +1709,12 @@ public class RagService {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toSet());
+    }
+
+    /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */
+    private static java.util.Collection<String> scopeKbIdsOf(Agent agent) {
+        return (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
+                ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
     }
 
     /**
@@ -2293,6 +2305,9 @@ public class RagService {
                     new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), userImgs,
                     startTime, question, thinkingHolder, degradations, degradedCodes, null);
             st.docMetaCache = documentMetaCache;
+            // 本轮无知识库检索，但工具仍可能被模型调用：范围同样跟随智能体库绑定（库隔离）
+            st.toolScopeKbIds = scopeKbIdsOf(agent);
+            st.toolScopeDocIds = resolveScopeDocIds(agent);
             // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;

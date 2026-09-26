@@ -36,12 +36,30 @@ public class KnowledgeRetrievalTool {
     /** 工具执行线程内有效（Spring AI 同步执行工具回调），用完即清，避免跨会话串号 */
     private static final ThreadLocal<SourceRegistrar> REGISTRAR = new ThreadLocal<>();
 
+    /**
+     * 工具检索范围（与主链路同库界，2026-09-26 库隔离修复）：智能体绑定了知识库时，
+     * searchKnowledge 不允许越过范围检索其他库——否则「仅挂刑法库」的智能体经工具仍能
+     * 把其他库的块召回并注册进引用来源。kbIds 限定向量检索的库（null=不限，与主链路
+     * scopeKbIds 同语义）；docIds 对命中做后过滤（null=不限，空集合=范围内无文档，检索为空）。
+     */
+    public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {}
+
+    private static final ThreadLocal<KbScope> KB_SCOPE = new ThreadLocal<>();
+
     public static void setSourceRegistrar(SourceRegistrar r) {
         REGISTRAR.set(r);
     }
 
     public static void clearSourceRegistrar() {
         REGISTRAR.remove();
+    }
+
+    public static void setKbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {
+        KB_SCOPE.set(new KbScope(kbIds, docIds));
+    }
+
+    public static void clearKbScope() {
+        KB_SCOPE.remove();
     }
 
     private final HybridRetrievalService hybridRetrievalService;
@@ -67,11 +85,18 @@ public class KnowledgeRetrievalTool {
             return "查询关键词不能为空";
         }
         int limit = topK == null ? MAX_HITS : Math.max(1, Math.min(topK, MAX_HITS));
+        // 范围与主链路对齐：向量路按库界检索（kbIds），命中再按文档范围后过滤（docIds，含空集合 fail-closed）
+        KbScope scope = KB_SCOPE.get();
         List<Hit> hits;
         try {
-            hits = hybridRetrievalService.search(query.trim());
+            hits = hybridRetrievalService.search(query.trim(), null, scope == null ? null : scope.kbIds());
         } catch (Exception e) {
             return "知识库检索失败：" + e.getMessage();
+        }
+        if (scope != null && scope.docIds() != null) {
+            hits = hits.stream()
+                    .filter(h -> h.docId() != null && scope.docIds().contains(h.docId()))
+                    .toList();
         }
         if (hits == null || hits.isEmpty()) {
             return "未在知识库中检索到相关内容";
