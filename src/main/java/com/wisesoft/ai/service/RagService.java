@@ -135,22 +135,19 @@ public class RagService {
         }
     }
 
-    /** 重排（服务可用就执行；不可用 → 保持融合分排序并 fail-loud 标记） */
+    /**
+     * 重排（重排模型归知识库检索设置：queryParams["rerank.model"] 经线程局部覆盖生效）；
+     * 服务可用就执行；不可用 → 保持融合分排序并 fail-loud 标记。
+     */
     private List<HybridRetrievalService.Hit> rerankIfNeeded(List<HybridRetrievalService.Hit> hits, String query,
-                                                             List<Map<String, String>> degradations, Set<String> degradedCodes,
-                                                             String userRerankRef) {
+                                                             List<Map<String, String>> degradations, Set<String> degradedCodes) {
         if (!hits.isEmpty()) {
-            // 个人重排模型路径不走全局探测/冷却状态，因此仅对全局路径做不可用降级提示
-            if (userRerankRef != null && !userRerankRef.isBlank()) {
-                hits = rerankService.rank(hits, query, userRerankRef);
+            String reason = rerankService.debugUnavailableReason();
+            if (reason != null) {
+                addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                        "重排不可用（" + reason + "），按融合分排序");
             } else {
-                String reason = rerankService.debugUnavailableReason();
-                if (reason != null) {
-                    addDegradation(degradations, degradedCodes, "rerankUnavailable",
-                            "重排不可用（" + reason + "），按融合分排序");
-                } else {
-                    hits = rerankService.rank(hits, query);
-                }
+                hits = rerankService.rank(hits, query);
             }
         }
         return hits;
@@ -255,6 +252,8 @@ public class RagService {
     private final SubAgentOrchestrator subAgentOrchestrator;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
+    /** 自动派遣（agentId="auto"）：按名称+描述从可见主智能体中路由本轮智能体 */
+    private final AgentDispatchService agentDispatchService;
     private final ModelRegistryService modelRegistryService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
@@ -319,6 +318,7 @@ public class RagService {
                       SkillTools skillTools,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
+                      AgentDispatchService agentDispatchService,
                       McpClientService mcpClientService,
                       KnowledgeBaseService knowledgeBaseService,
                       com.wisesoft.ai.mapper.UserMapper userMapper,
@@ -344,6 +344,7 @@ public class RagService {
         this.skillTools = skillTools;
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
+        this.agentDispatchService = agentDispatchService;
         this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
@@ -395,26 +396,11 @@ public class RagService {
     private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
-        // 智能体（4.1）：选中后覆盖模型/提示词/工具/知识库范围；agentId 无效/缺失时视为无覆盖（继承全局）
-        final Agent agent = (agentId == null || agentId.isBlank()) ? null : agentService.get(agentId);
-        if (agent != null) {
-            log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
-            // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
-            applyQueryOverrides(agent);
-        }
-        // 本轮生效模型（会话覆盖 > 智能体 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用；
-        // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
-        // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
-        final java.util.Collection<String> scopeKbIds =
-                (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
-                        ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
-        // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 视觉/重排个人默认（本轮图片理解/重排用）
+        // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
+        // 本轮生效模型（会话覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用；
+        // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
         final String resolvedModel = resolveModel(modelOverride, prefUser);
-        final String userVisionRef = prefUser == null || prefUser.getDefaultVisionModel() == null
-                ? "" : prefUser.getDefaultVisionModel();
-        final String userRerankRef = prefUser == null || prefUser.getDefaultRerankModel() == null
-                ? "" : prefUser.getDefaultRerankModel();
         if (resolvedModel.isBlank()) {
             log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
             sendSseEvent(emitter, "error",
@@ -422,6 +408,20 @@ public class RagService {
             completeEmitter(emitter);
             return;
         }
+        final String userVisionRef = prefUser == null || prefUser.getDefaultVisionModel() == null
+                ? "" : prefUser.getDefaultVisionModel();
+        // 智能体（4.1）：agentId="auto" 走自动派遣（按名称+描述路由）；无效/缺失视为无覆盖（继承全局）。
+        // 派遣在 resolveModel 之后（用当轮生效模型判路），失败回落默认智能体
+        final Agent agent = resolveAgent(agentId, question, resolvedModel, sessionId, emitter);
+        if (agent != null) {
+            log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
+            // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
+            applyQueryOverrides(agent);
+        }
+        // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
+        final java.util.Collection<String> scopeKbIds =
+                (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
+                        ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
         // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
         final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
         final boolean useDeepThink;
@@ -522,7 +522,7 @@ public class RagService {
                         rankQuery = retrievalQuery;
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
-                    hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes, userRerankRef);
+                    hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes);
                     hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
                     log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, thinkTerms={}, hits={}",
                             dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
@@ -543,11 +543,11 @@ public class RagService {
                 if (useDeepThink && !thinkTerms.isEmpty()) {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
-                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes, userRerankRef);
+                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 } else {
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
                 }
-                hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes, userRerankRef);
+                hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
@@ -1412,7 +1412,7 @@ public class RagService {
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
-        /** 本轮生效模型（会话覆盖 > 智能体 > 个人默认 > 全局；主链路解析后回填，生成流按此发送） */
+        /** 本轮生效模型（会话覆盖 > 个人默认；智能体不绑定模型。主链路解析后回填，生成流按此发送） */
         volatile String model;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
         volatile boolean deepThink;
@@ -1565,6 +1565,58 @@ public class RagService {
      * 参数走 ConfigService（DB 设置页保存即生效，yml 兜底）
      */
     // ---- 智能体（4.1）覆盖解析辅助 ----
+
+    /**
+     * 智能体解析：agentId="auto" → 自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选；
+     * 单候选直接命中；超时/失败/无命中回落默认智能体，agent.autoDispatch 关闭时直接回落默认）。
+     * 派遣结果经 SSE agent_dispatched 下发（路由过程对用户可见）。
+     * 其余 agentId 走 agentService.get（无效/不可读返回 null，继承全局）。
+     */
+    private Agent resolveAgent(String agentId, String question, String resolvedModel,
+                               String sessionId, SseEmitter emitter) {
+        if (agentId == null || agentId.isBlank()) return null;
+        if (!"auto".equals(agentId)) return agentService.get(agentId);
+        List<Agent> candidates = agentService.dispatchCandidates();
+        if (candidates.isEmpty()) return null;
+        if (candidates.size() == 1 || !configService.getBoolean("agent.autoDispatch")) {
+            Agent direct = candidates.size() == 1 ? candidates.get(0) : agentService.defaultAgent();
+            emitDispatched(emitter, direct, candidates.size(), false, sessionId);
+            return direct;
+        }
+        sendSseEvent(emitter, "stage", "正在派遣智能体…", sessionId);
+        // 最近两轮对话参与路由（追问如"之前说的退款进度"要靠上下文才能派对）
+        String recentContext = "";
+        try {
+            recentContext = buildHistoryText(sessionService.getRecentHistory(sessionId, 2));
+        } catch (Exception e) {
+            log.debug("[DISPATCH] 会话历史读取失败（无上下文路由）: {}", e.getMessage());
+        }
+        long t0 = System.currentTimeMillis();
+        Agent picked = agentDispatchService.dispatch(question, candidates, resolvedModel, recentContext);
+        boolean fallback = picked == null;
+        if (fallback) picked = agentService.defaultAgent();
+        log.info("[DISPATCH] 自动派遣: {} 个候选 → {}（{}，{}ms）", candidates.size(),
+                picked == null ? "无（继承全局）" : picked.getName(),
+                fallback ? "回落默认" : "路由命中", System.currentTimeMillis() - t0);
+        emitDispatched(emitter, picked, candidates.size(), fallback, sessionId);
+        return picked;
+    }
+
+    /** 派遣结果下发（复用编排卡片风格：候选数/命中/名称，前端在输入区上方展示） */
+    private void emitDispatched(SseEmitter emitter, Agent picked, int candidates, boolean fallback, String sessionId) {
+        if (picked == null) return;
+        try {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("candidates", candidates);
+            info.put("id", picked.getId());
+            info.put("name", picked.getName());
+            info.put("description", picked.getDescription());
+            info.put("fallback", fallback);
+            sendSseEvent(emitter, "agent_dispatched", JSON.toJSONString(info), sessionId);
+        } catch (Exception e) {
+            log.debug("[DISPATCH] 派遣结果事件下发失败（不影响问答）: {}", e.getMessage());
+        }
+    }
 
     /**
      * 模型解析链（优先级从高到低）：会话级覆盖（聊天页手动切换）> 用户个人默认模型。

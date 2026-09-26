@@ -2,10 +2,13 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.wisesoft.ai.mapper.AgentMapper;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.KnowledgeBaseMapper;
+import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.KnowledgeBase;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -25,20 +28,24 @@ import java.util.Set;
  * 不做可见性判定（可见性由检索层与 {@link ResourceVisibilityService} 统一处理），
  * 避免两处各算一套导致口径不一致。
  */
+@Slf4j
 @Service
 public class KnowledgeBaseService {
 
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
+    private final AgentMapper agentMapper;
     private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
 
     /** 默认库缓存（避免每次检索都查库；is_default 变更时由 update/create 失效） */
     private volatile String cachedDefaultId;
 
     public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
+                                AgentMapper agentMapper,
                                 com.wisesoft.ai.service.ModelRegistryService modelRegistryService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
+        this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
     }
 
@@ -57,12 +64,13 @@ public class KnowledgeBaseService {
         return kbMapper.selectById(id);
     }
 
-    /** 新建：名称必填；isDefault=1 时先把其它库的默认标记清掉（保证唯一默认库） */
+    /** 新建：名称/向量模型必填；isDefault=1 时先把其它库的默认标记清掉（保证唯一默认库） */
     public KnowledgeBase create(Map<String, Object> body, String uid) {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setName(str(body.get("name")));
         kb.setDescription(str(body.get("description")));
         kb.setQueryParams(str(body.get("queryParams")));
+        kb.setParseParams(str(body.get("parseParams")));
         kb.setIsDefault(toInt(body.get("isDefault"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef"))));
@@ -86,6 +94,7 @@ public class KnowledgeBaseService {
         if (body.containsKey("name")) upd.set(KnowledgeBase::getName, str(body.get("name")));
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
         if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
+        if (body.containsKey("parseParams")) upd.set(KnowledgeBase::getParseParams, str(body.get("parseParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
         if (body.containsKey("embeddingRef")) {
             upd.set(KnowledgeBase::getEmbeddingRef, validateEmbeddingRef(str(body.get("embeddingRef"))));
@@ -120,17 +129,35 @@ public class KnowledgeBaseService {
         kb.setUpdateTime(LocalDateTime.now());
         kbMapper.updateById(kb);
         cachedDefaultId = null;
+        // 级联清理：从关联智能体（含子智能体）的 knowledgeBaseIds 里摘除本库 ID，避免悬挂引用
+        cleanupAgentReferences(id);
         return null;
     }
 
+    /** 知识库删除后同步摘除各智能体 knowledgeBaseIds 中的该库 ID（like 预筛 + splitIds 精确匹配） */
+    private void cleanupAgentReferences(String kbId) {
+        List<Agent> candidates = agentMapper.selectList(new LambdaQueryWrapper<Agent>()
+                .like(Agent::getKnowledgeBaseIds, kbId));
+        for (Agent a : candidates) {
+            Set<String> ids = splitIds(a.getKnowledgeBaseIds());
+            if (!ids.remove(kbId)) continue;
+            a.setKnowledgeBaseIds(ids.isEmpty() ? null : String.join(",", ids));
+            agentMapper.updateById(a);
+            log.info("[KB] 智能体 {}（{}）已摘除对已删除知识库 {} 的引用", a.getId(), a.getName(), kbId);
+        }
+    }
+
     /**
-     * 校验并归一化本库绑定向量模型引用：空=跟随全局（合法）；非空必须是有效的 embedding 类型引用。
-     * @return 归一化后的引用（trim 后；空串表示跟随全局）
+     * 校验并归一化本库绑定向量模型引用：**必填**——向量空间与索引一一对应，没有可用的运行时兜底；
+     * 历史空值由启动迁移回填（引用或遗留模型名，遗留名经 DynamicEmbeddingModel 走遗留网关）。
+     * @return 归一化后的引用（trim 后）
      */
     public String validateEmbeddingRef(String ref) {
         String v = ref == null ? "" : ref.trim();
-        if (v.isEmpty()) return "";
-        if (modelRegistryService.resolveReference(v) == null) {
+        if (v.isEmpty()) {
+            throw new com.wisesoft.ai.common.BizException("请为本知识库选择向量模型（必填）");
+        }
+        if (modelRegistryService.resolveReference(v) == null && v.contains("/")) {
             throw new com.wisesoft.ai.common.BizException("向量模型无效或已被删除，请重新选择");
         }
         String type = modelRegistryService.referenceType(v);
@@ -140,7 +167,7 @@ public class KnowledgeBaseService {
         return v;
     }
 
-    /** 绑定了自定义向量模型的未删除知识库（per-KB 向量索引按此枚举） */
+    /** 绑定了向量模型的未删除知识库（per-KB 向量索引按此枚举；向量模型必绑后即全部知识库） */
     public List<KnowledgeBase> listCustomEmbedding() {
         return kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
                 .eq(KnowledgeBase::getDeleted, 0)
@@ -151,8 +178,8 @@ public class KnowledgeBaseService {
     // ==================== 检索侧支撑 ====================
 
     /**
-     * 默认库 ID：没有默认库时自动建一个「默认知识库」，
-     * 保证历史文档（kb_id 为空）与新建文档始终有归属，检索范围不会因缺库而变空。
+     * 默认库 ID：没有默认库时自动建一个「默认知识库」，保证新建文档始终有归属、检索范围不会因缺库而变空。
+     * （历史 kb_id 为空的文档已由启动迁移一次性归入默认库，此后 kb_id 必填。）
      */
     public String defaultId() {
         String cached = cachedDefaultId;
@@ -181,9 +208,7 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 库 ID 集合 → 文档 ID 集合（检索按库过滤用）。
-     * <p>注意：{@code kb_id} 为空的文档归入默认库，因此当入参包含默认库时，
-     * 结果还要并上「kb_id 为空」的文档，否则历史文档会整体检索不到。
+     * 库 ID 集合 → 文档 ID 集合（检索按库过滤用）。文档 kb_id 必填（历史空值已由启动迁移归库）。
      *
      * @return 文档 ID 集合；入参为空返回空集合
      */
@@ -195,29 +220,22 @@ public class KnowledgeBaseService {
                 .in(AiDocument::getKbId, kbIds))) {
             if (d.getId() != null) ids.add(d.getId());
         }
-        // 含默认库 → 并上未指定归属的文档（历史数据兼容）
-        if (kbIds.contains(defaultId())) {
-            for (AiDocument d : docMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                    .select(AiDocument::getId)
-                    .isNull(AiDocument::getKbId))) {
-                if (d.getId() != null) ids.add(d.getId());
-            }
-        }
         return ids;
     }
 
     /**
-     * 把文档移到某个知识库（文档管理页切换归属用）。
+     * 把文档移到某个知识库（文档管理页切换归属用）；kbId 空 = 移入默认库（显式写默认库 ID）。
      *
      * @return false 表示文档不存在
      */
     public boolean moveDoc(String docId, String kbId) {
         AiDocument doc = docMapper.selectById(docId);
         if (doc == null) return false;
-        // 显式 set：kbId 传 null（移回默认库）时也能真正写入，不被 NOT_NULL 策略跳过
+        String target = kbId == null || kbId.isBlank() ? defaultId() : kbId.trim();
+        // 显式 set：避免 NOT_NULL 策略跳过导致移动静默失效
         docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                 .eq(AiDocument::getId, docId)
-                .set(AiDocument::getKbId, kbId)
+                .set(AiDocument::getKbId, target)
                 .set(AiDocument::getUpdateTime, LocalDateTime.now()));
         return true;
     }
@@ -229,8 +247,6 @@ public class KnowledgeBaseService {
             long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, kb.getId()));
             m.put(kb.getId(), (int) n);
         }
-        long orphan = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().isNull(AiDocument::getKbId));
-        if (orphan > 0) m.put(defaultId(), m.getOrDefault(defaultId(), 0) + (int) orphan);
         return m;
     }
 
@@ -244,6 +260,7 @@ public class KnowledgeBaseService {
             m.put("name", kb.getName());
             m.put("description", kb.getDescription());
             m.put("queryParams", kb.getQueryParams());
+            m.put("parseParams", kb.getParseParams());
             m.put("isDefault", kb.getIsDefault());
             m.put("createdBy", kb.getCreatedBy());
             m.put("shareConfig", kb.getShareConfig());

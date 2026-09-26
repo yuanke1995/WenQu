@@ -19,14 +19,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 知识库向量存储注册中心：按知识库路由 VectorStore（per-KB 向量模型绑定的核心）。
  * <p>
- * - {@code embeddingRef} 为空（跟随全局）的库 → 全局 RedisVectorStore 单例（ai-doc-index，
- *   Spring AI 自动配置；历史数据零迁移）<br>
- * - 绑定了向量模型的库 → 懒创建独立 RedisVectorStore：独立索引 {@code ai-doc-kb-{kbId}}、
- *   独立 key 前缀 {@code ai:chunkkb-{kbId}:}（不与全局前缀 ai:chunk: 重叠，避免索引间互相收录）、
- *   独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）
+ * 每个库必须绑定自己的向量模型（历史空绑定已由启动迁移回填）：懒创建独立 RedisVectorStore——
+ * 独立索引 {@code ai-doc-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
+ * 独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）。
+ * 全局共享索引 ai-doc-index 仅保留 Spring 自动配置 bean 作回滚缓冲，不再参与路由。
  * <p>
  * 维度一致性约束因此从"全库"收缩到"单库"：同库所有块同一向量模型；换模型触发本库重嵌入
- * （{@code DocumentService.reembedKbAsync}），全局换模型只影响跟随全局的库。
+ * （{@code DocumentService.reembedKbAsync}）。
  *
  * @author yuanke
  */
@@ -37,7 +36,6 @@ public class KbVectorStoreRegistry {
 
     private final KnowledgeBaseService kbService;
     private final DynamicEmbeddingModel embeddingModel;
-    private final VectorStore globalStore;
     private final RedisProperties redisProperties;
 
     /** kbId → 独立向量库实例（懒创建；KB 切换向量模型时由 evict 移除重建） */
@@ -46,18 +44,19 @@ public class KbVectorStoreRegistry {
     private volatile JedisPooled sharedJedis;
 
     /**
-     * 按知识库路由向量库：kbId 空（历史文档/默认库兜底）或该库未绑定自定义向量模型 → 全局库；
-     * 绑定了 → 该库独立向量库（懒创建）。KB 行查不到（已删）回落全局。
+     * 按知识库路由向量库：每个库都按自己的绑定模型路由独立索引；
+     * kbId 空（防御：迁移后不应出现）或库行查不到（已删）→ 默认库的独立索引。
      */
     public VectorStore storeForKb(String kbId) {
-        if (kbId == null || kbId.isBlank()) return globalStore;
-        RedisVectorStore custom = byKb.get(kbId);
+        String effective = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        RedisVectorStore custom = byKb.get(effective);
         if (custom != null) return custom;
-        KnowledgeBase kb = kbService.get(kbId);
+        KnowledgeBase kb = kbService.get(effective);
         if (kb == null || kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
-            return globalStore;
+            // 启动迁移会把历史空绑定回填；走到这里说明向量模型不可用，fail-loud 暴露而不是悄悄写错索引
+            throw new IllegalStateException("知识库 " + effective + " 未绑定向量模型，无法路由向量库（请在知识库管理中绑定）");
         }
-        return byKb.computeIfAbsent(kbId, id -> build(kb));
+        return byKb.computeIfAbsent(effective, id -> build(kb));
     }
 
     /** KB 切换/清空向量模型后调用：移除旧实例（下次访问按新 ref 重建）；返回被移除的实例（可能 null） */
@@ -118,10 +117,9 @@ public class KbVectorStoreRegistry {
         return sharedJedis;
     }
 
-    /** 全局库 + 全部自定义库（供无 scope 的全库检索展开；顺序无关） */
+    /** 全部知识库的独立向量库（供无 scope 的全库检索展开；顺序无关） */
     public List<VectorStore> allStores() {
         List<VectorStore> out = new ArrayList<>();
-        out.add(globalStore);
         for (KnowledgeBase kb : customKbs()) {
             try {
                 out.add(storeForKb(kb.getId()));

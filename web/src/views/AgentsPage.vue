@@ -93,6 +93,10 @@
           <section class="app-card">
             <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份</h2>
             <p class="ap-block-hint">对话页下拉里展示的就是名称与描述，写清楚它适合什么场景。</p>
+            <p class="ap-block-hint" style="margin:0 0 8px">
+              描述还是「自动派遣」的路由依据：用户开启自动派遣时，系统按名称+描述把每条问题派给最合适的智能体——
+              各智能体的职责要互不重叠，重叠会导致派错。
+            </p>
             <a-form-item label="用途">
               <a-radio-group v-model:value="form.isSubagent">
                 <a-radio-button :value="0">主智能体</a-radio-button>
@@ -106,7 +110,8 @@
               <a-input v-model:value="form.name" :maxlength="200" placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
             </a-form-item>
             <a-form-item label="描述" style="margin-bottom:0">
-              <a-input v-model:value="form.description" :maxlength="500" placeholder="一句话说明它适合什么场景" />
+              <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
+                          placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题），自动派遣将按描述把用户问题路由到本智能体" />
             </a-form-item>
           </section>
 

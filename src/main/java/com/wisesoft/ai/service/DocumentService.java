@@ -73,6 +73,8 @@ public class DocumentService {
     private final VectorStore vectorStore;
     private final KbVectorStoreRegistry kbVectorStores;
     private final com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper;
+    /** 知识库服务：上传未指定库时归入默认库（kb_id 必填语义） */
+    private final KnowledgeBaseService kbService;
     private final AppProperties properties;
     private final DocumentMetaCache documentMetaCache;
     private final com.wisesoft.ai.mapper.QaLogMapper qaLogMapper;
@@ -81,6 +83,8 @@ public class DocumentService {
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final ResourceVisibilityService resourceVisibilityService;
+    /** 视觉模型服务：解析期按知识库 visionRef 描述图片（线程局部作用域） */
+    private final VisionService visionService;
     /** 向量模型（@Primary 即 DynamicEmbeddingModel）：重嵌入前探测新维度用；forRef 支持 KB 绑定模型 */
     private final DynamicEmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
@@ -98,43 +102,14 @@ public class DocumentService {
     /** 同名上传串行锁：避免并发上传同一文件名时双方都判定"无可复用"而产生重复文档（单实例内有效） */
     private final Map<String, Object> uploadLocks = new ConcurrentHashMap<>();
 
-    /** 向量库索引名（DROP/重建索引用，与 spring.ai.vectorstore.redis.index-name 一致） */
+    /** 向量库索引名（遗留全局索引 ai-doc-index；仅作回滚缓冲保留，业务向量一律落各库独立索引） */
     @Value("${spring.ai.vectorstore.redis.index-name:ai-doc-index}")
     private String vectorIndexName;
-
-    /**
-     * 向量库 schema 自动初始化开关（与 RedisVectorStore 自动配置同源）。
-     * 重嵌入护栏：为 false 时 afterPropertiesSet() 不会重建索引，DROP 之后将无索引可写可查，
-     * 向量路彻底不可用且无法自愈——必须先于 DROP 拒绝任务。
-     */
-    @Value("${spring.ai.vectorstore.redis.initialize-schema:true}")
-    private boolean vectorInitializeSchema;
-
-    /** 全量重嵌入任务状态（设置页查询/展示；字段 volatile 供异步线程写、接口线程读） */
-    private final ReembedStatus reembedStatus = new ReembedStatus();
-    private final AtomicBoolean reembedRunning = new AtomicBoolean(false);
 
     /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
     public static final String REEMBED_LOCK_KEY = "ai-doc:reembed:lock";
     /** 锁 TTL：任务每批刷新续期；实例崩溃后最多 TTL 秒自愈（不再永久降级） */
     private static final long REEMBED_LOCK_TTL_SECONDS = 120;
-
-    /** 重嵌入状态快照（设置页/接口用） */
-    public static class ReembedStatus {
-        public volatile String status = "idle";   // idle / running / done / failed
-        public volatile int total;
-        public volatile int done;
-        public volatile int failed;
-        public volatile String error;
-        public volatile long startTime;
-        public volatile long endTime;
-        /** 切换前索引维度（取自 embedding.dimensions 记录，0=首次/未知） */
-        public volatile int oldDim;
-        /** 本次重建所用新模型维度（探测得到，索引 schema 按此重建） */
-        public volatile int newDim;
-        /** 对账：任务结束时索引内实际文档数（与 done 对比可发现丢块） */
-        public volatile int indexed;
-    }
 
     /** 解析线程池（并发 parse.concurrency 可调：避免多文档同时解析打爆 embedding/Ollama；保存即生效） */
     private ThreadPoolExecutor parseExecutor;
@@ -226,9 +201,9 @@ public class DocumentService {
 
         // 同名串行：并发上传同一文件名时，避免双方都判定"无可复用"而各建一条文档（本实例内互斥；
         // 跨实例仍靠 tryLockParsing 的 CAS 兜底，最坏情况产生一条重复记录，可手动删除）
-        // 目标知识库校验（kbId 空 = 归入默认库）：不存在/已删除拒绝，避免上传进黑洞
-        String targetKbId = kbId == null || kbId.isBlank() ? null : kbId.trim();
-        if (targetKbId != null) {
+        // 目标知识库校验（kb_id 必填：未指定归入默认库）：不存在/已删除拒绝，避免上传进黑洞
+        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        {
             com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(targetKbId);
             if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
                 throw new BizException("目标知识库不存在或已删除");
@@ -305,9 +280,8 @@ public class DocumentService {
      * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
      */
     /**
-     * 按文档路由向量库：doc.kbId → 所属知识库绑定的向量模型（KbVectorStoreRegistry）。
-     * 跟随全局的库落全局索引；绑定了自定义向量模型的库落各自的独立索引。
-     * 文档行查不到（已删）回落全局——此时写入了也无害（会被后续 delete 清理）。
+     * 按文档路由向量库：doc.kbId → 所属知识库绑定的向量模型（KbVectorStoreRegistry，每库独立索引）。
+     * 文档行查不到（已删/迁移竞态）按默认库路由，保证向量有归属、后续删除清理不落空。
      */
     private VectorStore storeOf(String docId) {
         String kbId = null;
@@ -349,67 +323,6 @@ public class DocumentService {
         }
     }
 
-    /**
-     * 全量重嵌入（向量模型热切换后自动触发，也可设置页手动触发）：
-     * 向量无法跨模型迁移（不同模型向量空间数学不兼容，即使维度相同语义也不同），
-     * 唯一正确做法是清空向量索引后用新模型全量重算。
-     * <p>
-     * 编排顺序（前两步是护栏，任何一步失败都在动索引之前抛出，旧索引与旧向量保持完整）：
-     * <ol>
-     *   <li>护栏：initialize-schema 必须为 true，否则 DROP 后无法重建索引（向量路永久不可用）</li>
-     *   <li>护栏：探测新模型维度（不可达/维度非法即放弃，服务不降级），与 embedding.dimensions
-     *       记录的旧维度比对记日志</li>
-     *   <li>DROP 向量索引（连数据）→ 按新维度重建 schema</li>
-     *   <li>游标分批重新 embedding 全部知识块</li>
-     *   <li>记录新维度到 embedding.dimensions（下次切换的旧维度基线）+ 索引文档数对账</li>
-     * </ol>
-     * 期间向量检索返回空结果，自动降级关键词路（HybridRetrieval 已有降级），系统不中断；
-     * 新文档解析/知识块编辑在重嵌期间写入的向量即为新模型产物，任务覆盖不到的增量部分由
-     * 分批游标自然补齐（重嵌开始后新增的块 id 大于游标会被后续批次读到；先写后读的块会被同 id 覆盖）。
-     * 已知残留风险：DROP 与并发解析的向量写入撞车时那批向量会落进已删除索引，
-     * 由第 6 步对账（indexed vs done）暴露，解析空闲时再触发一次即可补齐。
-     */
-    public boolean reembedAllAsync() {
-        if (!reembedRunning.compareAndSet(false, true)) {
-            log.warn("[Reembed] 全量重嵌入任务已在运行，忽略重复触发");
-            return false;
-        }
-        Thread t = new Thread(() -> {
-            boolean lockHeld = false;
-            try {
-                // 多副本互斥：仅一个实例执行 DROP+重建（并发执行会互删对方正在写的索引）；
-                // Redis 不可用时退化为仅本地 CAS（原单实例语义，避免锁本身阻断重嵌入）
-                lockHeld = acquireReembedLock();
-                if (!lockHeld) {
-                    reembedStatus.status = "failed";
-                    reembedStatus.error = "另一实例正在执行全量重嵌入，本次已跳过（避免索引互删），完成后可重试";
-                    log.warn("[Reembed] 另一实例正在执行全量重嵌入（分布式锁被占），本次跳过");
-                    return;
-                }
-                reembedAll();
-                reembedStatus.endTime = System.currentTimeMillis();
-                reembedStatus.status = "done";
-                log.info("[Reembed] 全量重嵌入完成: {}/{} 块, 失败 {} 块, 维度 {}→{}, 索引内 {} 块, 耗时 {}ms",
-                        reembedStatus.done, reembedStatus.total, reembedStatus.failed,
-                        reembedStatus.oldDim, reembedStatus.newDim, reembedStatus.indexed,
-                        reembedStatus.endTime - reembedStatus.startTime);
-            } catch (Exception e) {
-                reembedStatus.status = "failed";
-                reembedStatus.error = e.getMessage();
-                log.error("[Reembed] 全量重嵌入失败（已完成 {} 块）: {}", reembedStatus.done, e.getMessage(), e);
-            } finally {
-                if (lockHeld) {
-                    releaseReembedLock();
-                }
-                reembedStatus.endTime = System.currentTimeMillis();
-                reembedRunning.set(false);
-            }
-        }, "reembed-all");
-        t.setDaemon(true);
-        t.start();
-        return true;
-    }
-
     /** 抢占全量重嵌入分布式锁（setIfAbsent + TTL）；false=其它实例正在执行 */
     private boolean acquireReembedLock() {
         try {
@@ -439,24 +352,6 @@ public class DocumentService {
         }
     }
 
-    /** 绑定了自定义向量模型的知识库下的全部文档 ID（全局重嵌入时这些库要跳过） */
-    private java.util.Set<String> customEmbeddingDocIds() {
-        java.util.Set<String> out = new java.util.HashSet<>();
-        List<KnowledgeBase> customKbs = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
-                .eq(KnowledgeBase::getDeleted, 0)
-                .isNotNull(KnowledgeBase::getEmbeddingRef)
-                .ne(KnowledgeBase::getEmbeddingRef, "")
-                .select(KnowledgeBase::getId));
-        for (KnowledgeBase kb : customKbs) {
-            for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                    .eq(AiDocument::getKbId, kb.getId())
-                    .select(AiDocument::getId))) {
-                if (d.getId() != null) out.add(d.getId());
-            }
-        }
-        return out;
-    }
-
     /**
      * 按库重嵌入（异步）：知识库切换/清空绑定向量模型后调用。
      * 旧向量随旧索引/全局索引清除后，全部块按新模型重新向量化写回，并回写本库维度。
@@ -478,6 +373,40 @@ public class DocumentService {
                 releaseReembedLock();
             }
         }, "reembed-kb-" + kbId);
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * 启动迁移专用：多个知识库的按库重嵌在单线程内**顺序**执行（只抢一次分布式锁）。
+     * 逐个调用 reembedKbAsync 会因共享锁互相挤掉（拿不到锁的直接放弃），因此迁移场景合并为一个任务。
+     *
+     * @param tasks kbId → 回填后的向量模型引用（oldRef 一律空串：迁移前向量都在全局共享索引）
+     */
+    public void reembedKbsSequentialAsync(java.util.LinkedHashMap<String, String> tasks) {
+        if (tasks == null || tasks.isEmpty()) return;
+        Thread t = new Thread(() -> {
+            if (!acquireReembedLock()) {
+                log.warn("[FAIL-LOUD] [Migrate-Reembed] 其他重嵌入任务进行中，{} 个迁移库的重嵌未执行（重启或重新保存知识库可重试）", tasks.size());
+                return;
+            }
+            try {
+                for (Map.Entry<String, String> e : tasks.entrySet()) {
+                    try {
+                        List<String> docIds = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                                        .eq(AiDocument::getKbId, e.getKey()).select(AiDocument::getId))
+                                .stream().map(AiDocument::getId).filter(Objects::nonNull).toList();
+                        reembedKb(e.getKey(), docIds, "", e.getValue());
+                    } catch (Exception ex) {
+                        log.error("[FAIL-LOUD] [Migrate-Reembed] 知识库 {} 重嵌失败（检索将查不到该库，"
+                                + "请在知识库管理重新保存该库的向量模型触发重嵌）: {}", e.getKey(), ex.getMessage(), ex);
+                    }
+                    refreshReembedLock();
+                }
+            } finally {
+                releaseReembedLock();
+            }
+        }, "reembed-migrate");
         t.setDaemon(true);
         t.start();
     }
@@ -562,8 +491,8 @@ public class DocumentService {
                 String fromRef = kbRefOf(fromKbId);
                 String toRef = kbRefOf(toKbId);
                 if (fromRef.equals(toRef)) return; // 同一向量空间，向量无需迁移
-                VectorStore from = fromRef.isBlank() ? vectorStore : kbVectorStores.storeForKb(fromKbId);
-                VectorStore to = toRef.isBlank() ? vectorStore : kbVectorStores.storeForKb(toKbId);
+                VectorStore from = kbVectorStores.storeForKb(fromKbId);
+                VectorStore to = kbVectorStores.storeForKb(toKbId);
                 List<Knowledge> rows = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
                         .eq(Knowledge::getDocId, docId));
                 List<String> vectorIds = rows.stream().map(Knowledge::getVectorId)
@@ -591,10 +520,10 @@ public class DocumentService {
         t.start();
     }
 
-    /** 库 ID → 其绑定向量模型引用（未绑定/库不存在返回空串） */
+    /** 库 ID → 其绑定向量模型引用（kbId 空=默认库；库不存在返回空串） */
     private String kbRefOf(String kbId) {
-        if (kbId == null || kbId.isBlank()) return "";
-        com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(kbId);
+        String id = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(id);
         return kb == null || kb.getEmbeddingRef() == null ? "" : kb.getEmbeddingRef();
     }
 
@@ -614,132 +543,6 @@ public class DocumentService {
             }
         }
         throw lastErr == null ? new IllegalStateException("向量化失败") : new IllegalStateException(lastErr.getMessage(), lastErr);
-    }
-
-    public ReembedStatus getReembedStatus() {
-        return reembedStatus;
-    }
-
-    private void reembedAll() {
-        if (!(vectorStore instanceof RedisVectorStore rvs)) {
-            throw new IllegalStateException("向量库非 RedisVectorStore，不支持全量重嵌入（当前: "
-                    + vectorStore.getClass().getName() + "）");
-        }
-        // 护栏1（前置，先于任何破坏性操作）：schema 自动初始化关闭时不能 DROP——
-        // afterPropertiesSet() 不会重建索引，DROP 后向量路将永久不可用且无法自愈
-        if (!vectorInitializeSchema) {
-            throw new IllegalStateException("spring.ai.vectorstore.redis.initialize-schema=false，"
-                    + "DROP 索引后无法自动重建（向量检索将永久不可用），已拒绝执行重嵌入；"
-                    + "请置为 true 后重启，或由运维手动重建索引");
-        }
-        reembedStatus.status = "running";
-        reembedStatus.total = 0;
-        reembedStatus.done = 0;
-        reembedStatus.failed = 0;
-        reembedStatus.error = null;
-        reembedStatus.indexed = 0;
-        reembedStatus.startTime = System.currentTimeMillis();
-        reembedStatus.endTime = 0;
-        // 护栏2（前置）：真实探测新模型维度。此时 DynamicEmbeddingModel 已指向新配置，
-        // 探测失败说明新模型不可达——在 DROP 之前抛出，旧索引与旧向量保持完整（服务不降级）
-        reembedStatus.oldDim = Math.max(0, configService.getInt("embedding.dimensions", 0));
-        int newDim;
-        try {
-            newDim = embeddingModel.dimensions();
-        } catch (Exception e) {
-            throw new IllegalStateException("新向量模型维度探测失败（" + e.getMessage()
-                    + "），已放弃重嵌入并保留旧索引；请先修正向量模型配置", e);
-        }
-        if (newDim <= 0) {
-            throw new IllegalStateException("新向量模型返回维度非法(" + newDim + ")，已放弃重嵌入并保留旧索引");
-        }
-        reembedStatus.newDim = newDim;
-        log.info("[Reembed] 维度护栏通过: 旧索引维度={} → 新模型维度={}{}", reembedStatus.oldDim, newDim,
-                reembedStatus.oldDim > 0 && reembedStatus.oldDim != newDim ? "（维度变化，索引 schema 必须重建）" : "");
-        // 1. DROP 索引连数据：旧模型向量全部作废（维度不同时 RediSearch schema 也必须重建）
-        try {
-            rvs.getJedis().ftDropIndexDD(vectorIndexName);
-            log.info("[Reembed] 向量索引 {} 已删除（含旧向量数据）", vectorIndexName);
-        } catch (Exception e) {
-            log.info("[Reembed] 向量索引 {} 不存在或删除失败（空库场景可忽略）: {}", vectorIndexName, e.getMessage());
-        }
-        // 2. 重建索引 schema：embeddingModel（DynamicEmbeddingModel）此时已是新配置，dimensions() 为新维度
-        rvs.afterPropertiesSet();
-        // 3. 游标分批全量重嵌（id 升序、LIMIT 翻页，逻辑删除由 MyBatis-Plus 自动过滤；与解析链路同批大小与重试）。
-        // 只重嵌「跟随全局向量模型」的库：绑定了自定义向量模型的库有各自独立索引，不受全局切换影响。
-        java.util.Set<String> customDocIds = customEmbeddingDocIds();
-        int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
-        int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
-        String lastId = "";
-        while (true) {
-            List<Knowledge> rawBatch = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
-                    .gt(Knowledge::getId, lastId)
-                    .orderByAsc(Knowledge::getId)
-                    .last("LIMIT " + batchSize));
-            if (rawBatch.isEmpty()) {
-                break;
-            }
-            lastId = rawBatch.get(rawBatch.size() - 1).getId();
-            List<Knowledge> batch = rawBatch.stream()
-                    .filter(k -> !customDocIds.contains(k.getDocId()))
-                    .toList();
-            if (batch.isEmpty()) {
-                continue;
-            }
-            reembedStatus.total = Math.max(reembedStatus.total, reembedStatus.done + batch.size());
-            List<Document> docs = new ArrayList<>(batch.size());
-            for (Knowledge k : batch) {
-                Map<String, Object> metadata = new HashMap<>();
-                if (k.getDocId() != null) {
-                    metadata.put("docId", k.getDocId());
-                }
-                metadata.put("title", k.getTitle() == null ? "" : k.getTitle());
-                metadata.put("knowledgeId", k.getId());
-                if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) {
-                    metadata.put("titlePath", k.getTitlePath());
-                }
-                if (k.getImages() != null) {
-                    metadata.put("images", k.getImages());
-                }
-                // overlap 前缀是解析期上下文，重嵌时不可恢复，传 null（仅影响分块边界处的语义衔接，影响极小）
-                docs.add(new Document(k.getId(),
-                        buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata));
-            }
-            try {
-                vectorAddWithRetry("reembed", docs, embedRetry);
-                reembedStatus.done += docs.size();
-            } catch (Exception e) {
-                // 单批失败不终止整任务（重嵌是重建性操作，失败块记数，完成后可再次触发补齐）
-                reembedStatus.failed += docs.size();
-                log.warn("[FAIL-LOUD] [Reembed] 批次重嵌失败（{} 块）: {}", docs.size(), e.getMessage());
-            }
-            // 续期分布式锁（任务可能持续数分钟~数小时，防止 TTL 期间被误释放导致其它实例切入互删索引）
-            refreshReembedLock();
-        }
-        // 4. 记录本次索引维度：作为下次切换的"旧维度"基线，也让设置页能显示当前索引维度。
-        // 只在索引确实按 newDim 重建后写入，失败任务不留下说谎的记录
-        configService.putInternal("embedding.dimensions", String.valueOf(newDim));
-        // 5. 对账：索引实际文档数 vs 本次成功写入数。两者差异说明有丢块
-        // （典型来源：DROP 与并发解析写入撞车，那批向量落进了已删除的索引）
-        reembedStatus.indexed = readIndexDocCount(rvs);
-        if (reembedStatus.indexed > 0 && reembedStatus.indexed < reembedStatus.done) {
-            log.warn("[FAIL-LOUD] [Reembed] 索引对账不一致: 成功写入 {} 块，索引内仅 {} 块"
-                    + "（可能与并发解析撞车），建议解析空闲时再触发一次重嵌入补齐",
-                    reembedStatus.done, reembedStatus.indexed);
-        }
-    }
-
-    /**
-     * 读取索引内文档数（FT.INFO num_docs），仅用于对账展示——失败返回 0（不影响任务判定成败）
-     */
-    private int readIndexDocCount(RedisVectorStore rvs) {
-        try {
-            Object n = rvs.getJedis().ftInfo(vectorIndexName).get("num_docs");
-            return n == null ? 0 : Integer.parseInt(String.valueOf(n).trim());
-        } catch (Exception e) {
-            log.debug("[Reembed] 索引文档数读取失败（跳过对账）: {}", e.getMessage());
-            return 0;
-        }
     }
 
     /**
@@ -815,6 +618,12 @@ public class DocumentService {
             // 新解析任务：清残留删除标志 + 记录线程（供 delete() 中断）
             deletedFlags.remove(docId);
             parseThreads.put(docId, Thread.currentThread());
+            // 解析参数按知识库解析：全局设置（chunk.*）为底 ← 本库 parse_params 覆盖，线程局部生效——
+            // 解析器/processUpload 里的 configService 读取自动取到本库值；视觉模型同理（图片描述按库 visionRef）。
+            // 仅对本次解析生效，finally 清除；解析参数改动只影响之后的解析（历史文档需重解析）。
+            final com.wisesoft.ai.model.KnowledgeBase parseKb =
+                    doc.getKbId() == null || doc.getKbId().isBlank() ? null : kbMapper.selectById(doc.getKbId());
+            applyParseParams(parseKb);
             updateProgress(docId, 5, "开始解析");
             // 流式解析：直接传源文件 Path（已持久落盘），避免大文件全量读入堆内存
             updateProgress(docId, 10, "解析文档内容(图片较多时较慢)");
@@ -1045,6 +854,57 @@ public class DocumentService {
             // 清理解析线程引用与删除标志（delete() 的 DB 物理删除仍可兜底 isDocAlive）
             parseThreads.remove(docId);
             deletedFlags.remove(docId);
+            configService.clearOverride();
+            visionService.clearParseScope();
+        }
+    }
+
+    /**
+     * 应用知识库级解析参数：parse_params JSON 的白名单键（chunk.*）以线程局部覆盖生效，
+     * visionRef 交给 VisionService 的解析期引用（图片描述按库路由）；未配置的键继承全局。
+     */
+    private void applyParseParams(com.wisesoft.ai.model.KnowledgeBase kb) {
+        if (kb == null) return;
+        String raw = kb.getParseParams();
+        if (raw != null && !raw.isBlank()) {
+            try {
+                com.alibaba.fastjson2.JSONObject p = com.alibaba.fastjson2.JSON.parseObject(raw);
+                if (p != null) {
+                    Map<String, String> overrides = new LinkedHashMap<>();
+                    for (String key : PARSE_PARAM_KEYS) {
+                        Object v = p.get(key);
+                        if (v != null && !String.valueOf(v).isBlank()) {
+                            overrides.put(key, String.valueOf(v).trim());
+                        }
+                    }
+                    if (!overrides.isEmpty()) {
+                        configService.putOverrides(overrides);
+                        log.info("[{}] 应用知识库「{}」解析参数覆盖: {}", kb.getId(), kb.getName(), overrides.keySet());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[{}] 知识库「{}」解析参数解析失败（忽略，使用全局设置）: {}", kb.getId(), kb.getName(), e.getMessage());
+            }
+        }
+        String visionRef = parseVisionRef(kb);
+        if (!visionRef.isBlank()) visionService.startParseScope(visionRef);
+    }
+
+    /** 知识库解析参数白名单（与设置页"文档解析"暴露项一致 + 本库图片描述视觉模型） */
+    private static final Set<String> PARSE_PARAM_KEYS = Set.of(
+            "chunk.maxSize", "chunk.overlap", "chunk.maxChunks", "chunk.maxImages",
+            "chunk.structural", "chunk.structuralRatio", "chunk.headingDepth");
+
+    /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
+    private String parseVisionRef(com.wisesoft.ai.model.KnowledgeBase kb) {
+        String raw = kb.getParseParams();
+        if (raw == null || raw.isBlank()) return "";
+        try {
+            com.alibaba.fastjson2.JSONObject p = com.alibaba.fastjson2.JSON.parseObject(raw);
+            Object v = p == null ? null : p.get("visionRef");
+            return v == null ? "" : String.valueOf(v).trim();
+        } catch (Exception e) {
+            return "";
         }
     }
 
@@ -1893,6 +1753,13 @@ public class DocumentService {
         if (descBackfillRunning.putIfAbsent(docId, Boolean.TRUE) != null) return; // 防重入
         boolean submitted = ThreadPoolManager.execute(() -> {
             try {
+                // 补描述跑在共享池线程（非解析线程）：同样按所属知识库的 visionRef 设置解析期视觉模型
+                AiDocument d = documentMapper.selectById(docId);
+                com.wisesoft.ai.model.KnowledgeBase kb =
+                        d == null || d.getKbId() == null || d.getKbId().isBlank()
+                                ? null : kbMapper.selectById(d.getKbId());
+                String vRef = kb == null ? "" : parseVisionRef(kb);
+                if (!vRef.isBlank()) visionService.startParseScope(vRef);
                 List<Knowledge> blocks = knowledgeMapper.selectList(
                         new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId)
                                 .orderByAsc(Knowledge::getChunkIndex));
@@ -1929,8 +1796,8 @@ public class DocumentService {
                 if (remaining > 0) {
                     log.warn("[FAIL-LOUD] [{}] 图片描述补齐后仍有 {} 张无描述（视觉模型不可用？可稍后重试补描述接口）", docId, remaining);
                     try {
-                        AiDocument d = documentMapper.selectById(docId);
-                        String base = d == null || d.getParseDesc() == null ? "" : d.getParseDesc();
+                        AiDocument d2 = documentMapper.selectById(docId);
+                        String base = d2 == null || d2.getParseDesc() == null ? "" : d2.getParseDesc();
                         updateProgress(docId, 100,
                                 (base.isEmpty() ? "" : base + "；") + "补描述后仍有 " + remaining + " 张图无描述");
                     } catch (Exception ignored) {
@@ -1940,6 +1807,7 @@ public class DocumentService {
                 log.warn("[{}] 图片描述补齐任务异常: {}", docId, e.getMessage());
             } finally {
                 descBackfillRunning.remove(docId);
+                visionService.clearParseScope();
             }
         });
         if (!submitted) {

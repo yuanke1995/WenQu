@@ -43,32 +43,6 @@
               <template v-for="(blk, i) in blocksOf(current, !advMode)" :key="i">
                 <div v-if="blk.type === 'sub' && current !== 'skills'" class="cfg-sub">{{ blk.title }}</div>
 
-                <!-- 向量模型组：索引状态与重嵌入（只读状态 + 手动触发） -->
-                <template v-if="current === 'embedding' && blk.type === 'sub' && blk.title.includes('索引状态')">
-                  <a-form-item>
-                    <template #label>
-                      <a-tooltip :title="TIPS.embeddingDimensions" placement="top">当前索引维度 <question-circle-outlined class="tip-icon" /></a-tooltip>
-                    </template>
-                    <span v-if="embeddingDimensions" style="color:var(--app-text2)">{{ embeddingDimensions }} 维</span>
-                    <span v-else style="color:var(--app-text3)">未记录（首次重嵌入完成后自动记录）</span>
-                  </a-form-item>
-                  <a-form-item label="重嵌入状态">
-                    <div>
-                      <span v-if="reembed.status === 'running'" style="color:var(--app-accent)">进行中：{{ reembed.done }} / {{ reembed.total }} 块<span v-if="reembed.failed" style="color:var(--app-danger)">（失败 {{ reembed.failed }}）</span></span>
-                      <span v-else-if="reembed.status === 'done'" style="color:var(--app-ok)">已完成：{{ reembed.done }} 块<span v-if="reembed.failed" style="color:var(--app-danger)">（失败 {{ reembed.failed }}，可重试补齐）</span></span>
-                      <span v-else-if="reembed.status === 'failed'" style="color:var(--app-danger)">失败：{{ reembed.error }}（已完成 {{ reembed.done }} 块，可重试）</span>
-                      <span v-else style="color:var(--app-text3)">未运行</span>
-                      <button class="app-btn ghost small" :disabled="reembedTriggering" @click="doTriggerReembed">{{ reembedTriggering ? '启动中…' : '手动重嵌入' }}</button>
-                      <button class="app-btn ghost small" @click="refreshReembedStatus">刷新</button>
-                    </div>
-                    <div v-if="reembed.status !== 'idle'" class="reembed-meta">
-                      <span v-if="reembed.newDim">维度：{{ reembed.oldDim || '未知' }} → {{ reembed.newDim }}</span>
-                      <span v-if="reembedElapsed" style="margin-left:12px">耗时 {{ reembedElapsed }}</span>
-                      <span v-if="reembed.indexed" style="margin-left:12px">索引内 {{ reembed.indexed }} 块<span v-if="reembed.status === 'done' && reembed.indexed < reembed.done" style="color:var(--app-danger)">（少于成功写入数，建议再跑一次）</span></span>
-                    </div>
-                  </a-form-item>
-                </template>
-
                 <!-- MCP 面板：工具栏（搜索/刷新/重连/添加）+ 总开关行 + 服务卡片 + 高级 JSON 编辑 -->
                 <template v-if="current === 'mcp' && blk.type === 'sub'">
                   <div class="key-bar">
@@ -529,7 +503,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, saveConfig, resetConfig, checkKeywordEngine,
-         getReembedStatus, triggerReembed, probeConnectivity,
+         probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare,
          listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
@@ -607,9 +581,6 @@ const fetchAndFill = async () => {
         if (f.factor) v = Math.round(Number(v) / f.factor)
         writeForm(form.value, f.path, v)
       }
-      const em = d.embedding || {}
-      embeddingDimensions.value = em.dimensions?.value || ''
-      refreshReembedStatus()
       loadMcpStatus()
       initialPayload.value = buildPayload()
     }
@@ -757,29 +728,6 @@ const onKeywordEngineChange = async val => {
 }
 
 // ==================== 重嵌入状态 ====================
-const embeddingDimensions = ref('')
-const reembed = ref({ status: 'idle', total: 0, done: 0, failed: 0, error: null, oldDim: 0, newDim: 0, indexed: 0 })
-const reembedTriggering = ref(false)
-const reembedElapsed = computed(() => {
-  const s = reembed.value
-  if (!s.startTime) return ''
-  const end = s.status === 'running' ? Date.now() : (s.endTime || 0)
-  if (!end || end < s.startTime) return ''
-  const sec = Math.round((end - s.startTime) / 1000)
-  return sec < 60 ? `${sec} 秒` : `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`
-})
-let reembedTimer = null
-const refreshReembedStatus = async () => {
-  try {
-    const r = await getReembedStatus()
-    if (r.success) reembed.value = r.data || { status: 'idle' }
-    if (reembed.value.status === 'running') {
-      if (!reembedTimer) reembedTimer = setInterval(refreshReembedStatus, 3000)
-    } else if (reembedTimer) {
-      clearInterval(reembedTimer); reembedTimer = null
-    }
-  } catch (e) { /* 静默 */ }
-}
 // ==================== MCP 外部工具：连接状态与重连 ====================
 const mcpStatus = ref({ enabled: false, servers: [] })
 const mcpLoading = ref(false)
@@ -1226,20 +1174,8 @@ const doReloadMcp = async () => {
   finally { mcpReloading.value = false }
 }
 
-const doTriggerReembed = async () => {
-  reembedTriggering.value = true
-  try {
-    const r = await triggerReembed()
-    if (r.success) { message.success('全量重嵌入任务已启动，期间检索自动降级关键词路'); refreshReembedStatus() }
-    else message.error(r.msg || '触发失败')
-  } catch (e) { message.error(e.message || '触发失败') }
-  finally { reembedTriggering.value = false }
-}
 
 onMounted(fetchAndFill)
-onUnmounted(() => {
-  if (reembedTimer) { clearInterval(reembedTimer); reembedTimer = null }
-})
 </script>
 
 <style scoped>
@@ -1275,7 +1211,6 @@ onUnmounted(() => {
 .probe-chip { margin-left: 8px; font-size: 11px; border-radius: 999px; padding: 3px 9px; cursor: help; }
 .probe-chip.ok { color: var(--app-ok); background: #eaf5ec; }
 .probe-chip.bad { color: var(--app-danger); background: #fbecea; }
-.reembed-meta { margin-top: 6px; color: var(--app-text3); font-size: 12px; line-height: 1.8; }
 /* MCP 总开关行 + 高级 JSON 折叠 */
 .mcp-switch-row {
   display: flex; align-items: center; gap: 8px;

@@ -12,22 +12,28 @@
       </nav>
       <section class="pf-content">
         <!-- 各类型个人默认模型面板 -->
-        <div v-if="current === 'chat' || current === 'vision' || current === 'rerank'" class="app-card pf-card">
+        <div v-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
           <div class="pf-row">
             <ModelSelect v-model:value="pref[panelMeta.field]" :type="current"
-                         inherit-label="跟随全局" :width="360" :disabled="loading" />
+                         inherit-label="不设默认" :width="360" :disabled="loading" />
             <button class="app-btn" :disabled="saving" @click="save">保存</button>
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
         </div>
 
-        <!-- 向量模型：仅说明，不提供个人默认（全库向量空间须一致） -->
+        <!-- 向量/重排：仅说明，不提供个人默认（向量归知识库绑定；重排归知识库检索设置） -->
         <div v-else-if="current === 'embedding'" class="app-card pf-card">
           <h2 class="app-card-title">向量模型</h2>
-          <p class="pf-hint">向量模型决定整个知识库的向量空间，必须全局统一，不提供个人默认。</p>
-          <p class="pf-sub-hint">更换向量模型需要全量重嵌入，请由管理员在「系统设置 → 向量模型」中调整。</p>
+          <p class="pf-hint">向量空间与知识库的向量索引一一对应，归各知识库绑定，不提供个人默认。</p>
+          <p class="pf-sub-hint">请由管理员在「知识库管理」中为每个知识库选择向量模型；换模型自动按库重嵌入。</p>
+        </div>
+
+        <div v-else-if="current === 'rerank'" class="app-card pf-card">
+          <h2 class="app-card-title">重排模型</h2>
+          <p class="pf-hint">重排是知识库检索策略的一部分，归各知识库的「检索参数」配置，不提供个人默认。</p>
+          <p class="pf-sub-hint">请由管理员在「知识库管理 → 编辑」中为知识库选择重排模型；未配置的库不做精排。</p>
         </div>
 
         <!-- 账号安全 -->
@@ -66,8 +72,8 @@ const router = useRouter()
 const navs = [
   { key: 'chat', label: '聊天模型' },
   { key: 'vision', label: '视觉模型' },
-  { key: 'rerank', label: '重排模型' },
   { key: 'embedding', label: '向量模型' },
+  { key: 'rerank', label: '重排模型' },
   { key: 'security', label: '账号安全' }
 ]
 const current = ref('chat')
@@ -76,25 +82,20 @@ const PANELS = {
   chat: {
     field: 'defaultModel', title: '聊天模型',
     hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用。',
-    tail: '清空（选「跟随全局」）后每次对话需手动选择模型。'
+    tail: '清空（选「不设默认」）后每次对话需手动选择模型。'
   },
   vision: {
     field: 'defaultVisionModel', title: '视觉模型',
-    hint: '对话中上传图片的理解走此模型；留空跟随系统全局。',
-    tail: '文档入库时的图片描述始终使用系统全局模型。'
-  },
-  rerank: {
-    field: 'defaultRerankModel', title: '重排模型',
-    hint: '对话检索的重排走此模型；留空跟随系统全局。',
-    tail: '检索调试与评估始终使用系统全局模型。'
+    hint: '对话中上传图片的理解走此模型；留空则不识别图片内容（仅展示）。',
+    tail: '文档入库时的图片描述使用知识库绑定的视觉模型（知识库 → 编辑 → 解析参数）。'
   }
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
 
-// 三类个人默认（全量保存：任一面板保存都提交三元组当前值）
+// 个人默认（全量保存：任一面板保存都提交当前值；重排/向量无个人默认）
 const loading = ref(false)
 const saving = ref(false)
-const pref = ref({ defaultModel: '', defaultVisionModel: '', defaultRerankModel: '' })
+const pref = ref({ defaultModel: '', defaultVisionModel: '' })
 
 const load = async () => {
   loading.value = true
@@ -103,10 +104,9 @@ const load = async () => {
     const d = (r && r.data) || {}
     pref.value = {
       defaultModel: d.defaultModel || '',
-      defaultVisionModel: d.defaultVisionModel || '',
-      defaultRerankModel: d.defaultRerankModel || ''
+      defaultVisionModel: d.defaultVisionModel || ''
     }
-  } catch (e) { /* 拉取失败保持空（跟随全局） */ }
+  } catch (e) { /* 拉取失败保持空（未设默认） */ }
   finally { loading.value = false }
 }
 

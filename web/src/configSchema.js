@@ -5,9 +5,6 @@
 export const TIPS = {
   "temperature": "控制回答的随机性（0~2）：越低回答越稳定、严谨、贴近资料原文（知识库问答建议 0.2~0.4）；越高越有创造性，但也更容易偏离事实或编造内容。注意部分厂商范围更窄（如智谱 0~1），超出会报错。",
   "systemPrompt": "定义 AI 的角色与回答风格，会注入每次问答的系统提示。改动立即影响所有回答的语气与行为；引用标注、配图、追问的硬性规则由系统固定，不可在此修改。",
-  "visionModel": "图片识别所用的多模态模型，影响文档截图、流程图的描述质量（描述越准，回答配图与检索召回越准）。从模型供应商中「视觉」类型模型里选择；网关与密钥由供应商统一管理。",
-  "embeddingModel": "向量化所用模型，决定知识块与提问的语义表示。从模型供应商中「向量」类型模型里选择；切换保存时会真实探测新模型（不可达将拒绝保存），通过后自动全量重嵌入——不同模型向量不可迁移；期间检索降级关键词路。",
-  "embeddingDimensions": "当前向量索引的维度，由系统在全量重嵌入成功后自动记录，不可手工修改。切换向量模型时用它与新模型探测维度比对：维度变化说明索引 schema 必须重建（重嵌入会自动做）。显示\"未记录\"表示本库尚未跑过重嵌入，不影响使用。",
   "visionPrompt": "图片描述的要求（如提取关键文字/界面元素、说明流程要点）。改动影响图片描述的内容倾向，进而影响检索与配图准确性。",
   "visionConcurrency": "文档解析时图片描述的最大并发数。调高解析更快，但占用更多显存/推理资源（本地 Ollama 需设 OLLAMA_NUM_PARALLEL 才能并行）；调低更稳。",
   "maxChunks": "单文档解析的最大知识块数（0=不限制）。超大文档超出部分截断不入库，防止 embedding 调用数万次导致解析失控。",
@@ -16,8 +13,7 @@ export const TIPS = {
   "uploadMaxSize": "文档上传大小上限（MB）。保存即生效（新上传按新限制校验）；物理上限 1GB 由容器兜底，不可超过。",
   "vectorWeight": "向量语义相似度在最终排序分中的占比。调高更侧重\"意思相近\"的匹配（适合口语化、换说法的提问）；过高可能引入字面无关但语义相近的块。",
   "keywordWeight": "关键词精确命中在排序分中的占比。调高更侧重\"字面命中\"（适合知识库资料中的专有名词、按钮名）；过高会漏掉语义相关但字面不同的内容。",
-  "rerankEnabled": "对混合检索候选再做一次精排（真交叉编码）。从模型供应商中「重排」类型模型里选择；未启用或服务不可用时自动回退融合分排序。",
-  "rerankModel": "重排模型：从模型供应商中「重排」类型模型里选择；留空时走本地 reranker 服务（scripts/win 或 scripts/mac 的 start_rerank_server，bge-reranker-v2-m3）。",
+  "rerankEnabled": "重排总开关（对混合检索候选再做一次精排）。重排模型本身归各知识库的检索设置（未配置的库不做精排）；本地 reranker 服务见 scripts/win 或 scripts/mac 的 start_rerank_server。",
   "modelWindows": "声明各模型的上下文窗口大小（token），格式\"模型名=token\"逗号分隔，按当前模型名的包含关系匹配。设置过大有超窗报错风险，过小会浪费模型能力。",
   "defaultWindow": "当「模型窗口映射」未匹配到当前模型时使用的窗口大小兜底值。",
   "safetyFactor": "上下文预算 = 窗口 × 安全系数 − 输出限制。系数越高单次可塞入更多知识块和历史，但越接近模型窗口上限；建议 0.6~0.8。",
@@ -134,16 +130,16 @@ export const TIPS = {
   "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
   "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
   "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
+  "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。",
   "mcpEnabled": "MCP 外部工具总开关：开启后自动连接下方配置的 MCP Server，把外部工具动态注册给大模型调用（标准 Model Context Protocol，用户可自行扩展工具而无需改代码）。单个 Server 连接失败仅跳过，不影响问答；默认关闭。",
   "mcpServers": "MCP Server 列表（JSON 数组）：[{\"name\":\"时间工具\",\"url\":\"http://127.0.0.1:8931\",\"type\":\"streamable\"}]。name 为显示名；url 为服务地址（可含路径，不带路径时默认端点 /mcp）；type 可选 streamable（默认）或 sse。配置变更后下一轮问答自动生效，连接失败的服务会被跳过并在后端日志告警。",
 }
 
 export const PANELS = [
   { key: "chat", title: "智能问答模型", sections: ["模型与连接（厂商预设自动填充地址与补全路径）","回答行为与内容","记忆与上下文","并发与超时","消息图片限制（防 base64 洪峰压垮解码/视觉处理）","调试开关（排障用，生产建议仅开引用自检）"] },
-  { key: "vision", title: "视觉模型（图片识别）", sections: ["模型与连接（网关地址 / 密钥）","识别提示词与并发（文档图与用户传图分开控制）","调用参数（超时 / 重试 / Ollama 推理）","图片描述缓存（改版本号/有效期后需重解析生效）","图片相关性校验（按图片标记前文关键词过滤无关配图）"] },
-  { key: "chunk", title: "文档解析（上传上限/分块/图片）", sections: ["上传与单文档保护（超限截断入库）","图片处理与访问鉴权（需重解析/新上传生效）","分块与解析行为（需重新解析/新上传文档生效）"] },
-  { key: "embedding", title: "向量模型（Embedding，切换需全量重嵌入）", sections: ["模型与连接（网关地址 / 向量化路径 / 密钥）","索引状态与重嵌入（切换模型后自动触发）"] },
-  { key: "retrieval", title: "检索设置（混合检索权重 + 重排 + 关键词引擎）", sections: ["关键词引擎（类型与服务连接）","融合权重 · 阈值 · 改写回退","查询改写（把问句改写为检索关键词，提升召回）","意图分类（问候/闲聊/知识库无关话题跳过检索直接对话）","关联扩散与引用识别","重排服务（可选 reranker，需独立服务）"] },
+  { key: "vision", title: "图片描述（视觉；模型归各知识库解析设置）", sections: ["总开关","识别提示词与并发（文档图与用户传图分开控制）","调用参数（超时 / 重试 / Ollama 推理）","图片描述缓存（改版本号/有效期后需重解析生效）","图片相关性校验（按图片标记前文关键词过滤无关配图）"] },
+  { key: "chunk", title: "文档解析默认模板（新建库预填；各库可在知识库设置覆盖）", sections: ["上传与单文档保护（超限截断入库）","图片处理与访问鉴权（需重解析/新上传生效）","分块与解析行为（需重新解析/新上传文档生效；知识库级参数仅对其后解析生效）"] },
+  { key: "retrieval", title: "检索设置（混合检索权重 + 重排 + 关键词引擎）", sections: ["关键词引擎（类型与服务连接）","融合权重 · 阈值 · 改写回退","查询改写（把问句改写为检索关键词，提升召回）","意图分类（问候/闲聊/知识库无关话题跳过检索直接对话）","关联扩散与引用识别","重排服务（总开关；重排模型归各知识库检索设置）"] },
   { key: "context", title: "上下文与长度控制", sections: ["窗口与预算（决定单次请求上下文长度）","历史裁剪 · 命中片段与填充","信息增益去冗余","@ 引用（输入框手动指定参考资料）"] },
   { key: "deepReasoning", title: "深度思考设置", sections: ["思考模式与引导","检索计划 · 多路与超时","思考增强 · 护栏与路由"] },
   { key: "tool", title: "工具调用（Function Calling）", sections: ["总开关","子工具（需总开关开启）"] },
@@ -173,7 +169,7 @@ export const FIELDS = [
   { panel: "chat", section: 5, group: "chat", key: "retrievalDebugEnabled", path: "chat.retrievalDebugEnabled", label: "检索调试入口", type: "switch", tips: "retrievalDebugEnabled", def: false, debug: true, tier: 3 },
   { panel: "chat", section: 5, group: "chat", key: "showDebugDegradations", path: "chat.showDebugDegradations", label: "降级提示", type: "switch", tips: "showDebugDegradations", def: false, note: "默认关闭：回答下方不显示任何降级提示（无命中/改写失败/图片剔除/缓存命中等）；调试排障时开启可见全部原因", debug: true, tier: 3 },
   { panel: "vision", section: -1, group: "vision", key: "enabled", path: "vision.enabled", label: "启用图片描述", type: "switch", tips: "visionEnabled", def: true, tier: 1 },
-  { panel: "vision", section: 0, group: "vision", key: "model", path: "vision.model", label: "视觉模型", type: "model", modelType: "vision", allowClear: true, tips: "visionModel", def: "", width: 420, core: true, tier: 2 },
+  // vision.model / embedding.model / retrieval.rerank.model 已退役：模型归属到使用者（知识库绑定），见对应管理页
   { panel: "vision", section: 1, group: "vision", key: "prompt", path: "vision.prompt", label: "识别提示词", type: "textarea", tips: "visionPrompt", def: "", rows: 3, ph: "图片描述提示词（50字内描述界面/元素）", tier: 2 },
   { panel: "vision", section: 1, group: "vision", key: "concurrency", path: "vision.concurrency", label: "图片描述并发", type: "number", tips: "visionConcurrency", def: 4, min: 1, max: 16, width: 200, tier: 3 },
   { panel: "vision", section: 1, group: "vision", key: "userImageConcurrency", path: "vision.userImageConcurrency", label: "用户图片并发", type: "number", tips: "userImageConcurrency", def: 2, min: 1, max: 16, width: 200, tier: 3 },
@@ -196,7 +192,6 @@ export const FIELDS = [
   { panel: "chunk", section: 2, group: "chunk", key: "structural", path: "chunk.structural", label: "结构感知切分", type: "switch", tips: "chunkStructural", def: true, note: "标题/段落边界优先 + 章节路径注入，需重解析生效", tier: 2 },
   { panel: "chunk", section: 2, group: "chunk", key: "structuralRatio", path: "chunk.structuralRatio", label: "边界阈值比例", type: "number", tips: "chunkStructuralRatio", def: 0.8, min: 0.5, max: 1, step: 0.05, width: 200, note: "达到 maxSize×比例 时优先在段落边界断块", vif: "chunk.structural", tier: 2 },
   { panel: "chunk", section: 2, group: "chunk", key: "headingDepth", path: "chunk.headingDepth", label: "标题识别层级", type: "number", tips: "chunkHeadingDepth", def: 4, min: 1, max: 6, step: 1, width: 200, note: "章节路径识别到几级标题；改后需重解析生效", vif: "chunk.structural", tier: 2 },
-  { panel: "embedding", section: 0, group: "embedding", key: "model", path: "embedding.model", label: "向量模型", type: "model", modelType: "embedding", tips: "embeddingModel", def: "", width: 420, note: "切换保存时自动探测并全量重嵌入（期间向量检索降级关键词路）", core: true, tier: 1 },
   { panel: "retrieval", section: 0, group: "keyword", key: "engine", path: "keyword.engine", label: "关键词引擎", type: "select", tips: "keywordEngine", def: "mysql", width: 220, options: [{"value":"mysql","label":"mysql（LIKE，零依赖，库大时慢）"},{"value":"meilisearch","label":"meilisearch（中文分词+相关度，推荐）"}], tier: 2 },
   { panel: "retrieval", section: 0, group: "keyword", key: "baseUrl", path: "keyword.baseUrl", label: "引擎服务地址", type: "text", tips: "keywordBaseUrl", def: "http://localhost:7700", width: 320, ph: "http://localhost:7700", tier: 2 },
   { panel: "retrieval", section: 0, group: "keyword", key: "apiKey", path: "keyword.apiKey", label: "引擎 Key", type: "password", tips: "keywordApiKey", def: "", width: 320, ph: "Meilisearch master key（服务端未设置可留空）", tier: 2 },
@@ -207,7 +202,6 @@ export const FIELDS = [
   { panel: "retrieval", section: 1, group: "retrieval", key: "keywordLimit", path: "retrieval.keywordLimit", label: "关键词召回上限", type: "number", tips: "keywordLimit", def: 20, min: 1, step: 5, width: 200, tier: 2 },
   { panel: "retrieval", section: 1, group: "retrieval", key: "searchTimeoutMs", path: "retrieval.searchTimeoutMs", label: "检索超时(ms)", type: "number", tips: "retrievalTimeout", def: 8000, min: 500, step: 500, width: 200, note: "混合检索总超时", tier: 2 },
   { panel: "retrieval", section: 5, group: "rerank", key: "enabled", path: "retrieval.rerank.enabled", label: "启用重排", type: "switch", tips: "rerankEnabled", def: false, note: "开启前自动校验服务可用性", tier: 2 },
-  { panel: "retrieval", section: 5, group: "rerank", key: "model", path: "retrieval.rerank.model", label: "重排模型", type: "model", modelType: "rerank", allowClear: true, tips: "rerankModel", def: "", width: 320, tier: 2 },
   { panel: "context", section: 0, group: "context", key: "modelWindows", path: "context.modelWindows", label: "模型窗口映射", type: "text", tips: "modelWindows", def: "", ph: "模型名=token,逗号分隔，如 qwen3=131072", tier: 3 },
   { panel: "context", section: 0, group: "context", key: "defaultWindowTokens", path: "context.defaultWindowTokens", label: "默认窗口 token", type: "number", tips: "defaultWindow", def: 32768, min: 1000, step: 1000, width: 200, tier: 3 },
   { panel: "context", section: 0, group: "context", key: "safetyFactor", path: "context.safetyFactor", label: "窗口安全系数", type: "number", tips: "safetyFactor", def: 0.7, min: 0.1, max: 1, step: 0.05, width: 200, tier: 3 },
@@ -242,6 +236,7 @@ export const FIELDS = [
   { panel: "agent", section: 0, group: "agent", key: "subAgents", path: "agent.subAgents", label: "子代理数量", type: "number", tips: "agentSubAgents", def: 2, min: 2, max: 4, step: 1, width: 200, note: "2~4：越多召回越全，并发检索与提炼调用也越多", vif: "agent.enabled", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "topKPerAgent", path: "agent.topKPerAgent", label: "每代理取块数", type: "number", tips: "agentTopK", def: 3, min: 1, max: 10, step: 1, width: 200, note: "每个子代理取回命中块上限（跨代理自动去重）", vif: "agent.enabled", tier: 3 },
   { panel: "agent", section: 0, group: "agent", key: "digestEnabled", path: "agent.digestEnabled", label: "要点提炼", type: "switch", tips: "agentDigest", def: true, note: "开=每个子代理用模型提炼 2~3 条要点再汇总；关=只并行检索合并（零额外调用）", vif: "agent.enabled", tier: 2 },
+  { panel: "agent", section: 0, group: "agent", key: "autoDispatch", path: "agent.autoDispatch", label: "自动派遣", type: "switch", tips: "agentAutoDispatch", def: true, note: "对话页「自动派遣」模式的总开关：按名称+描述路由智能体；关闭后回落默认智能体", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "autoRoute", path: "agent.autoRoute", label: "按需委派", type: "switch", tips: "agentAutoRoute", def: true, note: "开=主模型先从候选助手挑出相关的、只咨询选中的（省开销、卡片无无关角色）；关=每轮全部并行", vif: "agent.enabled", tier: 2 },
   { panel: "agent", section: 0, group: "agent", key: "routeTimeoutMs", path: "agent.routeTimeoutMs", label: "路由超时(ms)", type: "number", tips: "agentRouteTimeout", def: 8000, min: 1000, max: 20000, step: 500, width: 200, note: "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）", vif: "agent.enabled", tier: 3 },
 ]
@@ -255,14 +250,14 @@ export const FIELDS = [
  * 新增配置项默认进高级（不进此清单即隐藏），避免设置页再次膨胀。
  */
 export const CORE_PATHS = new Set([
-  // 主回答模型（网关/密钥在「模型供应商」页管理）
+  // 主回答模型（会话覆盖 > 个人默认；网关/密钥在「模型供应商」页管理）
   'chat.temperature', 'chat.systemPrompt',
-  // 向量模型（切换需全量重嵌入，属管理员必知）
-  'embedding.model',
-  // 视觉模型（图片问答）
-  'vision.enabled', 'vision.model',
-  // 重排（检索质量关键）
-  'retrieval.rerank.enabled', 'retrieval.rerank.model',
+  // 视觉总开关（视觉模型归各知识库解析设置）
+  'vision.enabled',
+  // 重排总开关（重排模型归各知识库检索设置）
+  'retrieval.rerank.enabled',
+  // 自动派遣（对话页智能体路由）
+  'agent.autoDispatch',
 ])
 
 /** 字段是否属核心（基础模式可见）；path 缺省时按 group.key 拼 */

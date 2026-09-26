@@ -40,7 +40,6 @@ public class HybridRetrievalService {
     private int keywordLimit() { return configService.getInt("retrieval.keywordLimit", 20); }
     private double vecThreshold() { return configService.getDouble("retrieval.vecThreshold", 0.3); }
 
-    private final VectorStore vectorStore;
     private final KbVectorStoreRegistry kbVectorStores;
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
@@ -307,7 +306,7 @@ public class HybridRetrievalService {
         }
     }
 
-    /** 目标知识库集合 → 去重后的向量库实例（跟随全局的库共享全局索引；绑定了模型的库各用独立索引） */
+    /** 目标知识库集合 → 去重后的向量库实例（每库按各自绑定的向量模型路由独立索引） */
     private List<VectorStore> resolveVectorStores(java.util.Collection<String> kbIds) {
         if (kbIds == null || kbIds.isEmpty()) return kbVectorStores.allStores();
         java.util.LinkedHashMap<VectorStore, Boolean> out = new java.util.LinkedHashMap<>();
@@ -318,7 +317,7 @@ public class HybridRetrievalService {
                 log.warn("[FAIL-LOUD] 知识库 {} 向量库构建失败（跳过该库）: {}", kbId, e.getMessage());
             }
         }
-        return out.isEmpty() ? List.of(vectorStore) : new ArrayList<>(out.keySet());
+        return new ArrayList<>(out.keySet());
     }
 
     /**

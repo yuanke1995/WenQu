@@ -29,9 +29,10 @@ public class ChatRequest {
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")
     private boolean deepThink;
 
-    @Schema(description = "智能体 ID（P3：4.1 Agent 配置）；非空时该轮问答按智能体覆盖模型/提示词/工具/知识库范围，未填维度继承全局")
+    @Schema(description = "智能体 ID；\"auto\"=自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选，失败回落默认智能体）；"
+            + "其他非空值=该轮问答按该智能体的提示词/工具/知识库范围执行；空=继承全局配置")
     private String agentId;
 
-    @Schema(description = "会话级模型覆盖（引用 providerId/modelId 或遗留模型名；仅用户在聊天页手动切换时传，空=跟随智能体/个人默认/全局）")
+    @Schema(description = "会话级模型覆盖（引用 providerId/modelId 或遗留模型名；仅用户在聊天页手动切换时传，空=个人默认，全局兜底已退役）")
     private String model;
 }

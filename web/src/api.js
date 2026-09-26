@@ -88,7 +88,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched,
     deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
@@ -156,6 +156,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'tool_status') { onToolStatus && onToolStatus(d.content) } // content 为 {name,status,elapsedMs,args,result|error}
               else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated,description,digest}
               else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
+              else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
               else if (d.type === 'done') { end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
               else if (d.type === 'error') { end(); onError(d.content); return }
             } catch (e) {
@@ -408,12 +409,6 @@ export const saveConfig = payload => request('/config', { method: 'PUT', body: J
 /** 恢复指定配置分组为默认值（不触碰 embedding 组与各模型 API Key） */
 export const resetConfig = groups =>
   request('/config/reset', { method: 'POST', body: JSON.stringify({ groups }) })
-
-/** 向量模型全量重嵌入：任务状态（status/total/done/failed） */
-export const getReembedStatus = () => request('/config/embedding/reindex')
-
-/** 向量模型全量重嵌入：手动触发（切换向量模型后后端自动触发，失败可重试） */
-export const triggerReembed = () => request('/config/embedding/reindex', { method: 'POST' })
 
 /** 推荐问题列表（欢迎页展示，DB 配置） */
 export const getSuggested = () => request('/suggested')

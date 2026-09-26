@@ -50,8 +50,8 @@ public class KnowledgeBaseController {
         return kb == null ? ResultJson.error("知识库不存在") : ResultJson.ok(kb);
     }
 
-    @Operation(summary = "新建知识库", description = "body: name(必填)/description/queryParams/isDefault/shareConfig；"
-            + "queryParams 为 JSON 字符串，留空表示继承全局检索设置")
+    @Operation(summary = "新建知识库", description = "body: name(必填)/description/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/isDefault/shareConfig；"
+            + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         if (body.get("name") == null || String.valueOf(body.get("name")).isBlank()) {
@@ -60,8 +60,8 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kbService.create(body, null));
     }
 
-    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams 传 null/空串表示清空并恢复继承全局；"
-            + "embeddingRef（绑定向量模型）变更时自动按库重嵌入（异步，模型不可达则保持原绑定）")
+    @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
+            + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
         KnowledgeBase before = kbService.get(id);

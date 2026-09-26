@@ -11,11 +11,13 @@
 -- 知识库：文档的容器，检索按库隔离、检索参数随库（对齐成熟同类产品的知识库模型）。
 -- 一个知识库 = 一套检索作用域（含自己的检索参数）；文档归属某个库，智能体关联若干库。
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
-    `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    -- 主键列为 kb_id：c_ai_document.kb_id 的外键指向它
+    `kb_id`        VARCHAR(50)  NOT NULL COMMENT '知识库ID（c_ai_document.kb_id 的外键）',
     `name`         VARCHAR(200) NOT NULL COMMENT '知识库名称',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索参数(JSON: {"retrieval.vecThreshold":"0.3",...}; 空=全部继承全局检索设置)',
-    `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；空=跟随系统全局 embedding.model）',
+    `parse_params` TEXT         DEFAULT NULL COMMENT '解析参数(JSON: chunk.maxSize/overlap/maxChunks/maxImages/structural/structuralRatio/headingDepth + visionRef; 空=全部继承全局解析设置)',
+    `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
     `embedding_dimensions` INT DEFAULT NULL COMMENT '本库向量索引维度（绑定/切换向量模型重嵌后回写）',
     `is_default`   INT          DEFAULT 0 COMMENT '是否默认库: 1=默认（新建文档默认归属、未指定库时的兜底）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
@@ -23,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
-    PRIMARY KEY (`id`),
+    PRIMARY KEY (`kb_id`),
     KEY `idx_deleted_default` (`deleted`, `is_default`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库表（文档容器，检索按库隔离，检索参数随库）';
 
@@ -39,7 +41,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `file_size`    BIGINT       DEFAULT 0 COMMENT '文件大小(字节)',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '文档描述',
     `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
-    `kb_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID（空=归入默认知识库）',
+    `kb_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID（必填；启动迁移会把历史空值归入默认库）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
@@ -239,7 +241,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
-    `model`           VARCHAR(255) DEFAULT NULL COMMENT '模型覆盖（空=继承全局 chat.model）',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索参数覆盖(JSON: {"retrieval.vectorWeight":"0.8",...}; 空=全部继承全局检索设置)',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
     `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
@@ -290,8 +291,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
-    `default_vision_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认视觉模型（引用 providerId/modelId；空=跟随系统全局，聊天上传图片理解用）',
-    `default_rerank_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认重排模型（引用 providerId/modelId；空=跟随系统全局，检索重排用）',
+    `default_vision_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认视觉模型（引用 providerId/modelId；空=不设默认，聊天上传图片理解用）',
+    -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),

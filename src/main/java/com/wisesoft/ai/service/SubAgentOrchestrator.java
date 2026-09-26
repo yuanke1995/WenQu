@@ -183,7 +183,7 @@ public class SubAgentOrchestrator {
         final List<Map<String, Object>> branches = new ArrayList<>();
         final long t0;
         final boolean delegated;
-        /** 主链路已解析的本轮生效模型（会话覆盖 > 智能体 > 个人默认），供要点提炼等辅助调用复用 */
+        /** 主链路已解析的本轮生效模型（会话覆盖 > 个人默认），供要点提炼等辅助调用复用 */
         final String resolvedModel;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,

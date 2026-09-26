@@ -4,7 +4,6 @@ import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.parser.DocumentParser;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.ConnectivityProbeService;
-import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RerankService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,7 +33,6 @@ public class ConfigController {
     private final List<DocumentParser> parsers;
     private final RerankService rerankService;
     private final KeywordIndexService keywordIndexService;
-    private final DocumentService documentService;
     private final ConnectivityProbeService connectivityProbeService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
@@ -106,23 +104,8 @@ public class ConfigController {
                 body.get("apiKey"), body.get("model"), body.get("path")));
     }
 
-    /** 向量模型全量重嵌入状态（切换向量模型后自动触发，也可手动重试） */
-    @Operation(summary = "重嵌入状态", description = "向量模型切换后的全量重嵌入任务状态（status/total/done/failed）")
-    @GetMapping("/embedding/reindex")
-    public ResultJson reembedStatus() {
-        return ResultJson.ok(documentService.getReembedStatus());
-    }
-
-    /** 手动触发全量重嵌入（任务运行中重复触发会被忽略） */
-    @Operation(summary = "触发重嵌入", description = "手动触发全量重嵌入（向量模型热切换后自动触发；失败后可重试）。期间向量检索自动降级关键词路，服务不中断")
-    @PostMapping("/embedding/reindex")
-    public ResultJson triggerReembed() {
-        boolean started = documentService.reembedAllAsync();
-        return started ? ResultJson.ok(null, "全量重嵌入任务已启动")
-                : ResultJson.error(409, "重嵌入任务已在运行中");
-    }
-
-    @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（chat.model、chat.baseUrl、chat.apiKey、chat.completionsPath、chat.temperature、chat.systemPrompt、vision.model、vision.prompt 等），保存即生效无需重启；*.apiKey 以 RSA 加密入库")
+    /** 向量模型全量重嵌入已退役：向量模型归各知识库绑定，重嵌入随知识库编辑/启动迁移按库触发 */
+    @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（chat.temperature、chat.systemPrompt、vision.prompt、检索/解析参数等），保存即生效无需重启；*.apiKey 以 RSA 加密入库。业务模型已归属使用者：知识库绑定向量/解析视觉/检索重排模型，聊天模型走会话覆盖>个人默认")
     @PutMapping
     public ResultJson updateConfig(
             @Parameter(description = "{\"chat\": {\"model\": \"..\", \"temperature\": \"0.3\"}, \"vision\": {\"model\": \"..\", \"prompt\": \"..\"}}")

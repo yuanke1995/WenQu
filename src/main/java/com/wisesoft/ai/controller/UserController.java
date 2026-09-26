@@ -72,14 +72,14 @@ public class UserController {
         return ResultJson.ok(orgService.getPreference(com.wisesoft.ai.util.RequestUser.uid()));
     }
 
-    @Operation(summary = "设置个人默认模型", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\",\"defaultRerankModel\":\"引用\"}；"
-            + "字段缺省(null)=不修改，空串=清除（跟随系统全局）；个人默认在智能体未指定时生效（聊天模型），视觉/重排分别用于聊天图片理解与检索重排")
+    @Operation(summary = "设置个人默认模型", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\"}；"
+            + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效，视觉模型用于聊天上传图片理解。"
+            + "重排/向量模型不提供个人默认（重排归知识库检索设置，向量归知识库绑定）")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
                 body.containsKey("defaultModel") ? str(body.get("defaultModel")) : null,
-                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null,
-                body.containsKey("defaultRerankModel") ? str(body.get("defaultRerankModel")) : null);
+                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null);
         return ResultJson.ok("已保存");
     }
 

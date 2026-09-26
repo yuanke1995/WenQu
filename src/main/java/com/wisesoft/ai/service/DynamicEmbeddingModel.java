@@ -74,14 +74,22 @@ public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * 按引用解析的向量模型（知识库绑定自定义向量模型时，其独立索引的写入/查询向量化用本方法）。
-     * 按路由指纹缓存底层客户端；引用无效抛 IllegalArgumentException（调用方应先经 KB 保存校验）。
+     * 按引用解析的向量模型（知识库绑定向量模型的独立索引写入/查询用）。
+     * 引用格式 {@code providerId/modelId} → 供应商网关；非引用的遗留纯模型名（如启动迁移回填的
+     * 旧全局 embedding.model 值）→ 遗留 embedding.* 网关 + 该模型名，行为与退役前"跟随全局"一致。
+     * 按路由指纹缓存底层客户端；解析不出任何路由抛 IllegalArgumentException（调用方应先经 KB 保存校验）。
      */
     public org.springframework.ai.embedding.EmbeddingModel forRef(String ref) {
-        ModelRegistryService.ModelRoute route = registry.resolveReference(ref.trim());
-        if (route == null) {
+        String v = ref == null ? "" : ref.trim();
+        ModelRegistryService.ModelRoute resolved = registry.resolveReference(v);
+        if (resolved == null && !v.isBlank() && !v.contains("/")) {
+            // 遗留纯模型名：模型名取 ref 本体，网关回落遗留 embedding.* 配置（与退役前全局路由同源）
+            resolved = registry.embeddingRoute(v);
+        }
+        if (resolved == null) {
             throw new IllegalArgumentException("向量模型引用无效: " + ref);
         }
+        final ModelRegistryService.ModelRoute route = resolved;
         return refDelegates.computeIfAbsent(route.embeddingFingerprint(), k -> {
             String[] np = DynamicOpenAiChatModel.normalize(route.baseUrl(), route.embeddingsPath(),
                     DEFAULT_EMBEDDINGS_PATH, "/embeddings");

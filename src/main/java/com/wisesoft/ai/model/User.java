@@ -48,13 +48,11 @@ public class User {
     @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
     private String defaultModel;
 
-    /** 个人默认视觉模型（聊天上传图片理解；空=跟随系统全局）。清空同上需 ALWAYS */
+    /** 个人默认视觉模型（聊天上传图片理解；空=未设默认，解析不描述图片）。清空同上需 ALWAYS */
     @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
     private String defaultVisionModel;
 
-    /** 个人默认重排模型（聊天检索重排；空=跟随系统全局）。清空同上需 ALWAYS */
-    @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
-    private String defaultRerankModel;
+    // 个人默认重排模型已退役（重排归知识库检索设置；存量库该列无害保留）
 
     /** 创建时间 */
     private LocalDateTime createTime;

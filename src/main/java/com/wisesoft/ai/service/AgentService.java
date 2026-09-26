@@ -85,6 +85,20 @@ public class AgentService {
     }
 
     /**
+     * 自动派遣候选（agentId="auto" 时用）：可见的主智能体实体列表（isSubagent≠1 + 可读性过滤）。
+     * 与 {@link #available()} 同口径，但返回实体供派遣路由读取名称/描述。
+     */
+    public List<Agent> dispatchCandidates() {
+        List<Agent> out = new ArrayList<>();
+        for (Agent a : list()) {
+            if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
+            if (!readable(a)) continue;
+            out.add(a);
+        }
+        return out;
+    }
+
+    /**
      * 可委派的子智能体（供主智能体配置页勾选）。
      * 只返回子智能体（is_subagent=1），且是最小字段——配置页只需要 id 与展示名。
      */

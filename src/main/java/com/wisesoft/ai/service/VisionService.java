@@ -47,10 +47,12 @@ public class VisionService {
     }
 
     /**
-     * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）
+     * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）。
+     * 视觉模型取当前线程的解析期引用（{@link #startParseScope}，文档解析按库）；
+     * 未设置（无库上下文）时不描述图片——全局 vision.model 已退役，没有运行时兜底。
      */
     public String describe(byte[] imageBytes, String ext) {
-        return describe(imageBytes, ext, configService.get("vision.prompt"), null);
+        return describe(imageBytes, ext, configService.get("vision.prompt"), PARSE_REF.get());
     }
 
     /** 默认描述提示词（供调用方组合带路由覆盖的 describe 重载） */
@@ -68,20 +70,24 @@ public class VisionService {
     }
 
     /**
-     * 带路由覆盖的图片描述：refOverride 非空时解析该引用为视觉网关（聊天上传图片的个人默认模型），
-     * 解析失败回落全局 visionRoute；空 = 全局。文档入库等无用户上下文场景传 null。
+     * 带路由覆盖的图片描述：refOverride 非空时解析该引用为视觉网关（聊天上传图片的个人默认模型、
+     * 文档解析的知识库 visionRef）；空/解析失败 → 跳过描述（全局 vision.model 已退役，无运行时兜底）。
      */
     public String describe(byte[] imageBytes, String ext, String prompt, String refOverride) {
+        if (imageBytes == null || imageBytes.length == 0) return "";
         // L12 fail-loud：vision.enabled 配置化（设置页可改，保存即生效；未配置时回退 yml/环境变量值）
         String cfgEnabled = configService.get("vision.enabled");
         boolean enabled = cfgEnabled == null ? properties.getVision().isEnabled() : Boolean.parseBoolean(cfgEnabled.trim());
-        if (!enabled || imageBytes == null || imageBytes.length == 0) {
-            if (!enabled && imageBytes != null && imageBytes.length > 0) {
-                log.debug("视觉模型已关闭（vision.enabled=false），跳过图片描述");
-            }
+        if (!enabled) {
+            log.debug("视觉模型已关闭（vision.enabled=false），跳过图片描述");
             return "";
         }
         ModelRegistryService.ModelRoute route = routeFor(refOverride);
+        if (route == null) {
+            log.info("[Vision] 未指定视觉模型（{}），跳过图片描述（本图不参与向量召回，解析继续）",
+                    refOverride == null || refOverride.isBlank() ? "未绑定/未设置个人默认" : "引用无效");
+            return "";
+        }
         String model = route.modelId();
         String cacheKey = imageDescCache.key(imageBytes, prompt, model);
         if (cacheKey != null) {
@@ -117,15 +123,34 @@ public class VisionService {
         return result;
     }
 
-    /** 路由解析：refOverride 非空时按引用取供应商网关（解析失败回落全局并告警），空走全局 visionRoute */
+    /**
+     * 路由解析：refOverride 非空时按引用取供应商网关；空/引用无效 → null（调用方跳过描述，
+     * 不再回落已退役的全局 vision.model）。
+     */
     private ModelRegistryService.ModelRoute routeFor(String refOverride) {
-        if (refOverride == null || refOverride.isBlank()) return modelRegistryService.visionRoute();
+        if (refOverride == null || refOverride.isBlank()) return null;
         ModelRegistryService.ModelRoute r = modelRegistryService.resolveReference(refOverride.trim());
         if (r == null) {
-            log.warn("[Vision] 个人视觉模型引用解析失败，回落全局: {}", refOverride);
-            return modelRegistryService.visionRoute();
+            log.warn("[Vision] 视觉模型引用解析失败，跳过图片描述: {}", refOverride);
+            return null;
         }
         return r;
+    }
+
+    /**
+     * 解析期视觉模型引用（线程局部）：文档解析按所属知识库的 visionRef 描述图片，
+     * 解析任务 worker 线程开头 set、finally clear（与 ConfigService.putOverrides 同模式）。
+     */
+    private static final ThreadLocal<String> PARSE_REF = new ThreadLocal<>();
+
+    /** 设置当前线程的解析期视觉模型引用（知识库 visionRef） */
+    public void startParseScope(String ref) {
+        if (ref != null && !ref.isBlank()) PARSE_REF.set(ref.trim());
+    }
+
+    /** 清除解析期视觉模型引用（解析任务结束必须调用） */
+    public void clearParseScope() {
+        PARSE_REF.remove();
     }
 
     private String callOnce(byte[] imageBytes, String ext, String prompt, ModelRegistryService.ModelRoute route) {

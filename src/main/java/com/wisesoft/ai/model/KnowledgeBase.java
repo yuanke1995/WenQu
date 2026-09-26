@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * <p>
  * 定位（对齐成熟知识库产品的模型）：
  * <ul>
- *   <li><b>文档容器</b>：文档归属于某个知识库（{@code c_ai_document.kb_id}），未指定时归入默认库。</li>
+ *   <li><b>文档容器</b>：文档必归属于某个知识库（{@code c_ai_document.kb_id}，历史空值由启动迁移归入默认库）。</li>
  *   <li><b>检索作用域</b>：检索按知识库过滤，不同库之间互不干扰（法律库与手册库各自召回）。</li>
  *   <li><b>参数归属</b>：检索参数（{@code queryParams}）存在库上，而非全局——
  *       不同资料性质可配不同策略（法律库提高阈值保精度、手册库放宽阈值保召回）；
@@ -27,7 +27,9 @@ import java.time.LocalDateTime;
 @TableName("c_ai_knowledge_base")
 public class KnowledgeBase {
 
-    @TableId(type = IdType.ASSIGN_UUID)
+    /** 知识库业务ID：表主键列为 {@code kb_id}（{@code c_ai_document.kb_id} 的外键指向该列），
+     *  必须显式指定列名——默认按字段名映射到 {@code id} 列会读不到业务ID。 */
+    @TableId(value = "kb_id", type = IdType.ASSIGN_UUID)
     private String id;
 
     /** 知识库名称 */
@@ -42,7 +44,15 @@ public class KnowledgeBase {
      */
     private String queryParams;
 
-    /** 本库绑定向量模型（引用 providerId/modelId；空=跟随系统全局 embedding.model）。
+    /**
+     * 解析参数（JSON：{"chunk.maxSize":"800","chunk.overlap":"100",...,"visionRef":"providerId/modelId"}）。
+     * 空=全部继承全局解析设置（chunk.*）；仅对之后解析/重解析的文档生效；
+     * visionRef 为本库图片描述用的视觉模型（文档解析把图片转文字供向量召回），空=解析时跳过图片描述。
+     */
+    private String parseParams;
+
+    /** 本库绑定向量模型（引用 providerId/modelId；必填——向量空间与索引一一对应，
+     * 没有可用的"运行时跟随全局"兜底，历史空值由启动迁移回填）。
      * 向量一致性约束是"单库"级：同库所有块必须同一向量模型，换模型触发本库重嵌入。 */
     private String embeddingRef;
 

@@ -103,12 +103,13 @@ public class ConnectivityProbeService {
         return post(url, key, body, start, "补全地址 " + url);
     }
 
-    /** 向量模型探测：复用保存流程的 probe（真实 embedding 一次），额外返回向量维度 */
+    /** 向量模型探测：复用保存流程的 probe（真实 embedding 一次），额外返回向量维度。
+     *  仅按显式传入的表单值探测（全局 embedding.model 已退役，不再有配置回落）。 */
     private Map<String, Object> embeddingProbe(String baseUrl, String apiKey, String model,
                                                String path, long start) {
         String base = value(baseUrl, "embedding.baseUrl");
         String key = secret(apiKey, "embedding.apiKey");
-        String mdl = value(model, "embedding.model");
+        String mdl = model == null ? "" : model.trim();
         String p = value(path, "embedding.embeddingsPath");
         if (base.isBlank()) return fail(start, "网关地址为空");
         if (mdl.isBlank()) return fail(start, "模型名为空");
@@ -124,7 +125,8 @@ public class ConnectivityProbeService {
     private Map<String, Object> rerankProbe(String baseUrl, String apiKey, String model, long start) {
         String base = value(baseUrl, "rerank.baseUrl");
         if (base.isBlank()) return fail(start, "服务地址为空");
-        String mdl = model == null || model.isBlank() ? nvl(configService.get("rerank.model")) : model.trim();
+        // 仅按显式传入的模型名探测（全局 rerank.model 已退役，重排模型归知识库检索设置）
+        String mdl = model == null || model.isBlank() ? "" : model.trim();
         if (mdl.isBlank()) return fail(start, "模型名为空");
         // 与 RerankService 一致：版本段尾缀（…/v1、…/v4）自动移入重排路径（本地地址保持 /v1/rerank）
         String[] np = DynamicOpenAiChatModel.normalize(base, "", "/v1/rerank", "/rerank");

@@ -70,7 +70,6 @@ public class ModelRegistryService {
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
     private final Environment environment;
-    private final AppProperties properties;
 
     private volatile List<Provider> providers = List.of();
     private volatile List<ModelInfo> models = List.of();
@@ -82,7 +81,7 @@ public class ModelRegistryService {
                                 com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
                                 StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                                Environment environment, AppProperties properties) {
+                                Environment environment) {
         this.providerMapper = providerMapper;
         this.modelMapper = modelMapper;
         this.agentMapper = agentMapper;
@@ -94,7 +93,6 @@ public class ModelRegistryService {
         this.redisTemplate = redisTemplate;
         this.redisProperties = redisProperties;
         this.environment = environment;
-        this.properties = properties;
     }
 
     @PostConstruct
@@ -190,40 +188,29 @@ public class ModelRegistryService {
                 configService.get("chat.completionsPath"), null, model, model);
     }
 
-    /** 向量路由：embedding.model 引用 → 供应商；遗留 → embedding.* 配置（env 兜底） */
+    /** 向量路由（遗留全局客户端用）：引用/全局键 → 供应商；遗留 → embedding.* 配置（env 兜底）。
+     *  向量模型本体已归知识库 embedding_ref，本方法仅供全局 VectorStore bean（回滚缓冲）的
+     *  {@link DynamicEmbeddingModel#current()} 路由，不再作为任何业务运行时默认。 */
     public ModelRoute embeddingRoute() {
         String model = firstNonBlank(configService.get("embedding.model"),
                 environment.getProperty("spring.ai.openai.embedding.options.model", ""));
+        return embeddingRoute(model);
+    }
+
+    /** 向量路由（按模型名）：引用 → 供应商网关；遗留纯模型名 → embedding.* 遗留网关 + 该模型名。
+     *  供知识库遗留模型引用（启动迁移回填的历史全局值）与全局客户端路由共用。 */
+    public ModelRoute embeddingRoute(String modelValue) {
+        String model = nz(modelValue);
         ModelRoute r = resolveReference(model);
         if (r != null) return r;
         return new ModelRoute(null,
                 firstNonBlank(configService.get("embedding.baseUrl"), environment.getProperty("spring.ai.openai.embedding.base-url", "")),
                 firstNonBlank(configService.get("embedding.apiKey"), environment.getProperty("spring.ai.openai.embedding.api-key", "")),
-                null, configService.get("embedding.embeddingsPath"), nz(model), nz(model));
+                null, configService.get("embedding.embeddingsPath"), model, model);
     }
 
-    /**
-     * 向量路由（参数化）：供 ConfigService 保存时比较「未保存表单值」与当前值的新旧路由，
-     * 保证迁移把配置值改写为引用后指纹比较仍成立（不会误触发全量重嵌入）。
-     */
-    public ModelRoute embeddingRoute(String model, String legacyBaseUrl, String legacyApiKey, String legacyPath) {
-        ModelRoute r = resolveReference(model);
-        if (r != null) return r;
-        return new ModelRoute(null, nz(legacyBaseUrl), nz(legacyApiKey), null, nz(legacyPath), nz(model), nz(model));
-    }
-
-    /** 视觉路由：vision.model 引用 → 供应商；遗留 → vision.* 配置（yml 兜底） */
-    public ModelRoute visionRoute() {
-        String model = nz(configService.get("vision.model"));
-        ModelRoute r = resolveReference(model);
-        if (r != null) return r;
-        return new ModelRoute(null,
-                firstNonBlank(configService.get("vision.baseUrl"), properties.getVision().getBaseUrl()),
-                firstNonBlank(configService.get("vision.apiKey"), properties.getVision().getApiKey()),
-                null, null, model, model);
-    }
-
-    /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务） */
+    /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
+     *  模型值可被知识库/智能体的检索参数覆盖（线程局部 rerank.model 覆盖经 ConfigService.get 生效）。 */
     public ModelRoute rerankRoute() {
         String model = nz(configService.get("rerank.model"));
         ModelRoute r = resolveReference(model);
@@ -498,9 +485,7 @@ public class ModelRegistryService {
         Long userRefs = userMapper.selectCount(new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
                 .likeRight(com.wisesoft.ai.model.User::getDefaultModel, prefix)
                 .or()
-                .likeRight(com.wisesoft.ai.model.User::getDefaultVisionModel, prefix)
-                .or()
-                .likeRight(com.wisesoft.ai.model.User::getDefaultRerankModel, prefix));
+                .likeRight(com.wisesoft.ai.model.User::getDefaultVisionModel, prefix));
         if (userRefs != null && userRefs > 0) refs.add("个人默认模型 ×" + userRefs);
         Long kbRefs = kbMapper.selectCount(new LambdaQueryWrapper<KnowledgeBase>()
                 .likeRight(KnowledgeBase::getEmbeddingRef, prefix));

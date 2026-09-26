@@ -36,6 +36,13 @@
               </div>
               <div class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
+              <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
+              <div v-if="m.dispatched" class="dispatch-chip">
+                <thunderbolt-outlined class="dispatch-ic" />
+                <span>已派遣「{{ m.dispatched.name }}」</span>
+                <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
+                <span v-if="m.dispatched.description" class="dispatch-desc">{{ m.dispatched.description }}</span>
+              </div>
               <a-spin v-if="m.loading && m.content" size="small" style="margin-top:4px" />
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length" class="tool-status-list">
                 <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-status-item" :title="t.args ? ('入参: ' + t.args) : ''">
@@ -188,6 +195,14 @@
                       <span class="agent-menu-hint">决定这一轮问答用哪套配置</span>
                     </div>
                     <div class="agent-menu-list">
+                      <div v-if="agentList.length" class="agent-mi" :class="{ active: currentAgentId === AUTO_AGENT }" @click="pickAgent(AUTO_AGENT)">
+                        <span class="agent-mi-ava"><thunderbolt-outlined /></span>
+                        <div class="agent-mi-text">
+                          <span class="agent-mi-name">自动派遣</span>
+                          <span class="agent-mi-desc">每轮由模型按各智能体的职责描述，挑最合适的来回答</span>
+                        </div>
+                        <check-outlined v-if="currentAgentId === AUTO_AGENT" class="agent-mi-check" />
+                      </div>
                       <div v-if="!agentList.length" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
                         <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
@@ -371,7 +386,7 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
-         ArrowUpOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons-vue'
+         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, getSuggested, deleteMessageGroup, getConfig, listAvailableAgents,
          getUserPreference } from '../api'
@@ -449,18 +464,25 @@ const toggleDeepThink = () => {
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length))
 
 // ==================== 智能体（4.1）：对话页下拉切换，按会话记忆 ====================
-const agentList = ref([])                       // 全部智能体
-const agentMap = ref({})                        // 会话ID → 选中的智能体ID（按会话记忆）
+const agentList = ref([])                       // 全部主智能体
+const agentMap = ref({})                        // 会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置）
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
+const AUTO_AGENT = '__auto__'                   // 自动派遣哨兵值（请求时转 "auto"，由后端按描述路由）
 const currentAgentId = computed({
-  // 空值一律回落到默认助手：有了具名助手后，界面不再提供「不使用任何助手」的选项
-  get: () => agentMap.value[currentSessionId.value] || defaultAgentId.value || '',
+  // 新会话默认「自动派遣」：每轮由生效模型按名称+描述挑最合适的智能体（市面 Coze 多 Agent 模式同款）；
+  // 没有任何智能体时回退默认助手/全局配置
+  get: () => {
+    const memo = agentMap.value[currentSessionId.value]
+    if (memo !== undefined) return memo
+    return agentList.value.length ? AUTO_AGENT : (defaultAgentId.value || '')
+  },
   set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
 })
 const isAdmin = ref(isAdminSync())
 const agentPickerOpen = ref(false)
-/** 当前生效的智能体名（空 = 走全局配置） */
+/** 当前生效的智能体名（自动派遣/空 = 走对应模式） */
 const currentAgentName = computed(() => {
+  if (currentAgentId.value === AUTO_AGENT) return '自动派遣'
   const a = agentList.value.find(x => x.id === currentAgentId.value)
   return a ? a.name : '默认（全局配置）'
 })
@@ -468,8 +490,11 @@ const currentAgentName = computed(() => {
 const pickAgent = id => {
   currentAgentId.value = id || ''
   agentPickerOpen.value = false
-  const a = agentList.value.find(x => x.id === id)
-  if (a) message.success(`已切换为「${a.name}」`)
+  if (id === AUTO_AGENT) message.success('已切换为「自动派遣」')
+  else {
+    const a = agentList.value.find(x => x.id === id)
+    if (a) message.success(`已切换为「${a.name}」`)
+  }
 }
 /** 底部「管理智能体」：跳到独立的一级页面 */
 const goManageAgents = () => {
@@ -484,9 +509,9 @@ const loadAgents = async () => {
     // 优先默认助手；未设默认时用列表第一个，保证下拉总有可选项
     const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true) || agentList.value[0]
     defaultAgentId.value = def ? def.id : ''
-    // 当前会话尚未选择时，落到默认智能体
+    // 当前会话尚未选择时：有候选智能体则默认「自动派遣」，否则落到默认智能体
     if (!(currentSessionId.value in agentMap.value)) {
-      agentMap.value = { ...agentMap.value, [currentSessionId.value]: defaultAgentId.value }
+      agentMap.value = { ...agentMap.value, [currentSessionId.value]: agentList.value.length ? AUTO_AGENT : defaultAgentId.value }
     }
   } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
 }
@@ -1028,8 +1053,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
   sendQuestion(currentSessionId.value, question, imgs, {
     signal: abortController.value.signal,
     deepThink,
-    agentId: currentAgentId.value,
-    // 会话级模型覆盖：仅用户手动切换时传（空=后端按 智能体>个人默认>全局 链路解析）
+    agentId: currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''),
+    // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
     model: currentOverrideModel.value || '',
     onThinking: t => {
       const m = messages.value[idx]
@@ -1108,6 +1133,16 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r) return
         messages.value[idx].subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [] }
+      } catch (e) { /* 忽略 */ }
+    },
+    onAgentDispatched: payload => {
+      try {
+        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!r || !r.name) return
+        messages.value[idx].dispatched = {
+          name: r.name, description: r.description || '', fallback: r.fallback === true
+        }
+        scroll()
       } catch (e) { /* 忽略 */ }
     },
     onDone: contentJson => {
@@ -1506,6 +1541,15 @@ onMounted(async () => {
 }
 .related-tag:hover { background: #ddefe0; }
 .stage-hint { margin-top: 6px; font-size: 13px; color: var(--app-accent); display: flex; align-items: center; gap: 6px; }
+.dispatch-chip {
+  margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; color: var(--app-text2);
+  border: 1px solid var(--app-border); border-radius: 999px; padding: 3px 10px;
+  background: color-mix(in srgb, var(--app-accent) 6%, transparent);
+}
+.dispatch-ic { color: var(--app-accent); font-size: 12px; }
+.dispatch-fallback { color: var(--app-text3); }
+.dispatch-desc { color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
 
 .fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
 .fb-row :deep(.fb-active) { color: var(--app-accent); }

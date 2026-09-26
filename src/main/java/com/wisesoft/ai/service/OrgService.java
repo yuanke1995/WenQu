@@ -134,23 +134,24 @@ public class OrgService {
     // ==================== 个人偏好（个人设置） ====================
 
     /**
-     * 个人偏好读取：三类个人默认模型（chat/vision/rerank，引用，空=跟随系统全局）+ 可用聊天模型清单
+     * 个人偏好读取：个人默认模型（chat/vision，引用，空=未设默认）+ 可用聊天模型清单。
+     * 个人默认重排已退役（重排模型归知识库检索设置）。
      */
     public java.util.Map<String, Object> getPreference(String uid) {
         User u = userMapper.selectById(uid);
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("defaultModel", u == null ? null : u.getDefaultModel());
         m.put("defaultVisionModel", u == null ? null : u.getDefaultVisionModel());
-        m.put("defaultRerankModel", u == null ? null : u.getDefaultRerankModel());
         m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT));
         return m;
     }
 
     /**
-     * 设置个人默认模型（三元组全量保存）：每个值 null=不修改，空串=清除（跟随系统全局），引用=设置。
-     * 校验引用有效且登记类型与槽位一致（防选到不可用模型）。向量模型不提供个人默认（全库向量空间须一致）。
+     * 设置个人默认模型（二元组全量保存）：每个值 null=不修改，空串=清除，引用=设置。
+     * 校验引用有效且登记类型与槽位一致（防选到不可用模型）。
+     * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排个人默认已退役（归知识库检索设置）。
      */
-    public void setPreference(String uid, String chatRef, String visionRef, String rerankRef) {
+    public void setPreference(String uid, String chatRef, String visionRef) {
         User u = userMapper.selectById(uid);
         if (u == null) throw new BizException("用户不存在");
         if (chatRef != null) {
@@ -163,16 +164,10 @@ public class OrgService {
             validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉");
             u.setDefaultVisionModel(v.isEmpty() ? null : v);
         }
-        if (rerankRef != null) {
-            String v = rerankRef.trim();
-            validateDefaultModel(v, ModelRegistryService.TYPE_RERANK, "重排");
-            u.setDefaultRerankModel(v.isEmpty() ? null : v);
-        }
         userMapper.updateById(u);
-        log.info("[AUDIT] 个人默认模型已更新 uid={} chat={} vision={} rerank={}", uid,
+        log.info("[AUDIT] 个人默认模型已更新 uid={} chat={} vision={}", uid,
                 chatRef == null ? "(未改)" : chatRef.isBlank() ? "(清空)" : chatRef,
-                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef,
-                rerankRef == null ? "(未改)" : rerankRef.isBlank() ? "(清空)" : rerankRef);
+                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef);
     }
 
     /** 校验个人默认模型引用：存在且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */
