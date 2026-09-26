@@ -323,10 +323,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_provider` (
     `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
     `sort_order`       INT          DEFAULT 0 COMMENT '排序（小在前）',
     `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
+    `owner_uid`        VARCHAR(64)  DEFAULT NULL COMMENT '归属用户：空=平台级（所有人可见可用，管理员维护）；非空=个人级（仅归属人可见可用，2026-09-26）',
     `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型供应商表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型供应商表（owner_uid 空=平台级，非空=个人级）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_model` (
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',

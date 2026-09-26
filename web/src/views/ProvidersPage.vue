@@ -3,7 +3,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h1 class="app-page-title">模型供应商</h1>
-      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记，供智能体/对话/设置页选用</span>
+      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。平台供应商所有人可用，你新建的只有自己可用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
@@ -18,11 +18,15 @@
               <div class="pv-title">
                 <div class="pv-name">
                   {{ p.name }}
+                  <!-- 归属：平台级=管理员登记、所有人可用（只读）；个人级=自己登记的，别人看不见 -->
+                  <a-tag :color="p.platform ? 'blue' : 'green'" class="pv-scope-tag">
+                    {{ p.platform ? '平台共享' : '仅自己' }}
+                  </a-tag>
                   <a-tag v-if="!p.enabled" color="default" class="pv-disabled-tag">已停用</a-tag>
                 </div>
                 <div class="pv-url" :title="p.baseUrl">{{ p.baseUrl }}</div>
               </div>
-              <a-switch :checked="p.enabled" size="small"
+              <a-switch v-if="p.manageable" :checked="p.enabled" size="small"
                         @change="v => onToggle(p, v)" />
             </div>
             <div class="pv-models">
@@ -32,21 +36,25 @@
               <span v-if="!p.modelCount" class="pv-none">未登记模型</span>
             </div>
             <div class="pv-remark" v-if="p.remark">{{ p.remark }}</div>
+            <!-- 平台供应商对普通用户只读：不给编辑/删除/登记模型入口，避免"点了报错"的死路 -->
             <div class="pv-actions">
-              <button class="app-link-btn" @click="openModels(p)">
-                <database-outlined /> 管理模型（{{ p.modelCount }}）
-              </button>
-              <button class="app-link-btn" @click="openEdit(p)">编辑</button>
-              <a-popconfirm title="确定删除该供应商？其已登记的模型会一并删除。"
-                            ok-text="删除" cancel-text="取消" @confirm="onDelete(p)">
-                <button class="app-link-btn danger">删除</button>
-              </a-popconfirm>
+              <template v-if="p.manageable">
+                <button class="app-link-btn" @click="openModels(p)">
+                  <database-outlined /> 管理模型（{{ p.modelCount }}）
+                </button>
+                <button class="app-link-btn" @click="openEdit(p)">编辑</button>
+                <a-popconfirm title="确定删除该供应商？其已登记的模型会一并删除。"
+                              ok-text="删除" cancel-text="取消" @confirm="onDelete(p)">
+                  <button class="app-link-btn danger">删除</button>
+                </a-popconfirm>
+              </template>
+              <span v-else class="pv-readonly">平台供应商由管理员维护，你可用它的模型但不可修改</span>
             </div>
           </div>
         </div>
         <div v-else-if="!loading" class="app-card pv-empty">
           <div class="pv-empty-title">还没有供应商</div>
-          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 本地服务等），登记 API Key 后即可远程拉取模型列表。</div>
+          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 本地服务等），登记 API Key 后即可远程拉取模型列表。你自己建的供应商只有你能看到和使用。</div>
         </div>
       </a-spin>
     </div>
@@ -615,6 +623,8 @@ onMounted(load)
 .pv-title { flex: 1; min-width: 0; }
 .pv-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .pv-disabled-tag { font-size: 11px; line-height: 16px; }
+.pv-scope-tag { font-size: 11px; line-height: 16px; }
+.pv-readonly { font-size: 12px; color: var(--app-text3, #999); }
 .pv-url {
   font-size: 12px; color: var(--app-text3, #999);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

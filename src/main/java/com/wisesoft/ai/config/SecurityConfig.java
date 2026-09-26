@@ -86,6 +86,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;
+        // 模型供应商（2026-09-26）：普通用户可登记**自己的**网关与 Key（个人级，仅本人可见可用），
+        // 管理员登记的为平台级（所有人可用）。资源级判定在 ProviderController.denyUnlessManageable
+        // 内做（改/删/启停/登记模型必须先通过归属校验），这里只按端点放行。
+        if (isProviderSelfEndpoint(method, path)) return true;
         // 个人偏好（本人默认模型）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
         if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;
@@ -137,6 +141,24 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path == null) return false;
         return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
                 || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share");
+    }
+
+    /**
+     * 模型供应商的自助端点（普通用户可访问）。
+     * <p>
+     * 覆盖：列表 / 新建（{@code /provider}）、单个的改删与启停、单个的模型登记、
+     * 先测后存用的 {@code /models/fetch} 与 {@code /test}。
+     * 写操作的归属判定不在拦截器做——由 {@code ProviderController.denyUnlessManageable}
+     * 按「管理员级全部 / 普通用户仅自己登记的个人级」逐资源裁决。
+     * {@code /provider/available} 在更早的白名单分支已放行。
+     */
+    private static boolean isProviderSelfEndpoint(String method, String path) {
+        if (path == null) return false;
+        return path.equals("/api/ai/provider")
+                || path.matches("/api/ai/provider/[^/]+")
+                || path.matches("/api/ai/provider/[^/]+/(models|enabled)")
+                || path.equals("/api/ai/provider/models/fetch")
+                || path.equals("/api/ai/provider/test");
     }
 
     /**

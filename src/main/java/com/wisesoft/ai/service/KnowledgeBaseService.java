@@ -73,7 +73,8 @@ public class KnowledgeBaseService {
         kb.setParseParams(str(body.get("parseParams")));
         kb.setIsDefault(toInt(body.get("isDefault"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
-        kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef"))));
+        kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
+                com.wisesoft.ai.util.RequestUser.role()));
         kb.setCreatedBy(uid);
         kb.setDeleted(0);
         LocalDateTime now = LocalDateTime.now();
@@ -97,7 +98,10 @@ public class KnowledgeBaseService {
         if (body.containsKey("parseParams")) upd.set(KnowledgeBase::getParseParams, str(body.get("parseParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
         if (body.containsKey("embeddingRef")) {
-            upd.set(KnowledgeBase::getEmbeddingRef, validateEmbeddingRef(str(body.get("embeddingRef"))));
+            // 归属校验按**当前操作者**判（create/update 都只在请求线程里被控制器调用；
+            // 能走到这里的操作者即该库的管理者，见 KnowledgeBaseController 的资源级判定）
+            upd.set(KnowledgeBase::getEmbeddingRef, validateEmbeddingRef(str(body.get("embeddingRef")),
+                    com.wisesoft.ai.util.RequestUser.uid(), com.wisesoft.ai.util.RequestUser.role()));
             // 模型切换后维度以重嵌结果为准，先清掉旧记录
             upd.set(KnowledgeBase::getEmbeddingDimensions, null);
         }
@@ -150,13 +154,21 @@ public class KnowledgeBaseService {
     /**
      * 校验并归一化本库绑定向量模型引用：**必填**——向量空间与索引一一对应，没有可用的运行时兜底；
      * 历史空值由启动迁移回填（引用或遗留模型名，遗留名经 DynamicEmbeddingModel 走遗留网关）。
+     * <p>
+     * 归属校验：引用必须对「绑定人」可用（平台级供应商 + 该用户自己登记的个人级）——
+     * 否则会出现「张三的知识库挂在李四的 Key 上」。
+     *
+     * @param ref  前端提交的向量模型引用
+     * @param uid  操作者 uid（知识库归属人）
+     * @param role 操作者角色编码
      * @return 归一化后的引用（trim 后）
      */
-    public String validateEmbeddingRef(String ref) {
+    public String validateEmbeddingRef(String ref, String uid, String role) {
         String v = ref == null ? "" : ref.trim();
         if (v.isEmpty()) {
             throw new com.wisesoft.ai.common.BizException("请为本知识库选择向量模型（必填）");
         }
+        modelRegistryService.assertUsable(v, uid, role);
         if (modelRegistryService.resolveReference(v) == null && v.contains("/")) {
             throw new com.wisesoft.ai.common.BizException("向量模型无效或已被删除，请重新选择");
         }

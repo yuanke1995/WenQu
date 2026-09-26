@@ -56,6 +56,12 @@ public class Provider {
     /** 创建人 uid */
     private String createdBy;
 
+    /**
+     * 归属用户：空 = 平台级（管理员维护，所有人可见可用）；非空 = 个人级
+     * （2026-09-26：普通用户登记自己的网关与 Key，只有归属人可见可用，不共享）。
+     */
+    private String ownerUid;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

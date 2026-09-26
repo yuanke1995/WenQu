@@ -149,31 +149,32 @@ public class OrgService {
      * 个人偏好读取：个人默认模型（chat/vision，引用，空=未设默认）+ 可用聊天模型清单。
      * 个人默认重排已退役（重排模型归知识库检索设置）。
      */
-    public java.util.Map<String, Object> getPreference(String uid) {
+    public java.util.Map<String, Object> getPreference(String uid, String role) {
         User u = userMapper.selectById(uid);
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("defaultModel", u == null ? null : u.getDefaultModel());
         m.put("defaultVisionModel", u == null ? null : u.getDefaultVisionModel());
-        m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT));
+        m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT, uid, role));
         return m;
     }
 
     /**
      * 设置个人默认模型（二元组全量保存）：每个值 null=不修改，空串=清除，引用=设置。
-     * 校验引用有效且登记类型与槽位一致（防选到不可用模型）。
+     * 校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
      * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排个人默认已退役（归知识库检索设置）。
      */
     public void setPreference(String uid, String chatRef, String visionRef) {
         User u = userMapper.selectById(uid);
         if (u == null) throw new BizException("用户不存在");
+        String role = u.getRole();
         if (chatRef != null) {
             String v = chatRef.trim();
-            validateDefaultModel(v, ModelRegistryService.TYPE_CHAT, "聊天");
+            validateDefaultModel(v, ModelRegistryService.TYPE_CHAT, "聊天", uid, role);
             u.setDefaultModel(v.isEmpty() ? null : v);
         }
         if (visionRef != null) {
             String v = visionRef.trim();
-            validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉");
+            validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉", uid, role);
             u.setDefaultVisionModel(v.isEmpty() ? null : v);
         }
         userMapper.updateById(u);
@@ -182,9 +183,11 @@ public class OrgService {
                 visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef);
     }
 
-    /** 校验个人默认模型引用：存在且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */
-    private void validateDefaultModel(String ref, String expectedType, String label) {
+    /** 校验个人默认模型引用：存在、对本人可用、且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */
+    private void validateDefaultModel(String ref, String expectedType, String label, String uid, String role) {
         if (ref.isEmpty()) return;
+        // 归属校验：引用他人登记的个人级供应商一律拒绝（该 Key 属于别人）
+        modelRegistryService.assertUsable(ref, uid, role);
         if (modelRegistryService.resolveReference(ref) == null) {
             throw new BizException("默认模型无效或已被删除，请重新选择");
         }

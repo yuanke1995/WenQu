@@ -58,6 +58,7 @@ public class ChatController {
     private final AdminGuard adminGuard;
     private final AuthService authService;
     private final com.wisesoft.ai.service.MenuService menuService;
+    private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
 
     /**
      * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
@@ -148,6 +149,10 @@ public class ChatController {
                 }
             }
         }
+
+        // 模型引用归属校验：普通用户只能用自己可用的供应商（平台级 + 自己登记的个人级）。
+        // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
+        modelRegistryService.assertUsable(request.getModel(), userId, RequestUser.role());
 
         // 超时配置化（chat.sseTimeoutMs，默认 5 分钟）；超时由 RagService.onTimeout 先发 warn 再 dispose（fail-loud）
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");

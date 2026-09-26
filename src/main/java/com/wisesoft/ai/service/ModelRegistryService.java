@@ -70,6 +70,8 @@ public class ModelRegistryService {
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
     private final Environment environment;
+    /** 角色判定（RBAC）：管理员级可管理全部供应商；仅依赖 Mapper，无循环依赖 */
+    private final com.wisesoft.ai.service.RoleService roleService;
 
     private volatile List<Provider> providers = List.of();
     private volatile List<ModelInfo> models = List.of();
@@ -81,7 +83,8 @@ public class ModelRegistryService {
                                 com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
                                 StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                                Environment environment) {
+                                Environment environment,
+                                com.wisesoft.ai.service.RoleService roleService) {
         this.providerMapper = providerMapper;
         this.modelMapper = modelMapper;
         this.agentMapper = agentMapper;
@@ -93,6 +96,7 @@ public class ModelRegistryService {
         this.redisTemplate = redisTemplate;
         this.redisProperties = redisProperties;
         this.environment = environment;
+        this.roleService = roleService;
     }
 
     @PostConstruct
@@ -261,6 +265,48 @@ public class ModelRegistryService {
         return p == null ? null : crypto.decrypt(p.getApiKey());
     }
 
+    // ==================== 归属（平台级 / 个人级）与可用性 ====================
+
+    /** 平台级供应商：owner_uid 为空——管理员维护，所有人可见可用（存量行/迁移种子均无归属） */
+    public static boolean isPlatform(Provider p) {
+        return p == null || p.getOwnerUid() == null || p.getOwnerUid().isBlank();
+    }
+
+    /** 该供应商是否对请求者可见可用：平台级全员可用；个人级仅归属人（管理员级另可全部管理） */
+    public boolean canUse(Provider p, String uid, String role) {
+        if (p == null) return false;
+        if (isPlatform(p) || roleService.isAdminCode(role)) return true;
+        return uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
+    }
+
+    /** 该供应商是否对请求者可管理（改 / 删 / 启停 / 登记模型）：管理员级全部；个人级仅归属人 */
+    public boolean canManage(Provider p, String uid, String role) {
+        if (p == null) return false;
+        if (roleService.isAdminCode(role)) return true;
+        return !isPlatform(p) && uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
+    }
+
+    /**
+     * 校验模型引用对请求者可用。**引用进入系统的三个入口统一走这里**：聊天请求 model、
+     * 个人默认模型、知识库向量模型。
+     * <p>
+     * 只判定「引用命中他人登记的个人级供应商」这一种情形：非引用格式（遗留裸模型名）与
+     * 不存在的引用不在此处理——由调用方原有的存在性 / 类型校验负责，免得改变既有报错口径。
+     * 命中时 fail-loud：不静默回落全局网关，否则会拿平台 Key 去跑别人的模型名。
+     *
+     * @param uid  请求者 uid（可为空=未知身份，此时个人级一律不可用）
+     * @param role 请求者角色编码
+     */
+    public void assertUsable(String value, String uid, String role) {
+        ModelRoute r = resolveReference(value);
+        if (r == null) return;
+        Provider p = providerById(r.providerId());
+        if (p != null && !canUse(p, uid, role)) {
+            throw new com.wisesoft.ai.common.BizException("模型「" + r.displayName()
+                    + "」属于他人登记的个人供应商，你无法使用；请在模型选择器里选自己可用的模型");
+        }
+    }
+
     private String displayNameOf(Provider p, String modelId) {
         for (ModelInfo m : models) {
             if (p.getId().equals(m.getProviderId()) && modelId.equals(m.getModelId())
@@ -283,9 +329,16 @@ public class ModelRegistryService {
         return null;
     }
 
-    /** 供应商列表（管理界面；apiKey 脱敏为 ****后4位） */
-    public List<Map<String, Object>> listProviders() {
-        List<Provider> ps = new ArrayList<>(providers);
+    /**
+     * 供应商列表（管理界面；apiKey 脱敏为 ****后4位）。
+     * 按请求者归属过滤：管理员级见全部；普通角色见「平台级 + 自己登记的」。
+     * 每行附 platform / mine / manageable，供前端决定是否给出编辑、删除、启停、模型登记入口。
+     */
+    public List<Map<String, Object>> listProviders(String uid, String role) {
+        List<Provider> ps = new ArrayList<>();
+        for (Provider p : providers) {
+            if (canUse(p, uid, role)) ps.add(p);
+        }
         ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
                 .thenComparing(p -> nz(p.getName())));
         List<Map<String, Object>> result = new ArrayList<>(ps.size());
@@ -302,6 +355,9 @@ public class ModelRegistryService {
             m.put("enabled", !Integer.valueOf(0).equals(p.getEnabled()));
             m.put("remark", p.getRemark());
             m.put("sortOrder", p.getSortOrder());
+            m.put("platform", isPlatform(p));
+            m.put("mine", !isPlatform(p) && uid != null && uid.equals(p.getOwnerUid()));
+            m.put("manageable", canManage(p, uid, role));
             Map<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
             for (String t : TYPES) typeCounts.put(t, 0);
             int total = 0;
@@ -389,14 +445,16 @@ public class ModelRegistryService {
     /**
      * 可用模型清单（选择器数据源，登录即可见）：enabled 供应商下 enabled 模型，按类型过滤，
      * 引用串预先拼好（ref = providerId/modelId）。不暴露 baseUrl/apiKey。
+     * 按请求者归属过滤——个人级供应商的模型只出现在归属人自己的选择器里。
      */
-    public List<Map<String, Object>> available(String type) {
+    public List<Map<String, Object>> available(String type, String uid, String role) {
         List<Provider> ps = new ArrayList<>(providers);
         ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
                 .thenComparing(p -> nz(p.getName())));
         List<Map<String, Object>> result = new ArrayList<>();
         for (Provider p : ps) {
             if (Integer.valueOf(0).equals(p.getEnabled())) continue;
+            if (!canUse(p, uid, role)) continue;
             List<Map<String, Object>> ms = new ArrayList<>();
             for (ModelInfo mi : models) {
                 if (!p.getId().equals(mi.getProviderId())) continue;
@@ -426,10 +484,14 @@ public class ModelRegistryService {
 
     /**
      * 新建/更新供应商。rawApiKey 为空或 **** 掩码时保留库中已存密钥（编辑场景未重输 Key）。
+     * <p>
+     * 归属：新建时由创建者角色决定——管理员级建的 = 平台级（ownerUid 空，所有人可见可用），
+     * 普通用户建的 = 个人级（ownerUid = 本人，只有自己可见可用）。编辑不改归属（谁登记的永远属于谁）。
      */
     public Provider saveProvider(String id, String name, String icon, String baseUrl, String rawApiKey,
                                  String completionsPath, String embeddingsPath, String apiType,
-                                 Boolean enabled, String remark, Integer sortOrder, String operator) {
+                                 Boolean enabled, String remark, Integer sortOrder, String operator,
+                                 String operatorRole) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("供应商名称不能为空");
         String url = baseUrl == null ? "" : baseUrl.trim();
         while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
@@ -447,6 +509,8 @@ public class ModelRegistryService {
             p = new Provider();
             p.setId(UUID.randomUUID().toString());
             p.setCreatedBy(operator);
+            // 管理员级建的 = 平台级（所有人可用）；普通用户建的 = 个人级（仅本人可用）
+            p.setOwnerUid(roleService.isAdminCode(operatorRole) ? null : operator);
         }
         p.setName(name.trim());
         p.setIcon(icon == null ? "" : icon.trim());
@@ -465,7 +529,8 @@ public class ModelRegistryService {
         p.setSortOrder(sortOrder == null ? 0 : sortOrder);
         if (isNew) {
             providerMapper.insert(p);
-            log.info("[Provider] 供应商已创建: {}（{}）by {}", p.getName(), p.getBaseUrl(), operator);
+            log.info("[Provider] 供应商已创建: {}（{}）by {}，归属={}", p.getName(), p.getBaseUrl(), operator,
+                    isPlatform(p) ? "平台级" : "个人级:" + p.getOwnerUid());
         } else {
             providerMapper.updateById(p);
             log.info("[Provider] 供应商已更新: {}（{}）by {}", p.getName(), p.getBaseUrl(), operator);

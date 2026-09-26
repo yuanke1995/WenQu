@@ -76,7 +76,8 @@ public class UserController {
     @Operation(summary = "个人偏好读取", description = "本人个人设置：defaultModel（个人默认聊天模型引用，空=跟随系统全局）+ models（可用聊天模型清单，选择器数据源）")
     @GetMapping("/preference")
     public ResultJson preference() {
-        return ResultJson.ok(orgService.getPreference(com.wisesoft.ai.util.RequestUser.uid()));
+        return ResultJson.ok(orgService.getPreference(com.wisesoft.ai.util.RequestUser.uid(),
+                com.wisesoft.ai.util.RequestUser.role()));
     }
 
     @Operation(summary = "设置个人默认模型", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\"}；"
