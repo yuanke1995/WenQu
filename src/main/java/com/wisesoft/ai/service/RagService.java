@@ -262,6 +262,8 @@ public class RagService {
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
     private final BuiltinTools builtinTools;
+    /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
+    private final SandboxTools sandboxTools;
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
     private final SkillService skillService;
     /** 聊天附件（文档类）：解码/解析为纯文本注入本轮上下文（图片走 images 多模态，不经此服务） */
@@ -332,6 +334,7 @@ public class RagService {
                       ArtifactService artifactService,
                       PresentArtifactTool presentArtifactTool,
                       BuiltinTools builtinTools,
+                      SandboxTools sandboxTools,
                       SkillService skillService,
                       ChatAttachmentService chatAttachmentService,
                       SubAgentOrchestrator subAgentOrchestrator,
@@ -358,6 +361,7 @@ public class RagService {
         this.artifactService = artifactService;
         this.presentArtifactTool = presentArtifactTool;
         this.builtinTools = builtinTools;
+        this.sandboxTools = sandboxTools;
         this.skillService = skillService;
         this.chatAttachmentService = chatAttachmentService;
         this.subAgentOrchestrator = subAgentOrchestrator;
@@ -1067,6 +1071,12 @@ public class RagService {
         if (toolOn(agent, "tool.artifact.enabled", agent == null ? null : agent.getToolArtifact())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
+        }
+        // 沙盒工具（隔离执行环境）：tool.sandbox.enabled 控制；暂无智能体级三态覆盖（toolSandbox 列未加，
+        // 见 SandboxTools 类注释）——沙盒本身按会话隔离，工具一旦启用对所有会话可用
+        if (toolOn(agent, "tool.sandbox.enabled", null)) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(sandboxTools)));
         }
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
         if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {

@@ -4,6 +4,7 @@ import com.wisesoft.ai.service.ArtifactService;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
+import com.wisesoft.ai.service.SandboxService;
 import com.wisesoft.ai.service.ScheduledJobService;
 import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.service.UserImageService;
@@ -50,6 +51,7 @@ public class ScheduleCenter {
     private final SessionService sessionService;
     private final ArtifactService artifactService;
     private final ScheduledJobService scheduledJobService;
+    private final SandboxService sandboxService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -61,7 +63,8 @@ public class ScheduleCenter {
     public ScheduleCenter(ConfigService configService, KeywordIndexService keywordIndexService,
                           UserImageService userImageService, RetrievalEvaluationService evalService,
                           SessionService sessionService, ArtifactService artifactService,
-                          ScheduledJobService scheduledJobService) {
+                          ScheduledJobService scheduledJobService,
+                          SandboxService sandboxService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -69,6 +72,7 @@ public class ScheduleCenter {
         this.sessionService = sessionService;
         this.artifactService = artifactService;
         this.scheduledJobService = scheduledJobService;
+        this.sandboxService = sandboxService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -119,6 +123,15 @@ public class ScheduleCenter {
                 () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
                 () -> false,
                 () -> scheduledJobService.tick());
+
+        // 沙盒空闲回收：本工程沙盒 scope 挂在会话上（长生命周期），没有"run 结束释放"的时机，
+        // 只能按空闲时长回收，否则用过沙盒的会话会永久占着一个容器。
+        // 阈值 sandbox.idleReleaseMinutes（0=不回收）、间隔 sandbox.cleanupIntervalMs（≤0=暂停）。
+        // provider 不可达/未配置 token 时 releaseIdle 内部按失败计数并摘除缓存条目，不会拖垮节拍线程。
+        register("沙盒空闲回收",
+                () -> configService.getInt("sandbox.cleanupIntervalMs", 600_000),
+                () -> false,
+                () -> sandboxService.releaseIdle());
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

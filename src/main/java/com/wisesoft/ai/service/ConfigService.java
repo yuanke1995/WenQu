@@ -381,6 +381,21 @@ public class ConfigService {
         d.put("oidc.fetchDepartmentInfo", "false");                     // 从 userinfo 取部门名并自动建部门
         d.put("oidc.departmentClaim", "department");
         d.put("oidc.forcePromptLogin", "false");                        // 授权请求带 prompt=login（强制重新认证）
+        // ---------- 沙盒（隔离执行环境）----------
+        // 语义与问渠新栈的环境变量一一对应（SANDBOX_PROVISIONER_URL / TOKEN / DELETE_TIMEOUT_SECONDS /
+        // KEEPALIVE_INTERVAL_SECONDS / VIRTUAL_PATH_PREFIX / EXEC_TIMEOUT_SECONDS / MAX_OUTPUT_BYTES），
+        // 但改走 config-schema：本工程配置唯一来源是 c_ai_config，设置页可改、保存即生效（client 懒构建）。
+        // token 走敏感项（.token 后缀 ⇒ RSA 密文入库 + 快照只回显后 4 位）。
+        d.put("sandbox.provisionerUrl", "http://127.0.0.1:8002"); // provisioner 服务地址
+        d.put("sandbox.token", "");                               // 访问令牌（≥32 字符，不足拒绝启用）
+        d.put("sandbox.virtualPathPrefix", "/home/gem/user-data");// 沙盒内可读写根
+        d.put("sandbox.commandTimeoutSeconds", "180");            // 单条命令超时（秒）
+        d.put("sandbox.maxOutputBytes", "262144");                // 单条命令输出上限（字节）
+        d.put("sandbox.keepaliveIntervalSeconds", "30");          // keepalive 间隔（秒，≤0 关闭）
+        d.put("sandbox.deleteTimeoutSeconds", "120");             // 删除沙盒的超时（秒）
+        d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
+        d.put("sandbox.cleanupIntervalMs", "600000");             // 空闲回收扫描间隔（ms，≤0=暂停）
+        d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
@@ -472,7 +487,7 @@ public class ConfigService {
      * 都要回来补一处判断，漏掉就会明文落库且界面回显完整密钥。</p>
      */
     private static boolean isSensitiveKey(String key) {
-        return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret"));
+        return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret") || key.endsWith(".token"));
     }
 
     /** 清除线程局部参数覆盖（评估结束后必须调用） */
