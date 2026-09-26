@@ -382,7 +382,6 @@ const save = async () => {
       const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
       if (n === 0) message.warning('没有可保存的配置项（后端未识别提交的键），请检查后重试')
       else { message.success(`配置已保存并生效（更新 ${n} 项）`); initialPayload.value = buildPayload() }
-      refreshReembedStatus()
     } else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
