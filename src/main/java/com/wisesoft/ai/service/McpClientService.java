@@ -119,6 +119,8 @@ public class McpClientService {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("id", row.getId());
                 m.put("name", row.getName());
+                // 智能体引用串：MCP Server 是个人资产，一律带归属 {uid}/{name}
+                m.put("ref", row.getUid() + "/" + row.getName());
                 m.put("url", row.getUrl());
                 m.put("type", row.getType());
                 m.put("enabled", Integer.valueOf(1).equals(row.getEnabled()));

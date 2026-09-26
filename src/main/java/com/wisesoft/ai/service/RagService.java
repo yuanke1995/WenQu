@@ -660,17 +660,27 @@ public class RagService {
                 // 智能体级筛选：skills 为 null → 注入全部启用技能；空串 → 一个都不注入；逗号串 → 只注入这些。
                 // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
                 // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
-                Set<String> onlySkills = agent == null ? null : scopeOf(agent.getSkills());
-                // fail-loud：智能体的「指定技能」按**名字**匹配，而技能是个人资产——
-                // 名字没命中就说明"这个智能体的技能意图对当前这个人根本不成立"（没装，或装了同名但停用了）。
-                // 静默当成"没装技能"会让人误以为智能体能力已生效，所以必须说出来。
+                Set<String> skillRefs = agent == null ? null : scopeOf(agent.getSkills());
+                RefScope skillScope = resolveRefs(skillRefs, userId);
+                Set<String> onlySkills = skillScope.names();
+                // fail-loud：智能体的「指定技能」是引用而非普通名字——
+                // ①引用指向别人的个人技能：直接不可用（个人资产不外借），绝不拿当前用户的同名技能顶替；
+                // ②引用指向的技能在当前用户名下不存在/已停用：说明该智能体的技能意图对这个人根本不成立。
+                // 两种情况都必须说出来，静默当成"没装技能"会让人误以为智能体能力已生效。
                 // 空集合=智能体显式「不使用任何技能」，是明确意图，不算缺失。
-                if (onlySkills != null && !onlySkills.isEmpty()) {
+                // 注意判定用「引用集合」而非解析后的名字集合：智能体只指定了别人的技能时，
+                // 解析结果会是空集合，用后者判断会把「属于其他用户」的提示也一起吞掉。
+                if (skillRefs != null && !skillRefs.isEmpty()) {
+                    if (!skillScope.notMine().isEmpty()) {
+                        addDegradation(degradations, degradedCodes, "agentSkillNotMine",
+                                "智能体指定的技能 " + String.join("、", skillScope.notMine())
+                                        + " 属于其他用户（技能是个人资产），对你不可用");
+                    }
                     Set<String> haveSkills = skillService.listWithState(userId).stream()
                             .filter(st -> !st.disabled())
                             .map(st -> st.skill().name())
                             .collect(java.util.stream.Collectors.toSet());
-                    List<String> missSkills = onlySkills.stream()
+                    List<String> missSkills = (onlySkills == null ? Set.<String>of() : onlySkills).stream()
                             .filter(n -> !haveSkills.contains(n)).toList();
                     if (!missSkills.isEmpty()) {
                         addDegradation(degradations, degradedCodes, "agentSkillUnavailable",
@@ -1038,12 +1048,21 @@ public class RagService {
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
         if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {
             // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
-            Set<String> onlyMcp = agent == null ? null : scopeOf(agent.getMcps());
-            // 与技能同理：MCP Server 是个人资产、按名字弱匹配，指定项没命中必须说出来，
-            // 否则"智能体挂了这个外部工具"会静默变成"什么都没挂"。空集合=显式不使用，不算缺失。
-            if (onlyMcp != null && !onlyMcp.isEmpty()) {
+            Set<String> mcpRefs = agent == null ? null : scopeOf(agent.getMcps());
+            RefScope mcpScope = resolveRefs(mcpRefs, userId);
+            Set<String> onlyMcp = mcpScope.names();
+            // 与技能同理（MCP Server 是个人资产、按引用精确绑定）：
+            // 别人的服务不顶替、自己没登记的要说出来，否则"智能体挂了这个外部工具"会静默变成"什么都没挂"。
+            // 空集合=显式不使用，不算缺失。判定用引用集合（理由同技能：只指定了别人的服务时也要提示）。
+            if (mcpRefs != null && !mcpRefs.isEmpty()) {
+                if (!mcpScope.notMine().isEmpty()) {
+                    addDegradation(st.degradations, st.degradedCodes, "agentMcpNotMine",
+                            "智能体指定的 MCP 服务 " + String.join("、", mcpScope.notMine())
+                                    + " 属于其他用户（MCP 是个人资产），对你不可用");
+                }
                 Set<String> haveMcp = mcpClientService.serverNames(userId);
-                List<String> missMcp = onlyMcp.stream().filter(n -> !haveMcp.contains(n)).toList();
+                List<String> missMcp = (onlyMcp == null ? Set.<String>of() : onlyMcp).stream()
+                        .filter(n -> !haveMcp.contains(n)).toList();
                 if (!missMcp.isEmpty()) {
                     addDegradation(st.degradations, st.degradedCodes, "agentMcpUnavailable",
                             "智能体指定的 MCP 服务 " + String.join("、", missMcp)
@@ -1795,6 +1814,47 @@ public class RagService {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * 智能体上「个人资源引用」的解析结果。
+     *
+     * @param names   参与匹配的资源名（归属当前用户，或内置/裸名这类"人人都有"的引用）
+     * @param notMine 明确属于**其他人**的引用（个人资产不外借，直接判不可用，不再拿同名资源顶上）
+     */
+    private record RefScope(Set<String> names, List<String> notMine) {
+    }
+
+    /**
+     * 解析智能体上的个人资源引用（技能 / MCP 同构）。
+     * <p>
+     * 技能与 MCP 都是**个人资产**，而智能体是公共对象，裸名字不是全局唯一键——
+     * 只按名字匹配会出现「使用者装了同名但内容不同的资源，被当成管理员指定的那个来用」（张冠李戴）。
+     * 因此引用分两种形态：
+     * <ul>
+     *   <li>{@code {uid}/{name}}：精确绑定某个人的资源。归属人是当前用户 → 参与匹配；
+     *       不是 → 直接判不可用（不拿当前用户的同名资源顶替）。</li>
+     *   <li>裸 {@code name}：存量配置的弱匹配（按名字在当前用户自己的资源里找）；
+     *       内置技能也走这条——它随版本分发、人人都有，按名字匹配才是对的。</li>
+     * </ul>
+     */
+    private static RefScope resolveRefs(Set<String> refs, String uid) {
+        if (refs == null) return new RefScope(null, List.of());
+        Set<String> names = new LinkedHashSet<>();
+        List<String> notMine = new ArrayList<>();
+        for (String r : refs) {
+            int slash = r.indexOf('/');
+            if (slash < 0) {
+                names.add(r);            // 裸名：内置技能 / 存量配置
+                continue;
+            }
+            String owner = r.substring(0, slash).trim();
+            String name = r.substring(slash + 1).trim();
+            if (name.isEmpty()) continue;
+            if (owner.isEmpty() || owner.equals(uid)) names.add(name);
+            else notMine.add(name);      // 别人的个人资产：不可用
+        }
+        return new RefScope(names, notMine);
     }
 
     /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */

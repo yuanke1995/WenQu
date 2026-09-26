@@ -261,12 +261,12 @@ const CAPS = [
     path: ['tool', 'builtin', 'enabled'], gate: ['tool', 'enabled'] },
   { key: 'toolArtifact', label: '产物交付', desc: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片', icon: FileDoneOutlined,
     kind: 'switch', path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
-  // 技能与 MCP 是**个人资产**（每人管自己的）：智能体这里选的是「名字」，
-  // 实际生效时会与当前问答用户自己的技能/MCP 求交集——别人没有同名资源则该项对他不生效。
-  { key: 'toolSkill', label: '技能 Skills', desc: '按技能名限定范围（技能归个人：只对装了同名技能的问答者生效）', icon: AppstoreOutlined,
+  // 技能与 MCP 是**个人资产**：这里选中的是「引用串」——个人资源存 {uid}/{name}，
+  // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
+  { key: 'toolSkill', label: '技能 Skills', desc: '限定用哪几个技能（内置技能对所有人按名字生效；我的技能只对我自己生效）', icon: AppstoreOutlined,
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     path: ['skill', 'enabled'] },
-  { key: 'toolMcp', label: 'MCP 外部工具', desc: '按服务名限定范围（MCP 归个人：只对登记了同名服务的问答者生效）', icon: ApiOutlined,
+  { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（MCP 归个人：只对我自己生效）', icon: ApiOutlined,
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     path: ['mcp', 'enabled'] }
 ]
@@ -481,14 +481,19 @@ const reload = async () => {
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
     // /skill/list 返回的是 { skills: [...] }（不是数组）——按数组判定会让「指定技能」永远没有可选项
+    // value 存**引用串**而非裸名：个人技能/MCP 是个人资产，{uid}/{name} 才能精确绑定到归属人，
+    // 避免别人用同名但内容不同的资源时被张冠李戴；内置技能后端给的 ref 就是裸名（人人都有）。
     if (sr && sr.success && sr.data) {
       const list = Array.isArray(sr.data.skills) ? sr.data.skills : []
-      skillOptions.value = list.filter(s => !s.disabled).map(s => ({ value: s.name, label: s.name }))
+      skillOptions.value = list.filter(s => !s.disabled).map(s => ({
+        value: s.ref || s.name,
+        label: s.name + (s.source === 'builtin' ? '（内置）' : '（我的）')
+      }))
     }
     if (mr && mr.success && mr.data) {
       mcpOptions.value = (mr.data.servers || []).map(s => ({
-        value: s.name,
-        label: s.connected ? s.name : s.name + '（未连接）'
+        value: s.ref || s.name,
+        label: s.name + (s.connected ? '' : '（未连接）')
       }))
     }
     // 可委派的子智能体

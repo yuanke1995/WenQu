@@ -158,6 +158,8 @@ public class McpController {
     private static void validate(String name, String url) {
         if (name == null || name.isBlank()) throw new BizException("请填写服务名称");
         if (name.length() > 40) throw new BizException("服务名称不超过 40 个字符");
+        // 服务名会参与智能体引用串 {uid}/{name} 的拆分，含 '/' 会让引用解析错位
+        if (name.contains("/")) throw new BizException("服务名称不能包含 /");
         if (url == null || url.isBlank()) throw new BizException("请填写服务地址");
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             throw new BizException("服务地址需以 http:// 或 https:// 开头");

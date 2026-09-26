@@ -67,11 +67,15 @@ public class SkillController {
     @Operation(summary = "技能列表", description = "内置（带本人是否停用）+ 本人技能，不含正文")
     @GetMapping("/list")
     public ResultJson list() {
+        String uid = RequestUser.uid();
         List<Map<String, Object>> skills = new ArrayList<>();
-        for (SkillService.SkillState st : skillService.listWithState(RequestUser.uid())) {
+        for (SkillService.SkillState st : skillService.listWithState(uid)) {
             SkillService.Skill s = st.skill();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", s.name());
+            // 智能体引用串：个人技能带归属 {uid}/{name}（精确绑定，别人用不到也不该被误当成自己的同名技能）；
+            // 内置技能不带归属——它随版本分发、人人都有（各人可自行停用），按名字弱匹配才是对的。
+            m.put("ref", "builtin".equals(s.source()) ? s.name() : uid + "/" + s.name());
             m.put("dirName", s.dirName());
             m.put("description", s.description());
             m.put("version", s.version());
