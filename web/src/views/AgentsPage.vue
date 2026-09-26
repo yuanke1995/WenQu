@@ -62,7 +62,8 @@
                 <div class="ap-card-foot">
                   <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
                   <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
-                  <button v-if="!isSub(a) && !isDefault(a)" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
+                  <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
+                  <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
                   <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
                   <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                     <button class="app-link-btn danger" @click.stop>删除</button>
@@ -172,7 +173,7 @@
                       <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
                     </div>
                     <div class="ap-cap-desc">
-                      {{ c.desc }}<span class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                      {{ c.desc }}<span v-if="globalText(c)" class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
                     </div>
                   </div>
                   <a-segmented v-if="c.kind === 'switch'" v-model:value="form[c.key]" :options="SEG" size="small" />
@@ -249,6 +250,7 @@ import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, lis
          listSkills, getMcpStatus, listSubAgents, updateAgentShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
+import { ensureAuth, isAdminSync } from '../utils/auth'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -263,12 +265,13 @@ const CAPS = [
     kind: 'switch', path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
   // 技能与 MCP 是**个人资产**：这里选中的是「引用串」——个人资源存 {uid}/{name}，
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
+  // 两者都没有独立的全局开关（配置里已无 skill.enabled / mcp.enabled），只受「工具调用」总闸制约。
   { key: 'toolSkill', label: '技能 Skills', desc: '限定用哪几个技能（内置技能对所有人按名字生效；我的技能只对我自己生效）', icon: AppstoreOutlined,
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
-    path: ['skill', 'enabled'] },
+    gate: ['tool', 'enabled'] },
   { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（MCP 归个人：只对我自己生效）', icon: ApiOutlined,
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
-    path: ['mcp', 'enabled'] }
+    gate: ['tool', 'enabled'] }
 ]
 // 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 const SEG = [
@@ -294,7 +297,10 @@ const saving = ref(false)
 const keyword = ref('')
 const agents = ref([])
 const kbOptions = ref([])
-const cfg = ref({})
+// 全局配置快照（仅管理员可读；普通用户保持 null，能力行不显示「全局开/关」）
+const cfg = ref(null)
+// 管理员级身份：reload 里 ensureAuth 到位后刷新（localStorage 兜底仅在已拉取过时可靠）
+const isAdmin = ref(isAdminSync())
 
 // 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
 const builtinOptions = ref(BUILTIN_TOOL_OPTIONS)
@@ -427,10 +433,40 @@ function openShare (a) {
 const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
 
 // ==================== 全局配置快照（用于显示每项的全局状态） ====================
-const rawOf = path => path.reduce((o, k) => (o == null ? undefined : o[k]), cfg.value)?.value
+/**
+ * 取全局配置项的 value。
+ * 配置快照是「组 → 键」两层，且**组内键名是含点的扁平字符串**（`tool` 组里就是
+ * `knowledgeRetrieval.enabled` / `artifact.enabled`），并不是嵌套对象——所以按
+ * ['tool','knowledgeRetrieval','enabled'] 逐层下钻查不到。逐层走，某一层缺失时把
+ * 「从该层起的剩余段」用 '.' 拼起来当扁平键直接取（消费掉整段）。
+ */
+const rawOf = path => {
+  if (!cfg.value || !Array.isArray(path) || !path.length) return undefined
+  let node = cfg.value
+  for (let i = 0; i < path.length; i++) {
+    if (node == null) return undefined
+    const direct = node[path[i]]
+    if (direct === undefined) {
+      const flat = node[path.slice(i).join('.')]
+      return flat === undefined ? undefined : flat?.value
+    }
+    node = direct
+  }
+  return node?.value
+}
 const isOn = path => { const v = rawOf(path); return v === 'true' || v === true }
+/**
+ * 能力行的「全局开/关」提示。
+ * cfg 为空 = 拿不到全局快照（普通用户无权读 /config）→ 返回空串，模板据此不显示该提示；
+ * 之前无条件回落到 isOn()=false 会显示成「关闭」，与真实全局状态相反。
+ */
 const globalText = c => {
+  if (!cfg.value) return ''
   if (c.gate && !isOn(c.gate)) return '关闭（工具总开关未开）'
+  // 无独立全局开关的能力（技能 / MCP：内容归个人，只受工具总闸制约）
+  if (!c.path) return '开启'
+  const v = rawOf(c.path)
+  if (v === undefined || v === null || v === '') return ''
   return isOn(c.path) ? '开启' : '关闭'
 }
 
@@ -465,8 +501,12 @@ const summaryCaps = computed(() => {
 const reload = async () => {
   loading.value = true
   try {
-    const [ar, dr, cr, sr, mr, xr] = await Promise.all([
-      listAgents(), listKnowledgeBases(), getConfig(), listSkills(), getMcpStatus(), listSubAgents()
+    // 身份先就位再决定要不要拉全局快照：/config 是**管理端点**，普通用户调用会 403
+    // （与本仓库既有约定一致：ChatPage / KnowledgeBasePage 同样只让管理员拉）
+    const me = await ensureAuth()
+    isAdmin.value = me.admin
+    const [ar, dr, sr, mr, xr] = await Promise.all([
+      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents()
     ])
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
@@ -475,9 +515,6 @@ const reload = async () => {
         value: k.id,
         label: k.name + (k.docCount != null ? `（${k.docCount} 个文档）` : '')
       }))
-    }
-    if (cr.success && cr.data) {
-      cfg.value = cr.data
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
     // /skill/list 返回的是 { skills: [...] }（不是数组）——按数组判定会让「指定技能」永远没有可选项
@@ -499,6 +536,13 @@ const reload = async () => {
     // 可委派的子智能体
     if (xr && xr.success && Array.isArray(xr.data)) {
       subOptions.value = xr.data.map(s => ({ value: s.id, label: s.name }))
+    }
+    // 全局能力总闸：仅管理员可读（普通用户拿不到时，能力行不显示「全局开/关」提示，而不是谎报关闭）
+    if (me.admin) {
+      try {
+        const cr = await getConfig()
+        if (cr && cr.success) cfg.value = cr.data
+      } catch (e) { /* 管理员也可能拉失败：保持不显示，页面其余部分照常可用 */ }
     }
   } catch (e) { message.error(e.message || '加载失败') }
   finally { loading.value = false }
