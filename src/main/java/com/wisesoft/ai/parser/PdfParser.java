@@ -54,7 +54,7 @@ public class PdfParser implements DocumentParser {
 
     @Override
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId) throws Exception {
-        int maxSize = properties.getChunk().getMaxSize();
+        int maxSize = configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
         String pageTitle = "第 1 页";

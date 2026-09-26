@@ -405,8 +405,9 @@ public class ConfigService {
         d.put("chat.completionsPath", "/v1/chat/completions");
         d.put("chat.citationCheckEnabled", "true");        // 引用语义一致性自检（生成后校验，默认开）
         d.put("vision.prompt", properties.getVision().getPrompt());
-        d.put("vision.baseUrl", properties.getVision().getBaseUrl());
-        d.put("vision.apiKey", properties.getVision().getApiKey());
+        // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
+        // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
+        // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落 legacy）
         d.put("vision.enabled", String.valueOf(properties.getVision().isEnabled())); // L12：总开关（设置页可改）
         d.put("vision.concurrency", String.valueOf(properties.getVision().getConcurrency()));
         d.put("vision.descCacheVersion", "1");                 // 图片描述缓存版本（bump 后全量重新描述）
@@ -420,6 +421,10 @@ public class ConfigService {
         // 当前向量索引维度（系统记录，非用户可编辑）：全量重嵌入成功后由 putInternal 回写，
         // 作为下次切换的"旧维度"基线并供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
         d.put("embedding.dimensions", "");
+        // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
+        // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
+        d.put("chunk.maxSize", String.valueOf(properties.getChunk().getMaxSize()));
+        d.put("chunk.headingDepth", String.valueOf(properties.getChunk().getHeadingDepth()));
         d.put("chunk.maxChunks", String.valueOf(properties.getChunk().getMaxChunks()));
         d.put("chunk.maxImages", String.valueOf(properties.getChunk().getMaxImages()));
         d.put("chunk.overlap", String.valueOf(properties.getChunk().getOverlap()));
@@ -556,9 +561,8 @@ public class ConfigService {
      */
     private void syncProperties() {
         try {
-            AppProperties.Chunk chunk = properties.getChunk();
-            chunk.setMaxSize(pInt("chunk.maxSize", chunk.getMaxSize()));
-            chunk.setHeadingDepth(pInt("chunk.headingDepth", chunk.getHeadingDepth()));
+            // chunk.maxSize / chunk.headingDepth 不再回写 AppProperties：解析器已统一从 configService 读取，
+            // 再回写一份进 bean 就形成双读取源——库级覆盖只写线程局部，读 bean 的旁路读不到（正是断链根因）
             AppProperties.Images images = properties.getImages();
             images.setMaxWidth(pInt("images.maxWidth", images.getMaxWidth()));
             images.setQuality((float) pDouble("images.quality", images.getQuality()));
@@ -624,6 +628,17 @@ public class ConfigService {
     /** 清除线程局部参数覆盖（评估结束后必须调用） */
     public void clearOverride() {
         OVERRIDE.remove();
+    }
+
+    /**
+     * 取当前线程参数覆盖的快照（副本，可能为空）。
+     * <p>用途：把本轮覆盖**显式**交给并行子线程——ThreadLocal 不随任务提交跨线程继承，
+     * 池化线程里读到的永远是空覆盖（静默退化为全局配置）。调用方在子线程内 putOverrides(snapshot)
+     * 并在 finally 里 clearOverride()（线程复用，必须清）。
+     */
+    public Map<String, String> currentOverrides() {
+        Map<String, String> cur = OVERRIDE.get();
+        return cur == null || cur.isEmpty() ? Map.of() : new HashMap<>(cur);
     }
 
     /**
@@ -866,18 +881,8 @@ public class ConfigService {
         updates.entrySet().removeIf(kv ->
                 kv.getKey().endsWith(".apiKey") && kv.getValue() != null && kv.getValue().startsWith("****"));
 
-        // 视觉模型网关地址校验：http(s) 开头、去尾部斜杠（路径容错由 VisionService 拼接处理）
-        String vb = updates.get("vision.baseUrl");
-        if (vb != null && !vb.isBlank()) {
-            String url = vb.trim();
-            while (url.endsWith("/")) {
-                url = url.substring(0, url.length() - 1);
-            }
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                throw new IllegalArgumentException("vision.baseUrl 需以 http:// 或 https:// 开头");
-            }
-            updates.put("vision.baseUrl", url);
-        }
+        // 视觉网关地址校验已移除：vision.baseUrl 不在可编辑白名单、也无运行时读取点
+        // （视觉网关来自供应商表），保留这段只会校验一个永远不会被消费的键
 
         // 敏感 key RSA 加密入库：明文→密文（已加密值原样保留；空值不加密直接存空）
         for (Map.Entry<String, String> kv : updates.entrySet()) {

@@ -231,8 +231,12 @@ public class HybridRetrievalService {
             return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds);
         }
         try {
+            // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
+            // 必须在提交前取快照、在子线程内重放；否则多路并行检索静默退化为全局配置（库级/智能体级策略全丢）
+            Map<String, String> runOverrides = configService.currentOverrides();
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
-                    .map(q -> CompletableFuture.supplyAsync(() -> search(q, diag, kbIds), multiSearchPool))
+                    .map(q -> CompletableFuture.supplyAsync(
+                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds)), multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(configService.getInt("retrieval.searchTimeoutMs", 8000), TimeUnit.MILLISECONDS);
@@ -252,6 +256,21 @@ public class HybridRetrievalService {
             if (diag != null) diag.multiTimeout();
             log.warn("[FAIL-LOUD] 多路检索超时/失败，降级首路: {}", e.getMessage());
             return search(qs.get(0), diag, kbIds);
+        }
+    }
+
+    /**
+     * 在子线程内重放本轮参数覆盖后执行检索。
+     * <p>覆盖值取自调用线程的快照（{@link ConfigService#currentOverrides()}），子线程用完必须清：
+     * multiSearchPool 是复用池，残留会让下一轮请求继承上一轮的库/智能体检索策略。
+     */
+    private List<Hit> runWithOverrides(Map<String, String> overrides, java.util.function.Supplier<List<Hit>> task) {
+        if (overrides == null || overrides.isEmpty()) return task.get();
+        configService.putOverrides(overrides);
+        try {
+            return task.get();
+        } finally {
+            configService.clearOverride();
         }
     }
 

@@ -2,6 +2,7 @@ package com.wisesoft.ai.parser;
 
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
+import com.wisesoft.ai.service.ConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Cell;
@@ -40,7 +41,15 @@ public class ExcelParser implements DocumentParser {
 
     private final AppProperties properties;
 
+    /** 配置读取点：分块粒度必须走这里，知识库 parse_params 的 chunk.maxSize 覆盖经线程局部生效 */
+    private final ConfigService configService;
+
     private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 单块最大字符数：全局设置，或所属知识库 parse_params 的覆盖（解析任务线程内） */
+    private int maxChunkSize() {
+        return configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
+    }
 
     @Override
     public boolean supports(String ext) {
@@ -55,7 +64,7 @@ public class ExcelParser implements DocumentParser {
 
     @Override
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId) throws Exception {
-        int maxSize = properties.getChunk().getMaxSize();
+        int maxSize = maxChunkSize();
         List<Chunk> chunks = new ArrayList<>();
 
         try (Workbook workbook = new XSSFWorkbook(java.nio.file.Files.newInputStream(file))) {

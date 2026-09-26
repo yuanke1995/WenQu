@@ -2,6 +2,7 @@ package com.wisesoft.ai.parser;
 
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
+import com.wisesoft.ai.service.ConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,14 @@ import java.util.Set;
 public class TextParser implements DocumentParser {
 
     private final AppProperties properties;
+
+    /** 配置读取点：分块粒度必须走这里，知识库 parse_params 的 chunk.maxSize 覆盖经线程局部生效 */
+    private final ConfigService configService;
+
+    /** 单块最大字符数：全局设置，或所属知识库 parse_params 的覆盖（解析任务线程内） */
+    private int maxChunkSize() {
+        return configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
+    }
 
     @Override
     public boolean supports(String ext) {
@@ -79,7 +88,7 @@ public class TextParser implements DocumentParser {
             }
             buf.append(line).append('\n');
             // 超长兜底：无标题的超长文档在段落边界硬切
-            if (buf.length() >= properties.getChunk().getMaxSize()) {
+            if (buf.length() >= maxChunkSize()) {
                 flush(chunks, buf, title);
             }
         }
@@ -94,7 +103,7 @@ public class TextParser implements DocumentParser {
         for (String para : content.split("\\n\\s*\\n")) {
             String t = para.trim();
             if (t.isEmpty()) continue;
-            if (buf.length() + t.length() > properties.getChunk().getMaxSize() && buf.length() > 0) {
+            if (buf.length() + t.length() > maxChunkSize() && buf.length() > 0) {
                 flush(chunks, buf, null);
             }
             buf.append(t).append('\n');
@@ -118,7 +127,7 @@ public class TextParser implements DocumentParser {
                 continue;
             }
             buf.append(cells).append('\n');
-            if (buf.length() >= properties.getChunk().getMaxSize()) {
+            if (buf.length() >= maxChunkSize()) {
                 flush(chunks, buf, header);
                 if (header != null) buf.append(header).append('\n'); // 重复表头保语义
             }
@@ -179,7 +188,7 @@ public class TextParser implements DocumentParser {
         String body = buf.toString().trim();
         buf.setLength(0);
         if (body.isEmpty()) return;
-        int maxSize = properties.getChunk().getMaxSize();
+        int maxSize = maxChunkSize();
         if (body.length() <= maxSize) {
             chunks.add(new Chunk(title == null ? "" : title, body, List.of()));
             return;

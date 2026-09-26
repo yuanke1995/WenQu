@@ -40,7 +40,7 @@ public class VisionService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
         factory.setReadTimeout(properties.getVision().getTimeoutMillis());
-        // 不设固定 baseUrl：网关地址每次调用动态读 DB（vision.baseUrl 热切换，保存即生效），请求用绝对 URI
+        // 不设固定 baseUrl：每次调用按引用（visionRef → 供应商表）解析出网关，请求用绝对 URI
         this.restClient = RestClient.builder()
                 .requestFactory(factory)
                 .build();
@@ -222,7 +222,7 @@ public class VisionService {
                         Map.of("url", "data:" + mime + ";base64," + base64)),
                 Map.of("type", "text", "text", prompt)))));
 
-        // 网关地址/Key 来自视觉路由（引用→供应商网关；遗留→vision.baseUrl/apiKey，get 对 apiKey 透明解密），
+        // 网关地址/Key 来自视觉路由（visionRef → 供应商表，Key 在解析时解密；无引用直接跳过，不回落 legacy），
         // 路径容错与 chat 同规则（版本尾缀/完整端点自动识别，支持智谱 /v4 等）
         String baseUrl = route.baseUrl();
         String apiKey = route.apiKey();

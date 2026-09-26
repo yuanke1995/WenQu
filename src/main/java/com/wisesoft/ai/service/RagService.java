@@ -58,19 +58,19 @@ public class RagService {
 
     /**
      * 本轮检索参数覆盖，优先级：**全局设置 &lt; 知识库 &lt; 智能体**（后者覆盖前者）。
-     * <p>知识库是检索参数的归属（不同资料性质可配不同策略：法律库提高阈值保精度、手册库放宽保召回）；
-     * 智能体级是"调用方覆盖"，用于个别助手临时偏离所属库的策略。未配置的项一律继承更外层。
+     * <p>知识库级来源 = <b>本轮实际参与检索的库</b>（{@code kbIds}；为空=不限库，取全部未删除库，
+     * 与检索范围同一口径）。不再从"智能体绑定的库"派生——不选智能体、或智能体未绑库时，
+     * 库自己的检索策略同样必须生效（知识库是检索参数的归属，不该依赖另一个资源才可用）。
+     * 智能体级是"调用方覆盖"，仅在有智能体时叠加。未配置的项一律继承更外层。
      * <p>用线程局部覆盖而不是改检索方法签名：检索在本轮问答线程内同步执行，覆盖值可见；
-     * 例外的多路并行检索跑在池化线程、取不到覆盖值（退化为全局配置），属可接受降级。
+     * 多路并行检索跑在池化线程，由 HybridRetrievalService 取快照后在子线程内重放覆盖。
      */
-    private void applyQueryOverrides(Agent agent) {
-        if (agent == null) return;
+    private void applyQueryOverrides(java.util.Collection<String> kbIds, Agent agent) {
         Map<String, String> ov = new LinkedHashMap<>();
         List<String> sources = new ArrayList<>();
-        // 1) 知识库级：智能体关联的每个库都可能有自己的检索策略
-        for (String kbId : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds())) {
-            KnowledgeBase kb = knowledgeBaseService.get(kbId);
-            if (kb == null || kb.getQueryParams() == null || kb.getQueryParams().isBlank()) continue;
+        // 1) 知识库级：本轮检索涉及的每个库各自的检索策略
+        for (KnowledgeBase kb : resolveQueryParamKbs(kbIds)) {
+            if (kb.getQueryParams() == null || kb.getQueryParams().isBlank()) continue;
             Map<String, String> p = parseQueryParams(kb.getQueryParams());
             if (p.isEmpty()) continue;
             // 多库对同一键配置不同值：按库顺序取后者，并留日志（不静默取错）
@@ -82,15 +82,30 @@ public class RagService {
                 }
             }
             ov.putAll(p);
-            sources.add(kb.getName() == null ? kbId : kb.getName());
+            sources.add(kb.getName() == null ? kb.getId() : kb.getName());
         }
         // 2) 智能体级：覆盖库级
-        ov.putAll(parseQueryParams(agent.getQueryParams()));
+        if (agent != null) ov.putAll(parseQueryParams(agent.getQueryParams()));
         if (!ov.isEmpty()) {
             configService.putOverrides(ov);
-            log.info("[AGENT] 应用检索参数覆盖 {} 项（知识库 {} + 智能体）: {}",
-                    ov.size(), sources.isEmpty() ? "无" : String.join("、", sources), ov.keySet());
+            log.info("[RAG] 应用检索参数覆盖 {} 项（知识库 {} + 智能体 {}）: {}", ov.size(),
+                    sources.isEmpty() ? "无" : String.join("、", sources),
+                    agent == null ? "无" : agent.getId(), ov.keySet());
         }
+    }
+
+    /**
+     * 本轮检索参数涉及的库：kbIds 非空按其逐个取库；为空（不限库）取全部未删除库
+     * （{@code KnowledgeBaseService.list()} 已按默认库优先、创建时间升序，与"全库检索"的范围一致）。
+     */
+    private List<KnowledgeBase> resolveQueryParamKbs(java.util.Collection<String> kbIds) {
+        if (kbIds == null || kbIds.isEmpty()) return knowledgeBaseService.list();
+        List<KnowledgeBase> out = new ArrayList<>();
+        for (String kbId : kbIds) {
+            KnowledgeBase kb = knowledgeBaseService.get(kbId);
+            if (kb != null) out.add(kb);
+        }
+        return out;
     }
 
     /**
@@ -421,11 +436,11 @@ public class RagService {
         final Agent agent = resolveAgent(agentId, question, resolvedModel, sessionId, emitter);
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
-            // 检索参数覆盖：本智能体自定义的检索策略在本轮线程内生效（未配置的项继承全局设置）
-            applyQueryOverrides(agent);
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
         final java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
+        // 检索参数覆盖：库级按本轮实际检索范围（未选智能体时同样生效），智能体级在其上叠加
+        applyQueryOverrides(scopeKbIds, agent);
         // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
         final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
         final boolean useDeepThink;

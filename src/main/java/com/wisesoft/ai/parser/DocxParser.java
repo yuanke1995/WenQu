@@ -123,9 +123,10 @@ public class DocxParser implements DocumentParser {
     @Override
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId, ParseProgress progress) throws IOException {
         List<Chunk> chunks = new ArrayList<>();
-        int maxSize = properties.getChunk().getMaxSize();
+        int maxSize = configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
         // 章节标题识别上限层级（chunk.headingDepth，默认 4，设置页可改，改后需重解析生效）
-        int maxHeading = Math.max(1, Math.min(6, properties.getChunk().getHeadingDepth()));
+        int maxHeading = Math.max(1, Math.min(6,
+                configService.getInt("chunk.headingDepth", properties.getChunk().getHeadingDepth())));
         // 结构感知切分（chunk.structural 可配，默认开）：标题栈 → 章节路径；边界优先阈值 = maxSize × ratio
         boolean structural = configService.getBoolean("chunk.structural");
         double ratio = Math.min(1.0, Math.max(0.5, configService.getDouble("chunk.structuralRatio", 0.8)));

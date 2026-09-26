@@ -717,23 +717,22 @@ public class ModelRegistryService {
     // ==================== 存量配置迁移 ====================
 
     /**
-     * 存量四组手填配置（chat/embedding/vision/rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记，
+     * 存量手填网关配置（embedding / rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记，
      * 配置值改写为引用。幂等：值已是引用或网关信息为空则跳过；同网关（归一化 baseUrl + Key 相同）复用同一供应商。
      * 直接落库 + putInternal 改写配置值，不走 update() 联动（绝不触发全量重嵌入）。
+     * <p>chat / vision 两组不迁移：chat.model 全局兜底退役后迁移产物无消费方；vision.model 已退役
+     * （视觉模型归知识库 parse_params.visionRef），vision.baseUrl/apiKey 亦无运行时读取点。
      */
     private void migrateLegacyConfigs() {
-        // chat 组已不再迁移：chat.model 全局兜底退役后其迁移产物无消费方（模型解析链止于智能体/个人默认）
         Map<String, String[]> groups = Map.of(
                 "embedding", new String[]{"embedding.baseUrl", "embedding.apiKey", "embedding.embeddingsPath"},
-                "vision", new String[]{"vision.baseUrl", "vision.apiKey", null},
                 "rerank", new String[]{"rerank.baseUrl", null, null});
         Map<String, String> typeByGroup = Map.of(
-                "embedding", TYPE_EMBEDDING, "vision", TYPE_VISION, "rerank", TYPE_RERANK);
-        // 未启用的功能不迁移（yml 兜底默认值也非空，避免为从未用过的本地 vision/rerank 建供应商）；
-        // 之后启用时走遗留解析（vision.*/rerank.* 原值未动，行为不变）
+                "embedding", TYPE_EMBEDDING, "rerank", TYPE_RERANK);
+        // 未启用的功能不迁移（yml 兜底默认值也非空，避免为从未用过的本地 rerank 建供应商）；
+        // 之后启用时走遗留解析（rerank.* 原值未动，行为不变）
         Map<String, Boolean> enabledByGroup = Map.of(
                 "embedding", true,
-                "vision", configService.getBoolean("vision.enabled"),
                 "rerank", configService.getBoolean("rerank.enabled"));
         int migrated = 0;
         for (Map.Entry<String, String[]> g : groups.entrySet()) {

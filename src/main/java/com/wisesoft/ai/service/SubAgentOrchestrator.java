@@ -185,9 +185,15 @@ public class SubAgentOrchestrator {
         final boolean delegated;
         /** 主链路已解析的本轮生效模型（会话覆盖 > 个人默认），供要点提炼等辅助调用复用 */
         final String resolvedModel;
+        /**
+         * 创建上下文时父线程（问答流水线）的检索参数覆盖快照（全局 &lt; 知识库 &lt; 智能体的合并结果）。
+         * <p>并行分支由框架用 {@code Schedulers.parallel()} 调度，ThreadLocal 不跨线程继承 ⇒ 必须在
+         * 分支线程内重放这份快照，否则分支检索（topK / 权重 / 阈值）静默退化为全局配置。
+         */
+        final Map<String, String> baseOverrides;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
-               String resolvedModel) {
+               String resolvedModel, Map<String, String> baseOverrides) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
@@ -195,6 +201,7 @@ public class SubAgentOrchestrator {
             this.t0 = System.currentTimeMillis();
             this.delegated = subAgents != null && !subAgents.isEmpty();
             this.resolvedModel = resolvedModel;
+            this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -276,7 +283,8 @@ public class SubAgentOrchestrator {
                 ? Math.min(subAgents.size(), 4)
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
-        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel);
+        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel,
+                configService.currentOverrides());
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
@@ -352,7 +360,7 @@ public class SubAgentOrchestrator {
                 final int idx = i;
                 graph.addNode("agent_" + i, AsyncNodeAction.node_async(state -> {
                     RunCtx c = ctxOf(state);
-                    if (c != null) runAgent(idx, c);
+                    if (c != null) runWithOverrides(c, () -> runAgent(idx, c));
                     return Map.of();   // 数据写进 RunCtx（图只负责调度与汇聚）
                 }));
                 graph.addEdge("agent_" + i, "merge");
@@ -368,6 +376,26 @@ public class SubAgentOrchestrator {
             return compiled;
         } catch (Exception e) {
             throw new IllegalStateException("构建子代理图失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 在并行分支线程内重放本轮检索参数覆盖后执行分支主体。
+     * <p>分支跑在 reactor 线程池（{@code Schedulers.parallel()}），拿不到问答流水线线程的 ThreadLocal
+     * 覆盖值 ⇒ 不重放的话分支检索按全局参数跑（"编排卡片命中块数与主链路不一致"的隐藏原因）。
+     * 线程池复用，finally 必须清，避免把本轮策略泄漏给下一个任务。
+     */
+    private void runWithOverrides(RunCtx ctx, Runnable task) {
+        Map<String, String> ov = ctx.baseOverrides;
+        if (ov == null || ov.isEmpty()) {
+            task.run();
+            return;
+        }
+        configService.putOverrides(ov);
+        try {
+            task.run();
+        } finally {
+            configService.clearOverride();
         }
     }
 
