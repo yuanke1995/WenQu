@@ -423,9 +423,19 @@ public class SessionService {
      */
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, null);
+    }
+
+    /**
+     * 追加消息（含附件元信息）：attachments 为 JSON 数组字符串（[{name,mime,size}]，不含内容本体），
+     * 随用户消息持久化使附件标签刷新后仍可回显。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments) {
         // 1. MySQL 持久化
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -436,7 +446,7 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -480,6 +490,12 @@ public class SessionService {
                 } catch (Exception ignored) {
                 }
             }
+            if (attachments != null && !attachments.isBlank()) {
+                try {
+                    redisMsg.put("attachments", JSON.parseArray(attachments, Map.class));
+                } catch (Exception ignored) {
+                }
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -498,7 +514,7 @@ public class SessionService {
      */
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
                                  String sources, String thinking, String retrieved, String artifacts,
-                                 String toolCalls) {
+                                 String toolCalls, String attachments) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -527,6 +543,7 @@ public class SessionService {
             msg.setRetrieved(retrieved);
             msg.setArtifacts(artifacts);
             msg.setToolCalls(toolCalls);
+            msg.setAttachments(attachments);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -709,6 +726,13 @@ public class SessionService {
                 map.put("toolCalls", JSON.parseArray(m.getToolCalls(), Map.class)); // 工具调用过程（历史回显）
             } catch (Exception e) {
                 // toolCalls 解析失败忽略
+            }
+        }
+        if (m.getAttachments() != null && !m.getAttachments().isBlank()) {
+            try {
+                map.put("attachments", JSON.parseArray(m.getAttachments(), Map.class)); // 附件标签（历史回显）
+            } catch (Exception e) {
+                // attachments 解析失败忽略
             }
         }
         return map;

@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = ''
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = []
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -112,7 +112,13 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId, question, images, deepThink, agentId: agentId || '', model: model || '' }),
+    body: JSON.stringify({
+      sessionId, question, images, deepThink,
+      agentId: agentId || '', model: model || '',
+      // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
+      attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
+      skills: Array.isArray(skills) && skills.length ? skills : undefined
+    }),
     signal: inner.signal
   }).then(res => {
     if (!res.ok) {
@@ -281,6 +287,8 @@ export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' }
 // ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
 /** 对话页下拉：问答用户可读的精简列表（仅 id/name/description/model/isDefault） */
 export const listAvailableAgents = () => request('/agent/available')
+/** 对话页技能菜单：未停用技能精简列表（问答用户可读） */
+export const listAvailableSkills = () => request('/skill/available')
 export const listAgents = () => request('/agent/list')
 export const listSubAgents = () => request('/agent/sub')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })

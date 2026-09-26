@@ -2,6 +2,7 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.config.AppProperties;
+import com.wisesoft.ai.dto.ChatRequest;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.util.TokenCounter;
@@ -248,6 +249,8 @@ public class RagService {
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（skill.enabled 控制，默认关） */
     private final SkillService skillService;
     private final SkillTools skillTools;
+    /** 聊天附件（文档类）：解码/解析为纯文本注入本轮上下文（图片走 images 多模态，不经此服务） */
+    private final ChatAttachmentService chatAttachmentService;
     /** SubAgent 并行编排（4.3）：多视角并行检索 + 要点提炼（agent.enabled 控制，默认关） */
     private final SubAgentOrchestrator subAgentOrchestrator;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
@@ -316,6 +319,7 @@ public class RagService {
                       BuiltinTools builtinTools,
                       SkillService skillService,
                       SkillTools skillTools,
+                      ChatAttachmentService chatAttachmentService,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
                       AgentDispatchService agentDispatchService,
@@ -342,6 +346,7 @@ public class RagService {
         this.builtinTools = builtinTools;
         this.skillService = skillService;
         this.skillTools = skillTools;
+        this.chatAttachmentService = chatAttachmentService;
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
         this.agentDispatchService = agentDispatchService;
@@ -352,12 +357,14 @@ public class RagService {
     }
 
     /**
-     * 处理用户问题（可含上传图片），通过 SSE 流式返回。
+     * 处理用户问题（可含上传图片与附件），通过 SSE 流式返回。
      * deepThink=true 时先流式输出思考过程（thinking 事件），提取检索计划后多路检索再回答。
+     * attachments 为文档类附件（服务端解析为文本注入本轮上下文）；skills 为用户本轮主动选用的技能名（全文注入 system prompt）。
      * modelOverride 为聊天页的会话级模型覆盖（引用或遗留名，仅用户手动切换时传）；userId 用于解析个人默认模型。
      * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
      */
-    public void chat(String sessionId, String question, List<String> userImages, boolean deepThink,
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
@@ -374,7 +381,8 @@ public class RagService {
         try {
             pipelineExecutor.execute(() -> {
                 try {
-                    runChat(sessionId, question, userImages, useDeepThink, agentId, modelOverride, userId, emitter);
+                    runChat(sessionId, question, userImages, attachments, skills, useDeepThink,
+                            agentId, modelOverride, userId, emitter);
                 } finally {
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
@@ -391,9 +399,10 @@ public class RagService {
     }
 
     /**
-     * 问答流水线主体（独立线程执行）：图片处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
+     * 问答流水线主体（独立线程执行）：图片/附件处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
-    private void runChat(String sessionId, String question, List<String> userImages, boolean deepThink,
+    private void runChat(String sessionId, String question, List<String> userImages,
+                         List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
@@ -452,13 +461,28 @@ public class RagService {
                     .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
                     .collect(Collectors.joining("\n"));
 
+            // 0.1 用户上传附件（文档类）：解析为纯文本注入本轮上下文。
+            //     单附件解析失败以可读错误说明占位、其余照常（不拖垮整轮）；元信息（名称/体积）随消息持久化供气泡回显
+            List<ChatAttachmentService.PreparedAttachment> preparedAtts = chatAttachmentService.prepare(attachments);
+            String attachmentText = chatAttachmentService.buildContextText(preparedAtts);
+            List<Map<String, Object>> attachmentsMeta = new ArrayList<>();
+            if (attachments != null) {
+                for (int i = 0; i < Math.min(attachments.size(), preparedAtts.size()); i++) {
+                    attachmentsMeta.add(ChatAttachmentService.metaOf(attachments.get(i), preparedAtts.get(i).size()));
+                }
+            }
+
+            // 0.2 用户本轮主动选用的技能（输入框「+」菜单）：全文注入本轮 system prompt
+            String userSkillText = buildUserSkillText(skills);
+
             // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
             //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
             if (knowledgeOff) {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
-                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, emitter, startTime,
-                        thinkingHolder, degradations, degradedCodes, agent, stageMs, resolvedModel);
+                runNoKnowledgeChat(sessionId, question, userImgs, imgDescText, attachmentText, userSkillText,
+                        attachmentsMeta, emitter, startTime, thinkingHolder, degradations, degradedCodes,
+                        agent, stageMs, resolvedModel);
                 return;
             }
 
@@ -491,7 +515,7 @@ public class RagService {
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
             if (useDeepThink && configService.getBoolean("deepReasoning.enabled")) {
-                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, emitter, resolvedModel);
+                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, attachmentText, emitter, resolvedModel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
                 if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
@@ -649,6 +673,11 @@ public class RagService {
                             skillBlock.split("\n- ").length - 1);
                 }
             }
+            // 用户本轮主动选用的技能：全文注入（区别于上面的清单渐进披露），与全局/智能体的技能开关无关——
+            // 用户显式选择是明确的当轮意图，优先于智能体的技能范围筛选
+            if (!userSkillText.isBlank()) {
+                system.append(userSkillText);
+            }
             // SubAgent 并行检索要点：作为补充资料段（不占 [N] 引用编号空间，仅辅助生成）
             if (subOutcome != null && !subOutcome.digestText().isBlank()) {
                 system.append("\n\n【并行检索要点】\n").append(subOutcome.digestText());
@@ -669,6 +698,11 @@ public class RagService {
             StringBuilder userQuestion = new StringBuilder(question);
             if (!imgDescText.isBlank()) {
                 userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            }
+            // 用户上传附件文本拼入问题（主 LLM 结合附件内容回答）
+            if (!attachmentText.isBlank()) {
+                userQuestion.append("\n\n用户上传了附件，内容如下（请结合附件内容回答问题，引用时注明来自哪个附件）：\n")
+                        .append(attachmentText);
             }
             // 思考链注入：把深度思考的推理过程（截断）作为参考注入，让"想过的"作用于"答"；
             // 明确说明必须以参考资料为准，思考只是辅助拆解
@@ -908,6 +942,7 @@ public class RagService {
             st.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
+            st.userAttachments = attachmentsMeta; // 附件元信息（随用户消息持久化，气泡回显）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1320,11 +1355,15 @@ public class RagService {
                     List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
                     String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
 
-                    // 记录对话历史（含图片与引用来源），拿到消息ID供前端反馈
+                    // 记录对话历史（含图片/附件与引用来源），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
                     List<String> userImgUrls = st.userImgs.stream().map(UserImageService.UserImage::url).toList();
+                    String attachmentsJson = (st.userAttachments == null || st.userAttachments.isEmpty())
+                            ? null : JSON.toJSONString(st.userAttachments);
+                    // 10 参重载（含 attachments）：显式传 null 占位，避免误绑定到 thinking 参数的旧重载
                     sessionService.appendMessage(st.sessionId, "user", st.question,
-                            userImgUrls.isEmpty() ? null : userImgUrls, null);
+                            userImgUrls.isEmpty() ? null : userImgUrls, null,
+                            null, null, null, null, attachmentsJson);
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
@@ -1420,6 +1459,8 @@ public class RagService {
         volatile Set<String> toolScopeDocIds;
         /** 本轮生效模型（会话覆盖 > 个人默认；智能体不绑定模型。主链路解析后回填，生成流按此发送） */
         volatile String model;
+        /** 附件元信息（[{name,mime,size}]，主链路解析后回填）：随用户消息持久化，气泡回显 */
+        volatile List<Map<String, Object>> userAttachments;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
         volatile boolean deepThink;
         /**
@@ -2048,6 +2089,7 @@ public class RagService {
      * 思考长度护栏（maxThinkingChars）：超限中断思考流但保留已收集内容继续走计划提取，不整段丢弃
      */
     private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText,
+                                            String attachmentText,
                                             SseEmitter emitter, String resolvedModel) {
         String thinkingMode = configService.get("deepReasoning.thinkingMode");
         boolean enableThinking = configService.getBoolean("deepReasoning.enableThinking");
@@ -2066,6 +2108,10 @@ public class RagService {
         StringBuilder user = new StringBuilder(question);
         if (imgDescText != null && !imgDescText.isBlank()) {
             user.append("\n\n用户上传了图片，图片内容描述如下（仅用于辅助思考，不用输出图片标记）：\n").append(imgDescText);
+        }
+        // 附件内容随思考上下文（附件是回答素材，思考阶段就应看到）
+        if (attachmentText != null && !attachmentText.isBlank()) {
+            user.append("\n\n用户上传了附件，内容如下（仅用于辅助思考）：\n").append(attachmentText);
         }
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
@@ -2261,13 +2307,40 @@ public class RagService {
     }
 
     /**
+     * 用户本轮主动选用的技能（输入框「+」菜单）：把技能全文注入本轮 system prompt。
+     * 与 promptBlock 的清单渐进披露互补：清单靠模型按需 readSkill，这里是用户显式点名、直接全文前置。
+     * 只接受存在且未停用的技能（按 frontmatter 名匹配，输入框技能列表同源）；不依赖 skill.injectEnabled 开关。
+     */
+    private String buildUserSkillText(List<String> skills) {
+        if (skills == null || skills.isEmpty()) return "";
+        Set<String> wanted = new HashSet<>(skills);
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (SkillService.Skill s : skillService.list()) {
+            if (!wanted.contains(s.name()) || skillService.isDisabled(s)) continue;
+            String content = skillService.readContent(s.dirName());
+            if (content.startsWith("错误：")) {
+                log.warn("[SKILL] 用户指定技能 {} 内容读取失败，跳过: {}", s.name(), content);
+                continue;
+            }
+            sb.append("\n### 技能：").append(s.name()).append("\n\n").append(content).append('\n');
+            n++;
+        }
+        if (n == 0) return "";
+        log.info("[SKILL] 用户指定技能注入 {} 个: {}", n, skills);
+        return "\n\n【本轮指定技能】用户在本轮消息中主动选用了以下技能，请先完整阅读其说明，再严格按技能要求处理本轮问题："
+                + sb;
+    }
+
+    /**
      * 「不使用知识库」分支（智能体 knowledgeDisabled=1）：纯角色对话，不跑改写/深度思考/检索/子代理编排。
      * 与闲聊分支的差异：① 多轮历史照常注入；② 用户手动 @ 的文档仍取块前置（手动指定优先于智能体配置）；
      * ③ 图片提问时图片描述随问题发给模型（多模态理解，不参与检索）。
      * 复用主回答流：sources/retrieved 均空 → 前端检索状态行与引用区天然不渲染。
      */
     private void runNoKnowledgeChat(String sessionId, String question, List<UserImageService.UserImage> userImgs,
-                                    String imgDescText, SseEmitter emitter, long startTime,
+                                    String imgDescText, String attachmentText, String userSkillText,
+                                    List<Map<String, Object>> attachmentsMeta, SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel) {
@@ -2277,6 +2350,10 @@ public class RagService {
                     .append("\n\n【本轮对话说明】\n")
                     .append("本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，")
                     .append("不要输出 [N] 来源标注（本轮没有参考资料）。");
+            // 用户本轮主动选用的技能：与主链路口径一致，全文注入
+            if (userSkillText != null && !userSkillText.isBlank()) {
+                system.append(userSkillText);
+            }
             List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId,
                     configService.getInt("chat.historyRounds", 5));
             if (recentHistory == null) {
@@ -2288,10 +2365,13 @@ public class RagService {
                 system.append("\n\n对话历史：\n").append(historyText);
             }
 
-            // 拼装用户消息：问题 + 图片描述（本轮无知识库，无参考资料段）
+            // 拼装用户消息：问题 + 图片描述（本轮无知识库，无参考资料段）+ 附件内容
             StringBuilder userQuestion = new StringBuilder(question);
             if (imgDescText != null && !imgDescText.isBlank()) {
                 userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            }
+            if (attachmentText != null && !attachmentText.isBlank()) {
+                userQuestion.append("\n\n用户上传了附件，内容如下（请结合附件内容回答问题）：\n").append(attachmentText);
             }
             String user = userQuestion.toString();
 
@@ -2311,6 +2391,7 @@ public class RagService {
             // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;
+            st.userAttachments = attachmentsMeta; // 附件元信息随用户消息持久化（气泡回显）
             st.contextTokens = 0;
             st.budgetTokens = 0;
             st.contextHits = 0;

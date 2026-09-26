@@ -22,6 +22,14 @@
                 <img v-for="(u, ui) in m.images" :key="ui" :src="resolveImg(u)" class="msg-img"
                      :alt="'上传图片' + (ui + 1)" @click="openPreviewFromMsg(m, ui)" @error="onImgError" />
               </div>
+              <div v-if="m.role === 'user' && m.attachments && m.attachments.length" class="msg-files">
+                <span v-for="(a, fi) in m.attachments" :key="fi" class="msg-file"
+                      :title="(a.mime || '附件') + (a.size ? ' · ' + fmtSize(a.size) : '')">
+                  <paper-clip-outlined class="msg-file-ic" />
+                  <span class="msg-file-name">{{ a.name }}</span>
+                  <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
+                </span>
+              </div>
               <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
                 <div class="think-head" @click="m.thinkOpen = !m.thinkOpen">
                   <down-outlined class="think-arrow" />
@@ -163,8 +171,23 @@
       </div>
 
       <!-- 输入区：大圆角卡片（文本上、工具行下） -->
-      <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropImages">
-        <div v-if="dragOver" class="drop-overlay">松开以添加图片</div>
+      <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
+        <div v-if="dragOver" class="drop-overlay">松开以添加图片或附件</div>
+        <div v-if="pendingFiles.length" class="pending-files">
+          <div v-for="(f, fi) in pendingFiles" :key="fi" class="pending-file" :title="f.name">
+            <file-text-outlined class="pending-file-ic" />
+            <span class="pending-file-name">{{ f.name }}</span>
+            <span class="pending-file-size">{{ fmtSize(f.size) }}</span>
+            <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
+          </div>
+        </div>
+        <div v-if="pickedSkills.length" class="at-chips">
+          <span v-for="n in pickedSkills" :key="n" class="at-chip skill-chip">
+            <span class="skill-chip-ava" :style="skillAvaStyle(n)">{{ n.slice(0, 1) }}</span>
+            <span class="at-chip-name">{{ n }}</span>
+            <span class="at-chip-del" title="移除该技能" @click="toggleSkill(n)">×</span>
+          </span>
+        </div>
         <div v-if="pendingImages.length" class="pending-imgs">
           <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
             <img :src="p.dataUrl" alt="待发送图片" @click="previewPendingImage(pi)" />
@@ -227,9 +250,40 @@
                   </div>
                 </template>
               </a-dropdown>
-              <a-tooltip title="上传图片（最多 5 张）">
-                <button class="app-icon-btn" @click="pickImages"><picture-outlined /></button>
-              </a-tooltip>
+              <a-dropdown v-model:open="addMenuOpen" :trigger="['click']" placement="topLeft">
+                <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addMenuOpen || pickedSkills.length }"
+                        title="添加附件 / 选用技能">
+                  <plus-outlined />
+                </button>
+                <template #overlay>
+                  <div class="add-menu">
+                    <div class="add-menu-head"><span>添加</span></div>
+                    <div class="add-mi" @click="pickAttachments">
+                      <span class="add-mi-ava"><paper-clip-outlined /></span>
+                      <div class="add-mi-text">
+                        <span class="add-mi-name">附件</span>
+                        <span class="add-mi-desc">上传 PDF / Word / Excel / PPT / 文本等文件，解析后供模型阅读（最多 5 个，单个 15MB）</span>
+                      </div>
+                    </div>
+                    <template v-if="skillList.length">
+                      <div class="add-menu-sec">技能</div>
+                      <div class="add-menu-list">
+                        <div v-for="s in skillList" :key="s.name" class="add-mi"
+                             :class="{ active: pickedSkills.includes(s.name) }" @click="toggleSkill(s.name)">
+                          <span class="add-mi-ava skill-ava" :style="skillAvaStyle(s.name)">{{ s.name.slice(0, 1) }}</span>
+                          <div class="add-mi-text">
+                            <span class="add-mi-name">{{ s.name }}</span>
+                            <span v-if="s.description" class="add-mi-desc">{{ s.description }}</span>
+                          </div>
+                          <check-outlined v-if="pickedSkills.includes(s.name)" class="agent-mi-check" />
+                        </div>
+                      </div>
+                    </template>
+                    <div v-else class="add-mi-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
+                    <div class="add-menu-tip">选中技能仅对本轮消息生效</div>
+                  </div>
+                </template>
+              </a-dropdown>
               <a-tooltip v-if="thinkCap.visible"
                          :title="thinkCap.locked ? '该模型始终深度思考' : (deepThinkOn ? '深度思考：已开启' : '深度思考：已关闭')">
                 <button class="app-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }"
@@ -246,7 +300,7 @@
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
           </div>
         </div>
-        <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onFilesChange" />
+        <input ref="attachInput" type="file" multiple style="display:none" @change="onAttachChange" />
       </div>
     </div>
 
@@ -380,11 +434,11 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
-         DeleteOutlined, BugOutlined, EditOutlined, PictureOutlined, BulbOutlined, PauseCircleOutlined,
+         DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
-         getUserPreference } from '../api'
+         listAvailableSkills, getUserPreference } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -456,7 +510,32 @@ const toggleDeepThink = () => {
   deepThinkMap.value = { ...deepThinkMap.value, [effectiveModel.value]: deepThinkOn.value ? 0 : 1 }
   try { localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value)) } catch (e) { /* 存储不可用忽略 */ }
 }
-const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length))
+const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
+
+// ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
+const skillList = ref([])                 // 可用技能（后端 /skill/available：未停用技能精简列表）
+const pickedSkills = ref([])              // 本轮选用的技能名（发送后清空）
+const addMenuOpen = ref(false)
+const SKILL_AVA_COLORS = ['#e8f1ff', '#fff3e0', '#e8f5e9', '#fdeaf3', '#ede7f6', '#e0f4f1']
+const loadSkills = async () => {
+  try {
+    const r = await listAvailableSkills()
+    skillList.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
+  } catch (e) { /* 接口不可用时静默：菜单只显示附件入口 */ }
+}
+const toggleSkill = name => {
+  const i = pickedSkills.value.indexOf(name)
+  if (i >= 0) pickedSkills.value.splice(i, 1)
+  else {
+    if (pickedSkills.value.length >= 3) { message.warning('一次最多选用 3 个技能'); return }
+    pickedSkills.value.push(name)
+  }
+}
+const skillAvaStyle = name => {
+  const i = skillList.value.findIndex(s => s.name === name)
+  const color = SKILL_AVA_COLORS[(i < 0 ? name.length : i) % SKILL_AVA_COLORS.length]
+  return { background: color }
+}
 
 // ==================== 智能体（4.1）：对话页下拉切换，按会话记忆 ====================
 const agentList = ref([])                       // 全部主智能体
@@ -821,6 +900,7 @@ const switchSession = async sid => {
           messageId: m.messageId || m.id || null,
           fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
           images: Array.isArray(m.images) ? m.images : [],
+          attachments: Array.isArray(m.attachments) ? m.attachments : [],
           sources: Array.isArray(m.sources) ? m.sources : [],
           related: [],
           thinking: m.thinking || '',
@@ -918,18 +998,8 @@ const handleDeleteSession = async sid => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// ==================== 图片上传（选择/拖入/粘贴，压缩为 dataURL） ====================
+// ==================== 图片上传（粘贴，压缩为 dataURL） ====================
 const pendingImages = ref([])
-const fileInput = ref(null)
-const pickImages = () => {
-  if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); return }
-  fileInput.value?.click()
-}
-const onFilesChange = e => {
-  const files = Array.from(e.target.files || [])
-  e.target.value = ''
-  addImageFiles(files)
-}
 const compressImage = file => new Promise((resolve, reject) => {
   const img = new Image()
   const url = URL.createObjectURL(file)
@@ -978,11 +1048,11 @@ const onDragEnter = e => {
   }
 }
 const onDragLeave = () => { if (--dragDepth <= 0) { dragDepth = 0; dragOver.value = false } }
-const onDropImages = e => {
+const onDropFiles = e => {
   dragDepth = 0
   dragOver.value = false
   if (loading.value) return
-  addImageFiles(Array.from(e.dataTransfer?.files || []))
+  addFiles(Array.from(e.dataTransfer?.files || []))
 }
 const onPasteImages = e => {
   const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
@@ -991,11 +1061,73 @@ const onPasteImages = e => {
   addImageFiles(imgs)
 }
 
+// ==================== 附件上传（「+」菜单选择/拖入，转 dataURL 随请求发送，服务端解析文本） ====================
+const MAX_FILES = 5
+const MAX_FILE_MB = 15
+// 与后端 ChatAttachmentService 的类型白名单一致（doc/ppt 老格式未引入 scratchpad，不支持）
+const SUPPORTED_EXTS = ['pdf', 'docx', 'xls', 'xlsx', 'pptx', 'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log',
+  'xml', 'yml', 'yaml', 'html', 'htm', 'java', 'js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'sql', 'sh', 'bat',
+  'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'css', 'scss', 'less', 'properties', 'ini', 'conf', 'toml']
+const pendingFiles = ref([])
+const attachInput = ref(null)
+const pickAttachments = () => {
+  addMenuOpen.value = false
+  if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); return }
+  attachInput.value?.click()
+}
+const onAttachChange = e => {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+  addFiles(files)
+}
+const extOf = name => {
+  const dot = (name || '').lastIndexOf('.')
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase()
+}
+const fmtSize = n => {
+  if (!n && n !== 0) return ''
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  return (n / 1024 / 1024).toFixed(1) + ' MB'
+}
+const readFileDataUrl = file => new Promise((resolve, reject) => {
+  const r = new FileReader()
+  r.onload = () => resolve(r.result)
+  r.onerror = () => reject(new Error('读取失败'))
+  r.readAsDataURL(file)
+})
+/** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致） */
+const addFiles = files => {
+  for (const f of files) {
+    if (f.type.startsWith('image/')) {
+      if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); continue }
+      compressImage(f).then(dataUrl => pendingImages.value.push({ dataUrl }))
+        .catch(() => message.error(`图片处理失败: ${f.name}`))
+      continue
+    }
+    if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); break }
+    if (!SUPPORTED_EXTS.includes(extOf(f.name))) {
+      message.warning(`暂不支持的附件类型：${f.name}（支持 PDF / Word / Excel / PPT / 文本与代码文件）`)
+      continue
+    }
+    if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${f.name}`); continue }
+    readFileDataUrl(f).then(dataUrl => {
+      if (pendingFiles.value.length >= MAX_FILES) return
+      pendingFiles.value.push({ name: f.name, size: f.size, mime: f.type || '', dataUrl })
+    }).catch(() => message.error(`附件读取失败: ${f.name}`))
+  }
+}
+const removePendingFile = i => pendingFiles.value.splice(i, 1)
+
 // ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
 const send = () => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
-  if ((!q && !imgs.length) || loading.value) return
+  // 附件随请求发送（服务端解析文本注入本轮上下文）；技能仅对本轮生效
+  const atts = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, data: f.dataUrl }))
+  const attsMeta = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, size: f.size }))
+  const skills = [...pickedSkills.value]
+  if ((!q && !imgs.length && !atts.length) || loading.value) return
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
   if (!effectiveModel.value) {
     message.warning('未指定模型：请在右上角选择模型，或在个人设置/智能体中配置默认模型')
@@ -1003,9 +1135,13 @@ const send = () => {
   }
   text.value = ''
   pendingImages.value = []
+  pendingFiles.value = []
+  pickedSkills.value = []
   const deep = deepThinkOn.value
-  messages.value.push({ role: 'user', content: q, images: imgs, deepThink: deep, time: Date.now() })
-  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep)
+  // attachData 留在内存消息上：重新生成/自动重试时可原样重发（历史回放无数据，行为与图片 data: 口径一致）
+  messages.value.push({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
+                        skills, deepThink: deep, time: Date.now() })
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills)
 }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
@@ -1029,7 +1165,8 @@ const fmtMsgTime = ts => {
   return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
 }
 
-const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false) => {
+const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false,
+                      attachments = [], skills = []) => {
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
     messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] })
@@ -1044,6 +1181,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
   sendQuestion(currentSessionId.value, question, imgs, {
     signal: abortController.value.signal,
     deepThink,
+    attachments,
+    skills,
     agentId: currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''),
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
     model: currentOverrideModel.value || '',
@@ -1176,7 +1315,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         scroll()
         setTimeout(() => {
           if (idx < messages.value.length && messages.value[idx]?.role === 'ai' && messages.value[idx]?.loading) {
-            streamAnswer(question, imgs, idx, false, 0, deepThink)
+            streamAnswer(question, imgs, idx, false, 0, deepThink, attachments, skills)
           } else {
             if (messages.value[idx]) messages.value[idx].retrying = false
             loading.value = false
@@ -1203,7 +1342,10 @@ const regenerate = mi => {
     if (messages.value[i].role === 'user') {
       const imgs = (messages.value[i].images || []).filter(u => u.startsWith('data:'))
       const deep = !!messages.value[i].deepThink
-      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep)
+      // 附件/技能随内存消息重发（历史回放的消息无 attachData，则不带附件重试）
+      const atts = Array.isArray(messages.value[i].attachData) ? messages.value[i].attachData : []
+      const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
+      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep, atts, skills)
       return
     }
   }
@@ -1350,6 +1492,7 @@ onMounted(async () => {
   window.addEventListener('paste', onGlobalPaste)
   await loadSessions()
   loadAgents()       // 智能体下拉候选（不阻塞首屏）
+  loadSkills()       // 技能菜单候选（输入框「+」菜单，不阻塞首屏）
   const sid = route.query.sid
   if (sid) {
     await switchSession(sid)
@@ -1663,6 +1806,69 @@ onMounted(async () => {
   font-size: 12px; color: var(--app-accent); cursor: pointer;
 }
 .agent-menu-foot:hover { background: var(--app-accent-weak); }
+
+/* 输入框「+」菜单：附件 + 技能（视觉沿用智能体菜单的行式布局） */
+.add-menu {
+  min-width: 340px; max-width: 420px; background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: 14px; padding: 6px;
+  box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
+}
+.add-menu-head { padding: 8px 10px 6px; font-size: 12px; font-weight: 500; color: var(--app-text); }
+.add-menu-sec { padding: 8px 10px 2px; font-size: 11px; color: var(--app-text3); }
+.add-menu-list { max-height: 260px; overflow-y: auto; }
+.add-mi { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+.add-mi:hover { background: #f5f7fa; }
+.add-mi.active { background: var(--app-accent-weak); }
+.add-mi-ava {
+  flex: none; width: 26px; height: 26px; border-radius: 8px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 13px;
+  background: #eef1f5; color: var(--app-text3);
+}
+.add-mi.active .add-mi-ava { background: var(--app-accent-weak); color: var(--app-accent); }
+.skill-ava { font-size: 12px; font-weight: 600; }
+.add-mi-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.add-mi-name {
+  font-size: 13px; line-height: 20px; color: var(--app-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.add-mi.active .add-mi-name { color: var(--app-accent); font-weight: 500; }
+.add-mi-desc {
+  font-size: 11px; color: var(--app-text3); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.add-mi-empty { padding: 12px 10px; font-size: 12px; color: var(--app-text3); text-align: center; }
+.add-menu-tip { padding: 7px 10px 4px; border-top: 1px solid var(--app-border); margin-top: 4px; font-size: 11px; color: var(--app-text3); }
+
+/* 待发送附件条 + 技能选中标签 */
+.pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: 860px; }
+.pending-file {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
+  padding: 5px 8px; border-radius: 8px; font-size: 12px;
+  background: #f5f6f8; border: 1px solid var(--app-border); color: var(--app-text);
+}
+.pending-file-ic { flex: none; color: var(--app-accent); font-size: 14px; }
+.pending-file-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pending-file-size { flex: none; font-size: 11px; color: var(--app-text3); }
+.pending-file-del {
+  flex: none; cursor: pointer; font-size: 14px; line-height: 1; color: var(--app-text3);
+  padding: 0 1px; border-radius: 4px;
+}
+.pending-file-del:hover { color: var(--app-danger); }
+.skill-chip-ava {
+  flex: none; width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, .7);
+}
+
+/* 气泡内附件标签（历史回显） */
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-file {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 260px;
+  padding: 4px 8px; border-radius: 8px; font-size: 12px;
+  background: rgba(255, 255, 255, .55); border: 1px solid var(--app-border);
+}
+.msg-file-ic { flex: none; color: var(--app-accent); font-size: 13px; }
+.msg-file-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-file-size { flex: none; font-size: 11px; opacity: .65; }
 
 /* 状态栏：当前智能体卡片 */
 .rp-agent { display: flex; align-items: center; gap: 6px; }

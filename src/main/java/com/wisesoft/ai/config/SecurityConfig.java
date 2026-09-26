@@ -77,6 +77,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
+        // 对话页技能菜单：只读精简列表（未停用技能的名称/描述/来源，不含正文），问答用户可用；
+        // 管理端 /api/ai/skill/list、/skill/detail 等仍走管理员判定。
+        if ("GET".equals(method) && path.equals("/api/ai/skill/available")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;
         // 个人偏好（本人默认模型）：读改自己的设置

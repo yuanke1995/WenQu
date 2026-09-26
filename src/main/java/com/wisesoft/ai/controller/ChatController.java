@@ -9,6 +9,7 @@ import com.wisesoft.ai.dto.SessionInfo;
 import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.service.ImageUrlSigner;
+import com.wisesoft.ai.service.ChatAttachmentService;
 import com.wisesoft.ai.service.QaLogService;
 import com.wisesoft.ai.service.RagService;
 import com.wisesoft.ai.service.ConfigService;
@@ -97,6 +98,33 @@ public class ChatController {
             }
         }
 
+        // 附件上限：数量与单件体积（同图片口径防 base64 洪峰）；类型白名单在发送前就拒绝（避免白传体积）
+        List<ChatRequest.Attachment> attachments = request.getAttachments();
+        if (attachments != null && !attachments.isEmpty()) {
+            int maxAtt = Math.max(1, configService.getInt("chat.maxAttachmentsPerMessage", 5));
+            if (attachments.size() > maxAtt) {
+                throw new BizException("一次最多上传 " + maxAtt + " 个附件");
+            }
+            int maxAttMb = Math.max(1, configService.getInt("chat.maxAttachmentMb", 15));
+            long maxBase64Chars = maxAttMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
+            for (ChatRequest.Attachment att : attachments) {
+                if (att == null || att.getName() == null || att.getName().isBlank()
+                        || att.getData() == null || att.getData().isBlank()) {
+                    throw new BizException("附件信息不完整（缺少文件名或内容）");
+                }
+                if (!ChatAttachmentService.supportedExt(att.getName())) {
+                    throw new BizException("暂不支持的附件类型：" + att.getName()
+                            + "（支持 PDF / Word / Excel / PPT / 文本与代码文件）");
+                }
+                String data = att.getData();
+                int comma = data.indexOf(',');
+                long chars = data.length() - (data.startsWith("data:") && comma > 0 ? comma + 1 : 0);
+                if (chars > maxBase64Chars) {
+                    throw new BizException("单个附件不能超过 " + maxAttMb + "MB：" + att.getName());
+                }
+            }
+        }
+
         String sessionId = request.getSessionId();
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = sessionService.createSession(userId);
@@ -117,8 +145,8 @@ public class ChatController {
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
         SseEmitter emitter = new SseEmitter(sseTimeout);
-        ragService.chat(sessionId, question, images, request.isDeepThink(), request.getAgentId(),
-                request.getModel(), userId, emitter);
+        ragService.chat(sessionId, question, images, attachments, request.getSkills(),
+                request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter);
         return emitter;
     }
 

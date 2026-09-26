@@ -25,7 +25,8 @@ import java.util.Map;
  * 技能（Skills）管理接口（管理员）：列表 / 详情 / 新建 / 停用 / 删除。
  *
  * <p>技能是「目录 + SKILL.md」的纯文本能力包：system prompt 只注入名称与描述，
- * 模型按需用 readSkill 工具取全文。本控制器不在用户白名单内，因此天然需要管理员身份。
+ * 模型按需用 readSkill 工具取全文。/available 为问答用户白名单端点（对话页技能菜单），
+ * 其余管理端点不在用户白名单内，天然需要管理员身份。
  *
  * @author yuanke
  */
@@ -36,6 +37,21 @@ import java.util.Map;
 public class SkillController {
 
     private final SkillService skillService;
+
+    @Operation(summary = "对话页可用技能", description = "未停用技能的精简列表（name/description/source），问答用户可读；输入框「+」菜单数据源")
+    @GetMapping("/available")
+    public ResultJson available() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (SkillService.Skill s : skillService.list()) {
+            if (skillService.isDisabled(s)) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", s.name());
+            m.put("description", s.description());
+            m.put("source", s.source());
+            out.add(m);
+        }
+        return ResultJson.ok(out);
+    }
 
     @Operation(summary = "技能列表", description = "内置 + 用户技能（用户层同名覆盖），不含正文")
     @GetMapping("/list")

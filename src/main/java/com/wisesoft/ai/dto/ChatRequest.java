@@ -26,6 +26,28 @@ public class ChatRequest {
     @Schema(description = "用户上传图片（data URL 格式，如 data:image/jpeg;base64,xxx）")
     private List<String> images;
 
+    @Schema(description = "用户上传附件（文档类，非图片）：名称/类型/内容（data URL），内容由服务端解析为文本注入本轮上下文")
+    private List<Attachment> attachments;
+
+    @Schema(description = "本轮指定使用的技能名列表（输入框「+」菜单主动选用；注入技能全文到本轮 system prompt）")
+    private List<String> skills;
+
+    /**
+     * 聊天附件（文档类）：图片走 images（多模态 data URL），其余文件走这里由服务端解析文本。
+     */
+    @Data
+    @Schema(description = "聊天附件")
+    public static class Attachment {
+        @Schema(description = "文件名（含扩展名）", example = "需求说明.docx")
+        private String name;
+
+        @Schema(description = "MIME 类型", example = "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        private String mime;
+
+        @Schema(description = "文件内容（data URL 或裸 base64）")
+        private String data;
+    }
+
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")
     private boolean deepThink;
 

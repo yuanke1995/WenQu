@@ -45,6 +45,9 @@ public class Message {
     /** 工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]) */
     private String toolCalls;
 
+    /** 附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体，气泡回显) */
+    private String attachments;
+
     /** 消息序号 (会话内递增) */
     private Integer sequence;
 
