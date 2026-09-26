@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 /**
- * 配置 schema 一致性校验
+ * 配置字段定义一致性校验
  *
- * 背景：schema 化之后 configSchema.js 成为唯一真源（Settings.vue 模板里已无字段信息），
- * 生成器无法再从模板重新提取，因此本脚本改为「校验器」：以后端 ConfigService.java 的
- * EDITABLE / defaults() / TIER 为准，检查 schema 是否漏配、多余或 tier 不一致。
+ * schema 化之后字段定义只有一处：src/main/resources/config-schema.json（后端启动加载，
+ * 既下发给前端渲染设置页，也用于后端保存校验），因此原先"前端 schema ↔ 后端白名单 / TIER"
+ * 的双向比对已无必要（那时的比对靠正则解析源码，连 tool.knowledgeRetrieval.enabled 这种
+ * 带点的键都解析不了）。现在只剩一处真源漂移风险需要守住：
+ *
+ *   字段定义 ↔ ConfigService.defaults()
+ *
+ * snapshot() 只回显 defaults() 里存在的键，所以「字段有、defaults 没有」会导致该配置项
+ * 永远回显表单默认值（用户改了也看不出变化）；反过来「defaults 有、字段没有」属正常的
+ * 只读/内部配置（如 embedding.dimensions、eval.lastReport），只做提示不算错误。
  *
  * 用法：node scripts/gen_config_schema.js
  */
@@ -13,85 +20,55 @@ const path = require('path')
 
 const ROOT = path.resolve(__dirname, '..')
 const javaPath = ROOT + '/src/main/java/com/wisesoft/ai/service/ConfigService.java'
-const schemaPath = ROOT + '/web/src/configSchema.js'
+const schemaPath = ROOT + '/src/main/resources/config-schema.json'
+
+const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'))
 const java = fs.readFileSync(javaPath, 'utf8')
-const schema = fs.readFileSync(schemaPath, 'utf8')
 
-// ---- 后端：EDITABLE 白名单 ----
-const editable = [...java.slice(0, java.indexOf('Map<String, Integer> TIER'))
-  .matchAll(/Map\.entry\("([a-zA-Z.]+)",/g)].map(m => m[1])
-
-// ---- 后端：defaults() 默认值 ----
 const dStart = java.indexOf('private Map<String, String> defaults()')
 const dEnd = java.indexOf('private void syncProperties()')
-const defaults = {}
-for (const m of java.slice(dStart, dEnd).matchAll(/d\.put\("([a-zA-Z.]+)",\s*"?([^")]*)/g)) {
-  defaults[m[1]] = m[2].trim()
-}
+const defaults = new Set()
+for (const m of java.slice(dStart, dEnd).matchAll(/d\.put\("([a-zA-Z.]+)"/g)) defaults.add(m[1])
 
-// ---- 后端：TIER ----
-const tierBlock = java.slice(java.indexOf('Map<String, Integer> TIER'), java.indexOf('private final AiConfigMapper'))
-const TIER = {}
-for (const m of tierBlock.matchAll(/Map\.entry\("([a-zA-Z.]+)",\s*([123])\)/g)) TIER[m[1]] = Number(m[2])
+const fieldKeys = schema.fields.map(f => f.backendKey)
+const dupes = [...new Set(fieldKeys.filter((k, i) => fieldKeys.indexOf(k) !== i))]
 
-// ---- schema 字段 ----
-const fields = []
-for (const line of schema.split('\n')) {
-  const m = line.match(/^\s*\{ panel: "([a-zA-Z]+)", section: (-?\d+), group: "([a-zA-Z]+)", key: "([a-zA-Z]+)", path: "([a-zA-Z.]+)".*tier: (\d)/)
-  if (m) {
-    // 提交到后端的键名可能是 submitKey（如 upload.maxFileSizeMB → upload.maxFileSize）
-    const sk = line.match(/submitKey: "([a-zA-Z]+)"/)
-    fields.push({ panel: m[1], section: +m[2], group: m[3], key: m[4], path: m[5], tier: +m[6],
-      backendKey: m[3] + '.' + (sk ? sk[1] : m[4]) })
-  }
-}
-const byFull = new Map()
-for (const f of fields) byFull.set(f.backendKey, f)
+console.log('字段定义：' + fieldKeys.length + ' 项 / ' + schema.panels.length + ' 面板 / 文案 ' +
+  Object.keys(schema.tips || {}).length + ' 条 / 核心项 ' + (schema.corePaths || []).length + ' 个')
+console.log('defaults()：' + defaults.size + ' 项')
+console.log('')
 
 let problems = 0
 
-console.log('后端 EDITABLE：' + editable.length + ' 项')
-console.log('schema 字段：' + fields.length + ' 项')
-console.log('')
-
-const missing = editable.filter(k => !byFull.has(k))
-if (missing.length) {
+if (dupes.length) {
   problems++
-  console.log('【后端有、schema 没有】这些配置项不会出现在设置页（不会渲染也不会提交）：')
-  for (const k of missing) {
-    console.log('  ' + k.padEnd(46) + ' 默认值=' + (defaults[k] !== undefined ? defaults[k] : '(defaults 中缺失，snapshot 不会返回)'))
-  }
+  console.log('【字段 backendKey 重复】：')
+  for (const k of dupes) console.log('  ' + k)
   console.log('')
 }
 
-const extra = [...byFull.keys()].filter(k => !editable.includes(k))
-  .map(k => k + (byFull.get(k).key !== k.split('.')[1] ? '（schema 字段 ' + byFull.get(k).group + '.' + byFull.get(k).key + '）' : ''))
-if (extra.length) {
+const noDefault = fieldKeys.filter(k => !defaults.has(k))
+if (noDefault.length) {
   problems++
-  console.log('【schema 有、后端 EDITABLE 没有】提交时会被后端静默丢弃：')
-  for (const k of extra) console.log('  ' + k)
+  console.log('【字段有、defaults() 没有】该配置项回显不出库中值（设置页只会显示表单默认值）：')
+  for (const k of noDefault) console.log('  ' + k)
   console.log('')
 }
 
-const tierDiff = []
-for (const [k, f] of byFull) {
-  const want = TIER[k] !== undefined ? TIER[k] : 2
-  if (f.tier !== want) tierDiff.push(k + '（schema=' + f.tier + ' 后端=' + want + '）')
-}
-if (tierDiff.length) {
-  problems++
-  console.log('【tier 与后端不一致】：')
-  for (const t of tierDiff) console.log('  ' + t)
+const noField = [...defaults].filter(k => !fieldKeys.includes(k))
+if (noField.length) {
+  console.log('【defaults() 有、字段没有】属只读/内部配置（不经设置页下发，仅提示）：')
+  for (const k of noField) console.log('  ' + k)
   console.log('')
 }
 
-const noPath = fields.filter(f => !f.path)
+const noPath = schema.fields.filter(f => !f.path)
 if (noPath.length) {
   problems++
-  console.log('【缺少 path】会导致 buildDefaultForm 崩溃：')
-  for (const f of noPath) console.log('  ' + f.group + '.' + f.key)
+  console.log('【字段缺少 path】会导致 buildDefaultForm 崩：')
+  for (const f of noPath) console.log('  ' + f.backendKey)
   console.log('')
 }
 
-if (!problems) console.log('一致，无问题')
+if (!problems) console.log('字段定义与 defaults() 一致，无问题')
 process.exit(problems ? 1 : 0)

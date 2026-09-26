@@ -34,11 +34,22 @@ public class ConfigController {
     private final RerankService rerankService;
     private final KeywordIndexService keywordIndexService;
     private final ConnectivityProbeService connectivityProbeService;
+    private final com.wisesoft.ai.config.ConfigSchemaService configSchemaService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
     @GetMapping
     public ResultJson getConfig() {
         return ResultJson.ok(configService.snapshot());
+    }
+
+    /**
+     * 配置字段定义（设置页渲染 + 后端保存校验的唯一定义源）。
+     * <p>前端据此渲染表单（不再内置字段副本），字段的属性/范围/文案与后端校验规则来自同一份定义。
+     */
+    @Operation(summary = "获取配置字段定义", description = "面板、字段（类型/范围/默认值/条件显隐/文案）与核心项清单")
+    @GetMapping("/schema")
+    public ResultJson schema() {
+        return ResultJson.ok(configSchemaService.describe());
     }
 
     /**

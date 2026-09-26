@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,207 +40,9 @@ import java.util.Set;
 @Service
 public class ConfigService {
 
-    /** 可编辑白名单（模型网关三要素已迁至「模型供应商」页：chat/vision/embedding/rerank 的
-     *  baseUrl/apiKey/路径不再可编辑，模型键存引用 {providerId}/{modelId}，遗留纯模型名兼容；
-     *  chat.model 已退役，智能体亦不绑定模型——聊天模型解析链止于「会话覆盖 > 个人默认」） */
-    private static final Map<String, String> EDITABLE = Map.ofEntries(
-            Map.entry("chat.temperature", "回答温度(0~2)"),
-            Map.entry("chat.systemPrompt", "AI助手系统提示词（角色与回答风格）"),
-            Map.entry("chat.pipelineThreads", "问答流水线线程数(保存即生效)"),
-            Map.entry("chat.streamRetryCount", "主 LLM 流式中断自动重试次数(未输出token时,0=关闭)"),
-            Map.entry("chat.sseTimeoutMs", "问答 SSE 超时(毫秒,默认300000)"),
-            Map.entry("chat.showDebugDegradations", "回答提示显示调试级降级信息（默认关：只显示用户级）"),
-            Map.entry("chat.retrievalDebugEnabled", "检索调试入口（内部排障用，默认隐藏；开启后回答操作菜单显示「检索调试」）"),
-            Map.entry("chat.historyRounds", "多轮记忆注入轮数（问答时注入最近几轮对话作为上下文）"),
-            Map.entry("chat.remainTokenFloor", "上下文填充保留下限(token)：预算扣掉固定部分后至少保留该值给知识块"),
-            Map.entry("chat.truncateFallbackChars", "知识块超预算截断兜底字符数(块级截断每块仍保留的最小片段)"),
-            Map.entry("vision.enabled", "视觉模型总开关（false 时图片不生成描述）"),
-            Map.entry("vision.prompt", "视觉识别提示词"),
-            Map.entry("vision.concurrency", "图片描述并发数（保存即生效）"),
-            Map.entry("vision.userImageConcurrency", "用户上传图片识别并发数（保存即生效）"),
-            Map.entry("vision.descCacheVersion", "图片描述缓存版本(改动后重解析全量重新描述)"),
-            Map.entry("vision.descCacheTtlDays", "图片描述缓存有效期(天,0=不过期)"),
-            Map.entry("chunk.maxChunks", "单文档最大知识块数(0=不限制)"),
-            Map.entry("chunk.maxImages", "单文档最多提取图片数(0=不限制)"),
-            Map.entry("chunk.overlap", "分块重叠字符数(0=关闭)"),
-            Map.entry("chunk.structural", "结构感知切分(标题/段落边界+章节路径注入,需重解析)"),
-            Map.entry("chunk.structuralRatio", "结构切分边界阈值比例(0~1,达到maxSize×比例优先段落断块)"),
-            Map.entry("upload.maxFileSize", "文档上传大小上限(字节,保存即生效)"),
-            Map.entry("retrieval.vectorWeight", "混合检索：向量权重(0~1)"),
-            Map.entry("retrieval.keywordWeight", "混合检索：关键词权重(0~1)"),
-            Map.entry("context.modelWindows", "上下文：模型窗口映射（模型名=token,逗号分隔）"),
-            Map.entry("context.defaultWindowTokens", "上下文：模型默认窗口(token)"),
-            Map.entry("context.safetyFactor", "上下文：窗口安全系数(0~1)"),
-            Map.entry("context.costCapTokens", "上下文：成本软上限(token,0=不限制)"),
-            Map.entry("context.maxOutputTokens", "上下文：输出限制(token)"),
-            Map.entry("context.historyMaxTokens", "上下文：对话历史注入上限(token)"),
-            Map.entry("context.historyPerMsgChars", "上下文：单条历史截断(字符)"),
-            Map.entry("context.snippetWindowChars", "上下文：知识块命中片段窗口(字符,0=整块)"),
-            Map.entry("context.maxContextHits", "上下文：知识块填充上限(块)"),
-            Map.entry("context.dedupEnabled", "上下文：信息增益去冗余（跳过与已选块语义重复的候选，防同一操作多块重复进上下文）"),
-            Map.entry("context.dedupThreshold", "上下文：去冗余词元重叠阈值(0~1，默认0.45，越高越宽松)"),
-            Map.entry("context.dedupPathThreshold", "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)"),
-            Map.entry("chat.citationCheckEnabled", "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）"),
-            Map.entry("deepReasoning.enabled", "深度思考：总开关"),
-            Map.entry("deepReasoning.autoRoute", "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）"),
-            Map.entry("rerank.enabled", "重排：是否启用（需先启动本地 reranker 服务）"),
-            Map.entry("retrieval.vecThreshold", "检索：向量相似度下限(0~1，评估对比后可应用)"),
-            Map.entry("retrieval.keywordLimit", "检索：关键词召回词数上限"),
-            Map.entry("retrieval.vectorTopK", "检索：向量召回 topK（评估对比后可应用）"),
-            Map.entry("retrieval.searchTimeoutMs", "检索：混合检索总超时(ms,含关键词并行)"),
-            Map.entry("keyword.engine", "关键词引擎：mysql / meilisearch（切换前先探测并重建索引）"),
-            Map.entry("keyword.baseUrl", "关键词引擎：Meilisearch 服务地址"),
-            Map.entry("keyword.apiKey", "关键词引擎：Meilisearch master key（RSA 加密入库,留空回退环境变量 AI_MEILI_KEY）"),
-            Map.entry("ratelimit.enabled", "接口限流总开关（Redis 固定窗口，按用户/IP）"),
-            // ===== 以下为「代码早已读取、此前未开放到设置页」的参数（补白名单，无需改读取点）=====
-            Map.entry("images.chatCleanupIntervalMs", "聊天图片：清理任务执行间隔(ms,默认86400000=每天)"),
-            Map.entry("images.chatRetentionMillis", "聊天图片：保留时长(ms,默认604800000=7天；超期清理)"),
-            // ===== 以下为「原由 ai-app.* yml 读取、设置页不可改」的参数：开放后由 syncProperties 回写到 AppProperties =====
-            Map.entry("chunk.maxSize", "文档解析：单块最大字符数(分块粒度，影响检索精度与 embedding 成本；改后需重解析生效)"),
-            Map.entry("chunk.headingDepth", "文档解析：章节标题识别上限层级(1~6；调大后更深层的小节/条目标题独立成块并进章节路径，改后需重解析生效)"),
-            Map.entry("images.maxWidth", "图片：压缩后最长边像素(0=不压缩；影响视觉识别清晰度与成本)"),
-            Map.entry("images.quality", "图片：JPEG 压缩质量(0~1)"),
-            Map.entry("images.authEnabled", "图片访问鉴权：HMAC 签名 URL 开关(生产建议开，关闭则图片 URL 可直接访问)"),
-            Map.entry("images.authExpireSeconds", "图片访问鉴权：签名 URL 有效期(秒)"),
-            Map.entry("vision.timeoutMillis", "视觉模型：单张图片描述读取超时(ms；客户端在启动时构建，改动需重启生效)"),
-            Map.entry("vision.retryCount", "视觉模型：单图描述失败重试次数(降低降级率)"),
-            Map.entry("vision.think", "视觉模型：是否开启思考模式(qwen3 系默认思考；关闭可提速且输出更稳定)"),
-            Map.entry("vision.keepAliveMinutes", "视觉模型：Ollama 模型常驻时长(分钟，0=不发送；云端服务需设 0)"),
-            Map.entry("vision.numCtx", "视觉模型：Ollama 上下文窗口 num_ctx(0=不设置；默认 4096 会截断大图)"),
-            // ===== 查询改写（QueryRewrite）与图片相关性校验（ImageFilter）：同样由 syncProperties 回写 =====
-            // ===== 意图分类（Intent）：闲聊/知识库无关消息跳过检索直接对话，由 syncProperties 回写 =====
-            // ===== 消费方直读 configService 的行为参数（原先写死在代码里）=====
-            Map.entry("chat.maxImagesPerMessage", "对话：单条消息最多图片张数"),
-            Map.entry("chat.maxImageMb", "对话：单张图片体积上限(MB)"),
-            Map.entry("retrieval.relatedCount", "回答：末尾 <related> 相关追问的推荐条数"),
-            // ===== 工具调用（Function Calling）：@Tool 工具开关，均需 tool.enabled 总开关开启才生效 =====
-            Map.entry("tool.enabled", "工具调用：总开关（开启后模型可调用 @Tool 工具，如知识库精确检索、产物交付）"),
-            Map.entry("tool.knowledgeRetrieval.enabled", "工具调用：知识库精确检索工具开关（模型可主动补充检索，需总开关开启）"),
-            Map.entry("tool.knowledgeRetrieval.maxHits", "工具调用：精确检索工具单次返回命中块上限(1~5)"),
-            Map.entry("tool.artifact.enabled", "工具调用：产物交付工具开关（模型可生成 Markdown/CSV/JSON/HTML 文件并推送给用户，需总开关开启；默认关）"),
-            Map.entry("tool.builtin.enabled", "工具调用：内置高频工具开关（算术计算/当前时间/日期差，需总开关开启；默认关）"),
-            // ===== 技能（Skills）：内容本身是个人资产（c_ai_user_skill，见 SkillService），
-            // 这里只留与内容无关的预算类参数（注入上限 / 单技能读取截断），仍由管理员控上下文成本 =====
-            Map.entry("skill.injectMaxChars", "技能（Skills）：清单注入字符上限（防技能过多挤占上下文）"),
-            Map.entry("skill.maxFileChars", "技能（Skills）：单个技能全文读取上限（字符，超出截断）"),
-            Map.entry("agent.enabled", "SubAgent 并行编排：总开关（多视角并行检索 + 要点提炼；默认关，开启后每轮多 2~4 次提炼调用）"),
-            Map.entry("agent.subAgents", "SubAgent 并行编排：子代理数量（2~4，默认 2）"),
-            Map.entry("agent.topKPerAgent", "SubAgent 并行编排：每个子代理取回命中块数（默认 3）"),
-            Map.entry("agent.digestEnabled", "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）"),
-            Map.entry("agent.autoRoute", "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）"),
-            Map.entry("agent.routeTimeoutMs", "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）"),
-            Map.entry("agent.autoDispatch", "智能体自动派遣：对话页选「自动派遣」时由生效模型按名称+描述挑选智能体（关=回落默认智能体）"));
-            // MCP 外部工具：原先的 mcp.enabled / mcp.servers 全局项已随「MCP 下沉为个人资产」移除
-            // ——Server 列表在各人的 c_ai_user_mcp 里（谁能连自己说了算），平台层面只剩 tool.enabled 总开关。
-
-    /**
-     * 参数分层（仅影响设置页可见性，不影响任何读取链路）：
-     * 1 = 必需，不配就不能跑（新手模式可见）
-     * 2 = 调优，换语料/换场景才动（专家模式可见）
-     * 3 = 工程排障，超时/重试/并发/TTL 之类（专家模式可见，默认折叠）
-     * 未列出的 key 一律按 2 处理。
-     */
-    private static final Map<String, Integer> TIER = Map.ofEntries(
-            // ===== L1 必需（14 项）=====
-            Map.entry("chat.baseUrl", 1),
-            Map.entry("chat.apiKey", 1),
-            Map.entry("chat.temperature", 1),
-            Map.entry("chat.systemPrompt", 1),
-            Map.entry("chat.historyRounds", 1),
-            Map.entry("embedding.baseUrl", 1),
-            Map.entry("embedding.apiKey", 1),
-            Map.entry("chunk.maxSize", 1),
-            Map.entry("chunk.overlap", 1),
-            Map.entry("retrieval.vectorTopK", 1),
-            Map.entry("retrieval.vecThreshold", 1),
-            Map.entry("vision.enabled", 1),
-            // ===== L3 工程排障：chat =====
-            Map.entry("chat.pipelineThreads", 3),
-            Map.entry("chat.streamRetryCount", 3),
-            Map.entry("chat.sseTimeoutMs", 3),
-            Map.entry("chat.showDebugDegradations", 3),
-            Map.entry("chat.retrievalDebugEnabled", 3),
-            Map.entry("chat.truncateFallbackChars", 3),
-            Map.entry("chat.maxImagesPerMessage", 3),
-            Map.entry("chat.maxImageMb", 3),
-            // ===== L3：vision =====
-            Map.entry("vision.concurrency", 3),
-            Map.entry("vision.userImageConcurrency", 3),
-            Map.entry("vision.timeoutMillis", 3),
-            Map.entry("vision.retryCount", 3),
-            Map.entry("vision.think", 3),
-            Map.entry("vision.keepAliveMinutes", 3),
-            Map.entry("vision.numCtx", 3),
-            Map.entry("vision.descCacheVersion", 3),
-            Map.entry("vision.descCacheTtlDays", 3),
-            // ===== L3：解析 =====
-            Map.entry("parse.concurrency", 3),
-            Map.entry("parse.embedRetryCount", 3),
-            Map.entry("parse.embedBatchSize", 3),
-            Map.entry("parse.ocrMinText", 3),
-            Map.entry("parse.ocrDpi", 3),
-            Map.entry("parse.recoverStuckOnStartup", 3),
-            // ===== L3：关键词 / 重排 冷却与对账 =====
-            // ===== L3：上下文预算（maxContextHits / costCapTokens / dedupEnabled 留 L2）=====
-            Map.entry("context.modelWindows", 3),
-            Map.entry("context.defaultWindowTokens", 3),
-            Map.entry("context.safetyFactor", 3),
-            Map.entry("context.maxOutputTokens", 3),
-            Map.entry("context.historyMaxTokens", 3),
-            Map.entry("context.historyPerMsgChars", 3),
-            Map.entry("context.snippetWindowChars", 3),
-            Map.entry("context.dedupThreshold", 3),
-            Map.entry("context.dedupPathThreshold", 3),
-            // ===== L3：深度思考细节（总开关/模式/自动路由留 L2）=====
-            Map.entry("deepReasoning.timeoutMillis", 3),
-            Map.entry("deepReasoning.maxThinkingTokens", 3),
-            Map.entry("deepReasoning.maxThinkingChars", 3),
-            Map.entry("deepReasoning.searchTag", 3),
-            Map.entry("deepReasoning.prompt", 3),
-            Map.entry("deepReasoning.multiRetrieval", 3),
-            Map.entry("deepReasoning.injectThinkingMaxChars", 3),
-            Map.entry("deepReasoning.injectKeywords", 3),
-            Map.entry("deepReasoning.injectKeywordsMax", 3),
-            Map.entry("deepReasoning.autoRouteMinChars", 3),
-            Map.entry("deepReasoning.autoRouteLongChars", 3),
-            Map.entry("deepReasoning.autoRouteKeywords", 3),
-            // ===== L3：检索细节（权重/bonus/keywordLimit 等留 L2）=====
-            // ===== L3：查询改写 / 意图 / 图片过滤 细节（总开关留 L2）=====
-            Map.entry("imageFilter.minHits", 3),
-            Map.entry("imageFilter.preContextChars", 3),
-            // ===== L3：运维（限流 / 图片 / 会话 / 体检 / 清理 / 缓存）=====
-            Map.entry("ratelimit.windowSeconds", 3),
-            Map.entry("ratelimit.chatPerMinute", 3),
-            Map.entry("ratelimit.uploadPerMinute", 3),
-            Map.entry("images.maxWidth", 3),
-            Map.entry("images.quality", 3),
-            Map.entry("images.authEnabled", 3),
-            Map.entry("images.authExpireSeconds", 3),
-            Map.entry("images.chatCleanupIntervalMs", 3),
-            Map.entry("images.chatRetentionMillis", 3),
-            Map.entry("session.maxHistory", 3),
-            Map.entry("session.expireMinutes", 3),
-            Map.entry("eval.judgeEnabled", 3),
-            Map.entry("eval.autoIntervalMs", 3),
-            Map.entry("eval.autoThresholdPct", 3),
-            Map.entry("eval.judgeModel", 3),
-            Map.entry("cleanup.sessionCleanupIntervalMs", 3),
-            Map.entry("cleanup.sessionRetentionDays", 3),
-            Map.entry("cache.docMetaTtlSeconds", 3),
-            // ===== 工具调用 / MCP（管理调优项）=====
-            Map.entry("tool.enabled", 2),
-            Map.entry("tool.knowledgeRetrieval.enabled", 2),
-            Map.entry("tool.knowledgeRetrieval.maxHits", 3),
-            Map.entry("tool.artifact.enabled", 2),
-            Map.entry("tool.builtin.enabled", 2),
-            Map.entry("skill.injectMaxChars", 3),
-            Map.entry("skill.maxFileChars", 3),
-            Map.entry("agent.enabled", 2),
-            Map.entry("agent.subAgents", 2),
-            Map.entry("agent.topKPerAgent", 3),
-            Map.entry("agent.digestEnabled", 2),
-            Map.entry("agent.autoRoute", 2),
-            Map.entry("agent.routeTimeoutMs", 3));
+    // 可编辑白名单与参数分层（原 EDITABLE / TIER 两张 Map）已收敛到 classpath:config-schema.json，
+    // 由 ConfigSchemaService 提供 isEditable() / tier() / help() / validate()（字段定义单一来源）。
+    // MCP Server 已下沉为个人资产（c_ai_user_mcp），平台层面只剩 tool.enabled 总开关。
 
     private final ConfigMapper configMapper;
     private final AppProperties properties;
@@ -250,6 +53,8 @@ public class ConfigService {
     private final KeywordIndexService keywordIndexService;
     /** 敏感项（*.apiKey）RSA 加解密 */
     private final ConfigCryptoService crypto;
+    /** 配置字段定义（可编辑白名单 / 分层 / 说明 / 校验规则的唯一来源） */
+    private final com.wisesoft.ai.config.ConfigSchemaService schema;
 
     /** 配置变更广播 channel（多实例同步：任意实例保存配置 → 其他实例订阅后重载缓存） */
     public static final String CONFIG_CHANNEL = "ai:config:changed";
@@ -259,7 +64,8 @@ public class ConfigService {
     public ConfigService(ConfigMapper configMapper, AppProperties properties, Environment environment,
                          StringRedisTemplate redisTemplate, RedisProperties redisProperties,
                          @org.springframework.context.annotation.Lazy KeywordIndexService keywordIndexService,
-                         ConfigCryptoService crypto) {
+                         ConfigCryptoService crypto,
+                         com.wisesoft.ai.config.ConfigSchemaService schema) {
         this.configMapper = configMapper;
         this.properties = properties;
         this.environment = environment;
@@ -267,6 +73,7 @@ public class ConfigService {
         this.redisProperties = redisProperties;
         this.keywordIndexService = keywordIndexService;
         this.crypto = crypto;
+        this.schema = schema;
     }
 
     @jakarta.annotation.PostConstruct
@@ -384,7 +191,7 @@ public class ConfigService {
                     c.setConfigKey(e.getKey());
                     // 敏感项默认值灌入即加密（RSA: 前缀密文）
                     c.setConfigValue(e.getKey().endsWith(".apiKey") ? crypto.encrypt(e.getValue()) : e.getValue());
-                    c.setRemark(EDITABLE.getOrDefault(e.getKey(), "只读配置"));
+                    c.setRemark(schema.helpOrDefault(e.getKey(), "只读配置"));
                     configMapper.insert(c);
                 }
             } catch (Exception ex) {
@@ -723,163 +530,33 @@ public class ConfigService {
                 String prefix = g.getKey() + ".";
                 for (Map.Entry<String, String> kv : g.getValue().entrySet()) {
                     String fullKey = prefix + kv.getKey();
-                    if (EDITABLE.containsKey(fullKey)) {
+                    if (schema.isEditable(fullKey)) {
                         updates.put(fullKey, kv.getValue() == null ? "" : kv.getValue().trim());
                     }
                 }
             }
         }
-        String temp = updates.get("chat.temperature");
-        if (temp != null && !temp.isBlank()) {
-            double t = Double.parseDouble(temp);
-            if (t < 0 || t > 2) throw new IllegalArgumentException("temperature 需在 0~2 之间");
-        }
-        // LLM 网关地址校验：http(s) 开头、去尾部斜杠。路径拼接容错（…/v1、…/v4 等版本段、
-        // 完整端点粘贴）统一由 DynamicOpenAiChatModel.normalize 处理，此处不做改写，避免双处逻辑漂移
-        String cb = updates.get("chat.baseUrl");
-        if (cb != null && !cb.isBlank()) {
-            String url = cb.trim();
-            while (url.endsWith("/")) {
-                url = url.substring(0, url.length() - 1);
-            }
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                throw new IllegalArgumentException("chat.baseUrl 需以 http:// 或 https:// 开头");
-            }
-            updates.put("chat.baseUrl", url);
-        }
-        // 补全路径校验：留空（用默认 /v1/chat/completions）或以 / 开头
-        String cp = updates.get("chat.completionsPath");
-        if (cp != null && !cp.isBlank() && !cp.trim().startsWith("/")) {
-            throw new IllegalArgumentException("chat.completionsPath 需以 / 开头（如 /v1/chat/completions）");
-        }
-        // 检索权重校验：必须是 0~1 的数字（防非法值导致检索排序异常）
-        for (String wKey : new String[]{"retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold", "context.safetyFactor", "chunk.structuralRatio"}) {
-            String w = updates.get(wKey);
-            if (w != null && !w.isBlank()) {
-                try {
-                    double v = Double.parseDouble(w);
-                    if (v < 0 || v > 1) throw new IllegalArgumentException(wKey + " 需在 0~1 之间");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(wKey + " 必须是数字");
-                }
-            }
-        }
-        // 上下文长度参数校验：必须是非负整数
-        for (String iKey : new String[]{"context.defaultWindowTokens", "context.costCapTokens", "context.maxOutputTokens",
-                "context.historyMaxTokens", "context.historyPerMsgChars", "context.snippetWindowChars", "context.maxContextHits",
-                "chat.historyRounds", "chat.remainTokenFloor", "chat.truncateFallbackChars"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 检索/重排数值参数校验：正整数（minHits 允许 0=从不触发）
-        for (String iKey : new String[]{"retrieval.keywordLimit", "retrieval.vectorTopK", "rerank.maxHits",
-                "retrieval.searchTimeoutMs"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 1) throw new IllegalArgumentException(iKey + " 需 ≥1");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 深度思考参数校验
-        String mode = updates.get("deepReasoning.thinkingMode");
-        if (mode != null && !mode.isBlank() && !"model".equals(mode) && !"prompt".equals(mode)) {
-            throw new IllegalArgumentException("deepReasoning.thinkingMode 仅允许 model / prompt");
-        }
-        for (String iKey : new String[]{"deepReasoning.maxSubQueries", "deepReasoning.timeoutMillis", "deepReasoning.maxThinkingTokens",
-                "deepReasoning.maxThinkingChars", "deepReasoning.injectThinkingMaxChars", "deepReasoning.injectKeywordsMax"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        for (String bKey : new String[]{"deepReasoning.enabled", "deepReasoning.enableThinking", "deepReasoning.multiRetrieval",
-                "deepReasoning.injectThinking", "deepReasoning.injectKeywords", "deepReasoning.autoRoute",
-                "chunk.structural"}) {
-            String v = updates.get(bKey);
-            if (v != null && !v.isBlank() && !"true".equalsIgnoreCase(v) && !"false".equalsIgnoreCase(v)) {
-                throw new IllegalArgumentException(bKey + " 仅允许 true / false");
-            }
-        }
-        // 重排参数校验
-        String rb = updates.get("rerank.enabled");
-        if (rb != null && !rb.isBlank() && !"true".equalsIgnoreCase(rb) && !"false".equalsIgnoreCase(rb)) {
-            throw new IllegalArgumentException("rerank.enabled 仅允许 true / false");
-        }
-        // 关键词引擎校验
-        String ke = updates.get("keyword.engine");
-        if (ke != null && !ke.isBlank() && !"mysql".equalsIgnoreCase(ke) && !"meilisearch".equalsIgnoreCase(ke)) {
-            throw new IllegalArgumentException("keyword.engine 仅允许 mysql / meilisearch");
-        }
-        // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）
-        if (ke != null && "meilisearch".equalsIgnoreCase(ke)) {
-            if (!keywordIndexService.checkAvailable()) {
-                String reason = keywordIndexService.debugUnavailableReason();
-                throw new IllegalArgumentException("Meilisearch 服务不可用（" + (reason == null ? "探测失败" : reason)
-                        + "），请先启动 Meilisearch（docker compose 或本地）再切换");
-            }
-        }
-        String kt = updates.get("keyword.timeoutMillis");
-        if (kt != null && !kt.isBlank()) {
-            try {
-                if (Integer.parseInt(kt.trim()) < 200) throw new IllegalArgumentException("keyword.timeoutMillis 不能小于 200");
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("keyword.timeoutMillis 必须是整数");
-            }
-        }
-        // 解析参数校验：非负整数（0 表示不限制）
-        for (String iKey : new String[]{"chunk.maxChunks", "chunk.maxImages", "vision.concurrency",
-                "ratelimit.chatPerMinute", "ratelimit.uploadPerMinute",
-                "parse.ocrMinText", "parse.embedRetryCount"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 0) throw new IllegalArgumentException(iKey + " 不能为负数");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 并发数校验：必须 ≥1（0 会让解析/图片识别线程池无工作线程，任务永久排队）
-        for (String iKey : new String[]{"parse.concurrency", "vision.userImageConcurrency"}) {
-            String v = updates.get(iKey);
-            if (v != null && !v.isBlank()) {
-                try {
-                    if (Integer.parseInt(v.trim()) < 1) throw new IllegalArgumentException(iKey + " 需 ≥1");
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException(iKey + " 必须是整数");
-                }
-            }
-        }
-        // 上传上限校验：必须 ≥1MB 且 ≤1GB（物理上限由 multipart 兜底）
-        String uf = updates.get("upload.maxFileSize");
-        if (uf != null && !uf.isBlank()) {
-            try {
-                long v = Long.parseLong(uf.trim());
-                if (v < 1024 * 1024 || v > 1024L * 1024 * 1024) {
-                    throw new IllegalArgumentException("upload.maxFileSize 需在 1MB ~ 1GB 之间");
-                }
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("upload.maxFileSize 必须是整数(字节)");
-            }
-        }
-
         // 掩码回写保护：snapshot 对 *.apiKey 脱敏为 "****后4位"，前端未修改 key 时会把掩码原样提交；
         // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
         updates.entrySet().removeIf(kv ->
                 kv.getKey().endsWith(".apiKey") && kv.getValue() != null && kv.getValue().startsWith("****"));
+
+        // ---------- schema 驱动校验（类型 / 范围 / 枚举 / 布尔）----------
+        // 规则全部来自 classpath:config-schema.json（与下发前端渲染的是同一份定义）。此前按前缀分组
+        // 手写的校验清单已删除：其中 20 条对应的键早已退出可编辑白名单（死校验），其余 43 条的约束
+        // 均已被 schema 覆盖且不更松（如 context.defaultWindowTokens 由"≥0"收紧为"≥1000"）。
+        for (Map.Entry<String, String> kv : updates.entrySet()) {
+            String err = schema.validate(kv.getKey(), kv.getValue());
+            if (err != null) throw new IllegalArgumentException(err);
+        }
+        // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）。
+        // 这是"服务可达性"而不是"取值合法性"，故留在代码里而不进 schema。
+        String engine = updates.get("keyword.engine");
+        if (engine != null && "meilisearch".equalsIgnoreCase(engine.trim()) && !keywordIndexService.checkAvailable()) {
+            String reason = keywordIndexService.debugUnavailableReason();
+            throw new IllegalArgumentException("Meilisearch 服务不可用（" + (reason == null ? "探测失败" : reason)
+                    + "），请先启动 Meilisearch（docker compose 或本地）再切换");
+        }
 
         // 视觉网关地址校验已移除：vision.baseUrl 不在可编辑白名单、也无运行时读取点
         // （视觉网关来自供应商表），保留这段只会校验一个永远不会被消费的键
@@ -898,7 +575,7 @@ public class ConfigService {
                 c = new Config();
                 c.setConfigKey(kv.getKey());
                 c.setConfigValue(kv.getValue());
-                c.setRemark(EDITABLE.get(kv.getKey()));
+                c.setRemark(schema.help(kv.getKey()));
                 configMapper.insert(c);
             } else {
                 c.setConfigValue(kv.getValue());
@@ -975,7 +652,7 @@ public class ConfigService {
                     c = new Config();
                     c.setConfigKey(k);
                     c.setConfigValue(v);
-                    c.setRemark(EDITABLE.getOrDefault(k, "只读配置"));
+                    c.setRemark(schema.helpOrDefault(k, "只读配置"));
                     configMapper.insert(c);
                 } else {
                     c.setConfigValue(v);
@@ -996,7 +673,7 @@ public class ConfigService {
     }
 
     /**
-     * 系统内部回写（不经 EDITABLE 白名单）：供运行流程记录"既成事实"型配置，
+     * 系统内部回写（不经字段定义白名单）：供运行流程记录"既成事实"型配置，
      * 当前唯一用途是全量重嵌入成功后回写 embedding.dimensions（当前索引维度）。
      * 与 update() 的区别：不做业务校验、不加密、不触发重嵌入/重建索引等联动，
      * 只落库 + 刷新本地缓存 + 广播其他副本。失败仅告警（记录性数据，不阻断主流程）。
@@ -1028,22 +705,17 @@ public class ConfigService {
     /** 全量配置（供配置界面展示；apiKey 脱敏） */
     public Map<String, Object> snapshot() {
         Map<String, Object> result = new LinkedHashMap<>();
-        // 分组需覆盖 defaults() 里所有前缀，否则该组配置永远回显不出来（前端只能退回硬编码默认值）
-        String[] groups = {"chat", "vision", "embedding", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit",
-                // 补漏：defaults() 中已有这些前缀，但此前未列入本数组，导致设置页永远只能回显前端硬编码默认值
-                "images", "session", "cleanup", "eval", "imageFilter", "cache",
-                // 工具调用（Function Calling）分组：tool.enabled / tool.knowledgeRetrieval.* / tool.artifact.enabled
-                "tool",
-                // 技能分组：只剩预算类参数（injectMaxChars / maxFileChars），技能内容本身在个人表
-                "skill",
-                // 并行编排分组：agent.enabled / agent.subAgents / agent.topKPerAgent /
-                // agent.digestEnabled / agent.autoRoute / agent.routeTimeoutMs
-                // （按 "agent." 前缀自动收集，新增键无需改本数组，但必须在 defaults() 里有条目）
-                "agent"};
+        // 分组由 defaults() 的键前缀自动派生：不再手写组名数组——漏一个前缀该组就永远回显不出来
+        // （历史上 images / session / cleanup / eval / cache 就是这么漏掉的）。defaults() 只求值一次。
+        Map<String, String> defs = defaults();
+        Set<String> groups = new LinkedHashSet<>();
+        for (String k : defs.keySet()) {
+            int dot = k.indexOf('.');
+            if (dot > 0) groups.add(k.substring(0, dot));
+        }
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
-            for (Map.Entry<String, String> d : defaults().entrySet()) {
+            for (Map.Entry<String, String> d : defs.entrySet()) {
                 if (!d.getKey().startsWith(g + ".")) continue;
                 String shortKey = d.getKey().substring(g.length() + 1);
                 String value = get(d.getKey());
@@ -1052,8 +724,8 @@ public class ConfigService {
                 }
                 items.put(shortKey, Map.of(
                         "value", value,
-                        "editable", EDITABLE.containsKey(d.getKey()),
-                        "tier", TIER.getOrDefault(d.getKey(), 2)));
+                        "editable", schema.isEditable(d.getKey()),
+                        "tier", schema.tier(d.getKey())));
             }
             result.put(g, items);
         }
