@@ -38,6 +38,13 @@
         </button>
       </a-form>
 
+      <template v-if="!isInit && oidc.enabled">
+        <div class="login-divider"><span>或</span></div>
+        <button class="app-btn login-btn login-oidc" :disabled="oidcLoading" @click="submitOidc">
+          {{ oidcLoading ? '正在跳转…' : `使用 ${oidc.providerName} 登录` }}
+        </button>
+      </template>
+
       <p v-if="error" class="login-err">{{ error }}</p>
       <p v-if="isInit" class="login-hint">系统尚无可用账号，创建后即以此账号登录。密码至少 6 位。</p>
     </div>
@@ -46,24 +53,56 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { getFirstRun, loginApi, initializeAdmin } from '../api'
+import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl } from '../api'
 import { setToken } from '../utils/auth'
 import './app.css'
 
+const route = useRoute()
 const router = useRouter()
 const isInit = ref(false)
 const loading = ref(false)
 const error = ref('')
 const form = ref({ identifier: '', uid: '', username: '', password: '', confirm: '' })
 
+// 单点登录：入口只在后端回报「已启用且配置完整」时出现（配置只填一半就显示按钮，点下去必然撞错误页）
+const oidc = ref({ enabled: false, providerName: 'OIDC登录' })
+const oidcLoading = ref(false)
+
 onMounted(async () => {
+  // 单点登录失败时后端会 302 回 /login?oidc_error=...，把原因直接摊开（比只回登录页更可诊断）
+  const oe = String(route.query.oidc_error || '').trim()
+  if (oe) error.value = oe
   try {
     const r = await getFirstRun()
     if (r && r.success && r.data && r.data.needsInitialize) isInit.value = true
   } catch (e) { /* 探测失败按普通登录页处理 */ }
+  try {
+    const r = await getOidcConfig()
+    if (r && r.success && r.data) {
+      oidc.value = {
+        enabled: Boolean(r.data.enabled),
+        providerName: r.data.providerName || 'OIDC登录'
+      }
+    }
+  } catch (e) { /* 探测失败则不显示入口（本地登录不受影响） */ }
 })
+
+async function submitOidc () {
+  error.value = ''
+  oidcLoading.value = true
+  try {
+    const r = await getOidcLoginUrl('/chat')
+    const url = r && r.data && r.data.loginUrl
+    if (!url) { error.value = (r && r.msg) || '单点登录暂不可用'; return }
+    // 跳转到 IdP：整页跳转（授权码流程必须由浏览器完成重定向）
+    window.location.href = url
+  } catch (e) {
+    error.value = e.message || '单点登录暂不可用'
+    oidcLoading.value = false
+  }
+}
 
 async function submit () {
   error.value = ''
@@ -114,6 +153,15 @@ async function submit () {
 .login-title { font-size: 16px; font-weight: 500; margin: 0 0 2px; }
 .login-sub { font-size: 12px; color: var(--app-text2, #5f6570); margin: 0 0 16px; }
 .login-btn { width: 100%; justify-content: center; }
+.login-divider {
+  display: flex; align-items: center; gap: 8px; margin: 14px 0 12px;
+  color: var(--app-text3, #98a0aa); font-size: 11px;
+}
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--app-border, #e6e9ed); }
+.login-oidc {
+  background: transparent; color: var(--app-text, #1f2329);
+  border: 1px solid var(--app-border, #e6e9ed);
+}
 .login-err { color: var(--app-danger, #d4552e); font-size: 12px; margin: 10px 0 0; }
 .login-hint { color: var(--app-text3, #98a0aa); font-size: 11px; margin: 10px 0 0; line-height: 1.6; }
 </style>

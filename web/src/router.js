@@ -15,12 +15,15 @@ import Members from './views/MembersPage.vue'
 import Permissions from './views/PermissionsPage.vue'
 import Profile from './views/ProfilePage.vue'
 import Artifacts from './views/ArtifactsPage.vue'
+import OidcCallback from './views/OidcCallbackPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/chat' },
     { path: '/login', component: Login, meta: { title: '登录' } },
+    // 单点登录回调（IdP 授权后由后端 302 到这里）：此时还没有登录令牌，必须免登录守卫
+    { path: '/auth/oidc/callback', component: OidcCallback, meta: { title: '单点登录', public: true } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
     { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
     // 智能体工作台不再要求管理员：技能 Skills 与 MCP 是个人资产，所有人都要能进来管自己的；
@@ -49,7 +52,7 @@ const router = createRouter({
 // 管理员级角色（admin/superadmin 或自定义 admin_flag=1）放行；
 // 普通角色若其角色绑定的菜单包含该路径（RBAC 授权）也放行，否则回对话页
 router.beforeEach(async to => {
-  if (to.path === '/login') return true
+  if (to.path === '/login' || to.meta.public) return true
   if (!isLoggedIn()) return { path: '/login', replace: true }
   if (!to.meta.requiresAdmin) return true
   // 未拉取过身份则先向 /auth/me 确认（同时下发菜单树）
