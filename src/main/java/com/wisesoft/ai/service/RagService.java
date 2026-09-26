@@ -661,6 +661,25 @@ public class RagService {
                 // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
                 // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
                 Set<String> onlySkills = agent == null ? null : scopeOf(agent.getSkills());
+                // fail-loud：智能体的「指定技能」按**名字**匹配，而技能是个人资产——
+                // 名字没命中就说明"这个智能体的技能意图对当前这个人根本不成立"（没装，或装了同名但停用了）。
+                // 静默当成"没装技能"会让人误以为智能体能力已生效，所以必须说出来。
+                // 空集合=智能体显式「不使用任何技能」，是明确意图，不算缺失。
+                if (onlySkills != null && !onlySkills.isEmpty()) {
+                    Set<String> haveSkills = skillService.listWithState(userId).stream()
+                            .filter(st -> !st.disabled())
+                            .map(st -> st.skill().name())
+                            .collect(java.util.stream.Collectors.toSet());
+                    List<String> missSkills = onlySkills.stream()
+                            .filter(n -> !haveSkills.contains(n)).toList();
+                    if (!missSkills.isEmpty()) {
+                        addDegradation(degradations, degradedCodes, "agentSkillUnavailable",
+                                "智能体指定的技能 " + String.join("、", missSkills)
+                                        + " 在你名下不存在或已停用（技能是个人资产），本轮未生效");
+                        log.warn("[SKILL] uid={} 智能体 {} 指定的技能未命中: {}", userId,
+                                agent == null ? "-" : agent.getId(), missSkills);
+                    }
+                }
                 String skillBlock = skillService.promptBlock(userId,
                         configService.getInt("skill.injectMaxChars", 1200), onlySkills);
                 if (!skillBlock.isEmpty()) {
@@ -983,7 +1002,8 @@ public class RagService {
      * 否则继承全局 tool.* 开关。工具总开关 tool.enabled 仍由全局控制（智能体不开关总闸）。
      * 技能与 MCP 已于 2026-09-26 下沉为个人资产，因此按 userId 取：只读**这个人**的技能、只连**这个人**的 MCP。
      */
-    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent, String userId) {
+    private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent, String userId,
+                                                                                          AnswerStreamState st) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         if (!configService.getBoolean("tool.enabled")) {
             return callbacks;
@@ -1017,9 +1037,23 @@ public class RagService {
         }
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
         if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {
+            // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
+            Set<String> onlyMcp = agent == null ? null : scopeOf(agent.getMcps());
+            // 与技能同理：MCP Server 是个人资产、按名字弱匹配，指定项没命中必须说出来，
+            // 否则"智能体挂了这个外部工具"会静默变成"什么都没挂"。空集合=显式不使用，不算缺失。
+            if (onlyMcp != null && !onlyMcp.isEmpty()) {
+                Set<String> haveMcp = mcpClientService.serverNames(userId);
+                List<String> missMcp = onlyMcp.stream().filter(n -> !haveMcp.contains(n)).toList();
+                if (!missMcp.isEmpty()) {
+                    addDegradation(st.degradations, st.degradedCodes, "agentMcpUnavailable",
+                            "智能体指定的 MCP 服务 " + String.join("、", missMcp)
+                                    + " 你未登记或已停用（MCP 是个人资产），本轮未接入");
+                    log.warn("[MCP] uid={} 智能体 {} 指定的服务未命中: {}", userId,
+                            agent == null ? "-" : agent.getId(), missMcp);
+                }
+            }
             try {
-                // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
-                callbacks.addAll(mcpClientService.toolCallbacks(userId, agent == null ? null : scopeOf(agent.getMcps())));
+                callbacks.addAll(mcpClientService.toolCallbacks(userId, onlyMcp));
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
@@ -1148,7 +1182,7 @@ public class RagService {
                 // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。
                 // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
-                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent, st.userId), st))
+                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent, st.userId, st), st))
                 // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
                 .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
                 .stream()

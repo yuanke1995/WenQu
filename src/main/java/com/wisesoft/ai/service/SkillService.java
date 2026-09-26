@@ -263,6 +263,12 @@ public class SkillService {
             throw new BizException("技能缺少 description——模型靠它判断何时读取该技能，请在技能文件 frontmatter 里补上");
         }
         if (ownRow(uid, dir) != null) throw new BizException("已存在同名技能（" + dir + "），请换个名称或先删除");
+        // 与 create() 同一规则：个人技能不得占用内置技能名。
+        // 原文件形态下 URL 安装会「用户目录同名覆盖内置」，库和新建两条规则打架（新建拒、安装盖），
+        // 结果是装个包能把内置技能悄悄顶掉——统一为拒绝：内置技能只能各人自行停用，不能被覆盖。
+        if (builtinDirNames().contains(dir)) {
+            throw new BizException("已存在同名内置技能（" + dir + "）：内置技能只能在技能列表里停用，不能被同名技能覆盖，请换个名称安装");
+        }
         saveRow(newRow(uid, dir, meta.name(), meta.description(), content, "url", meta.version()));
         log.info("[SKILL] uid={} 从 URL 安装技能 {} ← {}", uid, dir, u);
         return parse(content, dir, "url");

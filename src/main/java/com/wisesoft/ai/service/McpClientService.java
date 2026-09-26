@@ -146,6 +146,28 @@ public class McpClientService {
     }
 
     /**
+     * 当前用户已登记并启用的服务名。
+     * <p>用途：判定「智能体按名字指定的 MCP 服务」在该用户名下是否真的存在（名字是弱匹配，
+     * 同名不同服务、或根本没登记都会让智能体的意图落空，需要显式告知而不是静默跳过）。
+     * 复用已建立的连接（不额外建连）。
+     */
+    public java.util.Set<String> serverNames(String uid) {
+        if (uid == null || uid.isBlank()) return java.util.Set.of();
+        ensureConnections(uid);
+        UserPool pool = pools.get(uid);
+        if (pool == null) return java.util.Set.of();
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        synchronized (pool) {
+            for (UserMcp row : pool.rows) {
+                if (Integer.valueOf(1).equals(row.getEnabled()) && row.getName() != null) {
+                    out.add(row.getName());
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
      * 重连某个用户的全部服务（增删/改地址后想立刻生效时用；不重建也会在下一次取工具时按指纹自动生效）。
      */
     public void reload(String uid) {
