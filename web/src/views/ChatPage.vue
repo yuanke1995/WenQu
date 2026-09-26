@@ -180,8 +180,6 @@
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
                 <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen }"
                         title="选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）">
-                  <robot-outlined class="agent-pill-ic" />
-                  <span v-if="currentAgentId" class="agent-pill-dot"></span>
                   <span class="agent-pill-name">{{ currentAgentName }}</span>
                   <down-outlined class="agent-pill-caret" />
                 </button>
@@ -1618,9 +1616,7 @@ onMounted(async () => {
   transition: background .15s, color .15s;
 }
 .agent-pill:hover, .agent-pill.open { background: #f2f3f5; color: var(--app-text); }
-.agent-pill.on .agent-pill-ic, .agent-pill.on .agent-pill-name { color: var(--app-text); }
-.agent-pill-ic { font-size: 14px; flex: none; }
-.agent-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none; }
+.agent-pill.on .agent-pill-name { color: var(--app-text); }
 .agent-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-pill-caret { font-size: 12px; opacity: .55; flex: none; }
 
