@@ -377,40 +377,6 @@ public class DocumentService {
         t.start();
     }
 
-    /**
-     * 启动迁移专用：多个知识库的按库重嵌在单线程内**顺序**执行（只抢一次分布式锁）。
-     * 逐个调用 reembedKbAsync 会因共享锁互相挤掉（拿不到锁的直接放弃），因此迁移场景合并为一个任务。
-     *
-     * @param tasks kbId → 回填后的向量模型引用（oldRef 一律空串：迁移前向量都在全局共享索引）
-     */
-    public void reembedKbsSequentialAsync(java.util.LinkedHashMap<String, String> tasks) {
-        if (tasks == null || tasks.isEmpty()) return;
-        Thread t = new Thread(() -> {
-            if (!acquireReembedLock()) {
-                log.warn("[FAIL-LOUD] [Migrate-Reembed] 其他重嵌入任务进行中，{} 个迁移库的重嵌未执行（重启或重新保存知识库可重试）", tasks.size());
-                return;
-            }
-            try {
-                for (Map.Entry<String, String> e : tasks.entrySet()) {
-                    try {
-                        List<String> docIds = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                                        .eq(AiDocument::getKbId, e.getKey()).select(AiDocument::getId))
-                                .stream().map(AiDocument::getId).filter(Objects::nonNull).toList();
-                        reembedKb(e.getKey(), docIds, "", e.getValue());
-                    } catch (Exception ex) {
-                        log.error("[FAIL-LOUD] [Migrate-Reembed] 知识库 {} 重嵌失败（检索将查不到该库，"
-                                + "请在知识库管理重新保存该库的向量模型触发重嵌）: {}", e.getKey(), ex.getMessage(), ex);
-                    }
-                    refreshReembedLock();
-                }
-            } finally {
-                releaseReembedLock();
-            }
-        }, "reembed-migrate");
-        t.setDaemon(true);
-        t.start();
-    }
-
     private void reembedKb(String kbId, List<String> docIds, String oldRef, String newRef) {
         String old = oldRef == null ? "" : oldRef.trim();
         String neu = newRef == null ? "" : newRef.trim();
