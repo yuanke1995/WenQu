@@ -414,6 +414,9 @@ export const getDocumentStats = () => request('/document/stats')
 /** 模型配置：获取全量（分组 + editable 标记） */
 export const getConfig = () => request('/config')
 
+// 配置字段定义：设置页渲染与后端保存校验的唯一定义源（config-schema.json 后端下发，前端不再内置副本）
+export const getConfigSchema = () => request('/config/schema')
+
 /** 前端运行时配置（文档上传上限/支持格式等，与后端一致） */
 export const getRuntimeConfig = () => request('/config/public')
 

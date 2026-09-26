@@ -14,7 +14,10 @@
       </button>
     </div>
 
-    <div class="set-body">
+    <div v-if="!schemaLoaded" class="app-card" style="margin:16px 20px">
+      <span class="head-hint-plain">正在加载配置字段定义…</span>
+    </div>
+    <div v-else class="set-body">
       <!-- 左侧分组导航（基础模式只列含常用项的分组） -->
       <nav class="set-nav">
         <span v-for="p in navPanels" :key="p.key" class="set-nav-item" :class="{ active: current === p.key }" @click="current = p.key">
@@ -238,12 +241,12 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { getConfig, saveConfig, resetConfig, checkKeywordEngine,
+import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine,
          probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount } from '../configSchema'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -294,13 +297,24 @@ const PANEL_ALERTS = {
 
 const loading = ref(false)
 const saving = ref(false)
+// 字段定义是否已从后端到达：定义到位前不渲染表单（blocksOf/currentPanel 都依赖字段数组，
+// 空定义下渲染会直接抛错）。容器本身仍是 configSchema.js 里的常量引用，填充后即可用。
+const schemaLoaded = ref(false)
 
 // ==================== 表单状态与回填 ====================
-const form = ref(buildDefaultForm())
+// 初始为空壳：字段定义来自后端 ⇒ 只有拿到定义后才能 buildDefaultForm()；
+// keyword 预置空对象是给下方的探测结果清理 watch 兜底（避免加载期取属性报错）
+const form = ref({ keyword: {} })
 
 const fetchAndFill = async () => {
   loading.value = true
   try {
+    // 定义先行：渲染字段、构建表单默认值、以及后续提交校验提示都基于它
+    const rs = await getConfigSchema()
+    if (!rs || !rs.success || !rs.data) throw new Error((rs && rs.msg) || '配置字段定义加载失败')
+    applyServerSchema(rs.data)
+    form.value = buildDefaultForm()
+    schemaLoaded.value = true
     const r = await getConfig()
     if (r.success && r.data) {
       const d = r.data
@@ -433,7 +447,7 @@ const doProbe = async group => {
 
 // 被探测项改动后清空旧探测结果
 watch(
-  () => [form.value.keyword.baseUrl, form.value.keyword.apiKey],
+  () => [form.value.keyword?.baseUrl, form.value.keyword?.apiKey],
   () => {
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }
