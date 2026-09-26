@@ -54,6 +54,11 @@ public class User {
 
     // 个人默认重排模型已退役（重排归知识库检索设置；存量库该列无害保留）
 
+    /** OIDC 身份标识（IdP 的 sub，唯一索引）：空=未绑定单点登录。
+     *  <p>蓝本用「占位用户 oidc:{sub}:{userId}」记录绑定，其注释自述原因是"在不修改表结构的前提下"
+     *  保存绑定关系；本工程有 SchemaMigrator 自动加列，故直接用列承载，不再制造假用户行。</p> */
+    private String oidcSub;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

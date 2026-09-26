@@ -296,10 +296,13 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
     `default_vision_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认视觉模型（引用 providerId/modelId；空=不设默认，聊天上传图片理解用）',
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
+    `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录。唯一索引：一个 sub 只能绑一个账号，防冒用）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),
     UNIQUE KEY `uk_username` (`username`),
+    -- MySQL 唯一索引允许多行 NULL ⇒ 未绑定 OIDC 的本地账号不受影响
+    UNIQUE KEY `uk_oidc_sub` (`oidc_sub`),
     KEY `idx_department` (`department_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
 

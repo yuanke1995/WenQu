@@ -32,7 +32,7 @@ import java.util.Set;
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）；embedding / vision / rerank
  *   各组的网关三要素保留为「遗留纯模型名」的回落网关，不再作为运行时默认
- * - 敏感项（*.apiKey）RSA 加密入库（ConfigCryptoService）：启动自动迁移存量明文，读取透明解密
+ * - 敏感项（*.apiKey / *.clientSecret）RSA 加密入库（ConfigCryptoService）：启动自动迁移存量明文，读取透明解密
  *
  * @author yuanke
  */
@@ -51,7 +51,7 @@ public class ConfigService {
     private final RedisProperties redisProperties;
     /** @Lazy 打破循环依赖：KeywordIndexService 构造依赖本类，仅引擎切换校验/重建时使用 */
     private final KeywordIndexService keywordIndexService;
-    /** 敏感项（*.apiKey）RSA 加解密 */
+    /** 敏感项（见 {@link #isSensitiveKey}）RSA 加解密 */
     private final ConfigCryptoService crypto;
     /** 配置字段定义（可编辑白名单 / 分层 / 说明 / 校验规则的唯一来源） */
     private final com.wisesoft.ai.config.ConfigSchemaService schema;
@@ -88,7 +88,7 @@ public class ConfigService {
     }
 
     /**
-     * 存量明文密钥迁移：*.apiKey 非 RSA: 前缀的值加密回写 DB 与缓存。
+     * 存量明文密钥迁移：敏感项（*.apiKey / *.clientSecret）非 RSA: 前缀的值加密回写 DB 与缓存。
      * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
      * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
      */
@@ -98,7 +98,7 @@ public class ConfigService {
             for (Map.Entry<String, String> e : cache.entrySet()) {
                 String k = e.getKey();
                 String v = e.getValue();
-                if (k.endsWith(".apiKey") && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
+                if (isSensitiveKey(k) && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
                     encrypted.put(k, crypto.encrypt(v));
                 }
             }
@@ -190,7 +190,7 @@ public class ConfigService {
                     Config c = new Config();
                     c.setConfigKey(e.getKey());
                     // 敏感项默认值灌入即加密（RSA: 前缀密文）
-                    c.setConfigValue(e.getKey().endsWith(".apiKey") ? crypto.encrypt(e.getValue()) : e.getValue());
+                    c.setConfigValue(isSensitiveKey(e.getKey()) ? crypto.encrypt(e.getValue()) : e.getValue());
                     c.setRemark(schema.helpOrDefault(e.getKey(), "只读配置"));
                     configMapper.insert(c);
                 }
@@ -356,6 +356,31 @@ public class ConfigService {
         // 远程安装来源白名单（逗号分隔的精确 host，子域要单列；留空=关闭远程安装）：技能正文入库不执行，
         // 但"允许从哪儿拉"必须是平台可控的边界（GitHub 走 raw 链接，故含 raw.githubusercontent.com）
         d.put("skill.remoteAllowedHosts", "github.com,raw.githubusercontent.com,modelscope.cn,www.modelscope.cn");
+
+        // ---------- 单点登录（OIDC）----------
+        // 语义与平台版 config/options.py 的 OIDCConfig 一致（字段名改成 camelCase 落 c_ai_config）：
+        // client_id + (issuerUrl 或 authorizationEndpoint) 即可生成登录链接；回调换 token 还需 clientSecret。
+        // clientSecret 走敏感项（RSA 密文入库 + 快照掩码），与 *.apiKey 同一机制。
+        d.put("oidc.enabled", "false");                                 // 总开关（关闭时登录页不显示按钮）
+        d.put("oidc.providerName", "OIDC登录");                          // 登录按钮上的认证源名称
+        d.put("oidc.issuerUrl", "");                                    // 走 discovery（/.well-known/openid-configuration）
+        d.put("oidc.clientId", "");
+        d.put("oidc.clientSecret", "");
+        d.put("oidc.redirectUri", "");                                  // 空=按当前站点推导 /api/ai/auth/oidc/callback
+        d.put("oidc.frontendBaseUrl", "");                              // 空=相对路径跳转（同源部署）；前后端分离时填前端地址
+        d.put("oidc.authorizationEndpoint", "");                        // 手填端点优先于 discovery（IdP 无 discovery 时用）
+        d.put("oidc.tokenEndpoint", "");
+        d.put("oidc.userinfoEndpoint", "");
+        d.put("oidc.scopes", "openid profile email");
+        d.put("oidc.autoCreateUser", "true");                           // 首次登录自动建号（关闭则须管理员预先建好并绑定）
+        d.put("oidc.defaultRole", "user");
+        d.put("oidc.defaultDepartment", "OIDC用户");
+        d.put("oidc.usernameClaim", "preferred_username");
+        d.put("oidc.nameClaim", "name");
+        d.put("oidc.useRawUsername", "false");                          // 用 IdP 的用户名当 uid（便于与本地账号对齐）
+        d.put("oidc.fetchDepartmentInfo", "false");                     // 从 userinfo 取部门名并自动建部门
+        d.put("oidc.departmentClaim", "department");
+        d.put("oidc.forcePromptLogin", "false");                        // 授权请求带 prompt=login（强制重新认证）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
@@ -441,6 +466,15 @@ public class ConfigService {
         }
     }
 
+    /**
+     * 敏感配置项：值以 RSA 密文入库、快照脱敏为 {@code ****后4位}、恢复默认时跳过。
+     * <p>按后缀判定而不是枚举键名——否则每加一个含密钥的配置项（如 OIDC 的 clientSecret）
+     * 都要回来补一处判断，漏掉就会明文落库且界面回显完整密钥。</p>
+     */
+    private static boolean isSensitiveKey(String key) {
+        return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret"));
+    }
+
     /** 清除线程局部参数覆盖（评估结束后必须调用） */
     public void clearOverride() {
         OVERRIDE.remove();
@@ -459,14 +493,14 @@ public class ConfigService {
 
     /**
      * 读取配置（线程局部覆盖 → 缓存 → 默认值）。
-     * 敏感项（*.apiKey）RSA 密文在此透明解密：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
+     * 敏感项 RSA 密文在此透明解密（见 {@link #isSensitiveKey}）：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
      */
     public String get(String key) {
         Map<String, String> ov = OVERRIDE.get();
         if (ov != null && ov.containsKey(key)) return ov.get(key);
         String v = cache.get(key);
         if (v == null) v = defaults().getOrDefault(key, "");
-        return key.endsWith(".apiKey") ? crypto.decrypt(v) : v;
+        return isSensitiveKey(key) ? crypto.decrypt(v) : v;
     }
 
     public double getDouble(String key) {
@@ -545,10 +579,10 @@ public class ConfigService {
                 }
             }
         }
-        // 掩码回写保护：snapshot 对 *.apiKey 脱敏为 "****后4位"，前端未修改 key 时会把掩码原样提交；
+        // 掩码回写保护：snapshot 对敏感项脱敏为 "****后4位"，前端未修改时会把掩码原样提交；
         // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
         updates.entrySet().removeIf(kv ->
-                kv.getKey().endsWith(".apiKey") && kv.getValue() != null && kv.getValue().startsWith("****"));
+                isSensitiveKey(kv.getKey()) && kv.getValue() != null && kv.getValue().startsWith("****"));
 
         // ---------- schema 驱动校验（类型 / 范围 / 枚举 / 布尔）----------
         // 规则全部来自 classpath:config-schema.json（与下发前端渲染的是同一份定义）。此前按前缀分组
@@ -573,7 +607,7 @@ public class ConfigService {
         // 敏感 key RSA 加密入库：明文→密文（已加密值原样保留；空值不加密直接存空）
         for (Map.Entry<String, String> kv : updates.entrySet()) {
             String v = kv.getValue();
-            if (kv.getKey().endsWith(".apiKey") && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
+            if (isSensitiveKey(kv.getKey()) && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
                 kv.setValue(crypto.encrypt(v));
             }
         }
@@ -624,7 +658,7 @@ public class ConfigService {
      * <ul>
      *   <li>白名单分组与 snapshot 对齐，但<b>排除 embedding</b>：向量模型恢复会触发全量重嵌入，
      *       必须走设置页正常流程（探测→确认）；</li>
-     *   <li><b>跳过 *.apiKey</b>：密钥以 RSA 加密存于 DB，恢复默认不得清空用户已配置的模型密钥
+     *   <li><b>跳过敏感项</b>（*.apiKey / *.clientSecret）：密钥以 RSA 加密存于 DB，恢复默认不得清空用户已配置的密钥
      *       （env 回退值可能为空导致模型不可用）；</li>
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
@@ -653,7 +687,7 @@ public class ConfigService {
             String k = e.getKey();
             int dot = k.indexOf('.');
             if (dot <= 0 || !targets.contains(k.substring(0, dot))) continue;
-            if (k.endsWith(".apiKey")) continue; // 密钥不随"恢复默认"清空
+            if (isSensitiveKey(k)) continue; // 密钥不随"恢复默认"清空
             String v = e.getValue();
             try {
                 Config c = configMapper.selectById(k);
@@ -711,7 +745,7 @@ public class ConfigService {
         }
     }
 
-    /** 全量配置（供配置界面展示；apiKey 脱敏） */
+    /** 全量配置（供配置界面展示；敏感项脱敏） */
     public Map<String, Object> snapshot() {
         Map<String, Object> result = new LinkedHashMap<>();
         // 分组由 defaults() 的键前缀自动派生：不再手写组名数组——漏一个前缀该组就永远回显不出来
@@ -728,7 +762,7 @@ public class ConfigService {
                 if (!d.getKey().startsWith(g + ".")) continue;
                 String shortKey = d.getKey().substring(g.length() + 1);
                 String value = get(d.getKey());
-                if (shortKey.contains("apiKey") && value.length() > 4) {
+                if (isSensitiveKey(d.getKey()) && value.length() > 4) {
                     value = "****" + value.substring(value.length() - 4);
                 }
                 items.put(shortKey, Map.of(

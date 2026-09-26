@@ -172,6 +172,10 @@ public class SecurityConfig implements WebMvcConfigurer {
      */
     private static boolean isAuthBootstrapEndpoint(String method, String path) {
         if (path == null) return false;
+        // OIDC 单点登录：四个端点都发生在"还没有本系统登录令牌"的阶段（配置探测 → 取授权地址 →
+        // IdP 回调 → 一次性 code 兑换），若不放行会与登录门禁互相死锁。
+        // API Key 仍不可用（isAuthEndpoint 对 /api/ai/auth/** 一律拒绝，凭据语义不同）。
+        if (path.startsWith("/api/ai/auth/oidc/")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/auth/first-run")) return true;
         return "POST".equals(method) && (path.equals("/api/ai/auth/login")
                 || path.equals("/api/ai/auth/initialize")
