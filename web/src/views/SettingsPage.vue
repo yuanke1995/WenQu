@@ -609,7 +609,7 @@ onMounted(fetchAndFill)
 
 <style scoped>
 .dirty-hint { font-size: 12px; color: #a3691b; background: #faf3e6; border-radius: 6px; padding: 3px 10px; }
-.head-hint-plain { font-size: 12px; color: var(--app-text3); background: transparent; border: none; }
+/* .head-hint-plain 已提到 app.css 作为全局共用样式（供应商/知识库/技能/MCP 页也用它） */
 /* 高级设置开关 + 隐藏项提示 */
 .adv-toggle {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3);

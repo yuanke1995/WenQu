@@ -1,80 +1,90 @@
 <template>
   <!-- MCP 外部工具（个人）：连接自己登记的 MCP Server，其工具会自动注册给模型调用。
-       原「系统设置 → MCP 面板」的全局 JSON 配置已废弃，服务改按用户隔离。 -->
-  <div class="mcp-panel">
-    <div class="key-bar">
-      <div class="key-bar-left">
-        <a-input v-model:value="keyword" placeholder="搜索服务名称 / 地址" allow-clear size="small" class="res-search">
-          <template #prefix><search-outlined class="res-search-ic" /></template>
-        </a-input>
-        <span class="key-stat">
-          共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
-          <span v-if="checkedAt" class="key-dim">· 更新于 {{ checkedAt }}</span>
-        </span>
-      </div>
-      <div class="key-bar-actions">
-        <a-tooltip title="刷新连接状态">
-          <button class="app-icon-btn" aria-label="刷新连接状态" :disabled="loading" @click="loadStatus"><reload-outlined /></button>
-        </a-tooltip>
-        <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
-          {{ reloading ? '重连中…' : '全部重连' }}
-        </button>
-        <button class="app-btn small" @click="openAdd">＋ 添加服务</button>
-      </div>
+       原「系统设置 → MCP 面板」的全局 JSON 配置已废弃，服务改按用户隔离。
+       页面骨架与「模型供应商」Tab 一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区。 -->
+  <div class="app-page">
+    <div class="app-page-head">
+      <h1 class="app-page-title">MCP 外部工具</h1>
+      <span class="head-hint-plain">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己</span>
+      <button class="app-btn" style="margin-left:auto" @click="openAdd">
+        <plus-outlined /> 添加服务
+      </button>
     </div>
 
-    <!-- 工具调用总开关由管理员在系统设置里控制：没开时连上了也调不动，必须让用户看见 -->
-    <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
-             message="平台未开启「工具调用」总开关"
-             description="服务照常连接与展示，但模型暂时无法调用任何工具（含 MCP 工具）。需管理员在「系统设置 → 工具调用」中开启总开关。" />
-
-    <div v-if="!servers.length" class="key-empty">
-      <div class="key-empty-title">还没有 MCP 服务</div>
-      <div class="key-empty-desc">
-        接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
-        这里加的服务只属于你自己，不影响其他人的问答。
+    <div class="app-page-body">
+      <div class="key-bar">
+        <div class="key-bar-left">
+          <a-input v-model:value="keyword" placeholder="搜索服务名称 / 地址" allow-clear size="small" class="res-search">
+            <template #prefix><search-outlined class="res-search-ic" /></template>
+          </a-input>
+          <span class="key-stat">
+            共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
+            <span v-if="checkedAt" class="key-dim">· 更新于 {{ checkedAt }}</span>
+          </span>
+        </div>
+        <div class="key-bar-actions">
+          <a-tooltip title="刷新连接状态">
+            <button class="app-icon-btn" aria-label="刷新连接状态" :disabled="loading" @click="loadStatus"><reload-outlined /></button>
+          </a-tooltip>
+          <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
+            {{ reloading ? '重连中…' : '全部重连' }}
+          </button>
+        </div>
       </div>
-      <button class="app-btn small" @click="openAdd">添加第一个服务</button>
-    </div>
-    <div v-else-if="!filtered.length" class="key-empty">
-      <div class="key-empty-title">没有匹配的服务</div>
-      <div class="key-empty-desc">没有名称或地址包含「{{ keyword }}」的服务。</div>
-      <button class="app-btn ghost small" @click="keyword = ''">清除搜索</button>
-    </div>
 
-    <template v-else>
-      <div v-for="s in filtered" :key="s.id" class="mcp-card">
-        <div class="mcp-card-head">
-          <span class="mcp-dot" :class="stateCls(s)"></span>
-          <span class="mcp-card-name">{{ s.name }}</span>
-          <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
-          <div class="mcp-card-actions">
-            <button v-if="s.connected" class="app-link-btn" @click="toggleTools(s)">
-              {{ expanded === s.id ? '收起工具' : '查看工具' }}
-            </button>
-            <a-tooltip :title="s.enabled ? '停用后断开连接、不再暴露它的工具' : '启用后自动连接'">
-              <a-switch size="small" :checked="!!s.enabled" :loading="togglingId === s.id"
-                        @change="v => toggleEnabled(s, v)" />
-            </a-tooltip>
-            <button class="app-link-btn" @click="openEdit(s)">编辑</button>
-            <a-popconfirm title="删除该服务？其工具将不再可用" ok-text="删除" cancel-text="取消" @confirm="removeServer(s)">
-              <button class="app-link-btn danger">删除</button>
-            </a-popconfirm>
+      <!-- 工具调用总开关由管理员在系统设置里控制：没开时连上了也调不动，必须让用户看见 -->
+      <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
+               message="平台未开启「工具调用」总开关"
+               description="服务照常连接与展示，但模型暂时无法调用任何工具（含 MCP 工具）。需管理员在「系统设置 → 工具调用」中开启总开关。" />
+
+      <div v-if="!servers.length" class="app-card key-empty">
+        <div class="key-empty-title">还没有 MCP 服务</div>
+        <div class="key-empty-desc">
+          接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
+          这里加的服务只属于你自己，不影响其他人的问答。
+        </div>
+        <button class="app-btn small" @click="openAdd">添加第一个服务</button>
+      </div>
+      <div v-else-if="!filtered.length" class="app-card key-empty">
+        <div class="key-empty-title">没有匹配的服务</div>
+        <div class="key-empty-desc">没有名称或地址包含「{{ keyword }}」的服务。</div>
+        <button class="app-btn ghost small" @click="keyword = ''">清除搜索</button>
+      </div>
+
+      <template v-else>
+        <div v-for="s in filtered" :key="s.id" class="app-card mcp-card">
+          <div class="mcp-card-head">
+            <span class="mcp-dot" :class="stateCls(s)"></span>
+            <span class="mcp-card-name">{{ s.name }}</span>
+            <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
+            <div class="mcp-card-actions">
+              <button v-if="s.connected" class="app-link-btn" @click="toggleTools(s)">
+                {{ expanded === s.id ? '收起工具' : '查看工具' }}
+              </button>
+              <a-tooltip :title="s.enabled ? '停用后断开连接、不再暴露它的工具' : '启用后自动连接'">
+                <a-switch size="small" :checked="!!s.enabled" :loading="togglingId === s.id"
+                          @change="v => toggleEnabled(s, v)" />
+              </a-tooltip>
+              <button class="app-link-btn" @click="openEdit(s)">编辑</button>
+              <a-popconfirm title="删除该服务？其工具将不再可用" ok-text="删除" cancel-text="取消" @confirm="removeServer(s)">
+                <button class="app-link-btn danger">删除</button>
+              </a-popconfirm>
+            </div>
+          </div>
+          <div class="mcp-card-sub">
+            <span class="mcp-type-pill">{{ s.type }}</span>
+            <span class="mcp-url" :title="s.url">{{ s.url }}</span>
+          </div>
+          <div v-if="expanded === s.id" class="mcp-tools">
+            <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
+              <code>{{ t.name }}</code>
+              <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
+            </div>
+            <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
           </div>
         </div>
-        <div class="mcp-card-sub">
-          <span class="mcp-type-pill">{{ s.type }}</span>
-          <span class="mcp-url" :title="s.url">{{ s.url }}</span>
-        </div>
-        <div v-if="expanded === s.id" class="mcp-tools">
-          <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
-            <code>{{ t.name }}</code>
-            <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
-          </div>
-          <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
-        </div>
-      </div>
-    </template>
+      </template>
+    </div>
 
     <!-- 添加 / 编辑弹窗：先测再存（地址填错当场就能发现，不用先存再回来删） -->
     <a-modal v-model:open="formOpen" :title="form.id ? '编辑 MCP 服务' : '添加 MCP 服务'" :footer="null" :width="580">
@@ -117,7 +127,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer } from '../api'
 
 const servers = ref([])
@@ -249,12 +259,15 @@ onMounted(loadStatus)
 .res-search { width: 220px; }
 .res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
 .res-search-ic { color: var(--app-text3); font-size: 12px; }
-.key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--app-border); border-radius: 8px; }
-.key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
-.key-empty-desc { font-size: 12px; color: var(--app-text3); margin-bottom: 14px; line-height: 1.7; }
+/* 空状态：与「模型供应商」一致——白卡片居中，不用虚线框 */
+.key-empty { text-align: center; padding: 40px 20px; }
+.key-empty-title { font-weight: 600; margin-bottom: 6px; }
+.key-empty-desc { font-size: 13px; color: var(--app-text3); line-height: 1.7; max-width: 520px; margin: 0 auto 14px; }
 .key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
-.mcp-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+/* 尺寸/圆角/边框复用 .app-card，与模型供应商卡片同规格 */
+.mcp-card { margin-bottom: 12px; }
+.mcp-card:last-child { margin-bottom: 0; }
 .mcp-card-head { display: flex; align-items: center; gap: 8px; }
 .mcp-card-name { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-card-head .mcp-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

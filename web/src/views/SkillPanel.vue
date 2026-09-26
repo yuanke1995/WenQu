@@ -1,66 +1,76 @@
 <template>
   <!-- 技能（Skills）：固化「这类问题该怎么做」的做法说明，模型按需读取后照做。
-       技能是个人资产：这里列出的 = 内置技能（随版本分发，可各自停用）+ 你自己新建/安装的技能。 -->
-  <div class="skill-panel">
-    <div class="key-bar">
-      <div class="key-bar-left">
-        <a-input v-model:value="keyword" placeholder="搜索技能名称 / 描述" allow-clear size="small" class="res-search">
-          <template #prefix><search-outlined class="res-search-ic" /></template>
-        </a-input>
-        <span class="key-stat">共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeCount }}</b></span>
-      </div>
-      <div class="key-bar-actions">
-        <a-tooltip title="刷新列表">
-          <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
-        </a-tooltip>
-        <button class="app-btn ghost small" @click="openInstall">从 URL 安装</button>
-        <button class="app-btn small" @click="openCreate">＋ 新建技能</button>
-      </div>
+       技能是个人资产：这里列出的 = 内置技能（随版本分发，可各自停用）+ 你自己新建/安装的技能。
+       页面骨架与「模型供应商」Tab 一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区。 -->
+  <div class="app-page">
+    <div class="app-page-head">
+      <h1 class="app-page-title">技能</h1>
+      <span class="head-hint-plain">固化「这类问题该怎么做」的做法说明，模型按需读取后照做；技能只属于你自己</span>
+      <button class="app-btn" style="margin-left:auto" @click="openCreate">
+        <plus-outlined /> 新建技能
+      </button>
     </div>
 
-    <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
-             message="平台未开启「工具调用」总开关"
-             description="技能照常展示，但模型无法调用 readSkill 读取技能正文——清单提示会失效。需管理员在「系统设置 → 工具调用」中开启总开关。" />
-
-    <div v-if="!skills.length" class="key-empty">
-      <div class="key-empty-title">还没有技能</div>
-      <div class="key-empty-desc">
-        技能用来固化「这类问题该怎么做」的做法——步骤、输出格式、禁忌。模型按需读取后照做，不必每次在提问里重复交代。
-        你在这里新建的技能只有自己能用，别人看不见。
+    <div class="app-page-body">
+      <div class="key-bar">
+        <div class="key-bar-left">
+          <a-input v-model:value="keyword" placeholder="搜索技能名称 / 描述" allow-clear size="small" class="res-search">
+            <template #prefix><search-outlined class="res-search-ic" /></template>
+          </a-input>
+          <span class="key-stat">共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeCount }}</b></span>
+        </div>
+        <div class="key-bar-actions">
+          <a-tooltip title="刷新列表">
+            <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
+          </a-tooltip>
+          <button class="app-btn ghost small" @click="openInstall">从 URL 安装</button>
+        </div>
       </div>
-      <button class="app-btn small" @click="openCreate">新建第一个技能</button>
-    </div>
-    <div v-else-if="!filtered.length" class="key-empty">
-      <div class="key-empty-title">没有匹配的技能</div>
-      <div class="key-empty-desc">没有名称或描述包含「{{ keyword }}」的技能。</div>
-      <button class="app-btn ghost small" @click="keyword = ''">清除搜索</button>
-    </div>
 
-    <!-- 卡片列表：按来源分组（我的技能 / 内置） -->
-    <template v-else>
-      <template v-for="g in groups" :key="g.title">
-        <div class="res-group-title">{{ g.title }} ({{ g.list.length }})</div>
-        <div class="skill-grid">
-          <div v-for="s in g.list" :key="s.dirName" class="skill-card">
-            <div class="skill-card-head">
-              <span class="skill-card-name" :title="s.name">{{ s.name }}</span>
-              <span v-if="s.disabled" class="app-pill warn key-tag">已停用</span>
-              <span v-else class="app-pill ok key-tag">生效中</span>
-            </div>
-            <div class="skill-card-desc" :class="{ 'skill-desc-warn': !s.description }" :title="s.description || ''">
-              {{ s.description || '（未填描述：模型不会主动读取它）' }}
-            </div>
-            <div class="skill-card-foot">
-              <button class="app-link-btn" @click="viewSkill(s)">查看</button>
-              <button class="app-link-btn" @click="toggleSkill(s)">{{ s.disabled ? '启用' : '停用' }}</button>
-              <a-popconfirm v-if="s.source !== 'builtin'" title="删除该技能？" ok-text="删除" cancel-text="取消" @confirm="delSkill(s)">
-                <button class="app-link-btn danger">删除</button>
-              </a-popconfirm>
+      <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
+               message="平台未开启「工具调用」总开关"
+               description="技能照常展示，但模型无法调用 readSkill 读取技能正文——清单提示会失效。需管理员在「系统设置 → 工具调用」中开启总开关。" />
+
+      <div v-if="!skills.length" class="app-card key-empty">
+        <div class="key-empty-title">还没有技能</div>
+        <div class="key-empty-desc">
+          技能用来固化「这类问题该怎么做」的做法——步骤、输出格式、禁忌。模型按需读取后照做，不必每次在提问里重复交代。
+          你在这里新建的技能只有自己能用，别人看不见。
+        </div>
+        <button class="app-btn small" @click="openCreate">新建第一个技能</button>
+      </div>
+      <div v-else-if="!filtered.length" class="app-card key-empty">
+        <div class="key-empty-title">没有匹配的技能</div>
+        <div class="key-empty-desc">没有名称或描述包含「{{ keyword }}」的技能。</div>
+        <button class="app-btn ghost small" @click="keyword = ''">清除搜索</button>
+      </div>
+
+      <!-- 卡片列表：按来源分组（我的技能 / 内置） -->
+      <template v-else>
+        <template v-for="g in groups" :key="g.title">
+          <div class="res-group-title">{{ g.title }} ({{ g.list.length }})</div>
+          <div class="skill-grid">
+            <div v-for="s in g.list" :key="s.dirName" class="app-card skill-card">
+              <div class="skill-card-head">
+                <span class="skill-card-name" :title="s.name">{{ s.name }}</span>
+                <span v-if="s.disabled" class="app-pill warn key-tag">已停用</span>
+                <span v-else class="app-pill ok key-tag">生效中</span>
+              </div>
+              <div class="skill-card-desc" :class="{ 'skill-desc-warn': !s.description }" :title="s.description || ''">
+                {{ s.description || '（未填描述：模型不会主动读取它）' }}
+              </div>
+              <div class="skill-card-foot">
+                <button class="app-link-btn" @click="viewSkill(s)">查看</button>
+                <button class="app-link-btn" @click="toggleSkill(s)">{{ s.disabled ? '启用' : '停用' }}</button>
+                <a-popconfirm v-if="s.source !== 'builtin'" title="删除该技能？" ok-text="删除" cancel-text="取消" @confirm="delSkill(s)">
+                  <button class="app-link-btn danger">删除</button>
+                </a-popconfirm>
+              </div>
             </div>
           </div>
-        </div>
+        </template>
       </template>
-    </template>
+    </div>
 
     <!-- 新建技能 -->
     <a-modal v-model:open="createOpen" title="新建技能" :footer="null" :width="720">
@@ -121,7 +131,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
 import { renderMd } from '../utils/markdown'
 
@@ -250,16 +260,18 @@ onMounted(load)
 .res-search { width: 220px; }
 .res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
 .res-search-ic { color: var(--app-text3); font-size: 12px; }
-.key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--app-border); border-radius: 8px; }
-.key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
-.key-empty-desc { font-size: 12px; color: var(--app-text3); margin-bottom: 14px; line-height: 1.7; }
+/* 空状态：与「模型供应商」一致——白卡片居中，不用虚线框 */
+.key-empty { text-align: center; padding: 40px 20px; }
+.key-empty-title { font-weight: 600; margin-bottom: 6px; }
+.key-empty-desc { font-size: 13px; color: var(--app-text3); line-height: 1.7; max-width: 520px; margin: 0 auto 14px; }
 .key-tag { font-size: 11px; flex: none; line-height: 18px; }
 .key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.res-group-title { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 12px 0 6px; }
+.res-group-title { font-size: 13px; font-weight: 600; margin: 0 0 10px; }
+.res-group-title ~ .res-group-title { margin-top: 16px; }
 
-.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-.skill-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: #fff; }
-.skill-card:hover { border-color: #d5dce8; background: #fafbfc; }
+.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+/* 尺寸/圆角/边框复用 .app-card，与模型供应商卡片同规格 */
+.skill-card:hover { border-color: #bcd0f7; }
 .skill-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .skill-card-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skill-card-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: 6px 0 8px; height: 38px; overflow: hidden; }

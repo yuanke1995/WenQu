@@ -1,52 +1,55 @@
 <template>
-  <div class="pv-page">
+  <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区 -->
+  <div class="app-page">
     <div class="app-page-head">
-      <h3 class="app-page-title">模型供应商</h3>
+      <h1 class="app-page-title">模型供应商</h1>
       <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记，供智能体/对话/设置页选用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
     </div>
 
-    <a-spin :spinning="loading">
-      <div v-if="list.length" class="pv-grid">
-        <div v-for="p in list" :key="p.id" class="app-card pv-card">
-          <div class="pv-head">
-            <ProviderIcon :icon="p.icon" :name="p.name" :size="34" />
-            <div class="pv-title">
-              <div class="pv-name">
-                {{ p.name }}
-                <a-tag v-if="!p.enabled" color="default" class="pv-disabled-tag">已停用</a-tag>
+    <div class="app-page-body">
+      <a-spin :spinning="loading">
+        <div v-if="list.length" class="pv-grid">
+          <div v-for="p in list" :key="p.id" class="app-card pv-card">
+            <div class="pv-head">
+              <ProviderIcon :icon="p.icon" :name="p.name" :size="34" />
+              <div class="pv-title">
+                <div class="pv-name">
+                  {{ p.name }}
+                  <a-tag v-if="!p.enabled" color="default" class="pv-disabled-tag">已停用</a-tag>
+                </div>
+                <div class="pv-url" :title="p.baseUrl">{{ p.baseUrl }}</div>
               </div>
-              <div class="pv-url" :title="p.baseUrl">{{ p.baseUrl }}</div>
+              <a-switch :checked="p.enabled" size="small"
+                        @change="v => onToggle(p, v)" />
             </div>
-            <a-switch :checked="p.enabled" size="small"
-                      @change="v => onToggle(p, v)" />
-          </div>
-          <div class="pv-models">
-            <a-tag v-for="t in typeChips(p)" :key="t.key" :color="t.color" class="pv-type-tag">
-              {{ t.label }} {{ t.count }}
-            </a-tag>
-            <span v-if="!p.modelCount" class="pv-none">未登记模型</span>
-          </div>
-          <div class="pv-remark" v-if="p.remark">{{ p.remark }}</div>
-          <div class="pv-actions">
-            <button class="app-link-btn" @click="openModels(p)">
-              <database-outlined /> 管理模型（{{ p.modelCount }}）
-            </button>
-            <button class="app-link-btn" @click="openEdit(p)">编辑</button>
-            <a-popconfirm title="确定删除该供应商？其已登记的模型会一并删除。"
-                          ok-text="删除" cancel-text="取消" @confirm="onDelete(p)">
-              <button class="app-link-btn danger">删除</button>
-            </a-popconfirm>
+            <div class="pv-models">
+              <a-tag v-for="t in typeChips(p)" :key="t.key" :color="t.color" class="pv-type-tag">
+                {{ t.label }} {{ t.count }}
+              </a-tag>
+              <span v-if="!p.modelCount" class="pv-none">未登记模型</span>
+            </div>
+            <div class="pv-remark" v-if="p.remark">{{ p.remark }}</div>
+            <div class="pv-actions">
+              <button class="app-link-btn" @click="openModels(p)">
+                <database-outlined /> 管理模型（{{ p.modelCount }}）
+              </button>
+              <button class="app-link-btn" @click="openEdit(p)">编辑</button>
+              <a-popconfirm title="确定删除该供应商？其已登记的模型会一并删除。"
+                            ok-text="删除" cancel-text="取消" @confirm="onDelete(p)">
+                <button class="app-link-btn danger">删除</button>
+              </a-popconfirm>
+            </div>
           </div>
         </div>
-      </div>
-      <div v-else-if="!loading" class="app-card pv-empty">
-        <div class="pv-empty-title">还没有供应商</div>
-        <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 本地服务等），登记 API Key 后即可远程拉取模型列表。</div>
-      </div>
-    </a-spin>
+        <div v-else-if="!loading" class="app-card pv-empty">
+          <div class="pv-empty-title">还没有供应商</div>
+          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 本地服务等），登记 API Key 后即可远程拉取模型列表。</div>
+        </div>
+      </a-spin>
+    </div>
 
     <!-- 新建/编辑供应商 -->
     <a-modal v-model:open="showEdit" :title="editing ? '编辑供应商' : '新建供应商'"
@@ -601,7 +604,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.pv-page { padding: 4px 2px; }
+/* 内边距/滚动由 .app-page-body 提供（与智能体/技能/MCP 同一套骨架），此处只放网格与卡片细节 */
 .pv-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
