@@ -25,11 +25,12 @@
           <robot-outlined />
           <span v-if="!collapsed">智能体</span>
         </button>
+        <!-- 知识库对所有人可见：普通用户看到的是共享范围内的库（可自建自管自己的库） -->
+        <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
+          <database-outlined />
+          <span v-if="!collapsed">知识库</span>
+        </button>
         <template v-if="isAdmin">
-          <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
-            <database-outlined />
-            <span v-if="!collapsed">知识库</span>
-          </button>
           <button class="nav-item" :class="{ active: isActive('/members') }" @click="router.push('/members')" title="成员管理">
             <team-outlined />
             <span v-if="!collapsed">成员管理</span>

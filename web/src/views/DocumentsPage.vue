@@ -9,7 +9,8 @@
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
-        <a-upload :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
+        <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
+        <a-upload v-if="canManageCurrentKb" :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
           <button class="app-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
         </a-upload>
       </div>
@@ -17,13 +18,13 @@
     <a-progress v-if="uploading" :percent="uploadPercent" size="small" style="max-width:420px;margin:10px 20px 0" />
 
     <div class="app-page-body">
-      <!-- 拖拽遮罩 -->
-      <div v-if="dragDepth > 0" class="drag-mask">
+      <!-- 拖拽遮罩（仅对可管理的库提示上传） -->
+      <div v-if="dragDepth > 0 && canManageCurrentKb" class="drag-mask">
         <div class="drag-mask-tip"><upload-outlined style="font-size:36px" /><div>松开鼠标上传到知识库</div></div>
       </div>
 
-      <!-- 批量操作栏 -->
-      <div v-if="selectedKeys.length" class="batch-bar">
+      <!-- 批量操作栏（需要当前库管理权） -->
+      <div v-if="selectedKeys.length && canManageCurrentKb" class="batch-bar">
         <span>已选 {{ selectedKeys.length }} 项：</span>
         <button class="app-btn ghost" @click="batchStatus(0)">批量启用</button>
         <button class="app-btn ghost" @click="batchStatus(1)">批量弃用</button>
@@ -51,16 +52,19 @@
         </div>
         <a-spin :spinning="loading">
           <div v-for="d in list" :key="d.id" class="doc-row">
-            <span class="col-check"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
+            <span class="col-check" v-if="canManageCurrentKb"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
+            <span v-else class="col-check"></span>
             <span class="col-name">
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
               <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
               <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
             </span>
             <span class="col-kb">
-              <a-select :value="kbOf(d)" size="small" style="width:100%" :options="kbSelectOptions"
+              <!-- 移动库 = 写操作：仅对文档有管理权的人开放，其他人显示为纯文本 -->
+              <a-select v-if="canManageDoc(d)" :value="kbOf(d)" size="small" style="width:100%" :options="kbSelectOptions"
                         :title="'切换所属知识库：决定哪些助手能检索到该文档'"
                         @change="v => onMoveKb(d, v)" />
+              <span v-else class="kb-name-text" :title="kbNameOf(d)">{{ kbNameOf(d) }}</span>
             </span>
             <span class="col-num">{{ d.chunkCount || 0 }}</span>
             <span class="col-num">{{ d.hitCount || 0 }}</span>
@@ -81,14 +85,14 @@
               <template v-if="d.status === 0">
                 <button class="app-link-btn" @click="openKb(d)">知识块</button>
                 <button class="app-link-btn" @click="openVersions(d)">版本</button>
-                <button class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
+                <button v-if="canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
               </template>
-              <button v-else-if="d.status === 1" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
-              <button v-if="d.status !== 2" class="app-link-btn" @click="openShare(d)">共享</button>
+              <button v-else-if="d.status === 1 && canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
+              <button v-if="d.status !== 2 && canManageDoc(d)" class="app-link-btn" @click="openShare(d)">共享</button>
               <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
               <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
-              <button v-if="d.status === 0 || d.status === 3" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
-              <a-popconfirm title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
+              <button v-if="(d.status === 0 || d.status === 3) && canManageDoc(d)" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
+              <a-popconfirm v-if="canManageDoc(d)" title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
                 <button class="app-link-btn danger" :disabled="deletingId === d.id">删除</button>
               </a-popconfirm>
             </span>
@@ -173,12 +177,16 @@
           </a-table-column>
           <a-table-column title="操作" key="action" width="130">
             <template #default="{ record }">
-              <button class="app-link-btn" @click.stop="openKbEdit(record)">编辑</button>
-              <button v-if="(record.status ?? 0) === 0" class="app-link-btn" @click.stop="toggleKbStatus(record, 1)">停用</button>
-              <button v-else class="app-link-btn" @click.stop="toggleKbStatus(record, 0)">启用</button>
-              <a-popconfirm title="确定删除该知识块？向量将同步移除" ok-text="删除" cancel-text="取消" @confirm.stop="delKnowledge(record.id)">
-                <button class="app-link-btn danger" @click.stop>删除</button>
-              </a-popconfirm>
+              <!-- 知识块编辑/停用/删除是文档管理动作：仅对文档有管理权的人可见 -->
+              <template v-if="canManageDoc(currentDoc)">
+                <button class="app-link-btn" @click.stop="openKbEdit(record)">编辑</button>
+                <button v-if="(record.status ?? 0) === 0" class="app-link-btn" @click.stop="toggleKbStatus(record, 1)">停用</button>
+                <button v-else class="app-link-btn" @click.stop="toggleKbStatus(record, 0)">启用</button>
+                <a-popconfirm title="确定删除该知识块？向量将同步移除" ok-text="删除" cancel-text="取消" @confirm.stop="delKnowledge(record.id)">
+                  <button class="app-link-btn danger" @click.stop>删除</button>
+                </a-popconfirm>
+              </template>
+              <span v-else class="key-dim" style="font-size:11px">只读</span>
             </template>
           </a-table-column>
           <!-- 行内展开直读：元信息（章节/Token/图片）+ 完整 Markdown；图片走详情接口签名，先用列表数据即时渲染 -->
@@ -283,7 +291,7 @@
           <a-table-column title="创建时间" dataIndex="createTime" key="createTime" />
           <a-table-column title="操作" key="action" width="100">
             <template #default="{ record }">
-              <a-popconfirm :title="`确定回滚到 v${record.version}？当前版本将被覆盖`" ok-text="回滚" cancel-text="取消" @confirm="doRollback(record.version)">
+              <a-popconfirm v-if="canManageDoc(currentDoc)" :title="`确定回滚到 v${record.version}？当前版本将被覆盖`" ok-text="回滚" cancel-text="取消" @confirm="doRollback(record.version)">
                 <button class="app-link-btn">回滚</button>
               </a-popconfirm>
             </template>
@@ -323,6 +331,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
+import { isAdminSync, ensureAuth } from '../utils/auth'
 
 // 上传限制（启动时从 /config/public 动态获取）
 const MAX_SIZE = 200 * 1024 * 1024
@@ -358,6 +367,17 @@ const typeColor = t => {
 
 const route = useRoute()
 const router = useRouter()
+// 权限：文档管理对普通用户按"自建自管"开放——自己的库/文档可管理，别人共享的只读
+const isAdmin = isAdminSync()
+const myUid = ref('')
+/** 当前库是否可管理（上传/批量操作的门槛） */
+const canManageCurrentKb = computed(() => {
+  if (isAdmin) return true
+  const k = kbases.value.find(x => x.id === currentKbId.value)
+  return !!k && k.createdBy === myUid.value
+})
+/** 单个文档是否可管理（创建者或管理员；后端还会按共享范围二次判定） */
+const canManageDoc = d => isAdmin || (myUid.value && d.createdBy === myUid.value)
 /** 当前所在知识库（路由参数）：列表/上传都限定在该库 */
 const currentKbId = computed(() => String(route.params.kbId || ''))
 const currentKbName = computed(() => {
@@ -366,6 +386,7 @@ const currentKbName = computed(() => {
 })
 
 const list = ref([])
+const currentDoc = ref(null)   // 当前打开抽屉（知识块/版本）的文档行：判定行内管理按钮显隐
 const loading = ref(false)
 const uploading = ref(false)
 const uploadPercent = ref(0)
@@ -391,7 +412,7 @@ const toggleSelect = (id, e) => {
   else if (at >= 0) selectedKeys.value.splice(at, 1)
 }
 
-onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); window.addEventListener('paste', onPaste) })
+onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); ensureAuth().then(me => { myUid.value = me.user || '' }); window.addEventListener('paste', onPaste) })
 watch(currentKbId, () => { fetchList() })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -412,6 +433,8 @@ async function fetchKbs () {
     if (r && r.success !== false) kbases.value = r.data || []
   } catch (e) { /* 拉取失败不影响文档管理主流程，仅归属列留空 */ }
 }
+/** 文档所属库显示名（只读视角用） */
+const kbNameOf = d => (kbases.value.find(k => k.id === (d.kbId || defaultKbId.value)) || {}).name || '默认知识库'
 /** 切换文档归属：选默认库时后端存 null（与"未指定"等价） */
 const onMoveKb = async (d, v) => {
   const target = v === defaultKbId.value ? null : v
@@ -427,7 +450,9 @@ const onMoveKb = async (d, v) => {
 async function fetchList () {
   loading.value = true
   try {
-    const [r, stats] = await Promise.all([listDocuments(route.params.kbId), getDocumentStats()])
+    // 命中统计是管理端点：普通用户不调（命中列显示 0），避免 403 触发全局误报提示
+    const statsP = isAdminSync() ? getDocumentStats() : Promise.resolve(null)
+    const [r, stats] = await Promise.all([listDocuments(route.params.kbId), statsP])
     if (r.success) {
       const hitMap = (stats && stats.success && stats.data) ? stats.data : {}
       list.value = (r.data || []).map(d => ({ ...d, hitCount: hitMap[d.id] || 0 }))
@@ -488,6 +513,7 @@ const onDrop = e => {
   if (ok.length) beforeUpload(ok)
 }
 const onPaste = e => {
+  if (!canManageCurrentKb.value) return   // 无当前库管理权时不响应粘贴上传
   const files = Array.from(e.clipboardData?.files || [])
     .filter(f => uploadCfg.value.allowedExts.includes((f.name.split('.').pop() || '').toLowerCase()))
   if (files.length) beforeUpload(files)
@@ -798,6 +824,7 @@ const dlSource = async d => {
 }
 
 const openKb = async record => {
+  currentDoc.value = record
   kbDocName.value = record.fileName
   kbDocId.value = record.id
   kbVisible.value = true
@@ -1004,6 +1031,7 @@ const verList = ref([])
 const verDocName = ref('')
 const verDocId = ref('')
 const openVersions = async record => {
+  currentDoc.value = record
   verDocName.value = record.fileName
   verDocId.value = record.id
   verVisible.value = true

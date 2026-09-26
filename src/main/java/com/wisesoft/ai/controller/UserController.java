@@ -40,11 +40,17 @@ public class UserController {
                 str(body.get("role")), str(body.get("password"))), "已创建");
     }
 
-    @Operation(summary = "重置密码", description = "{\"password\":\"新密码\"}；同时清除登录失败锁定")
+    @Operation(summary = "重置密码", description = "{\"password\":\"新密码\"}；同时清除登录失败锁定。"
+            + "普通用户仅可改自己的密码（本端点对普通用户开放，改别人由管理员端点拦截）")
     @PutMapping("/{uid}/password")
     public ResultJson resetPassword(
             @Parameter(description = "用户标识") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
+        // 自助改密：非管理员只允许改自己的（uid 来自路径，但必须与登录态一致，防止代改）
+        if (!com.wisesoft.ai.service.AuthService.isAdminRole(com.wisesoft.ai.util.RequestUser.role())
+                && !com.wisesoft.ai.util.RequestUser.uid().equals(uid)) {
+            return ResultJson.error(403, "仅可修改自己的密码");
+        }
         authService.resetPassword(uid, str(body.get("password")));
         return ResultJson.ok("密码已重置");
     }

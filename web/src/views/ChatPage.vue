@@ -1504,10 +1504,14 @@ onMounted(async () => {
     await autoPick()
   }
   focusInput()
-  getConfig().then(r => {
-    if (!r.success) return
-    debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
-  }).catch(() => {})
+  // 检索调试入口是管理员调参（chat.retrievalDebugEnabled，配置里标 debug）：只有管理员才拉 /config
+  // ——/config 是管理端点，普通用户调它会 403，触发全局「无管理员权限，请先完成管理员验证」的误报
+  if (isAdminSync()) {
+    getConfig().then(r => {
+      if (!r.success) return
+      debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
+    }).catch(() => {})
+  }
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
   }).catch(() => {})

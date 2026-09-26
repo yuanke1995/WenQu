@@ -28,8 +28,10 @@
             <span v-if="!kb.queryParams && !kb.parseParams" class="kb-dim">继承全局参数</span>
           </div>
           <div class="kb-card-actions" @click.stop>
-            <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
-            <button class="app-link-btn danger" :disabled="kb.isDefault === 1" @click="onDelete(kb)">删除</button>
+            <template v-if="isAdmin || kb.createdBy === myUid">
+              <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
+              <button class="app-link-btn danger" :disabled="kb.isDefault === 1" @click="onDelete(kb)">删除</button>
+            </template>
             <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
           </div>
         </div>
@@ -109,7 +111,8 @@
           <span class="kb-warn">未绑定时该类文档会解析失败</span>（不产出残缺内容）。
         </div>
 
-        <a-form-item label="设为默认库" style="margin-top:12px">
+        <!-- 设默认库是全局动作（影响所有人的新建归属），仅管理员 -->
+        <a-form-item v-if="isAdmin" label="设为默认库" style="margin-top:12px">
           <a-switch v-model:checked="form.isDefault" />
           <span class="kb-hint" style="margin-left:8px">新建文档默认归属</span>
         </a-form-item>
@@ -126,6 +129,11 @@ import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getConfig } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
+import { isAdminSync, ensureAuth } from '../utils/auth'
+
+// 权限：管理员全量；普通用户可自建自管自己的库，别人共享的库只读（后端按共享范围过滤返回）
+const isAdmin = isAdminSync()
+const myUid = ref('')
 
 const router = useRouter()
 const openDocs = kb => router.push(`/knowledge/${kb.id}/docs`)
@@ -221,8 +229,10 @@ const load = async () => {
 }
 
 // 全局配置缓存：占位符展示"继承的全局值" + 新建库预填解析模板（一次拉取，两处共用）
+// /config 是管理端点：普通用户不拉（占位符退化为"继承"，预填跳过），避免 403 触发全局误报提示
 const globalCfg = ref({})
 const loadGlobalCfg = async () => {
+  if (!isAdminSync()) return
   if (Object.keys(globalCfg.value).length) return
   try {
     const r = await getConfig()
@@ -325,7 +335,11 @@ const onDelete = async row => {
   }
 }
 
-onMounted(() => { load(); loadGlobalCfg() })
+onMounted(() => {
+  load()
+  loadGlobalCfg()
+  ensureAuth().then(me => { myUid.value = me.user || '' })
+})
 </script>
 
 <style scoped>

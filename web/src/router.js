@@ -29,7 +29,7 @@ const router = createRouter({
     { path: '/knowledge', component: AppLayout, children: [
       { path: '', component: KnowledgeBase },
       { path: ':kbId/docs', component: Documents, meta: { title: '文档管理' } }
-    ], meta: { requiresAdmin: true, title: '知识库' } },
+    ], meta: { title: '知识库' } },
     // 文档管理并入知识库（卡片点进）；旧入口重定向
     { path: '/documents', redirect: '/knowledge' },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },

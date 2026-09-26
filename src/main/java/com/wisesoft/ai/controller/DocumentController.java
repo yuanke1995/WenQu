@@ -38,6 +38,57 @@ public class DocumentController {
     private final DocumentService documentService;
     private final ConfigService configService;
     private final RateLimitService rateLimitService;
+    private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
+    private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
+
+    // ==================== 资源级权限（普通用户自建自管，管理员全量） ====================
+
+    private boolean admin() {
+        return com.wisesoft.ai.service.AuthService.isAdminRole(RequestUser.role());
+    }
+
+    private com.wisesoft.ai.service.ResourceVisibilityService.Principal principal() {
+        return new com.wisesoft.ai.service.ResourceVisibilityService.Principal(
+                RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+    }
+
+    /** 文档管理权：普通用户=创建者（文档 share_config 的 manage 命中亦可）；库语义 KNOWLEDGE_BASE */
+    private void requireDocManage(com.wisesoft.ai.model.AiDocument doc) {
+        if (admin()) return;
+        if (doc == null) throw new BizException("文档不存在");
+        if (!visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
+                com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            throw new BizException("仅可管理自己上传或被授权管理的文档");
+        }
+    }
+
+    /** 文档可读：文档自身 + 其所属库都在共享范围内（不可见按不存在处理，不泄露存在性） */
+    private void requireDocRead(com.wisesoft.ai.model.AiDocument doc) {
+        if (doc == null) throw new BizException("文档不存在");
+        if (admin()) return;
+        var p = principal();
+        var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
+        if (!visibility.canRead(p, doc.getShareConfig(), doc.getCreatedBy(), kind)) {
+            throw new BizException("文档不存在");
+        }
+        if (doc.getKbId() != null) {
+            var kb = kbService.get(doc.getKbId());
+            if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                throw new BizException("文档不存在");
+            }
+        }
+    }
+
+    /** 目标库管理权（上传/移动的落点校验；kbId 空=默认库，同样按其库配置判定） */
+    private void requireKbManage(String kbId) {
+        if (admin()) return;
+        String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId() : kbId;
+        var kb = id == null ? null : kbService.get(id);
+        if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
+                com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            throw new BizException("仅可向自己创建或被授权管理的知识库上传文档");
+        }
+    }
 
     /** 上传大小业务校验（DB 配置 upload.maxFileSize，保存即生效；multipart 物理上限由容器兜底） */
     private void checkUploadSize(MultipartFile file) {
@@ -64,6 +115,7 @@ public class DocumentController {
         if (description != null && description.length() > 500) {
             throw new BizException("文档描述过长（最多 500 字）");
         }
+        requireKbManage(kbId);   // 往哪个库传，就要对这个库有管理权
         var doc = documentService.upload(file, description, kbId);
         log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
@@ -81,6 +133,7 @@ public class DocumentController {
         if (description != null && description.length() > 500) {
             throw new BizException("文档描述过长（最多 500 字）");
         }
+        requireKbManage(kbId);   // 批量上传同样先校验目标库
         List<Map<String, Object>> results = new ArrayList<>();
         for (MultipartFile file : files) {
             Map<String, Object> item = new LinkedHashMap<>();
@@ -102,16 +155,41 @@ public class DocumentController {
     }
 
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
-            + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部")
+            + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
+            + "普通用户仅返回共享范围内可见的库与文档")
     @GetMapping("/list")
     public ResultJson list(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
-        return ResultJson.ok(documentService.list(kbId));
+        List<com.wisesoft.ai.model.AiDocument> docs = documentService.list(kbId);
+        if (admin()) return ResultJson.ok(docs);
+        // 普通用户：库可见 + 文档自身可见，双重过滤（库不可见时按空列表处理，不泄露存在性）
+        var p = principal();
+        var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
+        if (kbId != null && !kbId.isBlank()) {
+            var kb = kbService.get(kbId);
+            if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                return ResultJson.ok(List.of());
+            }
+        }
+        var visibleKbIds = new java.util.HashSet<String>();
+        for (var kb : kbService.list()) {
+            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) visibleKbIds.add(kb.getId());
+        }
+        List<com.wisesoft.ai.model.AiDocument> out = docs.stream()
+                .filter(d -> visibility.canRead(p, d.getShareConfig(), d.getCreatedBy(), kind))
+                // kb_id 为空=默认库语义（与检索侧一致）；连默认库都不存在时保守过滤掉
+                .filter(d -> {
+                    String kid = d.getKbId() == null ? kbService.defaultId() : d.getKbId();
+                    return kid != null && visibleKbIds.contains(kid);
+                })
+                .toList();
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "下载源文件", description = "取回上传的原始文件（个人文件区：备份/本地查看用）")
     @GetMapping("/{id}/source")
     public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadSource(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocRead(documentService.getDoc(id));   // 共享范围内才可取源文件
         DocumentService.SourceFile sf = documentService.sourceFileForDownload(id);
         // 文件名 URL 编码（RFC 5987）：中文名在 Content-Disposition 里必须编码，否则部分客户端乱码
         String encoded = java.net.URLEncoder.encode(sf.fileName(), java.nio.charset.StandardCharsets.UTF_8)
@@ -128,6 +206,7 @@ public class DocumentController {
     public ResultJson delete(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
             HttpServletRequest httpRequest) {
+        requireDocManage(documentService.getDoc(id));
         documentService.delete(id);
         log.info("[AUDIT] 删除文档 operator={} docId={}", RequestUser.uid(), id);
         return ResultJson.ok("删除成功");
@@ -140,6 +219,7 @@ public class DocumentController {
             @RequestBody Map<String, Integer> body) {
         Integer status = body.get("status");
         if (status == null) throw new BizException("缺少 status 参数");
+        requireDocManage(documentService.getDoc(id));
         documentService.updateStatus(id, status);
         return ResultJson.ok("操作成功");
     }
@@ -152,6 +232,7 @@ public class DocumentController {
             @RequestBody Map<String, String> body,
             HttpServletRequest httpRequest) {
         String shareConfig = body.get("shareConfig");
+        requireDocManage(documentService.getDoc(id));
         documentService.updateShareConfig(id, shareConfig, RequestUser.uid());
         return ResultJson.ok("操作成功");
     }
@@ -160,6 +241,7 @@ public class DocumentController {
     @PostMapping("/{id}/reparse")
     public ResultJson reparse(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocManage(documentService.getDoc(id));
         documentService.reparse(id);
         return ResultJson.ok("已重新提交解析");
     }
@@ -168,6 +250,7 @@ public class DocumentController {
     @PostMapping("/{id}/backfill-descriptions")
     public ResultJson backfillDescriptions(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocManage(documentService.getDoc(id));
         documentService.backfillImageDescriptions(id);
         return ResultJson.ok("已提交图片描述补齐任务");
     }
@@ -179,9 +262,21 @@ public class DocumentController {
             @RequestBody Map<String, List<String>> body,
             HttpServletRequest httpRequest) {
         List<String> ids = body.getOrDefault("ids", List.of());
-        documentService.batchDelete(ids);
-        log.info("[AUDIT] 批量删除文档 operator={} count={} ids={}", RequestUser.uid(), ids.size(), ids);
-        return ResultJson.ok("删除成功");
+        // 逐个校验管理权：无权限的文档跳过并在结果中说明，不让批量操作变成越权通道
+        List<String> allowed = new ArrayList<>();
+        for (String docId : ids) {
+            if (admin()) { allowed.add(docId); continue; }
+            var doc = documentService.getDoc(docId);
+            if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
+                    com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                allowed.add(docId);
+            } else {
+                log.warn("[AUDIT] 批量删除跳过无权限文档 operator={} docId={}", RequestUser.uid(), docId);
+            }
+        }
+        documentService.batchDelete(allowed);
+        log.info("[AUDIT] 批量删除文档 operator={} count={} ids={}", RequestUser.uid(), allowed.size(), allowed);
+        return ResultJson.ok("删除成功（" + allowed.size() + "/" + ids.size() + "，无权限的已跳过）");
     }
 
     @Operation(summary = "批量重解析", description = "批量复用源文件重新解析+向量化，逐个返回结果（解析中的文档跳过并提示）")
@@ -196,6 +291,7 @@ public class DocumentController {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", id);
             try {
+                requireDocManage(documentService.getDoc(id));
                 documentService.reparse(id);
                 item.put("success", true);
                 item.put("msg", "已提交解析");
@@ -219,20 +315,32 @@ public class DocumentController {
         List<String> ids = idsObj instanceof List<?> list
                 ? list.stream().map(String::valueOf).toList() : List.of();
         int status = body.get("status") == null ? 0 : Integer.parseInt(String.valueOf(body.get("status")));
-        documentService.batchUpdateStatus(ids, status);
-        return ResultJson.ok("操作成功");
+        // 逐个校验管理权：无权限的文档跳过（批量启停用不该成为越权通道）
+        List<String> allowed = new ArrayList<>();
+        for (String docId : ids) {
+            if (admin()) { allowed.add(docId); continue; }
+            var doc = documentService.getDoc(docId);
+            if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
+                    com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                allowed.add(docId);
+            }
+        }
+        documentService.batchUpdateStatus(allowed, status);
+        return ResultJson.ok("操作成功（" + allowed.size() + "/" + ids.size() + "，无权限的已跳过）");
     }
 
-    @Operation(summary = "文档命中统计", description = "从问答日志聚合各文档的命中次数")
+    @Operation(summary = "文档命中统计", description = "从问答日志聚合各文档的命中次数（跨资源视图，仅管理员）")
     @GetMapping("/stats")
     public ResultJson stats() {
+        if (!admin()) throw new BizException("仅管理员可查看文档命中统计");
         return ResultJson.ok(documentService.statsHitCounts());
     }
 
-    @Operation(summary = "文档版本列表", description = "获取文档的历史版本列表（倒序）")
+    @Operation(summary = "文档版本列表", description = "获取文档的历史版本列表（倒序）；共享范围内可见")
     @GetMapping("/{id}/versions")
     public ResultJson versions(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocRead(documentService.getDoc(id));
         return ResultJson.ok(documentService.listVersions(id));
     }
 
@@ -244,6 +352,7 @@ public class DocumentController {
             HttpServletRequest httpRequest) {
         Integer version = body.get("version");
         if (version == null) throw new BizException("缺少 version 参数");
+        requireDocManage(documentService.getDoc(id));
         documentService.rollback(id, version);
         log.info("[AUDIT] 回滚文档版本 operator={} docId={} version={}", RequestUser.uid(), id, version);
         return ResultJson.ok("回滚成功");

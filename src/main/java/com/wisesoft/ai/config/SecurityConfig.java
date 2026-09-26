@@ -84,8 +84,14 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;
-        // 个人偏好（本人默认模型）：读改自己的设置
+        // 个人偏好（本人默认模型）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
+        if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;
+        // 知识库 / 文档 / 智能体对普通用户开放**自建自管**（2026-09-26，用户数据隔离由
+        // ResourceVisibilityService 在 Controller 内做资源级判定：创建者=可管理、他人按共享范围、
+        // 知识库对他人封顶只读）。这里按端点精确放行；不匹配的（如 /agent/{id}/default 设默认、
+        // /document/stats 命中统计、/knowledge/list 知识块批量）仍走管理员判定，fail-closed。
+        if (isKbOrDocEndpoint(method, path) || isAgentSelfEndpoint(method, path)) return true;
         // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
         if ("GET".equals(method)) {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);
@@ -97,6 +103,38 @@ public class SecurityConfig implements WebMvcConfigurer {
     /** 是否为登录鉴权相关端点（不允许 API Key 访问：凭据语义不同） */
     private static boolean isAuthEndpoint(String path) {
         return path != null && path.startsWith("/api/ai/auth/");
+    }
+
+    /**
+     * 知识库 / 文档的自建自管端点（普通用户可访问；资源级权限由 Controller 内判定）。
+     * <p>刻意排除：{@code /document/stats}（全库命中统计）、{@code /knowledge/list}（知识块批量列）等
+     * 跨资源的管理视图，仍仅管理员。</p>
+     */
+    private static boolean isKbOrDocEndpoint(String method, String path) {
+        if (path == null) return false;
+        if (path.equals("/api/ai/document/stats")) return false;
+        // 知识库：列表 / 详情 / 新建 / 编辑 / 删除 / 移动文档
+        if (path.equals("/api/ai/kb") || path.equals("/api/ai/kb/list")
+                || path.matches("/api/ai/kb/[^/]+") || path.matches("/api/ai/kb/doc/[^/]+")) return true;
+        // 文档：列表 / 上传 / 批量 / 单个的启停用·共享·重解析·补图述·版本·回滚·源文件·删除
+        if (path.equals("/api/ai/document") || path.equals("/api/ai/document/list")
+                || path.equals("/api/ai/document/upload") || path.equals("/api/ai/document/upload/batch")
+                || path.equals("/api/ai/document/batch/delete") || path.equals("/api/ai/document/batch/reparse")
+                || path.matches("/api/ai/document/[^/]+")
+                || path.matches("/api/ai/document/[^/]+/(source|versions|status|share|reparse|backfill-descriptions|rollback)")) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 智能体的自建自管端点。刻意排除：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选，
+     * 仅管理员）；{@code /available}（本就公开，且在更早的白名单分支已放行）。
+     */
+    private static boolean isAgentSelfEndpoint(String method, String path) {
+        if (path == null) return false;
+        return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
+                || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share");
     }
 
     /**
