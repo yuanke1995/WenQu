@@ -4,6 +4,7 @@ import com.wisesoft.ai.service.ArtifactService;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
+import com.wisesoft.ai.service.ScheduledJobService;
 import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.service.UserImageService;
 import com.wisesoft.ai.thread.ThreadPoolManager;
@@ -48,6 +49,7 @@ public class ScheduleCenter {
     private final RetrievalEvaluationService evalService;
     private final SessionService sessionService;
     private final ArtifactService artifactService;
+    private final ScheduledJobService scheduledJobService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -58,13 +60,15 @@ public class ScheduleCenter {
 
     public ScheduleCenter(ConfigService configService, KeywordIndexService keywordIndexService,
                           UserImageService userImageService, RetrievalEvaluationService evalService,
-                          SessionService sessionService, ArtifactService artifactService) {
+                          SessionService sessionService, ArtifactService artifactService,
+                          ScheduledJobService scheduledJobService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
         this.evalService = evalService;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
+        this.scheduledJobService = scheduledJobService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -108,6 +112,13 @@ public class ScheduleCenter {
                         log.info("[ARTIFACT] 超期产物已清理 {} 件（保留 {} 天）", cleaned, days);
                     }
                 });
+
+        // 定时执行智能体：扫描到期的用户任务并派发（间隔 scheduled.scanIntervalMs，默认 30s；≤0 暂停）。
+        // 任务体只做"扫描 + 投递到线程池"，实际执行在别的池线程里跑，所以不会被几十秒的长任务拖住。
+        register("定时智能体任务",
+                () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
+                () -> false,
+                () -> scheduledJobService.tick());
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

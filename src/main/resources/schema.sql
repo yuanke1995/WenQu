@@ -476,3 +476,51 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
     KEY `idx_uid_time` (`uid`, `create_time`),
     KEY `idx_session` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产物交付表（模型生成的可下载文件）';
+
+-- ============================================
+-- 2026-09-26: 定时执行智能体（用户自建的计划任务）
+-- 每轮到点后按「智能体 + 提示词」跑一次完整问答，结果落进该任务的**专属会话**
+-- （一个任务一个会话，历史执行追加在里面，不刷屏会话列表；与平台版"每轮新建会话"不同，
+-- 差异见 ScheduledJobService 注释）。
+-- 调度：ScheduleCenter 的节拍任务扫描 next_run_at ≤ now 的启用任务；扫描时先推进
+-- next_run_at 再执行 ⇒ 天然防同一轮重复触发。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_scheduled_job` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '主键ID (UUID)',
+    `uid`          VARCHAR(64)   NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `name`         VARCHAR(100)  NOT NULL COMMENT '任务名（同时作为结果会话标题）',
+    `agent_id`     VARCHAR(50)   DEFAULT NULL COMMENT '执行的智能体（空=当轮生效的默认智能体）',
+    `prompt`       VARCHAR(2000) NOT NULL COMMENT '每轮发送给智能体的问题/指令',
+    `cron`         VARCHAR(100)  NOT NULL COMMENT 'cron 表达式（5 段：分 时 日 月 周）',
+    `timezone`     VARCHAR(64)   NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'cron 的时区解释',
+    `deep_think`   INT           DEFAULT 0 COMMENT '本轮是否深度思考: 0=否 1=是',
+    `model_ref`    VARCHAR(255)  DEFAULT NULL COMMENT '模型覆盖（{providerId}/{modelId}；空=个人默认）',
+    `enabled`      INT           DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用时 next_run_at 清空）',
+    `next_run_at`  DATETIME      DEFAULT NULL COMMENT '下次执行时刻（按 timezone 计算得出）',
+    `last_run_at`  DATETIME      DEFAULT NULL COMMENT '上次触发时刻',
+    `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '该任务的结果会话（懒创建，之后每轮追加）',
+    `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`      INT           DEFAULT 0 COMMENT '软删: 0=正常 1=已删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_uid` (`uid`),
+    KEY `idx_due` (`enabled`, `next_run_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时执行智能体任务表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_scheduled_run` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '主键ID (UUID)',
+    `job_id`       VARCHAR(50)   NOT NULL COMMENT '任务ID（c_ai_scheduled_job.id）',
+    `uid`          VARCHAR(64)   NOT NULL COMMENT '归属用户',
+    `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '执行结果会话',
+    `trigger_type` VARCHAR(16)   NOT NULL DEFAULT 'scheduled' COMMENT '触发方式: scheduled | manual',
+    `status`       VARCHAR(16)   NOT NULL COMMENT '状态: running | succeeded | failed',
+    `answer`       VARCHAR(1000) DEFAULT NULL COMMENT '回答摘录（列表快速预览用）',
+    `error`        VARCHAR(500)  DEFAULT NULL COMMENT '失败原因',
+    `started_at`   DATETIME      NOT NULL COMMENT '开始时刻',
+    `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻',
+    `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_job_time` (`job_id`, `create_time`),
+    KEY `idx_uid_time` (`uid`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行记录（每轮一行；回答正文在结果会话里）';

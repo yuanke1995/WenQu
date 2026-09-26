@@ -238,6 +238,17 @@ export const getKbParamDefaults = () => request('/kb/param-defaults')
 export const listArtifacts = keyword =>
   request('/artifact/list' + (keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''))
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
+
+// 定时任务（定时执行智能体；个人资产，每人管自己的）
+export const listScheduledJobs = () => request('/scheduled/list')
+export const createScheduledJob = body => request('/scheduled', { method: 'POST', body: JSON.stringify(body) })
+export const updateScheduledJob = (id, body) =>
+  request(`/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteScheduledJob = id => request(`/scheduled/${id}`, { method: 'DELETE' })
+export const toggleScheduledJob = (id, enabled) =>
+  request(`/scheduled/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
+export const runScheduledJob = id => request(`/scheduled/${id}/run`, { method: 'POST' })
+export const listScheduledRuns = (id, limit = 20) => request(`/scheduled/${id}/runs?limit=${limit}`)
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */

@@ -2371,6 +2371,17 @@ public class RagService {
         return dead != null && dead.get();
     }
 
+    /**
+     * 清除某通道的断开标记登记。**无客户端的收集型通道**（定时执行智能体用的 CollectingSseEmitter）
+     * 用完必须主动调用：它不会触发 onCompletion（没有真实响应可完成），否则 ACTIVE_SSE 会一直
+     * 持有该 emitter 引用不放。
+     */
+    static void forgetSseChannel(SseEmitter emitter) {
+        if (emitter != null) {
+            ACTIVE_SSE.remove(emitter);
+        }
+    }
+
     /** 客户端断开信号：思考流 doOnNext 内中断同步消费（blockLast）用 */
     private static final class SseClientGoneException extends RuntimeException {
     }

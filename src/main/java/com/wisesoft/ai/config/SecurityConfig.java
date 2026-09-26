@@ -101,6 +101,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 产物交付（我的产物）：普通用户可看/删**自己的**产物（ArtifactController 内按 uid 归属校验，
         // 管理员可越权）；文件下载走 /artifacts/** 签名地址，不经过本拦截器。
         if (path.equals("/api/ai/artifact") || path.startsWith("/api/ai/artifact/")) return true;
+        // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
+        if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
         // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
         if ("GET".equals(method)) {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);

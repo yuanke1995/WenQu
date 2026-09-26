@@ -310,6 +310,10 @@ public class ConfigService {
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
         d.put("artifact.retentionDays", "90");                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
+        d.put("scheduled.enabled", "true");                    // 定时执行智能体总开关
+        d.put("scheduled.maxPerUser", "20");                   // 每人定时任务数上限（0=不限）
+        d.put("scheduled.timeoutMs", "300000");                // 单次执行超时(ms)
+        d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
         d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)

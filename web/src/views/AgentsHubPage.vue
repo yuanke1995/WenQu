@@ -1,5 +1,5 @@
 <template>
-  <!-- 智能体工作台：四个 Tab 对所有人开放。
+  <!-- 智能体工作台：五个 Tab 对所有人开放。
        技能 Skills 与 MCP 是**个人资产**（每人管自己的，2026-09-26 从「系统设置」迁出）；
        智能体对普通用户开放**自建自管**（后端按 ResourceVisibilityService 做资源级隔离：
        只能看到/管理自己创建的与共享给自己的）；
@@ -11,6 +11,7 @@
       <a-tab-pane key="agents" tab="智能体"><AgentsPage /></a-tab-pane>
       <a-tab-pane key="skills" tab="技能 Skills"><SkillPanel /></a-tab-pane>
       <a-tab-pane key="mcp" tab="MCP 外部工具"><McpPanel /></a-tab-pane>
+      <a-tab-pane key="scheduled" tab="定时任务"><ScheduledPanel /></a-tab-pane>
     </a-tabs>
   </div>
 </template>
@@ -22,12 +23,13 @@ import AgentsPage from './AgentsPage.vue'
 import ProvidersPage from './ProvidersPage.vue'
 import SkillPanel from './SkillPanel.vue'
 import McpPanel from './McpPanel.vue'
+import ScheduledPanel from './ScheduledPanel.vue'
 
 // Tab 状态落在路由 query（?tab=skills），刷新/旧链接可还原；切 Tab 用 replace 不堆历史记录
 const route = useRoute()
 const router = useRouter()
 
-const TABS = ['providers', 'agents', 'skills', 'mcp']
+const TABS = ['providers', 'agents', 'skills', 'mcp', 'scheduled']
 
 const active = computed({
   get: () => {
