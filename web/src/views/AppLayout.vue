@@ -25,10 +25,6 @@
             <robot-outlined />
             <span v-if="!collapsed">智能体</span>
           </button>
-          <button class="nav-item" :class="{ active: isActive('/providers') }" @click="router.push('/providers')" title="模型供应商">
-            <cloud-server-outlined />
-            <span v-if="!collapsed">模型供应商</span>
-          </button>
           <button class="nav-item" :class="{ active: isActive('/knowledge') }" @click="router.push('/knowledge')" title="知识库">
             <database-outlined />
             <span v-if="!collapsed">知识库</span>
@@ -97,7 +93,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CloudServerOutlined,
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi } from '../api'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'

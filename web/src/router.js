@@ -5,14 +5,13 @@ import Login from './views/LoginPage.vue'
 // 工作台（三栏布局）：侧边栏 + 内容区
 import AppLayout from './views/AppLayout.vue'
 import Chat from './views/ChatPage.vue'
-import Agents from './views/AgentsPage.vue'
+import AgentsHub from './views/AgentsHubPage.vue'
 import KnowledgeBase from './views/KnowledgeBasePage.vue'
 import Documents from './views/DocumentsPage.vue'
 import Dashboard from './views/DashboardPage.vue'
 import Settings from './views/SettingsPage.vue'
 import Evaluation from './views/EvaluationPage.vue'
 import Members from './views/MembersPage.vue'
-import Providers from './views/ProvidersPage.vue'
 import Profile from './views/ProfilePage.vue'
 
 const router = createRouter({
@@ -22,8 +21,9 @@ const router = createRouter({
     { path: '/login', component: Login, meta: { title: '登录' } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
     { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
-    { path: '/agents', component: AppLayout, children: [{ path: '', component: Agents }], meta: { requiresAdmin: true, title: '智能体' } },
-    { path: '/providers', component: AppLayout, children: [{ path: '', component: Providers }], meta: { requiresAdmin: true, title: '模型供应商' } },
+    { path: '/agents', component: AppLayout, children: [{ path: '', component: AgentsHub }], meta: { requiresAdmin: true, title: '智能体' } },
+    // 模型供应商并入智能体页 Tab（?tab=providers）；旧入口重定向
+    { path: '/providers', redirect: { path: '/agents', query: { tab: 'providers' } } },
     { path: '/knowledge', component: AppLayout, children: [
       { path: '', component: KnowledgeBase },
       { path: ':kbId/docs', component: Documents, meta: { title: '文档管理' } }
