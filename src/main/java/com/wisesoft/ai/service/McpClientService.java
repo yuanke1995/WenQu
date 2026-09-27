@@ -81,9 +81,7 @@ public class McpClientService {
             return List.of(); // 智能体显式"不使用任何 MCP"：连接都不必建立
         }
         if (uid == null || uid.isBlank()) return List.of();
-        ensureConnections(uid);
-        UserPool pool = pools.get(uid);
-        if (pool == null) return List.of();
+        UserPool pool = ensureConnections(uid);
         List<ToolCallback> callbacks = new ArrayList<>();
         synchronized (pool) {
             for (Map.Entry<String, McpSyncClient> entry : pool.clients.entrySet()) {
@@ -111,8 +109,7 @@ public class McpClientService {
      */
     public List<Map<String, Object>> serverStatuses(String uid) {
         if (uid == null || uid.isBlank()) return List.of();
-        ensureConnections(uid);
-        UserPool pool = pools.get(uid);
+        UserPool pool = ensureConnections(uid);
         List<Map<String, Object>> out = new ArrayList<>();
         synchronized (pool) {
             for (UserMcp row : pool.rows) {
@@ -155,9 +152,7 @@ public class McpClientService {
      */
     public java.util.Set<String> serverNames(String uid) {
         if (uid == null || uid.isBlank()) return java.util.Set.of();
-        ensureConnections(uid);
-        UserPool pool = pools.get(uid);
-        if (pool == null) return java.util.Set.of();
+        UserPool pool = ensureConnections(uid);
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         synchronized (pool) {
             for (UserMcp row : pool.rows) {
@@ -227,10 +222,14 @@ public class McpClientService {
         return one.length() > 100 ? one.substring(0, 100) + "…" : one;
     }
 
-    /** 按该用户当前配置对齐连接（懒加载；配置指纹变化才重建） */
-    private void ensureConnections(String uid) {
+    /**
+     * 按该用户当前配置对齐连接（懒加载；配置指纹变化才重建）。
+     * 返回的一定是 {@link #pools} 里的活池：先对齐自己的池（顺带刷新 lastAccess），
+     * 再做全局空闲回收——顺序反了的话，回收会把自己刚取出的闲置池关掉并从 map 摘除，
+     * 调用方随后按 uid 再 get 就拿不到，对着已出 map 的"僵尸池"继续用（曾致 serverStatuses NPE）。
+     */
+    private UserPool ensureConnections(String uid) {
         UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
-        evictIdlePools();
         synchronized (pool) {
             pool.lastAccess = System.currentTimeMillis();
             List<UserMcp> rows = userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
@@ -241,7 +240,8 @@ public class McpClientService {
             }
             String fingerprint = fingerprintOf(rows);
             if (fingerprint.equals(pool.fingerprint)) {
-                return; // 配置未变，沿用现有连接
+                evictIdlePools(); // 配置未变，沿用现有连接
+                return pool;
             }
             closePool(pool);
             pool.fingerprint = fingerprint;
@@ -269,6 +269,8 @@ public class McpClientService {
                 }
             }
         }
+        evictIdlePools();
+        return pool;
     }
 
     /** 关闭并清空某个连接池（保留行信息本身由调用方重建） */
@@ -288,6 +290,11 @@ public class McpClientService {
     /**
      * 回收长时间未使用的用户连接池：SSE/streamable 都是有状态长连接，用户下线不再问答后
      * 不能一直挂着（尤其 SSE 会占用服务端连接槽）。仅回收空闲的，正在用的不受影响。
+     * <p>
+     * 只关连接、清指纹，池壳留在 {@link #pools} 里（下次访问指纹为空自动重建连接）——
+     * 不从 map 摘除：一旦摘除，「别的线程刚 computeIfAbsent/get 到引用」与「这里 remove」
+     * 之间存在竞态，调用方会拿着已出 map 的僵尸池或 get 到 null（serverStatuses 曾因此 NPE）。
+     * 池壳仅几个空字段，常驻开销可忽略；双重检查保证刚被使用的池不会被误关。
      */
     private void evictIdlePools() {
         long now = System.currentTimeMillis();
@@ -295,10 +302,9 @@ public class McpClientService {
             UserPool pool = e.getValue();
             if (now - pool.lastAccess < IDLE_EVICT_MILLIS) continue;
             synchronized (pool) {
-                if (now - pool.lastAccess < IDLE_EVICT_MILLIS) continue;
+                if (System.currentTimeMillis() - pool.lastAccess < IDLE_EVICT_MILLIS) continue;
                 closePool(pool);
                 pool.fingerprint = "";
-                pools.remove(e.getKey(), pool);
                 log.info("[MCP] 用户 {} 的 MCP 连接池空闲超时已回收", e.getKey());
             }
         }
