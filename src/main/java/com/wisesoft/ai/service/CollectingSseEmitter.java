@@ -85,7 +85,7 @@ public class CollectingSseEmitter extends SseEmitter {
                     settle();
                 }
                 default -> {
-                    // stage / retrieved / image / artifact / tool_status / subagent / warn 等过程事件：
+                    // stage / retrieved / image / artifact / tool_status / tool_output / subagent / warn 等过程事件：
                     // 对"跑完一轮并落会话"没有额外用途（产物已落库、来源已写在消息里），只留在 frames
                 }
             }

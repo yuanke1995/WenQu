@@ -1267,8 +1267,7 @@ public class RagService {
 
                 @Override
                 public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
-                    String name = cb.getToolDefinition().name();
-                    long begin = System.currentTimeMillis();
+                    String name = cb.getToolDefinition().name();                    long begin = System.currentTimeMillis();
                     // 单轮步数上限：防模型陷入"调工具→不满意→再调"的失控循环烧 token。
                     // 达到上限返回错误结果并要求模型直接作答（fail-safe 而不是无限放行）。
                     if (st.maxToolSteps > 0 && st.toolStepCount.get() >= st.maxToolSteps) {
@@ -1324,6 +1323,16 @@ public class RagService {
                             }
                         }
                         recordToolStatus(st, name, toolInput, "start", null, 0, 1);
+                        // 流式输出接线：execute 增强一份 toolContext，注入「本工具输出增量回调」（闭包持有工具名）。
+                        // SandboxTools 检测到回调即走流式执行（后台脱离+轮询），增量经 recordToolOutput 转 SSE；
+                        // 其余工具/无流上下文按原上下文透传，行为不变。
+                        org.springframework.ai.chat.model.ToolContext effectiveCtx = toolContext;
+                        if (SandboxTools.STREAMING_TOOL_NAME.equals(name) && toolContext != null) {
+                            java.util.Map<String, Object> enhanced = new java.util.HashMap<>(toolContext.getContext());
+                            enhanced.put(SandboxTools.CTX_OUTPUT_SINK,
+                                    (java.util.function.Consumer<String>) delta -> recordToolOutput(st, name, delta));
+                            effectiveCtx = new org.springframework.ai.chat.model.ToolContext(enhanced);
+                        }
                         // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
                         // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
                         // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
@@ -1334,7 +1343,7 @@ public class RagService {
                         }
                         try {
                             int[] attempts = {0};
-                            String result = callWithRetry(cb, toolInput, toolContext, name, attempts);
+                            String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts);
                             recordToolStatus(st, name, toolInput, "done", result,
                                     System.currentTimeMillis() - begin, attempts[0]);
                             return result;
@@ -1432,7 +1441,36 @@ public class RagService {
         throw last;
     }
 
-    /** 记录一条工具状态：实时 SSE tool_status 事件 + AnswerStreamState.toolCalls 累积（done 汇总与持久化用） */
+    /** 工具入参/结果分级截断：SSE 实时只发 200 字摘要（防超长工具 I/O 撑爆 SSE 帧与实时渲染） */
+    private static final int TOOL_IO_SSE_BRIEF = 200;
+    /** 终态记录（done 汇总 + 随消息持久化）保存的全文上限：前端工具卡片展开查看完整入参/输出 */
+    private static final int TOOL_IO_MAX = 8 * 1024;
+
+    private static String truncBrief(String s, int max) {
+        return s == null ? "" : s.substring(0, Math.min(max, s.length()));
+    }
+
+    /** 工具实时输出增量：SSE tool_output 事件（前端在运行中的工具卡片里实时滚动）。不落库——
+     *  完整输出随 done 汇总的 result 走持久化；本事件仅服务执行期的"看着它跑"。 */
+    private void recordToolOutput(AnswerStreamState st, String toolName, String delta) {
+        if (delta == null || delta.isEmpty()) {
+            return;
+        }
+        String brief = delta.length() > 4096 ? delta.substring(0, 4096) : delta; // 单片上限，防异常大块撑爆 SSE 帧
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("name", toolName);
+        rec.put("delta", brief);
+        try {
+            st.emitter.send(SseEmitter.event()
+                    .name("tool_output")
+                    .data("{\"type\":\"tool_output\",\"content\":" + JSON.toJSONString(rec)
+                            + ",\"sessionId\":\"" + st.sessionId + "\"}"));
+        } catch (Exception e) {
+            log.debug("[TOOL-OUTPUT] SSE 下发失败（客户端可能已断开）: {}", e.getMessage());
+        }
+    }
+
+    /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts) {
         Map<String, Object> rec = new LinkedHashMap<>();
@@ -1442,17 +1480,22 @@ public class RagService {
         if (attempts > 1) {
             rec.put("attempts", attempts); // 自动重试后成功：前端显示「重试 N 次」
         }
-        // 入参/结果截断（防超长工具 I/O 撑爆 SSE 与库）
-        String argsBrief = input == null ? "" : input.substring(0, Math.min(200, input.length()));
+        String argsBrief = truncBrief(input, TOOL_IO_SSE_BRIEF);
         rec.put("args", argsBrief);
         if (resultOrError != null) {
-            String brief = resultOrError.substring(0, Math.min(200, resultOrError.length()));
-            rec.put(status.equals("error") ? "error" : "result", brief);
+            rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, TOOL_IO_SSE_BRIEF));
         }
         // 只把终态（done/error）记入持久化列表：start 仅实时下发（前端转圈显示），
         // 否则快照里 start/done 成对存在，前端 done 汇总覆盖后工具状态行会出现重复双行
         if (!"start".equals(status)) {
-            st.toolCalls.add(rec);
+            // 终态记录升级为全文（上限 8KB）：done 汇总与落库都用它，前端卡片展开可见完整入参/输出，
+            // 历史恢复同样可展开（实时 SSE 副本保持短摘要，两者字段同名、前端合并时全文覆盖摘要）
+            Map<String, Object> full = new LinkedHashMap<>(rec);
+            full.put("args", truncBrief(input, TOOL_IO_MAX));
+            if (resultOrError != null) {
+                full.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, TOOL_IO_MAX));
+            }
+            st.toolCalls.add(full);
         }
         // 后端日志同步留痕（与 [RAG]/[CTX] 等阶段日志同级可观测）：开始/完成/失败各一行，结果截断防爆量
         if ("start".equals(status)) {
@@ -1461,7 +1504,7 @@ public class RagService {
             log.warn("[TOOL] {} 调用失败 ({}ms) error={}", name, elapsedMs, rec.get("error"));
         } else {
             log.info("[TOOL] {} 调用完成 ({}ms) result={}", name, elapsedMs,
-                    resultOrError == null ? "" : resultOrError.substring(0, Math.min(160, resultOrError.length())).replace('\n', ' '));
+                    resultOrError == null ? "" : truncBrief(resultOrError.replace('\n', ' '), 160));
         }
         try {
             st.emitter.send(SseEmitter.event()

@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `sources`     TEXT         DEFAULT NULL COMMENT '引用来源 (JSON数组字符串)',
     `retrieved`   TEXT         DEFAULT NULL COMMENT '检索状态行数据 (JSON: keywords/refs/terms)',
     `artifacts`   TEXT         DEFAULT NULL COMMENT '产物交付 (JSON数组: [{url,filename,size,description}])',
-    `tool_calls`  TEXT         DEFAULT NULL COMMENT '工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}])',
+    `tool_calls`  MEDIUMTEXT   DEFAULT NULL COMMENT '工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]；入参/输出存≤8KB全文，供前端卡片展开)',
     `tokens`      TEXT         DEFAULT NULL COMMENT 'Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)',
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',

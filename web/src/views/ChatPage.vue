@@ -39,7 +39,52 @@
                 </div>
                 <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
               </div>
-              <div class="md" :data-msg-index="i" v-html="timelineHtml(m)"></div>
+              <div v-if="hasTimelineTools(m)" class="md" :data-msg-index="i">
+                <template v-for="(seg, si) in timelineView(m)" :key="si">
+                  <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images)"></div>
+                  <div v-else class="tl-group">
+                    <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
+                      <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
+                      <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
+                      <check-outlined v-else class="tool-ic tool-ic-ok" />
+                      <span>执行了 {{ seg.tools.length }} 个操作</span>
+                      <span class="tool-dur">· {{ groupDur(seg) }}</span>
+                      <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }">▶</span>
+                    </button>
+                    <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
+                      <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
+                        <button class="tl-card-head" type="button" @click="t._open = !t._open">
+                          <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
+                          <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
+                          <close-circle-outlined v-else class="tool-ic tool-ic-err" />
+                          <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                          <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
+                          <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
+                          <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
+                          <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
+                          <span v-if="t.status === 'error'" class="tool-fail">失败</span>
+                          <span class="tl-caret" :class="{ open: t._open }">▶</span>
+                        </button>
+                        <div v-if="t._open || t.status === 'start'" class="tl-card-body">
+                          <template v-if="t.args">
+                            <div class="tl-io-label">入参</div>
+                            <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
+                          </template>
+                          <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
+                            <div class="tl-io-label">{{ t.status === 'start' ? '实时输出' : (t.result ? '输出' : '输出（执行期）') }}</div>
+                            <pre class="tl-io" :class="{ live: t.status === 'start' }">{{ liveOutput(t) }}</pre>
+                          </template>
+                          <template v-if="t.error">
+                            <div class="tl-io-label">错误</div>
+                            <pre class="tl-io tl-io-err">{{ t.error }}</pre>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div v-else class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
               <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
               <div v-if="m.dispatched" class="dispatch-chip">
@@ -50,16 +95,45 @@
               </div>
               <!-- 工具（沙盒/MCP）执行中不叠加裸 spin：工具条已有转圈+实时耗时，裸圈无语义还像卡死 -->
               <a-spin v-if="m.loading && m.content && !toolRunning(m)" size="small" style="margin-top:4px" />
+              <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineTools(m)" class="tool-status-list">
-                <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-status-item" :title="t.args ? ('入参: ' + t.args) : ''">
-                  <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
-                  <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
-                  <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                  <span class="tool-name">{{ toolLabel(t.name) }}</span>
-                  <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
-                  <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
-                  <span v-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
-                  <span v-if="t.status === 'error'" class="tool-fail">失败</span>
+                <button class="tl-group-bar" type="button" @click="m._fbOpen = !m._fbOpen">
+                  <loading-outlined v-if="toolRunning(m)" spin class="tool-ic tool-ic-run" />
+                  <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
+                  <check-outlined v-else class="tool-ic tool-ic-ok" />
+                  <span>执行了 {{ toolCallsView(m.toolCalls).length }} 个操作</span>
+                  <span class="tool-dur">· {{ fallbackDur(m) }}</span>
+                  <span class="tl-caret" :class="{ open: m._fbOpen }">▶</span>
+                </button>
+                <div v-if="m._fbOpen" class="tl-group-body">
+                  <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
+                    <button class="tl-card-head" type="button" @click="t._open = !t._open">
+                      <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
+                      <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
+                      <close-circle-outlined v-else class="tool-ic tool-ic-err" />
+                      <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                      <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
+                      <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
+                      <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
+                      <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
+                      <span v-if="t.status === 'error'" class="tool-fail">失败</span>
+                      <span class="tl-caret" :class="{ open: t._open }">▶</span>
+                    </button>
+                    <div v-if="t._open || t.status === 'start'" class="tl-card-body">
+                      <template v-if="t.args">
+                        <div class="tl-io-label">入参</div>
+                        <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
+                      </template>
+                      <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
+                        <div class="tl-io-label">{{ t.status === 'start' ? '实时输出' : (t.result ? '输出' : '输出（执行期）') }}</div>
+                        <pre class="tl-io" :class="{ live: t.status === 'start' }">{{ liveOutput(t) }}</pre>
+                      </template>
+                      <template v-if="t.error">
+                        <div class="tl-io-label">错误</div>
+                        <pre class="tl-io tl-io-err">{{ t.error }}</pre>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
@@ -606,12 +680,13 @@ const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's'
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
 
-// ==================== 时间线（瀑布式输出） ====================
-// 正文与工具条按事件到达顺序交错渲染。timeline 是段数组：
+// ==================== 时间线（正文与工具交错渲染） ====================
+// 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
 //   {kind:'text', from, to} → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
-//   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，条自动更新）。
+//   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
+// 渲染经 timelineView(m) 生成视图：连续工具合并为折叠组，正文保持段落连续。
 // 历史恢复的消息没有 timeline（落库只有整段 content，无法重建交错点）→ hasTimelineTools 为假，
-// 走下方分组兜底布局，不造数。整体在单个 .md 容器内拼接 HTML，data-msg-index 引用角标逻辑零改动。
+// 走下方兜底折叠组，不造数。data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
 
 const hasTimelineTools = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && s.kind === 'tool')
 
@@ -631,43 +706,77 @@ const pushTimelineTool = (idx, tool) => {
   tl.push({ kind: 'tool', tool })
 }
 
-const escapeHtml = s => String(s == null ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-
-/** 时间线里的工具条（内联 HTML：v-html 内不能用 Vue 组件，用 CSS 自绘图标） */
-const toolChipHtml = t => {
-  const icon = t.status === 'start'
-    ? '<span class="tl-ic tl-spin" aria-hidden="true"></span>'
-    : (t.status === 'done' ? '<span class="tl-ic tl-ok">✓</span>' : '<span class="tl-ic tl-err">✕</span>')
-  const retry = t.attempts > 1 ? '<span class="tool-dur">重试 ' + (t.attempts - 1) + ' 次</span>' : ''
-  const dur = t.status === 'start' && t.startAt
-    ? '<span class="tool-dur">' + liveToolDur(t.startAt) + '</span>'
-    : (t.elapsedMs > 0 ? '<span class="tool-dur">' + toolDuration(t.elapsedMs) + '</span>' : '')
-  const fail = t.status === 'error' ? '<span class="tool-fail">失败</span>' : ''
-  const title = t.args ? ' title="入参: ' + escapeHtml(t.args) + '"' : ''
-  return '<div class="tool-status-item tl-chip"' + title + '>' + icon
-    + '<span class="tool-name">' + escapeHtml(toolLabel(t.name)) + '</span>' + retry + dur + fail + '</div>'
-}
-
-const timelineHtml = m => {
-  const tl = m?.timeline
-  if (!Array.isArray(tl) || !tl.length || !tl.some(s => s && s.kind === 'tool')) {
-    return renderMd(m.content, m.images)
-  }
+/** 时间线渲染视图：把 timeline 段序列转成可渲染序列。
+ * 连续工具段（中间夹空白文本不算断点）合并为 {kind:'group', tools:[...]} 折叠组，
+ * 正文段落不被工具剁碎；尾部 timeline 未覆盖的正文兜底补段（与旧拼接逻辑等价）。 */
+const timelineView = m => {
   const len = (m.content || '').length
-  let html = '', cursor = 0
+  const tl = Array.isArray(m.timeline) ? m.timeline : []
+  const out = []
+  let group = null
+  let maxTo = 0
+  const flush = () => { if (group) { out.push(group); group = null } }
   for (const seg of tl) {
     if (!seg) continue
-    if (seg.kind === 'text') {
-      const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
-      if (to > from) { html += renderMd(m.content.slice(from, to), m.images); cursor = Math.max(cursor, to) }
-    } else if (seg.tool) {
-      html += toolChipHtml(seg.tool)
+    if (seg.kind === 'tool') {
+      if (seg.tool) { if (!group) group = { kind: 'group', tools: [] }; group.tools.push(seg.tool) }
+      continue
     }
+    const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
+    if (to <= from || !String(m.content || '').slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
+    flush()
+    out.push({ kind: 'text', from, to })
+    if (to > maxTo) maxTo = to
   }
-  if (cursor < len) html += renderMd(m.content.slice(cursor), m.images) // 兜底：timeline 未覆盖的尾部正文
-  return html
+  flush()
+  if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
+  return out
 }
+
+// ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
+const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds']
+const oneLine = (s, n) => { const x = String(s).replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x }
+const toolBrief = t => {
+  if (!t?.args) return ''
+  let obj = null
+  try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
+  if (!obj || typeof obj !== 'object') return oneLine(t.args, 56)
+  for (const k of TOOL_BRIEF_KEYS) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim()) return oneLine(v, 56)
+    if (Array.isArray(v) && v.length) return oneLine(JSON.stringify(v), 56)
+  }
+  for (const k of Object.keys(obj)) { // 兜底：第一个非空字符串字段（跳过 content/newString 等大文本字段）
+    if (k === 'content' || k === 'newString') continue
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim()) return oneLine(v, 56)
+  }
+  return oneLine(t.args, 48)
+}
+const prettyIo = s => {
+  if (s == null || s === '') return ''
+  try { const o = JSON.parse(s); return o && typeof o === 'object' ? JSON.stringify(o, null, 2) : String(s) } catch (e) { return String(s) }
+}
+// 运行中卡片显示实时输出（tool_output 增量累积，只展示尾部避免无界增长）；结束后显示最终全文
+const LIVE_TAIL_CHARS = 4000
+const liveOutput = t => {
+  if (t.status === 'start') {
+    if (!t.output) return ''
+    return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.output.slice(-LIVE_TAIL_CHARS)
+  }
+  return t.result != null ? t.result : (t.output || '')
+}
+const groupRunning = g => g.tools.some(t => t.status === 'start')
+const groupHasError = g => g.tools.some(t => t.status === 'error')
+const groupDur = g => {
+  let ms = 0, running = false
+  for (const t of g.tools) {
+    if (t.status === 'start') { running = true; if (t.startAt) ms += Math.max(0, nowTick.value - t.startAt) }
+    else ms += t.elapsedMs || 0
+  }
+  return toolDuration(ms) + (running ? '…' : '')
+}
+const fallbackDur = m => toolDuration(toolCallsView(m.toolCalls).reduce((s, t) => s + (t.elapsedMs || 0), 0))
 
 /** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
 const mergeDoneToolCalls = (idx, doneCalls) => {
@@ -679,6 +788,7 @@ const mergeDoneToolCalls = (idx, doneCalls) => {
     if (live) {
       live.status = d.status || 'done'
       live.elapsedMs = d.elapsedMs || live.elapsedMs || 0
+      if (d.args) live.args = d.args // done 汇总带全文（≤8KB），覆盖实时 200 字摘要
       if (d.error) live.error = d.error
       if (d.attempts != null) live.attempts = d.attempts
       if (d.result != null) live.result = d.result
@@ -1775,6 +1885,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
           if (last) {
             last.status = t.status
             last.elapsedMs = t.elapsedMs || 0
+            if (t.args) last.args = t.args
+            if (t.result != null) last.result = t.result
             if (t.error) last.error = t.error
           } else {
             const rec = { ...t }
@@ -1783,6 +1895,20 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
           }
         }
         scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onToolOutput: payload => {
+      try {
+        const o = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!o || !o.delta) return
+        const list = messages.value[idx].toolCalls
+        if (!Array.isArray(list)) return
+        const live = [...list].reverse().find(x => x.name === o.name && x.status === 'start')
+        if (!live) return
+        const MAX = 65536
+        let out = (live.output || '') + o.delta
+        if (out.length > MAX) { out = out.slice(out.length - MAX); live.outputTruncated = true }
+        live.output = out
       } catch (e) { /* 忽略 */ }
     },
     onSubagent: payload => {
@@ -2140,15 +2266,49 @@ onMounted(async () => {
 .think-body { padding: 0 10px 8px; border-top: 1px dashed var(--app-border); color: var(--app-text2); font-size: 12px; line-height: 1.7; max-height: 300px; overflow-y: auto; }
 .think-body :deep(.md > p) { margin: 4px 0; }
 
-.tool-status-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
-.tool-status-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; width: fit-content; }
-/* 时间线内联工具条（v-html 自绘图标，不能用 antd Vue 组件）：与底部分组列表同风格 */
-.tl-chip { margin: 4px 0; }
-.tl-ic { display: inline-flex; align-items: center; justify-content: center; width: 14px; }
-.tl-spin { width: 12px; height: 12px; border: 2px solid #1677ff; border-top-color: transparent; border-radius: 50%; animation: tl-rotate 0.8s linear infinite; }
-.tl-ok { color: #52c41a; font-size: 12px; }
-.tl-err { color: #ff4d4f; font-size: 12px; }
-@keyframes tl-rotate { to { transform: rotate(360deg); } }
+/* ==================== 工具执行卡片 / 折叠组 ====================
+ * 正文与工具交错：连续工具合并折叠组（组条窄条化，不把文章剁开）；
+ * 卡片标题行亮出关键参数（命令/路径/检索词），展开看完整入参/输出（toolCalls 存 ≤8KB 全文）。 */
+.tool-status-list { margin-top: 8px; }
+.tl-group { margin: 4px 0; }
+.tl-group-bar {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
+  padding: 4px 10px; font-size: 12px; color: var(--app-text2); text-align: left;
+  background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 8px;
+  cursor: pointer; user-select: none;
+}
+.tl-group-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
+.tl-caret { font-size: 10px; color: var(--app-text3); transition: transform .15s; line-height: 1; }
+.tl-caret.open { transform: rotate(90deg); }
+.tl-group-body {
+  margin: 6px 0 2px 12px; padding-left: 10px; border-left: 2px solid var(--app-border);
+  display: flex; flex-direction: column; gap: 6px; max-width: 100%;
+}
+.tl-group-body.solo { margin: 4px 0 2px; padding-left: 0; border-left: none; }
+.tl-card { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); width: fit-content; max-width: 100%; }
+.tl-card.err { border-color: color-mix(in srgb, var(--app-danger) 45%, transparent); }
+.tl-card-head {
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+  font-size: 12px; color: var(--app-text2); background: none; border: none; text-align: left;
+  cursor: pointer; user-select: none; max-width: 100%;
+}
+.tl-card-head:hover { color: var(--app-text); }
+.tl-brief {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
+  color: var(--app-accent); background: var(--app-accent-weak);
+  padding: 1px 6px; border-radius: 4px; max-width: 420px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tl-card-body { padding: 0 10px 8px; max-width: 100%; }
+.tl-io-label { font-size: 11px; color: var(--app-text3); margin: 6px 0 2px; }
+.tl-io {
+  margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--app-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
+  line-height: 1.6; color: var(--app-text); max-height: 240px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all; min-width: 320px; max-width: 100%;
+}
+.tl-io-err { color: var(--app-danger); }
+.tl-io.live { border: 1px solid color-mix(in srgb, var(--app-accent) 35%, transparent); background: var(--app-accent-weak); }
 .tool-ic { font-size: 13px; }
 .tool-ic-run { color: var(--app-accent); }
 .tool-ic-ok { color: var(--app-ok); }

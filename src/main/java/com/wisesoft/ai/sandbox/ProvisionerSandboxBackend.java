@@ -594,6 +594,155 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         return execute(command, null);
     }
 
+    // ==================== 流式执行（实时输出） ====================
+
+    /** 输出增量采样间隔（ms）：粒度权衡——太小打爆 HTTP，太大滚动不"实时"。 */
+    private static final long STREAM_POLL_INTERVAL_MS = 800;
+    /** 沙盒内流式输出的临时目录与文件前缀（进程结束/超时后即清理）。 */
+    private static final String STREAM_DIR = "/tmp/.wq-stream";
+
+    /**
+     * 流式执行：命令在沙盒内后台脱离运行（{@code &}），stdout/stderr 全量重定向进 log 文件、
+     * 退出码写 exit 标记文件；本方法按行轮询 log 追增量，每片经 {@code outputListener} 实时回调
+     * （上层转 SSE {@code tool_output} 事件），返回值仍是完整的 {@link ExecuteResponse}（output=全文）。
+     *
+     * <p>为什么不直接流式：runtime（all-in-one-sandbox 镜像）的 {@code /v1/shell/exec} 是同步一次性
+     * 返回（async 模式的 wait 也仅在 completed 时给 output），无流式端点；而「后台脱离 + 读文件」
+     * 只依赖 shell 的 POSIX 语义与既有的按行读文件端点，镜像零改动。与同步 {@link #execute} 的差异
+     * 要如实知道：输出经文件中转（语义等价）；超时返回已收到的输出并注明命令可能仍在后台运行
+     * （沙盒空闲回收会清理）。
+     */
+    public ExecuteResponse executeStreaming(String command, Integer timeout, java.util.function.Consumer<String> outputListener) {
+        try {
+            SandboxRuntimeClient client = getClient();
+            String streamId = UUID.randomUUID().toString().replace("-", "");
+            String logPath = STREAM_DIR + "/" + streamId + ".log";
+            String exitPath = STREAM_DIR + "/" + streamId + ".exit";
+            // ① 同步准备：建目录、清同名残留（顺带确认沙盒可用，失败即返回错误——不静默降级到同步执行）
+            ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + logPath + " " + exitPath + " && echo READY");
+            if (prep.exitCode() == null || prep.exitCode() != 0) {
+                return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false);
+            }
+            // ② 后台启动：花括号组后台化，组内先跑命令（2>&1 合并）、再写退出码标记；组输出进 log。
+            //    exec 立即返回（stdout 只有 BG_OK），命令的输出全部进 log 文件。
+            String wrapped = "{ { " + command + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath + " 2>&1 & echo BG_OK";
+            SandboxRuntimeClient.SandboxExecResult launch = client.execCommand(wrapped, null, false);
+            String launchOut = launch.output() == null ? "" : launch.output().strip();
+            if (!launchOut.endsWith("BG_OK")) {
+                return new ExecuteResponse("Error: 沙盒后台执行启动失败: " + launchOut, 1, false);
+            }
+            // ③ 轮询：追增量 → 回调；exit 标记出现即完成；总时长受 timeout（缺省 commandTimeoutSeconds）约束
+            StringBuilder all = new StringBuilder();
+            int linesRead = 0;
+            int timeoutSeconds = timeout != null && timeout > 0 ? timeout : commandTimeoutSeconds;
+            long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+            Integer exitCode = null;
+            boolean timedOut = false;
+            while (true) {
+                try {
+                    Thread.sleep(STREAM_POLL_INTERVAL_MS);
+                } catch (InterruptedException exc) {
+                    Thread.currentThread().interrupt();
+                    timedOut = true;
+                    break;
+                }
+                linesRead = drainLines(client, logPath, linesRead, all, outputListener, false);
+                exitCode = tryReadExitCode(client, exitPath);
+                if (exitCode != null) {
+                    break;
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    timedOut = true;
+                    break;
+                }
+            }
+            // ④ 收尾：最后追平一次（命令已结束，进行中的尾行按完整行收掉），清理临时文件
+            linesRead = drainLines(client, logPath, linesRead, all, outputListener, true);
+            cleanupStream(client, logPath, exitPath);
+            String output = all.toString();
+            boolean truncated = false;
+            byte[] encoded = output.getBytes(StandardCharsets.UTF_8);
+            if (encoded.length > maxOutputBytes) {
+                output = new String(encoded, encoded.length - maxOutputBytes, maxOutputBytes, StandardCharsets.UTF_8);
+                truncated = true;
+            }
+            if (timedOut) {
+                output = output + "\n…（等待超时（上限 " + timeoutSeconds + "s），已停止追踪；命令可能仍在沙盒内运行）";
+            }
+            return new ExecuteResponse(output, exitCode, truncated);
+        } catch (RuntimeException exc) {
+            System.err.println("Sandbox streaming execute failed for thread " + threadId + ": " + exc);
+            return new ExecuteResponse("Error: " + exc, 1, false);
+        }
+    }
+
+    /**
+     * 追读 log 自 {@code linesRead}（0-based 行号）之后的新增完整行：追加进 {@code all} 并回调
+     * {@code outputListener}，返回新的已读行数。只发完整行（以 \n 结尾才算），避免把"正在写的行"
+     * 反复重发；{@code forceTail} 用于终局追平——命令已结束，把未完成尾行按完整行收掉。
+     */
+    private int drainLines(SandboxRuntimeClient client, String logPath, int linesRead,
+                           StringBuilder all, java.util.function.Consumer<String> outputListener, boolean forceTail) {
+        String chunk;
+        try {
+            SandboxRuntimeClient.SandboxReadFileResult result = client.readFile(logPath, linesRead, null);
+            byte[] raw = result.content() == null ? new byte[0] : result.content();
+            chunk = new String(raw, StandardCharsets.UTF_8);
+        } catch (RuntimeException exc) {
+            if (isMissingFileError(exc)) {
+                return linesRead; // log 尚未落盘（启动竞态）：不算失败，下一轮再读
+            }
+            throw exc;
+        }
+        if (chunk.isEmpty()) {
+            return linesRead;
+        }
+        String[] parts = chunk.split("\n", -1);
+        boolean endsNewline = chunk.endsWith("\n");
+        int complete;
+        if (endsNewline) {
+            complete = parts.length - 1; // 尾部空串是最后一个 \n 之后的占位，不是一行
+        } else {
+            complete = forceTail ? parts.length : parts.length - 1; // 尾行还在写：留到下一轮（保证不漏不重）
+        }
+        if (complete <= 0) {
+            return linesRead;
+        }
+        StringBuilder delta = new StringBuilder();
+        for (int i = 0; i < complete; i++) {
+            delta.append(parts[i]).append('\n');
+        }
+        all.append(delta);
+        if (outputListener != null) {
+            outputListener.accept(delta.toString());
+        }
+        return linesRead + complete;
+    }
+
+    /** 读退出码标记文件：不存在（404）= 命令未结束，返回 null；存在则解析首行整数。 */
+    private Integer tryReadExitCode(SandboxRuntimeClient client, String exitPath) {
+        try {
+            SandboxRuntimeClient.SandboxReadFileResult result = client.readFile(exitPath, 0, null);
+            byte[] raw = result.content() == null ? new byte[0] : result.content();
+            String content = new String(raw, StandardCharsets.UTF_8).strip();
+            return content.isEmpty() ? null : Integer.valueOf(content.split("\n")[0].strip());
+        } catch (RuntimeException exc) {
+            if (isMissingFileError(exc)) {
+                return null;
+            }
+            throw exc;
+        }
+    }
+
+    /** 清理流式临时文件（best-effort：清理失败不影响结果，残留随沙盒回收清理）。 */
+    private void cleanupStream(SandboxRuntimeClient client, String logPath, String exitPath) {
+        try {
+            client.execCommand("rm -f " + logPath + " " + exitPath, Duration.ofSeconds(10), false);
+        } catch (RuntimeException ignore) {
+            // best-effort cleanup
+        }
+    }
+
     // ==================== 列目录 ====================
 
     @Override

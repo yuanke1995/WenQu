@@ -33,6 +33,11 @@ public class SandboxTools {
     /** 单次命令输出超过该长度时，返回给模型的内容会被截断（避免把上下文撑爆）。 */
     private static final int TOOL_OUTPUT_CHARS = 20_000;
 
+    /** toolContext 里「工具输出增量回调」的键（Consumer&lt;String&gt;，RagService 注入 → SSE tool_output 实时下发）。 */
+    public static final String CTX_OUTPUT_SINK = "wq_tool_output_sink";
+    /** 支持流式输出的工具名（RagService 按 name 判定是否注入输出回调）。 */
+    public static final String STREAMING_TOOL_NAME = "execute";
+
     private final SandboxService sandboxService;
     private final ArtifactService artifactService;
 
@@ -53,7 +58,12 @@ public class SandboxTools {
         if (command == null || command.isBlank()) {
             return "命令不能为空";
         }
-        ProvisionerSandboxBackend.ExecuteResponse result = backend.execute(command);
+        // 有输出回调（问答流式链路注入）→ 走流式执行：命令后台脱离 + 按行轮询，增量经回调转 SSE
+        // tool_output 实时下发（前端「看着它跑」）；无回调（无流上下文的调用方）保持原同步执行。
+        java.util.function.Consumer<String> sink = outputSink(toolContext);
+        ProvisionerSandboxBackend.ExecuteResponse result = sink != null
+                ? backend.executeStreaming(command, null, sink)
+                : backend.execute(command);
         StringBuilder sb = new StringBuilder();
         if (result.exitCode != null && result.exitCode != 0) {
             sb.append("退出码 ").append(result.exitCode).append('\n');
@@ -200,6 +210,14 @@ public class SandboxTools {
         if (toolContext == null) return null;
         Object v = toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
         return v == null ? null : String.valueOf(v);
+    }
+
+    /** 取输出增量回调（RagService 按工具名注入；缺省 null = 无流式上下文，走同步执行）。 */
+    @SuppressWarnings("unchecked")
+    private java.util.function.Consumer<String> outputSink(ToolContext toolContext) {
+        if (toolContext == null) return null;
+        Object v = toolContext.getContext().get(CTX_OUTPUT_SINK);
+        return v instanceof java.util.function.Consumer ? (java.util.function.Consumer<String>) v : null;
     }
 
     // ==================== 内部 ====================
