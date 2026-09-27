@@ -1,6 +1,7 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.mapper.AgentMapper;
 import com.wisesoft.ai.mapper.ScheduledJobMapper;
@@ -133,16 +134,24 @@ public class ScheduledJobService {
         // 改了 cron/时区/启停都要重算下次执行时刻（否则会按旧节奏跑，用户改完看不到变化）
         job.setNextRunAt(Integer.valueOf(1).equals(job.getEnabled())
                 ? nextRunAt(job.getCron(), job.getTimezone(), LocalDateTime.now()) : null);
-        jobMapper.updateById(job);
+        // next_run_at 必须走 wrapper 显式 set：updateById 的默认 NOT_NULL 策略会把 null 字段整列跳过，
+        // 停用任务时「置空下次执行时刻」写不进去，刷新后仍显示旧的执行时间。
+        jobMapper.update(job, new LambdaUpdateWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getId, id)
+                .set(ScheduledJob::getNextRunAt, job.getNextRunAt()));
         return toDto(job);
     }
 
     public boolean delete(String uid, String id) {
         ScheduledJob job = mustOwn(uid, id);
-        job.setDeleted(1);
-        job.setEnabled(0);
-        job.setNextRunAt(null);
-        jobMapper.updateById(job);
+        // 必须用 LambdaUpdateWrapper 显式 set：deleted 是全局 logic-delete-field，
+        // updateById 的 SET 子句会剔除该列（逻辑删除静默失效 ⇒ 删了还在列表里）；
+        // 而 next_run_at=null 在 updateById 的 NOT_NULL 策略下同样会被跳过。
+        jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getId, id)
+                .set(ScheduledJob::getDeleted, 1)
+                .set(ScheduledJob::getEnabled, 0)
+                .set(ScheduledJob::getNextRunAt, null));
         log.info("[SCHEDULED] uid={} 删除定时任务 {}", uid, job.getName());
         return true;
     }
@@ -152,7 +161,11 @@ public class ScheduledJobService {
         ScheduledJob job = mustOwn(uid, id);
         job.setEnabled(enabled ? 1 : 0);
         job.setNextRunAt(enabled ? nextRunAt(job.getCron(), job.getTimezone(), LocalDateTime.now()) : null);
-        jobMapper.updateById(job);
+        // 同 update()：停用要把 next_run_at 显式置空，updateById 会静默跳过 null 列
+        jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getId, id)
+                .set(ScheduledJob::getEnabled, job.getEnabled())
+                .set(ScheduledJob::getNextRunAt, job.getNextRunAt()));
         return toDto(job);
     }
 

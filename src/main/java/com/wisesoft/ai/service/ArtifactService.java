@@ -235,18 +235,27 @@ public class ArtifactService {
         return row;
     }
 
-    /** 删除产物（软删 + 删除文件）；无归属校验失败抛异常，返回 false = 不存在/已删除。 */
+    /**
+     * 删除产物（逻辑删除 + 删除文件）；无归属校验失败抛异常，返回 false = 不存在/已删除。
+     * <p>
+     * <b>落库必须走 {@code deleteById}</b>：{@code deleted} 是本工程全局的 {@code logic-delete-field}，
+     * MyBatis-Plus 为逻辑删除实体生成的 {@code updateById} 语句会**把该列从 SET 子句里剔除**
+     * （只在 WHERE 上补 {@code deleted=0}）⇒「{@code row.setDeleted(1)} + {@code updateById}」是静默无效的：
+     * 文件被删掉、记录却仍是未删除状态，于是列表里留着一条下载必然 404 的行。
+     */
     public boolean softDelete(String id, String uid, boolean admin) {
         Artifact row = getOwned(id, uid, admin);
         if (row == null) return false;
         deleteFileQuietly(row.getObjectKey());
-        row.setDeleted(1);
-        artifactMapper.updateById(row);
+        artifactMapper.deleteById(row.getId());
         log.info("[ARTIFACT] 已删除产物 id={} uid={} file={}", id, row.getUid(), row.getFilename());
         return true;
     }
 
-    /** 超期产物清理（供调度任务调用）：删文件 + 软删记录，返回清理条数。retentionDays ≤ 0 = 不清理。 */
+    /**
+     * 超期产物清理（供调度任务调用）：删文件 + 逻辑删记录，返回清理条数。retentionDays ≤ 0 = 不清理。
+     * <p>落库同 {@link #softDelete}：只能走 {@code deleteById}，{@code updateById} 改不动 {@code deleted}。
+     */
     public int cleanupExpired(int retentionDays) {
         if (retentionDays <= 0) return 0;
         LocalDateTime before = LocalDateTime.now().minusDays(retentionDays);
@@ -256,8 +265,7 @@ public class ArtifactService {
         int n = 0;
         for (Artifact row : rows) {
             deleteFileQuietly(row.getObjectKey());
-            row.setDeleted(1);
-            artifactMapper.updateById(row);
+            artifactMapper.deleteById(row.getId());
             n++;
         }
         return n;

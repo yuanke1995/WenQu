@@ -129,9 +129,11 @@ public class KnowledgeBaseService {
         if (kb.getIsDefault() != null && kb.getIsDefault() == 1) return "默认知识库不可删除";
         long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, id));
         if (n > 0) return "该知识库下还有 " + n + " 个文档，请先移出或删除文档";
-        kb.setDeleted(1);
-        kb.setUpdateTime(LocalDateTime.now());
-        kbMapper.updateById(kb);
+        // 必须走 deleteById（MyBatis-Plus 的逻辑删除语句）：deleted 是全局 logic-delete-field，
+        // updateById 生成的 SET 子句会剔除该列（只在 WHERE 补 deleted=0）⇒
+        // 「setDeleted(1) + updateById」静默无效，库删了还在列表里（与产物删除同一坑）。
+        // update_time 由库侧 `on update CURRENT_TIMESTAMP` 随本行 UPDATE 自动刷新。
+        kbMapper.deleteById(id);
         cachedDefaultId = null;
         // 级联清理：从关联智能体（含子智能体）的 knowledgeBaseIds 里摘除本库 ID，避免悬挂引用
         cleanupAgentReferences(id);
