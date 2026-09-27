@@ -31,15 +31,15 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 ├── src/main/java/.../ai/
 │   ├── WenQuApplication.java        # 入口
 │   ├── config/                      # SecurityConfig(Token+RBAC) / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler 等
-│   ├── controller/                  # 24 个控制器、170+ 端点（完整契约以 Swagger 为准）：
+│   ├── controller/                  # 25 个控制器、170+ 端点（完整契约以 Swagger 为准）：
 │   │                                #   Auth(登录+OIDC) / Chat(SSE+会话+消息组+引用溯源) / Document / Knowledge(知识块) / KnowledgeBase(知识库) / Qa(反馈+看板) / Config(设置 schema)
 │   │                                #   Provider(模型供应商) / Agent(智能体) / Skill(技能) / Mcp / ScheduledJob(定时任务) / Artifact(产物) / ApiKey / ApiEndpoint(对外问答)
-│   │                                #   User / Role / Menu / Department(成员与 RBAC) / SearchIndex / DescCache / RetrievalDebug / Evaluation
+│   │                                #   User / Role / Menu / Department(成员与 RBAC) / SearchIndex / DescCache / RetrievalDebug / Evaluation / Sandbox(沙盒工作区浏览)
 │   ├── service/                     # 问答主链路：RagService(问答编排+工具注册) / HybridRetrievalService(混合检索+扩散汇总) / RerankService / KnowledgeRefService(引用识别+1-hop 扩散)
 │   │                                #   KeywordIndexService(mysql|meilisearch 双引擎) / KeywordExtractor(jieba) / VisionService / ImageFilterService / ImageDescCache / UserImageService
 │   │                                #   DocumentService(解析+向量化+全量重嵌入编排) / SessionService / QaLogService / ConfigService(config-schema 唯一定义源) / RateLimitService / AnswerCacheService / RetrievalEvaluationService
 │   │                                #   智能体与工具：SubAgentOrchestrator(StateGraph 并行编排) / ArtifactService(产物交付) / BuiltinTools / KnowledgeRetrievalTool / PresentArtifactTool / SkillTools
-│   │                                #   SandboxService(沙盒装配：scope 挂会话+空闲回收) / SandboxTools(沙盒五工具) / AgentService / SkillService / McpClientService / ApiKeyService
+│   │                                #   SandboxService(沙盒装配：scope 挂会话+空闲回收) / SandboxTools(沙盒六工具，含 deliver_artifact 产物交付) / AgentService / SkillService / McpClientService / ApiKeyService
 │   │                                #   基础设施：DynamicOpenAiChatModel / DynamicEmbeddingModel(配置指纹热切换) / ModelRegistryService(供应商判权) / OidcService(单点登录) / ImageUrlSigner(HMAC)
 │   │                                #   ConfigCryptoService(RSA) / ScheduleCenter(定时任务+沙盒回收调度) / ThreadPoolManager(线程池)
 │   ├── sandbox/                     # 沙盒隔离执行环境：ProvisionerSandboxProvider(连接缓存+keepalive) / SandboxProvisionerClient(HTTP 客户端，强制 HTTP/1.1)
@@ -192,7 +192,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **文档解析**：docx（表格→Markdown、结构感知切分）/ xlsx / pdf（扫描件自动 OCR，逐页 200DPI → 本地视觉模型）/ txt/md/csv；大文件流式解析；分块重叠只进向量化文本；解析删除感知（删除立即停止并清理产物）
 - **数据闭环**：问答日志 + 👍👎 反馈 + 看板聚合；**无命中问题 → 一键创建知识块**（自动生成向量）；**差评回流**：看板差评样本 → 一键加入检索评估集
 - **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；每轮问答可指定智能体，未填维度继承全局；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）
-- **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 5 个工具——`execute`（shell 命令）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls`；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）
+- **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 6 个工具——`execute`（shell 命令）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls` / `deliver_artifact`（沙盒文件交付为「我的产物」，扩展名白名单放宽到 py/png/xlsx/zip 等，单个 ≤1MB，路径限定用户数据根）；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）；**右栏「沙盒」卡**可浏览/下载会话沙盒工作区文件（`/sandbox/state|tree|download` 只读端点，只 discover 不创建容器）；**工具瞬时故障自动重试**（失败 500ms 重试一次，`tool_status.attempts` 透出尝试次数）
 - **定时执行智能体**（`/agents` → 定时任务 Tab）：智能体按 cron（6 段）或固定间隔自动执行，执行历史与结果会话留痕；调度中心先推进 `next_run_at` 再执行（单实例防重复）、同任务串行（未完成记 `skipped`）
 - **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（命中块注册进引用流）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（渐进披露读 `SKILL.md`）；开关集中在 `tool.*`，**总开关与子开关默认均为 false**
 - **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力（内置目录 + 用户目录），支持新建 / 从 URL 安装（远程域白名单 `skill.remoteAllowedHosts`）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；**按用户隔离**（个人资产），沙盒内以只读投影暴露给容器
@@ -212,7 +212,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/ai/chat` | SSE 流式问答（`token`/`image`/`retrieved`/`thinking`/`tool_status`/`subagent`/`artifact`/`stage`/`warn`/`done`/`error` 事件，见下方 SSE 事件表） |
+| `POST /api/ai/chat` | SSE 流式问答（`token`/`image`/`retrieved`/`thinking`/`tool_status`/`subagent`/`artifact`/`stage`/`plan`/`warn`/`done`/`error` 事件，见下方 SSE 事件表） |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树（前端据此渲染侧边栏与管理入口） |
 | `POST /api/ai/auth/login`、`/api/ai/auth/oidc/{config,login-url,callback,exchange-code}` | 本地登录 / OIDC 单点登录四端点 |
 | `GET /api/ai/sessions?keyword=`、`POST /api/ai/session/new`、`GET /api/ai/session/{id}`、`PUT /api/ai/session/{id}/rename` | 会话列表（搜索）/ 新建 / 历史恢复 / 重命名 |
@@ -251,6 +251,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 |------|------|------|
 | `token` | 流式生成逐片（语义缓存命中时一次性整段） | 回答文本增量 |
 | `stage` | 问答阶段推进 | 阶段标识（前端显示进度提示） |
+| `plan` | 轮次开始，按当前配置确定会跑的步骤 | 执行计划步骤名数组，如 `["理解问题","深度思考","检索知识库","生成回答"]`（仅实时下发，不随消息持久化；模型临时决定的工具调用不在计划内） |
 | `image` | 生成之前 | 命中图片 URL 列表（按编号顺序，生产为 HMAC 签名 URL） |
 | `retrieved` | 检索 + 重排 + 上下文填充完成 | 检索概览 `{keywords, refs, terms}`（随消息持久化） |
 | `thinking` | 深度思考开启时 | 思考链增量 |

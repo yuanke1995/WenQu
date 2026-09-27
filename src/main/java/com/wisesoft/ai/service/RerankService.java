@@ -147,13 +147,13 @@ public class RerankService {
             List<Double> scores = oneShot ? rankByOpenAiRerank(query, docs, r) : rankByOpenAiRerank(query, docs);
             if (scores == null || scores.size() != docs.size()) return candidates;
 
-            List<HybridRetrievalService.Hit> ranked = new ArrayList<>(candidates);
-            // 预计算 index→score 映射，避免排序比较器里反复 indexOf（O(n² log n) 且 record equals 会逐字段比较大文本）
-            Map<HybridRetrievalService.Hit, Double> scoreMap = new HashMap<>();
+            // 重排分回填到每条候选（原先只用于排序即丢弃，引用来源无法透出真实相关度）；
+            // 直接按分值降序排（primitive 比较，避免 record equals 逐字段比较大文本）
+            List<HybridRetrievalService.Hit> ranked = new ArrayList<>(candidates.size());
             for (int i = 0; i < candidates.size(); i++) {
-                scoreMap.put(candidates.get(i), scores.get(i));
+                ranked.add(candidates.get(i).withRerankScore(scores.get(i)));
             }
-            ranked.sort((a, b) -> Double.compare(scoreMap.get(b), scoreMap.get(a)));
+            ranked.sort((a, b) -> Double.compare(b.rerankScore(), a.rerankScore()));
             log.info("[Rerank] 候选 {} 条重排完成", candidates.size());
             return ranked;
         } catch (Exception e) {

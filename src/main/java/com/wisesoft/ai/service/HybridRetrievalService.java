@@ -61,10 +61,17 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 混合检索结果（titlePath 章节路径，检索侧拼装上下文用）
+     * 混合检索结果（titlePath 章节路径，检索侧拼装上下文用）。
+     * rerankScore：重排模型相关度分（0~1，relevance_score），仅重排实际执行后由 RerankService 回填；
+     * 未重排时为 null——score 始终是融合分（向量+关键词加权），两者口径不同，引用来源分别透出。
      */
     public record Hit(String knowledgeId, String docId, String title, String content,
-                      List<String> images, double score, Integer chunkIndex, String titlePath) {
+                      List<String> images, double score, Integer chunkIndex, String titlePath,
+                      Double rerankScore) {
+        /** 回填重排分（其余字段原样拷贝；record 等值含大文本字段，重排排序直接用该分值比较） */
+        public Hit withRerankScore(double rerankScore) {
+            return new Hit(knowledgeId, docId, title, content, images, score, chunkIndex, titlePath, rerankScore);
+        }
     }
 
     /**
@@ -176,7 +183,8 @@ public class HybridRetrievalService {
                             oldHit.title(), oldHit.content(), oldHit.images(),
                             oldHit.score() + newHit.score(), // A1：双命中叠加
                             oldHit.chunkIndex() == null ? newHit.chunkIndex() : oldHit.chunkIndex(),
-                            oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath()));
+                            oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath(),
+                            null));
         }
 
         List<Hit> result = new ArrayList<>(merged.values());
@@ -556,7 +564,7 @@ public class HybridRetrievalService {
             titlePath = tp == null ? null : String.valueOf(tp);
         }
         if (docId == null) docId = "";
-        return new Hit(kid, docId, title, doc.getText(), images, score, chunkIndex, titlePath);
+        return new Hit(kid, docId, title, doc.getText(), images, score, chunkIndex, titlePath, null);
     }
 
     /**
@@ -682,7 +690,7 @@ public class HybridRetrievalService {
             }
         }
         return new Hit(String.valueOf(k.getId()), String.valueOf(k.getDocId()),
-                k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath());
+                k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath(), null);
     }
 
     private List<String> imagesFromMd(Map<String, Object> md) {

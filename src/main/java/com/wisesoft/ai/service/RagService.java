@@ -477,6 +477,21 @@ public class RagService {
         List<Map<String, String>> degradations = new ArrayList<>();
         Set<String> degradedCodes = new HashSet<>();
         try {
+            // 执行计划（任务清单）：只列本轮按当前配置**确定会跑**的步骤，供前端清单逐项点亮。
+            // 模型临时决定的工具调用/子智能体咨询无从预知，不进计划（谎报计划比没有计划更糟），
+            // 那部分由 tool_status/subagent 实时事件呈现。计划仅实时可见，不随消息持久化。
+            List<String> planSteps = new ArrayList<>();
+            planSteps.add("理解问题");
+            if (knowledgeOff) {
+                planSteps.add("生成回答");
+            } else {
+                if (useDeepThink && configService.getBoolean("deepReasoning.enabled")) {
+                    planSteps.add("深度思考");
+                }
+                planSteps.add("检索知识库");
+                planSteps.add("生成回答");
+            }
+            sendSseEvent(emitter, "plan", JSON.toJSONString(planSteps), sessionId);
             // 0. 进度提示：理解问题阶段（图片描述/改写都有耗时，先给用户反馈）
             sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
             // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）
@@ -923,6 +938,12 @@ public class RagService {
                 src.put("title", hit.title());
                 src.put("snippet", snippet(text)); // 用截取后的片段做溯源摘要（更贴近命中内容）
                 src.put("images", hit.images()); // 关联文档截图（原始URL，前端经 /proxy 访问）
+                // 相关度：score=检索融合分（恒有）；rerankScore=重排模型相关度（重排实际执行才有），
+                // 3 位小数仅为展示整洁，数据本身真实
+                src.put("score", Math.round(hit.score() * 1000) / 1000.0);
+                if (hit.rerankScore() != null) {
+                    src.put("rerankScore", Math.round(hit.rerankScore() * 1000) / 1000.0);
+                }
                 // 扩散块来源标注：REF_OUT（被引用）/ REF_IN（引用者）/ PARENT（父章节上下文），前端引用弹窗可区分
                 String refOrigin = refOrigins.get(hit.knowledgeId());
                 if (refOrigin != null) src.put("origin", refOrigin);
@@ -1144,7 +1165,7 @@ public class RagService {
                 public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
                     String name = cb.getToolDefinition().name();
                     long begin = System.currentTimeMillis();
-                    recordToolStatus(st, name, toolInput, "start", null, 0);
+                    recordToolStatus(st, name, toolInput, "start", null, 0, 1);
                     // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
                     // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
                     // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
@@ -1154,11 +1175,14 @@ public class RagService {
                         KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
                     }
                     try {
-                        String result = cb.call(toolInput, toolContext);
-                        recordToolStatus(st, name, toolInput, "done", result, System.currentTimeMillis() - begin);
+                        int[] attempts = {0};
+                        String result = callWithRetry(cb, toolInput, toolContext, name, attempts);
+                        recordToolStatus(st, name, toolInput, "done", result,
+                                System.currentTimeMillis() - begin, attempts[0]);
                         return result;
                     } catch (Exception e) {
-                        recordToolStatus(st, name, toolInput, "error", e.getMessage(), System.currentTimeMillis() - begin);
+                        recordToolStatus(st, name, toolInput, "error", e.getMessage(),
+                                System.currentTimeMillis() - begin, 0);
                         throw e;
                     } finally {
                         if (kbTool) {
@@ -1172,13 +1196,47 @@ public class RagService {
         return wrapped.toArray(new org.springframework.ai.tool.ToolCallback[0]);
     }
 
+    /**
+     * 工具调用瞬时故障自动重试：失败后 500ms 重试一次（共至多 2 次），attempts 记录实际尝试次数。
+     * 场景是沙盒容器冷启动、网络抖动这类瞬时故障；确定性错误（路径不存在等）多付一次 500ms 代价可接受
+     * ——业务层的"错误输出"（如命令退出码非 0）不是异常，不会触发重试。模型看到的只有终态与 attempts。
+     * 注意不声明 throws：ToolCallback.call 只抛运行时异常，包装 checked 会破坏调用方 precise-rethrow。
+     */
+    private String callWithRetry(org.springframework.ai.tool.ToolCallback cb, String toolInput,
+                                 org.springframework.ai.chat.model.ToolContext toolContext,
+                                 String name, int[] attempts) {
+        RuntimeException last = null;
+        for (int i = 0; i < 2; i++) {
+            if (i > 0) {
+                log.warn("[TOOL] {} 第 1 次调用失败，500ms 后自动重试: {}", name,
+                        last == null ? "" : last.getMessage());
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw last;
+                }
+            }
+            attempts[0]++;
+            try {
+                return cb.call(toolInput, toolContext);
+            } catch (Exception e) {
+                last = e instanceof RuntimeException ? (RuntimeException) e : new IllegalStateException(e);
+            }
+        }
+        throw last;
+    }
+
     /** 记录一条工具状态：实时 SSE tool_status 事件 + AnswerStreamState.toolCalls 累积（done 汇总与持久化用） */
     private void recordToolStatus(AnswerStreamState st, String name, String input,
-                                  String status, String resultOrError, long elapsedMs) {
+                                  String status, String resultOrError, long elapsedMs, int attempts) {
         Map<String, Object> rec = new LinkedHashMap<>();
         rec.put("name", name);
         rec.put("status", status);
         rec.put("elapsedMs", elapsedMs);
+        if (attempts > 1) {
+            rec.put("attempts", attempts); // 自动重试后成功：前端显示「重试 N 次」
+        }
         // 入参/结果截断（防超长工具 I/O 撑爆 SSE 与库）
         String argsBrief = input == null ? "" : input.substring(0, Math.min(200, input.length()));
         rec.put("args", argsBrief);
@@ -1444,14 +1502,29 @@ public class RagService {
                     List<String> userImgUrls = st.userImgs.stream().map(UserImageService.UserImage::url).toList();
                     String attachmentsJson = (st.userAttachments == null || st.userAttachments.isEmpty())
                             ? null : JSON.toJSONString(st.userAttachments);
+                    // Token 用量（1.9）：持久化前先算好（随消息存 JSON，刷新/历史会话仍可回看「本次用量/会话累计」）。
+                    // 输出优先用网关真实 usage（部分兼容网关末块 metadata.usage 携带），拿不到回落本地估算；
+                    // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
+                    boolean realOutput = st.realOutputTokens > 0;
+                    int outputTokens = realOutput ? st.realOutputTokens : TokenCounter.estimate(answer);
+                    int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
+                    Map<String, Object> tokens = new LinkedHashMap<>();
+                    tokens.put("context", st.contextTokens);
+                    tokens.put("budget", st.budgetTokens);
+                    tokens.put("hits", st.contextHits);
+                    tokens.put("output", outputTokens);
+                    tokens.put("prompt", promptTokens);
+                    tokens.put("outputIsReal", realOutput);
+                    tokens.put("total", promptTokens + outputTokens);
                     // 10 参重载（含 attachments）：显式传 null 占位，避免误绑定到 thinking 参数的旧重载
                     sessionService.appendMessage(st.sessionId, "user", st.question,
                             userImgUrls.isEmpty() ? null : userImgUrls, null,
                             null, null, null, null, attachmentsJson);
+                    // 12 参重载（含 tokens）：助手消息把用量 JSON 随行落库（历史回看/会话累计的数据源）
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
-                            toolCallsJson);
+                            toolCallsJson, null, JSON.toJSONString(tokens));
 
                     // 异步落问答日志（不阻塞 SSE 完成）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
@@ -1488,20 +1561,7 @@ public class RagService {
                             ? List.of() : artifactService.takeArtifacts(st.sessionId));
                     // 工具调用过程汇总（实时 tool_status 已逐条下发；此处兜底，前端 onDone 覆盖渲染）
                     donePayload.put("toolCalls", toolCallSnapshot);
-                    // Token 消耗可视化（1.9）：上下文实际/预算/填充块数 + 输出。
-                    // 输出优先用网关真实 usage（部分兼容网关末块 metadata.usage 携带），拿不到回落本地估算；
-                    // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
-                    Map<String, Object> tokens = new LinkedHashMap<>();
-                    boolean realOutput = st.realOutputTokens > 0;
-                    int outputTokens = realOutput ? st.realOutputTokens : TokenCounter.estimate(answer);
-                    int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
-                    tokens.put("context", st.contextTokens);
-                    tokens.put("budget", st.budgetTokens);
-                    tokens.put("hits", st.contextHits);
-                    tokens.put("output", outputTokens);
-                    tokens.put("prompt", promptTokens);
-                    tokens.put("outputIsReal", realOutput);
-                    tokens.put("total", promptTokens + outputTokens);
+                    // Token 消耗可视化（1.9）：用量已在持久化前算好（tokens），此处随 done 下发给当轮展示
                     donePayload.put("tokens", tokens);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
@@ -1622,6 +1682,11 @@ public class RagService {
                 src.put("snippet", snippet);
                 src.put("images", h.images());
                 src.put("origin", "TOOL");
+                // 与主链路口径一致：融合分恒有，重排分仅有则透出
+                src.put("score", Math.round(h.score() * 1000) / 1000.0);
+                if (h.rerankScore() != null) {
+                    src.put("rerankScore", Math.round(h.rerankScore() * 1000) / 1000.0);
+                }
                 sources.add(src);
                 return ref;
             }

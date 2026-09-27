@@ -88,7 +88,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched, onPlan,
     deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = []
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
@@ -153,6 +153,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               const d = JSON.parse(line.substring(5).trim())
               if (d.type === 'token') { onToken(d.content) }
               else if (d.type === 'stage') { onStage && onStage(d.content) }
+              else if (d.type === 'plan') { onPlan && onPlan(d.content) } // content 为本轮执行计划步骤名数组 ["理解问题","检索知识库",…]
               else if (d.type === 'retrieved') { onRetrieved && onRetrieved(d.content) }
               else if (d.type === 'thinking') { onThinking && onThinking(d.content) }
               else if (d.type === 'thinking_done') { onThinkingDone && onThinkingDone(d.content) }
@@ -579,3 +580,25 @@ export const setUserPreference = payload =>
     method: 'PUT',
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
+
+// ---- 沙盒工作区浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
+export const sandboxState = sessionId =>
+  request(`/sandbox/state?sessionId=${encodeURIComponent(sessionId || '')}`, { timeout: 15000 })
+export const sandboxTree = (sessionId, path) =>
+  request(`/sandbox/tree?sessionId=${encodeURIComponent(sessionId || '')}${path ? '&path=' + encodeURIComponent(path) : ''}`, { timeout: 20000 })
+/** 下载沙盒文件：带 Authorization 的 fetch → Blob（浏览器直接 window.open 不带令牌，会 401） */
+export const sandboxDownload = async (sessionId, path, filename) => {
+  const res = await fetch(`${BASE}/sandbox/download?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path || '')}`,
+    { headers: { Authorization: 'Bearer ' + authToken() } })
+  if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
+  if (!res.ok) throw new Error(`下载失败(${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || (path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path) || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}

@@ -55,6 +55,7 @@
                   <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                   <close-circle-outlined v-else class="tool-ic tool-ic-err" />
                   <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                  <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                   <span v-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                   <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                 </div>
@@ -304,8 +305,20 @@
       </div>
     </div>
 
-    <!-- 右侧状态栏（可收起）：模型 / 本次检索 / 引用来源 -->
+    <!-- 右侧状态栏（可收起）：执行过程 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源 -->
     <aside v-if="panelOpen" class="right-panel">
+      <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
+      <div class="rp-scope-row">
+        <span class="rp-scope">
+          <span :class="{ on: panelScope === 'round' }" @click="panelScope = 'round'">本轮</span>
+          <span :class="{ on: panelScope === 'session' }" @click="panelScope = 'session'">会话</span>
+        </span>
+      </div>
+      <!-- 运行控制：运行中可停止（与发送键/ESC 同一 stop）；最近一轮失败可整轮重试（复用消息流 regenerate） -->
+      <div v-if="panelAi && (panelAi.loading || panelAi.failed)" class="rp-card rp-ctrl">
+        <button v-if="panelAi.loading" class="rp-ctrl-btn is-stop" @click="stop()"><pause-circle-outlined /> 停止生成</button>
+        <button v-else class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
+      </div>
       <div class="rp-card">
         <div class="rp-label">当前智能体</div>
         <div class="rp-strong rp-agent">
@@ -322,26 +335,125 @@
         </div>
         <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
       </div>
+      <!-- 执行过程时间线：当前/最近一轮的 思考·工具·子智能体·阶段 汇总（只投影消息里已有数据，不造数） -->
       <div class="rp-card">
-        <div class="rp-label">最近一次检索</div>
-        <template v-if="lastRetrieved || lastSources.length">
-          <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
-          <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
-          <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
-          <template v-if="toolSearchQueries(lastAi).length">
-            <div class="rp-divider"></div>
-            <div class="rp-tool-label">精确检索（模型主动补充）</div>
-            <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
+        <div class="rp-exec-head" @click="toggleExecPanel">
+          <span class="rp-label" style="margin-bottom:0">执行过程</span>
+          <span class="rp-exec-sum">
+            <a-spin v-if="panelAi && panelAi.loading" size="small" />
+            <template v-else>{{ execSummary }}</template>
+            <down-outlined class="rp-arrow" :class="{ open: rpExecOpen }" />
+          </span>
+        </div>
+        <template v-if="rpExecOpen">
+          <template v-if="panelAi">
+            <div v-for="(it, ti) in execTimeline" :key="ti" class="rp-exec-wrap" :class="{ 'is-error': it.status === 'error' }">
+              <div class="rp-exec-item" :class="{ 'is-click': it.kind === 'tool' || it.kind === 'subagent' }" @click="onTimelineClick(it)">
+                <span class="rp-dot" :class="it.status"></span>
+                <span class="rp-exec-name" :title="it.name">{{ it.name }}</span>
+                <span v-if="it.retry" class="rp-exec-dur">{{ it.retry }}</span>
+                <span v-if="it.duration" class="rp-exec-dur">{{ it.duration }}</span>
+              </div>
+              <!-- 工具步点开看入参/报错（_open 存在消息对象上，随会话保留） -->
+              <div v-if="it.kind === 'tool' && it.src._open && it.detail" class="rp-exec-detail">{{ it.detail }}</div>
+              <!-- 子智能体行点开看各分支状态（右栏独立折叠，与消息流内编排卡片互不影响） -->
+              <div v-if="it.kind === 'subagent' && rpSaOpen && it.src.branches" class="rp-exec-detail rp-exec-sub">
+                <div v-for="b in it.src.branches" :key="b.id" class="rp-sa-row">
+                  <span class="rp-sa-name" :title="b.description">{{ b.name }}</span>
+                  <span class="rp-exec-dur">{{ b.status === 'done' ? ((b.hits ? b.hits + ' 块 · ' : '') + fmtDuration(b.elapsedMs)) : (b.status === 'running' ? '运行中' : '失败') }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="!execTimeline.length" class="rp-dim">本轮暂无执行明细</div>
           </template>
+          <div v-else class="rp-dim">发送问题后展示执行过程</div>
         </template>
-        <div v-else class="rp-dim">本轮尚无检索记录</div>
       </div>
-      <!-- 本次用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
-      <div v-if="lastTokens" class="rp-card">
-        <div class="rp-label">本次用量{{ lastTokens.outputIsReal ? '（网关实测）' : '（估算）' }}</div>
-        <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
-        <div class="rp-row"><span>上下文 {{ fmtTokens(lastTokens.context) }}</span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
-        <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 上下文填入 {{ lastTokens.hits }} 块</div>
+      <!-- 沙盒工作区（会话 scope）：容器运行中可浏览/下载文件；未运行时只给说明，绝不悄悄拉起容器 -->
+      <div class="rp-card">
+        <div class="rp-exec-head" @click="toggleSandbox">
+          <span class="rp-label" style="margin-bottom:0">沙盒</span>
+          <span class="rp-exec-sum">
+            <template v-if="sbState && sbState.available">文件 {{ sbEntries.length }}</template>
+            <template v-else>未运行</template>
+            <down-outlined class="rp-arrow" :class="{ open: sbOpen }" />
+          </span>
+        </div>
+        <template v-if="sbOpen">
+          <template v-if="sbState && sbState.available">
+            <div class="rp-sb-path">
+              <span v-if="sbPath && sbState.root && sbPath !== sbState.root" class="rp-sb-nav" @click="sbNav(sbParent(sbPath))">‹ 上一级</span>
+              <span class="rp-sb-cur" :title="sbPath">{{ sbPath }}</span>
+              <span class="rp-sb-refresh" title="刷新" @click="sbLoad(sbPath)">⟳</span>
+            </div>
+            <div v-if="sbLoading" class="rp-dim">加载中…</div>
+            <template v-else>
+              <div v-for="e in sbEntries" :key="e.path" class="rp-sb-row"
+                   :title="e.isDir ? ('打开目录 ' + e.path) : ('下载 ' + e.path)"
+                   @click="sbOpenEntry(e)">
+                <span class="rp-sb-ic">{{ e.isDir ? '▸' : '·' }}</span>
+                <span class="rp-sb-name">{{ sbName(e.path) }}</span>
+                <span v-if="!e.isDir && e.size != null" class="rp-exec-dur">{{ fmtSize(e.size) }}</span>
+              </div>
+              <div v-if="!sbEntries.length" class="rp-dim">（空目录）</div>
+            </template>
+          </template>
+          <div v-else class="rp-dim">沙盒未运行——本轮问答使用沙盒工具后出现；文件跨轮保留，空闲超时自动回收</div>
+        </template>
+      </div>
+      <!-- 本会话产物：汇总各轮生成的文件，点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
+      <div class="rp-card">
+        <div class="rp-label">产物<template v-if="sessionArtifacts.length"> · {{ sessionArtifacts.length }} 个</template></div>
+        <template v-if="sessionArtifacts.length">
+          <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
+             :href="resolveImg(a.url)" :download="a.filename" target="_blank"
+             :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
+            <file-text-outlined class="rp-art-ic" />
+            <span class="rp-art-name">{{ a.filename }}</span>
+            <download-outlined class="rp-art-dl" />
+          </a>
+          <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
+        </template>
+        <div v-else class="rp-dim">本会话尚未产出文件</div>
+      </div>
+      <template v-if="panelScope === 'round'">
+        <div class="rp-card">
+          <div class="rp-label">最近一次检索</div>
+          <template v-if="lastRetrieved || lastSources.length">
+            <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
+            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
+            <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
+            <template v-if="toolSearchQueries(lastAi).length">
+              <div class="rp-divider"></div>
+              <div class="rp-tool-label">精确检索（模型主动补充）</div>
+              <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
+            </template>
+          </template>
+          <div v-else class="rp-dim">本轮尚无检索记录</div>
+        </div>
+        <!-- 本次用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
+        <div v-if="lastTokens" class="rp-card">
+          <div class="rp-label">本次用量{{ lastTokens.outputIsReal ? '（网关实测）' : '（估算）' }}</div>
+          <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
+          <!-- 上下文占用条：context/budget，逼近预算变警告色（>80% 警告 / >95% 危险） -->
+          <div v-if="lastTokens.budget > 0" class="rp-ctx-bar" :title="'上下文占用 ' + ctxPct + '%'">
+            <span class="rp-ctx-fill" :class="ctxLevel" :style="{ width: ctxPct + '%' }"></span>
+          </div>
+          <div class="rp-row" :style="lastTokens.budget > 0 ? 'margin-top:5px' : ''"><span>上下文 {{ fmtTokens(lastTokens.context) }}<template v-if="lastTokens.budget > 0">（{{ ctxPct }}%）</template></span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
+          <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 上下文填入 {{ lastTokens.hits }} 块</div>
+        </div>
+      </template>
+      <!-- 会话视图：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
+      <div v-else class="rp-card">
+        <div class="rp-label">会话汇总</div>
+        <div class="rp-strong">{{ sessionTokensLabel }}</div>
+        <div v-if="sessionTokens.rounds" class="rp-meta">输出 {{ fmtTokens(sessionTokens.output) }} · 按已记录 {{ sessionTokens.rounds }}/{{ roundCount }} 轮累计</div>
+        <div v-else-if="roundCount" class="rp-meta">恢复的历史轮次不含用量记录</div>
+        <div v-else class="rp-meta">发送问题后统计</div>
+        <div class="rp-divider"></div>
+        <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
+        <div class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮 · 引用 {{ sessionRetrieval.refs }} 段</span><span class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
+        <div class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
       </div>
       <div class="rp-card">
         <div class="rp-label">引用来源<template v-if="groupedSources.length"> · {{ groupedSources.length }} 个文档</template></div>
@@ -355,8 +467,13 @@
             </div>
             <div class="rp-group-body" :class="{ open: g.open }">
               <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
-                   title="点击查看原文" @click.stop="openSource(s)">
+                   :class="{ hl: hoveredRef === s.ref }"
+                   title="点击查看原文；有对应角标的来源会在正文中定位"
+                   @click.stop="locateSource(s)"
+                   @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
+                <span class="rp-src-ref">[{{ s.ref }}]</span>
                 <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
+                <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
               </div>
             </div>
           </div>
@@ -438,7 +555,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference } from '../api'
+         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -454,6 +571,7 @@ const router = useRouter()
 const TOOL_LABELS = {
   searchKnowledge: '知识库精确检索',
   presentArtifact: '生成文件产物',
+  deliver_artifact: '交付沙盒产物',
   calculate: '算术计算',
   currentDateTime: '获取当前时间',
   daysBetween: '计算日期差'
@@ -714,6 +832,204 @@ const groupedSources = computed(() => {
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
+// ==================== 右栏：执行过程时间线 + 本会话产物（P0 补展示） ====================
+// panelAi = 最后一轮 AI 消息（含进行中）——执行过程要看到实时进度，
+// 与「最近一次检索/本次用量」用的 lastAi（仅已完成轮）口径不同
+const panelAi = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'ai') return messages.value[i]
+  }
+  return null
+})
+const rpExecOpen = ref(true)        // 时间线折叠态：新轮次自动展开，完成后用户未手动操作则自动收起
+const rpExecTouched = ref(false)
+const rpSaOpen = ref(false)         // 子智能体分支行的展开态（右栏独立于消息流内编排卡片）
+const toggleExecPanel = () => {
+  rpExecOpen.value = !rpExecOpen.value
+  rpExecTouched.value = true
+}
+// 工具步时间线项（计划/无计划两条路径共用）：入参/输出/报错原文可展开（result 即沙盒命令输出等，
+// 历史恢复的 done 记录同样带 args/result）
+const toolTimelineItem = t => ({
+  kind: 'tool',
+  status: t.status === 'start' ? 'running' : (t.status === 'error' ? 'error' : 'done'),
+  name: toolLabel(t.name),
+  duration: t.elapsedMs > 0 ? toolDuration(t.elapsedMs) : '',
+  retry: t.attempts > 1 ? '重试 ' + (t.attempts - 1) + ' 次' : '',
+  detail: [t.args ? '入参 ' + t.args : '', t.result ? '输出 ' + t.result : '', t.error ? '错误 ' + t.error : ''].filter(Boolean).join('\n'),
+  src: t
+})
+// 时间线只投影消息对象里已有的数据：plan / thinking / toolCalls / subagents / stage，不造数。
+// 有计划（本轮 plan 事件下发）→ 按计划顺序逐项点亮，状态只来自真实事件；
+// 计划外真实发生的工具调用/子智能体按发生序插在「生成回答」之前（它们发生在生成过程中）。
+// 无计划（历史恢复/旧消息）→ 退回纯事件时间线
+const execTimeline = computed(() => {
+  const m = panelAi.value
+  if (!m) return []
+  const plan = Array.isArray(m.plan) ? m.plan : []
+  const items = []
+  if (plan.length) {
+    const stage = m.stage || ''
+    for (const stepName of plan) {
+      let status = 'pending'
+      let duration = ''
+      if (stepName === '理解问题') {
+        status = m.loading ? (stage.includes('理解问题') ? 'running' : 'done')
+          : (m.content || m.failed || m.retrieved || m.thinking ? 'done' : 'pending')
+      } else if (stepName === '深度思考') {
+        status = m.thinking ? ((m.loading && m.thinkLoading) ? 'running' : 'done') : 'pending'
+      } else if (stepName === '检索知识库') {
+        status = (m.retrieved || (Array.isArray(m.sources) && m.sources.length)) ? 'done'
+          : (m.loading && stage.includes('检索')) ? 'running' : 'pending'
+      } else if (stepName === '生成回答') {
+        status = !m.loading ? (m.failed ? 'error' : (m.content ? 'done' : 'pending'))
+          : (m.content || stage.includes('生成')) ? 'running' : 'pending'
+        if (status === 'done' && m.doneTime && m.time) duration = toolDuration(m.doneTime - m.time)
+      } else {
+        // 后端扩展的未知步骤名：完成轮按已做完显示，运行中按阶段文本匹配
+        status = !m.loading ? 'done' : (stage.includes(stepName) ? 'running' : 'pending')
+      }
+      items.push({ kind: 'plan', status, name: stepName, duration })
+    }
+    const extra = []
+    for (const t of toolCallsView(m.toolCalls)) extra.push(toolTimelineItem(t))
+    const sc = subagentCard(m)
+    if (sc) extra.push({ kind: 'subagent', status: sc.running ? 'running' : (sc.done < sc.total ? 'error' : 'done'), name: sc.title, src: sc })
+    const genIdx = items.findIndex(it => it.name === '生成回答')
+    items.splice(genIdx >= 0 ? genIdx : items.length, 0, ...extra)
+  } else {
+    if (m.thinking) items.push({ kind: 'think', status: (m.loading && m.thinkLoading) ? 'running' : 'done', name: '深度思考' })
+    for (const t of toolCallsView(m.toolCalls)) items.push(toolTimelineItem(t))
+    const sc = subagentCard(m)
+    if (sc) items.push({ kind: 'subagent', status: sc.running ? 'running' : (sc.done < sc.total ? 'error' : 'done'), name: sc.title, src: sc })
+    if (m.loading) items.push({ kind: 'stage', status: 'running', name: m.stage || '生成回答' })
+    else if (m.failed) items.push({ kind: 'final', status: 'error', name: '生成失败' })
+    else if (m.content) items.push({ kind: 'final', status: 'done', name: '生成回答', duration: (m.doneTime && m.time) ? toolDuration(m.doneTime - m.time) : '' })
+  }
+  return items
+})
+// 折叠态的头部摘要（运行中由转圈代替）
+const execSummary = computed(() => {
+  const m = panelAi.value
+  if (!m) return ''
+  const tools = toolCallsView(m.toolCalls).length
+  const arts = Array.isArray(m.artifacts) ? m.artifacts.length : 0
+  return [tools ? '工具 ' + tools : '', arts ? '产物 ' + arts : ''].filter(Boolean).join(' · ')
+})
+const onTimelineClick = it => {
+  if (it.kind === 'tool') it.src._open = !it.src._open
+  else if (it.kind === 'subagent') rpSaOpen.value = !rpSaOpen.value
+}
+// 右栏「重试本轮」：与消息流内重试同源——regenerate 向前配对用户问题后整轮重发；
+// 工具级单步重试需要后端重执行机制，暂未实现
+const retryPanelRound = () => {
+  const m = panelAi.value
+  if (!m) return
+  const idx = messages.value.indexOf(m)
+  if (idx >= 0) regenerate(idx)
+}
+// 本会话产物：汇总所有轮次的 artifact（历史恢复的消息同样带 artifacts），最新一轮在前
+const sessionArtifacts = computed(() => {
+  const out = []
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m.role !== 'ai' || !Array.isArray(m.artifacts)) continue
+    for (const a of m.artifacts) if (a && a.url) out.push(a)
+  }
+  return out
+})
+// ===== 右栏统计口径切换（P0 #4）：本轮=最近完成轮明细；会话=全量累计（选择持久化） =====
+const panelScope = ref(localStorage.getItem('app_panel_scope') === 'session' ? 'session' : 'round')
+watch(panelScope, v => { try { localStorage.setItem('app_panel_scope', v) } catch (e) { /* 存储不可用忽略 */ } })
+// 会话累计 tokens：只累加消息里真实记录的用量（tokens 随 done 事件下发、未落库，
+// 历史恢复的轮没有该字段——不计入，也不冒充 0）
+const sessionTokens = computed(() => {
+  let total = 0, output = 0, rounds = 0
+  for (const m of messages.value) {
+    if (m.role !== 'ai' || !m.tokens || typeof m.tokens !== 'object') continue
+    rounds++
+    total += Number(m.tokens.total) || 0
+    output += Number(m.tokens.output) || 0
+  }
+  return { total, output, rounds }
+})
+const sessionTokensLabel = computed(() => sessionTokens.value.rounds ? fmtTokens(sessionTokens.value.total) + ' tokens' : '用量未记录')
+// 会话累计检索/工具：检索轮数按「该轮有检索行或引用」计；精确检索次数按 searchKnowledge 终态记录计
+const sessionRetrieval = computed(() => {
+  let rounds = 0, refs = 0, search = 0, tools = 0
+  for (const m of messages.value) {
+    if (m.role !== 'ai') continue
+    const list = toolCallsView(m.toolCalls)
+    tools += list.length
+    for (const t of list) if (t.name === 'searchKnowledge' && t.status !== 'start') search++
+    if (m.retrieved || (Array.isArray(m.sources) && m.sources.length)) {
+      rounds++
+      refs += Array.isArray(m.sources) ? m.sources.length : 0
+    }
+  }
+  return { rounds, refs, search, tools }
+})
+// ===== 上下文占用条（P0 #3）：context/budget，>80% 警告 / >95% 危险 =====
+const ctxPct = computed(() => {
+  const t = lastTokens.value
+  if (!t || !t.budget) return 0
+  return Math.min(100, Math.max(0, Math.round((t.context / t.budget) * 100)))
+})
+const ctxLevel = computed(() => (ctxPct.value > 95 ? 'danger' : (ctxPct.value > 80 ? 'warn' : '')))
+
+// ==================== 右栏：沙盒工作区浏览（P2 #9） ====================
+// state 探测不创建容器；树懒加载（展开/切会话时拉），文件行点击下载（带令牌 fetch）
+const sbOpen = ref(false)
+const sbState = ref(null)          // {available, root}
+const sbPath = ref('')
+const sbEntries = ref([])
+const sbLoading = ref(false)
+const toggleSandbox = () => { sbOpen.value = !sbOpen.value }
+const sbLoadState = async () => {
+  if (!currentSessionId.value) { sbState.value = null; return }
+  try {
+    const r = await sandboxState(currentSessionId.value)
+    sbState.value = (r && r.success && r.data) ? r.data : { available: false }
+  } catch (e) { sbState.value = { available: false } }
+  if (sbState.value.available) {
+    sbPath.value = sbState.value.root || ''
+    sbLoad(sbPath.value)
+  }
+}
+const sbLoad = async p => {
+  if (!currentSessionId.value) return
+  sbLoading.value = true
+  try {
+    const r = await sandboxTree(currentSessionId.value, p)
+    if (r && r.success && r.data && r.data.available) {
+      sbPath.value = r.data.path || p || ''
+      sbEntries.value = Array.isArray(r.data.entries) ? r.data.entries : []
+      sbState.value = { ...(sbState.value || {}), available: true }
+    } else if (r && r.success && r.data) {
+      sbState.value = { available: false }
+      sbEntries.value = []
+    } else {
+      message.warning((r && r.msg) || '沙盒目录读取失败')
+    }
+  } catch (e) { message.warning(e.message || '沙盒目录读取失败') }
+  finally { sbLoading.value = false }
+}
+const sbNav = p => sbLoad(p)
+const sbParent = p => {
+  const i = (p || '').replace(/\/+$/, '').lastIndexOf('/')
+  return i > 0 ? p.slice(0, i) : p
+}
+const sbName = p => {
+  const s = p || ''
+  return s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s
+}
+const sbOpenEntry = e => {
+  if (e.isDir) sbNav(e.path)
+  else sandboxDownload(currentSessionId.value, e.path, sbName(e.path)).catch(err => message.warning(err.message || '下载失败'))
+}
+watch(sbOpen, v => { if (v) sbLoadState() })
+watch(currentSessionId, () => { sbState.value = null; sbEntries.value = []; if (sbOpen.value) sbLoadState() })
+
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
 const DISCLAIMER_TEXT = `
@@ -765,10 +1081,17 @@ const openSource = async s => {
 }
 
 // 引用角标悬浮提示：悬停时从 sources 取标题/片段写入原生 title（含精确检索工具来源，数据 done 后可用；
-// 原生 title 零依赖，点击角标仍走引用弹窗看完整原文）
+// 原生 title 零依赖，点击角标仍走引用弹窗看完整原文）。同时驱动角标 ↔ 右栏来源联动：
+// 悬停正文 [n] → 右栏对应来源高亮（hoveredRef）；移出到其他元素即清除
 const refHover = e => {
   const t = e.target
-  if (!t || !t.classList || !t.classList.contains('ref-sup') || t.dataset.tipSet) return
+  if (!t || !t.classList) return
+  if (!t.classList.contains('ref-sup')) {
+    if (hoveredRef.value != null) hoveredRef.value = null
+    return
+  }
+  hoveredRef.value = Number(t.dataset.ref)
+  if (t.dataset.tipSet) return
   const mdEl = t.closest('.md')
   const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
   const src = messages.value[msgIdx]?.sources?.[Number(t.dataset.ref) - 1]
@@ -776,6 +1099,41 @@ const refHover = e => {
     ? `[${t.dataset.ref}] ${(src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识'))}${src.title ? ' §' + src.title : ''}\n${src.snippet || '（无原文片段）'}`
     : `[${t.dataset.ref}] 来源信息加载中`
   t.dataset.tipSet = '1'
+}
+
+// ===== 引用相关度 + 角标联动（P1 #5）=====
+// 分值口径：rerankScore=重排模型相关度（重排实际执行才有），否则回落检索融合分 score；都缺则不显示
+const hoveredRef = ref(null)
+const fmtSourceScore = s => {
+  const v = s ? (s.rerankScore != null ? s.rerankScore : s.score) : null
+  return (v == null || isNaN(Number(v))) ? '' : Number(v).toFixed(2)
+}
+const scoreTitle = s => (s && s.rerankScore != null ? '重排相关度 ' + s.rerankScore : '检索融合分 ' + s.score)
+// 正文角标高亮（v-html 内容走 DOM class 切换；仅作用于 lastAi 所在消息）
+const setSupHighlight = (refN, on) => {
+  const idx = lastAi.value ? messages.value.indexOf(lastAi.value) : -1
+  if (idx < 0) return
+  document.querySelectorAll('.md[data-msg-index="' + idx + '"] .ref-sup[data-ref="' + refN + '"]')
+    .forEach(el => el.classList.toggle('ref-hl', on))
+}
+const hoverSource = s => { hoveredRef.value = s.ref; setSupHighlight(s.ref, true) }
+const unhoverSource = s => {
+  if (hoveredRef.value === s.ref) hoveredRef.value = null
+  setSupHighlight(s.ref, false)
+}
+// 右栏来源点击：正文有对应角标 → 滚动定位并闪烁提示；没有（片段未被回答引用）→ 打开原文弹窗
+const locateSource = s => {
+  const idx = lastAi.value ? messages.value.indexOf(lastAi.value) : -1
+  const el = idx >= 0 ? document.querySelector('.md[data-msg-index="' + idx + '"] .ref-sup[data-ref="' + s.ref + '"]') : null
+  if (el) {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.classList.remove('ref-flash')
+    void el.offsetWidth // 强制 reflow 重启动画
+    el.classList.add('ref-flash')
+    setTimeout(() => el.classList.remove('ref-flash'), 1600)
+  } else {
+    openSource(s)
+  }
 }
 
 // 消息内容点击：代码复制 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
@@ -908,6 +1266,8 @@ const switchSession = async sid => {
           time: m.createTime ? new Date(m.createTime).getTime() : null,
           artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
           toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
+          // Token 用量（随消息落库）：历史会话的「本次用量/会话累计」回看数据源（旧消息无此字段则为 null）
+          tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
           retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
           // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
           subagents: (() => {
@@ -1169,12 +1529,16 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
                       attachments = [], skills = []) => {
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
-    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] })
+    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null })
   } else {
-    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [] }
+    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null }
   }
   loading.value = true
   scrollForce()
+  // 新一轮开始：右栏执行过程展开跟随实时进度，子智能体分支行收起
+  rpExecOpen.value = true
+  rpExecTouched.value = false
+  rpSaOpen.value = false
   abortController.value = new AbortController()
   let full = ''
   let gotToken = false
@@ -1203,6 +1567,13 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
     },
     onToken: t => { gotToken = true; full += t; messages.value[idx].content = full; messages.value[idx].stage = ''; messages.value[idx].thinkLoading = false; scroll() },
     onStage: s => { messages.value[idx].stage = s; scroll() },
+    onPlan: p => {
+      // 本轮执行计划（后端按配置确定会跑的步骤）：右栏清单逐项点亮的数据源；仅实时，历史轮无此字段
+      try {
+        const arr = typeof p === 'string' ? JSON.parse(p) : p
+        if (Array.isArray(arr) && arr.length) messages.value[idx].plan = arr
+      } catch (e) { /* 忽略 */ }
+    },
     onRetrieved: payload => {
       try {
         const j = JSON.parse(payload)
@@ -1296,6 +1667,10 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
       messages.value[idx].loading = false
+      // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
+      messages.value[idx].doneTime = Date.now()
+      // 生成完成：右栏执行过程自动收起（用户手动点过则尊重其选择），答案出来后不占版面
+      if (rpExecOpen.value && !rpExecTouched.value) rpExecOpen.value = false
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
       if (messages.value[idx].saOpen && !messages.value[idx].saTouched) messages.value[idx].saOpen = false
       messages.value[idx].sources = sources
@@ -1925,6 +2300,84 @@ onMounted(async () => {
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 右栏执行过程时间线：状态点 + 单行步骤 + 可展开详情 */
+.rp-exec-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.rp-exec-sum { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--app-text3); }
+.rp-exec-wrap { margin-top: 3px; }
+.rp-exec-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; color: var(--app-text2); min-width: 0; }
+.rp-exec-item.is-click { cursor: pointer; }
+.rp-exec-item.is-click:hover .rp-exec-name { color: var(--app-accent); }
+.is-error .rp-exec-name { color: var(--app-danger); }
+.rp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--app-text3); }
+.rp-dot.done { background: var(--app-ok); }
+.rp-dot.running { background: var(--app-accent); animation: rp-pulse 1.2s ease-in-out infinite; }
+.rp-dot.error { background: var(--app-danger); }
+.rp-dot.pending { background: transparent; border: 1.5px solid var(--app-text3); }
+.rp-dot.pending + .rp-exec-name { color: var(--app-text3); }
+@keyframes rp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .rp-dot.running { animation: none; } }
+.rp-exec-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-exec-dur { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-exec-detail {
+  margin: 2px 0 4px 13px; font-size: 11px; color: var(--app-text2); background: var(--app-accent-weak);
+  border-radius: 6px; padding: 5px 7px; word-break: break-all; white-space: pre-wrap;
+  max-height: 150px; overflow-y: auto; line-height: 1.5;
+}
+.rp-sa-row { display: flex; justify-content: space-between; gap: 8px; }
+.rp-sa-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 右栏产物卡 */
+.rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; text-decoration: none; }
+.rp-art:hover .rp-art-name { color: var(--app-accent); }
+.rp-art-ic { color: var(--app-accent); font-size: 12px; flex: none; }
+.rp-art-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-art-dl { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-art-all { margin-top: 4px; font-size: 11px; color: var(--app-accent); cursor: pointer; }
+.rp-art-all:hover { text-decoration: underline; }
+
+/* 右栏统计口径切换 + 上下文占用条 */
+.rp-scope-row { display: flex; justify-content: flex-end; }
+.rp-scope { display: inline-flex; border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; background: var(--app-panel); }
+.rp-scope span { padding: 3px 10px; font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
+.rp-scope span.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
+.rp-ctx-bar { height: 6px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; margin-top: 6px; }
+.rp-ctx-fill { display: block; height: 100%; background: var(--app-accent); transition: width .3s; }
+.rp-ctx-fill.warn { background: #d9861f; }
+.rp-ctx-fill.danger { background: var(--app-danger); }
+@media (prefers-reduced-motion: reduce) { .rp-ctx-fill { transition: none; } }
+
+/* 引用相关度 + 角标联动（右栏 ↔ 正文） */
+.rp-src-ref { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-src-score { flex: none; font-size: 11px; color: var(--app-accent); }
+.rp-src-sub .rp-src-name { flex: 1; min-width: 0; }
+.rp-src-sub.hl { background: var(--app-accent-weak); border-radius: 4px; }
+.md .ref-sup.ref-hl { background: var(--app-accent-weak); border-radius: 3px; }
+.md .ref-sup.ref-flash { animation: ref-flash 1.5s ease; }
+@keyframes ref-flash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .md .ref-sup.ref-flash { animation: none; } }
+
+/* 右栏运行控制（停止 / 重试本轮） */
+.rp-ctrl { display: flex; }
+.rp-ctrl-btn {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 6px 0; border: 1px solid var(--app-border); border-radius: 8px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 12px; cursor: pointer;
+}
+.rp-ctrl-btn:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.rp-ctrl-btn.is-stop { color: var(--app-danger); border-color: #eecdc2; }
+.rp-ctrl-btn.is-stop:hover { color: var(--app-danger); border-color: var(--app-danger); background: #fbecea; }
+
+/* 右栏沙盒工作区（树浏览 / 下载） */
+.rp-sb-path { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; min-width: 0; }
+.rp-sb-nav { flex: none; font-size: 11px; color: var(--app-accent); cursor: pointer; }
+.rp-sb-cur { flex: 1; min-width: 0; font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.rp-sb-refresh { flex: none; font-size: 12px; color: var(--app-text3); cursor: pointer; }
+.rp-sb-refresh:hover { color: var(--app-accent); }
+.rp-sb-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; min-width: 0; }
+.rp-sb-row:hover .rp-sb-name { color: var(--app-accent); }
+.rp-sb-ic { flex: none; width: 10px; font-size: 10px; color: var(--app-text3); }
+.rp-sb-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 来源弹窗内容 */
 .src-content { max-height: 55vh; overflow-y: auto; line-height: 1.7; font-size: 14px; padding-right: 6px; }
