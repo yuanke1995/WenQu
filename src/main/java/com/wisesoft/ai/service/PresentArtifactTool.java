@@ -27,6 +27,15 @@ public class PresentArtifactTool {
     /** toolContext 中会话 ID 的键名（RagService 注入） */
     public static final String CTX_SESSION_ID = "sessionId";
 
+    /**
+     * toolContext 中用户 ID 的键名（RagService 注入）。
+     * <p>沙盒工具的归属 uid 必须从这里取，不能读 {@code RequestUser.uid()}：工具回调在 Spring AI
+     * 响应式 I/O 线程上执行，而 {@code RequestUser} 是 ThreadLocal，由流水线线程装载，
+     * 跨线程即失效、回落成 anonymous —— 表现为沙盒被建到 {@code shared/anonymous/workspace}。
+     * 与会话 ID 一起经 toolContext 透传，才是跨线程安全的取身份方式（参见 SubAgentOrchestrator 的同样处理）。
+     */
+    public static final String CTX_USER_ID = "userId";
+
     private final ArtifactService artifactService;
 
     public PresentArtifactTool(ArtifactService artifactService) {

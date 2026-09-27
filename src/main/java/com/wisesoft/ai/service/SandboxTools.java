@@ -2,7 +2,6 @@ package com.wisesoft.ai.service;
 
 import com.wisesoft.ai.sandbox.ProvisionerSandboxBackend;
 import com.wisesoft.ai.sandbox.SandboxFsBackend;
-import com.wisesoft.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
@@ -19,9 +18,11 @@ import org.springframework.stereotype.Component;
  * {@code ls} / {@code deliver_artifact}（沙盒文件 → 我的产物）。工具名与新栈保持一致
  * （{@code deliver_artifact} 为本工程新增），便于将来两边共用提示词与技能文档。
  * <p>
- * 归属与 scope 的来源：会话 id 走 {@code ToolContext}（与产物交付工具同一约定），uid 走
- * {@code RequestUser}——问答链路在流水线线程里已按本轮用户装载身份（见 {@code RagService.loadIdentity}），
- * 所以这里拿到的是**真实用户**而不是 anonymous。
+ * 归属与 scope 的来源：会话 id 与用户 uid 都走 {@code ToolContext}（与产物交付工具同一约定），
+ * 由 RagService 发起流式请求时注入。注意：工具回调跑在 Spring AI 响应式 I/O 线程上，
+ * 而 {@code RequestUser} 是流水线线程装载的 ThreadLocal，跨线程读不到（回落 anonymous），
+ * 所以这里必须读 toolContext 透传的 uid，而不是 RequestUser.uid()——否则沙盒会被建到
+ * {@code shared/anonymous/workspace}（已踩坑）。
  *
  * @author yuanke
  */
@@ -208,12 +209,21 @@ public class SandboxTools {
 
     private ProvisionerSandboxBackend backend(ToolContext toolContext) {
         String sessionId = null;
+        String uid = null;
         if (toolContext != null) {
-            Object v = toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
-            if (v != null) sessionId = String.valueOf(v);
+            Object s = toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
+            if (s != null) sessionId = String.valueOf(s);
+            // 用户归属必须走 toolContext 透传（CTX_USER_ID），不能读 RequestUser.uid()：
+            // 工具回调执行在 Spring AI 响应式 I/O 线程，RequestUser 的 ThreadLocal 在该线程上未装载、回落 anonymous。
+            Object u = toolContext.getContext().get(PresentArtifactTool.CTX_USER_ID);
+            if (u != null) uid = String.valueOf(u);
         }
-        String uid = RequestUser.uid();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+        if (uid == null || uid.isBlank()) {
+            // 跨线程身份透传缺失（理论上 RagService 必然注入 CTX_USER_ID）——显式报警，绝不静默回落 anonymous 建沙盒。
+            log.warn("[FAIL-LOUD] 沙盒工具缺少 toolContext 用户归属，拒绝建沙盒（session={}）", sessionId);
+            return null;
+        }
+        if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
         return sandboxService.backend(sessionId, uid);

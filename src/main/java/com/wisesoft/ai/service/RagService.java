@@ -1280,75 +1280,125 @@ public class RagService {
                                 + "请基于已有信息直接给出最终回答。\"}";
                     }
                     st.toolStepCount.incrementAndGet();
-                    // 人在回路审批：有副作用工具（沙盒/MCP）+ 智能体 ask 模式 → 暂停等待用户确认。
-                    // 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；拒绝/超时以错误结果回给模型，
-                    // 让它基于已有信息继续而不是无限重试。游客会话本就不暴露这类工具，天然不进此分支。
-                    if (st.sensitiveToolNames.contains(name) && "ask".equalsIgnoreCase(st.toolApprovalMode)) {
-                        long approvalTimeout = approvalTimeoutMs();
-                        String approvalId = java.util.UUID.randomUUID().toString();
-                        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
-                        PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
-                        try {
-                            Map<String, Object> req = new LinkedHashMap<>();
-                            req.put("approvalId", approvalId);
-                            req.put("tool", name);
-                            String args = toolInput == null ? "" : toolInput;
-                            req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
-                            req.put("timeoutMs", approvalTimeout);
-                            sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
-                            log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
-                            boolean approved;
+                    // 心跳已升级为整轮流级（buildAnswerStream 启动、终态路径停止）：覆盖「工具执行」
+                    // 与「工具结束→最终回答首 token」两段静默区，这里不再逐工具启停。
+                    {
+                        // 人在回路审批：有副作用工具（沙盒/MCP）+ 智能体 ask 模式 → 暂停等待用户确认。
+                        // 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；拒绝/超时以错误结果回给模型，
+                        // 让它基于已有信息继续而不是无限重试。游客会话本就不暴露这类工具，天然不进此分支。
+                        if (st.sensitiveToolNames.contains(name) && "ask".equalsIgnoreCase(st.toolApprovalMode)) {
+                            long approvalTimeout = approvalTimeoutMs();
+                            String approvalId = java.util.UUID.randomUUID().toString();
+                            java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+                            PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
                             try {
-                                approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
-                            } catch (java.util.concurrent.ExecutionException ee) {
-                                approved = false;
-                            } catch (java.util.concurrent.TimeoutException te) {
-                                approved = false;
-                                log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                                approved = false;
+                                Map<String, Object> req = new LinkedHashMap<>();
+                                req.put("approvalId", approvalId);
+                                req.put("tool", name);
+                                String args = toolInput == null ? "" : toolInput;
+                                req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
+                                req.put("timeoutMs", approvalTimeout);
+                                sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
+                                log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
+                                boolean approved;
+                                try {
+                                    approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
+                                } catch (java.util.concurrent.ExecutionException ee) {
+                                    approved = false;
+                                } catch (java.util.concurrent.TimeoutException te) {
+                                    approved = false;
+                                    log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    approved = false;
+                                }
+                                if (!approved) {
+                                    recordToolStatus(st, name, toolInput, "error", "用户拒绝或确认超时，未执行",
+                                            System.currentTimeMillis() - begin, 0);
+                                    return "{\"error\":\"该工具调用未被用户批准（拒绝或确认超时），未执行。"
+                                            + "请基于已有信息继续回答，不要重复尝试调用该工具。\"}";
+                                }
+                                log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
+                            } finally {
+                                PENDING_APPROVALS.remove(approvalId);
                             }
-                            if (!approved) {
-                                recordToolStatus(st, name, toolInput, "error", "用户拒绝或确认超时，未执行",
-                                        System.currentTimeMillis() - begin, 0);
-                                return "{\"error\":\"该工具调用未被用户批准（拒绝或确认超时），未执行。"
-                                        + "请基于已有信息继续回答，不要重复尝试调用该工具。\"}";
-                            }
-                            log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
-                        } finally {
-                            PENDING_APPROVALS.remove(approvalId);
                         }
-                    }
-                    recordToolStatus(st, name, toolInput, "start", null, 0, 1);
-                    // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
-                    // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
-                    // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
-                    boolean kbTool = "searchKnowledge".equals(name);
-                    if (kbTool) {
-                        KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
-                        KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
-                    }
-                    try {
-                        int[] attempts = {0};
-                        String result = callWithRetry(cb, toolInput, toolContext, name, attempts);
-                        recordToolStatus(st, name, toolInput, "done", result,
-                                System.currentTimeMillis() - begin, attempts[0]);
-                        return result;
-                    } catch (Exception e) {
-                        recordToolStatus(st, name, toolInput, "error", e.getMessage(),
-                                System.currentTimeMillis() - begin, 0);
-                        throw e;
-                    } finally {
+                        recordToolStatus(st, name, toolInput, "start", null, 0, 1);
+                        // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
+                        // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
+                        // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
+                        boolean kbTool = "searchKnowledge".equals(name);
                         if (kbTool) {
-                            KnowledgeRetrievalTool.clearSourceRegistrar();
-                            KnowledgeRetrievalTool.clearKbScope();
+                            KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
+                            KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
+                        }
+                        try {
+                            int[] attempts = {0};
+                            String result = callWithRetry(cb, toolInput, toolContext, name, attempts);
+                            recordToolStatus(st, name, toolInput, "done", result,
+                                    System.currentTimeMillis() - begin, attempts[0]);
+                            return result;
+                        } catch (Exception e) {
+                            recordToolStatus(st, name, toolInput, "error", e.getMessage(),
+                                    System.currentTimeMillis() - begin, 0);
+                            throw e;
+                        } finally {
+                            if (kbTool) {
+                                KnowledgeRetrievalTool.clearSourceRegistrar();
+                                KnowledgeRetrievalTool.clearKbScope();
+                            }
                         }
                     }
                 }
             });
         }
         return wrapped.toArray(new org.springframework.ai.tool.ToolCallback[0]);
+    }
+
+    // ==================== 工具执行心跳 ====================
+
+    /** 心跳间隔 15s：小于常见中间代理 60s 读超时与前端 120s 空闲看门狗，留足余量。 */
+    private static final long TOOL_HEARTBEAT_INTERVAL_MS = 15_000;
+
+    /** 心跳调度线程（全进程共享一个，守护线程不阻塞退出）。 */
+    private static final java.util.concurrent.ScheduledExecutorService TOOL_HEARTBEAT_POOL =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "tool-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * 整轮流级 SSE 心跳：覆盖「工具执行（沙盒命令/审批等待可达数分钟）」与「工具结束→
+     * 最终回答首 token」两段全静默区——中间代理（vite/nginx 默认 60s 读超时）会掐断连接、
+     * 前端 120s 空闲看门狗会把静默误判为失联。每 15s 发一条 SSE 注释行（":keepalive"）：
+     * 中间层与看门狗都视之为存活信号，前端解析器忽略注释行、UI 零打扰。
+     * <p>生命周期：buildAnswerStream 启动（流重试重建时幂等复用），终态路径
+     * （doOnComplete / doOnError / disposeSafe）停止；发送失败（客户端已断开）自停，防任务泄漏。
+     */
+    private synchronized void startRunHeartbeat(AnswerStreamState st) {
+        if (st.heartbeat != null && !st.heartbeat.isDone()) return;
+        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.ScheduledFuture<?> f = TOOL_HEARTBEAT_POOL.scheduleWithFixedDelay(() -> {
+            try {
+                st.emitter.send(SseEmitter.event().comment("keepalive"));
+            } catch (Exception e) {
+                log.debug("[RUN-HEARTBEAT] 心跳下发失败（客户端可能已断开），心跳自停: {}", e.getMessage());
+                java.util.concurrent.ScheduledFuture<?> s = self.get();
+                if (s != null) s.cancel(false);
+            }
+        }, TOOL_HEARTBEAT_INTERVAL_MS, TOOL_HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        self.set(f);
+        st.heartbeat = f;
+    }
+
+    private static void stopRunHeartbeat(AnswerStreamState st) {
+        java.util.concurrent.ScheduledFuture<?> f = st.heartbeat;
+        if (f != null) {
+            f.cancel(false);
+            st.heartbeat = null;
+        }
     }
 
     /**
@@ -1431,6 +1481,9 @@ public class RagService {
         SseEmitter emitter = st.emitter;
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
+        // 整轮流级心跳：从这里到终态（complete/error/dispose）全程保活，覆盖工具执行
+        // 与「工具结束→最终回答首 token」两段静默盲区（重试重建流时幂等复用）
+        startRunHeartbeat(st);
         return chatClient.prompt()
                 .system(system)
                 .user(user)
@@ -1448,8 +1501,11 @@ public class RagService {
                 // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
                 .toolCallbacks(instrumentTools(enabledToolCallbacks(agent, st.userId, st), st))
-                // 工具上下文：把当前会话 ID 注入，供产物交付等工具定位会话并实时下发 SSE
-                .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId))
+                // 工具上下文：把当前会话 ID 与用户 ID 注入，供产物交付、沙盒等工具定位会话与归属。
+                // userId 必须随 toolContext 透传——工具回调跑在 Spring AI 响应式 I/O 线程上，
+                // 读 RequestUser.uid()（ThreadLocal）跨线程失效会回落成 anonymous，导致沙盒建到 shared/anonymous。
+                .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId,
+                        PresentArtifactTool.CTX_USER_ID, st.userId))
                 .stream()
                 // 用 chatResponse 而非 content：流式中顺便捕获网关返回的真实 token usage（部分兼容网关
                 // 在末块 metadata.usage 里给出 completion_tokens；拿不到则回落 TokenCounter 估算）。
@@ -1534,10 +1590,14 @@ public class RagService {
                             : "AI 回复失败，请稍后重试";
                     st.degradations.add(Map.of("code", "streamError", "msg", "模型输出中断：" + msg));
                     sendSseEvent(emitter, "error", msg, st.sessionId);
+                    // 终态：停整轮流级心跳（error 路径）
+                    stopRunHeartbeat(st);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
                 })
                 .doOnComplete(() -> {
+                    // 终态：先停整轮流级心跳（complete 路径），收尾阶段不再有心跳字节
+                    stopRunHeartbeat(st);
                     // 下发缓冲尾部（可能残留滑动窗口），并剥离可能的不完整标签
                     if (st.emitBuf.length() > 0) {
                         String rest = st.emitBuf.toString().replaceAll("<related>[\\s\\S]*?</related>", "");
@@ -1804,6 +1864,8 @@ public class RagService {
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
         volatile int maxToolSteps;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
+        /** 整轮流级心跳句柄（buildAnswerStream 启动、终态路径停止）：覆盖工具执行与最终回答首 token 两段静默区 */
+        volatile java.util.concurrent.ScheduledFuture<?> heartbeat;
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
@@ -1843,6 +1905,9 @@ public class RagService {
         }
 
         void disposeSafe() {
+            // 客户端断开：顺带停整轮流级心跳（防断开后调度任务空转泄漏；发送失败也会自停，双保险）
+            java.util.concurrent.ScheduledFuture<?> hb = heartbeat;
+            if (hb != null) hb.cancel(false);
             Disposable d = disposableRef.get();
             if (d != null) d.dispose();
         }
