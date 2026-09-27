@@ -103,6 +103,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/artifact") || path.startsWith("/api/ai/artifact/")) return true;
         // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        // 沙盒工作区浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
+        // 只会按自己的 uid 派生 sandboxId，天然探不到别人的容器；开关 tool.sandbox.enabled 关闭时控制器 fail-closed
+        if (path.equals("/api/ai/sandbox") || path.startsWith("/api/ai/sandbox/")) return true;
         // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
         if ("GET".equals(method)) {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);

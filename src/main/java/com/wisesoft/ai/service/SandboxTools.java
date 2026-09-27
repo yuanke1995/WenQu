@@ -15,8 +15,9 @@ import org.springframework.stereotype.Component;
  * 与问渠新栈的差别要说清楚：新栈把沙盒接在 deepagents 的「文件系统中间件」上（{@code FilesystemMiddleware}
  * 提供 read_file/write_file/edit_file/ls/glob/grep/execute 一族工具，并配合大结果裁剪），
  * 而本工程没有该中间件，故这里**按本工程的 {@code @Tool} 机制逐个显式注册**，
- * 只接当前真正用得上的五个：{@code execute} / {@code read_file} / {@code write_file} / {@code edit_file} / {@code ls}。
- * 工具名与新栈保持一致（{@code execute} 等），便于将来两边共用提示词与技能文档。
+ * 接当前用得上的六个：{@code execute} / {@code read_file} / {@code write_file} / {@code edit_file} /
+ * {@code ls} / {@code deliver_artifact}（沙盒文件 → 我的产物）。工具名与新栈保持一致
+ * （{@code deliver_artifact} 为本工程新增），便于将来两边共用提示词与技能文档。
  * <p>
  * 归属与 scope 的来源：会话 id 走 {@code ToolContext}（与产物交付工具同一约定），uid 走
  * {@code RequestUser}——问答链路在流水线线程里已按本轮用户装载身份（见 {@code RagService.loadIdentity}），
@@ -32,9 +33,11 @@ public class SandboxTools {
     private static final int TOOL_OUTPUT_CHARS = 20_000;
 
     private final SandboxService sandboxService;
+    private final ArtifactService artifactService;
 
-    public SandboxTools(SandboxService sandboxService) {
+    public SandboxTools(SandboxService sandboxService, ArtifactService artifactService) {
         this.sandboxService = sandboxService;
+        this.artifactService = artifactService;
     }
 
     @Tool(name = "execute", description = "在隔离沙盒（Linux 容器）中执行 shell 命令，返回标准输出与退出码。"
@@ -150,6 +153,52 @@ public class SandboxTools {
             sb.append(entry.path).append('\n');
         }
         return clip(sb.toString());
+    }
+
+    /**
+     * 沙盒文件 → 我的产物（交付语义，模型显式调用；不做轮末自动扫描——那会把临时文件全灌进产物页）。
+     * 路径限定用户数据根（skills 投影只读且非产物，拒绝）；扩展名白名单放宽到沙盒典型输出，
+     * 大小上限 1MB（与文本产物一致）。交付后走产物卡片 SSE 实时推送，前端/产物页零改动。
+     */
+    @Tool(name = "deliver_artifact", description = "把沙盒里生成的文件交付为正式产物（进入用户的「我的产物」，"
+            + "并实时推送产物卡片）。当沙盒中产出了用户要保留/下载的文件（脚本、数据表、图表、文档等）时调用；"
+            + "仅支持用户数据目录下的文件，单个不超过 1MB。")
+    public String deliver_artifact(
+            @ToolParam(description = "沙盒内文件的绝对路径，如 /home/gem/user-data/sales.csv") String path,
+            @ToolParam(description = "产物文件名（含扩展名；留空则沿用沙盒内原文件名）", required = false) String filename,
+            @ToolParam(description = "给用户的产物说明（简短，说明这是什么）", required = false) String description,
+            ToolContext toolContext) {
+        ProvisionerSandboxBackend backend = backend(toolContext);
+        if (backend == null) return NO_CONTEXT;
+        String sessionId = sessionId(toolContext);
+        if (sessionId == null || sessionId.isBlank()) {
+            return "无法定位当前会话，产物交付失败";
+        }
+        String p = path == null ? "" : path.strip();
+        String root = sandboxService.userDataRoot();
+        if (!p.startsWith(root + "/") && !p.equals(root)) {
+            return "只能交付用户数据目录（" + root + "）下的文件";
+        }
+        java.util.List<SandboxFsBackend.DownloadResult> results = backend.downloadFiles(java.util.List.of(p));
+        SandboxFsBackend.DownloadResult r = results == null || results.isEmpty() ? null : results.get(0);
+        if (r == null || r.hasError() || r.content == null || r.content.length == 0) {
+            return "读取沙盒文件失败：" + (r == null ? "文件不存在" : r.error);
+        }
+        String name = filename == null || filename.isBlank() ? p.substring(p.lastIndexOf('/') + 1) : filename;
+        try {
+            java.util.Map<String, Object> info = artifactService.writeBytes(sessionId, name, r.content, description);
+            artifactService.publish(sessionId, "artifact", com.alibaba.fastjson2.JSON.toJSONString(info));
+            return "已交付产物：" + info.get("filename") + "（" + r.content.length + " 字节） 访问地址：" + info.get("url");
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return "产物交付失败：" + e.getMessage();
+        }
+    }
+
+    /** 从 toolContext 取会话 id（与 {@link #backend(ToolContext)} 同键，供产物归属使用）。 */
+    private String sessionId(ToolContext toolContext) {
+        if (toolContext == null) return null;
+        Object v = toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
+        return v == null ? null : String.valueOf(v);
     }
 
     // ==================== 内部 ====================

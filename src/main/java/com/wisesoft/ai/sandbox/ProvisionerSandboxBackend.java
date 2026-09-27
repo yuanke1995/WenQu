@@ -60,8 +60,9 @@ import java.util.HexFormat;
  * <p><b>未接线（显式标注）</b>：{@code downloadAuthorizedFileToPath} / {@code uploadAuthorizedFileFromPath} /
  * {@code listAuthorizedDirectory} / {@code createAuthorizedDirectory} / {@code deleteAuthorizedPath}
  * 这五个「授权文件搬运」方法在新栈服务于「技能投影 + 大结果落盘」，本工程当前只接线
- * {@code execute} / {@code read} / {@code write} / {@code ls}（见 {@code SandboxTools}），
- * 其余方法保留原样但暂未接线——不是遗漏，是等对应的使用场景出现（如产物从沙盒落回「我的产物」）再接。
+ * {@code execute} / {@code read} / {@code write} / {@code edit} / {@code ls} / {@code downloadFiles}
+ * （见 {@code SandboxTools} 与沙盒浏览端点），其余方法保留原样但暂未接线——不是遗漏，是等对应的
+ * 使用场景出现（如产物从沙盒落回「我的产物」的批量/目录形态）再接。
  */
 public class ProvisionerSandboxBackend implements SandboxFsBackend {
 

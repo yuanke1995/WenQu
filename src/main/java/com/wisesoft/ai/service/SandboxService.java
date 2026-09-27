@@ -54,6 +54,41 @@ public class SandboxService {
         return new ProvisionerSandboxBackend(provider, sessionId, uid, null, true, true);
     }
 
+    /**
+     * 探测当前会话的沙盒是否在运行（discover 不创建——浏览面板绝不能有「看一眼就把容器拉起来」的副作用）。
+     * 探测失败（provisioner 不可达等）按不可用处理，返回 false 不抛错。
+     */
+    public boolean available(String sessionId, String uid) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return false;
+        }
+        try {
+            return provider.get(sessionId, uid, false, true, null) != null;
+        } catch (Exception e) {
+            log.debug("[SANDBOX] 探测沙盒失败 (session={}): {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 取「不创建」的沙盒 backend：供浏览端点使用。沙盒未运行时首次连接即抛
+     * RuntimeException（sandbox is unavailable）——调用方自行转成可读状态，不产生容器。
+     */
+    public ProvisionerSandboxBackend backendIfPresent(String sessionId, String uid) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("沙盒需要会话上下文（sessionId）");
+        }
+        if (uid == null || uid.isBlank()) {
+            throw new IllegalArgumentException("沙盒需要用户上下文（uid）");
+        }
+        return new ProvisionerSandboxBackend(provider, sessionId, uid, null, false, true);
+    }
+
+    /** 沙盒内用户数据虚拟根（可读写区，浏览面板的默认起点；默认 /home/gem/user-data）。 */
+    public String userDataRoot() {
+        return provider.virtualPathPrefix();
+    }
+
     /** 立即释放某会话的沙盒（当前未接线到「删除会话」流程，故主要供排障与将来的钩子使用）。 */
     public void release(String sessionId, String uid) {
         provider.release(sessionId, uid, true, null);

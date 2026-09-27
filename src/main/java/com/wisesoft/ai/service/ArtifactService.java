@@ -54,6 +54,10 @@ public class ArtifactService {
 
     /** 允许生成的产物扩展名（小写，无点） */
     private static final Set<String> ALLOWED_EXTS = Set.of("md", "txt", "csv", "json", "html", "htm");
+    /** 字节级产物的扩展名白名单（沙盒文件交付）：在文本白名单上放宽到沙盒典型输出（脚本/图片/表格/压缩包） */
+    private static final Set<String> ALLOWED_EXTS_BINARY = Set.of(
+            "md", "txt", "csv", "json", "html", "htm",
+            "py", "log", "png", "jpg", "jpeg", "svg", "xlsx", "xls", "pdf", "zip");
     /** 单文件内容上限（约 1MB，防止工具把超大内容写盘占满磁盘） */
     private static final int MAX_BYTES = 1024 * 1024;
     /** 文件名最大长度（含扩展名） */
@@ -127,14 +131,32 @@ public class ArtifactService {
      * @return { id, url, filename, ext, size, description }
      */
     public Map<String, Object> write(String sessionId, String filename, String content, String description) {
+        return writeBytes(sessionId, filename,
+                (content == null ? "" : content).getBytes(StandardCharsets.UTF_8), description, ALLOWED_EXTS);
+    }
+
+    /**
+     * 字节级产物写入（沙盒文件交付 {@code deliver_artifact} 用）：与文本产物同一套落盘/登记/推送约定，
+     * 差异仅在扩展名白名单放宽到沙盒典型输出（py/png/xlsx/zip 等），大小上限同为 1MB。
+     *
+     * @return { id, url, filename, ext, size, description }
+     */
+    public Map<String, Object> writeBytes(String sessionId, String filename, byte[] bytes, String description) {
+        return writeBytes(sessionId, filename, bytes, description, ALLOWED_EXTS_BINARY);
+    }
+
+    private Map<String, Object> writeBytes(String sessionId, String filename, byte[] bytes,
+                                           String description, Set<String> allowedExts) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("缺少会话标识");
         }
-        String safeName = sanitizeFilename(filename);
+        String safeName = sanitizeFilename(filename, allowedExts);
         if (safeName == null) {
-            throw new IllegalArgumentException("产物文件名不合法或格式不支持（支持 md/txt/csv/json/html）");
+            throw new IllegalArgumentException("产物文件名不合法或扩展名不支持");
         }
-        byte[] bytes = (content == null ? "" : content).getBytes(StandardCharsets.UTF_8);
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("产物内容为空");
+        }
         if (bytes.length > MAX_BYTES) {
             throw new IllegalArgumentException("产物内容过大（超过 1MB）");
         }
@@ -315,6 +337,10 @@ public class ArtifactService {
 
     /** 净化文件名：去路径/非法字符、限长、强约束扩展名。返回 null 表示不合法。 */
     private String sanitizeFilename(String name) {
+        return sanitizeFilename(name, ALLOWED_EXTS);
+    }
+
+    private String sanitizeFilename(String name, Set<String> allowedExts) {
         if (name == null || name.isBlank()) return null;
         String trimmed = name.trim();
         if (trimmed.length() > MAX_NAME_LEN) {
@@ -326,7 +352,7 @@ public class ArtifactService {
         // 强制扩展名白名单
         int dot = cleaned.lastIndexOf('.');
         String ext = dot > 0 ? cleaned.substring(dot + 1).toLowerCase() : "";
-        if (!ALLOWED_EXTS.contains(ext)) {
+        if (!allowedExts.contains(ext)) {
             // 无扩展名 → 默认 .md；非法扩展名 → 拒绝
             if (ext.isEmpty()) {
                 cleaned = cleaned + ".md";
