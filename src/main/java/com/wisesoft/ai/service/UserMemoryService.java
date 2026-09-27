@@ -15,6 +15,7 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -45,7 +46,7 @@ public class UserMemoryService {
 
     private final UserMemoryMapper memoryMapper;
     private final ConfigService configService;
-    /** 全局默认对话模型（DynamicOpenAiChatModel，与问答同源路由；提取线程内调用） */
+    /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，模型名由调用方 per-request 显式传入） */
     private final ChatModel chatModel;
 
     /** 单条内容长度上限（列宽 500） */
@@ -114,9 +115,10 @@ public class UserMemoryService {
 
     /**
      * 问答完成后的记忆提取入口（调用方在 done 后触发，本方法自行判断是否值得跑）。
-     * 异步 daemon 线程执行，绝不阻塞/影响问答主链路；任何失败仅日志。
+     * 提取调用跟随本轮生效模型（model，done 时已由问答入口 fail-loud 保证非空——提取服务于本轮对话，
+     * 与问答同源，无需独立配置）。异步 daemon 线程执行，绝不阻塞/影响问答主链路；任何失败仅日志。
      */
-    public void maybeExtract(String uid, String sessionId, String question, String answer, boolean guestMode) {
+    public void maybeExtract(String uid, String sessionId, String question, String answer, boolean guestMode, String model) {
         if (guestMode) return;                       // 游客会话：不注入也不提取
         if (!enabled()) return;
         if (uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) return;
@@ -125,7 +127,7 @@ public class UserMemoryService {
         String a = answer == null ? "" : (answer.length() > EXTRACT_ANSWER_CHARS ? answer.substring(0, EXTRACT_ANSWER_CHARS) : answer);
         Thread t = new Thread(() -> {
             try {
-                extract(uid, sessionId, q, a);
+                extract(uid, sessionId, q, a, model);
             } catch (Exception e) {
                 log.warn("[Memory] 自动提取失败（不影响问答）: uid={} {}", uid, e.getMessage());
             }
@@ -135,13 +137,21 @@ public class UserMemoryService {
     }
 
     /** 同步提取主体：LLM 判断 + 解析 + 去重落库（由异步线程调用） */
-    private void extract(String uid, String sessionId, String question, String answer) {
+    private void extract(String uid, String sessionId, String question, String answer, String model) {
+        // DynamicOpenAiChatModel 迁移后 default options 为空（模型名均由 per-request options 提供），
+        // 不带 model 的请求体会被网关以 400 "Required parameter model missing" 拒绝；
+        // 本轮模型缺失说明上游模型解析异常（问答入口 fail-loud，理论上到不了这），显式暴露而非静默吞
+        if (model == null || model.isBlank()) {
+            log.warn("[Memory] 自动提取跳过：本轮模型缺失（上游模型解析异常）: uid={}", uid);
+            return;
+        }
         String sys = "你是记忆提取器。判断这段对话是否包含值得长期记住的用户信息（用户身份/职责、偏好、"
                 + "项目背景、明确要求记住的事）。只提取对【未来对话】有用的持久事实，"
                 + "不要提取一次性的任务内容、临时问题和回答正文。"
                 + "只输出 JSON 数组，格式：[{\"content\":\"一句独立可读的事实\",\"category\":\"fact|instruction|project\"}]，最多 3 条；没有值得记的就输出 []。不要输出任何其他内容。";
         String user = "用户：" + question + "\n\n助手：" + answer;
-        String out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user))))
+        String out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user)),
+                        OpenAiChatOptions.builder().model(model).build()))
                 .getResult().getOutput().getText();
         String json = out == null ? "" : out.trim().replaceAll("^```(json)?\\s*|\\s*```$", "");
         JSONArray arr = JSON.parseArray(json);

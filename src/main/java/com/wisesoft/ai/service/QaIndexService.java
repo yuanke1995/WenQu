@@ -14,6 +14,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
@@ -46,7 +47,7 @@ public class QaIndexService {
 
     private final KnowledgeQaMapper qaMapper;
     private final ConfigService configService;
-    /** 全局默认对话模型（DynamicOpenAiChatModel，与对话链路同源路由；解析线程内调用） */
+    /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，生成用模型来自 parse.qaModel 配置） */
     private final ChatModel chatModel;
 
     /** 送入 LLM 的块正文上限（超出截断：QA 是问法增强，不需要全文） */
@@ -63,6 +64,14 @@ public class QaIndexService {
      */
     public int generateForBlocks(String docId, List<Knowledge> blocks, VectorStore store,
                                  java.util.function.BiConsumer<Integer, String> progress) {
+        // 生成用模型：parse.qaModel 独立配置（eval.judgeModel 同模式——chat.model 全局兜底退役后，
+        // DynamicOpenAiChatModel 的模型名必须 per-request 显式提供，裸调请求体会被网关 400 拒绝）。
+        // 未配置属功能性误配（qaEnabled 已开却没给模型），抛出走调用方既有 best-effort 可见性通道（日志/终态描述），不静默吞
+        String model = configService.get("parse.qaModel");
+        if (model == null || model.isBlank()) {
+            throw new IllegalStateException("未配置 parse.qaModel（问答对增强需在设置页「分块与索引」指定生成用模型，"
+                    + "格式 {providerId}/{modelId}；chat.model 全局兜底已退役）");
+        }
         int perChunk = Math.max(1, Math.min(5, configService.getInt("parse.qaPerChunk", 2)));
         int total = 0;
         int failedBlocks = 0;
@@ -75,7 +84,7 @@ public class QaIndexService {
             }
             List<String[]> pairs;
             try {
-                pairs = generate(k, perChunk);
+                pairs = generate(k, perChunk, model);
             } catch (Exception e) {
                 failedBlocks++;
                 log.warn("[QA] 块 {} 生成失败（跳过）: {}", k.getId(), e.getMessage());
@@ -117,7 +126,7 @@ public class QaIndexService {
     }
 
     /** 单块 LLM 生成：只输出 JSON 数组，容忍 ```json 围栏；问法超长截断（列宽 500） */
-    private List<String[]> generate(Knowledge k, int n) {
+    private List<String[]> generate(Knowledge k, int n, String model) {
         String content = k.getContent() == null ? "" : k.getContent();
         if (content.length() < MIN_CONTENT_CHARS) return List.of();
         if (content.length() > MAX_CONTENT_CHARS) content = content.substring(0, MAX_CONTENT_CHARS);
@@ -125,7 +134,8 @@ public class QaIndexService {
                 + " 个用户最可能提问的问题及对应答案，问法要口语化、贴近真实用户提问。"
                 + "只输出 JSON 数组，格式：[{\"q\":\"问题\",\"a\":\"答案\"}]，不要输出任何其他内容。";
         String user = "标题: " + (k.getTitle() == null ? "" : k.getTitle()) + "\n\n" + content;
-        String out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user))))
+        String out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user)),
+                        OpenAiChatOptions.builder().model(model).build()))
                 .getResult().getOutput().getText();
         String json = out == null ? "" : out.trim().replaceAll("^```(json)?\\s*|\\s*```$", "");
         JSONArray arr = JSON.parseArray(json);
