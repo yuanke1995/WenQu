@@ -33,3 +33,5 @@ package-lock.json
 /dump/
 /.zcodeignore
 /dumps/
+/skill-projections/
+/user-data/

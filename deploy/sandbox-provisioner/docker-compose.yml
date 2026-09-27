@@ -1,0 +1,45 @@
+# 沙盒 provisioner —— docker 后端（真沙盒）。
+#
+# 与 run.sh 二选一：
+#   bash run.sh start                 memory 后端：宿主机 python，管理面通、无真实沙盒
+#   docker compose up -d --build      docker 后端：真沙盒（需容器运行时 + 沙盒镜像）
+#
+# 为什么 docker 后端必须容器化：app.py 的容器后端在构造期用 os.environ["HOSTNAME"]
+# 去 inspect 自身容器，并据此从 Mounts 反推宿主路径（创建兄弟容器时要传宿主绝对路径），
+# 在宿主机直接跑会 RuntimeError: docker backend unavailable。
+#
+# 网络链路：沙盒各自建一个 bridge 网络（{DOCKER_NETWORK_PREFIX}-{sandbox_id}），
+# provisioner 把自己接入该网络，因此它按容器名访问沙盒；而对外 HTTP 接口统一返回
+# proxy 地址（sandbox_response() 里的 sandbox_proxy_url），API 侧只需访问
+# http://127.0.0.1:8002/api/sandboxes/<id>/proxy/... 即可，无需能解析沙盒容器名。
+services:
+  sandbox-provisioner:
+    build: .
+    image: wenqu-sandbox-provisioner:local
+    container_name: wenqu-sandbox-provisioner
+    restart: unless-stopped
+    ports:
+      # 只绑回环：回环地址在 macOS 系统代理的例外列表内，避免出站请求被代理劫持。
+      - "127.0.0.1:8002:8002"
+    volumes:
+      # 用 docker.sock 在宿主 daemon 上创建沙盒容器。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 沙盒持久卷。容器内挂载点路径不可改——provisioner 按 /app/user-data 与
+      # /app/skill-projections 从自身 Mounts 反推宿主路径，再 bind 给沙盒的
+      # /home/gem/user-data 与 /home/gem/skills（后者只读）。
+      - ../../user-data:/app/user-data
+      - ../../skill-projections:/app/skill-projections
+      # 全局沙盒环境变量（部署侧维护；内容会注入每个沙盒，按不可信输入对待）。
+      - ./sandbox.env:/app/sandbox.env:ro
+    environment:
+      PROVISIONER_BACKEND: docker
+      # 对外暴露的地址：API 侧据此访问 proxy 端点，必须是它真能连上的地址。
+      PROVISIONER_PUBLIC_URL: http://127.0.0.1:8002
+      SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:-wenqu-local-dev-sandbox-provisioner-token}
+      # docker 后端的必需项：每个沙盒会建 {prefix}-{sandbox_id} 网络。
+      DOCKER_NETWORK_PREFIX: wenqu-sandbox-net
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0}
+      # core = 关闭浏览器/VNC/Jupyter/CodeServer，只留文件与 shell（本工程只用到这两组）。
+      SANDBOX_RUNTIME_PROFILE: ${SANDBOX_RUNTIME_PROFILE:-core}
+      SANDBOX_CONTAINER_PORT: "8080"
+      SANDBOX_HEALTH_TIMEOUT_SECONDS: "300"
