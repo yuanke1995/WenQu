@@ -24,6 +24,9 @@
              选 1.1.2.x 线（适配 Spring AI 1.1.x）；spring-ai-bom 会把其传递的 spring-ai-* 收敛到 1.1.8 -->
         <spring-ai-alibaba.version>1.1.2.3</spring-ai-alibaba.version>
         <mybatis-plus.version>3.5.12</mybatis-plus.version>
+        <!-- MCP Java SDK 版本：与 spring-ai-mcp 1.1.8 内部对齐的 0.18.3
+             （spring-ai-alibaba-graph-core 传递的 0.14.0 已被仲裁掉：本地只有其 pom 没下载 jar） -->
+        <mcp.version>0.18.3</mcp.version>
         <poi.version>5.2.3</poi.version>
         <lombok.version>1.18.46</lombok.version>
     </properties>
@@ -67,6 +70,15 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
+        <!-- MCP 服务端 WebMVC 传输层（McpServerService 把智能体发布为 /ai/mcp/{token} 端点用）。
+             必须显式声明：spring-ai-mcp 对它俩的依赖标了 <optional>true</optional>，optional 不向下传递，
+             仅靠 spring-ai-mcp 拿不到 WebMvcStatelessServerTransport（编译报「找不到符号」）。
+             版本号必须与 spring-ai-mcp 内置的 mcp sdk 对齐（1.1.8 → 0.18.3），混版会出二进制不兼容。 -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-spring-webmvc</artifactId>
+            <version>${mcp.version}</version>
         </dependency>
 
         <!-- MyBatis-Plus -->
