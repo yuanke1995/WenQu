@@ -587,7 +587,13 @@ const TOOL_LABELS = {
   deliver_artifact: '交付沙盒产物',
   calculate: '算术计算',
   currentDateTime: '获取当前时间',
-  daysBetween: '计算日期差'
+  daysBetween: '计算日期差',
+  readSkill: '读取技能',
+  execute: '执行沙盒命令',
+  read_file: '读取沙盒文件',
+  write_file: '写入沙盒文件',
+  edit_file: '编辑沙盒文件',
+  ls: '查看沙盒目录'
 }
 // ⚠️ 与 McpClientService 的 clientInfo name 对应：wen-qu → w_q_（改名时需同步）
 const MCP_CLIENT_PREFIX = 'w_q_'
