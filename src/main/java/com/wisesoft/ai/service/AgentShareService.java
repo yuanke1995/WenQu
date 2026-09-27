@@ -54,9 +54,10 @@ public class AgentShareService {
 
     /**
      * 发布/更新分享配置：首次生成 token（此后不变）；modelRef 空串=清空（回退发布者个人默认模型）。
+     * mcpEnabled 控制同一个 token 是否同时作为 MCP 端点（/ai/mcp/{token}）对外提供。
      * 由 AgentController 在归属校验（canManage）通过后调用。
      */
-    public AgentShare publish(String agentId, boolean enabled, String modelRef, String uid) {
+    public AgentShare publish(String agentId, boolean enabled, boolean mcpEnabled, String modelRef, String uid) {
         AgentShare share = getByAgent(agentId);
         if (share == null) {
             share = new AgentShare();
@@ -65,14 +66,15 @@ public class AgentShareService {
             share.setCreatedBy(uid);
         }
         share.setEnabled(enabled ? 1 : 0);
+        share.setMcpEnabled(mcpEnabled ? 1 : 0);
         share.setModelRef(modelRef == null || modelRef.isBlank() ? null : modelRef.trim());
         if (share.getId() == null) {
             shareMapper.insert(share);
         } else {
             shareMapper.updateById(share);
         }
-        log.info("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} token={}***",
-                uid, agentId, enabled, share.getToken().substring(0, 6));
+        log.info("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} token={}***",
+                uid, agentId, enabled, mcpEnabled, share.getToken().substring(0, 6));
         return share;
     }
 

@@ -38,6 +38,12 @@ public class AgentShare {
     /** 启用: 1=可访问, 0=暂停（保留 token） */
     private Integer enabled;
 
+    /**
+     * MCP 端点：1=对外提供 /ai/mcp/{token}（Streamable HTTP；token 即凭据，与网页分享同一条记录）
+     * <p>与 {@link #enabled} 独立：可以只开网页分享不开 MCP；停用网页分享（enabled=0）时 MCP 一并失效。
+     */
+    private Integer mcpEnabled;
+
     /** 创建人（游客对话以该用户身份执行检索可见性） */
     private String createdBy;
 

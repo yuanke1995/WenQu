@@ -128,34 +128,43 @@ public class AgentController {
         return ResultJson.ok("共享范围已保存");
     }
 
-    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, token, modelRef}；未发布返回 enabled=false（仅可管理者可见）")
+    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, token, modelRef}；未发布返回 enabled=false（仅可管理者可见）")
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
-        if (share == null) return ResultJson.ok(Map.of("enabled", false));
+        if (share == null) return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false));
         return ResultJson.ok(Map.of(
                 "enabled", share.getEnabled() != null && share.getEnabled() == 1,
+                "mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1,
                 "token", share.getToken() == null ? "" : share.getToken(),
                 "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
     }
 
-    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, modelRef}——开启后 /s/{token} 免登录可对话；"
+    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, modelRef}——开启后 /s/{token} 免登录可对话；"
+            + "mcpEnabled=true 时同一个 token 兼作 MCP 端点 /ai/mcp/{token}（Streamable HTTP，供 Claude/Cursor 等接入）；"
             + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
             + "游客能力收窄：沙盒/产物/MCP/技能执行不暴露，检索可见性与默认模型按发布者执行")
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
         Object refObj = body.get("modelRef");
         String modelRef = refObj == null ? "" : String.valueOf(refObj).trim();
+        // MCP 端点是分享的附加形态：分享停用（enabled=0）时链接与端点一并失效，
+        // 因此"开了 MCP 却没开分享"是无效组合，显式拒绝而不是让用户发布完才发现端点不通
+        if (mcpEnabled && !enabled) {
+            return ResultJson.error("开启 MCP 端点需要先启用公开分享");
+        }
         // 模型引用归属校验：只能用自己可用的供应商（平台级 + 自己登记的个人级），发布时 fail-loud
         if (enabled && !modelRef.isBlank()) {
             modelRegistryService.assertUsable(modelRef, RequestUser.uid(), RequestUser.role());
         }
-        var share = agentShareService.publish(id, enabled, modelRef, RequestUser.uid());
+        var share = agentShareService.publish(id, enabled, mcpEnabled, modelRef, RequestUser.uid());
         return ResultJson.ok(Map.of(
                 "enabled", enabled,
+                "mcpEnabled", mcpEnabled,
                 "token", share.getToken() == null ? "" : share.getToken(),
                 "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
     }

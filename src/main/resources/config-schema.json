@@ -136,6 +136,14 @@
         "总开关（自动提取 + 注入；用户可在个人设置查看/编辑/删除自己的记忆）",
         "容量与预算（条数上限与注入预算，防挤占知识上下文）"
       ]
+    },
+    {
+      "key": "mcp",
+      "title": "MCP 服务（双向）",
+      "sections": [
+        "对外提供端点（Server：把已发布的智能体暴露给 Claude / Cursor 等外部客户端）",
+        "安全与限频"
+      ]
     }
   ],
   "fields": [
@@ -1602,9 +1610,18 @@
       "tips": "agentAggregateMode",
       "def": "concat",
       "options": [
-        { "value": "concat", "label": "concat（按分支顺序直拼）" },
-        { "value": "rerank", "label": "rerank（按重排分降序合并）" },
-        { "value": "supervisor", "label": "supervisor（LLM 二次聚合）" }
+        {
+          "value": "concat",
+          "label": "concat（按分支顺序直拼）"
+        },
+        {
+          "value": "rerank",
+          "label": "rerank（按重排分降序合并）"
+        },
+        {
+          "value": "supervisor",
+          "label": "supervisor（LLM 二次聚合）"
+        }
       ],
       "note": "concat=按分支顺序直拼；rerank=命中按重排分降序合并（高分块优先进上下文）；supervisor=LLM 二次聚合（去重、按价值排序、矛盾标注冲突，多一次调用）",
       "vif": "agent.enabled",
@@ -2280,6 +2297,55 @@
       "min": 0,
       "step": 60000,
       "tier": 3
+    },
+    {
+      "backendKey": "mcp.server.enabled",
+      "panel": "mcp",
+      "section": 0,
+      "group": "mcp",
+      "key": "server.enabled",
+      "path": "mcp.server.enabled",
+      "label": "对外提供 MCP 端点",
+      "type": "switch",
+      "tips": "mcpServerEnabled",
+      "def": false,
+      "note": "开启后 /ai/mcp/{token} 可用：智能体发布时勾选「MCP 端点」即可被外部 MCP 客户端接入（默认关——不主动对外暴露能力）。连外部 MCP 服务（Client）不受此开关影响，那是每人自己在「MCP 外部工具」里登记的",
+      "tier": 1
+    },
+    {
+      "backendKey": "mcp.server.timeoutMs",
+      "panel": "mcp",
+      "section": 0,
+      "group": "mcp",
+      "key": "server.timeoutMs",
+      "path": "mcp.server.timeoutMs",
+      "label": "单次调用超时（ms）",
+      "type": "number",
+      "tips": "mcpServerTimeout",
+      "def": 180000,
+      "min": 30000,
+      "step": 10000,
+      "width": 220,
+      "note": "等一轮问答跑完的最长时间（外部客户端的超时通常更短，复杂智能体建议拆小或调低）",
+      "vif": "mcp.server.enabled",
+      "tier": 2
+    },
+    {
+      "backendKey": "mcp.server.allowedOrigins",
+      "panel": "mcp",
+      "section": 1,
+      "group": "mcp",
+      "key": "server.allowedOrigins",
+      "path": "mcp.server.allowedOrigins",
+      "label": "允许的 Origin",
+      "type": "text",
+      "tips": "mcpServerAllowedOrigins",
+      "def": "",
+      "width": 420,
+      "ph": "https://a.example.com,https://b.example.com",
+      "note": "浏览器型客户端跨域调用时的白名单（逗号分隔，需带 scheme）；留空=只允许本机回环。Claude/Cursor 等本地进程客户端不带 Origin，不受此限制",
+      "vif": "mcp.server.enabled",
+      "tier": 2
     }
   ],
   "tips": {
@@ -2459,7 +2525,10 @@
     "sandboxKeepaliveInterval": "provisioner 侧的沙盒有闲置生命周期，这里控制多久 touch 一次表示\"还在用\"。设为 0 关闭 keepalive（长对话中间隔很久才调用一次的话，沙盒可能被 provisioner 回收）。",
     "sandboxDeleteTimeout": "删除沙盒要等容器清理完，允许的最长时间。",
     "sandboxIdleRelease": "会话多久没使用沙盒就回收容器。沙盒里生成的文件会随容器一起消失，所以默认 60 分钟——如果用户需要\"上午生成的文件下午还在\"，把这个值调大即可。0 表示不自动回收。",
-    "sandboxCleanupInterval": "扫描\"哪些沙盒空闲了\"的间隔；≤0 暂停该任务。"
+    "sandboxCleanupInterval": "扫描\"哪些沙盒空闲了\"的间隔；≤0 暂停该任务。",
+    "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力：开启后，智能体发布时可勾选「MCP 端点」，拿到 /ai/mcp/{token} 地址，粘贴到 Claude Desktop、Cursor 或其他支持 MCP 的客户端即可直接调用该智能体（token 即凭据，撤销分享或关掉这里立即失效）。",
+    "mcpServerTimeout": "外部客户端调用该智能体时，服务端等待一轮问答完成的上限。超时会向客户端返回错误而不是继续空等；智能体开了深度思考或多子代理时建议调大。",
+    "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。"
   },
   "corePaths": [
     "chat.temperature",
@@ -2598,6 +2667,7 @@
     "sandbox.keepaliveIntervalSeconds": "沙盒 keepalive 间隔（秒，≤0 关闭）",
     "sandbox.deleteTimeoutSeconds": "沙盒删除超时（秒）",
     "sandbox.idleReleaseMinutes": "沙盒空闲回收（分钟，0=不回收）",
-    "sandbox.cleanupIntervalMs": "沙盒空闲回收扫描间隔（ms，≤0=暂停）"
+    "sandbox.cleanupIntervalMs": "沙盒空闲回收扫描间隔（ms，≤0=暂停）",
+    "mcp.server.enabled": "MCP 服务端点（对外提供）"
   }
 }

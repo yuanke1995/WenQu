@@ -276,6 +276,11 @@
           <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随我的个人默认模型" />
           <div class="pub-hint">只能选择你自己可用的模型（平台级或个人级）；游客检索知识库按你的可见范围执行</div>
         </div>
+        <div class="pub-row">
+          <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" @change="savePublish" />
+          <span class="pub-row-t">{{ pubMcpEnabled ? 'MCP 端点已开启：Claude / Cursor 等外部客户端可用该地址直接调用这个智能体' : 'MCP 端点未开启（开启后同一 token 兼作 MCP 凭据）' }}</span>
+          <div class="pub-hint" v-if="!pubEnabled">需先启用公开分享；还需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</div>
+        </div>
         <template v-if="pubToken">
           <div class="pub-row">
             <span class="pub-label">分享链接</span>
@@ -290,6 +295,16 @@
             <a-textarea :value="iframeSnippet" readonly :rows="3" class="pub-iframe" />
             <button class="app-btn ghost small" style="margin-top:6px" @click="copyText(iframeSnippet, '嵌入代码已复制')">复制嵌入代码</button>
             <div class="pub-hint">粘贴到任意网页；游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露</div>
+          </div>
+          <div class="pub-row">
+            <span class="pub-label">MCP 端点</span>
+            <div class="pub-copy-row">
+              <a-input :value="mcpUrl" readonly size="small" />
+              <button class="app-btn ghost small" @click="copyText(mcpUrl, 'MCP 地址已复制')">复制</button>
+            </div>
+            <a-textarea :value="mcpJson" readonly :rows="4" class="pub-iframe" />
+            <button class="app-btn ghost small" style="margin-top:6px" @click="copyText(mcpJson, 'mcp.json 已复制')">复制 Cursor 配置</button>
+            <div class="pub-hint">粘贴到 Claude Desktop 的 Integrations 或项目根目录 .cursor/mcp.json。地址含凭据，等同密钥：撤销分享或关掉上面开关立即失效。外部调用同样受限——沙盒 / 产物 / 个人技能与个人 MCP 不暴露</div>
           </div>
           <div class="pub-row">
             <a-popconfirm title="撤销后链接立即失效，重新发布会生成新链接，确定撤销？" @confirm="doRevoke">
@@ -669,24 +684,34 @@ function openShare (a) {
 // ==================== 公开发布（/s/{token} 免登录对话 + iframe 嵌入） ====================
 const pubVisible = ref(false)
 const pubAgentId = ref('')
+const pubAgentName = ref('')
 const pubEnabled = ref(false)
+const pubMcpEnabled = ref(false)
 const pubModelRef = ref('')
 const pubToken = ref('')
 const shareUrl = computed(() => pubToken.value ? window.location.origin + '/s/' + pubToken.value : '')
+// MCP 端点（/ai/mcp/{token}）：与网页分享同一 token，token 即凭据
+const mcpUrl = computed(() => pubToken.value ? window.location.origin + '/ai/mcp/' + pubToken.value : '')
+const mcpJson = computed(() => mcpUrl.value
+  ? JSON.stringify({ mcpServers: { [pubAgentName.value || 'wenqu']: { url: mcpUrl.value } } }, null, 2)
+  : '')
 const iframeSnippet = computed(() => shareUrl.value
   ? `<iframe src="${shareUrl.value}?embed=1" style="width:420px;height:640px;border:1px solid #e5e6eb;border-radius:12px" title="AI 助手"></iframe>`
   : '')
 
 async function openPublish (a) {
   pubAgentId.value = a.id
+  pubAgentName.value = a.name || ''
   pubVisible.value = true
   pubToken.value = ''
   pubEnabled.value = false
+  pubMcpEnabled.value = false
   pubModelRef.value = ''
   try {
     const r = await getAgentPublish(a.id)
     if (r && r.success !== false && r.data) {
       pubEnabled.value = !!r.data.enabled
+      pubMcpEnabled.value = !!r.data.mcpEnabled
       pubModelRef.value = r.data.modelRef || ''
       pubToken.value = r.data.token || ''
     }
@@ -694,10 +719,17 @@ async function openPublish (a) {
 }
 
 async function savePublish () {
+  // MCP 端点是分享的附加形态：分享停用后链接与端点一并失效，前端同步关掉避免发布出无效组合
+  if (!pubEnabled.value) pubMcpEnabled.value = false
   try {
-    const r = await publishAgent(pubAgentId.value, { enabled: pubEnabled.value, modelRef: pubModelRef.value || '' })
+    const r = await publishAgent(pubAgentId.value, {
+      enabled: pubEnabled.value,
+      mcpEnabled: pubMcpEnabled.value,
+      modelRef: pubModelRef.value || ''
+    })
     if (r && r.success !== false && r.data) {
       pubToken.value = r.data.token || ''
+      pubMcpEnabled.value = !!r.data.mcpEnabled
       message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
     } else message.error(r?.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }

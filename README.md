@@ -4,7 +4,7 @@
 >
 > 中文名：**问渠** ｜ 英文名：**WenQu** ｜ 英文 slogan：*Ask the source.*
 
-独立 AI 服务，基于 Spring AI 实现的 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 外部工具、**沙盒隔离执行环境（容器内跑 shell / 读写文件）**、定时执行智能体、产物交付，配合知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、检索量化评估与数据看板，是面向"智能体 + 知识"场景的完整工作台。
+独立 AI 服务，基于 Spring AI 实现的 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 双向（接入外部 Server + 把智能体对外发布为 MCP Server）、**沙盒隔离执行环境（容器内跑 shell / 读写文件）**、定时执行智能体、产物交付，配合知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、检索量化评估与数据看板，是面向"智能体 + 知识"场景的完整工作台。
 
 ## 技术栈
 
@@ -170,7 +170,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 启动前端后访问 `http://localhost:5800/chat`，未登录自动跳转 `/login`（本地账号按引导创建管理员；接入 OIDC 后可单点登录）。左侧导航由 `/auth/me` 下发的**菜单树**渲染（RBAC：按角色绑定下发，可在「权限管理」页维护）——典型入口：**对话 / 智能体 / 知识库 / 我的产物 / 成员管理 / 权限管理 / 数据看板 / 检索评估 / 系统设置**，下方「最近」列出会话（悬浮显示「导出 Markdown」「删除」），底部显示当前登录用户与自助改密入口。
 
 1. **对话**（`/chat`）：欢迎页有推荐问题标签；输入框支持拖入/粘贴/点击上传图片（最多 5 张）、`@` 引用指定文档（被 @ 文档优先参考）；工具行可切换**智能体**、上传图片、**深度思考**开关，右侧显示本轮生效模型名。提问后：混合检索 + 查询改写 + 知识块关联扩散 → 流式回答，句末 `[N]` 引用角标可点开溯源弹窗（来源全文与图片）、位置级插入文档原图、回答下方**检索状态行**可展开看全部来源；深度思考先出折叠面板流式展示思维链；**智能体/工具调用**（知识库检索、沙盒执行、产物交付、内置工具、MCP、技能）以状态行实时反馈；**长期记忆**（memory.enabled）：问答完成后异步提炼值得长期记住的用户信息并注入后续对话（个人设置可查/改/删，公开分享页不携带）；产物以可下载卡片下发。回答支持复制/有帮助/没帮助/重新生成/检索调试/**加入评测集**（差评回流）/导出 Markdown/删除本轮。
-2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系——附**编排视图**拓扑图展示委派链路/失效引用/孤儿子智能体、设默认；卡片可**公开发布**——生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，停用/撤销随时可控，游客工具收窄为知识检索+内置项；**工具执行确认**——沙盒/MCP 类有副作用工具可设"执行前确认"（人在回路：批准/拒绝/超时按拒绝）或"禁用"）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
+2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系——附**编排视图**拓扑图展示委派链路/失效引用/孤儿子智能体、设默认；卡片可**公开发布**——生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，并可选把同一 token 兼作 **MCP 端点 `/ai/mcp/{token}`**（Claude / Cursor 等外部客户端直接调用该智能体），停用/撤销随时可控，游客工具收窄为知识检索+内置项；**工具执行确认**——沙盒/MCP 类有副作用工具可设"执行前确认"（人在回路：批准/拒绝/超时按拒绝）或"禁用"）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
 3. **知识库**（`/knowledge`）：多知识库管理——每库可设解析参数与检索参数（**留空跟随全局默认**，保存即固化覆盖）、文档级共享范围；**父子分块**（parse.childEnabled，默认关）：超长块确定性切成小子块向量化做检索索引，命中子块后返回父块完整正文（短文本召回更准、上下文不丢）；**问答对增强**（parse.qaEnabled，默认关）：解析时对每块用对话模型生成 QA 并按问法向量化（命中问法后返回来源块，对标 FastGPT 问答对模式；行落库 `c_ai_knowledge_qa`，重嵌/迁移不重调 LLM）；点入库进入**文档管理**：上传（多选/拖拽/带描述）与**网页 URL 导入**（批量粘贴、正文提取、源文件为 HTML 快照，仅公网 http/https 并逐跳防内网探测）、解析进度（图片逐张进度）、知识块预览（切片列表/结构导图、编辑单个块并重向量化）、版本历史与回滚、启停用/重解析/批量操作、全局知识块搜索。
 4. **我的产物**（`/artifacts`）：问答里智能体交付的文件产物（Markdown/CSV/JSON/HTML 等）汇总，可预览、下载、删除；定时任务产出的结果会话也在此链路。
 5. **数据看板**（`/dashboard`，管理员）：核心指标卡 + 检索质量自动体检 + 热门/无命中问题 TOP10 + 差评回流 + 知识库缺口一键补块。
@@ -196,7 +196,12 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **定时执行智能体**（`/agents` → 定时任务 Tab）：智能体按 cron（6 段）或固定间隔自动执行，执行历史与结果会话留痕；调度中心先推进 `next_run_at` 再执行（单实例防重复）、同任务串行（未完成记 `skipped`）
 - **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（命中块注册进引用流）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（渐进披露读 `SKILL.md`）；开关集中在 `tool.*`，**总开关与子开关默认均为 false**
 - **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力（内置目录 + 用户目录），支持新建 / 从 URL 安装（远程域白名单 `skill.remoteAllowedHosts`）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；**按用户隔离**（个人资产），沙盒内以只读投影暴露给容器
-- **MCP 外部工具**：接入任意 MCP Server（streamable/sse），连接状态、整体重连、临时连通性探测；按用户隔离连接池
+- **MCP 双向**：
+  - **Client（接进来）**：接入任意 MCP Server（streamable/sse），连接状态、整体重连、临时连通性探测；按用户隔离连接池
+  - **Server（送出去）**：智能体发布时可开启 **MCP 端点 `/ai/mcp/{token}`**（Streamable HTTP，无状态），
+    Claude Desktop / Cursor / 其他 Agent 粘贴地址即可调用该智能体——token 即凭据（与网页分享同源，
+    停用/撤销立即失效），按发布者身份检索、能力收窄同游客模式（沙盒/产物/个人技能与个人 MCP 不暴露）；
+    总开关 `mcp.server.enabled` 默认关
 - **知识库多库管理**：库级解析参数/检索参数（**稀疏覆盖**：留空跟随全局默认）；**检索可见性两级判定**（文档自身 + 所属库共享范围，私有库不会被他人检索到）
 - **RBAC 权限**：角色-菜单（侧边栏入口）+ 角色-API（端点白名单）两级绑定；管理员判定 `admin`/`superadmin` 或角色 `admin_flag`；普通用户仅开放问答链路，管理端点 403 fail-closed；前端管理页路由带守卫
 - **OIDC 单点登录**（可选）：标准授权码流程，自动建档（不设本地密码），绑定 `c_ai_user.oidc_sub` 唯一索引；配置在设置页「单点登录（OIDC）」面板，分离部署必填 `oidc.frontendBaseUrl`
@@ -237,7 +242,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `GET/POST /api/ai/agent/{id}/publish`、`DELETE /api/ai/agent/{id}/publish` | 公开分享发布/查询/撤销（生成 token，免登录对话入口） |
 | `GET /api/ai/share/{token}/info`、`GET /api/ai/share/{token}/history`、`POST /api/ai/share/{token}/chat` | 游客通道（免登录）：分享信息 / 游客会话历史 / 流式对话（IP 限频、工具白名单收窄） |
 | `GET /api/ai/skill/list`、`GET /api/ai/skill/detail`、`POST /api/ai/skill`、`POST /api/ai/skill/install`、`PUT /api/ai/skill/{name}/disabled`、`DELETE /api/ai/skill/{name}` | 技能包：列表 / 详情 / 新建 / URL 安装 / 启停 / 删除 |
-| `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP：状态 / 重连 / 临时探测 |
+| `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测 |
+| `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server 端点：Streamable HTTP（无状态），`initialize` / `tools/list` / `tools/call` |
 | `GET /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务：列表 / 新建 / 编辑 / 立即触发（含执行历史） |
 | `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表 / 删除（下载走签名 URL） |
 | `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/disabled` | 对外 API Key：列表 / 签发（明文仅一次）/ 吊销 |
@@ -431,7 +437,8 @@ spring:
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
 | `tool.*` | `enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`** | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`、`dir`(./data/skills)、`injectEnabled`(true)、`remoteAllowedHosts`(精确 host 白名单) | 保存即生效 |
-| `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`、`autoDispatch`、`routeTimeoutMs`(8000)、`maxToolSteps`(15) | 保存即生效；MCP Server 为每人自己的 `c_ai_user_mcp`（无全局 mcp.* 配置） |
+| `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`、`autoDispatch`、`routeTimeoutMs`(8000)、`maxToolSteps`(15) | 保存即生效；MCP **客户端**无全局配置（每人自己的 `c_ai_user_mcp`） |
+| `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | MCP **服务端**：对外提供 `/ai/mcp/{token}` 端点；`allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
 | `sandbox.*` | `provisionerUrl`(127.0.0.1:8002)、`token`(敏感，RSA 入库)、`virtualPathPrefix`(/home/gem/user-data)、`commandTimeoutSeconds`(180)、`maxOutputBytes`(262144)、`keepaliveIntervalSeconds`(30)、`idleReleaseMinutes`(60)、`cleanupIntervalMs`(600000) | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
 | 用户/角色 | `default_model`/`default_vision_model`（个人默认模型）、角色-菜单/角色-API 绑定 | 即时生效 |
@@ -440,7 +447,7 @@ spring:
 
 ## 已知注意事项
 
-- **智能体 / 工具 / 技能 / 沙盒默认全关**：`agent.enabled`、`tool.*`（含沙盒）、`skill.enabled` 默认均为 false，需在设置页显式开启；MCP 无全局开关（每个用户在「MCP 外部工具」登记自己的 Server）
+- **智能体 / 工具 / 技能 / 沙盒默认全关**：`agent.enabled`、`tool.*`（含沙盒）、`skill.enabled` 默认均为 false，需在设置页显式开启；MCP 客户端无全局开关（每个用户在「MCP 外部工具」登记自己的 Server）；MCP **服务端** `mcp.server.enabled` 默认关（对外暴露能力需显式开启）
 - **需重解析才生效的配置**：`chunk.maxSize` / `headingDepth` / `structural`、`retrieval.refDetectEnabled` 等；`refExpand*` 扩散类参数保存即生效
 - **`vision.timeoutMillis` 需重启**（视觉客户端启动时构建，其余 `vision.*` 保存即生效）
 - **`.nvmrc` 固定 Node 18.19.0**（Node ≥18 均可构建）
