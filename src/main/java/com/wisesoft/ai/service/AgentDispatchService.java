@@ -85,7 +85,9 @@ public class AgentDispatchService {
             }
             return picked;
         } catch (Exception e) {
-            log.warn("[DISPATCH] 自动派遣失败，回落默认智能体（{} 个候选）: {}", candidates.size(), e.getMessage());
+            // CompletableFuture.get 的 ExecutionException 自身 message 常为 null，真因在 cause——透出真因，不吞
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("[DISPATCH] 自动派遣失败，回落默认智能体（{} 个候选）: {}", candidates.size(), cause.toString());
             return null;
         }
     }

@@ -107,7 +107,9 @@ public class SubAgentOrchestrator {
                     .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             return parseRouteResult(out, candidates);
         } catch (Exception e) {
-            log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), e.getMessage());
+            // CompletableFuture.get 的 ExecutionException 自身 message 常为 null，真因在 cause——透出真因，不吞
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), cause.toString());
             return new RouteResult(candidates);
         }
     }

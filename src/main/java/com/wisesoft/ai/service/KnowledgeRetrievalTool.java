@@ -63,9 +63,11 @@ public class KnowledgeRetrievalTool {
     }
 
     private final HybridRetrievalService hybridRetrievalService;
+    private final ConfigService configService;
 
-    public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService) {
+    public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService) {
         this.hybridRetrievalService = hybridRetrievalService;
+        this.configService = configService;
     }
 
     /**
@@ -97,6 +99,15 @@ public class KnowledgeRetrievalTool {
             hits = hits.stream()
                     .filter(h -> h.docId() != null && scope.docIds().contains(h.docId()))
                     .toList();
+        }
+        // 最低相关分门（与主链路上下文填充同口径：排序分=重排分??融合分，retrieval.minContextScore，0=关）：
+        // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板
+        double minContextScore = configService.getDouble("retrieval.minContextScore", 0.6);
+        if (minContextScore > 0 && hits != null) {
+            hits = hits.stream().filter(h -> {
+                double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
+                return rankScore >= minContextScore;
+            }).toList();
         }
         if (hits == null || hits.isEmpty()) {
             return "未在知识库中检索到相关内容";
