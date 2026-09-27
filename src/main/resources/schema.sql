@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_qa` (
     KEY `idx_qa_doc` (`doc_id`),
     KEY `idx_qa_knowledge` (`knowledge_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识块问答对索引表（QA增强检索：按问法向量化，命中后返回来源块）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_knowledge_child` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID（同时作为子块向量的 vector id）',
+    `doc_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属文档ID',
+    `knowledge_id`  VARCHAR(50)  NOT NULL COMMENT '父块ID（命中子块后取回父块完整正文进上下文）',
+    `content`       TEXT         NOT NULL COMMENT '子块正文（向量化索引文本；父块完整内容仍存 c_ai_knowledge）',
+    `chunk_seq`     INT          DEFAULT 0 COMMENT '在父块内的切片序号',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_child_doc` (`doc_id`),
+    KEY `idx_child_knowledge` (`knowledge_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='子块索引表（父子分块：小块向量化检索，命中后返回父块完整正文）';
 -- 说明：idx_doc_deleted 覆盖按文档取块 + 逻辑删除过滤（增量 diff/孤儿清扫/快照/关键词路 doc 过滤）；
 -- idx_doc_id 为其最左前缀、已冗余，可在窗口期手动 DROP（SchemaMigrator 不会自动删索引）。
 -- 关键词检索：默认走 MySQL content/title LIKE（全表扫描，知识块量大时慢）；

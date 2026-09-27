@@ -287,6 +287,8 @@ public class ConfigService {
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
         d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
         d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
+        d.put("parse.childEnabled", "false");              // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
+        d.put("parse.childSize", "400");                   // 父子分块：子块尺寸（字符，超过该长度的块才切子块）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发
         // 问答行为参数
         d.put("chat.remainTokenFloor", "800");             // 上下文填充保留下限

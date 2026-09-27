@@ -97,6 +97,8 @@ public class DocumentService {
     private final DocxParser docxParser;
     /** QA 增强检索索引：解析期按块生成问答对并按问法向量化（parse.qaEnabled，best-effort） */
     private final QaIndexService qaIndexService;
+    /** 父子分块索引：超长块切子块向量化，命中后返回父块正文（parse.childEnabled，best-effort） */
+    private final ChildChunkService childChunkService;
     /** Redis：全量重嵌入分布式互斥锁（多副本共享库时防两个实例互删对方正在重建的索引） */
     private final StringRedisTemplate redisTemplate;
     /** 解析进度节流守卫：docId -> 已上报 progress（值未变化不写库） */
@@ -464,10 +466,80 @@ public class DocumentService {
         }
     }
 
-    /**
-     * 单知识块向量化并入库（供手动新增知识块复用；embedding 失败降级返回 false，不阻断入库）
-     * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
-     */
+    // ==================== 附加索引（QA 问法 + 父子子块）统一清理/恢复 ====================
+
+    /** 按来源块清理附加索引：向量 + 行（QA 与子块两套都处理；best-effort，失败告警不阻断主流程） */
+    private void deleteExtrasByKnowledge(List<String> knowledgeIds, String docId) {
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) return;
+        try {
+            List<String> vecIds = new ArrayList<>(qaIndexService.vectorIdsByKnowledge(knowledgeIds));
+            vecIds.addAll(childChunkService.vectorIdsByKnowledge(knowledgeIds));
+            if (!vecIds.isEmpty()) {
+                try {
+                    storeOf(docId).delete(vecIds);
+                } catch (Exception e) {
+                    log.warn("清理附加索引向量失败（{} 个，残留可重解析清理）: {}", vecIds.size(), e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取附加索引向量失败: {}", e.getMessage());
+        }
+        try {
+            qaIndexService.deleteByKnowledgePhysical(knowledgeIds);
+        } catch (Exception e) {
+            log.warn("删除 QA 行失败: {}", e.getMessage());
+        }
+        try {
+            childChunkService.deleteByKnowledgePhysical(knowledgeIds);
+        } catch (Exception e) {
+            log.warn("删除子块行失败: {}", e.getMessage());
+        }
+    }
+
+    /** 按文档清理附加索引（删除文档/回滚/解析中断补偿用） */
+    private void deleteExtrasByDoc(String docId) {
+        if (docId == null || docId.isBlank()) return;
+        try {
+            List<String> vecIds = new ArrayList<>(qaIndexService.vectorIdsByDoc(docId));
+            vecIds.addAll(childChunkService.vectorIdsByDoc(docId));
+            if (!vecIds.isEmpty()) {
+                try {
+                    storeOf(docId).delete(vecIds);
+                } catch (Exception e) {
+                    log.warn("清理文档附加索引向量失败（{} 个）: {}", vecIds.size(), e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取文档附加索引向量失败: {}", e.getMessage());
+        }
+        try {
+            qaIndexService.deleteByDocPhysical(docId);
+        } catch (Exception e) {
+            log.warn("删除文档 QA 行失败: {}", e.getMessage());
+        }
+        try {
+            childChunkService.deleteByDocPhysical(docId);
+        } catch (Exception e) {
+            log.warn("删除文档子块行失败: {}", e.getMessage());
+        }
+    }
+
+    /** 附加索引向量按（新）向量库恢复：QA 从问法行、子块从切片行（不调 LLM；失败可重解析补齐） */
+    private void reembedExtras(List<String> docIds, VectorStore target) {
+        try {
+            int qaOk = qaIndexService.reembedForDocs(docIds, target);
+            if (qaOk > 0) log.info("[Reembed] QA 向量恢复 {} 条", qaOk);
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] QA 向量恢复失败（可重解析补齐）: {}", e.getMessage());
+        }
+        try {
+            int childOk = childChunkService.reembedForDocs(docIds, target);
+            if (childOk > 0) log.info("[Reembed] 子块向量恢复 {} 条", childOk);
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] 子块向量恢复失败（可重解析补齐）: {}", e.getMessage());
+        }
+    }
+
     /**
      * 按文档路由向量库：doc.kbId → 所属知识库绑定的向量模型（KbVectorStoreRegistry，每库独立索引）。
      * 文档行查不到（已删/迁移竞态）按默认库路由，保证向量有归属、后续删除清理不落空。
@@ -486,6 +558,10 @@ public class DocumentService {
         return docId == null || docId.isBlank() ? null : documentMapper.selectById(docId);
     }
 
+    /**
+     * 单知识块向量化并入库（供手动新增知识块复用；embedding 失败降级返回 false，不阻断入库）
+     * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
+     */
     public boolean embedAndStore(Knowledge k, String content) {
         try {
             Map<String, Object> metadata = new HashMap<>();
@@ -633,13 +709,8 @@ public class DocumentService {
             kb.setUpdateTime(java.time.LocalDateTime.now());
             kbMapper.updateById(kb);
         }
-        // 5. QA 向量按新模型恢复（从落库行重建，不调 LLM；失败可重解析补齐）
-        try {
-            int qaOk = qaIndexService.reembedForDocs(docIds, target);
-            log.info("[KB-Reembed] 知识库 {} QA 向量恢复 {} 条", kbId, qaOk);
-        } catch (Exception e) {
-            log.warn("[KB-Reembed] 知识库 {} QA 向量恢复失败（可重解析补齐）: {}", kbId, e.getMessage());
-        }
+        // 5. QA/子块向量按新模型恢复（从落库行重建，不调 LLM；失败可重解析补齐）
+        reembedExtras(docIds, target);
         log.info("[KB-Reembed] 知识库 {} 重嵌完成: 模型 {}，成功 {} 块，失败 {} 块，维度 {}", kbId, neu, done, failed, newDim);
     }
 
@@ -662,13 +733,14 @@ public class DocumentService {
                 if (!vectorIds.isEmpty()) {
                     from.delete(vectorIds);
                 }
-                // QA 向量随迁：从旧库索引删除，新库从落库行恢复（不调 LLM）
+                // QA/子块向量随迁：从旧库索引删除，新库从落库行恢复（不调 LLM）
                 try {
-                    List<String> qaVecIds = qaIndexService.vectorIdsByDoc(docId);
-                    if (!qaVecIds.isEmpty()) from.delete(qaVecIds);
-                    qaIndexService.reembedForDocs(List.of(docId), to);
+                    List<String> extras = new ArrayList<>(qaIndexService.vectorIdsByDoc(docId));
+                    extras.addAll(childChunkService.vectorIdsByDoc(docId));
+                    if (!extras.isEmpty()) from.delete(extras);
+                    reembedExtras(List.of(docId), to);
                 } catch (Exception e) {
-                    log.warn("[DOC-MIGRATE] 文档 {} QA 向量迁移失败（可重解析补齐）: {}", docId, e.getMessage());
+                    log.warn("[DOC-MIGRATE] 文档 {} 附加索引向量迁移失败（可重解析补齐）: {}", docId, e.getMessage());
                 }
                 for (Knowledge k : rows) {
                     Map<String, Object> metadata = new HashMap<>();
@@ -734,14 +806,8 @@ public class DocumentService {
         } catch (Exception e) {
             log.warn("[{}] 补偿删除向量失败: {}", docId, e.getMessage());
         }
-        // QA 同步清理：本次解析期生成的问答对随删除一并清理
-        try {
-            List<String> qaVecIds = qaIndexService.vectorIdsByDoc(docId);
-            if (!qaVecIds.isEmpty()) storeOf(docId).delete(qaVecIds);
-        } catch (Exception e) {
-            log.warn("[{}] 补偿删除 QA 向量失败: {}", docId, e.getMessage());
-        }
-        qaIndexService.deleteByDocPhysical(docId);
+        // QA/子块同步清理：本次解析期生成的附加索引随删除一并清理
+        deleteExtrasByDoc(docId);
         knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         cleanupImages(docId);
@@ -956,6 +1022,21 @@ public class DocumentService {
                 }
             }
 
+            // 父子分块（parse.childEnabled）：超长块切子块做检索索引，命中后返回父块完整正文。
+            // 纯确定性切分（无 LLM），成本仅子块 embedding；best-effort 同 QA。
+            int childCount = 0;
+            boolean childFailed = false;
+            if (!newBlocks.isEmpty() && configService.getBoolean("parse.childEnabled")) {
+                updateProgress(docId, 95, "生成子块索引");
+                try {
+                    childCount = childChunkService.generateForBlocks(docId, newBlocks, storeOf(docId),
+                            (pct, desc) -> updateProgress(docId, 95 + Math.min(4, pct / 25), desc));
+                } catch (Exception e) {
+                    childFailed = true;
+                    log.warn("[FAIL-LOUD] [{}] 子块索引失败（块已全量可召回，不影响解析结果）: {}", docId, e.getMessage());
+                }
+            }
+
             // 清理未被新块匹配的旧块（内容变更的旧版本 / 被删除的段落与图片）。
             // 时机必须在向量化成功之后：若向量化失败，旧块仍保留 → hadExistingContent 回退 status=0 时内容完整可用；
             // 若提前删除，失败后旧版已毁、新版未建成，文档知识块全空（回退失效）。
@@ -979,22 +1060,9 @@ public class DocumentService {
                 // 关键词索引同步：删除变更/被删块（best-effort）
                 keywordIndexService.deleteChunks(staleOld.stream().map(Knowledge::getId)
                         .filter(Objects::nonNull).toList());
-                // QA 同步清理：旧块的问答对向量与行随块删除（漏删会残留僵尸问法命中）
-                try {
-                    List<String> staleKids = staleOld.stream().map(Knowledge::getId)
-                            .filter(Objects::nonNull).toList();
-                    List<String> qaVecIds = qaIndexService.vectorIdsByKnowledge(staleKids);
-                    if (!qaVecIds.isEmpty()) {
-                        try {
-                            storeOf(docId).delete(qaVecIds);
-                        } catch (Exception e) {
-                            log.warn("[{}] 清理旧块 QA 向量失败: {}", docId, e.getMessage());
-                        }
-                    }
-                    qaIndexService.deleteByKnowledgePhysical(staleKids);
-                } catch (Exception e) {
-                    log.warn("[{}] 清理旧块 QA 失败: {}", docId, e.getMessage());
-                }
+                // 附加索引（QA 问法 + 父子子块）随块清理：漏删会残留僵尸问法/子块命中
+                deleteExtrasByKnowledge(staleOld.stream().map(Knowledge::getId)
+                        .filter(Objects::nonNull).toList(), docId);
                 log.info("[{}] 增量清理旧块 {} 个（内容变更/删除）", docId, staleOld.size());
             }
 
@@ -1007,6 +1075,8 @@ public class DocumentService {
             if (!statsDesc.isEmpty()) doneDesc += "；" + statsDesc;
             if (qaCount > 0) doneDesc += "；QA " + qaCount;
             if (qaFailed) doneDesc += "；QA生成失败";
+            if (childCount > 0) doneDesc += "；子块 " + childCount;
+            if (childFailed) doneDesc += "；子块索引失败";
             if (!swept) doneDesc += "；孤儿清扫失败";
             updateProgress(docId, 100, doneDesc);
             doc.setChunkCount(chunks.size());
@@ -1109,7 +1179,7 @@ public class DocumentService {
     public static final Set<String> PARSE_PARAM_KEYS = Set.of(
             "chunk.maxSize", "chunk.overlap", "chunk.maxChunks", "chunk.maxImages",
             "chunk.structural", "chunk.structuralRatio", "chunk.headingDepth",
-            "parse.qaEnabled", "parse.qaPerChunk");
+            "parse.qaEnabled", "parse.qaPerChunk", "parse.childEnabled", "parse.childSize");
 
     /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
     private String parseVisionRef(com.wisesoft.ai.model.KnowledgeBase kb) {
@@ -1155,16 +1225,10 @@ public class DocumentService {
                     throw new BizException("删除向量失败，文档未删除，请稍后重试");
                 }
             }
-            // QA 同步清理：问答对向量与块向量一起走（失败 best-effort，行删除兜底不留僵尸行）
-            try {
-                List<String> qaVecIds = qaIndexService.vectorIdsByDoc(docId);
-                if (!qaVecIds.isEmpty()) storeOf(docId).delete(qaVecIds);
-            } catch (Exception e) {
-                log.warn("[{}] 删除 QA 向量失败（行将随文档删除，向量可整库重建清理）: {}", docId, e.getMessage());
-            }
         }
+        // QA/子块附加索引随文档删除（向量失败不中止删除，行删除兜底；向量残留可整库重建清理）
+        deleteExtrasByDoc(docId);
         knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
-        qaIndexService.deleteByDocPhysical(docId);
         documentMapper.deleteById(docId);
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         // 清理版本快照
@@ -1352,16 +1416,19 @@ public class DocumentService {
                 log.warn("清理旧向量失败 id={} oldVectorId={}: {}", id, oldVectorId, e.getMessage());
             }
         }
-        // 4. QA 对随内容失效：删旧问答对；开关开启时按新内容重建（单块单次 LLM 调用；失败仅告警，下次重解析补齐）
+        // 4. 附加索引随内容失效：删旧 QA/子块；各自开关开启时按新内容重建
+        //    （QA 单块单次 LLM 调用、子块为确定性切分；失败仅告警，下次重解析补齐）
         try {
-            List<String> qaVecIds = qaIndexService.vectorIdsByKnowledge(List.of(id));
-            if (!qaVecIds.isEmpty()) storeOf(k.getDocId()).delete(qaVecIds);
-            qaIndexService.deleteByKnowledgePhysical(List.of(id));
+            deleteExtrasByKnowledge(List.of(id), k.getDocId());
+            VectorStore store = storeOf(k.getDocId());
             if (configService.getBoolean("parse.qaEnabled")) {
-                qaIndexService.generateForBlocks(k.getDocId(), List.of(k), storeOf(k.getDocId()), null);
+                qaIndexService.generateForBlocks(k.getDocId(), List.of(k), store, null);
+            }
+            if (configService.getBoolean("parse.childEnabled")) {
+                childChunkService.generateForBlocks(k.getDocId(), List.of(k), store, null);
             }
         } catch (Exception e) {
-            log.warn("知识块 QA 更新失败 id={}: {}", id, e.getMessage());
+            log.warn("知识块附加索引更新失败 id={}: {}", id, e.getMessage());
         }
     }
 
@@ -1383,14 +1450,8 @@ public class DocumentService {
                 log.warn("删除知识块向量失败 id={}: {}", id, e.getMessage());
             }
         }
-        // QA 同步清理：块删除则其问答对向量与行一并移除
-        try {
-            List<String> qaVecIds = qaIndexService.vectorIdsByKnowledge(List.of(id));
-            if (!qaVecIds.isEmpty()) storeOf(k.getDocId()).delete(qaVecIds);
-        } catch (Exception e) {
-            log.warn("删除知识块 QA 向量失败 id={}: {}", id, e.getMessage());
-        }
-        qaIndexService.deleteByKnowledgePhysical(List.of(id));
+        // QA/子块附加索引随块删除
+        deleteExtrasByKnowledge(List.of(id), k.getDocId());
         knowledgeMapper.deleteById(id);
         keywordIndexService.deleteChunks(List.of(id)); // 关键词索引同步（best-effort）
 
@@ -1577,16 +1638,18 @@ public class DocumentService {
                 .gt(com.wisesoft.ai.model.AiDocumentVersion::getVersion, version));
         documentMetaCache.invalidate(docId);
         keywordIndexService.indexChunks(rebuilt); // 关键词索引同步：写入重建块（best-effort）
-        // QA 同步重建：回滚后块内容变了（且块 id 可能换），旧问答对全量作废重建
+        // QA/子块附加索引重建：回滚后块内容变了（且块 id 可能换），旧索引全量作废按回滚后内容重建
         try {
-            List<String> qaVecIds = qaIndexService.vectorIdsByDoc(docId);
-            if (!qaVecIds.isEmpty()) storeOf(docId).delete(qaVecIds);
-            qaIndexService.deleteByDocPhysical(docId);
+            deleteExtrasByDoc(docId);
+            VectorStore store = storeOf(docId);
             if (configService.getBoolean("parse.qaEnabled") && !rebuilt.isEmpty()) {
-                qaIndexService.generateForBlocks(docId, rebuilt, storeOf(docId), null);
+                qaIndexService.generateForBlocks(docId, rebuilt, store, null);
+            }
+            if (configService.getBoolean("parse.childEnabled") && !rebuilt.isEmpty()) {
+                childChunkService.generateForBlocks(docId, rebuilt, store, null);
             }
         } catch (Exception e) {
-            log.warn("[{}] 回滚后 QA 重建失败（可在重解析时补齐）: {}", docId, e.getMessage());
+            log.warn("[{}] 回滚后附加索引重建失败（可在重解析时补齐）: {}", docId, e.getMessage());
         }
         log.info("[{}] 回滚到 v{} 完成: {} chunks", docId, version, snapshot.size());
     }
