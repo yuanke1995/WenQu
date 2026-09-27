@@ -90,11 +90,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # 客户端已断开（典型：后端读超时 10s < CPU 推理耗时）。标记关闭连接，
+            # 防止 keep-alive 半开连接留在客户端连接池被复用后返回残缺响应
+            # （客户端表现为 "content type [application/octet-stream]" 提取错误）
+            self.close_connection = True
 
     def do_GET(self):
         if self.path.startswith("/v1/models"):
@@ -114,7 +120,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid json"})
             return
         if self.path.startswith("/v1/rerank"):
-            print(f"[rerank] POST /v1/rerank body={body}", flush=True)
+            # 只打摘要不打全量 body：118 块的请求体几百 KB，全量打印拖慢响应且刷屏
+            print(f"[rerank] POST /v1/rerank query={str(body.get('query', ''))[:50]!r} "
+                  f"docs={len(body.get('documents', []))}", flush=True)
             query = body.get("query", "")
             docs = body.get("documents", [])
             top_n = body.get("top_n", 0)

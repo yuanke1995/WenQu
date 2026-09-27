@@ -135,10 +135,20 @@ public class RerankService {
 
     private List<HybridRetrievalService.Hit> rankWithRoute(List<HybridRetrievalService.Hit> candidates, String query,
                                                            ModelRegistryService.ModelRoute r, boolean oneShot) {
-        {
-
         try {
-            List<String> docs = candidates.stream()
+            // 重排区间（rerank.minHits/maxHits，与评估链路同参数）：候选少于 minHits 不值得一次 cross-encoder
+            // 推理；多于 maxHits 时**只重排融合分最高的 top maxHits**，其余保持融合分序接在重排结果之后——
+            // 此前区间参数在生产链路无消费方，主检索 118 块全量发给本地服务，CPU 推理约 10s 撞客户端读超时，
+            // 连接断裂后 keep-alive 复用半开连接（"重排服务老是挂"的根因）
+            int minHits = Math.max(2, configService.getInt("rerank.minHits", 6));
+            int maxHits = Math.max(minHits, configService.getInt("rerank.maxHits", 15));
+            if (candidates.size() < minHits) return candidates;
+            int cut = Math.min(candidates.size(), maxHits);
+            List<HybridRetrievalService.Hit> head = new ArrayList<>(candidates.subList(0, cut));
+            List<HybridRetrievalService.Hit> tail = candidates.size() > cut
+                    ? new ArrayList<>(candidates.subList(cut, candidates.size())) : List.of();
+
+            List<String> docs = head.stream()
                     .map(h -> h.title() + "\n"
                             + (h.titlePath() != null && !h.titlePath().isBlank()
                                     ? "【上下文】" + h.titlePath() + "\n\n" : "")
@@ -149,12 +159,18 @@ public class RerankService {
 
             // 重排分回填到每条候选（原先只用于排序即丢弃，引用来源无法透出真实相关度）；
             // 直接按分值降序排（primitive 比较，避免 record equals 逐字段比较大文本）
-            List<HybridRetrievalService.Hit> ranked = new ArrayList<>(candidates.size());
-            for (int i = 0; i < candidates.size(); i++) {
-                ranked.add(candidates.get(i).withRerankScore(scores.get(i)));
+            List<HybridRetrievalService.Hit> ranked = new ArrayList<>(head.size());
+            for (int i = 0; i < head.size(); i++) {
+                ranked.add(head.get(i).withRerankScore(scores.get(i)));
             }
             ranked.sort((a, b) -> Double.compare(b.rerankScore(), a.rerankScore()));
-            log.info("[Rerank] 候选 {} 条重排完成", candidates.size());
+            if (!tail.isEmpty()) {
+                ranked.addAll(tail);
+                log.info("[Rerank] 候选 {} 条：top {} 进入重排，超出 {} 条保持融合分序",
+                        candidates.size(), cut, tail.size());
+            } else {
+                log.info("[Rerank] 候选 {} 条重排完成", candidates.size());
+            }
             return ranked;
         } catch (Exception e) {
             if (oneShot) {
@@ -168,7 +184,6 @@ public class RerankService {
                         failCooldownMs() / 1000, e.getMessage());
             }
             return candidates;
-        }
         }
     }
 
