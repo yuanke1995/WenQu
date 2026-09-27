@@ -242,12 +242,11 @@
             <div class="qp-grid">
               <label v-for="f in QP_FIELDS" :key="f.key" class="qp-item">
                 <span class="qp-label">{{ f.label }}</span>
-                <a-input v-model:value="form.qp[f.key]" :placeholder="f.ph" allow-clear />
+                <a-input v-model:value="form.qp[f.key]" :placeholder="qpPh(f)" allow-clear />
               </label>
               <label class="qp-item">
                 <span class="qp-label">重排服务</span>
-                <a-segmented v-model:value="form.qpRerank"
-                             :options="[{ label: '跟随全局', value: 'inherit' }, { label: '开启', value: 'on' }, { label: '关闭', value: 'off' }]" />
+                <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
               </label>
             </div>
           </section>
@@ -361,7 +360,7 @@ import {
   SafetyOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
-         listSkills, getMcpStatus, listSubAgents, updateAgentShare,
+         listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
@@ -462,6 +461,24 @@ const QP_FIELDS = [
   { key: 'keywordLimit', label: '关键词召回数', path: 'retrieval.keywordLimit', ph: '如 20，留空继承全局' }
 ]
 const blankQp = () => ({ vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null })
+// 「系统设置 → 检索设置」的当前全局值（/kb/param-defaults，普通用户可读）：
+// 占位符直接展示继承的是哪个值，而不是让用户去猜/翻设置页。口径同 KnowledgeBasePage 的 numPh/triPh。
+const qpDefaults = ref(null)
+/** 占位符：有全局值 → 「留空继承全局（当前 X）」；拿不到（接口异常/该项未配置）→ 回退静态提示 */
+const qpPh = f => {
+  const v = String(qpDefaults.value?.[f.path] ?? '').trim()
+  return v === '' ? f.ph : `留空继承全局（当前 ${v}）`
+}
+/** 重排三态的「跟随全局」选项：把全局当前状态亮出来（开启/关闭），读不到则保持原样 */
+const rerankOptions = computed(() => {
+  const v = String(qpDefaults.value?.['rerank.enabled'] ?? '').trim()
+  const cur = v === 'true' ? '当前开启' : (v === 'false' ? '当前关闭' : '')
+  return [
+    { label: cur ? `跟随全局（${cur}）` : '跟随全局', value: 'inherit' },
+    { label: '开启', value: 'on' },
+    { label: '关闭', value: 'off' }
+  ]
+})
 
 /** queryParams(JSON 串) → 表单（未配置的项为 null = 继承全局） */
 function parseQueryParams (json) {
@@ -778,9 +795,11 @@ const reload = async () => {
     // （与本仓库既有约定一致：ChatPage / KnowledgeBasePage 同样只让管理员拉）
     const me = await ensureAuth()
     isAdmin.value = me.admin
-    const [ar, dr, sr, mr, xr] = await Promise.all([
-      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents()
+    // /kb/param-defaults 普通用户可读（检索参数占位符展示全局当前值用），可安全进 Promise.all
+    const [ar, dr, sr, mr, xr, pd] = await Promise.all([
+      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents(), getKbParamDefaults()
     ])
+    if (pd && pd.success && pd.data) qpDefaults.value = pd.data
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
       const list = Array.isArray(dr.data) ? dr.data : (dr.data.list || [])
