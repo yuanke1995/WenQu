@@ -4,7 +4,7 @@
 >
 > 中文名：**问渠** ｜ 英文名：**WenQu** ｜ 英文 slogan：*Ask the source.*
 
-独立 AI 服务，基于 Spring AI 实现的企业级 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 外部工具、**沙盒隔离执行环境（容器内跑 shell / 读写文件）**、定时执行智能体、产物交付，配合企业知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、检索量化评估与数据看板，是面向企业内部"智能体 + 知识"场景的完整工作台。
+独立 AI 服务，基于 Spring AI 实现的 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 外部工具、**沙盒隔离执行环境（容器内跑 shell / 读写文件）**、定时执行智能体、产物交付，配合知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、检索量化评估与数据看板，是面向"智能体 + 知识"场景的完整工作台。
 
 ## 技术栈
 
@@ -104,49 +104,31 @@ bash deploy/sandbox-provisioner/run.sh docker-logs    # 跟踪日志
 # ===== 必填（无默认值，缺失将启动失败 fail-fast）=====
 export DB_PASSWORD=xxx                    # 数据库密码
 
-# ===== 可选 =====
-export AI_CHAT_KEY=sk-xxxx                # chat 模型密钥（MaaS 网关；有默认空值，缺失不启动失败，但聊天不可用）
+# ===== 基础设施连接（有默认值，按部署环境调整）=====
 export DB_HOST=127.0.0.1                  # 数据库主机（容器部署默认 mysql；外部 OceanBase 改为实际地址）
 export DB_PORT=3306                       # 数据库端口
 export DB_NAME=ai_doc_assistant           # 库名
 export DB_USERNAME=root                   # 用户名
 export REDIS_HOST=127.0.0.1
 export REDIS_PORT=6379                    # Redis 端口（按实际部署调整，容器化部署见 docker-compose）
-export AI_VISION_MODEL=qwen3-vl:2b        # 图片描述/OCR 模型（本地 Ollama）
-export AI_VISION_BASE_URL=http://localhost:11434  # 视觉地址（不含 /v1，代码自动拼）
-export AI_VISION_THINK=false              # 关闭 qwen3 思考模式（提速且输出稳定）
-export AI_IMAGES_DIR=./data               # 数据落盘目录（跨平台兜底；生产容器内为 /app/data）
-export AI_IMAGES_AUTH_ENABLED=true        # 图片访问鉴权（HMAC 签名 URL；默认开启，本地调试可置 false）
-export AI_QUERY_REWRITE_ENABLED=true      # 查询改写开关（默认开启）
-export AI_IMAGE_FILTER_ENABLED=true       # 回答图片相关性校验开关（默认开启）
-export AI_RATELIMIT_ENABLED=true          # 接口限流开关（Redis 固定窗口，按用户/IP；也可设置页改）
-export AI_RATELIMIT_CHAT=10               # 问答限频：次/分钟/用户（0=不限）
-export AI_RATELIMIT_UPLOAD=10             # 上传限频：次/分钟/用户（0=不限）
-export AI_RERANK_ENABLED=false            # 重排开关（需本地 reranker 服务，OpenAI 兼容 /v1/rerank）
-export AI_RERANK_BASE_URL=http://localhost:7997
-export AI_RERANK_MODEL=BAAI/bge-reranker-v2-m3
-export AI_KEYWORD_ENGINE=mysql            # 关键词召回引擎：mysql（LIKE 零依赖）| meilisearch
-export AI_MEILI_BASE_URL=http://localhost:7700
-export AI_MEILI_KEY=xxx                   # Meilisearch master key（仅 env/yml，不入库；compose 中必填）
-export AI_MEILI_INDEX=ai-doc-chunks       # 关键词索引名（只从 env/yml 读，永不入库）
-export AI_EMBEDDING_KEY=xxx               # 向量模型密钥（留空回落 AI_CHAT_KEY）
-export AI_EMBEDDING_BASE_URL=             # 向量模型网关地址（留空用默认 MaaS）
-export AI_EMBEDDING_MODEL=qwen3.7-text-embedding-flash
-export AI_INTENT_CLASSIFY_ENABLED=false   # 意图分类（chat/doc 分流，默认关）
-export AI_DEEP_REASONING_ENABLED=true     # 深度思考总开关
-export AI_DEEP_REASONING_MODE=model       # model=透传 enable_thinking / prompt=提示词引导
-export AI_CONTEXT_MODEL_WINDOWS="qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768"
-export AI_CONTEXT_COST_CAP=8000           # 上下文成本软上限（token）
-export AI_VISION_API_KEY=ollama           # 视觉模型密钥（Ollama 不校验，占位值）
 export REDIS_PASSWORD=                    # Redis 密码（默认空）
 export REDIS_DB=0
+export AI_IMAGES_DIR=./data               # 数据落盘目录（跨平台兜底；生产容器内为 /app/data）
+
+# ===== 安全 =====
+export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；留空则每次启动随机生成，重启后已发令牌失效；多副本必须一致）
+
+# ===== 仅 env/yml（不进设置页）=====
+export AI_MEILI_KEY=xxx                   # Meilisearch master key（compose 部署必填：meilisearch 容器以它初始化；app 侧同值可在设置页「检索设置 → 服务连接」配）
+export AI_MEILI_INDEX=ai-doc-chunks       # 关键词索引名（只从 env/yml 读，永不入库）
 export LOG_LEVEL_APP=info                 # 应用日志级别
 export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
 export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
 export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
-export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；留空则每次启动随机生成，重启后已发令牌失效）
 export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
+
+> **行为参数与模型配置不走环境变量**：检索/重排/解析/限流/深度思考/上下文/沙盒等 30+ 行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；问答/视觉/向量模型走**模型供应商**登记 + 知识库/个人默认绑定（API Key RSA 加密入库）。`application.yml` 里的同名项（`AI_CHAT_KEY`、`AI_RERANK_*` 等）只在**首次启动向空库灌默认值**时生效一次，之后一律以 DB 为准——已初始化的库上改这些环境变量不会生效。旧变量 `AI_VISION_MODEL`/`AI_VISION_BASE_URL`/`AI_VISION_API_KEY`（全局视觉模型）已退役：视觉模型按知识库绑定（visionRef → 供应商表），环境变量链路无消费方。
 
 **本地开发**：无需 export。密钥、数据目录等环境相关值放在项目根 `config/application-local.yml`（Spring Boot 外部配置目录，已被 .gitignore 忽略，**不打进构建产物**——密钥不会随 jar 分发），再以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
@@ -286,7 +268,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 支持多实例水平扩展，需满足以下约束（均已代码化治理）：
 
 1. **数据目录必须共享**：`AI_IMAGES_DIR` 指向所有实例都能访问的同一存储。docker-compose 用命名卷仅**同主机**共享；跨主机需挂 NFS/对象存储等共享卷
-2. **静态配置一致**：各副本的 yml/环境变量（数据库、Redis、`AI_JWT_SECRET`、模型密钥等）必须一致（**`AI_JWT_SECRET` 尤其必须一致**）；动态配置（`c_ai_config`）经 **Redis pub/sub** 广播即时生效，订阅断线由 **5 分钟兜底轮询**补齐
+2. **静态配置一致**：各副本的 yml/环境变量（数据库、Redis、`AI_JWT_SECRET`、`AI_MEILI_KEY` 等**仅存 env/yml 的项**）必须一致（**`AI_JWT_SECRET` 尤其必须一致**）；动态配置（`c_ai_config`，含模型与行为参数）经 **Redis pub/sub** 广播即时生效，订阅断线由 **5 分钟兜底轮询**补齐
 3. **并发防护**：重解析用 **DB 状态机 CAS**；解析队列有界，超限拒绝/降级不失控
 4. **删除中断语义**：删除在任意实例生效，其他实例上的解析由 DB 兜底在检查点秒级停止清理
 5. **总并发核算**：解析并发为"副本数 × parse.concurrency"，embedding/Ollama 为共享瓶颈
@@ -432,8 +414,8 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `model`、`temperature`、`baseUrl`/`apiKey`/`completionsPath`、`systemPrompt`、`historyRounds`(5)、`pipelineThreads`(8)、`suggestedQuestions` | 保存即生效（模型四要素按配置指纹重建客户端） |
-| `embedding.*` | `model`/`baseUrl`/`apiKey`/`embeddingsPath`、`dimensions`(系统回写，只读) | **保存即触发全量重嵌入**（先探测维度，通过才 DROP 重建） |
+| `chat.*` | `temperature`、`systemPrompt`、`baseUrl`/`apiKey`/`completionsPath`（遗留回落网关）、`historyRounds`(5)、`pipelineThreads`(8)、`suggestedQuestions` | 聊天模型走供应商/个人默认（`chat.model` 全局兜底已退役）；网关回落项保存即生效 |
+| `embedding.*` | `baseUrl`/`apiKey`/`embeddingsPath`（遗留回落网关）、`dimensions`(系统回写，只读) | 向量模型绑定知识库 `embedding_ref`（`embedding.model` 已退役）；重嵌入先探测维度，通过才 DROP 重建 |
 | `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`fusionMode`(sum)、`refExpand*`（关联扩散 9 项） | 多数保存即生效；引用识别开关**需重解析** |
 | `chunk.*` / `parse.*` | `maxSize`(800)、`structural`(true)、`concurrency`(2)、`ocrDpi`(200) | **需重解析/对后续解析生效** |
 | `vision.*` | `prompt`、`concurrency`(2)、`descCacheVersion`(1)、`numCtx`(16384) | 保存即生效（`timeoutMillis` 需重启） |

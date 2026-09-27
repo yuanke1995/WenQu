@@ -59,7 +59,8 @@ services:
     environment:
       # 必填（无默认值，缺失将启动失败）
       DB_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
-      AI_CHAT_KEY: ${AI_CHAT_KEY:?请设置 AI_CHAT_KEY}
+      # 可选：聊天网关的遗留回落密钥（仅在设置页未登记任何模型供应商时生效；正道是登记供应商）
+      AI_CHAT_KEY: ${AI_CHAT_KEY:-}
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
       DB_HOST: ${DB_HOST:-mysql}
       DB_PORT: ${DB_PORT:-3306}
