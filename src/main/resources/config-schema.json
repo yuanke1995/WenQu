@@ -1038,6 +1038,22 @@
       "tier": 2
     },
     {
+      "backendKey": "rerank.model",
+      "panel": "retrieval",
+      "section": 5,
+      "group": "rerank",
+      "key": "model",
+      "path": "retrieval.rerank.model",
+      "label": "重排模型",
+      "type": "model",
+      "modelType": "rerank",
+      "allowClear": true,
+      "tips": "rerankModel",
+      "def": "",
+      "note": "全局默认重排模型；各库检索设置未单独配置时生效，清空=回落本地 rerank.baseUrl 服务",
+      "tier": 2
+    },
+    {
       "backendKey": "context.modelWindows",
       "panel": "context",
       "section": 0,
@@ -1585,7 +1601,11 @@
       "type": "select",
       "tips": "agentAggregateMode",
       "def": "concat",
-      "options": ["concat", "rerank", "supervisor"],
+      "options": [
+        { "value": "concat", "label": "concat（按分支顺序直拼）" },
+        { "value": "rerank", "label": "rerank（按重排分降序合并）" },
+        { "value": "supervisor", "label": "supervisor（LLM 二次聚合）" }
+      ],
       "note": "concat=按分支顺序直拼；rerank=命中按重排分降序合并（高分块优先进上下文）；supervisor=LLM 二次聚合（去重、按价值排序、矛盾标注冲突，多一次调用）",
       "vif": "agent.enabled",
       "tier": 2
@@ -2275,6 +2295,7 @@
     "vectorWeight": "向量语义相似度在最终排序分中的占比。调高更侧重\"意思相近\"的匹配（适合口语化、换说法的提问）；过高可能引入字面无关但语义相近的块。",
     "keywordWeight": "关键词精确命中在排序分中的占比。调高更侧重\"字面命中\"（适合知识库资料中的专有名词、按钮名）；过高会漏掉语义相关但字面不同的内容。",
     "rerankEnabled": "重排总开关（对混合检索候选再做一次精排）。重排模型本身归各知识库的检索设置（未配置的库不做精排）；本地 reranker 服务见 scripts/win 或 scripts/mac 的 start_rerank_server。",
+    "rerankModel": "全局默认重排模型，从模型供应商登记的 rerank 类型模型中选（如硅基流动的 BAAI/bge-reranker-v2-m3，免费）。各知识库检索设置未单独配置重排模型时生效，配置后本地 reranker 服务（localhost:7997）可停用。云端重排每次多 100~500ms 网络延迟；免费模型限速，调用失败自动回退融合分排序不影响问答。清空=回落本地 rerank.baseUrl 服务。",
     "modelWindows": "声明各模型的上下文窗口大小（token），格式\"模型名=token\"逗号分隔，按当前模型名的包含关系匹配。设置过大有超窗报错风险，过小会浪费模型能力。",
     "defaultWindow": "当「模型窗口映射」未匹配到当前模型时使用的窗口大小兜底值。",
     "safetyFactor": "上下文预算 = 窗口 × 安全系数 − 输出限制。系数越高单次可塞入更多知识块和历史，但越接近模型窗口上限；建议 0.6~0.8。",
@@ -2488,6 +2509,7 @@
     "deepReasoning.enabled": "深度思考：总开关",
     "deepReasoning.autoRoute": "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）",
     "rerank.enabled": "重排：是否启用（需先启动本地 reranker 服务）",
+    "rerank.model": "重排：全局默认重排模型引用（各库检索设置未单独配置时生效；清空=回落本地 rerank.baseUrl 服务）",
     "retrieval.vecThreshold": "检索：向量相似度下限(0~1，评估对比后可应用)",
     "retrieval.minContextScore": "检索：上下文/引用的最低相关分门槛(排序分=重排分??融合分，低于该值的知识块不进上下文与引用；0=关闭)",
     "retrieval.keywordLimit": "检索：关键词召回词数上限",

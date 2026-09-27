@@ -27,8 +27,9 @@ import java.util.Set;
  * <p>
  * - 启动时表空则从 yml/env 默认值灌入
  * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
- *   chat.model / embedding.model / vision.model / rerank.model 均已退役——业务模型归属到使用者：
- *   知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认，仅 eval.judgeModel 等系统工具保留全局）
+ *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
+ *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model 保留为全局默认重排模型
+ *   （设置页可配，库级检索设置未单独配置时生效），仅 eval.judgeModel 等系统工具保留全局）
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）；embedding / vision / rerank
  *   各组的网关三要素保留为「遗留纯模型名」的回落网关，不再作为运行时默认
@@ -242,6 +243,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
+        d.put("rerank.model", "");                         // 重排全局默认模型引用（{providerId}/{modelId}；空=回落 rerank.baseUrl 本地服务）
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         d.put("context.modelWindows", properties.getContext().getModelWindows());
         d.put("context.defaultWindowTokens", String.valueOf(properties.getContext().getDefaultWindowTokens()));
