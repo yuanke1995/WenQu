@@ -272,6 +272,7 @@ public class ConfigService {
         d.put("deepReasoning.autoRoute", String.valueOf(properties.getDeepReasoning().isAutoRoute()));
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
+        d.put("retrieval.minContextScore", "0.6");         // 上下文/引用的最低相关分门槛（重排分；对齐 Dify/Coze Score 阈值；仅启用重排时生效，0=关）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
@@ -416,6 +417,7 @@ public class ConfigService {
         d.put("memory.maxInjectCount", "30");              // 每轮最多注入条数（按更新时间取最近）
         d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
+        d.put("agent.dispatchNarrowScope", "false");       // 委派收窄检索范围：挑出子集后主检索收窄到主智能体库∪选中助手库（默认关——路由判错会漏召回）
         d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）
         // mcp.enabled / mcp.servers 已移除：MCP Server 改为每人自己的 c_ai_user_mcp（见 McpClientService）

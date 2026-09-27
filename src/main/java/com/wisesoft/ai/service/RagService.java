@@ -460,10 +460,10 @@ public class RagService {
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
         }
-        // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）
-        final java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
-        // 检索参数覆盖：库级按本轮实际检索范围（未选智能体时同样生效），智能体级在其上叠加
-        applyQueryOverrides(scopeKbIds, agent);
+        // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
+        // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
+        // 重赋值为「主智能体库 ∪ 被选中子智能体库」（见检索前的路由段），因此不能声明为 final
+        java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
         // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
         final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
         final boolean useDeepThink;
@@ -556,6 +556,62 @@ public class RagService {
                 return;
             }
 
+            // 0.5 按需委派路由提前：委派挑选（route）不依赖检索结果，放在检索前执行——
+            // 开启「委派收窄检索范围」（agent.dispatchNarrowScope）时，主检索可先收窄到
+            // 「主智能体库 ∪ 被选中子智能体库」再跑，避免无关库的弱相关块挤进上下文/引用
+            // （路由判错的代价是漏召回，故默认关；误拦由检索本身兜底——子代理各自仍会检索自己库）。
+            // 总耗时不变：原时序为 检索→route→子代理，现对调为 route→检索→子代理（串行段相同）。
+            List<Agent> subCandidates = List.of();
+            SubAgentOrchestrator.RouteResult routeRes = null;
+            // 按需委派的路由结果（创建 AnswerStreamState 时要回填，供 done 下发与持久化）
+            Map<String, Object> subagentRouteInfo = null;
+            if (configService.getBoolean("agent.enabled")) {
+                subCandidates = resolveSubAgents(agent);
+                if (!subCandidates.isEmpty()) {
+                    sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
+                    routeRes = subAgentOrchestrator.route(question, subCandidates, resolvedModel);
+                    List<Agent> delegated = routeRes.picked();
+                    if (delegated.size() != subCandidates.size()) {
+                        log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", subCandidates.size(), delegated.size(),
+                                delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
+                    }
+                    // 路由结果下发：让"挑选过程"可见（前端展示"从 N 个候选中挑选 M 个"）；
+                    // reasons 为各被选助手的「挑选理由」（路由可解释性，模型没给理由时缺省）
+                    Map<String, Object> routeInfo = new LinkedHashMap<>();
+                    routeInfo.put("candidates", subCandidates.size());
+                    routeInfo.put("picked", delegated.size());
+                    routeInfo.put("names", delegated.stream().map(Agent::getName).toList());
+                    if (!routeRes.reasons().isEmpty()) routeInfo.put("reasons", routeRes.reasons());
+                    subagentRouteInfo = routeInfo;
+                    sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
+                    // 委派收窄检索范围（默认关）：仅当路由产生了**真子集**时收窄——真子集才证明路由有判别力；
+                    // 全量返回（route 失败回退 / autoRoute 关 / 真全选）都视作"无范围信息"，保持原范围。
+                    // 并集 = 主智能体库 ∪ 被选中子智能体库；双方都没绑库（或并集为空）时无从收窄，保持原范围。
+                    if (configService.getBoolean("agent.dispatchNarrowScope")
+                            && !delegated.isEmpty() && delegated.size() < subCandidates.size()) {
+                        Set<String> union = new java.util.LinkedHashSet<>();
+                        boolean bounded = false;
+                        if (scopeKbIds != null) {
+                            union.addAll(scopeKbIds);
+                            bounded = true;
+                        }
+                        for (Agent sub : delegated) {
+                            java.util.Collection<String> subKbs = scopeKbIdsOf(sub);
+                            if (subKbs != null) {
+                                union.addAll(subKbs);
+                                bounded = true;
+                            }
+                        }
+                        if (bounded && !union.isEmpty()) {
+                            scopeKbIds = union;
+                            log.info("[SUBAGENT] 委派收窄主检索范围：{} 个库（{}）", union.size(), String.join("、", union));
+                        }
+                    }
+                }
+            }
+            // 检索参数覆盖：库级按本轮实际检索范围（委派收窄后；未选智能体时同样生效），智能体级在其上叠加
+            applyQueryOverrides(scopeKbIds, agent);
+
             // 1. 深度思考（可选）：思考流式 → 提取检索计划 → 多路检索。
             //    失败/超时/未提取到计划 → 降级检索，但已收集的思考内容（thinking 词元）参与增强，不白费
             List<HybridRetrievalService.Hit> hits = null;
@@ -641,10 +697,7 @@ public class RagService {
             // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
             // 增强项：编排内部已把所有异常降级为空结果，失败不影响主链路
             SubAgentOrchestrator.Outcome subOutcome = null;
-            // 按需委派的路由结果（声明在 if 外：创建 AnswerStreamState 时要回填，供 done 下发与持久化）
-            Map<String, Object> subagentRouteInfo = null;
             if (configService.getBoolean("agent.enabled")) {
-                List<Agent> candidates = resolveSubAgents(agent);
                 // 编排视图：分支进度实时推 subagent 事件（前端渲染子智能体卡片）
                 Consumer<SubAgentOrchestrator.BranchEvent> onBranch = branch -> {
                     Map<String, Object> m = new LinkedHashMap<>();
@@ -658,29 +711,14 @@ public class RagService {
                     m.put("digest", branch.digest());
                     sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
                 };
-                if (candidates.isEmpty()) {
+                if (subCandidates.isEmpty()) {
                     // 未挂子智能体 → 原有的「多视角并行检索」
                     sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
                     subOutcome = subAgentOrchestrator.run(question, null, onBranch, resolvedModel);
                 } else {
-                    // 挂了子智能体 → 先由主模型按需挑选：只咨询与问题相关的角色，
-                    // 避免"全派"导致无关角色白跑（0 命中噪音 + 多余的检索与提炼开销）
-                    sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
-                    SubAgentOrchestrator.RouteResult routeRes = subAgentOrchestrator.route(question, candidates, resolvedModel);
+                    // 挂了子智能体 → 路由已在检索前完成（见 0.5 段的 subagent_route 事件），此处直接按挑选结果并行咨询；
+                    // 全量为空=路由判定无需咨询任何助手（问题与各助手职责均不匹配），跳过编排
                     List<Agent> delegated = routeRes.picked();
-                    if (delegated.size() != candidates.size()) {
-                        log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", candidates.size(), delegated.size(),
-                                delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
-                    }
-                    // 路由结果下发：让"挑选过程"可见（前端展示"从 N 个候选中挑选 M 个"）；
-                    // reasons 为各被选助手的「挑选理由」（路由可解释性，模型没给理由时缺省）
-                    Map<String, Object> routeInfo = new LinkedHashMap<>();
-                    routeInfo.put("candidates", candidates.size());
-                    routeInfo.put("picked", delegated.size());
-                    routeInfo.put("names", delegated.stream().map(Agent::getName).toList());
-                    if (!routeRes.reasons().isEmpty()) routeInfo.put("reasons", routeRes.reasons());
-                    subagentRouteInfo = routeInfo;
-                    sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
                     if (delegated.isEmpty()) {
                         log.info("[SUBAGENT] 按需委派判定无需咨询任何助手，跳过并行编排（问题与各助手职责均不匹配）");
                     } else {
@@ -851,6 +889,11 @@ public class RagService {
             boolean dedupEnabled = configService.getBoolean("context.dedupEnabled");
             double dedupThreshold = configService.getDouble("context.dedupThreshold", 0.45);
             double dedupPathThreshold = configService.getDouble("context.dedupPathThreshold", 0.28);
+            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）：重排分低于阈值的块不进上下文也不进引用，
+            // 防止词面/文风重叠的跨域弱相关块挤占名额（重排分不是校准概率，0.55 只说明"词面像"）。
+            // 仅对有重排分的命中生效——未启用重排（rerankScore=null）时零影响；0=关闭；
+            // 跳过不占 docNo/extra 配额（与去冗余同语义）。
+            double minContextScore = configService.getDouble("retrieval.minContextScore", 0.6);
             List<Set<String>> selectedTermSets = new ArrayList<>();
             List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
@@ -861,6 +904,12 @@ public class RagService {
                     if (extraUsed >= maxExtraHits || extraTokensUsed >= maxExtraTokens) break;
                 } else {
                     if (docNo > maxContextHits) break;
+                }
+                // 最低相关分门：弱相关块（重排分低于阈值）不进上下文/引用，不占名额
+                if (minContextScore > 0 && hit.rerankScore() != null && hit.rerankScore() < minContextScore) {
+                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} score={}",
+                            hit.knowledgeId(), hit.title(), hit.rerankScore());
+                    continue;
                 }
                 // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）
                 if (dedupEnabled && !selectedTermSets.isEmpty()
