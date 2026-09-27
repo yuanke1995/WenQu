@@ -5,7 +5,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * 问渠（WenQu）服务入口 —— AI 文档问答助手
+ * 问渠（WenQu）服务入口 —— AI 智能体工作台
  *
  * @author yuanke
  */

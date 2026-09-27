@@ -24,8 +24,8 @@ public class OpenApiConfig {
         return new OpenAPI()
                 .info(new Info()
                         .title("问渠 WenQu API")
-                        .description("问渠（WenQu）—— AI 文档问答助手服务，基于 RAG 实现知识库问答。" +
-                                "支持文档解析、混合检索、流式回答、引用溯源、数据看板与知识缺口闭环。")
+                        .description("问渠（WenQu）—— AI 智能体工作台。以智能体为核心组织模型、知识与工具，" +
+                                "基于 RAG 实现知识库问答：文档解析、混合检索、流式回答、引用溯源、沙盒执行、产物交付、数据看板与知识缺口闭环。")
                         .version("1.0.1")
                         .contact(new Contact()
                                 .name("yuanke")
