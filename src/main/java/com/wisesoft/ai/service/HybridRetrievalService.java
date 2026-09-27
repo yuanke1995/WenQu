@@ -42,6 +42,8 @@ public class HybridRetrievalService {
 
     private final KbVectorStoreRegistry kbVectorStores;
     private final KnowledgeMapper knowledgeMapper;
+    /** QA 增强检索：向量命中的 id 不是知识块 id 时，经问答对表解析回来源块 */
+    private final com.wisesoft.ai.mapper.KnowledgeQaMapper knowledgeQaMapper;
     private final AiDocumentMapper documentMapper;
     private final KeywordExtractor keywordExtractor;
     private final ConfigService configService;
@@ -152,10 +154,13 @@ public class HybridRetrievalService {
         Map<String, Hit> merged = new LinkedHashMap<>();
 
         // 向量命中：score = 向量权重 × 归一化向量分；非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
+        // QA 命中：向量 id 是问答对 id（非知识块 id），kidMap 已解析回来源块——同一块可被块向量与多个问答对同时命中，
+        // 按 knowledgeId 合并保留最高分（与"双命中叠加"的关键词路互不干扰）
         double vt = vecThreshold();
         for (Document doc : vectorDocs) {
-            String kid = String.valueOf(doc.getId());
-            Knowledge k = kidMap.get(kid);
+            Knowledge k = kidMap.get(String.valueOf(doc.getId()));
+            boolean qaHit = k != null && !String.valueOf(doc.getId()).equals(String.valueOf(k.getId()));
+            String kid = qaHit ? String.valueOf(k.getId()) : String.valueOf(doc.getId());
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
             if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
                 log.debug("[RAG] 跳过非生效文档命中: docId={} kid={}", docId, kid);
@@ -171,7 +176,8 @@ public class HybridRetrievalService {
             // 关键词单飞=keywordWeight×hitRate，两者同体系（0~0.6 / 0~0.4）可直接比较排序，无虚高问题；
             // 仅当关键词路 hitRate 本身归一化失真时才可能偏高（MySQL LIKE 路已按命中集归一化，属已知边界）
             double score = vectorWeight * vecNorm;
-            merged.put(kid, buildHit(doc, k, kid, score));
+            Hit hit = qaHit ? buildQaHit(doc, k, kid, score) : buildHit(doc, k, kid, score);
+            merged.merge(kid, hit, (a, b) -> a.score() >= b.score() ? a : b);
         }
         // 关键词命中：score = 关键词权重 × 词频加权分；与向量命中叠加（相加）
         for (Knowledge k : kwDocs) {
@@ -542,8 +548,21 @@ public class HybridRetrievalService {
         return score == null ? 0 : score;
     }
 
-    private Hit buildHit(Document doc, Knowledge k, String kid, double score) {
-        Map<String, Object> md = doc.getMetadata();
+    /**
+     * QA 命中构建：问答对只负责把问法命中路由到来源块——title/content/图片/章节路径全部取块本身
+     * （问法文本不进上下文不进引用），与直接命中该块的可引用性完全一致
+     */
+    private Hit buildQaHit(Document doc, Knowledge k, String kid, double score) {
+        String docId = metadataDocId(doc);
+        if (docId == null || docId.isEmpty()) {
+            docId = k.getDocId() == null ? "" : String.valueOf(k.getDocId());
+        }
+        List<String> images = (k.getImages() == null || k.getImages().isBlank())
+                ? List.of() : com.alibaba.fastjson2.JSON.parseArray(k.getImages(), String.class);
+        return new Hit(kid, docId, k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath(), null);
+    }
+
+    private Hit buildHit(Document doc, Knowledge k, String kid, double score) {        Map<String, Object> md = doc.getMetadata();
         String docId = metadataDocId(doc);
         String title = md.get("title") == null ? "" : String.valueOf(md.get("title"));
         List<String> images = imagesFromMd(md);
@@ -568,7 +587,9 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 批量加载向量命中的知识块（一次 selectBatchIds，替代逐条 selectById；失败返回空 Map 走原降级）
+     * 批量加载向量命中的知识块（一次 selectBatchIds，替代逐条 selectById；失败返回空 Map 走原降级）。
+     * QA 增强：未命中的 id 查问答对表解析回来源块（vector id = qa.id；元数据可能被 RedisVectorStore
+     * 丢弃，M6——以表为准不依赖 metadata）
      */
     private Map<String, Knowledge> loadKnowledgeBatch(List<Document> vectorDocs) {
         if (vectorDocs == null || vectorDocs.isEmpty()) return Map.of();
@@ -579,8 +600,27 @@ public class HybridRetrievalService {
                 .toList();
         if (ids.isEmpty()) return Map.of();
         try {
-            return knowledgeMapper.selectBatchIds(ids).stream()
+            Map<String, Knowledge> out = knowledgeMapper.selectBatchIds(ids).stream()
                     .collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
+            // QA 命中解析：块表查不到的 id → 问答对表 → 来源块行
+            List<String> missing = ids.stream().filter(id -> !out.containsKey(id)).toList();
+            if (!missing.isEmpty()) {
+                List<com.wisesoft.ai.model.KnowledgeQa> qas = knowledgeQaMapper.selectList(
+                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.wisesoft.ai.model.KnowledgeQa>()
+                                .in("id", missing));
+                if (!qas.isEmpty()) {
+                    java.util.Set<String> kids = qas.stream().map(com.wisesoft.ai.model.KnowledgeQa::getKnowledgeId)
+                            .filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+                    Map<String, Knowledge> chunkById = kids.isEmpty() ? Map.of()
+                            : knowledgeMapper.selectBatchIds(kids).stream()
+                                    .collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
+                    for (com.wisesoft.ai.model.KnowledgeQa qa : qas) {
+                        Knowledge chunk = chunkById.get(qa.getKnowledgeId());
+                        if (chunk != null) out.put(String.valueOf(qa.getId()), chunk);
+                    }
+                }
+            }
+            return out;
         } catch (Exception e) {
             log.warn("批量加载知识块元数据失败: {}", e.getMessage());
             return Map.of();

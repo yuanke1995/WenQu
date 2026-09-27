@@ -102,6 +102,12 @@
           <a-form-item label="标题识别层级" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <a-input-number v-model:value="form.p.headingDepth" :min="1" :max="6" style="width:100%" :placeholder="numPh('chunk', 'headingDepth')" />
           </a-form-item>
+          <a-form-item label="问答对增强" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-select v-model:value="form.p.qaEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('parse', 'qaEnabled')" allow-clear />
+          </a-form-item>
+          <a-form-item label="每块问答对数" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-input-number v-model:value="form.p.qaPerChunk" :min="1" :max="5" :step="1" style="width:100%" :placeholder="numPh('parse', 'qaPerChunk')" />
+          </a-form-item>
           <a-form-item label="图片描述模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <ModelSelect v-model="form.p.visionRef" type="vision" width="100%" inherit-label="不描述图片" />
           </a-form-item>
@@ -153,7 +159,7 @@ function blank () {
   return {
     name: '', description: '', embeddingRef: '', isDefault: false,
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
-    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, visionRef: '' }
+    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, visionRef: '' }
   }
 }
 
@@ -166,7 +172,8 @@ const QUERY_KEYS = {
 const PARSE_KEYS = {
   maxSize: 'chunk.maxSize', overlap: 'chunk.overlap', maxChunks: 'chunk.maxChunks',
   maxImages: 'chunk.maxImages', structural: 'chunk.structural',
-  structuralRatio: 'chunk.structuralRatio', headingDepth: 'chunk.headingDepth'
+  structuralRatio: 'chunk.structuralRatio', headingDepth: 'chunk.headingDepth',
+  qaEnabled: 'parse.qaEnabled', qaPerChunk: 'parse.qaPerChunk'
 }
 
 function hydrateForm (row) {
@@ -187,7 +194,7 @@ function hydrateForm (row) {
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = p[key]
     if (v === undefined || v === '') continue
-    f.p[field] = field === 'structural' ? String(v) : Number(v)
+    f.p[field] = (field === 'structural' || field === 'qaEnabled') ? String(v) : Number(v)
   }
   if (p.visionRef) f.p.visionRef = p.visionRef
   return f
@@ -268,6 +275,9 @@ const prefillFromGlobal = async () => {
   p.structural = structural === '' ? null : structural
   p.structuralRatio = num(flatVal('chunk.structuralRatio'))
   p.headingDepth = num(flatVal('chunk.headingDepth'))
+  const qaEnabled = flatVal('parse.qaEnabled')
+  p.qaEnabled = qaEnabled === '' ? null : qaEnabled
+  p.qaPerChunk = num(flatVal('parse.qaPerChunk'))
   // 检索参数（模板）：此前只预填解析参数，检索参数要用户自己猜当前生效值
   q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
   q.keywordWeight = num(flatVal('retrieval.keywordWeight'))

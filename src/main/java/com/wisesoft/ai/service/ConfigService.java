@@ -285,6 +285,8 @@ public class ConfigService {
         d.put("parse.concurrency", "2");                   // 文档解析并发数
         d.put("parse.ocrMinText", "20");                   // PDF 文本少于该长度判定扫描件触发 OCR
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
+        d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
+        d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发
         // 问答行为参数
         d.put("chat.remainTokenFloor", "800");             // 上下文填充保留下限
