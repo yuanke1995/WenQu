@@ -10,12 +10,24 @@
         <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
+        <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
+          <link-outlined /> 网页导入
+        </button>
         <a-upload v-if="canManageCurrentKb" :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
           <button class="app-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
         </a-upload>
       </div>
     </div>
     <a-progress v-if="uploading" :percent="uploadPercent" size="small" style="max-width:420px;margin:10px 20px 0" />
+
+    <!-- 网页导入：抓取 URL 正文入库（fileType=url，源文件为 HTML 快照） -->
+    <a-modal v-model:open="urlVisible" title="网页导入" :confirm-loading="importing" :width="540" ok-text="抓取并导入" @ok="submitImportUrl">
+      <a-alert type="info" show-icon message="每行一个 URL（最多 20 个），抓取正文后按与上传相同的链路分块入库" style="margin-bottom:10px" />
+      <a-textarea v-model:value="urlText" :rows="5" placeholder="https://example.com/article" />
+      <div style="margin-top:8px;color:#646a73;font-size:12px">
+        描述沿用右上角「文档描述」输入框（可选）；同名页面重复导入会替换旧内容；仅支持 http/https 公网地址
+      </div>
+    </a-modal>
 
     <div class="app-page-body">
       <!-- 拖拽遮罩（仅对可管理的库提示上传） -->
@@ -56,7 +68,7 @@
             <span v-else class="col-check"></span>
             <span class="col-name">
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
-              <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
+              <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
               <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
             </span>
             <span class="col-kb">
@@ -97,7 +109,7 @@
               </a-popconfirm>
             </span>
           </div>
-          <a-empty v-if="!loading && !list.length" description="暂无文档，点击右上角上传 .docx / .pdf / .xlsx" style="padding:40px 0" />
+          <a-empty v-if="!loading && !list.length" description="暂无文档，点击右上角上传 .docx / .pdf / .xlsx 或导入网页" style="padding:40px 0" />
         </a-spin>
       </div>
     </div>
@@ -319,15 +331,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { UploadOutlined, SearchOutlined, DownOutlined } from '@ant-design/icons-vue'
+import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb } from '../api'
+         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
@@ -360,7 +372,8 @@ const chipTip = d => {
 const typeColor = t => {
   const map = {
     docx: { bg: '#e6f1fb', fg: '#185fa5' }, doc: { bg: '#e6f1fb', fg: '#185fa5' },
-    pdf: { bg: '#fcebeb', fg: '#a32d2d' }, xlsx: { bg: '#eaf3de', fg: '#3b6d11' }, xls: { bg: '#eaf3de', fg: '#3b6d11' }
+    pdf: { bg: '#fcebeb', fg: '#a32d2d' }, xlsx: { bg: '#eaf3de', fg: '#3b6d11' }, xls: { bg: '#eaf3de', fg: '#3b6d11' },
+    url: { bg: '#f0eaff', fg: '#5b2ea6' }
   }
   return map[(t || '').toLowerCase()] || { bg: '#f1f3f5', fg: '#5f6570' }
 }
@@ -517,6 +530,35 @@ const onPaste = e => {
   const files = Array.from(e.clipboardData?.files || [])
     .filter(f => uploadCfg.value.allowedExts.includes((f.name.split('.').pop() || '').toLowerCase()))
   if (files.length) beforeUpload(files)
+}
+
+// ==================== 网页导入（URL 抓取入库，与上传共用解析链路） ====================
+const urlVisible = ref(false)
+const urlText = ref('')
+const importing = ref(false)
+async function submitImportUrl () {
+  const urls = [...new Set(urlText.value.split(/\s+/).map(s => s.trim()).filter(Boolean))]
+  if (!urls.length) { message.warning('请输入至少一个 URL'); return }
+  if (urls.length > 20) { message.warning('一次最多导入 20 个 URL'); return }
+  importing.value = true
+  const ok = []
+  const fail = []
+  try {
+    for (const u of urls) {
+      try {
+        const r = await importDocumentFromUrl(u, desc.value?.trim() || undefined, route.params.kbId)
+        if (r && r.success !== false) ok.push(u)
+        else fail.push(u + '：' + (r?.msg || '失败'))
+      } catch (e) { fail.push(u + '：' + (e.message || '失败')) }
+    }
+    if (fail.length) {
+      Modal.warning({ title: `导入完成：${ok.length} 成功 / ${fail.length} 失败`,
+        content: h('div', { style: 'white-space:pre-wrap;max-height:300px;overflow:auto' }, fail.join('\n')) })
+    } else {
+      message.success(`已提交 ${ok.length} 个网页解析`)
+    }
+    if (ok.length) { urlText.value = ''; urlVisible.value = false; fetchList() }
+  } finally { importing.value = false }
 }
 
 async function toggleStatus (record, status) {

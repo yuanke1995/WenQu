@@ -113,6 +113,12 @@
             <artifactId>jieba-analysis</artifactId>
             <version>1.0.2</version>
         </dependency>
+        <!-- HTML 解析（网页 URL 导入知识库：正文提取与结构化分块） -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.15.4</version>
+        </dependency>
         <!-- SpringDoc OpenAPI (Swagger UI)，Boot 3.5 对应 2.8.x -->
         <dependency>
             <groupId>org.springdoc</groupId>

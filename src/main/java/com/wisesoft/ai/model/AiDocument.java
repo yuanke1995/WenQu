@@ -23,7 +23,7 @@ public class AiDocument {
     /** 文件名 */
     private String fileName;
 
-    /** 文件类型: docx */
+    /** 文件类型: docx/pdf/xlsx/url（url=网页导入，源文件为 HTML 快照） */
     private String fileType;
 
     /** 分块数量 */
@@ -46,6 +46,9 @@ public class AiDocument {
 
     /** 文档描述 */
     private String description;
+
+    /** 网页导入的源 URL（file_type=url 时记录；普通上传为空） */
+    private String sourceUrl;
 
     /** 所属知识库ID（空=归入默认知识库；检索按库过滤，决定该文档能被哪些助手召回） */
     private String kbId;

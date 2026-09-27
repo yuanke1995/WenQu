@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
 CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `file_name`    VARCHAR(200) DEFAULT NULL COMMENT '文件名',
-    `file_type`    VARCHAR(20)  DEFAULT NULL COMMENT '文件类型: docx/pdf/xlsx',
+    `file_type`    VARCHAR(20)  DEFAULT NULL COMMENT '文件类型: docx/pdf/xlsx/url(url=网页导入,源文件为HTML快照)',
     `chunk_count`  INT          DEFAULT 0 COMMENT '分块数量',
     `status`       INT          DEFAULT 0 COMMENT '状态: 0=生效, 1=已弃用, 2=解析中, 3=解析失败',
     `fail_reason`  VARCHAR(500) DEFAULT NULL COMMENT '解析失败原因(status=3)',
@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `parse_desc`   VARCHAR(64)  DEFAULT '' COMMENT '解析阶段描述',
     `file_size`    BIGINT       DEFAULT 0 COMMENT '文件大小(字节)',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '文档描述',
+    `source_url`   VARCHAR(1024) DEFAULT NULL COMMENT '网页导入的源URL（file_type=url 时记录；普通上传为空）',
     `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
     `kb_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID（必填；启动迁移会把历史空值归入默认库）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',

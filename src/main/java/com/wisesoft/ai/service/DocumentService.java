@@ -30,6 +30,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -273,6 +279,187 @@ public class DocumentService {
             throw new BizException("解析队列繁忙（当前排队 " + queued + " 个任务），请稍后再试");
         }
         return doc;
+    }
+
+    /**
+     * 网页 URL 导入：抓取 HTML 快照 → 以 file_type=url 走与上传完全相同的入库链路
+     * （同名替换 → 源文件落盘 → 异步 WebParser 解析 → 分块/向量化/关键词索引）。
+     * 源文件即 HTML 快照：重解析读快照离线提取，不重新抓网；源 URL 记录在 source_url 列。
+     * 安全：仅 http/https；手动逐跳跟进重定向，每一跳都做内网地址校验（SSRF 防护）。
+     */
+    public AiDocument importFromUrl(String url, String description, String kbId) throws Exception {
+        String trimmed = url == null ? "" : url.trim();
+        if (trimmed.isEmpty()) throw new BizException("URL 不能为空");
+        URI uri;
+        try {
+            uri = URI.create(trimmed);
+        } catch (IllegalArgumentException e) {
+            throw new BizException("URL 格式不合法");
+        }
+        FetchResult page = fetchPage(uri);
+
+        // 文档名 = 页面 title（空则取 host+path）；同名导入走 doUpload 的 upsert 替换语义
+        String fileName = pageTitle(page.bytes());
+        if (fileName.isBlank()) {
+            String host = page.uri().getHost() == null ? "" : page.uri().getHost();
+            String path = page.uri().getPath() == null ? "" : page.uri().getPath();
+            fileName = (host + path).replaceAll("^/+", "");
+        }
+        fileName = fileName.replaceAll("\\p{Cntrl}", " ").trim();
+        if (fileName.isBlank()) fileName = page.uri().toString();
+        if (fileName.length() > 200) fileName = fileName.substring(0, 200);
+
+        DocumentParser parser = parsers.stream().filter(p -> p.supports("url")).findFirst()
+                .orElseThrow(() -> new BizException("网页解析器未就绪"));
+        // 目标库校验与 upload() 同口径（doUpload 内不再校验）
+        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        {
+            KnowledgeBase kb = kbMapper.selectById(targetKbId);
+            if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
+                throw new BizException("目标知识库不存在或已删除");
+            }
+        }
+        Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
+        try {
+            synchronized (lock) {
+                AiDocument doc = doUpload(new InMemoryPage(page.bytes(), fileName), fileName, "url",
+                        description, parser, targetKbId);
+                // 源 URL 回写（doUpload 不管这个字段；新导入与同名替换两条路都要落）
+                String finalUrl = page.uri().toString();
+                documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getId, doc.getId())
+                        .set(AiDocument::getSourceUrl, finalUrl));
+                doc.setSourceUrl(finalUrl);
+                return doc;
+            }
+        } finally {
+            uploadLocks.remove(fileName, lock);
+        }
+    }
+
+    private record FetchResult(URI uri, byte[] bytes, String contentType) {
+    }
+
+    /** 网页抓取上限：防止超大页面打爆堆内存（超限 fail-loud 拒绝导入） */
+    private static final long MAX_PAGE_BYTES = 5L * 1024 * 1024;
+    private static final int MAX_REDIRECTS = 5;
+
+    /** 抓取网页：手动逐跳重定向（每跳都过 requirePublicHost 内网校验），大小封顶读取 */
+    private FetchResult fetchPage(URI start) {
+        HttpClient client = HttpClient.newBuilder()
+                // JDK HttpClient 默认 HTTP/2 会对明文 http 发 h2c 升级（沙盒 422 同源坑），显式钉死 HTTP/1.1
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                // 重定向 NEVER + 手动跟进：Redirect.NORMAL 会自动跟随到内网地址，绕过单次校验
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        URI current = start;
+        for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            requirePublicHost(current);
+            HttpRequest req = HttpRequest.newBuilder(current)
+                    .timeout(java.time.Duration.ofSeconds(15))
+                    .header("User-Agent", "wen-qu-kb-importer (knowledge-base web import)")
+                    .header("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")
+                    .GET().build();
+            HttpResponse<InputStream> resp;
+            try {
+                resp = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BizException("网页抓取被中断");
+            } catch (java.io.IOException e) {
+                throw new BizException("网页抓取失败: " + rootMessage(e));
+            }
+            int code = resp.statusCode();
+            if (code >= 300 && code < 400) {
+                String location = resp.headers().firstValue("Location").orElse(null);
+                try { resp.body().close(); } catch (Exception ignored) { }
+                if (location == null || location.isBlank()) {
+                    throw new BizException("网页重定向缺少 Location（HTTP " + code + "）");
+                }
+                current = current.resolve(location.trim());
+                continue;
+            }
+            if (code != 200) {
+                throw new BizException("网页返回 HTTP " + code + "（" + current.getHost() + "）");
+            }
+            String contentType = resp.headers().firstValue("Content-Type").orElse("");
+            String lower = contentType.toLowerCase();
+            if (!(lower.contains("text/html") || lower.contains("application/xhtml") || lower.contains("text/plain"))) {
+                throw new BizException("URL 返回的不是网页（Content-Type: " + contentType + "）");
+            }
+            return new FetchResult(current, readCapped(resp.body()), contentType);
+        }
+        throw new BizException("重定向超过 " + MAX_REDIRECTS + " 次，已停止跟进");
+    }
+
+    /** 封顶读取响应体：超过 MAX_PAGE_BYTES 直接拒绝（不静默截断，避免半篇正文当完整知识入库） */
+    private byte[] readCapped(InputStream in) {
+        try (in) {
+            byte[] data = in.readNBytes((int) MAX_PAGE_BYTES + 1);
+            if (data.length > MAX_PAGE_BYTES) {
+                throw new BizException("网页内容超过 " + (MAX_PAGE_BYTES / 1024 / 1024) + "MB 上限，已拒绝导入");
+            }
+            return data;
+        } catch (BizException e) {
+            throw e;
+        } catch (java.io.IOException e) {
+            throw new BizException("读取网页内容失败: " + rootMessage(e));
+        }
+    }
+
+    /**
+     * SSRF 防护：仅 http/https；主机解析出的所有地址（含 IPv6）都不得为
+     * 回环/站点内网/任意/链路本地/多播地址——服务端抓取不能变成内网探测通道
+     */
+    private void requirePublicHost(URI uri) {
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new BizException("仅支持 http/https 链接");
+        }
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) throw new BizException("URL 缺少主机名");
+        java.net.InetAddress[] addrs;
+        try {
+            addrs = java.net.InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            throw new BizException("无法解析主机: " + host);
+        }
+        for (java.net.InetAddress addr : addrs) {
+            if (addr.isLoopbackAddress() || addr.isSiteLocalAddress() || addr.isAnyLocalAddress()
+                    || addr.isLinkLocalAddress() || addr.isMulticastAddress()) {
+                throw new BizException("禁止导入内网/本机地址的网页（" + host + "）");
+            }
+        }
+    }
+
+    /** 页面标题提取（charsetName=null 让 jsoup 自动探测） */
+    private String pageTitle(byte[] bytes) {
+        try {
+            String t = org.jsoup.Jsoup.parse(new java.io.ByteArrayInputStream(bytes), null, "").title();
+            return t == null ? "" : t.trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String rootMessage(Throwable e) {
+        String m = e.getMessage();
+        return m == null || m.isBlank() ? e.getClass().getSimpleName() : m;
+    }
+
+    /** 网页导入用：把抓取到的 HTML 字节包装成 MultipartFile，完整复用 doUpload（同名替换/落盘/异步解析）链路 */
+    private record InMemoryPage(byte[] bytes, String fileName) implements MultipartFile {
+        @Override public String getName() { return "file"; }
+        @Override public String getOriginalFilename() { return fileName; }
+        @Override public String getContentType() { return "text/html"; }
+        @Override public boolean isEmpty() { return bytes.length == 0; }
+        @Override public long getSize() { return bytes.length; }
+        @Override public byte[] getBytes() { return bytes; }
+        @Override public InputStream getInputStream() { return new ByteArrayInputStream(bytes); }
+        @Override public void transferTo(File dest) throws IOException {
+            java.nio.file.Files.write(dest.toPath(), bytes);
+        }
     }
 
     /**

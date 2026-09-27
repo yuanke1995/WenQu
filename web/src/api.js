@@ -346,6 +346,14 @@ export function uploadDocumentsBatch(files, onProgress, description, kbId) {
   return upload('/document/upload/batch', fd, onProgress)
 }
 
+/** 网页 URL 导入（后端抓取 HTML 快照入库，fileType=url；抓取耗时较长，超时放宽到 60s） */
+export const importDocumentFromUrl = (url, description, kbId) => {
+  const q = new URLSearchParams({ url })
+  if (description) q.append('description', description)
+  if (kbId) q.append('kbId', kbId)
+  return request('/document/import-url?' + q.toString(), { method: 'POST', timeout: 60000 })
+}
+
 /** 批量重解析 */
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })

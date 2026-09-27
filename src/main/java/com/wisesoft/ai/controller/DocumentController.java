@@ -123,6 +123,25 @@ public class DocumentController {
         return ResultJson.ok(doc, "已提交解析");
     }
 
+    @Operation(summary = "网页 URL 导入", description = "抓取网页 HTML 快照入库（file_type=url），异步走与上传相同的解析/向量化链路；"
+            + "仅支持 http/https 公网地址，重定向逐跳校验（防内网探测）；同名页面重复导入按替换语义走增量重解析")
+    @PostMapping("/import-url")
+    public ResultJson importUrl(
+            @Parameter(description = "网页 URL") @RequestParam("url") String url,
+            @Parameter(description = "文档描述（可选）") @RequestParam(value = "description", required = false) String description,
+            @Parameter(description = "目标知识库（可选；空=默认知识库）") @RequestParam(value = "kbId", required = false) String kbId,
+            HttpServletRequest httpRequest) throws Exception {
+        rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
+        if (url == null || url.isBlank()) throw new BizException("URL 不能为空");
+        if (description != null && description.length() > 500) {
+            throw new BizException("文档描述过长（最多 500 字）");
+        }
+        requireKbManage(kbId);
+        var doc = documentService.importFromUrl(url, description, kbId);
+        log.info("[AUDIT] 网页导入 operator={} docId={} url={}", RequestUser.uid(), doc.getId(), url);
+        return ResultJson.ok(doc, "已提交解析");
+    }
+
     @Operation(summary = "批量上传文档", description = "批量上传多个文档，逐个提交异步解析，返回每个文件的上传结果；按用户限频（ratelimit.uploadPerMinute）")
     @PostMapping("/upload/batch")
     public ResultJson uploadBatch(
