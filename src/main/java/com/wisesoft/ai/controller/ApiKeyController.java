@@ -70,6 +70,15 @@ public class ApiKeyController {
         return ResultJson.ok(Map.of("id", id, "disabled", disabled));
     }
 
+    @Operation(summary = "授权 MCP 入口", description = "body: {\"mcpEnabled\": true}——允许该 Key 访问平台级 MCP 入口 /ai/mcp"
+            + "（元工具集：知识检索 / 问答 / 列知识库 / 列智能体）。默认不授权；停用该 Key 时入口一并不可用")
+    @PutMapping("/{id}/mcp")
+    public ResultJson setMcpEnabled(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        boolean enabled = Boolean.TRUE.equals(body.get("mcpEnabled"));
+        apiKeyService.setMcpEnabled(id, enabled);
+        return ResultJson.ok(Map.of("id", id, "mcpEnabled", enabled));
+    }
+
     @Operation(summary = "删除 Key", description = "物理删除记录（不再需要时清理；日常吊销建议用停用）")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable String id) {

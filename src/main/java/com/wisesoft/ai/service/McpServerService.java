@@ -2,9 +2,13 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.AgentShare;
+import com.wisesoft.ai.model.ApiKey;
+import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.User;
+import com.wisesoft.ai.util.RequestUser;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
@@ -20,6 +24,8 @@ import org.springframework.web.servlet.function.ServerResponse;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -59,6 +65,8 @@ public class McpServerService {
     public static final String ENDPOINT_PREFIX = "/mcp/";
     /** 路由 pattern（转发层用它接住所有 token 的请求） */
     public static final String ENDPOINT_PATTERN = "/mcp/{token}";
+    /** 平台级入口路径（不带 token）：完整对外地址为 {origin}/ai/mcp */
+    public static final String PLATFORM_ENDPOINT = "/mcp";
 
     /** MCP 访客会话 uid 前缀（非真实用户；SessionService 按 owner 精确匹配天然隔离） */
     private static final String MCP_VISITOR_UID_PREFIX = "mcp-visitor:";
@@ -71,22 +79,43 @@ public class McpServerService {
     /** Origin 未配置允许列表时放行的回环主机（本地自部署/本机客户端） */
     private static final Set<String> LOOPBACK_HOSTS = Set.of("localhost", "127.0.0.1", "[::1]");
 
+    /** 平台级入口的访客会话 uid 前缀（会话不进任何人的会话列表，但归属可追溯） */
+    private static final String MCP_CLIENT_UID_PREFIX = "mcp-client:";
+    /** 传输上下文 key：平台级入口解析出的 API Key 记录 */
+    private static final String CTX_API_KEY = "wenqu.mcp.apiKey";
+
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
     private final RagService ragService;
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final ConfigService configService;
+    private final ApiKeyService apiKeyService;
+    private final UserMapper userMapper;
+    private final KnowledgeRetrievalTool knowledgeRetrievalTool;
+    private final KnowledgeBaseService knowledgeBaseService;
+    private final AgentService agentService;
+    private final ResourceVisibilityService visibility;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
                             RagService ragService, RateLimitService rateLimitService,
-                            ModelRegistryService modelRegistryService, ConfigService configService) {
+                            ModelRegistryService modelRegistryService, ConfigService configService,
+                            ApiKeyService apiKeyService, UserMapper userMapper,
+                            KnowledgeRetrievalTool knowledgeRetrievalTool,
+                            KnowledgeBaseService knowledgeBaseService, AgentService agentService,
+                            ResourceVisibilityService visibility) {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
         this.ragService = ragService;
         this.rateLimitService = rateLimitService;
         this.modelRegistryService = modelRegistryService;
         this.configService = configService;
+        this.apiKeyService = apiKeyService;
+        this.userMapper = userMapper;
+        this.knowledgeRetrievalTool = knowledgeRetrievalTool;
+        this.knowledgeBaseService = knowledgeBaseService;
+        this.agentService = agentService;
+        this.visibility = visibility;
     }
 
     /** MCP 端点总开关（mcp.server.enabled，默认关：不主动对外暴露能力） */
@@ -130,6 +159,182 @@ public class McpServerService {
         return transport.getRouterFunction().route(request)
                 .orElseThrow(() -> new IllegalStateException("MCP 传输层路由未命中: " + tokenPrefix(token)))
                 .handle(request);
+    }
+
+    // ==================== 平台级入口 /ai/mcp（API Key 凭据 + 固定元工具集） ====================
+
+    /**
+     * 平台级入口：一个地址暴露整套能力，凭据是请求头里的 API Key，身份 = Key 的创建者。
+     * <p>
+     * 与 per-agent 端点的分工：端点不属于某个智能体，工具集固定（无状态传输下 tools 在注册时就固定，
+     * 不能按凭据动态变化），因此<b>权限在每个 handler 内按身份裁决</b>——可见的知识库、可用的智能体
+     * 与这个人在网页上看到的完全一致（复用 ResourceVisibilityService 与 AgentService 的既有口径）。
+     */
+    public ServerResponse handlePlatform(ServerRequest request) throws Exception {
+        if (!enabled()) {
+            return jsonError(HttpStatus.NOT_FOUND, "MCP 端点未启用（可在系统设置开启）");
+        }
+        String plainKey = credential(request);
+        ApiKey key = plainKey.isEmpty() ? null : apiKeyService.verify(plainKey);
+        if (key == null || key.getMcpEnabled() == null || key.getMcpEnabled() != 1) {
+            log.warn("[MCP-SERVER] 平台级入口凭据无效或未授权 ip={}", clientIp(request));
+            return jsonError(HttpStatus.UNAUTHORIZED, "API Key 无效，或未授权访问 MCP 入口（需在 API Key 管理中开启）");
+        }
+        WebMvcStatelessServerTransport transport = WebMvcStatelessServerTransport.builder()
+                .messageEndpoint(PLATFORM_ENDPOINT)
+                .contextExtractor(req -> McpTransportContext.create(Map.of(
+                        CTX_API_KEY, key, CTX_IP, clientIp(req))))
+                .securityValidator(this::validateHeaders)
+                .build();
+        McpServer.sync(transport)
+                .serverInfo(new McpSchema.Implementation("wenqu", "1.0.0"))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
+                .instructions("问渠（WenQu）知识中枢：可检索调用者可见的知识库、向智能体提问、"
+                        + "列出可见的知识库与可用智能体。所有能力都按调用者自身的可见范围执行。")
+                .tools(platformTools())
+                .build();
+        apiKeyService.touchLastUsed(key.getId());
+        return transport.getRouterFunction().route(request)
+                .orElseThrow(() -> new IllegalStateException("MCP 传输层路由未命中（平台级入口）"))
+                .handle(request);
+    }
+
+    /** 平台级固定工具集（名字固定 ⇒ 权限在 handler 内按身份裁决，不靠工具名区分人） */
+    private McpStatelessServerFeatures.SyncToolSpecification[] platformTools() {
+        return new McpStatelessServerFeatures.SyncToolSpecification[]{
+                new McpStatelessServerFeatures.SyncToolSpecification(
+                        tool("wenqu_search_knowledge", "检索知识库",
+                                "在调用者可见的知识库中检索与关键词相关的片段（含章节路径、标题、正文）。"
+                                        + "kbId 留空 = 检索全部可见库；结果已按相关度门槛过滤，未命中会明确说明。",
+                                props("query", "string", "检索关键词或短语，越精准越好（可含功能名/字段名/操作对象）",
+                                        "topK", "integer", "返回条数 1~5，默认 5",
+                                        "kbId", "string", "可选：限定在某个知识库内检索（用 wenqu_list_knowledge_bases 取 id）"),
+                                List.of("query")),
+                        this::searchKnowledge),
+                new McpStatelessServerFeatures.SyncToolSpecification(
+                        tool("wenqu_ask", "向智能体提问",
+                                "跑一次完整问答（检索 + 模型作答），拿到完整回答文本。"
+                                        + "agentId 留空 = 按调用者的默认配置问答；传入则按该智能体的提示词、模型与知识库范围作答。"
+                                        + "需要多轮上下文时把上一次返回的 sessionId 传回来。",
+                                props("question", "string", "提问内容",
+                                        "agentId", "string", "可选：指定智能体（用 wenqu_list_agents 取 id）",
+                                        "sessionId", "string", "可选：上一次调用返回的会话 ID，传入可续接上下文"),
+                                List.of("question")),
+                        this::askPlatform),
+                new McpStatelessServerFeatures.SyncToolSpecification(
+                        tool("wenqu_list_knowledge_bases", "列出可见知识库",
+                                "返回调用者可见的知识库 id 与名称（检索时可指定 kbId 限定范围）。",
+                                Map.of(), List.of()),
+                        (ctx, call) -> listKnowledgeBases(ctx)),
+                new McpStatelessServerFeatures.SyncToolSpecification(
+                        tool("wenqu_list_agents", "列出可用智能体",
+                                "返回调用者可使用的智能体 id、名称与描述（wenqu_ask 的 agentId 从这里取）。",
+                                Map.of(), List.of()),
+                        (ctx, call) -> listAgents(ctx))
+        };
+    }
+
+    private McpSchema.CallToolResult searchKnowledge(McpTransportContext ctx, McpSchema.CallToolRequest call) {
+        ApiKey key = apiKeyOf(ctx);
+        Map<String, Object> args = argsOf(call);
+        String query = text(args.get("query"));
+        if (query.isEmpty()) return toolError("参数 query 不能为空");
+        Integer topK = args.get("topK") == null ? null : toInt(args.get("topK"));
+        String kbId = text(args.get("kbId"));
+        return withIdentity(key, () -> {
+            if (!kbId.isEmpty() && !visibleKbIds().contains(kbId)) {
+                return toolError("kbId 不存在或不在可见范围内（用 wenqu_list_knowledge_bases 查看）");
+            }
+            try {
+                // 工具范围与主链路同语义：ThreadLocal 限定本线程的检索库界（finally 必清，池化线程会复用）
+                KnowledgeRetrievalTool.setKbScope(kbId.isEmpty() ? null : List.of(kbId), null);
+                return ok(knowledgeRetrievalTool.searchKnowledge(query, topK));
+            } finally {
+                KnowledgeRetrievalTool.clearKbScope();
+            }
+        });
+    }
+
+    private McpSchema.CallToolResult askPlatform(McpTransportContext ctx, McpSchema.CallToolRequest call) {
+        ApiKey key = apiKeyOf(ctx);
+        Map<String, Object> args = argsOf(call);
+        String question = text(args.get("question"));
+        if (question.isEmpty()) return toolError("参数 question 不能为空");
+        if (question.length() > MAX_QUESTION_CHARS) {
+            return toolError("单条内容过长（最多 " + MAX_QUESTION_CHARS + " 字）");
+        }
+        String agentId = text(args.get("agentId"));
+        String sessionId = text(args.get("sessionId"));
+        String ip = text(ctx.get(CTX_IP));
+        try {
+            rateLimitService.checkRateLimit("chat", ip.isEmpty() ? "mcp-key:" + key.getId() : "ip:" + ip);
+        } catch (BizException e) {
+            return toolError(e.getMessage());
+        }
+        return withIdentity(key, () -> {
+            if (!agentId.isEmpty() && !visibleAgentIds().contains(agentId)) {
+                return toolError("agentId 不存在或不可用（用 wenqu_list_agents 查看）");
+            }
+            // 会话挂在独立 uid 下：不污染调用者自己的会话列表，归属仍可追溯
+            String owner = MCP_CLIENT_UID_PREFIX + key.getCreatedBy();
+            String sid = sessionId;
+            if (sid.isEmpty()) {
+                sid = sessionService.createSession(owner);
+            } else {
+                try {
+                    sessionService.assertOwned(sid, owner);
+                } catch (BizException e) {
+                    return toolError("sessionId 无效或不属于该 Key");
+                }
+            }
+            long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", 180_000));
+            CollectingSseEmitter sink = new CollectingSseEmitter();
+            try {
+                // 非游客模式：身份与网页问答完全一致（智能体、个人技能、个人 MCP、工具开关等按本人配置）
+                ragService.chat(sid, question, List.of(), List.of(), List.of(),
+                        false, agentId.isEmpty() ? null : agentId, "", key.getCreatedBy(), sink, false);
+                if (!sink.awaitDone(timeoutMs)) {
+                    return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
+                }
+                if (sink.lastError() != null && !sink.lastError().isBlank()) {
+                    return toolError(sink.lastError());
+                }
+                String answer = sink.answer();
+                if (answer.isBlank()) return toolError("本轮未产生回答内容");
+                log.info("[AUDIT] MCP 平台级问答 key={} agent={} session={} ip={} chars={}",
+                        key.getId(), agentId.isEmpty() ? "-" : agentId, sid, ip.isEmpty() ? "-" : ip, answer.length());
+                return McpSchema.CallToolResult.builder()
+                        .addTextContent(answer)
+                        .structuredContent(Map.of("sessionId", sid))
+                        .build();
+            } finally {
+                RagService.forgetSseChannel(sink);
+            }
+        });
+    }
+
+    private McpSchema.CallToolResult listKnowledgeBases(McpTransportContext ctx) {
+        ApiKey key = apiKeyOf(ctx);
+        return withIdentity(key, () -> {
+            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                    RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (KnowledgeBase kb : knowledgeBaseService.list()) {
+                if (!visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) continue;
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", kb.getId());
+                m.put("name", kb.getName() == null ? "" : kb.getName());
+                m.put("isDefault", kb.getIsDefault() != null && kb.getIsDefault() == 1);
+                out.add(m);
+            }
+            return ok(JSON.toJSONString(out));
+        });
+    }
+
+    private McpSchema.CallToolResult listAgents(McpTransportContext ctx) {
+        ApiKey key = apiKeyOf(ctx);
+        return withIdentity(key, () -> ok(JSON.toJSONString(agentService.available())));
     }
 
     // ==================== 端点解析 ====================
@@ -299,6 +504,98 @@ public class McpServerService {
         int colon = s.lastIndexOf(':');
         if (colon > 0 && !s.startsWith("[")) s = s.substring(0, colon);
         return s.toLowerCase(Locale.ROOT);
+    }
+
+    // ==================== 平台级内部 ====================
+
+    /** 请求头里的凭据：Authorization: Bearer &lt;key&gt; 优先，其次 X-Api-Key（与内部 API Key 口径一致） */
+    private static String credential(ServerRequest req) {
+        String auth = req.headers().firstHeader("Authorization");
+        if (auth != null && auth.length() > 7 && auth.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return auth.substring(7).trim();
+        }
+        String x = req.headers().firstHeader("X-Api-Key");
+        return x == null ? "" : x.trim();
+    }
+
+    private static ApiKey apiKeyOf(McpTransportContext ctx) {
+        Object v = ctx.get(CTX_API_KEY);
+        return v instanceof ApiKey k ? k : null;
+    }
+
+    private static Map<String, Object> argsOf(McpSchema.CallToolRequest call) {
+        return call.arguments() == null ? Map.of() : call.arguments();
+    }
+
+    private static Integer toInt(Object v) {
+        try {
+            return v == null ? null : Integer.valueOf(String.valueOf(v).trim());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 以 Key 所属用户的身份执行：装载 RequestUser（检索可见性、智能体可读性都读它）
+     * 并在结束时清理——MCP 请求跑在池化线程上，不清会污染下一次请求。
+     */
+    private McpSchema.CallToolResult withIdentity(ApiKey key, java.util.function.Supplier<McpSchema.CallToolResult> body) {
+        if (key == null || key.getCreatedBy() == null || key.getCreatedBy().isBlank()) {
+            return toolError("凭据缺失或 Key 无归属用户");
+        }
+        User u = userMapper.selectById(key.getCreatedBy());
+        if (u == null) return toolError("Key 所属用户不存在");
+        RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
+        try {
+            return body.get();
+        } finally {
+            RequestUser.clear();
+        }
+    }
+
+    /** 当前身份可见的知识库 id（与知识库页列表同口径） */
+    private java.util.Set<String> visibleKbIds() {
+        ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (KnowledgeBase kb : knowledgeBaseService.list()) {
+            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                    ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                ids.add(kb.getId());
+            }
+        }
+        return ids;
+    }
+
+    /** 当前身份可用的智能体 id（与对话页下拉同口径，子智能体不在其中） */
+    private java.util.Set<String> visibleAgentIds() {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (Map<String, Object> m : agentService.available()) {
+            Object id = m.get("id");
+            if (id != null) ids.add(String.valueOf(id));
+        }
+        return ids;
+    }
+
+    private static McpSchema.Tool tool(String name, String title, String description,
+                                       Map<String, Object> props, List<String> required) {
+        return McpSchema.Tool.builder()
+                .name(name).title(title).description(description)
+                .inputSchema(new McpSchema.JsonSchema("object", props, required, false, null, null))
+                .build();
+    }
+
+    /** 按三元组（name, type, description）拼 JsonSchema 的 properties */
+    private static Map<String, Object> props(String... triples) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (int i = 0; i + 2 < triples.length; i += 3) {
+            m.put(triples[i], Map.of("type", triples[i + 1], "description", triples[i + 2]));
+        }
+        return m;
+    }
+
+    private static McpSchema.CallToolResult ok(String text) {
+        return McpSchema.CallToolResult.builder().addTextContent(text).build();
     }
 
     /** 客户端 IP：X-Forwarded-For 首段优先（与 ChatController 同口径） */

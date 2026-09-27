@@ -119,6 +119,14 @@
                       </a-tooltip>
                     </template>
                   </a-table-column>
+                  <a-table-column title="MCP" key="mcp" width="86">
+                    <template #default="{ record }">
+                      <a-tooltip :title="record.mcpEnabled ? '可访问平台级 MCP 入口 /ai/mcp（点击收回）' : '未授权 MCP 入口（点击授权）'">
+                        <a-switch size="small" :checked="!!record.mcpEnabled"
+                                  :loading="keyMcpTogglingId === record.id" @change="toggleKeyMcp(record)" />
+                      </a-tooltip>
+                    </template>
+                  </a-table-column>
                   <a-table-column title="最近使用" key="lastUsed" width="150">
                     <template #default="{ record }">
                       <span :class="{ 'key-dim': !record.lastUsedAt }">{{ record.lastUsedAt ? fmtTs(record.lastUsedAt) : '从未使用' }}</span>
@@ -159,6 +167,8 @@
                       <li><code>X-Api-Key: sk-…</code> 作为访问凭据，无需平台登录令牌</li>
                       <li>会话归属由服务端判定：未带登录令牌的调用共享 anonymous 兼容池，建议调用方各自登录或按 Key 隔离使用</li>
                       <li>权限仅限问答链路（问答 / 会话 / 反馈 / 引用溯源），管理端点一律拒绝</li>
+                      <li>打开「MCP」开关后，该 Key 还可作为平台级 MCP 入口 <code>/ai/mcp</code> 的凭据
+                        （请求头带 <code>Authorization: Bearer sk-…</code>），供 Claude / Cursor 等客户端调用：检索知识库、提问、列出可见库与智能体</li>
                       <li>不再使用建议「停用」而非删除：停用可保留审计线索，删除记录即消失</li>
                     </ul>
                   </div>
@@ -243,7 +253,7 @@ import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine,
          probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, deleteApiKey, renameApiKey, updateApiKeyShare } from '../api'
+         listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
@@ -481,6 +491,7 @@ const keys = ref([])
 const keysLoading = ref(false)
 const keyKeyword = ref('')
 const keyTogglingId = ref('')
+const keyMcpTogglingId = ref('')
 const keyCreating = ref(false)
 const usageOpen = ref(false)
 const copiedSample = ref('')
@@ -606,6 +617,17 @@ const toggleKey = async rec => {
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { keyTogglingId.value = '' }
+}
+/** MCP 列：授权 / 收回该 Key 访问平台级 MCP 入口（/ai/mcp）的资格（与「停用」是两件事） */
+const toggleKeyMcp = async rec => {
+  if (keyMcpTogglingId.value) return
+  keyMcpTogglingId.value = rec.id
+  try {
+    const r = await setApiKeyMcp(rec.id, !rec.mcpEnabled)
+    if (r.success) { message.success(rec.mcpEnabled ? '已收回 MCP 入口' : '已授权 MCP 入口'); loadKeys() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { keyMcpTogglingId.value = '' }
 }
 const delKey = async id => {
   try {

@@ -202,6 +202,9 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
     Claude Desktop / Cursor / 其他 Agent 粘贴地址即可调用该智能体——token 即凭据（与网页分享同源，
     停用/撤销立即失效），按发布者身份检索、能力收窄同游客模式（沙盒/产物/个人技能与个人 MCP 不暴露）；
     总开关 `mcp.server.enabled` 默认关
+  - **平台级入口 `/ai/mcp`**：一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），
+    凭据是请求头的 API Key（需在 API Key 管理中给该 Key 打开「MCP」开关），身份 = Key 的创建者，
+    可见范围与他在网页上看到的完全一致；与 per-agent 端点共存互不干扰
 - **知识库多库管理**：库级解析参数/检索参数（**稀疏覆盖**：留空跟随全局默认）；**检索可见性两级判定**（文档自身 + 所属库共享范围，私有库不会被他人检索到）
 - **RBAC 权限**：角色-菜单（侧边栏入口）+ 角色-API（端点白名单）两级绑定；管理员判定 `admin`/`superadmin` 或角色 `admin_flag`；普通用户仅开放问答链路，管理端点 403 fail-closed；前端管理页路由带守卫
 - **OIDC 单点登录**（可选）：标准授权码流程，自动建档（不设本地密码），绑定 `c_ai_user.oidc_sub` 唯一索引；配置在设置页「单点登录（OIDC）」面板，分离部署必填 `oidc.frontendBaseUrl`
@@ -243,7 +246,9 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `GET /api/ai/share/{token}/info`、`GET /api/ai/share/{token}/history`、`POST /api/ai/share/{token}/chat` | 游客通道（免登录）：分享信息 / 游客会话历史 / 流式对话（IP 限频、工具白名单收窄） |
 | `GET /api/ai/skill/list`、`GET /api/ai/skill/detail`、`POST /api/ai/skill`、`POST /api/ai/skill/install`、`PUT /api/ai/skill/{name}/disabled`、`DELETE /api/ai/skill/{name}` | 技能包：列表 / 详情 / 新建 / URL 安装 / 启停 / 删除 |
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测 |
-| `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server 端点：Streamable HTTP（无状态），`initialize` / `tools/list` / `tools/call` |
+| `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server·per-agent 端点：一个智能体一个工具 |
+| `POST /ai/mcp`（`GET` 同路径；凭据走 `Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
+| `PUT /api/ai/api-key/{id}/mcp` | 授权某把 API Key 访问平台级 MCP 入口 |
 | `GET /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务：列表 / 新建 / 编辑 / 立即触发（含执行历史） |
 | `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表 / 删除（下载走签名 URL） |
 | `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/disabled` | 对外 API Key：列表 / 签发（明文仅一次）/ 吊销 |

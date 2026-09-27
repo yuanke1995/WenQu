@@ -27,7 +27,11 @@ public class McpEndpointConfig {
     @Bean
     public RouterFunction<ServerResponse> mcpEndpointRouter(McpServerService mcpServerService) {
         return RouterFunctions
+                // per-agent 端点：/ai/mcp/{token}（token 即凭据）
                 .route(RequestPredicates.POST(McpServerService.ENDPOINT_PATTERN), mcpServerService::handle)
-                .andRoute(RequestPredicates.GET(McpServerService.ENDPOINT_PATTERN), mcpServerService::handle);
+                .andRoute(RequestPredicates.GET(McpServerService.ENDPOINT_PATTERN), mcpServerService::handle)
+                // 平台级入口：/ai/mcp（请求头带 API Key，暴露固定元工具集）；精确路径，与上面不冲突
+                .andRoute(RequestPredicates.POST(McpServerService.PLATFORM_ENDPOINT), mcpServerService::handlePlatform)
+                .andRoute(RequestPredicates.GET(McpServerService.PLATFORM_ENDPOINT), mcpServerService::handlePlatform);
     }
 }

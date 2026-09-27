@@ -307,6 +307,9 @@ export const listApiKeys = () => request('/api-key/list')
 export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })
 export const setApiKeyDisabled = (id, disabled) =>
   request(`/api-key/${id}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
+/** 授权 / 收回该 Key 访问平台级 MCP 入口（/ai/mcp）的资格 */
+export const setApiKeyMcp = (id, mcpEnabled) =>
+  request(`/api-key/${id}/mcp`, { method: 'PUT', body: JSON.stringify({ mcpEnabled }) })
 export const renameApiKey = (id, name) =>
   request(`/api-key/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })

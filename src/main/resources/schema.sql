@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写）',
     `key_prefix`   VARCHAR(32)  DEFAULT NULL COMMENT '明文前缀（列表展示用）',
     `disabled`     INT          DEFAULT 0 COMMENT '是否停用: 0=启用, 1=停用（吊销）',
+    `mcp_enabled`  INT          DEFAULT 0 COMMENT 'MCP 端点: 1=该 Key 可访问平台级 MCP 入口 /ai/mcp（元工具集），0=不可',
     `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
     `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人',

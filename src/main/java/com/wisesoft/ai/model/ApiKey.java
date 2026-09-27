@@ -35,6 +35,12 @@ public class ApiKey {
     /** 是否启用（0=启用，1=停用/吊销） */
     private Integer disabled;
 
+    /**
+     * MCP 端点：1=该 Key 可用于平台级 MCP 入口 /ai/mcp（元工具集：检索/问答/列库/列智能体）
+     * <p>默认 0：Key 的权限面是「问答链路」，MCP 是另一条入口，需显式授权后才放行（最小权限）。
+     */
+    private Integer mcpEnabled;
+
     /** 过期时间（null=长期有效） */
     private LocalDateTime expireAt;
 

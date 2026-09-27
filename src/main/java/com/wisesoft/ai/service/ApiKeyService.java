@@ -106,6 +106,7 @@ public class ApiKeyService {
             m.put("name", k.getName());
             m.put("keyPrefix", k.getKeyPrefix());
             m.put("disabled", k.getDisabled() != null && k.getDisabled() == 1);
+            m.put("mcpEnabled", k.getMcpEnabled() != null && k.getMcpEnabled() == 1);
             m.put("expired", k.getExpireAt() != null && k.getExpireAt().isBefore(now));
             m.put("expireAt", k.getExpireAt());
             m.put("lastUsedAt", k.getLastUsedAt());
@@ -138,6 +139,21 @@ public class ApiKeyService {
         k.setUpdateTime(LocalDateTime.now());
         mapper.updateById(k);
         log.info("[API-KEY] {} {}", disabled ? "停用" : "启用", id);
+    }
+
+    /**
+     * 授权 / 收回该 Key 访问平台级 MCP 入口（/ai/mcp）的资格。
+     * <p>与"停用"是两件事：停用吊销的是整把 Key；这里只控制它能否走 MCP 这条入口。
+     * 默认不授权——Key 的既有权限面是问答链路，MCP 入口需显式开（最小权限）。</p>
+     */
+    public void setMcpEnabled(String id, boolean enabled) {
+        ensureManageable(mapper.selectById(id));
+        ApiKey k = new ApiKey();
+        k.setId(id);
+        k.setMcpEnabled(enabled ? 1 : 0);
+        k.setUpdateTime(LocalDateTime.now());
+        mapper.updateById(k);
+        log.info("[API-KEY] {} MCP 入口 key={}", enabled ? "授权" : "收回", id);
     }
 
     /** 物理删除（清理不再需要的 Key） */
