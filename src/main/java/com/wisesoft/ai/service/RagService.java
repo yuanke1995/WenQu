@@ -383,6 +383,13 @@ public class RagService {
     public void chat(String sessionId, String question, List<String> userImages,
                      List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter) {
+        chat(sessionId, question, userImages, attachments, skills, deepThink,
+                agentId, modelOverride, userId, emitter, false);
+    }
+
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter, boolean guestMode) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -405,7 +412,7 @@ public class RagService {
                 boolean identity = loadIdentity(userId);
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, useDeepThink,
-                            agentId, modelOverride, userId, emitter);
+                            agentId, modelOverride, userId, emitter, guestMode);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -427,7 +434,7 @@ public class RagService {
      */
     private void runChat(String sessionId, String question, List<String> userImages,
                          List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
-                         String agentId, String modelOverride, String userId, SseEmitter emitter) {
+                         String agentId, String modelOverride, String userId, SseEmitter emitter, boolean guestMode) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -521,7 +528,7 @@ public class RagService {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
                         attachmentsMeta, emitter, startTime, thinkingHolder, degradations, degradedCodes,
-                        agent, stageMs, resolvedModel);
+                        agent, stageMs, resolvedModel, guestMode);
                 return;
             }
 
@@ -1015,6 +1022,7 @@ public class RagService {
             st.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
+            st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.userAttachments = attachmentsMeta; // 附件元信息（随用户消息持久化，气泡回显）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
@@ -1064,6 +1072,26 @@ public class RagService {
                                                                                           AnswerStreamState st) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         if (!configService.getBoolean("tool.enabled")) {
+            return callbacks;
+        }
+        // 游客分享会话（公开链接 /s/{token}）：能力白名单收窄——只保留知识精确检索与内置工具
+        // （计算器/时间等无副作用项）。沙盒/产物/MCP/技能执行都是身份敏感能力：产物归属发布者、
+        // 沙盒按 uid 派生容器、MCP/技能是个人资产，一律不对匿名访客暴露。
+        if (st.guestMode) {
+            if (toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
+                callbacks.addAll(java.util.Arrays.asList(
+                        org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
+            }
+            if (toolOn(agent, "tool.builtin.enabled", agent == null ? null : agent.getToolBuiltin())) {
+                Set<String> onlyBuiltin = agent == null ? null : scopeOf(agent.getBuiltinTools());
+                for (org.springframework.ai.tool.ToolCallback cb :
+                        org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
+                    if (onlyBuiltin == null || onlyBuiltin.contains(cb.getToolDefinition().name())) {
+                        callbacks.add(cb);
+                    }
+                }
+            }
+            log.info("[TOOL] 游客分享会话受限模式：启用 {} 个工具（知识检索/内置）", callbacks.size());
             return callbacks;
         }
         if (toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
@@ -1609,6 +1637,8 @@ public class RagService {
         volatile List<Map<String, Object>> userAttachments;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
         volatile boolean deepThink;
+        /** 游客分享会话（公开链接）：工具白名单收窄为知识检索+内置项，沙盒/产物/MCP/技能不暴露 */
+        volatile boolean guestMode;
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
@@ -2588,7 +2618,7 @@ public class RagService {
                                     List<Map<String, Object>> attachmentsMeta, SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
-                                    String resolvedModel) {
+                                    String resolvedModel, boolean guestMode) {
         try {
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答
             StringBuilder system = new StringBuilder(resolveSystemPrompt(agent))
@@ -2636,6 +2666,7 @@ public class RagService {
             // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;
+            st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
             st.userAttachments = attachmentsMeta; // 附件元信息随用户消息持久化（气泡回显）
             st.contextTokens = 0;
             st.budgetTokens = 0;

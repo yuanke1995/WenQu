@@ -42,6 +42,8 @@ public class AgentController {
     private final AgentService agentService;
     private final ResourceVisibilityService visibility;
     private final com.wisesoft.ai.service.RoleService roleService;
+    private final com.wisesoft.ai.service.AgentShareService agentShareService;
+    private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
 
     /** 当前登录态的权限主体 */
     private ResourceVisibilityService.Principal principal() {
@@ -124,5 +126,45 @@ public class AgentController {
         Object v = body == null ? null : body.get("shareConfig");
         agentService.updateShareConfig(id, v == null ? null : String.valueOf(v));
         return ResultJson.ok("共享范围已保存");
+    }
+
+    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, token, modelRef}；未发布返回 enabled=false（仅可管理者可见）")
+    @GetMapping("/{id}/publish")
+    public ResultJson getPublish(@PathVariable String id) {
+        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        var share = agentShareService.getByAgent(id);
+        if (share == null) return ResultJson.ok(Map.of("enabled", false));
+        return ResultJson.ok(Map.of(
+                "enabled", share.getEnabled() != null && share.getEnabled() == 1,
+                "token", share.getToken() == null ? "" : share.getToken(),
+                "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
+    }
+
+    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, modelRef}——开启后 /s/{token} 免登录可对话；"
+            + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
+            + "游客能力收窄：沙盒/产物/MCP/技能执行不暴露，检索可见性与默认模型按发布者执行")
+    @PostMapping("/{id}/publish")
+    public ResultJson publish(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        Object refObj = body.get("modelRef");
+        String modelRef = refObj == null ? "" : String.valueOf(refObj).trim();
+        // 模型引用归属校验：只能用自己可用的供应商（平台级 + 自己登记的个人级），发布时 fail-loud
+        if (enabled && !modelRef.isBlank()) {
+            modelRegistryService.assertUsable(modelRef, RequestUser.uid(), RequestUser.role());
+        }
+        var share = agentShareService.publish(id, enabled, modelRef, RequestUser.uid());
+        return ResultJson.ok(Map.of(
+                "enabled", enabled,
+                "token", share.getToken() == null ? "" : share.getToken(),
+                "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
+    }
+
+    @Operation(summary = "撤销公开分享", description = "删除分享配置（链接立即失效）；重新发布会生成新 token")
+    @DeleteMapping("/{id}/publish")
+    public ResultJson revokePublish(@PathVariable String id) {
+        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        agentShareService.revoke(id);
+        return ResultJson.ok("已撤销分享");
     }
 }

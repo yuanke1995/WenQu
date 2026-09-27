@@ -62,6 +62,7 @@
                 <div class="ap-card-foot">
                   <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
                   <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
+                  <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
                   <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
                   <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
                   <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
@@ -235,6 +236,42 @@
     <!-- 共享范围（公共组件：与文档 / API Key 同一套两区表单） -->
     <ShareScopeModal v-model:open="shareVisible" resource-label="智能体" read-verb="使用"
                      :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="reload" />
+
+    <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入） -->
+    <a-modal v-model:open="pubVisible" title="公开发布" :width="560" :footer="null">
+      <div class="pub-form">
+        <div class="pub-row">
+          <a-switch v-model:checked="pubEnabled" @change="savePublish" />
+          <span class="pub-row-t">{{ pubEnabled ? '已发布：拿到链接的人可以免登录与该智能体对话' : '已停用：链接暂不可访问（token 保留，重新开启即恢复）' }}</span>
+        </div>
+        <div class="pub-row">
+          <span class="pub-label">游客对话模型</span>
+          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随我的个人默认模型" />
+          <div class="pub-hint">只能选择你自己可用的模型（平台级或个人级）；游客检索知识库按你的可见范围执行</div>
+        </div>
+        <template v-if="pubToken">
+          <div class="pub-row">
+            <span class="pub-label">分享链接</span>
+            <div class="pub-copy-row">
+              <a-input :value="shareUrl" readonly size="small" />
+              <button class="app-btn ghost small" @click="copyText(shareUrl, '链接已复制')">复制</button>
+              <a :href="shareUrl" target="_blank" rel="noopener" class="app-link-btn">打开</a>
+            </div>
+          </div>
+          <div class="pub-row">
+            <span class="pub-label">iframe 嵌入</span>
+            <a-textarea :value="iframeSnippet" readonly :rows="3" class="pub-iframe" />
+            <button class="app-btn ghost small" style="margin-top:6px" @click="copyText(iframeSnippet, '嵌入代码已复制')">复制嵌入代码</button>
+            <div class="pub-hint">粘贴到任意网页；游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露</div>
+          </div>
+          <div class="pub-row">
+            <a-popconfirm title="撤销后链接立即失效，重新发布会生成新链接，确定撤销？" @confirm="doRevoke">
+              <button class="app-link-btn danger">撤销分享</button>
+            </a-popconfirm>
+          </div>
+        </template>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -247,9 +284,11 @@ import {
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
-         listSkills, getMcpStatus, listSubAgents, updateAgentShare } from '../api'
+         listSkills, getMcpStatus, listSubAgents, updateAgentShare,
+         getAgentPublish, publishAgent, revokeAgentPublish } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
+import ModelSelect from '../components/ModelSelect.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 
 // ==================== 能力定义 ====================
@@ -428,6 +467,60 @@ function scopeLabel (a) {
 function openShare (a) {
   shareTarget.value = { id: a.id, shareConfig: a.shareConfig || '' }
   shareVisible.value = true
+}
+
+// ==================== 公开发布（/s/{token} 免登录对话 + iframe 嵌入） ====================
+const pubVisible = ref(false)
+const pubAgentId = ref('')
+const pubEnabled = ref(false)
+const pubModelRef = ref('')
+const pubToken = ref('')
+const shareUrl = computed(() => pubToken.value ? window.location.origin + '/s/' + pubToken.value : '')
+const iframeSnippet = computed(() => shareUrl.value
+  ? `<iframe src="${shareUrl.value}?embed=1" style="width:420px;height:640px;border:1px solid #e5e6eb;border-radius:12px" title="AI 助手"></iframe>`
+  : '')
+
+async function openPublish (a) {
+  pubAgentId.value = a.id
+  pubVisible.value = true
+  pubToken.value = ''
+  pubEnabled.value = false
+  pubModelRef.value = ''
+  try {
+    const r = await getAgentPublish(a.id)
+    if (r && r.success !== false && r.data) {
+      pubEnabled.value = !!r.data.enabled
+      pubModelRef.value = r.data.modelRef || ''
+      pubToken.value = r.data.token || ''
+    }
+  } catch (e) { message.error(e.message || '分享配置加载失败') }
+}
+
+async function savePublish () {
+  try {
+    const r = await publishAgent(pubAgentId.value, { enabled: pubEnabled.value, modelRef: pubModelRef.value || '' })
+    if (r && r.success !== false && r.data) {
+      pubToken.value = r.data.token || ''
+      message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
+    } else message.error(r?.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
+}
+
+async function doRevoke () {
+  try {
+    const r = await revokeAgentPublish(pubAgentId.value)
+    if (r && r.success !== false) {
+      pubVisible.value = false
+      message.success('已撤销分享')
+    } else message.error(r?.msg || '撤销失败')
+  } catch (e) { message.error(e.message || '撤销失败') }
+}
+
+async function copyText (text, tip) {
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(tip || '已复制')
+  } catch (e) { message.error('复制失败，请手动选择复制') }
 }
 /** 卡片上只标出「显式开启」的能力——跟随全局的不占位置 */
 const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
@@ -783,4 +876,13 @@ onMounted(async () => { })
 }
 .ap-cap-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 2px; }
 .ap-cap-global { color: #b6bdc7; }
+/* 公开发布弹窗 */
+.pub-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.pub-row { display: flex; flex-direction: column; gap: 6px; }
+.pub-row:first-child { flex-direction: row; align-items: center; gap: 10px; }
+.pub-row-t { font-size: 13px; color: var(--app-text2, #4e5460); }
+.pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2, #4e5460); }
+.pub-copy-row { display: flex; gap: 8px; align-items: center; }
+.pub-iframe { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.pub-hint { font-size: 12px; color: var(--app-text3, #8f959e); }
 </style>

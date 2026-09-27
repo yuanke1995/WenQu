@@ -328,6 +328,86 @@ export const updateAgentShare = (id, shareConfig) =>
 export const updateApiKeyShare = (id, shareConfig) =>
   request(`/api-key/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 
+// ==================== 智能体公开分享（发布管理 + 游客通道） ====================
+/** 查询智能体的公开分享配置（未发布返回 enabled=false） */
+export const getAgentPublish = id => request(`/agent/${id}/publish`)
+/** 发布/更新公开分享（enabled + modelRef，modelRef 空=回退发布者个人默认模型） */
+export const publishAgent = (id, body) =>
+  request(`/agent/${id}/publish`, { method: 'POST', body: JSON.stringify(body) })
+/** 撤销公开分享（删行，链接立即失效；重新发布生成新 token） */
+export const revokeAgentPublish = id => request(`/agent/${id}/publish`, { method: 'DELETE' })
+
+/** 游客：分享信息（免登录） */
+export const getShareInfo = token => request(`/share/${token}/info`)
+/** 游客：自己会话的最近历史（刷新恢复用） */
+export const getShareHistory = (token, sessionId, visitorId) =>
+  request(`/share/${token}/history?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+
+/**
+ * 游客流式对话（SSE，免登录）：token 即凭据；服务端按发布者身份检索、游客受限工具集。
+ * 事件：token（增量正文）/ stage（阶段提示）/ done（本轮完成，含 sessionId）/ error / warn
+ */
+export function sendShareMessage(token, payload, { onToken, onStage, onDone, onError, onWarn, signal, idleTimeoutMs = 120000 } = {}) {
+  if (typeof onDone !== 'function' || typeof onError !== 'function') return
+  const controller = new AbortController()
+  let idleTimer = null
+  let idleTimedOut = false
+  const armIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => { idleTimedOut = true; controller.abort() }, idleTimeoutMs)
+  }
+  if (signal) {
+    if (signal.aborted) controller.abort()
+    else signal.addEventListener('abort', () => controller.abort())
+  }
+  fetch(`${BASE}/share/${encodeURIComponent(token)}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: controller.signal
+  }).then(res => {
+    if (!res.ok || !res.body) {
+      res.json().then(d => onError(d?.msg || '请求失败: ' + res.status)).catch(() => onError('请求失败: ' + res.status))
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    const handleEvent = raw => {
+      const line = raw.split('\n').find(l => l.startsWith('data:'))
+      if (!line) return
+      let data = null
+      try { data = JSON.parse(line.slice(5).trim()) } catch (e) { return }
+      if (!data || !data.type) return
+      armIdle()
+      if (data.type === 'token') onToken && onToken(data.content || '')
+      else if (data.type === 'stage') onStage && onStage(data.content || '')
+      else if (data.type === 'warn') onWarn && onWarn(data.content || '')
+      else if (data.type === 'error') onError(data.content || '回答失败')
+      else if (data.type === 'done') onDone(data)
+    }
+    const pump = () => reader.read().then(({ done, value }) => {
+      if (done) { clearTimeout(idleTimer); return }
+      buf += decoder.decode(value, { stream: true })
+      let idx
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        handleEvent(buf.slice(0, idx))
+        buf = buf.slice(idx + 2)
+      }
+      return pump()
+    })
+    armIdle()
+    pump().catch(e => {
+      clearTimeout(idleTimer)
+      onError(idleTimedOut ? '回答超时，请重试' : (e.message || '连接中断'))
+    })
+  }).catch(e => {
+    clearTimeout(idleTimer)
+    if (e.name === 'AbortError') onError('已停止生成')
+    else onError(e.message || '网络错误')
+  })
+}
+
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress, kbId) {
   const fd = new FormData()

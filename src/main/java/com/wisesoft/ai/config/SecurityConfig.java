@@ -111,6 +111,8 @@ public class SecurityConfig implements WebMvcConfigurer {
             var m = KNOWLEDGE_SINGLE_GET.matcher(path);
             if (m.matches() && !"list".equals(m.group(1))) return true;
         }
+        // 智能体公开分享（游客通道）：免登录，token 即凭据（/s/{token} 的后端 API）
+        if (isShareGuestEndpoint(path)) return true;
         return false;
     }
 
@@ -148,7 +150,17 @@ public class SecurityConfig implements WebMvcConfigurer {
     private static boolean isAgentSelfEndpoint(String method, String path) {
         if (path == null) return false;
         return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
-                || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share");
+                || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share")
+                || path.matches("/api/ai/agent/[^/]+/publish");
+    }
+
+    /**
+     * 游客分享端点（公开链接 /s/{token} 的后端 API）：免登录可访问。
+     * 安全面收窄在 {@code ShareController} 与 RagService 游客模式内做：
+     * token 校验 + IP 限流 + 工具白名单收窄（沙盒/产物/MCP/技能不暴露）。
+     */
+    private static boolean isShareGuestEndpoint(String path) {
+        return path != null && path.startsWith("/api/ai/share/");
     }
 
     /**
@@ -203,9 +215,10 @@ public class SecurityConfig implements WebMvcConfigurer {
                 apiKeyService.touchLastUsed(rec.getId());
                 return true;
             }
-            // 2. 登录门禁：require-login=true 时，除登录引导端点外必须持有效登录令牌
+            // 2. 登录门禁：require-login=true 时，除登录引导端点与游客分享端点外必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));
-            if (properties.getAuth().isRequireLogin() && !authenticated && !isAuthBootstrapEndpoint(method, path)) {
+            if (properties.getAuth().isRequireLogin() && !authenticated
+                    && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(

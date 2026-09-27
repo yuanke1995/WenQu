@@ -95,6 +95,20 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_child` (
     KEY `idx_child_doc` (`doc_id`),
     KEY `idx_child_knowledge` (`knowledge_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='子块索引表（父子分块：小块向量化检索，命中后返回父块完整正文）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `agent_id`    VARCHAR(50)  NOT NULL COMMENT '被分享的智能体ID',
+    `token`       VARCHAR(64)  NOT NULL COMMENT '分享令牌（/s/{token} 免登录访问；唯一）',
+    `model_ref`   VARCHAR(255) DEFAULT NULL COMMENT '游客对话模型引用（providerId/modelId，须为平台级供应商或创建者可用；空=回退创建者个人默认模型）',
+    `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=可访问, 0=暂停（保留 token，恢复即用）',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；游客对话以该用户身份执行检索可见性与工具）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_share_token` (`token`),
+    KEY `idx_share_agent` (`agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体公开分享配置（一个智能体一条；/s/{token} 免登录对话）';
 -- 说明：idx_doc_deleted 覆盖按文档取块 + 逻辑删除过滤（增量 diff/孤儿清扫/快照/关键词路 doc 过滤）；
 -- idx_doc_id 为其最左前缀、已冗余，可在窗口期手动 DROP（SchemaMigrator 不会自动删索引）。
 -- 关键词检索：默认走 MySQL content/title LIKE（全表扫描，知识块量大时慢）；

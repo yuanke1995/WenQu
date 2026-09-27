@@ -170,7 +170,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 启动前端后访问 `http://localhost:5800/chat`，未登录自动跳转 `/login`（本地账号按引导创建管理员；接入 OIDC 后可单点登录）。左侧导航由 `/auth/me` 下发的**菜单树**渲染（RBAC：按角色绑定下发，可在「权限管理」页维护）——典型入口：**对话 / 智能体 / 知识库 / 我的产物 / 成员管理 / 权限管理 / 数据看板 / 检索评估 / 系统设置**，下方「最近」列出会话（悬浮显示「导出 Markdown」「删除」），底部显示当前登录用户与自助改密入口。
 
 1. **对话**（`/chat`）：欢迎页有推荐问题标签；输入框支持拖入/粘贴/点击上传图片（最多 5 张）、`@` 引用指定文档（被 @ 文档优先参考）；工具行可切换**智能体**、上传图片、**深度思考**开关，右侧显示本轮生效模型名。提问后：混合检索 + 查询改写 + 知识块关联扩散 → 流式回答，句末 `[N]` 引用角标可点开溯源弹窗（来源全文与图片）、位置级插入文档原图、回答下方**检索状态行**可展开看全部来源；深度思考先出折叠面板流式展示思维链；**智能体/工具调用**（知识库检索、沙盒执行、产物交付、内置工具、MCP、技能）以状态行实时反馈；产物以可下载卡片下发。回答支持复制/有帮助/没帮助/重新生成/检索调试/导出 Markdown/删除本轮。
-2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系、设默认）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
+2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系、设默认；卡片可**公开发布**——生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，停用/撤销随时可控，游客工具收窄为知识检索+内置项）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
 3. **知识库**（`/knowledge`）：多知识库管理——每库可设解析参数与检索参数（**留空跟随全局默认**，保存即固化覆盖）、文档级共享范围；**父子分块**（parse.childEnabled，默认关）：超长块确定性切成小子块向量化做检索索引，命中子块后返回父块完整正文（短文本召回更准、上下文不丢）；**问答对增强**（parse.qaEnabled，默认关）：解析时对每块用对话模型生成 QA 并按问法向量化（命中问法后返回来源块，对标 FastGPT 问答对模式；行落库 `c_ai_knowledge_qa`，重嵌/迁移不重调 LLM）；点入库进入**文档管理**：上传（多选/拖拽/带描述）与**网页 URL 导入**（批量粘贴、正文提取、源文件为 HTML 快照，仅公网 http/https 并逐跳防内网探测）、解析进度（图片逐张进度）、知识块预览（切片列表/结构导图、编辑单个块并重向量化）、版本历史与回滚、启停用/重解析/批量操作、全局知识块搜索。
 4. **我的产物**（`/artifacts`）：问答里智能体交付的文件产物（Markdown/CSV/JSON/HTML 等）汇总，可预览、下载、删除；定时任务产出的结果会话也在此链路。
 5. **数据看板**（`/dashboard`，管理员）：核心指标卡 + 检索质量自动体检 + 热门/无命中问题 TOP10 + 差评回流 + 知识库缺口一键补块。
@@ -234,6 +234,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `GET /api/ai/config/embedding/reindex` | 全量重嵌入任务状态（含索引对账） |
 | `GET /api/ai/provider/*` | 模型供应商：登记（平台级/个人级）、启停、判权（`ModelRegistryService.assertUsable`） |
 | `GET /api/ai/agent/list`、`GET /api/ai/agent/available`、`POST /api/ai/agent`、`PUT /api/ai/agent/{id}`、`DELETE /api/ai/agent/{id}`、`POST /api/ai/agent/{id}/default` | 智能体 CRUD / 对话页精简列表（普通用户可访问）/ 设默认 |
+| `GET/POST /api/ai/agent/{id}/publish`、`DELETE /api/ai/agent/{id}/publish` | 公开分享发布/查询/撤销（生成 token，免登录对话入口） |
+| `GET /api/ai/share/{token}/info`、`GET /api/ai/share/{token}/history`、`POST /api/ai/share/{token}/chat` | 游客通道（免登录）：分享信息 / 游客会话历史 / 流式对话（IP 限频、工具白名单收窄） |
 | `GET /api/ai/skill/list`、`GET /api/ai/skill/detail`、`POST /api/ai/skill`、`POST /api/ai/skill/install`、`PUT /api/ai/skill/{name}/disabled`、`DELETE /api/ai/skill/{name}` | 技能包：列表 / 详情 / 新建 / URL 安装 / 启停 / 删除 |
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP：状态 / 重连 / 临时探测 |
 | `GET /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务：列表 / 新建 / 编辑 / 立即触发（含执行历史） |
