@@ -123,19 +123,33 @@ public class McpClientService {
                 m.put("enabled", Integer.valueOf(1).equals(row.getEnabled()));
                 String st = pool.states.get(row.getName());
                 // 停用不建立连接，也不该报"失败"——给出明确语义
-                m.put("state", Integer.valueOf(1).equals(row.getEnabled()) ? (st == null ? "unknown" : st) : "disabled");
-                m.put("connected", "connected".equals(st));
+                String disp = Integer.valueOf(1).equals(row.getEnabled()) ? (st == null ? "unknown" : st) : "disabled";
                 List<Map<String, String>> tools = new ArrayList<>();
-                McpSyncClient c = pool.clients.get(row.getName());
-                if (c != null) {
-                    try {
-                        for (McpSchema.Tool t : c.listTools().tools()) {
-                            tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+                // "connected" 是粘性状态：连接成功那一刻写入后再也不会自动失效，远端进程被关停、
+                // 网络中断都发现不了，状态会一直显示"已连接"（绿点）。serverStatuses 本来就会对缓存
+                // 客户端发一次 listTools 取工具列表，这里把它当作在线校验：失败就把状态翻成 failed
+                // （而不是被 catch 吞掉继续显示绿色），成功则保持 connected（若上轮因瞬时错误被误标
+                // failed，这一刻也会自动恢复）。改配置/空闲回收重建连接时另走 ensureConnections 重连。
+                if ("connected".equals(disp)) {
+                    McpSyncClient c = pool.clients.get(row.getName());
+                    if (c == null) {
+                        pool.states.put(row.getName(), "failed:连接已失效");
+                        disp = "failed:连接已失效";
+                    } else {
+                        try {
+                            for (McpSchema.Tool t : c.listTools().tools()) {
+                                tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+                            }
+                        } catch (Exception e) {
+                            String msg = e.getMessage() == null ? "连接已断开" : e.getMessage();
+                            pool.states.put(row.getName(), "failed:" + msg);
+                            disp = "failed:" + msg;
+                            log.info("[MCP] uid={} server {} 在线校验未通过，状态翻为断开: {}", uid, row.getName(), msg);
                         }
-                    } catch (Exception ignore) {
-                        // 拉列表失败不阻断状态展示（工具列表为空，连接状态仍以 states 为准）
                     }
                 }
+                m.put("state", disp);
+                m.put("connected", "connected".equals(disp));
                 m.put("tools", tools);
                 m.put("toolCount", tools.size());
                 out.add(m);
