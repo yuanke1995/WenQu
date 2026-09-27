@@ -39,7 +39,7 @@
                 </div>
                 <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
               </div>
-              <div class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+              <div class="md" :data-msg-index="i" v-html="timelineHtml(m)"></div>
               <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
               <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
               <div v-if="m.dispatched" class="dispatch-chip">
@@ -48,14 +48,16 @@
                 <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
                 <span v-if="m.dispatched.description" class="dispatch-desc">{{ m.dispatched.description }}</span>
               </div>
-              <a-spin v-if="m.loading && m.content" size="small" style="margin-top:4px" />
-              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length" class="tool-status-list">
+              <!-- 工具（沙盒/MCP）执行中不叠加裸 spin：工具条已有转圈+实时耗时，裸圈无语义还像卡死 -->
+              <a-spin v-if="m.loading && m.content && !toolRunning(m)" size="small" style="margin-top:4px" />
+              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineTools(m)" class="tool-status-list">
                 <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-status-item" :title="t.args ? ('入参: ' + t.args) : ''">
                   <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                   <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                   <close-circle-outlined v-else class="tool-ic tool-ic-err" />
                   <span class="tool-name">{{ toolLabel(t.name) }}</span>
                   <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
+                  <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                   <span v-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                   <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                 </div>
@@ -601,6 +603,102 @@ const toolCallsView = list => {
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
 }
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
+// 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
+const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
+
+// ==================== 时间线（瀑布式输出） ====================
+// 正文与工具条按事件到达顺序交错渲染。timeline 是段数组：
+//   {kind:'text', from, to} → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
+//   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，条自动更新）。
+// 历史恢复的消息没有 timeline（落库只有整段 content，无法重建交错点）→ hasTimelineTools 为假，
+// 走下方分组兜底布局，不造数。整体在单个 .md 容器内拼接 HTML，data-msg-index 引用角标逻辑零改动。
+
+const hasTimelineTools = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && s.kind === 'tool')
+
+const extendTimelineText = (idx, from, to) => {
+  const m = messages.value[idx]
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  const last = tl[tl.length - 1]
+  if (last && last.kind === 'text' && last.to === from) last.to = to
+  else tl.push({ kind: 'text', from, to })
+}
+
+const pushTimelineTool = (idx, tool) => {
+  const m = messages.value[idx]
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  tl.push({ kind: 'tool', tool })
+}
+
+const escapeHtml = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** 时间线里的工具条（内联 HTML：v-html 内不能用 Vue 组件，用 CSS 自绘图标） */
+const toolChipHtml = t => {
+  const icon = t.status === 'start'
+    ? '<span class="tl-ic tl-spin" aria-hidden="true"></span>'
+    : (t.status === 'done' ? '<span class="tl-ic tl-ok">✓</span>' : '<span class="tl-ic tl-err">✕</span>')
+  const retry = t.attempts > 1 ? '<span class="tool-dur">重试 ' + (t.attempts - 1) + ' 次</span>' : ''
+  const dur = t.status === 'start' && t.startAt
+    ? '<span class="tool-dur">' + liveToolDur(t.startAt) + '</span>'
+    : (t.elapsedMs > 0 ? '<span class="tool-dur">' + toolDuration(t.elapsedMs) + '</span>' : '')
+  const fail = t.status === 'error' ? '<span class="tool-fail">失败</span>' : ''
+  const title = t.args ? ' title="入参: ' + escapeHtml(t.args) + '"' : ''
+  return '<div class="tool-status-item tl-chip"' + title + '>' + icon
+    + '<span class="tool-name">' + escapeHtml(toolLabel(t.name)) + '</span>' + retry + dur + fail + '</div>'
+}
+
+const timelineHtml = m => {
+  const tl = m?.timeline
+  if (!Array.isArray(tl) || !tl.length || !tl.some(s => s && s.kind === 'tool')) {
+    return renderMd(m.content, m.images)
+  }
+  const len = (m.content || '').length
+  let html = '', cursor = 0
+  for (const seg of tl) {
+    if (!seg) continue
+    if (seg.kind === 'text') {
+      const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
+      if (to > from) { html += renderMd(m.content.slice(from, to), m.images); cursor = Math.max(cursor, to) }
+    } else if (seg.tool) {
+      html += toolChipHtml(seg.tool)
+    }
+  }
+  if (cursor < len) html += renderMd(m.content.slice(cursor), m.images) // 兜底：timeline 未覆盖的尾部正文
+  return html
+}
+
+/** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
+const mergeDoneToolCalls = (idx, doneCalls) => {
+  const m = messages.value[idx]
+  if (!Array.isArray(m.toolCalls)) m.toolCalls = []
+  const list = m.toolCalls
+  for (const d of doneCalls) {
+    const live = [...list].reverse().find(x => x.name === d.name && x.status === 'start')
+    if (live) {
+      live.status = d.status || 'done'
+      live.elapsedMs = d.elapsedMs || live.elapsedMs || 0
+      if (d.error) live.error = d.error
+      if (d.attempts != null) live.attempts = d.attempts
+      if (d.result != null) live.result = d.result
+    } else {
+      list.push({ ...d })
+    }
+  }
+}
+// 运行中工具的实时耗时：1s 一跳的 tick 驱动重渲染，让"卡住"变成可见的进行中
+const nowTick = ref(Date.now())
+let tickTimer = null
+const ensureTick = () => {
+  if (tickTimer) return
+  tickTimer = setInterval(() => {
+    nowTick.value = Date.now()
+    if (!loading.value) { clearInterval(tickTimer); tickTimer = null }
+  }, 1000)
+}
+onUnmounted(() => { if (tickTimer) clearInterval(tickTimer) })
+const liveToolDur = startAt => Math.max(0, Math.round((nowTick.value - startAt) / 1000)) + 's'
 // 精确检索工具实际使用的检索词（模型可主动改词做二次检索，与主链路 retrieved 的词不同源）。
 // 从 toolCalls 终态记录的 args 派生：实时路径 start 记录带 args（done 合并后保留），历史恢复是 done 记录带 args，两路都覆盖
 const toolSearchQueries = m => {
@@ -1585,9 +1683,9 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
                       attachments = [], skills = []) => {
   const idx = replaceIdx ?? messages.value.length
   if (replaceIdx == null) {
-    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null })
+    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] })
   } else {
-    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null }
+    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] }
   }
   loading.value = true
   scrollForce()
@@ -1621,7 +1719,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         if (j.thinking) m.thinking = j.thinking
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: t => { gotToken = true; full += t; messages.value[idx].content = full; messages.value[idx].stage = ''; messages.value[idx].thinkLoading = false; scroll() },
+    onToken: t => { gotToken = true; const prevLen = full.length; full += t; messages.value[idx].content = full; extendTimelineText(idx, prevLen, full.length); messages.value[idx].stage = ''; messages.value[idx].thinkLoading = false; scroll() },
     onStage: s => { messages.value[idx].stage = s; scroll() },
     onPlan: p => {
       // 本轮执行计划（后端按配置确定会跑的步骤）：右栏清单逐项点亮的数据源；仅实时，历史轮无此字段
@@ -1667,7 +1765,10 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         if (!t || !t.name) return
         if (!Array.isArray(messages.value[idx].toolCalls)) messages.value[idx].toolCalls = []
         if (t.status === 'start') {
-          messages.value[idx].toolCalls.push({ ...t })
+          const rec = { ...t, startAt: Date.now() }
+          messages.value[idx].toolCalls.push(rec)
+          pushTimelineTool(idx, rec)
+          ensureTick()
         } else {
           const list = messages.value[idx].toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
@@ -1676,7 +1777,9 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
             last.elapsedMs = t.elapsedMs || 0
             if (t.error) last.error = t.error
           } else {
-            list.push({ ...t })
+            const rec = { ...t }
+            list.push(rec)
+            pushTimelineTool(idx, rec)
           }
         }
         scroll()
@@ -1721,10 +1824,16 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         if (p.tokens && typeof p.tokens === 'object') messages.value[idx].tokens = p.tokens
         if (p.thinking) messages.value[idx].thinking = p.thinking
         messages.value[idx].thinkLoading = false
-        if (typeof p.finalContent === 'string' && p.finalContent !== '') messages.value[idx].content = p.finalContent
+        if (typeof p.finalContent === 'string' && p.finalContent !== '') {
+          // 最终正文与流式累积不一致（引用自检重建/related 清理等改写了正文）：文本区间失效 →
+          // 时间线清空回退分组兜底（正文以最终版为准，工具条走底部列表），不显示交错错位的内容
+          if (p.finalContent !== messages.value[idx].content) messages.value[idx].timeline = []
+          messages.value[idx].content = p.finalContent
+        }
         if (Array.isArray(p.finalImages)) messages.value[idx].images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) messages.value[idx].artifacts = p.artifacts
-        if (Array.isArray(p.toolCalls) && p.toolCalls.length) messages.value[idx].toolCalls = p.toolCalls
+        // done 工具终态原地合并（不整组替换）：保住 timeline 引用与实时到达顺序，终态字段覆盖
+        if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(idx, p.toolCalls)
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) messages.value[idx].subagents = p.subagentBranches
         if (p.subagentRoute) messages.value[idx].subagentRoute = p.subagentRoute
@@ -1765,6 +1874,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         }, 2500)
         return
       }
+      // 错误正文整体替换：时间线文本区间失效 → 清空回退分组兜底
+      messages.value[idx].timeline = []
       messages.value[idx].content = '😅 ' + e
       messages.value[idx].loading = false
       messages.value[idx].retrying = false
@@ -2031,6 +2142,13 @@ onMounted(async () => {
 
 .tool-status-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .tool-status-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; width: fit-content; }
+/* 时间线内联工具条（v-html 自绘图标，不能用 antd Vue 组件）：与底部分组列表同风格 */
+.tl-chip { margin: 4px 0; }
+.tl-ic { display: inline-flex; align-items: center; justify-content: center; width: 14px; }
+.tl-spin { width: 12px; height: 12px; border: 2px solid #1677ff; border-top-color: transparent; border-radius: 50%; animation: tl-rotate 0.8s linear infinite; }
+.tl-ok { color: #52c41a; font-size: 12px; }
+.tl-err { color: #ff4d4f; font-size: 12px; }
+@keyframes tl-rotate { to { transform: rotate(360deg); } }
 .tool-ic { font-size: 13px; }
 .tool-ic-run { color: var(--app-accent); }
 .tool-ic-ok { color: var(--app-ok); }

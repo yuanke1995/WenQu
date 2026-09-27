@@ -132,6 +132,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     const decoder = new TextDecoder()
     let buffer = ''
     let ended = false
+    let sawDoneEvent = false
     const end = err => {
       if (ended) return
       ended = true
@@ -141,7 +142,9 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     }
     const read = () => {
       reader.read().then(({ done, value }) => {
-        if (done) { end(); return }
+        // 流关闭但从未收到 done/error 事件：连接被中间层/服务端提前掐断，
+        // 按失败上报（fail-loud），不能假装正常结束把半截回答留在屏上
+        if (done) { end(sawDoneEvent ? undefined : '连接被提前关闭，回答未正常结束，请重试'); return }
         armIdle() // 收到数据（任意字节）即视为存活
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -165,7 +168,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
               else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
               else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
-              else if (d.type === 'done') { end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
+              else if (d.type === 'done') { sawDoneEvent = true; end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
               else if (d.type === 'error') { end(); onError(d.content); return }
             } catch (e) {
               console.warn('[SSE] JSON 解析失败，已忽略该行:', e.message)
@@ -393,6 +396,7 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
     const pump = () => reader.read().then(({ done, value }) => {
       if (done) { clearTimeout(idleTimer); return }
       buf += decoder.decode(value, { stream: true })
+      armIdle() // 收到数据（任意字节，含 :keepalive 注释行）即视为存活——与主链路看门狗同语义，否则整轮心跳对分享链路无效
       let idx
       while ((idx = buf.indexOf('\n\n')) >= 0) {
         handleEvent(buf.slice(0, idx))
