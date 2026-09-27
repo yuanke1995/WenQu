@@ -170,7 +170,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 启动前端后访问 `http://localhost:5800/chat`，未登录自动跳转 `/login`（本地账号按引导创建管理员；接入 OIDC 后可单点登录）。左侧导航由 `/auth/me` 下发的**菜单树**渲染（RBAC：按角色绑定下发，可在「权限管理」页维护）——典型入口：**对话 / 智能体 / 知识库 / 我的产物 / 成员管理 / 权限管理 / 数据看板 / 检索评估 / 系统设置**，下方「最近」列出会话（悬浮显示「导出 Markdown」「删除」），底部显示当前登录用户与自助改密入口。
 
 1. **对话**（`/chat`）：欢迎页有推荐问题标签；输入框支持拖入/粘贴/点击上传图片（最多 5 张）、`@` 引用指定文档（被 @ 文档优先参考）；工具行可切换**智能体**、上传图片、**深度思考**开关，右侧显示本轮生效模型名。提问后：混合检索 + 查询改写 + 知识块关联扩散 → 流式回答，句末 `[N]` 引用角标可点开溯源弹窗（来源全文与图片）、位置级插入文档原图、回答下方**检索状态行**可展开看全部来源；深度思考先出折叠面板流式展示思维链；**智能体/工具调用**（知识库检索、沙盒执行、产物交付、内置工具、MCP、技能）以状态行实时反馈；**长期记忆**（memory.enabled）：问答完成后异步提炼值得长期记住的用户信息并注入后续对话（个人设置可查/改/删，公开分享页不携带）；产物以可下载卡片下发。回答支持复制/有帮助/没帮助/重新生成/检索调试/**加入评测集**（差评回流）/导出 Markdown/删除本轮。
-2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系、设默认；卡片可**公开发布**——生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，停用/撤销随时可控，游客工具收窄为知识检索+内置项；**工具执行确认**——沙盒/MCP 类有副作用工具可设"执行前确认"（人在回路：批准/拒绝/超时按拒绝）或"禁用"）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
+2. **智能体工作台**（`/agents`，管理员）：同页五个 Tab——**模型供应商**（登记各厂商网关，平台级/个人级归属，普通用户只读可用）、**智能体**（主/子智能体：模型、提示词、知识库范围、能力开关、委派关系——附**编排视图**拓扑图展示委派链路/失效引用/孤儿子智能体、设默认；卡片可**公开发布**——生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，停用/撤销随时可控，游客工具收窄为知识检索+内置项；**工具执行确认**——沙盒/MCP 类有副作用工具可设"执行前确认"（人在回路：批准/拒绝/超时按拒绝）或"禁用"）、**技能 Skills**（新建/URL 安装/启停用，个人资产）、**MCP 外部工具**（登记/重连/探测 MCP Server）、**定时任务**（智能体定时执行：cron/间隔调度、执行历史、结果会话）。
 3. **知识库**（`/knowledge`）：多知识库管理——每库可设解析参数与检索参数（**留空跟随全局默认**，保存即固化覆盖）、文档级共享范围；**父子分块**（parse.childEnabled，默认关）：超长块确定性切成小子块向量化做检索索引，命中子块后返回父块完整正文（短文本召回更准、上下文不丢）；**问答对增强**（parse.qaEnabled，默认关）：解析时对每块用对话模型生成 QA 并按问法向量化（命中问法后返回来源块，对标 FastGPT 问答对模式；行落库 `c_ai_knowledge_qa`，重嵌/迁移不重调 LLM）；点入库进入**文档管理**：上传（多选/拖拽/带描述）与**网页 URL 导入**（批量粘贴、正文提取、源文件为 HTML 快照，仅公网 http/https 并逐跳防内网探测）、解析进度（图片逐张进度）、知识块预览（切片列表/结构导图、编辑单个块并重向量化）、版本历史与回滚、启停用/重解析/批量操作、全局知识块搜索。
 4. **我的产物**（`/artifacts`）：问答里智能体交付的文件产物（Markdown/CSV/JSON/HTML 等）汇总，可预览、下载、删除；定时任务产出的结果会话也在此链路。
 5. **数据看板**（`/dashboard`，管理员）：核心指标卡 + 检索质量自动体检 + 热门/无命中问题 TOP10 + 差评回流 + 知识库缺口一键补块。
@@ -191,7 +191,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **语义缓存**（`c_ai_answer_cache`）：相似问题直接复用历史回答（embedding 余弦相似度 ≥ 阈值，默认 0.96）；知识库任何变动**整体失效**；**维度护栏**：缓存向量与当前模型维度不一致一律判不命中——跨模型向量空间不可比
 - **文档解析**：docx（表格→Markdown、结构感知切分）/ xlsx / pdf（扫描件自动 OCR，逐页 200DPI → 本地视觉模型）/ txt/md/csv；大文件流式解析；分块重叠只进向量化文本；解析删除感知（删除立即停止并清理产物）
 - **数据闭环**：问答日志 + 👍👎 反馈 + 看板聚合；**无命中问题 → 一键创建知识块**（自动生成向量）；**差评回流**：看板差评样本 → 一键加入检索评估集
-- **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；每轮问答可指定智能体，未填维度继承全局；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）
+- **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；每轮问答可指定智能体，未填维度继承全局；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）；**按需委派路由**（`agent.autoRoute`）：主模型先从候选中挑出与问题相关的子智能体，路由结果与**挑选理由**随 SSE 下发并随消息持久化；**结果聚合策略可配**（`agent.aggregateMode`）：`concat` 按分支直拼 / `rerank` 命中按重排分降序合并（高分块优先进上下文预算）/ `supervisor` 监督者二次聚合（LLM 去重合并、按价值排序、结论矛盾显式标注「⚠ 冲突」，失败回退直拼）；要点段字符预算（`agent.digestMaxChars`）防多分支要点挤占上下文；失败分支显式占位（`agent.aggregateMarkFailed`）让模型可声明"该方面资料不足"；智能体页提供**委派编排视图**（主→子 SVG 拓扑图：悬停高亮委派链路、悬空引用与孤儿子智能体警示、点击节点进配置）；对话编排卡片实时展示各分支状态、任务描述、要点、耗时占比条与路由理由
 - **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 6 个工具——`execute`（shell 命令）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls` / `deliver_artifact`（沙盒文件交付为「我的产物」，扩展名白名单放宽到 py/png/xlsx/zip 等，单个 ≤1MB，路径限定用户数据根）；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）；**右栏「沙盒」卡**可浏览/下载会话沙盒工作区文件（`/sandbox/state|tree|download` 只读端点，只 discover 不创建容器）；**工具瞬时故障自动重试**（失败 500ms 重试一次，`tool_status.attempts` 透出尝试次数）
 - **定时执行智能体**（`/agents` → 定时任务 Tab）：智能体按 cron（6 段）或固定间隔自动执行，执行历史与结果会话留痕；调度中心先推进 `next_run_at` 再执行（单实例防重复）、同任务串行（未完成记 `skipped`）
 - **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（命中块注册进引用流）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（渐进披露读 `SKILL.md`）；开关集中在 `tool.*`，**总开关与子开关默认均为 false**
@@ -212,7 +212,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/ai/chat` | SSE 流式问答（`token`/`image`/`retrieved`/`thinking`/`tool_status`/`subagent`/`artifact`/`stage`/`plan`/`warn`/`done`/`error` 事件，见下方 SSE 事件表） |
+| `POST /api/ai/chat` | SSE 流式问答（`token`/`stage`/`plan`/`image`/`retrieved`/`thinking`/`thinking_done`/`tool_status`/`subagent`/`subagent_route`/`agent_dispatched`/`approval_required`/`artifact`/`warn`/`done`/`error` 事件，见下方 SSE 事件表） |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树（前端据此渲染侧边栏与管理入口） |
 | `POST /api/ai/auth/login`、`/api/ai/auth/oidc/{config,login-url,callback,exchange-code}` | 本地登录 / OIDC 单点登录四端点 |
 | `GET /api/ai/sessions?keyword=`、`POST /api/ai/session/new`、`GET /api/ai/session/{id}`、`PUT /api/ai/session/{id}/rename` | 会话列表（搜索）/ 新建 / 历史恢复 / 重命名 |
@@ -258,11 +258,15 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `image` | 生成之前 | 命中图片 URL 列表（按编号顺序，生产为 HMAC 签名 URL） |
 | `retrieved` | 检索 + 重排 + 上下文填充完成 | 检索概览 `{keywords, refs, terms}`（随消息持久化） |
 | `thinking` | 深度思考开启时 | 思考链增量 |
+| `thinking_done` | 深度思考结束（正常完成或截断降级） | `{status: ok\|degraded, thinking: 完整思考链}` |
 | `tool_status` | Agent 调用工具 | 工具名 / 状态（done\|error）/ 结果或错误 |
-| `subagent` | 子智能体并行执行推进 | 子智能体名 / 状态 / 摘要 |
+| `subagent` | 子智能体并行执行推进 | 分支状态 `{id,name,status,hits,elapsedMs,delegated,description,digest}` |
+| `subagent_route` | 按需委派路由判定完成 | `{candidates,picked,names,reasons}`——reasons 为各被选助手的「挑选理由」（可解释性；随消息持久化，历史回显） |
+| `agent_dispatched` | 对话页「自动派遣」选定主智能体 | `{name,description,fallback}`（fallback=true 表示路由失败回落默认智能体） |
+| `approval_required` | 有副作用工具（沙盒/MCP）执行前等待确认 | `{approvalId,tool,args,timeoutMs}`（批准/拒绝经 `POST /api/ai/tool-approval/{id}`） |
 | `artifact` | 产物交付工具落盘 | 产物卡片字段 `{id,url,filename,ext,size,description}` |
 | `warn` | 非致命降级/告警 | 提示文案 |
-| `done` | 回答完成 | `sources`、`related`、`messageId`、`thinking`；缓存命中另带 `finalContent`/`finalImages`/`degradations` |
+| `done` | 回答完成 | `sources`、`related`、`messageId`、`thinking`、`finalContent`/`finalImages`（校验修正后全文/图片）、`degradations`、`artifacts`、`toolCalls`、`tokens`（用量）、`subagentBranches`/`subagentRoute`（编排终态收敛）；缓存命中仅 `finalContent`/`finalImages` |
 | `error` | 处理或下发异常 | 错误文案 |
 
 > **思考结束没有独立事件**：完整思考链在 `done.thinking` 一次性给出。
@@ -427,7 +431,7 @@ spring:
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
 | `tool.*` | `enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`** | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`、`dir`(./data/skills)、`injectEnabled`(true)、`remoteAllowedHosts`(精确 host 白名单) | 保存即生效 |
-| `agent.*` / `mcp.*` | 编排开关与子智能体数、MCP servers(JSON) | 保存即生效（MCP 需 reload 重连） |
+| `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`、`autoDispatch`、`routeTimeoutMs`(8000)、`maxToolSteps`(15) | 保存即生效；MCP Server 为每人自己的 `c_ai_user_mcp`（无全局 mcp.* 配置） |
 | `sandbox.*` | `provisionerUrl`(127.0.0.1:8002)、`token`(敏感，RSA 入库)、`virtualPathPrefix`(/home/gem/user-data)、`commandTimeoutSeconds`(180)、`maxOutputBytes`(262144)、`keepaliveIntervalSeconds`(30)、`idleReleaseMinutes`(60)、`cleanupIntervalMs`(600000) | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
 | 用户/角色 | `default_model`/`default_vision_model`（个人默认模型）、角色-菜单/角色-API 绑定 | 即时生效 |
@@ -436,7 +440,7 @@ spring:
 
 ## 已知注意事项
 
-- **智能体 / 工具 / 技能 / MCP / 沙盒默认全关**：`agent.enabled`、`tool.*`（含沙盒）、`skill.enabled`、`mcp.enabled` 默认均为 false，需在设置页显式开启
+- **智能体 / 工具 / 技能 / 沙盒默认全关**：`agent.enabled`、`tool.*`（含沙盒）、`skill.enabled` 默认均为 false，需在设置页显式开启；MCP 无全局开关（每个用户在「MCP 外部工具」登记自己的 Server）
 - **需重解析才生效的配置**：`chunk.maxSize` / `headingDepth` / `structural`、`retrieval.refDetectEnabled` 等；`refExpand*` 扩散类参数保存即生效
 - **`vision.timeoutMillis` 需重启**（视觉客户端启动时构建，其余 `vision.*` 保存即生效）
 - **`.nvmrc` 固定 Node 18.19.0**（Node ≥18 均可构建）

@@ -130,6 +130,8 @@
                       <span v-if="b.status === 'done'" class="subagent-hits">{{ b.hits }} 块 · {{ fmtDuration(b.elapsedMs) }}</span>
                     </div>
                     <div v-if="b.description" class="sa-desc">{{ b.description }}</div>
+                    <div v-if="subagentCard(m).reasons[b.name]" class="sa-reason">派它：{{ subagentCard(m).reasons[b.name] }}</div>
+                    <div class="sa-bar"><div class="sa-bar-fill" :class="'st-' + (b.status || 'running')" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
                     <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
                   </div>
                 </div>
@@ -762,10 +764,19 @@ function subagentCard (m) {
   const routeNote = (rt && rt.candidates > rt.picked)
     ? `从 ${rt.candidates} 个候选中挑选 ${rt.picked} 个相关的`
     : ''
+  // 路由「挑选理由」（名称 → 理由；subagent_route 事件与 done payload 下发，旧消息无此字段不展示）
+  const reasons = (rt && rt.reasons && typeof rt.reasons === 'object' && !Array.isArray(rt.reasons)) ? rt.reasons : {}
+  // 耗时占比条基准：最慢分支（相对值，让"谁拖了后腿"一眼可见；运行中分支随进度增长）
+  const maxElapsed = Math.max(1, ...branches.map(b => b.elapsedMs || 0))
   // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）；
   // 用户手动点过则尊重其选择（saTouched），不再自动改变
   if (m.saOpen === undefined) m.saOpen = running
-  return { branches, done, total, running, title, routeNote }
+  return { branches, done, total, running, title, routeNote, reasons, maxElapsed }
+}
+
+/** 分支耗时占比条宽度：相对最慢分支的百分比（下限 2% 保证可见） */
+function barWidth (card, b) {
+  return Math.max(2, Math.round((b.elapsedMs || 0) / card.maxElapsed * 100)) + '%'
 }
 
 /** 手动展开/收起编排卡片（标记 saTouched，避免生成完成后被自动收起打断阅读） */
@@ -1671,7 +1682,7 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r) return
-        messages.value[idx].subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [] }
+        messages.value[idx].subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
       } catch (e) { /* 忽略 */ }
     },
     onAgentDispatched: payload => {
@@ -2084,6 +2095,13 @@ onMounted(async () => {
 .sa-status-tag.st-done { background: #eaf5ec; color: var(--app-ok); }
 .sa-status-tag.st-failed { background: #fdeceb; color: var(--app-danger); }
 .subagent-hits { margin-left: auto; font-size: 11px; color: var(--app-text3); }
+/* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
+.sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
+.sa-bar { margin-top: 5px; height: 3px; border-radius: 2px; background: var(--app-border); overflow: hidden; }
+.sa-bar-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
+.sa-bar-fill.st-done { background: var(--app-ok); }
+.sa-bar-fill.st-running { background: var(--app-accent); }
+.sa-bar-fill.st-failed { background: var(--app-danger); }
 .sa-desc { margin-top: 4px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
 .sa-digest {
   margin-top: 5px; font-size: 11.5px; color: var(--app-text2); line-height: 1.6;

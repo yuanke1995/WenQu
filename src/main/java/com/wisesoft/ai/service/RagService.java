@@ -666,16 +666,19 @@ public class RagService {
                     // 挂了子智能体 → 先由主模型按需挑选：只咨询与问题相关的角色，
                     // 避免"全派"导致无关角色白跑（0 命中噪音 + 多余的检索与提炼开销）
                     sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
-                    List<Agent> delegated = subAgentOrchestrator.route(question, candidates, resolvedModel);
+                    SubAgentOrchestrator.RouteResult routeRes = subAgentOrchestrator.route(question, candidates, resolvedModel);
+                    List<Agent> delegated = routeRes.picked();
                     if (delegated.size() != candidates.size()) {
                         log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", candidates.size(), delegated.size(),
                                 delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
                     }
-                    // 路由结果下发：让"挑选过程"可见（前端展示"从 N 个候选中挑选 M 个"）
+                    // 路由结果下发：让"挑选过程"可见（前端展示"从 N 个候选中挑选 M 个"）；
+                    // reasons 为各被选助手的「挑选理由」（路由可解释性，模型没给理由时缺省）
                     Map<String, Object> routeInfo = new LinkedHashMap<>();
                     routeInfo.put("candidates", candidates.size());
                     routeInfo.put("picked", delegated.size());
                     routeInfo.put("names", delegated.stream().map(Agent::getName).toList());
+                    if (!routeRes.reasons().isEmpty()) routeInfo.put("reasons", routeRes.reasons());
                     subagentRouteInfo = routeInfo;
                     sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
                     if (delegated.isEmpty()) {
@@ -1667,9 +1670,10 @@ public class RagService {
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
-                    // 记忆提取：问答完整落定后异步提炼长期记忆（服务内自判开关/游客/匿名，best-effort）
+                    // 记忆提取：问答完整落定后异步提炼长期记忆（服务内自判开关/游客/匿名，best-effort）；
+                    // 提取调用跟随本轮生效模型（st.model，done 时 fail-loud 保证非空）
                     userMemoryService.maybeExtract(st.userId, st.sessionId, st.question,
-                            st.fullResponse.toString(), st.guestMode);
+                            st.fullResponse.toString(), st.guestMode, st.model);
                 })
                 .subscribe();
     }

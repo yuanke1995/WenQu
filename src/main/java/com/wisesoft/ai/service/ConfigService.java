@@ -405,6 +405,9 @@ public class ConfigService {
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
+        d.put("agent.aggregateMode", "concat");            // 结果聚合模式：concat=按分支顺序直拼 / rerank=按重排分排序 / supervisor=LLM 二次聚合
+        d.put("agent.digestMaxChars", "1500");             // 要点段总字符预算（超限截断；supervisor 模式作为压缩目标）
+        d.put("agent.aggregateMarkFailed", "true");        // 失败分支在要点段显式占位（让主模型知道该视角无资料）
         d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：问答后自动提取 + 注入本人后续问答

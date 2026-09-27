@@ -69,12 +69,19 @@ public class SubAgentOrchestrator {
      * 按需委派路由：让主模型先从候选子智能体里挑出与问题相关的，只跑选中的。
      * <p>背景：主智能体挂了 N 个子智能体时，若每轮全部并行，会出现"派了完全无关的角色"
      * （如问表单操作却去查《刑法》），既浪费检索与提炼开销，也让编排卡片充满 0 命中的噪音。
-     * <p>降级：候选 ≤1 或未开启 agent.autoRoute → 原样返回；路由调用失败/超时/解析失败
-     * → 回退全部候选（编排是增强项，宁可多跑也不能缺失）。判定"都不需要"时返回空列表。
+     * <p>返回 {@link RouteResult}：选中名单 + 各自的「挑选理由」——理由随 subagent_route 事件
+     * 下发前端，让"为什么派它"可见（编排可解释性）。路由失败/超时/解析失败
+     * → 回退全部候选（编排是增强项，宁可多跑也不能缺失）。判定"都不需要"时 picked 为空。
      */
-    public List<Agent> route(String question, List<Agent> candidates, String resolvedModel) {
-        if (candidates == null || candidates.isEmpty()) return List.of();
-        if (candidates.size() == 1 || !configService.getBoolean("agent.autoRoute")) return candidates;
+    public record RouteResult(List<Agent> picked, Map<String, String> reasons) {
+        public RouteResult(List<Agent> picked) {
+            this(picked, Map.of());
+        }
+    }
+
+    public RouteResult route(String question, List<Agent> candidates, String resolvedModel) {
+        if (candidates == null || candidates.isEmpty()) return new RouteResult(List.of());
+        if (candidates.size() == 1 || !configService.getBoolean("agent.autoRoute")) return new RouteResult(candidates);
         try {
             StringBuilder sb = new StringBuilder();
             for (Agent a : candidates) {
@@ -84,7 +91,8 @@ public class SubAgentOrchestrator {
             String prompt = "你是任务分派员。可咨询的助手清单如下（每行：id | 名称：职责）：\n" + sb
                     + "\n用户问题：" + question
                     + "\n\n请判断回答该问题需要咨询上述哪些助手，只选职责确实相关的（宁缺毋滥）。"
-                    + "\n只输出一个 JSON 数组，元素为助手的 id 字符串；若都不相关则输出 []。不要输出任何解释文字。";
+                    + "\n只输出一个 JSON 数组，元素为对象 {\"id\":\"助手id\",\"reason\":\"挑选理由（15字内，说明它职责与问题的关联）\"}；"
+                    + "若都不相关则输出 []。不要输出任何解释文字。";
             int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
             String out = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> chatClient.prompt()
@@ -100,42 +108,56 @@ public class SubAgentOrchestrator {
             return parseRouteResult(out, candidates);
         } catch (Exception e) {
             log.warn("[SUBAGENT] 委派路由失败，回退为全部候选（{} 个）: {}", candidates.size(), e.getMessage());
-            return candidates;
+            return new RouteResult(candidates);
         }
     }
 
     /**
-     * 解析路由结果（模型输出的 JSON 数组）：按 id 匹配，兼容模型返回名称的情况。
+     * 解析路由结果：新格式为 JSON 数组 [{id, reason}]（带挑选理由），
+     * 兼容旧格式（纯 id/名称字符串数组）——reason 缺省为空，前端不展示理由行。
      * 解析不出任何有效项时回退全部候选（宁可多跑不可漏）。
      */
-    List<Agent> parseRouteResult(String out, List<Agent> candidates) {
-        if (out == null || out.isBlank()) return candidates;
+    RouteResult parseRouteResult(String out, List<Agent> candidates) {
+        if (out == null || out.isBlank()) return new RouteResult(candidates);
         try {
             // 容忍 markdown 代码块包裹与前后缀文本：取第一个 [ 到最后一个 ]
             String s = out.trim();
             int lb = s.indexOf('[');
             int rb = s.lastIndexOf(']');
-            if (lb < 0 || rb <= lb) return candidates;
+            if (lb < 0 || rb <= lb) return new RouteResult(candidates);
             String arr = s.substring(lb, rb + 1);
-            List<String> tokens = com.alibaba.fastjson2.JSON.parseArray(arr, String.class);
-            if (tokens == null) return candidates;
-            if (tokens.isEmpty()) return List.of();   // 模型明确判定"都不需要"
-            List<Agent> picked = new ArrayList<>();
+            List<Object> items = com.alibaba.fastjson2.JSON.parseArray(arr, Object.class);
+            if (items == null) return new RouteResult(candidates);
+            if (items.isEmpty()) return new RouteResult(List.of());   // 模型明确判定"都不需要"
+            Map<String, Agent> byKey = new LinkedHashMap<>();
             for (Agent a : candidates) {
-                for (String t : tokens) {
-                    if (t == null || t.isBlank()) continue;
-                    String v = t.trim();
-                    if (v.equals(a.getId()) || v.equals(a.getName())) {
-                        picked.add(a);
-                        break;
-                    }
+                if (a.getId() != null) byKey.putIfAbsent(a.getId(), a);
+                if (a.getName() != null) byKey.putIfAbsent(a.getName(), a);
+            }
+            List<Agent> picked = new ArrayList<>();
+            Map<String, String> reasons = new LinkedHashMap<>();
+            for (Object o : items) {
+                String id = null;
+                String reason = null;
+                if (o instanceof com.alibaba.fastjson2.JSONObject obj) {
+                    id = obj.getString("id");
+                    reason = obj.getString("reason");
+                } else if (o != null) {
+                    id = String.valueOf(o);   // 旧格式：纯字符串（id 或名称）
+                }
+                if (id == null || id.isBlank()) continue;
+                Agent a = byKey.get(id.trim());
+                if (a != null && !picked.contains(a)) {
+                    picked.add(a);
+                    if (reason != null && !reason.isBlank()) reasons.put(a.getName(), reason.strip());
                 }
             }
             // 模型返回了非空数组但一个都对不上（可能编了名字）→ 回退全部，避免"以为派了实际没派"
-            return picked.isEmpty() ? candidates : picked;
+            if (!picked.isEmpty()) return new RouteResult(picked, reasons);
+            return new RouteResult(candidates);
         } catch (Exception e) {
             log.warn("[SUBAGENT] 路由结果解析失败，回退为全部候选: {}", e.getMessage());
-            return candidates;
+            return new RouteResult(candidates);
         }
     }
 
@@ -300,15 +322,110 @@ public class SubAgentOrchestrator {
                 if (ctx.digests.isEmpty() && text != null && !text.isBlank()) ctx.digests.add(text);
             }));
             long ms = System.currentTimeMillis() - t0;
+            // rerank 聚合：各分支命中合并后按重排分（无重排分回退相关分）降序——
+            // 主链路按顺序做价值驱动填充，排序后高分块优先占用上下文预算，低分块不再挤占。
+            // 此时全部分支已汇合（fan-in 完成），collected 无并发写入，可安全原位排序
+            if ("rerank".equals(configService.get("agent.aggregateMode")) && ctx.collected.size() > 1) {
+                ctx.collected.sort(java.util.Comparator.comparingDouble(
+                        (HybridRetrievalService.Hit h) -> h.rerankScore() != null ? h.rerankScore() : h.score())
+                        .reversed());
+                log.info("[SUBAGENT] rerank 聚合：{} 块按重排分降序合并", ctx.collected.size());
+            }
+            String digestText = aggregate(ctx, resolvedModel);
             log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
                     delegated ? "子智能体委派" : "多视角", agents, ctx.collected.size(), ctx.digests.size(), ms);
-            return new Outcome(List.copyOf(ctx.collected), String.join("\n", ctx.digests), agents, ms,
+            return new Outcome(List.copyOf(ctx.collected), digestText, agents, ms,
                     List.copyOf(ctx.branches));
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
             return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0, List.copyOf(ctx.branches));
         } finally {
             CTX_REGISTRY.remove(ctxId);
+        }
+    }
+
+    /**
+     * 结果聚合（可配置策略）：把各分支产物合并成进主链路的要点段。
+     *
+     * <p>输入：各分支要点（ctx.digests，完成序）+ 失败分支（ctx.branches 里 status=failed）。
+     * <ul>
+     *   <li><b>失败占位</b>（agent.aggregateMarkFailed，默认开）：失败分支在要点段显式标注
+     *       「未返回结果」，让主模型知道该视角无资料、可在回答里声明"该方面资料不足"，
+     *       而不是静默跳过让主模型误以为资料齐全；</li>
+     *   <li><b>supervisor 二次聚合</b>（agent.aggregateMode）：全部要点产出后由模型再聚合一轮——
+     *       去重合并、按对回答的价值排序、结论矛盾显式标注冲突点、压缩进要点预算。
+     *       放在图外而不是 merge 节点里做：图按分支数缓存（graphCache），聚合进图就得连缓存键
+     *       一起改，而图外调用语义完全等价；失败回退 concat（聚合是增强项，不影响问答）；</li>
+     *   <li><b>预算</b>（agent.digestMaxChars）：concat/rerank 模式下要点段超限截断
+     *       （fail-loud：截断必留 warn，防止"要点被悄悄砍半"无人知晓）。</li>
+     * </ul>
+     */
+    private String aggregate(RunCtx ctx, String resolvedModel) {
+        List<String> parts = new ArrayList<>(ctx.digests);
+        if (configService.getBoolean("agent.aggregateMarkFailed")) {
+            for (Map<String, Object> b : ctx.branches) {
+                if ("failed".equals(b.get("status"))) {
+                    parts.add("· 【" + b.get("name") + "】未返回结果（该视角执行失败，无资料）");
+                }
+            }
+        }
+        if (parts.isEmpty()) return "";
+        String joined = String.join("\n", parts);
+        int budget = Math.max(200, configService.getInt("agent.digestMaxChars", 1500));
+        if ("supervisor".equals(configService.get("agent.aggregateMode"))
+                && (parts.size() > 1 || joined.length() > budget)) {
+            String sup = superviseAggregate(joined, ctx.question, resolvedModel, budget);
+            if (sup != null) return sup;
+            // superviseAggregate 内部已留 warn；此处回退 concat，继续走预算截断
+        }
+        if (joined.length() > budget) {
+            log.warn("[SUBAGENT] 要点段超预算：{} 字 > 预算 {} 字，已截断（可调 agent.digestMaxChars 或改用 supervisor 模式）",
+                    joined.length(), budget);
+            joined = joined.substring(0, budget);
+        }
+        return joined;
+    }
+
+    /**
+     * supervisor 二次聚合：把各分支要点合并为一份清单（去重、排序、标注冲突、压缩进预算）。
+     * 失败返回 null（调用方回退 concat 直拼，不影响问答主链路）。
+     */
+    private String superviseAggregate(String joined, String question, String resolvedModel, int budget) {
+        try {
+            String prompt = "你是检索监督者（supervisor），负责汇总多个并行检索视角的要点。用户问题：" + question
+                    + "\n\n各视角要点（【】内为来源角色/视角）：\n" + joined
+                    + "\n\n请聚合为一份最终要点清单：\n"
+                    + "1. 合并重复内容，删掉与问题无关的空话；\n"
+                    + "2. 按对回答该问题的价值从高到低排序，价值很低的可舍弃；\n"
+                    + "3. 不同视角的结论相互矛盾时，单独标注一行「⚠ 冲突：矛盾点说明」；\n"
+                    + "4. 保留要点的【来源】前缀，让回答能区分视角；\n"
+                    + "5. 全文控制在 " + budget + " 字以内。\n"
+                    + "只输出要点清单本身，不要任何解释。";
+            // 与 digest() 同一约束：chatClient 挂了 ToolCall Advisor，必须显式设 options 并关工具执行
+            String out = chatClient.prompt()
+                    .user(prompt)
+                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                            .model(resolvedModel)
+                            .temperature(configService.getDouble("chat.temperature"))
+                            .internalToolExecutionEnabled(false)
+                            .build())
+                    .call()
+                    .content();
+            if (out == null || out.isBlank()) {
+                log.warn("[SUBAGENT] supervisor 聚合返回空（回退直拼）");
+                return null;
+            }
+            String text = out.strip();
+            if (text.length() > budget) {
+                log.warn("[SUBAGENT] supervisor 聚合结果 {} 字超预算 {} 字，已截断", text.length(), budget);
+                text = text.substring(0, budget);
+            }
+            log.info("[SUBAGENT] supervisor 聚合：{} 字 → {} 字", joined.length(), text.length());
+            return text;
+        } catch (Exception e) {
+            // fail-loud：聚合失败回退直拼必须留 warn 线索（静默会表现为"要点变回直拼"无人知晓）
+            log.warn("[SUBAGENT] supervisor 二次聚合失败，回退直拼: {}", e.getMessage());
+            return null;
         }
     }
 

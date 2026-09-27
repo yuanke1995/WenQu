@@ -12,6 +12,9 @@
           <a-tooltip title="刷新">
             <button class="app-icon-btn" :disabled="loading" aria-label="刷新列表" @click="reload"><reload-outlined /></button>
           </a-tooltip>
+          <a-tooltip title="委派编排视图：主智能体 → 子智能体的委派关系图">
+            <button class="app-icon-btn" :disabled="loading || !agents.length" aria-label="委派编排视图" @click="topoOpen = true"><apartment-outlined /></button>
+          </a-tooltip>
           <button class="app-btn small" @click="openCreate">新建智能体</button>
         </div>
       </div>
@@ -297,6 +300,54 @@
         </template>
       </div>
     </a-modal>
+
+    <!-- 委派编排视图：主智能体 → 子智能体委派关系拓扑（数据全部来自已加载列表，纯前端渲染） -->
+    <a-modal v-model:open="topoOpen" title="委派编排视图" :width="900" :footer="null" class="ap-topo-modal">
+      <div class="ap-topo-legend">
+        <span class="ap-lg"><span class="ap-lg-dot main" />主智能体</span>
+        <span class="ap-lg"><span class="ap-lg-dot sub" />子智能体</span>
+        <span class="ap-lg"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" class="ap-edge miss" /></svg>失效引用（子智能体已删除）</span>
+        <span class="ap-lg">悬停高亮委派链路 · 点击节点直接进配置</span>
+      </div>
+      <div v-if="topoData.warnings.length" class="ap-topo-warns">
+        <div v-for="(w, wi) in topoData.warnings" :key="wi" class="ap-topo-warn">{{ w }}</div>
+      </div>
+      <div v-if="!topoData.subs.length && !topoData.edges.length" class="ap-topo-empty">
+        还没有委派关系：先新建一个「用途 = 子智能体」的智能体，再到主智能体配置的「子智能体委派」里勾选它。
+      </div>
+      <div v-else class="ap-topo-scroll">
+        <svg :viewBox="`0 0 ${TOPO_W} ${topoData.H}`" :width="TOPO_W" :height="topoData.H" class="ap-topo-svg">
+          <!-- 委派边（失效引用：红色虚线 + 右列占位符） -->
+          <path v-for="e in topoData.edges" :key="'e' + e.from.id + (e.to ? e.to.id : 'x' + e.toId)"
+                :d="edgePath(e)" class="ap-edge" :class="[edgeCls(e), { miss: e.missing }]" />
+          <g v-for="e in topoData.edges.filter(x => x.missing)" :key="'x' + e.from.id + e.toId">
+            <rect :x="SUB_X" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 - 13" width="26" height="26" rx="6" class="ap-phantom" />
+            <text :x="SUB_X + 13" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 + 5" class="ap-phantom-t">!</text>
+          </g>
+          <!-- 主智能体列 -->
+          <g v-for="a in topoData.mains" :key="'m' + a.id" class="ap-node" :class="nodeCls('m' + a.id)"
+             @mouseenter="topoHover = 'm' + a.id" @mouseleave="topoHover = ''" @click="openEdit(a); topoOpen = false">
+            <rect :x="MAIN_X" :y="topoData.mainPos[String(a.id)]" :width="TOPO.nodeW" :height="TOPO.rowH" rx="8" class="ap-nrect main" />
+            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, MAIN_NAME) }}</text>
+            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 40" class="ap-ndesc">{{ trunc(a.description || '未填写描述', MAIN_LINE) }}</text>
+            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 56" class="ap-nmeta">
+              {{ subCountOf(a) ? `委派 ${subCountOf(a)} 个子智能体` : '未委派子智能体' }}
+            </text>
+          </g>
+          <!-- 子智能体列（无人委派 = 灰虚线框） -->
+          <g v-for="a in topoData.subs" :key="'s' + a.id" class="ap-node" :class="nodeCls('s' + a.id)"
+             @mouseenter="topoHover = 's' + a.id" @mouseleave="topoHover = ''" @click="openEdit(a); topoOpen = false">
+            <rect :x="SUB_X" :y="topoData.subPos[String(a.id)]" :width="TOPO.subW" :height="TOPO.rowH" rx="8"
+                  class="ap-nrect sub" :class="{ orphan: !topoData.parents[String(a.id)].length }" />
+            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, SUB_NAME) }}</text>
+            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 40" class="ap-ndesc">{{ trunc(a.description || '未填写描述', SUB_LINE) }}</text>
+            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 56" class="ap-nmeta">
+              {{ topoData.parents[String(a.id)].length ? `被 ${topoData.parents[String(a.id)].length} 个主智能体委派` : '暂无人委派' }}
+            </text>
+          </g>
+        </svg>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -478,6 +529,99 @@ const scopeText = a => {
   if (!n) return '全部知识库'
   return n === 1 ? '限 1 个知识库' : `限 ${n} 个知识库`
 }
+
+// ==================== 委派编排视图（拓扑：主智能体 → 子智能体委派关系，纯前端渲染） ====================
+const topoOpen = ref(false)
+const topoHover = ref('')   // 悬停的节点 key（'m'+id / 's'+id，用于高亮相关委派链路）
+const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 80, subW: 248 }
+const TOPO_W = TOPO.pad + TOPO.nodeW + TOPO.gapG + TOPO.subW + TOPO.pad
+const MAIN_X = TOPO.pad
+const SUB_X = TOPO.pad + TOPO.nodeW + TOPO.gapG
+
+const topoData = computed(() => {
+  const mains = agents.value.filter(a => !isSub(a))
+  const subs = agents.value.filter(isSub)
+  const subById = new Map(subs.map(a => [String(a.id), a]))
+  const edges = []
+  const warnings = []
+  for (const m of mains) {
+    for (const sid of splitList(m.subAgentIds)) {
+      const sub = subById.get(String(sid))
+      if (sub) edges.push({ from: m, to: sub, missing: false })
+      else {
+        // fail-loud：悬空引用直接在图上标红并给出文字警示（静默画不出来会让人误以为配置生效了）
+        edges.push({ from: m, to: null, toId: String(sid), missing: true })
+        warnings.push(`「${m.name}」引用的子智能体 (#${sid}) 不存在或已删除——该委派不会生效`)
+      }
+    }
+  }
+  // 反向关系：每个子智能体被哪些主智能体委派（孤儿检测）
+  const parents = {}
+  for (const s of subs) parents[String(s.id)] = []
+  for (const e of edges) if (!e.missing) parents[String(e.to.id)].push(e.from)
+  const orphanCount = subs.filter(s => !parents[String(s.id)].length).length
+  if (orphanCount) warnings.push(`${orphanCount} 个子智能体还没被任何主智能体委派（图中灰虚线框）`)
+  // 两列布局，各自按行数垂直居中
+  const colH = n => Math.max(n, 0) * (TOPO.rowH + TOPO.rowGap) - TOPO.rowGap
+  const rows = Math.max(mains.length, subs.length, 1)
+  const H = colH(rows) + TOPO.pad * 2
+  const yOf = (i, count) => Math.round(TOPO.pad + (H - TOPO.pad * 2 - colH(count)) / 2) + i * (TOPO.rowH + TOPO.rowGap)
+  const mainPos = {}
+  const subPos = {}
+  mains.forEach((a, i) => { mainPos[String(a.id)] = yOf(i, mains.length) })
+  subs.forEach((a, i) => { subPos[String(a.id)] = yOf(i, subs.length) })
+  return { mains, subs, edges, warnings, H, mainPos, subPos, parents }
+})
+
+/**
+ * 按显示宽度截断：全角 = 1 字宽、半角 ≈ 0.55。
+ * 纯字数截断不可靠——中文按字号折算一行只装得下十几字，超宽文本会溢出节点矩形、
+ * 被 SVG 视口右缘裁掉（首版"显示不全"的根因）。maxFull = 该行可容纳的全角字数。
+ */
+const trunc = (s, maxFull) => {
+  const t = String(s == null ? '' : s)
+  let w = 0
+  for (let i = 0; i < t.length; i++) {
+    w += t.charCodeAt(i) > 255 ? 1 : 0.55
+    if (w > maxFull) return t.slice(0, i) + '…'
+  }
+  return t
+}
+// 每行可容纳的全角字数（节点宽 - 左右内边距 12×2，按字号折算：名称 13px / 描述与元信息 11px）
+const MAIN_NAME = Math.floor((TOPO.nodeW - 24) / 13)
+const MAIN_LINE = Math.floor((TOPO.nodeW - 24) / 11)
+const SUB_NAME = Math.floor((TOPO.subW - 24) / 13)
+const SUB_LINE = Math.floor((TOPO.subW - 24) / 11)
+const subCountOf = a => splitList(a.subAgentIds).length
+
+/** 边路径：主节点右缘中点 → 子节点左缘中点（贝塞尔）；失效引用画到右列同高的占位符 */
+function edgePath (e) {
+  const y1 = topoData.value.mainPos[String(e.from.id)] + TOPO.rowH / 2
+  const x1 = MAIN_X + TOPO.nodeW
+  const y2 = e.missing ? y1 : topoData.value.subPos[String(e.to.id)] + TOPO.rowH / 2
+  const x2 = e.missing ? SUB_X + 13 : SUB_X
+  const mx = (x1 + x2) / 2
+  return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
+}
+
+/** 悬停高亮：与悬停节点相连的边/节点保持醒目，其余淡化（一眼看清单条委派链路） */
+const hoverRelated = computed(() => {
+  if (!topoHover.value) return null
+  const set = new Set([topoHover.value])
+  for (const e of topoData.value.edges) {
+    if ('m' + e.from.id === topoHover.value || (e.to && 's' + e.to.id === topoHover.value)) {
+      set.add('m' + e.from.id)
+      if (e.to) set.add('s' + e.to.id)
+    }
+  }
+  return set
+})
+const edgeCls = e => {
+  if (!hoverRelated.value) return ''
+  const rel = hoverRelated.value.has('m' + e.from.id) && (!e.to || hoverRelated.value.has('s' + e.to.id))
+  return rel ? 'on' : 'dim'
+}
+const nodeCls = key => (hoverRelated.value && !hoverRelated.value.has(key) ? 'dim' : '')
 
 // ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
 const shareVisible = ref(false)
@@ -925,4 +1069,30 @@ onMounted(async () => { })
 .pub-copy-row { display: flex; gap: 8px; align-items: center; }
 .pub-iframe { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
 .pub-hint { font-size: 12px; color: var(--app-text3, #8f959e); }
+
+/* ==================== 委派编排视图（拓扑） ==================== */
+.ap-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
+.ap-lg { display: inline-flex; align-items: center; gap: 6px; }
+.ap-lg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+.ap-lg-dot.main { background: #fff; border: 1.5px solid var(--app-accent, #4a7dff); }
+.ap-lg-dot.sub { background: #eef3ff; border: 1.5px solid var(--app-accent, #4a7dff); }
+.ap-topo-warns { margin-bottom: 10px; }
+.ap-topo-warn { font-size: 12px; color: var(--app-danger); padding: 2px 0; }
+.ap-topo-empty { padding: 28px 0; text-align: center; font-size: 13px; color: var(--app-text3); }
+.ap-topo-scroll { display: flex; justify-content: center; overflow: auto; }
+.ap-topo-svg { flex: none; }
+.ap-edge { fill: none; stroke: #b9bfcc; stroke-width: 1.5; opacity: .8; transition: opacity .2s, stroke-width .2s; }
+.ap-edge.on { stroke: var(--app-accent, #4a7dff); stroke-width: 2; opacity: 1; }
+.ap-edge.dim { opacity: .1; }
+.ap-edge.miss { stroke: var(--app-danger, #e5484d); stroke-dasharray: 5 4; }
+.ap-node { cursor: pointer; }
+.ap-node.dim { opacity: .18; }
+.ap-nrect { fill: #fff; stroke: var(--app-border, #e3e6ec); stroke-width: 1.2; }
+.ap-nrect.sub { fill: #f4f7ff; }
+.ap-nrect.orphan { stroke-dasharray: 5 4; stroke: #c2c7d1; }
+.ap-phantom { fill: #fff; stroke: var(--app-danger, #e5484d); stroke-dasharray: 4 3; }
+.ap-phantom-t { font-size: 14px; font-weight: 700; fill: var(--app-danger, #e5484d); text-anchor: middle; }
+.ap-nname { font-size: 13px; font-weight: 600; fill: var(--app-text, #24292f); }
+.ap-ndesc { font-size: 11px; fill: var(--app-text3, #8f959e); }
+.ap-nmeta { font-size: 11px; fill: var(--app-text3, #8f959e); }
 </style>
