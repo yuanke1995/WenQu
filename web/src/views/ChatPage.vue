@@ -158,6 +158,7 @@
                   <template #overlay>
                     <a-menu @click="({ key }) => onMoreAction(key, i)">
                       <a-menu-item v-if="debugEntryVisible" key="debug"><bug-outlined style="margin-right:8px" />检索调试</a-menu-item>
+                      <a-menu-item v-if="m.sources && m.sources.length" key="addEval"><dislike-outlined style="margin-right:8px" />加入评测集</a-menu-item>
                       <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
@@ -565,7 +566,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload, approveToolCall } from '../api'
+         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload, approveToolCall, addEvalCase } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -1792,8 +1793,28 @@ const fallbackCopyText = txt => {
 // 删除本轮对话（回答 + 同组问题一起软删除）；导出 Markdown（该轮问答）
 const onMoreAction = (key, mi) => {
   if (key === 'debug') openDebug(mi)
+  else if (key === 'addEval') addToEval(mi)
   else if (key === 'deleteRound') deleteRound(mi)
   else if (key === 'export') exportRound(mi)
+}
+/** 差评回流一键固化：本轮「问题 → 引用的知识块」追加进检索评测集（后端按问题去重） */
+const addToEval = async mi => {
+  const m = messages.value[mi]
+  const kids = [...new Set((m.sources || []).map(s => s.knowledgeId).filter(Boolean))]
+  if (!kids.length) { message.warning('本轮没有可固化的知识块引用'); return }
+  let question = null
+  for (let i = mi - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
+    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
+  }
+  if (!question?.content) { message.warning('找不到本轮对应的提问'); return }
+  try {
+    const r = await addEvalCase(question.content, kids)
+    if (r && r.success !== false) {
+      if (r.data?.added === false) message.info(r.data.reason || '评估集已存在相同问题')
+      else message.success(`已加入评测集（期望块 ${r.data?.expected ?? kids.length} 个，可在检索评估页跑回归）`)
+    } else message.error(r?.msg || '加入评测集失败')
+  } catch (e) { message.error(e.message || '加入评测集失败') }
 }
 // 单轮导出：向 mi 前配对最近的用户提问（遇更早回答即停）
 const exportRound = mi => {

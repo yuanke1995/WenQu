@@ -1024,6 +1024,7 @@ public class RagService {
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
+            st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.userAttachments = attachmentsMeta; // 附件元信息（随用户消息持久化，气泡回显）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
@@ -1204,6 +1205,17 @@ public class RagService {
                 public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
                     String name = cb.getToolDefinition().name();
                     long begin = System.currentTimeMillis();
+                    // 单轮步数上限：防模型陷入"调工具→不满意→再调"的失控循环烧 token。
+                    // 达到上限返回错误结果并要求模型直接作答（fail-safe 而不是无限放行）。
+                    if (st.maxToolSteps > 0 && st.toolStepCount.get() >= st.maxToolSteps) {
+                        recordToolStatus(st, name, toolInput, "error", "已达单轮工具调用步数上限(" + st.maxToolSteps + ")",
+                                System.currentTimeMillis() - begin, 0);
+                        log.warn("[TOOL] 达到单轮步数上限({})，拒绝继续调用: tool={} session={}",
+                                st.maxToolSteps, name, st.sessionId);
+                        return "{\"error\":\"已达到本轮工具调用步数上限(" + st.maxToolSteps + ")，不再执行工具调用。"
+                                + "请基于已有信息直接给出最终回答。\"}";
+                    }
+                    st.toolStepCount.incrementAndGet();
                     // 人在回路审批：有副作用工具（沙盒/MCP）+ 智能体 ask 模式 → 暂停等待用户确认。
                     // 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；拒绝/超时以错误结果回给模型，
                     // 让它基于已有信息继续而不是无限重试。游客会话本就不暴露这类工具，天然不进此分支。
@@ -1694,6 +1706,9 @@ public class RagService {
         volatile java.util.Set<String> sensitiveToolNames = java.util.Set.of();
         /** 工具执行审批模式（本轮智能体的 toolApprovalMode；null=auto） */
         volatile String toolApprovalMode;
+        /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
+        volatile int maxToolSteps;
+        final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
@@ -2591,6 +2606,13 @@ public class RagService {
         return t > 0 ? t : 120000L;
     }
 
+    /** 单轮工具步数上限：智能体覆盖（null=继承全局；0=不限制；负数按继承处理） */
+    private int resolveMaxToolSteps(Agent agent) {
+        Integer v = agent == null ? null : agent.getMaxToolSteps();
+        if (v == null || v < 0) v = configService.getInt("agent.maxToolSteps", 15);
+        return Math.max(0, v);
+    }
+
     /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */
     private static boolean clientDisconnected(SseEmitter emitter) {
         java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
@@ -2752,6 +2774,7 @@ public class RagService {
             st.model = resolvedModel;
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
+            st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.userAttachments = attachmentsMeta; // 附件元信息随用户消息持久化（气泡回显）
             st.contextTokens = 0;
             st.budgetTokens = 0;

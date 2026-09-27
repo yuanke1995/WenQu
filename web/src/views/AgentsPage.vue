@@ -204,6 +204,18 @@
               </div>
               <a-select v-model:value="form.toolApprovalMode" size="small" style="width:120px" :options="approvalOptions" />
             </div>
+            <div class="ap-cap">
+              <span class="ap-cap-ic"><thunderbolt-outlined /></span>
+              <div class="ap-cap-l">
+                <div class="ap-cap-name">单轮工具步数上限</div>
+                <div class="ap-cap-desc">
+                  一轮问答里全部工具的调用总次数上限，防止模型陷入「调工具→不满意→再调」的失控循环；
+                  达到上限后模型会直接给出最终回答。留空跟随全局（默认 15），0=不限制。
+                </div>
+              </div>
+              <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
+                              style="width:120px" placeholder="全局 15" />
+            </div>
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
@@ -379,6 +391,8 @@ const blankForm = () => ({
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
   // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: 'auto',
+  // 单轮工具调用步数上限：null=跟随全局（agent.maxToolSteps，默认 15）；0=不限制
+  maxToolSteps: null,
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
   builtinMode: 'inherit', builtinTools: [],
   skillMode: 'inherit', skills: [],
@@ -694,6 +708,7 @@ const openEdit = a => {
     toolArtifact: triStr(a.toolArtifact),
     toolMcp: triStr(a.toolMcp),
     toolApprovalMode: a.toolApprovalMode || 'auto',
+    maxToolSteps: a.maxToolSteps == null ? null : Number(a.maxToolSteps),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
@@ -725,6 +740,7 @@ const save = async () => {
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
     toolApprovalMode: f.toolApprovalMode || 'auto',
+    maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）

@@ -405,6 +405,7 @@ public class ConfigService {
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
+        d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
         d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）

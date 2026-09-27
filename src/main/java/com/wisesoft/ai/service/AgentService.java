@@ -192,6 +192,8 @@ public class AgentService {
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
         // 工具执行审批三态（auto/ask/off；null=auto）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
+        // 单轮工具步数上限（null=继承全局）
+        if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
         if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
         if (b.containsKey("mcps")) uw.set(Agent::getMcps, a.getMcps());
         if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
@@ -277,6 +279,11 @@ public class AgentService {
         if (body.containsKey("toolApprovalMode")) {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
             a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
+        }
+        // 单轮工具步数上限（null=继承全局；0=不限制；负数归一 null）
+        if (body.containsKey("maxToolSteps")) {
+            Integer steps = toTri(body.get("maxToolSteps"));
+            a.setMaxToolSteps(steps != null && steps < 0 ? null : steps);
         }
         // 具体项范围（技能 / MCP Server / 内置工具）：null=跟随全局、空串=不使用、逗号串=仅这些
         if (body.containsKey("skills")) a.setSkills(toScopeText(body.get("skills"), 1000));

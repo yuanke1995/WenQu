@@ -77,6 +77,13 @@ public class Agent {
     private String toolApprovalMode;
 
     /**
+     * 单轮工具调用步数上限（全部工具合计）：NULL=用全局 agent.maxToolSteps；0=不限制。
+     * 防模型陷入"调用工具→不满意→再调用"的失控循环烧 token；达到上限后模型收到
+     * 错误结果并被要求直接给出最终回答。
+     */
+    private Integer maxToolSteps;
+
+    /**
      * 技能范围（具体项筛选，对齐通用智能体平台的 skills 列表语义）：
      * NULL=跟随全局（注入全部可用技能）；空串=显式不注入任何技能；逗号分隔的技能名=只注入这些。
      * 与 toolSkill 的分工：toolSkill 决定"这类能力开不开"，本字段在其开启后限定"具体用哪几个"。
