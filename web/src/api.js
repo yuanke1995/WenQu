@@ -88,7 +88,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched, onPlan,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onSubagent, onSubagentRoute, onAgentDispatched, onPlan, onApprovalRequired,
     deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = []
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
@@ -164,6 +164,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated,description,digest}
               else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
               else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
+              else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
               else if (d.type === 'done') { end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
               else if (d.type === 'error') { end(); onError(d.content); return }
             } catch (e) {
@@ -437,6 +438,10 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 /** 批量重解析 */
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
+
+/** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
+export const approveToolCall = (approvalId, approved) =>
+  request(`/tool-approval/${encodeURIComponent(approvalId)}`, { method: 'POST', body: JSON.stringify({ approved }) })
 
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>

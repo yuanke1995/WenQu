@@ -70,6 +70,13 @@ public class Agent {
     private Integer toolMcp;
 
     /**
+     * 有副作用工具（沙盒/MCP）执行审批（人在回路）：auto=自动执行（默认）、
+     * ask=模型每次调用前暂停等用户确认（拒绝/超时以错误结果回给模型继续）、off=禁用这两类工具。
+     * NULL=auto。游客分享会话本就不暴露这两类工具，与审批模式无关。
+     */
+    private String toolApprovalMode;
+
+    /**
      * 技能范围（具体项筛选，对齐通用智能体平台的 skills 列表语义）：
      * NULL=跟随全局（注入全部可用技能）；空串=显式不注入任何技能；逗号分隔的技能名=只注入这些。
      * 与 toolSkill 的分工：toolSkill 决定"这类能力开不开"，本字段在其开启后限定"具体用哪几个"。

@@ -1023,6 +1023,7 @@ public class RagService {
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
+            st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.userAttachments = attachmentsMeta; // 附件元信息（随用户消息持久化，气泡回显）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
@@ -1071,7 +1072,9 @@ public class RagService {
     private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent, String userId,
                                                                                           AnswerStreamState st) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
+        java.util.Set<String> sensitiveTools = new java.util.HashSet<>();
         if (!configService.getBoolean("tool.enabled")) {
+            st.sensitiveToolNames = sensitiveTools;
             return callbacks;
         }
         // 游客分享会话（公开链接 /s/{token}）：能力白名单收窄——只保留知识精确检索与内置工具
@@ -1124,8 +1127,11 @@ public class RagService {
         // 沙盒工具（隔离执行环境）：tool.sandbox.enabled 控制；暂无智能体级三态覆盖（toolSandbox 列未加，
         // 见 SandboxTools 类注释）——沙盒本身按会话隔离，工具一旦启用对所有会话可用
         if (toolOn(agent, "tool.sandbox.enabled", null)) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(sandboxTools)));
+            for (org.springframework.ai.tool.ToolCallback cb :
+                    org.springframework.ai.support.ToolCallbacks.from(sandboxTools)) {
+                callbacks.add(cb);
+                sensitiveTools.add(cb.getToolDefinition().name());
+            }
         }
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
         if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {
@@ -1154,11 +1160,16 @@ public class RagService {
                 }
             }
             try {
-                callbacks.addAll(mcpClientService.toolCallbacks(userId, onlyMcp));
+                for (org.springframework.ai.tool.ToolCallback cb : mcpClientService.toolCallbacks(userId, onlyMcp)) {
+                    callbacks.add(cb);
+                    sensitiveTools.add(cb.getToolDefinition().name());
+                }
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
         }
+        // 记录本轮"有副作用"的工具名单（沙盒/MCP）：智能体 toolApprovalMode=ask 时执行前需用户确认
+        st.sensitiveToolNames = sensitiveTools;
         // 可观测性：本次问答暴露了哪些工具（空则不打印；模型调不调用由模型决策，但"挂了什么"要可见）
         if (!callbacks.isEmpty()) {
             String names = callbacks.stream()
@@ -1193,6 +1204,46 @@ public class RagService {
                 public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
                     String name = cb.getToolDefinition().name();
                     long begin = System.currentTimeMillis();
+                    // 人在回路审批：有副作用工具（沙盒/MCP）+ 智能体 ask 模式 → 暂停等待用户确认。
+                    // 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；拒绝/超时以错误结果回给模型，
+                    // 让它基于已有信息继续而不是无限重试。游客会话本就不暴露这类工具，天然不进此分支。
+                    if (st.sensitiveToolNames.contains(name) && "ask".equalsIgnoreCase(st.toolApprovalMode)) {
+                        long approvalTimeout = approvalTimeoutMs();
+                        String approvalId = java.util.UUID.randomUUID().toString();
+                        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+                        PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
+                        try {
+                            Map<String, Object> req = new LinkedHashMap<>();
+                            req.put("approvalId", approvalId);
+                            req.put("tool", name);
+                            String args = toolInput == null ? "" : toolInput;
+                            req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
+                            req.put("timeoutMs", approvalTimeout);
+                            sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
+                            log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
+                            boolean approved;
+                            try {
+                                approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
+                            } catch (java.util.concurrent.ExecutionException ee) {
+                                approved = false;
+                            } catch (java.util.concurrent.TimeoutException te) {
+                                approved = false;
+                                log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                approved = false;
+                            }
+                            if (!approved) {
+                                recordToolStatus(st, name, toolInput, "error", "用户拒绝或确认超时，未执行",
+                                        System.currentTimeMillis() - begin, 0);
+                                return "{\"error\":\"该工具调用未被用户批准（拒绝或确认超时），未执行。"
+                                        + "请基于已有信息继续回答，不要重复尝试调用该工具。\"}";
+                            }
+                            log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
+                        } finally {
+                            PENDING_APPROVALS.remove(approvalId);
+                        }
+                    }
                     recordToolStatus(st, name, toolInput, "start", null, 0, 1);
                     // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
                     // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
@@ -1639,6 +1690,10 @@ public class RagService {
         volatile boolean deepThink;
         /** 游客分享会话（公开链接）：工具白名单收窄为知识检索+内置项，沙盒/产物/MCP/技能不暴露 */
         volatile boolean guestMode;
+        /** 本轮"有副作用"工具名单（沙盒/MCP，enabledToolCallbacks 装配时回填）：审批模式 ask 时执行前需确认 */
+        volatile java.util.Set<String> sensitiveToolNames = java.util.Set.of();
+        /** 工具执行审批模式（本轮智能体的 toolApprovalMode；null=auto） */
+        volatile String toolApprovalMode;
         /**
          * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
          * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
@@ -2507,6 +2562,35 @@ public class RagService {
     private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, java.util.concurrent.atomic.AtomicBoolean> ACTIVE_SSE =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** 工具执行审批挂起项：approvalId → 等待用户批准（内存态；进程重启/刷新页面即失效，超时自动拒绝） */
+    private record PendingApproval(String sessionId, String userId, String toolName,
+                                   java.util.concurrent.CompletableFuture<Boolean> future) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, PendingApproval> PENDING_APPROVALS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对）；
+     * 不存在/已失效返回 false（前端据此提示重新发起）。
+     */
+    public boolean resolveApproval(String approvalId, boolean approved, String uid) {
+        if (approvalId == null || approvalId.isBlank()) return false;
+        PendingApproval p = PENDING_APPROVALS.get(approvalId);
+        if (p == null) return false;
+        if (uid == null || !uid.equals(p.userId())) {
+            log.warn("[TOOL] 审批人非本轮用户，拒绝: approvalId={} by={}", approvalId, uid);
+            return false;
+        }
+        return p.future().complete(approved);
+    }
+
+    /** 审批等待上限（chat.approvalTimeoutMs，默认 120s；阻塞工具调用线程，必须有界） */
+    private long approvalTimeoutMs() {
+        long t = configService.getLong("chat.approvalTimeoutMs");
+        return t > 0 ? t : 120000L;
+    }
+
     /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */
     private static boolean clientDisconnected(SseEmitter emitter) {
         java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
@@ -2667,6 +2751,7 @@ public class RagService {
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
+            st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.userAttachments = attachmentsMeta; // 附件元信息随用户消息持久化（气泡回显）
             st.contextTokens = 0;
             st.budgetTokens = 0;

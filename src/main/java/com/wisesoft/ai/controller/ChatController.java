@@ -163,6 +163,18 @@ public class ChatController {
         return emitter;
     }
 
+    @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
+            + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
+    @PostMapping("/tool-approval/{approvalId}")
+    public ResultJson resolveToolApproval(
+            @Parameter(description = "审批请求 ID（approval_required 事件下发）") @PathVariable("approvalId") String approvalId,
+            @RequestBody Map<String, Boolean> body) {
+        boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        boolean ok = ragService.resolveApproval(approvalId, approved, com.wisesoft.ai.util.RequestUser.uid());
+        if (!ok) return ResultJson.error("审批请求不存在或已失效（可能已超时）");
+        return ResultJson.ok(approved ? "已批准" : "已拒绝");
+    }
+
     @Operation(summary = "会话列表", description = "列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）；支持 keyword 按标题或消息内容模糊搜索")
     @GetMapping("/sessions")
     public ResultJson listSessions(

@@ -190,6 +190,8 @@ public class AgentService {
         if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
         if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
+        // 工具执行审批三态（auto/ask/off；null=auto）
+        if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
         if (b.containsKey("mcps")) uw.set(Agent::getMcps, a.getMcps());
         if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
@@ -271,6 +273,11 @@ public class AgentService {
         if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
+        // 工具执行审批三态（auto/ask/off；null 归一为 auto）
+        if (body.containsKey("toolApprovalMode")) {
+            String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
+            a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
+        }
         // 具体项范围（技能 / MCP Server / 内置工具）：null=跟随全局、空串=不使用、逗号串=仅这些
         if (body.containsKey("skills")) a.setSkills(toScopeText(body.get("skills"), 1000));
         if (body.containsKey("mcps")) a.setMcps(toScopeText(body.get("mcps"), 1000));

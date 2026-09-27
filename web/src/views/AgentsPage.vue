@@ -191,6 +191,19 @@
                 </div>
               </div>
             </div>
+            <!-- 有副作用工具（沙盒/MCP）执行审批（人在回路） -->
+            <div class="ap-cap" style="border-top:1px dashed var(--app-line,#e5e6eb);margin-top:10px;padding-top:12px">
+              <span class="ap-cap-ic"><safety-outlined /></span>
+              <div class="ap-cap-l">
+                <div class="ap-cap-name">工具执行确认</div>
+                <div class="ap-cap-desc">
+                  针对「沙盒执行」与「MCP 外部工具」这两类有副作用的工具：自动执行=模型直接调用；
+                  执行前确认=每次调用先暂停等你批准（拒绝/超时后模型会收到未执行提示继续回答）；
+                  禁用=不给模型这两类工具。游客分享会话本就不暴露它们。
+                </div>
+              </div>
+              <a-select v-model:value="form.toolApprovalMode" size="small" style="width:120px" :options="approvalOptions" />
+            </div>
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
@@ -281,7 +294,8 @@ import { message } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, RobotOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
-  FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined
+  FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
+  SafetyOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare,
@@ -317,6 +331,12 @@ const SEG = [
   { label: '跟随全局', value: '' },
   { label: '开启', value: '1' },
   { label: '关闭', value: '0' }
+]
+// 有副作用工具（沙盒/MCP）执行审批三态
+const approvalOptions = [
+  { value: 'auto', label: '自动执行' },
+  { value: 'ask', label: '执行前确认' },
+  { value: 'off', label: '禁用' }
 ]
 // 多实例能力：跟随全局 / 不使用 / 指定（选「指定」才展开具体项多选）
 const SEG_MULTI = [
@@ -357,6 +377,8 @@ const blankForm = () => ({
   name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
+  // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
+  toolApprovalMode: 'auto',
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
   builtinMode: 'inherit', builtinTools: [],
   skillMode: 'inherit', skills: [],
@@ -671,6 +693,7 @@ const openEdit = a => {
     toolSkill: triStr(a.toolSkill),
     toolArtifact: triStr(a.toolArtifact),
     toolMcp: triStr(a.toolMcp),
+    toolApprovalMode: a.toolApprovalMode || 'auto',
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
@@ -701,6 +724,7 @@ const save = async () => {
     knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0,
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
+    toolApprovalMode: f.toolApprovalMode || 'auto',
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）

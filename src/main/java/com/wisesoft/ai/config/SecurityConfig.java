@@ -71,6 +71,10 @@ public class SecurityConfig implements WebMvcConfigurer {
             return true;
         }
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
+        // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
+        // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
+        if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
+                || path.startsWith("/api/ai/tool-approval/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;
         // 登录相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）

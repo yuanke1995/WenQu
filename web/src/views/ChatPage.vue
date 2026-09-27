@@ -60,6 +60,16 @@
                   <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                 </div>
               </div>
+              <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
+              <div v-if="m.approval" class="approval-card">
+                <div class="approval-title"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
+                <pre v-if="m.approval.args" class="approval-args">{{ m.approval.args }}</pre>
+                <div class="approval-actions">
+                  <button class="app-btn small" :disabled="m.approval.busy" @click="resolveApproval(m, true)">批准执行</button>
+                  <button class="app-btn ghost small" :disabled="m.approval.busy" @click="resolveApproval(m, false)">拒绝</button>
+                  <span class="approval-hint">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</span>
+                </div>
+              </div>
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
                    :href="resolveImg(a.url)" :download="a.filename" target="_blank" :title="'下载 ' + a.filename">
@@ -555,7 +565,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload } from '../api'
+         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload, approveToolCall } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -1525,6 +1535,25 @@ const fmtMsgTime = ts => {
   return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
 }
 
+/** 工具执行审批：批准/拒绝当前气泡挂起的工具请求；后端以错误结果回给模型继续回答 */
+async function resolveApproval (m, approved) {
+  if (!m.approval || m.approval.busy) return
+  m.approval.busy = true
+  try {
+    const r = await approveToolCall(m.approval.id, approved)
+    if (r && r.success === false) {
+      message.warning(r.msg || '审批提交失败')
+      m.approval.busy = false
+      return
+    }
+    m.approval = null
+    scroll()
+  } catch (e) {
+    message.error(e.message || '审批提交失败')
+    if (m.approval) m.approval.busy = false
+  }
+}
+
 const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false,
                       attachments = [], skills = []) => {
   const idx = replaceIdx ?? messages.value.length
@@ -1579,6 +1608,14 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         const j = JSON.parse(payload)
         messages.value[idx].retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
         messages.value[idx].stage = ''
+        scroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onApprovalRequired: payload => {
+      // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走
+      try {
+        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
+        messages.value[idx].approval = { id: j.approvalId, tool: j.tool, args: j.args, timeoutMs: j.timeoutMs, busy: false }
         scroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -2407,4 +2444,10 @@ onMounted(async () => {
 .lightbox-next { right: 16px; }
 .lightbox-prev:hover:not(:disabled), .lightbox-next:hover:not(:disabled) { background: rgba(0,0,0,.7); }
 .lightbox-prev:disabled, .lightbox-next:disabled { opacity: .25; cursor: not-allowed; }
+/* 工具执行审批（人在回路） */
+.approval-card { margin-top: 8px; border: 1px solid #f0c36d; background: #fffaf0; border-radius: 8px; padding: 10px 12px; max-width: 640px; }
+.approval-title { font-size: 13px; font-weight: 600; color: #8a5a00; display: flex; align-items: center; gap: 6px; }
+.approval-args { margin: 8px 0 0; background: #fff; border: 1px solid #f0e2c0; border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
+.approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.approval-hint { font-size: 12px; color: #b0b5bf; }
 </style>
