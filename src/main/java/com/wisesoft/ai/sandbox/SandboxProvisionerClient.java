@@ -34,7 +34,14 @@ public class SandboxProvisionerClient {
         this.timeout = Duration.ofSeconds(timeoutSeconds);
         this.deleteTimeout = Duration.ofSeconds(deleteTimeoutSeconds);
         this.authHeader = "Bearer " + token;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        // 显式固定 HTTP/1.1：JDK HttpClient 默认 HTTP/2，对明文 http:// 会发 h2c 升级请求（Upgrade 头），
+        // 而 provisioner（uvicorn）不支持 h2c——uvicorn 拒绝升级请求时会**丢弃请求 body**，
+        // FastAPI 便报 422 {"loc":["body"],"msg":"Field required"}（2026-09-27 实测踩坑，见日志
+        // "Unsupported upgrade request"）。httpx 蓝本不受影响（httpx 默认就是 HTTP/1.1）。
+        this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     private HttpRequest.Builder requestBuilder(String method, String path, Duration requestTimeout) {

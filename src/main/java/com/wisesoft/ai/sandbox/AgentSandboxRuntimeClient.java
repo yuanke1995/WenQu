@@ -74,6 +74,9 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
 
     /** 沙盒 runtime 的连接池与线程池由全进程共享（HttpClient 线程安全）。 */
     private static final HttpClient HTTP = HttpClient.newBuilder()
+            // 显式固定 HTTP/1.1，理由同 SandboxProvisionerClient：runtime 服务同为 uvicorn 系，
+            // 默认 HTTP/2 的 h2c 升级请求会被拒绝且 body 被丢（2026-09-27 实测 provisioner 侧踩坑）。
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
