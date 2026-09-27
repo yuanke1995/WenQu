@@ -95,6 +95,12 @@ public class ConfigSchemaService {
                         if (v != null) opts.add(String.valueOf(v));
                     }
                 }
+                // 声明了 tips 就必须在 tips 表里有文案：否则前端按 tips 键查不到 ⇒ 问号图标静默不渲染
+                // （配置项"没有 tip"最难自查——定义为空即失败，不让它悄悄少一个提示）
+                String tipsKey = j.getString("tips");
+                if (tipsKey != null && !tipsKey.isBlank() && !this.tips.containsKey(tipsKey)) {
+                    throw new IllegalStateException("config-schema.json 字段 " + key + " 的 tips 键不存在于 tips 表: " + tipsKey);
+                }
                 Field f = new Field(key, j.getString("panel"), j.getString("label"), j.getString("type"),
                         dbl(j, "min"), dbl(j, "max"), dbl(j, "step"), dbl(j, "factor"),
                         j.getIntValue("tier", 2), List.copyOf(opts), h.get(key));
