@@ -53,14 +53,21 @@
 
       <template v-else>
         <div v-for="s in filtered" :key="s.id" class="app-card mcp-card">
-          <div class="mcp-card-head">
-            <span class="mcp-dot" :class="stateCls(s)"></span>
-            <span class="mcp-card-name">{{ s.name }}</span>
-            <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
-            <div class="mcp-card-actions">
-              <button v-if="s.connected" class="app-link-btn" @click="toggleTools(s)">
-                {{ expanded === s.id ? '收起工具' : '查看工具' }}
-              </button>
+          <div class="mcp-card-top" :class="{ clickable: s.connected }"
+               :title="s.connected ? (expanded === s.id ? '点击收起工具' : '点击查看工具') : ''"
+               @click="s.connected && toggleTools(s)">
+            <div class="mcp-card-info">
+              <div class="mcp-card-head">
+                <span class="mcp-dot" :class="stateCls(s)"></span>
+                <span class="mcp-card-name">{{ s.name }}</span>
+                <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
+              </div>
+              <div class="mcp-card-sub">
+                <span class="mcp-type-pill">{{ s.type }}</span>
+                <span class="mcp-url" :title="s.url">{{ s.url }}</span>
+              </div>
+            </div>
+            <div class="mcp-card-actions" @click.stop>
               <a-tooltip :title="s.enabled ? '停用后断开连接、不再暴露它的工具' : '启用后自动连接'">
                 <a-switch size="small" :checked="!!s.enabled" :loading="togglingId === s.id"
                           @change="v => toggleEnabled(s, v)" />
@@ -70,10 +77,6 @@
                 <button class="app-link-btn danger">删除</button>
               </a-popconfirm>
             </div>
-          </div>
-          <div class="mcp-card-sub">
-            <span class="mcp-type-pill">{{ s.type }}</span>
-            <span class="mcp-url" :title="s.url">{{ s.url }}</span>
           </div>
           <div v-if="expanded === s.id" class="mcp-tools">
             <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
@@ -268,10 +271,14 @@ onMounted(loadStatus)
 /* 尺寸/圆角/边框复用 .app-card，与模型供应商卡片同规格 */
 .mcp-card { margin-bottom: 12px; }
 .mcp-card:last-child { margin-bottom: 0; }
+.mcp-card-top { display: flex; align-items: center; gap: 12px; }
+.mcp-card-top.clickable { cursor: pointer; user-select: none; }
+.mcp-card-info { flex: 1; min-width: 0; }
 .mcp-card-head { display: flex; align-items: center; gap: 8px; }
 .mcp-card-name { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-card-head .mcp-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mcp-card-actions { margin-left: auto; flex: none; display: flex; align-items: center; gap: 8px; }
+.mcp-card-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.mcp-card-actions .app-link-btn { display: inline-flex; align-items: center; line-height: 1; }
 .mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--app-text3); }
 .mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: #f1f3f5; color: var(--app-text3); }
