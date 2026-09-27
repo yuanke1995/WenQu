@@ -257,8 +257,8 @@ public class AppProperties {
         private double safetyFactor = 0.7;
         /** 成本软上限（token，0=不限制）：即使模型窗口很大，单次请求输入也不超过此值，防止账单失控 */
         private int costCapTokens = 8000;
-        /** 输出限制 maxTokens（同时从窗口预算中预留） */
-        private int maxOutputTokens = 2000;
+        /** 输出限制 maxTokens（同时从窗口预算中预留）；2000 时带表格/引用的正常回答易触顶截断（实测 1888），默认 4096 */
+        private int maxOutputTokens = 4096;
         /** 注入对话历史的 token 上限（超出按"保留用户问题优先"裁剪） */
         private int historyMaxTokens = 1200;
         /** 单条历史消息截断字符数 */

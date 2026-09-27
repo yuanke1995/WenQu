@@ -1540,8 +1540,27 @@ public class RagService {
                 .doOnComplete(() -> {
                     // 下发缓冲尾部（可能残留滑动窗口），并剥离可能的不完整标签
                     if (st.emitBuf.length() > 0) {
-                        String rest = st.emitBuf.toString().replaceAll("<related>[\\s\\S]*?</related>", "")
-                                .replaceAll("<related[\\s\\S]*$", "");
+                        String rest = st.emitBuf.toString().replaceAll("<related>[\\s\\S]*?</related>", "");
+                        // 未闭合的 <related>（模型偶发把推荐块写在回答开头，或输出触顶截断在闭合标签之前）：
+                        // 原实现从 "<related" 起整段静默丢弃——模型若把正文写在标签内会陪葬，
+                        // 表现为回答只剩开头几字甚至全空（realOutputTokens 已计入完整输出）。
+                        // 改为剥标签本体、保留内部文字，并 fail-loud 标记。
+                        String noOpen = rest.replace("<related>", "");
+                        if (!noOpen.equals(rest)) {
+                            rest = noOpen;
+                            addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
+                                    "模型输出格式异常（related 标签未闭合，通常是输出达到长度上限被截断），已保留可读内容");
+                        }
+                        // 尾部残留的半截标签（截断恰好停在 <related / </related 中间）：剥掉避免漏出标签字样
+                        int lt = rest.lastIndexOf('<');
+                        if (lt >= 0) {
+                            String tail = rest.substring(lt);
+                            if (tail.length() < "<related>".length() && "<related>".startsWith(tail)) {
+                                rest = rest.substring(0, lt);
+                            } else if (tail.length() < "</related>".length() && "</related>".startsWith(tail)) {
+                                rest = rest.substring(0, lt);
+                            }
+                        }
                         st.emitBuf.setLength(0);
                         if (!rest.isEmpty()) {
                             st.fullResponse.append(rest);
@@ -1662,6 +1681,14 @@ public class RagService {
                     // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
                     boolean realOutput = st.realOutputTokens > 0;
                     int outputTokens = realOutput ? st.realOutputTokens : TokenCounter.estimate(answer);
+                    // 输出触顶 fail-loud：网关真实 completion_tokens 达到 maxOutputTokens 上限 ⇒ 大概率被
+                    // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
+                    // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
+                    int maxOutput = configService.getInt("context.maxOutputTokens");
+                    if (realOutput && outputTokens >= maxOutput) {
+                        addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
+                                "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在设置页调大「输出限制 token」");
+                    }
                     int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
                     Map<String, Object> tokens = new LinkedHashMap<>();
                     tokens.put("context", st.contextTokens);

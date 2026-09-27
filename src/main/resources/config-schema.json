@@ -1126,7 +1126,7 @@
       "label": "输出限制 token",
       "type": "number",
       "tips": "maxOutput",
-      "def": 2000,
+      "def": 4096,
       "min": 100,
       "step": 100,
       "width": 200,
