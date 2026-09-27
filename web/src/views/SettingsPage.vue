@@ -253,9 +253,12 @@ const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用',
   ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能（预算）',
-  agent: '并行检索'
+  agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆'
 }
-const groupLabel = key => NAV_LABELS[key] || key
+// 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），
+// 而不是把英文 key 直接漏到导航上——oidc / sandbox / memory 曾因此显示成裸 key
+const groupLabel = key => NAV_LABELS[key]
+  || ((PANELS.find(p => p.key === key)?.title || key).split(/[（(]/)[0].trim() || key)
 const current = ref('chat')
 const currentPanel = computed(() => PANELS.find(p => p.key === current.value))
 
