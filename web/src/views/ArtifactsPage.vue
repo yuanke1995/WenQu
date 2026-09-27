@@ -35,6 +35,11 @@
                   <span class="art-dot">·</span>
                   <span class="art-desc">{{ r.description }}</span>
                 </template>
+                <span class="art-dot">·</span>
+                <span :class="['art-expire', { warn: expireSoon(r.expireTime) }]"
+                      :title="r.expireTime ? '预计清理时间：' + fmtTime(r.expireTime) : '产物不会被自动清理'">
+                  {{ fmtExpire(r.expireTime) }}
+                </span>
               </div>
             </div>
             <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
@@ -88,6 +93,26 @@ const fmtSize = n => {
 
 const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 
+// 清理时间相对文案：expireTime 为空 = 保留天数为 0（永不清理）。快到期（≤3 天）标警示色。
+const DAY_MS = 24 * 3600 * 1000
+const expireDaysLeft = t => {
+  if (!t) return null
+  const exp = new Date(String(t).replace(' ', 'T')).getTime()
+  if (Number.isNaN(exp)) return null
+  return (exp - Date.now()) / DAY_MS
+}
+const fmtExpire = t => {
+  const d = expireDaysLeft(t)
+  if (d === null) return '永久保留'
+  if (d <= 0) return '即将清理'
+  if (d < 1) return '1 天内清理'
+  return `${Math.ceil(d)} 天后清理`
+}
+const expireSoon = t => {
+  const d = expireDaysLeft(t)
+  return d !== null && d <= 3
+}
+
 const doDelete = row => {
   Modal.confirm({
     title: '删除该产物？',
@@ -128,6 +153,8 @@ onMounted(load)
 .art-sub { margin-top: 2px; font-size: 12px; color: var(--app-text3); display: flex; gap: 4px; min-width: 0; }
 .art-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .art-dot { opacity: 0.6; }
+.art-expire { flex-shrink: 0; }
+.art-expire.warn { color: var(--app-danger, #d4380d); font-weight: 500; }
 .art-del { color: var(--app-danger, #d4380d); }
 .art-empty { text-align: center; padding: 28px 16px; }
 .art-empty-title { margin: 0 0 6px; font-weight: 500; }

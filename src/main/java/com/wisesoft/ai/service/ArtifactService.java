@@ -69,6 +69,7 @@ public class ArtifactService {
     private final ImageUrlSigner imageUrlSigner;
     private final ArtifactMapper artifactMapper;
     private final SessionMapper sessionMapper;
+    private final ConfigService configService;
 
     /** 会话级 emitter 注册表：问答开始时登记，结束清理；供工具在流式执行中实时下发产物事件 */
     private static final ConcurrentHashMap<String, SseEmitter> EMITTERS = new ConcurrentHashMap<>();
@@ -77,11 +78,13 @@ public class ArtifactService {
             new ConcurrentHashMap<>();
 
     public ArtifactService(AppProperties properties, ImageUrlSigner imageUrlSigner,
-                           ArtifactMapper artifactMapper, SessionMapper sessionMapper) {
+                           ArtifactMapper artifactMapper, SessionMapper sessionMapper,
+                           ConfigService configService) {
         this.properties = properties;
         this.imageUrlSigner = imageUrlSigner;
         this.artifactMapper = artifactMapper;
         this.sessionMapper = sessionMapper;
+        this.configService = configService;
     }
 
     /** 问答开始时登记：sessionId → emitter（用于工具实时下发 artifact 事件） */
@@ -204,9 +207,10 @@ public class ArtifactService {
         return info;
     }
 
-    /** 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。url 已按需签名。 */
+    /** 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。url 已按需签名；expireTime 按当前全局保留天数动态算出。 */
     public List<Map<String, Object>> list(String uid, String keyword) {
         if (uid == null || uid.isBlank()) return List.of();
+        int retentionDays = configService.getInt("artifact.retentionDays", 90);
         LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
                 .eq(Artifact::getUid, uid)
                 .eq(Artifact::getDeleted, 0)
@@ -216,7 +220,7 @@ public class ArtifactService {
         }
         List<Map<String, Object>> out = new ArrayList<>();
         for (Artifact row : artifactMapper.selectList(w)) {
-            out.add(toDto(row));
+            out.add(toDto(row, retentionDays));
         }
         return out;
     }
@@ -298,7 +302,7 @@ public class ArtifactService {
         return uid;
     }
 
-    private Map<String, Object> toDto(Artifact row) {
+    private Map<String, Object> toDto(Artifact row, int retentionDays) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", row.getId());
         m.put("filename", row.getFilename());
@@ -307,8 +311,17 @@ public class ArtifactService {
         m.put("description", row.getDescription() == null ? "" : row.getDescription());
         m.put("sessionId", row.getSessionId());
         m.put("createTime", row.getCreateTime() == null ? null : row.getCreateTime().toString());
+        // 预计清理时间：不落库、按当前全局保留天数即时算，保证与 cleanupExpired 口径同源
+        // （落库会在管理员改 retentionDays 后变成陈旧数据）；retentionDays ≤ 0 = 永不清理 → null
+        m.put("expireTime", expireTimeOf(row, retentionDays));
         m.put("url", imageUrlSigner.signUrl("/ai/" + row.getObjectKey()));
         return m;
+    }
+
+    /** 预计清理时间（ISO 字符串）；永不清理或无创建时间返回 null。 */
+    private static String expireTimeOf(Artifact row, int retentionDays) {
+        if (retentionDays <= 0 || row.getCreateTime() == null) return null;
+        return row.getCreateTime().plusDays(retentionDays).toString();
     }
 
     private Path baseDir() {
