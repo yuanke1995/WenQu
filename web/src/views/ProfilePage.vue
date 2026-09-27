@@ -54,6 +54,45 @@
             <span class="pf-sub-hint" style="margin-left:10px">修改成功后需重新登录</span>
           </a-form>
         </div>
+
+        <!-- 长期记忆（跨会话个性化） -->
+        <div v-else-if="current === 'memory'" class="app-card pf-card">
+          <h2 class="app-card-title">我的长期记忆</h2>
+          <p class="pf-hint">
+            系统会在每轮问答后自动提炼值得长期记住的信息（偏好、项目背景、明确要求记住的事），
+            并在你之后的对话中自动带上。这里可以查看、修改、删除——删掉的就永远不会再被提起。
+          </p>
+          <div class="pf-row" style="margin-bottom:12px">
+            <a-input v-model:value="memDraft" :maxlength="500" allow-clear style="flex:1"
+                     placeholder="手动添加一条记忆，如：我负责 XX 系统的运维" @pressEnter="addMemory" />
+            <button class="app-btn" :disabled="memSaving || !memDraft.trim()" @click="addMemory">添加</button>
+          </div>
+          <a-spin :spinning="memLoading">
+            <div v-if="!memories.length" class="pf-sub-hint" style="padding:12px 0">
+              还没有记忆。多聊几轮，或手动添加一条。
+            </div>
+            <div v-for="m in memories" :key="m.id" class="mem-item">
+              <template v-if="memEditing === m.id">
+                <a-input v-model:value="memEditDraft" :maxlength="500" size="small" @pressEnter="saveMemEdit(m)" />
+                <button class="app-link-btn" :disabled="memSaving" @click="saveMemEdit(m)">保存</button>
+                <button class="app-link-btn" @click="memEditing = ''">取消</button>
+              </template>
+              <template v-else>
+                <span class="mem-content" :title="m.content">{{ m.content }}</span>
+                <span class="mem-tag" :class="'mem-' + m.category">{{ categoryLabel(m.category) }}</span>
+                <span v-if="m.source === 'auto'" class="mem-tag mem-src" :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
+                <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
+                <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
+                <a-popconfirm title="删除后不会再被提起，确定？" @confirm="removeMemory(m)">
+                  <button class="app-link-btn danger">删除</button>
+                </a-popconfirm>
+              </template>
+            </div>
+          </a-spin>
+          <p class="pf-sub-hint">
+            记忆只属于你自己，只注入你本人的对话（公开分享页不会携带）；已达上限时自动提取会暂停，删掉几条即可恢复。
+          </p>
+        </div>
       </section>
     </div>
   </div>
@@ -64,7 +103,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { clearAuth } from '../utils/auth'
-import { changePasswordApi, getUserPreference, setUserPreference } from '../api'
+import { changePasswordApi, getUserPreference, setUserPreference,
+         listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 
 const router = useRouter()
@@ -74,6 +114,7 @@ const navs = [
   { key: 'vision', label: '视觉模型' },
   { key: 'embedding', label: '向量模型' },
   { key: 'rerank', label: '重排模型' },
+  { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
 ]
 const current = ref('chat')
@@ -145,7 +186,56 @@ const submitPwd = async () => {
   finally { pwdSaving.value = false }
 }
 
-onMounted(load)
+// ---- 长期记忆：列表 / 手动添加 / 编辑 / 删除（注入与自动提取在后端完成） ----
+const memories = ref([])
+const memLoading = ref(false)
+const memSaving = ref(false)
+const memDraft = ref('')
+const memEditing = ref('')
+const memEditDraft = ref('')
+const CATEGORY_LABELS = { fact: '事实', instruction: '约定', project: '项目' }
+const categoryLabel = c => CATEGORY_LABELS[c] || '事实'
+
+const loadMemories = async () => {
+  memLoading.value = true
+  try {
+    const r = await listMyMemories()
+    memories.value = (r && r.data) || []
+  } catch (e) { /* 静默：列表加载失败不阻塞其他面板 */ }
+  finally { memLoading.value = false }
+}
+const addMemory = async () => {
+  const c = memDraft.value.trim()
+  if (!c) return
+  memSaving.value = true
+  try {
+    const r = await addMyMemory(c)
+    if (r && r.success !== false) { memDraft.value = ''; await loadMemories() }
+    else message.error(r?.msg || '添加失败')
+  } catch (e) { message.error(e.message || '添加失败') }
+  finally { memSaving.value = false }
+}
+const startMemEdit = m => { memEditing.value = m.id; memEditDraft.value = m.content }
+const saveMemEdit = async m => {
+  const c = memEditDraft.value.trim()
+  if (!c) return
+  memSaving.value = true
+  try {
+    const r = await updateMyMemory(m.id, c)
+    if (r && r.success !== false) { memEditing.value = ''; await loadMemories() }
+    else message.error(r?.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
+  finally { memSaving.value = false }
+}
+const removeMemory = async m => {
+  try {
+    const r = await deleteMyMemory(m.id)
+    if (r && r.success !== false) await loadMemories()
+    else message.error(r?.msg || '删除失败')
+  } catch (e) { message.error(e.message || '删除失败') }
+}
+
+onMounted(() => { load(); loadMemories() })
 </script>
 
 <style scoped>
@@ -163,4 +253,11 @@ onMounted(load)
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
 .pf-row { display: flex; align-items: center; gap: 10px; }
 .pf-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
+/* 长期记忆列表 */
+.mem-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--app-border); }
+.mem-item:last-child { border-bottom: none; }
+.mem-content { flex: 1; min-width: 0; font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-tag { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
+.mem-src { background: #f2f3f5; color: #8f959e; }
+.mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
 </style>

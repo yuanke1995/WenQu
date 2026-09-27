@@ -117,6 +117,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         }
         // 智能体公开分享（游客通道）：免登录，token 即凭据（/s/{token} 的后端 API）
         if (isShareGuestEndpoint(path)) return true;
+        // 用户长期记忆（个人资产）：个人设置页增删改查自己的（归属在 MemoryController 按 uid 过滤）
+        if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) return true;
         return false;
     }
 

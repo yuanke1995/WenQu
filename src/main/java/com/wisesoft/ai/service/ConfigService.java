@@ -406,6 +406,11 @@ public class ConfigService {
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
         d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
         d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
+        // 用户长期记忆（跨会话个性化）
+        d.put("memory.enabled", "true");                   // 总开关：问答后自动提取 + 注入本人后续问答
+        d.put("memory.maxPerUser", "50");                  // 每人记忆条数上限（满后自动提取跳过，个人设置可清理）
+        d.put("memory.maxInjectCount", "30");              // 每轮最多注入条数（按更新时间取最近）
+        d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
         d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）

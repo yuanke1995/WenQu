@@ -109,6 +109,21 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
     UNIQUE KEY `uk_share_token` (`token`),
     KEY `idx_share_agent` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体公开分享配置（一个智能体一条；/s/{token} 免登录对话）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
+    `id`                VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `uid`               VARCHAR(64)  NOT NULL COMMENT '所属用户（记忆按用户隔离，只注入本人会话）',
+    `content`           VARCHAR(500) NOT NULL COMMENT '记忆内容（一句独立可读的事实/偏好，如"用户负责XX项目的运维"）',
+    `category`          VARCHAR(20)  DEFAULT 'fact' COMMENT '类别: fact=事实偏好 instruction=指令约定 project=项目背景',
+    `source`            VARCHAR(20)  DEFAULT 'manual' COMMENT '来源: auto=问答后自动提取 manual=用户手动添加',
+    `source_session_id` VARCHAR(50)  DEFAULT NULL COMMENT '来源会话ID（auto 时记录，便于溯源删除）',
+    `hit_count`         INT          DEFAULT 0 COMMENT '被注入后续问答的次数（使用度）',
+    `last_hit_at`       DATETIME     DEFAULT NULL COMMENT '最近一次被注入时间',
+    `create_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_mem_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户长期记忆（跨会话事实/偏好；注入本人后续问答的 system prompt）';
 -- 说明：idx_doc_deleted 覆盖按文档取块 + 逻辑删除过滤（增量 diff/孤儿清扫/快照/关键词路 doc 过滤）；
 -- idx_doc_id 为其最左前缀、已冗余，可在窗口期手动 DROP（SchemaMigrator 不会自动删索引）。
 -- 关键词检索：默认走 MySQL content/title LIKE（全表扫描，知识块量大时慢）；

@@ -507,6 +507,18 @@ export const getAnalytics = () => request('/analytics/summary')
 /** 差评样本列表（反馈回流：问题/回答摘要/反馈说明/引用块） */
 export const getBadCases = () => request('/analytics/badcases')
 
+// ==================== 用户长期记忆（个人设置页管理；提取与注入在后端自动完成） ====================
+/** 我的记忆列表（按更新时间倒序；含来源与被注入次数） */
+export const listMyMemories = () => request('/memory')
+/** 手动添加记忆（category: fact/instruction/project，默认 fact） */
+export const addMyMemory = (content, category) =>
+  request('/memory', { method: 'POST', body: JSON.stringify({ content, category }) })
+/** 编辑记忆内容（仅本人） */
+export const updateMyMemory = (id, content) =>
+  request(`/memory/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ content }) })
+/** 删除记忆（仅本人；自动提取的也可删） */
+export const deleteMyMemory = id => request(`/memory/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
 /** 追加单条评估 case（差评回流：问题 → 引用过的知识块） */
 export const addEvalCase = (question, knowledgeIds) =>
   request('/eval/case', { method: 'POST', body: JSON.stringify({ question, knowledgeIds }) })

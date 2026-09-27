@@ -128,6 +128,14 @@
         "路径与执行限额",
         "回收"
       ]
+    },
+    {
+      "key": "memory",
+      "title": "用户长期记忆（跨会话个性化）",
+      "sections": [
+        "总开关（自动提取 + 注入；用户可在个人设置查看/编辑/删除自己的记忆）",
+        "容量与预算（条数上限与注入预算，防挤占知识上下文）"
+      ]
     }
   ],
   "fields": [
@@ -1451,6 +1459,74 @@
       "tier": 3
     },
     {
+      "backendKey": "memory.enabled",
+      "panel": "memory",
+      "section": 0,
+      "group": "memory",
+      "key": "enabled",
+      "path": "memory.enabled",
+      "label": "长期记忆总开关",
+      "type": "switch",
+      "tips": "memoryEnabled",
+      "def": true,
+      "note": "关闭后停止自动提取且不再注入；已存记忆保留",
+      "tier": 1
+    },
+    {
+      "backendKey": "memory.maxPerUser",
+      "panel": "memory",
+      "section": 1,
+      "group": "memory",
+      "key": "maxPerUser",
+      "path": "memory.maxPerUser",
+      "label": "每人记忆上限",
+      "type": "number",
+      "tips": "memoryMaxPerUser",
+      "def": 50,
+      "min": 10,
+      "max": 200,
+      "step": 10,
+      "width": 200,
+      "note": "条数上限；满后自动提取跳过，用户在个人设置清理",
+      "tier": 2
+    },
+    {
+      "backendKey": "memory.maxInjectCount",
+      "panel": "memory",
+      "section": 1,
+      "group": "memory",
+      "key": "maxInjectCount",
+      "path": "memory.maxInjectCount",
+      "label": "每轮注入条数",
+      "type": "number",
+      "tips": "memoryMaxInjectCount",
+      "def": 30,
+      "min": 5,
+      "max": 50,
+      "step": 5,
+      "width": 200,
+      "note": "每轮问答最多带入的记忆条数（按更新时间取最近）",
+      "tier": 2
+    },
+    {
+      "backendKey": "memory.injectBudgetChars",
+      "panel": "memory",
+      "section": 1,
+      "group": "memory",
+      "key": "injectBudgetChars",
+      "path": "memory.injectBudgetChars",
+      "label": "注入字符预算",
+      "type": "number",
+      "tips": "memoryInjectBudgetChars",
+      "def": 1500,
+      "min": 200,
+      "max": 4000,
+      "step": 100,
+      "width": 200,
+      "note": "记忆段字符上限，防挤占知识上下文",
+      "tier": 2
+    },
+    {
       "backendKey": "agent.digestEnabled",
       "panel": "agent",
       "section": 0,
@@ -2210,6 +2286,10 @@
     "agentSubAgents": "子代理数量：每个子代理负责一个检索视角。2 个覆盖大多数问题；3~4 适合多条件/多主题的长问题。数量越多召回越全但越慢。",
     "agentTopK": "每个子代理取回的命中块数上限（跨代理自动去重，重复块只占一个引用编号）。",
     "agentMaxToolSteps": "单轮问答工具调用步数上限（全部工具合计）：防模型陷入\"调工具→不满意→再调\"的失控循环；达到上限后模型收到错误结果并被要求直接作答。0=不限制。智能体可在自己的配置里覆盖此值。",
+    "memoryEnabled": "用户长期记忆总开关：开启后每轮问答完成后异步用对话模型提炼值得长期记住的用户信息（偏好/项目背景/明确要求记住的事），并注入本人后续问答；用户可在个人设置查看、编辑、删除自己的记忆。关闭后停止提取与注入，已存记忆保留。",
+    "memoryMaxPerUser": "每个用户的记忆条数上限：满后自动提取跳过，用户在个人设置清理后继续。",
+    "memoryMaxInjectCount": "每轮问答最多注入的记忆条数（按更新时间取最近）。",
+    "memoryInjectBudgetChars": "记忆注入段的字符预算：超过预算截断，防止挤占知识上下文。",
     "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
     "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
     "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",

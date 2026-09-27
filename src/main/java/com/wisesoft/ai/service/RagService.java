@@ -241,6 +241,8 @@ public class RagService {
     private final HybridRetrievalService hybridRetrievalService;
     private final RerankService rerankService;
     private final DocumentMetaCache documentMetaCache;
+    /** 用户长期记忆：跨会话事实/偏好的提取与注入（memory.enabled；游客分享会话豁免——发布者记忆不外泄） */
+    private final UserMemoryService userMemoryService;
     private final QaLogService qaLogService;
     private final UserImageService userImageService;
     private final ConfigService configService;
@@ -343,7 +345,8 @@ public class RagService {
                       McpClientService mcpClientService,
                       KnowledgeBaseService knowledgeBaseService,
                       com.wisesoft.ai.mapper.UserMapper userMapper,
-                      ModelRegistryService modelRegistryService) {
+                      ModelRegistryService modelRegistryService,
+                      UserMemoryService userMemoryService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -370,6 +373,7 @@ public class RagService {
         this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
+        this.userMemoryService = userMemoryService;
         this.modelRegistryService = modelRegistryService;
     }
 
@@ -703,6 +707,12 @@ public class RagService {
                             + "若句末需要标点，放在标记之前的文字末尾，如\"布局组件[图片1]\"，不要写成\"布局组件[图片1]、\"。")
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
                     .append(relatedPromptLine());
+            // 用户长期记忆（跨会话个性化）：注入本人记忆 + 累加使用度；游客分享会话不注入
+            // （发布者的个人记忆不外泄给匿名访客）；空记忆/未开启零影响
+            if (!guestMode) {
+                String memoryText = userMemoryService.injectText(userId);
+                if (memoryText != null) system.append("\n\n").append(memoryText);
+            }
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
             // 清单为空的段落不追加（没装技能时对提示词零影响）；注入的是本用户自己的技能。
             if (skillOn(agent)) {
@@ -1657,6 +1667,9 @@ public class RagService {
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
+                    // 记忆提取：问答完整落定后异步提炼长期记忆（服务内自判开关/游客/匿名，best-effort）
+                    userMemoryService.maybeExtract(st.userId, st.sessionId, st.question,
+                            st.fullResponse.toString(), st.guestMode);
                 })
                 .subscribe();
     }
@@ -2731,6 +2744,11 @@ public class RagService {
                     .append("\n\n【本轮对话说明】\n")
                     .append("本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，")
                     .append("不要输出 [N] 来源标注（本轮没有参考资料）。");
+            // 用户长期记忆（与主链路同口径；游客分享会话不注入）
+            if (!guestMode) {
+                String memoryText = userMemoryService.injectText(userId);
+                if (memoryText != null) system.append("\n\n").append(memoryText);
+            }
             // 用户本轮主动选用的技能：与主链路口径一致，全文注入
             if (userSkillText != null && !userSkillText.isBlank()) {
                 system.append(userSkillText);
