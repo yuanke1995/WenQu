@@ -889,9 +889,10 @@ public class RagService {
             boolean dedupEnabled = configService.getBoolean("context.dedupEnabled");
             double dedupThreshold = configService.getDouble("context.dedupThreshold", 0.45);
             double dedupPathThreshold = configService.getDouble("context.dedupPathThreshold", 0.28);
-            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）：重排分低于阈值的块不进上下文也不进引用，
-            // 防止词面/文风重叠的跨域弱相关块挤占名额（重排分不是校准概率，0.55 只说明"词面像"）。
-            // 仅对有重排分的命中生效——未启用重排（rerankScore=null）时零影响；0=关闭；
+            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）：排序分低于阈值的块不进上下文也不进引用，
+            // 防止词面/文风重叠的跨域弱相关块挤占名额（0.55 只说明"词面像"，不代表 55% 相关）。
+            // 排序分口径与填充顺序一致：rerankScore（启用重排且命中数在重排区间内时）否则融合分 score
+            // ——两种分域数值区间不同，调值前先看检索调试里的实际分数分布；0=关闭；
             // 跳过不占 docNo/extra 配额（与去冗余同语义）。
             double minContextScore = configService.getDouble("retrieval.minContextScore", 0.6);
             List<Set<String>> selectedTermSets = new ArrayList<>();
@@ -905,10 +906,11 @@ public class RagService {
                 } else {
                     if (docNo > maxContextHits) break;
                 }
-                // 最低相关分门：弱相关块（重排分低于阈值）不进上下文/引用，不占名额
-                if (minContextScore > 0 && hit.rerankScore() != null && hit.rerankScore() < minContextScore) {
-                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} score={}",
-                            hit.knowledgeId(), hit.title(), hit.rerankScore());
+                // 最低相关分门：排序分（重排分??融合分，与填充顺序同口径）低于阈值的块不进上下文/引用，不占名额
+                double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();
+                if (minContextScore > 0 && rankScore < minContextScore) {
+                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} rankScore={} (rerank={} score={})",
+                            hit.knowledgeId(), hit.title(), rankScore, hit.rerankScore(), hit.score());
                     continue;
                 }
                 // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）

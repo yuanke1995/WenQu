@@ -272,7 +272,7 @@ public class ConfigService {
         d.put("deepReasoning.autoRoute", String.valueOf(properties.getDeepReasoning().isAutoRoute()));
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
-        d.put("retrieval.minContextScore", "0.6");         // 上下文/引用的最低相关分门槛（重排分；对齐 Dify/Coze Score 阈值；仅启用重排时生效，0=关）
+        d.put("retrieval.minContextScore", "0.6");         // 上下文/引用的最低相关分门槛（排序分=重排分??融合分；对齐 Dify/Coze Score 阈值；0=关）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
