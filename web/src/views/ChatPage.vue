@@ -382,52 +382,45 @@
           <div v-else class="rp-dim">发送问题后展示执行过程</div>
         </template>
       </div>
-      <!-- 沙盒工作区（会话 scope）：容器运行中可浏览/下载文件；未运行时只给说明，绝不悄悄拉起容器 -->
-      <div class="rp-card">
+      <!-- 沙盒工作区（会话 scope）：容器运行中才显示整卡（未运行/未用过则隐藏，不占版面），可浏览/下载文件；state 探测绝不悄悄拉起容器 -->
+      <div v-if="sbState && sbState.available" class="rp-card">
         <div class="rp-exec-head" @click="toggleSandbox">
           <span class="rp-label" style="margin-bottom:0">沙盒</span>
           <span class="rp-exec-sum">
-            <template v-if="sbState && sbState.available">文件 {{ sbEntries.length }}</template>
-            <template v-else>未运行</template>
+            文件 {{ sbEntries.length }}
             <down-outlined class="rp-arrow" :class="{ open: sbOpen }" />
           </span>
         </div>
         <template v-if="sbOpen">
-          <template v-if="sbState && sbState.available">
-            <div class="rp-sb-path">
-              <span v-if="sbPath && sbState.root && sbPath !== sbState.root" class="rp-sb-nav" @click="sbNav(sbParent(sbPath))">‹ 上一级</span>
-              <span class="rp-sb-cur" :title="sbPath">{{ sbPath }}</span>
-              <span class="rp-sb-refresh" title="刷新" @click="sbLoad(sbPath)">⟳</span>
+          <div class="rp-sb-path">
+            <span v-if="sbPath && sbState.root && sbPath !== sbState.root" class="rp-sb-nav" @click="sbNav(sbParent(sbPath))">‹ 上一级</span>
+            <span class="rp-sb-cur" :title="sbPath">{{ sbPath }}</span>
+            <span class="rp-sb-refresh" title="刷新" @click="sbLoad(sbPath)">⟳</span>
+          </div>
+          <div v-if="sbLoading" class="rp-dim">加载中…</div>
+          <template v-else>
+            <div v-for="e in sbEntries" :key="e.path" class="rp-sb-row"
+                 :title="e.isDir ? ('打开目录 ' + e.path) : ('下载 ' + e.path)"
+                 @click="sbOpenEntry(e)">
+              <span class="rp-sb-ic">{{ e.isDir ? '▸' : '·' }}</span>
+              <span class="rp-sb-name">{{ sbName(e.path) }}</span>
+              <span v-if="!e.isDir && e.size != null" class="rp-exec-dur">{{ fmtSize(e.size) }}</span>
             </div>
-            <div v-if="sbLoading" class="rp-dim">加载中…</div>
-            <template v-else>
-              <div v-for="e in sbEntries" :key="e.path" class="rp-sb-row"
-                   :title="e.isDir ? ('打开目录 ' + e.path) : ('下载 ' + e.path)"
-                   @click="sbOpenEntry(e)">
-                <span class="rp-sb-ic">{{ e.isDir ? '▸' : '·' }}</span>
-                <span class="rp-sb-name">{{ sbName(e.path) }}</span>
-                <span v-if="!e.isDir && e.size != null" class="rp-exec-dur">{{ fmtSize(e.size) }}</span>
-              </div>
-              <div v-if="!sbEntries.length" class="rp-dim">（空目录）</div>
-            </template>
+            <div v-if="!sbEntries.length" class="rp-dim">（空目录）</div>
           </template>
-          <div v-else class="rp-dim">沙盒未运行——本轮问答使用沙盒工具后出现；文件跨轮保留，空闲超时自动回收</div>
         </template>
       </div>
-      <!-- 本会话产物：汇总各轮生成的文件，点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
-      <div class="rp-card">
-        <div class="rp-label">产物<template v-if="sessionArtifacts.length"> · {{ sessionArtifacts.length }} 个</template></div>
-        <template v-if="sessionArtifacts.length">
-          <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
-             :href="resolveImg(a.url)" :download="a.filename" target="_blank"
-             :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
-            <file-text-outlined class="rp-art-ic" />
-            <span class="rp-art-name">{{ a.filename }}</span>
-            <download-outlined class="rp-art-dl" />
-          </a>
-          <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
-        </template>
-        <div v-else class="rp-dim">本会话尚未产出文件</div>
+      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
+      <div v-if="sessionArtifacts.length" class="rp-card">
+        <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
+        <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
+           :href="resolveImg(a.url)" :download="a.filename" target="_blank"
+           :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
+          <file-text-outlined class="rp-art-ic" />
+          <span class="rp-art-name">{{ a.filename }}</span>
+          <download-outlined class="rp-art-dl" />
+        </a>
+        <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
       </div>
       <template v-if="panelScope === 'round'">
         <div class="rp-card">
@@ -472,21 +465,24 @@
         <div class="rp-label">引用来源<template v-if="groupedSources.length"> · {{ groupedSources.length }} 个文档</template></div>
         <template v-if="groupedSources.length">
           <div v-for="g in groupedSources" :key="g.key" class="rp-group">
-            <div class="rp-group-head" @click="g.open = !g.open" :title="g.open ? '收起片段' : '展开片段'">
+            <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
               <file-text-outlined class="rp-src-ic" />
               <span class="rp-src-name">{{ g.fileName }}</span>
               <span class="rp-count">{{ g.items.length }} 段</span>
-              <down-outlined class="rp-arrow" :class="{ open: g.open }" />
+              <down-outlined class="rp-arrow" :class="{ open: srcOpenOf(g) }" />
             </div>
-            <div class="rp-group-body" :class="{ open: g.open }">
-              <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
-                   :class="{ hl: hoveredRef === s.ref }"
-                   title="点击查看原文；有对应角标的来源会在正文中定位"
-                   @click.stop="locateSource(s)"
-                   @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
-                <span class="rp-src-ref">[{{ s.ref }}]</span>
-                <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
-                <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
+            <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
+              <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
+              <div class="rp-group-body-in">
+                <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
+                     :class="{ hl: hoveredRef === s.ref }"
+                     title="点击查看原文；有对应角标的来源会在正文中定位"
+                     @click.stop="locateSource(s)"
+                     @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
+                  <span class="rp-src-ref">[{{ s.ref }}]</span>
+                  <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
+                  <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -558,7 +554,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
@@ -847,8 +843,7 @@ const groupedSources = computed(() => {
       g = {
         key,
         fileName: s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识'),
-        items: [],
-        open: true
+        items: []
       }
       byKey.set(key, g)
       groups.push(g)
@@ -857,6 +852,13 @@ const groupedSources = computed(() => {
   }
   return groups
 })
+// 分组展开态（key → 开/合，默认展开）：**必须存在 computed 外的响应式容器**——
+// computed 每次求值都重建分组对象，直接 g.open = !g.open 改的是非响应式临时对象，
+// 点击既不触发重渲染、状态也会随重建被冲掉（「收缩不生效」的根因）。
+// 存 reactive map 还能跨重算保留：流式更新 sources 后用户已收起的组不弹回
+const srcOpen = reactive({})
+const srcOpenOf = g => (srcOpen[g.key] !== undefined ? srcOpen[g.key] : true)
+const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
@@ -1055,8 +1057,13 @@ const sbOpenEntry = e => {
   if (e.isDir) sbNav(e.path)
   else sandboxDownload(currentSessionId.value, e.path, sbName(e.path)).catch(err => message.warning(err.message || '下载失败'))
 }
+// 沙盒卡只在容器运行中显示：状态探测不能依赖「点开卡片」（否则卡永远没机会出现）——
+// 面板打开（含初始）/ 切会话 / 本轮用过沙盒工具的轮完成时各探测一次（state 探测不创建容器）
+const SB_TOOL_NAMES = ['execute', 'read_file', 'write_file', 'edit_file', 'ls']
+const roundUsedSandbox = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => SB_TOOL_NAMES.includes(t.name))
+watch(panelOpen, v => { if (v) sbLoadState() }, { immediate: true })
 watch(sbOpen, v => { if (v) sbLoadState() })
-watch(currentSessionId, () => { sbState.value = null; sbEntries.value = []; if (sbOpen.value) sbLoadState() })
+watch(currentSessionId, () => { sbState.value = null; sbEntries.value = []; if (panelOpen.value) sbLoadState() })
 
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
@@ -1724,6 +1731,8 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       messages.value[idx].loading = false
       // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
       messages.value[idx].doneTime = Date.now()
+      // 本轮用过沙盒工具：容器可能刚被拉起，刷新右栏沙盒卡（未用沙盒/面板收起则不探测）
+      if (panelOpen.value && roundUsedSandbox(messages.value[idx])) sbLoadState()
       // 生成完成：右栏执行过程自动收起（用户手动点过则尊重其选择），答案出来后不占版面
       if (rpExecOpen.value && !rpExecTouched.value) rpExecOpen.value = false
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
@@ -2375,8 +2384,10 @@ onMounted(async () => {
 .rp-count { margin-left: auto; flex: none; font-size: 11px; color: var(--app-text3); }
 .rp-arrow { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1); }
 .rp-arrow.open { transform: rotate(180deg); }
-.rp-group-body { display: grid; grid-template-rows: 0fr; overflow: hidden; transition: grid-template-rows .22s cubic-bezier(0.16, 1, 0.3, 1); }
+.rp-group-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s cubic-bezier(0.16, 1, 0.3, 1); }
 .rp-group-body.open { grid-template-rows: 1fr; }
+/* 网格行高动画的两个必要条件：唯一子容器 + min-height:0（否则子项按内容撑开，收不到 0 高） */
+.rp-group-body-in { min-height: 0; overflow: hidden; }
 .rp-src-sub { padding: 3px 0 3px 20px; font-size: 11.5px; color: var(--app-text2); }
 @media (prefers-reduced-motion: reduce) { .rp-group-body, .rp-arrow { transition: none; } }
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
