@@ -388,12 +388,24 @@ public class RagService {
                      List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter) {
         chat(sessionId, question, userImages, attachments, skills, deepThink,
-                agentId, modelOverride, userId, emitter, false);
+                agentId, modelOverride, userId, emitter, false, false);
     }
 
     public void chat(String sessionId, String question, List<String> userImages,
                      List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter, boolean guestMode) {
+        chat(sessionId, question, userImages, attachments, skills, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, false);
+    }
+
+    /**
+     * @param regenerate 重新生成/自动重试的重发标记：该问题的用户消息已随上一轮请求**即时落库**（见 runChat 0.3），
+     *                   true 时跳过开始期的用户消息落库，避免重发产生重复历史行
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -416,7 +428,7 @@ public class RagService {
                 boolean identity = loadIdentity(userId);
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, useDeepThink,
-                            agentId, modelOverride, userId, emitter, guestMode);
+                            agentId, modelOverride, userId, emitter, guestMode, regenerate);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -438,7 +450,8 @@ public class RagService {
      */
     private void runChat(String sessionId, String question, List<String> userImages,
                          List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
-                         String agentId, String modelOverride, String userId, SseEmitter emitter, boolean guestMode) {
+                         String agentId, String modelOverride, String userId, SseEmitter emitter,
+                         boolean guestMode, boolean regenerate) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -505,6 +518,12 @@ public class RagService {
             sendSseEvent(emitter, "plan", JSON.toJSONString(planSteps), sessionId);
             // 0. 进度提示：理解问题阶段（图片描述/改写都有耗时，先给用户反馈）
             sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
+            // 前置心跳：从本轮一开始就保活（图片视觉描述/深度思考/检索都是长静默区，
+            // serverless 端点冷启动时检索可达 90s+，此前该阶段无心跳 ⇒ 前端 120s 空闲看门狗
+            // 掐断连接，用户看到"无输出且报错"而后端其实还在干活）。句柄在 st 创建时接管
+            // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
+            final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
+                    scheduleKeepalive(emitter, "前置");
             // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）
             List<UserImageService.UserImage> userImgs = userImageService.process(userImages, userVisionRef);
             String imgDescText = userImgs.isEmpty() ? "" : userImgs.stream()
@@ -525,13 +544,26 @@ public class RagService {
             // 0.2 用户本轮主动选用的技能（输入框「+」菜单）：全文注入本轮 system prompt
             String userSkillText = buildUserSkillText(userId, skills);
 
+            // 0.3 用户消息即时落库（先于检索/生成，图片与附件元信息此时已就绪）：
+            //     刷新页面/断线不再丢掉已发出的问题（此前只在整轮完成时落库，回答中刷新=问题彻底消失）；
+            //     且后续轮次 getRecentHistory 能取到本轮问题——上一轮回答尚未完成/失败时上下文照样延续。
+            //     重新生成/自动重试（regenerate=true）不重复落库：该问题已随上一轮请求入库。
+            //     落库失败内部已降级 Redis（mysqlPending 补写机制），不阻断本轮回答。
+            if (!regenerate) {
+                List<String> earlyImgUrls = userImgs.stream().map(UserImageService.UserImage::url).toList();
+                sessionService.appendMessage(sessionId, "user", question,
+                        earlyImgUrls.isEmpty() ? null : earlyImgUrls, null,
+                        null, null, null, null,
+                        attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta));
+            }
+
             // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
             //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
             if (knowledgeOff) {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
-                        attachmentsMeta, emitter, startTime, thinkingHolder, degradations, degradedCodes,
+                        preHeartbeat, emitter, startTime, thinkingHolder, degradations, degradedCodes,
                         agent, stageMs, resolvedModel, guestMode);
                 return;
             }
@@ -1082,6 +1114,7 @@ public class RagService {
                     degradations, degradedCodes, retrievedJson);
             st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
             st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
+            st.heartbeat = preHeartbeat; // 前置心跳句柄移交（buildAnswerStream 的 startRunHeartbeat 幂等复用，终态照旧停止）
             st.toolScopeKbIds = scopeKbIds; // 精确检索工具与主链路同库界（库隔离）
             st.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
@@ -1089,7 +1122,6 @@ public class RagService {
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
-            st.userAttachments = attachmentsMeta; // 附件元信息（随用户消息持久化，气泡回显）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1378,28 +1410,37 @@ public class RagService {
             });
 
     /**
-     * 整轮流级 SSE 心跳：覆盖「工具执行（沙盒命令/审批等待可达数分钟）」与「工具结束→
-     * 最终回答首 token」两段全静默区——中间代理（vite/nginx 默认 60s 读超时）会掐断连接、
-     * 前端 120s 空闲看门狗会把静默误判为失联。每 15s 发一条 SSE 注释行（":keepalive"）：
-     * 中间层与看门狗都视之为存活信号，前端解析器忽略注释行、UI 零打扰。
-     * <p>生命周期：buildAnswerStream 启动（流重试重建时幂等复用），终态路径
-     * （doOnComplete / doOnError / disposeSafe）停止；发送失败（客户端已断开）自停，防任务泄漏。
+     * 按 15s 间隔向 emitter 发 SSE 注释行（":keepalive"）保活，返回句柄供停止/移交。
+     * 发送失败（客户端已断开）自停，防任务泄漏。供 startRunHeartbeat 与 runChat 前置阶段共用。
      */
-    private synchronized void startRunHeartbeat(AnswerStreamState st) {
-        if (st.heartbeat != null && !st.heartbeat.isDone()) return;
+    private static java.util.concurrent.ScheduledFuture<?> scheduleKeepalive(SseEmitter emitter, String phase) {
         java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
                 new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.ScheduledFuture<?> f = TOOL_HEARTBEAT_POOL.scheduleWithFixedDelay(() -> {
             try {
-                st.emitter.send(SseEmitter.event().comment("keepalive"));
+                emitter.send(SseEmitter.event().comment("keepalive"));
             } catch (Exception e) {
-                log.debug("[RUN-HEARTBEAT] 心跳下发失败（客户端可能已断开），心跳自停: {}", e.getMessage());
+                log.debug("[RUN-HEARTBEAT] {}心跳下发失败（客户端可能已断开），心跳自停: {}", phase, e.getMessage());
                 java.util.concurrent.ScheduledFuture<?> s = self.get();
                 if (s != null) s.cancel(false);
             }
         }, TOOL_HEARTBEAT_INTERVAL_MS, TOOL_HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
         self.set(f);
-        st.heartbeat = f;
+        return f;
+    }
+
+    /**
+     * 整轮流级 SSE 心跳：覆盖「工具执行（沙盒命令/审批等待可达数分钟）」与「工具结束→
+     * 最终回答首 token」两段全静默区——中间代理（vite/nginx 默认 60s 读超时）会掐断连接、
+     * 前端 120s 空闲看门狗会把静默误判为失联。每 15s 发一条 SSE 注释行（":keepalive"）：
+     * 中间层与看门狗都视之为存活信号，前端解析器忽略注释行、UI 零打扰。
+     * <p>生命周期：runChat 在**检索/深度思考阶段前**就启动前置心跳（serverless 端点冷启动期间
+     * 检索可达 90s+，此前该阶段无心跳会被前端掐断），st 创建时接管句柄（本方法幂等复用），
+     * 终态路径（doOnComplete / doOnError / disposeSafe）停止；发送失败自停，防任务泄漏。
+     */
+    private synchronized void startRunHeartbeat(AnswerStreamState st) {
+        if (st.heartbeat != null && !st.heartbeat.isDone()) return;
+        st.heartbeat = scheduleKeepalive(st.emitter, "整轮");
     }
 
     private static void stopRunHeartbeat(AnswerStreamState st) {
@@ -1774,11 +1815,9 @@ public class RagService {
                     List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
                     String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
 
-                    // 记录对话历史（含图片/附件与引用来源），拿到消息ID供前端反馈
+                    // 记录对话历史：用户消息已在本轮开始时即时落库（runChat 0.3，regenerate 重发不重复），
+                    // 完成时只补落助手消息（含引用来源/思考/产物/工具调用/用量），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
-                    List<String> userImgUrls = st.userImgs.stream().map(UserImageService.UserImage::url).toList();
-                    String attachmentsJson = (st.userAttachments == null || st.userAttachments.isEmpty())
-                            ? null : JSON.toJSONString(st.userAttachments);
                     // Token 用量（1.9）：持久化前先算好（随消息存 JSON，刷新/历史会话仍可回看「本次用量/会话累计」）。
                     // 输出优先用网关真实 usage（部分兼容网关末块 metadata.usage 携带），拿不到回落本地估算；
                     // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
@@ -1801,10 +1840,6 @@ public class RagService {
                     tokens.put("prompt", promptTokens);
                     tokens.put("outputIsReal", realOutput);
                     tokens.put("total", promptTokens + outputTokens);
-                    // 10 参重载（含 attachments）：显式传 null 占位，避免误绑定到 thinking 参数的旧重载
-                    sessionService.appendMessage(st.sessionId, "user", st.question,
-                            userImgUrls.isEmpty() ? null : userImgUrls, null,
-                            null, null, null, null, attachmentsJson);
                     // 12 参重载（含 tokens）：助手消息把用量 JSON 随行落库（历史回看/会话累计的数据源）
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
@@ -1894,8 +1929,6 @@ public class RagService {
         volatile Set<String> toolScopeDocIds;
         /** 本轮生效模型（会话覆盖 > 个人默认；智能体不绑定模型。主链路解析后回填，生成流按此发送） */
         volatile String model;
-        /** 附件元信息（[{name,mime,size}]，主链路解析后回填）：随用户消息持久化，气泡回显 */
-        volatile List<Map<String, Object>> userAttachments;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
         volatile boolean deepThink;
         /** 游客分享会话（公开链接）：工具白名单收窄为知识检索+内置项，沙盒/产物/MCP/技能不暴露 */
@@ -2924,7 +2957,8 @@ public class RagService {
     private void runNoKnowledgeChat(String sessionId, String question, String userId,
                                     List<UserImageService.UserImage> userImgs,
                                     String imgDescText, String attachmentText, String userSkillText,
-                                    List<Map<String, Object>> attachmentsMeta, SseEmitter emitter, long startTime,
+                                    java.util.concurrent.ScheduledFuture<?> preHeartbeat,
+                                    SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel, boolean guestMode) {
@@ -2983,7 +3017,7 @@ public class RagService {
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
-            st.userAttachments = attachmentsMeta; // 附件元信息随用户消息持久化（气泡回显）
+            st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
             st.contextTokens = 0;
             st.budgetTokens = 0;
             st.contextHits = 0;

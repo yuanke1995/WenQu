@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onPlan, onApprovalRequired,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = []
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], regenerate = false
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -115,6 +115,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     body: JSON.stringify({
       sessionId, question, images, deepThink,
       agentId: agentId || '', model: model || '',
+      // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
+      regenerate: regenerate || undefined,
       // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       skills: Array.isArray(skills) && skills.length ? skills : undefined

@@ -158,8 +158,10 @@ public class ChatController {
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
         SseEmitter emitter = new SseEmitter(sseTimeout);
+        // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         ragService.chat(sessionId, question, images, attachments, request.getSkills(),
-                request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter);
+                request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
+                false, request.isRegenerate());
         return emitter;
     }
 
