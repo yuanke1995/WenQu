@@ -173,7 +173,10 @@ public class SandboxTools {
      */
     @Tool(name = "deliver_artifact", description = "把沙盒里生成的文件交付为正式产物（进入用户的「我的产物」，"
             + "并实时推送产物卡片）。当沙盒中产出了用户要保留/下载的文件（脚本、数据表、图表、文档等）时调用；"
-            + "仅支持用户数据目录下的文件，单个不超过 1MB。")
+            + "仅支持用户数据目录下的文件，单个不超过 1MB。"
+            + "硬性约束：文字里向用户承诺「可以交付/一并交付」某个文件，就必须在同一轮对本工具逐个调用、当场交付，"
+            + "禁止只口头承诺而不调用；用户索取沙盒内的任何已有文件时直接交付该文件本身，"
+            + "不要只交付别的文件或只复述文件内容。")
     public String deliver_artifact(
             @ToolParam(description = "沙盒内文件的绝对路径，如 /home/gem/user-data/sales.csv") String path,
             @ToolParam(description = "产物文件名（含扩展名；留空则沿用沙盒内原文件名）", required = false) String filename,

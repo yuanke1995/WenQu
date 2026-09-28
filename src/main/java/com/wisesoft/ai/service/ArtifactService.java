@@ -54,10 +54,10 @@ public class ArtifactService {
 
     /** 允许生成的产物扩展名（小写，无点） */
     private static final Set<String> ALLOWED_EXTS = Set.of("md", "txt", "csv", "json", "html", "htm");
-    /** 字节级产物的扩展名白名单（沙盒文件交付）：在文本白名单上放宽到沙盒典型输出（脚本/图片/表格/压缩包） */
+    /** 字节级产物的扩展名白名单（沙盒文件交付）：在文本白名单上放宽到沙盒典型输出（脚本/代码/图片/表格/压缩包） */
     private static final Set<String> ALLOWED_EXTS_BINARY = Set.of(
             "md", "txt", "csv", "json", "html", "htm",
-            "py", "log", "png", "jpg", "jpeg", "svg", "xlsx", "xls", "pdf", "zip");
+            "py", "java", "log", "png", "jpg", "jpeg", "svg", "xlsx", "xls", "pdf", "zip");
     /** 单文件内容上限（约 1MB，防止工具把超大内容写盘占满磁盘） */
     private static final int MAX_BYTES = 1024 * 1024;
     /** 文件名最大长度（含扩展名） */

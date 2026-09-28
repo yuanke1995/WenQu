@@ -32,7 +32,10 @@ public class ImageAuthInterceptor implements HandlerInterceptor {
         if (expireStr != null && expireStr.matches("\\d+")) {
             expire = Long.parseLong(expireStr);
         }
-        if (signer.verify(path, expire, sig)) {
+        // 签名基准是**原始路径**（如 /ai/artifacts/…/xxx_2026年度销售额.csv），而浏览器对路径里的
+        // 中文/空格做百分号编码，getRequestURI() 拿到的是编码后的串 → 直接比对必然失配 401
+        // （症状：纯 ASCII 文件名能下载、中文文件名"无法下载"）。编码与不编码各验一次，任一匹配即放行。
+        if (signer.verify(path, expire, sig) || verifyDecoded(path, expire, sig)) {
             return true;
         }
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -42,5 +45,15 @@ public class ImageAuthInterceptor implements HandlerInterceptor {
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    /** 解码后再验一次（URLDecoder 把 + 转空格，但路径里浏览器本就不编码 +，原始串那次校验已覆盖） */
+    private boolean verifyDecoded(String path, long expire, String sig) {
+        try {
+            return signer.verify(java.net.URLDecoder.decode(path, java.nio.charset.StandardCharsets.UTF_8),
+                    expire, sig);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
