@@ -39,9 +39,12 @@
                 </div>
                 <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
               </div>
-              <div v-if="hasTimelineTools(m)" class="md" :data-msg-index="i">
+              <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineView(m)" :key="si">
                   <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images)"></div>
+                  <!-- 过程独白段：区间指向 m.processText（与正文分流），灰字弱化原位渲染，不与正文混淆 -->
+                  <div v-else-if="seg.kind === 'process'" class="tl-process">{{ (m.processText || '').slice(seg.from, seg.to) }}</div>
+                  <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group">
                     <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
@@ -65,7 +68,7 @@
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <span class="tl-caret" :class="{ open: t._open }">▶</span>
                         </button>
-                        <div v-if="t._open || t.status === 'start'" class="tl-card-body">
+                        <div v-if="t._open" class="tl-card-body">
                           <template v-if="t.args">
                             <div class="tl-io-label">入参</div>
                             <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
@@ -87,7 +90,8 @@
               <div v-else class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
               <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
-              <div v-if="m.dispatched" class="dispatch-chip">
+              <!-- 派遣提示属内部排障信息：与「检索调试」同一开关（chat.retrievalDebugEnabled，仅管理员可见）控制 -->
+              <div v-if="m.dispatched && debugEntryVisible" class="dispatch-chip">
                 <thunderbolt-outlined class="dispatch-ic" />
                 <span>已派遣「{{ m.dispatched.name }}」</span>
                 <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
@@ -96,7 +100,7 @@
               <!-- 工具（沙盒/MCP）执行中不叠加裸 spin：工具条已有转圈+实时耗时，裸圈无语义还像卡死 -->
               <a-spin v-if="m.loading && m.content && !toolRunning(m)" size="small" style="margin-top:4px" />
               <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
-              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineTools(m)" class="tool-status-list">
+              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="tool-status-list">
                 <button class="tl-group-bar" type="button" @click="m._fbOpen = !m._fbOpen">
                   <loading-outlined v-if="toolRunning(m)" spin class="tool-ic tool-ic-run" />
                   <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
@@ -119,7 +123,7 @@
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                       <span class="tl-caret" :class="{ open: t._open }">▶</span>
                     </button>
-                    <div v-if="t._open || t.status === 'start'" class="tl-card-body">
+                    <div v-if="t._open" class="tl-card-body">
                       <template v-if="t.args">
                         <div class="tl-io-label">入参</div>
                         <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
@@ -146,6 +150,7 @@
                   <span class="approval-hint">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</span>
                 </div>
               </div>
+              <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
                    :href="resolveImg(a.url)" :download="a.filename" target="_blank" :title="'下载 ' + a.filename">
@@ -621,10 +626,12 @@ const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.
 //   {kind:'text', from, to} → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
 //   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
 // 渲染经 timelineView(m) 生成视图：连续工具合并为折叠组，正文保持段落连续。
-// 历史恢复的消息没有 timeline（落库只有整段 content，无法重建交错点）→ hasTimelineTools 为假，
-// 走下方兜底折叠组，不造数。data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
+// 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复时由 restoreTimeline 重建，
+// 刷新后仍是「正文—工具—正文」的交错过程视图；旧消息无 timeline 才走底部汇总兜底。
+// data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
 
-const hasTimelineTools = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && s.kind === 'tool')
+/** 是否值得按时间线渲染：有工具段/产物段/过程段才有交错意义（纯正文段与整段渲染等价） */
+const hasTimelineBlocks = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact' || s.kind === 'process'))
 
 const extendTimelineText = (m, from, to) => {
   if (!m) return
@@ -634,10 +641,48 @@ const extendTimelineText = (m, from, to) => {
   else tl.push({ kind: 'text', from, to })
 }
 
+// 过程独白段带区间：指向 m.processText（与正文分流的独立累积），连续追加自动延伸末段
+const extendTimelineProcess = (m, from, to) => {
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  const last = tl[tl.length - 1]
+  if (last && last.kind === 'process' && last.to === from) last.to = to
+  else tl.push({ kind: 'process', from, to })
+}
+
+// 工具段带下标 i：与后端落库口径一致（工具终态在 toolCalls 里的位置），
+// 实时态另存对象引用（status 原地更新，卡片自动从转圈变完成）
 const pushTimelineTool = (m, tool) => {
   if (!m) return
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  tl.push({ kind: 'tool', tool })
+  tl.push({ kind: 'tool', tool, i: Array.isArray(m.toolCalls) ? m.toolCalls.length - 1 : 0 })
+}
+
+// 产物段：只存下标（产物清单可能被 done 整体覆盖，存引用会失效），渲染时取 m.artifacts[i]
+const pushTimelineArtifact = (m, index) => {
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  tl.push({ kind: 'artifact', i: index })
+}
+
+/** 用后端落库/下发的段数组重建时间线：文本段直接用区间，工具段与产物段按下标取回对象。
+ *  下标取不到（数据缺失）就跳过该段，不造数。 */
+const restoreTimeline = (m, segs) => {
+  const out = []
+  for (const s of segs || []) {
+    if (!s || !s.kind) continue
+    if (s.kind === 'text') {
+      out.push({ kind: 'text', from: Number(s.from) || 0, to: Number(s.to) || 0 })
+    } else if (s.kind === 'process') {
+      out.push({ kind: 'process', from: Number(s.from) || 0, to: Number(s.to) || 0 })
+    } else if (s.kind === 'tool') {
+      const t = (m.toolCalls || [])[Number(s.i) || 0]
+      if (t) out.push({ kind: 'tool', i: Number(s.i) || 0, tool: t })
+    } else if (s.kind === 'artifact') {
+      out.push({ kind: 'artifact', i: Number(s.i) || 0 })
+    }
+  }
+  return out
 }
 
 /** 句末判定：文本尾部（去空白）以句末标点收尾视为「话已说完」；否则视为半句——后面大概率
@@ -677,6 +722,21 @@ const timelineView = m => {
   }
   for (const seg of tl) {
     if (!seg) continue
+    if (seg.kind === 'process') {
+      // 过程独白段：区间指向 m.processText（独立累积），原位灰字渲染；
+      // 不参与句中吸收/工具分组，直接断开当前合并窗口与工具组
+      flushMerge()
+      flushGroup()
+      const plen = (m.processText || '').length
+      const pf = Math.min(Number(seg.from) || 0, plen)
+      const pt = Math.min(Number(seg.to) || 0, plen)
+      if (pt > pf) out.push({ kind: 'process', from: pf, to: pt })
+      continue
+    }
+    if (seg.kind === 'artifact') {
+      // 产物不再按生成时刻就地渲染（统一沉底展示）：跳过该段，且不打断工具组/合并窗口
+      continue
+    }
     if (seg.kind === 'tool') {
       if (!seg.tool) continue
       if (mergeFrom >= 0) { absorbed.push(seg.tool); continue }
@@ -1336,38 +1396,46 @@ const switchSession = async sid => {
     if (r.success && Array.isArray(r.data) && currentSessionId.value === sid) {
       const list = r.data
         .filter(m => m && (m.content || (Array.isArray(m.images) && m.images.length)))
-        .map(m => ({
-          role: m.role === 'user' ? 'user' : 'ai',
-          content: String(m.content || ''),
-          messageId: m.messageId || m.id || null,
-          fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
-          images: Array.isArray(m.images) ? m.images : [],
-          attachments: Array.isArray(m.attachments) ? m.attachments : [],
-          sources: Array.isArray(m.sources) ? m.sources : [],
-          related: [],
-          thinking: m.thinking || '',
-          thinkOpen: false,
-          time: m.createTime ? new Date(m.createTime).getTime() : null,
-          artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
-          toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
-          // Token 用量（随消息落库）：历史会话的「本次用量/会话累计」回看数据源（旧消息无此字段则为 null）
-          tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
-          retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
-          // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
-          subagents: (() => {
-            try {
-              const r = m.retrieved ? JSON.parse(m.retrieved) : null
-              return (r && Array.isArray(r.branches)) ? r.branches : []
-            } catch (e) { return [] }
-          })(),
-          // 按需委派路由结果（同样随 retrieved 持久化）
-          subagentRoute: (() => {
-            try {
-              const r = m.retrieved ? JSON.parse(m.retrieved) : null
-              return (r && r.route) ? r.route : null
-            } catch (e) { return null }
-          })()
-        }))
+        .map(m => {
+          const msg = {
+            role: m.role === 'user' ? 'user' : 'ai',
+            content: String(m.content || ''),
+            messageId: m.messageId || m.id || null,
+            fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
+            images: Array.isArray(m.images) ? m.images : [],
+            attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            sources: Array.isArray(m.sources) ? m.sources : [],
+            related: [],
+            thinking: m.thinking || '',
+            thinkOpen: false,
+            time: m.createTime ? new Date(m.createTime).getTime() : null,
+            artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
+            toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
+            // 过程独白全文（随消息落库）：历史回显时间线 process 段的区间数据源（旧消息无此字段则为空）
+            processText: typeof m.processText === 'string' ? m.processText : '',
+            // Token 用量（随消息落库）：历史会话的「本次用量/会话累计」回看数据源（旧消息无此字段则为 null）
+            tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
+            retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
+            // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
+            subagents: (() => {
+              try {
+                const r = m.retrieved ? JSON.parse(m.retrieved) : null
+                return (r && Array.isArray(r.branches)) ? r.branches : []
+              } catch (e) { return [] }
+            })(),
+            // 按需委派路由结果（同样随 retrieved 持久化）
+            subagentRoute: (() => {
+              try {
+                const r = m.retrieved ? JSON.parse(m.retrieved) : null
+                return (r && r.route) ? r.route : null
+              } catch (e) { return null }
+            })(),
+            // 回答时间线（随消息落库）：重建后刷新页仍是「正文—工具—产物」交错的过程视图
+            timeline: []
+          }
+          if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
+          return msg
+        })
       // 该会话正在流式回答：把 live 消息接回视图尾部。本轮完成前后端不落库助手消息，
       // getHistory 里没有这条；用户消息在轮开始时已即时落库，顺序正好衔接
       const st = chatStreams.get(sid)
@@ -1680,6 +1748,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 兼容旧 payload */ }
     },
     onToken: t => { gotToken = true; const prevLen = full.length; full += t; msg.content = full; extendTimelineText(msg, prevLen, full.length); msg.stage = ''; msg.thinkLoading = false; liveScroll() },
+    onProcess: t => {
+      // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）
+      const prevLen = (msg.processText || '').length
+      msg.processText = (msg.processText || '') + t
+      extendTimelineProcess(msg, prevLen, msg.processText.length)
+      liveScroll()
+    },
     onStage: s => { msg.stage = s; liveScroll() },
     onPlan: p => {
       // 本轮执行计划（后端按配置确定会跑的步骤）：右栏清单逐项点亮的数据源；仅实时，历史轮无此字段
@@ -1716,6 +1791,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (!a || !a.url) return
         if (!Array.isArray(msg.artifacts)) msg.artifacts = []
         msg.artifacts.push(a)
+        // 产物按生成时刻插入时间线（只记下标），刷新后仍在原位而不是堆到气泡底部
+        pushTimelineArtifact(msg, msg.artifacts.length - 1)
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1801,15 +1878,19 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (p.thinking) msg.thinking = p.thinking
         msg.thinkLoading = false
         if (typeof p.finalContent === 'string' && p.finalContent !== '') {
-          // 最终正文与流式累积不一致（引用自检重建/related 清理等改写了正文）：文本区间失效 →
-          // 时间线清空回退分组兜底（正文以最终版为准，工具条走底部列表），不显示交错错位的内容
-          if (p.finalContent !== msg.content) msg.timeline = []
-          msg.content = p.finalContent
+          // 最终正文与流式累积不一致（引用自检重建/related 清理等改写了正文）：文本区间失效，
+          // 以 done 下发的落库版时间线为准（区间已按最终正文夹取）；后端没给时间线才回退底部汇总
+          if (p.finalContent !== msg.content) msg.content = p.finalContent
         }
         if (Array.isArray(p.finalImages)) msg.images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) msg.artifacts = p.artifacts
+        // 过程独白以 done 下发的落库版为准（须先于 timeline 恢复赋值：过程段区间指向它）
+        if (typeof p.processText === 'string') msg.processText = p.processText
         // done 工具终态原地合并（不整组替换）：保住 timeline 引用与实时到达顺序，终态字段覆盖
         if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(msg, p.toolCalls)
+        // 时间线以落库版为准：本轮视图与刷新后视图同源（工具/产物下标与终态清单一一对应）
+        if (Array.isArray(p.timeline) && p.timeline.length) msg.timeline = restoreTimeline(msg, p.timeline)
+        else if (msg.content !== full) msg.timeline = []
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
         if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
@@ -2121,6 +2202,8 @@ onMounted(async () => {
 /* 正文段贴工具块：压掉 v-html 里 markdown 段落的上下 margin，保持「句间插标签」的连续读感 */
 .tl-text :deep(*:first-child) { margin-top: 0; }
 .tl-text :deep(*:last-child) { margin-bottom: 0; }
+/* 过程独白段（<process> 标签分流）：灰字弱化 + 左侧细线，与正文区分但不打断交错过程视图 */
+.tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
 .tl-group { margin: 3px 0; }
 .tl-group-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
@@ -2169,6 +2252,7 @@ onMounted(async () => {
 .tool-fail { color: var(--app-danger); }
 
 .artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+/* 时间线里的产物卡片（生成时刻穿插，非底部汇总）：上下留白与正文段落对齐 */
 .artifact-item {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
   padding: 6px 10px; border: 1px solid var(--app-border); border-radius: 8px;
