@@ -396,7 +396,7 @@
       </div>
     </div>
 
-    <!-- 右侧状态栏（可收起）：执行过程 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源 -->
+    <!-- 右侧状态栏（可收起）：运行控制 / 当前智能体 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示） -->
     <aside v-if="panelOpen" class="right-panel">
       <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
       <div class="rp-scope-row">
@@ -425,68 +425,6 @@
           </span>
         </div>
         <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
-      </div>
-      <!-- 执行过程时间线：当前/最近一轮的 思考·工具·子智能体·阶段 汇总（只投影消息里已有数据，不造数） -->
-      <div class="rp-card">
-        <div class="rp-exec-head" @click="toggleExecPanel">
-          <span class="rp-label" style="margin-bottom:0">执行过程</span>
-          <span class="rp-exec-sum">
-            <a-spin v-if="panelAi && panelAi.loading" size="small" />
-            <template v-else>{{ execSummary }}</template>
-            <down-outlined class="rp-arrow" :class="{ open: rpExecOpen }" />
-          </span>
-        </div>
-        <template v-if="rpExecOpen">
-          <template v-if="panelAi">
-            <div v-for="(it, ti) in execTimeline" :key="ti" class="rp-exec-wrap" :class="{ 'is-error': it.status === 'error' }">
-              <div class="rp-exec-item" :class="{ 'is-click': it.kind === 'tool' || it.kind === 'subagent' }" @click="onTimelineClick(it)">
-                <span class="rp-dot" :class="it.status"></span>
-                <span class="rp-exec-name" :title="it.name">{{ it.name }}</span>
-                <span v-if="it.retry" class="rp-exec-dur">{{ it.retry }}</span>
-                <span v-if="it.duration" class="rp-exec-dur">{{ it.duration }}</span>
-              </div>
-              <!-- 工具步点开看入参/报错（_open 存在消息对象上，随会话保留） -->
-              <div v-if="it.kind === 'tool' && it.src._open && it.detail" class="rp-exec-detail">{{ it.detail }}</div>
-              <!-- 子智能体行点开看各分支状态（右栏独立折叠，与消息流内编排卡片互不影响） -->
-              <div v-if="it.kind === 'subagent' && rpSaOpen && it.src.branches" class="rp-exec-detail rp-exec-sub">
-                <div v-for="b in it.src.branches" :key="b.id" class="rp-sa-row">
-                  <span class="rp-sa-name" :title="b.description">{{ b.name }}</span>
-                  <span class="rp-exec-dur">{{ b.status === 'done' ? ((b.hits ? b.hits + ' 块 · ' : '') + fmtDuration(b.elapsedMs)) : (b.status === 'running' ? '运行中' : '失败') }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="!execTimeline.length" class="rp-dim">本轮暂无执行明细</div>
-          </template>
-          <div v-else class="rp-dim">发送问题后展示执行过程</div>
-        </template>
-      </div>
-      <!-- 沙盒工作区（会话 scope）：容器运行中才显示整卡（未运行/未用过则隐藏，不占版面），可浏览/下载文件；state 探测绝不悄悄拉起容器 -->
-      <div v-if="sbState && sbState.available" class="rp-card">
-        <div class="rp-exec-head" @click="toggleSandbox">
-          <span class="rp-label" style="margin-bottom:0">沙盒</span>
-          <span class="rp-exec-sum">
-            文件 {{ sbEntries.length }}
-            <down-outlined class="rp-arrow" :class="{ open: sbOpen }" />
-          </span>
-        </div>
-        <template v-if="sbOpen">
-          <div class="rp-sb-path">
-            <span v-if="sbPath && sbState.root && sbPath !== sbState.root" class="rp-sb-nav" @click="sbNav(sbParent(sbPath))">‹ 上一级</span>
-            <span class="rp-sb-cur" :title="sbPath">{{ sbPath }}</span>
-            <span class="rp-sb-refresh" title="刷新" @click="sbLoad(sbPath)">⟳</span>
-          </div>
-          <div v-if="sbLoading" class="rp-dim">加载中…</div>
-          <template v-else>
-            <div v-for="e in sbEntries" :key="e.path" class="rp-sb-row"
-                 :title="e.isDir ? ('打开目录 ' + e.path) : ('下载 ' + e.path)"
-                 @click="sbOpenEntry(e)">
-              <span class="rp-sb-ic">{{ e.isDir ? '▸' : '·' }}</span>
-              <span class="rp-sb-name">{{ sbName(e.path) }}</span>
-              <span v-if="!e.isDir && e.size != null" class="rp-exec-dur">{{ fmtSize(e.size) }}</span>
-            </div>
-            <div v-if="!sbEntries.length" class="rp-dim">（空目录）</div>
-          </template>
-        </template>
       </div>
       <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
       <div v-if="sessionArtifacts.length" class="rp-card">
@@ -539,33 +477,31 @@
         <div class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮 · 引用 {{ sessionRetrieval.refs }} 段</span><span class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
         <div class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
       </div>
-      <div class="rp-card">
-        <div class="rp-label">引用来源<template v-if="groupedSources.length"> · {{ groupedSources.length }} 个文档</template></div>
-        <template v-if="groupedSources.length">
-          <div v-for="g in groupedSources" :key="g.key" class="rp-group">
-            <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
-              <file-text-outlined class="rp-src-ic" />
-              <span class="rp-src-name">{{ g.fileName }}</span>
-              <span class="rp-count">{{ g.items.length }} 段</span>
-              <down-outlined class="rp-arrow" :class="{ open: srcOpenOf(g) }" />
-            </div>
-            <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
-              <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
-              <div class="rp-group-body-in">
-                <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
-                     :class="{ hl: hoveredRef === s.ref }"
-                     title="点击查看原文；有对应角标的来源会在正文中定位"
-                     @click.stop="locateSource(s)"
-                     @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
-                  <span class="rp-src-ref">[{{ s.ref }}]</span>
-                  <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
-                  <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
-                </div>
+      <!-- 引用来源：有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则） -->
+      <div v-if="groupedSources.length" class="rp-card">
+        <div class="rp-label">引用来源 · {{ groupedSources.length }} 个文档</div>
+        <div v-for="g in groupedSources" :key="g.key" class="rp-group">
+          <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
+            <file-text-outlined class="rp-src-ic" />
+            <span class="rp-src-name">{{ g.fileName }}</span>
+            <span class="rp-count">{{ g.items.length }} 段</span>
+            <down-outlined class="rp-arrow" :class="{ open: srcOpenOf(g) }" />
+          </div>
+          <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
+            <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
+            <div class="rp-group-body-in">
+              <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
+                   :class="{ hl: hoveredRef === s.ref }"
+                   title="点击查看原文；有对应角标的来源会在正文中定位"
+                   @click.stop="locateSource(s)"
+                   @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
+                <span class="rp-src-ref">[{{ s.ref }}]</span>
+                <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
+                <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
               </div>
             </div>
           </div>
-        </template>
-        <div v-else class="rp-dim">暂无引用</div>
+        </div>
       </div>
     </aside>
 
@@ -642,9 +578,9 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, sandboxState, sandboxTree, sandboxDownload, approveToolCall, addEvalCase } from '../api'
+         listAvailableSkills, getUserPreference, approveToolCall, addEvalCase } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
-import { sessionStore, loadSessions } from './store'
+import { sessionStore, loadSessions, chatStreams } from './store'
 import { exportAnswerMd } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
@@ -690,8 +626,7 @@ const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.
 
 const hasTimelineTools = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && s.kind === 'tool')
 
-const extendTimelineText = (idx, from, to) => {
-  const m = messages.value[idx]
+const extendTimelineText = (m, from, to) => {
   if (!m) return
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
   const last = tl[tl.length - 1]
@@ -699,36 +634,73 @@ const extendTimelineText = (idx, from, to) => {
   else tl.push({ kind: 'text', from, to })
 }
 
-const pushTimelineTool = (idx, tool) => {
-  const m = messages.value[idx]
+const pushTimelineTool = (m, tool) => {
   if (!m) return
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
   tl.push({ kind: 'tool', tool })
 }
 
+/** 句末判定：文本尾部（去空白）以句末标点收尾视为「话已说完」；否则视为半句——后面大概率
+ * 接「工具结果回来后继续说」的下半句。尾部有未闭合代码块（``` 为奇数个）时强制视为句末：
+ * 跨代码块边界的拼接会让后续正文被吞进代码块。 */
+const SENTENCE_END_CHARS = '。，、；：！？…—～~.!?;:』」》）〉】]'
+const endsSentence = s => {
+  const t = String(s).replace(/\s+$/, '')
+  if (!t) return true
+  if ((t.match(/```/g) || []).length % 2 === 1) return true
+  return SENTENCE_END_CHARS.includes(t.slice(-1))
+}
+
 /** 时间线渲染视图：把 timeline 段序列转成可渲染序列。
- * 连续工具段（中间夹空白文本不算断点）合并为 {kind:'group', tools:[...]} 折叠组，
- * 正文段落不被工具剁碎；尾部 timeline 未覆盖的正文兜底补段（与旧拼接逻辑等价）。 */
+ * 1）连续工具段（中间夹空白文本不算断点）合并为 {kind:'group', tools:[...]} 折叠组；
+ * 2）句中工具吸收：模型常在句中发起工具（"先[调工具]检查环境"），半句之后出现的工具延迟渲染，
+ *    等出现下一段正文时把两段文本连排渲染（合并区间是 content 的连续切片——工具不往正文写
+ *    内容，连排与全量渲染完全等价，零失真），工具并入后续工具游程，组内顺序仍如实保留时序。
+ *    每帧重算无状态：打字机期间合并窗口由收尾 flush 照常显示，运行中工具的卡片始终可见。
+ * 尾部 timeline 未覆盖的正文兜底补段（与旧拼接逻辑等价）。 */
 const timelineView = m => {
   const len = (m.content || '').length
+  const content = String(m.content || '')
   const tl = Array.isArray(m.timeline) ? m.timeline : []
   const out = []
   let group = null
   let maxTo = 0
-  const flush = () => { if (group) { out.push(group); group = null } }
+  let mergeFrom = -1 // >=0 表示有一个未闭合的半句在等待后续正文连排
+  const absorbed = [] // 半句与下一段正文之间出现的工具（延迟渲染，按到达顺序保真）
+  const flushGroup = () => { if (group) { out.push(group); group = null } }
+  const flushMerge = () => {
+    if (mergeFrom < 0) return
+    out.push({ kind: 'text', from: mergeFrom, to: maxTo })
+    for (const t of absorbed) { if (!group) group = { kind: 'group', tools: [] }; group.tools.push(t) }
+    absorbed.length = 0
+    mergeFrom = -1
+  }
   for (const seg of tl) {
     if (!seg) continue
     if (seg.kind === 'tool') {
-      if (seg.tool) { if (!group) group = { kind: 'group', tools: [] }; group.tools.push(seg.tool) }
+      if (!seg.tool) continue
+      if (mergeFrom >= 0) { absorbed.push(seg.tool); continue }
+      if (!group) group = { kind: 'group', tools: [] }
+      group.tools.push(seg.tool)
       continue
     }
     const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
-    if (to <= from || !String(m.content || '').slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
-    flush()
-    out.push({ kind: 'text', from, to })
-    if (to > maxTo) maxTo = to
+    if (to <= from || !content.slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
+    if (mergeFrom >= 0) {
+      maxTo = to // 半句连排：窗口向本段延伸
+      if (endsSentence(content.slice(mergeFrom, maxTo))) flushMerge()
+      continue
+    }
+    flushGroup()
+    maxTo = to
+    if (endsSentence(content.slice(from, to))) {
+      out.push({ kind: 'text', from, to })
+    } else {
+      mergeFrom = from // 半句：开启合并窗口
+    }
   }
-  flush()
+  flushMerge()
+  flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
   return out
 }
@@ -779,8 +751,8 @@ const groupDur = g => {
 const fallbackDur = m => toolDuration(toolCallsView(m.toolCalls).reduce((s, t) => s + (t.elapsedMs || 0), 0))
 
 /** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
-const mergeDoneToolCalls = (idx, doneCalls) => {
-  const m = messages.value[idx]
+const mergeDoneToolCalls = (m, doneCalls) => {
+  if (!m) return
   if (!Array.isArray(m.toolCalls)) m.toolCalls = []
   const list = m.toolCalls
   for (const d of doneCalls) {
@@ -804,7 +776,7 @@ const ensureTick = () => {
   if (tickTimer) return
   tickTimer = setInterval(() => {
     nowTick.value = Date.now()
-    if (!loading.value) { clearInterval(tickTimer); tickTimer = null }
+    if (!chatStreams.size) { clearInterval(tickTimer); tickTimer = null }
   }, 1000)
 }
 onUnmounted(() => { if (tickTimer) clearInterval(tickTimer) })
@@ -933,8 +905,12 @@ const loadAgents = async () => {
   } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
 }
 
-const loading = ref(false)
 const currentSessionId = ref(null)
+// 「当前会话正在回答」：流式记录按会话各存一条（chatStreams，store.js 模块单例，跨路由存活）。
+// 语义变化：以前是页面全局布尔（任何会话在答都不能切会话/新建，点击被静默吞掉），
+// 现在只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
+// 同一会话内仍互斥（输入/重新生成/停止都作用于当前会话），守卫写法不用动。
+const loading = computed(() => chatStreams.has(currentSessionId.value))
 const messages = ref([])
 const box = ref(null)
 const stickToBottom = ref(true)
@@ -950,7 +926,6 @@ const previewUrl = computed(() => previewList.value[previewIndex.value] || '')
 const zoom = ref(1)
 const offset = ref({ x: 0, y: 0 })
 const dragState = ref(null)
-const abortController = ref(null)
 
 const currentSessionTitle = computed(() => {
   const s = sessionStore.list.find(x => x.id === currentSessionId.value)
@@ -1072,8 +1047,8 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
-// ==================== 右栏：执行过程时间线 + 本会话产物（P0 补展示） ====================
-// panelAi = 最后一轮 AI 消息（含进行中）——执行过程要看到实时进度，
+// ==================== 右栏：运行控制 / 本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
+// panelAi = 最后一轮 AI 消息（含进行中）——供「运行控制」卡（停止/重试本轮）定位重发目标，
 // 与「最近一次检索/本次用量」用的 lastAi（仅已完成轮）口径不同
 const panelAi = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -1081,85 +1056,6 @@ const panelAi = computed(() => {
   }
   return null
 })
-const rpExecOpen = ref(true)        // 时间线折叠态：新轮次自动展开，完成后用户未手动操作则自动收起
-const rpExecTouched = ref(false)
-const rpSaOpen = ref(false)         // 子智能体分支行的展开态（右栏独立于消息流内编排卡片）
-const toggleExecPanel = () => {
-  rpExecOpen.value = !rpExecOpen.value
-  rpExecTouched.value = true
-}
-// 工具步时间线项（计划/无计划两条路径共用）：入参/输出/报错原文可展开（result 即沙盒命令输出等，
-// 历史恢复的 done 记录同样带 args/result）
-const toolTimelineItem = t => ({
-  kind: 'tool',
-  status: t.status === 'start' ? 'running' : (t.status === 'error' ? 'error' : 'done'),
-  name: toolLabel(t.name),
-  duration: t.elapsedMs > 0 ? toolDuration(t.elapsedMs) : '',
-  retry: t.attempts > 1 ? '重试 ' + (t.attempts - 1) + ' 次' : '',
-  detail: [t.args ? '入参 ' + t.args : '', t.result ? '输出 ' + t.result : '', t.error ? '错误 ' + t.error : ''].filter(Boolean).join('\n'),
-  src: t
-})
-// 时间线只投影消息对象里已有的数据：plan / thinking / toolCalls / subagents / stage，不造数。
-// 有计划（本轮 plan 事件下发）→ 按计划顺序逐项点亮，状态只来自真实事件；
-// 计划外真实发生的工具调用/子智能体按发生序插在「生成回答」之前（它们发生在生成过程中）。
-// 无计划（历史恢复/旧消息）→ 退回纯事件时间线
-const execTimeline = computed(() => {
-  const m = panelAi.value
-  if (!m) return []
-  const plan = Array.isArray(m.plan) ? m.plan : []
-  const items = []
-  if (plan.length) {
-    const stage = m.stage || ''
-    for (const stepName of plan) {
-      let status = 'pending'
-      let duration = ''
-      if (stepName === '理解问题') {
-        status = m.loading ? (stage.includes('理解问题') ? 'running' : 'done')
-          : (m.content || m.failed || m.retrieved || m.thinking ? 'done' : 'pending')
-      } else if (stepName === '深度思考') {
-        status = m.thinking ? ((m.loading && m.thinkLoading) ? 'running' : 'done') : 'pending'
-      } else if (stepName === '检索知识库') {
-        status = (m.retrieved || (Array.isArray(m.sources) && m.sources.length)) ? 'done'
-          : (m.loading && stage.includes('检索')) ? 'running' : 'pending'
-      } else if (stepName === '生成回答') {
-        status = !m.loading ? (m.failed ? 'error' : (m.content ? 'done' : 'pending'))
-          : (m.content || stage.includes('生成')) ? 'running' : 'pending'
-        if (status === 'done' && m.doneTime && m.time) duration = toolDuration(m.doneTime - m.time)
-      } else {
-        // 后端扩展的未知步骤名：完成轮按已做完显示，运行中按阶段文本匹配
-        status = !m.loading ? 'done' : (stage.includes(stepName) ? 'running' : 'pending')
-      }
-      items.push({ kind: 'plan', status, name: stepName, duration })
-    }
-    const extra = []
-    for (const t of toolCallsView(m.toolCalls)) extra.push(toolTimelineItem(t))
-    const sc = subagentCard(m)
-    if (sc) extra.push({ kind: 'subagent', status: sc.running ? 'running' : (sc.done < sc.total ? 'error' : 'done'), name: sc.title, src: sc })
-    const genIdx = items.findIndex(it => it.name === '生成回答')
-    items.splice(genIdx >= 0 ? genIdx : items.length, 0, ...extra)
-  } else {
-    if (m.thinking) items.push({ kind: 'think', status: (m.loading && m.thinkLoading) ? 'running' : 'done', name: '深度思考' })
-    for (const t of toolCallsView(m.toolCalls)) items.push(toolTimelineItem(t))
-    const sc = subagentCard(m)
-    if (sc) items.push({ kind: 'subagent', status: sc.running ? 'running' : (sc.done < sc.total ? 'error' : 'done'), name: sc.title, src: sc })
-    if (m.loading) items.push({ kind: 'stage', status: 'running', name: m.stage || '生成回答' })
-    else if (m.failed) items.push({ kind: 'final', status: 'error', name: '生成失败' })
-    else if (m.content) items.push({ kind: 'final', status: 'done', name: '生成回答', duration: (m.doneTime && m.time) ? toolDuration(m.doneTime - m.time) : '' })
-  }
-  return items
-})
-// 折叠态的头部摘要（运行中由转圈代替）
-const execSummary = computed(() => {
-  const m = panelAi.value
-  if (!m) return ''
-  const tools = toolCallsView(m.toolCalls).length
-  const arts = Array.isArray(m.artifacts) ? m.artifacts.length : 0
-  return [tools ? '工具 ' + tools : '', arts ? '产物 ' + arts : ''].filter(Boolean).join(' · ')
-})
-const onTimelineClick = it => {
-  if (it.kind === 'tool') it.src._open = !it.src._open
-  else if (it.kind === 'subagent') rpSaOpen.value = !rpSaOpen.value
-}
 // 右栏「重试本轮」：与消息流内重试同源——regenerate 向前配对用户问题后整轮重发；
 // 工具级单步重试需要后端重执行机制，暂未实现
 const retryPanelRound = () => {
@@ -1216,64 +1112,6 @@ const ctxPct = computed(() => {
   return Math.min(100, Math.max(0, Math.round((t.context / t.budget) * 100)))
 })
 const ctxLevel = computed(() => (ctxPct.value > 95 ? 'danger' : (ctxPct.value > 80 ? 'warn' : '')))
-
-// ==================== 右栏：沙盒工作区浏览（P2 #9） ====================
-// state 探测不创建容器；树懒加载（展开/切会话时拉），文件行点击下载（带令牌 fetch）
-const sbOpen = ref(false)
-const sbState = ref(null)          // {available, root}
-const sbPath = ref('')
-const sbEntries = ref([])
-const sbLoading = ref(false)
-const toggleSandbox = () => { sbOpen.value = !sbOpen.value }
-const sbLoadState = async () => {
-  if (!currentSessionId.value) { sbState.value = null; return }
-  try {
-    const r = await sandboxState(currentSessionId.value)
-    sbState.value = (r && r.success && r.data) ? r.data : { available: false }
-  } catch (e) { sbState.value = { available: false } }
-  if (sbState.value.available) {
-    sbPath.value = sbState.value.root || ''
-    sbLoad(sbPath.value)
-  }
-}
-const sbLoad = async p => {
-  if (!currentSessionId.value) return
-  sbLoading.value = true
-  try {
-    const r = await sandboxTree(currentSessionId.value, p)
-    if (r && r.success && r.data && r.data.available) {
-      sbPath.value = r.data.path || p || ''
-      sbEntries.value = Array.isArray(r.data.entries) ? r.data.entries : []
-      sbState.value = { ...(sbState.value || {}), available: true }
-    } else if (r && r.success && r.data) {
-      sbState.value = { available: false }
-      sbEntries.value = []
-    } else {
-      message.warning((r && r.msg) || '沙盒目录读取失败')
-    }
-  } catch (e) { message.warning(e.message || '沙盒目录读取失败') }
-  finally { sbLoading.value = false }
-}
-const sbNav = p => sbLoad(p)
-const sbParent = p => {
-  const i = (p || '').replace(/\/+$/, '').lastIndexOf('/')
-  return i > 0 ? p.slice(0, i) : p
-}
-const sbName = p => {
-  const s = p || ''
-  return s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s
-}
-const sbOpenEntry = e => {
-  if (e.isDir) sbNav(e.path)
-  else sandboxDownload(currentSessionId.value, e.path, sbName(e.path)).catch(err => message.warning(err.message || '下载失败'))
-}
-// 沙盒卡只在容器运行中显示：状态探测不能依赖「点开卡片」（否则卡永远没机会出现）——
-// 面板打开（含初始）/ 切会话 / 本轮用过沙盒工具的轮完成时各探测一次（state 探测不创建容器）
-const SB_TOOL_NAMES = ['execute', 'read_file', 'write_file', 'edit_file', 'ls']
-const roundUsedSandbox = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => SB_TOOL_NAMES.includes(t.name))
-watch(panelOpen, v => { if (v) sbLoadState() }, { immediate: true })
-watch(sbOpen, v => { if (v) sbLoadState() })
-watch(currentSessionId, () => { sbState.value = null; sbEntries.value = []; if (panelOpen.value) sbLoadState() })
 
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
@@ -1488,14 +1326,15 @@ onUnmounted(() => {
 
 // ==================== 会话 ====================
 const switchSession = async sid => {
-  if (loading.value) return
+  // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上
   router.replace({ path: '/chat', query: { sid } }).catch(() => {})
   try {
     const r = await getHistory(sid)
-    if (r.success && Array.isArray(r.data)) {
-      messages.value = r.data
+    // 快速连续切换时晚到的历史响应不覆盖当前视图
+    if (r.success && Array.isArray(r.data) && currentSessionId.value === sid) {
+      const list = r.data
         .filter(m => m && (m.content || (Array.isArray(m.images) && m.images.length)))
         .map(m => ({
           role: m.role === 'user' ? 'user' : 'ai',
@@ -1529,19 +1368,26 @@ const switchSession = async sid => {
             } catch (e) { return null }
           })()
         }))
+      // 该会话正在流式回答：把 live 消息接回视图尾部。本轮完成前后端不落库助手消息，
+      // getHistory 里没有这条；用户消息在轮开始时已即时落库，顺序正好衔接
+      const st = chatStreams.get(sid)
+      if (st && st.msg.loading) list.push(st.msg)
+      messages.value = list
       scrollForce()
-    } else {
+    } else if (currentSessionId.value === sid) {
       messages.value = []
     }
   } catch (e) {
-    messages.value = []
+    if (currentSessionId.value === sid) messages.value = []
   }
 }
 
 const creatingSession = ref(false)
 const createNewSession = async () => {
   if (creatingSession.value) return
-  const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0)?.id
+  // 空会话复用排除正在流式的会话：列表里的 messageCount 是快照（首条消息 done 后才刷新），
+  // 流式中的会话可能仍记 0——命中它会把当前视图清空而不是开新会话
+  const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0 && !chatStreams.has(s.id))?.id
   if (emptySid) {
     if (currentSessionId.value !== emptySid) await switchSession(emptySid)
     else messages.value = []
@@ -1574,13 +1420,14 @@ watch(() => route.query.sid, sid => {
 })
 // 侧边栏「新建对话」信号（消费后回写 seen，跨页积累的 tick 只消费一次）
 // 注意不依赖 route.query 状态：tick 触发时路由 push 可能尚未完成，条件里查 sid 会偶发落空
+// （不再被"正在回答"拦截：当前会话的流转入后台继续跑）
 watch(() => sessionStore.newChatTick, async tick => {
   sessionStore.newChatSeen = tick
-  if (route.path === '/chat' && !loading.value) await createNewSession()
+  if (route.path === '/chat') await createNewSession()
 })
 // 当前会话被删除 → 自动落到最近会话或新建
 watch(() => sessionStore.autoPickTick, async () => {
-  if (route.path === '/chat' && !loading.value) await autoPick()
+  if (route.path === '/chat') await autoPick()
 })
 const autoPick = async () => {
   const first = sessionStore.list.find(s => (s.messageCount ?? 0) > 0)
@@ -1789,98 +1636,101 @@ async function resolveApproval (m, approved) {
   }
 }
 
-const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1, deepThink = false,
-                      attachments = [], skills = []) => {
-  const idx = replaceIdx ?? messages.value.length
-  if (replaceIdx == null) {
-    messages.value.push({ role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] })
-  } else {
-    messages.value[replaceIdx] = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, messageId: null, fb: null, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] }
-  }
-  loading.value = true
-  scrollForce()
-  // 新一轮开始：右栏执行过程展开跟随实时进度，子智能体分支行收起
-  rpExecOpen.value = true
-  rpExecTouched.value = false
-  rpSaOpen.value = false
-  abortController.value = new AbortController()
+const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
+                      attachments = [], skills = [], prev = null) => {
+  // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
+  //（重试定时器触发时用户可能已切到别的会话/换了模型）
+  const sid = prev ? prev.sid : currentSessionId.value
+  const agentId = prev ? prev.agentId : (currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''))
+  const model = prev ? prev.model : (currentOverrideModel.value || '')
+  // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
+  // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] }
+  const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
+  if (!replaceMsg) messages.value.push(msg)
+  const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
+  const liveScroll = () => { if (viewing()) scroll() }
+  const abort = new AbortController()
+  const st = { msg, abort }
+  chatStreams.set(sid, st)
+  if (viewing()) scrollForce()
   let full = ''
   let gotToken = false
-  sendQuestion(currentSessionId.value, question, imgs, {
-    signal: abortController.value.signal,
+  sendQuestion(sid, question, imgs, {
+    signal: abort.signal,
     deepThink,
     attachments,
     skills,
-    agentId: currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''),
+    // 重发标记（重新生成/自动重试走 replaceMsg 路径）：后端跳过用户消息重复落库
+    regenerate: replaceMsg != null,
+    agentId,
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
-    model: currentOverrideModel.value || '',
+    model,
     onThinking: t => {
-      const m = messages.value[idx]
-      m.thinking = (m.thinking || '') + t
-      m.thinkLoading = true
-      scroll()
+      msg.thinking = (msg.thinking || '') + t
+      msg.thinkLoading = true
+      liveScroll()
     },
     onThinkingDone: payload => {
-      const m = messages.value[idx]
-      m.thinkLoading = false
-      m.thinkOpen = false
+      msg.thinkLoading = false
+      msg.thinkOpen = false
       try {
         const j = JSON.parse(payload)
-        if (j.thinking) m.thinking = j.thinking
+        if (j.thinking) msg.thinking = j.thinking
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: t => { gotToken = true; const prevLen = full.length; full += t; messages.value[idx].content = full; extendTimelineText(idx, prevLen, full.length); messages.value[idx].stage = ''; messages.value[idx].thinkLoading = false; scroll() },
-    onStage: s => { messages.value[idx].stage = s; scroll() },
+    onToken: t => { gotToken = true; const prevLen = full.length; full += t; msg.content = full; extendTimelineText(msg, prevLen, full.length); msg.stage = ''; msg.thinkLoading = false; liveScroll() },
+    onStage: s => { msg.stage = s; liveScroll() },
     onPlan: p => {
       // 本轮执行计划（后端按配置确定会跑的步骤）：右栏清单逐项点亮的数据源；仅实时，历史轮无此字段
       try {
         const arr = typeof p === 'string' ? JSON.parse(p) : p
-        if (Array.isArray(arr) && arr.length) messages.value[idx].plan = arr
+        if (Array.isArray(arr) && arr.length) msg.plan = arr
       } catch (e) { /* 忽略 */ }
     },
     onRetrieved: payload => {
       try {
         const j = JSON.parse(payload)
-        messages.value[idx].retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
-        messages.value[idx].stage = ''
-        scroll()
+        msg.retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
+        msg.stage = ''
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onApprovalRequired: payload => {
       // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        messages.value[idx].approval = { id: j.approvalId, tool: j.tool, args: j.args, timeoutMs: j.timeoutMs, busy: false }
-        scroll()
+        msg.approval = { id: j.approvalId, tool: j.tool, args: j.args, timeoutMs: j.timeoutMs, busy: false }
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onImage: imgs2 => {
       try {
         const parsed = JSON.parse(imgs2)
-        messages.value[idx].images = Array.isArray(parsed) ? parsed : []
-      } catch (e) { messages.value[idx].images = [] }
+        msg.images = Array.isArray(parsed) ? parsed : []
+      } catch (e) { msg.images = [] }
     },
     onArtifact: payload => {
       try {
         const a = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!a || !a.url) return
-        if (!Array.isArray(messages.value[idx].artifacts)) messages.value[idx].artifacts = []
-        messages.value[idx].artifacts.push(a)
-        scroll()
+        if (!Array.isArray(msg.artifacts)) msg.artifacts = []
+        msg.artifacts.push(a)
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onToolStatus: rec => {
       try {
         const t = typeof rec === 'string' ? JSON.parse(rec) : rec
         if (!t || !t.name) return
-        if (!Array.isArray(messages.value[idx].toolCalls)) messages.value[idx].toolCalls = []
+        if (!Array.isArray(msg.toolCalls)) msg.toolCalls = []
         if (t.status === 'start') {
           const rec = { ...t, startAt: Date.now() }
-          messages.value[idx].toolCalls.push(rec)
-          pushTimelineTool(idx, rec)
+          msg.toolCalls.push(rec)
+          pushTimelineTool(msg, rec)
           ensureTick()
         } else {
-          const list = messages.value[idx].toolCalls
+          const list = msg.toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
           if (last) {
             last.status = t.status
@@ -1891,17 +1741,17 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
           } else {
             const rec = { ...t }
             list.push(rec)
-            pushTimelineTool(idx, rec)
+            pushTimelineTool(msg, rec)
           }
         }
-        scroll()
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onToolOutput: payload => {
       try {
         const o = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!o || !o.delta) return
-        const list = messages.value[idx].toolCalls
+        const list = msg.toolCalls
         if (!Array.isArray(list)) return
         const live = [...list].reverse().find(x => x.name === o.name && x.status === 'start')
         if (!live) return
@@ -1915,28 +1765,28 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
       try {
         const b = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!b || b.id == null) return
-        const list = messages.value[idx].subagents || (messages.value[idx].subagents = [])
+        const list = msg.subagents || (msg.subagents = [])
         const i = list.findIndex(x => x.id === b.id)
         if (i >= 0) list[i] = { ...list[i], ...b }
         else list.push(b)
-        scroll()
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onSubagentRoute: payload => {
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r) return
-        messages.value[idx].subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
+        msg.subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
       } catch (e) { /* 忽略 */ }
     },
     onAgentDispatched: payload => {
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r || !r.name) return
-        messages.value[idx].dispatched = {
+        msg.dispatched = {
           name: r.name, description: r.description || '', fallback: r.fallback === true
         }
-        scroll()
+        liveScroll()
       } catch (e) { /* 忽略 */ }
     },
     onDone: contentJson => {
@@ -1947,69 +1797,64 @@ const streamAnswer = (question, imgs, replaceIdx, isFirstMessage, autoRetry = 1,
         related = Array.isArray(p.related) ? p.related : []
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
-        if (p.tokens && typeof p.tokens === 'object') messages.value[idx].tokens = p.tokens
-        if (p.thinking) messages.value[idx].thinking = p.thinking
-        messages.value[idx].thinkLoading = false
+        if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
+        if (p.thinking) msg.thinking = p.thinking
+        msg.thinkLoading = false
         if (typeof p.finalContent === 'string' && p.finalContent !== '') {
           // 最终正文与流式累积不一致（引用自检重建/related 清理等改写了正文）：文本区间失效 →
           // 时间线清空回退分组兜底（正文以最终版为准，工具条走底部列表），不显示交错错位的内容
-          if (p.finalContent !== messages.value[idx].content) messages.value[idx].timeline = []
-          messages.value[idx].content = p.finalContent
+          if (p.finalContent !== msg.content) msg.timeline = []
+          msg.content = p.finalContent
         }
-        if (Array.isArray(p.finalImages)) messages.value[idx].images = p.finalImages
-        if (Array.isArray(p.artifacts) && p.artifacts.length) messages.value[idx].artifacts = p.artifacts
+        if (Array.isArray(p.finalImages)) msg.images = p.finalImages
+        if (Array.isArray(p.artifacts) && p.artifacts.length) msg.artifacts = p.artifacts
         // done 工具终态原地合并（不整组替换）：保住 timeline 引用与实时到达顺序，终态字段覆盖
-        if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(idx, p.toolCalls)
+        if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(msg, p.toolCalls)
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
-        if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) messages.value[idx].subagents = p.subagentBranches
-        if (p.subagentRoute) messages.value[idx].subagentRoute = p.subagentRoute
+        if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
+        if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
       } catch (e) { /* 旧版/停止生成：无负载 */ }
-      if (messages.value[idx].content === '') messages.value[idx].content = '（已停止生成）'
-      messages.value[idx].loading = false
+      if (msg.content === '') msg.content = '（已停止生成）'
+      msg.loading = false
       // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
-      messages.value[idx].doneTime = Date.now()
-      // 本轮用过沙盒工具：容器可能刚被拉起，刷新右栏沙盒卡（未用沙盒/面板收起则不探测）
-      if (panelOpen.value && roundUsedSandbox(messages.value[idx])) sbLoadState()
-      // 生成完成：右栏执行过程自动收起（用户手动点过则尊重其选择），答案出来后不占版面
-      if (rpExecOpen.value && !rpExecTouched.value) rpExecOpen.value = false
+      msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
-      if (messages.value[idx].saOpen && !messages.value[idx].saTouched) messages.value[idx].saOpen = false
-      messages.value[idx].sources = sources
-      if (messages.value[idx].retrieved && Array.isArray(sources)) messages.value[idx].retrieved.refs = sources.length
-      messages.value[idx].related = related
-      messages.value[idx].messageId = messageId
-      messages.value[idx].degradations = degradations
-      loading.value = false
-      abortController.value = null
-      scrollForce()
+      if (msg.saOpen && !msg.saTouched) msg.saOpen = false
+      msg.sources = sources
+      if (msg.retrieved && Array.isArray(sources)) msg.retrieved.refs = sources.length
+      msg.related = related
+      msg.messageId = messageId
+      msg.degradations = degradations
+      // 记录仍指向本轮才清（防止误删同会话新一轮的记录）
+      if (chatStreams.get(sid) === st) chatStreams.delete(sid)
+      if (viewing()) scrollForce()
       if (isFirstMessage) loadSessions()
     },
-    onWarn: w => { messages.value[idx].warnMsg = w; scroll() },
+    onWarn: w => { msg.warnMsg = w; liveScroll() },
     onError: e => {
       if (autoRetry > 0 && !gotToken) {
-        messages.value[idx].retrying = true
-        scroll()
+        msg.retrying = true
+        liveScroll()
         setTimeout(() => {
-          if (idx < messages.value.length && messages.value[idx]?.role === 'ai' && messages.value[idx]?.loading) {
-            streamAnswer(question, imgs, idx, false, 0, deepThink, attachments, skills)
+          // 记录仍是本轮且气泡还在流式态才重试；用户已停止/记录已被清理则直接收尾
+          if (chatStreams.get(sid) === st && msg.loading) {
+            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, { sid, agentId, model })
           } else {
-            if (messages.value[idx]) messages.value[idx].retrying = false
-            loading.value = false
-            abortController.value = null
+            msg.retrying = false
+            if (chatStreams.get(sid) === st) chatStreams.delete(sid)
           }
         }, 2500)
         return
       }
       // 错误正文整体替换：时间线文本区间失效 → 清空回退分组兜底
-      messages.value[idx].timeline = []
-      messages.value[idx].content = '😅 ' + e
-      messages.value[idx].loading = false
-      messages.value[idx].retrying = false
-      messages.value[idx].failed = true
-      loading.value = false
-      abortController.value = null
+      msg.timeline = []
+      msg.content = '😅 ' + e
+      msg.loading = false
+      msg.retrying = false
+      msg.failed = true
+      if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       message.error(e)
-      scrollForce()
+      if (viewing()) scrollForce()
     }
   })
 }
@@ -2023,7 +1868,8 @@ const regenerate = mi => {
       // 附件/技能随内存消息重发（历史回放的消息无 attachData，则不带附件重试）
       const atts = Array.isArray(messages.value[i].attachData) ? messages.value[i].attachData : []
       const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
-      streamAnswer(messages.value[i].content, imgs, mi, false, 1, deep, atts, skills)
+      // 传消息对象（不是下标）：流式状态已按会话拆分，replace 走对象身份
+      streamAnswer(messages.value[i].content, imgs, messages.value[mi], false, 1, deep, atts, skills)
       return
     }
   }
@@ -2163,9 +2009,11 @@ const editMessage = mi => {
 }
 
 const stop = () => {
-  if (abortController.value) {
-    abortController.value.abort()
-    abortController.value = null
+  // 只停当前会话的流；其它会话的后台流不受影响
+  const st = chatStreams.get(currentSessionId.value)
+  if (st) {
+    chatStreams.delete(currentSessionId.value)
+    st.abort.abort()  // abort → api.js 按正常结束回调 onDone（气泡收尾为「已停止生成」）
   }
 }
 
@@ -2270,10 +2118,13 @@ onMounted(async () => {
  * 正文与工具交错：连续工具合并折叠组（组条窄条化，不把文章剁开）；
  * 卡片标题行亮出关键参数（命令/路径/检索词），展开看完整入参/输出（toolCalls 存 ≤8KB 全文）。 */
 .tool-status-list { margin-top: 8px; }
-.tl-group { margin: 4px 0; }
+/* 正文段贴工具块：压掉 v-html 里 markdown 段落的上下 margin，保持「句间插标签」的连续读感 */
+.tl-text :deep(*:first-child) { margin-top: 0; }
+.tl-text :deep(*:last-child) { margin-bottom: 0; }
+.tl-group { margin: 3px 0; }
 .tl-group-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
-  padding: 4px 10px; font-size: 12px; color: var(--app-text2); text-align: left;
+  padding: 3px 9px; font-size: 12px; color: var(--app-text2); text-align: left;
   background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 8px;
   cursor: pointer; user-select: none;
 }
@@ -2288,7 +2139,7 @@ onMounted(async () => {
 .tl-card { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); width: fit-content; max-width: 100%; }
 .tl-card.err { border-color: color-mix(in srgb, var(--app-danger) 45%, transparent); }
 .tl-card-head {
-  display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+  display: flex; align-items: center; gap: 6px; padding: 4px 9px;
   font-size: 12px; color: var(--app-text2); background: none; border: none; text-align: left;
   cursor: pointer; user-select: none; max-width: 100%;
 }
@@ -2674,31 +2525,10 @@ onMounted(async () => {
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 右栏执行过程时间线：状态点 + 单行步骤 + 可展开详情 */
+/* 右栏卡片头部（沙盒等折叠卡共用） */
 .rp-exec-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
 .rp-exec-sum { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--app-text3); }
-.rp-exec-wrap { margin-top: 3px; }
-.rp-exec-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; color: var(--app-text2); min-width: 0; }
-.rp-exec-item.is-click { cursor: pointer; }
-.rp-exec-item.is-click:hover .rp-exec-name { color: var(--app-accent); }
-.is-error .rp-exec-name { color: var(--app-danger); }
-.rp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--app-text3); }
-.rp-dot.done { background: var(--app-ok); }
-.rp-dot.running { background: var(--app-accent); animation: rp-pulse 1.2s ease-in-out infinite; }
-.rp-dot.error { background: var(--app-danger); }
-.rp-dot.pending { background: transparent; border: 1.5px solid var(--app-text3); }
-.rp-dot.pending + .rp-exec-name { color: var(--app-text3); }
-@keyframes rp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .rp-dot.running { animation: none; } }
-.rp-exec-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-exec-dur { flex: none; font-size: 11px; color: var(--app-text3); }
-.rp-exec-detail {
-  margin: 2px 0 4px 13px; font-size: 11px; color: var(--app-text2); background: var(--app-accent-weak);
-  border-radius: 6px; padding: 5px 7px; word-break: break-all; white-space: pre-wrap;
-  max-height: 150px; overflow-y: auto; line-height: 1.5;
-}
-.rp-sa-row { display: flex; justify-content: space-between; gap: 8px; }
-.rp-sa-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 右栏产物卡 */
 .rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; text-decoration: none; }
@@ -2740,17 +2570,6 @@ onMounted(async () => {
 .rp-ctrl-btn:hover { color: var(--app-accent); border-color: var(--app-accent); }
 .rp-ctrl-btn.is-stop { color: var(--app-danger); border-color: #eecdc2; }
 .rp-ctrl-btn.is-stop:hover { color: var(--app-danger); border-color: var(--app-danger); background: #fbecea; }
-
-/* 右栏沙盒工作区（树浏览 / 下载） */
-.rp-sb-path { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; min-width: 0; }
-.rp-sb-nav { flex: none; font-size: 11px; color: var(--app-accent); cursor: pointer; }
-.rp-sb-cur { flex: 1; min-width: 0; font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.rp-sb-refresh { flex: none; font-size: 12px; color: var(--app-text3); cursor: pointer; }
-.rp-sb-refresh:hover { color: var(--app-accent); }
-.rp-sb-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; min-width: 0; }
-.rp-sb-row:hover .rp-sb-name { color: var(--app-accent); }
-.rp-sb-ic { flex: none; width: 10px; font-size: 10px; color: var(--app-text3); }
-.rp-sb-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 来源弹窗内容 */
 .src-content { max-height: 55vh; overflow-y: auto; line-height: 1.7; font-size: 14px; padding-right: 6px; }

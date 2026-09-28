@@ -73,7 +73,7 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi } from '../api'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
-import { sessionStore, loadSessions, visibleSessions } from './store'
+import { sessionStore, loadSessions, visibleSessions, chatStreams } from './store'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -114,6 +114,13 @@ const exportSessionMd = s => {
 
 const delSession = async sid => {
   try {
+    // 删除流式中的会话：先中止其后台流（连接断开后后端在下次 SSE 发送失败时取消本轮，
+    // 不再往已删除的会话落库回答），并移除记录防止切回时把死消息接回视图
+    const st = chatStreams.get(sid)
+    if (st) {
+      chatStreams.delete(sid)
+      st.abort.abort()
+    }
     await deleteSessionApi(sid)
     message.success('会话已删除')
     await loadSessions()

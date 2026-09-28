@@ -17,6 +17,16 @@ export const sessionStore = reactive({
   autoPickTick: 0
 })
 
+// ==================== 流式回答记录（模块级单例，跨路由存活） ====================
+// chatStreams: sid → { msg, abort }，每个会话至多一条进行中的流式回答：
+//   msg   流式中的 AI 消息对象（reactive）：SSE 回调改写它而不是页面级 messages 数组，
+//         切走/新建会话后流继续跑、对象照常更新；切回该会话时把它接回视图尾部
+//         （本轮完成前后端不落库助手消息，getHistory 里没有这条）。
+//   abort 本轮请求的 AbortController：停止生成 / 删除流式中的会话时中止。
+// 后端口径：客户端断开 = 取消订阅立即停止生成、本轮不落库助手消息（RagService sendSseEvent
+// 返回 false 短路），所以"放着不管"不等于后台续跑——前台必须持有连接，切换会话才能不断流。
+export const chatStreams = reactive(new Map())
+
 export async function loadSessions (keyword) {
   if (keyword !== undefined) sessionStore.keyword = keyword
   sessionStore.loading = true
