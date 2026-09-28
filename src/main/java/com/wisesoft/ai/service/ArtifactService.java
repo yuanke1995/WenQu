@@ -76,6 +76,10 @@ public class ArtifactService {
     /** 会话级产物记录：问答期间生成的产物（done 事件汇总下发兜底，避免流式 artifact 事件丢失） */
     private static final ConcurrentHashMap<String, List<Map<String, Object>>> SESSION_ARTIFACTS =
             new ConcurrentHashMap<>();
+    /** 会话级产物生成监听（主流程登记，问答结束清理）：产物落盘即回调 (sessionId, 产物在本轮清单中的下标)，
+     *  主流程据此把产物卡片按「生成时刻」插进回答时间线——否则刷新后产物只能堆在气泡底部。 */
+    private static final ConcurrentHashMap<String, java.util.function.BiConsumer<String, Integer>> ARTIFACT_LISTENERS =
+            new ConcurrentHashMap<>();
 
     public ArtifactService(AppProperties properties, ImageUrlSigner imageUrlSigner,
                            ArtifactMapper artifactMapper, SessionMapper sessionMapper,
@@ -99,6 +103,17 @@ public class ArtifactService {
         if (sessionId != null) {
             EMITTERS.remove(sessionId);
             SESSION_ARTIFACTS.remove(sessionId);
+            ARTIFACT_LISTENERS.remove(sessionId);
+        }
+    }
+
+    /**
+     * 登记产物生成监听：问答主流程在流开始前登记，产物落盘时同步拿到它在「本轮产物清单」里的下标，
+     * 用于把产物卡片插入回答时间线的正确位置（生成时刻）。问答结束随 unregisterEmitter 一并清理。
+     */
+    public void registerArtifactListener(String sessionId, java.util.function.BiConsumer<String, Integer> listener) {
+        if (sessionId != null && listener != null) {
+            ARTIFACT_LISTENERS.put(sessionId, listener);
         }
     }
 
@@ -202,8 +217,22 @@ public class ArtifactService {
         // 记录到会话产物清单（原始 URL 存内存，下发时再签名——与图片同惯例：库里存原始、展示层签名）
         Map<String, Object> entry = new LinkedHashMap<>(info);
         entry.put("url", rawUrl);
-        SESSION_ARTIFACTS.computeIfAbsent(sessionId, k -> Collections.synchronizedList(new ArrayList<>()))
-                .add(entry);
+        List<Map<String, Object>> list =
+                SESSION_ARTIFACTS.computeIfAbsent(sessionId, k -> Collections.synchronizedList(new ArrayList<>()));
+        int artifactIndex;
+        synchronized (list) {
+            list.add(entry);
+            artifactIndex = list.size() - 1;
+        }
+        // 通知主流程：产物在时间线上的位置（下标）——监听缺失（非问答链路写入）时跳过，不影响交付
+        java.util.function.BiConsumer<String, Integer> listener = ARTIFACT_LISTENERS.get(sessionId);
+        if (listener != null) {
+            try {
+                listener.accept(sessionId, artifactIndex);
+            } catch (Exception e) {
+                log.warn("[ARTIFACT] 时间线登记失败（不影响交付）session={} file={}: {}", sessionId, safeName, e.getMessage());
+            }
+        }
         return info;
     }
 
