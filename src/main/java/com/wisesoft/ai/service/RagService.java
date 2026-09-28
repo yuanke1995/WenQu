@@ -229,6 +229,18 @@ public class RagService {
     }
 
     private static final Pattern relatedPattern = Pattern.compile("<related>([\\s\\S]*?)</related>");
+    /** 过程独白块：工具模式下模型把推理/试错独白包进 <process> 标签，流式中整块剥离归入过程通道（不进正文） */
+    private static final Pattern processPattern = Pattern.compile("<process>([\\s\\S]*?)</process>");
+
+    /** 工具模式提示词附录（buildAnswerStream 注入）：过程叙述规范——独白进 <process> 标签分流，标签外只写正式回答 */
+    private static final String PROCESS_NARRATION_GUIDE = """
+
+            【过程叙述规范】你正在带工具的执行场景中工作。推理、试错、排查与复盘属于过程，必须包进 <process> 与 </process> 标签内；标签外只写面向用户的正式回答：
+            - 调用工具前后的想法、中间检查、对工具报错的处理过程，一律写在 <process> 标签内，且同一内容只写一遍；
+            - 标签外禁止复述过程：不要重复 <process> 里已说过的话，不要出现"我先/我再看看/我改用/写入被拒我改用"这类过程性叙述，也不要把工具报错与排查细节写进正文（工具卡片已展示）；
+            - 尽量把一段完整的过程叙述写完再发起工具调用，不要在一句话中间插入工具调用；
+            - 全部工具执行完后，在标签外输出完整的正式回答（结论 + 结果摘要 + 必要说明），可直接作为交付内容阅读。
+            """;
     /** 全局编号后的图片占位：[图片N] 或 [图片N：描述]（描述内不含 ]；用于收集片段截取丢掉的图） */
     private static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
     /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换为 IMG_NUMBER_PATTERN 形态） */
@@ -1511,6 +1523,109 @@ public class RagService {
         }
     }
 
+    /**
+     * 把锚点到 pos 之间的正文记为一个文本段（无新增正文则忽略）。工具/产物插入时间线前调用，
+     * 使「正文 → 工具 → 正文」的交错顺序可被记录（只存区间，不复制正文）。
+     */
+    private void flushTimelineText(AnswerStreamState st, int pos) {
+        int from = st.timelineAnchor.get();
+        if (pos <= from) return;
+        Map<String, Object> seg = new LinkedHashMap<>();
+        seg.put("kind", "text");
+        seg.put("from", from);
+        seg.put("to", pos);
+        st.timeline.add(seg);
+        st.timelineAnchor.set(pos);
+    }
+
+    /**
+     * 过程时间线成段：锚点到 pos 之间的过程独白记为一个过程段（区间指向 processText，与正文段同构）。
+     * 连续追加时锚点不前移、区间自动延伸；工具/产物插入时先成段再插卡，保持「正文—过程—工具」真实交错。
+     */
+    private void flushTimelineProcess(AnswerStreamState st, int pos) {
+        int from = st.processAnchor.get();
+        if (pos <= from) return;
+        Map<String, Object> seg = new LinkedHashMap<>();
+        seg.put("kind", "process");
+        seg.put("from", from);
+        seg.put("to", pos);
+        st.timeline.add(seg);
+        st.processAnchor.set(pos);
+    }
+
+    /**
+     * 过程独白入通道：累积 processResponse、推进时间线过程段、SSE process 实时下发。
+     * 客户端断开只丢实时显示，累积与落库不受影响。
+     */
+    private void routeProcessText(AnswerStreamState st, String delta) {
+        if (delta == null || delta.isEmpty()) return;
+        st.processResponse.append(delta);
+        flushTimelineProcess(st, st.processResponse.length());
+        sendSseEvent(st.emitter, "process", delta, st.sessionId);
+    }
+
+    /** 产物生成时刻：正文成段后插入产物段（下标指向本轮产物清单，与 artifacts 数组同源同序） */
+    private void pushTimelineArtifact(AnswerStreamState st, int artifactIndex) {
+        flushTimelineText(st, st.fullResponse.length());
+        flushTimelineProcess(st, st.processResponse.length());
+        Map<String, Object> seg = new LinkedHashMap<>();
+        seg.put("kind", "artifact");
+        seg.put("i", artifactIndex);
+        st.timeline.add(seg);
+    }
+
+    /**
+     * 落库/下发用的时间线快照：补上尾部正文并按最终正文长度夹取。
+     * 引用自检可能删除若干引用标记使最终正文短于流式累积，区间按最终版收敛（不越界）；
+     * 只有「单段覆盖全文」时返回空（与整段渲染等价，不必占一列存储）。
+     */
+    private List<Map<String, Object>> buildTimelineSnapshot(AnswerStreamState st, String answer,
+                                                            int toolCount, int artifactCount) {
+        int len = answer == null ? 0 : answer.length();
+        int processLen = st.processResponse.length();
+        flushTimelineText(st, len);
+        flushTimelineProcess(st, processLen);
+        List<Map<String, Object>> out = new ArrayList<>();
+        synchronized (st.timeline) {
+            for (Map<String, Object> seg : st.timeline) {
+                if (seg == null) continue;
+                Map<String, Object> copy = new LinkedHashMap<>(seg);
+                if ("text".equals(copy.get("kind"))) {
+                    int from = Math.min(toInt(copy.get("from")), len);
+                    int to = Math.min(toInt(copy.get("to")), len);
+                    if (to <= from) continue; // 空段：不渲染也不打断交错
+                    copy.put("from", from);
+                    copy.put("to", to);
+                } else if ("process".equals(copy.get("kind"))) {
+                    // 过程段区间指向 processText，按其最终长度夹取（与正文段同规则）
+                    int from = Math.min(toInt(copy.get("from")), processLen);
+                    int to = Math.min(toInt(copy.get("to")), processLen);
+                    if (to <= from) continue;
+                    copy.put("from", from);
+                    copy.put("to", to);
+                } else if ("tool".equals(copy.get("kind"))) {
+                    // 下标段必须与终态清单一一对齐：工具并发（终态入列顺序与 start 不同）时
+                    // 该段无法指回确定的工具，丢弃比张冠李戴更诚实（卡片信息不会错配）
+                    int i = toInt(copy.get("i"));
+                    if (i < 0 || i >= toolCount) continue;
+                } else if ("artifact".equals(copy.get("kind"))) {
+                    int i = toInt(copy.get("i"));
+                    if (i < 0 || i >= artifactCount) continue;
+                }
+                out.add(copy);
+            }
+        }
+        if (out.size() == 1 && "text".equals(out.get(0).get("kind"))
+                && toInt(out.get(0).get("from")) == 0 && toInt(out.get(0).get("to")) == len) {
+            return List.of();
+        }
+        return out;
+    }
+
+    private static int toInt(Object v) {
+        return v instanceof Number n ? n.intValue() : 0;
+    }
+
     /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts) {
@@ -1525,6 +1640,17 @@ public class RagService {
         rec.put("args", argsBrief);
         if (resultOrError != null) {
             rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, TOOL_IO_SSE_BRIEF));
+        }
+        // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
+        // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
+        if ("start".equals(status)) {
+            flushTimelineText(st, st.fullResponse.length());
+            flushTimelineProcess(st, st.processResponse.length());
+            Map<String, Object> toolSeg = new LinkedHashMap<>();
+            toolSeg.put("kind", "tool");
+            // 终态记录在 start 之后才入 toolCalls 列表，此处 size 正是它将落到的下标
+            toolSeg.put("i", st.toolCalls.size());
+            st.timeline.add(toolSeg);
         }
         // 只把终态（done/error）记入持久化列表：start 仅实时下发（前端转圈显示），
         // 否则快照里 start/done 成对存在，前端 done 汇总覆盖后工具状态行会出现重复双行
@@ -1565,11 +1691,17 @@ public class RagService {
         SseEmitter emitter = st.emitter;
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
+        // 产物生成时刻监听：把产物卡片按生成顺序插进本轮时间线（刷新后仍在原位，不再堆到气泡底部）
+        artifactService.registerArtifactListener(st.sessionId, (sid, idx) -> pushTimelineArtifact(st, idx));
         // 整轮流级心跳：从这里到终态（complete/error/dispose）全程保活，覆盖工具执行
         // 与「工具结束→最终回答首 token」两段静默盲区（重试重建流时幂等复用）
         startRunHeartbeat(st);
+        org.springframework.ai.tool.ToolCallback[] toolCallbacks =
+                instrumentTools(enabledToolCallbacks(agent, st.userId, st), st);
+        // 过程叙述规范仅工具模式注入：无工具的纯对话没有"过程"可叙，加了反而诱导模型输出标签
+        String sysFinal = toolCallbacks.length == 0 ? system : system + PROCESS_NARRATION_GUIDE;
         return chatClient.prompt()
-                .system(system)
+                .system(sysFinal)
                 .user(user)
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
                 // st.model 为本轮解析好的模型（引用或遗留名，供应商路由由 DynamicOpenAiChatModel 按引用完成）
@@ -1584,7 +1716,7 @@ public class RagService {
                 // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。
                 // 必须用 .toolCallbacks()：.tools() 只接受 @Tool 注解对象，传 ToolCallback 实例会抛
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
-                .toolCallbacks(instrumentTools(enabledToolCallbacks(agent, st.userId, st), st))
+                .toolCallbacks(toolCallbacks)
                 // 工具上下文：把当前会话 ID 与用户 ID 注入，供产物交付、沙盒等工具定位会话与归属。
                 // userId 必须随 toolContext 透传——工具回调跑在 Spring AI 响应式 I/O 线程上，
                 // 读 RequestUser.uid()（ThreadLocal）跨线程失效会回落成 anonymous，导致沙盒建到 shared/anonymous。
@@ -1612,32 +1744,59 @@ public class RagService {
                 .doOnNext(token -> {
                     st.emitBuf.append(token);
                     String bufStr = st.emitBuf.toString();
-                    // 存在未完整闭合的 related 块（开始/闭合标签被跨 token 切分也覆盖）：继续缓冲不下发
-                    if (containsUnclosedRelated(bufStr)) {
+                    // 存在未完整闭合的 related/process 块（开始/闭合标签被跨 token 切分也覆盖）：继续缓冲不下发
+                    boolean unclosedRelated = containsUnclosedRelated(bufStr);
+                    boolean unclosedProcess = containsUnclosedProcess(bufStr);
+                    if (unclosedRelated || unclosedProcess) {
                         if (bufStr.length() > 3000) {
-                            // 异常兜底：模型未闭合标签，直接按原文发送（extractRelated 兜底清理）；fail-loud 标记
-                            addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
-                                    "模型输出格式异常（related 标签未闭合），已按原文清理");
-                            String raw = bufStr;
                             st.emitBuf.setLength(0);
-                            st.fullResponse.append(raw);
-                            // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）
-                            if (!sendSseEvent(emitter, "token", raw, st.sessionId)) {
-                                st.disposeSafe();
-                                return;
+                            if (unclosedProcess && !unclosedRelated && bufStr.contains("<process>")) {
+                                // 未闭合 <process>（模型漏写闭合标签）：开口前是正文走 token，
+                                // 其后剥标签整体归入过程通道（fail-loud 标记）——按原文发正文会把独白漏给用户
+                                addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                                        "模型输出格式异常（process 标签未闭合），开口后内容已整体归入过程叙述");
+                                int pIdx = bufStr.indexOf("<process>");
+                                String ansPart = bufStr.substring(0, pIdx);
+                                String procPart = bufStr.substring(pIdx + "<process>".length());
+                                if (!ansPart.isEmpty()) {
+                                    st.fullResponse.append(ansPart);
+                                    if (!sendSseEvent(emitter, "token", ansPart, st.sessionId)) {
+                                        st.disposeSafe();
+                                        return;
+                                    }
+                                }
+                                routeProcessText(st, procPart);
+                            } else {
+                                // related 未闭合（或两类标签并存难以可靠拆分）：按原文发送（extractRelated 兜底清理）；fail-loud 标记
+                                addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
+                                        "模型输出格式异常（related 标签未闭合），已按原文清理");
+                                String raw = bufStr;
+                                st.fullResponse.append(raw);
+                                // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）
+                                if (!sendSseEvent(emitter, "token", raw, st.sessionId)) {
+                                    st.disposeSafe();
+                                    return;
+                                }
                             }
                         }
                         return;
                     }
+                    // 提取完整 process 块 → 过程通道（不进正文）：实时 SSE process 事件 + 时间线过程段
+                    StringBuilder procBuf = new StringBuilder();
+                    java.util.regex.Matcher pm = processPattern.matcher(bufStr);
+                    while (pm.find()) procBuf.append(pm.group(1));
+                    String clean = bufStr.replaceAll("<process>[\\s\\S]*?</process>", "");
                     // 剥离完整 related 块，收集推荐内容
-                    java.util.regex.Matcher rm = relatedPattern.matcher(bufStr);
+                    java.util.regex.Matcher rm = relatedPattern.matcher(clean);
                     while (rm.find()) {
                         st.relatedBlock.append(rm.group(1)).append("\n");
                     }
-                    String clean = bufStr.replaceAll("<related>[\\s\\S]*?</related>", "");
-                    // 尾部保留 19 字符滑动窗口（可能是不完整标签片段），其余下发
+                    clean = clean.replaceAll("<related>[\\s\\S]*?</related>", "");
+                    // 尾部只扣留「可能是标签真前缀」的后缀（通常 0 字符），其余立即下发——
+                    // 此前固定扣 19 字符：正文 token 滞后下发而 tool_status/process 事件即时下发，
+                    // 旁路事件越过未下发正文 ⇒ 前端实时时间线错序断词（「提|示文件已存在」被劈开）
                     st.emitBuf.setLength(0);
-                    int keep = Math.min(19, clean.length());
+                    int keep = tagPrefixSuffixLen(clean);
                     String sendPart = clean.substring(0, clean.length() - keep);
                     String tailKeep = clean.substring(clean.length() - keep);
                     st.emitBuf.append(tailKeep);
@@ -1647,6 +1806,10 @@ public class RagService {
                         if (!sendSseEvent(emitter, "token", sendPart, st.sessionId)) {
                             st.disposeSafe();
                         }
+                    }
+                    // 过程事件在正文之后下发（同缓冲内先到的正文先行，保持流式顺序）
+                    if (procBuf.length() > 0) {
+                        routeProcessText(st, procBuf.toString());
                     }
                 })
                 .doOnError(error -> {
@@ -1665,6 +1828,11 @@ public class RagService {
                         st.fullResponse.setLength(0);
                         st.emitBuf.setLength(0);
                         st.relatedBlock.setLength(0);
+                        // 时间线同属本轮缓冲：一并清空并回到 0 锚点（否则重试后正文区间与正文错位）
+                        st.timeline.clear();
+                        st.timelineAnchor.set(0);
+                        st.processResponse.setLength(0);
+                        st.processAnchor.set(0);
                         st.disposableRef.set(buildAnswerStream(system, user, st, agent));
                         return;
                     }
@@ -1684,7 +1852,26 @@ public class RagService {
                     stopRunHeartbeat(st);
                     // 下发缓冲尾部（可能残留滑动窗口），并剥离可能的不完整标签
                     if (st.emitBuf.length() > 0) {
-                        String rest = st.emitBuf.toString().replaceAll("<related>[\\s\\S]*?</related>", "");
+                        String rest = st.emitBuf.toString();
+                        st.emitBuf.setLength(0);
+                        // 缓冲尾可能压着刚闭合/未闭合的 process 块（被扣留窗口压住）：先剥离，
+                        // 正文先行下发后再路由过程通道（保持流式顺序）
+                        StringBuilder procTail = new StringBuilder();
+                        java.util.regex.Matcher ptm = processPattern.matcher(rest);
+                        while (ptm.find()) procTail.append(ptm.group(1));
+                        rest = rest.replaceAll("<process>[\\s\\S]*?</process>", "");
+                        // 未闭合的 <process>（通常是输出触顶截断在闭合标签之前）：开口前是正文，
+                        // 其后剥标签归入过程通道并 fail-loud——原样发正文会把独白漏给用户
+                        int pIdx = rest.indexOf("<process");
+                        if (pIdx >= 0) {
+                            addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                                    "模型输出格式异常（process 标签未闭合，通常是输出达到长度上限被截断），已归入过程叙述");
+                            String procPart = rest.substring(pIdx);
+                            int gt = procPart.indexOf('>');
+                            procPart = gt >= 0 ? procPart.substring(gt + 1) : "";
+                            procTail.append(procPart);
+                            rest = rest.substring(0, pIdx);
+                        }
                         // 未闭合的 <related>（模型偶发把推荐块写在回答开头，或输出触顶截断在闭合标签之前）：
                         // 原实现从 "<related" 起整段静默丢弃——模型若把正文写在标签内会陪葬，
                         // 表现为回答只剩开头几字甚至全空（realOutputTokens 已计入完整输出）。
@@ -1695,20 +1882,22 @@ public class RagService {
                             addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
                                     "模型输出格式异常（related 标签未闭合，通常是输出达到长度上限被截断），已保留可读内容");
                         }
-                        // 尾部残留的半截标签（截断恰好停在 <related / </related 中间）：剥掉避免漏出标签字样
+                        // 尾部残留的半截标签（截断恰好停在 <related / </related / <process / </process 中间）：剥掉避免漏出标签字样
                         int lt = rest.lastIndexOf('<');
                         if (lt >= 0) {
                             String tail = rest.substring(lt);
-                            if (tail.length() < "<related>".length() && "<related>".startsWith(tail)) {
-                                rest = rest.substring(0, lt);
-                            } else if (tail.length() < "</related>".length() && "</related>".startsWith(tail)) {
+                            if (isRelatedStart(tail) || isRelatedEndStart(tail)
+                                    || isProcessStart(tail) || isProcessEndStart(tail)) {
                                 rest = rest.substring(0, lt);
                             }
                         }
-                        st.emitBuf.setLength(0);
                         if (!rest.isEmpty()) {
                             st.fullResponse.append(rest);
                             sendSseEvent(emitter, "token", rest, st.sessionId);
+                        }
+                        // 正文下发后再路由过程独白（流式顺序：先到的正文先行）
+                        if (procTail.length() > 0) {
+                            routeProcessText(st, procTail.toString());
                         }
                     }
                     // 相关推荐：优先用流式收集的块内容；兜底再对完整回答剥离一次（防 </related> 缺失等异常）
@@ -1815,6 +2004,13 @@ public class RagService {
                     List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
                     String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
 
+                    // 回答时间线：正文区间 + 过程区间 + 工具/产物下标，随消息持久化（刷新与历史会话据此还原交错顺序）
+                    List<Map<String, Object>> timelineSnapshot =
+                            buildTimelineSnapshot(st, answer, toolCallSnapshot.size(), sessionArtifacts.size());
+                    String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
+                    // 过程独白全文（<process> 标签内，与正文分流）：随消息落库 + done 下发，前端时间线灰字弱化渲染
+                    String processText = st.processResponse.toString();
+
                     // 记录对话历史：用户消息已在本轮开始时即时落库（runChat 0.3，regenerate 重发不重复），
                     // 完成时只补落助手消息（含引用来源/思考/产物/工具调用/用量），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
@@ -1844,7 +2040,8 @@ public class RagService {
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
-                            toolCallsJson, null, JSON.toJSONString(tokens));
+                            toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
+                            processText.isEmpty() ? null : processText);
 
                     // 异步落问答日志（不阻塞 SSE 完成）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
@@ -1881,6 +2078,11 @@ public class RagService {
                             ? List.of() : artifactService.takeArtifacts(st.sessionId));
                     // 工具调用过程汇总（实时 tool_status 已逐条下发；此处兜底，前端 onDone 覆盖渲染）
                     donePayload.put("toolCalls", toolCallSnapshot);
+                    // 回答时间线（与落库同源）：最终正文可能与流式累积不同（引用自检改写），
+                    // 前端用它替换本地累积的时间线，保证「本轮视图」与「刷新后视图」完全一致
+                    donePayload.put("timeline", timelineSnapshot);
+                    // 过程独白全文（与落库同源）：前端 onDone 覆盖本地累积，先于 timeline 恢复赋值
+                    donePayload.put("processText", processText);
                     // Token 消耗可视化（1.9）：用量已在持久化前算好（tokens），此处随 done 下发给当轮展示
                     donePayload.put("tokens", tokens);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
@@ -1922,6 +2124,16 @@ public class RagService {
         final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
         /** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        /** 本轮回答时间线：正文区间段 {kind:'text',from,to} 与工具/产物下标段 {kind:'tool'|'artifact',i} 按发生
+         *  顺序排列。随消息落库并在 done 下发，供刷新/历史会话还原「正文与工具卡片交错」的过程视图——
+         *  此前只落整段正文 + 工具终态列表，刷新后只能整段渲染、工具与产物堆在气泡底部。 */
+        final java.util.List<Map<String, Object>> timeline = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        /** 时间线锚点：下一个文本段的起点（已记入时间线的正文长度），工具/产物插入时先把锚点前的正文成段 */
+        final java.util.concurrent.atomic.AtomicInteger timelineAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
+        /** 过程独白（<process> 标签内）：与正文分流累积，随消息落库（process_text 列）并经 SSE process 事件实时下发 */
+        final StringBuilder processResponse = new StringBuilder();
+        /** 过程时间线锚点：下一个过程段的起点（已记入时间线的过程独白长度），工具/产物插入时先成段 */
+        final java.util.concurrent.atomic.AtomicInteger processAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
         /** 精确检索工具的检索范围（与主链路同库界，工具执行线程内生效）：kbIds 限定库，docIds 后过滤命中 */
@@ -2030,6 +2242,31 @@ public class RagService {
     }
 
     /**
+     * 未闭合/已闭合标签剥离后，clean 尾部可能压着「标签的真前缀」（跨 token 切分），
+     * 需要扣留等下一个 token 补全。返回需扣留的后缀长度：只扣真前缀，其余全部立即下发。
+     * <p>此前实现固定扣 19 字符：正文 token 恒滞后，而 tool_status/process/artifact 事件即时下发，
+     * 旁路事件越过未下发正文 ⇒ 前端实时时间线错序断词。改为精确扣留后尾缀通常长 0（正文零延迟下发）。
+     */
+    private static int tagPrefixSuffixLen(String s) {
+        if (s.isEmpty()) return 0;
+        // 真前缀最长 = 闭合标签长度 - 1 = 9（"</related" / "</process"）
+        int start = Math.max(0, s.length() - 9);
+        for (int i = start; i < s.length(); i++) {
+            String tail = s.substring(i);
+            if (isTagPrefix(tail)) return s.length() - i; // 最小 i = 最长后缀，一次扣足
+        }
+        return 0;
+    }
+
+    /** tail 是否为四个标签中任一标签的真前缀（含单纯的 "<"） */
+    private static boolean isTagPrefix(String tail) {
+        return (tail.length() < "<related>".length() && "<related>".startsWith(tail))
+                || (tail.length() < "</related>".length() && "</related>".startsWith(tail))
+                || (tail.length() < "<process>".length() && "<process>".startsWith(tail))
+                || (tail.length() < "</process>".length() && "</process>".startsWith(tail));
+    }
+
+    /**
      * 判断字符串中是否存在未完整闭合的 related 块（开始/闭合标签的跨 token 片段也算）
      * package-private static：纯字符串逻辑，供单元测试直接验证（滑动窗口缓冲依赖此判定）
      */
@@ -2060,6 +2297,34 @@ public class RagService {
         if (lt < 0) return false;
         String tail = s.substring(lt);
         return tail.length() < "</related>".length() && "</related>".startsWith(tail);
+    }
+
+    /**
+     * 判断字符串中是否存在未完整闭合的 process 块（与 containsUnclosedRelated 同规则，标签族不同）
+     */
+    static boolean containsUnclosedProcess(String s) {
+        if (s.contains("</process>")) {
+            // 已有关闭标签：剔除完整块后，剩余部分若还有 process 痕迹则视为未闭合
+            String rest = s.replaceAll("<process>[\\s\\S]*?</process>", "");
+            return rest.contains("<process") || isProcessStart(rest) || isProcessEndStart(rest);
+        }
+        return s.contains("<process") || isProcessStart(s) || isProcessEndStart(s);
+    }
+
+    /** 判断字符串末尾是否为 <process> 标签的部分前缀（捕获跨 token 分割的开始标签） */
+    private static boolean isProcessStart(String s) {
+        int lt = s.lastIndexOf('<');
+        if (lt < 0) return false;
+        String tail = s.substring(lt);
+        return tail.length() < "<process>".length() && "<process>".startsWith(tail);
+    }
+
+    /** 判断字符串末尾是否为 </process> 标签的部分前缀（捕获跨 token 分割的闭合标签） */
+    private static boolean isProcessEndStart(String s) {
+        int lt = s.lastIndexOf('<');
+        if (lt < 0) return false;
+        String tail = s.substring(lt);
+        return tail.length() < "</process>".length() && "</process>".startsWith(tail);
     }
 
     /**

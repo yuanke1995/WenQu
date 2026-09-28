@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `retrieved`   TEXT         DEFAULT NULL COMMENT '检索状态行数据 (JSON: keywords/refs/terms)',
     `artifacts`   TEXT         DEFAULT NULL COMMENT '产物交付 (JSON数组: [{url,filename,size,description}])',
     `tool_calls`  MEDIUMTEXT   DEFAULT NULL COMMENT '工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]；入参/输出存≤8KB全文，供前端卡片展开)',
+    `timeline`    TEXT         DEFAULT NULL COMMENT '回答时间线 (JSON数组：正文区间段 / 过程区间段 / 工具下标段 / 产物下标段，记录交错顺序，刷新后还原过程视图)',
+    `process_text` TEXT        DEFAULT NULL COMMENT '过程独白全文 (<process> 标签内的模型思考叙述，与正文分流；时间线 process 段区间指向本字段)',
     `tokens`      TEXT         DEFAULT NULL COMMENT 'Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)',
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',

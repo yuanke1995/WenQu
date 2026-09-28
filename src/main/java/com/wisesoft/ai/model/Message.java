@@ -45,6 +45,19 @@ public class Message {
     /** 工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]) */
     private String toolCalls;
 
+    /**
+     * 回答时间线 (JSON数组: [{kind:'text',from,to} | {kind:'tool',i} | {kind:'artifact',i}])。
+     * 记录正文与工具卡片/产物卡片的交错顺序：文本段只存 content 的字符区间，工具段存 toolCalls 下标，
+     * 产物段存 artifacts 下标。刷新/历史会话据此还原「边想边做」的交错视图（不落库则只能整段正文+底部汇总）。
+     */
+    private String timeline;
+
+    /**
+     * 过程独白全文 (<process> 标签内的模型思考叙述，与正文分流)。
+     * 时间线 process 段 {kind:'process',from,to} 的区间指向本字段，前端灰字弱化渲染、不与正文混淆。
+     */
+    private String processText;
+
     /** Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)，随助手消息落库供历史回看 */
     private String tokens;
 

@@ -444,9 +444,24 @@ public class SessionService {
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls,
                                 String attachments, String tokens) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, null, null);
+    }
+
+    /**
+     * 追加消息（含回答时间线）：timeline 为 JSON 数组字符串（正文区间段/工具下标段/产物下标段），
+     * 与 content、toolCalls、artifacts 同源落库，刷新与历史会话据此还原正文与工具/产物的交错顺序。
+     * 不落库则历史回看只能整段正文 + 底部汇总（过程感丢失）。
+     *
+     * @param processText 过程独白全文（&lt;process&gt; 标签内，与正文分流；时间线 process 段区间指向它，可为空）
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText) {
         // 1. MySQL 持久化
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                    toolCalls, attachments, tokens, timeline, processText);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -457,7 +472,7 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -513,6 +528,15 @@ public class SessionService {
                 } catch (Exception ignored) {
                 }
             }
+            if (timeline != null && !timeline.isBlank()) {
+                try {
+                    redisMsg.put("timeline", JSON.parseArray(timeline, Map.class));
+                } catch (Exception ignored) {
+                }
+            }
+            if (processText != null && !processText.isBlank()) {
+                redisMsg.put("processText", processText); // 过程独白全文（降级缓存也带，读侧原样透出）
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -531,7 +555,8 @@ public class SessionService {
      */
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
                                  String sources, String thinking, String retrieved, String artifacts,
-                                 String toolCalls, String attachments, String tokens) {
+                                 String toolCalls, String attachments, String tokens, String timeline,
+                                 String processText) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -562,6 +587,8 @@ public class SessionService {
             msg.setToolCalls(toolCalls);
             msg.setAttachments(attachments);
             msg.setTokens(tokens);
+            msg.setTimeline(timeline);
+            msg.setProcessText(processText);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -752,6 +779,16 @@ public class SessionService {
             } catch (Exception e) {
                 // tokens 解析失败忽略
             }
+        }
+        if (m.getTimeline() != null && !m.getTimeline().isBlank()) {
+            try {
+                map.put("timeline", JSON.parseArray(m.getTimeline(), Map.class)); // 回答时间线（历史回显交错顺序）
+            } catch (Exception e) {
+                // timeline 解析失败忽略
+            }
+        }
+        if (m.getProcessText() != null && !m.getProcessText().isBlank()) {
+            map.put("processText", m.getProcessText()); // 过程独白全文（历史回显灰字过程段）
         }
         if (m.getAttachments() != null && !m.getAttachments().isBlank()) {
             try {

@@ -88,7 +88,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onPlan, onApprovalRequired,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onPlan, onApprovalRequired, onProcess,
     deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], regenerate = false
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
@@ -167,6 +167,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'artifact') { onArtifact && onArtifact(d.content) } // content 为 {url,filename,description}
               else if (d.type === 'tool_status') { onToolStatus && onToolStatus(d.content) } // content 为 {name,status,elapsedMs,args,result|error}
               else if (d.type === 'tool_output') { onToolOutput && onToolOutput(d.content) } // content 为 {name,delta}：工具执行中 stdout/stderr 增量
+              else if (d.type === 'process') { onProcess && onProcess(d.content) } // content 为过程独白（<process> 标签内）增量：时间线灰字过程段
               else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated,description,digest}
               else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
               else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
