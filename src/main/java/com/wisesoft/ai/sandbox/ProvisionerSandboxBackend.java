@@ -618,17 +618,22 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             String streamId = UUID.randomUUID().toString().replace("-", "");
             String logPath = STREAM_DIR + "/" + streamId + ".log";
             String exitPath = STREAM_DIR + "/" + streamId + ".exit";
+            String okPath = STREAM_DIR + "/" + streamId + ".ok";
             // ① 同步准备：建目录、清同名残留（顺带确认沙盒可用，失败即返回错误——不静默降级到同步执行）
-            ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + logPath + " " + exitPath + " && echo READY");
+            ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + logPath + " " + exitPath
+                    + " " + okPath + " && echo READY");
             if (prep.exitCode() == null || prep.exitCode() != 0) {
                 return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false);
             }
             // ② 后台启动：花括号组后台化，组内先跑命令（2>&1 合并）、再写退出码标记；组输出进 log。
-            //    exec 立即返回（stdout 只有 BG_OK），命令的输出全部进 log 文件。
-            String wrapped = "{ { " + command + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath + " 2>&1 & echo BG_OK";
+            //    启动成功判据 = ok 标记文件落盘（echo BG_OK > ok），不判 stdout 文本：
+            //    runtime 的 exec 用带 job control 的 shell，秒级命令的完成通知（[1]+ Done …）
+            //    会在 BG_OK 之后混进同一响应，任何文本前后缀匹配都会被噪音击穿（09-28 实测回归）。
+            String wrapped = "{ { " + command + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath
+                    + " 2>&1 & echo BG_OK > " + okPath;
             SandboxRuntimeClient.SandboxExecResult launch = client.execCommand(wrapped, null, false);
-            String launchOut = launch.output() == null ? "" : launch.output().strip();
-            if (!launchOut.endsWith("BG_OK")) {
+            if (!waitForMarker(client, okPath, 5000)) {
+                String launchOut = launch.output() == null ? "" : launch.output().strip();
                 return new ExecuteResponse("Error: 沙盒后台执行启动失败: " + launchOut, 1, false);
             }
             // ③ 轮询：追增量 → 回调；exit 标记出现即完成；总时长受 timeout（缺省 commandTimeoutSeconds）约束
@@ -658,7 +663,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             }
             // ④ 收尾：最后追平一次（命令已结束，进行中的尾行按完整行收掉），清理临时文件
             linesRead = drainLines(client, logPath, linesRead, all, outputListener, true);
-            cleanupStream(client, logPath, exitPath);
+            cleanupStream(client, logPath, exitPath, okPath);
             String output = all.toString();
             boolean truncated = false;
             byte[] encoded = output.getBytes(StandardCharsets.UTF_8);
@@ -734,10 +739,32 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         }
     }
 
+    /** 短轮询等待标记文件出现（readFile 404 = 未落盘）：出现即 true，超时/中断为 false。 */
+    private boolean waitForMarker(SandboxRuntimeClient client, String path, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                client.readFile(path, 0, null);
+                return true;
+            } catch (RuntimeException exc) {
+                if (!isMissingFileError(exc)) {
+                    throw exc;
+                }
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
     /** 清理流式临时文件（best-effort：清理失败不影响结果，残留随沙盒回收清理）。 */
-    private void cleanupStream(SandboxRuntimeClient client, String logPath, String exitPath) {
+    private void cleanupStream(SandboxRuntimeClient client, String logPath, String exitPath, String okPath) {
         try {
-            client.execCommand("rm -f " + logPath + " " + exitPath, Duration.ofSeconds(10), false);
+            client.execCommand("rm -f " + logPath + " " + exitPath + " " + okPath, Duration.ofSeconds(10), false);
         } catch (RuntimeException ignore) {
             // best-effort cleanup
         }
