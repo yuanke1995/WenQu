@@ -1,7 +1,7 @@
 // ==================== 工作台共享状态 ====================
 // 会话列表为布局侧边栏与聊天页共用：模块级单例 reactive store，
 // 避免两处各自拉取导致列表闪烁/不一致；聊天页在新建/删除/首条消息后调 loadSessions 同步。
-import { reactive } from 'vue'
+import { reactive, shallowReactive } from 'vue'
 import { message } from 'ant-design-vue'
 import { listSessions } from '../api'
 
@@ -25,7 +25,11 @@ export const sessionStore = reactive({
 //   abort 本轮请求的 AbortController：停止生成 / 删除流式中的会话时中止。
 // 后端口径：客户端断开 = 取消订阅立即停止生成、本轮不落库助手消息（RagService sendSseEvent
 // 返回 false 短路），所以"放着不管"不等于后台续跑——前台必须持有连接，切换会话才能不断流。
-export const chatStreams = reactive(new Map())
+// 必须用 shallowReactive：deep reactive 的 Map 在 get() 时会把存入的 {msg,abort} 包一层代理，
+// onDone 里 `chatStreams.get(sid) === st` 恒为 false → 记录永不清理 → 回答完成后 loading 卡死
+// （发送按钮停在红色停止态）。shallowReactive 下 get 返回原对象，身份比较成立；msg 自身
+// 已是 reactive(fresh)，模板响应性不受影响。
+export const chatStreams = shallowReactive(new Map())
 
 export async function loadSessions (keyword) {
   if (keyword !== undefined) sessionStore.keyword = keyword
