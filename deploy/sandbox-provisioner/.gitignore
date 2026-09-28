@@ -2,3 +2,5 @@
 run/
 __pycache__/
 *.pyc
+# 本机部署覆盖项（SANDBOX_IMAGE 等），不进 git
+.env
