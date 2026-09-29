@@ -65,8 +65,12 @@ public class AgentDispatchService {
                     + (recentContext == null || recentContext.isBlank()
                     ? "" : "\n最近对话（用于理解追问的上下文）：\n" + recentContext + "\n")
                     + "\n用户当前问题：" + question
-                    + "\n\n请判断该问题最适合交给哪个智能体回答（依据职责描述匹配，追问要结合最近对话理解）。"
-                    + "\n只输出一个 JSON 对象：{\"id\":\"智能体id\"}；若没有任何智能体匹配则输出 {}。不要输出任何解释文字。";
+                    + "\n\n判定规则（按顺序执行）："
+                    + "\n1. 匹配的依据是「问题的所属领域」与「智能体职责描述声明的领域」实质重合——智能体掌握哪些知识库/工具/专业范围，问题是否落在该范围内。"
+                    + "\n2. 名称或个别词语的相似不算匹配（如问题里出现\"表单\"不等于该问表单产品的操作手册；出现\"合同\"不等于该问劳动法）。先判断问题真正属于什么领域，再看哪个智能体的领域覆盖它。"
+                    + "\n3. 通用问题（常识问答、写作、建议、跨领域话题）不属于任何智能体的专业域：输出 {}，交给默认助手。宁缺勿滥，不要为了派而派。"
+                    + "\n4. 追问要结合最近对话理解归属。"
+                    + "\n\n只输出一个 JSON 对象：{\"id\":\"智能体id\"}；若没有任何智能体匹配则输出 {}。不要输出任何解释文字。";
             int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
             String out = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> chatClient.prompt()

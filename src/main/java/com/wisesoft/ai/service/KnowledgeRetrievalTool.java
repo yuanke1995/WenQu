@@ -30,7 +30,17 @@ public class KnowledgeRetrievalTool {
 
     /** 引用来源注册器：流式问答期间由 RagService 注入（instrumentTools 包装层），把工具命中注册进当前回答的来源列表并分配引用编号 */
     public interface SourceRegistrar {
-        int register(Hit hit, String snippet);
+        /**
+         * 注册一个工具命中的知识块。
+         *
+         * @return 注册结果：ref=引用编号；imageSeqs=该来源图片分配到的全局图片编号（块无图则为空；
+         *         重复注册同一块时返回首次分配的编号）。工具文本据此附「本段相关截图」清单，
+         *         模型才能在正文中用真实存在的 [图片N] 配图，而不是编造编号。
+         */
+        Registration register(Hit hit, String snippet);
+
+        /** 注册结果 */
+        record Registration(int ref, java.util.List<Integer> imageSeqs) {}
     }
 
     /** 工具执行线程内有效（Spring AI 同步执行工具回调），用完即清，避免跨会话串号 */
@@ -114,6 +124,8 @@ public class KnowledgeRetrievalTool {
         }
         // 注册模式（流式问答）：命中块注册进当前回答的来源列表续编引用编号，
         // 文本用【引用N】并提示模型按编号标注 → 前端角标悬浮/引用弹窗可溯源；
+        // 来源图片并入全局图片编号体系后在块尾附「本段相关截图」清单（[图片N：描述]），
+        // 模型按清单在正文真实位置引用编号 → 前端 images[N-1] 映射出真实截图；
         // 非注册模式（无流上下文，如直接调用）：保持旧【片段N】格式
         SourceRegistrar registrar = REGISTRAR.get();
         StringBuilder sb = new StringBuilder();
@@ -123,9 +135,11 @@ public class KnowledgeRetrievalTool {
             count++;
             String content = h.content() == null ? "" : h.content();
             String cut = content.length() > MAX_CONTENT_CHARS ? content.substring(0, MAX_CONTENT_CHARS) + "…（已截断）" : content;
+            SourceRegistrar.Registration reg = null;
             if (registrar != null) {
                 String snippet = content.length() > SNIPPET_CHARS ? content.substring(0, SNIPPET_CHARS) + "…" : content;
-                sb.append("【引用").append(registrar.register(h, snippet)).append("】");
+                reg = registrar.register(h, snippet);
+                sb.append("【引用").append(reg.ref()).append("】");
             } else {
                 sb.append("【片段").append(count).append("】");
             }
@@ -133,10 +147,22 @@ public class KnowledgeRetrievalTool {
                 sb.append("章节：").append(h.titlePath()).append(" / ");
             }
             sb.append("标题：").append(h.title() == null ? "" : h.title()).append("\n");
-            sb.append(cut).append("\n\n");
+            sb.append(cut).append("\n");
+            // 图片清单放块尾：正文截断（MAX_CONTENT_CHARS）会丢掉原文里的图片占位，清单不受影响；
+            // 描述帮助模型判断这张截图讲什么、该插在哪个步骤（与主链路 [图片N：描述] 同格式）
+            if (reg != null && !reg.imageSeqs().isEmpty()) {
+                sb.append("本段相关截图：");
+                for (Integer seq : reg.imageSeqs()) {
+                    sb.append("[图片").append(seq).append("]");
+                }
+                sb.append("\n");
+            }
+            sb.append("\n");
         }
         if (registrar != null) {
-            sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]）");
+            sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]；"
+                    + "若要在回答中插入截图，只能使用上列「本段相关截图」中给出的 [图片N] 编号，"
+                    + "没有列出的编号一律不要输出——不存在对应的图片）");
         }
         return sb.toString().trim();
     }

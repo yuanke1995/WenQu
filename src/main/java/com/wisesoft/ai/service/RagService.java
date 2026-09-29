@@ -238,11 +238,14 @@ public class RagService {
             【过程叙述规范】你正在带工具的执行场景中工作。推理、试错、排查与复盘属于过程，必须包进 <process> 与 </process> 标签内；标签外只写面向用户的正式回答：
             - 调用工具前后的想法、中间检查、对工具报错的处理过程，一律写在 <process> 标签内，且同一内容只写一遍；
             - 标签外禁止复述过程：不要重复 <process> 里已说过的话，不要出现"我先/我再看看/我改用/写入被拒我改用"这类过程性叙述，也不要把工具报错与排查细节写进正文（工具卡片已展示）；
+            - 标签外的每个字都会原样展示给用户、算作正式回答的一部分：发起工具调用时不要在标签外附带任何计划句、过渡句或说明句（无论中文还是英文，例如"I'll first read... / Let me search..."），要么不说，要么写进 <process>；
             - 尽量把一段完整的过程叙述写完再发起工具调用，不要在一句话中间插入工具调用；
             - 全部工具执行完后，在标签外输出完整的正式回答（结论 + 结果摘要 + 必要说明），可直接作为交付内容阅读。
             """;
     /** 全局编号后的图片占位：[图片N] 或 [图片N：描述]（描述内不含 ]；用于收集片段截取丢掉的图） */
     private static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
+    /** 从图片占位中提取全局编号（[图片12：xxx] → 12） */
+    private static final Pattern IMG_NUM_DIGITS_PATTERN = Pattern.compile("\\d+");
     /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换为 IMG_NUMBER_PATTERN 形态） */
     private static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
 
@@ -1115,9 +1118,6 @@ public class RagService {
             String user = context.length() == 0
                     ? userQuestion.toString()
                     : userQuestion + "\n\n参考资料：\n" + context;
-            if (context.length() == 0) {
-                addDegradation(degradations, degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
-            }
 
             // 5. 异步流式生成（缓冲过滤 <related> 块：跨 token 分割也能正确剥离，前端不会看到标签原文）
             // 生成前最后一道短路检查：流式回答是最长成本段，断开即不再发起（生成中断开由 doOnNext 发送失败取消订阅）
@@ -1959,6 +1959,31 @@ public class RagService {
                             log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
                         }
                     }
+                    // 图片占位越界校验（与引用越界校验同构）：正文 [图片N] 编号必须落在本轮真实图片
+                    // （imgIndex，由主链路上下文填充建立）范围内。工具模式下模型手里没有编号图片
+                    // （工具返回文本不带编号、images 为空），却可能按「尽量配图」规则编造 [图片N]，
+                    // 前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除标记 + fail-loud。
+                    int maxImg = st.imgIndex.size();
+                    java.util.regex.Matcher im = IMG_NUMBER_PATTERN.matcher(answer);
+                    StringBuilder imgSb = new StringBuilder();
+                    int bogusImgs = 0;
+                    while (im.find()) {
+                        java.util.regex.Matcher nm = IMG_NUM_DIGITS_PATTERN.matcher(im.group());
+                        int n = nm.find() ? Integer.parseInt(nm.group()) : 0;
+                        if (n >= 1 && n <= maxImg) {
+                            im.appendReplacement(imgSb, java.util.regex.Matcher.quoteReplacement(im.group()));
+                        } else {
+                            bogusImgs++;
+                            im.appendReplacement(imgSb, "");
+                        }
+                    }
+                    im.appendTail(imgSb);
+                    if (bogusImgs > 0) {
+                        answer = imgSb.toString();
+                        addDegradation(st.degradations, st.degradedCodes, "invalidImageRef",
+                                "已移除 " + bogusImgs + " 处无效的图片标记（本轮没有对应的图片资料）");
+                        log.info("[IMG-CHECK] 剔除无效图片标记 {} 处 (maxImg={})", bogusImgs, maxImg);
+                    }
                     // 生成完成（引用自检前的最后一步）
                     st.stageMs.put("generate", System.currentTimeMillis() - st.startTime);
                     // 引用语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
@@ -2035,6 +2060,12 @@ public class RagService {
                                 "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在设置页调大「输出限制 token」");
                     }
                     int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
+                    // noHit 事后判定（基于本轮最终引用）：主链路检索 0 填充但工具检索（智能体知识检索工具等）
+                    // 注册了来源时不算"未检索到"——生成前判定拿不到工具后续注册的引用，会出现在回答带着
+                    // [N] 引用的同时提示"未检索到相关资料"的自相矛盾。最终（sources 含工具注册项）仍为空才提示。
+                    if (sources.isEmpty()) {
+                        addDegradation(st.degradations, st.degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
+                    }
                     Map<String, Object> tokens = new LinkedHashMap<>();
                     tokens.put("context", st.contextTokens);
                     tokens.put("budget", st.budgetTokens);
@@ -2119,7 +2150,8 @@ public class RagService {
     /**
      * 单次回答的流式状态与 complete 回调依赖（H2 重试重建流时复用同一状态，旧缓冲被清空）。
      */
-    private static final class AnswerStreamState {
+    /** 非静态内部类：工具图片注册（registerToolSource）需调用外部实例的 sendSseEvent/imageUrlSigner；生命周期=单轮请求，无泄漏 */
+    private final class AnswerStreamState {
         final String sessionId;
         final String question;
         /** 本轮所属用户 uid：技能/MCP 都是个人资产，取工具与取技能时只认它 */
@@ -2156,6 +2188,8 @@ public class RagService {
         final java.util.concurrent.atomic.AtomicInteger processAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
+        /** 工具来源引用编号 → 该来源图片的全局图片编号清单（重复注册同一块时原样返回，供工具文本重复附清单） */
+        final Map<Integer, List<Integer>> toolRefImages = new java.util.HashMap<>();
         /** 精确检索工具的检索范围（与主链路同库界，工具执行线程内生效）：kbIds 限定库，docIds 后过滤命中 */
         volatile java.util.Collection<String> toolScopeKbIds;
         volatile Set<String> toolScopeDocIds;
@@ -2225,16 +2259,28 @@ public class RagService {
          * 同块已注册/已在主链路则复用原编号不重复注册；返回分配的编号供工具文本【引用N】提示模型标注。
          * origin=TOOL 供前端区分工具来源；synchronized 防工具线程与流回调并发追加。
          */
-        int registerToolSource(HybridRetrievalService.Hit h, String snippet) {
+        /**
+         * 工具命中注册：来源进 sources 续编引用编号；来源图片并入全局图片编号体系
+         * （imgIndex/imgDescIndex，同一 URL 全局只编号一次，编号与主链路上下文填充连续）。
+         * 描述从块原文的 [图片]/[图片：描述] 占位按出现顺序对齐（第 i 个占位 ↔ 第 i 张图，与主链路同口径），
+         * 拿不到描述留空（imgFilter rebuild 对空描述放行，不会误剔）。
+         * 有新增图片时重发全量 image 事件（前端 onImage 是整体替换，必须发全量已签名清单），
+         * 模型后续正文才能引用真实存在的 [图片N]，前端 images[N-1] 才映射得到。
+         */
+        KnowledgeRetrievalTool.SourceRegistrar.Registration registerToolSource(HybridRetrievalService.Hit h, String snippet) {
+            Integer existing = findExistingSourceRef(h);
+            if (existing != null) {
+                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
+                        toolRefImages.getOrDefault(existing, List.of()));
+            }
+            int ref;
             synchronized (sources) {
-                if (h.knowledgeId() != null) {
-                    for (Map<String, Object> s : sources) {
-                        if (h.knowledgeId().equals(s.get("knowledgeId"))) {
-                            return (Integer) s.get("ref");
-                        }
-                    }
+                existing = findExistingSourceRef(h); // 并发注册同一块的双检
+                if (existing != null) {
+                    return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
+                            toolRefImages.getOrDefault(existing, List.of()));
                 }
-                int ref = sources.size() + 1;
+                ref = sources.size() + 1;
                 Map<String, Object> src = new LinkedHashMap<>();
                 src.put("ref", ref);
                 src.put("knowledgeId", h.knowledgeId());
@@ -2256,8 +2302,76 @@ public class RagService {
                     src.put("rerankScore", Math.round(h.rerankScore() * 1000) / 1000.0);
                 }
                 sources.add(src);
-                return ref;
             }
+            // 图片编号并入 + SSE 在 sources 锁外（签名与网络写不应持锁）
+            List<Integer> imgSeqs = assignToolImages(h);
+            toolRefImages.put(ref, imgSeqs);
+            return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
+        }
+
+        /** 已注册过同一知识块 → 返回既有引用编号（未注册返回 null） */
+        private Integer findExistingSourceRef(HybridRetrievalService.Hit h) {
+            if (h.knowledgeId() == null) return null;
+            synchronized (sources) {
+                for (Map<String, Object> s : sources) {
+                    if (h.knowledgeId().equals(s.get("knowledgeId"))) {
+                        return (Integer) s.get("ref");
+                    }
+                }
+            }
+            return null;
+        }
+
+        /**
+         * 来源图片并入全局编号：URL 去重（全局一张图一个编号），编号延续 imgIndex.size()+1；
+         * 有新增则重发全量 image 事件（SSE 发送在 sources 锁外——签名与网络写不应持锁）。
+         */
+        private List<Integer> assignToolImages(HybridRetrievalService.Hit h) {
+            List<String> urls = h.images();
+            if (urls == null || urls.isEmpty()) return List.of();
+            String[] descs = extractImgDescs(h);
+            boolean added = false;
+            List<Integer> seqs = new ArrayList<>();
+            synchronized (sources) {
+                for (int i = 0; i < urls.size(); i++) {
+                    String url = urls.get(i);
+                    int seq = -1;
+                    for (Map.Entry<Integer, String> e : imgIndex.entrySet()) {
+                        if (url.equals(e.getValue())) { seq = e.getKey(); break; }
+                    }
+                    if (seq < 0) {
+                        seq = imgIndex.size() + 1;
+                        imgIndex.put(seq, url);
+                        imgDescIndex.put(seq, i < descs.length && descs[i] != null ? descs[i] : "");
+                        added = true;
+                    }
+                    seqs.add(seq);
+                }
+            }
+            if (added) {
+                List<String> signed = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
+                sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
+            }
+            return seqs;
+        }
+
+        /** 从块原文按占位出现顺序提取图片描述（第 i 个 [图片：desc] ↔ 第 i 张图；占位多于图片数时多余描述丢弃） */
+        private String[] extractImgDescs(HybridRetrievalService.Hit h) {
+            List<String> urls = h.images();
+            String[] descs = new String[urls == null ? 0 : urls.size()];
+            String content = h.content() == null ? "" : h.content();
+            Matcher pm = IMG_PLACEHOLDER_PATTERN.matcher(content);
+            int di = 0;
+            while (pm.find() && di < descs.length) {
+                String raw = pm.group();
+                String d = "";
+                int ci = raw.indexOf('：');
+                if (ci >= 0 && raw.length() > ci + 2) {
+                    d = raw.substring(ci + 1, raw.length() - 1).trim();
+                }
+                descs[di++] = d;
+            }
+            return descs;
         }
     }
 
