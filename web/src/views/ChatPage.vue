@@ -635,7 +635,11 @@ const toolCallsView = list => {
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
-const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.status === 'running')
+// 是否有「正在运行且可见」的编排分支。必须带 delegated 条件：编排卡片（subagentCard）只渲染
+// 委派分支（多视角模式的分支是实现细节，不渲染卡片）。若这里不带 delegated，多视角模式下
+// busyOf 会以为「卡片在转圈」而让位，实际卡片根本不渲染 → 气泡整个空白，loading 凭空消失。
+// 两处判定必须同源：busyOf 只能把进度让位给「真的正在渲染」的构件。
+const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.status === 'running' && b.delegated)
 
 // ==================== 气泡级「进行中」提示（单一进度行） ====================
 // 一轮回答里同一时刻只出现一处进行中指示，互斥由本函数的优先级链保证，而不是让
@@ -650,7 +654,9 @@ const busyOf = m => {
   if (m.retrying) return { text: '连接中断，正在自动重试…', warn: true }
   if (toolRunning(m)) return null                 // 工具自己会转圈并计时
   if (subRunning(m)) return null                  // 编排卡片每个分支自带转圈 + 进度条
-  if (m.thinkLoading) return null                 // 深度思考面板自己会转圈
+  // 深度思考面板只有 thinking 非空才渲染（v-if m.thinking）：让位条件与之对齐，
+  // 否则 thinkLoading=true 而面板未渲染时进度行同样凭空消失（与 subRunning 同类坑）
+  if (m.thinkLoading && m.thinking) return null       // 深度思考面板自己会转圈
   if (m.stage) return { text: m.stage }           // 后端阶段文案（理解/检索/生成）
   if (m.content) return { spin: true }            // 正文续写中：一个转圈足够
   return { text: '正在生成回答…' }                // 工具已回、正文未出（含多轮工具之间的空档）
