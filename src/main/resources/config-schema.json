@@ -108,7 +108,8 @@
         "会话参数与清理",
         "文档名缓存（多副本一致性）",
         "产物清理（模型生成的可下载文件）",
-        "定时执行智能体"
+        "定时执行智能体",
+        "网页源定时刷新（url 文档到期自动重抓重建）"
       ]
     },
     {
@@ -1585,6 +1586,9 @@
       "tier": 2
     },
     {
+      "backendKey": "memory.dedupThreshold",
+      "panel": "memory",
+      "section": 1,
       "group": "memory",
       "key": "dedupThreshold",
       "path": "memory.dedupThreshold",
@@ -1600,6 +1604,9 @@
       "tier": 3
     },
     {
+      "backendKey": "memory.useSemanticInject",
+      "panel": "memory",
+      "section": 1,
       "group": "memory",
       "key": "useSemanticInject",
       "path": "memory.useSemanticInject",
@@ -1866,6 +1873,9 @@
       "tier": 3
     },
     {
+      "backendKey": "web.refreshEnabled",
+      "panel": "maintenance",
+      "section": 7,
       "group": "web",
       "key": "refreshEnabled",
       "path": "web.refreshEnabled",
@@ -1878,6 +1888,9 @@
       "tier": 3
     },
     {
+      "backendKey": "web.refreshScanIntervalMs",
+      "panel": "maintenance",
+      "section": 7,
       "group": "web",
       "key": "refreshScanIntervalMs",
       "path": "web.refreshScanIntervalMs",
@@ -2535,6 +2548,8 @@
     "memoryMaxPerUser": "每个用户的记忆条数上限：满后自动提取跳过，用户在个人设置清理后继续。",
     "memoryMaxInjectCount": "每轮问答最多注入的记忆条数（按更新时间取最近）。",
     "memoryInjectBudgetChars": "记忆注入段的字符预算：超过预算截断，防止挤占知识上下文。",
+    "memoryDedupThreshold": "自动提取/手动添加记忆时的语义去重阈值：新记忆先与该用户已有记忆做向量化余弦相似度比对，≥此值视为重复并跳过（越低越易判重）。默认 0.90。",
+    "memoryUseSemanticInject": "开启后注入按当前对话语义检索最相关的 Top-K 记忆（走向量化比对），而非单纯按更新时间倒序取最近条数。关闭即回退时间倒序。",
     "agentDigest": "是否用模型把每个子代理的命中提炼成 2~3 条要点再汇总：开启后进主链路的资料更精炼（不会把多路原始片段都塞进上下文），但要多花 2~4 次模型调用；关闭则只做并行检索合并（零额外成本）。",
     "agentAggregateMode": "多分支结果的合并策略。concat：按分支完成顺序直拼（现状，零额外开销）；rerank：各分支命中合并后按重排分/相关分降序排序，高分块优先填进上下文预算（改善多分支低分块挤占预算的问题）；supervisor：全部分支要点产出后，再由模型做一次「监督者聚合」——去重合并、按对回答的价值排序、结论矛盾时显式标注冲突点，并把总长压缩进要点预算（代价：每轮多一次模型调用；调用失败自动回退 concat，不影响问答）。",
     "agentDigestMaxChars": "并行检索要点段注入主链路的总字符上限。要点段属于补充资料，预算太小会丢信息、太大挤占知识片段与回答生成的空间；supervisor 模式会把该值作为压缩目标写给模型，concat/rerank 模式超限时截断并记日志。",
@@ -2550,6 +2565,8 @@
     "scheduledMaxPerUser": "每个用户最多能建多少个定时任务（0=不限制）。默认 20：任务到点会真实调用模型，配额是防止失控的保护。",
     "scheduledTimeout": "一轮定时问答的最长等待时间（毫秒），超时按失败记录。定时任务用的是与网页问答同一条流水线（含检索、深度思考、工具调用），长任务的耗时接近用户手动提问。",
     "scheduledScanInterval": "扫描\"是否有任务到期\"的间隔（毫秒，≤0 = 暂停扫描）。默认 30000（30 秒）：cron 精度是分钟，30 秒扫描足以准点触发，又不会频繁查库。",
+    "webRefreshEnabled": "网页源自动刷新的全局闸刀：开启后，标记「自动刷新」的网页文档（file_type=url）会按各自 cron 到期重新抓网并同名替换重建（分块/向量）；关闭后即使文档标记了自动刷新也不执行（任务配置保留）。默认开。",
+    "webRefreshScanInterval": "扫描「是否有网页文档到期需刷新」的间隔（毫秒，≤0 = 暂停扫描）。默认 60000：cron 精度是分钟级，1 分钟扫描足以准点触发，又不会频繁查库。",
     "oidcEnabled": "启用后登录页会出现「使用 {认证源名称} 登录」的入口，走标准的 OIDC 授权码流程（授权 → 回调 → 换取本系统登录令牌）。本地账号密码登录始终保留，不受此项影响，因此配置出错也不会把自己锁在系统外。",
     "oidcProviderName": "显示在登录按钮上的认证源名称，例如「企业微信登录」「统一身份认证」。只影响界面文案。",
     "oidcIssuerUrl": "IdP 的 issuer 地址（通常形如 https://idp.example.com/realms/main）。系统会读取其 /.well-known/openid-configuration 自动发现授权、令牌、用户信息三个端点——只有 IdP 不支持 discovery 时，才需要在下面手填端点。",
