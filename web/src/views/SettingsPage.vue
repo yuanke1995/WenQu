@@ -174,6 +174,83 @@
                   </div>
                 </div>
 
+                <!-- MCP 调用审计（仅管理员）：外部客户端调用 /ai/mcp 两类端点的每次工具执行 -->
+                <div class="key-usage">
+                  <div class="fold-head" @click="toggleAudit">
+                    <span class="fold-caret">{{ auditOpen ? '▾' : '▸' }}</span> MCP 调用审计
+                    <span class="key-dim">（外部客户端经 MCP 端点调用平台能力的全量记录）</span>
+                  </div>
+                  <div v-if="auditOpen" class="key-usage-body">
+                    <div class="audit-summary">
+                      <template v-if="auditSummary">
+                        <span>累计调用 <b>{{ auditSummary.total }}</b></span>
+                        <span>成功 <b class="ok">{{ auditSummary.success }}</b></span>
+                        <span>失败 <b class="bad">{{ auditSummary.failed }}</b></span>
+                        <span v-if="auditTopTool">最常调用 <b>{{ auditTopTool.toolName }}</b>（{{ auditTopTool.cnt }} 次）</span>
+                      </template>
+                      <span v-else class="key-dim">暂无汇总</span>
+                    </div>
+                    <div class="audit-filter">
+                      <a-select v-model:value="auditFilter.channel" size="small" style="width: 130px"
+                                allow-clear placeholder="全部渠道" @change="loadAudit(true)">
+                        <a-select-option value="agent">智能体端点</a-select-option>
+                        <a-select-option value="platform">平台级入口</a-select-option>
+                      </a-select>
+                      <a-select v-model:value="auditFilter.success" size="small" style="width: 100px"
+                                allow-clear placeholder="全部结果" @change="loadAudit(true)">
+                        <a-select-option :value="1">成功</a-select-option>
+                        <a-select-option :value="0">失败</a-select-option>
+                      </a-select>
+                      <a-input v-model:value="auditFilter.tool" size="small" style="width: 180px"
+                               placeholder="工具名（模糊）" allow-clear @press-enter="loadAudit(true)" />
+                      <button class="app-btn small" :disabled="auditLoading" @click="loadAudit(true)">查询</button>
+                      <a-tooltip title="刷新">
+                        <button class="app-icon-btn" aria-label="刷新审计记录" :disabled="auditLoading" @click="loadAudit(true)">
+                          <reload-outlined />
+                        </button>
+                      </a-tooltip>
+                    </div>
+                    <a-table :data-source="auditRows" size="small" row-key="id" :pagination="false" :loading="auditLoading">
+                      <a-table-column title="时间" key="time" width="130">
+                        <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.createdAt) }}</span></template>
+                      </a-table-column>
+                      <a-table-column title="渠道" key="channel" width="100">
+                        <template #default="{ record }">
+                          <span class="audit-chip" :class="record.channel">{{ record.channel === 'agent' ? '智能体端点' : '平台级' }}</span>
+                        </template>
+                      </a-table-column>
+                      <a-table-column title="工具" key="tool" width="180" ellipsis>
+                        <template #default="{ record }"><code class="audit-mono">{{ record.toolName }}</code></template>
+                      </a-table-column>
+                      <a-table-column title="凭据" key="cred" width="150" ellipsis>
+                        <template #default="{ record }"><code class="audit-mono">{{ record.credentialRef || '—' }}</code></template>
+                      </a-table-column>
+                      <a-table-column title="归属" key="owner" width="120" ellipsis>
+                        <template #default="{ record }">{{ record.ownerUid || '—' }}</template>
+                      </a-table-column>
+                      <a-table-column title="调用者 IP" key="ip" width="120" ellipsis>
+                        <template #default="{ record }">{{ record.callerIp || '—' }}</template>
+                      </a-table-column>
+                      <a-table-column title="耗时" key="dur" width="90">
+                        <template #default="{ record }">{{ record.durationMs }}ms</template>
+                      </a-table-column>
+                      <a-table-column title="结果" key="ok">
+                        <template #default="{ record }">
+                          <a-tooltip v-if="!record.success && record.errorMsg" :title="record.errorMsg">
+                            <span class="audit-chip fail">失败</span>
+                          </a-tooltip>
+                          <span v-else class="audit-chip pass">成功</span>
+                        </template>
+                      </a-table-column>
+                    </a-table>
+                    <div class="audit-pager">
+                      <span class="key-dim">共 {{ auditTotal }} 条</span>
+                      <a-pagination size="small" :current="auditPage" :page-size="auditSize" :total="auditTotal"
+                                    :show-size-changer="false" @change="onAuditPage" />
+                    </div>
+                  </div>
+                </div>
+
                 <!-- 创建弹窗：两步式（表单 → 明文仅此一次展示） -->
                 <a-modal v-model:open="createOpen" :title="createStep === 'form' ? '创建 API Key' : 'Key 已创建'"
                          :footer="null" :width="580" :mask-closable="false" @cancel="closeCreateKey">
@@ -253,7 +330,8 @@ import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine,
          probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare } from '../api'
+         listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
+         getMcpAuditLogs, getMcpAuditSummary } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
@@ -642,6 +720,44 @@ watch(current, k => {
   if (k === 'apiKey') loadKeys()
 })
 
+// ==================== MCP 调用审计（仅管理员，后端 requireAdmin 兜底） ====================
+const auditOpen = ref(false)
+const auditLoading = ref(false)
+const auditRows = ref([])
+const auditTotal = ref(0)
+const auditPage = ref(1)
+const auditSize = 20
+const auditSummary = ref(null)
+const auditFilter = ref({ channel: null, success: null, tool: '' })
+const auditTopTool = computed(() => {
+  const list = auditSummary.value?.byTool || []
+  return list.length ? list[0] : null
+})
+
+/** 首次展开时懒加载（带汇总）；resetPage=true 表示筛选变化回第一页 */
+const loadAudit = async (resetPage = false) => {
+  if (resetPage) auditPage.value = 1
+  auditLoading.value = true
+  try {
+    // 明细与汇总分开请求：任何一个 403/失败都不能连累另一个（Promise.all 会整体 throw）
+    const r = await getMcpAuditLogs({ ...auditFilter.value, page: auditPage.value, size: auditSize })
+    if (r.success && r.data) {
+      auditRows.value = r.data.rows || []
+      auditTotal.value = r.data.total || 0
+    } else message.error(r.msg || '审计明细加载失败')
+    if (!auditSummary.value) {
+      const s = await getMcpAuditSummary()
+      if (s.success && s.data) auditSummary.value = s.data
+    }
+  } catch (e) { message.error(e.message || '审计数据加载失败') }
+  finally { auditLoading.value = false }
+}
+const toggleAudit = () => {
+  auditOpen.value = !auditOpen.value
+  if (auditOpen.value && !auditSummary.value && !auditLoading.value) loadAudit(true)
+}
+const onAuditPage = p => { auditPage.value = p; loadAudit(false) }
+
 onMounted(fetchAndFill)
 </script>
 
@@ -731,4 +847,17 @@ onMounted(fetchAndFill)
   padding: 12px 36px 12px 12px;
 }
 .key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--app-text); }
+/* MCP 调用审计 */
+.audit-summary { display: flex; gap: 16px; font-size: 12px; color: var(--app-text2); margin-bottom: 10px; flex-wrap: wrap; }
+.audit-summary b { font-weight: 600; color: var(--app-text); }
+.audit-summary b.ok { color: var(--app-ok); }
+.audit-summary b.bad { color: var(--app-danger); }
+.audit-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.audit-chip { font-size: 11px; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.audit-chip.agent { color: var(--app-accent); background: var(--app-accent-weak); }
+.audit-chip.platform { color: #8c6a1f; background: #faf3e6; }
+.audit-chip.pass { color: var(--app-ok); background: #eaf5ec; }
+.audit-chip.fail { color: var(--app-danger); background: #fbecea; }
+.audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
 </style>

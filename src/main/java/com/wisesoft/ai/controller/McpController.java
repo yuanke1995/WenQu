@@ -1,15 +1,20 @@
 package com.wisesoft.ai.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.config.AdminGuard;
 import com.wisesoft.ai.dto.ResultJson;
+import com.wisesoft.ai.mapper.McpCallLogMapper;
 import com.wisesoft.ai.mapper.UserMcpMapper;
+import com.wisesoft.ai.model.McpCallLog;
 import com.wisesoft.ai.model.UserMcp;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.McpClientService;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
@@ -50,6 +56,8 @@ public class McpController {
     private final McpClientService mcpClientService;
     private final ConfigService configService;
     private final UserMcpMapper userMcpMapper;
+    private final McpCallLogMapper mcpCallLogMapper;
+    private final AdminGuard adminGuard;
 
     @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）")
     @GetMapping("/status")
@@ -144,7 +152,68 @@ public class McpController {
         return ResultJson.ok(mcpClientService.probe(body.get("url"), body.get("type")));
     }
 
+    // ==================== MCP 调用审计（仅管理员） ====================
+
+    @Operation(summary = "MCP 调用审计-明细", description = "外部客户端调用 wenqu MCP 端点（智能体端点 /ai/mcp/{token} 与平台级 /ai/mcp）的每次工具执行记录：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
+    @GetMapping("/audit/logs")
+    public ResultJson auditLogs(@RequestParam(required = false) String channel,
+                                @RequestParam(required = false) String tool,
+                                @RequestParam(required = false) Integer success,
+                                @RequestParam(defaultValue = "1") Integer page,
+                                @RequestParam(defaultValue = "20") Integer size,
+                                HttpServletRequest httpRequest) {
+        requireAdmin(httpRequest);
+        int p = Math.max(1, page == null ? 1 : page);
+        int n = Math.min(100, Math.max(1, size == null ? 20 : size));
+        LambdaQueryWrapper<McpCallLog> qw = new LambdaQueryWrapper<McpCallLog>()
+                .orderByDesc(McpCallLog::getCreatedAt);
+        if (channel != null && !channel.isBlank()) qw.eq(McpCallLog::getChannel, channel.trim());
+        if (tool != null && !tool.isBlank()) qw.like(McpCallLog::getToolName, tool.trim());
+        if (success != null) qw.eq(McpCallLog::getSuccess, success);
+        long total = mcpCallLogMapper.selectCount(qw);
+        // count 之后才拼 LIMIT：同一 wrapper 先数总数再取页（项目无分页插件，手工 offset）
+        qw.last("LIMIT " + (long) (p - 1) * n + ", " + n);
+        List<McpCallLog> rows = mcpCallLogMapper.selectList(qw);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", total);
+        data.put("page", p);
+        data.put("size", n);
+        data.put("rows", rows);
+        return ResultJson.ok(data);
+    }
+
+    @Operation(summary = "MCP 调用审计-汇总", description = "总调用/成功/失败/平均耗时 + 按工具×渠道分组统计（调用量倒序前 20）。仅管理员")
+    @GetMapping("/audit/summary")
+    public ResultJson auditSummary(HttpServletRequest httpRequest) {
+        requireAdmin(httpRequest);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", mcpCallLogMapper.selectCount(null));
+        data.put("success", mcpCallLogMapper.selectCount(new LambdaQueryWrapper<McpCallLog>().eq(McpCallLog::getSuccess, 1)));
+        data.put("failed", mcpCallLogMapper.selectCount(new LambdaQueryWrapper<McpCallLog>().eq(McpCallLog::getSuccess, 0)));
+        // 按工具×渠道分组：同名工具在两类入口下语义不同（如 wenqu_ask 平台级/智能体端点）
+        QueryWrapper<McpCallLog> gw = new QueryWrapper<McpCallLog>()
+                .select("tool_name AS toolName", "channel", "COUNT(*) AS cnt",
+                        "SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failCnt",
+                        "ROUND(AVG(duration_ms)) AS avgMs")
+                .groupBy("tool_name", "channel")
+                .orderByDesc("cnt")
+                .last("LIMIT 20");
+        data.put("byTool", mcpCallLogMapper.selectMaps(gw));
+        return ResultJson.ok(data);
+    }
+
     // ==================== 内部 ====================
+
+    /**
+     * 审计是管理员视角（外部调用盘点）。注意 {@code /api/ai/mcp/**} 在 SecurityConfig 的
+     * 登录放行名单里（个人 MCP 管理人人可用），且对带 API Key 的请求也放行——
+     * 所以这里必须<b>方法内自查 admin</b>（fail-closed），不能依赖拦截器。
+     */
+    private void requireAdmin(HttpServletRequest request) {
+        if (!adminGuard.isAdmin(request)) {
+            throw new BizException(403, "仅管理员可查看 MCP 调用审计");
+        }
+    }
 
     /** 取本人的一条记录：不存在或不是本人的都按不存在处理（避免按 ID 遍历到别人的服务） */
     private UserMcp own(String id) {

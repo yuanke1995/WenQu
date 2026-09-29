@@ -2,11 +2,13 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.McpCallLogMapper;
 import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.AgentShare;
 import com.wisesoft.ai.model.ApiKey;
 import com.wisesoft.ai.model.KnowledgeBase;
+import com.wisesoft.ai.model.McpCallLog;
 import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.util.RequestUser;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -24,6 +26,7 @@ import org.springframework.web.servlet.function.ServerResponse;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -31,6 +34,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * MCP（Model Context Protocol）服务端：把「已发布的智能体」对外暴露成 MCP Server，
@@ -96,6 +100,7 @@ public class McpServerService {
     private final KnowledgeBaseService knowledgeBaseService;
     private final AgentService agentService;
     private final ResourceVisibilityService visibility;
+    private final McpCallLogMapper mcpCallLogMapper;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
                             RagService ragService, RateLimitService rateLimitService,
@@ -103,7 +108,7 @@ public class McpServerService {
                             ApiKeyService apiKeyService, UserMapper userMapper,
                             KnowledgeRetrievalTool knowledgeRetrievalTool,
                             KnowledgeBaseService knowledgeBaseService, AgentService agentService,
-                            ResourceVisibilityService visibility) {
+                            ResourceVisibilityService visibility, McpCallLogMapper mcpCallLogMapper) {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
         this.ragService = ragService;
@@ -116,6 +121,7 @@ public class McpServerService {
         this.knowledgeBaseService = knowledgeBaseService;
         this.agentService = agentService;
         this.visibility = visibility;
+        this.mcpCallLogMapper = mcpCallLogMapper;
     }
 
     /** MCP 端点总开关（mcp.server.enabled，默认关：不主动对外暴露能力） */
@@ -236,6 +242,11 @@ public class McpServerService {
 
     private McpSchema.CallToolResult searchKnowledge(McpTransportContext ctx, McpSchema.CallToolRequest call) {
         ApiKey key = apiKeyOf(ctx);
+        return audit("platform", "wenqu_search_knowledge", keyOwner(key), keyRef(key),
+                key == null ? null : key.getId(), null, ipOf(ctx), () -> searchKnowledgeBody(key, call));
+    }
+
+    private McpSchema.CallToolResult searchKnowledgeBody(ApiKey key, McpSchema.CallToolRequest call) {
         Map<String, Object> args = argsOf(call);
         String query = text(args.get("query"));
         if (query.isEmpty()) return toolError("参数 query 不能为空");
@@ -257,6 +268,13 @@ public class McpServerService {
 
     private McpSchema.CallToolResult askPlatform(McpTransportContext ctx, McpSchema.CallToolRequest call) {
         ApiKey key = apiKeyOf(ctx);
+        String agentId = text(argsOf(call).get("agentId"));
+        return audit("platform", "wenqu_ask", keyOwner(key), keyRef(key),
+                key == null ? null : key.getId(), agentId.isEmpty() ? null : agentId, ipOf(ctx),
+                () -> askPlatformBody(key, ctx, call));
+    }
+
+    private McpSchema.CallToolResult askPlatformBody(ApiKey key, McpTransportContext ctx, McpSchema.CallToolRequest call) {
         Map<String, Object> args = argsOf(call);
         String question = text(args.get("question"));
         if (question.isEmpty()) return toolError("参数 question 不能为空");
@@ -301,8 +319,6 @@ public class McpServerService {
                 }
                 String answer = sink.answer();
                 if (answer.isBlank()) return toolError("本轮未产生回答内容");
-                log.info("[AUDIT] MCP 平台级问答 key={} agent={} session={} ip={} chars={}",
-                        key.getId(), agentId.isEmpty() ? "-" : agentId, sid, ip.isEmpty() ? "-" : ip, answer.length());
                 return McpSchema.CallToolResult.builder()
                         .addTextContent(answer)
                         .structuredContent(Map.of("sessionId", sid))
@@ -315,26 +331,30 @@ public class McpServerService {
 
     private McpSchema.CallToolResult listKnowledgeBases(McpTransportContext ctx) {
         ApiKey key = apiKeyOf(ctx);
-        return withIdentity(key, () -> {
-            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
-                    RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
-            List<Map<String, Object>> out = new ArrayList<>();
-            for (KnowledgeBase kb : knowledgeBaseService.list()) {
-                if (!visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) continue;
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("id", kb.getId());
-                m.put("name", kb.getName() == null ? "" : kb.getName());
-                m.put("isDefault", kb.getIsDefault() != null && kb.getIsDefault() == 1);
-                out.add(m);
-            }
-            return ok(JSON.toJSONString(out));
-        });
+        return audit("platform", "wenqu_list_knowledge_bases", keyOwner(key), keyRef(key),
+                key == null ? null : key.getId(), null, ipOf(ctx),
+                () -> withIdentity(key, () -> {
+                    ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                            RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+                    List<Map<String, Object>> out = new ArrayList<>();
+                    for (KnowledgeBase kb : knowledgeBaseService.list()) {
+                        if (!visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) continue;
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("id", kb.getId());
+                        m.put("name", kb.getName() == null ? "" : kb.getName());
+                        m.put("isDefault", kb.getIsDefault() != null && kb.getIsDefault() == 1);
+                        out.add(m);
+                    }
+                    return ok(JSON.toJSONString(out));
+                }));
     }
 
     private McpSchema.CallToolResult listAgents(McpTransportContext ctx) {
         ApiKey key = apiKeyOf(ctx);
-        return withIdentity(key, () -> ok(JSON.toJSONString(agentService.available())));
+        return audit("platform", "wenqu_list_agents", keyOwner(key), keyRef(key),
+                key == null ? null : key.getId(), null, ipOf(ctx),
+                () -> withIdentity(key, () -> ok(JSON.toJSONString(agentService.available()))));
     }
 
     // ==================== 端点解析 ====================
@@ -402,8 +422,15 @@ public class McpServerService {
     /**
      * 工具执行：跑一次完整的问答流水线（复用 {@link RagService#chat} 的游客模式），
      * 用 {@link CollectingSseEmitter} 收集完整回答后一次性返回（MCP 的 tools/call 是请求-响应语义）。
+     * 外层 {@link #audit} 统一落调用审计（每次外部调用一行，可回溯）。
      */
     private McpSchema.CallToolResult ask(Resolved r, McpTransportContext ctx, McpSchema.CallToolRequest call) {
+        return audit("agent", toolName(r.agent()), r.owner().getUid(),
+                "token:" + tokenPrefix(r.share().getToken()), null, r.agent().getId(), ipOf(ctx),
+                () -> askBody(r, ctx, call));
+    }
+
+    private McpSchema.CallToolResult askBody(Resolved r, McpTransportContext ctx, McpSchema.CallToolRequest call) {
         Map<String, Object> args = call.arguments() == null ? Map.of() : call.arguments();
         String question = text(args.get("question"));
         if (question.isEmpty()) {
@@ -448,8 +475,6 @@ public class McpServerService {
             if (answer.isBlank()) {
                 return toolError("本轮未产生回答内容");
             }
-            log.info("[AUDIT] MCP 调用 agent={} session={} ip={} chars={}",
-                    r.agent().getId(), sessionId, ip.isEmpty() ? "-" : ip, answer.length());
             return McpSchema.CallToolResult.builder()
                     .addTextContent(answer)
                     // 结构化输出给支持它的客户端（续接上下文用）；文本输出对老客户端始终可读
@@ -462,6 +487,83 @@ public class McpServerService {
     }
 
     // ==================== 内部 ====================
+
+    // ==================== 调用审计（c_ai_mcp_call_log） ====================
+
+    /**
+     * 统一调用埋点：计时 → 执行 → 按 {@code isError}/异常判定结果 → 落一行调用日志。
+     * 覆盖全部五个工具 handler（两类入口），是"谁在什么时候用哪个凭据调了哪个工具、
+     * 成没成功、花了多久"的唯一记录点。
+     * <p>
+     * 日志写失败只告警不外抛：审计是旁路观察面，不能反过来打断外部客户端的正常调用；
+     * 但告警必须显式出现在日志里，不允许静默吞掉。
+     */
+    private McpSchema.CallToolResult audit(String channel, String tool, String ownerUid, String credentialRef,
+                                           String apiKeyId, String agentId, String ip,
+                                           java.util.function.Supplier<McpSchema.CallToolResult> body) {
+        long start = System.currentTimeMillis();
+        McpSchema.CallToolResult res;
+        boolean success = false;   // 兜底初始化：Error 型异常直接穿 finally 时按失败记录
+        String error = null;
+        try {
+            res = body.get();
+            success = !Boolean.TRUE.equals(res.isError());
+            if (!success) error = firstText(res);
+        } catch (RuntimeException e) {
+            success = false;
+            error = e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName() : e.getMessage();
+            res = toolError("调用处理异常: " + error);
+        } finally {
+            long cost = System.currentTimeMillis() - start;
+            try {
+                McpCallLog row = new McpCallLog();
+                row.setId(UUID.randomUUID().toString());
+                row.setChannel(channel);
+                row.setToolName(tool);
+                row.setOwnerUid(ownerUid);
+                row.setCredentialRef(credentialRef);
+                row.setApiKeyId(apiKeyId);
+                row.setAgentId(agentId);
+                row.setCallerIp(ip);
+                row.setDurationMs(cost);
+                row.setSuccess(success ? 1 : 0);
+                row.setErrorMsg(error == null ? null : error.substring(0, Math.min(error.length(), 500)));
+                row.setCreatedAt(LocalDateTime.now());
+                mcpCallLogMapper.insert(row);
+            } catch (Exception logEx) {
+                log.warn("[MCP-AUDIT] 调用日志落库失败（不影响本次调用）: {}", logEx.getMessage());
+            }
+        }
+        return res;
+    }
+
+    /** isError 结果里的首段文本（审计记录失败原因用） */
+    private static String firstText(McpSchema.CallToolResult res) {
+        try {
+            if (res.content() == null || res.content().isEmpty()) return "工具返回错误（无文本详情）";
+            Object c = res.content().get(0);
+            if (c instanceof McpSchema.TextContent tc) return tc.text();
+            return String.valueOf(c);
+        } catch (Exception e) {
+            return "工具返回错误（详情解析失败）";
+        }
+    }
+
+    /** 传输上下文里的调用者 IP */
+    private static String ipOf(McpTransportContext ctx) {
+        return text(ctx.get(CTX_IP));
+    }
+
+    /** 平台级 Key 的归属 uid（Key 在 handlePlatform 已验真，这里防御性取值） */
+    private static String keyOwner(ApiKey key) {
+        return key == null || key.getCreatedBy() == null ? "" : key.getCreatedBy();
+    }
+
+    /** 平台级 Key 的审计指代：key:{id}（不落明文 Key，ID 足以与管理页对上号） */
+    private static String keyRef(ApiKey key) {
+        return key == null ? "" : "key:" + key.getId();
+    }
 
     /**
      * Origin 校验（MCP 规范要求 HTTP 传输防 DNS rebinding）：

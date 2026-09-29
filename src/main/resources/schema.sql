@@ -614,3 +614,23 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     KEY `idx_status_created` (`status`, `created_at`),
     KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批记录（人在回路：持久化 + 审计 + 进程重启后可见）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
+    `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',
+    `channel`        VARCHAR(16)  NOT NULL COMMENT '入口渠道: agent=智能体端点/ai/mcp/{token}，platform=平台级/ai/mcp',
+    `tool_name`      VARCHAR(128) DEFAULT NULL COMMENT '被调用的工具名（ask-{slug} / wenqu_*）',
+    `owner_uid`      VARCHAR(64)  DEFAULT NULL COMMENT '身份归属：端点=发布者uid，平台级=Key创建者uid',
+    `credential_ref` VARCHAR(128) DEFAULT NULL COMMENT '凭据指代（脱敏）：token:前6位 / key:{id}，不存明文',
+    `api_key_id`     VARCHAR(64)  DEFAULT NULL COMMENT '平台级入口的 API Key ID（agent 渠道为空）',
+    `agent_id`       VARCHAR(64)  DEFAULT NULL COMMENT '智能体ID（agent 渠道必填，platform 指定时有值）',
+    `caller_ip`      VARCHAR(64)  DEFAULT NULL COMMENT '调用者IP（X-Forwarded-For 首段）',
+    `duration_ms`    BIGINT       NOT NULL DEFAULT 0 COMMENT '耗时（毫秒）',
+    `success`        TINYINT      NOT NULL DEFAULT 1 COMMENT '结果: 1=成功 0=失败（isError 或抛异常）',
+    `error_msg`      VARCHAR(512) DEFAULT NULL COMMENT '失败原因（截断 500 字符）',
+    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '调用时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_created` (`created_at`),
+    KEY `idx_channel_time` (`channel`, `created_at`),
+    KEY `idx_tool` (`tool_name`),
+    KEY `idx_owner` (`owner_uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 服务端调用审计日志（外部客户端调用 wenqu MCP 端点的每次工具执行）';

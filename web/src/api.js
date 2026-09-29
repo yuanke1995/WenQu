@@ -303,6 +303,18 @@ export const setMcpServerEnabled = (id, enabled) =>
   request(`/mcp/servers/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
 export const deleteMcpServer = id => request('/mcp/servers/' + id, { method: 'DELETE' })
 
+/** MCP 调用审计（仅管理员）：外部客户端调用 /ai/mcp 端点的每次工具执行 */
+export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => {
+  const q = new URLSearchParams()
+  if (channel) q.set('channel', channel)
+  if (tool) q.set('tool', tool)
+  if (success !== undefined && success !== null && success !== '') q.set('success', String(success))
+  q.set('page', String(page || 1))
+  q.set('size', String(size || 20))
+  return request('/mcp/audit/logs?' + q.toString())
+}
+export const getMcpAuditSummary = () => request('/mcp/audit/summary')
+
 // ==================== 技能（Skills）（个人资产：每人管自己的技能） ====================
 export const listSkills = () => request('/skill/list')
 export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))
