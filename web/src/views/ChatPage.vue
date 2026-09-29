@@ -955,7 +955,10 @@ const boundAgentOf = sid => {
   const local = sessionAgent.value[sid]
   if (local) return local
   const s = sessionStore.list.find(x => x.id === sid)
-  if (s && s.agentId !== undefined) return { agentId: s.agentId || '', agentName: s.agentName || '' }
+  // 必须用 != null 同时排除 null 与 undefined：后端未绑定时 agent_id 为 NULL，序列化后是 null（不是字段缺失），
+  // 若只判 !== undefined 会把「未绑定」误判成「已绑定为不使用智能体」——表现为会话一进来就锁死，
+  // 每次点选都走"开启新会话"分支，点一次建一个空会话。
+  if (s && s.agentId != null) return { agentId: s.agentId || '', agentName: s.agentName || '' }
   return null
 }
 const currentAgentId = computed({
