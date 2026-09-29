@@ -248,6 +248,9 @@ export const getKbParamDefaults = () => request('/kb/param-defaults')
 export const listArtifacts = keyword =>
   request('/artifact/list' + (keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''))
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
+// 批量删除：逐条校验归属，返回 { deleted, skipped }（skipped = 不存在/无权的 id）
+export const deleteArtifactsBatch = ids =>
+  request('/artifact/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 
 // 定时任务（定时执行智能体；个人资产，每人管自己的）
 export const listScheduledJobs = () => request('/scheduled/list')
