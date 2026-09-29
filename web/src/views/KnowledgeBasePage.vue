@@ -196,7 +196,8 @@ function hydrateForm (row) {
   for (const [field, key] of Object.entries(QUERY_KEYS)) {
     const v = q[key]
     if (v === undefined || v === '') continue
-    f.q[field] = field === 'rerankModel' ? v : Number(v)
+    // rerankEnabled 是 'true'/'false' 开关字符串（同解析参数的开关字段），走 Number 会得 NaN
+    f.q[field] = (field === 'rerankModel' || field === 'rerankEnabled') ? String(v) : Number(v)
   }
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = p[key]
