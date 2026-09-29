@@ -132,8 +132,13 @@ export const renderMd = (t, images = []) => {
   // ③ 清理末尾孤立竖线（LLM 回答结尾偶发残留" |"），避免渲染成一行竖线
   pre = pre.replace(/\n\s*\|\s*$/g, '')
   // ④ 渲染 + 消毒（放行内部图片占位前缀 __AI_IMG_，否则 DOMPurify 会剥掉其 src 导致图片丢失）
+  // ADD_URI_SAFE_ATTR：DOMPurify 对白名单内属性的"值"也统一走 ALLOWED_URI_REGEXP 校验
+  // （URI_SAFE_ATTRIBUTES 默认不含数值型属性）。上面的严格 URI 正则只认 __AI_IMG_/http/data，
+  // start="6"/colspan 等纯数字值会被当非法 URI 剥掉 → 列表被图片打断后每段从 1 重排、合并单元格丢失。
+  // 这些属性值天然不是 URI，走官方扩展点跳过 URI 校验（base 合并默认列表，不影响其它安全检查）。
   let html = DOMPurify.sanitize(md.render(pre), {
-    ALLOWED_URI_REGEXP: /^(?:__AI_IMG_|https?:|data:image\/|mailto:|tel:)/i
+    ALLOWED_URI_REGEXP: /^(?:__AI_IMG_|https?:|data:image\/|mailto:|tel:)/i,
+    ADD_URI_SAFE_ATTR: ['start', 'colspan', 'rowspan', 'span']
   })
   // ⑤ DOM 后处理（sanitize 之后新建元素不受白名单限制）
   const box = document.createElement('div')
