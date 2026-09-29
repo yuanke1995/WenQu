@@ -213,11 +213,11 @@
                 <div class="ap-cap-name">单轮工具步数上限</div>
                 <div class="ap-cap-desc">
                   一轮问答里全部工具的调用总次数上限，防止模型陷入「调工具→不满意→再调」的失控循环；
-                  达到上限后模型会直接给出最终回答。留空跟随全局（默认 15），0=不限制。
+                  达到上限后模型会直接给出最终回答。留空跟随全局当前值（默认 {{ globalMaxToolSteps }}），0=不限制。
                 </div>
               </div>
               <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
-                              style="width:120px" placeholder="全局 15" />
+                              style="width:120px" :placeholder="`全局 ${globalMaxToolSteps}`" />
             </div>
           </section>
 
@@ -456,7 +456,7 @@ const blankForm = () => ({
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
   // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: 'auto',
-  // 单轮工具调用步数上限：null=跟随全局（agent.maxToolSteps，默认 15）；0=不限制
+  // 单轮工具调用步数上限：null=跟随全局当前值（agent.maxToolSteps）；0=不限制
   maxToolSteps: null,
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
   builtinMode: 'inherit', builtinTools: [],
@@ -777,6 +777,13 @@ const rawOf = path => {
   return node?.value
 }
 const isOn = path => { const v = rawOf(path); return v === 'true' || v === true }
+/** 单轮工具步数上限的当前全局值（用于 placeholder 与描述，避免写死 15 与系统设置不一致） */
+const globalMaxToolSteps = computed(() => {
+  const v = rawOf(['agent', 'maxToolSteps'])
+  if (v === undefined || v === null || v === '') return 15
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 15
+})
 /**
  * 能力行的「全局开/关」提示。
  * cfg 为空 = 拿不到全局快照（普通用户无权读 /config）→ 返回空串，模板据此不显示该提示；

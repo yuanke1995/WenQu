@@ -53,9 +53,13 @@ public class ConfigController {
     }
 
     /**
-     * 前端运行时配置（文档上传限制等）：动态获取，保持与后端配置一致（改后端配置前端自动同步）
+     * 前端运行时配置（文档上传限制、排障显示开关等）：动态获取，保持与后端配置一致（改后端配置前端自动同步）。
+     * <p>
+     * 放在公开端点（SecurityConfig 白名单）而非 {@code GET /config}：/config 是管理端点，普通用户调它 403，
+     * 而这几个值决定「普通用户界面上显示什么」，必须所有人都能读到同一个开关值。
      */
-    @Operation(summary = "获取前端运行时配置", description = "文档上传大小上限/支持格式等（前端校验用，与后端业务配置一致）")
+    @Operation(summary = "获取前端运行时配置",
+            description = "文档上传大小上限/支持格式、排障显示开关（chat.retrievalDebugEnabled）等（前端用，与后端业务配置一致）")
     @GetMapping("/public")
     public ResultJson publicConfig() {
         Map<String, Object> upload = new LinkedHashMap<>();
@@ -72,7 +76,19 @@ public class ConfigController {
             exts.addAll(p.supportedExts());
         }
         upload.put("allowedExts", new ArrayList<>(exts));
-        return ResultJson.ok(Map.of("upload", upload));
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("upload", upload);
+
+        // 排障显示开关（单一开关，键与设置页「检索调试入口」同一份定义 source）：
+        // 统一控制回答气泡上的「由 X 回答」归属徽标与「已派遣 X」路由提示。
+        // 这两个显示项属"给不给用户看"的业务显隐，必须在公开端点下发（/config 普通用户 403）；
+        // 「检索调试」「加入评测集」这类必 403 的管理入口仍只在管理员侧单独判定，不复用本值。
+        Map<String, Object> ui = new LinkedHashMap<>();
+        ui.put("debugEntry", configService.getBoolean("chat.retrievalDebugEnabled"));
+        resp.put("ui", ui);
+
+        return ResultJson.ok(resp);
     }
 
     /** 字节数 → 可读标签（如 209715200 → "200MB"） */

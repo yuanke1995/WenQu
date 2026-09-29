@@ -31,7 +31,8 @@
                 </span>
               </div>
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
-              <div v-if="showAgentTag(m, i)" class="agent-tag">
+              <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
+              <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
                 <robot-outlined class="agent-tag-ic" />
                 <span>由「{{ m.agentName }}」回答</span>
               </div>
@@ -105,8 +106,8 @@
                 <span v-if="busyOf(m).text">{{ busyOf(m).text }}</span>
               </div>
               <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
-              <!-- 派遣提示属内部排障信息：与「检索调试」同一开关（chat.retrievalDebugEnabled，仅管理员可见）控制 -->
-              <div v-if="m.dispatched && debugEntryVisible" class="dispatch-chip">
+              <!-- 与上方「由 X 回答」归属徽标同属内部排障信息：同一个开关（chat.retrievalDebugEnabled）控制 -->
+              <div v-if="m.dispatched && debugDisplayVisible" class="dispatch-chip">
                 <thunderbolt-outlined class="dispatch-ic" />
                 <span>已派遣「{{ m.dispatched.name }}」</span>
                 <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
@@ -597,7 +598,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
+         getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams } from './store'
@@ -1035,7 +1036,10 @@ const pickAgent = id => {
     if (a) message.success(`已切换为「${a.name}」`)
   }
 }
-/** 归属标识是否展示：会话内首条助手消息、或与上一条助手消息归属不同时才标（同一个人全程一致不必重复） */
+/**
+ * 归属徽标的「去重」判定：会话内首条助手消息、或与上一条助手消息归属不同时才标（同一个人全程一致不必重复）。
+ * 是否允许显示由排障显示开关叠加判断（调用处 && debugDisplayVisible），本函数只负责去重，不读配置。
+ */
 const showAgentTag = (m, i) => {
   if (m.role !== 'ai' || !m.agentName) return false
   for (let k = i - 1; k >= 0; k--) {
@@ -1171,7 +1175,13 @@ const modelSourceLabel = computed(() => {
   if (userDefaultModel.value) return '个人默认'
   return ''
 })
+// 「检索调试」/「加入评测集」菜单项专属（管理端点，普通用户必 403）：只在管理员身份下从 /config 读取
 const debugEntryVisible = ref(false)
+// 排障显示开关（chat.retrievalDebugEnabled，设置页「检索调试入口」）：
+// 统一控制回答气泡上的「由 X 回答」归属徽标与「已派遣 X」路由提示。
+// 值必须走 /config/public（管理员/普通用户都能读）——这两条是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
+// /config 是管理端点，普通用户调它 403 并触发全局「无管理员权限」误报，故不复用。
+const debugDisplayVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
@@ -2278,6 +2288,11 @@ onMounted(async () => {
       debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
     }).catch(() => {})
   }
+  // 同一个开关的「显示」语义走公开端点：归属徽标/派遣提示的显隐对所有人生效（含普通用户）
+  getRuntimeConfig().then(r => {
+    if (!r.success) return
+    debugDisplayVisible.value = r.data?.ui?.debugEntry === true
+  }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
   }).catch(() => {})
