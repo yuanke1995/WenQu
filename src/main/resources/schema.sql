@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
     `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=可访问, 0=暂停（保留 token，恢复即用）',
     `mcp_enabled` INT          DEFAULT 0 COMMENT 'MCP 端点: 1=对外提供 /ai/mcp/{token}（Streamable HTTP，Token 即凭据），0=关闭',
     `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；游客对话与 MCP 调用以该用户身份执行检索可见性与工具）',
+    `visit_count`  INT         DEFAULT 0 COMMENT '游客对话累计访问次数（每次成功发起一次游客对话 +1；发布访问统计）',
+    `last_visit_at` DATETIME   DEFAULT NULL COMMENT '最近一次游客对话时间',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -592,3 +594,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_scheduled_run` (
     KEY `idx_job_time` (`job_id`, `create_time`),
     KEY `idx_uid_time` (`uid`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行记录（每轮一行；回答正文在结果会话里）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '审批请求ID（UUID，与 SSE approval_required 事件一致）',
+    `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '归属会话',
+    `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
+    `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '待审批工具名（沙盒/MCP）',
+    `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT',
+    `request_args` VARCHAR(2000) DEFAULT NULL COMMENT '工具入参摘要（截断 2000 字符，审计回溯用）',
+    `created_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '挂起时刻',
+    `resolved_at`  DATETIME      DEFAULT NULL COMMENT '裁决/超时时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_status_created` (`status`, `created_at`),
+    KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批记录（人在回路：持久化 + 审计 + 进程重启后可见）';

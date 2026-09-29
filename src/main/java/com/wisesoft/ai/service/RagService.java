@@ -292,6 +292,7 @@ public class RagService {
     /** 自动派遣（agentId="auto"）：按名称+描述从可见主智能体中路由本轮智能体 */
     private final AgentDispatchService agentDispatchService;
     private final ModelRegistryService modelRegistryService;
+    private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -361,7 +362,8 @@ public class RagService {
                       KnowledgeBaseService knowledgeBaseService,
                       com.wisesoft.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
-                      UserMemoryService userMemoryService) {
+                      UserMemoryService userMemoryService,
+                      com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -390,6 +392,7 @@ public class RagService {
         this.userMapper = userMapper;
         this.userMemoryService = userMemoryService;
         this.modelRegistryService = modelRegistryService;
+        this.toolApprovalMapper = toolApprovalMapper;
     }
 
     /**
@@ -1338,6 +1341,21 @@ public class RagService {
                             long approvalTimeout = approvalTimeoutMs();
                             String approvalId = java.util.UUID.randomUUID().toString();
                             java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+                            // 落库审批记录（持久化 + 审计；内存 future 仍负责阻塞工具线程，不可省）
+                            try {
+                                com.wisesoft.ai.model.ToolApproval rec = new com.wisesoft.ai.model.ToolApproval();
+                                rec.setId(approvalId);
+                                rec.setSessionId(st.sessionId);
+                                rec.setUserId(st.userId);
+                                rec.setToolName(name);
+                                rec.setStatus("PENDING");
+                                String argsSummary = toolInput == null ? "" : (toolInput.length() > 2000 ? toolInput.substring(0, 2000) : toolInput);
+                                rec.setRequestArgs(argsSummary);
+                                rec.setCreatedAt(java.time.LocalDateTime.now());
+                                toolApprovalMapper.insert(rec);
+                            } catch (Exception e) {
+                                log.warn("[TOOL] 审批记录落库失败（不阻塞审批流程）: {}", e.getMessage());
+                            }
                             PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
                             try {
                                 Map<String, Object> req = new LinkedHashMap<>();
@@ -1353,10 +1371,11 @@ public class RagService {
                                     approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
                                 } catch (java.util.concurrent.ExecutionException ee) {
                                     approved = false;
-                                } catch (java.util.concurrent.TimeoutException te) {
-                                    approved = false;
-                                    log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
-                                } catch (InterruptedException ie) {
+                            } catch (java.util.concurrent.TimeoutException te) {
+                                approved = false;
+                                markApprovalResolved(approvalId, "TIMEOUT", st.userId);
+                                log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
+                            } catch (InterruptedException ie) {
                                     Thread.currentThread().interrupt();
                                     approved = false;
                                 }
@@ -3293,18 +3312,60 @@ public class RagService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对）；
-     * 不存在/已失效返回 false（前端据此提示重新发起）。
+     * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对，内存态与 DB 双重校验）；
+     * 内存态丢失（进程重启/已超时）时仍可更新 DB 审计记录（幂等），但无法唤醒已死的工具线程。
      */
     public boolean resolveApproval(String approvalId, boolean approved, String uid) {
         if (approvalId == null || approvalId.isBlank()) return false;
+        String status = approved ? "APPROVED" : "REJECTED";
+        boolean dbOk = markApprovalResolved(approvalId, status, uid);
         PendingApproval p = PENDING_APPROVALS.get(approvalId);
-        if (p == null) return false;
+        if (p == null) {
+            // 内存态缺失：DB 更新成功说明是合法裁决（或已被裁决过），返回 dbOk；线程已不可唤醒
+            return dbOk;
+        }
         if (uid == null || !uid.equals(p.userId())) {
             log.warn("[TOOL] 审批人非本轮用户，拒绝: approvalId={} by={}", approvalId, uid);
             return false;
         }
         return p.future().complete(approved);
+    }
+
+    /** 更新审批记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝）。best-effort 不抛 */
+    private boolean markApprovalResolved(String approvalId, String status, String uid) {
+        try {
+            com.wisesoft.ai.model.ToolApproval rec = toolApprovalMapper.selectById(approvalId);
+            if (rec == null) return false;
+            if (uid != null && !uid.equals(rec.getUserId())) {
+                log.warn("[TOOL] 审批人非本轮用户（DB），拒绝: approvalId={} by={}", approvalId, uid);
+                return false;
+            }
+            if (!"PENDING".equals(rec.getStatus())) return false; // 已裁决，幂等
+            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wisesoft.ai.model.ToolApproval>()
+                    .eq(com.wisesoft.ai.model.ToolApproval::getId, approvalId)
+                    .set(com.wisesoft.ai.model.ToolApproval::getStatus, status)
+                    .set(com.wisesoft.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
+            return true;
+        } catch (Exception e) {
+            log.warn("[TOOL] 审批裁决落库失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起） */
+    @jakarta.annotation.PostConstruct
+    public void purgeStaleApprovals() {
+        try {
+            long timeoutSec = approvalTimeoutMs() / 1000 + 5;
+            java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusSeconds(timeoutSec);
+            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wisesoft.ai.model.ToolApproval>()
+                    .eq(com.wisesoft.ai.model.ToolApproval::getStatus, "PENDING")
+                    .lt(com.wisesoft.ai.model.ToolApproval::getCreatedAt, cutoff)
+                    .set(com.wisesoft.ai.model.ToolApproval::getStatus, "TIMEOUT")
+                    .set(com.wisesoft.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
+        } catch (Exception e) {
+            log.warn("[TOOL] 遗留审批清理失败（可忽略，下次启动重试）: {}", e.getMessage());
+        }
     }
 
     /** 审批等待上限（chat.approvalTimeoutMs，默认 120s；阻塞工具调用线程，必须有界） */
