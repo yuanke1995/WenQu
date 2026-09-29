@@ -157,6 +157,11 @@ public class SessionService {
                 info.setUpdateTime(s.getUpdateTime());
                 info.setIsPinned(s.getIsPinned());
                 info.setIsFavorite(s.getIsFavorite());
+                // 会话级智能体绑定（NULL=未绑定不发：前端据此区分「新会话可选」与「已锁定」）
+                if (s.getAgentId() != null) {
+                    info.setAgentId(s.getAgentId());
+                    info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
+                }
                 return info;
             }).toList();
         } catch (Exception e) {
@@ -458,10 +463,22 @@ public class SessionService {
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls,
                                 String attachments, String tokens, String timeline, String processText) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, timeline, processText, null, null);
+    }
+
+    /**
+     * 追加消息（含智能体归属）：agentId/agentName 为本轮生效智能体的快照（助手消息专用）。
+     * 落库意义：智能体是会话级绑定的，但归属要随消息留存——改名/删除后历史仍如实回显「这条是谁答的」。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText,
+                                String agentId, String agentName) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText);
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -472,7 +489,7 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText, agentId, agentName);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -537,6 +554,10 @@ public class SessionService {
             if (processText != null && !processText.isBlank()) {
                 redisMsg.put("processText", processText); // 过程独白全文（降级缓存也带，读侧原样透出）
             }
+            if (agentId != null && !agentId.isBlank()) {
+                redisMsg.put("agentId", agentId);   // 智能体归属（降级缓存同样带：补写 MySQL 后归属不丢）
+                redisMsg.put("agentName", agentName == null ? "" : agentName);
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -556,7 +577,7 @@ public class SessionService {
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
-                                 String processText) {
+                                 String processText, String agentId, String agentName) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -589,6 +610,8 @@ public class SessionService {
             msg.setTokens(tokens);
             msg.setTimeline(timeline);
             msg.setProcessText(processText);
+            msg.setAgentId(agentId);
+            msg.setAgentName(agentName);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -604,6 +627,53 @@ public class SessionService {
             sessionMapper.updateById(update);
             return msg.getId();
         });
+    }
+
+    /**
+     * 会话级智能体绑定（首问锁定）：仅当会话尚未绑定（agent_id IS NULL）时写入，已绑定则原样不动
+     * ——这正是「一次锁定、全程一致」的实现点：后续轮次即使请求里带了别的 agentId 也不再改变本会话。
+     * <p>
+     * 取值语义：有值=锁定该智能体；空串=已决定不绑定（走全局配置）；NULL=尚未决定（新会话未发过消息）。
+     * 空串与 NULL 必须区分，否则"用户明确选了不用智能体"会被当成未绑定而每轮重新路由。
+     *
+     * @return true=本次调用完成绑定；false=已绑定过或写库失败（写库失败由调用方按 fail-loud 处理）
+     */
+    public boolean bindAgent(String sessionId, String agentId, String agentName) {
+        try {
+            // 注意：全局逻辑删除字段 deleted 使得 updateById 无法置空/改部分字段的场景受限，
+            // 这里按项目约定走 LambdaUpdateWrapper.set（显式 SET，且带 isNull 条件保证只锁一次）
+            int rows = sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .isNull(Session::getAgentId)
+                    .set(Session::getAgentId, agentId == null ? "" : agentId)
+                    .set(Session::getAgentName, agentName == null ? "" : agentName));
+            return rows > 0;
+        } catch (Exception e) {
+            log.warn("会话绑定智能体失败 (session={}): {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 读取会话已锁定的智能体。返回 null 表示「尚未绑定」（列仍为 NULL、会话不存在或查询失败）。
+     * 返回的 agentId 可能为空串（已决定不绑定智能体）。
+     */
+    public AgentBinding getAgentBinding(String sessionId) {
+        try {
+            Session s = sessionMapper.selectOne(new LambdaQueryWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .select(Session::getAgentId, Session::getAgentName)
+                    .last("LIMIT 1"));
+            if (s == null || s.getAgentId() == null) return null;
+            return new AgentBinding(s.getAgentId(), s.getAgentName());
+        } catch (Exception e) {
+            log.warn("读取会话智能体绑定失败 (session={}): {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 会话级智能体绑定快照（agentId 空串 = 已决定不绑定智能体） */
+    public record AgentBinding(String agentId, String agentName) {
     }
 
     /**
@@ -739,6 +809,11 @@ public class SessionService {
         map.put("content", m.getContent());
         map.put("messageId", m.getId()); // 与 SSE done 事件字段名一致，供前端反馈/导出等操作
         map.put("createTime", m.getCreateTime()); // 气泡下方时间展示
+        // 智能体归属（随消息落库的当轮快照）：历史回显「这条是谁答的」；无值表示本轮未使用智能体
+        if (m.getAgentId() != null && !m.getAgentId().isBlank()) {
+            map.put("agentId", m.getAgentId());
+            map.put("agentName", m.getAgentName() == null ? "" : m.getAgentName());
+        }
         if (m.getThinking() != null && !m.getThinking().isBlank()) {
             map.put("thinking", m.getThinking());
         }

@@ -479,9 +479,14 @@ public class RagService {
         }
         final String userVisionRef = prefUser == null || prefUser.getDefaultVisionModel() == null
                 ? "" : prefUser.getDefaultVisionModel();
-        // 智能体（4.1）：agentId="auto" 走自动派遣（按名称+描述路由）；无效/缺失视为无覆盖（继承全局）。
+        // 本轮回答的全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）。
+        // 声明在智能体解析之前：会话锁定的智能体若已不可用，需要就地登记提示而不是静默改用全局配置
+        List<Map<String, String>> degradations = new ArrayList<>();
+        Set<String> degradedCodes = new HashSet<>();
+        // 智能体（4.1）：会话级绑定——已锁定的会话沿用锁定值，未锁定的按请求解析并锁定（首问路由一次）。
         // 派遣在 resolveModel 之后（用当轮生效模型判路），失败回落默认智能体
-        final Agent agent = resolveAgent(agentId, question, resolvedModel, sessionId, emitter);
+        final Agent agent = resolveSessionAgent(sessionId, agentId, question, resolvedModel, emitter,
+                degradations, degradedCodes);
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
         }
@@ -509,9 +514,6 @@ public class RagService {
         final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
         final String[] thinkingHolder = {null};
-        // 本轮回答的全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）
-        List<Map<String, String>> degradations = new ArrayList<>();
-        Set<String> degradedCodes = new HashSet<>();
         try {
             // 执行计划（任务清单）：只列本轮按当前配置**确定会跑**的步骤，供前端清单逐项点亮。
             // 模型临时决定的工具调用/子智能体咨询无从预知，不进计划（谎报计划比没有计划更糟），
@@ -1765,7 +1767,7 @@ public class RagService {
                                         return;
                                     }
                                 }
-                                routeProcessText(st, procPart);
+                                routeProcessText(st, procPart.stripLeading());
                             } else {
                                 // related 未闭合（或两类标签并存难以可靠拆分）：按原文发送（extractRelated 兜底清理）；fail-loud 标记
                                 addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
@@ -1784,7 +1786,9 @@ public class RagService {
                     // 提取完整 process 块 → 过程通道（不进正文）：实时 SSE process 事件 + 时间线过程段
                     StringBuilder procBuf = new StringBuilder();
                     java.util.regex.Matcher pm = processPattern.matcher(bufStr);
-                    while (pm.find()) procBuf.append(pm.group(1));
+                    // 每个块内容剥前导空白：模型写 "<process>\n内容\n</process>"，标签后的换行是格式噪声，
+                    // 不剥则灰字块顶部空一行且随消息落库（多个块同批拼接时中间也会出空白行）
+                    while (pm.find()) procBuf.append(pm.group(1).stripLeading());
                     String clean = bufStr.replaceAll("<process>[\\s\\S]*?</process>", "");
                     // 剥离完整 related 块，收集推荐内容
                     java.util.regex.Matcher rm = relatedPattern.matcher(clean);
@@ -1858,7 +1862,7 @@ public class RagService {
                         // 正文先行下发后再路由过程通道（保持流式顺序）
                         StringBuilder procTail = new StringBuilder();
                         java.util.regex.Matcher ptm = processPattern.matcher(rest);
-                        while (ptm.find()) procTail.append(ptm.group(1));
+                        while (ptm.find()) procTail.append(ptm.group(1).stripLeading());
                         rest = rest.replaceAll("<process>[\\s\\S]*?</process>", "");
                         // 未闭合的 <process>（通常是输出触顶截断在闭合标签之前）：开口前是正文，
                         // 其后剥标签归入过程通道并 fail-loud——原样发正文会把独白漏给用户
@@ -1869,7 +1873,7 @@ public class RagService {
                             String procPart = rest.substring(pIdx);
                             int gt = procPart.indexOf('>');
                             procPart = gt >= 0 ? procPart.substring(gt + 1) : "";
-                            procTail.append(procPart);
+                            procTail.append(procPart.stripLeading());
                             rest = rest.substring(0, pIdx);
                         }
                         // 未闭合的 <related>（模型偶发把推荐块写在回答开头，或输出触顶截断在闭合标签之前）：
@@ -2041,7 +2045,8 @@ public class RagService {
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
                             toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
-                            processText.isEmpty() ? null : processText);
+                            processText.isEmpty() ? null : processText,
+                            agent.getId(), agent.getName());
 
                     // 异步落问答日志（不阻塞 SSE 完成）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
@@ -2085,6 +2090,18 @@ public class RagService {
                     donePayload.put("processText", processText);
                     // Token 消耗可视化（1.9）：用量已在持久化前算好（tokens），此处随 done 下发给当轮展示
                     donePayload.put("tokens", tokens);
+                    // 智能体归属与会话锁定状态（以库中绑定为准，而非本轮局部变量：绑库失败时不应误导前端）。
+                    // agentLocked=true 是前端「本会话已绑定、切换智能体=新会话」的依据；
+                    // agentId 为空串表示已绑定为"不使用智能体"（与未绑定的 NULL 区分），此时不下发 id/name。
+                    SessionService.AgentBinding finalBinding = sessionService.getAgentBinding(st.sessionId);
+                    if (finalBinding != null) {
+                        donePayload.put("agentLocked", true);
+                        if (!finalBinding.agentId().isEmpty()) {
+                            donePayload.put("agentId", finalBinding.agentId());
+                            donePayload.put("agentName",
+                                    finalBinding.agentName() == null ? "" : finalBinding.agentName());
+                        }
+                    }
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
@@ -2399,6 +2416,61 @@ public class RagService {
                 picked == null ? "无（继承全局）" : picked.getName(),
                 fallback ? "回落默认" : "路由命中", System.currentTimeMillis() - t0);
         emitDispatched(emitter, picked, candidates.size(), fallback, sessionId);
+        return picked;
+    }
+
+    /**
+     * 会话级智能体解析（4.1：会话绑定）：智能体不再是"每轮随请求变化"，而是会话创建后首问锁定、全程一致。
+     * <ul>
+     *   <li>已锁定会话：一律用锁定值，请求里的 agentId 不再生效——人设/知识库/工具集全程一致，
+     *       与交互约定「切换智能体 = 新会话」配套（否则就是同一个会话里悄悄换人）。</li>
+     *   <li>未锁定会话：按请求解析（auto=自动派遣，只在首问路由一次），解析结果写入会话锁定。</li>
+     * </ul>
+     * 锁定值不可用时 fail-loud 提示（不静默回落全局配置）：那等于悄悄换人，用户无从察觉。
+     */
+    private Agent resolveSessionAgent(String sessionId, String requestedAgentId, String question,
+                                      String resolvedModel, SseEmitter emitter,
+                                      List<Map<String, String>> degradations, Set<String> degradedCodes) {
+        SessionService.AgentBinding bound = sessionService.getAgentBinding(sessionId);
+        if (bound != null) {
+            if (bound.agentId().isEmpty()) return null; // 已决定不绑定智能体（走全局配置）
+            Agent locked = agentService.get(bound.agentId());
+            if (locked == null) {
+                String name = (bound.agentName() == null || bound.agentName().isBlank())
+                        ? bound.agentId() : bound.agentName();
+                addDegradation(degradations, degradedCodes, "agentUnavailable",
+                        "本会话绑定的智能体「" + name + "」已不可访问（已删除或权限变更），本轮未使用它；如需换用其它智能体请新建会话");
+                log.warn("[AGENT] 会话 {} 绑定的智能体 {} 不可访问，本轮按不可用处理", sessionId, bound.agentId());
+                return null;
+            }
+            if (requestedAgentId != null && !requestedAgentId.isBlank()
+                    && !"auto".equals(requestedAgentId) && !requestedAgentId.equals(bound.agentId())) {
+                log.info("[AGENT] 会话 {} 已锁定智能体 {}，忽略请求中的 agentId={}（换人请新建会话）",
+                        sessionId, bound.agentId(), requestedAgentId);
+            }
+            return locked;
+        }
+        // 未锁定：按请求解析（auto → 首问自动派遣），结果即锁定，后续轮次不再重路由
+        Agent picked = resolveAgent(requestedAgentId, question, resolvedModel, sessionId, emitter);
+        // 用户显式指定了智能体却拿不到（已删除或无权访问）：不静默改用全局配置（等于悄悄换人），明确告知。
+        // auto 派遣无候选是设计内回落（候选为空时本就走全局），不在此列。
+        if (picked == null && requestedAgentId != null && !requestedAgentId.isBlank()
+                && !"auto".equals(requestedAgentId)) {
+            addDegradation(degradations, degradedCodes, "agentMissing",
+                    "所选智能体不可用（已删除或你无访问权限），本轮按全局配置回答");
+            log.warn("[AGENT] 会话 {} 请求的智能体 {} 不可解析，本轮按全局配置回答", sessionId, requestedAgentId);
+        }
+        boolean boundOk = sessionService.bindAgent(sessionId,
+                picked == null ? "" : picked.getId(),
+                picked == null ? "" : picked.getName());
+        if (!boundOk) {
+            // 写库未生效（并发首问各写一次 / 写库异常）：下轮会再解析一次，理论上可能换人——告警便于排查
+            log.warn("[AGENT] 会话 {} 智能体绑定未写入（并发或写库失败），下一轮将重新解析", sessionId);
+        } else if (picked != null) {
+            log.info("[AGENT] 会话 {} 首问锁定智能体 {}（{}）", sessionId, picked.getId(), picked.getName());
+        } else {
+            log.info("[AGENT] 会话 {} 首问未使用智能体（锁定为全局配置）", sessionId);
+        }
         return picked;
     }
 

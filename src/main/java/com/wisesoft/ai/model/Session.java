@@ -41,4 +41,14 @@ public class Session {
 
     /** 是否收藏: 0=否,1=是 */
     private Integer isFavorite;
+
+    /**
+     * 会话级绑定的智能体（首问时锁定：显式选择或自动派遣的结果）。
+     * NULL=尚未绑定（新会话未发过消息），空串=已决定不绑定智能体（走全局配置），有值=已锁定。
+     * 锁定后本会话所有轮次都用它，人设/知识库/工具集全程一致（切换智能体 = 新会话）。
+     */
+    private String agentId;
+
+    /** 绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称） */
+    private String agentName;
 }

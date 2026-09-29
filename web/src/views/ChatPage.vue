@@ -30,6 +30,11 @@
                   <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
                 </span>
               </div>
+              <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
+              <div v-if="showAgentTag(m, i)" class="agent-tag">
+                <robot-outlined class="agent-tag-ic" />
+                <span>由「{{ m.agentName }}」回答</span>
+              </div>
               <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
                 <div class="think-head" @click="m.thinkOpen = !m.thinkOpen">
                   <down-outlined class="think-arrow" />
@@ -42,8 +47,14 @@
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineView(m)" :key="si">
                   <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images)"></div>
-                  <!-- 过程独白段：区间指向 m.processText（与正文分流），灰字弱化原位渲染，不与正文混淆 -->
-                  <div v-else-if="seg.kind === 'process'" class="tl-process">{{ (m.processText || '').slice(seg.from, seg.to) }}</div>
+                  <!-- 过程独白段：区间指向 m.processText（与正文分流），「深度思考」标题行常驻、内容可折叠 -->
+                  <div v-else-if="seg.kind === 'process'" class="tl-process-block">
+                    <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
+                      <span class="tl-process-title">深度思考</span>
+                      <span class="tl-caret" :class="{ open: procOpen(m, seg) }">▶</span>
+                    </button>
+                    <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
+                  </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group">
                     <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
@@ -298,9 +309,12 @@
           <div class="input-toolbar">
             <div class="toolbar-left">
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
-                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen }"
-                        title="选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）">
+                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, locked: agentLocked }"
+                        :title="agentLocked
+                          ? `本会话已绑定「${currentAgentName}」，切换智能体会开启新会话`
+                          : '选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）'">
                   <span class="agent-pill-name">{{ currentAgentName }}</span>
+                  <lock-outlined v-if="agentLocked" class="agent-pill-lock" />
                   <down-outlined class="agent-pill-caret" />
                 </button>
                 <template #overlay>
@@ -580,7 +594,7 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
-         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
+         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase } from '../api'
@@ -649,6 +663,20 @@ const extendTimelineProcess = (m, from, to) => {
   if (last && last.kind === 'process' && last.to === from) last.to = to
   else tl.push({ kind: 'process', from, to })
 }
+
+// 过程独白折叠态：键用段起点 from（流式期间 to 随增量增长、from 稳定；timelineView 每帧重算，
+// 段对象本身不保状态，与工具卡 _open 存在 toolCalls 对象上同理，这里挂在消息上）。
+// 未点击过时默认折叠（时间线保持紧凑，点标题才展开看思考过程）。
+const procOpen = (m, seg) => !!(m && m._procOpen && m._procOpen[seg.from] === true)
+const toggleProc = (m, seg) => {
+  if (!m._procOpen) m._procOpen = {}
+  m._procOpen[seg.from] = !procOpen(m, seg)
+}
+
+// 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
+// 原样入通道）：段的起点都是块边界（flush 锚点），显示时剥掉段首换行，免得灰字块顶部空一行；
+// 只动显示，不碰区间下标，段内的模型自身换行/空行照常保留。
+const procSlice = (m, seg) => (m.processText || '').slice(seg.from, seg.to).replace(/^[\n\r]+/, '')
 
 // 工具段带下标 i：与后端落库口径一致（工具终态在 toolCalls 里的位置），
 // 实时态另存对象引用（status 原地更新，卡片自动从转圈变完成）
@@ -912,38 +940,79 @@ const skillAvaStyle = name => {
   return { background: color }
 }
 
-// ==================== 智能体（4.1）：对话页下拉切换，按会话记忆 ====================
+// ==================== 智能体（4.1）：会话级绑定（首问锁定，切换=新会话） ====================
 const agentList = ref([])                       // 全部主智能体
-const agentMap = ref({})                        // 会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置）
+// 未绑定会话的待选值：会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置）
+const agentMap = ref({})
+// 已绑定会话的绑定镜像：会话ID → {agentId, agentName}，来源为后端 c_ai_session 的绑定
+// （done 事件即时回填 + 会话列表兜底，刷新页面后仍能判断锁定态）
+const sessionAgent = ref({})
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
 const AUTO_AGENT = '__auto__'                   // 自动派遣哨兵值（请求时转 "auto"，由后端按描述路由）
+/** 会话的智能体绑定（后端权威）：本地镜像优先（本轮刚锁定、会话列表尚未刷新），否则取会话列表项 */
+const boundAgentOf = sid => {
+  if (!sid) return null
+  const local = sessionAgent.value[sid]
+  if (local) return local
+  const s = sessionStore.list.find(x => x.id === sid)
+  if (s && s.agentId !== undefined) return { agentId: s.agentId || '', agentName: s.agentName || '' }
+  return null
+}
 const currentAgentId = computed({
-  // 新会话默认「自动派遣」：每轮由生效模型按名称+描述挑最合适的智能体（市面 Coze 多 Agent 模式同款）；
-  // 没有任何智能体时回退默认助手/全局配置
+  // 新会话默认「自动派遣」：首问由模型按名称+描述挑最合适的智能体（命中后即锁定，后续轮次不再重路由）；
+  // 已绑定会话一律回显锁定值（''=该会话绑定为「不使用智能体」）；没有任何智能体时回退默认助手/全局配置
   get: () => {
+    const bound = boundAgentOf(currentSessionId.value)
+    if (bound) return bound.agentId || ''
     const memo = agentMap.value[currentSessionId.value]
     if (memo !== undefined) return memo
     return agentList.value.length ? AUTO_AGENT : (defaultAgentId.value || '')
   },
   set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
 })
+/** 当前会话是否已锁定智能体（含"已绑定为不使用智能体"；锁定后切换=新会话） */
+const agentLocked = computed(() => boundAgentOf(currentSessionId.value) !== null)
 const isAdmin = ref(isAdminSync())
 const agentPickerOpen = ref(false)
-/** 当前生效的智能体名（自动派遣/空 = 走对应模式） */
+/** 当前生效的智能体名（自动派遣/空 = 走对应模式；已锁定会话显示绑定名） */
 const currentAgentName = computed(() => {
+  const bound = boundAgentOf(currentSessionId.value)
+  if (bound) {
+    if (!bound.agentId) return '默认（全局配置）'
+    const b = agentList.value.find(x => x.id === bound.agentId)
+    return (b && b.name) || bound.agentName || '默认（全局配置）'
+  }
   if (currentAgentId.value === AUTO_AGENT) return '自动派遣'
   const a = agentList.value.find(x => x.id === currentAgentId.value)
   return a ? a.name : '默认（全局配置）'
 })
-/** 选中智能体：写入当前会话记忆并给出即时反馈 */
+/** 选中智能体：未绑定会话记录待选值；已绑定会话按主流约定「切换 = 开启新会话」 */
 const pickAgent = id => {
-  currentAgentId.value = id || ''
   agentPickerOpen.value = false
+  if (agentLocked.value) {
+    // 人设/知识库/工具集都随智能体变，同一会话中途换人会让上下文串味 —— 换人即换会话
+    const cur = currentAgentName.value
+    const target = id === AUTO_AGENT
+      ? '自动派遣' : (agentList.value.find(a => a.id === id)?.name || '默认（全局配置）')
+    message.info(`本会话已绑定「${cur}」，将开启新会话使用「${target}」`)
+    createNewSession(id)
+    return
+  }
+  currentAgentId.value = id || ''
   if (id === AUTO_AGENT) message.success('已切换为「自动派遣」')
   else {
     const a = agentList.value.find(x => x.id === id)
     if (a) message.success(`已切换为「${a.name}」`)
   }
+}
+/** 归属标识是否展示：会话内首条助手消息、或与上一条助手消息归属不同时才标（同一个人全程一致不必重复） */
+const showAgentTag = (m, i) => {
+  if (m.role !== 'ai' || !m.agentName) return false
+  for (let k = i - 1; k >= 0; k--) {
+    const prev = messages.value[k]
+    if (prev.role === 'ai') return prev.agentName !== m.agentName
+  }
+  return true
 }
 /** 底部「管理智能体」：跳到独立的一级页面 */
 const goManageAgents = () => {
@@ -1415,6 +1484,9 @@ const switchSession = async sid => {
             processText: typeof m.processText === 'string' ? m.processText : '',
             // Token 用量（随消息落库）：历史会话的「本次用量/会话累计」回看数据源（旧消息无此字段则为 null）
             tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
+            // 回答归属（随消息落库的当轮智能体快照）：历史回显「这条是谁答的」，旧消息无此字段则为空
+            agentId: typeof m.agentId === 'string' ? m.agentId : '',
+            agentName: typeof m.agentName === 'string' ? m.agentName : '',
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
             // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
             subagents: (() => {
@@ -1451,12 +1523,21 @@ const switchSession = async sid => {
 }
 
 const creatingSession = ref(false)
-const createNewSession = async () => {
+/**
+ * 新建会话。presetAgentId：由「切换智能体」触发时带上目标智能体，落为新会话的待选值
+ * （新会话尚未绑定，首问发出时才由后端锁定）。
+ */
+const createNewSession = async presetAgentId => {
   if (creatingSession.value) return
   // 空会话复用排除正在流式的会话：列表里的 messageCount 是快照（首条消息 done 后才刷新），
   // 流式中的会话可能仍记 0——命中它会把当前视图清空而不是开新会话
-  const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0 && !chatStreams.has(s.id))?.id
+  // 已绑定智能体的空会话不复用：它带着自己的绑定（删掉一轮问答不会解锁），复用会让"切换智能体"看起来没生效
+  const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0
+    && !chatStreams.has(s.id) && !boundAgentOf(s.id))?.id
   if (emptySid) {
+    if (presetAgentId !== undefined) {
+      agentMap.value = { ...agentMap.value, [emptySid]: presetAgentId || '' }
+    }
     if (currentSessionId.value !== emptySid) await switchSession(emptySid)
     else messages.value = []
     router.replace({ path: '/chat', query: { sid: emptySid } })
@@ -1467,7 +1548,11 @@ const createNewSession = async () => {
   try {
     const r = await newSession()
     if (r.success && r.data?.sessionId) {
-      currentSessionId.value = r.data.sessionId
+      const sid = r.data.sessionId
+      currentSessionId.value = sid
+      if (presetAgentId !== undefined) {
+        agentMap.value = { ...agentMap.value, [sid]: presetAgentId || '' }
+      }
       messages.value = []
       router.replace({ path: '/chat', query: { sid: r.data.sessionId } })
       await loadSessions()
@@ -1875,6 +1960,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
+        // 会话级绑定：首问后本会话即锁定智能体（agentLocked 由后端下发，含"绑定为不使用智能体"）。
+        // 本地镜像先于会话列表刷新生效，输入区立刻切到锁定态（切换=新会话）
+        if (p.agentLocked) {
+          sessionAgent.value = {
+            ...sessionAgent.value,
+            [sid]: { agentId: p.agentId || '', agentName: p.agentName || '' }
+          }
+        }
+        if (p.agentName) msg.agentName = p.agentName
         if (p.thinking) msg.thinking = p.thinking
         msg.thinkLoading = false
         if (typeof p.finalContent === 'string' && p.finalContent !== '') {
@@ -2203,6 +2297,13 @@ onMounted(async () => {
 .tl-text :deep(*:first-child) { margin-top: 0; }
 .tl-text :deep(*:last-child) { margin-bottom: 0; }
 /* 过程独白段（<process> 标签分流）：灰字弱化 + 左侧细线，与正文区分但不打断交错过程视图 */
+.tl-process-block { margin: 2px 0; }
+.tl-process-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
+.tl-process-head:hover { color: var(--app-text2); background: #f2f4f7; }
+/* 折叠三角悬浮才亮：静态标题保持干净，hover 时提示可点 */
+.tl-process-head .tl-caret { opacity: 0; transition: opacity .15s; }
+.tl-process-head:hover .tl-caret { opacity: 1; }
+.tl-process-title { font-weight: 500; color: var(--app-text2); }
 .tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
 .tl-group { margin: 3px 0; }
 .tl-group-bar {
@@ -2447,6 +2548,15 @@ onMounted(async () => {
 .agent-pill.on .agent-pill-name { color: var(--app-text); }
 .agent-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-pill-caret { font-size: 12px; opacity: .55; flex: none; }
+.agent-pill.locked { cursor: pointer; }
+.agent-pill-lock { font-size: 11px; opacity: .6; flex: none; }
+/* 回答归属：弱化呈现，不与正文抢注意力 */
+.agent-tag {
+  display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px;
+  font-size: 12px; color: var(--app-text2);
+  border: 1px solid var(--app-border); border-radius: 999px; padding: 2px 10px;
+}
+.agent-tag-ic { font-size: 12px; opacity: .8; }
 
 /* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
 .agent-menu {

@@ -64,6 +64,15 @@ public class Message {
     /** 附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体，气泡回显) */
     private String attachments;
 
+    /**
+     * 本轮生效的智能体（助手消息才有值；取自会话级绑定的当轮快照）。
+     * 落库意义：回答归属可追溯（"这条是谁答的"），且智能体改名/删除后历史仍如实回显。
+     */
+    private String agentId;
+
+    /** 本轮智能体名称快照（与 agentId 同时落库，供气泡/历史直接展示） */
+    private String agentName;
+
     /** 消息序号 (会话内递增) */
     private Integer sequence;
 
