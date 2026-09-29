@@ -614,7 +614,8 @@ public class RagService {
             if (configService.getBoolean("agent.enabled")) {
                 subCandidates = resolveSubAgents(agent);
                 if (!subCandidates.isEmpty()) {
-                    sendSseEvent(emitter, "stage", "正在判断需要咨询哪些助手…", sessionId);
+                    // 阶段文案统一：路由挑选属"理解问题"准备段（具体挑了谁由 subagent_route 事件承载）
+                    sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
                     routeRes = subAgentOrchestrator.route(question, subCandidates, resolvedModel);
                     List<Agent> delegated = routeRes.picked();
                     if (delegated.size() != subCandidates.size()) {
@@ -759,7 +760,8 @@ public class RagService {
                 };
                 if (subCandidates.isEmpty()) {
                     // 未挂子智能体 → 原有的「多视角并行检索」
-                    sendSseEvent(emitter, "stage", "正在并行检索多个视角…", sessionId);
+                    // 阶段文案统一：并行检索只是检索的一种实现（分支进度由 subagent 事件承载）
+                    sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                     subOutcome = subAgentOrchestrator.run(question, null, onBranch, resolvedModel);
                 } else {
                     // 挂了子智能体 → 路由已在检索前完成（见 0.5 段的 subagent_route 事件），此处直接按挑选结果并行咨询；
@@ -768,7 +770,8 @@ public class RagService {
                     if (delegated.isEmpty()) {
                         log.info("[SUBAGENT] 按需委派判定无需咨询任何助手，跳过并行编排（问题与各助手职责均不匹配）");
                     } else {
-                        sendSseEvent(emitter, "stage", "正在并行咨询 " + delegated.size() + " 个子智能体…", sessionId);
+                        // 阶段文案统一：子智能体也是检索路数之一（咨询了哪几个由 subagent 事件承载）
+                        sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                         subOutcome = subAgentOrchestrator.run(question, delegated, onBranch, resolvedModel);
                     }
                 }
@@ -2400,7 +2403,8 @@ public class RagService {
             emitDispatched(emitter, direct, candidates.size(), false, sessionId);
             return direct;
         }
-        sendSseEvent(emitter, "stage", "正在派遣智能体…", sessionId);
+        // 阶段文案统一：自动派遣属"理解问题"准备段（派中了谁由 dispatched 事件承载）
+        sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
         // 最近两轮对话参与路由（追问如"之前说的退款进度"要靠上下文才能派对）
         String recentContext = "";
         try {
@@ -2471,7 +2475,23 @@ public class RagService {
         } else {
             log.info("[AGENT] 会话 {} 首问未使用智能体（锁定为全局配置）", sessionId);
         }
+        // 绑定结果就地广播（不等整轮 done）：锁定发生在首问开始，前端也应在当轮就切到锁定态，
+        // 否则用户要等回答结束才看到"已绑定"，误以为锁定是在会话结束时才做的。
+        emitAgentBound(emitter, sessionId, picked);
         return picked;
+    }
+
+    /** 会话级绑定结果下发：{locked,agentId,agentName}（agentId 空串表示已绑定为"不使用智能体"） */
+    private void emitAgentBound(SseEmitter emitter, String sessionId, Agent bound) {
+        try {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("locked", true);
+            info.put("agentId", bound == null ? "" : bound.getId());
+            info.put("agentName", bound == null ? "" : bound.getName());
+            sendSseEvent(emitter, "agent_bound", JSON.toJSONString(info), sessionId);
+        } catch (Exception e) {
+            log.debug("[AGENT] 绑定结果事件下发失败（不影响问答）: {}", e.getMessage());
+        }
     }
 
     /** 派遣结果下发（复用编排卡片风格：候选数/命中/名称，前端在输入区上方展示） */

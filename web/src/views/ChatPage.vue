@@ -50,7 +50,7 @@
                   <!-- 过程独白段：区间指向 m.processText（与正文分流），「深度思考」标题行常驻、内容可折叠 -->
                   <div v-else-if="seg.kind === 'process'" class="tl-process-block">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
-                      <span class="tl-process-title">深度思考</span>
+                      <span class="tl-process-title">执行过程</span>
                       <span class="tl-caret" :class="{ open: procOpen(m, seg) }">▶</span>
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
@@ -99,7 +99,11 @@
                 </template>
               </div>
               <div v-else class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
-              <div v-if="m.loading && m.stage && !m.content" class="stage-hint"><loading-outlined /> {{ m.stage }}</div>
+              <!-- 气泡级进度行：一轮里同时只显示一处（互斥见 busyOf），工具/深度思考/审批由各自构件表达 -->
+              <div v-if="busyOf(m)" class="busy-hint" :class="{ warn: busyOf(m).warn }">
+                <loading-outlined spin />
+                <span v-if="busyOf(m).text">{{ busyOf(m).text }}</span>
+              </div>
               <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
               <!-- 派遣提示属内部排障信息：与「检索调试」同一开关（chat.retrievalDebugEnabled，仅管理员可见）控制 -->
               <div v-if="m.dispatched && debugEntryVisible" class="dispatch-chip">
@@ -108,8 +112,6 @@
                 <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
                 <span v-if="m.dispatched.description" class="dispatch-desc">{{ m.dispatched.description }}</span>
               </div>
-              <!-- 工具（沙盒/MCP）执行中不叠加裸 spin：工具条已有转圈+实时耗时，裸圈无语义还像卡死 -->
-              <a-spin v-if="m.loading && m.content && !toolRunning(m)" size="small" style="margin-top:4px" />
               <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="tool-status-list">
                 <button class="tl-group-bar" type="button" @click="m._fbOpen = !m._fbOpen">
@@ -266,7 +268,6 @@
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
-            <div v-if="m.retrying" class="retry-tip"><a-spin size="small" /><span>连接中断，正在自动重试…</span></div>
             <div v-if="m.role === 'user'" class="msg-edit-row">
               <a-tooltip title="编辑此问题重新发送" placement="top">
                 <edit-outlined class="app-icon-btn" @click="editMessage(i)" />
@@ -634,6 +635,26 @@ const toolCallsView = list => {
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
+const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.status === 'running')
+
+// ==================== 气泡级「进行中」提示（单一进度行） ====================
+// 一轮回答里同一时刻只出现一处进行中指示，互斥由本函数的优先级链保证，而不是让
+// 阶段提示 / 裸 spin / 重试条各自写 v-if 条件（那样每加一种状态就可能再叠一层）。
+// 返回 null = 此刻不该有底部进度行：进行中状态已由更具体的构件表达——
+//   工具卡片（转圈 + 实时耗时 + 工具名）、编排卡片（每分支转圈 + 进度条）、
+//   深度思考面板（转圈 + 「已完成」）、审批卡（批准/拒绝按钮）。
+// 返回 { text } = 带文案的进度行；{ spin: true } = 只有转圈（正文已在流出，不必重复写字）。
+const busyOf = m => {
+  if (!m || !m.loading) return null
+  if (m.approval) return null                     // 等用户批准：进度让位给审批卡
+  if (m.retrying) return { text: '连接中断，正在自动重试…', warn: true }
+  if (toolRunning(m)) return null                 // 工具自己会转圈并计时
+  if (subRunning(m)) return null                  // 编排卡片每个分支自带转圈 + 进度条
+  if (m.thinkLoading) return null                 // 深度思考面板自己会转圈
+  if (m.stage) return { text: m.stage }           // 后端阶段文案（理解/检索/生成）
+  if (m.content) return { spin: true }            // 正文续写中：一个转圈足够
+  return { text: '正在生成回答…' }                // 工具已回、正文未出（含多轮工具之间的空档）
+}
 
 // ==================== 时间线（正文与工具交错渲染） ====================
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
@@ -1893,6 +1914,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           const rec = { ...t, startAt: Date.now() }
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
+          // 进入工具阶段：上一句阶段文案（如「正在检索资料…」）已过期，清掉避免工具跑完又复活。
+          // 该阶段由工具卡片自己表达（转圈 + 实时耗时），底部进度行不重复描述
+          msg.stage = ''
           ensureTick()
         } else {
           const list = msg.toolCalls
@@ -1952,6 +1976,18 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           name: r.name, description: r.description || '', fallback: r.fallback === true
         }
         liveScroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    // 会话级绑定结果：后端在首问解析并锁定后就下发（不等整轮结束），输入区立刻切锁定态
+    onAgentBound: payload => {
+      try {
+        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!r || !r.locked) return
+        sessionAgent.value = {
+          ...sessionAgent.value,
+          [sid]: { agentId: r.agentId || '', agentName: r.agentName || '' }
+        }
+        if (r.agentName) msg.agentName = r.agentName
       } catch (e) { /* 忽略 */ }
     },
     onDone: contentJson => {
@@ -2454,7 +2490,12 @@ onMounted(async () => {
   padding: 3px 10px; cursor: pointer;
 }
 .related-tag:hover { background: #ddefe0; }
-.stage-hint { margin-top: 6px; font-size: 13px; color: var(--app-accent); display: flex; align-items: center; gap: 6px; }
+.busy-hint { margin-top: 6px; font-size: 13px; color: var(--app-accent); display: flex; align-items: center; gap: 6px; }
+/* 自动重试属异常状态：沿用原重试条的醒目底色，与正常阶段文案区分 */
+.busy-hint.warn {
+  margin-top: 8px; color: #a3691b; background: #faf3e6; border: 1px solid #f0dfb6;
+  border-radius: 6px; padding: 4px 10px; width: fit-content;
+}
 .dispatch-chip {
   margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 12px; color: var(--app-text2);
@@ -2468,11 +2509,6 @@ onMounted(async () => {
 .fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
 .fb-row :deep(.fb-active) { color: var(--app-accent); }
 .retry-row { margin-top: 8px; }
-.retry-tip {
-  margin-top: 8px; display: flex; align-items: center; gap: 6px; color: #a3691b;
-  font-size: 12px; background: #faf3e6; border: 1px solid #f0dfb6; border-radius: 6px;
-  padding: 4px 10px; width: fit-content;
-}
 .msg-edit-row {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; height: 24px; z-index: 1;
   display: flex; align-items: center; justify-content: flex-end; gap: 6px;
