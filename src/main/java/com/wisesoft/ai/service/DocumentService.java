@@ -59,6 +59,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.time.LocalDateTime;
 
 /**
  * 文档管理服务
@@ -111,6 +112,9 @@ public class DocumentService {
     private final Map<String, Thread> parseThreads = new ConcurrentHashMap<>();
     /** 同名上传串行锁：避免并发上传同一文件名时双方都判定"无可复用"而产生重复文档（单实例内有效） */
     private final Map<String, Object> uploadLocks = new ConcurrentHashMap<>();
+
+    /** 正在自动刷新的网页文档 id（防同文档上轮未结束又被触发；单实例内有效） */
+    private final Set<String> refreshingDocs = ConcurrentHashMap.newKeySet();
 
     /** 向量库索引名（遗留全局索引 ai-doc-index；仅作回滚缓冲保留，业务向量一律落各库独立索引） */
     @Value("${spring.ai.vectorstore.redis.index-name:ai-doc-index}")
@@ -338,6 +342,84 @@ public class DocumentService {
             }
         } finally {
             uploadLocks.remove(fileName, lock);
+        }
+    }
+
+    /** 单次扫描最多触发的刷新数（防一次积压打满抓取/解析链路） */
+    private static final int WEB_REFRESH_SCAN_LIMIT = 20;
+
+    /**
+     * 网页源定时刷新：扫描到期（next_refresh_at<=now）且开启自动刷新的 url 文档，
+     * 逐个重新抓网 + 同名替换重建（复用 {@link #importFromUrl} 全套入库链路：落盘/异步解析/向量化/索引），
+     * 成功/失败均推进 last_refresh_at 与 next_refresh_at。由 {@link ScheduleCenter} 节拍调用；
+     * 单实例下先推进 next_refresh_at 再执行，天然防重复触发；失败 fail-loud 不中断其他文档。
+     */
+    public void refreshDueWebSources() {
+        if (!configService.getBoolean("web.refreshEnabled")) return;
+        LocalDateTime now = LocalDateTime.now();
+        List<AiDocument> due = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                .eq(AiDocument::getFileType, "url")
+                .eq(AiDocument::getAutoRefresh, 1)
+                .isNotNull(AiDocument::getNextRefreshAt)
+                .le(AiDocument::getNextRefreshAt, now)
+                .eq(AiDocument::getDeleted, 0)
+                .last("limit " + WEB_REFRESH_SCAN_LIMIT));
+        for (AiDocument doc : due) {
+            if (!refreshingDocs.add(doc.getId())) {
+                continue; // 同文档上轮未结束跳过
+            }
+            try {
+                log.info("[WEB-REFRESH] 开始刷新 doc={} url={}", doc.getId(), doc.getSourceUrl());
+                importFromUrl(doc.getSourceUrl(), doc.getDescription(), doc.getKbId());
+                documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getId, doc.getId())
+                        .set(AiDocument::getLastRefreshAt, now)
+                        .set(AiDocument::getNextRefreshAt, nextRefreshAt(doc.getRefreshCron())));
+                log.info("[WEB-REFRESH] 刷新完成 doc={} url={}", doc.getId(), doc.getSourceUrl());
+            } catch (Exception e) {
+                log.warn("[FAIL-LOUD] 网页源刷新失败 doc={} url={}: {}", doc.getId(), doc.getSourceUrl(), e.getMessage());
+                // 失败也推进 next_refresh_at（按 cron 或兜底 1 天），避免立刻重试打爆源站
+                documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getId, doc.getId())
+                        .set(AiDocument::getNextRefreshAt, nextRefreshAt(doc.getRefreshCron())));
+            } finally {
+                refreshingDocs.remove(doc.getId());
+            }
+        }
+    }
+
+    /** 配置网页源自动刷新：开启时校验 cron（5段）并重算 next_refresh_at；关闭时清空 next_refresh_at。仅 file_type=url 有效 */
+    public void setRefreshConfig(String docId, int autoRefresh, String cron) {
+        AiDocument doc = getDoc(docId);
+        if (!"url".equals(doc.getFileType())) {
+            throw new BizException("仅网页导入（file_type=url）的文档支持自动刷新");
+        }
+        if (autoRefresh == 1) {
+            String c = cron == null ? "" : cron.trim();
+            if (c.isEmpty()) throw new BizException("开启自动刷新需提供 refreshCron（5段，如 0 3 * * *）");
+            ScheduledJobService.validateCron(c, "Asia/Shanghai");
+            LocalDateTime next = ScheduledJobService.nextRunAt(c, "Asia/Shanghai", LocalDateTime.now());
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getAutoRefresh, 1)
+                    .set(AiDocument::getRefreshCron, c)
+                    .set(AiDocument::getNextRefreshAt, next));
+        } else {
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getAutoRefresh, 0)
+                    .set(AiDocument::getRefreshCron, null)
+                    .set(AiDocument::getNextRefreshAt, null));
+        }
+    }
+
+    /** 下次刷新时刻：cron 按 Asia/Shanghai 解释；空/非法 cron 兜底 1 天（不让刷新卡死） */
+    private LocalDateTime nextRefreshAt(String cron) {
+        if (cron == null || cron.isBlank()) return LocalDateTime.now().plusDays(1);
+        try {
+            return ScheduledJobService.nextRunAt(cron, "Asia/Shanghai", LocalDateTime.now());
+        } catch (Exception e) {
+            return LocalDateTime.now().plusDays(1);
         }
     }
 

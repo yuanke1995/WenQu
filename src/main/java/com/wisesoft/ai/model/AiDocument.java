@@ -70,4 +70,16 @@ public class AiDocument {
 
     /** 更新时间 */
     private LocalDateTime updateTime;
+
+    /** 网页源自动刷新: 0=关闭 1=开启（仅 file_type=url 生效） */
+    private Integer autoRefresh;
+
+    /** 自动刷新 cron（5段: 分 时 日 月 周） */
+    private String refreshCron;
+
+    /** 上次自动刷新时刻 */
+    private LocalDateTime lastRefreshAt;
+
+    /** 下次自动刷新时刻（调度扫描据此触发） */
+    private LocalDateTime nextRefreshAt;
 }

@@ -104,6 +104,21 @@
               <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
               <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
               <button v-if="(d.status === 0 || d.status === 3) && canManageDoc(d)" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
+              <a-popover v-if="d.fileType === 'url' && canManageDoc(d)" title="自动刷新网页源" trigger="click" placement="leftTop">
+                <button class="app-link-btn" :class="{ active: d.autoRefresh === 1 }">自动刷新{{ d.autoRefresh === 1 ? '·开' : '' }}</button>
+                <template #content>
+                  <div style="width:264px">
+                    <a-switch :checked="d.autoRefresh === 1" @change="v => onRefreshToggle(d, v)" />
+                    <span style="margin-left:8px">开启后按周期重新抓网重建</span>
+                    <div v-if="d.autoRefresh === 1" style="margin-top:10px">
+                      <div style="font-size:12px;color:#888">刷新周期 (cron 5段: 分 时 日 月 周)</div>
+                      <a-input :value="d.refreshCron || ''" size="small" placeholder="0 3 * * *" style="margin-top:4px" @change="e => onRefreshCronInput(d, e.target.value)" />
+                      <div style="font-size:12px;color:#888;margin-top:4px">下次刷新: {{ d.nextRefreshAt || '—' }}</div>
+                      <button class="app-btn primary sm" style="margin-top:8px" @click="saveRefresh(d)">保存</button>
+                    </div>
+                  </div>
+                </template>
+              </a-popover>
               <a-popconfirm v-if="canManageDoc(d)" title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
                 <button class="app-link-btn danger" :disabled="deletingId === d.id">删除</button>
               </a-popconfirm>
@@ -339,7 +354,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl } from '../api'
+         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
@@ -605,6 +620,18 @@ async function reparse (id) {
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { reparsingId.value = '' }
+}
+function onRefreshToggle (d, val) { d.autoRefresh = val ? 1 : 0 }
+function onRefreshCronInput (d, v) { d.refreshCron = v }
+async function saveRefresh (d) {
+  if (d.autoRefresh === 1 && (!d.refreshCron || !d.refreshCron.trim())) {
+    message.warning('开启自动刷新需填写 cron（5段，如 0 3 * * *）'); return
+  }
+  try {
+    const r = await refreshConfigDocument(d.id, d.autoRefresh, d.autoRefresh === 1 ? d.refreshCron.trim() : '')
+    if (r.success) { message.success('已更新自动刷新配置'); fetchList() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
 }
 async function del (id) {
   deletingId.value = id

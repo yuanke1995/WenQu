@@ -48,10 +48,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `auto_refresh`    INT          DEFAULT 0 COMMENT '网页源自动刷新: 0=关闭 1=开启（仅 file_type=url 生效）',
+    `refresh_cron`    VARCHAR(60)  DEFAULT NULL COMMENT '自动刷新 cron（5段: 分 时 日 月 周，如 0 3 * * * 每日3点）',
+    `last_refresh_at` DATETIME     DEFAULT NULL COMMENT '上次自动刷新时刻',
+    `next_refresh_at` DATETIME     DEFAULT NULL COMMENT '下次自动刷新时刻（ScheduleCenter 扫描据此触发）',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     PRIMARY KEY (`id`),
     KEY `idx_status_deleted` (`status`, `deleted`),
-    KEY `idx_file_status` (`file_name`, `status`)
+    KEY `idx_file_status` (`file_name`, `status`),
+    KEY `idx_next_refresh` (`next_refresh_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI文档表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (

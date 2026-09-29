@@ -6,6 +6,7 @@ import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
 import com.wisesoft.ai.service.SandboxService;
 import com.wisesoft.ai.service.ScheduledJobService;
+import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.SessionService;
 import com.wisesoft.ai.service.UserImageService;
 import com.wisesoft.ai.thread.ThreadPoolManager;
@@ -52,6 +53,7 @@ public class ScheduleCenter {
     private final ArtifactService artifactService;
     private final ScheduledJobService scheduledJobService;
     private final SandboxService sandboxService;
+    private final DocumentService documentService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -64,7 +66,8 @@ public class ScheduleCenter {
                           UserImageService userImageService, RetrievalEvaluationService evalService,
                           SessionService sessionService, ArtifactService artifactService,
                           ScheduledJobService scheduledJobService,
-                          SandboxService sandboxService) {
+                          SandboxService sandboxService,
+                          DocumentService documentService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -73,6 +76,7 @@ public class ScheduleCenter {
         this.artifactService = artifactService;
         this.scheduledJobService = scheduledJobService;
         this.sandboxService = sandboxService;
+        this.documentService = documentService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -123,6 +127,13 @@ public class ScheduleCenter {
                 () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
                 () -> false,
                 () -> scheduledJobService.tick());
+
+        // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（间隔 web.refreshScanIntervalMs，默认 60s；≤0 暂停）。
+        // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。
+        register("网页源定时刷新",
+                () -> configService.getInt("web.refreshScanIntervalMs", 60_000),
+                () -> false,
+                () -> documentService.refreshDueWebSources());
 
         // 沙盒空闲回收：本工程沙盒 scope 挂在会话上（长生命周期），没有"run 结束释放"的时机，
         // 只能按空闲时长回收，否则用过沙盒的会话会永久占着一个容器。

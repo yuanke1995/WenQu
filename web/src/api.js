@@ -473,6 +473,8 @@ export const updateDocumentStatus = (id, status) =>
 /** 文档重解析 */
 export const reparseDocument = id =>
   request(`/document/${id}/reparse`, { method: 'POST' })
+export const refreshConfigDocument = (id, autoRefresh, refreshCron) =>
+  request(`/document/${id}/refresh-config?autoRefresh=${autoRefresh}${refreshCron ? `&refreshCron=${encodeURIComponent(refreshCron)}` : ''}`, { method: 'PUT' })
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })

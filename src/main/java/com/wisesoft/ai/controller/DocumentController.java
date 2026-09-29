@@ -266,6 +266,18 @@ public class DocumentController {
         return ResultJson.ok("已重新提交解析");
     }
 
+    @Operation(summary = "设置网页源自动刷新", description = "为 file_type=url 的文档配置自动刷新开关与 cron（5段，如 0 3 * * *）；" +
+            "开启后由调度中心按 cron 重新抓网重建，关闭则清空下次刷新时刻")
+    @PutMapping("/{id}/refresh-config")
+    public ResultJson refreshConfig(
+            @Parameter(description = "文档 ID") @PathVariable("id") String id,
+            @Parameter(description = "autoRefresh: 0/1") @RequestParam("autoRefresh") int autoRefresh,
+            @Parameter(description = "refreshCron（5段，开启时必填）") @RequestParam(value = "refreshCron", required = false) String refreshCron) {
+        requireDocManage(documentService.getDoc(id));
+        documentService.setRefreshConfig(id, autoRefresh, refreshCron);
+        return ResultJson.ok("已更新自动刷新配置");
+    }
+
     @Operation(summary = "补齐图片描述", description = "对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）")
     @PostMapping("/{id}/backfill-descriptions")
     public ResultJson backfillDescriptions(

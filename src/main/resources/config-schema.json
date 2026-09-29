@@ -1840,6 +1840,33 @@
       "tier": 3
     },
     {
+      "group": "web",
+      "key": "refreshEnabled",
+      "path": "web.refreshEnabled",
+      "label": "网页源自动刷新总开关",
+      "type": "switch",
+      "tips": "webRefreshEnabled",
+      "def": true,
+      "note": "开启后，标记「自动刷新」的网页文档（file_type=url）会按各自 cron 重新抓网+重建分块/向量",
+      "backendKey": "web.refreshEnabled",
+      "tier": 3
+    },
+    {
+      "group": "web",
+      "key": "refreshScanIntervalMs",
+      "path": "web.refreshScanIntervalMs",
+      "label": "刷新扫描间隔(ms)",
+      "type": "number",
+      "tips": "webRefreshScanInterval",
+      "def": 60000,
+      "min": 0,
+      "step": 10000,
+      "width": 220,
+      "note": "≤0=暂停扫描；只需比 cron 精度更频繁地查库",
+      "backendKey": "web.refreshScanIntervalMs",
+      "tier": 3
+    },
+    {
       "backendKey": "oidc.enabled",
       "panel": "oidc",
       "section": 0,
@@ -2639,6 +2666,8 @@
     "scheduled.maxPerUser": "每人定时任务数上限（0=不限）",
     "scheduled.timeoutMs": "定时任务单次执行超时(ms)",
     "scheduled.scanIntervalMs": "定时任务到期扫描间隔(ms，≤0=暂停)",
+    "web.refreshEnabled": "网页源自动刷新的总开关。关闭后即使文档标记了 autoRefresh 也不会刷新（相当于全局闸刀，但任务配置保留）。",
+    "web.refreshScanIntervalMs": "扫描「是否有网页文档到期需刷新」的间隔（毫秒，≤0=暂停扫描）。默认 60000：cron 精度分钟级，1 分钟扫描足以准点触发，又不会频繁查库。",
     "oidc.enabled": "单点登录（OIDC）：总开关",
     "oidc.providerName": "认证源名称（登录按钮文案）",
     "oidc.issuerUrl": "OIDC Issuer URL（自动发现各端点）",

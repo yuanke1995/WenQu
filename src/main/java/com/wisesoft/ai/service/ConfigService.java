@@ -323,6 +323,8 @@ public class ConfigService {
         d.put("scheduled.maxPerUser", "20");                   // 每人定时任务数上限（0=不限）
         d.put("scheduled.timeoutMs", "300000");                // 单次执行超时(ms)
         d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
+        d.put("web.refreshEnabled", "true");                   // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
+        d.put("web.refreshScanIntervalMs", "60000");           // 网页源到期扫描间隔(ms，≤0=暂停扫描)
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
         d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)
