@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
     `create_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    `embedding`      TEXT         DEFAULT NULL COMMENT '记忆向量（JSON float 数组；语义去重与注入检索用）',
     KEY `idx_mem_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户长期记忆（跨会话事实/偏好；注入本人后续问答的 system prompt）';
 -- 说明：idx_doc_deleted 覆盖按文档取块 + 逻辑删除过滤（增量 diff/孤儿清扫/快照/关键词路 doc 过滤）；

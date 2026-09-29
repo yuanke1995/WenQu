@@ -49,4 +49,7 @@ public class UserMemory {
 
     /** 更新时间 */
     private LocalDateTime updateTime;
+
+    /** 记忆向量（JSON float 数组；语义去重与注入检索用） */
+    private String embedding;
 }

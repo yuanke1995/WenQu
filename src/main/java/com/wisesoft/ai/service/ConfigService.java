@@ -325,6 +325,8 @@ public class ConfigService {
         d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
         d.put("web.refreshEnabled", "true");                   // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
         d.put("web.refreshScanIntervalMs", "60000");           // 网页源到期扫描间隔(ms，≤0=暂停扫描)
+        d.put("memory.dedupThreshold", "0.90");               // 自动提取/手动添加记忆的语义去重余弦阈值（≥此值视为重复，跳过）
+        d.put("memory.useSemanticInject", "true");           // 注入是否按当前对话语义检索 Top-K（关闭则回退按更新时间倒序）
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         d.put("chunk.maxSize", "800");                 // 单块最大字符数
         d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)

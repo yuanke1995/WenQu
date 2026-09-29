@@ -48,6 +48,8 @@ public class UserMemoryService {
     private final ConfigService configService;
     /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，模型名由调用方 per-request 显式传入） */
     private final ChatModel chatModel;
+    /** 向量模型（单文本 embed；语义去重与注入检索用） */
+    private final DynamicEmbeddingModel embeddingModel;
 
     /** 单条内容长度上限（列宽 500） */
     private static final int MAX_CONTENT_CHARS = 500;
@@ -67,6 +69,63 @@ public class UserMemoryService {
         return Math.max(1, configService.getInt("memory.maxInjectCount", 30));
     }
 
+    private double dedupThreshold() {
+        return configService.getDouble("memory.dedupThreshold", 0.90);
+    }
+
+    private boolean useSemanticInject() {
+        return configService.getBoolean("memory.useSemanticInject");
+    }
+
+    /** 单文本向量化（best-effort：失败返回 null，不阻断提取/注入主链路） */
+    private float[] embed(String text) {
+        if (text == null || text.isBlank()) return null;
+        try {
+            return embeddingModel.embed(text);
+        } catch (Exception e) {
+            log.warn("[Memory] 向量化失败（不影响主链路）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 向量 JSON 反序列化（容错：非法/空返回 null） */
+    private float[] parseEmbedding(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            JSONArray a = JSON.parseArray(s);
+            if (a == null || a.isEmpty()) return null;
+            float[] v = new float[a.size()];
+            for (int i = 0; i < a.size(); i++) v[i] = a.getFloatValue(i);
+            return v;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 向量序列化（紧凑 JSON 数组） */
+    private String serializeEmbedding(float[] v) {
+        if (v == null) return null;
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < v.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(v[i]);
+        }
+        return sb.append("]").toString();
+    }
+
+    /** 余弦相似度（维度不一致/零向量返回 0） */
+    private double cosine(float[] a, float[] b) {
+        if (a == null || b == null || a.length == 0 || a.length != b.length) return 0;
+        double dot = 0, na = 0, nb = 0;
+        for (int i = 0; i < a.length; i++) {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        if (na == 0 || nb == 0) return 0;
+        return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    }
+
     private int injectBudgetChars() {
         return Math.max(200, configService.getInt("memory.injectBudgetChars", 1500));
     }
@@ -77,27 +136,47 @@ public class UserMemoryService {
      * 取该用户记忆并拼注入文本（null=无记忆/未开启，零影响）。
      * 顺带累加使用度（hit_count+1、last_hit_at=now）：管理页据此看哪些记忆真被用上。
      */
-    public String injectText(String uid) {
+    /**
+     * 取该用户记忆并拼注入文本（null=无记忆/未开启，零影响）。
+     * recentText 非空且开启语义注入时，按当前对话语义余弦排序取 Top-K（最相关优先）；否则回退更新时间倒序。
+     * 顺带累加使用度（hit_count/last_hit_at）供管理页看哪些记忆真被用上。
+     */
+    public String injectText(String uid, String recentText) {
         if (!enabled() || uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) return null;
         List<UserMemory> list = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>()
-                .eq(UserMemory::getUid, uid)
-                .orderByDesc(UserMemory::getUpdateTime)
-                .last("limit " + maxInjectCount()));
+                .eq(UserMemory::getUid, uid));
         if (list.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder("【用户长期记忆】以下是系统此前为你记住的关于该用户的信息，供个性化回答参考；"
-                + "与当前对话内容冲突时以对话为准：\n");
+        boolean semantic = useSemanticInject() && recentText != null && !recentText.isBlank();
+        if (semantic) {
+            try {
+                float[] q = embed(recentText);
+                if (q != null) list.sort((a, b) -> Double.compare(sim(q, b), sim(q, a)));
+                else semantic = false;
+            } catch (Exception e) { semantic = false; }
+        }
+        if (!semantic) {
+            list.sort((a, b) -> {
+                LocalDateTime ta = a.getUpdateTime(), tb = b.getUpdateTime();
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return tb.compareTo(ta);
+            });
+        }
         int budget = injectBudgetChars();
+        int limit = maxInjectCount();
         int used = 0;
         List<String> hitIds = new ArrayList<>();
+        StringBuilder sb = new StringBuilder("【用户长期记忆】以下是系统此前为你记住的关于该用户的信息，供个性化回答参考；"
+                + "与当前对话内容冲突时以对话为准：\n");
         for (UserMemory m : list) {
+            if (hitIds.size() >= limit) break;
             String line = "- " + m.getContent() + "\n";
-            if (used + line.length() > budget) break;
+            if (!hitIds.isEmpty() && used + line.length() > budget) break; // 已带至少一条后受预算限制
             sb.append(line);
             used += line.length();
             hitIds.add(m.getId());
         }
         if (hitIds.isEmpty()) return null;
-        // 使用度累加（best-effort；失败不影响本轮问答）
         try {
             for (String id : hitIds) {
                 memoryMapper.update(null, new LambdaUpdateWrapper<UserMemory>()
@@ -109,6 +188,13 @@ public class UserMemoryService {
             log.warn("[Memory] 使用度累加失败: {}", e.getMessage());
         }
         return sb.toString();
+    }
+
+    /** 当前问题与某记忆的余弦相似度（无向量返回 -1，排序时排最后） */
+    private double sim(float[] q, UserMemory m) {
+        float[] v = parseEmbedding(m.getEmbedding());
+        if (v == null) return -1;
+        return cosine(q, v);
     }
 
     // ==================== 自动提取 ====================
@@ -158,7 +244,9 @@ public class UserMemoryService {
         if (arr == null || arr.isEmpty()) return;
 
         int cap = maxPerUser();
-        long existing = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
+        // 语义去重：加载该用户全部记忆，lazy 补向量后与本轮提取项比对（存量通常几十~几百条，Java 端余弦足够）
+        List<UserMemory> existing = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
+        double threshold = dedupThreshold();
         int saved = 0;
         for (int i = 0; i < arr.size() && saved < 3; i++) {
             JSONObject o = arr.getJSONObject(i);
@@ -170,11 +258,25 @@ public class UserMemoryService {
             if (content.length() > MAX_CONTENT_CHARS) content = content.substring(0, MAX_CONTENT_CHARS);
             String category = o.getString("category");
             if (!"instruction".equals(category) && !"project".equals(category)) category = "fact";
-            // 去重：同用户同内容精确匹配跳过（语义去重留给后续向量召回版本）
-            Long dup = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>()
-                    .eq(UserMemory::getUid, uid).eq(UserMemory::getContent, content));
-            if (dup != null && dup > 0) continue;
-            if (existing >= cap) {
+            // 精确匹配优先（快路径）：同内容已存在跳过
+            boolean exactDup = false;
+            for (UserMemory m : existing) { if (content.equals(m.getContent())) { exactDup = true; break; } }
+            if (exactDup) continue;
+            // 语义去重：向量化后与存量余弦比对，超阈值视为重复
+            float[] vec = embed(content);
+            if (vec != null) {
+                boolean semanticDup = false;
+                for (UserMemory m : existing) {
+                    float[] mv = parseEmbedding(m.getEmbedding());
+                    if (mv == null) { // 存量无向量：lazy 补（best-effort，不阻断去重）
+                        mv = embed(m.getContent());
+                        if (mv != null) { m.setEmbedding(serializeEmbedding(mv)); memoryMapper.updateById(m); }
+                    }
+                    if (mv != null && cosine(vec, mv) >= threshold) { semanticDup = true; break; }
+                }
+                if (semanticDup) continue;
+            }
+            if (existing.size() >= cap) {
                 log.info("[Memory] 用户 {} 记忆已达上限 {} 条，跳过自动写入（请在个人设置清理）", uid, cap);
                 break;
             }
@@ -185,8 +287,9 @@ public class UserMemoryService {
             m.setSource("auto");
             m.setSourceSessionId(sessionId);
             m.setHitCount(0);
+            m.setEmbedding(serializeEmbedding(vec));
             memoryMapper.insert(m);
-            existing++;
+            existing.add(m);
             saved++;
         }
         if (saved > 0) log.info("[Memory] 用户 {} 新增记忆 {} 条", uid, saved);
@@ -204,14 +307,27 @@ public class UserMemoryService {
     /** 手动添加（source=manual） */
     public UserMemory addManual(String uid, String content, String category) {
         String c = normalize(content);
-        long existing = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
-        if (existing >= maxPerUser()) throw new BizException("记忆已达上限 " + maxPerUser() + " 条，请先清理再添加");
+        long existingCnt = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
+        if (existingCnt >= maxPerUser()) throw new BizException("记忆已达上限 " + maxPerUser() + " 条，请先清理再添加");
+        // 语义去重：与存量比对，超阈值拒绝重复添加（明确告知用户，而非静默吞）
+        float[] vec = embed(c);
+        if (vec != null) {
+            List<UserMemory> all = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
+            for (UserMemory m : all) {
+                float[] mv = parseEmbedding(m.getEmbedding());
+                if (mv == null) { mv = embed(m.getContent()); if (mv != null) { m.setEmbedding(serializeEmbedding(mv)); memoryMapper.updateById(m); } }
+                if (mv != null && cosine(vec, mv) >= dedupThreshold()) {
+                    throw new BizException("已存在高度相似的记忆（相似度过高，未重复添加）");
+                }
+            }
+        }
         UserMemory m = new UserMemory();
         m.setUid(uid);
         m.setContent(c);
         m.setCategory("instruction".equals(category) || "project".equals(category) ? category : "fact");
         m.setSource("manual");
         m.setHitCount(0);
+        m.setEmbedding(serializeEmbedding(vec));
         memoryMapper.insert(m);
         return m;
     }

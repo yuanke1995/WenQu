@@ -806,7 +806,7 @@ public class RagService {
             // 用户长期记忆（跨会话个性化）：注入本人记忆 + 累加使用度；游客分享会话不注入
             // （发布者的个人记忆不外泄给匿名访客）；空记忆/未开启零影响
             if (!guestMode) {
-                String memoryText = userMemoryService.injectText(userId);
+                String memoryText = userMemoryService.injectText(userId, question);
                 if (memoryText != null) system.append("\n\n").append(memoryText);
             }
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
@@ -3502,7 +3502,7 @@ public class RagService {
                     .append("不要输出 [N] 来源标注（本轮没有参考资料）。");
             // 用户长期记忆（与主链路同口径；游客分享会话不注入）
             if (!guestMode) {
-                String memoryText = userMemoryService.injectText(userId);
+                String memoryText = userMemoryService.injectText(userId, question);
                 if (memoryText != null) system.append("\n\n").append(memoryText);
             }
             // 用户本轮主动选用的技能：与主链路口径一致，全文注入

@@ -1585,6 +1585,32 @@
       "tier": 2
     },
     {
+      "group": "memory",
+      "key": "dedupThreshold",
+      "path": "memory.dedupThreshold",
+      "label": "语义去重阈值",
+      "type": "number",
+      "tips": "memoryDedupThreshold",
+      "def": 0.90,
+      "min": 0.5,
+      "max": 1,
+      "step": 0.01,
+      "width": 200,
+      "note": "自动提取/手动添加记忆的余弦相似度≥此值视为重复并跳过（越低越易判重）",
+      "tier": 3
+    },
+    {
+      "group": "memory",
+      "key": "useSemanticInject",
+      "path": "memory.useSemanticInject",
+      "label": "语义注入",
+      "type": "switch",
+      "tips": "memoryUseSemanticInject",
+      "def": true,
+      "note": "开启后注入按当前对话语义检索最相关的 Top-K 记忆，而非单纯按更新时间倒序",
+      "tier": 3
+    },
+    {
       "backendKey": "agent.digestEnabled",
       "panel": "agent",
       "section": 0,
