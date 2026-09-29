@@ -129,6 +129,7 @@ public class ShareController {
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
         ragService.chat(sessionId, message.trim(), List.of(), List.of(), List.of(),
                 false, ctx.agent().getId(), modelRef, owner.getUid(), emitter, true);
+        agentShareService.incrementVisit(ctx.share().getId());
         log.info("[AUDIT] 游客对话 ip={} agent={} session={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId);
         return emitter;

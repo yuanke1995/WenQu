@@ -123,4 +123,20 @@ public class AgentShareService {
         }
         return sb.toString();
     }
+
+    /**
+     * 发布访问统计：每次游客成功发起对话 +1（best-effort，失败仅日志，绝不影响对话主链路）。
+     * 用 COALESCE 兜底未补列的老实例（SchemaMigrator 补列前 visit_count 为 NULL）。
+     */
+    public void incrementVisit(String shareId) {
+        if (shareId == null || shareId.isBlank()) return;
+        try {
+            shareMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AgentShare>()
+                    .eq(AgentShare::getId, shareId)
+                    .setSql("visit_count = COALESCE(visit_count, 0) + 1")
+                    .set(AgentShare::getLastVisitAt, java.time.LocalDateTime.now()));
+        } catch (Exception e) {
+            log.warn("[Share] 访问统计 +1 失败 share={}: {}", shareId, e.getMessage());
+        }
+    }
 }

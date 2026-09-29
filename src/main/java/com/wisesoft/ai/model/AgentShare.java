@@ -47,6 +47,12 @@ public class AgentShare {
     /** 创建人（游客对话以该用户身份执行检索可见性） */
     private String createdBy;
 
+    /** 游客对话累计访问次数（发布访问统计；每次成功发起一次游客对话 +1） */
+    private Integer visitCount;
+
+    /** 最近一次游客对话时间 */
+    private LocalDateTime lastVisitAt;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 
