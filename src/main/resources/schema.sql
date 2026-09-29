@@ -634,3 +634,36 @@ CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     KEY `idx_tool` (`tool_name`),
     KEY `idx_owner` (`owner_uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 服务端调用审计日志（外部客户端调用 wenqu MCP 端点的每次工具执行）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '工作流ID（UUID）',
+    `uid`          VARCHAR(64)   NOT NULL COMMENT '创建者 uid',
+    `name`         VARCHAR(100)  NOT NULL COMMENT '工作流名称',
+    `description`  VARCHAR(500)  DEFAULT NULL COMMENT '描述',
+    `dsl`          MEDIUMTEXT    NOT NULL COMMENT '工作流 DSL（JSON：version/nodes/edges，画布坐标存 position）',
+    `status`       VARCHAR(16)   NOT NULL DEFAULT 'draft' COMMENT '状态: draft=草稿 published=已发布（M4 启用发布语义）',
+    `share_config` VARCHAR(2000) DEFAULT NULL COMMENT '共享范围(JSON，与知识库/智能体同款两级可见性；空=仅本人，M4 前不启用)',
+    `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_uid_time` (`uid`, `update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流定义（DSL 是唯一真源，画布只是编辑器）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '运行ID（UUID）',
+    `workflow_id`  VARCHAR(50)   NOT NULL COMMENT '工作流ID',
+    `dsl_snapshot` MEDIUMTEXT    NOT NULL COMMENT '本次运行锁定的 DSL 快照（执行不可变，改画布不影响历史回放）',
+    `trigger_type` VARCHAR(16)   NOT NULL DEFAULT 'manual' COMMENT '触发方式: manual=调试 agent=智能体绑定 api=外部Key',
+    `triggered_by` VARCHAR(64)   DEFAULT NULL COMMENT '触发者 uid',
+    `status`       VARCHAR(20)   NOT NULL DEFAULT 'running' COMMENT '状态: running/success/failed/timeout/waiting_approval',
+    `inputs`       TEXT          DEFAULT NULL COMMENT '开始节点入参（JSON）',
+    `outputs`      TEXT          DEFAULT NULL COMMENT '结束节点出参（JSON）',
+    `node_traces`  MEDIUMTEXT    DEFAULT NULL COMMENT '节点级 trace（JSON 数组：nodeId/type/status/输入输出摘要/耗时）',
+    `error`        VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（截断 1000 字符）',
+    `started_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '开始时刻',
+    `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻',
+    `duration_ms`  BIGINT        DEFAULT NULL COMMENT '总耗时（毫秒）',
+    PRIMARY KEY (`id`),
+    KEY `idx_wf_time` (`workflow_id`, `started_at`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流运行记录（每次运行锁 DSL 快照；trace 为运营闭环打地基）';

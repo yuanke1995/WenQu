@@ -119,6 +119,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isShareGuestEndpoint(path)) return true;
         // 用户长期记忆（个人资产）：个人设置页增删改查自己的（归属在 MemoryController 按 uid 过滤）
         if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) return true;
+        // 工作流（个人资产）：M0~M3 仅创建者本人可见可管（WorkflowService 按 uid 归属校验；M4 随发布语义启用共享）
+        if (path.equals("/api/ai/workflow") || path.startsWith("/api/ai/workflow/")) return true;
         return false;
     }
 

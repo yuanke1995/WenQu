@@ -1,0 +1,289 @@
+package com.wisesoft.ai.service;
+
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * 工作流 DSL 结构校验器：节点注册表、引用完整性、分支键对账、成环检测、可达性、变量引用检查。
+ * 全部 fail-loud——每条问题独立成句报出（节点 id 带上），供编辑器逐项定位。
+ * <p>
+ * <b>分期口径</b>：结构校验对全部已登记类型一视同仁（画布可以先画 M3 的节点）；
+ * 能不能执行由 {@link WorkflowEngine#EXECUTABLE} 决定（编译期拒绝未开放类型）。
+ *
+ * @author yuanke
+ */
+@Component
+public class WorkflowValidator {
+
+    /** 节点 id 约束：字母数字下划线连字符（变量引用 {{id.key}} 以它寻址，不能含 . 与 {}） */
+    private static final Pattern NODE_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    /** 变量引用：{{nodeId.key}}（key 检查在 M1 节点输出类型化后加严，这里先查节点存在性） */
+    private static final Pattern VAR_REF = Pattern.compile("\\{\\{\\s*([A-Za-z0-9_-]+)\\.([A-Za-z0-9_]+)\\s*\\}\\}");
+
+    /** 规模上限：防误操作拖出巨图拖垮校验/编译（真实场景几十个节点封顶） */
+    private static final int MAX_NODES = 100;
+    private static final int MAX_EDGES = 300;
+
+    /** 节点类型注册表（全部规划类型；executable 与否见引擎） */
+    public static final Set<String> KNOWN_TYPES = Set.of(
+            "start", "end", "llm", "retrieval", "condition",
+            "http", "code", "subagent", "approval", "loop", "template");
+    /** 开始节点的固定 id 语义：变量引用 {{start.xxx}} 指向入参 */
+    public static final String START_SEMANTIC = "start";
+    public static final String END_TYPE = "end";
+    public static final String CONDITION_TYPE = "condition";
+
+    /** 校验全部通过返回空列表；否则每条问题一句（可多句） */
+    public List<String> validate(WorkflowDsl dsl) {
+        List<String> errors = new ArrayList<>();
+        if (dsl == null || dsl.getNodes() == null || dsl.getNodes().isEmpty()) {
+            errors.add("DSL 中没有任何节点");
+            return errors;
+        }
+        if (dsl.getNodes().size() > MAX_NODES) {
+            errors.add("节点数超过上限 " + MAX_NODES + "（当前 " + dsl.getNodes().size() + "）");
+            return errors;
+        }
+        // ---- 节点：id 合法性 / 唯一性 / 类型注册表 ----
+        Map<String, WorkflowDsl.Node> byId = new LinkedHashMap<>();
+        Set<String> startIds = new LinkedHashSet<>();
+        Set<String> endIds = new LinkedHashSet<>();
+        for (WorkflowDsl.Node n : dsl.getNodes()) {
+            String where = "节点[" + safeRef(n) + "]";
+            if (n.getId() == null || n.getId().isBlank()) {
+                errors.add(where + " 缺少 id");
+                continue;
+            }
+            if (!NODE_ID.matcher(n.getId()).matches()) {
+                errors.add(where + " 的 id「" + n.getId() + "」只允许字母/数字/下划线/连字符（1~64 位）");
+                continue;
+            }
+            // __ 前缀是 StateGraph 的保留字（__START__/__END__）：带 __ 前缀的节点 addNode 能进、
+            // compile() 才被 Node.validate 拒绝且文案陈旧——在校验期就拦下并讲清原因（实测结论）
+            if (n.getId().startsWith("__")) {
+                errors.add(where + " 的 id「" + n.getId() + "」不能以 __ 开头（执行引擎保留前缀）");
+                continue;
+            }
+            if (byId.containsKey(n.getId())) {
+                errors.add("节点 id「" + n.getId() + "」重复");
+                continue;
+            }
+            if (n.getType() == null || !KNOWN_TYPES.contains(n.getType())) {
+                errors.add(where + " 类型「" + n.getType() + "」未注册（可用：" + String.join(", ", KNOWN_TYPES) + "）");
+                continue;
+            }
+            byId.put(n.getId(), n);
+            if ("start".equals(n.getType())) startIds.add(n.getId());
+            if (END_TYPE.equals(n.getType())) endIds.add(n.getId());
+        }
+        if (startIds.size() != 1) {
+            errors.add("必须有且只有一个开始（start）节点（当前 " + startIds.size() + " 个）");
+        }
+        if (endIds.isEmpty()) {
+            errors.add("至少需要一个结束（end）节点");
+        }
+        if (dsl.getEdges() != null && dsl.getEdges().size() > MAX_EDGES) {
+            errors.add("连线数超过上限 " + MAX_EDGES + "（当前 " + dsl.getEdges().size() + "）");
+        }
+
+        // ---- 边：端点存在性 / 分支键对账 / 重复 ----
+        Set<String> edgeKeys = new HashSet<>();
+        List<WorkflowDsl.Edge> edges = dsl.getEdges() == null ? List.of() : dsl.getEdges();
+        for (WorkflowDsl.Edge e : edges) {
+            String where = "连线[" + nz(e.getFrom()) + " → " + nz(e.getTo()) + "]";
+            if (e.getFrom() == null || e.getFrom().isBlank() || e.getTo() == null || e.getTo().isBlank()) {
+                errors.add(where + " 起点或终点为空");
+                continue;
+            }
+            if (!byId.containsKey(e.getFrom())) {
+                errors.add(where + " 起点节点「" + e.getFrom() + "」不存在");
+                continue;
+            }
+            if (!byId.containsKey(e.getTo())) {
+                errors.add(where + " 终点节点「" + e.getTo() + "」不存在");
+                continue;
+            }
+            boolean fromCondition = CONDITION_TYPE.equals(byId.get(e.getFrom()).getType());
+            if (fromCondition) {
+                if (e.getBranch() == null || e.getBranch().isBlank()) {
+                    errors.add(where + " 来自条件分支节点，必须携带分支键（branch）");
+                } else if (!declaredBranches(byId.get(e.getFrom())).contains(e.getBranch())) {
+                    errors.add(where + " 的分支键「" + e.getBranch() + "」未在该条件节点 branches 里声明");
+                }
+            } else if (e.getBranch() != null && !e.getBranch().isBlank()) {
+                errors.add(where + " 只有条件分支（condition）节点的出边才允许携带分支键");
+            }
+            if (!edgeKeys.add(e.getFrom() + ">" + e.getBranch() + ">" + e.getTo())) {
+                errors.add(where + " 重复连线");
+            }
+        }
+        // 条件节点声明了分支但没有出边 → 显式报（否则运行到该节点会"无路可走"静默卡死）
+        for (WorkflowDsl.Node n : byId.values()) {
+            if (!CONDITION_TYPE.equals(n.getType())) continue;
+            Set<String> declared = declaredBranches(n);
+            if (declared.isEmpty()) {
+                errors.add("条件分支节点「" + n.getId() + "」未声明任何分支（config.branches）");
+                continue;
+            }
+            Set<String> wired = new HashSet<>();
+            for (WorkflowDsl.Edge e : edges) {
+                if (n.getId().equals(e.getFrom()) && e.getBranch() != null) wired.add(e.getBranch());
+            }
+            for (String b : declared) {
+                if (!wired.contains(b)) {
+                    errors.add("条件分支节点「" + n.getId() + "」的分支「" + b + "」声明了但没有连线");
+                }
+            }
+        }
+
+        // ---- 图结构：从 start 可达 / 无环（M0 口径；M3 引入 loop 节点后仅放宽其显式回跳） ----
+        String start = startIds.size() == 1 ? startIds.iterator().next() : null;
+        if (start != null) {
+            for (String id : reachable(byId, edges, start)) {
+                errors.add("节点「" + id + "」从开始节点不可达（悬空）");
+            }
+            List<String> cycle = findCycle(byId, edges, start);
+            if (!cycle.isEmpty()) {
+                errors.add("存在环：" + String.join(" → ", cycle) + "（当前版本不允许环；循环节点开放后仅允许经 loop 显式回跳）");
+            }
+        }
+
+        // ---- 变量引用：{{nodeId.key}} 的节点必须存在 ----
+        for (WorkflowDsl.Node n : byId.values()) {
+            for (String ref : collectVarRefs(n.getConfig())) {
+                String owner = ref.substring(0, ref.indexOf('.'));
+                if (START_SEMANTIC.equals(owner)) continue;
+                if (!byId.containsKey(owner)) {
+                    errors.add("节点「" + n.getId() + "」的配置里引用了不存在的节点 {{" + ref + "}}");
+                }
+            }
+        }
+        return errors;
+    }
+
+    /** 条件节点的分支键声明（config.branches = [{key,...},...]），取不到返回空集（缺 branches 由主校验报） */
+    @SuppressWarnings("unchecked")
+    private static Set<String> declaredBranches(WorkflowDsl.Node n) {
+        Set<String> out = new LinkedHashSet<>();
+        Object branches = n.getConfig() == null ? null : n.getConfig().get("branches");
+        if (branches instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m && m.get("key") != null) out.add(String.valueOf(m.get("key")));
+                else if (o instanceof String s && !s.isBlank()) out.add(s.trim());
+            }
+        }
+        return out;
+    }
+
+    /** 从 start 做 DFS，返回「不可达」节点集合（其余可达） */
+    private static Set<String> reachable(Map<String, WorkflowDsl.Node> byId, List<WorkflowDsl.Edge> edges, String start) {
+        Set<String> visited = new HashSet<>();
+        Deque<String> stack = new ArrayDeque<>();
+        stack.push(start);
+        visited.add(start);
+        Map<String, List<String>> adj = adjacency(edges);
+        while (!stack.isEmpty()) {
+            String cur = stack.pop();
+            for (String next : adj.getOrDefault(cur, List.of())) {
+                if (byId.containsKey(next) && visited.add(next)) stack.push(next);
+            }
+        }
+        Set<String> unreachable = new HashSet<>(byId.keySet());
+        unreachable.removeAll(visited);
+        return unreachable;
+    }
+
+    /** 找一条从 start 出发可达的环并还原路径（无环返回空） */
+    private static List<String> findCycle(Map<String, WorkflowDsl.Node> byId, List<WorkflowDsl.Edge> edges, String start) {
+        Map<String, List<String>> adj = adjacency(edges);
+        Map<String, Integer> color = new LinkedHashMap<>();   // 0=未访 1=在栈 2=完成
+        Map<String, String> parent = new LinkedHashMap<>();
+        List<String> path = new ArrayList<>();
+        // 从 start 的可达子图里找环（起点任意可达节点，环与入口无关）
+        for (String root : byId.keySet()) {
+            if (cycleDfs(root, adj, color, parent, path)) {
+                // path 现在是 [v, v]（首尾相同）；裁掉重复尾
+                List<String> out = new ArrayList<>(path);
+                if (out.size() > 1 && out.get(0).equals(out.get(out.size() - 1))) {
+                    out = out.subList(0, out.size() - 1);
+                }
+                return out;
+            }
+        }
+        return List.of();
+    }
+
+    /** 三色 DFS；发现回边时把栈上路径还原进 path（返回 true 表示已找到） */
+    private static boolean cycleDfs(String cur, Map<String, List<String>> adj,
+                                    Map<String, Integer> color, Map<String, String> parent, List<String> path) {
+        color.put(cur, 1);
+        for (String next : adj.getOrDefault(cur, List.of())) {
+            Integer c = color.get(next);
+            if (c != null && c == 1) {
+                // 回边：从 next 沿 parent 回溯到 cur 即环路径
+                path.clear();
+                path.add(next);
+                String p = cur;
+                while (p != null && !p.equals(next)) {
+                    path.add(0, p);
+                    p = parent.get(p);
+                }
+                if (path.isEmpty() || !path.get(0).equals(next)) path.add(0, next);
+                path.add(next);
+                return true;
+            }
+            if (c == null) {
+                parent.put(next, cur);
+                if (cycleDfs(next, adj, color, parent, path)) return true;
+            }
+        }
+        color.put(cur, 2);
+        return false;
+    }
+
+    private static Map<String, List<String>> adjacency(List<WorkflowDsl.Edge> edges) {
+        Map<String, List<String>> adj = new LinkedHashMap<>();
+        for (WorkflowDsl.Edge e : edges) {
+            if (e.getFrom() == null || e.getTo() == null) continue;
+            adj.computeIfAbsent(e.getFrom(), k -> new ArrayList<>()).add(e.getTo());
+        }
+        return adj;
+    }
+
+    /** 递归收集 config 里所有字符串值中的变量引用（去重，形如 "nodeId.key"） */
+    private static Set<String> collectVarRefs(Object config) {
+        Set<String> out = new LinkedHashSet<>();
+        collect(config, out);
+        return out;
+    }
+
+    private static void collect(Object v, Set<String> out) {
+        if (v instanceof String s) {
+            Matcher m = VAR_REF.matcher(s);
+            while (m.find()) out.add(m.group(1) + "." + m.group(2));
+        } else if (v instanceof Map<?, ?> map) {
+            for (Object o : map.values()) collect(o, out);
+        } else if (v instanceof List<?> list) {
+            for (Object o : list) collect(o, out);
+        }
+    }
+
+    private static String safeRef(WorkflowDsl.Node n) {
+        return n.getId() == null ? (n.getType() == null ? "未命名" : n.getType()) : n.getId();
+    }
+
+    private static String nz(String s) {
+        return s == null || s.isBlank() ? "?" : s;
+    }
+}
