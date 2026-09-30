@@ -445,8 +445,76 @@ const refreshGraph = async () => {
       tripleTotal.value = tr.data?.total || 0
     }
   } catch (e) { message.error(e.message || '图谱状态加载失败') }
+  // 图视图开着时刷新同步重渲染（构建完成/手动刷新都能看到新关系）
+  if (graphView.value === 'graph') nextTick(renderGraphChart)
 }
 const onTripleTableChange = pg => { triplePage.value = pg.current; refreshGraph() }
+
+// ==================== 图视图（echarts 力导向图：节点=实体、边=关系） ====================
+const graphView = ref('graph')   // 默认图视图；列表是核对清单
+const graphChartEl = ref(null)
+const graphSampled = 500         // 图视图一次拉取的关系上限（后端放宽到 500，超出部分走列表）
+let chartInstance = null
+
+const onGraphViewChange = () => { if (graphView.value === 'graph') nextTick(renderGraphChart) }
+
+watch(graphModal, open => {
+  if (open) nextTick(() => { if (graphView.value === 'graph') renderGraphChart() })
+  else disposeChart()
+})
+
+function disposeChart() {
+  if (chartInstance) { chartInstance.dispose(); chartInstance = null }
+}
+
+async function renderGraphChart() {
+  if (!graphKb.value || !graphChartEl.value) return
+  let rows = []
+  try {
+    const r = await graphTriples(graphKb.value.id, 1, graphSampled)
+    rows = r.success ? (r.data?.rows || []) : []
+  } catch (e) { message.error(e.message || '图谱数据加载失败'); return }
+  disposeChart()
+  if (!rows.length) return   // 空态由模板的 .graph-empty 兜底
+  // 节点度数（连线越多的实体越大）
+  const degree = {}
+  const nodeNames = []
+  const seen = new Set()
+  const links = rows.map(t => {
+    for (const n of [t.subject, t.object]) {
+      degree[n] = (degree[n] || 0) + 1
+      if (!seen.has(n)) { seen.add(n); nodeNames.push(n) }
+    }
+    return { source: t.subject, target: t.object, value: t.predicate, doc: t.doc }
+  })
+  chartInstance = echarts.init(graphChartEl.value)
+  chartInstance.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      formatter: p => p.dataType === 'edge'
+        ? `<b>${p.data.source}</b> —【${p.data.value}】→ <b>${p.data.target}</b><br/><span style="color:#999">来源：${p.data.doc || '—'}</span>`
+        : `<b>${p.name}</b><br/><span style="color:#999">关联关系 ${degree[p.name] || 0} 条</span>`
+    },
+    series: [{
+      type: 'graph', layout: 'force', roam: true, draggable: true,
+      data: nodeNames.map(n => ({
+        name: n,
+        symbolSize: Math.min(48, 14 + (degree[n] || 1) * 4),
+        label: { show: true, fontSize: 10 }
+      })),
+      links,
+      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08 },
+      label: { color: '#333', position: 'right' },
+      lineStyle: { color: '#b9c0cc', curveness: 0.05 },
+      edgeLabel: { show: true, fontSize: 10, color: '#8a919e', formatter: '{c}' },
+      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 7,
+      emphasis: { focus: 'adjacency', lineStyle: { width: 2.5 } },
+      itemStyle: { color: '#4f6ef2' }
+    }]
+  }, true)
+}
+
+const onWinResize = () => { if (chartInstance) chartInstance.resize() }
 const doBuild = async () => {
   graphBuilding.value = true
   try {
@@ -493,6 +561,11 @@ onMounted(() => {
   load()
   loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
   ensureAuth().then(me => { myUid.value = me.user || '' })
+  window.addEventListener('resize', onWinResize)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWinResize)
+  disposeChart()
 })
 </script>
 
@@ -524,6 +597,13 @@ onMounted(() => {
 .kb-param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
 /* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */
 .kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; min-width: 0; }
+
+/* 图谱：工具栏 + 力导向图画布 */
+.graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.graph-wrap { position: relative; }
+.graph-canvas { height: 520px; width: 100%; }
+.graph-empty, .graph-note { font-size: 12px; color: var(--app-text3); }
+.graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 /* 长标签「GraphRAG 知识图谱」放不下标准 5/24 标签列：放开 nowrap 折成两行，
    保持与表单其他行同一标签列右对齐（antd 标签默认 nowrap + 固定行高，需一并放开） */
 .kb-item-wrap-label :deep(.ant-form-item-label),
