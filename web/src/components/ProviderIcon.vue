@@ -1,5 +1,5 @@
 <template>
-  <a-tooltip :title="name" :mouse-enter-delay="0" :mouse-leave-delay="0.1" :disabled="!name">
+  <a-tooltip :title="tip" :mouse-enter-delay="0" :mouse-leave-delay="0.1" :disabled="!tip">
     <span class="provider-icon" :style="{ width: size + 'px', height: size + 'px' }">
       <!-- http(s) 图片 URL：直接渲染 -->
       <img v-if="isUrl" :src="icon" :alt="name" class="pi-img" />
@@ -33,9 +33,13 @@ const props = defineProps({
   icon: { type: String, default: '' },
   /** 供应商名（字母徽标兜底 / 悬浮提示用） */
   name: { type: String, default: '' },
+  /** 悬浮提示文案；缺省回落到 name（图标选择器传候选名，避免跟随表单里已填的供应商名） */
+  tooltip: { type: String, default: '' },
   /** 尺寸 px */
   size: { type: Number, default: 18 },
 })
+
+const tip = computed(() => props.tooltip || props.name)
 
 const isUrl = computed(() => /^https?:\/\//i.test(props.icon || ''))
 

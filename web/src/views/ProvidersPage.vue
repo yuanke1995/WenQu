@@ -71,7 +71,7 @@
             <button v-for="k in iconKeys" :key="k.key" type="button"
                     class="pv-icon-cell" :class="{ active: form.icon === k.key }"
                     :title="k.name" @click="onPickIcon(k.key)">
-              <ProviderIcon :icon="k.key" :name="form.name || k.name" :size="20" />
+              <ProviderIcon :icon="k.key" :name="form.name || k.name" :tooltip="k.name" :size="20" />
             </button>
           </div>
           <div class="pv-hint">留空自动按名称生成徽标；点上方图标选内置品牌；没有的品牌可把官方 logo 图放到图床，贴图片 URL。</div>
@@ -217,9 +217,18 @@ function blank() {
 }
 
 // 图标候选：官方 SVG + 品牌徽标（'custom' 后端迁移兜底值按名称自动生成，等价留空）
+// 悬浮提示用候选自己的名字（ICON_LABELS/预设里的友好名），不跟表单已填的供应商名走
+const ICON_LABELS = {
+  anthropic: 'Anthropic',
+  googlegemini: 'Gemini',
+  alibabacloud: '阿里云',
+  huggingface: 'Hugging Face',
+  vllm: 'vLLM',
+}
 const iconKeys = computed(() => {
+  const label = k => BRAND_PRESETS[k]?.name || ICON_LABELS[k] || BRAND_BADGES[k]?.name || k
   const keys = [{ key: '', name: '自动（按名称）' }]
-  for (const k of Object.keys(BRAND_PATHS)) keys.push({ key: k, name: k })
+  for (const k of Object.keys(BRAND_PATHS)) keys.push({ key: k, name: label(k) })
   for (const [k, b] of Object.entries(BRAND_BADGES)) keys.push({ key: k, name: b.name || k })
   return keys
 })
