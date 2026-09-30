@@ -1,7 +1,7 @@
 package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.dto.ResultJson;
-import com.wisesoft.ai.model.AiWorkflow;
+import com.wisesoft.ai.model.Workflow;
 import com.wisesoft.ai.service.WorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,7 +37,7 @@ public class WorkflowController {
     @Operation(summary = "本人工作流列表", description = "按更新时间倒序；M4 前仅返回本人创建的")
     @GetMapping("/list")
     public ResultJson list() {
-        List<AiWorkflow> rows = workflowService.listOwn();
+        List<Workflow> rows = workflowService.listOwn();
         return ResultJson.ok(rows);
     }
 
@@ -50,14 +50,14 @@ public class WorkflowController {
     @Operation(summary = "新建工作流", description = "body: {name, description?, dsl}；DSL 必须通过结构校验（不收坏图）")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
-        AiWorkflow row = workflowService.create(str(body, "name"), str(body, "description"), str(body, "dsl"));
+        Workflow row = workflowService.create(str(body, "name"), str(body, "description"), str(body, "dsl"));
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
     @Operation(summary = "更新工作流", description = "body: {name?, description?, dsl?}；只传要改的字段，dsl 变更会重新校验")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
-        AiWorkflow row = workflowService.update(id, str(body, "name"), str(body, "description"), str(body, "dsl"));
+        Workflow row = workflowService.update(id, str(body, "name"), str(body, "description"), str(body, "dsl"));
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
@@ -66,6 +66,35 @@ public class WorkflowController {
     public ResultJson delete(@PathVariable String id) {
         workflowService.delete(id);
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // M4：发布与版本
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "发布工作流", description = "把当前草稿 DSL 发布为新版本（版本号递增）；发布后草稿继续可改，"
+            + "已发布版本的行为被冻结——API 触发与智能体绑定跑的都是已发布版本。body: {note?}（发布说明）")
+    @PostMapping("/{id}/publish")
+    public ResultJson publish(@PathVariable String id, @RequestBody(required = false) Map<String, Object> body) {
+        return ResultJson.ok(workflowService.publish(id, body == null ? null : str(body, "note")));
+    }
+
+    @Operation(summary = "下线工作流", description = "已发布 → 草稿：外部 API 触发与智能体绑定随即不可用；版本历史保留")
+    @PostMapping("/{id}/unpublish")
+    public ResultJson unpublish(@PathVariable String id) {
+        return ResultJson.ok(workflowService.unpublish(id));
+    }
+
+    @Operation(summary = "版本历史", description = "新→旧：版本号/说明/发布者/时间/current（是否为当前发布版本）")
+    @GetMapping("/{id}/versions")
+    public ResultJson versions(@PathVariable String id) {
+        return ResultJson.ok(workflowService.listVersions(id));
+    }
+
+    @Operation(summary = "回滚到指定版本", description = "以该版本 DSL 再发一版（版本号递增，历史不被改写）")
+    @PostMapping("/{id}/rollback/{version}")
+    public ResultJson rollback(@PathVariable String id, @PathVariable int version) {
+        return ResultJson.ok(workflowService.rollback(id, version));
     }
 
     @Operation(summary = "DSL 校验 + 编译 dry-run", description = "body: {dsl}；返回 errors（结构问题逐条）/ compiled（翻译层是否吃下）/ nodeCount / edgeCount。画布实时校验与保存前校验共用")

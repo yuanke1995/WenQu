@@ -7,6 +7,8 @@
       <button class="app-btn ghost small" @click="$emit('back')"><arrow-left-outlined /> 返回列表</button>
       <a-input v-model:value="name" class="wf-name" :maxlength="100" placeholder="工作流名称" @change="dirty = true" />
       <span class="wf-save-hint">{{ dirty ? '有未保存改动' : '已保存' }}</span>
+      <a-tag v-if="publishedVersion != null" color="green" class="wf-ver">已发布 v{{ publishedVersion }}</a-tag>
+      <a-tag v-else-if="workflowId" class="wf-ver">草稿</a-tag>
       <span class="flex-gap"></span>
       <button class="app-btn ghost small" :disabled="busy" @click="doValidate">校验</button>
       <button class="app-btn ghost small" :disabled="busy" @click="showHistory">运行历史</button>
@@ -14,6 +16,10 @@
         <play-circle-outlined /> 运行
       </button>
       <button class="app-btn small" :disabled="busy" @click="doSave">保存</button>
+      <!-- M4：发布把当前草稿冻结成一个版本（API 触发 / 智能体绑定跑的是已发布版本，草稿继续可改） -->
+      <button class="app-btn primary small" :disabled="busy || !workflowId" @click="doPublish">
+        <cloud-upload-outlined /> {{ publishedVersion != null ? '发布新版本' : '发布' }}
+      </button>
     </div>
 
     <div class="wf-body">
@@ -373,7 +379,7 @@
 <script setup>
 import { ref, reactive, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ArrowLeftOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
+import { ArrowLeftOutlined, PlayCircleOutlined, CloudUploadOutlined } from '@ant-design/icons-vue'
 import { VueFlow, useVueFlow, MarkerType, Handle, Position } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
@@ -382,7 +388,7 @@ import ModelSelect from '../components/ModelSelect.vue'
 import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
   runWorkflow, listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
-  listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval
+  listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow
 } from '../api'
 
 const props = defineProps({
@@ -438,6 +444,7 @@ const branchPick = ref(false)
 const pendingConn = ref(null)
 const pendingBranch = ref('')
 const savedDsl = ref('')        // 上次保存的 DSL 文本（脏检测）
+const publishedVersion = ref(null)  // M4：当前发布版本号（null=未发布）
 
 const selected = computed(() => (selectedId.value && findNode(selectedId.value)) || null)
 const hasStart = computed(() => nodes.value.some(n => n.data.nodeType === 'start'))
@@ -891,6 +898,28 @@ async function doSave() {
   }
 }
 
+// ---------- M4：发布（把当前草稿冻结成一个版本） ----------
+/**
+ * 发布前必须先保存：发布的是库里的草稿 DSL，不是画布内存里的图——
+ * 有未保存改动就直接拦下（否则"我发布了但跑的不是我看到的图"）。
+ */
+async function doPublish() {
+  if (!workflowId.value) { message.warning('请先保存工作流，再发布'); return }
+  if (dirty.value) { message.warning('有未保存改动：请先保存，再发布'); return }
+  busy.value = true
+  try {
+    const r = await publishWorkflow(workflowId.value, '')
+    const d = r.data || {}
+    publishedVersion.value = d.version
+    message.success(`已发布 v${d.version}（API 触发与智能体绑定将使用这一版）`)
+    emit('saved')
+  } catch (e) {
+    message.error('发布失败：' + (e.message || ''))
+  } finally {
+    busy.value = false
+  }
+}
+
 // ---------- 运行（同步调试 + trace 回放染色） ----------
 function openRun() {
   for (const k of Object.keys(runInputs)) delete runInputs[k]
@@ -1049,6 +1078,7 @@ async function load() {
     const r = await getWorkflow(workflowId.value)
     const row = r.data || {}
     name.value = row.name || ''
+    publishedVersion.value = row.publishedVersion == null ? null : row.publishedVersion
     const dsl = safeParse(row.dsl) || { nodes: [], edges: [] }
     loadGraph(dsl)
     savedDsl.value = row.dsl || ''

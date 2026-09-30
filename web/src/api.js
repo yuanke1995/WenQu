@@ -281,6 +281,16 @@ export const getWorkflowPendingApproval = (id, runId) => request(`/workflow/${id
 /** 人工审核：裁决并恢复续跑（同步跑完，返回终态 run） */
 export const resolveWorkflowApproval = (id, runId, approved) =>
   request(`/workflow/${id}/run/${runId}/approval`, { method: 'POST', body: JSON.stringify({ approved }), timeout: 300000 })
+// ---------- M4：发布与版本 ----------
+/** 发布当前草稿为新版本（返回 {id, version, publishedAt, status}）；草稿校验不过会被拒 */
+export const publishWorkflow = (id, note) =>
+  request(`/workflow/${id}/publish`, { method: 'POST', body: JSON.stringify({ note: note || '' }) })
+/** 下线（已发布 → 草稿）：API 触发与智能体绑定随即不可用 */
+export const unpublishWorkflow = id => request(`/workflow/${id}/unpublish`, { method: 'POST' })
+/** 版本历史（新→旧）：[{version, note, publishedBy, publishedAt, current}] */
+export const listWorkflowVersions = id => request(`/workflow/${id}/versions`)
+/** 回滚到指定版本：以该版本 DSL 再发一版（返回 {version, rolledBackTo}） */
+export const rollbackWorkflow = (id, version) => request(`/workflow/${id}/rollback/${version}`, { method: 'POST' })
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */

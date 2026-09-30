@@ -37,6 +37,7 @@ public class AgentService {
 
     private final AgentMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
+    private final com.wisesoft.ai.mapper.WorkflowMapper workflowMapper;
 
     /** 当前请求者（可见性/可管性判定的输入） */
     private Principal principal() {
@@ -200,6 +201,8 @@ public class AgentService {
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
+        // M4：绑定的工作流（chatflow）；空串/null = 解绑（显式置空，NOT_NULL 策略下 updateById 不管）
+        if (b.containsKey("workflowId")) uw.set(Agent::getWorkflowId, a.getWorkflowId());
         // 检索参数覆盖（可清空：null = 全部继承全局设置）
         if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
         uw.set(Agent::getUpdateTime, a.getUpdateTime());
@@ -293,9 +296,26 @@ public class AgentService {
         // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
         if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
-        // 检索参数覆盖（JSON 串：{"vectorWeight":0.8,...}；空串归一为 null = 全部继承全局设置）
+        // M4：绑定工作流（chatflow）——非空时校验「存在 + 对当前用户可读 + 已发布」，
+        // 未发布直接拒绝：绑定后对话才报错不如配置时就说清楚（fail-loud，不做运行时静默回退）
+        if (body.containsKey("workflowId")) a.setWorkflowId(assertBindableWorkflow(body.get("workflowId")));
         if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
         return a;
+    }
+
+    /** 可绑定的工作流 id：空/null = 解绑；非空必须是存在、可读且已发布的工作流 */
+    private String assertBindableWorkflow(Object v) {
+        String id = asText(v, 50);
+        if (id == null) return null;
+        var wf = workflowMapper.selectById(id);
+        if (wf == null) throw new BizException("工作流不存在：" + id);
+        if (!resourceVisibilityService.canRead(principal(), wf.getShareConfig(), wf.getUid(), ResourceKind.WORKFLOW)) {
+            throw new BizException(403, "无权绑定该工作流（不在其共享范围内）");
+        }
+        if (!"published".equals(wf.getStatus())) {
+            throw new BizException("工作流「" + wf.getName() + "」尚未发布：请先在画布发布，再绑定到智能体");
+        }
+        return id;
     }
 
     private void clearDefault() {

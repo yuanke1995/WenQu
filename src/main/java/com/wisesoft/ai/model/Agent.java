@@ -123,6 +123,14 @@ public class Agent {
         return ids.isEmpty() ? null : ids;
     }
 
+    /**
+     * M4：绑定的工作流 ID（chatflow 语义）。非空时该智能体的回答<b>由工作流产出</b>——
+     * 会话每轮把用户问题送进图（start 节点入参），end 节点的出参即回答；
+     * 智能体自带的人设/知识库/工具配置在该模式下<b>不参与</b>（逻辑由工作流定义）。
+     * 跑的是工作流的<b>已发布版本</b>（绑定与运行时都会校验，未发布 fail-loud）。
+     */
+    private String workflowId;
+
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
 

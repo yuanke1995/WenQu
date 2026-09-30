@@ -1,9 +1,9 @@
 <template>
-  <!-- 工作流列表（个人资产，M0~M3 仅创建者可见可管）：编辑进画布、运行历史回放、删除。
+  <!-- 工作流列表（个人资产）：编辑进画布、运行历史页、发布与版本、删除。
        布局对齐 ScheduledPanel 同款卡片风格。 -->
   <div class="app-page">
-    <!-- 编辑态（editingId !== null）只渲染 FlowEditor 整页替换列表；列表头/列表体随编辑态隐藏 -->
-    <template v-if="editingId === null">
+    <!-- 编辑态（editingId !== null）或运行历史态，整页替换列表；列表头/列表体随之隐藏 -->
+    <template v-if="editingId === null && historyId === null">
     <div class="app-page-head">
       <h1 class="app-page-title">工作流</h1>
       <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
@@ -25,8 +25,17 @@
           <div v-for="r in rows" :key="r.id" class="app-card wf-card">
             <div class="wf-head">
               <span class="wf-name">{{ r.name }}</span>
-              <a-tag :color="r.status === 'published' ? 'green' : 'default'">{{ r.status === 'published' ? '已发布' : '草稿' }}</a-tag>
+              <a-tag :color="r.status === 'published' ? 'green' : 'default'">
+                {{ r.status === 'published' ? (r.publishedVersion != null ? '已发布 v' + r.publishedVersion : '已发布') : '草稿' }}
+              </a-tag>
               <span class="wf-meta">{{ summary(r.dsl) }}</span>
+              <!-- 最近一次运行（列表即可看出"这个工作流现在能不能跑"） -->
+              <span v-if="r.lastRunStatus" class="wf-last">
+                最近运行
+                <a-tag :color="runColor(r.lastRunStatus)">{{ runLabel(r.lastRunStatus) }}</a-tag>
+                <span class="wf-meta">{{ fmtTime(r.lastRunAt) }}</span>
+              </span>
+              <span v-else class="wf-meta">尚未运行</span>
             </div>
             <div v-if="r.description" class="wf-desc">{{ r.description }}</div>
             <div class="wf-actions">
@@ -35,6 +44,16 @@
               </button>
               <button class="app-btn ghost small" @click="openHistory(r)">
                 <history-outlined /> 运行历史
+              </button>
+              <button class="app-btn ghost small" @click="openVersions(r)">
+                <tags-outlined /> 版本
+              </button>
+              <!-- 发布/下线：已发布版本被冻结，草稿继续可改 -->
+              <button v-if="r.status === 'published'" class="app-btn ghost small" :disabled="busyId === r.id" @click="doUnpublish(r)">
+                <stop-outlined /> 下线
+              </button>
+              <button v-else class="app-btn small" :disabled="busyId === r.id" @click="doPublish(r)">
+                <cloud-upload-outlined /> 发布
               </button>
               <button class="app-btn ghost small wf-del" @click="doDelete(r)">
                 <delete-outlined /> 删除
@@ -50,42 +69,27 @@
     <!-- 画布编辑器：整页替换列表（返回即回列表并刷新） -->
     <FlowEditor v-if="editingId !== null" :workflow-id="editingId" @back="closeEditor" @saved="load" />
 
-    <!-- 运行历史（列表页入口）：点击单条回放节点级 trace -->
-    <a-modal v-model:open="historyModal" :title="`运行历史${historyRow ? ' · ' + historyRow.name : ''}`" :footer="null" width="760px">
-      <a-spin :spinning="historyLoading">
-        <div v-if="!runs.length" class="head-hint-plain">还没有运行记录</div>
-        <div v-else class="wf-runs">
-          <div v-for="x in runs" :key="x.id" class="wf-run">
-            <div class="wf-run-head" @click="openDetail(x)">
-              <a-tag :color="runColor(x.status)">{{ runLabel(x.status) }}</a-tag>
-              <span class="wf-meta">{{ x.triggerType === 'manual' ? '手动' : x.triggerType }}</span>
-              <span class="wf-meta">{{ fmtTime(x.startedAt) }}</span>
-              <span class="wf-meta">{{ x.durationMs != null ? fmtMs(x.durationMs) : '' }}</span>
-              <a class="wf-run-link">节点 trace →</a>
+    <!-- 运行历史页（M4：独立页，含 trace 回放与待审批裁决） -->
+    <WorkflowRunHistory v-if="historyId !== null" :workflow-id="historyId" :name="historyName" @back="closeHistory" />
+
+    <!-- 版本历史（发布历史 + 回滚） -->
+    <a-modal v-model:open="versionModal" :title="`版本历史${versionRow ? ' · ' + versionRow.name : ''}`" :footer="null" width="620px">
+      <a-spin :spinning="versionLoading">
+        <div v-if="!versions.length" class="head-hint-plain">还没有发布过版本（在画布里点「发布」即冻结第一版）</div>
+        <div v-else class="wf-versions">
+          <div v-for="v in versions" :key="v.version" class="wf-version">
+            <div class="wf-version-head">
+              <a-tag :color="v.current ? 'green' : 'default'">v{{ v.version }}{{ v.current ? ' · 当前' : '' }}</a-tag>
+              <span class="wf-meta">{{ fmtTime(v.publishedAt) }}</span>
+              <span class="wf-meta">{{ v.publishedBy || '' }}</span>
+              <button v-if="!v.current" class="app-btn ghost small" :disabled="busyId === versionRow.id" @click="doRollback(v)">
+                <rollback-outlined /> 回滚到此版
+              </button>
             </div>
-            <div v-if="x.error" class="wf-run-err">{{ x.error }}</div>
+            <div v-if="v.note" class="wf-version-note">{{ v.note }}</div>
           </div>
         </div>
       </a-spin>
-      <!-- trace 详情 -->
-      <a-modal v-model:open="detailModal" title="运行详情" :footer="null" width="640px">
-        <a-spin :spinning="detailLoading">
-          <template v-if="detail">
-            <div class="wf-run-head" style="margin-bottom:10px">
-              <a-tag :color="runColor(detail.status)">{{ runLabel(detail.status) }}</a-tag>
-              <span class="wf-meta">{{ fmtTime(detail.startedAt) }}</span>
-              <span class="wf-meta">{{ detail.durationMs != null ? fmtMs(detail.durationMs) : '' }}</span>
-            </div>
-            <div v-if="detail.error" class="wf-run-err" style="margin-bottom:10px">{{ detail.error }}</div>
-            <div class="wf-block"><div class="wf-block-label">入参</div>
-              <pre class="wf-pre">{{ pretty(detail.inputs) }}</pre></div>
-            <div class="wf-block"><div class="wf-block-label">出参</div>
-              <pre class="wf-pre">{{ pretty(detail.outputs) }}</pre></div>
-            <div class="wf-block"><div class="wf-block-label">节点 trace</div>
-              <pre class="wf-pre">{{ prettyTrace(detail.nodeTraces) }}</pre></div>
-          </template>
-        </a-spin>
-      </a-modal>
     </a-modal>
   </div>
 </template>
@@ -93,20 +97,27 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined } from '@ant-design/icons-vue'
+import {
+  PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
+  StopOutlined, RollbackOutlined, TagsOutlined
+} from '@ant-design/icons-vue'
 import FlowEditor from './FlowEditor.vue'
-import { listWorkflows, deleteWorkflow, listWorkflowRuns, getWorkflowRun } from '../api'
+import WorkflowRunHistory from './WorkflowRunHistory.vue'
+import {
+  listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
+  listWorkflowVersions, rollbackWorkflow
+} from '../api'
 
 const rows = ref([])
 const loading = ref(false)
 const editingId = ref(null)     // null = 列表；'' = 新建；'id' = 编辑
-const historyModal = ref(false)
-const historyRow = ref(null)
-const historyLoading = ref(false)
-const runs = ref([])
-const detailModal = ref(false)
-const detailLoading = ref(false)
-const detail = ref(null)
+const historyId = ref(null)     // 非 null = 运行历史页
+const historyName = ref('')
+const busyId = ref(null)        // 正在执行发布/下线/回滚的工作流 id
+const versionModal = ref(false)
+const versionLoading = ref(false)
+const versionRow = ref(null)
+const versions = ref([])
 
 const load = async () => {
   loading.value = true
@@ -123,6 +134,8 @@ const load = async () => {
 
 const openEditor = id => { editingId.value = id }
 const closeEditor = () => { editingId.value = null; load() }
+const openHistory = row => { historyId.value = row.id; historyName.value = row.name }
+const closeHistory = () => { historyId.value = null; load() }
 
 const doDelete = row => {
   Modal.confirm({
@@ -141,33 +154,69 @@ const doDelete = row => {
   })
 }
 
-const openHistory = async row => {
-  historyRow.value = row
-  runs.value = []
-  historyModal.value = true
-  historyLoading.value = true
+/** 发布：把库里的草稿冻结成一版（未发布的草稿改动画布不影响任何对外行为） */
+const doPublish = async row => {
+  busyId.value = row.id
   try {
-    const r = await listWorkflowRuns(row.id)
-    runs.value = (r && r.data) || []
+    const r = await publishWorkflow(row.id, '')
+    message.success(`已发布 v${r.data.version}（API 触发与智能体绑定将使用这一版）`)
+    await load()
   } catch (e) {
-    message.error('运行历史加载失败：' + (e.message || ''))
+    message.error('发布失败：' + (e.message || ''))
   } finally {
-    historyLoading.value = false
+    busyId.value = null
   }
 }
 
-const openDetail = async row => {
-  detailModal.value = true
-  detailLoading.value = true
-  detail.value = null
+const doUnpublish = async row => {
+  busyId.value = row.id
   try {
-    const r = await getWorkflowRun(historyRow.value.id, row.id)
-    detail.value = r.data || null
+    await unpublishWorkflow(row.id)
+    message.success('已下线：API 触发与智能体绑定随即不可用')
+    await load()
   } catch (e) {
-    message.error('运行详情加载失败：' + (e.message || ''))
+    message.error('下线失败：' + (e.message || ''))
   } finally {
-    detailLoading.value = false
+    busyId.value = null
   }
+}
+
+const openVersions = async row => {
+  versionRow.value = row
+  versions.value = []
+  versionModal.value = true
+  versionLoading.value = true
+  try {
+    const r = await listWorkflowVersions(row.id)
+    versions.value = (r && r.data) || []
+  } catch (e) {
+    message.error('版本历史加载失败：' + (e.message || ''))
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+/** 回滚 = 以该版本 DSL 再发一版（历史不被改写，可再次回滚） */
+const doRollback = async v => {
+  const row = versionRow.value
+  Modal.confirm({
+    title: `回滚到 v${v.version}？`,
+    content: '会以该版本的 DSL 发布为新版本（版本号递增），当前已发布版本不受影响、仍可回滚回来。',
+    okText: '回滚', cancelText: '取消',
+    onOk: async () => {
+      busyId.value = row.id
+      try {
+        const r = await rollbackWorkflow(row.id, v.version)
+        message.success(`已回滚到 v${v.version}，发布为 v${r.data.version}`)
+        versionModal.value = false
+        await load()
+      } catch (e) {
+        message.error('回滚失败：' + (e.message || ''))
+      } finally {
+        busyId.value = null
+      }
+    }
+  })
 }
 
 /** DSL 摘要：节点/边数量 */
@@ -178,26 +227,9 @@ const summary = dslText => {
   } catch (e) { return 'DSL 解析失败' }
 }
 
-const pretty = s => {
-  try { return JSON.stringify(JSON.parse(s), null, 2) } catch (e) { return s || '（无）' }
-}
-const prettyTrace = s => {
-  const arr = (() => { try { return JSON.parse(s) } catch (e) { return null } })()
-  if (!Array.isArray(arr)) return s || '（无）'
-  return arr.map(t => {
-    const parts = [`[${t.status}] ${t.nodeId}(${t.type}) 耗时 ${t.elapsedMs}ms`]
-    if (t.promptTokens != null) parts[0] += ` in ${t.promptTokens}tok`
-    if (t.completionTokens != null) parts[0] += ` out ${t.completionTokens}tok`
-    if (t.error) parts.push(`  错误：${t.error}`)
-    if (t.output) parts.push(`  输出：${JSON.stringify(t.output).slice(0, 200)}`)
-    return parts.join('\n')
-  }).join('\n\n')
-}
-
 const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
 const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
-const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
 
 onMounted(load)
 </script>
@@ -208,21 +240,15 @@ onMounted(load)
 .wf-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wf-name { font-weight: 500; font-size: 14px; }
 .wf-meta { font-size: 12px; color: var(--app-text3); }
+.wf-last { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .wf-desc { font-size: 13px; color: var(--app-text2); }
 .wf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wf-del { color: var(--app-danger, #d4380d); }
 .wf-empty { text-align: center; padding: 28px 16px; }
 .wf-empty-title { margin: 0 0 6px; font-weight: 500; }
-.wf-runs { display: flex; flex-direction: column; gap: 10px; }
-.wf-run { border-bottom: 1px solid var(--app-border); padding-bottom: 8px; }
-.wf-run:last-child { border-bottom: none; }
-.wf-run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; }
-.wf-run-link { font-size: 12px; color: var(--app-accent); margin-left: auto; }
-.wf-run-err { margin-top: 6px; font-size: 13px; color: var(--app-danger, #d4380d); }
-.wf-block { margin-bottom: 10px; }
-.wf-block-label { font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
-.wf-pre {
-  background: var(--app-panel); border-radius: 6px; padding: 8px 10px; margin: 0;
-  font-size: 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all;
-}
+.wf-versions { display: flex; flex-direction: column; gap: 10px; }
+.wf-version { border-bottom: 1px solid var(--app-border); padding-bottom: 8px; }
+.wf-version:last-child { border-bottom: none; }
+.wf-version-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wf-version-note { font-size: 13px; color: var(--app-text2); margin-top: 4px; }
 </style>

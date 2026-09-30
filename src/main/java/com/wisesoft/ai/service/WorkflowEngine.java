@@ -61,6 +61,12 @@ import java.util.function.Function;
 @Service
 public class WorkflowEngine {
 
+    /**
+     * 单节点流式 LLM 调用的结束等待上限（秒）：只防"网关连上却永不结束"的悬挂，
+     * 不是节点超时策略（run 级超时是 M5 的独立项，届时统一改成可配）。
+     */
+    private static final int STREAM_TIMEOUT_SECONDS = 600;
+
     /** 变量引用语法：{{nodeId.key}}（与校验器/表达式求值器同一口径） */
     public static final java.util.regex.Pattern VAR_REF =
             java.util.regex.Pattern.compile("\\{\\{\\s*([A-Za-z0-9_-]+)\\.([A-Za-z0-9_]+)\\s*\\}\\}");
@@ -283,13 +289,27 @@ public class WorkflowEngine {
     }
 
     /**
-     * LLM 节点：渲染 prompt → ChatClient 非流式调用（模型引用已在 run 前 assertUsable 并解析进 ctx）。
+     * LLM 节点：渲染 prompt → ChatClient 调用（模型引用已在 run 前 assertUsable 并解析进 ctx）。
      * 显式 internalToolExecutionEnabled(false)：chatClient 挂了 ToolCall Advisor，裸调用会抛；
      * 工作流节点是确定性的单步执行，不触发工具调用。
+     * <p>
+     * M4 对话型接入：ctx.tokenSink 非空时改走<b>流式</b>调用，每个文本块即时交给 sink（由调用方推给前端），
+     * 节点输出仍是完整文本——流式只影响"边跑边看"，不改变节点语义与下游引用。
      */
     private Function<OverAllState, NodeOut> llmBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
             String prompt = render(cfgStr(n, "prompt", true), ref -> resolveRef(ref, ctx, state));
+            boolean stream = ctx != null && ctx.tokenSink != null;
+            if (stream) {
+                try {
+                    return llmStreaming(n, ctx, prompt);
+                } catch (BizException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new BizException("节点「" + n.getId() + "」LLM 流式调用失败（"
+                            + ctx.resolvedModels.get(n.getId()) + "）：" + e.getMessage());
+                }
+            }
             String model = ctx.resolvedModels.get(n.getId());
             Object t = n.getConfig() == null ? null : n.getConfig().get("temperature");
             double temperature = t instanceof Number num ? num.doubleValue() : ctx.defaultTemperature;
@@ -320,6 +340,71 @@ public class WorkflowEngine {
             trace.put("answer", answer == null ? "" : answer);
             return new NodeOut(Map.of("answer", answer == null ? "" : answer), pTok, cTok, trace);
         };
+    }
+
+    /**
+     * LLM 节点的流式分支（对话型接入用）：订阅 chatResponse 流，文本块即时进 sink、
+     * 同时累积成完整回答；末块 metadata 有 usage 则取真实 token 数。
+     * <p>
+     * 用 latch 等流结束而不用 Flux 的阻塞迭代：节点体跑在图调度的线程上，阻塞式迭代
+     * 在响应式调度器里会被拒（IllegalStateException），subscribe + await 是确定性做法。
+     */
+    private NodeOut llmStreaming(WorkflowDsl.Node n, WorkflowRunCtx ctx, String prompt) {
+        String model = ctx.resolvedModels.get(n.getId());
+        Object t = n.getConfig() == null ? null : n.getConfig().get("temperature");
+        double temperature = t instanceof Number num ? num.doubleValue() : ctx.defaultTemperature;
+        StringBuilder full = new StringBuilder();
+        Integer[] tokens = new Integer[2];
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        chatClient.prompt()
+                .user(prompt)
+                .options(OpenAiChatOptions.builder()
+                        .model(model)
+                        .temperature(temperature)
+                        .internalToolExecutionEnabled(false)
+                        .build())
+                .stream()
+                .chatResponse()
+                .subscribe(resp -> {
+                    Usage usage = resp == null || resp.getMetadata() == null ? null : resp.getMetadata().getUsage();
+                    if (usage != null) {
+                        if (usage.getPromptTokens() != null && usage.getPromptTokens() > 0) tokens[0] = usage.getPromptTokens();
+                        if (usage.getCompletionTokens() != null && usage.getCompletionTokens() > 0) tokens[1] = usage.getCompletionTokens();
+                    }
+                    Object out = resp == null || resp.getResult() == null ? null : resp.getResult().getOutput();
+                    String delta = (out instanceof org.springframework.ai.chat.messages.AssistantMessage am
+                            ? (am.getText() == null ? "" : am.getText()) : "");
+                    if (!delta.isEmpty()) {
+                        full.append(delta);
+                        try {
+                            ctx.tokenSink.accept(delta);
+                        } catch (Exception ignore) {
+                            // sink 抛错（SSE 通道已断）不打断节点执行：图仍需收口，最终回答照常落库
+                        }
+                    }
+                }, e -> {
+                    failure.set(e);
+                    latch.countDown();
+                }, latch::countDown);
+        try {
+            if (!latch.await(STREAM_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new BizException("节点「" + n.getId() + "」LLM 流式调用超时（" + STREAM_TIMEOUT_SECONDS + " 秒无结束信号）");
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new BizException("节点「" + n.getId() + "」LLM 流式调用被中断");
+        }
+        if (failure.get() != null) {
+            Throwable e = failure.get();
+            throw new BizException("节点「" + n.getId() + "」LLM 调用失败（" + model + "）：" + e.getMessage());
+        }
+        String answer = full.toString();
+        Map<String, Object> trace = new LinkedHashMap<>();
+        trace.put("model", model);
+        trace.put("answer", answer);
+        trace.put("streamed", true);
+        return new NodeOut(Map.of("answer", answer), tokens[0], tokens[1], trace);
     }
 
     /** 检索节点 topK 上限（单节点召回预算；主链路上限同量级） */

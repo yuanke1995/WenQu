@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 工作流单次运行的<b>显式执行上下文</b>（对齐 {@code SubAgentOrchestrator.RunCtx} 的已验证范式）：
@@ -33,6 +34,13 @@ public final class WorkflowRunCtx {
     final double defaultTemperature;
     /** 运行期最大步数（图迭代上限，对齐 agent.maxToolSteps 语义；M1 图无环，兜底防 M3 loop 回跳失控） */
     final int maxSteps;
+    /**
+     * M4 对话型接入（智能体绑定）的 token 透传通道：非空时 llm 节点改走流式调用，
+     * 每个文本块即时交给它（由 RagService 包装成 SSE token 事件推给前端），
+     * 节点输出仍为完整文本——流式只是"边跑边看"，不改变节点语义。
+     * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推，走非流式）。
+     */
+    final Consumer<String> tokenSink;
 
     // ---- M3：人工审核的挂起/恢复（快照短路重放方案） ----
     /**
@@ -56,6 +64,11 @@ public final class WorkflowRunCtx {
 
     WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps) {
+        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, null);
+    }
+
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
+                   Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink) {
         this.runId = runId;
         this.uid = uid;
         this.departmentId = departmentId;
@@ -64,6 +77,7 @@ public final class WorkflowRunCtx {
         this.inputs = inputs == null ? Map.of() : inputs;
         this.defaultTemperature = defaultTemperature;
         this.maxSteps = maxSteps;
+        this.tokenSink = tokenSink;
     }
 
     /**

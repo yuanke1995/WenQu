@@ -1,10 +1,12 @@
 package com.wisesoft.ai.service;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.dto.ChatRequest;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.KnowledgeBase;
+import com.wisesoft.ai.model.WorkflowRun;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -292,6 +294,13 @@ public class RagService {
     /** 自动派遣（agentId="auto"）：按名称+描述从可见主智能体中路由本轮智能体 */
     private final AgentDispatchService agentDispatchService;
     private final ModelRegistryService modelRegistryService;
+    /**
+     * M4：工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
+     * {@code WorkflowService → WorkflowEngine → RagService} 已是一条依赖链（子智能体节点复用问答管线），
+     * 这里再直接注入就成环（Spring Boot 3 默认禁止循环依赖，启动直接失败）。惰性取用把这个
+     * 「只有绑定了工作流的智能体才用得到」的反向依赖推迟到调用时，依赖图保持单向。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider;
     private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
@@ -363,6 +372,7 @@ public class RagService {
                       com.wisesoft.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
                       UserMemoryService userMemoryService,
+                      org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
                       com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
@@ -391,6 +401,7 @@ public class RagService {
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
         this.userMemoryService = userMemoryService;
+        this.workflowServiceProvider = workflowServiceProvider;
         this.modelRegistryService = modelRegistryService;
         this.toolApprovalMapper = toolApprovalMapper;
     }
@@ -495,6 +506,18 @@ public class RagService {
                 degradations, degradedCodes);
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
+        }
+        // M4：智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
+        // 位置在智能体解析之后：绑定是智能体的属性，会话级锁定后每轮都走同一张图（同一人设语义）。
+        // 图片/附件在此路径下不参与（工作流只接收文本入参），显式登记为降级提示而不是静默丢弃。
+        if (agent != null && agent.getWorkflowId() != null && !agent.getWorkflowId().isBlank()) {
+            if ((userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty())) {
+                addDegradation(degradations, degradedCodes, "workflowInputIgnored",
+                        "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
+            }
+            runWorkflowChat(sessionId, question, userId, emitter, startTime, degradations, degradedCodes,
+                    agent, guestMode, regenerate);
+            return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
         // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
@@ -3478,6 +3501,170 @@ public class RagService {
         log.info("[SKILL] 用户指定技能注入 {} 个: {}", n, skills);
         return "\n\n【本轮指定技能】用户在本轮消息中主动选用了以下技能，请先完整阅读其说明，再严格按技能要求处理本轮问题："
                 + sb;
+    }
+
+    // ==================== M4：智能体绑定工作流（chatflow 语义） ====================
+
+    /**
+     * 智能体绑定工作流后的问答路径（M4）：会话每轮把用户问题送进图，end 节点的出参即回答。
+     * <p>
+     * 与常规链路的分工：绑定了工作流的智能体，<b>行为由工作流定义</b>——智能体自带的人设 /
+     * 知识库范围 / 工具开关都不参与（那些是"预设型智能体"的维度）。两套逻辑同时生效会让回答
+     * 不可预测，故这里整条走工作流，不做混合。
+     * <p>
+     * 流式：llm 节点的 token 经 {@code WorkflowRunCtx#tokenSink} 透传到这里，逐块转 SSE token 事件；
+     * 最终回答以 end 节点出参为准（done.finalContent 覆盖流式累积——多 llm 节点或模板聚合时
+     * 出参可能不等于任一节点的原文，这是设计使然，不是不一致）。
+     */
+    private void runWorkflowChat(String sessionId, String question, String userId, SseEmitter emitter,
+                                 long startTime, List<Map<String, String>> degradations,
+                                 Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate) {
+        sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
+        sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
+        java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
+        try {
+            if (!regenerate) {
+                sessionService.appendMessage(sessionId, "user", question, null, null, null, null, null, null, null);
+            }
+            Map<String, Object> inputs = buildWorkflowInputs(sessionId, question, degradations, degradedCodes);
+            StringBuilder streamed = new StringBuilder();
+            WorkflowService.Principal p = WorkflowService.Principal.current();   // 流水线线程已 loadIdentity(userId)
+            WorkflowRun run = workflowServiceProvider.getObject()
+                    .runForAgent(agent.getWorkflowId(), inputs, p, token -> {
+                        streamed.append(token);
+                        sendSseEvent(emitter, "token", token, sessionId);
+                    });
+            if (!"success".equals(run.getStatus())) {
+                String reason = run.getError() == null || run.getError().isBlank()
+                        ? "工作流运行未成功（状态 " + run.getStatus() + "）" : run.getError();
+                log.warn("[WORKFLOW-CHAT] 工作流运行失败: session={} run={} : {}", sessionId, run.getId(), reason);
+                sendSseEvent(emitter, "error", "工作流执行失败：" + reason, sessionId);
+                completeEmitter(emitter);
+                return;
+            }
+            String answer = workflowAnswerOf(run);
+            Map<String, Object> tokens = workflowTokensOf(run);
+            String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
+                    null, null, null, null, null, null, null, JSON.toJSONString(tokens), null, null,
+                    agent.getId(), agent.getName());
+            qaLogService.logAsync(sessionId, question, answer, List.of(), false,
+                    System.currentTimeMillis() - startTime, question, null, false);
+            Map<String, Object> donePayload = new LinkedHashMap<>();
+            donePayload.put("sources", List.of());
+            donePayload.put("related", List.of());
+            donePayload.put("messageId", messageId);
+            donePayload.put("finalContent", answer);
+            donePayload.put("finalImages", List.of());
+            donePayload.put("degradations", degradations);
+            donePayload.put("artifacts", List.of());
+            donePayload.put("toolCalls", List.of());
+            donePayload.put("tokens", tokens);
+            // 工作流运行信息：前端可展示"本次回答由工作流 v{n} 产出，耗时 xx"
+            Map<String, Object> wfInfo = new LinkedHashMap<>();
+            wfInfo.put("workflowId", run.getWorkflowId());
+            wfInfo.put("version", run.getVersion());
+            wfInfo.put("runId", run.getId());
+            wfInfo.put("status", run.getStatus());
+            wfInfo.put("durationMs", run.getDurationMs());
+            donePayload.put("workflowRun", wfInfo);
+            SessionService.AgentBinding finalBinding = sessionService.getAgentBinding(sessionId);
+            if (finalBinding != null) {
+                donePayload.put("agentLocked", true);
+                if (!finalBinding.agentId().isEmpty()) {
+                    donePayload.put("agentId", finalBinding.agentId());
+                    donePayload.put("agentName", finalBinding.agentName() == null ? "" : finalBinding.agentName());
+                }
+            }
+            sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
+            completeEmitter(emitter);
+            // 记忆提取：工作流节点用的是自己的模型，这里按「用户个人默认聊天模型」提取长期记忆
+            // （没有配置默认模型就不提取——记忆提取必须有模型，不传空引用去让下游猜/报内部错）
+            com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
+            String memoryModel = prefUser == null ? null : prefUser.getDefaultModel();
+            if (memoryModel != null && !memoryModel.isBlank()) {
+                userMemoryService.maybeExtract(userId, sessionId, question, answer, guestMode, memoryModel);
+            } else {
+                log.debug("[WORKFLOW-CHAT] 未配置个人默认模型，跳过长期记忆提取: uid={}", userId);
+            }
+            log.info("[WORKFLOW-CHAT] 工作流回答完成: session={} run={} v={} 耗时 {}ms",
+                    sessionId, run.getId(), run.getVersion(), run.getDurationMs());
+        } catch (com.wisesoft.ai.common.BizException e) {
+            log.warn("[WORKFLOW-CHAT] 工作流执行被拒绝: session={} : {}", sessionId, e.getMessage());
+            sendSseEvent(emitter, "error", e.getMessage(), sessionId);
+            completeEmitter(emitter);
+        } catch (Exception e) {
+            log.error("[WORKFLOW-CHAT] 工作流执行异常: session={} : {}", sessionId, e.toString());
+            sendSseEvent(emitter, "error", "工作流执行异常：" + e.getMessage(), sessionId);
+            completeEmitter(emitter);
+        } finally {
+            heartbeat.cancel(false);
+        }
+    }
+
+    /**
+     * 工作流开始节点的入参：固定提供 {@code question}（本轮问题）与 {@code history}（近期多轮文本）。
+     * 只有 start 节点<b>声明过</b>的键才会被真正引用（引擎只校验声明项，多给的键不影响执行），
+     * 因此多轮能力是"工作流声明了 history 才生效"，不必为它单独开关。
+     */
+    private Map<String, Object> buildWorkflowInputs(String sessionId, String question,
+                                                    List<Map<String, String>> degradations,
+                                                    Set<String> degradedCodes) {
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("question", question == null ? "" : question);
+        List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId,
+                configService.getInt("chat.historyRounds", 5));
+        if (recent == null) {
+            addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
+            recent = List.of();
+        }
+        inputs.put("history", buildHistoryText(recent));
+        return inputs;
+    }
+
+    /**
+     * 结束节点出参 → 回答文本：优先取 {@code answer} 键；没有该键但只有唯一出参时取它；
+     * 多出参且无 answer → fail-loud（不明确指定就把某个出参当回答，是猜）。
+     */
+    private String workflowAnswerOf(WorkflowRun run) {
+        Map<String, Object> outputs = new LinkedHashMap<>();
+        try {
+            outputs = JSON.parseObject(run.getOutputs() == null ? "{}" : run.getOutputs());
+        } catch (Exception ignored) {
+        }
+        if (outputs == null || outputs.isEmpty()) {
+            throw new com.wisesoft.ai.common.BizException("工作流的结束节点没有产出任何出参，无法作为回答");
+        }
+        Object answer = outputs.get("answer");
+        if (answer == null && outputs.size() == 1) answer = outputs.values().iterator().next();
+        if (answer == null) {
+            throw new com.wisesoft.ai.common.BizException("工作流的结束节点未声明 answer 出参（当前出参："
+                    + String.join("、", outputs.keySet()) + "）——请在结束节点里把回答映射到 answer");
+        }
+        String text = String.valueOf(answer);
+        return text.isBlank() ? "（工作流未产出回答内容）" : text;
+    }
+
+    /** 本次运行的 token 汇总（各节点 trace 相加；拿不到算 0，不臆造数字） */
+    private Map<String, Object> workflowTokensOf(WorkflowRun run) {
+        int prompt = 0, completion = 0;
+        try {
+            JSONArray arr = JSON.parseArray(run.getNodeTraces() == null ? "[]" : run.getNodeTraces());
+            if (arr != null) {
+                for (Object o : arr) {
+                    if (!(o instanceof Map<?, ?> m)) continue;
+                    Object p = m.get("promptTokens");
+                    Object c = m.get("completionTokens");
+                    if (p instanceof Number n) prompt += n.intValue();
+                    if (c instanceof Number n) completion += n.intValue();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        Map<String, Object> tokens = new LinkedHashMap<>();
+        tokens.put("prompt", prompt);
+        tokens.put("output", completion);
+        tokens.put("total", prompt + completion);
+        return tokens;
     }
 
     /**

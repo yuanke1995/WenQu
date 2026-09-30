@@ -62,6 +62,8 @@ public class ResourceVisibilityService {
         KNOWLEDGE_BASE,
         /** 智能体 / 技能：全角色可管理 */
         AGENT,
+        /** 工作流（M4）：与智能体同口径，全角色可管理（创建者 + 共享范围里的管理级） */
+        WORKFLOW,
         /** API Key：全角色可管理。共享的是「Key 记录」而非密钥本体（明文仅签发时返回一次，列表只有前缀） */
         API_KEY
     }
@@ -71,7 +73,7 @@ public class ResourceVisibilityService {
         boolean admin = roleService.isAdminCode(role);
         return switch (kind) {
             case KNOWLEDGE_BASE -> admin ? Permission.MANAGE : Permission.READ;
-            case AGENT, API_KEY -> (admin || roleService.existsActive(role))
+            case AGENT, API_KEY, WORKFLOW -> (admin || roleService.existsActive(role))
                     ? Permission.MANAGE : Permission.READ;
         };
     }

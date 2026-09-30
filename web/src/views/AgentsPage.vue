@@ -59,6 +59,10 @@
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
                 <div class="ap-chips">
                   <span class="ap-chip">{{ scopeText(a) }}</span>
+                  <!-- M4：绑定了工作流的智能体，回答由工作流产出（卡片上一眼可见） -->
+                  <span v-if="a.workflowId" class="ap-chip ap-chip-on" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
+                    工作流 {{ workflowName(a.workflowId) }}
+                  </span>
                   <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
                   <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
                 </div>
@@ -234,6 +238,17 @@
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
+            <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />工作流编排（chatflow）</h2>
+            <p class="ap-block-hint">
+              绑定后该智能体的回答<b>由工作流产出</b>：每轮把你的问题送进图，结束节点的 answer 出参即回答；
+              智能体自带的人设/知识库/工具配置不再参与（逻辑由工作流定义）。只列出<b>已发布</b>的工作流。
+            </p>
+            <a-select v-model:value="form.workflowId" :options="workflowOptions" allow-clear
+                      show-search option-filter-prop="label" style="width:100%"
+                      placeholder="不绑定——按下面的模型/知识库/工具配置作答" />
+          </section>
+
+          <section class="app-card" v-if="!form.isSubagent">
             <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索参数</h2>
             <p class="ap-block-hint">
               留空即继承「系统设置 → 检索设置」；只填需要为这个智能体单独调整的项
@@ -376,7 +391,7 @@ import {
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
-         getAgentPublish, publishAgent, revokeAgentPublish } from '../api'
+         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -444,6 +459,9 @@ const skillOptions = ref([])
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
 const subOptions = ref([])
+/** M4：工作流列表与可绑定选项（只列已发布版本） */
+const workflowRows = ref([])
+const workflowOptions = ref([])
 const OPTION_REFS = { builtinOptions, skillOptions, mcpOptions }
 const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
@@ -465,7 +483,9 @@ const blankForm = () => ({
   // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
   isSubagent: 0, subAgentIds: [],
   // 检索参数覆盖：留空 = 继承全局「系统设置 → 检索设置」；非空的项才写入 queryParams
-  qp: blankQp(), qpRerank: 'inherit'
+  qp: blankQp(), qpRerank: 'inherit',
+  // M4：绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
+  workflowId: null
 })
 /** 检索参数覆盖：可覆盖的项（值即后端 ConfigService 的完整配置键） */
 const QP_FIELDS = [
@@ -563,6 +583,11 @@ const scopeText = a => {
 }
 
 // ==================== 委派编排视图（拓扑：主智能体 → 子智能体委派关系，纯前端渲染） ====================
+/** 绑定工作流时卡片上显示的名字（工作流已删除/不可见则显示 id，不谎报） */
+const workflowName = id => {
+  const w = workflowRows.value.find(x => String(x.id) === String(id))
+  return w ? (w.name || id) : `#${id}` + '（不可用）'
+}
 const topoOpen = ref(false)
 const topoHover = ref('')   // 悬停的节点 key（'m'+id / 's'+id，用于高亮相关委派链路）
 const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 80, subW: 248 }
@@ -835,9 +860,12 @@ const reload = async () => {
     const me = await ensureAuth()
     isAdmin.value = me.admin
     // /kb/param-defaults 普通用户可读（检索参数占位符展示全局当前值用），可安全进 Promise.all
-    const [ar, dr, sr, mr, xr, pd] = await Promise.all([
-      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents(), getKbParamDefaults()
+    const [ar, dr, sr, mr, xr, pd, wr] = await Promise.all([
+      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents(), getKbParamDefaults(),
+      // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
+      listWorkflows().catch(() => null)
     ])
+    workflowRows.value = (wr && wr.success && wr.data) ? wr.data : []
     if (pd && pd.success && pd.data) qpDefaults.value = pd.data
     if (ar.success && ar.data) agents.value = ar.data
     if (dr.success && dr.data) {
@@ -868,6 +896,10 @@ const reload = async () => {
     if (xr && xr.success && Array.isArray(xr.data)) {
       subOptions.value = xr.data.map(s => ({ value: s.id, label: s.name }))
     }
+    // M4：可绑定的工作流（只列已发布的——绑定未发布会在后端被拒，不如下拉里就不给）
+    workflowOptions.value = workflowRows.value
+      .filter(w => w.status === 'published')
+      .map(w => ({ value: w.id, label: (w.name || w.id) + (w.publishedVersion != null ? `（v${w.publishedVersion}）` : '') }))
     // 全局能力总闸：仅管理员可读（普通用户拿不到时，能力行不显示「全局开/关」提示，而不是谎报关闭）
     if (me.admin) {
       try {
@@ -916,6 +948,8 @@ const openEdit = a => {
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
     isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
+    // M4：绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
+    workflowId: a.workflowId || null,
     ...(() => { const r = parseQueryParams(a.queryParams); return { qp: r.qp, qpRerank: r.rr } })()
   }
   // 三档：不使用知识库 > 指定知识库（选了库）> 全部知识库
@@ -948,7 +982,9 @@ const save = async () => {
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
     subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(','),
     // 检索参数覆盖：留空项不写入 → 继承全局；全空 → 空串 → 后端存 null
-    queryParams: buildQueryParams(f.qp, f.qpRerank)
+    queryParams: buildQueryParams(f.qp, f.qpRerank),
+    // 工作流绑定：空/未选 → 空串（后端归一为 null = 解绑）；非空必须是已发布工作流（后端校验）
+    workflowId: f.isSubagent ? '' : (f.workflowId || '')
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」

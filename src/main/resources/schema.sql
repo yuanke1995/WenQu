@@ -330,6 +330,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
     `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
     `knowledge_disabled` INT        DEFAULT 0 COMMENT '不使用知识库: 0=使用（按 knowledge_scope 约束） 1=纯角色智能体（整条跳过检索链路；@ 引用不受影响）',
+    `workflow_id`     VARCHAR(50)  DEFAULT NULL COMMENT 'M4：绑定的工作流ID——非空时该智能体的回答由工作流产出（chatflow 语义，跑已发布版本）',
     `is_builtin`      INT           DEFAULT 0 COMMENT '内置标记: 1=系统内置（禁止删除） 0=普通',
     `is_default`      INT          DEFAULT 0 COMMENT '是否默认智能体: 0=否 1=是',
     `create_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -643,6 +644,10 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
     `dsl`          MEDIUMTEXT    NOT NULL COMMENT '工作流 DSL（JSON：version/nodes/edges，画布坐标存 position）',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'draft' COMMENT '状态: draft=草稿 published=已发布（M4 启用发布语义）',
     `share_config` VARCHAR(2000) DEFAULT NULL COMMENT '共享范围(JSON，与知识库/智能体同款两级可见性；空=仅本人，M4 前不启用)',
+    `published_dsl` MEDIUMTEXT   DEFAULT NULL COMMENT 'M4：已发布版本锁定的 DSL（发布时从 dsl 拷贝；草稿继续改不影响已发布行为）',
+    `published_version` INT      DEFAULT NULL COMMENT 'M4：当前发布版本号（对应 c_ai_workflow_version.version）',
+    `published_at` DATETIME      DEFAULT NULL COMMENT 'M4：最近一次发布时间',
+    `published_by` VARCHAR(64)   DEFAULT NULL COMMENT 'M4：最近一次发布者 uid',
     `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -660,6 +665,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
     `outputs`      TEXT          DEFAULT NULL COMMENT '结束节点出参（JSON）',
     `node_traces`  MEDIUMTEXT    DEFAULT NULL COMMENT '节点级 trace（JSON 数组：nodeId/type/status/输入输出摘要/耗时）',
     `state_snapshot` MEDIUMTEXT  DEFAULT NULL COMMENT '人工审核挂起时的执行快照（已完成节点全量输出+挂起节点；恢复时短路重放用，终态运行置空）',
+    `version`      INT           DEFAULT NULL COMMENT 'M4：本次运行基于的发布版本号（NULL=草稿调试运行）',
+    `dsl_source`   VARCHAR(16)   NOT NULL DEFAULT 'draft' COMMENT 'M4：本次运行用的 DSL 来源: draft=草稿 published=已发布版本',
+    `api_key_id`   VARCHAR(50)   DEFAULT NULL COMMENT 'M4：API 触发所用的 Key id（人工/智能体触发为 NULL）',
     `error`        VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（截断 1000 字符）',
     `started_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '开始时刻',
     `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻',
@@ -668,3 +676,16 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
     KEY `idx_wf_time` (`workflow_id`, `started_at`),
     KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流运行记录（每次运行锁 DSL 快照；trace 为运营闭环打地基）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_workflow_version` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '版本记录ID（UUID）',
+    `workflow_id`  VARCHAR(50)   NOT NULL COMMENT '工作流ID',
+    `version`      INT           NOT NULL COMMENT '版本号（同一工作流内递增，从 1 起）',
+    `dsl`          MEDIUMTEXT    NOT NULL COMMENT '该版本锁定的 DSL 快照（回滚取用）',
+    `note`         VARCHAR(500)  DEFAULT NULL COMMENT '发布说明',
+    `published_by` VARCHAR(64)   DEFAULT NULL COMMENT '发布者 uid',
+    `published_at` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_wf_version` (`workflow_id`, `version`),
+    KEY `idx_wf_time` (`workflow_id`, `published_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流发布版本（M4：发布即落一版，回滚=以历史版本 DSL 再发一版）';

@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("c_ai_workflow_run")
-public class AiWorkflowRun {
+public class WorkflowRun {
 
     @TableId(type = IdType.INPUT)
     private String id;
@@ -49,6 +49,15 @@ public class AiWorkflowRun {
 
     /** 人工审核挂起时的执行快照（已完成节点全量输出 + 挂起节点；恢复时短路重放用，终态运行置空） */
     private String stateSnapshot;
+
+    /** M4：本次运行基于的发布版本号（NULL = 草稿调试运行） */
+    private Integer version;
+
+    /** M4：本次运行用的 DSL 来源: draft=草稿 published=已发布版本 */
+    private String dslSource;
+
+    /** M4：API 触发所用的 Key id（人工/智能体触发为 NULL） */
+    private String apiKeyId;
 
     /** 失败原因（截断 1000 字符） */
     private String error;

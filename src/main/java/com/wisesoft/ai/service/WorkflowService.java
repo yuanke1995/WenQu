@@ -5,12 +5,17 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.ApiKeyMapper;
 import com.wisesoft.ai.mapper.ToolApprovalMapper;
+import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.mapper.WorkflowMapper;
 import com.wisesoft.ai.mapper.WorkflowRunMapper;
-import com.wisesoft.ai.model.AiWorkflow;
-import com.wisesoft.ai.model.AiWorkflowRun;
+import com.wisesoft.ai.mapper.WorkflowVersionMapper;
+import com.wisesoft.ai.model.Workflow;
+import com.wisesoft.ai.model.WorkflowRun;
+import com.wisesoft.ai.model.WorkflowVersion;
 import com.wisesoft.ai.model.ToolApproval;
+import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,13 +28,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * 工作流管理：DSL 是唯一真源（架构决策见排班计划），本服务做
  * 存储 + 校验 + 编译 dry-run 的编排，以及调试运行（run）与运行记录查询。
  * <p>
- * 归属口径（分期边界）：M0~M3 仅<b>创建者本人</b>可见可管（share_config 字段预留，
- * M4 随发布语义一起启用两级可见性）——不做半吊子共享。
+ * 归属口径：M0~M3 仅<b>创建者本人</b>可见可管；M4 起启用发布语义与两级可见性——
+ * {@code share_config} 同款（{@link ResourceVisibilityService#canRead}），
+ * 共享给他人的是「可触发/可读」，管理权仍只在创建者与共享范围里的管理级。
+ * <p>
+ * M4 的三种触发与各自跑的 DSL：
+ * <ul>
+ *   <li><b>manual</b>（画布调试／本服务 {@link #run}）：跑<b>草稿</b> DSL，支持人工审核挂起；</li>
+ *   <li><b>api</b>（外部 Key 触发 {@link #runByApi}）：跑<b>已发布</b> DSL，遇审核节点 fail-loud；</li>
+ *   <li><b>agent</b>（智能体绑定 {@link #runForAgent}）：跑<b>已发布</b> DSL，流式 token 透传，
+ *       同样不支持审核节点。</li>
+ * </ul>
  * <p>
  * 运行语义：每次运行把当时的 DSL <b>快照</b>进 {@code c_ai_workflow_run}（执行不可变，
  * 改画布不影响历史回放）；run 记录先落（status=running）再执行、finally 收口——
@@ -48,21 +63,65 @@ public class WorkflowService {
 
     private final WorkflowMapper workflowMapper;
     private final WorkflowRunMapper runMapper;
+    private final WorkflowVersionMapper versionMapper;
     private final ToolApprovalMapper toolApprovalMapper;
+    private final UserMapper userMapper;
+    private final ApiKeyMapper apiKeyMapper;
     private final WorkflowValidator validator;
     private final WorkflowEngine engine;
     private final ConfigService configService;
+    private final ResourceVisibilityService visibility;
 
-    /** 本人工作流列表（更新时间倒序） */
-    public List<AiWorkflow> listOwn() {
-        return workflowMapper.selectList(new LambdaQueryWrapper<AiWorkflow>()
-                .eq(AiWorkflow::getUid, RequestUser.uid())
-                .orderByDesc(AiWorkflow::getUpdateTime));
+    /**
+     * 运行主体（触发者身份）：M4 起触发者不一定是登录用户——外部 API Key 触发时身份是
+     * <b>Key 的归属用户</b>（{@code c_ai_api_key.created_by}），故身份显式封装传递，
+     * 不直接读 {@link RequestUser}（API Key 请求没有登录令牌，ThreadLocal 是 anonymous）。
+     */
+    public record Principal(String uid, String departmentId, String role) {
+        public static Principal current() {
+            return new Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+        }
+
+        public static Principal ofUser(String uid, UserMapper userMapper) {
+            String dept = null, role = "user";
+            if (uid != null && !uid.isBlank()) {
+                User u = userMapper.selectById(uid);
+                if (u != null) {
+                    dept = u.getDepartmentId();
+                    role = u.getRole() == null || u.getRole().isBlank() ? "user" : u.getRole();
+                }
+            }
+            return new Principal(uid, dept, role);
+        }
+    }
+
+    /** 本人工作流列表（更新时间倒序），附带最近一次运行的状态与时刻（列表页展示，派生信息不落库） */
+    public List<Workflow> listOwn() {
+        List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getUid, RequestUser.uid())
+                .orderByDesc(Workflow::getUpdateTime));
+        if (rows.isEmpty()) return rows;
+        List<String> ids = rows.stream().map(Workflow::getId).toList();
+        List<WorkflowRun> recent = runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
+                .in(WorkflowRun::getWorkflowId, ids)
+                .orderByDesc(WorkflowRun::getStartedAt)
+                .last("LIMIT 500"));
+        Map<String, WorkflowRun> last = new LinkedHashMap<>();
+        for (WorkflowRun r : recent) last.putIfAbsent(r.getWorkflowId(), r);   // 已按时间倒序，首条即最近
+        for (Workflow w : rows) {
+            WorkflowRun r = last.get(w.getId());
+            if (r != null) {
+                w.setLastRunStatus(r.getStatus());
+                w.setLastRunAt(r.getStartedAt());
+                w.setLastRunId(r.getId());
+            }
+        }
+        return rows;
     }
 
     /** 本人的一条工作流：不存在或不是本人的都按不存在处理（不泄露存在性） */
-    public AiWorkflow getOwn(String id) {
-        AiWorkflow row = workflowMapper.selectById(id);
+    public Workflow getOwn(String id) {
+        Workflow row = workflowMapper.selectById(id);
         if (row == null || !RequestUser.uid().equals(row.getUid())) {
             throw new BizException(404, "工作流不存在");
         }
@@ -70,14 +129,14 @@ public class WorkflowService {
     }
 
     /** 新建：名称必填、DSL 必须通过结构校验（不接受存进去的坏图） */
-    public AiWorkflow create(String name, String description, String dslText) {
+    public Workflow create(String name, String description, String dslText) {
         if (name == null || name.isBlank()) throw new BizException("请填写工作流名称");
         if (name.length() > 100) throw new BizException("工作流名称不超过 100 个字符");
         if (description != null && description.length() > 500) throw new BizException("描述不超过 500 个字符");
         WorkflowDsl dsl = parseDsl(dslText);
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过：" + String.join("；", errors));
-        AiWorkflow row = new AiWorkflow();
+        Workflow row = new Workflow();
         row.setId(UUID.randomUUID().toString());
         row.setUid(RequestUser.uid());
         row.setName(name.trim());
@@ -92,8 +151,8 @@ public class WorkflowService {
     }
 
     /** 更新：只改传了的字段；dsl 有变更时重新校验 */
-    public AiWorkflow update(String id, String name, String description, String dslText) {
-        AiWorkflow row = getOwn(id);
+    public Workflow update(String id, String name, String description, String dslText) {
+        Workflow row = getOwn(id);
         if (name != null) {
             if (name.isBlank()) throw new BizException("工作流名称不能为空");
             if (name.length() > 100) throw new BizException("工作流名称不超过 100 个字符");
@@ -116,7 +175,7 @@ public class WorkflowService {
 
     /** 删除（本人的）：连带运行记录保留（审计与回放价值独立于定义存在） */
     public void delete(String id) {
-        AiWorkflow row = getOwn(id);
+        Workflow row = getOwn(id);
         workflowMapper.deleteById(row.getId());
     }
 
@@ -164,6 +223,214 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
+    // M4：发布与版本（草稿可改，已发布行为冻结；回滚 = 以历史版本 DSL 再发一版）
+    // --------------------------------------------------------------------------------------------------
+
+    /**
+     * 发布当前草稿为新版本：草稿校验通过 → 版本号 +1 → 落版本行 → 工作流切到该版本
+     * （{@code status=published}，{@code published_dsl} 锁定）。
+     * <p>
+     * 发布后草稿继续可改，改动画布<b>不影响</b>已发布版本的行为——API 触发与智能体绑定跑的
+     * 都是 {@code published_dsl}（对齐 Dify/Coze 的「发布版本」语义）。
+     */
+    public Map<String, Object> publish(String id, String note) {
+        Workflow row = getOwn(id);
+        WorkflowDsl dsl = parseDsl(row.getDsl());
+        List<String> errors = validator.validate(dsl);
+        if (!errors.isEmpty()) throw new BizException("工作流校验未通过，无法发布：" + String.join("；", errors));
+        int version = nextVersion(row.getId());
+        WorkflowVersion v = new WorkflowVersion();
+        v.setId(UUID.randomUUID().toString());
+        v.setWorkflowId(row.getId());
+        v.setVersion(version);
+        v.setDsl(row.getDsl().trim());
+        v.setNote(note == null || note.isBlank() ? null : note.trim());
+        v.setPublishedBy(RequestUser.uid());
+        v.setPublishedAt(LocalDateTime.now());
+        versionMapper.insert(v);
+        row.setStatus("published");
+        row.setPublishedDsl(v.getDsl());
+        row.setPublishedVersion(version);
+        row.setPublishedAt(v.getPublishedAt());
+        row.setPublishedBy(v.getPublishedBy());
+        row.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(row);
+        log.info("[WORKFLOW] 发布工作流 {}（{}）版本 v{} uid={}", row.getName(), row.getId(), version, row.getUid());
+        return Map.of("id", row.getId(), "version", version, "publishedAt", v.getPublishedAt().toString(),
+                "status", row.getStatus());
+    }
+
+    /** 下线（回到草稿态）：已发布版本记录保留（历史可查，再发布即新版本） */
+    public Map<String, Object> unpublish(String id) {
+        Workflow row = getOwn(id);
+        if (!"published".equals(row.getStatus())) {
+            throw new BizException("该工作流当前不是已发布状态（" + row.getStatus() + "）");
+        }
+        row.setStatus("draft");
+        row.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(row);
+        log.info("[WORKFLOW] 下线工作流 {}（{}）uid={}", row.getName(), row.getId(), row.getUid());
+        return Map.of("id", row.getId(), "status", row.getStatus());
+    }
+
+    /** 版本历史（新→旧）：版本号/说明/发布者/时间；DSL 大体量，只在详情接口给 */
+    public List<Map<String, Object>> listVersions(String id) {
+        Workflow row = getOwn(id);
+        List<WorkflowVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<WorkflowVersion>()
+                .eq(WorkflowVersion::getWorkflowId, row.getId())
+                .orderByDesc(WorkflowVersion::getVersion));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (WorkflowVersion v : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("version", v.getVersion());
+            m.put("note", v.getNote());
+            m.put("publishedBy", v.getPublishedBy());
+            m.put("publishedAt", v.getPublishedAt());
+            m.put("current", v.getVersion() != null && v.getVersion().equals(row.getPublishedVersion()));
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 回滚到指定版本：取该版本的 DSL <b>再发一版</b>（版本号继续递增）。
+     * 不改写历史——回滚动作本身也是一次发布，可再次回滚（写指针式回滚会让历史不可追溯）。
+     */
+    public Map<String, Object> rollback(String id, int targetVersion) {
+        Workflow row = getOwn(id);
+        WorkflowVersion target = versionMapper.selectOne(new LambdaQueryWrapper<WorkflowVersion>()
+                .eq(WorkflowVersion::getWorkflowId, row.getId())
+                .eq(WorkflowVersion::getVersion, targetVersion)
+                .last("LIMIT 1"));
+        if (target == null) throw new BizException(404, "版本 v" + targetVersion + " 不存在");
+        WorkflowDsl dsl = parseDsl(target.getDsl());
+        List<String> errors = validator.validate(dsl);
+        if (!errors.isEmpty()) throw new BizException("版本 v" + targetVersion + " 的 DSL 已不符合当前校验规则，无法回滚："
+                + String.join("；", errors));
+        int version = nextVersion(row.getId());
+        WorkflowVersion v = new WorkflowVersion();
+        v.setId(UUID.randomUUID().toString());
+        v.setWorkflowId(row.getId());
+        v.setVersion(version);
+        v.setDsl(target.getDsl());
+        v.setNote("回滚至 v" + targetVersion);
+        v.setPublishedBy(RequestUser.uid());
+        v.setPublishedAt(LocalDateTime.now());
+        versionMapper.insert(v);
+        row.setStatus("published");
+        row.setPublishedDsl(v.getDsl());
+        row.setPublishedVersion(version);
+        row.setPublishedAt(v.getPublishedAt());
+        row.setPublishedBy(v.getPublishedBy());
+        row.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(row);
+        log.info("[WORKFLOW] 回滚工作流 {}（{}）至 v{} → 新版本 v{}", row.getName(), row.getId(), targetVersion, version);
+        return Map.of("id", row.getId(), "version", version, "rolledBackTo", targetVersion);
+    }
+
+    /** 下一个版本号（当前最大 + 1；无历史从 1 起） */
+    private int nextVersion(String workflowId) {
+        List<WorkflowVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<WorkflowVersion>()
+                .eq(WorkflowVersion::getWorkflowId, workflowId)
+                .orderByDesc(WorkflowVersion::getVersion)
+                .last("LIMIT 1"));
+        return rows.isEmpty() || rows.get(0).getVersion() == null ? 1 : rows.get(0).getVersion() + 1;
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // M4：API 触发 / 智能体绑定（跑已发布版本）
+    // --------------------------------------------------------------------------------------------------
+
+    /**
+     * 外部 API Key 触发：跑<b>已发布</b> DSL。
+     * <p>
+     * 权限：工作流对该 Key 的归属用户可读（创建者短路或 share_config 命中）才允许触发；
+     * 不存在/不可见一律 404（不泄露存在性）。未发布 → 400 fail-loud（外部系统集成在发布前调
+     * 会拿到明确原因，而不是跑一份随时会变的草稿）。
+     * <b>人工审核节点不支持</b>：API 调用方没有审批卡交互面，直接 fail-loud 说明——
+     * 不做"自动批准"之类的静默降级。
+     */
+    public WorkflowRun runByApi(String workflowId, Map<String, Object> inputs, String apiKeyId) {
+        Principal p = resolvePrincipal(apiKeyId);
+        Workflow row = loadVisible(workflowId, p);
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException("工作流「" + row.getName() + "」尚未发布：API 触发只跑已发布版本（请先在画布发布）");
+        }
+        assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "API 触发");
+        return execute(row, row.getPublishedDsl(), "api", p.uid(), apiKeyId, row.getPublishedVersion(),
+                "published", inputs, null, p);
+    }
+
+    /** 外部调用方查运行记录（补查/回溯用）：可见性口径与触发一致（不可见一律 404） */
+    public WorkflowRun getRunForApi(String workflowId, String runId, String apiKeyId) {
+        Principal p = resolvePrincipal(apiKeyId);
+        Workflow row = loadVisible(workflowId, p);
+        WorkflowRun r = runMapper.selectById(runId);
+        if (r == null || !workflowId.equals(r.getWorkflowId())) {
+            throw new BizException(404, "运行记录不存在");
+        }
+        return r;
+    }
+
+    /**
+     * 触发者身份解析：带 API Key → Key 的归属用户（外部调用方没有登录令牌，
+     * ThreadLocal 里是 anonymous，必须回查 Key 归属）；否则 → 当前登录用户。
+     */
+    private Principal resolvePrincipal(String apiKeyId) {
+        if (apiKeyId != null && !apiKeyId.isBlank()) {
+            var key = apiKeyMapper.selectById(apiKeyId);
+            if (key == null || key.getCreatedBy() == null) {
+                throw new BizException(403, "API Key 无效（未绑定归属用户）");
+            }
+            return Principal.ofUser(key.getCreatedBy(), userMapper);
+        }
+        return Principal.current();
+    }
+
+    /** 按可见性取工作流（不存在与不可见都按 404，不泄露存在性） */
+    private Workflow loadVisible(String workflowId, Principal p) {
+        Workflow row = workflowMapper.selectById(workflowId);
+        if (row == null) throw new BizException(404, "工作流不存在");
+        if (!visibility.canRead(new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role()),
+                row.getShareConfig(), row.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+            throw new BizException(404, "工作流不存在");
+        }
+        return row;
+    }
+
+    /**
+     * 智能体绑定的对话型运行（chatflow）：跑<b>已发布</b> DSL，llm 节点的流式 token 经
+     * {@code tokenSink} 透传给调用方（由 RagService 转成 SSE token 事件）。
+     * 同样不支持人工审核节点（会话里没有工作流审批卡交互面，fail-loud 而非自动放行）。
+     */
+    public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
+                                     Consumer<String> tokenSink) {
+        Workflow row = workflowMapper.selectById(workflowId);
+        if (row == null) throw new BizException(404, "工作流不存在");
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException("绑定的工作流「" + row.getName() + "」尚未发布：请先在画布发布后再使用该智能体");
+        }
+        if (!visibility.canRead(new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role()),
+                row.getShareConfig(), row.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+            throw new BizException(404, "工作流不存在");
+        }
+        assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "智能体对话");
+        return execute(row, row.getPublishedDsl(), "agent", p.uid(), null, row.getPublishedVersion(),
+                "published", inputs, tokenSink, p);
+    }
+
+    /** 人工审核节点在无审批交互面的触发方式下 fail-loud（不静默自动放行） */
+    private static void assertNoApprovalNode(WorkflowDsl dsl, String triggerName) {
+        if (dsl.getNodes() == null) return;
+        for (WorkflowDsl.Node n : dsl.getNodes()) {
+            if ("approval".equals(n.getType())) {
+                throw new BizException(triggerName + "不支持人工审核节点（节点「" + n.getId()
+                        + "」）：审核需要人在回路的交互面，请在画布调试运行中处理，或从发布版本里移除该节点");
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------------------------------
     // 调试运行（M1）
     // --------------------------------------------------------------------------------------------------
 
@@ -175,20 +442,40 @@ public class WorkflowService {
      *
      * @param inputs 开始节点入参（{{start.key}} 的取值来源）
      */
-    public AiWorkflowRun run(String id, Map<String, Object> inputs) {
-        AiWorkflow row = getOwn(id);
-        WorkflowDsl dsl = parseDsl(row.getDsl());
+    public WorkflowRun run(String id, Map<String, Object> inputs) {
+        Workflow row = getOwn(id);
+        return execute(row, row.getDsl(), "manual", RequestUser.uid(), null, null, "draft",
+                inputs, null, Principal.current());
+    }
+
+    /**
+     * 执行内核：落 run 记录 → 入参校验 → 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取。
+     * 失败不抛（返回 status=failed 的 run，error 带原因）——调试入口要让用户拿到 trace。
+     * <b>人工审核挂起</b>：审核节点落 PENDING 审批记录后抛 WorkflowSuspendException，
+     * run 落 waiting_approval + 状态快照（已完成节点全量输出），审批接口按快照恢复续跑。
+     *
+     * @param dslText    本次运行锁定的 DSL（草稿或已发布版本）
+     * @param tokenSink  非空时 llm 节点改走流式并把文本块即时交给它（对话型接入）
+     */
+    private WorkflowRun execute(Workflow row, String dslText, String triggerType, String triggeredBy,
+                                  String apiKeyId, Integer version, String dslSource,
+                                  Map<String, Object> inputs, Consumer<String> tokenSink, Principal p) {
+        WorkflowDsl dsl = parseDsl(dslText);
         String runId = UUID.randomUUID().toString();
-        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
+        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
                 configService.currentOverrides(), inputs,
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", 50));
-        AiWorkflowRun run = new AiWorkflowRun();
+                configService.getInt("workflow.maxSteps", 50),
+                tokenSink);
+        WorkflowRun run = new WorkflowRun();
         run.setId(runId);
         run.setWorkflowId(row.getId());
-        run.setDslSnapshot(row.getDsl());   // 执行不可变：锁定本次运行用的 DSL（对齐 Coze run 语义）
-        run.setTriggerType("manual");       // agent/api 触发 M4 接入
-        run.setTriggeredBy(RequestUser.uid());
+        run.setDslSnapshot(dslText);   // 执行不可变：锁定本次运行用的 DSL（对齐 Coze run 语义）
+        run.setTriggerType(triggerType);
+        run.setTriggeredBy(triggeredBy);
+        run.setApiKeyId(apiKeyId);
+        run.setVersion(version);
+        run.setDslSource(dslSource);
         run.setStatus("running");
         run.setInputs(JSON.toJSONString(inputs == null ? Map.of() : inputs));
         run.setStartedAt(LocalDateTime.now());
@@ -243,8 +530,8 @@ public class WorkflowService {
      * 快照里的已完成节点输出直接回放（不再执行节点体），只有挂起的审核节点与其下游真正执行。
      * 恢复执行在本次请求内同步完成——接口返回的就是终态 run。
      */
-    public AiWorkflowRun approveRun(String workflowId, String runId, boolean approved) {
-        AiWorkflowRun run = getRun(workflowId, runId);
+    public WorkflowRun approveRun(String workflowId, String runId, boolean approved) {
+        WorkflowRun run = getRun(workflowId, runId);
         if (!"waiting_approval".equals(run.getStatus())) {
             throw new BizException("该运行不在等待审批状态（当前：" + run.getStatus() + "）");
         }
@@ -321,11 +608,11 @@ public class WorkflowService {
      * 审批记录落 TIMEOUT。审核等待是"人在回路"，没有自动恢复语义——超时即终止，重跑新开一轮。
      */
     public int reapApprovalTimeouts() {
-        List<AiWorkflowRun> waiting = runMapper.selectList(new LambdaQueryWrapper<AiWorkflowRun>()
-                .eq(AiWorkflowRun::getStatus, "waiting_approval")
+        List<WorkflowRun> waiting = runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
+                .eq(WorkflowRun::getStatus, "waiting_approval")
                 .last("LIMIT 100"));
         int reaped = 0;
-        for (AiWorkflowRun run : waiting) {
+        for (WorkflowRun run : waiting) {
             ToolApproval rec = toolApprovalMapper.selectOne(new LambdaQueryWrapper<ToolApproval>()
                     .eq(ToolApproval::getSessionId, run.getId())
                     .eq(ToolApproval::getStatus, "PENDING")
@@ -396,7 +683,7 @@ public class WorkflowService {
     }
 
     /** 收口：写终态 + trace + 耗时（status=failed 时 error 带原因；成功时 error 置空） */
-    private AiWorkflowRun finish(AiWorkflowRun run, WorkflowRunCtx ctx, String error) {
+    private WorkflowRun finish(WorkflowRun run, WorkflowRunCtx ctx, String error) {
         if (error != null) run.setStatus("failed");
         run.setError(error == null ? null : WorkflowRunCtx.abbreviate(error, 1000));
         run.setNodeTraces(JSON.toJSONString(ctx.tracesSnapshot()));
@@ -407,18 +694,18 @@ public class WorkflowService {
     }
 
     /** 某工作流的运行记录（最近 50 条，新→旧）：归属校验后按 started_at 倒序 */
-    public List<AiWorkflowRun> listRuns(String workflowId) {
+    public List<WorkflowRun> listRuns(String workflowId) {
         getOwn(workflowId);
-        return runMapper.selectList(new LambdaQueryWrapper<AiWorkflowRun>()
-                .eq(AiWorkflowRun::getWorkflowId, workflowId)
-                .orderByDesc(AiWorkflowRun::getStartedAt)
+        return runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
+                .eq(WorkflowRun::getWorkflowId, workflowId)
+                .orderByDesc(WorkflowRun::getStartedAt)
                 .last("LIMIT 50"));
     }
 
     /** 单条运行记录（含完整 trace）：归属两层校验（工作流是本人的 + run 属于该工作流） */
-    public AiWorkflowRun getRun(String workflowId, String runId) {
+    public WorkflowRun getRun(String workflowId, String runId) {
         getOwn(workflowId);
-        AiWorkflowRun r = runMapper.selectById(runId);
+        WorkflowRun r = runMapper.selectById(runId);
         if (r == null || !workflowId.equals(r.getWorkflowId())) {
             throw new BizException(404, "运行记录不存在");
         }
