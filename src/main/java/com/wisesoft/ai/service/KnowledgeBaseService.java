@@ -74,6 +74,8 @@ public class KnowledgeBaseService {
         kb.setQueryParams(str(body.get("queryParams")));
         kb.setParseParams(str(body.get("parseParams")));
         kb.setIsDefault(toInt(body.get("isDefault"), 0));
+        // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
+        kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
                 com.wisesoft.ai.util.RequestUser.role()));
