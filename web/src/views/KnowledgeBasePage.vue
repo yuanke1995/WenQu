@@ -30,6 +30,7 @@
           <div class="kb-card-actions" @click.stop>
             <template v-if="isAdmin || kb.createdBy === myUid">
               <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
+              <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
               <button class="app-link-btn danger" :disabled="kb.isDefault === 1" @click="onDelete(kb)">删除</button>
             </template>
             <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
@@ -128,17 +129,48 @@
           <a-switch v-model:checked="form.isDefault" />
           <span class="kb-hint" style="margin-left:8px">新建文档默认归属</span>
         </a-form-item>
+
+        <!-- P1 GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展 -->
+        <a-form-item label="GraphRAG 知识图谱" style="margin-top:4px">
+          <a-switch v-model:checked="form.graphEnabled" />
+          <span class="kb-hint" style="margin-left:8px">
+            开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）。
+            需在系统设置 → 定时维护 → GraphRAG 配置抽取模型；已有文档点列表页「构建图谱」回溯。
+          </span>
+        </a-form-item>
       </a-form>
+    </a-modal>
+
+    <!-- 图谱浏览（三元组 + 构建/状态） -->
+    <a-modal v-model:open="graphModal" :title="`知识图谱 · ${graphKb?.name || ''}`" :footer="null" width="720px">
+      <div class="graph-toolbar">
+        <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
+          {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱（存量回溯）' }}
+        </a-button>
+        <span class="kb-hint">
+          实体 {{ graphInfo.entities || 0 }} · 三元组 {{ graphInfo.triples || 0 }}
+          <template v-if="graphInfo.building">（失败 {{ graphInfo.failed || 0 }}）</template>
+        </span>
+        <a-popconfirm title="清空该库全部图谱数据？（三元组/实体/抽取记录全删，可重新构建）" ok-text="清空" cancel-text="取消" @confirm="doClearGraph">
+          <a-button size="small" danger>清空图谱</a-button>
+        </a-popconfirm>
+        <a-button size="small" @click="refreshGraph" style="margin-left:auto">刷新</a-button>
+      </div>
+      <a-table :data-source="triples" :columns="tripleCols" size="small" row-key="id"
+               :loading="triplesLoading" :pagination="triplePagination"
+               :locale="{ emptyText: '还没有三元组（先构建图谱，或确认已开启开关并配置抽取模型）' }"
+               @change="onTripleTableChange" />
     </a-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
-import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getKbParamDefaults } from '../api'
+import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getKbParamDefaults,
+         graphBuild, graphStatus, graphTriples, graphClear } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync, ensureAuth } from '../utils/auth'
@@ -163,7 +195,7 @@ const triOptions = [
 
 function blank () {
   return {
-    name: '', description: '', embeddingRef: '', isDefault: false,
+    name: '', description: '', embeddingRef: '', isDefault: false, graphEnabled: false,
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, visionRef: '' }
   }
@@ -189,6 +221,7 @@ function hydrateForm (row) {
   f.description = row?.description || ''
   f.embeddingRef = row?.embeddingRef || ''
   f.isDefault = row?.isDefault === 1
+  f.graphEnabled = row?.graphEnabled === 1
   let q = {}
   let p = {}
   try { q = row?.queryParams ? JSON.parse(row.queryParams) : {} } catch { q = {} }
@@ -335,7 +368,8 @@ const save = async () => {
       embeddingRef: form.value.embeddingRef,
       queryParams,
       parseParams,
-      isDefault: form.value.isDefault ? 1 : 0
+      isDefault: form.value.isDefault ? 1 : 0,
+      graphEnabled: form.value.graphEnabled ? 1 : 0
     }
     const r = editing.value
       ? await updateKnowledgeBase(editing.value.id, body)
@@ -352,6 +386,73 @@ const save = async () => {
   } finally {
     saving.value = false
   }
+}
+
+// ==================== P1 GraphRAG：图谱构建与三元组浏览 ====================
+const graphModal = ref(false)
+const graphKb = ref(null)
+const graphInfo = ref({})
+const graphBuilding = ref(false)
+const triples = ref([])
+const triplesLoading = ref(false)
+const triplePage = ref(1)
+const tripleTotal = ref(0)
+const tripleCols = [
+  { title: '主体', dataIndex: 'subject', key: 'subject', width: 150, ellipsis: true },
+  { title: '关系', dataIndex: 'predicate', key: 'predicate', width: 110 },
+  { title: '客体', dataIndex: 'object', key: 'object', width: 150, ellipsis: true },
+  { title: '来源文档', dataIndex: 'doc', key: 'doc', ellipsis: true }
+]
+const triplePagination = computed(() => ({
+  current: triplePage.value, total: tripleTotal.value, pageSize: 20, showSizeChanger: false
+}))
+const openGraph = async kb => {
+  graphKb.value = kb
+  graphModal.value = true
+  triplePage.value = 1
+  refreshGraph()
+}
+const refreshGraph = async () => {
+  if (!graphKb.value) return
+  try {
+    const [st, tr] = await Promise.all([
+      graphStatus(graphKb.value.id),
+      graphTriples(graphKb.value.id, triplePage.value, 20)
+    ])
+    if (st.success) graphInfo.value = st.data || {}
+    if (tr.success) {
+      triples.value = tr.data?.rows || []
+      tripleTotal.value = tr.data?.total || 0
+    }
+  } catch (e) { message.error(e.message || '图谱状态加载失败') }
+}
+const onTripleTableChange = pg => { triplePage.value = pg.current; refreshGraph() }
+const doBuild = async () => {
+  graphBuilding.value = true
+  try {
+    const r = await graphBuild(graphKb.value.id)
+    if (r.success) {
+      message.success(`构建已开始（${r.data?.total || 0} 个文档），可点「刷新」看进度`)
+      // 构建中轮询进度（3s 一次，弹窗开着才轮询）
+      const timer = setInterval(() => {
+        if (!graphModal.value) { clearInterval(timer); return }
+        graphStatus(graphKb.value.id).then(st => {
+          if (st.success) {
+            graphInfo.value = st.data || {}
+            if (!st.data?.building) { clearInterval(timer); message.success('图谱构建完成'); refreshGraph() }
+          }
+        }).catch(() => clearInterval(timer))
+      }, 3000)
+    } else message.error(r.msg || '构建启动失败')
+  } catch (e) { message.error(e.message || '构建启动失败') }
+  finally { graphBuilding.value = false }
+}
+const doClearGraph = async () => {
+  try {
+    const r = await graphClear(graphKb.value.id)
+    if (r.success) { message.success('图谱已清空'); refreshGraph() }
+    else message.error(r.msg || '清空失败')
+  } catch (e) { message.error(e.message || '清空失败') }
 }
 
 const onDelete = async row => {

@@ -114,6 +114,8 @@ public class DocumentService {
 
     /** 正在自动刷新的网页文档 id（防同文档上轮未结束又被触发；单实例内有效） */
     private final Set<String> refreshingDocs = ConcurrentHashMap.newKeySet();
+    /** P1 GraphRAG：解析成功后抽三元组 / 删除时清图（开关按库判定，服务内自兜异常不扰解析） */
+    private final GraphRagService graphRagService;
 
     /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
     public static final String REEMBED_LOCK_KEY = "ai-doc:reembed:lock";
@@ -1151,6 +1153,9 @@ public class DocumentService {
             log.info("[{}] 解析成功: {} chunks", docId, chunks.size());
             // 图片描述补齐：解析中视觉调用失败/超限的图，后台补描述并回写知识块（图片语义全部进入 RAG）
             backfillImageDescriptions(docId);
+            // P1 GraphRAG：库级开关开启时异步抽实体关系三元组（uid=null=系统身份：平台级模型可用，
+            // 个人级供应商按判权被拒——抽取是系统行为，不接任何用户的个人模型）
+            graphRagService.onDocParsed(docId, null, "user");
         } catch (Exception e) {
             // 删除场景：线程被 delete() 中断（interrupt）或检查点发现删除 → 只清理产物，不置失败状态
             if (deletedFlags.containsKey(docId)) {
@@ -1284,6 +1289,12 @@ public class DocumentService {
         }
         // QA/子块附加索引随文档删除（向量失败不中止删除，行删除兜底；向量残留可整库重建清理）
         deleteExtrasByDoc(docId);
+        // P1 GraphRAG：该文档的三元组与抽取记录随删（实体保留——无三元组引用的实体不参与图扩展，无害）
+        try {
+            graphRagService.onDocDeleted(docId);
+        } catch (Exception e) {
+            log.warn("[{}] GraphRAG 清理失败（不影响删除）: {}", docId, e.getMessage());
+        }
         knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
         documentMapper.deleteById(docId);
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）

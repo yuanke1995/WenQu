@@ -109,7 +109,8 @@
         "文档名缓存（多副本一致性）",
         "产物清理（模型生成的可下载文件）",
         "定时执行智能体",
-        "网页源定时刷新（url 文档到期自动重抓重建）"
+        "网页源定时刷新（url 文档到期自动重抓重建）",
+        "GraphRAG（知识图谱，库级开关）"
       ]
     },
     {
@@ -2378,6 +2379,71 @@
       "note": "浏览器型客户端跨域调用时的白名单（逗号分隔，需带 scheme）；留空=只允许本机回环。Claude/Cursor 等本地进程客户端不带 Origin，不受此限制",
       "vif": "mcp.server.enabled",
       "tier": 2
+    },
+    {
+      "backendKey": "graphrag.modelRef",
+      "panel": "maintenance",
+      "section": 8,
+      "group": "graphrag",
+      "key": "modelRef",
+      "path": "graphrag.modelRef",
+      "label": "抽取模型引用",
+      "type": "text",
+      "def": "",
+      "tier": 2,
+      "width": 260,
+      "note": "对话模型引用（如 gpt-4o 或供应商引用名）；留空 = 不抽取。抽取出错看服务日志"
+    },
+    {
+      "backendKey": "graphrag.batchChunks",
+      "panel": "maintenance",
+      "section": 8,
+      "group": "graphrag",
+      "key": "batchChunks",
+      "path": "graphrag.batchChunks",
+      "label": "批抽取块数",
+      "type": "number",
+      "def": 3,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "width": 140,
+      "note": "每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
+      "tier": 3
+    },
+    {
+      "backendKey": "graphrag.maxTriplesPerChunk",
+      "panel": "maintenance",
+      "section": 8,
+      "group": "graphrag",
+      "key": "maxTriplesPerChunk",
+      "path": "graphrag.maxTriplesPerChunk",
+      "label": "单块三元组上限",
+      "type": "number",
+      "def": 10,
+      "min": 1,
+      "max": 30,
+      "step": 1,
+      "width": 140,
+      "note": "每块最多抽几条关系（成本闸，超出的丢弃）",
+      "tier": 3
+    },
+    {
+      "backendKey": "graphrag.expandTopK",
+      "panel": "maintenance",
+      "section": 8,
+      "group": "graphrag",
+      "key": "expandTopK",
+      "path": "graphrag.expandTopK",
+      "label": "检索图扩展上限",
+      "type": "number",
+      "def": 5,
+      "min": 0,
+      "max": 20,
+      "step": 1,
+      "width": 140,
+      "note": "检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减",
+      "tier": 2
     }
   ],
   "tips": {
@@ -2707,6 +2773,10 @@
     "sandbox.deleteTimeoutSeconds": "沙盒删除超时（秒）",
     "sandbox.idleReleaseMinutes": "沙盒空闲回收（分钟，0=不回收）",
     "sandbox.cleanupIntervalMs": "沙盒空闲回收扫描间隔（ms，≤0=暂停）",
-    "mcp.server.enabled": "MCP 服务端点（对外提供）"
+    "mcp.server.enabled": "MCP 服务端点（对外提供）",
+    "graphrag.modelRef": "GraphRAG：对话模型引用（如 gpt-4o 或供应商引用名）；留空 = 不抽取。抽取出错看服务日志",
+    "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
+    "graphrag.maxTriplesPerChunk": "GraphRAG：每块最多抽几条关系（成本闸，超出的丢弃）",
+    "graphrag.expandTopK": "GraphRAG：检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减"
   }
 }

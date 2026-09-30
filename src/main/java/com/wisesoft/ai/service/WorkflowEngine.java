@@ -84,6 +84,17 @@ public class WorkflowEngine {
     public static final java.util.regex.Pattern VAR_REF =
             java.util.regex.Pattern.compile("\\{\\{\\s*([A-Za-z0-9_-]+)\\.([A-Za-z0-9_]+)\\s*\\}\\}");
 
+    /**
+     * 代码节点的上游数据注入路径：引擎进沙盒执行代码前，把<b>开始节点入参</b>（裸键，如 {@code question}）
+     * 与<b>各节点输出</b>（{@code wf:<id>.<key>}）序列化成 JSON 写到该路径，代码自行读取——code 节点不做
+     * {{}} 渲染，这是动态数据进入代码的唯一通道（契约固定：/tmp/wf_inputs.json）。
+     */
+    static final String CODE_INPUTS_PATH = "/tmp/wf_inputs.json";
+
+    /** 上游数据注入的序列化器（state 值均为节点输出：字符串/数字/List&lt;Map&gt;，JSON 友好） */
+    private static final com.fasterxml.jackson.databind.ObjectMapper CODE_INPUTS_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final WorkflowValidator validator;
     private final ChatClient chatClient;
     private final HybridRetrievalService retrievalService;
@@ -762,7 +773,9 @@ public class WorkflowEngine {
 
     /**
      * 代码执行节点：Python/Node，走 Docker 沙盒（scope=workflow+uid，跨运行复用同一容器）。
-     * 代码<b>原样执行</b>不做变量渲染（{{}} 在代码里语义不可控；需要动态值用 template 节点上游拼接）。
+     * 代码<b>原样执行</b>不做变量渲染（{{}} 在代码里语义不可控）；需要上游动态数据时，引擎在进沙盒前
+     * 把上游节点输出（state 里全部 {@code wf:<id>.<key>}）写成 JSON 到 {@link #CODE_INPUTS_PATH}
+     * （/tmp/wf_inputs.json），代码读取该文件取值——这是动态数据进入代码的唯一通道。
      * 超时与输出截断沿用沙盒 provisioner 口径（commandTimeoutSeconds/maxOutputBytes）。
      */
     private Function<OverAllState, NodeOut> codeBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
@@ -778,9 +791,23 @@ public class WorkflowEngine {
             int timeoutSeconds = cfgInt(n, "timeoutSeconds", 60, 1, 300);
             String file = "/tmp/wf_" + n.getId() + "_" + System.currentTimeMillis() + ("python".equals(lang) ? ".py" : ".js");
             String cmd = ("python".equals(lang) ? "python3 " : "node ") + file;
+            // 上游数据注入：开始节点入参（裸键，如 question）+ 各节点输出（wf:<id>.<key>）序列化成 JSON，
+            // 代码读 CODE_INPUTS_PATH；键口径与 {{}} 解析一致（start 取 ctx.inputs，其余取 state）。
+            Map<String, Object> upstream = new LinkedHashMap<>();
+            if (ctx != null && ctx.inputs != null) upstream.putAll(ctx.inputs);
+            for (Map.Entry<String, Object> e : state.data().entrySet()) {
+                if (e.getKey() != null && e.getKey().startsWith("wf:")) upstream.put(e.getKey(), e.getValue());
+            }
+            String inputsJson;
+            try {
+                inputsJson = CODE_INPUTS_MAPPER.writeValueAsString(upstream);
+            } catch (Exception ex) {
+                throw new BizException("节点「" + n.getId() + "」上游数据序列化失败：" + ex.getMessage());
+            }
             ProvisionerSandboxBackend.ExecuteResponse resp = withReplay(ctx, () -> {
                 ProvisionerSandboxBackend backend = sandboxService.backend("workflow", ctx.uid);
                 backend.write(file, code);
+                backend.write(CODE_INPUTS_PATH, inputsJson);
                 return backend.execute(cmd, timeoutSeconds);
             });
             String output = resp.output() == null ? "" : resp.output();

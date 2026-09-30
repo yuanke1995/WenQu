@@ -112,6 +112,12 @@ public class KnowledgeBaseService {
             if (isDef == 1) clearDefault();
             upd.set(KnowledgeBase::getIsDefault, isDef);
         }
+        // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
+        if (body.containsKey("graphEnabled")) {
+            Object v = body.get("graphEnabled");
+            boolean on = Boolean.TRUE.equals(v) || "1".equals(String.valueOf(v)) || Integer.valueOf(1).equals(v);
+            upd.set(KnowledgeBase::getGraphEnabled, on ? 1 : 0);
+        }
         upd.set(KnowledgeBase::getUpdateTime, LocalDateTime.now());
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
         // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本项目已踩过同一坑）

@@ -415,6 +415,10 @@ public class ConfigService {
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
+        d.put("graphrag.modelRef", "");                    // P1：GraphRAG 抽取用对话模型引用（必须显式配置才抽取；系统身份不接个人级模型）
+        d.put("graphrag.maxTriplesPerChunk", "10");        // P1：单个知识块抽取三元组上限（成本闸）
+        d.put("graphrag.batchChunks", "3");                // P1：合并批抽取的块数（3~5 平衡 token 与归属粒度）
+        d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：问答后自动提取 + 注入本人后续问答
         d.put("memory.maxPerUser", "50");                  // 每人记忆条数上限（满后自动提取跳过，个人设置可清理）

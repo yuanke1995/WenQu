@@ -794,3 +794,9 @@ export const sandboxDownload = async (sessionId, path, filename) => {
   a.remove()
   URL.revokeObjectURL(url)
 }
+
+// ---------- P1 GraphRAG（知识图谱；管理员） ----------
+export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POST' })
+export const graphStatus = kbId => request(`/graph/${kbId}/status`)
+export const graphTriples = (kbId, page = 1, size = 20) => request(`/graph/${kbId}/triples?page=${page}&size=${size}`)
+export const graphClear = kbId => request(`/graph/${kbId}`, { method: 'DELETE' })

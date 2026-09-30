@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `parse_params` TEXT         DEFAULT NULL COMMENT '解析参数(JSON: chunk.maxSize/overlap/maxChunks/maxImages/structural/structuralRatio/headingDepth + visionRef; 空=全部继承全局解析设置)',
     `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
     `embedding_dimensions` INT DEFAULT NULL COMMENT '本库向量索引维度（绑定/切换向量模型重嵌后回写）',
+    `graph_enabled` INT DEFAULT 0 COMMENT 'GraphRAG 开关（库级，默认关）: 1=解析后抽实体关系三元组，检索时一跳图扩展',
     `is_default`   INT          DEFAULT 0 COMMENT '是否默认库: 1=默认（新建文档默认归属、未指定库时的兜底）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',
@@ -707,3 +708,50 @@ CREATE TABLE IF NOT EXISTS `c_ai_trace_sample` (
     UNIQUE KEY `uk_qalog` (`qa_log_id`),
     KEY `idx_status_time` (`status`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='P1 Trace 采样池（线上对话 → 标注 → 回流评测集）';
+
+-- ============================================
+-- P1 GraphRAG：实体关系三元组（库级开关，默认关；MySQL 起步不上图数据库）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_graph_entity` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '实体ID',
+    `kb_id`         VARCHAR(50)  NOT NULL COMMENT '知识库ID（图按库隔离）',
+    `name`          VARCHAR(128) NOT NULL COMMENT '实体显示名（首次见到的写法）',
+    `name_norm`     VARCHAR(128) NOT NULL COMMENT '归一名（去空白/全角转半角/小写，匹配与唯一键用）',
+    `aliases`       VARCHAR(1000) DEFAULT NULL COMMENT '别名(JSON数组，同一实体的其它写法)',
+    `mention_count` INT          DEFAULT 0 COMMENT '提及次数（图扩展排序的弱权重）',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_kb_norm` (`kb_id`, `name_norm`),
+    KEY `idx_kb_mention` (`kb_id`, `mention_count`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 实体表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_graph_triple` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '三元组ID',
+    `kb_id`       VARCHAR(50)  NOT NULL COMMENT '知识库ID',
+    `subject_id`  VARCHAR(50)  NOT NULL COMMENT '主体实体ID（c_ai_graph_entity.id）',
+    `predicate`   VARCHAR(64)  NOT NULL COMMENT '关系谓词（如 母公司/位于/成立于）',
+    `object_id`   VARCHAR(50)  NOT NULL COMMENT '客体实体ID',
+    `chunk_id`    VARCHAR(50)  DEFAULT NULL COMMENT '溯源知识块ID（检索扩展反查真实块用）',
+    `doc_id`      VARCHAR(50)  DEFAULT NULL COMMENT '溯源文档ID（按文档清图用）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_triple` (`kb_id`, `subject_id`, `predicate`, `object_id`),
+    KEY `idx_kb_subj` (`kb_id`, `subject_id`),
+    KEY `idx_kb_obj` (`kb_id`, `object_id`),
+    KEY `idx_kb_doc` (`kb_id`, `doc_id`),
+    KEY `idx_chunk` (`chunk_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 三元组表（LLM 从知识块抽取，仅原文陈述）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_graph_extract` (
+    `id`           VARCHAR(50)  NOT NULL COMMENT '抽取记录ID',
+    `doc_id`       VARCHAR(50)  NOT NULL COMMENT '文档ID',
+    `chunk_id`     VARCHAR(50)  NOT NULL COMMENT '知识块ID',
+    `content_hash` VARCHAR(64)  NOT NULL COMMENT '抽取时的块内容哈希（哈希增量：一致即跳过）',
+    `status`       VARCHAR(16)  NOT NULL DEFAULT 'done' COMMENT '状态: done=成功 failed=失败（失败不重试，计数可见）',
+    `triple_count` INT          DEFAULT 0 COMMENT '抽出三元组条数',
+    `created_at`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '抽取时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_chunk` (`chunk_id`),
+    KEY `idx_doc` (`doc_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 抽取记录（哈希增量与失败率的账本）';

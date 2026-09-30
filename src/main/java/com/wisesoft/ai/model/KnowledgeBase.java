@@ -59,6 +59,12 @@ public class KnowledgeBase {
     /** 本库向量索引维度（绑定/切换向量模型重嵌后回写；空=未记录） */
     private Integer embeddingDimensions;
 
+    /**
+     * GraphRAG 开关（库级，默认关）：1=解析后抽实体关系三元组、检索时一跳图扩展。
+     * 开启后需配置全局 graphrag.modelRef 才会真的抽取（异步任务 fail-loud 提示）。
+     */
+    private Integer graphEnabled;
+
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;
 

@@ -53,6 +53,8 @@ public class HybridRetrievalService {
     private final ResourceVisibilityService resourceVisibilityService;
     /** 知识库共享范围：检索过滤要按"文档 + 所属库"两级判定（与管理接口同口径） */
     private final KnowledgeBaseService knowledgeBaseService;
+    /** P1 GraphRAG 图扩展（收口处调用；GraphRagService 不反向依赖本服务，无环） */
+    private final GraphRagService graphRagService;
 
     /** 全量重嵌入进行中（持有分布式锁的实例正在 DROP/重建向量索引）→ 各实例向量路跳过降级关键词 */
     private boolean reembedInProgress() {
@@ -88,6 +90,7 @@ public class HybridRetrievalService {
         private boolean keywordFallback; // Meili 无命中回退 MySQL（仅调试面板展示，不扰用户）
         private boolean multiTimeout;    // 多路检索超时/失败 → 降级首路/仅用已完成结果
         private String lastError;
+        private int graphExpanded;       // P1：图扩展并入的块数（GraphRAG 开启的库才有值）
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
         void keywordFailed() { this.keywordFailed = true; }
@@ -111,6 +114,8 @@ public class HybridRetrievalService {
         public boolean isKeywordFallback() { return keywordFallback; }
         public boolean isMultiTimeout() { return multiTimeout; }
         public String lastError() { return lastError; }
+        public int getGraphExpanded() { return graphExpanded; }
+        void addGraphExpanded(int n) { this.graphExpanded += n; }
     }
 
     /**
@@ -196,6 +201,12 @@ public class HybridRetrievalService {
 
         List<Hit> result = new ArrayList<>(merged.values());
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
+        // P1 GraphRAG 图扩展：按库级开关一跳补块（真实块衰减分并入，diag.graphExpanded 计数）
+        try {
+            result = graphRagService.expand(result, kbIds, diag);
+        } catch (Exception e) {
+            log.warn("[RAG] 图扩展失败（不影响主检索结果）: {}", e.getMessage());
+        }
         return result;
     }
 
