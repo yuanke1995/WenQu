@@ -201,10 +201,10 @@ public class GraphRagService {
         return out;
     }
 
-    /** 三元组浏览（带实体名与溯源文档名，分页） */
+    /** 三元组浏览（带实体名与溯源文档名，分页；图视图一次拉大批——size 上限放宽到 500） */
     public Map<String, Object> triples(String kbId, int page, int size) {
         int p = Math.max(1, page);
-        int s = Math.min(Math.max(10, size), 100);
+        int s = Math.min(Math.max(10, size), 500);
         var pg = tripleMapper.selectPage(new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(p, s),
                 new LambdaQueryWrapper<GraphTriple>().eq(GraphTriple::getKbId, kbId)
                         .orderByDesc(GraphTriple::getCreateTime));

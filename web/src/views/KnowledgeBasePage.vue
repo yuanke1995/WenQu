@@ -131,19 +131,23 @@
         </a-form-item>
 
         <!-- P1 GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展 -->
-        <a-form-item label="GraphRAG 知识图谱" style="margin-top:4px">
+        <a-form-item label="GraphRAG 知识图谱" class="kb-item-wrap-label" style="margin-top:4px">
           <a-switch v-model:checked="form.graphEnabled" />
-          <span class="kb-hint" style="margin-left:8px">
+          <div class="kb-hint" style="margin-top:4px">
             开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）。
             需在系统设置 → 定时维护 → GraphRAG 配置抽取模型；已有文档点列表页「构建图谱」回溯。
-          </span>
+          </div>
         </a-form-item>
       </a-form>
     </a-modal>
 
-    <!-- 图谱浏览（三元组 + 构建/状态） -->
-    <a-modal v-model:open="graphModal" :title="`知识图谱 · ${graphKb?.name || ''}`" :footer="null" width="720px">
+    <!-- 图谱浏览（图视图 / 列表 + 构建/状态） -->
+    <a-modal v-model:open="graphModal" :title="`知识图谱 · ${graphKb?.name || ''}`" :footer="null" width="860px" @after-open="onGraphModalOpen">
       <div class="graph-toolbar">
+        <a-radio-group v-model:value="graphView" size="small" button-style="solid" @change="onGraphViewChange">
+          <a-radio-button value="graph">图视图</a-radio-button>
+          <a-radio-button value="list">列表</a-radio-button>
+        </a-radio-group>
         <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
           {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱（存量回溯）' }}
         </a-button>
@@ -156,19 +160,35 @@
         </a-popconfirm>
         <a-button size="small" @click="refreshGraph" style="margin-left:auto">刷新</a-button>
       </div>
-      <a-table :data-source="triples" :columns="tripleCols" size="small" row-key="id"
-               :loading="triplesLoading" :pagination="triplePagination"
-               :locale="{ emptyText: '还没有三元组（先构建图谱，或确认已开启开关并配置抽取模型）' }"
-               @change="onTripleTableChange" />
+
+      <!-- 图视图：力导向图（节点=实体、边=关系谓词；点节点高亮邻居，可缩放拖拽） -->
+      <div v-show="graphView === 'graph'" class="graph-wrap">
+        <div ref="graphChartEl" class="graph-canvas"></div>
+        <div v-if="!graphInfo.triples" class="graph-empty">还没有三元组——先点「构建图谱」。</div>
+        <div v-else-if="graphInfo.triples > graphSampled" class="graph-note">图示展示前 {{ graphSampled }} 条关系（按提及度优先），完整清单请切「列表」。</div>
+      </div>
+
+      <!-- 列表视图：逐条核对（带来源文档） -->
+      <div v-show="graphView === 'list'">
+        <a-table :data-source="triples" :columns="tripleCols" size="small" row-key="id"
+                 :loading="triplesLoading" :pagination="triplePagination"
+                 :locale="{ emptyText: '还没有三元组（先构建图谱，或确认已开启开关并配置抽取模型）' }"
+                 @change="onTripleTableChange" />
+      </div>
     </a-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+import * as echarts from 'echarts/core'
+import { GraphChart } from 'echarts/charts'
+import { TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 import { listKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase, getKbParamDefaults,
          graphBuild, graphStatus, graphTriples, graphClear } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -504,4 +524,8 @@ onMounted(() => {
 .kb-param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
 /* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */
 .kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; min-width: 0; }
+/* 长标签「GraphRAG 知识图谱」放不下标准 5/24 标签列：放开 nowrap 折成两行，
+   保持与表单其他行同一标签列右对齐（antd 标签默认 nowrap + 固定行高，需一并放开） */
+.kb-item-wrap-label :deep(.ant-form-item-label),
+.kb-item-wrap-label :deep(.ant-form-item-label > label) { white-space: normal; height: auto; }
 </style>
