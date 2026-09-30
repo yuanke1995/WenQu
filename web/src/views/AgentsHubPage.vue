@@ -12,6 +12,7 @@
       <a-tab-pane key="skills" tab="技能 Skills"><SkillPanel /></a-tab-pane>
       <a-tab-pane key="mcp" tab="MCP 外部工具"><McpPanel /></a-tab-pane>
       <a-tab-pane key="scheduled" tab="定时任务"><ScheduledPanel /></a-tab-pane>
+      <a-tab-pane key="workflow" tab="工作流"><WorkflowPanel /></a-tab-pane>
     </a-tabs>
   </div>
 </template>
@@ -24,12 +25,13 @@ import ProvidersPage from './ProvidersPage.vue'
 import SkillPanel from './SkillPanel.vue'
 import McpPanel from './McpPanel.vue'
 import ScheduledPanel from './ScheduledPanel.vue'
+import WorkflowPanel from './WorkflowPanel.vue'
 
 // Tab 状态落在路由 query（?tab=skills），刷新/旧链接可还原；切 Tab 用 replace 不堆历史记录
 const route = useRoute()
 const router = useRouter()
 
-const TABS = ['providers', 'agents', 'skills', 'mcp', 'scheduled']
+const TABS = ['providers', 'agents', 'skills', 'mcp', 'scheduled', 'workflow']
 
 const active = computed({
   get: () => {

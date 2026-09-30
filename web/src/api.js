@@ -262,6 +262,20 @@ export const toggleScheduledJob = (id, enabled) =>
   request(`/scheduled/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const runScheduledJob = id => request(`/scheduled/${id}/run`, { method: 'POST' })
 export const listScheduledRuns = (id, limit = 20) => request(`/scheduled/${id}/runs?limit=${limit}`)
+
+// ---------- 工作流（DSL 唯一真源；画布只是编辑器） ----------
+export const listWorkflows = () => request('/workflow/list')
+export const getWorkflow = id => request(`/workflow/${id}`)
+export const createWorkflow = body => request('/workflow', { method: 'POST', body: JSON.stringify(body) })
+export const updateWorkflow = (id, body) => request(`/workflow/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteWorkflow = id => request(`/workflow/${id}`, { method: 'DELETE' })
+/** 校验 + 编译 dry-run：返回 {errors:[], compiled, compileError?, nodeCount, edgeCount} */
+export const validateWorkflowDsl = dsl => request('/workflow/validate', { method: 'POST', body: JSON.stringify({ dsl }) })
+/** 同步调试运行（LLM/检索耗时可达分钟级，放宽超时）；失败不抛——返回 status=failed 的 run */
+export const runWorkflow = (id, inputs) =>
+  request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }), timeout: 300000 })
+export const listWorkflowRuns = id => request(`/workflow/${id}/run/list`)
+export const getWorkflowRun = (id, runId) => request(`/workflow/${id}/run/${runId}`)
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */
