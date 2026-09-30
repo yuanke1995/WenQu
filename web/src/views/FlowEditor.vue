@@ -113,9 +113,10 @@
             <template v-if="selected.data.nodeType === 'start'">
               <div class="wf-form-item"><label>入参定义</label></div>
               <div v-for="(p, i) in editConfig.inputs" :key="i" class="wf-rows">
-                <a-input v-model:value="p.key" placeholder="参数名，如 question" />
-                <a-checkbox v-model:checked="p.required">必填</a-checkbox>
-                <button class="app-btn ghost small" @click="editConfig.inputs.splice(i, 1)">删</button>
+                <a-input v-model:value="p.key" placeholder="参数名，如 question" class="wf-row-grow" />
+                <!-- 必填：checkbox 文字禁换行（行内空间紧张时"必填"会被压成竖排） -->
+                <a-checkbox v-model:checked="p.required" class="wf-req-cb" title="运行时此入参必填">必填</a-checkbox>
+                <button class="app-btn ghost small wf-row-del" @click="editConfig.inputs.splice(i, 1)">删</button>
               </div>
               <button class="app-btn ghost small" @click="editConfig.inputs.push({ key: '', required: true })">+ 添加入参</button>
               <div class="wf-hint">入参在点「运行」时填写；后续节点用 <code v-pre>{{start.参数名}}</code> 引用。</div>
@@ -126,11 +127,12 @@
               <div class="wf-form-item"><label>出参映射</label></div>
               <div v-for="(o, i) in editConfig.outputs" :key="i" class="wf-rows">
                 <a-input v-model:value="o.key" placeholder="输出名，如 answer" class="wf-row-key" />
-                <a-input v-model:value="o.value" :placeholder="'{{llm.answer}}'" class="wf-row-value" />
-                <button class="app-btn ghost small" @click="editConfig.outputs.splice(i, 1)">删</button>
+                <a-input v-model:value="o.value" class="wf-row-value"
+                         :placeholder="LBB + 'llm.answer' + RBB + ' 或固定文本'" />
+                <button class="app-btn ghost small wf-row-del" @click="editConfig.outputs.splice(i, 1)">删</button>
               </div>
               <button class="app-btn ghost small" @click="editConfig.outputs.push({ key: '', value: '' })">+ 添加出参</button>
-              <div class="wf-hint">值可写变量引用 <code v-pre>{{nodeId.key}}</code> 或固定文本。</div>
+              <div class="wf-hint">值可写变量引用 <code v-pre>{{nodeId.key}}</code> 或固定文本；对话型绑定取名为 <code>answer</code> 的出参作回答。</div>
             </template>
 
             <!-- llm -->
@@ -1445,7 +1447,12 @@ load()
 }
 .wf-rows { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .wf-row-key { width: 110px; flex: none; }
-.wf-row-value { flex: 1; }
+.wf-row-value { flex: 1; min-width: 0; }
+.wf-row-grow { flex: 1; min-width: 0; }
+/* 行内「必填」勾选：文字禁换行（默认会被 flex 压成竖排两字），勾选框与文字都不缩 */
+.wf-req-cb { flex: none; white-space: nowrap; }
+.wf-req-cb :deep(.ant-checkbox + span) { white-space: nowrap; padding-inline-start: 4px; padding-inline-end: 0; }
+.wf-row-del { flex: none; }
 .wf-branch { border: 1px dashed var(--app-border); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .wf-branch-radio { padding: 2px 0; }
 .wf-hint { font-size: 12px; color: var(--app-text3); line-height: 1.7; }
