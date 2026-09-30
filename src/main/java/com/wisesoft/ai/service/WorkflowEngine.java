@@ -62,10 +62,23 @@ import java.util.function.Function;
 public class WorkflowEngine {
 
     /**
-     * 单节点流式 LLM 调用的结束等待上限（秒）：只防"网关连上却永不结束"的悬挂，
-     * 不是节点超时策略（run 级超时是 M5 的独立项，届时统一改成可配）。
+     * 单节点 LLM 调用的默认结束等待上限（秒）：只防"网关连上却永不结束"的悬挂，
+     * 不是节点超时策略的主体——节点 config.timeoutSeconds 可按节点覆盖（1~3600）。
      */
-    private static final int STREAM_TIMEOUT_SECONDS = 600;
+    private static final int LLM_DEFAULT_TIMEOUT_SECONDS = 600;
+
+    /** LLM 节点的超时等待池：非流式调用丢进来带时限等待（daemon cached，并发 = 并发 LLM 节点数） */
+    private static final java.util.concurrent.ExecutorService LLM_POOL =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "wf-llm");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 节点级 LLM 超时（config.timeoutSeconds，1~3600；未声明用默认 600） */
+    private static int llmTimeoutSeconds(WorkflowDsl.Node n) {
+        return cfgInt(n, "timeoutSeconds", LLM_DEFAULT_TIMEOUT_SECONDS, 1, 3600);
+    }
 
     /** 变量引用语法：{{nodeId.key}}（与校验器/表达式求值器同一口径） */
     public static final java.util.regex.Pattern VAR_REF =
@@ -313,18 +326,32 @@ public class WorkflowEngine {
             String model = ctx.resolvedModels.get(n.getId());
             Object t = n.getConfig() == null ? null : n.getConfig().get("temperature");
             double temperature = t instanceof Number num ? num.doubleValue() : ctx.defaultTemperature;
+            int timeoutSeconds = llmTimeoutSeconds(n);
             String answer;
             Integer pTok = null, cTok = null;
             try {
-                var resp = chatClient.prompt()
-                        .user(prompt)
-                        .options(OpenAiChatOptions.builder()
-                                .model(model)
-                                .temperature(temperature)
-                                .internalToolExecutionEnabled(false)
-                                .build())
-                        .call()
-                        .chatResponse();
+                // 非流式调用也带硬超时（丢进等待池带时限取结果）：网关挂起不拖死整个 run
+                java.util.concurrent.Future<org.springframework.ai.chat.model.ChatResponse> future =
+                        LLM_POOL.submit(() -> chatClient.prompt()
+                                .user(prompt)
+                                .options(OpenAiChatOptions.builder()
+                                        .model(model)
+                                        .temperature(temperature)
+                                        .internalToolExecutionEnabled(false)
+                                        .build())
+                                .call()
+                                .chatResponse());
+                org.springframework.ai.chat.model.ChatResponse resp;
+                try {
+                    resp = future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    future.cancel(true);
+                    throw new BizException("节点「" + n.getId() + "」LLM 调用超时（" + timeoutSeconds
+                            + " 秒；可在节点属性里调 timeoutSeconds）");
+                } catch (java.util.concurrent.ExecutionException ee) {
+                    Throwable c = ee.getCause() != null ? ee.getCause() : ee;
+                    throw c instanceof Exception ex ? ex : ee;
+                }
                 answer = resp == null || resp.getResult() == null || resp.getResult().getOutput() == null
                         ? "" : resp.getResult().getOutput().getText();
                 Usage usage = resp == null || resp.getMetadata() == null ? null : resp.getMetadata().getUsage();
@@ -332,6 +359,8 @@ public class WorkflowEngine {
                     pTok = usage.getPromptTokens();
                     cTok = usage.getCompletionTokens();
                 }
+            } catch (BizException e) {
+                throw e;
             } catch (Exception e) {
                 throw new BizException("节点「" + n.getId() + "」LLM 调用失败（" + model + "）：" + e.getMessage());
             }
@@ -388,8 +417,9 @@ public class WorkflowEngine {
                     latch.countDown();
                 }, latch::countDown);
         try {
-            if (!latch.await(STREAM_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
-                throw new BizException("节点「" + n.getId() + "」LLM 流式调用超时（" + STREAM_TIMEOUT_SECONDS + " 秒无结束信号）");
+            if (!latch.await(llmTimeoutSeconds(n), java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new BizException("节点「" + n.getId() + "」LLM 流式调用超时（"
+                        + llmTimeoutSeconds(n) + " 秒无结束信号；可在节点属性里调 timeoutSeconds）");
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
@@ -411,8 +441,12 @@ public class WorkflowEngine {
     private static final int MAX_TOPK = 20;
 
     /**
-     * 知识库检索节点：query 模板渲染 → 混合检索（kbIds 限定库界，null=全局）→ 取前 topK。
+     * 知识库检索节点：query 模板渲染 → 混合检索（kbIds 限定库界，null=全局）→ 低分门过滤 → 取前 topK。
      * 输出 chunks（结构化列表）/ text（拼接文本，直接可拼 prompt）/ count。
+     * <p>
+     * M5 低分门：config.minScore 声明则用它，未声明跟随全局 {@code retrieval.minContextScore}
+     * （与主问答管线同键同语义：排序分 = 重排分??融合分，低于阈值的块不进结果也不占 topK 名额；
+     * 0 = 不过滤）。此前工作流检索全量吐块、该门只在主链路生效——就是排班 M1 记的那笔账。
      */
     private Function<OverAllState, NodeOut> retrievalBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -421,10 +455,13 @@ public class WorkflowEngine {
             int topK = cfgInt(n, "topK", 5, 1, MAX_TOPK);
             List<Hit> hits = withReplay(ctx, () -> retrievalService.search(query, null, kbIds));
             if (hits == null) hits = List.of();
+            double minScore = resolveMinScore(n, ctx);
+            List<Hit> kept = filterByMinScore(hits, minScore);
+            int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
             StringBuilder text = new StringBuilder();
             int count = 0;
-            for (Hit h : hits) {
+            for (Hit h : kept) {
                 if (count >= topK) break;
                 count++;
                 Map<String, Object> c = new LinkedHashMap<>();
@@ -443,9 +480,30 @@ public class WorkflowEngine {
             trace.put("kbIds", kbIds == null ? "全部知识库" : kbIds);
             trace.put("topK", topK);
             trace.put("count", count);
+            if (minScore > 0) trace.put("minScore", minScore);
+            if (skipped > 0) trace.put("lowScoreSkipped", skipped);
             return new NodeOut(Map.of("chunks", chunks, "text", text.toString().trim(), "count", count),
                     null, null, trace);
         };
+    }
+
+    /** 节点低分阈值：config.minScore 声明优先，未声明跟随全局 retrieval.minContextScore（节点线程内经 withReplay 重放） */
+    private double resolveMinScore(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        Object v = n.getConfig() == null ? null : n.getConfig().get("minScore");
+        if (v instanceof Number num) return Math.max(0, num.doubleValue());
+        Double g = withReplay(ctx, () -> configService.getDouble("retrieval.minContextScore", 0.6));
+        return g == null ? 0 : Math.max(0, g);
+    }
+
+    /** 低分门：排序分（重排分??融合分，与主链路同口径）低于阈值的块剔除；阈值 ≤0 原样返回（公开纯函数，供用例直接验证） */
+    public static List<Hit> filterByMinScore(List<Hit> hits, double minScore) {
+        if (hits == null || hits.isEmpty() || minScore <= 0) return hits;
+        List<Hit> out = new ArrayList<>(hits.size());
+        for (Hit h : hits) {
+            double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
+            if (rankScore >= minScore) out.add(h);
+        }
+        return out;
     }
 
     /** config.kbIds：JSON 数组 → Collection；空/null → null（全局检索） */

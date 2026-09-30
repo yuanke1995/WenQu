@@ -150,6 +150,9 @@
               <div class="wf-form-item"><label>温度（留空跟随全局）</label>
                 <a-input-number v-model:value="editConfig.temperature" :min="0" :max="2" :step="0.1" style="width: 140px" />
               </div>
+              <div class="wf-form-item"><label>超时（秒，留空默认 600；到时按节点失败终止）</label>
+                <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="3600" style="width: 140px" />
+              </div>
               <div class="wf-hint">后续节点用 <code>{{ LBB + selected.id + '.answer' + RBB }}</code> 引用本节点的回答。</div>
             </template>
 
@@ -167,6 +170,10 @@
               </div>
               <div class="wf-form-item"><label>topK（召回条数）</label>
                 <a-input-number v-model:value="editConfig.topK" :min="1" :max="20" style="width: 140px" />
+              </div>
+              <div class="wf-form-item"><label>低分过滤 minScore（留空跟随全局检索设置；0=不过滤）</label>
+                <a-input-number v-model:value="editConfig.minScore" :min="0" :max="2" :step="0.05" style="width: 140px" />
+                <div class="wf-hint">排序分（重排分，未启用重排时为融合分）低于它的块不进结果也不占 topK 名额。</div>
               </div>
               <div class="wf-hint"><code>text</code> 是可直接拼进 prompt 的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
             </template>
@@ -638,8 +645,8 @@ function insertRef(field, refText, sep = ' ') {
 const BLANK_CONFIGS = {
   start: { inputs: [{ key: 'question', required: true }] },
   end: { outputs: [{ key: 'answer', value: '' }] },
-  llm: { modelRef: '', prompt: '', temperature: null },
-  retrieval: { query: '', kbIds: [], topK: 5 },
+  llm: { modelRef: '', prompt: '', temperature: null, timeoutSeconds: null },
+  retrieval: { query: '', kbIds: [], topK: 5, minScore: null },
   condition: { branches: [{ key: 'ok', expr: '' }] },
   http: { method: 'GET', url: '', headers: [], body: '', timeoutMs: 15000 },
   code: { language: 'python', code: '', timeoutSeconds: 60 },

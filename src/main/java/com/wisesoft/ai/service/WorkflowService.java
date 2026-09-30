@@ -61,6 +61,17 @@ public class WorkflowService {
     /** DSL 体积上限（含画布坐标；真实工作流几十 KB 封顶，512KB 已留足冗余） */
     private static final int MAX_DSL_CHARS = 512 * 1024;
 
+    /**
+     * run 级执行线程池（M5 硬超时用）：把图调用从请求线程挪到独立线程，主线程带时限等待。
+     * cached + daemon：并发量 = 同时在跑的工作流数，线程随用随建、空闲即回收。
+     */
+    private static final java.util.concurrent.ExecutorService RUN_POOL =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "wf-run");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final WorkflowMapper workflowMapper;
     private final WorkflowRunMapper runMapper;
     private final WorkflowVersionMapper versionMapper;
@@ -484,7 +495,7 @@ public class WorkflowService {
             WorkflowEngine.checkStartInputs(dsl, inputs);
             engine.resolveModels(dsl, ctx);
             CompiledGraph compiled = engine.compile(dsl, ctx);
-            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = compiled.invoke(Map.of());
+            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = invokeGraph(compiled);
             if (result.isEmpty()) {
                 throw new BizException("图执行未返回终态（可能被步数上限截断，workflow.maxSteps=" + ctx.maxSteps + "）");
             }
@@ -494,6 +505,11 @@ public class WorkflowService {
             log.info("[WORKFLOW] 运行成功：{}（{}）run={} 耗时 {}ms", row.getName(), row.getId(), run.getId(),
                     System.currentTimeMillis() - ctx.t0);
             return finish(run, ctx, null);
+        } catch (RunTimeoutException e) {
+            // M5：run 硬超时——落 timeout 终态（error 带原因与调参指引），执行线程已中断回收
+            log.warn("[WORKFLOW] 运行超时：{}（{}）run={}：{} 秒", row.getName(), row.getId(), run.getId(), e.seconds);
+            run.setStatus("timeout");
+            return finish(run, ctx, "运行超时（" + e.seconds + " 秒未跑完，workflow.runTimeoutSeconds，0=不限制）");
         } catch (BizException e) {
             log.warn("[WORKFLOW] 运行失败：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), e.getMessage());
             return finish(run, ctx, e.getMessage());
@@ -513,6 +529,37 @@ public class WorkflowService {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.warn("[WORKFLOW] 运行异常：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), cause.toString());
             return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
+        }
+    }
+
+    /** run 级超时信号（内部用）：带超时秒数，收口处转 timeout 终态 */
+    private static final class RunTimeoutException extends RuntimeException {
+        final int seconds;
+        RunTimeoutException(int seconds) { super("run timeout: " + seconds + "s"); this.seconds = seconds; }
+    }
+
+    /**
+     * 执行图（M5 run 硬超时）：{@code workflow.runTimeoutSeconds} &gt; 0 时把图调用丢进独立线程池、
+     * 主线程带时限等待——超时 cancel(true) 中断执行线程并抛 {@link RunTimeoutException}。
+     * 图内部跑在框架的 reactor 调度上，中断能解开"主线程阻塞等待"这一层；真正的长任务
+     * （LLM/HTTP/子智能体）各有节点级超时兜底，不会无限占用公共池。
+     * 0 = 不限制（直接同步调用，不多付一次线程切换）。
+     */
+    private Optional<com.alibaba.cloud.ai.graph.OverAllState> invokeGraph(CompiledGraph compiled) throws Exception {
+        int timeoutSeconds = configService.getInt("workflow.runTimeoutSeconds", 600);
+        if (timeoutSeconds <= 0) {
+            return compiled.invoke(Map.of());
+        }
+        java.util.concurrent.Future<Optional<com.alibaba.cloud.ai.graph.OverAllState>> future =
+                RUN_POOL.submit(() -> compiled.invoke(Map.of()));
+        try {
+            return future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException te) {
+            future.cancel(true);
+            throw new RunTimeoutException(timeoutSeconds);
+        } catch (java.util.concurrent.ExecutionException ee) {
+            Throwable c = ee.getCause() != null ? ee.getCause() : ee;
+            throw c instanceof Exception ex ? ex : ee;
         }
     }
 
@@ -575,7 +622,7 @@ public class WorkflowService {
         try {
             engine.resolveModels(dsl, ctx);
             CompiledGraph compiled = engine.compile(dsl, ctx);
-            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = compiled.invoke(Map.of());
+            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = invokeGraph(compiled);
             if (result.isEmpty()) {
                 throw new BizException("恢复执行未返回终态（可能被步数上限截断，workflow.maxSteps=" + ctx.maxSteps + "）");
             }
@@ -584,6 +631,10 @@ public class WorkflowService {
             run.setStateSnapshot(null);
             log.info("[WORKFLOW] 审批{}后恢复运行成功：run={}（{} 节点短路回放）", approved ? "批准" : "拒绝", runId, ctx.resumeOutputs.size());
             return finish(run, ctx, null);
+        } catch (RunTimeoutException e) {
+            log.warn("[WORKFLOW] 恢复运行超时：run={}：{} 秒", runId, e.seconds);
+            run.setStatus("timeout");
+            return finish(run, ctx, "恢复执行超时（" + e.seconds + " 秒未跑完，workflow.runTimeoutSeconds，0=不限制）");
         } catch (BizException e) {
             log.warn("[WORKFLOW] 恢复运行失败：run={}：{}", runId, e.getMessage());
             return finish(run, ctx, e.getMessage());
@@ -682,9 +733,9 @@ public class WorkflowService {
         }
     }
 
-    /** 收口：写终态 + trace + 耗时（status=failed 时 error 带原因；成功时 error 置空） */
+    /** 收口：写终态 + trace + 耗时（error 非空时仅在 run 还在 running 才置 failed——timeout 等终态由调用方先行设定） */
     private WorkflowRun finish(WorkflowRun run, WorkflowRunCtx ctx, String error) {
-        if (error != null) run.setStatus("failed");
+        if (error != null && "running".equals(run.getStatus())) run.setStatus("failed");
         run.setError(error == null ? null : WorkflowRunCtx.abbreviate(error, 1000));
         run.setNodeTraces(JSON.toJSONString(ctx.tracesSnapshot()));
         run.setFinishedAt(LocalDateTime.now());
