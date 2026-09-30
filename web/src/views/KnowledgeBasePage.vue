@@ -168,7 +168,7 @@
         <div v-if="selectedEntity" class="graph-panel">
           <b>{{ selectedEntity }}</b> 的关系（{{ entityRelations.length }}）：
           <span v-for="(r, i) in entityRelations" :key="i" class="graph-rel">
-            {{ r.subject }} —【{{ r.predicate }}】→ {{ r.object }}
+            {{ r.source }} —【{{ r.value }}】→ {{ r.target }}
           </span>
           <button class="app-link-btn" style="margin-left:auto" @click="selectedEntity = null">收起</button>
         </div>
