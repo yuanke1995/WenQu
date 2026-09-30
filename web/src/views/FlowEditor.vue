@@ -4,54 +4,76 @@
        连线校验：禁悬空/自环、start 无入边、end 无出边、非 loop 禁成环、条件出边必须挂已声明分支。 -->
   <div class="wf-editor">
     <div class="wf-toolbar">
-      <button class="app-btn ghost small" @click="$emit('back')"><arrow-left-outlined /> 返回列表</button>
+      <button class="app-btn ghost small wf-tb-back" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
       <a-input v-model:value="name" class="wf-name" :maxlength="100" placeholder="工作流名称" @change="dirty = true" />
-      <span class="wf-save-hint">{{ dirty ? '有未保存改动' : '已保存' }}</span>
-      <a-tag v-if="publishedVersion != null" color="green" class="wf-ver">已发布 v{{ publishedVersion }}</a-tag>
-      <a-tag v-else-if="workflowId" class="wf-ver">草稿</a-tag>
+      <div class="wf-tb-status">
+        <span class="wf-dot" :class="dirty ? 'dot-dirty' : 'dot-saved'" />
+        <span class="wf-save-hint">{{ dirty ? '有未保存改动' : '已保存' }}</span>
+        <span class="wf-tb-sep" />
+        <a-tag v-if="publishedVersion != null" color="green" class="wf-ver">已发布 v{{ publishedVersion }}</a-tag>
+        <a-tag v-else-if="workflowId" class="wf-ver">草稿</a-tag>
+      </div>
       <span class="flex-gap"></span>
-      <button class="app-btn ghost small" :disabled="busy" @click="doValidate">校验</button>
-      <button class="app-btn ghost small" :disabled="busy" @click="showHistory">运行历史</button>
-      <button class="app-btn small" :disabled="busy || !workflowId" @click="openRun">
-        <play-circle-outlined /> 运行
-      </button>
-      <button class="app-btn small" :disabled="busy" @click="doSave">保存</button>
-      <!-- M4：发布把当前草稿冻结成一个版本（API 触发 / 智能体绑定跑的是已发布版本，草稿继续可改） -->
-      <button class="app-btn primary small" :disabled="busy || !workflowId" @click="doPublish">
-        <cloud-upload-outlined /> {{ publishedVersion != null ? '发布新版本' : '发布' }}
-      </button>
+      <div class="wf-tb-actions">
+        <button class="app-btn ghost small" :disabled="busy" @click="doValidate">校验</button>
+        <button class="app-btn ghost small" :disabled="busy" @click="showHistory">运行历史</button>
+        <button class="app-btn small" :disabled="busy || !workflowId" @click="openRun">
+          <play-circle-outlined /> 运行
+        </button>
+        <button class="app-btn small" :disabled="busy" @click="doSave">保存</button>
+        <!-- M4：发布把当前草稿冻结成一个版本（API 触发 / 智能体绑定跑的是已发布版本，草稿继续可改） -->
+        <button class="app-btn primary small" :disabled="busy || !workflowId" @click="doPublish">
+          <cloud-upload-outlined /> {{ publishedVersion != null ? '发布新版本' : '发布' }}
+        </button>
+      </div>
     </div>
 
     <div class="wf-body">
-      <!-- 左侧节点面板：拖拽到画布或点击添加（瀑布排布） -->
+      <!-- 左侧节点面板：按用途分组，拖拽到画布或点击添加（瀑布排布） -->
       <div class="wf-palette">
         <div class="wf-palette-title">节点</div>
-        <div v-for="t in PALETTE" :key="t.type" class="wf-palette-item" :class="{ disabled: t.type === 'start' && hasStart }"
-             draggable="true" @dragstart="onDragStart($event, t.type)" @click="addNodeAt(t.type)">
-          <span class="wf-node-icon" :class="`icon-${t.type}`">{{ t.icon }}</span>
-          <span class="wf-palette-name">{{ t.label }}</span>
-        </div>
-        <div class="wf-palette-hint">拖拽或点击添加；<br/>删除：选中后 Delete；<br/>右键节点 / 连线 / 画布有快捷菜单；<br/>「{{ TYPE_META.condition.label }}」连线时会让你选分支。</div>
+        <template v-for="g in PALETTE_GROUPS" :key="g.title">
+          <div class="wf-palette-group">{{ g.title }}</div>
+          <div v-for="t in g.types" :key="t" class="wf-palette-item" :class="{ disabled: t === 'start' && hasStart }"
+               :title="TYPE_META[t].brief"
+               draggable="true" @dragstart="onDragStart($event, t)" @click="addNodeAt(t)">
+            <span class="wf-node-ico" :style="{ background: tint(colorOf(t)), color: colorOf(t) }">
+              <span class="wf-node-icon">{{ TYPE_META[t].icon }}</span>
+            </span>
+            <span class="wf-palette-name">{{ TYPE_META[t].label }}</span>
+          </div>
+        </template>
+        <div class="wf-palette-hint">拖拽或点击添加；删除选中后按 Delete；右键节点 / 连线 / 画布有快捷菜单。</div>
       </div>
 
-      <!-- 画布 -->
+      <!-- 画布（网格吸附 16px：节点落点整齐；右下角小地图 + 缩放控件） -->
       <div class="wf-canvas-wrap" @drop="onDrop" @dragover.prevent>
         <VueFlow v-model:nodes="nodes" v-model:edges="edges"
                  :delete-key-code="['Backspace', 'Delete']"
-                 :default-edge-options="{ markerEnd: MarkerType.ArrowClosed }"
+                 :default-edge-options="EDGE_OPTIONS"
+                 :snap-to-grid="true" :snap-grid="[16, 16]"
                  :min-zoom="0.2" :max-zoom="2"
                  @connect="onConnect" @node-click="onNodeClick" @pane-click="closeDrawer"
                  @nodes-change="onNodesChange" @edges-change="onEdgesChange"
                  @node-context-menu="onNodeContextMenu" @edge-context-menu="onEdgeContextMenu"
                  @pane-context-menu="onPaneContextMenu">
-          <Background :gap="16" />
+          <Background :gap="16" pattern-color="#d6dae2" :size="1.2" />
+          <MiniMap class="wf-minimap" :node-color="minimapColor" pannable zoomable />
+          <Controls class="wf-controls" :show-interactive="false" />
           <template #node-wf="props">
-            <div class="wf-node" :class="[`wf-${props.data.nodeType}`, props.data.run ? `run-${props.data.run.status}` : '']">
+            <div class="wf-node" :style="{ '--nc': colorOf(props.data.nodeType) }"
+                 :class="[`wf-${props.data.nodeType}`, props.data.run ? `run-${props.data.run.status}` : '']">
               <Handle v-if="props.data.nodeType !== 'start'" type="target" :position="Position.Left" />
               <Handle v-if="props.data.nodeType !== 'end'" type="source" :position="Position.Right" />
               <div class="wf-node-head">
-                <span class="wf-node-icon" :class="`icon-${props.data.nodeType}`">{{ TYPE_META[props.data.nodeType]?.icon }}</span>
-                <span class="wf-node-label">{{ props.data.label }}</span>
+                <span class="wf-node-ico" :style="{ background: tint(colorOf(props.data.nodeType)), color: colorOf(props.data.nodeType) }">
+                  <span class="wf-node-icon">{{ TYPE_META[props.data.nodeType]?.icon }}</span>
+                </span>
+                <div class="wf-node-titles">
+                  <span class="wf-node-label">{{ props.data.label }}</span>
+                  <!-- 节点 id 直接可见：变量引用 {{id.key}} 要用到它，不用回抽屉里翻 -->
+                  <span class="wf-node-id">{{ props.id }}</span>
+                </div>
               </div>
               <div class="wf-node-sub">{{ subText(props.data) }}</div>
               <div v-if="props.data.run" class="wf-node-badge" :class="`badge-${props.data.run.status}`">
@@ -65,11 +87,27 @@
 
     <!-- 右侧抽屉：属性编辑 / 运行详情 -->
     <a-drawer v-model:open="drawer" :title="selected ? `${TYPE_META[selected.data.nodeType]?.label || ''} · ${selected.id}` : ''"
-              width="430" destroy-on-close @close="closeDrawer">
+              width="460" destroy-on-close @close="closeDrawer">
       <a-tabs v-if="selected" v-model:activeKey="drawerTab">
         <a-tab-pane key="config" tab="属性">
           <div class="wf-form">
-            <div class="wf-form-item"><label>节点 ID</label><span class="wf-form-static">{{ selected.id }}</span></div>
+            <!-- 节点说明卡：类型色图标 + 一句话作用 + 输出/入参键（下游引用什么一眼看到，不必猜） -->
+            <div class="wf-node-brief" :style="{ '--nc': colorOf(selected.data.nodeType) }">
+              <span class="wf-node-ico" :style="{ background: tint(colorOf(selected.data.nodeType)), color: colorOf(selected.data.nodeType) }">
+                <span class="wf-node-icon">{{ TYPE_META[selected.data.nodeType]?.icon }}</span>
+              </span>
+              <div class="wf-brief-body">
+                <div class="wf-brief-title">
+                  {{ TYPE_META[selected.data.nodeType]?.label }}
+                  <span class="wf-node-id">{{ selected.id }}</span>
+                </div>
+                <div class="wf-brief-desc">{{ TYPE_META[selected.data.nodeType]?.brief }}</div>
+                <div v-if="briefOut.length" class="wf-brief-out">
+                  <span class="wf-out-label">{{ selected.data.nodeType === 'start' ? '入参' : '输出' }}</span>
+                  <code v-for="k in briefOut" :key="k">{{ k }}</code>
+                </div>
+              </div>
+            </div>
 
             <!-- start：入参列表 -->
             <template v-if="selected.data.nodeType === 'start'">
@@ -110,7 +148,7 @@
               <div class="wf-form-item"><label>温度（留空跟随全局）</label>
                 <a-input-number v-model:value="editConfig.temperature" :min="0" :max="2" :step="0.1" style="width: 140px" />
               </div>
-              <div class="wf-hint">输出键：<code>answer</code>（模型回答文本），后续节点用 <code>{{ LBB + selected.id + '.answer' + RBB }}</code> 引用。</div>
+              <div class="wf-hint">后续节点用 <code>{{ LBB + selected.id + '.answer' + RBB }}</code> 引用本节点的回答。</div>
             </template>
 
             <!-- retrieval -->
@@ -128,7 +166,7 @@
               <div class="wf-form-item"><label>topK（召回条数）</label>
                 <a-input-number v-model:value="editConfig.topK" :min="1" :max="20" style="width: 140px" />
               </div>
-              <div class="wf-hint">输出键：<code>chunks</code>（结构化命中）/ <code>text</code>（拼接文本，可直接拼 prompt）/ <code>count</code>。</div>
+              <div class="wf-hint"><code>text</code> 是可直接拼进 prompt 的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
             </template>
 
             <!-- condition -->
@@ -179,7 +217,7 @@
               <div class="wf-form-item"><label>超时（ms，1s~60s）</label>
                 <a-input-number v-model:value="editConfig.timeoutMs" :min="1000" :max="60000" :step="1000" style="width: 140px" />
               </div>
-              <div class="wf-hint">输出键：<code>status</code> / <code>body</code>（截断 2 万字符）/ <code>contentType</code>。</div>
+              <div class="wf-hint">响应体进 state 时截断 2 万字符（trace 同步截断）。</div>
             </template>
 
             <!-- code -->
@@ -196,7 +234,7 @@
                 <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="300" style="width: 140px" />
               </div>
               <div class="wf-hint">
-                依赖沙盒（设置页「沙盒工具」开关）；非 0 退出码视为节点失败。输出键：<code>output</code>（stdout）/ <code>exitCode</code>。
+                依赖沙盒（设置页「沙盒工具」开关）；非 0 退出码视为节点失败，stdout 在 <code>output</code> 里。
               </div>
             </template>
 
@@ -216,7 +254,7 @@
               <div class="wf-form-item"><label>模型（留空走发起人个人默认）</label>
                 <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
               </div>
-              <div class="wf-hint">复用该智能体完整问答管线（知识库范围/工具/技能原样生效）。输出键：<code>answer</code>。</div>
+              <div class="wf-hint">复用该智能体完整问答管线（知识库范围/工具/技能原样生效），回答全文在 <code>answer</code>。</div>
             </template>
 
             <!-- approval -->
@@ -267,7 +305,7 @@
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('template', v, '\n')" />
               </div>
-              <div class="wf-hint">输出键：<code>text</code>（渲染后的文本）。</div>
+              <div class="wf-hint">渲染结果在 <code>text</code>，多视角汇总后接 LLM 或直接作答都行。</div>
             </template>
           </div>
           <div class="wf-drawer-actions">
@@ -278,7 +316,7 @@
         <a-tab-pane key="run" tab="运行输出">
           <!-- 人工审核审批卡：run 挂起在 waiting_approval 时出现，裁决即续跑 -->
           <div v-if="runResult?.status === 'waiting_approval' && approvalInfo" class="wf-approval-card">
-            <div class="wf-approval-head"><span class="wf-node-icon icon-approval">✋</span> 等待人工审核</div>
+            <div class="wf-approval-head"><span class="wf-node-ico" style="background: rgba(250, 140, 22, 0.12); color: #d4380d"><span class="wf-node-icon">✋</span></span> 等待人工审核</div>
             <div class="wf-approval-prompt">{{ approvalInfo.prompt || approvalInfo.requestArgs }}</div>
             <div class="wf-approval-meta">
               <span v-if="approvalInfo.createdAt">挂起于 {{ fmtTime(approvalInfo.createdAt) }}</span>
@@ -403,8 +441,12 @@ import { message, Modal } from 'ant-design-vue'
 import { ArrowLeftOutlined, PlayCircleOutlined, CloudUploadOutlined } from '@ant-design/icons-vue'
 import { VueFlow, useVueFlow, MarkerType, Handle, Position } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
+import { MiniMap } from '@vue-flow/minimap'
+import { Controls } from '@vue-flow/controls'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
+import '@vue-flow/minimap/dist/style.css'
+import '@vue-flow/controls/dist/style.css'
 import ModelSelect from '../components/ModelSelect.vue'
 import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
@@ -424,22 +466,47 @@ const { addEdges, removeEdges, updateNodeData, findNode, screenToFlowCoordinate,
 const LBB = '{{'
 const RBB = '}}'
 
+/** 连线默认样式（统一线宽与颜色；选中态在 CSS 里加粗提色） */
+const EDGE_OPTIONS = {
+  markerEnd: MarkerType.ArrowClosed,
+  style: { stroke: '#b3bac6', strokeWidth: 1.8 }
+}
+/** 小地图节点取色：与画布节点同色（未配置类型回落灰） */
+const minimapColor = n => colorOf(n?.data?.nodeType)
+
 // ---------- 类型元数据与面板 ----------
+// color：节点/面板/抽屉统一的类型色（11 类全给色——此前只有 5 类有图标色，新加的 6 类在画布上分不出类型）
 const TYPE_META = {
-  start: { label: '开始', icon: '▶' },
-  end: { label: '结束', icon: '■' },
-  llm: { label: 'LLM 调用', icon: '✦' },
-  retrieval: { label: '知识检索', icon: '⌕' },
-  condition: { label: '条件分支', icon: '⑂' },
-  http: { label: 'HTTP 请求', icon: '⇄' },
-  code: { label: '代码执行', icon: '⌨' },
-  subagent: { label: '子智能体', icon: '＠' },
-  approval: { label: '人工审核', icon: '✋' },
-  loop: { label: '循环', icon: '↻' },
-  template: { label: '模板转换', icon: '✎' }
+  start: { label: '开始', icon: '▶', color: '#52c41a', brief: '工作流入口，声明本轮可用的入参', out: ['入参键'] },
+  end: { label: '结束', icon: '■', color: '#8c8c8c', brief: '工作流出口，映射最终出参', out: [] },
+  llm: { label: 'LLM 调用', icon: '✦', color: '#7c5cff', brief: '把 prompt 发给对话模型，拿回答', out: ['answer'] },
+  retrieval: { label: '知识检索', icon: '⌕', color: '#1677ff', brief: '按检索词在知识库里召回片段', out: ['chunks', 'text', 'count'] },
+  condition: { label: '条件分支', icon: '⑂', color: '#fa8c16', brief: '按表达式命中分支，走不同路径', out: ['route'] },
+  http: { label: 'HTTP 请求', icon: '⇄', color: '#13c2c2', brief: '调公网接口取数据（逐跳 SSRF 校验）', out: ['status', 'body', 'contentType'] },
+  code: { label: '代码执行', icon: '⌨', color: '#eb2f96', brief: '在沙盒容器里跑 Python / Node', out: ['output', 'exitCode'] },
+  subagent: { label: '子智能体', icon: '＠', color: '#2f54eb', brief: '委派某个智能体按它自己的配置作答', out: ['answer'] },
+  approval: { label: '人工审核', icon: '✋', color: '#d4380d', brief: '挂起等人拍板，批准/拒绝各走一支', out: ['route'] },
+  loop: { label: '循环', icon: '↻', color: '#d4b106', brief: '按分支回跳重跑，最多 maxLoops 轮', out: ['route', 'loopCount'] },
+  template: { label: '模板转换', icon: '✎', color: '#08979c', brief: '把多路上游输出拼成一段文本', out: ['text'] }
 }
 const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template']
   .map(t => ({ type: t, ...TYPE_META[t] }))
+/** 左侧节点面板分组（11 类平铺太散，按用途分组更好找） */
+const PALETTE_GROUPS = [
+  { title: '流程', types: ['start', 'end'] },
+  { title: '模型', types: ['llm', 'subagent'] },
+  { title: '数据', types: ['retrieval', 'http', 'code', 'template'] },
+  { title: '控制', types: ['condition', 'approval', 'loop'] }
+]
+/** 类型色（未知类型回落灰） */
+const colorOf = t => (TYPE_META[t]?.color) || '#8c8c8c'
+/** #rrggbb → rgba(...)（图标底衬用，避免依赖 color-mix 的浏览器支持） */
+function tint(hex, alpha = 0.12) {
+  const h = String(hex || '').replace('#', '')
+  if (h.length !== 6) return 'transparent'
+  const n = parseInt(h, 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+}
 
 // ---------- 状态 ----------
 const nodes = ref([])
@@ -490,6 +557,14 @@ const pendingNodeLabel = computed(() => {
   const c = pendingConn.value
   const node = c && findNode(c.source)
   return node ? node.data.label : ''
+})
+
+/** 抽屉说明卡的输出/入参键：start 动态取入参声明，其余取类型注册表 */
+const briefOut = computed(() => {
+  if (!selected.value) return []
+  const t = selected.value.data.nodeType
+  if (t === 'start') return (((editConfig.value || {}).inputs) || []).map(i => i && i.key).filter(Boolean)
+  return TYPE_META[t]?.out || []
 })
 
 // ---------- M4+：变量引用选择器（上游节点 id + 输出键，选了就插进输入框，不用手打 {{}}） ----------
@@ -1232,49 +1307,94 @@ load()
 <style scoped>
 .wf-editor { display: flex; flex-direction: column; height: 100%; min-width: 0; }
 .wf-toolbar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 16px; background: var(--app-panel);
+  display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
+  padding: 9px 14px; background: var(--app-panel);
   border-bottom: 1px solid var(--app-border); flex: none;
 }
-.wf-name { width: 220px; }
-.wf-save-hint { font-size: 12px; color: var(--app-text3); }
+.wf-tb-back { flex: none; }
+.wf-name { width: 200px; flex: none; }
+.wf-tb-status { display: flex; align-items: center; gap: 8px; flex: none; }
+.wf-tb-sep { width: 1px; height: 14px; background: var(--app-border); }
+/* 状态点：比纯文字更快读出"有没有未保存改动" */
+.wf-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot-saved { background: #52c41a; }
+.dot-dirty { background: #fa8c16; }
+.wf-tb-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: 4px; }
+.wf-save-hint { font-size: 12px; color: var(--app-text3); white-space: nowrap; }
+.wf-ver { margin: 0; }
 .flex-gap { flex: 1; }
 .wf-body { flex: 1; min-height: 0; display: flex; }
 
 .wf-palette {
-  width: 150px; flex: none; border-right: 1px solid var(--app-border);
+  width: 168px; flex: none; border-right: 1px solid var(--app-border);
   background: var(--app-panel); padding: 10px 8px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; gap: 5px;
 }
-.wf-palette-title { font-size: 12px; color: var(--app-text3); margin-bottom: 2px; }
+.wf-palette-title { font-size: 12px; color: var(--app-text3); margin-bottom: 2px; font-weight: 500; }
+.wf-palette-group {
+  font-size: 11px; color: var(--app-text3); opacity: .85;
+  margin: 8px 0 2px 2px; letter-spacing: .5px;
+}
+.wf-palette-group:first-of-type { margin-top: 2px; }
 .wf-palette-item {
   display: flex; align-items: center; gap: 8px;
-  border: 1px solid var(--app-border); border-radius: 6px;
-  padding: 8px 10px; cursor: grab; background: var(--app-bg, #fff); font-size: 13px;
-  user-select: none;
+  border: 1px solid var(--app-border); border-radius: 7px;
+  padding: 6px 8px; cursor: grab; background: var(--app-bg, #fff); font-size: 13px;
+  user-select: none; transition: border-color .15s, box-shadow .15s;
 }
-.wf-palette-item:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.wf-palette-item:hover { border-color: var(--app-accent); box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
 .wf-palette-item.disabled { opacity: 0.4; cursor: not-allowed; }
-.wf-palette-hint { font-size: 11px; color: var(--app-text3); line-height: 1.7; margin-top: 6px; }
+.wf-palette-hint { font-size: 11px; color: var(--app-text3); line-height: 1.7; margin-top: 8px; }
 
 .wf-canvas-wrap { flex: 1; min-width: 0; position: relative; background: var(--app-bg, #f5f6f8); }
+/* 连线：默认细灰、选中加粗提色；拖拽连线时高亮 */
+.wf-canvas-wrap :deep(.vue-flow__edge-path) { stroke: #b3bac6; stroke-width: 1.8; }
+.wf-canvas-wrap :deep(.vue-flow__edge.selected .vue-flow__edge-path),
+.wf-canvas-wrap :deep(.vue-flow__edge:focus .vue-flow__edge-path) { stroke: var(--app-accent); stroke-width: 2.6; }
+.wf-canvas-wrap :deep(.vue-flow__edge:hover .vue-flow__edge-path) { stroke: #8c96a8; }
+.wf-canvas-wrap :deep(.vue-flow__connection-path) { stroke: var(--app-accent); stroke-width: 2.2; }
+.wf-canvas-wrap :deep(.vue-flow__edge-text) { font-size: 11px; }
+.wf-canvas-wrap :deep(.vue-flow__edge-textbg) { fill: #fff; }
+/* 小地图与缩放控件 */
+.wf-minimap {
+  background: var(--app-bg, #fff); border: 1px solid var(--app-border);
+  border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+}
+.wf-controls { display: flex; gap: 2px; }
+.wf-controls :deep(.vue-flow__controls-button) {
+  background: var(--app-bg, #fff); border-bottom: 1px solid var(--app-border);
+  border-radius: 6px; width: 26px; height: 26px;
+}
+.wf-controls :deep(.vue-flow__controls-button svg) { fill: var(--app-text2); }
 
 /* 画布节点（slot 内容带本组件 scoped 属性，可直接命中） */
 .wf-node {
-  background: #fff; border: 1.5px solid var(--app-border); border-radius: 8px;
-  padding: 8px 12px; min-width: 150px;
+  background: #fff; border: 1.5px solid var(--app-border); border-radius: 10px;
+  border-left: 3px solid var(--nc, var(--app-border));
+  padding: 8px 12px; min-width: 168px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  font-size: 13px; position: relative;
+  font-size: 13px; position: relative; transition: box-shadow .15s, border-color .15s;
 }
-.wf-node-head { display: flex; align-items: center; gap: 7px; }
-.wf-node-icon { font-size: 13px; }
-.icon-start { color: #52c41a; }
-.icon-end { color: #8c8c8c; }
-.icon-llm { color: #7c5cff; }
-.icon-retrieval { color: #1677ff; }
-.icon-condition { color: #fa8c16; }
-.wf-node-label { font-weight: 500; }
-.wf-node-sub { font-size: 11px; color: var(--app-text3); margin-top: 3px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-node:hover { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.10); }
+/* 选中态由 vue-flow 挂在父节点上：用 :deep 命中 */
+.wf-canvas-wrap :deep(.vue-flow__node.selected) .wf-node {
+  border-color: var(--nc, var(--app-accent));
+  box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.14);
+}
+.wf-node-head { display: flex; align-items: center; gap: 8px; }
+/* 图标统一为「圆角方块底衬 + 类型色符号」：11 类各有色，扫读分得清 */
+.wf-node-ico {
+  width: 22px; height: 22px; border-radius: 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1;
+}
+.wf-node-icon { font-size: 12px; }
+.wf-node-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.wf-node-label { font-weight: 500; line-height: 1.3; }
+.wf-node-id { font-size: 11px; color: var(--app-text3); font-family: ui-monospace, Menlo, monospace; line-height: 1.2; }
+.wf-node-sub {
+  font-size: 11px; color: var(--app-text3); margin-top: 5px; max-width: 190px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .wf-node :deep(.vue-flow__handle) { width: 8px; height: 8px; background: var(--app-accent); border: none; }
 .wf-node.run-success { border-color: #52c41a; box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.15); }
 .wf-node.run-failed { border-color: #ff4d4f; box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
@@ -1298,10 +1418,25 @@ load()
 .wf-approval-actions { display: flex; gap: 10px; }
 
 /* 抽屉表单 */
-.wf-form { display: flex; flex-direction: column; gap: 12px; }
+.wf-form { display: flex; flex-direction: column; gap: 14px; }
 .wf-form-item label { display: block; font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
 .wf-form-item { font-size: 13px; }
 .wf-form-static { color: var(--app-text2); font-family: monospace; font-size: 12px; }
+/* 节点说明卡：类型色贯穿（左边条 + 图标底衬），输出键 chip 化 */
+.wf-node-brief {
+  display: flex; gap: 10px; align-items: flex-start;
+  border: 1px solid var(--app-border); border-left: 3px solid var(--nc, var(--app-border));
+  border-radius: 8px; padding: 10px 12px; background: var(--app-bg, #fafafa);
+}
+.wf-brief-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.wf-brief-title { font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.wf-brief-desc { font-size: 12px; color: var(--app-text2); line-height: 1.6; }
+.wf-brief-out { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.wf-out-label { font-size: 11px; color: var(--app-text3); }
+.wf-brief-out code {
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px;
+  padding: 1px 6px; font-size: 11px; font-family: ui-monospace, Menlo, monospace;
+}
 .wf-rows { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .wf-row-key { width: 110px; flex: none; }
 .wf-row-value { flex: 1; }
@@ -1311,7 +1446,7 @@ load()
 /* 变量引用选择器：贴在输入框下方，窄条不抢输入框的视觉主位 */
 .wf-ref-pick { margin-top: 6px; width: 100%; }
 .wf-hint code { background: var(--app-panel); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
-.wf-drawer-actions { margin-top: 16px; }
+.wf-drawer-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
 .wf-req { color: #ff4d4f; margin-left: 2px; }
 
 /* 运行输出 */

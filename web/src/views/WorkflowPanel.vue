@@ -24,18 +24,22 @@
         <div v-else class="wf-list">
           <div v-for="r in rows" :key="r.id" class="app-card wf-card">
             <div class="wf-head">
+              <!-- 状态用「色点 + 文字」：一眼分清发布态，不靠大色块 -->
+              <span class="wf-dot" :class="r.status === 'published' ? 'dot-pub' : 'dot-draft'" />
               <span class="wf-name">{{ r.name }}</span>
-              <a-tag :color="r.status === 'published' ? 'green' : 'default'">
+              <span class="wf-status" :class="r.status === 'published' ? 'st-pub' : 'st-draft'">
                 {{ r.status === 'published' ? (r.publishedVersion != null ? '已发布 v' + r.publishedVersion : '已发布') : '草稿' }}
-              </a-tag>
-              <span class="wf-meta">{{ summary(r.dsl) }}</span>
-              <!-- 最近一次运行（列表即可看出"这个工作流现在能不能跑"） -->
-              <span v-if="r.lastRunStatus" class="wf-last">
-                最近运行
-                <a-tag :color="runColor(r.lastRunStatus)">{{ runLabel(r.lastRunStatus) }}</a-tag>
-                <span class="wf-meta">{{ fmtTime(r.lastRunAt) }}</span>
               </span>
-              <span v-else class="wf-meta">尚未运行</span>
+              <span class="wf-meta">{{ summary(r.dsl) }}</span>
+              <!-- 最近一次运行：右侧对齐，扫一眼知道"这个工作流现在能不能跑" -->
+              <span class="wf-last">
+                <template v-if="r.lastRunStatus">
+                  <span class="wf-run-dot" :class="'rd-' + r.lastRunStatus" />
+                  <span class="wf-run-txt">{{ runLabel(r.lastRunStatus) }}</span>
+                  <span class="wf-meta">{{ fmtTime(r.lastRunAt) }}</span>
+                </template>
+                <span v-else class="wf-meta">尚未运行</span>
+              </span>
             </div>
             <div v-if="r.description" class="wf-desc">{{ r.description }}</div>
             <div class="wf-actions">
@@ -58,7 +62,7 @@
               <button class="app-btn ghost small wf-del" @click="doDelete(r)">
                 <delete-outlined /> 删除
               </button>
-              <span class="wf-meta" style="margin-left:auto">更新于 {{ fmtTime(r.updateTime) }}</span>
+              <span class="wf-meta wf-upd">更新于 {{ fmtTime(r.updateTime) }}</span>
             </div>
           </div>
         </div>
@@ -236,14 +240,30 @@ onMounted(load)
 
 <style scoped>
 .wf-list { display: flex; flex-direction: column; gap: 10px; }
-.wf-card { display: flex; flex-direction: column; gap: 8px; }
+.wf-card { display: flex; flex-direction: column; gap: 8px; transition: box-shadow .15s, border-color .15s; }
+.wf-card:hover { box-shadow: 0 3px 12px rgba(0, 0, 0, .07); }
 .wf-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 状态：色点 + 文字（比大色块 tag 轻，扫读快） */
+.wf-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot-pub { background: #52c41a; box-shadow: 0 0 0 3px rgba(82, 196, 26, .15); }
+.dot-draft { background: #c9cdd4; box-shadow: 0 0 0 3px rgba(201, 205, 212, .18); }
 .wf-name { font-weight: 500; font-size: 14px; }
+.wf-status { font-size: 12px; color: var(--app-text2); }
+.st-pub { color: #389e0d; }
+.st-draft { color: var(--app-text3); }
 .wf-meta { font-size: 12px; color: var(--app-text3); }
-.wf-last { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
+.wf-last { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text3); }
+.wf-run-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.rd-success { background: #52c41a; }
+.rd-failed { background: #ff4d4f; }
+.rd-running { background: #1677ff; }
+.rd-timeout { background: #fa8c16; }
+.rd-waiting_approval { background: #fa8c16; }
+.wf-run-txt { color: var(--app-text2); }
 .wf-desc { font-size: 13px; color: var(--app-text2); }
-.wf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-top: 1px dashed var(--app-border); padding-top: 8px; }
 .wf-del { color: var(--app-danger, #d4380d); }
+.wf-upd { margin-left: auto; }
 .wf-empty { text-align: center; padding: 28px 16px; }
 .wf-empty-title { margin: 0 0 6px; font-weight: 500; }
 .wf-versions { display: flex; flex-direction: column; gap: 10px; }

@@ -61,19 +61,27 @@
         <div class="wf-block"><div class="wf-block-label">出参</div><pre class="wf-pre">{{ pretty(detail.outputs) }}</pre></div>
         <div class="wf-block">
           <div class="wf-block-label">节点 trace（{{ traces.length }}）</div>
-          <div v-for="(t, i) in traces" :key="i" class="wf-trace">
-            <div class="wf-trace-head" @click="t._open = !t._open">
-              <span class="wf-trace-idx">{{ i + 1 }}</span>
-              <a-tag :color="runColor(t.status)">{{ runLabel(t.status) }}</a-tag>
-              <span class="wf-trace-name">{{ t.nodeId }}<span class="wf-meta">（{{ t.type }}）</span></span>
-              <span class="wf-meta">{{ t.elapsedMs != null ? t.elapsedMs + ' ms' : '' }}</span>
-              <span v-if="t.completionTokens != null" class="wf-meta">out {{ t.completionTokens }} tok</span>
-              <span class="wf-trace-toggle">{{ t._open ? '收起' : '展开' }}</span>
-            </div>
-            <div v-if="t.error" class="wf-run-err">{{ t.error }}</div>
-            <div v-if="t._open" class="wf-trace-body">
-              <div v-if="t.input" class="wf-block"><div class="wf-block-label">输入</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.input)) }}</pre></div>
-              <div v-if="t.output" class="wf-block"><div class="wf-block-label">输出</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.output)) }}</pre></div>
+          <!-- 时间线式排布：左轨圆点按状态着色，执行顺序一眼可读 -->
+          <div class="wf-timeline">
+            <div v-for="(t, i) in traces" :key="i" class="wf-tl-item">
+              <div class="wf-tl-rail">
+                <span class="wf-tl-dot" :class="'td-' + t.status" />
+                <span v-if="i < traces.length - 1" class="wf-tl-line" />
+              </div>
+              <div class="wf-tl-body">
+                <div class="wf-tl-head" @click="t._open = !t._open">
+                  <span class="wf-trace-name">{{ t.nodeId }}<span class="wf-meta">（{{ t.type }}）</span></span>
+                  <a-tag :color="runColor(t.status)" class="wf-tl-tag">{{ runLabel(t.status) }}</a-tag>
+                  <span class="wf-meta">{{ t.elapsedMs != null ? t.elapsedMs + ' ms' : '' }}</span>
+                  <span v-if="t.completionTokens != null" class="wf-meta">out {{ t.completionTokens }} tok</span>
+                  <span class="wf-trace-toggle">{{ t._open ? '收起' : '展开' }}</span>
+                </div>
+                <div v-if="t.error" class="wf-run-err">{{ t.error }}</div>
+                <div v-if="t._open" class="wf-trace-body">
+                  <div v-if="t.input" class="wf-block"><div class="wf-block-label">输入</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.input)) }}</pre></div>
+                  <div v-if="t.output" class="wf-block"><div class="wf-block-label">输出</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.output)) }}</pre></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -197,8 +205,19 @@ onMounted(load)
 .wf-approval-foot .app-btn { margin-left: 0; }
 .wf-approval-foot .wf-meta { margin-right: auto; }
 .wf-trace { border-top: 1px solid var(--app-border); padding: 6px 0; }
-.wf-trace-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
-.wf-trace-idx { font-size: 12px; color: var(--app-text3); width: 18px; }
-.wf-trace-name { font-size: 13px; font-weight: 500; }
+/* trace 时间线：左轨（状态圆点 + 连线）+ 右侧内容 */
+.wf-timeline { display: flex; flex-direction: column; }
+.wf-tl-item { display: flex; gap: 10px; }
+.wf-tl-rail { display: flex; flex-direction: column; align-items: center; flex: none; width: 14px; padding-top: 5px; }
+.wf-tl-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.td-success { background: #52c41a; box-shadow: 0 0 0 3px rgba(82, 196, 26, .15); }
+.td-failed { background: #ff4d4f; box-shadow: 0 0 0 3px rgba(255, 77, 79, .15); }
+.td-waiting { background: #fa8c16; box-shadow: 0 0 0 3px rgba(250, 140, 22, .18); }
+.td-running { background: #1677ff; }
+.wf-tl-line { flex: 1; width: 1.5px; background: var(--app-border); margin: 3px 0; }
+.wf-tl-body { flex: 1; min-width: 0; padding-bottom: 12px; }
+.wf-tl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
+.wf-tl-tag { margin: 0; }
+.wf-trace-name { font-size: 13px; font-weight: 500; font-family: ui-monospace, Menlo, monospace; }
 .wf-trace-toggle { font-size: 12px; color: var(--app-accent); margin-left: auto; }
 </style>
