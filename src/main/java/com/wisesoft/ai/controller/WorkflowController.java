@@ -29,7 +29,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ai/workflow")
 @RequiredArgsConstructor
-@Tag(name = "工作流", description = "工作流定义：CRUD / DSL 校验与编译 dry-run（执行随 M1 开放）")
+@Tag(name = "工作流", description = "工作流定义：CRUD / DSL 校验与编译 dry-run / 调试运行与 trace（M1）")
 public class WorkflowController {
 
     private final WorkflowService workflowService;
@@ -72,6 +72,30 @@ public class WorkflowController {
     @PostMapping("/validate")
     public ResultJson validate(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(workflowService.validate(str(body, "dsl")));
+    }
+
+    @Operation(summary = "调试运行（同步）", description = "body: {inputs?}（开始节点入参，{{start.key}} 取值来源）。"
+            + "执行前 fail-fast：必填入参缺失 / llm 节点模型不可用直接报错；"
+            + "执行失败不抛 500——返回 status=failed 的 run（error + node_traces 可定位问题节点）；"
+            + "每次运行锁定当时 DSL 快照，改画布不影响历史回放")
+    @PostMapping("/{id}/run")
+    public ResultJson run(@PathVariable String id, @RequestBody(required = false) Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> inputs = body == null || !(body.get("inputs") instanceof Map) ? Map.of()
+                : (Map<String, Object>) body.get("inputs");
+        return ResultJson.ok(workflowService.run(id, inputs));
+    }
+
+    @Operation(summary = "运行记录列表", description = "最近 50 条（新→旧）：状态/触发方式/耗时/错误摘要；trace 详情见单条接口")
+    @GetMapping("/{id}/run/list")
+    public ResultJson runList(@PathVariable String id) {
+        return ResultJson.ok(workflowService.listRuns(id));
+    }
+
+    @Operation(summary = "运行记录详情", description = "含完整 node_traces（每节点 status/输入输出摘要/耗时/token）与 inputs/outputs")
+    @GetMapping("/{id}/run/{runId}")
+    public ResultJson runDetail(@PathVariable String id, @PathVariable String runId) {
+        return ResultJson.ok(workflowService.getRun(id, runId));
     }
 
     private static String str(Map<String, Object> body, String key) {

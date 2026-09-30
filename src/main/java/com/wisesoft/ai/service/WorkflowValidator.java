@@ -127,6 +127,14 @@ public class WorkflowValidator {
             if (!edgeKeys.add(e.getFrom() + ">" + e.getBranch() + ">" + e.getTo())) {
                 errors.add(where + " 重复连线");
             }
+            // start 是虚拟入口 / end 是执行终点：它们的方向性由引擎翻译层依赖（start 出边改从
+            // StateGraph.START 出发、end 承接终止边），反向边在翻译层没有语义，结构期拦下讲清楚
+            if ("start".equals(byId.get(e.getTo()).getType())) {
+                errors.add(where + " 开始节点（start）不能作为连线的终点");
+            }
+            if (END_TYPE.equals(byId.get(e.getFrom()).getType())) {
+                errors.add(where + " 结束节点（end）不能作为连线的起点");
+            }
         }
         // 条件节点声明了分支但没有出边 → 显式报（否则运行到该节点会"无路可走"静默卡死）
         for (WorkflowDsl.Node n : byId.values()) {
