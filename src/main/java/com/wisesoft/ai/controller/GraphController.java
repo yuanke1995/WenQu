@@ -31,27 +31,27 @@ public class GraphController {
 
     @Operation(summary = "构建图谱（存量回溯）", description = "逐文档串行抽取该库全部生效文档；进度经 /status 查询，重复触发会被拒")
     @PostMapping("/{kbId}/build")
-    public ResultJson build(@PathVariable String kbId) {
+    public ResultJson build(@PathVariable("kbId") String kbId) {
         return ResultJson.ok(graphRagService.build(kbId));
     }
 
     @Operation(summary = "构建进度与图谱规模", description = "building/total/done/failed/extracted + 实体数/三元组数")
     @GetMapping("/{kbId}/status")
-    public ResultJson status(@PathVariable String kbId) {
+    public ResultJson status(@PathVariable("kbId") String kbId) {
         return ResultJson.ok(graphRagService.status(kbId));
     }
 
     @Operation(summary = "三元组浏览", description = "带实体名与来源文档名的分页列表（溯源核对用）")
     @GetMapping("/{kbId}/triples")
-    public ResultJson triples(@PathVariable String kbId,
-                              @RequestParam(defaultValue = "1") int page,
-                              @RequestParam(defaultValue = "20") int size) {
+    public ResultJson triples(@PathVariable("kbId") String kbId,
+                              @RequestParam(value = "page", defaultValue = "1") int page,
+                              @RequestParam(value = "size", defaultValue = "20") int size) {
         return ResultJson.ok(graphRagService.triples(kbId, page, size));
     }
 
     @Operation(summary = "清空图谱", description = "删该库全部三元组/实体/抽取记录（显式动作；开关关闭不删数据）")
     @DeleteMapping("/{kbId}")
-    public ResultJson clear(@PathVariable String kbId) {
+    public ResultJson clear(@PathVariable("kbId") String kbId) {
         return ResultJson.ok(graphRagService.clear(kbId));
     }
 }
