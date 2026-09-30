@@ -419,9 +419,10 @@ const triplePage = ref(1)
 const tripleTotal = ref(0)
 const tripleCols = [
   { title: '主体', dataIndex: 'subject', key: 'subject', width: 150, ellipsis: true },
-  { title: '关系', dataIndex: 'predicate', key: 'predicate', width: 110 },
-  { title: '客体', dataIndex: 'object', key: 'object', width: 150, ellipsis: true },
-  { title: '来源文档', dataIndex: 'doc', key: 'doc', ellipsis: true }
+  { title: '关系', dataIndex: 'predicate', key: 'predicate', width: 90 },
+  // 客体是最长的一列，吃掉剩余弹性宽度；来源文档基本是同名文件，固定宽即可
+  { title: '客体', dataIndex: 'object', key: 'object', ellipsis: true },
+  { title: '来源文档', dataIndex: 'doc', key: 'doc', width: 180, ellipsis: true }
 ]
 const triplePagination = computed(() => ({
   current: triplePage.value, total: tripleTotal.value, pageSize: 20, showSizeChanger: false
@@ -455,6 +456,9 @@ const graphView = ref('graph')   // 默认图视图；列表是核对清单
 const graphChartEl = ref(null)
 const graphSampled = 500         // 图视图一次拉取的关系上限（后端放宽到 500，超出部分走列表）
 let chartInstance = null
+let graphNodes = []              // 当前图数据（高亮 setOption 时复用）
+let graphLinks = []
+let highlightName = null         // 点击选中的节点名（null=无高亮）
 
 const onGraphViewChange = () => { if (graphView.value === 'graph') nextTick(renderGraphChart) }
 
@@ -480,38 +484,68 @@ async function renderGraphChart() {
   const degree = {}
   const nodeNames = []
   const seen = new Set()
-  const links = rows.map(t => {
+  graphLinks = rows.map(t => {
     for (const n of [t.subject, t.object]) {
       degree[n] = (degree[n] || 0) + 1
       if (!seen.has(n)) { seen.add(n); nodeNames.push(n) }
     }
     return { source: t.subject, target: t.object, value: t.predicate, doc: t.doc }
   })
+  graphNodes = nodeNames.map(n => ({
+    name: n,
+    symbolSize: Math.min(48, 14 + (degree[n] || 1) * 4),
+    label: { show: true, fontSize: 10 }
+  }))
   chartInstance = echarts.init(graphChartEl.value)
+  // 交互坑规避（echarts graph 已知问题）：layoutAnimation 开着时拖节点后力模拟会打断漫游控制；
+  // emphasis.focus adjacency 在拖拽场景会卡住高亮态——改用「点击节点手动高亮邻居」（applyHighlight）
   chartInstance.setOption({
     backgroundColor: 'transparent',
     tooltip: {
       formatter: p => p.dataType === 'edge'
         ? `<b>${p.data.source}</b> —【${p.data.value}】→ <b>${p.data.target}</b><br/><span style="color:#999">来源：${p.data.doc || '—'}</span>`
-        : `<b>${p.name}</b><br/><span style="color:#999">关联关系 ${degree[p.name] || 0} 条</span>`
+        : `<b>${p.name}</b><br/><span style="color:#999">点击高亮邻居 · 关联关系 ${degree[p.name] || 0} 条</span>`
     },
     series: [{
-      type: 'graph', layout: 'force', roam: true, draggable: true,
-      data: nodeNames.map(n => ({
-        name: n,
-        symbolSize: Math.min(48, 14 + (degree[n] || 1) * 4),
-        label: { show: true, fontSize: 10 }
-      })),
-      links,
-      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08 },
+      type: 'graph', layout: 'force', roam: true, draggable: true, cursor: 'grab',
+      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08, layoutAnimation: false },
+      data: graphNodes,
+      links: graphLinks,
       label: { color: '#333', position: 'right' },
       lineStyle: { color: '#b9c0cc', curveness: 0.05 },
       edgeLabel: { show: true, fontSize: 10, color: '#8a919e', formatter: '{c}' },
       edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 7,
-      emphasis: { focus: 'adjacency', lineStyle: { width: 2.5 } },
       itemStyle: { color: '#4f6ef2' }
     }]
   }, true)
+  chartInstance.on('click', onGraphClick)
+  applyHighlight()
+}
+
+/** 点击节点：高亮它的邻居（再点同节点/空白恢复）；手动 setOption 而非 emphasis.focus，避免拖拽后状态卡住 */
+function onGraphClick(params) {
+  if (params.dataType === 'node') {
+    highlightName = highlightName === params.name ? null : params.name
+  } else {
+    highlightName = null
+  }
+  applyHighlight()
+}
+
+function applyHighlight() {
+  if (!chartInstance) return
+  const neighbors = new Set()
+  if (highlightName) {
+    for (const l of graphLinks) {
+      if (l.source === highlightName) neighbors.add(l.target)
+      if (l.target === highlightName) neighbors.add(l.source)
+    }
+  }
+  const dim = n => highlightName && n !== highlightName && !neighbors.has(n)
+  chartInstance.setOption({ series: [{
+    data: graphNodes.map(d => ({ ...d, itemStyle: { opacity: dim(d.name) ? 0.12 : 1 } })),
+    links: graphLinks.map(l => ({ ...l, lineStyle: { opacity: highlightName && l.source !== highlightName && l.target !== highlightName ? 0.06 : 1 } }))
+  }] })
 }
 
 const onWinResize = () => { if (chartInstance) chartInstance.resize() }
