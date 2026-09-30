@@ -112,38 +112,91 @@ public class KeywordIndexService {
         return properties.getKeyword().getIndex();
     }
 
-    /** 配置变化（baseUrl/timeout/apiKey）时重建 RestClient 并重置探测与索引初始化状态 */
+    /**
+     * 客户端（惰性构建）：首次使用时按当前配置构建，配置变更时重建。
+     * <p>变更判定刻意比较<b>解密后的明文</b>而不是库中密文：keyword.apiKey 走 RSA-OAEP 加密，
+     * 同一明文每次加密都产生不同密文（随机种子），用密文比较会在"重存了同一个 key"时误判为变更。
+     * <p>日志区分两种情形（原先都打成"重建"，启动首建那条会被误读成"有人改了配置"）：
+     * <ul>
+     *   <li><b>就绪</b>：进程内首次构建（client == null），打印生效配置；</li>
+     *   <li><b>重建</b>：配置确实变了，附具体变更项的旧值 → 新值，API Key 按 {@code ****后4位} 掩码。</li>
+     * </ul>
+     */
     private RestClient client() {
-        String url = baseUrl();
-        int t = timeoutMillis();
-        String key = apiKey() == null ? "" : apiKey();
-        if (client == null || !url.equals(clientBaseUrl) || t != clientTimeout || !key.equals(clientApiKey)) {
-            synchronized (this) {
-                if (client == null || !url.equals(clientBaseUrl) || t != clientTimeout || !key.equals(clientApiKey)) {
-                    // 注意：不能用 SimpleClientHttpRequestFactory（HttpURLConnection 不支持 PATCH，settings 校准会抛
-                    // ProtocolException: Invalid HTTP method: PATCH）；改用 JdkClientHttpRequestFactory（java.net.http.HttpClient）。
-                    // 其连接超时只能在构造 HttpClient 时配置，读超时用 setReadTimeout(Duration)
-                    HttpClient httpClient = HttpClient.newBuilder()
-                            .connectTimeout(Duration.ofMillis(2000))
-                            .build();
-                    JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
-                    factory.setReadTimeout(Duration.ofMillis(t));
-                    RestClient.Builder builder = RestClient.builder().baseUrl(url).requestFactory(factory);
-                    if (!key.isBlank()) {
-                        builder.defaultHeader("Authorization", "Bearer " + key);
-                    }
-                    client = builder.build();
-                    clientBaseUrl = url;
-                    clientTimeout = t;
-                    clientApiKey = key;
-                    supportChecked.set(false);
-                    available = false;
-                    indexReady = false;
-                    log.info("[Keyword] Meilisearch 客户端重建: {}，索引 {}，超时 {}ms，key 已配置: {}", url, index(), t, !key.isBlank());
-                }
+        RestClient current = client;
+        if (current != null) {
+            // 快路径：配置未变时不进同步块（client() 每次检索 / 每次写索引都会走）
+            String url = baseUrl();
+            int t = timeoutMillis();
+            String key = apiKeyOrEmpty();
+            if (url.equals(clientBaseUrl) && t == clientTimeout && key.equals(clientApiKey)) {
+                return current;
             }
         }
+        build();
         return client;
+    }
+
+    /** 重建（或首次构建）客户端：双重检查，并发下只有一个线程真正构建 */
+    private void build() {
+        synchronized (this) {
+            String oldUrl = clientBaseUrl;
+            int oldT = clientTimeout;
+            String oldKey = clientApiKey;
+            boolean first = client == null;
+            String url = baseUrl();
+            int t = timeoutMillis();
+            String key = apiKeyOrEmpty();
+            if (!first && url.equals(oldUrl) && t == oldT && key.equals(oldKey)) {
+                return; // 等待锁期间已被按同一份配置重建
+            }
+            // 变更明细：只列出真正变化的项，便于判断是改了地址/超时还是换了 Key
+            List<String> changes = List.of();
+            if (!first) {
+                List<String> items = new ArrayList<>(3);
+                if (!url.equals(oldUrl)) items.add("地址 " + oldUrl + " → " + url);
+                if (t != oldT) items.add("超时 " + oldT + "ms → " + t + "ms");
+                if (!key.equals(oldKey)) items.add("Key " + maskSecret(oldKey) + " → " + maskSecret(key));
+                changes = items;
+            }
+            // 注意：不能用 SimpleClientHttpRequestFactory（HttpURLConnection 不支持 PATCH，settings 校准会抛
+            // ProtocolException: Invalid HTTP method: PATCH）；改用 JdkClientHttpRequestFactory（java.net.http.HttpClient）。
+            // 其连接超时只能在构造 HttpClient 时配置，读超时用 setReadTimeout(Duration)
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofMillis(2000))
+                    .build();
+            JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+            factory.setReadTimeout(Duration.ofMillis(t));
+            RestClient.Builder builder = RestClient.builder().baseUrl(url).requestFactory(factory);
+            if (!key.isBlank()) {
+                builder.defaultHeader("Authorization", "Bearer " + key);
+            }
+            client = builder.build();
+            clientBaseUrl = url;
+            clientTimeout = t;
+            clientApiKey = key;
+            supportChecked.set(false);
+            available = false;
+            indexReady = false;
+            if (first) {
+                log.info("[Keyword] Meilisearch 客户端就绪: {}，索引 {}，超时 {}ms，Key {}", url, index(), t, maskSecret(key));
+            } else {
+                log.info("[Keyword] Meilisearch 配置变更，客户端已重建: {}（变更: {}）", url, String.join("；", changes));
+            }
+        }
+    }
+
+    /** API Key（null 归一为空串） */
+    private String apiKeyOrEmpty() {
+        String k = apiKey();
+        return k == null ? "" : k;
+    }
+
+    /** 密钥展示掩码（与 ConfigService 快照同一口径：****后4位） */
+    private static String maskSecret(String secret) {
+        if (secret == null || secret.isBlank()) return "未配置";
+        if (secret.length() <= 4) return "****";
+        return "****" + secret.substring(secret.length() - 4);
     }
 
     // ==================== 可用性探测 ====================

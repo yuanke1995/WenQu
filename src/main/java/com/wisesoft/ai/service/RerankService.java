@@ -66,31 +66,92 @@ public class RerankService {
         return t > 0 ? t : 5000;
     }
 
-    /** 配置变化（网关/路径/Key/超时）时重建 RestClient 并重置探测缓存 */
+    /**
+     * 客户端（惰性构建）：首次调用按当前路由构建，网关/重排路径/Key/超时变化时重建。
+     * <p>日志按两种情形区分（原先统一打成"客户端重建"，启动首建那条会被误读成"有人改了配置"）：
+     * <ul>
+     *   <li><b>就绪</b>：进程内首次构建（client == null），打印生效路由与模型；</li>
+     *   <li><b>重建</b>：路由或超时确实变了，附具体变更项的旧值 → 新值（Key 按 {@code ****后4位} 掩码）。</li>
+     * </ul>
+     */
     private RestClient client() {
         ModelRegistryService.ModelRoute r = route();
         // 版本段尾缀（…/v1、…/v4）自动移入重排路径；本地地址保持 /v1/rerank
         String[] np = DynamicOpenAiChatModel.normalize(r.baseUrl(), "", "/v1/rerank", "/rerank");
-        String key = np[0] + "|" + np[1] + "|" + (r.apiKey() == null ? "" : r.apiKey());
         int t = timeoutMillis();
-        if (client == null || !key.equals(clientKey) || t != clientTimeout) {
-            synchronized (this) {
-                if (client == null || !key.equals(clientKey) || t != clientTimeout) {
-                    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-                    factory.setConnectTimeout(2000);
-                    factory.setReadTimeout(t);
-                    client = RestClient.builder().baseUrl(np[0]).requestFactory(factory).build();
-                    clientKey = key;
-                    clientRerankPath = np[1];
-                    clientTimeout = t;
-                    // 配置变更后重新探测
-                    supportChecked.set(false);
-                    rerankSupported = false;
-                    log.info("[Rerank] 客户端重建: {}，模型 {}，超时 {}ms", np[0], model(), t);
-                }
+        RestClient current = client;
+        if (current != null) {
+            // 快路径：路由与超时都未变时不进同步块（每次重排都会走 client()）
+            if (fingerprint(np, r).equals(clientKey) && t == clientTimeout) {
+                return current;
             }
         }
-        return client;
+        return rebuild();
+    }
+
+    /** 已构建客户端的指纹：网关地址|重排路径|API Key（三者任一变化都需要重建） */
+    private String fingerprint(String[] np, ModelRegistryService.ModelRoute r) {
+        return np[0] + "|" + np[1] + "|" + (r.apiKey() == null ? "" : r.apiKey());
+    }
+
+    /** 重建（或首次构建）客户端：双重检查，并发下只有一个线程真正构建 */
+    private RestClient rebuild() {
+        synchronized (this) {
+            ModelRegistryService.ModelRoute r = route();
+            String[] np = DynamicOpenAiChatModel.normalize(r.baseUrl(), "", "/v1/rerank", "/rerank");
+            int t = timeoutMillis();
+            String fp = fingerprint(np, r);
+            boolean first = client == null;
+            String oldFp = clientKey;
+            int oldTimeout = clientTimeout;
+            if (!first && fp.equals(oldFp) && t == oldTimeout) {
+                return client; // 等待锁期间已被按同一份路由重建
+            }
+            // 变更明细：指纹三段 = 网关地址 | 重排路径 | Key，逐段比对便于判断到底哪一项变了
+            List<String> changes = List.of();
+            if (!first) {
+                String[] oldParts = oldFp.split("\\|", -1);
+                List<String> items = new ArrayList<>(4);
+                if (!np[0].equals(oldParts[0])) items.add("地址 " + oldParts[0] + " → " + np[0]);
+                if (!np[1].equals(oldParts[1])) items.add("重排路径 " + oldParts[1] + " → " + np[1]);
+                if (!keyPart(fp).equals(keyPart(oldFp))) {
+                    items.add("Key " + maskSecret(keyPart(oldFp)) + " → " + maskSecret(keyPart(fp)));
+                }
+                if (t != oldTimeout) items.add("超时 " + oldTimeout + "ms → " + t + "ms");
+                changes = items;
+            }
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(2000);
+            factory.setReadTimeout(t);
+            client = RestClient.builder().baseUrl(np[0]).requestFactory(factory).build();
+            clientKey = fp;
+            clientRerankPath = np[1];
+            clientTimeout = t;
+            // 配置变更后重新探测
+            supportChecked.set(false);
+            rerankSupported = false;
+            if (first) {
+                log.info("[Rerank] 客户端就绪: {}，模型 {}，超时 {}ms", np[0], model(), t);
+            } else {
+                log.info("[Rerank] 路由变更，客户端已重建: {}，模型 {}，超时 {}ms（变更: {}）",
+                        np[0], model(), t, String.join("；", changes));
+            }
+            return client;
+        }
+    }
+
+    /** 指纹中的 Key 段（第 3 段；指纹不足三段时返回空串） */
+    private static String keyPart(String fingerprint) {
+        if (fingerprint == null || fingerprint.isBlank()) return "";
+        String[] parts = fingerprint.split("\\|", -1);
+        return parts.length > 2 ? parts[2] : "";
+    }
+
+    /** 密钥展示掩码（与 ConfigService 快照同一口径：****后4位） */
+    private static String maskSecret(String secret) {
+        if (secret == null || secret.isBlank()) return "未配置";
+        if (secret.length() <= 4) return "****";
+        return "****" + secret.substring(secret.length() - 4);
     }
 
     /** 供应商 Key 非空时附带 Bearer（云端 rerank 网关需要；本地 reranker 服务无 Key 时省略） */
