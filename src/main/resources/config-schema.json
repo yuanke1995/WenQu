@@ -2388,11 +2388,13 @@
       "key": "modelRef",
       "path": "graphrag.modelRef",
       "label": "抽取模型引用",
-      "type": "text",
+      "type": "model",
       "def": "",
       "tier": 2,
-      "width": 260,
-      "note": "格式 {供应商ID}/{模型ID}——取自「模型供应商」页登记的**平台级**供应商（对话页模型选择器选项的取值即此格式）。个人级供应商在系统抽取身份下会被判权拒绝；留空 = 不抽取。填错不会当场校验，构建/解析时日志报错且三元组为 0"
+      "width": 420,
+      "note": "系统身份抽取：个人级供应商不可用，Key 用所选供应商登记的；留空 = 不抽取",
+      "modelType": "chat",
+      "allowClear": true
     },
     {
       "backendKey": "graphrag.batchChunks",
@@ -2774,7 +2776,7 @@
     "sandbox.idleReleaseMinutes": "沙盒空闲回收（分钟，0=不回收）",
     "sandbox.cleanupIntervalMs": "沙盒空闲回收扫描间隔（ms，≤0=暂停）",
     "mcp.server.enabled": "MCP 服务端点（对外提供）",
-    "graphrag.modelRef": "GraphRAG 抽取模型引用：{供应商ID}/{模型ID}，必须指向平台级供应商（Key 在供应商登记里，无需另填）",
+    "graphrag.modelRef": "GraphRAG 抽取模型（下拉选平台级模型；Key 用供应商登记的，无需另填）",
     "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
     "graphrag.maxTriplesPerChunk": "GraphRAG：每块最多抽几条关系（成本闸，超出的丢弃）",
     "graphrag.expandTopK": "GraphRAG：检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减"
