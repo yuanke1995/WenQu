@@ -99,7 +99,7 @@ public class McpController {
 
     @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?}；只传要改的字段，改完自动重连")
     @PutMapping("/servers/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
         if (body.containsKey("name")) {
             String name = trim(text(body, "name"));
@@ -121,7 +121,7 @@ public class McpController {
 
     @Operation(summary = "启停 MCP 服务", description = "body: {\"enabled\": true}；停用即断开连接且不再暴露其工具")
     @PostMapping("/servers/{id}/enabled")
-    public ResultJson setEnabled(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson setEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
         row.setEnabled(Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0);
         userMcpMapper.updateById(row);
@@ -131,7 +131,7 @@ public class McpController {
 
     @Operation(summary = "删除 MCP 服务", description = "连带关闭该连接（只删自己的）")
     @DeleteMapping("/servers/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         UserMcp row = own(id);
         userMcpMapper.deleteById(row.getId());
         mcpClientService.reload(row.getUid());
@@ -156,11 +156,11 @@ public class McpController {
 
     @Operation(summary = "MCP 调用审计-明细", description = "外部客户端调用 wenqu MCP 端点（智能体端点 /ai/mcp/{token} 与平台级 /ai/mcp）的每次工具执行记录：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
     @GetMapping("/audit/logs")
-    public ResultJson auditLogs(@RequestParam(required = false) String channel,
-                                @RequestParam(required = false) String tool,
-                                @RequestParam(required = false) Integer success,
-                                @RequestParam(defaultValue = "1") Integer page,
-                                @RequestParam(defaultValue = "20") Integer size,
+    public ResultJson auditLogs(@RequestParam(value = "channel", required = false) String channel,
+                                @RequestParam(value = "tool", required = false) String tool,
+                                @RequestParam(value = "success", required = false) Integer success,
+                                @RequestParam(value = "page", defaultValue = "1") Integer page,
+                                @RequestParam(value = "size", defaultValue = "20") Integer size,
                                 HttpServletRequest httpRequest) {
         requireAdmin(httpRequest);
         int p = Math.max(1, page == null ? 1 : page);

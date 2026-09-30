@@ -107,7 +107,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "知识库详情", description = "普通用户仅共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
     @GetMapping("/{id}")
-    public ResultJson get(@PathVariable String id) {
+    public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) return ResultJson.error("知识库不存在");
         if (!admin() && !visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),
@@ -132,7 +132,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
             + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         KnowledgeBase before = mustGet(id);
         requireManage(before);
         Object kb = kbService.update(id, body);
@@ -150,7 +150,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）；仅创建者/被授权人/管理员可删")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         requireManage(mustGet(id));
         String reason = kbService.delete(id);
         if (reason != null) return ResultJson.error(reason);
@@ -160,7 +160,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回默认库（即 kb_id 置空）；"
             + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权")
     @PutMapping("/doc/{docId}")
-    public ResultJson moveDoc(@PathVariable String docId, @RequestBody Map<String, Object> body) {
+    public ResultJson moveDoc(@PathVariable("docId") String docId, @RequestBody Map<String, Object> body) {
         Object kbId = body.get("kbId");
         String toKbId = kbId == null ? null : String.valueOf(kbId);
         // 记录迁移前归属（含历史文档 kb_id 为空=默认库），移动后按前后两库的向量模型判断是否迁移向量

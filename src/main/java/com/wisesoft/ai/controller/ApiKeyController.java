@@ -55,7 +55,7 @@ public class ApiKeyController {
 
     @Operation(summary = "重命名 Key", description = "改用途备注，不影响 Key 本身与调用方；body: {\"name\": \"…\"}")
     @PutMapping("/{id}/name")
-    public ResultJson rename(@PathVariable String id, @RequestBody Map<String, String> body) {
+    public ResultJson rename(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
         if (name == null || name.isBlank()) throw new BizException("名称不能为空");
         apiKeyService.rename(id, name.trim());
@@ -64,7 +64,7 @@ public class ApiKeyController {
 
     @Operation(summary = "启用/停用", description = "停用即吊销（保留记录便于审计）；body: {\"disabled\": true}")
     @PutMapping("/{id}/disabled")
-    public ResultJson setDisabled(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson setDisabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         boolean disabled = Boolean.TRUE.equals(body.get("disabled"));
         apiKeyService.setDisabled(id, disabled);
         return ResultJson.ok(Map.of("id", id, "disabled", disabled));
@@ -73,7 +73,7 @@ public class ApiKeyController {
     @Operation(summary = "授权 MCP 入口", description = "body: {\"mcpEnabled\": true}——允许该 Key 访问平台级 MCP 入口 /ai/mcp"
             + "（元工具集：知识检索 / 问答 / 列知识库 / 列智能体）。默认不授权；停用该 Key 时入口一并不可用")
     @PutMapping("/{id}/mcp")
-    public ResultJson setMcpEnabled(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson setMcpEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         boolean enabled = Boolean.TRUE.equals(body.get("mcpEnabled"));
         apiKeyService.setMcpEnabled(id, enabled);
         return ResultJson.ok(Map.of("id", id, "mcpEnabled", enabled));
@@ -81,7 +81,7 @@ public class ApiKeyController {
 
     @Operation(summary = "删除 Key", description = "物理删除记录（不再需要时清理；日常吊销建议用停用）")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         apiKeyService.delete(id);
         return ResultJson.ok(Map.of("id", id));
     }
@@ -89,7 +89,7 @@ public class ApiKeyController {
     @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局）；"
             + "非空须为 version 2 JSON，且管理范围不得宽于读取范围")
     @PutMapping("/{id}/share")
-    public ResultJson updateShare(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson updateShare(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         Object v = body == null ? null : body.get("shareConfig");
         apiKeyService.updateShareConfig(id, v == null ? null : String.valueOf(v));
         return ResultJson.ok("共享范围已保存");

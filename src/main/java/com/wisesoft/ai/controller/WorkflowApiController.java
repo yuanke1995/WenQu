@@ -43,7 +43,7 @@ public class WorkflowApiController {
             + "status / outputs（结束节点出参）/ nodeTraces（节点级输入输出与耗时）/ durationMs。"
             + "失败不抛 500——返回 status=failed 的 run，error 与 trace 可定位失败节点。")
     @PostMapping("/{id}/run")
-    public ResultJson run(@PathVariable String id, @RequestBody(required = false) Map<String, Object> body,
+    public ResultJson run(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body,
                           HttpServletRequest request) {
         @SuppressWarnings("unchecked")
         Map<String, Object> inputs = body == null || !(body.get("inputs") instanceof Map) ? Map.of()
@@ -57,7 +57,7 @@ public class WorkflowApiController {
     @Operation(summary = "查询运行结果", description = "按 runId 查本次运行的状态与结果（触发方与归属一致的才可见）；"
             + "用于外部系统异步核对（同步触发已直接返回，此接口供补查/回溯）")
     @GetMapping("/{id}/run/{runId}")
-    public ResultJson runDetail(@PathVariable String id, @PathVariable String runId) {
+    public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId) {
         return ResultJson.ok(workflowService.getRun(id, runId));
     }
 }

@@ -127,7 +127,7 @@ public class SkillController {
 
     @Operation(summary = "启用/停用技能", description = "body: {\"disabled\": true}；停用后不注入清单、readSkill 也会拒绝")
     @PutMapping("/{name}/disabled")
-    public ResultJson setDisabled(@PathVariable String name, @RequestBody Map<String, Object> body) {
+    public ResultJson setDisabled(@PathVariable("name") String name, @RequestBody Map<String, Object> body) {
         boolean disabled = Boolean.TRUE.equals(body.get("disabled"));
         skillService.setDisabled(RequestUser.uid(), name, disabled);
         return ResultJson.ok(Map.of("dirName", name, "disabled", disabled));
@@ -135,7 +135,7 @@ public class SkillController {
 
     @Operation(summary = "删除技能", description = "仅本人技能可删；内置技能不可删（可停用）")
     @DeleteMapping("/{name}")
-    public ResultJson delete(@PathVariable String name) {
+    public ResultJson delete(@PathVariable("name") String name) {
         skillService.delete(RequestUser.uid(), name);
         return ResultJson.ok(Map.of("dirName", name));
     }

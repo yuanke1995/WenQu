@@ -43,7 +43,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "任务详情")
     @GetMapping("/{id}")
-    public ResultJson detail(@PathVariable String id) {
+    public ResultJson detail(@PathVariable("id") String id) {
         try {
             return ResultJson.ok(scheduledJobService.detail(RequestUser.uid(), id));
         } catch (BizException e) {
@@ -63,7 +63,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "修改定时任务", description = "改 cron / 时区 / 启停后会自动重算下次执行时刻")
     @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         try {
             return ResultJson.ok(scheduledJobService.update(RequestUser.uid(), id, body), "已保存");
         } catch (BizException e) {
@@ -73,7 +73,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "删除定时任务", description = "软删；已产生的执行记录与结果会话保留")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         try {
             scheduledJobService.delete(RequestUser.uid(), id);
             return ResultJson.ok(null, "已删除");
@@ -84,7 +84,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "启用/停用", description = "body: {enabled: true|false}；启用时从当前时刻往后重算下次执行")
     @PutMapping("/{id}/enabled")
-    public ResultJson toggle(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson toggle(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         try {
             boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.get("enabled")));
             return ResultJson.ok(scheduledJobService.toggle(RequestUser.uid(), id, enabled),
@@ -96,7 +96,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "立即执行一次", description = "异步执行（不等结果）；状态与回答看执行历史与该任务的结果会话")
     @PostMapping("/{id}/run")
-    public ResultJson runNow(@PathVariable String id) {
+    public ResultJson runNow(@PathVariable("id") String id) {
         try {
             scheduledJobService.runNow(RequestUser.uid(), id);
             return ResultJson.ok(null, "已触发执行，稍后可在执行历史里查看结果");
@@ -107,8 +107,8 @@ public class ScheduledJobController {
 
     @Operation(summary = "执行历史", description = "最近 N 次执行的触发方式/状态/回答摘录（正文在结果会话里）")
     @GetMapping("/{id}/runs")
-    public ResultJson runs(@PathVariable String id,
-                           @RequestParam(required = false, defaultValue = "20") int limit) {
+    public ResultJson runs(@PathVariable("id") String id,
+                           @RequestParam(value = "limit", required = false, defaultValue = "20") int limit) {
         try {
             return ResultJson.ok(scheduledJobService.runs(RequestUser.uid(), id, limit));
         } catch (BizException e) {

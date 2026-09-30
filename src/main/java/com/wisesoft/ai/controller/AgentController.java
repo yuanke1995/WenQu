@@ -98,14 +98,14 @@ public class AgentController {
 
     @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段；工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         return ResultJson.ok(agentService.update(id, body));
     }
 
     @Operation(summary = "删除智能体", description = "物理删除；仅创建者/被授权人/管理员可删")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentService.delete(id);
         return ResultJson.ok(Map.of("id", id));
@@ -113,7 +113,7 @@ public class AgentController {
 
     @Operation(summary = "设为默认", description = "设为默认智能体（其余清零）；仅影响前端下拉预选，不自动强制应用。全局动作，仅管理员")
     @PostMapping("/{id}/default")
-    public ResultJson setDefault(@PathVariable String id) {
+    public ResultJson setDefault(@PathVariable("id") String id) {
         agentService.setDefault(id);
         return ResultJson.ok(Map.of("id", id, "isDefault", 1));
     }
@@ -121,7 +121,7 @@ public class AgentController {
     @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局共享）；"
             + "非空须为 version 2 JSON，且管理范围不得宽于读取范围。共享范围之外的人不可见、不可用、不可管理该智能体")
     @PutMapping("/{id}/share")
-    public ResultJson updateShare(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson updateShare(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         Object v = body == null ? null : body.get("shareConfig");
         agentService.updateShareConfig(id, v == null ? null : String.valueOf(v));
@@ -130,7 +130,7 @@ public class AgentController {
 
     @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, token, modelRef}；未发布返回 enabled=false（仅可管理者可见）")
     @GetMapping("/{id}/publish")
-    public ResultJson getPublish(@PathVariable String id) {
+    public ResultJson getPublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
         if (share == null) return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false));
@@ -146,7 +146,7 @@ public class AgentController {
             + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
             + "游客能力收窄：沙盒/产物/MCP/技能执行不暴露，检索可见性与默认模型按发布者执行")
     @PostMapping("/{id}/publish")
-    public ResultJson publish(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
@@ -171,7 +171,7 @@ public class AgentController {
 
     @Operation(summary = "撤销公开分享", description = "删除分享配置（链接立即失效）；重新发布会生成新 token")
     @DeleteMapping("/{id}/publish")
-    public ResultJson revokePublish(@PathVariable String id) {
+    public ResultJson revokePublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentShareService.revoke(id);
         return ResultJson.ok("已撤销分享");

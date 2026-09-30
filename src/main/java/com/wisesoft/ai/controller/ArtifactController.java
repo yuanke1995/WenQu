@@ -44,13 +44,13 @@ public class ArtifactController {
 
     @Operation(summary = "我的产物列表", description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址")
     @GetMapping("/list")
-    public ResultJson list(@RequestParam(required = false) String keyword) {
+    public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword) {
         return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword));
     }
 
     @Operation(summary = "删除产物", description = "删除自己的产物（同时删除文件）；删他人的返回 403")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable String id) {
+    public ResultJson delete(@PathVariable("id") String id) {
         try {
             boolean ok = artifactService.softDelete(id, RequestUser.uid(), admin());
             return ok ? ResultJson.ok(null, "已删除") : ResultJson.error("产物不存在或已删除");

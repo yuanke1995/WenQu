@@ -35,42 +35,42 @@ public class TraceController {
     @Operation(summary = "执行列表", description = "kind=chat 对话 / workflow 工作流（两类各自分页）。"
             + "筛选：keyword 关键词、hasCitation 有无引用（对话）、rating 评分 1/0（对话）、days 最近 N 天（0=不限）、agentId 智能体")
     @GetMapping("/list")
-    public ResultJson list(@RequestParam(defaultValue = "chat") String kind,
-                           @RequestParam(defaultValue = "1") int page,
-                           @RequestParam(defaultValue = "20") int size,
-                           @RequestParam(required = false) String keyword,
-                           @RequestParam(required = false) Integer hasCitation,
-                           @RequestParam(required = false) Integer rating,
-                           @RequestParam(defaultValue = "0") Integer days,
-                           @RequestParam(required = false) String agentId) {
+    public ResultJson list(@RequestParam(value = "kind", defaultValue = "chat") String kind,
+                           @RequestParam(value = "page", defaultValue = "1") int page,
+                           @RequestParam(value = "size", defaultValue = "20") int size,
+                           @RequestParam(value = "keyword", required = false) String keyword,
+                           @RequestParam(value = "hasCitation", required = false) Integer hasCitation,
+                           @RequestParam(value = "rating", required = false) Integer rating,
+                           @RequestParam(value = "days", defaultValue = "0") Integer days,
+                           @RequestParam(value = "agentId", required = false) String agentId) {
         return ResultJson.ok(traceService.list(kind, page, size, keyword, hasCitation, rating, days, agentId));
     }
 
     @Operation(summary = "对话型详情", description = "日志 + 回答消息全过程（sources/toolCalls/tokens/timeline）+ 反馈 + 采样状态；"
             + "存量行（无 message_id 关联）为摘要视图")
     @GetMapping("/chat/{id}")
-    public ResultJson chatDetail(@PathVariable String id) {
+    public ResultJson chatDetail(@PathVariable("id") String id) {
         return ResultJson.ok(traceService.chatDetail(id));
     }
 
     @Operation(summary = "工作流型详情", description = "run 全量（含节点级 node_traces）+ 工作流名")
     @GetMapping("/workflow/{runId}")
-    public ResultJson workflowDetail(@PathVariable String runId) {
+    public ResultJson workflowDetail(@PathVariable("runId") String runId) {
         return ResultJson.ok(traceService.workflowDetail(runId));
     }
 
     @Operation(summary = "采样池列表", description = "status=pending/labeled/dismissed/all")
     @GetMapping("/pool")
-    public ResultJson pool(@RequestParam(defaultValue = "pending") String status,
-                           @RequestParam(defaultValue = "1") int page,
-                           @RequestParam(defaultValue = "20") int size) {
+    public ResultJson pool(@RequestParam(value = "status", defaultValue = "pending") String status,
+                           @RequestParam(value = "page", defaultValue = "1") int page,
+                           @RequestParam(value = "size", defaultValue = "20") int size) {
         return ResultJson.ok(traceService.pool(status, page, size));
     }
 
     @Operation(summary = "标注并回流评测集", description = "body: {knowledgeIds:[知识块ID...], note?}——期望命中的知识块至少 1 个，"
             + "回流走评测集 addCase（版本化机制不变），成功才置 labeled")
     @PostMapping("/pool/{id}/label")
-    public ResultJson label(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson label(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
         List<String> knowledgeIds = body.get("knowledgeIds") instanceof List ? (List<String>) body.get("knowledgeIds") : List.of();
         Object note = body.get("note");
@@ -79,7 +79,7 @@ public class TraceController {
 
     @Operation(summary = "忽略样本", description = "不回流，置 dismissed")
     @PostMapping("/pool/{id}/dismiss")
-    public ResultJson dismiss(@PathVariable String id) {
+    public ResultJson dismiss(@PathVariable("id") String id) {
         return ResultJson.ok(traceService.dismiss(id));
     }
 

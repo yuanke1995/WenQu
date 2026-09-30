@@ -43,8 +43,8 @@ public class ApiEndpointController {
 
     @Operation(summary = "接口列表", description = "module 传模块名过滤（all=全部）；keyword 模糊匹配路径/名称")
     @GetMapping("/list")
-    public ResultJson list(@RequestParam(required = false) String module,
-                           @RequestParam(required = false) String keyword) {
+    public ResultJson list(@RequestParam(value = "module", required = false) String module,
+                           @RequestParam(value = "keyword", required = false) String keyword) {
         return ResultJson.ok(apiEndpointService.list(module, keyword));
     }
 
@@ -57,7 +57,7 @@ public class ApiEndpointController {
 
     @Operation(summary = "编辑接口", description = "扫描登记的仅可改名称/模块；手工的可全改")
     @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         apiEndpointService.update(id, str(body, "method"), str(body, "path"),
                 str(body, "name"), str(body, "module"));
         return ResultJson.ok("已保存");
@@ -65,7 +65,7 @@ public class ApiEndpointController {
 
     @Operation(summary = "删除接口", description = "级联清理角色绑定；代码中仍存在的端点重启后会重新登记")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@Parameter(description = "接口 ID") @PathVariable String id) {
+    public ResultJson delete(@Parameter(description = "接口 ID") @PathVariable("id") String id) {
         apiEndpointService.delete(id);
         return ResultJson.ok("已删除");
     }

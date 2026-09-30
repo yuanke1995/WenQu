@@ -78,7 +78,7 @@ public class RoleController {
 
     @Operation(summary = "编辑角色", description = "内置角色仅可改名称/描述（管理员级与状态锁定）；自定义可全改")
     @PutMapping("/{code}")
-    public ResultJson update(@PathVariable String code, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
         roleService.update(code, str(body, "name"), str(body, "description"),
                 intOrNull(body, "adminFlag"), intOrNull(body, "status"));
         return ResultJson.ok("已保存");
@@ -86,14 +86,14 @@ public class RoleController {
 
     @Operation(summary = "删除角色", description = "内置角色与在用角色不可删；级联清菜单/接口绑定")
     @DeleteMapping("/{code}")
-    public ResultJson delete(@Parameter(description = "角色编码") @PathVariable String code) {
+    public ResultJson delete(@Parameter(description = "角色编码") @PathVariable("code") String code) {
         roleService.delete(code);
         return ResultJson.ok("已删除");
     }
 
     @Operation(summary = "角色的菜单绑定", description = "返回该角色绑定的菜单 id 列表")
     @GetMapping("/{code}/menus")
-    public ResultJson menus(@PathVariable String code) {
+    public ResultJson menus(@PathVariable("code") String code) {
         Role r = roleService.get(code);
         if (r == null) return ResultJson.error("角色不存在");
         return ResultJson.ok(roleService.menuIdsOf(code));
@@ -101,14 +101,14 @@ public class RoleController {
 
     @Operation(summary = "保存角色的菜单绑定", description = "body: {menuIds:[...]} 全量替换；管理员级角色无需绑定（天然全量）")
     @PutMapping("/{code}/menus")
-    public ResultJson saveMenus(@PathVariable String code, @RequestBody Map<String, Object> body) {
+    public ResultJson saveMenus(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
         roleService.saveMenus(code, idList(body, "menuIds"));
         return ResultJson.ok("菜单权限已保存");
     }
 
     @Operation(summary = "角色的接口绑定", description = "返回该角色绑定的接口 id 列表")
     @GetMapping("/{code}/apis")
-    public ResultJson apis(@PathVariable String code) {
+    public ResultJson apis(@PathVariable("code") String code) {
         Role r = roleService.get(code);
         if (r == null) return ResultJson.error("角色不存在");
         return ResultJson.ok(roleApiIds(code));
@@ -120,7 +120,7 @@ public class RoleController {
 
     @Operation(summary = "保存角色的接口绑定", description = "body: {apiIds:[...]} 全量替换；管理员级角色无需绑定（天然放行）")
     @PutMapping("/{code}/apis")
-    public ResultJson saveApis(@PathVariable String code, @RequestBody Map<String, Object> body) {
+    public ResultJson saveApis(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
         roleService.saveApis(code, idList(body, "apiIds"));
         return ResultJson.ok("接口权限已保存");
     }

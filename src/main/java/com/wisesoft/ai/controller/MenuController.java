@@ -67,7 +67,7 @@ public class MenuController {
 
     @Operation(summary = "编辑菜单", description = "仅更新 body 中出现的字段；父级变更做环检测")
     @PutMapping("/{id}")
-    public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         menuService.update(id, str(body, "parentId"), str(body, "name"), str(body, "icon"),
                 str(body, "path"), intOrNull(body, "sortOrder"), intOrNull(body, "visible"));
         return ResultJson.ok("已保存");
@@ -75,7 +75,7 @@ public class MenuController {
 
     @Operation(summary = "删除菜单", description = "内置菜单与含子菜单的不可删；级联清理角色绑定")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@Parameter(description = "菜单 ID") @PathVariable String id) {
+    public ResultJson delete(@Parameter(description = "菜单 ID") @PathVariable("id") String id) {
         menuService.delete(id);
         return ResultJson.ok("已删除");
     }

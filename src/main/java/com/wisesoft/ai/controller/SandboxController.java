@@ -50,7 +50,7 @@ public class SandboxController {
 
     @Operation(summary = "沙盒状态", description = "当前会话沙盒是否在运行（只探测不创建）+ 用户数据虚拟根路径")
     @GetMapping("/state")
-    public ResultJson state(@RequestParam String sessionId) {
+    public ResultJson state(@RequestParam("sessionId") String sessionId) {
         if (!enabled()) {
             return ResultJson.error("沙盒未开启");
         }
@@ -63,7 +63,7 @@ public class SandboxController {
 
     @Operation(summary = "列目录", description = "列出沙盒内某目录条目（path/isDir/size）；path 缺省为用户数据根")
     @GetMapping("/tree")
-    public ResultJson tree(@RequestParam String sessionId, @RequestParam(required = false) String path) {
+    public ResultJson tree(@RequestParam("sessionId") String sessionId, @RequestParam(value = "path", required = false) String path) {
         if (!enabled()) {
             return ResultJson.error("沙盒未开启");
         }
@@ -102,7 +102,7 @@ public class SandboxController {
 
     @Operation(summary = "下载文件", description = "下载沙盒内指定文件（字节流；目录/不存在返回错误）")
     @GetMapping("/download")
-    public Object download(@RequestParam String sessionId, @RequestParam String path,
+    public Object download(@RequestParam("sessionId") String sessionId, @RequestParam("path") String path,
                            jakarta.servlet.http.HttpServletResponse response) {
         if (!enabled()) {
             return ResultJson.error("沙盒未开启");
