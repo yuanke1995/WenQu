@@ -100,9 +100,12 @@
               <div class="wf-form-item"><label>模型</label>
                 <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
               </div>
-              <div class="wf-form-item"><label>Prompt（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+              <div class="wf-form-item"><label>Prompt（支持 <code v-pre>{{nodeId.key}}</code> 引用，可直接选）</label>
                 <a-textarea v-model:value="editConfig.prompt" :rows="7"
                             :placeholder="'如：基于以下资料回答问题：{{retrieval.text}}\n\n问题：{{start.question}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('prompt', v, '\n')" />
               </div>
               <div class="wf-form-item"><label>温度（留空跟随全局）</label>
                 <a-input-number v-model:value="editConfig.temperature" :min="0" :max="2" :step="0.1" style="width: 140px" />
@@ -112,8 +115,11 @@
 
             <!-- retrieval -->
             <template v-else-if="selected.data.nodeType === 'retrieval'">
-              <div class="wf-form-item"><label>检索词（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+              <div class="wf-form-item"><label>检索词（支持 <code v-pre>{{nodeId.key}}</code> 引用，可直接选）</label>
                 <a-input v-model:value="editConfig.query" :placeholder="'如：{{start.question}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('query', v, ' ')" />
               </div>
               <div class="wf-form-item"><label>知识库范围（不选 = 全部）</label>
                 <a-select v-model:value="editConfig.kbIds" mode="multiple" style="width: 100%" allow-clear
@@ -153,6 +159,9 @@
               </div>
               <div class="wf-form-item"><label>URL（仅公网 http/https，重定向逐跳校验）</label>
                 <a-input v-model:value="editConfig.url" :placeholder="'https://api.example.com/data?q={{start.question}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('url', v, '')" />
               </div>
               <div class="wf-form-item"><label>请求头</label></div>
               <div v-for="(h, i) in editConfig.headers" :key="i" class="wf-rows">
@@ -163,6 +172,9 @@
               <button class="app-btn ghost small" @click="editConfig.headers.push({ key: '', value: '' })">+ 添加请求头</button>
               <div v-if="editConfig.method !== 'GET'" class="wf-form-item" style="margin-top:8px"><label>请求体（支持引用）</label>
                 <a-textarea v-model:value="editConfig.body" :rows="4" placeholder="原始请求体，如 JSON" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('body', v, '\n')" />
               </div>
               <div class="wf-form-item"><label>超时（ms，1s~60s）</label>
                 <a-input-number v-model:value="editConfig.timeoutMs" :min="1000" :max="60000" :step="1000" style="width: 140px" />
@@ -194,9 +206,12 @@
                 <a-select v-model:value="editConfig.agentId" style="width: 100%" show-search option-filter-prop="label"
                           placeholder="选择要委派的智能体" :options="agentOptions" />
               </div>
-              <div class="wf-form-item"><label>指令（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+              <div class="wf-form-item"><label>指令（支持 <code v-pre>{{nodeId.key}}</code> 引用，可直接选）</label>
                 <a-textarea v-model:value="editConfig.prompt" :rows="6"
                             :placeholder="'如：请基于你的知识库回答：{{start.question}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('prompt', v, '\n')" />
               </div>
               <div class="wf-form-item"><label>模型（留空走发起人个人默认）</label>
                 <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
@@ -209,6 +224,9 @@
               <div class="wf-form-item"><label>审批提示（给人看的内容，支持引用）</label>
                 <a-textarea v-model:value="editConfig.prompt" :rows="5"
                             :placeholder="'如：以下回答即将交付，请确认：\n{{llm.answer}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('prompt', v, '\n')" />
               </div>
               <div class="wf-form-item"><label>超时（秒，超时按拒绝终止本轮运行）</label>
                 <a-input-number v-model:value="editConfig.timeoutSeconds" :min="30" :max="86400" style="width: 160px" />
@@ -245,6 +263,9 @@
               <div class="wf-form-item"><label>模板（聚合多路上游输出拼 prompt）</label>
                 <a-textarea v-model:value="editConfig.template" :rows="8"
                             :placeholder="'视角一要点：{{subagent_1.answer}}\n\n视角二要点：{{subagent_2.answer}}\n\n请综合以上视角回答：{{start.question}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('template', v, '\n')" />
               </div>
               <div class="wf-hint">输出键：<code>text</code>（渲染后的文本）。</div>
             </template>
@@ -470,6 +491,71 @@ const pendingNodeLabel = computed(() => {
   const node = c && findNode(c.source)
   return node ? node.data.label : ''
 })
+
+// ---------- M4+：变量引用选择器（上游节点 id + 输出键，选了就插进输入框，不用手打 {{}}） ----------
+/** 各类型节点的输出键（与引擎各节点体实际写入 state 的键一一对应；start 动态取入参声明） */
+const OUTPUT_KEYS = {
+  llm: ['answer'],
+  retrieval: ['chunks', 'text', 'count'],
+  condition: ['route'],
+  http: ['status', 'body', 'contentType'],
+  code: ['output', 'exitCode'],
+  subagent: ['answer'],
+  approval: ['route'],
+  loop: ['route', 'loopCount'],
+  template: ['text']
+}
+
+/** 某节点的全部上游祖先（沿入边反向 BFS；loop 回跳成环由 seen 去重兜住）。
+ *  引擎按 state 取值——凡在本节点之前执行过的节点输出都引用得到，不限于直接上一跳。 */
+function upstreamOf(id) {
+  const parents = new Map()
+  for (const e of edges.value) {
+    if (!e.target || !e.source) continue
+    if (!parents.has(e.target)) parents.set(e.target, new Set())
+    parents.get(e.target).add(e.source)
+  }
+  const seen = new Set()
+  const stack = [...(parents.get(id) || [])]
+  while (stack.length) {
+    const cur = stack.pop()
+    if (seen.has(cur)) continue
+    seen.add(cur)
+    for (const p of parents.get(cur) || []) if (!seen.has(p)) stack.push(p)
+  }
+  return [...seen]
+}
+
+/** 引用选择器的分组选项：按上游节点分组，叶子 = {{nodeId.key}} */
+const refGroups = computed(() => {
+  if (!selectedId.value) return []
+  const groups = []
+  for (const nid of upstreamOf(selectedId.value)) {
+    const node = findNode(nid)
+    if (!node) continue
+    const t = node.data.nodeType
+    let keys = []
+    if (t === 'start') {
+      keys = (((node.data.config || {}).inputs) || []).map(i => i && i.key).filter(Boolean)
+    } else {
+      keys = OUTPUT_KEYS[t] || []
+    }
+    if (!keys.length) continue
+    groups.push({
+      label: `${TYPE_META[t]?.label || t} · ${nid}`,
+      options: keys.map(k => ({ value: `{{${nid}.${k}}}`, label: k }))
+    })
+  }
+  return groups
+})
+
+/** 把选中的引用追加到指定字段（已有内容则换行后续写；检索词这类短字段直接空格续写） */
+function insertRef(field, refText, sep = ' ') {
+  if (!refText) return
+  const cur = editConfig.value[field] || ''
+  editConfig.value[field] = cur.trimEnd() ? cur.trimEnd() + sep + refText : refText
+  dirty.value = true
+}
 
 // ---------- DSL ↔ 画布 ----------
 const BLANK_CONFIGS = {
@@ -1222,6 +1308,8 @@ load()
 .wf-branch { border: 1px dashed var(--app-border); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .wf-branch-radio { padding: 2px 0; }
 .wf-hint { font-size: 12px; color: var(--app-text3); line-height: 1.7; }
+/* 变量引用选择器：贴在输入框下方，窄条不抢输入框的视觉主位 */
+.wf-ref-pick { margin-top: 6px; width: 100%; }
 .wf-hint code { background: var(--app-panel); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
 .wf-drawer-actions { margin-top: 16px; }
 .wf-req { color: #ff4d4f; margin-left: 2px; }
