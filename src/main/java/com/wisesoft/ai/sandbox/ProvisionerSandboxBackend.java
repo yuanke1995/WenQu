@@ -873,6 +873,33 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         return new WriteResult(null, normalized);
     }
 
+    /**
+     * 引擎内部文件放置（覆盖语义，不受 user-data 可写根限制）——供 WorkflowEngine code 节点放置
+     * 执行脚本与上游数据注入文件（容器本地 /tmp）。
+     *
+     * <p>与 {@link #write(String, String)} 的两处差异都是<b>刻意的</b>：
+     * <ul>
+     *   <li><b>可写根守卫不适用</b>：write() 的 user-data 守卫是用户工具面（write_file）的产品语义
+     *       ——「用户文件进 user-data 工作区」；而沙盒 execute 本就持完整 shell 权限，对引擎内部
+     *       /tmp 放置套这个守卫不会更安全，只会把失败伪装成执行期的 {@code can't open file}（exit=2，
+     *       2026-09-30 实测踩坑：provisioner 日志零 file/write 请求、runtime 实测接受 /tmp 写入）。</li>
+     *   <li><b>覆盖而非创建</b>：/tmp/wf_inputs.json 是固定契约路径，容器按 scope 跨运行复用，
+     *       create-only 会让后续运行写入失败或读到上一个 run 的陈旧注入。</li>
+     * </ul>
+     * 失败直接抛异常（fail-loud）：引擎写入是执行的前置条件，静默失败会把错误推迟到执行期，
+     * 排查成本远高于在写入点报错。
+     */
+    public void putFile(String file, String content) {
+        String normalized = normalizePath(file);
+        ensureParentDirectory(normalized);
+        SandboxRuntimeClient client = getClient();
+        SandboxRuntimeClient.SandboxWriteResult result = client.writeFile(normalized, content);
+        if (!result.success()) {
+            throw new RuntimeException("putFile failed for '" + file + "': "
+                    + (result.message() == null ? "unknown error" : result.message()));
+        }
+    }
+
     public EditResult edit(String file_path, String oldString, String newString, boolean replaceAll) {
         String normalized;
         try {

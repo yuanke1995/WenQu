@@ -806,8 +806,11 @@ public class WorkflowEngine {
             }
             ProvisionerSandboxBackend.ExecuteResponse resp = withReplay(ctx, () -> {
                 ProvisionerSandboxBackend backend = sandboxService.backend("workflow", ctx.uid);
-                backend.write(file, code);
-                backend.write(CODE_INPUTS_PATH, inputsJson);
+                // putFile（覆盖语义、不受 user-data 可写根限制、失败抛异常）而非 write()：
+                // write() 会把 /tmp 拒在客户端（可写根守卫）且 create-only，错误返回值若被忽略
+                // 就变成执行期 python can't open file（exit=2，2026-09-30 实测踩坑）
+                backend.putFile(file, code);
+                backend.putFile(CODE_INPUTS_PATH, inputsJson);
                 return backend.execute(cmd, timeoutSeconds);
             });
             String output = resp.output() == null ? "" : resp.output();
