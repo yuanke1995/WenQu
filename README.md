@@ -4,7 +4,7 @@
 >
 > 中文名：**问渠** ｜ 英文名：**WenQu** ｜ 英文 slogan：*Ask the source.*
 
-独立 AI 服务，基于 Spring AI 实现的 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 双向（接入外部 Server + 把智能体对外发布为 MCP Server）、**沙盒隔离执行环境（容器内跑 shell / 读写文件，实时输出流式回传）**、定时执行智能体、产物交付，配合知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、网页 URL 导入可定时自动刷新、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、**用户长期记忆（问答后自动提炼、跨会话注入）**、过程独白与消息时间线、检索量化评估与数据看板，是面向"智能体 + 知识"场景的完整工作台。
+独立 AI 服务，基于 Spring AI 实现的 **AI 智能体工作台**：以智能体为核心组织模型、知识与工具——多智能体并行编排（StateGraph）、技能包（Skills）、MCP 双向（接入外部 Server + 把智能体对外发布为 MCP Server）、**沙盒隔离执行环境（容器内跑 shell / 读写文件，实时输出流式回传）**、定时执行智能体、产物交付、可视化工作流（DSL 唯一真源 + StateGraph 执行引擎与调试 trace，画布编辑器开发中），配合知识库（RAG：Word/PDF/Excel/TXT/Markdown 解析含扫描件 OCR、网页 URL 导入可定时自动刷新、混合检索 + 查询改写、知识块关联检索、语义缓存加速、回答中位置级展示文档原图、引用溯源）、深度思考、**用户长期记忆（问答后自动提炼、跨会话注入）**、过程独白与消息时间线、检索量化评估与数据看板，是面向"智能体 + 知识"场景的完整工作台。
 
 ## 技术栈
 
@@ -31,14 +31,15 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 ├── src/main/java/.../ai/
 │   ├── WenQuApplication.java        # 入口
 │   ├── config/                      # SecurityConfig(Token+RBAC) / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler 等
-│   ├── controller/                  # 27 个控制器、190+ 端点（完整契约以 Swagger 为准）：
+│   ├── controller/                  # 28 个控制器、190+ 端点（完整契约以 Swagger 为准）：
 │   │                                #   Auth(登录+OIDC) / Chat(SSE+会话+消息组+引用溯源+工具确认) / Document / Knowledge(知识块) / KnowledgeBase(知识库) / Qa(反馈+看板) / Config(设置 schema)
 │   │                                #   Provider(模型供应商) / Agent(智能体) / Skill(技能) / Mcp / ScheduledJob(定时任务) / Artifact(产物) / ApiKey / ApiEndpoint(对外问答)
-│   │                                #   Memory(用户长期记忆) / User / Role / Menu / Department(成员与 RBAC) / SearchIndex / DescCache / RetrievalDebug / Evaluation / Sandbox(沙盒工作区浏览)
+│   │                                #   Memory(用户长期记忆) / User / Role / Menu / Department(成员与 RBAC) / SearchIndex / DescCache / RetrievalDebug / Evaluation / Sandbox(沙盒工作区浏览) / Workflow(工作流)
 │   ├── service/                     # 问答主链路：RagService(问答编排+工具注册) / HybridRetrievalService(混合检索+扩散汇总) / RerankService / KnowledgeRefService(引用识别+1-hop 扩散)
 │   │                                #   KeywordIndexService(mysql|meilisearch 双引擎) / KeywordExtractor(jieba) / VisionService / ImageFilterService / ImageDescCache / UserImageService
 │   │                                #   DocumentService(解析+向量化+全量重嵌入编排) / SessionService / QaLogService / ConfigService(config-schema 唯一定义源) / RateLimitService / AnswerCacheService / RetrievalEvaluationService
 │   │                                #   智能体与工具：SubAgentOrchestrator(StateGraph 并行编排) / ArtifactService(产物交付) / BuiltinTools / KnowledgeRetrievalTool / PresentArtifactTool / SkillTools
+│   │                                #   工作流：WorkflowDsl(DSL 唯一真源) / WorkflowValidator(结构校验) / WorkflowEngine(DSL→StateGraph 翻译层+执行) / WorkflowExpr(条件表达式) / WorkflowRunCtx(显式上下文+trace) / WorkflowService(CRUD+运行+记录)
 │   │                                #   SandboxService(沙盒装配：scope 挂会话+空闲回收) / SandboxTools(沙盒六工具，含 deliver_artifact 产物交付) / AgentService / SkillService / McpClientService / ApiKeyService
 │   │                                #   基础设施：DynamicOpenAiChatModel / DynamicEmbeddingModel(配置指纹热切换) / ModelRegistryService(供应商判权) / OidcService(单点登录) / ImageUrlSigner(HMAC)
 │   │                                #   ConfigCryptoService(RSA) / ScheduleCenter(定时任务+沙盒回收调度) / ThreadPoolManager(线程池)
@@ -196,6 +197,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；**智能体会话级绑定**（对齐 Coze/Dify/Claude Projects 主流做法）：会话**首问时锁定**（`c_ai_session.agent_id`，`bindAgent` 以 `isNull(agent_id)` 只写一次），全程同一人设/知识库/工具集——已锁定会话忽略请求里的 agentId，**切换智能体 = 新建会话**；列值语义 `NULL`=未绑定、空串=已决定不绑定（走全局配置），显式不用智能体不会被反复重路由；「自动派遣」= **首问路由一次并锁定**（`agent_dispatched` 事件 + 就地下发 `agent_bound` 锁定结果），不再每轮静默换人；绑定智能体不可访问（被删/权限变更）时 fail-loud 降级提示（`agentUnavailable`/`agentMissing`），不静默回落全局配置；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）；**按需委派路由**（`agent.autoRoute`）：主模型先从候选中挑出与问题相关的子智能体，路由结果与**挑选理由**随 SSE 下发并随消息持久化；可开**委派收窄检索范围**（`agent.dispatchNarrowScope`，默认关）：路由挑出子集后主检索收窄到「主智能体库∪被选中助手库」；**结果聚合策略可配**（`agent.aggregateMode`）：`concat` 按分支直拼 / `rerank` 命中按重排分降序合并（高分块优先进上下文预算）/ `supervisor` 监督者二次聚合（LLM 去重合并、按价值排序、结论矛盾显式标注「⚠ 冲突」，失败回退直拼）；要点段字符预算（`agent.digestMaxChars`）防多分支要点挤占上下文；失败分支显式占位（`agent.aggregateMarkFailed`）让模型可声明"该方面资料不足"；智能体页提供**委派编排视图**（主→子 SVG 拓扑图：悬停高亮委派链路、悬空引用与孤儿子智能体警示、点击节点进配置）；对话编排卡片实时展示各分支状态、任务描述、要点、耗时占比条与路由理由
 - **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 6 个工具——`execute`（shell 命令，**输出实时流式回传**：SSE `tool_output` 逐行增量，长命令不用等跑完才见结果）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls` / `deliver_artifact`（沙盒文件交付为「我的产物」，扩展名白名单放宽到 py/png/xlsx/zip 等，单个 ≤1MB，路径限定用户数据根）；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）；**沙盒运行时依赖必须烧进镜像**（容器内 gem 用户无 sudo，装不了 JDK/Node 等——用 `sandbox-image/Dockerfile` 派生镜像 + `SANDBOX_IMAGE` 指定）；**右栏「沙盒」卡**可浏览/下载会话沙盒工作区文件（`/sandbox/state|tree|download` 只读端点，只 discover 不创建容器）；**工具瞬时故障自动重试**（失败 500ms 重试一次，`tool_status.attempts` 透出尝试次数）
 - **定时执行智能体**（`/agents` → 定时任务 Tab）：智能体按 cron（6 段）或固定间隔自动执行，执行历史与结果会话留痕；调度中心先推进 `next_run_at` 再执行（单实例防重复）、同任务串行（未完成记 `skipped`）
+- **可视化工作流**（画布编辑器开发中，当前为引擎后端）：DSL（JSON）是**唯一真源**——节点/边/变量引用/画布坐标全在其中，画布只是编辑器、引擎只认 DSL；`StateGraph` 执行底座复用（与多智能体编排同源）；结构校验器 fail-loud（11 类节点注册表、成环/悬空/分支键对账/变量引用检查）；**五类核心节点**已可执行：开始 / 结束 / LLM（模型引用过判权，`modelRef` 留空走个人默认）/ 知识库检索（kbIds 库界）/ 条件分支（SpEL 安全求值，禁 `T()`/构造器，`else` 兜底）；变量引用 `{{nodeId.key}}` 统一寻址；`POST /{id}/run` 同步调试运行，**每次运行锁定当时 DSL 快照**（改画布不影响历史回放）+ 节点级 trace（status/输入输出摘要/耗时/token）落库；运行期最大步数闸（`workflow.maxSteps`）；归属 M0~M3 仅创建者可见（M4 接发布语义/智能体绑定/API 触发/画布编辑器）
 - **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（命中块注册进引用流）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（渐进披露读 `SKILL.md`）；开关集中在 `tool.*`，**总开关与子开关默认均为 false**
 - **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力（内置目录 + 用户目录），支持新建 / 从 URL 安装（远程域白名单 `skill.remoteAllowedHosts`）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；**按用户隔离**（个人资产），沙盒内以只读投影暴露给容器
 - **MCP 双向**：
@@ -221,7 +223,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ## API 一览
 
-> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新）。代码共 **27 个控制器、190+ 端点**，下表为核心端点速查（完整契约以 Swagger 为准）：
+> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新）。代码共 **28 个控制器、190+ 端点**，下表为核心端点速查（完整契约以 Swagger 为准）：
 
 | 端点 | 说明 |
 |------|------|
@@ -256,6 +258,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 | `POST /ai/mcp`（`GET` 同路径；凭据走 `Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
 | `PUT /api/ai/api-key/{id}/mcp` | 授权某把 API Key 访问平台级 MCP 入口 |
 | `GET /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务：列表 / 新建 / 编辑 / 立即触发（含执行历史） |
+| `GET/POST /api/ai/workflow`、`GET/PUT/DELETE /api/ai/workflow/{id}`、`POST /api/ai/workflow/validate` | 工作流定义：CRUD / DSL 校验 + 编译 dry-run（errors 逐条 + compiled） |
+| `POST /api/ai/workflow/{id}/run`、`GET /api/ai/workflow/{id}/run/list`、`GET /api/ai/workflow/{id}/run/{runId}` | 调试运行（同步，body `{"inputs":{…}}`，失败返回 failed 不抛 500）/ 运行列表（近 50 条）/ 单次 trace 详情（节点级输入输出/耗时/token） |
 | `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表 / 删除（下载走签名 URL） |
 | `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/disabled` | 对外 API Key：列表 / 签发（明文仅一次）/ 吊销 |
 | `GET /api/ai/user/list`、`GET /api/ai/role/*`、`GET /api/ai/menu/*` | 成员 / 角色 / 菜单（RBAC 维护） |
@@ -460,6 +464,7 @@ spring:
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |
+| `workflow.*` | `maxSteps`(50) | 工作流单次运行最大图步数（StateGraph recursionLimit，超限 fail-loud） |
 | `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | MCP **服务端**：对外提供 `/ai/mcp/{token}` 端点；`allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
 | `sandbox.*` | `provisionerUrl`(127.0.0.1:8002)、`token`(敏感，RSA 入库)、`virtualPathPrefix`(/home/gem/user-data)、`commandTimeoutSeconds`(180)、`maxOutputBytes`(262144)、`keepaliveIntervalSeconds`(30)、`idleReleaseMinutes`(60)、`cleanupIntervalMs`(600000) | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
