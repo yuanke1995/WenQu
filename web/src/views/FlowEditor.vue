@@ -466,11 +466,11 @@ const { addEdges, removeEdges, updateNodeData, findNode, screenToFlowCoordinate,
 const LBB = '{{'
 const RBB = '}}'
 
-/** 连线默认样式（统一线宽与颜色；选中态在 CSS 里加粗提色） */
-const EDGE_OPTIONS = {
-  markerEnd: MarkerType.ArrowClosed,
-  style: { stroke: '#b3bac6', strokeWidth: 1.8 }
-}
+/**
+ * 连线默认样式：只给箭头，不给 style——style 会被 vue-flow 写成 path 上的<b>内联样式</b>，
+ * 内联优先级高于 CSS 类，选中/悬停的加粗提色就永远赢不了它（线宽与颜色统一走 CSS）。
+ */
+const EDGE_OPTIONS = { markerEnd: MarkerType.ArrowClosed }
 /** 小地图节点取色：与画布节点同色（未配置类型回落灰） */
 const minimapColor = n => colorOf(n?.data?.nodeType)
 
@@ -1347,11 +1347,17 @@ load()
 .wf-palette-hint { font-size: 11px; color: var(--app-text3); line-height: 1.7; margin-top: 8px; }
 
 .wf-canvas-wrap { flex: 1; min-width: 0; position: relative; background: var(--app-bg, #f5f6f8); }
-/* 连线：默认细灰、选中加粗提色；拖拽连线时高亮 */
-.wf-canvas-wrap :deep(.vue-flow__edge-path) { stroke: #b3bac6; stroke-width: 1.8; }
-.wf-canvas-wrap :deep(.vue-flow__edge.selected .vue-flow__edge-path),
-.wf-canvas-wrap :deep(.vue-flow__edge:focus .vue-flow__edge-path) { stroke: var(--app-accent); stroke-width: 2.6; }
-.wf-canvas-wrap :deep(.vue-flow__edge:hover .vue-flow__edge-path) { stroke: #8c96a8; }
+/* 连线：默认细灰；悬停加深加粗；选中（点击）用主题色明显加粗 + 光晕——
+   注意线宽/颜色必须走 CSS（内联 style 会压死选中态，见 EDGE_OPTIONS 注释） */
+.wf-canvas-wrap :deep(.vue-flow__edge-path) { stroke: #b3bac6; stroke-width: 1.8; transition: stroke .12s, stroke-width .12s; }
+.wf-canvas-wrap :deep(.vue-flow__edge:hover .vue-flow__edge-path) { stroke: #7f8a9e; stroke-width: 2.2; cursor: pointer; }
+.wf-canvas-wrap :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+  stroke: var(--app-accent); stroke-width: 2.8;
+  filter: drop-shadow(0 0 3px rgba(51, 112, 255, 0.45));
+}
+/* 分支标签：选中时标签底色跟着提色，和线一体 */
+.wf-canvas-wrap :deep(.vue-flow__edge.selected .vue-flow__edge-text) { fill: var(--app-accent); font-weight: 600; }
+.wf-canvas-wrap :deep(.vue-flow__edge.selected .vue-flow__edge-textbg) { fill: rgba(51, 112, 255, 0.08); }
 .wf-canvas-wrap :deep(.vue-flow__connection-path) { stroke: var(--app-accent); stroke-width: 2.2; }
 .wf-canvas-wrap :deep(.vue-flow__edge-text) { font-size: 11px; }
 .wf-canvas-wrap :deep(.vue-flow__edge-textbg) { fill: #fff; }
