@@ -508,7 +508,9 @@ async function renderGraphChart() {
     },
     series: [{
       type: 'graph', layout: 'force', roam: true, draggable: true, cursor: 'grab',
-      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08, layoutAnimation: false },
+      // layoutAnimation 保持开启：false 会造成拖走一个节点后其余节点命中区错位（echarts 已知问题）。
+      // 上轮"拖一下就失效"的真凶是 emphasis.focus adjacency（已移除），力模拟本身是标准拖拽行为
+      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08, layoutAnimation: true },
       data: graphNodes,
       links: graphLinks,
       label: { color: '#333', position: 'right' },
