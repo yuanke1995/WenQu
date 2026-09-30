@@ -209,7 +209,7 @@ public class ConfigService {
         // （模型引用 → 供应商网关），DynamicOpenAiChatModel 对解析不出的引用 fail-loud，无全局兜底
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
         d.put("chat.systemPrompt", properties.getSystemPrompt());
-        d.put("chat.citationCheckEnabled", "true");        // 引用语义一致性自检（生成后校验，默认开）
+        d.put("chat.citationCheckEnabled", "false");       // 引用语义一致性自检（生成后校验，默认关：每轮多一次模型调用）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
@@ -275,7 +275,6 @@ public class ConfigService {
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
-        d.put("retrieval.vectorTopK", "15");               // 向量检索召回上限（评估批量对比可覆盖）
         // 重排行为参数
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());
@@ -325,8 +324,7 @@ public class ConfigService {
         d.put("memory.dedupThreshold", "0.90");               // 自动提取/手动添加记忆的语义去重余弦阈值（≥此值视为重复，跳过）
         d.put("memory.useSemanticInject", "true");           // 注入是否按当前对话语义检索 Top-K（关闭则回退按更新时间倒序）
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
-        d.put("chunk.maxSize", "800");                 // 单块最大字符数
-        d.put("chunk.headingDepth", "4");              // 章节标题识别上限层级(1~6)
+        // 注：chunk.maxSize / chunk.headingDepth 已在上方按 properties 播种（保证 yml/env 覆盖生效），此处不得再写死覆盖
         d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
         d.put("images.quality", "0.9");                // JPEG 压缩质量
         d.put("images.authEnabled", "false");          // 图片签名鉴权开关

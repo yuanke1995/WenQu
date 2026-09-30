@@ -137,15 +137,6 @@ ai-app:
       pre-context-chars: 100
   # 视觉模型不在此配置：模型按知识库绑定（parse_params.visionRef → 「模型供应商」表），
   # 行为参数（开关/提示词/并发/超时/重试/缓存）统一在系统设置页维护（c_ai_config）
-  # 查询改写（默认关闭，开启后会对用户提问做 LLM 优化后再检索）
-  query-rewrite:
-    enabled: ${AI_QUERY_REWRITE_ENABLED:true}
-    timeout-millis: 5000
-  # 意图分类（默认关闭：纯文本消息先经 LLM 判断「闲聊/知识库无关」vs「知识库问答」，
-  # 前者跳过改写/思考/检索/引用直接对话，后者走完整 RAG；失败/超时自动降级为知识库问答）
-  intent:
-    enabled: ${AI_INTENT_CLASSIFY_ENABLED:false}
-    timeout-millis: 3000
   # 上下文与长度控制（价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)，块按相关度累积）
   context:
     # 模型窗口映射（子串匹配当前 chat.model，未匹配用 default-window-tokens）
