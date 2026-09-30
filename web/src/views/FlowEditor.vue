@@ -25,7 +25,7 @@
           <span class="wf-node-icon" :class="`icon-${t.type}`">{{ t.icon }}</span>
           <span class="wf-palette-name">{{ t.label }}</span>
         </div>
-        <div class="wf-palette-hint">拖拽或点击添加；<br/>删除：选中后 Delete；<br/>「{{ TYPE_META.condition.label }}」连线时会让你选分支。</div>
+        <div class="wf-palette-hint">拖拽或点击添加；<br/>删除：选中后 Delete；<br/>右键节点 / 连线 / 画布有快捷菜单；<br/>「{{ TYPE_META.condition.label }}」连线时会让你选分支。</div>
       </div>
 
       <!-- 画布 -->
@@ -34,7 +34,10 @@
                  :delete-key-code="['Backspace', 'Delete']"
                  :default-edge-options="{ markerEnd: MarkerType.ArrowClosed }"
                  :min-zoom="0.2" :max-zoom="2"
-                 @connect="onConnect" @node-click="onNodeClick" @pane-click="closeDrawer">
+                 @connect="onConnect" @node-click="onNodeClick" @pane-click="closeDrawer"
+                 @nodes-change="onNodesChange" @edges-change="onEdgesChange"
+                 @node-context-menu="onNodeContextMenu" @edge-context-menu="onEdgeContextMenu"
+                 @pane-context-menu="onPaneContextMenu">
           <Background :gap="16" />
           <template #node-wf="props">
             <div class="wf-node" :class="[`wf-${props.data.nodeType}`, props.data.run ? `run-${props.data.run.status}` : '']">
@@ -321,11 +324,54 @@
         </div>
       </a-spin>
     </a-modal>
+
+    <!-- 右键菜单：节点 / 连线 / 画布空白，Teleport 到 body（fixed 定位不受祖先 transform 影响） -->
+    <Teleport to="body">
+      <div v-if="ctxMenu.open" ref="ctxMenuEl" class="wf-ctx-menu"
+           :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @contextmenu.prevent>
+        <!-- 节点右键 -->
+        <template v-if="ctxMenu.kind === 'node'">
+          <div class="wf-ctx-item" @click="ctxOpenProps"><span class="wf-ctx-ico">⚙</span>打开属性</div>
+          <div class="wf-ctx-item" :class="{ disabled: ctxNodeIsStart }" @click="ctxCopyNode">
+            <span class="wf-ctx-ico">⧉</span>复制节点
+          </div>
+          <div class="wf-ctx-sep" />
+          <div class="wf-ctx-item" @click="ctxDeleteNode">
+            <span class="wf-ctx-ico">✕</span>删除节点<span class="wf-ctx-key">Del</span>
+          </div>
+        </template>
+        <!-- 连线右键 -->
+        <template v-else-if="ctxMenu.kind === 'edge'">
+          <div class="wf-ctx-item" @click="ctxDeleteEdge">
+            <span class="wf-ctx-ico">✕</span>删除连线<span class="wf-ctx-key">Del</span>
+          </div>
+        </template>
+        <!-- 画布空白右键 -->
+        <template v-else>
+          <div class="wf-ctx-item has-sub"><span class="wf-ctx-ico">✚</span>添加节点<span class="wf-ctx-arrow">▸</span>
+            <div class="wf-ctx-sub">
+              <div v-for="t in PALETTE" :key="t.type" class="wf-ctx-item"
+                   :class="{ disabled: t.type === 'start' && hasStart }" @click="ctxAddNode(t.type)">
+                <span class="wf-ctx-ico">{{ t.icon }}</span>{{ t.label }}
+              </div>
+            </div>
+          </div>
+          <div v-if="nodeClipboard" class="wf-ctx-item" @click="ctxPaste"><span class="wf-ctx-ico">⎘</span>粘贴节点</div>
+          <div class="wf-ctx-sep" />
+          <div class="wf-ctx-item" @click="ctxSelectAll"><span class="wf-ctx-ico">☐</span>全选节点</div>
+          <div class="wf-ctx-sep" />
+          <div class="wf-ctx-item" @click="ctxFitView"><span class="wf-ctx-ico">⤢</span>适应视图</div>
+          <div class="wf-ctx-item" @click="ctxZoomIn"><span class="wf-ctx-ico">⊕</span>放大</div>
+          <div class="wf-ctx-item" @click="ctxZoomOut"><span class="wf-ctx-ico">⊖</span>缩小</div>
+          <div class="wf-ctx-item" @click="ctxResetZoom"><span class="wf-ctx-ico">◎</span>重置缩放</div>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { ArrowLeftOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
 import { VueFlow, useVueFlow, MarkerType, Handle, Position } from '@vue-flow/core'
@@ -335,8 +381,8 @@ import '@vue-flow/core/dist/theme-default.css'
 import ModelSelect from '../components/ModelSelect.vue'
 import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
-  runWorkflow, listWorkflowRuns, getWorkflowRun, listKnowledgeBases,
-  listAvailableAgents, resolveWorkflowApproval
+  runWorkflow, listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
+  listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval
 } from '../api'
 
 const props = defineProps({
@@ -344,7 +390,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['back', 'saved'])
 
-const { addEdges, removeEdges, updateNodeData, findNode, screenToFlowCoordinate, fitView } = useVueFlow()
+const { addEdges, removeEdges, updateNodeData, findNode, screenToFlowCoordinate, fitView, zoomIn, zoomOut, zoomTo, addSelectedNodes } = useVueFlow()
 
 // 模板里要展示「字面量大括号」时拼这两个常量——不能写 {{ '{{' }}：模板 tokenizer 不识别引号，
 // 会在字符串内部的第一个 }} 处截断插值（实测编译报 Unterminated string constant）
@@ -517,6 +563,154 @@ function onDrop(e) {
   if (!nodeType) return
   const p = screenToFlowCoordinate({ x: e.clientX, y: e.clientY })
   addNodeAt(nodeType, { x: p.x - 60, y: p.y - 20 })
+}
+
+// ---------- 右键菜单（节点 / 连线 / 画布空白） ----------
+const ctxMenu = reactive({ open: false, x: 0, y: 0, kind: 'pane', nodeId: '', edgeId: '' })
+const ctxMenuEl = ref(null)
+const nodeClipboard = ref(null)   // 复制的节点 { nodeType, config }
+const ctxNodeIsStart = computed(() => findNode(ctxMenu.nodeId)?.data.nodeType === 'start')
+
+function openCtxMenu(kind, x, y, ids = {}) {
+  ctxMenu.open = true
+  ctxMenu.kind = kind
+  ctxMenu.nodeId = ids.nodeId || ''
+  ctxMenu.edgeId = ids.edgeId || ''
+  ctxMenu.x = x
+  ctxMenu.y = y
+  nextTick(clampCtxMenu)   // 渲染后按实际尺寸收进视口
+}
+
+function clampCtxMenu() {
+  const el = ctxMenuEl.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  // 画布菜单的「添加节点」有二级飞出（~150px），右侧多预留一份
+  const reserve = ctxMenu.kind === 'pane' ? 160 : 12
+  ctxMenu.x = Math.max(8, Math.min(ctxMenu.x, window.innerWidth - r.width - reserve - 8))
+  ctxMenu.y = Math.max(8, Math.min(ctxMenu.y, window.innerHeight - r.height - 8))
+}
+
+function closeCtxMenu() {
+  ctxMenu.open = false
+}
+
+// vue-flow 的 node/edge contextmenu 不阻断冒泡，pane 会再发一次——stopPropagation 防菜单被画布项覆盖
+function onNodeContextMenu({ event, node }) {
+  event.preventDefault()
+  event.stopPropagation()
+  openCtxMenu('node', event.clientX, event.clientY, { nodeId: node.id })
+}
+
+function onEdgeContextMenu({ event, edge }) {
+  event.preventDefault()
+  event.stopPropagation()
+  openCtxMenu('edge', event.clientX, event.clientY, { edgeId: edge.id })
+}
+
+function onPaneContextMenu(event) {
+  event.preventDefault()
+  openCtxMenu('pane', event.clientX, event.clientY)
+}
+
+// 菜单打开期间：点外部 / Esc / 窗口缩放即关
+watch(() => ctxMenu.open, open => {
+  if (open) {
+    window.addEventListener('mousedown', onGlobalMousedown, true)
+    window.addEventListener('keydown', onCtxKeydown, true)
+    window.addEventListener('resize', closeCtxMenu)
+  } else {
+    window.removeEventListener('mousedown', onGlobalMousedown, true)
+    window.removeEventListener('keydown', onCtxKeydown, true)
+    window.removeEventListener('resize', closeCtxMenu)
+  }
+})
+
+function onGlobalMousedown(e) {
+  if (ctxMenuEl.value && !ctxMenuEl.value.contains(e.target)) closeCtxMenu()
+}
+
+function onCtxKeydown(e) {
+  if (e.key === 'Escape') closeCtxMenu()
+}
+
+onBeforeUnmount(closeCtxMenu)   // 卸载时置 open=false，watcher 即刻摘掉全局监听
+
+function ctxOpenProps() {
+  const id = ctxMenu.nodeId
+  closeCtxMenu()
+  selectNode(id)
+  drawerTab.value = 'config'
+  drawer.value = true
+}
+
+function ctxCopyNode() {
+  const node = findNode(ctxMenu.nodeId)
+  if (!node) return
+  if (node.data.nodeType === 'start') { message.info('开始节点只能有一个'); return }
+  nodeClipboard.value = { nodeType: node.data.nodeType, config: JSON.parse(JSON.stringify(node.data.config || {})) }
+  pasteNode(nodeClipboard.value, node.position.x + 40, node.position.y + 40)
+  closeCtxMenu()
+}
+
+function pasteNode(src, x, y) {
+  const id = genId(src.nodeType)
+  nodes.value.push({
+    id, type: 'wf', position: { x, y },
+    data: { nodeType: src.nodeType, label: TYPE_META[src.nodeType].label, config: JSON.parse(JSON.stringify(src.config || {})), run: null }
+  })
+  dirty.value = true
+  return id
+}
+
+function ctxPaste() {
+  const src = nodeClipboard.value
+  if (!src) return
+  const p = screenToFlowCoordinate({ x: ctxMenu.x, y: ctxMenu.y })
+  pasteNode(src, p.x - 60, p.y - 20)
+  closeCtxMenu()
+}
+
+function ctxDeleteNode() {
+  const id = ctxMenu.nodeId
+  closeCtxMenu()
+  nodes.value = nodes.value.filter(n => n.id !== id)
+  edges.value = edges.value.filter(e => e.source !== id && e.target !== id)
+  if (selectedId.value === id) closeDrawer()
+  dirty.value = true
+}
+
+function ctxDeleteEdge() {
+  const id = ctxMenu.edgeId
+  closeCtxMenu()
+  edges.value = edges.value.filter(e => e.id !== id)
+  dirty.value = true
+}
+
+function ctxAddNode(nodeType) {
+  const p = screenToFlowCoordinate({ x: ctxMenu.x, y: ctxMenu.y })
+  addNodeAt(nodeType, { x: p.x - 60, y: p.y - 20 })
+  closeCtxMenu()
+}
+
+function ctxSelectAll() {
+  addSelectedNodes(nodes.value)
+  closeCtxMenu()
+}
+
+function ctxFitView() { closeCtxMenu(); fitView({ padding: 0.2, duration: 200 }) }
+function ctxZoomIn() { closeCtxMenu(); zoomIn({ duration: 200 }) }
+function ctxZoomOut() { closeCtxMenu(); zoomOut({ duration: 200 }) }
+function ctxResetZoom() { closeCtxMenu(); zoomTo(1, { duration: 200 }) }
+
+// Delete/Backspace 键删节点/连线走 vue-flow 内部删除，不经过上面的右键处理——
+// 从 change 流里认出 remove 补脏标记（否则删完仍显示「已保存」，一刷新改动全丢）
+function onNodesChange(changes) {
+  if (changes.some(c => c.type === 'remove')) dirty.value = true
+}
+
+function onEdgesChange(changes) {
+  if (changes.some(c => c.type === 'remove')) dirty.value = true
 }
 
 // ---------- 连线校验 ----------
@@ -1020,4 +1214,33 @@ load()
 .wf-history-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .wf-history-meta { font-size: 12px; color: var(--app-text3); }
 .wf-history-link { margin-left: auto; font-size: 12px; color: var(--app-accent); }
+
+/* 右键菜单（Teleport 到 body，scoped 属性随元素带出，样式照常命中） */
+.wf-ctx-menu {
+  position: fixed; z-index: 1030; min-width: 168px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.13);
+  padding: 4px; font-size: 13px; color: var(--app-text);
+  user-select: none;
+}
+.wf-ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.wf-ctx-item:hover { background: var(--app-accent-weak); color: var(--app-accent); }
+.wf-ctx-item.disabled { opacity: 0.4; cursor: not-allowed; }
+.wf-ctx-item.disabled:hover { background: transparent; color: inherit; }
+.wf-ctx-ico { width: 16px; text-align: center; font-size: 12px; flex: none; }
+.wf-ctx-key { margin-left: 14px; font-size: 11px; color: var(--app-text3); }
+.wf-ctx-arrow { margin-left: 14px; font-size: 11px; color: var(--app-text3); }
+.wf-ctx-sep { height: 1px; background: var(--app-border); margin: 4px 6px; }
+.wf-ctx-item.has-sub { position: relative; }
+.wf-ctx-sub {
+  display: none; position: absolute; left: 100%; top: -5px; min-width: 150px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.13);
+  padding: 4px; max-height: 330px; overflow-y: auto;
+}
+.wf-ctx-item.has-sub:hover .wf-ctx-sub { display: block; }
+.wf-ctx-sub .wf-ctx-item:hover { background: var(--app-accent-weak); color: var(--app-accent); }
 </style>
