@@ -79,6 +79,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 业务校验类非法参数：service 层广泛用它携带用户可读的拒绝原因（如「供应商仍被引用」），
+     * 按 400 + 原文案返回，而非落入 500 兜底
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ResultJson<Void>> handleIllegalArgument(IllegalArgumentException e) {
+        log.debug("业务校验拒绝: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ResultJson.error(400, e.getMessage()));
+    }
+
+    /**
      * 兜底：未知异常，不向客户端泄露内部信息
      */
     @ExceptionHandler(Exception.class)

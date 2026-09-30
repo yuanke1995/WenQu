@@ -270,7 +270,9 @@ const triPh = (group, key) => {
  * 影响已建库——要跟随就清空对应项后保存，空值即"不写覆盖"）。任一字段留空 = 该库该项跟随全局。
  */
 const prefillFromGlobal = async () => {
-  await loadParamDefaults()
+  // 模型索引一并加载：rerank 引用要先验可解析（停用/他人供应商不在可选列表）再预填，
+  // 否则触发器裸显原始 UUID 长串（也是此前参数网格被撑爆错位的诱因）
+  await Promise.all([loadParamDefaults(), loadModelIndex()])
   const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
   const q = form.value.q
   const p = form.value.p
@@ -297,7 +299,8 @@ const prefillFromGlobal = async () => {
   q.keywordLimit = num(flatVal('retrieval.keywordLimit'))
   const rerankEnabled = flatVal('rerank.enabled')
   q.rerankEnabled = rerankEnabled === '' ? null : rerankEnabled
-  q.rerankModel = flatVal('rerank.model')
+  const rerankRef = flatVal('rerank.model')
+  q.rerankModel = rerankRef && modelRefInfo(rerankRef) ? rerankRef : ''   // 列表外引用不预填（留空=继承全局）
 }
 
 const openCreate = () => {
@@ -345,7 +348,7 @@ const save = async () => {
     showEdit.value = false
     await load()
   } catch (e) {
-    message.error('保存失败')
+    message.error(e.message || '保存失败')
   } finally {
     saving.value = false
   }
@@ -361,7 +364,7 @@ const onDelete = async row => {
     message.success('已删除（关联智能体已同步摘除该库）')
     await load()
   } catch (e) {
-    message.error('删除失败')
+    message.error(e.message || '删除失败')
   }
 }
 
@@ -397,6 +400,7 @@ onMounted(() => {
 .kb-empty { grid-column: 1 / -1; text-align: center; color: var(--app-text3); font-size: 12px; padding: 40px 0; }
 .kb-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 4px; }
 .kb-divider { margin: 16px 0 4px; font-size: 12px; color: var(--app-text2); }
-.kb-param-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 8px; }
-.kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; }
+.kb-param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
+/* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */
+.kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; min-width: 0; }
 </style>

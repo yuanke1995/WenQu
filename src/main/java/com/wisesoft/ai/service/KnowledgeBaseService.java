@@ -215,6 +215,19 @@ public class KnowledgeBaseService {
                 def.setCreateTime(now);
                 def.setUpdateTime(now);
                 kbMapper.insert(def);
+            } else if (def.getId() == null || def.getId().isBlank()) {
+                // 历史行主键为空串：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存走到
+                // PUT /api/ai/kb/（空路径变量 → 404）、「文档管理」路由断链——启动后首次触达即自愈：
+                // 换主键 + 迁移 kb_id='' 的历史文档引用到新 id。
+                String newId = java.util.UUID.randomUUID().toString();
+                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getId, "")
+                        .set(KnowledgeBase::getId, newId));
+                docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getKbId, "")
+                        .set(AiDocument::getKbId, newId));
+                def.setId(newId);
+                log.warn("[KB] 默认知识库主键为空串（历史数据），已自愈为新 id {}", newId);
             }
             cachedDefaultId = def.getId();
             return def.getId();
