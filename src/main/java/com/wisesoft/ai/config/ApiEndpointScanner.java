@@ -5,8 +5,8 @@ import com.wisesoft.ai.mapper.ApiEndpointMapper;
 import com.wisesoft.ai.model.ApiEndpoint;
 import com.wisesoft.ai.service.RoleService;
 import io.swagger.v3.oas.annotations.Operation;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -43,12 +43,25 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ApiEndpointScanner implements ApplicationRunner {
 
     private final RequestMappingHandlerMapping requestMappingHandlerMapping;
     private final ApiEndpointMapper apiEndpointMapper;
     private final RoleService roleService;
+
+    /**
+     * 显式构造而非 {@code @RequiredArgsConstructor}：
+     * 容器里 {@code RequestMappingHandlerMapping} 不止一个（actuator 的 {@code controllerEndpointHandlerMapping}
+     * 也是它的子类），必须按 bean 名限定。否则只能靠编译期 {@code -parameters} 保留形参名做按名兜底解析，
+     * 一旦手工 javac 忘了加该参数（pom 里是 {@code <parameters>true</parameters>}），启动即歧义失败。
+     */
+    public ApiEndpointScanner(@Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping requestMappingHandlerMapping,
+                              ApiEndpointMapper apiEndpointMapper,
+                              RoleService roleService) {
+        this.requestMappingHandlerMapping = requestMappingHandlerMapping;
+        this.apiEndpointMapper = apiEndpointMapper;
+        this.roleService = roleService;
+    }
 
     @Override
     public void run(ApplicationArguments args) {
