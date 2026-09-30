@@ -96,7 +96,10 @@ public class KnowledgeRetrievalTool {
         if (query == null || query.isBlank()) {
             return "查询关键词不能为空";
         }
-        int limit = topK == null ? MAX_HITS : Math.max(1, Math.min(topK, MAX_HITS));
+        // 上限取配置（tool.knowledgeRetrieval.maxHits，1~5；此前该键只在 ConfigService 播种、
+        // 从未被读取，等于设置页上一个改了不动的假开关）：默认与工具给模型的参数说明（1~5）一致
+        int cap = Math.max(1, Math.min(MAX_HITS, configService.getInt("tool.knowledgeRetrieval.maxHits", MAX_HITS)));
+        int limit = topK == null ? cap : Math.max(1, Math.min(topK, cap));
         // 范围与主链路对齐：向量路按库界检索（kbIds），命中再按文档范围后过滤（docIds，含空集合 fail-closed）
         KbScope scope = KB_SCOPE.get();
         List<Hit> hits;
