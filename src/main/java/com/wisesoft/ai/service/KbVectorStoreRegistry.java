@@ -19,10 +19,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 知识库向量存储注册中心：按知识库路由 VectorStore（per-KB 向量模型绑定的核心）。
  * <p>
- * 每个库必须绑定自己的向量模型（历史空绑定已由启动迁移回填）：懒创建独立 RedisVectorStore——
- * 独立索引 {@code ai-doc-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
+ * 每个库必须绑定自己的向量模型（启动迁移会把遗留裸模型名改写为供应商引用）：懒创建独立
+ * RedisVectorStore——独立索引 {@code ai-doc-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
  * 独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）。
- * 全局共享索引 ai-doc-index 仅保留 Spring 自动配置 bean 作回滚缓冲，不再参与路由。
+ * 全局共享索引 ai-doc-index 已退役（spring.ai.vectorstore.type=none 不再装配全局向量库 bean）。
  * <p>
  * 维度一致性约束因此从"全库"收缩到"单库"：同库所有块同一向量模型；换模型触发本库重嵌入
  * （{@code DocumentService.reembedKbAsync}）。

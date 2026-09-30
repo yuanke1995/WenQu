@@ -14,7 +14,7 @@
 | ORM | MyBatis-Plus 3.5.12（逻辑删除 `deleted`，驼峰映射） |
 | 数据库 | OceanBase（MySQL 协议，库 `ai_doc_assistant`，可按环境调整）；30+ 张 `c_ai_*` 表由启动自动建立 |
 | 向量库 | Redis Stack（RediSearch 向量索引，Jedis 客户端，索引 `ai-doc-index`；连接地址经 `REDIS_HOST`/`REDIS_PORT` 注入，默认 `127.0.0.1:6379`） |
-| LLM | 问答/视觉/向量三类模型均可跨厂商热切换（DeepSeek / 智谱 GLM / 阿里百炼 Qwen / Kimi / 豆包 / 腾讯混元 / 百度千帆 / MiniMax / SiliconFlow / 本地 Ollama 等预设）；图片理解/OCR 可走本地 Ollama `qwen3-vl:2b` |
+| LLM | 问答/视觉/向量三类模型均可跨厂商热切换（DeepSeek / 智谱 GLM / 阿里百炼 Qwen / Kimi / 豆包 / 腾讯混元 / 百度千帆 / MiniMax / SiliconFlow / Ollama 等 OpenAI 兼容网关预设，模型经「供应商表 + 引用」登记绑定，**无全局兜底**） |
 | 智能体编排 | Spring AI Alibaba Agent Framework 1.1.2.3（`StateGraph` 多子智能体并行编排） |
 | MCP | `spring-ai-mcp`（MCP Java SDK 0.18.3）——外部工具服务器接入 |
 | 沙盒 | 独立 provisioner 服务（Python 3.13 + FastAPI + Docker SDK，容器化部署）+ 全功能沙盒镜像（all-in-one-sandbox）；模型经 Function Calling 在隔离容器内执行 shell、读写文件 |
@@ -81,11 +81,7 @@ docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
 ```
 > 宿主端口按实际部署自行映射，后端以 `REDIS_HOST`/`REDIS_PORT` 指向该端口（docker-compose 的映射见 `docker-compose.yml`）。RedisVectorStore 自动配置使用 **Jedis** 客户端，项目已引入 `redis.clients:jedis` 且 `spring.data.redis.client-type: jedis`。
 
-**本地 Ollama**（图片描述 / 扫描 PDF OCR）：安装 Ollama 并拉取视觉模型：
-```bash
-ollama pull qwen3-vl:2b
-```
-> 建议设置环境变量 `OLLAMA_NUM_PARALLEL=4`（否则多图描述串行排队）；4GB 显存机器并发度建议 `vision.concurrency=2`。
+**模型供应商**（问答/视觉/向量三类模型，含图片描述与扫描 PDF OCR）：不需要任何本地部署——在「供应商管理」页登记 OpenAI 兼容网关（网关地址 / API Key / 补全与向量路径），按类型登记模型后，在对话页/个人设置/知识库编辑/系统设置中绑定即可（API Key RSA 加密入库）。若本机装了 Ollama，也可按「本地网关」供应商登记使用，但非必需。
 
 **数据库**：现有 OceanBase 库 `ai_doc_assistant`（库需预先存在，库名按实际环境配置）。表结构由应用启动自动执行 `schema.sql` 创建（全部 `CREATE TABLE IF NOT EXISTS`，重复启动安全；存量库缺列缺索引由 `SchemaMigrator` 启动期自动补齐）；也可手动执行：
 ```bash
@@ -131,7 +127,7 @@ export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
 export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
 
-> **行为参数与模型配置不走环境变量**：检索/重排/解析/限流/深度思考/上下文/沙盒/记忆/定时任务等 16 组 130+ 行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；问答/视觉/向量模型走**模型供应商**登记 + 知识库/个人默认绑定（API Key RSA 加密入库）。`application.yml` 里的同名项（`AI_CHAT_KEY`、`AI_RERANK_*` 等）只在**首次启动向空库灌默认值**时生效一次，之后一律以 DB 为准——已初始化的库上改这些环境变量不会生效。旧变量 `AI_VISION_MODEL`/`AI_VISION_BASE_URL`/`AI_VISION_API_KEY`（全局视觉模型）已退役：视觉模型按知识库绑定（visionRef → 供应商表），环境变量链路无消费方。
+> **行为参数与模型配置不走环境变量**：检索/重排/解析/限流/深度思考/上下文/沙盒/记忆/定时任务等 16 组 130+ 行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；问答/视觉/向量模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失/引用无效会 fail-loud 引导选择）。`application.yml` 不再存任何模型网关/密钥（`AI_CHAT_KEY`、`AI_EMBEDDING_KEY`、`AI_VISION_MODEL` 等已退役）：供应商档案是唯一网关来源，聊天模型解析不出引用、视觉模型未按库绑定、向量模型未绑定知识库时均显式报错，不静默回落。
 
 **本地开发**：无需 export。密钥、数据目录等环境相关值放在项目根 `config/application-local.yml`（Spring Boot 外部配置目录，已被 .gitignore 忽略，**不打进构建产物**——密钥不会随 jar 分发），再以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
@@ -179,20 +175,20 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 5. **数据看板**（`/dashboard`，管理员）：核心指标卡 + 检索质量自动体检 + 热门/无命中问题 TOP10 + 差评回流 + 知识库缺口一键补块。
 6. **检索评估**（`/evaluation`，管理员）：从历史问答回放生成评估集，多参数组对比 recall@k / MRR / 命中率，一键体检、一键应用最优组到线上配置。
 7. **系统设置**（`/settings`，管理员）：左侧分组导航（**智能问答模型 / 图片描述（视觉；模型归各知识库解析设置）/ 文档解析默认模板 / 检索设置 / 上下文控制 / 深度思考 / 工具调用（含沙盒执行工具开关）/ API Key 管理 / 技能 Skills / 并行检索 / 接口限流 / 定时维护 / 单点登录 OIDC / 沙盒（隔离执行环境）/ 用户长期记忆 / MCP 服务（双向）**），共 16 组、130+ 设置字段，改动后页头「保存配置」一次性保存；**问答/视觉/向量三类模型跨厂商热切换**（四要素存库、API Key RSA 加密、保存即生效；向量模型保存前先探测维度、通过后自动全量重嵌入）。
-8. **成员与权限**（`/members` `/permissions`，管理员）：成员账号管理、角色维护（`admin`/`superadmin`/自定义角色）、角色-菜单绑定（决定侧边栏入口）、角色-API 绑定（决定可访问端点）；OIDC 自动建档的用户也走同一权限模型。**个人设置**（`/profile`，所有用户）：自助改密、三类个人默认模型、长期记忆管理（自动提取的记忆可编辑/删除，含来源会话溯源与被注入次数）。
+8. **成员与权限**（`/members` `/permissions`，管理员）：成员账号管理、角色维护（`admin`/`superadmin`/自定义角色）、角色-菜单绑定（决定侧边栏入口）、角色-API 绑定（决定可访问端点）；OIDC 自动建档的用户也走同一权限模型。**个人设置**（`/profile`，所有用户）：自助改密、聊天/视觉两类个人默认模型、长期记忆管理（自动提取的记忆可编辑/删除，含来源会话溯源与被注入次数）。
 
 ## 核心功能
 
 - **混合检索**：Redis 向量 Top-K + 关键词召回并行（**超时/阈值/召回数/位置奖励等行为参数设置页可调**，保存即生效）；**向量分归一化 + 双命中叠加**（语义+关键词命中 = 向量分+关键词分+标题奖励）；**关键词引擎可切换**（默认 `mysql` LIKE 零依赖；切到 `meilisearch` 用中文分词 + 相关度打分，服务不可用/超时自动降级回 MySQL，首次切换需 `POST /api/ai/search-index/reindex` 全量重建，写索引随解析/编辑/删除增量同步）；**jieba 中文分词**（搜索模式细粒度词元 + 长词 2-gram/4-gram 子词元补充召回宽度，启动预热词典；**检索状态行只展示主词元**，子词元仅参与召回不展示）；**分块位置奖励**（文档首块加权）
 - **知识块关联检索**（`c_ai_knowledge_ref`）：解析时识别块内交叉引用（详见/参见/见 编号节/《章节名》/章节名+章节后缀等 7 类模式），建块间引用边；检索命中 A 时 **1-hop 扩散**自动带出关联块 + **结构上下文扩展**沿章节路径带出父章节摘要；扩散块走独立配额，引用来源带 `origin` 标注（REF_OUT/REF_IN/PARENT）；引用关系与块/文档同生命周期
-- **模型热切换**（问答/视觉/向量三类，均免重启）：四要素（网关地址 / API Key / 模型名 / 接口路径）全部存 `c_ai_config`，设置页保存即生效，API Key **RSA 加密入库**；`DynamicOpenAiChatModel` / `DynamicEmbeddingModel` 每次调用校验配置指纹，变化即本地重建客户端；路径归一化兼容智谱 `/v4`、方舟 `/v3`、千帆 `/v2`、Ollama 等 OpenAI 兼容端点；多副本经 Redis pub/sub 广播各自重建
+- **模型热切换**（问答/视觉/向量三类，均免重启）：网关四要素（网关地址 / API Key / 模型名 / 接口路径）全部存**模型供应商表**（`c_ai_provider` + `c_ai_model`），模型以 `{providerId}/{modelId}` 引用绑定（会话覆盖 / 个人默认 / 知识库向量 `embedding_ref` / 知识库图片描述 `visionRef` / 记忆向量化 `memory.embeddingRef`），保存即生效，API Key **RSA 加密入库**；`DynamicOpenAiChatModel` / `DynamicEmbeddingModel` 每次调用按引用解析，变化即本地重建客户端；路径归一化兼容智谱 `/v4`、方舟 `/v3`、千帆 `/v2`、Ollama 等 OpenAI 兼容端点；多副本经 Redis pub/sub 广播各自重建
 - **向量模型切换：维度护栏 + 全量重嵌入编排**：三道护栏前置（initialize-schema 校验 → 真实探测维度 → 维度比对判定 schema 重建），按序执行：清语义缓存 → DROP 索引 → 重建 schema → 游标分批全量重嵌 → 回写维度 + 索引对账；**期间向量检索降级关键词路，服务不中断**；Redis 分布式锁保证多副本单点执行
 - **查询改写**：LLM 将用户问题改写为检索关键词（默认开启）；支持多轮对话上下文改写（追问"那删除呢？"自动补全），改写结果入库可评估
 - **上下文与长度控制**：`预算 = min(模型窗口×安全系数 − 输出限制, 成本软上限)`；**价值驱动填充**（按相关度分数累积填充）；**块内命中片段截取**（±150 字窗口，被截掉的图片占位自动补齐）；**关联扩散块独立配额**；**信息增益去冗余**（与已选块词元重叠过高即跳过）；**历史裁剪**；token 按中英文分语言估算
 - **图片链路**：docx 提取图片（去重 + **双图策略**：识别用压缩图 1280px，展示用原图）→ 视觉模型生成描述随分块落库 → 检索命中后**相关性预筛** → 全局编号 `[图片N：描述]` → **相关性校验兜底**（错配/编造编号自动剔除）→ SSE `image` 事件 → 前端灯箱渲染原图；图片描述完成逐张上报进度
 - **引用溯源**：回答句末 `[N]` 角标 → 弹窗展示来源知识块全文（图文交错）+ 关联截图；**检索状态行**展开列出全部命中来源与摘要，条目点击弹同一溯源弹窗
 - **语义缓存**（`c_ai_answer_cache`）：相似问题直接复用历史回答（embedding 余弦相似度 ≥ 阈值，默认 0.96）；知识库任何变动**整体失效**；**维度护栏**：缓存向量与当前模型维度不一致一律判不命中——跨模型向量空间不可比
-- **文档解析**：docx（表格→Markdown、结构感知切分）/ xlsx / pdf（扫描件自动 OCR，逐页 200DPI → 本地视觉模型）/ txt/md/csv；大文件流式解析；分块重叠只进向量化文本；解析删除感知（删除立即停止并清理产物）
+- **文档解析**：docx（表格→Markdown、结构感知切分）/ xlsx / pdf（扫描件自动 OCR，逐页 200DPI → 知识库绑定的视觉模型）/ txt/md/csv；大文件流式解析；分块重叠只进向量化文本；解析删除感知（删除立即停止并清理产物）
 - **数据闭环**：问答日志 + 👍👎 反馈 + 看板聚合；**无命中问题 → 一键创建知识块**（自动生成向量）；**差评回流**：看板差评样本 → 一键加入检索评估集
 - **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；**智能体会话级绑定**（对齐 Coze/Dify/Claude Projects 主流做法）：会话**首问时锁定**（`c_ai_session.agent_id`，`bindAgent` 以 `isNull(agent_id)` 只写一次），全程同一人设/知识库/工具集——已锁定会话忽略请求里的 agentId，**切换智能体 = 新建会话**；列值语义 `NULL`=未绑定、空串=已决定不绑定（走全局配置），显式不用智能体不会被反复重路由；「自动派遣」= **首问路由一次并锁定**（`agent_dispatched` 事件 + 就地下发 `agent_bound` 锁定结果），不再每轮静默换人；绑定智能体不可访问（被删/权限变更）时 fail-loud 降级提示（`agentUnavailable`/`agentMissing`），不静默回落全局配置；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）；**按需委派路由**（`agent.autoRoute`）：主模型先从候选中挑出与问题相关的子智能体，路由结果与**挑选理由**随 SSE 下发并随消息持久化；可开**委派收窄检索范围**（`agent.dispatchNarrowScope`，默认关）：路由挑出子集后主检索收窄到「主智能体库∪被选中助手库」；**结果聚合策略可配**（`agent.aggregateMode`）：`concat` 按分支直拼 / `rerank` 命中按重排分降序合并（高分块优先进上下文预算）/ `supervisor` 监督者二次聚合（LLM 去重合并、按价值排序、结论矛盾显式标注「⚠ 冲突」，失败回退直拼）；要点段字符预算（`agent.digestMaxChars`）防多分支要点挤占上下文；失败分支显式占位（`agent.aggregateMarkFailed`）让模型可声明"该方面资料不足"；智能体页提供**委派编排视图**（主→子 SVG 拓扑图：悬停高亮委派链路、悬空引用与孤儿子智能体警示、点击节点进配置）；对话编排卡片实时展示各分支状态、任务描述、要点、耗时占比条与路由理由
 - **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 6 个工具——`execute`（shell 命令，**输出实时流式回传**：SSE `tool_output` 逐行增量，长命令不用等跑完才见结果）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls` / `deliver_artifact`（沙盒文件交付为「我的产物」，扩展名白名单放宽到 py/png/xlsx/zip 等，单个 ≤1MB，路径限定用户数据根）；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）；**沙盒运行时依赖必须烧进镜像**（容器内 gem 用户无 sudo，装不了 JDK/Node 等——用 `sandbox-image/Dockerfile` 派生镜像 + `SANDBOX_IMAGE` 指定）；**右栏「沙盒」卡**可浏览/下载会话沙盒工作区文件（`/sandbox/state|tree|download` 只读端点，只 discover 不创建容器）；**工具瞬时故障自动重试**（失败 500ms 重试一次，`tool_status.attempts` 透出尝试次数）
@@ -304,7 +300,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 2. **静态配置一致**：各副本的 yml/环境变量（数据库、Redis、`AI_JWT_SECRET`、`AI_MEILI_KEY` 等**仅存 env/yml 的项**）必须一致（**`AI_JWT_SECRET` 尤其必须一致**）；动态配置（`c_ai_config`，含模型与行为参数）经 **Redis pub/sub** 广播即时生效，订阅断线由 **5 分钟兜底轮询**补齐
 3. **并发防护**：重解析用 **DB 状态机 CAS**；解析队列有界，超限拒绝/降级不失控
 4. **删除中断语义**：删除在任意实例生效，其他实例上的解析由 DB 兜底在检查点秒级停止清理
-5. **总并发核算**：解析并发为"副本数 × parse.concurrency"，embedding/Ollama 为共享瓶颈
+5. **总并发核算**：解析并发为"副本数 × parse.concurrency"，embedding/视觉为共享瓶颈
 6. **语义缓存一致性（无需手工同步）**：命中时校验 DB 行存在兜底，任一实例失效后其它实例立即感知
 7. **向量模型热切换为全实例串行**：Redis 分布式锁互斥，锁持有期间所有实例向量检索自动降级关键词路；任务每批续期锁，实例崩溃后锁 TTL 自愈
 8. **启动对账/巡检开关需收敛为单点**：`keyword.reconcileOnStartup` 与 `parse.recoverStuckOnStartup` 多副本上线前请置 false
@@ -420,11 +416,8 @@ ai-app:
   images:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（源文件/图片/产物/密钥都在此）
     auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
-  vision:                                  # 视觉模型（本地 Ollama）
-    model: ${AI_VISION_MODEL:qwen3-vl:2b}
-    base-url: ${AI_VISION_BASE_URL:http://localhost:11434}
-    concurrency: 2
-    num-ctx: 16384                         # 1280px 图视觉 token 1600-2500，默认 4096 会截断
+  # 视觉/向量/聊天模型不在 yml 配置：网关统一来自「模型供应商」表（供应商登记 + 引用绑定），
+  # 行为参数（视觉开关/提示词/并发、向量、检索等）在系统设置页维护（c_ai_config）
   deep-reasoning:                          # 深度思考
     enabled: ${AI_DEEP_REASONING_ENABLED:true}
     thinking-mode: ${AI_DEEP_REASONING_MODE:model}
@@ -436,13 +429,10 @@ ai-app:
 spring:
   servlet.multipart: { max-file-size: 1024MB }
   data.redis: { client-type: jedis, host: ${REDIS_HOST:127.0.0.1}, port: ${REDIS_PORT:6379} }
-  ai.openai:
-    api-key: ${AI_CHAT_KEY}
-    chat: { options: { model: qwen3.8-27b } }
-  ai.vectorstore.redis: { initialize-schema: true, index-name: ai-doc-index, prefix: "ai:chunk:" }
+  ai.vectorstore.type: none                # 关闭全局 RedisVectorStore（per-KB 独立索引由 KbVectorStoreRegistry 管理）
 ```
 
-> **模型配置以 DB 为准**：`spring.ai.openai.*` 仅作 `c_ai_config` 未配置时的**回退默认值**；设置页保存后一律以 DB 为准。
+> **模型配置无兜底**：`spring.ai.openai.*` 不再配置（模型网关统一来自「模型供应商」表）；聊天/视觉/向量模型引用解析不出时显式报错引导，不静默回落任何全局默认。
 
 ### 仅存 DB 的配置键（`c_ai_config`）
 
@@ -450,17 +440,17 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `temperature`、`systemPrompt`、`baseUrl`/`apiKey`/`completionsPath`（遗留回落网关）、`historyRounds`(5)、`pipelineThreads`(8)、`suggestedQuestions` | 聊天模型走供应商/个人默认（`chat.model` 全局兜底已退役）；网关回落项保存即生效 |
-| `embedding.*` | `baseUrl`/`apiKey`/`embeddingsPath`（遗留回落网关）、`dimensions`(系统回写，只读) | 向量模型绑定知识库 `embedding_ref`（`embedding.model` 已退役）；重嵌入先探测维度，通过才 DROP 重建 |
+| `chat.*` | `temperature`、`systemPrompt`、`historyRounds`(5)、`pipelineThreads`(8)、`suggestedQuestions` | 聊天模型走供应商/个人默认引用（`chat.model` 及网关三要素已退役）；行为项保存即生效 |
+| `embedding.*` | `dimensions`(系统回写，只读) | 向量模型绑定知识库 `embedding_ref`（`embedding.baseUrl/apiKey/embeddingsPath` 已退役）；换绑重嵌入先探测维度，通过才 DROP 重建 |
 | `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`fusionMode`(sum)、`refExpand*`（关联扩散 9 项） | 多数保存即生效；引用识别开关**需重解析** |
 | `chunk.*` / `parse.*` | `maxSize`(800)、`structural`(true)、`concurrency`(2)、`ocrDpi`(200) | **需重解析/对后续解析生效** |
-| `vision.*` | `prompt`、`concurrency`(2)、`descCacheVersion`(1)、`numCtx`(16384) | 保存即生效（`timeoutMillis` 需重启） |
+| `vision.*` | `enabled`(true)、`prompt`、`concurrency`(2)、`retryCount`(1)、`descCacheVersion`(1)、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库 `visionRef` 绑定，无全局键 |
 | `context.*` / `atRef.*` / `rerank.*` / `semanticCache.*` | 去冗余阈值、@引用上限、重排区间、缓存阈值(0.96) | 保存即生效 |
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
 | `tool.*` | `enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`** | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`、`dir`(./data/skills)、`injectEnabled`(true)、`remoteAllowedHosts`(精确 host 白名单) | 保存即生效 |
 | `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`(true)、`dispatchNarrowScope`(**false**)、`autoDispatch`(true)、`routeTimeoutMs`(8000)、`maxToolSteps`(15) | 保存即生效；MCP **客户端**无全局配置（每人自己的 `c_ai_user_mcp`） |
-| `memory.*` | `enabled`(true)、`maxPerUser`(50)、`maxInjectCount`(30)、`injectBudgetChars`(1500)、`dedupThreshold`(0.9)、`useSemanticInject`(true) | 用户长期记忆：保存即生效（提取在问答完成后异步执行） |
+| `memory.*` | `enabled`(true)、`embeddingRef`（向量化模型引用，空=语义去重降级精确匹配、语义注入关闭）、`maxPerUser`(50)、`maxInjectCount`(30)、`injectBudgetChars`(1500)、`dedupThreshold`(0.9)、`useSemanticInject`(true) | 用户长期记忆：保存即生效（提取在问答完成后异步执行） |
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |

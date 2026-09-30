@@ -75,9 +75,9 @@ public class VisionService {
      */
     public String describe(byte[] imageBytes, String ext, String prompt, String refOverride) {
         if (imageBytes == null || imageBytes.length == 0) return "";
-        // L12 fail-loud：vision.enabled 配置化（设置页可改，保存即生效；未配置时回退 yml/环境变量值）
+        // vision.enabled 配置化（设置页可改，保存即生效；未配置时默认开启）
         String cfgEnabled = configService.get("vision.enabled");
-        boolean enabled = cfgEnabled == null ? properties.getVision().isEnabled() : Boolean.parseBoolean(cfgEnabled.trim());
+        boolean enabled = cfgEnabled == null || cfgEnabled.isBlank() || Boolean.parseBoolean(cfgEnabled.trim());
         if (!enabled) {
             log.debug("视觉模型已关闭（vision.enabled=false），跳过图片描述");
             return "";
@@ -104,7 +104,7 @@ public class VisionService {
     public String describeOcr(byte[] imageBytes, String ext, String prompt) {
         if (imageBytes == null || imageBytes.length == 0) return "";
         String cfgEnabled = configService.get("vision.enabled");
-        boolean enabled = cfgEnabled == null ? properties.getVision().isEnabled() : Boolean.parseBoolean(cfgEnabled.trim());
+        boolean enabled = cfgEnabled == null || cfgEnabled.isBlank() || Boolean.parseBoolean(cfgEnabled.trim());
         if (!enabled) {
             throw new IllegalStateException("视觉模型总开关已关闭（vision.enabled=false），扫描件无法 OCR；请在系统设置开启或为该库更换非扫描文档");
         }
@@ -202,21 +202,6 @@ public class VisionService {
 
         Map<String, Object> body = new HashMap<>();
         body.put("model", route.modelId());
-        // qwen3 系列默认思考模式：关闭以提速且输出稳定（实测 max_tokens 在思考模型下会导致空输出，保持 0 不发送）
-        if (!properties.getVision().isThink()) {
-            body.put("think", false);
-        }
-        // Ollama 支持 keep_alive 保持模型常驻，避免每个文档解析都重新加载模型（云端服务不支持需配置为 0）
-        int keepAlive = properties.getVision().getKeepAliveMinutes();
-        if (keepAlive > 0) {
-            body.put("keep_alive", keepAlive + "m");
-        }
-        // Ollama num_ctx：1280px 识别图视觉 token 约 1600-2500，默认 4096 会截断描述输出；
-        // 云端服务（阿里云 MaaS 等）通常忽略未知字段，若报错可将 vision.num-ctx 置 0 关闭
-        int numCtx = properties.getVision().getNumCtx();
-        if (numCtx > 0) {
-            body.put("options", Map.of("num_ctx", numCtx));
-        }
         body.put("messages", List.of(Map.of("role", "user", "content", List.of(
                 Map.of("type", "image_url", "image_url",
                         Map.of("url", "data:" + mime + ";base64," + base64)),

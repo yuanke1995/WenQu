@@ -51,8 +51,8 @@ public class KnowledgeBase {
      */
     private String parseParams;
 
-    /** 本库绑定向量模型（引用 providerId/modelId；必填——向量空间与索引一一对应，
-     * 没有可用的"运行时跟随全局"兜底，历史空值由启动迁移回填）。
+    /** 本库绑定向量模型（引用 providerId/modelId；必填且必须可解析——向量空间与索引一一对应，
+     * 无任何运行时兜底，遗留裸模型名由启动迁移改写为供应商引用）。
      * 向量一致性约束是"单库"级：同库所有块必须同一向量模型，换模型触发本库重嵌入。 */
     private String embeddingRef;
 

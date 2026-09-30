@@ -156,8 +156,8 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 校验并归一化本库绑定向量模型引用：**必填**——向量空间与索引一一对应，没有可用的运行时兜底；
-     * 历史空值由启动迁移回填（引用或遗留模型名，遗留名经 DynamicEmbeddingModel 走遗留网关）。
+     * 校验并归一化本库绑定向量模型引用：**必填且必须为可解析的供应商引用**——向量空间与索引一一对应，
+     * 没有任何运行时兜底（全局 embedding.* 网关与遗留裸模型名回落已移除；存量裸名由启动迁移改写为引用）。
      * <p>
      * 归属校验：引用必须对「绑定人」可用（平台级供应商 + 该用户自己登记的个人级）——
      * 否则会出现「张三的知识库挂在李四的 Key 上」。
@@ -173,7 +173,7 @@ public class KnowledgeBaseService {
             throw new com.wisesoft.ai.common.BizException("请为本知识库选择向量模型（必填）");
         }
         modelRegistryService.assertUsable(v, uid, role);
-        if (modelRegistryService.resolveReference(v) == null && v.contains("/")) {
+        if (modelRegistryService.resolveReference(v) == null) {
             throw new com.wisesoft.ai.common.BizException("向量模型无效或已被删除，请重新选择");
         }
         String type = modelRegistryService.referenceType(v);

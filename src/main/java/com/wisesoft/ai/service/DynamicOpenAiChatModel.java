@@ -25,9 +25,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *   {@link ModelRegistryService#chatRoute} 解析出对应供应商网关（baseUrl/apiKey/completionsPath），
  *   按「归一化 baseUrl|path|apiKey」指纹缓存并委派对应 {@link OpenAiChatModel} 实例；
  *   下发前把 options.model 改写为裸模型名（引用前缀不透传给网关）
- * - 遗留纯模型名 / 解析失败 → 全局 chat.* 网关（c_ai_config 三要素，保存即热生效），与原行为一致
- * - 网关地址/密钥变更（设置页或供应商管理保存）后指纹变化 → 自动构建新客户端，旧实例由缓存淘汰
- * - 默认网关配置变更经由 ConfigService 本地保存 / Redis 广播 reload / 周期兜底 reload 刷新，下一次请求自动感知
+ * - <b>无兜底</b>：模型值缺失 / 非引用 / 供应商不存在 → fail-loud 抛出（全局 chat.* 网关兜底已移除），
+ *   由问答入口/调用方的「选择模型」引导兜住
+ * - 网关地址/密钥变更（供应商管理保存）后指纹变化 → 自动构建新客户端，旧实例由缓存淘汰
+ * - 供应商变更经由 Redis 广播 reload / 周期兜底 reload 刷新，下一次请求自动感知
  * - 替换 Spring AI 自动配置的单例 ChatModel：RagService 注入基于本类的 ChatClient（DynamicChatClientConfig）
  *
  * @author yuanke
@@ -59,22 +60,33 @@ public class DynamicOpenAiChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        ModelRegistryService.ModelRoute route = registry.chatRoute(modelOf(prompt));
+        ModelRegistryService.ModelRoute route = requireRoute(prompt);
         return current(route).call(rewriteModel(prompt, route));
     }
 
     /** 必须覆写：接口 default 实现抛 UnsupportedOperationException（不支持流式） */
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
-        ModelRegistryService.ModelRoute route = registry.chatRoute(modelOf(prompt));
+        ModelRegistryService.ModelRoute route = requireRoute(prompt);
         return current(route).stream(rewriteModel(prompt, route));
     }
 
     @Override
     public ChatOptions getDefaultOptions() {
-        // 无请求上下文：用全局路由的默认 options（与原单委托行为一致，仅作兜底）
-        OpenAiChatModel m = delegates.get(registry.chatRoute("").chatFingerprint());
-        return m != null ? m.getDefaultOptions() : ChatOptions.builder().build();
+        // 空 default options：模型名/温度等均由 per-request options 提供（无请求上下文，不做路由解析）
+        return OpenAiChatOptions.builder().build();
+    }
+
+    /** 解析请求模型路由；未设置 / 非引用 / 供应商不存在一律 fail-loud（无全局网关兜底） */
+    private ModelRegistryService.ModelRoute requireRoute(Prompt prompt) {
+        String model = modelOf(prompt);
+        ModelRegistryService.ModelRoute route = registry.chatRoute(model);
+        if (route == null) {
+            throw new com.wisesoft.ai.common.BizException(
+                    "聊天模型未配置或引用无效（" + (model == null || model.isBlank() ? "未选择模型" : model)
+                            + "）：请在对话页模型选择器或个人设置中选择可用模型");
+        }
+        return route;
     }
 
     /** 请求模型名（options.model，可能为引用/遗留名/null） */

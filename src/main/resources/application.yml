@@ -53,29 +53,12 @@ spring:
         transcription: false
       image: false
       moderation: false
-    # LLM 对话（OpenAI 兼容协议）——以下仅作 DB 未配置时的兜底默认
-    openai:
-      api-key: ${AI_CHAT_KEY:}
-      base-url: https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode
-      chat:
-        options:
-          # 注意：该 MaaS 网关对 qwen-max 返回 DashScope 原生格式(text 字段)，Spring AI 无法解析；
-          # qwen-plus 返回标准 OpenAI 格式，流式/非流式均兼容
-          model: qwen3.8-27b
-          temperature: 0.3
-      # Embedding 单独配置（需用兼容 OpenAI 协议的向量服务；api-key 留空时回落 chat 密钥）
-      embedding:
-        api-key: ${AI_EMBEDDING_KEY:}
-        base-url: ${AI_EMBEDDING_BASE_URL:https://llm-xdqpg8ip850vmxh3.cn-beijing.maas.aliyuncs.com/compatible-mode}
-        options:
-          model: ${AI_EMBEDDING_MODEL:qwen3.7-text-embedding-flash}
-
-    # Redis 向量库配置（Spring AI 1.1：index 更名 index-name；initialize-schema 默认 false，需显式开启）
+    # 模型网关一律来自「模型供应商」表（c_ai_provider，API Key RSA 加密入库）：
+    # 聊天 = 会话覆盖/个人默认的模型引用，视觉 = 知识库 parse_params.visionRef，向量 = kb.embedding_ref，
+    # 记忆向量化 = memory.embeddingRef。这里不再存任何网关/密钥兜底值——解析不出的引用一律 fail-loud。
+    # 关闭全局 RedisVectorStore 自动装配（per-KB 独立索引由 KbVectorStoreRegistry 管理）
     vectorstore:
-      redis:
-        initialize-schema: true
-        index-name: ai-doc-index
-        prefix: "ai:chunk:"
+      type: none
 
 # MyBatis-Plus（SQL 日志默认走 slf4j，级别由 LOG_LEVEL_SQL 控制）
 mybatis-plus:
@@ -152,26 +135,8 @@ ai-app:
       enabled: ${AI_IMAGE_FILTER_ENABLED:true}
       min-hits: 1
       pre-context-chars: 100
-  # 图片描述（本地 Ollama 视觉模型，OpenAI 兼容协议；已实测返回标准 OpenAI 格式）
-  vision:
-    model: ${AI_VISION_MODEL:qwen3-vl:2b}
-    # 约定：base-url 不含 /v1（代码自动拼 /v1/chat/completions）；Ollama 用 http://localhost:11434
-    base-url: ${AI_VISION_BASE_URL:http://localhost:11434}
-    # Ollama 不校验密钥，此处为占位值；如换回云端服务需改为真实 API Key
-    api-key: ${AI_VISION_API_KEY:ollama}
-    enabled: true
-    # 单张图片描述超时（本地 2B 模型约 29s；文档图多时排队+推理可能超 60s，放宽到 180s 防误降级）
-    timeout-millis: 180000
-    # Ollama 上下文窗口：1280px 识别图视觉 token 约 1600-2500，默认 4096 会截断描述输出；0=不设置
-    num-ctx: 16384
-    # 图片描述并发度（本机 4GB 显存建议 2，避免并发压垮 Ollama 导致 500/超时）
-    concurrency: 2
-    # 单图失败重试次数（Ollama 偶发 500/超时，重试 1 次显著降低"无描述"降级）
-    retry-count: 1
-    # keep_alive 保持 qwen3-vl 常驻内存，避免每次文档解析都要重新加载模型（云端服务不支持需设 0）
-    keep-alive-minutes: 30
-    # 关闭思考模式（qwen3 系列默认思考，关闭后提速且输出稳定）
-    think: ${AI_VISION_THINK:false}
+  # 视觉模型不在此配置：模型按知识库绑定（parse_params.visionRef → 「模型供应商」表），
+  # 行为参数（开关/提示词/并发/超时/重试/缓存）统一在系统设置页维护（c_ai_config）
   # 查询改写（默认关闭，开启后会对用户提问做 LLM 优化后再检索）
   query-rewrite:
     enabled: ${AI_QUERY_REWRITE_ENABLED:true}

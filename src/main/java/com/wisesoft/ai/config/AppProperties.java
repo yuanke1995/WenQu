@@ -143,30 +143,15 @@ public class AppProperties {
 
     @Data
     public static class Vision {
-        /** 图片描述模型（全模态，已实测返回标准 OpenAI 格式；求快可换 qwen3-omni-flash） */
-        private String model = "";
-        /** 视觉模型 base-url（与 chat 同网关） */
-        private String baseUrl = "";
-        /** 视觉模型 API Key */
-        private String apiKey = "";
-        /** 是否启用图片描述（关闭则只提取图片不调模型） */
+        /** 是否启用图片描述（关闭则只提取图片不调模型；设置页 vision.enabled 可改，保存即生效） */
         private boolean enabled = true;
-        /** 单张图片描述超时(ms) */
-        private int timeoutMillis = 30000;
-        /** 图片描述并发度（本地 Ollama 需设置 OLLAMA_NUM_PARALLEL 才能并行推理） */
-        private int concurrency = 4;
-        /** 单张图片失败重试次数（Ollama 偶发 500/超时，重试可显著降低降级率） */
+        /** 单张图片描述超时(ms)（RestClient 构建期读取，需重启生效） */
+        private int timeoutMillis = 180000;
+        /** 图片描述并发度（设置页 vision.concurrency 可改，保存即生效） */
+        private int concurrency = 2;
+        /** 单张图片失败重试次数（syncProperties 回写，设置页保存即生效） */
         private int retryCount = 1;
-        /** Ollama keep_alive 保持模型常驻(分钟)，0=不发送（云端服务不支持此参数需设 0） */
-        private int keepAliveMinutes = 30;
-        /** Ollama 上下文窗口 num_ctx：1280px 识别图视觉 token 约 1600-2500，默认 4096 会截断；0=不设置 */
-        private int numCtx = 16384;
-        /**
-         * 关闭思考模式（qwen3 系列默认思考，关闭后提速且输出稳定）。
-         * 注意：max_tokens 在该思考模型下会导致空输出，本项目不发送 max_tokens
-         */
-        private boolean think = false;
-        /** 描述 prompt */
+        /** 描述 prompt（defaults() 种子值；运行时读 vision.prompt，设置页保存即生效） */
         private String prompt = "请简要描述这张图片的内容，如果是界面截图请提取关键文字和界面元素，如果是流程图请说明流程要点，50字以内。";
     }
 
@@ -181,7 +166,7 @@ public class AppProperties {
         private boolean enabled = false;
         /** 分类超时时间(ms)：分类只输出一个单词，超时不宜过大，超时按 doc 处理 */
         private int timeoutMillis = 3000;
-        /** 分类用模型（留空回落 chat.model，可配更小更快的模型） */
+        /** 分类用模型（意图分类当前无运行时消费方，保留占位） */
         private String model = "";
         /** 分类 prompt（要求只输出 chat 或 doc 单词；拿不准输出 doc） */
         private String prompt = "你是意图分类器，判断用户消息是否需要检索知识库资料来回答。只输出一个单词：chat 或 doc，不要任何解释。\n"
@@ -249,7 +234,7 @@ public class AppProperties {
      */
     @Data
     public static class Context {
-        /** 模型上下文窗口映射（格式 "模型名子串=token,模型名子串=token"，按当前 chat.model 子串匹配；未匹配用默认值） */
+        /** 模型上下文窗口映射（格式 "模型名子串=token,模型名子串=token"，按请求模型的模型名子串匹配；未匹配用默认值） */
         private String modelWindows = "qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768";
         /** 未匹配到模型时的默认窗口（token） */
         private int defaultWindowTokens = 32768;

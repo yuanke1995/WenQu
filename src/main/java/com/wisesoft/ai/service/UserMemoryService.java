@@ -77,13 +77,20 @@ public class UserMemoryService {
         return configService.getBoolean("memory.useSemanticInject");
     }
 
-    /** 单文本向量化（best-effort：失败返回 null，不阻断提取/注入主链路） */
+    /**
+     * 单文本向量化（best-effort：失败返回 null，不阻断提取/注入主链路）。
+     * 模型取显式绑定 {@code memory.embeddingRef}（设置页「用户长期记忆 → 向量化模型」）；
+     * <b>无兜底</b>：未绑定或引用无效时返回 null——语义去重降级为精确匹配、语义注入关闭，
+     * 记忆的提取/落库/注入主链路不受影响。
+     */
     private float[] embed(String text) {
         if (text == null || text.isBlank()) return null;
+        String ref = configService.get("memory.embeddingRef");
+        if (ref == null || ref.isBlank()) return null;
         try {
-            return embeddingModel.embed(text);
+            return embeddingModel.forRef(ref.trim()).embed(text);
         } catch (Exception e) {
-            log.warn("[Memory] 向量化失败（不影响主链路）: {}", e.getMessage());
+            log.warn("[Memory] 向量化失败（不影响主链路）: ref={} {}", ref, e.getMessage());
             return null;
         }
     }

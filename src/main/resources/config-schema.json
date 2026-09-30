@@ -134,7 +134,7 @@
       "key": "memory",
       "title": "用户长期记忆（跨会话个性化）",
       "sections": [
-        "总开关（自动提取 + 注入；用户可在个人设置查看/编辑/删除自己的记忆）",
+        "总开关与向量化模型（自动提取 + 注入；用户可在个人设置查看/编辑/删除自己的记忆）",
         "容量与预算（条数上限与注入预算，防挤占知识上下文）"
       ]
     },
@@ -482,54 +482,6 @@
       "max": 5,
       "width": 200,
       "note": "本地模型偶发超时/500，重试可显著降低降级率",
-      "tier": 3
-    },
-    {
-      "backendKey": "vision.think",
-      "panel": "vision",
-      "section": 2,
-      "group": "vision",
-      "key": "think",
-      "path": "vision.think",
-      "label": "开启思考模式",
-      "type": "switch",
-      "tips": "visionThink",
-      "def": false,
-      "note": "qwen3 系视觉模型默认思考；关闭可提速且输出更稳定",
-      "tier": 3
-    },
-    {
-      "backendKey": "vision.keepAliveMinutes",
-      "panel": "vision",
-      "section": 2,
-      "group": "vision",
-      "key": "keepAliveMinutes",
-      "path": "vision.keepAliveMinutes",
-      "label": "模型常驻(分钟)",
-      "type": "number",
-      "tips": "visionKeepAlive",
-      "def": 30,
-      "min": 0,
-      "step": 5,
-      "width": 200,
-      "note": "仅 Ollama；0=不发送该参数（云端服务须设 0）",
-      "tier": 3
-    },
-    {
-      "backendKey": "vision.numCtx",
-      "panel": "vision",
-      "section": 2,
-      "group": "vision",
-      "key": "numCtx",
-      "path": "vision.numCtx",
-      "label": "num_ctx",
-      "type": "number",
-      "tips": "visionNumCtx",
-      "def": 16384,
-      "min": 0,
-      "step": 1024,
-      "width": 200,
-      "note": "仅 Ollama；0=不设置（默认 4096 会截断大图视觉 token）",
       "tier": 3
     },
     {
@@ -1532,6 +1484,21 @@
       "tier": 1
     },
     {
+      "backendKey": "memory.embeddingRef",
+      "panel": "memory",
+      "section": 0,
+      "group": "memory",
+      "key": "embeddingRef",
+      "path": "memory.embeddingRef",
+      "label": "向量化模型",
+      "type": "model",
+      "modelType": "embedding",
+      "width": 420,
+      "def": "",
+      "note": "用于记忆的语义去重与语义注入；留空则去重降级为精确匹配、语义注入关闭（记忆提取/落库不受影响）",
+      "tier": 1
+    },
+    {
       "backendKey": "memory.maxPerUser",
       "panel": "memory",
       "section": 1,
@@ -1595,7 +1562,7 @@
       "label": "语义去重阈值",
       "type": "number",
       "tips": "memoryDedupThreshold",
-      "def": 0.90,
+      "def": 0.9,
       "min": 0.5,
       "max": 1,
       "step": 0.01,
@@ -1884,7 +1851,6 @@
       "tips": "webRefreshEnabled",
       "def": true,
       "note": "开启后，标记「自动刷新」的网页文档（file_type=url）会按各自 cron 重新抓网+重建分块/向量",
-      "backendKey": "web.refreshEnabled",
       "tier": 3
     },
     {
@@ -1902,7 +1868,6 @@
       "step": 10000,
       "width": 220,
       "note": "≤0=暂停扫描；只需比 cron 精度更频繁地查库",
-      "backendKey": "web.refreshScanIntervalMs",
       "tier": 3
     },
     {
@@ -2545,6 +2510,7 @@
     "agentTopK": "每个子代理取回的命中块数上限（跨代理自动去重，重复块只占一个引用编号）。",
     "agentMaxToolSteps": "单轮问答工具调用步数上限（全部工具合计）：防模型陷入\"调工具→不满意→再调\"的失控循环；达到上限后模型收到错误结果并被要求直接作答。0=不限制。智能体可在自己的配置里覆盖此值。",
     "memoryEnabled": "用户长期记忆总开关：开启后每轮问答完成后异步用对话模型提炼值得长期记住的用户信息（偏好/项目背景/明确要求记住的事），并注入本人后续问答；用户可在个人设置查看、编辑、删除自己的记忆。关闭后停止提取与注入，已存记忆保留。",
+    "memoryEmbeddingRef": "语义去重（相似问题判重）与语义注入（按当前对话检索相关记忆）都依赖向量相似度，向量模型在此显式绑定——未绑定时这两项能力自动降级，记忆的提取、落库与按时间注入不受影响。换绑模型后，已存记忆向量空间不迁移（新写入用新模型）。",
     "memoryMaxPerUser": "每个用户的记忆条数上限：满后自动提取跳过，用户在个人设置清理后继续。",
     "memoryMaxInjectCount": "每轮问答最多注入的记忆条数（按更新时间取最近）。",
     "memoryInjectBudgetChars": "记忆注入段的字符预算：超过预算截断，防止挤占知识上下文。",

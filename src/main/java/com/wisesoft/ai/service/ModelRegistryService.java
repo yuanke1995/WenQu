@@ -12,7 +12,6 @@ import com.wisesoft.ai.model.ModelInfo;
 import com.wisesoft.ai.model.Provider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
-import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -33,10 +32,11 @@ import java.util.regex.Pattern;
  * 模型供应商注册中心：供应商（OpenAI 兼容网关档案）+ 模型库（按类型分类登记）的统一管理入口。
  * <p>
  * <h3>模型引用格式</h3>
- * 所有存模型的位置（chat.model / agent.model / 用户偏好 / 会话覆盖等）统一用 {@code {providerId}/{modelId}}
+ * 所有存模型的位置（agent.model / 用户偏好 / 会话覆盖 / KB 绑定等）统一用 {@code {providerId}/{modelId}}
  * 引用格式；解析时按第一段 providerId 查本表得到网关（baseUrl/apiKey/路径），第二段起为原样模型名
- * （兼容 OpenRouter 等模型名自带斜杠的网关）。<b>兼容策略</b>：值不含可识别引用（providerId 查不到）
- * 时按「遗留纯模型名」处理，回落全局 chat.* 配置的网关——存量数据无需刷库即可继续工作。
+ * （兼容 OpenRouter 等模型名自带斜杠的网关）。<b>无兜底</b>：引用解析不出（providerId 不存在或非引用
+ * 格式）一律返回 null，由调用方 fail-loud 引导配置——全局 chat.* 与 embedding.* 网关兜底已移除；存量
+ * 知识库的遗留裸模型名由 {@link #repairKbEmbeddingRefs()} 启动迁移一次性改写为供应商引用。
  * <p>
  * <h3>路由与缓存</h3>
  * {@link #chatRoute} / {@link #embeddingRoute} / {@link #visionRoute} / {@link #rerankRoute} 返回
@@ -69,7 +69,6 @@ public class ModelRegistryService {
     private final ConfigCryptoService crypto;
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
-    private final Environment environment;
     /** 角色判定（RBAC）：管理员级可管理全部供应商；仅依赖 Mapper，无循环依赖 */
     private final com.wisesoft.ai.service.RoleService roleService;
 
@@ -83,7 +82,6 @@ public class ModelRegistryService {
                                 com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
                                 StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                                Environment environment,
                                 com.wisesoft.ai.service.RoleService roleService) {
         this.providerMapper = providerMapper;
         this.modelMapper = modelMapper;
@@ -95,7 +93,6 @@ public class ModelRegistryService {
         this.crypto = crypto;
         this.redisTemplate = redisTemplate;
         this.redisProperties = redisProperties;
-        this.environment = environment;
         this.roleService = roleService;
     }
 
@@ -103,6 +100,7 @@ public class ModelRegistryService {
     public void init() {
         reload();
         migrateLegacyConfigs();
+        repairKbEmbeddingRefs();
         startRedisSync();
         log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型", providers.size(), models.size());
     }
@@ -161,7 +159,7 @@ public class ModelRegistryService {
 
     /**
      * 按引用格式解析网关路由：{@code {providerId}/{modelId}}（按第一个斜杠切分，模型名可自带斜杠）。
-     * 非引用格式 / providerId 不存在 → null（调用方回落遗留逻辑）。
+     * 非引用格式 / providerId 不存在 → null（调用方 fail-loud，不回落全局网关）。
      */
     public ModelRoute resolveReference(String value) {
         if (value == null) return null;
@@ -177,40 +175,12 @@ public class ModelRegistryService {
     }
 
     /**
-     * 聊天模型路由：引用 → 供应商网关；遗留纯模型名 → 全局 chat.* 配置的网关（env 兜底，与原
-     * DynamicOpenAiChatModel.resolve 语义一致，供注册中心上线前配置的遗留智能体继续工作）。
-     * 恒非 null；模型名为空串时由调用方兜底（问答入口已 fail-loud 引导配置，全局 chat.model 兜底已移除）。
+     * 聊天模型路由：仅按引用解析（会话覆盖 / 个人默认均为 {@code {providerId}/{modelId}} 格式）。
+     * 值为空 / 非引用 / 供应商不存在 → null，由调用方 fail-loud 引导配置
+     * （全局 chat.* 网关兜底已移除——遗留裸模型名不再有可用网关）。
      */
     public ModelRoute chatRoute(String modelValue) {
-        ModelRoute r = resolveReference(modelValue);
-        if (r != null) return r;
-        String model = (modelValue == null || modelValue.isBlank())
-                ? "" : modelValue.trim();
-        return new ModelRoute(null,
-                firstNonBlank(configService.get("chat.baseUrl"), environment.getProperty("spring.ai.openai.base-url", "")),
-                firstNonBlank(configService.get("chat.apiKey"), environment.getProperty("spring.ai.openai.api-key", "")),
-                configService.get("chat.completionsPath"), null, model, model);
-    }
-
-    /** 向量路由（遗留全局客户端用）：引用/全局键 → 供应商；遗留 → embedding.* 配置（env 兜底）。
-     *  向量模型本体已归知识库 embedding_ref，本方法仅供全局 VectorStore bean（回滚缓冲）的
-     *  {@link DynamicEmbeddingModel#current()} 路由，不再作为任何业务运行时默认。 */
-    public ModelRoute embeddingRoute() {
-        String model = firstNonBlank(configService.get("embedding.model"),
-                environment.getProperty("spring.ai.openai.embedding.options.model", ""));
-        return embeddingRoute(model);
-    }
-
-    /** 向量路由（按模型名）：引用 → 供应商网关；遗留纯模型名 → embedding.* 遗留网关 + 该模型名。
-     *  供知识库遗留模型引用（启动迁移回填的历史全局值）与全局客户端路由共用。 */
-    public ModelRoute embeddingRoute(String modelValue) {
-        String model = nz(modelValue);
-        ModelRoute r = resolveReference(model);
-        if (r != null) return r;
-        return new ModelRoute(null,
-                firstNonBlank(configService.get("embedding.baseUrl"), environment.getProperty("spring.ai.openai.embedding.base-url", "")),
-                firstNonBlank(configService.get("embedding.apiKey"), environment.getProperty("spring.ai.openai.embedding.api-key", "")),
-                null, configService.get("embedding.embeddingsPath"), model, model);
+        return resolveReference(modelValue);
     }
 
     /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
@@ -731,11 +701,12 @@ public class ModelRegistryService {
     // ==================== 存量配置迁移 ====================
 
     /**
-     * 存量手填网关配置（embedding / rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记，
-     * 配置值改写为引用。幂等：值已是引用或网关信息为空则跳过；同网关（归一化 baseUrl + Key 相同）复用同一供应商。
-     * 直接落库 + putInternal 改写配置值，不走 update() 联动（绝不触发全量重嵌入）。
-     * <p>chat / vision 两组不迁移：chat.model 全局兜底退役后迁移产物无消费方；vision.model 已退役
-     * （视觉模型归知识库 parse_params.visionRef），vision.baseUrl/apiKey 亦无运行时读取点。
+     * 存量手填网关配置（embedding / rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记。
+     * 幂等：值已是引用或网关信息为空则跳过；同网关（归一化 baseUrl + Key 相同）复用同一供应商。
+     * 直接落库，不走 update() 联动（绝不触发全量重嵌入）。
+     * <p>迁移产物去向：rerank.model 为活跃键，改写为引用后由重排路由消费；embedding.model 已退役
+     * （向量模型归知识库 embedding_ref），不再回写配置值——只登记供应商档案与模型，供知识库绑定
+     * 与 {@link #repairKbEmbeddingRefs()} 改写裸名引用。chat / vision 两组无遗留消费方，不迁移。
      */
     private void migrateLegacyConfigs() {
         Map<String, String[]> groups = Map.of(
@@ -761,7 +732,10 @@ public class ModelRegistryService {
                 String path = g.getValue()[2] == null ? "" : nz(configService.get(g.getValue()[2]));
                 Provider p = findOrMergeProvider(baseUrl, apiKey, path, group);
                 upsertModel(p.getId(), model.trim(), typeByGroup.get(group));
-                configService.putInternal(group + ".model", p.getId() + "/" + model.trim());
+                // 仅活跃键回写引用（rerank.model）；embedding.model 等退役键不再制造孤儿行
+                if (configService.isLiveKey(group + ".model")) {
+                    configService.putInternal(group + ".model", p.getId() + "/" + model.trim());
+                }
                 reload();
                 migrated++;
                 log.info("[Provider] 存量 {} 模型已迁移: {} → {}/{}", group, model, p.getName(), model.trim());
@@ -771,6 +745,55 @@ public class ModelRegistryService {
         }
         if (migrated > 0) {
             log.info("[Provider] 存量模型配置迁移完成: {} 组改写为供应商引用", migrated);
+        }
+    }
+
+    /**
+     * 知识库遗留裸模型名引用修复（启动迁移）：向量模型兜底已移除，{@code kb.embedding_ref} 必须是
+     * {@code {providerId}/{modelId}} 引用。历史值两类：
+     * <ul>
+     *   <li>裸模型名（无斜杠）→ 按遗留 embedding.* 网关（c_ai_config 存量行）findOrMergeProvider
+     *       建档并改写为引用——与 migrateLegacyConfigs 的同网关合并逻辑幂等复用；</li>     *   <li>引用但供应商已删 → 无法自动修复，log.error 暴露（使用时 fail-loud 引导重绑）。</li>
+     * </ul>
+     * 空绑定不自动选型，log.warn 提示手动绑定（storeForKb 对空绑定本就 fail-loud）。
+     */
+    private void repairKbEmbeddingRefs() {
+        try {
+            List<com.wisesoft.ai.model.KnowledgeBase> kbs = kbMapper.selectList(
+                    new LambdaQueryWrapper<>());
+            int repaired = 0;
+            for (com.wisesoft.ai.model.KnowledgeBase kb : kbs) {
+                String ref = nz(kb.getEmbeddingRef());
+                if (ref.isEmpty()) {
+                    log.warn("[Provider] 知识库 {}（{}）未绑定向量模型，检索/解析将不可用——请在知识库管理中绑定", kb.getId(), kb.getName());
+                    continue;
+                }
+                if (resolveReference(ref) != null) continue;
+                if (ref.contains("/")) {
+                    log.error("[Provider] 知识库 {}（{}）绑定的向量模型引用 {} 供应商已不存在，请重新绑定", kb.getId(), kb.getName(), ref);
+                    continue;
+                }
+                String baseUrl = nz(configService.get("embedding.baseUrl"));
+                if (baseUrl.isEmpty()) {
+                    log.error("[Provider] 知识库 {}（{}）遗留裸模型名 {} 无法修复（无遗留网关信息），请重新绑定向量模型",
+                            kb.getId(), kb.getName(), ref);
+                    continue;
+                }
+                String apiKey = nz(configService.get("embedding.apiKey"));
+                String path = nz(configService.get("embedding.embeddingsPath"));
+                Provider p = findOrMergeProvider(baseUrl, apiKey, path, "embedding");
+                upsertModel(p.getId(), ref, TYPE_EMBEDDING);
+                kb.setEmbeddingRef(p.getId() + "/" + ref);
+                kbMapper.updateById(kb);
+                reload();
+                repaired++;
+                log.info("[Provider] 知识库 {} 遗留向量模型已改写为引用: {} → {}/{}", kb.getId(), ref, p.getId(), ref);
+            }
+            if (repaired > 0) {
+                log.info("[Provider] 知识库遗留向量模型引用修复完成: {} 个库", repaired);
+            }
+        } catch (Exception e) {
+            log.warn("[Provider] 知识库向量引用修复失败（不影响启动，使用时报错可人工重绑）: {}", e.getMessage());
         }
     }
 
@@ -894,10 +917,6 @@ public class ModelRegistryService {
 
     private static String nz(String v) {
         return v == null ? "" : v.trim();
-    }
-
-    private static String firstNonBlank(String a, String b) {
-        return (a != null && !a.isBlank()) ? a.trim() : (b == null ? "" : b.trim());
     }
 
     /** apiKey 脱敏（快照/列表回显）：****后4位 */

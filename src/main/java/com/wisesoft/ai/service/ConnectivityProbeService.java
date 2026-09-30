@@ -81,14 +81,15 @@ public class ConnectivityProbeService {
     /**
      * 对话类探测（chat / vision 共用）：向补全地址发一次最小补全。
      * <p>比 GET /models 更可靠——部分网关不实现 /models；且能顺带验证模型名与 Key 是否被接受。
+     * <p>仅按表单显式值探测（chat.* 与 vision.* 全局网关键已退役，供应商档案是唯一网关来源）。
      */
     private Map<String, Object> chatProbe(String group, String baseUrl, String apiKey, String model,
                                           String path, long start) {
-        String base = value(baseUrl, group + ".baseUrl");
-        String key = secret(apiKey, group + ".apiKey");
-        String mdl = value(model, group + ".model");
+        String base = nvl(baseUrl);
+        String key = nvl(apiKey);
+        String mdl = nvl(model);
         // vision 无独立路径配置：固定走 /v1/chat/completions（与 VisionService 一致）
-        String pathCfg = "chat".equals(group) ? value(path, "chat.completionsPath") : "";
+        String pathCfg = "chat".equals(group) ? nvl(path) : "";
         String[] np = DynamicOpenAiChatModel.normalize(base, pathCfg, "/v1/chat/completions", "/chat/completions");
         String url = np[0] + np[1];
 
@@ -104,13 +105,13 @@ public class ConnectivityProbeService {
     }
 
     /** 向量模型探测：复用保存流程的 probe（真实 embedding 一次），额外返回向量维度。
-     *  仅按显式传入的表单值探测（全局 embedding.model 已退役，不再有配置回落）。 */
+     *  仅按显式传入的表单值探测（embedding.* 全局网关键已退役，供应商档案是唯一网关来源）。 */
     private Map<String, Object> embeddingProbe(String baseUrl, String apiKey, String model,
                                                String path, long start) {
-        String base = value(baseUrl, "embedding.baseUrl");
-        String key = secret(apiKey, "embedding.apiKey");
+        String base = nvl(baseUrl);
+        String key = nvl(apiKey);
         String mdl = model == null ? "" : model.trim();
-        String p = value(path, "embedding.embeddingsPath");
+        String p = nvl(path);
         if (base.isBlank()) return fail(start, "网关地址为空");
         if (mdl.isBlank()) return fail(start, "模型名为空");
         int dim = DynamicEmbeddingModel.probe(base, key, mdl, p);

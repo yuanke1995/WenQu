@@ -77,7 +77,6 @@ public class DocumentService {
     private final AiDocumentMapper documentMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final com.wisesoft.ai.mapper.AiDocumentVersionMapper versionMapper;
-    private final VectorStore vectorStore;
     private final KbVectorStoreRegistry kbVectorStores;
     private final com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper;
     /** 知识库服务：上传未指定库时归入默认库（kb_id 必填语义） */
@@ -92,7 +91,7 @@ public class DocumentService {
     private final ResourceVisibilityService resourceVisibilityService;
     /** 视觉模型服务：解析期按知识库 visionRef 描述图片（线程局部作用域） */
     private final VisionService visionService;
-    /** 向量模型（@Primary 即 DynamicEmbeddingModel）：重嵌入前探测新维度用；forRef 支持 KB 绑定模型 */
+    /** 向量模型引用路由器（per-KB 绑定模型客户端）：重嵌入前探测新维度用 */
     private final DynamicEmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
     private final DocxParser docxParser;
@@ -115,10 +114,6 @@ public class DocumentService {
 
     /** 正在自动刷新的网页文档 id（防同文档上轮未结束又被触发；单实例内有效） */
     private final Set<String> refreshingDocs = ConcurrentHashMap.newKeySet();
-
-    /** 向量库索引名（遗留全局索引 ai-doc-index；仅作回滚缓冲保留，业务向量一律落各库独立索引） */
-    @Value("${spring.ai.vectorstore.redis.index-name:ai-doc-index}")
-    private String vectorIndexName;
 
     /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
     public static final String REEMBED_LOCK_KEY = "ai-doc:reembed:lock";
@@ -711,10 +706,14 @@ public class DocumentService {
     private void reembedKb(String kbId, List<String> docIds, String oldRef, String newRef) {
         String old = oldRef == null ? "" : oldRef.trim();
         String neu = newRef == null ? "" : newRef.trim();
-        // 1. 新模型维度护栏：探测失败则回退本库 embedding_ref 到旧值（保留旧向量，功能不降级）
+        // 1. 新模型维度护栏：探测失败则回退本库 embedding_ref 到旧值（保留旧向量，功能不降级）。
+        //    绑定必填（validateEmbeddingRef），newRef 为空属于上游校验失效，fail-loud 不静默落全局库
+        if (neu.isEmpty()) {
+            throw new IllegalStateException("知识库 " + kbId + " 未绑定新向量模型，无法重嵌入（请在知识库管理中绑定）");
+        }
         int newDim;
         try {
-            newDim = neu.isBlank() ? embeddingModel.dimensions() : embeddingModel.forRef(neu).dimensions();
+            newDim = embeddingModel.forRef(neu).dimensions();
         } catch (Exception e) {
             throw new IllegalStateException("新向量模型维度探测失败（" + e.getMessage() + "），本库保持原绑定", e);
         }
@@ -723,26 +722,17 @@ public class DocumentService {
         List<Knowledge> rows = docIds.isEmpty() ? List.of() : knowledgeMapper.selectList(
                 new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds));
 
-        // 2. 清旧向量：旧绑定=跟随全局 → 从全局索引按 id 删除；旧绑定=自定义 → DROP 本库独立索引（连数据）
-        List<String> vectorIds = rows.stream().map(Knowledge::getVectorId)
-                .filter(java.util.Objects::nonNull).filter(v -> !v.isBlank()).toList();
+        // 2. 清旧向量：旧绑定=遗留跟随全局（已退役，全局索引不再参与路由，残留向量不自动清理）；
+        //    旧绑定=自定义引用 → DROP 本库独立索引（连数据）
         if (old.isBlank()) {
-            if (!vectorIds.isEmpty()) {
-                try {
-                    vectorStore.delete(vectorIds);
-                } catch (Exception e) {
-                    log.warn("[KB-Reembed] 旧全局向量删除失败（可能有残留，可手动清理）: {}", e.getMessage());
-                }
-            }
+            log.info("[KB-Reembed] 知识库 {} 旧绑定跟随全局（已退役），全局索引残留向量如有可在 Redis 手动清理", kbId);
         } else {
             kbVectorStores.dropKbIndex(kbId);
         }
-        if (!neu.isBlank()) {
-            kbVectorStores.remove(kbId); // 下次访问按新模型重建
-        }
+        kbVectorStores.remove(kbId); // 下次访问按新模型重建
 
         // 3. 按新模型全量重嵌本库
-        VectorStore target = neu.isBlank() ? vectorStore : kbVectorStores.storeForKb(kbId);
+        VectorStore target = kbVectorStores.storeForKb(kbId);
         int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
         int done = 0;

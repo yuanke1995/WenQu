@@ -1,38 +1,32 @@
 package com.wisesoft.ai.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.document.Document;
 import org.springframework.ai.document.MetadataMode;
-import org.springframework.ai.embedding.AbstractEmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.annotation.Primary;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 动态 OpenAI 兼容 EmbeddingModel：向量模型四要素（model / baseUrl / apiKey / embeddingsPath），
- * 经 {@link ModelRegistryService#embeddingRoute} 解析（embedding.model 为引用时取对应供应商网关，
- * 遗留值走全局 embedding.* 配置），设置页保存即生效，@Primary 使自动配置的 RedisVectorStore 注入本类，
- * 切换向量厂商无需重启服务。
+ * 向量模型引用路由器：按知识库绑定（{@code kb.embedding_ref = {providerId}/{modelId}}）解析并缓存
+ * 独立的 {@link OpenAiEmbeddingModel} 客户端（{@link KbVectorStoreRegistry} 的 per-KB 索引与
+ * 用户长期记忆向量化共用）。
  * <p>
- * - 每次调用前校验路由指纹（resolved 后的值比较），变化即重建底层 {@link OpenAiEmbeddingModel}（本地构建，无网络开销）
+ * - <b>无兜底</b>：引用为空 / 非引用 / 供应商不存在 → 抛出，由调用方 fail-loud 引导绑定
+ *   （全局 embedding.* 网关与遗留裸模型名回落已移除；存量裸名由 ModelRegistryService 启动迁移改写为引用）
+ * - 按路由指纹缓存底层客户端；供应商网关/密钥变更（Redis 广播 reload）后指纹变化 → 自动重建
  * - 路径归一化复用 {@link DynamicOpenAiChatModel#normalize}（智谱 /v4/embeddings、千帆 /v2/embeddings 等）
  * - <b>重要</b>：向量模型切换 ≠ 仅换模型名——新旧模型向量空间不兼容（维度/语义均不同，数学上不可迁移），
- *   必须配合全量重嵌入（DocumentService.reembedAll：DROP 向量索引 → 按新维度重建 schema →
- *   全量重新 embedding → 清空语义缓存），ConfigService 保存检测到向量路由变化时自动触发
- * - DB 未配置时回退 yml/env 的 spring.ai.openai.embedding.*（与原自动配置行为一致）
+ *   知识库换绑由 DocumentService.reembedKbAsync 按库重嵌入兜住
  *
  * @author yuanke
  */
 @Slf4j
 @Component
-@Primary
-public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
+public class DynamicEmbeddingModel {
 
     /** Spring AI 默认 embedding 路径（与 OpenAiApi 默认一致） */
     static final String DEFAULT_EMBEDDINGS_PATH = "/v1/embeddings";
@@ -41,8 +35,9 @@ public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
     private final RetryTemplate retryTemplate;
     private final ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry;
 
-    private volatile String delegateKey = "";
-    private volatile OpenAiEmbeddingModel delegate;
+    /** 按引用解析的向量客户端缓存（KB 自定义向量模型用），key=路由指纹 */
+    private final java.util.concurrent.ConcurrentHashMap<String, EmbeddingModel> refDelegates =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public DynamicEmbeddingModel(ModelRegistryService registry,
                                  ObjectProvider<RetryTemplate> retryTemplate,
@@ -52,74 +47,26 @@ public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
         this.observationRegistry = observationRegistry;
     }
 
-    @Override
-    public EmbeddingResponse call(EmbeddingRequest request) {
-        return current().call(request);
-    }
-
-    /** abstract 方法：embedding 文本提取（委托底层实现） */
-    @Override
-    public float[] embed(Document document) {
-        return current().embed(document);
-    }
-
-    /** 覆写父类缓存实现：模型热切换后维度可能变化，必须实时反映（RedisVectorStore 建索引依赖本值） */
-    @Override
-    public int dimensions() {
-        return current().dimensions();
-    }
-
-    /** 按 provider 引用解析的向量客户端缓存（KB 自定义向量模型用），key=路由指纹 */
-    private final java.util.concurrent.ConcurrentHashMap<String, OpenAiEmbeddingModel> refDelegates =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
     /**
-     * 按引用解析的向量模型（知识库绑定向量模型的独立索引写入/查询用）。
-     * 引用格式 {@code providerId/modelId} → 供应商网关；非引用的遗留纯模型名（如启动迁移回填的
-     * 旧全局 embedding.model 值）→ 遗留 embedding.* 网关 + 该模型名，行为与退役前"跟随全局"一致。
-     * 按路由指纹缓存底层客户端；解析不出任何路由抛 IllegalArgumentException（调用方应先经 KB 保存校验）。
+     * 按引用解析的向量模型：引用格式 {@code providerId/modelId} → 供应商网关。
+     * 引用无效（空/非引用/供应商不存在）抛 IllegalArgumentException——调用方应先经 KB 保存校验
+     * 或显式配置（如 memory.embeddingRef），运行时触达即配置缺失。
      */
-    public org.springframework.ai.embedding.EmbeddingModel forRef(String ref) {
+    public EmbeddingModel forRef(String ref) {
         String v = ref == null ? "" : ref.trim();
         ModelRegistryService.ModelRoute resolved = registry.resolveReference(v);
-        if (resolved == null && !v.isBlank() && !v.contains("/")) {
-            // 遗留纯模型名：模型名取 ref 本体，网关回落遗留 embedding.* 配置（与退役前全局路由同源）
-            resolved = registry.embeddingRoute(v);
-        }
         if (resolved == null) {
-            throw new IllegalArgumentException("向量模型引用无效: " + ref);
+            throw new IllegalArgumentException("向量模型引用无效: " + (v.isEmpty() ? "（未绑定）" : v)
+                    + "（请重新绑定向量模型）");
         }
-        final ModelRegistryService.ModelRoute route = resolved;
-        return refDelegates.computeIfAbsent(route.embeddingFingerprint(), k -> {
-            String[] np = DynamicOpenAiChatModel.normalize(route.baseUrl(), route.embeddingsPath(),
+        return refDelegates.computeIfAbsent(resolved.embeddingFingerprint(), k -> {
+            String[] np = DynamicOpenAiChatModel.normalize(resolved.baseUrl(), resolved.embeddingsPath(),
                     DEFAULT_EMBEDDINGS_PATH, "/embeddings");
-            return build(np[0], np[1], route.modelId(), route.apiKey());
+            return build(np[0], np[1], resolved.modelId(), resolved.apiKey());
         });
     }
 
-    /** 读当前向量路由（引用 → 供应商网关；遗留 → 全局 embedding.*），指纹变化即重建底层客户端 */
-    private OpenAiEmbeddingModel current() {
-        ModelRegistryService.ModelRoute route = registry.embeddingRoute();
-        String key = route.embeddingFingerprint();
-        OpenAiEmbeddingModel m = delegate;
-        if (m != null && key.equals(delegateKey)) {
-            return m;
-        }
-        synchronized (this) {
-            m = delegate;
-            if (m != null && key.equals(delegateKey)) {
-                return m;
-            }
-            String[] np = DynamicOpenAiChatModel.normalize(route.baseUrl(), route.embeddingsPath(),
-                    DEFAULT_EMBEDDINGS_PATH, "/embeddings");
-            m = build(np[0], np[1], route.modelId(), route.apiKey());
-            delegate = m;
-            delegateKey = key;
-            return m;
-        }
-    }
-
-    private OpenAiEmbeddingModel build(String baseUrl, String embeddingsPath, String model, String apiKey) {
+    private EmbeddingModel build(String baseUrl, String embeddingsPath, String model, String apiKey) {
         OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
@@ -127,8 +74,7 @@ public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
                 .model(model)
                 .build();
-        log.info("[Embedding] 向量模型客户端已{}: baseUrl={}, embeddingsPath={}, model={}, apiKey={}",
-                delegate == null ? "构建" : "重建（配置热切换）",
+        log.info("[Embedding] 向量模型客户端已构建: baseUrl={}, embeddingsPath={}, model={}, apiKey={}",
                 baseUrl, embeddingsPath, model,
                 apiKey == null || apiKey.length() <= 8 ? (apiKey == null || apiKey.isEmpty() ? "(空)" : "****")
                         : "****" + apiKey.substring(apiKey.length() - 4));
@@ -140,7 +86,7 @@ public class DynamicEmbeddingModel extends AbstractEmbeddingModel {
 
     /**
      * 保存前探测：用「尚未入库」的新配置构建临时客户端并对探测文本做一次真实 embedding。
-     * 供 ConfigService.update 校验新配置可达/Key 有效/模型名正确（失败拒绝保存，避免配错后全量重嵌任务必然失败），
+     * 供保存流程校验新配置可达/Key 有效/模型名正确（失败拒绝保存，避免配错后重嵌任务必然失败），
      * 同时返回新模型维度（与旧索引维度比对记日志，维度变化必然需要重建索引）。
      */
     public static int probe(String baseUrl, String apiKey, String model, String embeddingsPath) {

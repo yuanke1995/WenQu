@@ -204,13 +204,11 @@ public class ConfigService {
     /** 从 yml/env 读取默认值 */
     private Map<String, String> defaults() {
         Map<String, String> d = new LinkedHashMap<>();
-        // chat.model 已退役（全局兜底移除）：不再注入默认值，存量库中的旧行成为孤儿数据（无读取方）
+        // chat.model 已退役（全局兜底移除）：不再注入默认值，存量库中的旧行成为孤儿数据（无读取方）。
+        // chat.baseUrl / chat.apiKey / chat.completionsPath 同步退役：聊天网关统一来自「模型供应商」表
+        // （模型引用 → 供应商网关），DynamicOpenAiChatModel 对解析不出的引用 fail-loud，无全局兜底
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
         d.put("chat.systemPrompt", properties.getSystemPrompt());
-        d.put("chat.baseUrl", env("spring.ai.openai.base-url", ""));
-        d.put("chat.apiKey", env("spring.ai.openai.api-key", ""));
-        // 对话补全路径（GLM 等非 /v1 网关需改，如 /api/paas/v4/chat/completions；默认与 Spring AI 一致）
-        d.put("chat.completionsPath", "/v1/chat/completions");
         d.put("chat.citationCheckEnabled", "true");        // 引用语义一致性自检（生成后校验，默认开）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
@@ -220,15 +218,14 @@ public class ConfigService {
         d.put("vision.concurrency", String.valueOf(properties.getVision().getConcurrency()));
         d.put("vision.descCacheVersion", "1");                 // 图片描述缓存版本（bump 后全量重新描述）
         d.put("vision.descCacheTtlDays", "180");               // 图片描述缓存有效期(天，0=不过期)
-        // 向量网关三要素（遗留纯模型名回落用；向量模型本体已归知识库 embedding_ref，全局键退役）
-        d.put("embedding.baseUrl", env("spring.ai.openai.embedding.base-url",
-                env("spring.ai.openai.base-url", "")));
-        d.put("embedding.apiKey", env("spring.ai.openai.embedding.api-key",
-                env("spring.ai.openai.api-key", "")));
-        d.put("embedding.embeddingsPath", "/v1/embeddings");
-        // 当前向量索引维度（系统记录，非用户可编辑）：全量重嵌入成功后由 putInternal 回写，
-        // 作为下次切换的"旧维度"基线并供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
+        // embedding.baseUrl/apiKey/embeddingsPath 退役：向量网关统一来自「模型供应商」表（kb.embedding_ref
+        // 引用 → 供应商网关），存量遗留网关信息由 ModelRegistryService 启动迁移读取（修复裸名引用）后不再有读取方
+        // 当前向量索引维度（系统记录，非用户可编辑）：按库重嵌入成功后由 putInternal 回写，
+        // 供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
         d.put("embedding.dimensions", "");
+        // 用户长期记忆的向量化模型引用（{providerId}/{modelId}；空=语义去重降级精确匹配、语义注入关闭）。
+        // 显式绑定、无兜底：语义去重与语义注入依赖向量空间，模型必须由管理员明示
+        d.put("memory.embeddingRef", "");
         // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
         // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
         d.put("chunk.maxSize", String.valueOf(properties.getChunk().getMaxSize()));
@@ -334,11 +331,8 @@ public class ConfigService {
         d.put("images.quality", "0.9");                // JPEG 压缩质量
         d.put("images.authEnabled", "false");          // 图片签名鉴权开关
         d.put("images.authExpireSeconds", "3600");     // 签名 URL 有效期(秒)
-        d.put("vision.timeoutMillis", "30000");        // 视觉模型读取超时(ms)
+        d.put("vision.timeoutMillis", "30000");        // 视觉模型读取超时(ms，RestClient 构建期读取，需重启生效)
         d.put("vision.retryCount", "1");               // 单图失败重试次数
-        d.put("vision.think", "false");                // 视觉模型思考模式开关
-        d.put("vision.keepAliveMinutes", "30");        // Ollama 常驻时长(分钟)
-        d.put("vision.numCtx", "16384");               // Ollama num_ctx
         d.put("session.maxHistory", "10");             // 会话保留轮数
         d.put("session.expireMinutes", "30");          // 会话过期(分钟)
         // 查询改写（默认值取 bean，单一来源；消费方 RagService 经 syncProperties 回写后热生效）
@@ -456,9 +450,6 @@ public class ConfigService {
             AppProperties.Vision vision = properties.getVision();
             vision.setTimeoutMillis(pInt("vision.timeoutMillis", vision.getTimeoutMillis()));
             vision.setRetryCount(pInt("vision.retryCount", vision.getRetryCount()));
-            vision.setThink(pBool("vision.think", vision.isThink()));
-            vision.setKeepAliveMinutes(pInt("vision.keepAliveMinutes", vision.getKeepAliveMinutes()));
-            vision.setNumCtx(pInt("vision.numCtx", vision.getNumCtx()));
             AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
