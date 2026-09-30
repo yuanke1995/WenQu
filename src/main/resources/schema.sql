@@ -659,6 +659,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
     `inputs`       TEXT          DEFAULT NULL COMMENT '开始节点入参（JSON）',
     `outputs`      TEXT          DEFAULT NULL COMMENT '结束节点出参（JSON）',
     `node_traces`  MEDIUMTEXT    DEFAULT NULL COMMENT '节点级 trace（JSON 数组：nodeId/type/status/输入输出摘要/耗时）',
+    `state_snapshot` MEDIUMTEXT  DEFAULT NULL COMMENT '人工审核挂起时的执行快照（已完成节点全量输出+挂起节点；恢复时短路重放用，终态运行置空）',
     `error`        VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（截断 1000 字符）',
     `started_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '开始时刻',
     `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻',

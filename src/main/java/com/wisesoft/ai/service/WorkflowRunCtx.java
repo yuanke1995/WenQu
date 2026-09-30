@@ -21,6 +21,8 @@ public final class WorkflowRunCtx {
     final String uid;
     final String departmentId;
     final String role;
+    /** 本次运行 id（人工审核节点的 PENDING 记录以此关联归属） */
+    final String runId;
     /** 触发线程的参数覆盖快照（节点线程内重放；见 ConfigService.currentOverrides 的跨线程口径） */
     final Map<String, String> baseOverrides;
     /** 开始节点入参（变量引用 {{start.key}} 的取值来源） */
@@ -32,13 +34,29 @@ public final class WorkflowRunCtx {
     /** 运行期最大步数（图迭代上限，对齐 agent.maxToolSteps 语义；M1 图无环，兜底防 M3 loop 回跳失控） */
     final int maxSteps;
 
+    // ---- M3：人工审核的挂起/恢复（快照短路重放方案） ----
+    /**
+     * 恢复执行时各节点上次运行的<b>全量</b>输出（nodeId → 裸键输出 map；截断前的原值）。
+     * 包装层发现某节点有历史输出即短路返回（不再执行节点体）——已完成节点零成本续跑，
+     * 只有挂起节点与其下游真正执行。非恢复运行恒为空。
+     */
+    final Map<String, Map<String, Object>> resumeOutputs = new LinkedHashMap<>();
+    /** 审批裁决（nodeId → 批准与否）；审核节点体据此路由 approve/reject 分支 */
+    final Map<String, Boolean> approvalDecisions = new LinkedHashMap<>();
+    /**
+     * 每个成功节点的全量输出登记（nodeId → 裸键输出 map，与 state 同值但不截断）。
+     * 挂起时整体序列化进 run.state_snapshot，作为恢复执行的短路依据。
+     */
+    final Map<String, Map<String, Object>> fullOutputs = new LinkedHashMap<>();
+
     /** 节点 trace（完成序；同步串行图无并发写，并行图(M3)再上锁） */
     final List<Map<String, Object>> traces = new ArrayList<>();
     /** 开始时刻（run 总耗时用） */
     final long t0 = System.currentTimeMillis();
 
-    WorkflowRunCtx(String uid, String departmentId, String role, Map<String, String> baseOverrides,
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps) {
+        this.runId = runId;
         this.uid = uid;
         this.departmentId = departmentId;
         this.role = role;

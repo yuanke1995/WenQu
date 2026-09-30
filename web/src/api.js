@@ -276,6 +276,11 @@ export const runWorkflow = (id, inputs) =>
   request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }), timeout: 300000 })
 export const listWorkflowRuns = id => request(`/workflow/${id}/run/list`)
 export const getWorkflowRun = (id, runId) => request(`/workflow/${id}/run/${runId}`)
+/** 人工审核：待审批信息（prompt/超时/挂起时刻），无则 null */
+export const getWorkflowPendingApproval = (id, runId) => request(`/workflow/${id}/run/${runId}/approval`)
+/** 人工审核：裁决并恢复续跑（同步跑完，返回终态 run） */
+export const resolveWorkflowApproval = (id, runId, approved) =>
+  request(`/workflow/${id}/run/${runId}/approval`, { method: 'POST', body: JSON.stringify({ approved }), timeout: 300000 })
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */

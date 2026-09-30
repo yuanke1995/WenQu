@@ -496,27 +496,11 @@ public class DocumentService {
 
     /**
      * SSRF 防护：仅 http/https；主机解析出的所有地址（含 IPv6）都不得为
-     * 回环/站点内网/任意/链路本地/多播地址——服务端抓取不能变成内网探测通道
+     * 回环/站点内网/任意/链路本地/多播地址——服务端抓取不能变成内网探测通道。
+     * （实现已提取到 {@link com.wisesoft.ai.util.SsrfGuard} 供工作流 HTTP 节点等同口径复用）
      */
     private void requirePublicHost(URI uri) {
-        String scheme = uri.getScheme();
-        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-            throw new BizException("仅支持 http/https 链接");
-        }
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) throw new BizException("URL 缺少主机名");
-        java.net.InetAddress[] addrs;
-        try {
-            addrs = java.net.InetAddress.getAllByName(host);
-        } catch (java.net.UnknownHostException e) {
-            throw new BizException("无法解析主机: " + host);
-        }
-        for (java.net.InetAddress addr : addrs) {
-            if (addr.isLoopbackAddress() || addr.isSiteLocalAddress() || addr.isAnyLocalAddress()
-                    || addr.isLinkLocalAddress() || addr.isMulticastAddress()) {
-                throw new BizException("禁止导入内网/本机地址的网页（" + host + "）");
-            }
-        }
+        com.wisesoft.ai.util.SsrfGuard.requirePublicHost(uri);
     }
 
     /** 页面标题提取（charsetName=null 让 jsoup 自动探测） */

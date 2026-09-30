@@ -7,13 +7,22 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.model.Agent;
+import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.service.HybridRetrievalService.Hit;
+import com.wisesoft.ai.sandbox.ProvisionerSandboxBackend;
+import com.wisesoft.ai.util.SsrfGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -29,27 +38,22 @@ import java.util.function.Function;
  * <p>
  * <b>分期口径（排班计划 2026-09-29）</b>：
  * <ul>
- *   <li>M0（已完成）：结构校验 + 编译骨架；</li>
- *   <li>M1（当前）：llm / retrieval / condition 三类真实节点（AsyncNodeAction / addConditionalEdges）
- *       + 运行执行 + 节点 trace 收集。M0 两个待验证项已源码取证：
- *       ① 未注册状态键默认 {@code KeyStrategy.REPLACE}、不丢弃不报错（OverAllState.updateState），
- *       故策略表留空即可——节点输出键按 {@code wf:<nodeId>.<key>} 命名进 state，天然无冲突；
- *       ② 条件边 API 为 {@code addConditionalEdges(source, AsyncEdgeAction, Map<branchKey,target>)}；
- *   <li>M3：http / code / subagent / approval / loop / template。</li>
+ *   <li>M0：结构校验 + 编译骨架；</li>
+ *   <li>M1：llm / retrieval / condition 真实节点 + 运行 + trace（未注册键默认 REPLACE、
+ *       addConditionalEdges 形态两项已源码取证 + 实测关闭）；</li>
+ *   <li>M2：VueFlow 画布（前端，后端零改动）；</li>
+ *   <li>M3（当前）：节点补全——http / code / subagent / approval / loop / template。
+ *       approval 采用<b>挂起-快照-短路重放</b>方案：节点落 PENDING 审批记录后抛
+ *       {@link WorkflowSuspendException}，run 落 waiting_approval + 状态快照；
+ *       审批接口按快照恢复（已完成节点短路回放，仅挂起节点及其下游真正执行），
+ *       不依赖框架 checkpoint。loop 节点打破 DAG 限制：校验器只放行<b>源自 loop 节点</b>的回跳边，
+ *       运行期 loopCount 计数 + maxSteps 双闸。</li>
  * </ul>
  * <p>
- * 结构决策（继承 SubAgentOrchestrator 的已验证结论）：
- * <ul>
- *   <li><b>图按次编译、动作闭包绑定 RunCtx</b>：每次运行拿 DSL 快照现编译（不缓存，DSL 各异），
- *       节点动作直接闭包 {@link WorkflowRunCtx}，无需 ctxId 经 state 中转的注册表范式；
- *       顺序执行时节点跑在调用线程，M3 引入并行分支后 ThreadLocal 依旧不可用——
- *       节点内身份/配置一律经 {@link #withReplay} 显式重放，禁止新引 ThreadLocal 依赖；</li>
- *   <li><b>end 是真实节点</b>（渲染 config.outputs 进 state，trace 可见、可达路径可追溯），
- *       start 是虚拟概念（出边改从 StateGraph.START 出发）；</li>
- *   <li><b>条件节点先在节点体内裁决路由</b>（trace 记录命中分支），出边动作只读 state 里的
- *       路由键做映射——路由判定与 trace 归属同一节点，不产生重复 trace 条目；</li>
- *   <li>条件表达式求值走 {@link WorkflowExpr}（SpEL + SimpleEvaluationContext，禁 T()/构造器）。</li>
- * </ul>
+ * 结构决策（继承 SubAgentOrchestrator 的已验证结论）：图按次编译、动作闭包
+ * {@link WorkflowRunCtx}；节点内身份/配置一律经 {@link #withReplay} 显式重放；
+ * 输出键按 {@code wf:<nodeId>.<key>} 命名进 state；条件类节点（condition/approval/loop）
+ * 在节点体内裁决路由、出边动作只读映射。
  *
  * @author yuanke
  */
@@ -67,24 +71,41 @@ public class WorkflowEngine {
     private final ConfigService configService;
     private final ModelRegistryService modelRegistryService;
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
+    private final SandboxService sandboxService;
+    private final AgentService agentService;
+    private final RagService ragService;
+    private final SessionService sessionService;
+    private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
 
     public WorkflowEngine(WorkflowValidator validator, ChatClient chatClient,
                           HybridRetrievalService retrievalService, ConfigService configService,
                           ModelRegistryService modelRegistryService,
-                          com.wisesoft.ai.mapper.UserMapper userMapper) {
+                          com.wisesoft.ai.mapper.UserMapper userMapper,
+                          SandboxService sandboxService, AgentService agentService,
+                          RagService ragService, SessionService sessionService,
+                          com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper) {
         this.validator = validator;
         this.chatClient = chatClient;
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.modelRegistryService = modelRegistryService;
         this.userMapper = userMapper;
+        this.sandboxService = sandboxService;
+        this.agentService = agentService;
+        this.ragService = ragService;
+        this.sessionService = sessionService;
+        this.toolApprovalMapper = toolApprovalMapper;
     }
 
     /**
-     * 当前可编译执行的节点类型（M1：start/end 虚实各半 + llm/retrieval/condition 三类真实节点）。
-     * M3 增 http / code / subagent / approval / loop / template。
+     * 当前可编译执行的节点类型（M3 起 11 类全量开放；start/end 虚实各半见 buildGraph）。
      */
-    public static final List<String> EXECUTABLE = List.of("start", "end", "llm", "retrieval", "condition");
+    public static final List<String> EXECUTABLE = List.of(
+            "start", "end", "llm", "retrieval", "condition",
+            "http", "code", "subagent", "approval", "loop", "template");
+
+    /** 条件类（路由器）节点：出边携带分支键、节点体内裁决路由（condition/approval/loop 同范式） */
+    public static final Set<String> ROUTER_TYPES = Set.of("condition", "approval", "loop");
 
     /** 节点输出在 state 中的键前缀：wf:&lt;nodeId&gt;.&lt;key&gt;（nodeId 不含 "."，键注入安全） */
     static String nsKey(String nodeId, String key) {
@@ -96,7 +117,7 @@ public class WorkflowEngine {
         return buildGraph(dsl, null, 100);
     }
 
-    /** 执行编译：节点动作闭包 ctx（trace 收集/身份重放/模型引用），recursionLimit 用本轮 maxSteps */
+    /** 执行编译：节点动作闭包 ctx（trace 收集/身份重放/模型引用/恢复快照），recursionLimit 用本轮 maxSteps */
     public CompiledGraph compile(WorkflowDsl dsl, WorkflowRunCtx ctx) {
         return buildGraph(dsl, ctx, Math.max(1, ctx.maxSteps));
     }
@@ -108,9 +129,7 @@ public class WorkflowEngine {
         }
         for (WorkflowDsl.Node n : dsl.getNodes()) {
             if (!EXECUTABLE.contains(n.getType())) {
-                throw new BizException("节点「" + n.getId() + "」的类型 " + n.getType()
-                        + " 尚未开放执行（当前支持 " + String.join("/", EXECUTABLE)
-                        + "；http/code/subagent/approval/loop/template 随 M3 开放）");
+                throw new BizException("节点「" + n.getId() + "」的类型 " + n.getType() + " 未注册");
             }
         }
         try {
@@ -126,19 +145,17 @@ public class WorkflowEngine {
                 graph.addNode(n.getId(), wrap(n, ctx, bodyOf(n, ctx)));
             }
 
-            // ---- 边翻译：start 虚拟（出边从 START 出发）；end 是真实节点（先 addNode 过），
-            //      指向 end 的边保持原样，end→END 的终止边在下方统一补——
-            //      因此 M0 时代的 passthrough 兜底不再需要（start→end 直连即 START→end→END）----
+            // ---- 边翻译：start 虚拟（出边从 START 出发）；end 是真实节点，end→END 终止边统一补 ----
             for (WorkflowDsl.Node n : dsl.getNodes()) {
                 if (!"end".equals(n.getType())) continue;
                 graph.addEdge(n.getId(), StateGraph.END);
             }
-            Set<String> translated = new LinkedHashSet<>();   // 翻译后去重（同一源点多条无条件出边汇同一条时报可读错）
-            Map<String, Map<String, String>> condMappings = new LinkedHashMap<>();   // 条件节点 → branch→target
+            Set<String> translated = new LinkedHashSet<>();
+            Map<String, Map<String, String>> condMappings = new LinkedHashMap<>();   // 路由节点 → branch→target
             for (WorkflowDsl.Edge e : dsl.getEdges()) {
                 String from = "start".equals(byId.get(e.getFrom()).getType()) ? StateGraph.START : e.getFrom();
-                if ("condition".equals(byId.get(e.getFrom()).getType())) {
-                    // 条件出边：不 addEdge，攒 mappings 后统一 addConditionalEdges（同一节点两种出边会被库拒）
+                if (ROUTER_TYPES.contains(byId.get(e.getFrom()).getType())) {
+                    // 路由出边：不 addEdge，攒 mappings 后统一 addConditionalEdges（同一节点两种出边会被库拒）
                     condMappings.computeIfAbsent(e.getFrom(), k -> new LinkedHashMap<>()).put(e.getBranch(), e.getTo());
                     continue;
                 }
@@ -153,7 +170,7 @@ public class WorkflowEngine {
                         com.alibaba.cloud.ai.graph.action.AsyncEdgeAction.edge_async(state -> {
                             Object route = state.value(nsKey(en.getKey(), "route")).orElse(null);
                             if (route == null) {
-                                throw new BizException("条件节点「" + en.getKey() + "」未产出路由键（节点体未执行或未命中任何分支）");
+                                throw new BizException("路由节点「" + en.getKey() + "」未产出路由键（节点体未执行或未命中任何分支）");
                             }
                             return String.valueOf(route);
                         }),
@@ -165,7 +182,6 @@ public class WorkflowEngine {
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            // 库层拒绝（图结构/参数问题）：原文透出，fail-loud 不吞
             throw new BizException("图编译失败：" + e.getMessage());
         }
     }
@@ -174,7 +190,7 @@ public class WorkflowEngine {
     // 节点执行体
     // --------------------------------------------------------------------------------------------------
 
-    /** 节点体执行结果：output 进 state（裸键，包装层再加节点前缀）；traceExtra 只进 trace 不进 state */
+    /** 节点体执行结果：output 进 state（裸键，包装层再加节点前缀）；traceOutput 只进 trace 不进 state */
     private record NodeOut(Map<String, Object> output, Integer promptTokens, Integer completionTokens,
                            Object traceOutput) {
         static NodeOut of(Map<String, Object> output) {
@@ -183,12 +199,20 @@ public class WorkflowEngine {
     }
 
     /**
-     * 节点包装层：计时 + trace（输入=配置引用渲染快照，输出=节点体结果摘要）+
-     * 输出键加节点前缀进 state（wf:&lt;id&gt;.&lt;key&gt;，避免不同节点同名输出在 state 里互相覆盖）。
-     * 失败 fail-loud：异常上抛让整轮 run 落 failed，trace 记 error。
+     * 节点包装层：恢复短路 + 计时 + trace + 输出键加节点前缀进 state。
+     * <ul>
+     *   <li><b>恢复短路</b>：resumeOutputs 含该节点（上次运行的快照）→ 直接回放输出，不执行节点体——
+     *       人工审核恢复时已完成节点零成本续跑；</li>
+     *   <li><b>挂起穿透</b>：{@link WorkflowSuspendException} 不按失败处理（记 waiting trace 后原样上抛，
+     *       由 run 收口转 waiting_approval）；</li>
+     *   <li>其余异常 fail-loud：上抛让整轮 run 落 failed。</li>
+     * </ul>
      */
     private AsyncNodeAction wrap(WorkflowDsl.Node n, WorkflowRunCtx ctx, Function<OverAllState, NodeOut> body) {
         return AsyncNodeAction.node_async(state -> {
+            if (ctx != null && ctx.resumeOutputs.containsKey(n.getId())) {
+                return namespace(n.getId(), ctx.resumeOutputs.get(n.getId()));
+            }
             long t0 = System.currentTimeMillis();
             Map<String, Object> inputSnapshot = ctx == null ? Map.of() : inputSnapshot(n, ctx, state);
             try {
@@ -197,12 +221,15 @@ public class WorkflowEngine {
                 if (ctx != null) {
                     ctx.trace(n.getId(), n.getType(), "success", inputSnapshot, out.traceOutput(), ms,
                             out.promptTokens(), out.completionTokens(), null);
+                    ctx.fullOutputs.put(n.getId(), out.output());
                 }
-                Map<String, Object> namespaced = new LinkedHashMap<>();
-                for (Map.Entry<String, Object> e : out.output().entrySet()) {
-                    if (e.getValue() != null) namespaced.put(nsKey(n.getId(), e.getKey()), e.getValue());
+                return namespace(n.getId(), out.output());
+            } catch (WorkflowSuspendException e) {
+                if (ctx != null) {
+                    ctx.trace(n.getId(), n.getType(), "waiting", inputSnapshot, e.traceOutput,
+                            System.currentTimeMillis() - t0, null, null, null);
                 }
-                return namespaced;
+                throw e;
             } catch (Exception e) {
                 long ms = System.currentTimeMillis() - t0;
                 if (ctx != null) {
@@ -213,12 +240,26 @@ public class WorkflowEngine {
         });
     }
 
+    private static Map<String, Object> namespace(String nodeId, Map<String, Object> out) {
+        Map<String, Object> namespaced = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : out.entrySet()) {
+            if (e.getValue() != null) namespaced.put(nsKey(nodeId, e.getKey()), e.getValue());
+        }
+        return namespaced;
+    }
+
     /** 按类型分派节点体（start 永不进入：虚拟节点不 addNode） */
     private Function<OverAllState, NodeOut> bodyOf(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return switch (n.getType()) {
             case "llm" -> llmBody(n, ctx);
             case "retrieval" -> retrievalBody(n, ctx);
-            case "condition" -> conditionBody(n, ctx);
+            case "condition" -> routerBody(n, ctx, false);
+            case "http" -> httpBody(n, ctx);
+            case "code" -> codeBody(n, ctx);
+            case "subagent" -> subagentBody(n, ctx);
+            case "approval" -> approvalBody(n, ctx);
+            case "loop" -> routerBody(n, ctx, true);
+            case "template" -> templateBody(n, ctx);
             case "end" -> endBody(n, ctx);
             default -> throw new BizException("节点「" + n.getId() + "」类型 " + n.getType() + " 无执行体");
         };
@@ -232,6 +273,13 @@ public class WorkflowEngine {
             throw new BizException("节点「" + n.getId() + "」缺少必填配置 " + key);
         }
         return s;
+    }
+
+    /** 整数配置（缺省默认值 + 范围钳制） */
+    private static int cfgInt(WorkflowDsl.Node n, String key, int dft, int min, int max) {
+        Object v = n.getConfig() == null ? null : n.getConfig().get(key);
+        int val = v instanceof Number num ? num.intValue() : dft;
+        return Math.max(min, Math.min(max, val));
     }
 
     /**
@@ -279,16 +327,13 @@ public class WorkflowEngine {
 
     /**
      * 知识库检索节点：query 模板渲染 → 混合检索（kbIds 限定库界，null=全局）→ 取前 topK。
-     * 输出 chunks（结构化列表，供后续节点/trace 查看）与 text（拼接文本，直接可拼 prompt）。
-     * 身份与检索参数经 withReplay 显式重放（节点可能不在触发线程上）。
+     * 输出 chunks（结构化列表）/ text（拼接文本，直接可拼 prompt）/ count。
      */
     private Function<OverAllState, NodeOut> retrievalBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
             String query = render(cfgStr(n, "query", true), ref -> resolveRef(ref, ctx, state));
             Collection<String> kbIds = kbIdsOf(n);
-            Object t = n.getConfig() == null ? null : n.getConfig().get("topK");
-            int topK = t instanceof Number num ? num.intValue() : 5;
-            topK = Math.max(1, Math.min(topK, MAX_TOPK));
+            int topK = cfgInt(n, "topK", 5, 1, MAX_TOPK);
             List<Hit> hits = withReplay(ctx, () -> retrievalService.search(query, null, kbIds));
             if (hits == null) hits = List.of();
             List<Map<String, Object>> chunks = new ArrayList<>();
@@ -329,37 +374,64 @@ public class WorkflowEngine {
         return ids.isEmpty() ? null : ids;
     }
 
+    // ---- M3：条件路由（condition 原语义 + loop 计数闸共用一个节点体）----
+
     /**
-     * 条件分支节点：按 config.branches 声明序求值，首个命中的分支键写进 state（wf:&lt;id&gt;.route），
-     * 由出边动作映射目标。key=else 的分支视为兜底（不写 expr 或 expr 恒空）。
-     * 全部落空且无 else → fail-loud（图终止，run 落 failed，错误信息讲明该补 else）。
+     * 路由节点体：按 config.branches 声明序求值，首个命中的分支键写进 state（wf:&lt;id&gt;.route），
+     * 由出边动作映射目标。key=else 的分支视为兜底。全落空且无 else → fail-loud。
+     * <p>loop 节点在同一体上叠加<b>迭代计数</b>：每次执行 loopCount+1（持久在 state，跨迭代累加），
+     * 超过 config.maxLoops 即 fail-loud（编译期校验 maxLoops 声明 + 运行期计数 = 双闸；
+     * 另有 recursionLimit 硬兜底）。
      */
-    private Function<OverAllState, NodeOut> conditionBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+    private Function<OverAllState, NodeOut> routerBody(WorkflowDsl.Node n, WorkflowRunCtx ctx, boolean isLoop) {
         return state -> {
+            Integer loopCount = null;
+            Map<String, Object> output = new LinkedHashMap<>();
+            if (isLoop) {
+                int maxLoops = cfgInt(n, "maxLoops", 5, 1, 100);
+                int count = 1;
+                try {
+                    Object prev = state.value(nsKey(n.getId(), "loopCount")).orElse(null);
+                    if (prev instanceof Number num) count = num.intValue() + 1;
+                } catch (Exception ignored) {
+                }
+                if (count > maxLoops) {
+                    throw new BizException("循环节点「" + n.getId() + "」已达最大迭代次数 " + maxLoops
+                            + "（当前第 " + count + " 轮）——请检查回跳条件是否永远为真");
+                }
+                loopCount = count;
+                output.put("loopCount", count);
+            }
             List<Map<String, Object>> branches = branchesOf(n);
             Map<String, Object> refs = new LinkedHashMap<>();
             for (Map<String, Object> b : branches) {
                 String key = String.valueOf(b.get("key"));
                 String expr = b.get("expr") == null ? "" : String.valueOf(b.get("expr")).trim();
-                if ("else".equals(key)) return route(n, key, "兜底分支");
+                if ("else".equals(key)) {
+                    output.put("route", key);
+                    return routeOut(n, output, key, "兜底分支");
+                }
                 for (String ref : refsOf(b.get("expr"))) refs.put(ref, resolveRef(ref, ctx, state));
                 boolean hit;
                 try {
                     hit = WorkflowExpr.eval(expr, refs);
                 } catch (BizException e) {
-                    throw new BizException("条件节点「" + n.getId() + "」分支「" + key + "」：" + e.getMessage());
+                    throw new BizException((isLoop ? "循环节点" : "条件节点") + "「" + n.getId() + "」分支「" + key + "」：" + e.getMessage());
                 }
-                if (hit) return route(n, key, expr);
+                if (hit) {
+                    output.put("route", key);
+                    return routeOut(n, output, key, expr);
+                }
             }
-            throw new BizException("条件节点「" + n.getId() + "」所有分支均未命中且未声明 else 兜底分支");
+            throw new BizException((isLoop ? "循环节点" : "条件节点") + "「" + n.getId() + "」所有分支均未命中且未声明 else 兜底分支");
         };
     }
 
-    private static NodeOut route(WorkflowDsl.Node n, String key, String matchedExpr) {
-        Map<String, Object> trace = new LinkedHashMap<>();
+    private static NodeOut routeOut(WorkflowDsl.Node n, Map<String, Object> output, String key, String matchedExpr) {
+        Map<String, Object> trace = new LinkedHashMap<>(output);   // loop 时带 loopCount
         trace.put("branch", key);
         trace.put("matched", WorkflowRunCtx.abbreviate(matchedExpr, 200));
-        return new NodeOut(Map.of("route", key), null, null, trace);
+        return new NodeOut(output, null, null, trace);
     }
 
     /** config.branches：[{key, expr}, ...]（结构校验已保证声明与出边对账，这里只做形状兜底） */
@@ -375,10 +447,257 @@ public class WorkflowEngine {
         return out;
     }
 
+    // ---- M3：http ----
+
+    private static final int MAX_REDIRECT_HOPS = 5;
+    private static final int MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024;   // 响应体读取上限（超限拒绝，防拖垮实例）
+    private static final int HTTP_BODY_STATE_CHARS = 20_000;         // 进 state 的正文截断（trace 同）
+
     /**
-     * 结束节点（真实节点）：渲染 config.outputs（值 = 模板或字面量）写进 state——
-     * 哪条路径到达哪个 end、产出了什么，trace 与 state 都可回放。
+     * HTTP 请求节点：方法/URL/头/体 + 超时；SSRF 复用 SsrfGuard 逐跳内网校验（fail-loud）。
+     * 重定向手动跟进且每跳重新过校验（自动跟随会绕过单次校验，同 DocumentService 口径）。
+     * 输出 status / body（进 state 截断 2 万字符）/ contentType。
      */
+    private Function<OverAllState, NodeOut> httpBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            String method = cfgStr(n, "method", false).toUpperCase();
+            if (method.isEmpty()) method = "GET";
+            if (!List.of("GET", "POST", "PUT", "DELETE").contains(method)) {
+                throw new BizException("节点「" + n.getId() + "」不支持的 HTTP 方法：" + method);
+            }
+            String url = render(cfgStr(n, "url", true), ref -> resolveRef(ref, ctx, state));
+            URI uri;
+            try {
+                uri = URI.create(url.trim());
+            } catch (Exception e) {
+                throw new BizException("节点「" + n.getId() + "」URL 不合法：" + url);
+            }
+            int timeoutMs = cfgInt(n, "timeoutMs", 15_000, 1_000, 60_000);
+            Map<String, String> headers = new LinkedHashMap<>();
+            Object hCfg = n.getConfig() == null ? null : n.getConfig().get("headers");
+            if (hCfg instanceof Map<?, ?> m) {
+                for (Map.Entry<?, ?> e : m.entrySet()) {
+                    if (e.getKey() != null) {
+                        headers.put(String.valueOf(e.getKey()),
+                                render(String.valueOf(e.getValue() == null ? "" : e.getValue()), ref -> resolveRef(ref, ctx, state)));
+                    }
+                }
+            } else if (hCfg instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m && m.get("key") != null) {
+                        headers.put(String.valueOf(m.get("key")),
+                                render(String.valueOf(m.get("value") == null ? "" : m.get("value")), ref -> resolveRef(ref, ctx, state)));
+                    }
+                }
+            }
+            String reqBody = "GET".equals(method) ? null : render(cfgStr(n, "body", false), ref -> resolveRef(ref, ctx, state));
+
+            HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)   // 明文 http 的 h2c 升级坑，钉死 HTTP/1.1
+                    .connectTimeout(Duration.ofMillis(timeoutMs))
+                    .followRedirects(HttpClient.Redirect.NEVER)   // 手动逐跳：每跳都过 SSRF 校验
+                    .build();
+            int status = -1;
+            String contentType = "";
+            String bodyText = "";
+            URI current = uri;
+            for (int hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+                SsrfGuard.requirePublicHost(current);
+                HttpRequest.Builder rb = HttpRequest.newBuilder(current).timeout(Duration.ofMillis(timeoutMs));
+                headers.forEach(rb::header);
+                HttpRequest req;
+                if ("GET".equals(method) || reqBody == null) {
+                    req = rb.method(method, HttpRequest.BodyPublishers.noBody()).build();
+                } else {
+                    req = rb.method(method, HttpRequest.BodyPublishers.ofString(reqBody)).build();
+                }
+                HttpResponse<byte[]> resp;
+                try {
+                    resp = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new BizException("节点「" + n.getId() + "」HTTP 请求被中断");
+                } catch (java.io.IOException e) {
+                    throw new BizException("节点「" + n.getId() + "」HTTP 请求失败：" + e.getMessage());
+                }
+                status = resp.statusCode();
+                if (status >= 300 && status < 400) {
+                    String location = resp.headers().firstValue("Location").orElse(null);
+                    if (location == null || location.isBlank()) {
+                        throw new BizException("节点「" + n.getId() + "」重定向缺少 Location（HTTP " + status + "）");
+                    }
+                    current = current.resolve(location.trim());
+                    continue;
+                }
+                contentType = resp.headers().firstValue("Content-Type").orElse("");
+                byte[] raw = resp.body();
+                if (raw != null && raw.length > MAX_HTTP_BODY_BYTES) {
+                    throw new BizException("节点「" + n.getId() + "」响应体超过 2MB 上限，已拒绝");
+                }
+                bodyText = raw == null ? "" : new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+                break;
+            }
+            if (bodyText.isEmpty() && status >= 300 && status < 400) {
+                throw new BizException("节点「" + n.getId() + "」重定向超过 " + MAX_REDIRECT_HOPS + " 次，已停止跟进");
+            }
+            Map<String, Object> trace = new LinkedHashMap<>();
+            trace.put("url", url);
+            trace.put("status", status);
+            trace.put("contentType", contentType);
+            trace.put("bodyChars", bodyText.length());
+            String stateBody = bodyText.length() > HTTP_BODY_STATE_CHARS
+                    ? bodyText.substring(0, HTTP_BODY_STATE_CHARS) + "…（已截断，全长 " + bodyText.length() + " 字符）"
+                    : bodyText;
+            return new NodeOut(Map.of("status", status, "body", stateBody, "contentType", contentType),
+                    null, null, trace);
+        };
+    }
+
+    // ---- M3：code ----
+
+    /**
+     * 代码执行节点：Python/Node，走 Docker 沙盒（scope=workflow+uid，跨运行复用同一容器）。
+     * 代码<b>原样执行</b>不做变量渲染（{{}} 在代码里语义不可控；需要动态值用 template 节点上游拼接）。
+     * 超时与输出截断沿用沙盒 provisioner 口径（commandTimeoutSeconds/maxOutputBytes）。
+     */
+    private Function<OverAllState, NodeOut> codeBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            if (!configService.getBoolean("tool.sandbox.enabled")) {
+                throw new BizException("节点「" + n.getId() + "」代码执行依赖沙盒，请先在设置页开启「沙盒工具」（tool.sandbox.enabled）");
+            }
+            String lang = cfgStr(n, "language", true).toLowerCase();
+            if (!List.of("python", "node").contains(lang)) {
+                throw new BizException("节点「" + n.getId() + "」仅支持 python / node（当前 " + lang + "）");
+            }
+            String code = cfgStr(n, "code", true);
+            int timeoutSeconds = cfgInt(n, "timeoutSeconds", 60, 1, 300);
+            String file = "/tmp/wf_" + n.getId() + "_" + System.currentTimeMillis() + ("python".equals(lang) ? ".py" : ".js");
+            String cmd = ("python".equals(lang) ? "python3 " : "node ") + file;
+            ProvisionerSandboxBackend.ExecuteResponse resp = withReplay(ctx, () -> {
+                ProvisionerSandboxBackend backend = sandboxService.backend("workflow", ctx.uid);
+                backend.write(file, code);
+                return backend.execute(cmd, timeoutSeconds);
+            });
+            String output = resp.output() == null ? "" : resp.output();
+            if (resp.exitCode() == null || resp.exitCode() != 0) {
+                throw new BizException("节点「" + n.getId() + "」代码执行失败（exit=" + resp.exitCode() + "）："
+                        + WorkflowRunCtx.abbreviate(output, 500));
+            }
+            Map<String, Object> trace = new LinkedHashMap<>();
+            trace.put("language", lang);
+            trace.put("exitCode", resp.exitCode());
+            trace.put("truncated", resp.truncated());
+            trace.put("output", output);
+            return new NodeOut(Map.of("output", output, "exitCode", resp.exitCode()), null, null, trace);
+        };
+    }
+
+    // ---- M3：subagent ----
+
+    /**
+     * 子智能体节点：委派指定智能体作答——复用 RagService.chat 全管线（智能体的知识库范围/
+     * 工具/技能原样生效），身份按触发者装载（可见性按调用者），回答经 CollectingSseEmitter 收集。
+     * 会话为<b>临时会话</b>：跑完即删（软删可审计），回答留在 trace 与 state，不污染会话列表。
+     */
+    private Function<OverAllState, NodeOut> subagentBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            String agentId = cfgStr(n, "agentId", true);
+            String prompt = render(cfgStr(n, "prompt", true), ref -> resolveRef(ref, ctx, state));
+            String modelRef = cfgStr(n, "modelRef", false);   // 空 → 走触发者个人默认（管线内解析）
+            Agent agent = withReplay(ctx, () -> agentService.get(agentId));
+            if (agent == null) {
+                throw new BizException("节点「" + n.getId() + "」智能体不存在或对当前用户不可见");
+            }
+            int timeoutMs = withReplay(ctx, () -> Math.max(30_000, configService.getInt("workflow.subagentTimeoutMs", 180_000)));
+            String sessionId = sessionService.createSession(ctx.uid);
+            CollectingSseEmitter sink = new CollectingSseEmitter();
+            try {
+                withReplay(ctx, () -> {
+                    ragService.chat(sessionId, prompt, List.of(), List.of(), List.of(), false,
+                            agentId, modelRef, ctx.uid, sink, false);
+                    return null;
+                });
+                if (!sink.awaitDone(timeoutMs)) {
+                    throw new BizException("节点「" + n.getId() + "」子智能体回答超时（" + timeoutMs / 1000 + " 秒）");
+                }
+                if (sink.lastError() != null && !sink.lastError().isBlank()) {
+                    throw new BizException("节点「" + n.getId() + "」子智能体执行失败：" + sink.lastError());
+                }
+                String answer = sink.answer() == null ? "" : sink.answer();
+                if (answer.isBlank()) {
+                    throw new BizException("节点「" + n.getId() + "」子智能体未产生回答");
+                }
+                Map<String, Object> trace = new LinkedHashMap<>();
+                trace.put("agentId", agentId);
+                trace.put("agentName", agent.getName());
+                trace.put("answer", answer);
+                return new NodeOut(Map.of("answer", answer), null, null, trace);
+            } finally {
+                // 收集型通道不触发 onCompletion，必须主动清登记；临时会话随手删（软删，审计留痕）
+                RagService.forgetSseChannel(sink);
+                try {
+                    sessionService.deleteSession(ctx.uid, sessionId);
+                } catch (Exception ignored) {
+                }
+            }
+        };
+    }
+
+    // ---- M3：approval ----
+
+    /**
+     * 人工审核节点（挂起-快照-短路重放）：
+     * <ul>
+     *   <li>无裁决 → 渲染审批提示、落 PENDING 审批记录（复用 c_ai_tool_approval：
+     *       sessionId 存 runId、toolName 存 workflow:节点id），抛 {@link WorkflowSuspendException}
+     *       让整轮 run 挂起为 waiting_approval + 状态快照；</li>
+     *   <li>有裁决（恢复执行，ctx.approvalDecisions）→ 路由 approve / reject 分支；
+     *       分支声明与连线由校验器强制（approve/reject 必须都有）。</li>
+     * </ul>
+     */
+    private Function<OverAllState, NodeOut> approvalBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            Boolean decision = ctx.approvalDecisions.get(n.getId());
+            if (decision != null) {
+                String route = decision ? "approve" : "reject";
+                Map<String, Object> output = new LinkedHashMap<>();
+                output.put("route", route);
+                Map<String, Object> trace = new LinkedHashMap<>();
+                trace.put("branch", route);
+                trace.put("decision", decision ? "approved" : "rejected");
+                return new NodeOut(output, null, null, trace);
+            }
+            String prompt = render(cfgStr(n, "prompt", true), ref -> resolveRef(ref, ctx, state));
+            int timeoutSeconds = cfgInt(n, "timeoutSeconds", 120, 30, 86_400);
+            ToolApproval rec = new ToolApproval();
+            rec.setId(java.util.UUID.randomUUID().toString());
+            rec.setSessionId(ctx.runId);                 // 审批记录的 sessionId 语义 = 工作流运行 id
+            rec.setUserId(ctx.uid);                      // 仅运行发起人可裁决
+            rec.setToolName("workflow:" + n.getId());
+            rec.setStatus("PENDING");
+            rec.setRequestArgs(com.alibaba.fastjson2.JSON.toJSONString(
+                    Map.of("prompt", prompt, "timeoutSeconds", timeoutSeconds)));
+            rec.setCreatedAt(java.time.LocalDateTime.now());
+            toolApprovalMapper.insert(rec);
+            Map<String, Object> traceOut = new LinkedHashMap<>();
+            traceOut.put("prompt", prompt);
+            traceOut.put("approvalId", rec.getId());
+            traceOut.put("timeoutSeconds", timeoutSeconds);
+            throw new WorkflowSuspendException(rec.getId(), n.getId(), traceOut);
+        };
+    }
+
+    // ---- M3：template ----
+
+    /** 模板/变量聚合节点：多路输出拼 prompt——纯文本渲染，输出 {text}（多视角并行的汇总场景） */
+    private Function<OverAllState, NodeOut> templateBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            String text = render(cfgStr(n, "template", true), ref -> resolveRef(ref, ctx, state));
+            return NodeOut.of(Map.of("text", text));
+        };
+    }
+
+    /** 结束节点：渲染 config.outputs（值 = 模板或字面量）写进 state——到达路径与产出均可回放 */
     private Function<OverAllState, NodeOut> endBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
             Object outputs = n.getConfig() == null ? null : n.getConfig().get("outputs");
@@ -400,7 +719,7 @@ public class WorkflowEngine {
 
     /**
      * 节点体内的身份与配置重放：线程上已有**同一**身份（顺序执行=触发线程）则不动；
-     * 不同/缺失（M3 并行分支跑在 reactor 池）则补设并在 finally 清除。
+     * 不同/缺失（并行分支跑在 reactor 池）则补设并在 finally 清除。
      * 参数覆盖先存线程现状、finally 原样恢复——不吞触发线程已有的覆盖。
      */
     private <T> T withReplay(WorkflowRunCtx ctx, java.util.function.Supplier<T> body) {

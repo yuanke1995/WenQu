@@ -2,6 +2,8 @@
   <!-- 工作流列表（个人资产，M0~M3 仅创建者可见可管）：编辑进画布、运行历史回放、删除。
        布局对齐 ScheduledPanel 同款卡片风格。 -->
   <div class="app-page">
+    <!-- 编辑态（editingId !== null）只渲染 FlowEditor 整页替换列表；列表头/列表体随编辑态隐藏 -->
+    <template v-if="editingId === null">
     <div class="app-page-head">
       <h1 class="app-page-title">工作流</h1>
       <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
@@ -43,6 +45,7 @@
         </div>
       </a-spin>
     </div>
+  </template>
 
     <!-- 画布编辑器：整页替换列表（返回即回列表并刷新） -->
     <FlowEditor v-if="editingId !== null" :workflow-id="editingId" @back="closeEditor" @saved="load" />

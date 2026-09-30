@@ -43,6 +43,8 @@ public class WorkflowValidator {
     public static final String START_SEMANTIC = "start";
     public static final String END_TYPE = "end";
     public static final String CONDITION_TYPE = "condition";
+    /** 路由器节点：出边携带分支键、声明分支必须连线（condition/approval/loop 同范式，与引擎 ROUTER_TYPES 同口径） */
+    public static final Set<String> ROUTER_TYPES = Set.of(CONDITION_TYPE, "approval", "loop");
 
     /** 校验全部通过返回空列表；否则每条问题一句（可多句） */
     public List<String> validate(WorkflowDsl dsl) {
@@ -114,15 +116,15 @@ public class WorkflowValidator {
                 errors.add(where + " 终点节点「" + e.getTo() + "」不存在");
                 continue;
             }
-            boolean fromCondition = CONDITION_TYPE.equals(byId.get(e.getFrom()).getType());
-            if (fromCondition) {
+            boolean fromRouter = ROUTER_TYPES.contains(byId.get(e.getFrom()).getType());
+            if (fromRouter) {
                 if (e.getBranch() == null || e.getBranch().isBlank()) {
-                    errors.add(where + " 来自条件分支节点，必须携带分支键（branch）");
+                    errors.add(where + " 来自路由节点（条件/审核/循环），必须携带分支键（branch）");
                 } else if (!declaredBranches(byId.get(e.getFrom())).contains(e.getBranch())) {
-                    errors.add(where + " 的分支键「" + e.getBranch() + "」未在该条件节点 branches 里声明");
+                    errors.add(where + " 的分支键「" + e.getBranch() + "」未在该节点 branches 里声明");
                 }
             } else if (e.getBranch() != null && !e.getBranch().isBlank()) {
-                errors.add(where + " 只有条件分支（condition）节点的出边才允许携带分支键");
+                errors.add(where + " 只有条件类节点（condition/approval/loop）的出边才允许携带分支键");
             }
             if (!edgeKeys.add(e.getFrom() + ">" + e.getBranch() + ">" + e.getTo())) {
                 errors.add(where + " 重复连线");
@@ -136,13 +138,26 @@ public class WorkflowValidator {
                 errors.add(where + " 结束节点（end）不能作为连线的起点");
             }
         }
-        // 条件节点声明了分支但没有出边 → 显式报（否则运行到该节点会"无路可走"静默卡死）
+        // 路由节点专项：声明了分支但没有出边 → 显式报（否则运行到该节点会"无路可走"静默卡死）；
+        // approval 必须声明 approve/reject 两条分支；loop 必须声明 maxLoops（1~100）
         for (WorkflowDsl.Node n : byId.values()) {
-            if (!CONDITION_TYPE.equals(n.getType())) continue;
+            if (!ROUTER_TYPES.contains(n.getType())) continue;
             Set<String> declared = declaredBranches(n);
             if (declared.isEmpty()) {
-                errors.add("条件分支节点「" + n.getId() + "」未声明任何分支（config.branches）");
+                errors.add("路由节点「" + n.getId() + "」（" + n.getType() + "）未声明任何分支（config.branches）");
                 continue;
+            }
+            if ("approval".equals(n.getType())) {
+                if (!declared.contains("approve") || !declared.contains("reject")) {
+                    errors.add("审核节点「" + n.getId() + "」必须声明 approve 与 reject 两条分支（当前："
+                            + String.join("、", declared) + "）");
+                }
+            }
+            if ("loop".equals(n.getType())) {
+                Object ml = n.getConfig() == null ? null : n.getConfig().get("maxLoops");
+                if (!(ml instanceof Number num) || num.intValue() < 1 || num.intValue() > 100) {
+                    errors.add("循环节点「" + n.getId() + "」必须声明 maxLoops（1~100 的整数，防回跳失控）");
+                }
             }
             Set<String> wired = new HashSet<>();
             for (WorkflowDsl.Edge e : edges) {
@@ -150,20 +165,24 @@ public class WorkflowValidator {
             }
             for (String b : declared) {
                 if (!wired.contains(b)) {
-                    errors.add("条件分支节点「" + n.getId() + "」的分支「" + b + "」声明了但没有连线");
+                    errors.add("路由节点「" + n.getId() + "」（" + n.getType() + "）的分支「" + b + "」声明了但没有连线");
                 }
             }
         }
 
-        // ---- 图结构：从 start 可达 / 无环（M0 口径；M3 引入 loop 节点后仅放宽其显式回跳） ----
+        // ---- 图结构：从 start 可达 / 回跳规则（M3）：环允许存在，但每条回边必须源自 loop 节点 ----
         String start = startIds.size() == 1 ? startIds.iterator().next() : null;
         if (start != null) {
             for (String id : reachable(byId, edges, start)) {
                 errors.add("节点「" + id + "」从开始节点不可达（悬空）");
             }
-            List<String> cycle = findCycle(byId, edges, start);
-            if (!cycle.isEmpty()) {
-                errors.add("存在环：" + String.join(" → ", cycle) + "（当前版本不允许环；循环节点开放后仅允许经 loop 显式回跳）");
+            for (String[] back : findBackEdges(byId, edges, start)) {
+                String u = back[0];
+                String v = back[1];
+                if (!"loop".equals(byId.get(u).getType())) {
+                    errors.add("连线「" + u + " → " + v + "」构成回跳，但只有循环节点（loop）可以发起回跳"
+                            + "（把这段逻辑改画为：loop 节点声明分支，回跳边从 loop 节点引出）");
+                }
             }
         }
 
@@ -212,52 +231,34 @@ public class WorkflowValidator {
         return unreachable;
     }
 
-    /** 找一条从 start 出发可达的环并还原路径（无环返回空） */
-    private static List<String> findCycle(Map<String, WorkflowDsl.Node> byId, List<WorkflowDsl.Edge> edges, String start) {
+    /**
+     * 三色 DFS 找<b>全部回边</b>（u→v，v 在当前 DFS 栈上即回边）：
+     * M3 起 loop 节点打破 DAG 限制，成环检查从"拒绝一切环"放宽为"回边必须源自 loop 节点"，
+     * 所以这里不再还原环路径，而是逐条返回回边供规则裁决。
+     */
+    private static List<String[]> findBackEdges(Map<String, WorkflowDsl.Node> byId, List<WorkflowDsl.Edge> edges, String start) {
         Map<String, List<String>> adj = adjacency(edges);
         Map<String, Integer> color = new LinkedHashMap<>();   // 0=未访 1=在栈 2=完成
-        Map<String, String> parent = new LinkedHashMap<>();
-        List<String> path = new ArrayList<>();
-        // 从 start 的可达子图里找环（起点任意可达节点，环与入口无关）
-        for (String root : byId.keySet()) {
-            if (cycleDfs(root, adj, color, parent, path)) {
-                // path 现在是 [v, v]（首尾相同）；裁掉重复尾
-                List<String> out = new ArrayList<>(path);
-                if (out.size() > 1 && out.get(0).equals(out.get(out.size() - 1))) {
-                    out = out.subList(0, out.size() - 1);
-                }
-                return out;
-            }
-        }
-        return List.of();
+        List<String[]> backs = new ArrayList<>();
+        cycleDfs(start, adj, color, backs);
+        return backs;
     }
 
-    /** 三色 DFS；发现回边时把栈上路径还原进 path（返回 true 表示已找到） */
-    private static boolean cycleDfs(String cur, Map<String, List<String>> adj,
-                                    Map<String, Integer> color, Map<String, String> parent, List<String> path) {
+    /** 三色 DFS；发现回边（下一跳在栈上）即记入 backs */
+    private static void cycleDfs(String cur, Map<String, List<String>> adj,
+                                 Map<String, Integer> color, List<String[]> backs) {
         color.put(cur, 1);
         for (String next : adj.getOrDefault(cur, List.of())) {
             Integer c = color.get(next);
             if (c != null && c == 1) {
-                // 回边：从 next 沿 parent 回溯到 cur 即环路径
-                path.clear();
-                path.add(next);
-                String p = cur;
-                while (p != null && !p.equals(next)) {
-                    path.add(0, p);
-                    p = parent.get(p);
-                }
-                if (path.isEmpty() || !path.get(0).equals(next)) path.add(0, next);
-                path.add(next);
-                return true;
+                backs.add(new String[]{cur, next});
+                continue;
             }
             if (c == null) {
-                parent.put(next, cur);
-                if (cycleDfs(next, adj, color, parent, path)) return true;
+                cycleDfs(next, adj, color, backs);
             }
         }
         color.put(cur, 2);
-        return false;
     }
 
     private static Map<String, List<String>> adjacency(List<WorkflowDsl.Edge> edges) {

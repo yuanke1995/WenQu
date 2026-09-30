@@ -47,6 +47,9 @@ public class AiWorkflowRun {
     /** 节点级 trace（JSON 数组：nodeId/type/status/输入输出摘要/耗时） */
     private String nodeTraces;
 
+    /** 人工审核挂起时的执行快照（已完成节点全量输出 + 挂起节点；恢复时短路重放用，终态运行置空） */
+    private String stateSnapshot;
+
     /** 失败原因（截断 1000 字符） */
     private String error;
 

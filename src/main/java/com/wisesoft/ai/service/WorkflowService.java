@@ -2,18 +2,22 @@ package com.wisesoft.ai.service;
 
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.ToolApprovalMapper;
 import com.wisesoft.ai.mapper.WorkflowMapper;
 import com.wisesoft.ai.mapper.WorkflowRunMapper;
 import com.wisesoft.ai.model.AiWorkflow;
 import com.wisesoft.ai.model.AiWorkflowRun;
+import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +48,7 @@ public class WorkflowService {
 
     private final WorkflowMapper workflowMapper;
     private final WorkflowRunMapper runMapper;
+    private final ToolApprovalMapper toolApprovalMapper;
     private final WorkflowValidator validator;
     private final WorkflowEngine engine;
     private final ConfigService configService;
@@ -165,18 +170,21 @@ public class WorkflowService {
     /**
      * 同步调试运行：入参校验（必填项）→ 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取。
      * 失败不抛（返回 status=failed 的 run，error 带原因）——调试入口要让用户拿到 trace。
+     * <b>人工审核挂起</b>：审核节点落 PENDING 审批记录后抛 WorkflowSuspendException，
+     * run 落 waiting_approval + 状态快照（已完成节点全量输出），审批接口按快照恢复续跑。
      *
      * @param inputs 开始节点入参（{{start.key}} 的取值来源）
      */
     public AiWorkflowRun run(String id, Map<String, Object> inputs) {
         AiWorkflow row = getOwn(id);
         WorkflowDsl dsl = parseDsl(row.getDsl());
-        WorkflowRunCtx ctx = new WorkflowRunCtx(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
+        String runId = UUID.randomUUID().toString();
+        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
                 configService.currentOverrides(), inputs,
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50));
         AiWorkflowRun run = new AiWorkflowRun();
-        run.setId(UUID.randomUUID().toString());
+        run.setId(runId);
         run.setWorkflowId(row.getId());
         run.setDslSnapshot(row.getDsl());   // 执行不可变：锁定本次运行用的 DSL（对齐 Coze run 语义）
         run.setTriggerType("manual");       // agent/api 触发 M4 接入
@@ -203,9 +211,187 @@ public class WorkflowService {
             log.warn("[WORKFLOW] 运行失败：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), e.getMessage());
             return finish(run, ctx, e.getMessage());
         } catch (Exception e) {
+            WorkflowSuspendException suspend = findSuspend(e);
+            if (suspend != null) {
+                // 挂起收口：waiting_approval + 状态快照（已完成节点全量输出），等审批接口恢复
+                run.setStatus("waiting_approval");
+                Map<String, Object> snapshot = new LinkedHashMap<>();
+                snapshot.put("outputs", ctx.fullOutputs);
+                snapshot.put("pendingNode", suspend.nodeId);
+                run.setStateSnapshot(JSON.toJSONString(snapshot));
+                log.info("[WORKFLOW] 运行挂起待审核：{}（{}）run={} 节点={} approval={}",
+                        row.getName(), row.getId(), run.getId(), suspend.nodeId, suspend.approvalId);
+                return finish(run, ctx, null);
+            }
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.warn("[WORKFLOW] 运行异常：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), cause.toString());
             return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
+        }
+    }
+
+    /** 异常链里找挂起信号（框架会把节点异常包进 ExecutionException/CompletionException） */
+    private static WorkflowSuspendException findSuspend(Throwable t) {
+        while (t != null) {
+            if (t instanceof WorkflowSuspendException s) return s;
+            t = t.getCause();
+        }
+        return null;
+    }
+
+    /**
+     * 审批裁决并恢复续跑（挂起-快照-短路重放）：仅运行发起人可裁决；
+     * 快照里的已完成节点输出直接回放（不再执行节点体），只有挂起的审核节点与其下游真正执行。
+     * 恢复执行在本次请求内同步完成——接口返回的就是终态 run。
+     */
+    public AiWorkflowRun approveRun(String workflowId, String runId, boolean approved) {
+        AiWorkflowRun run = getRun(workflowId, runId);
+        if (!"waiting_approval".equals(run.getStatus())) {
+            throw new BizException("该运行不在等待审批状态（当前：" + run.getStatus() + "）");
+        }
+        if (!RequestUser.uid().equals(run.getTriggeredBy())) {
+            throw new BizException(403, "仅运行发起人可审批");
+        }
+        ToolApproval rec = toolApprovalMapper.selectOne(new LambdaQueryWrapper<ToolApproval>()
+                .eq(ToolApproval::getSessionId, runId)
+                .eq(ToolApproval::getStatus, "PENDING")
+                .last("LIMIT 1"));
+        if (rec == null) {
+            throw new BizException("未找到待处理的审批记录（可能已超时回收）");
+        }
+        rec.setStatus(approved ? "APPROVED" : "REJECTED");
+        rec.setResolvedAt(LocalDateTime.now());
+        toolApprovalMapper.updateById(rec);
+
+        Map<String, Object> snapshot = JSON.parseObject(run.getStateSnapshot() == null ? "{}" : run.getStateSnapshot());
+        String pendingNode = snapshot.get("pendingNode") == null ? "" : String.valueOf(snapshot.get("pendingNode"));
+        WorkflowDsl dsl = parseDsl(run.getDslSnapshot());
+        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
+                configService.currentOverrides(),
+                parseJsonObject(run.getInputs()),
+                configService.getDouble("chat.temperature"),
+                configService.getInt("workflow.maxSteps", 50));
+        // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
+        Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
+        if (outputs != null) {
+            for (Map.Entry<String, Object> e : outputs.entrySet()) {
+                Map<String, Object> nodeOut = new LinkedHashMap<>();
+                if (e.getValue() instanceof Map<?, ?> m) {
+                    for (Map.Entry<?, ?> en : m.entrySet()) nodeOut.put(String.valueOf(en.getKey()), en.getValue());
+                }
+                ctx.resumeOutputs.put(e.getKey(), nodeOut);
+            }
+        }
+        ctx.approvalDecisions.put(pendingNode, approved);
+        // 之前的 trace 原样保留（恢复运行的短路与新增节点续写在后面）
+        List<Map<String, Object>> prevTraces = parseTraceList(run.getNodeTraces());
+        ctx.traces.addAll(prevTraces);
+        try {
+            engine.resolveModels(dsl, ctx);
+            CompiledGraph compiled = engine.compile(dsl, ctx);
+            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = compiled.invoke(Map.of());
+            if (result.isEmpty()) {
+                throw new BizException("恢复执行未返回终态（可能被步数上限截断，workflow.maxSteps=" + ctx.maxSteps + "）");
+            }
+            run.setStatus("success");
+            run.setOutputs(JSON.toJSONString(engine.extractOutputs(dsl, result.get())));
+            run.setStateSnapshot(null);
+            log.info("[WORKFLOW] 审批{}后恢复运行成功：run={}（{} 节点短路回放）", approved ? "批准" : "拒绝", runId, ctx.resumeOutputs.size());
+            return finish(run, ctx, null);
+        } catch (BizException e) {
+            log.warn("[WORKFLOW] 恢复运行失败：run={}：{}", runId, e.getMessage());
+            return finish(run, ctx, e.getMessage());
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("[WORKFLOW] 恢复运行异常：run={}：{}", runId, cause.toString());
+            return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
+        }
+    }
+
+    /** 某次运行的待审批信息（前端审批卡：prompt/超时/挂起时刻）；无则返回 null */
+    public ToolApproval pendingApproval(String workflowId, String runId) {
+        getRun(workflowId, runId);
+        return toolApprovalMapper.selectOne(new LambdaQueryWrapper<ToolApproval>()
+                .eq(ToolApproval::getSessionId, runId)
+                .eq(ToolApproval::getStatus, "PENDING")
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 审批超时回收（ScheduleCenter 周期调用）：挂起超过节点 timeoutSeconds 的 run 落 timeout 终态、
+     * 审批记录落 TIMEOUT。审核等待是"人在回路"，没有自动恢复语义——超时即终止，重跑新开一轮。
+     */
+    public int reapApprovalTimeouts() {
+        List<AiWorkflowRun> waiting = runMapper.selectList(new LambdaQueryWrapper<AiWorkflowRun>()
+                .eq(AiWorkflowRun::getStatus, "waiting_approval")
+                .last("LIMIT 100"));
+        int reaped = 0;
+        for (AiWorkflowRun run : waiting) {
+            ToolApproval rec = toolApprovalMapper.selectOne(new LambdaQueryWrapper<ToolApproval>()
+                    .eq(ToolApproval::getSessionId, run.getId())
+                    .eq(ToolApproval::getStatus, "PENDING")
+                    .last("LIMIT 1"));
+            int timeoutSeconds = 120;
+            java.time.LocalDateTime anchor = java.time.LocalDateTime.now();
+            if (rec != null) {
+                anchor = rec.getCreatedAt() == null ? anchor : rec.getCreatedAt();
+                Map<String, Object> args = parseJsonObject(rec.getRequestArgs());
+                Object ts = args.get("timeoutSeconds");
+                if (ts instanceof Number num) timeoutSeconds = num.intValue();
+            } else {
+                // 状态挂着但无 PENDING 记录（异常态）：按记录丢失终止，不留永久挂起
+                run.setStatus("failed");
+                run.setError("审批记录丢失，运行终止");
+                run.setFinishedAt(LocalDateTime.now());
+                run.setDurationMs(run.getStartedAt() == null ? null
+                        : java.time.Duration.between(run.getStartedAt(), LocalDateTime.now()).toMillis());
+                runMapper.updateById(run);
+                reaped++;
+                continue;
+            }
+            if (anchor.plusSeconds(Math.max(30, timeoutSeconds)).isAfter(LocalDateTime.now())) continue;
+            rec.setStatus("TIMEOUT");
+            rec.setResolvedAt(LocalDateTime.now());
+            toolApprovalMapper.updateById(rec);
+            run.setStatus("timeout");
+            run.setError("人工审核超时（" + timeoutSeconds + " 秒未处理），运行终止");
+            run.setFinishedAt(LocalDateTime.now());
+            run.setDurationMs(java.time.Duration.between(run.getStartedAt() == null ? anchor : run.getStartedAt(),
+                    LocalDateTime.now()).toMillis());
+            runMapper.updateById(run);
+            reaped++;
+        }
+        return reaped;
+    }
+
+    /** JSON 对象解析（空/非法返回空 map，不抛） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseJsonObject(String s) {
+        if (s == null || s.isBlank()) return new LinkedHashMap<>();
+        try {
+            return JSON.parseObject(s);
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
+        }
+    }
+
+    /** trace JSON 数组解析（空/非法返回空列表，不抛） */
+    private static List<Map<String, Object>> parseTraceList(String s) {
+        if (s == null || s.isBlank()) return new ArrayList<>();
+        try {
+            JSONArray arr = JSON.parseArray(s);
+            List<Map<String, Object>> out = new ArrayList<>();
+            if (arr != null) {
+                for (Object o : arr) {
+                    if (o instanceof Map<?, ?> m) {
+                        Map<String, Object> t = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> e : m.entrySet()) t.put(String.valueOf(e.getKey()), e.getValue());
+                        out.add(t);
+                    }
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return new ArrayList<>();
         }
     }
 

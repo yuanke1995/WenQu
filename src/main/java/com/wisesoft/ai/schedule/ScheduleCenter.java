@@ -5,6 +5,7 @@ import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.KeywordIndexService;
 import com.wisesoft.ai.service.RetrievalEvaluationService;
 import com.wisesoft.ai.service.SandboxService;
+import com.wisesoft.ai.service.WorkflowService;
 import com.wisesoft.ai.service.ScheduledJobService;
 import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.SessionService;
@@ -54,6 +55,7 @@ public class ScheduleCenter {
     private final ScheduledJobService scheduledJobService;
     private final SandboxService sandboxService;
     private final DocumentService documentService;
+    private final WorkflowService workflowService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -67,7 +69,8 @@ public class ScheduleCenter {
                           SessionService sessionService, ArtifactService artifactService,
                           ScheduledJobService scheduledJobService,
                           SandboxService sandboxService,
-                          DocumentService documentService) {
+                          DocumentService documentService,
+                          WorkflowService workflowService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -77,6 +80,7 @@ public class ScheduleCenter {
         this.scheduledJobService = scheduledJobService;
         this.sandboxService = sandboxService;
         this.documentService = documentService;
+        this.workflowService = workflowService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -143,6 +147,12 @@ public class ScheduleCenter {
                 () -> configService.getInt("sandbox.cleanupIntervalMs", 600_000),
                 () -> false,
                 () -> sandboxService.releaseIdle());
+
+        // 工作流人工审核超时回收：挂起超过节点 timeoutSeconds 的 run 落 timeout 终态（审核是人在回路，无自动恢复语义）
+        register("工作流审批超时回收",
+                () -> 60_000,
+                () -> false,
+                () -> workflowService.reapApprovalTimeouts());
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

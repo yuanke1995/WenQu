@@ -5,7 +5,7 @@
   <div class="wf-editor">
     <div class="wf-toolbar">
       <button class="app-btn ghost small" @click="$emit('back')"><arrow-left-outlined /> 返回列表</button>
-      <a-input v-model:value="name" class="wf-name" :maxlength="100" placeholder="工作流名称" />
+      <a-input v-model:value="name" class="wf-name" :maxlength="100" placeholder="工作流名称" @change="dirty = true" />
       <span class="wf-save-hint">{{ dirty ? '有未保存改动' : '已保存' }}</span>
       <span class="flex-gap"></span>
       <button class="app-btn ghost small" :disabled="busy" @click="doValidate">校验</button>
@@ -46,7 +46,7 @@
               </div>
               <div class="wf-node-sub">{{ subText(props.data) }}</div>
               <div v-if="props.data.run" class="wf-node-badge" :class="`badge-${props.data.run.status}`">
-                {{ props.data.run.status === 'success' ? '✓' : '✕' }} {{ fmtMs(props.data.run.elapsedMs) }}
+                {{ props.data.run.status === 'success' ? '✓' : props.data.run.status === 'waiting' ? '✋' : '✕' }} {{ fmtMs(props.data.run.elapsedMs) }}
               </div>
             </div>
           </template>
@@ -135,6 +135,110 @@
                 每个分支需连一条出边（连线时选分支键）。
               </div>
             </template>
+
+            <!-- http -->
+            <template v-else-if="selected.data.nodeType === 'http'">
+              <div class="wf-form-item"><label>请求方法</label>
+                <a-select v-model:value="editConfig.method" style="width: 140px"
+                          :options="['GET', 'POST', 'PUT', 'DELETE'].map(m => ({ value: m, label: m }))" />
+              </div>
+              <div class="wf-form-item"><label>URL（仅公网 http/https，重定向逐跳校验）</label>
+                <a-input v-model:value="editConfig.url" :placeholder="'https://api.example.com/data?q={{start.question}}'" />
+              </div>
+              <div class="wf-form-item"><label>请求头</label></div>
+              <div v-for="(h, i) in editConfig.headers" :key="i" class="wf-rows">
+                <a-input v-model:value="h.key" placeholder="Header" class="wf-row-key" />
+                <a-input v-model:value="h.value" placeholder="值（支持引用）" class="wf-row-value" />
+                <button class="app-btn ghost small" @click="editConfig.headers.splice(i, 1)">删</button>
+              </div>
+              <button class="app-btn ghost small" @click="editConfig.headers.push({ key: '', value: '' })">+ 添加请求头</button>
+              <div v-if="editConfig.method !== 'GET'" class="wf-form-item" style="margin-top:8px"><label>请求体（支持引用）</label>
+                <a-textarea v-model:value="editConfig.body" :rows="4" placeholder="原始请求体，如 JSON" />
+              </div>
+              <div class="wf-form-item"><label>超时（ms，1s~60s）</label>
+                <a-input-number v-model:value="editConfig.timeoutMs" :min="1000" :max="60000" :step="1000" style="width: 140px" />
+              </div>
+              <div class="wf-hint">输出键：<code>status</code> / <code>body</code>（截断 2 万字符）/ <code>contentType</code>。</div>
+            </template>
+
+            <!-- code -->
+            <template v-else-if="selected.data.nodeType === 'code'">
+              <div class="wf-form-item"><label>语言</label>
+                <a-select v-model:value="editConfig.language" style="width: 140px"
+                          :options="[{ value: 'python', label: 'Python' }, { value: 'node', label: 'Node' }]" />
+              </div>
+              <div class="wf-form-item"><label>代码（原样执行，不做变量渲染）</label>
+                <a-textarea v-model:value="editConfig.code" :rows="10"
+                            :placeholder='"# Python 示例\nvalue = \"处理结果\"\nprint(value)"' />
+              </div>
+              <div class="wf-form-item"><label>超时（秒，1~300）</label>
+                <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="300" style="width: 140px" />
+              </div>
+              <div class="wf-hint">
+                依赖沙盒（设置页「沙盒工具」开关）；非 0 退出码视为节点失败。输出键：<code>output</code>（stdout）/ <code>exitCode</code>。
+              </div>
+            </template>
+
+            <!-- subagent -->
+            <template v-else-if="selected.data.nodeType === 'subagent'">
+              <div class="wf-form-item"><label>智能体（可见性按运行发起人）</label>
+                <a-select v-model:value="editConfig.agentId" style="width: 100%" show-search option-filter-prop="label"
+                          placeholder="选择要委派的智能体" :options="agentOptions" />
+              </div>
+              <div class="wf-form-item"><label>指令（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+                <a-textarea v-model:value="editConfig.prompt" :rows="6"
+                            :placeholder="'如：请基于你的知识库回答：{{start.question}}'" />
+              </div>
+              <div class="wf-form-item"><label>模型（留空走发起人个人默认）</label>
+                <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
+              </div>
+              <div class="wf-hint">复用该智能体完整问答管线（知识库范围/工具/技能原样生效）。输出键：<code>answer</code>。</div>
+            </template>
+
+            <!-- approval -->
+            <template v-else-if="selected.data.nodeType === 'approval'">
+              <div class="wf-form-item"><label>审批提示（给人看的内容，支持引用）</label>
+                <a-textarea v-model:value="editConfig.prompt" :rows="5"
+                            :placeholder="'如：以下回答即将交付，请确认：\n{{llm.answer}}'" />
+              </div>
+              <div class="wf-form-item"><label>超时（秒，超时按拒绝终止本轮运行）</label>
+                <a-input-number v-model:value="editConfig.timeoutSeconds" :min="30" :max="86400" style="width: 160px" />
+              </div>
+              <div class="wf-hint">
+                分支固定为 <code>approve</code> / <code>reject</code>，各连一条出边（批准走 approve、拒绝走 reject）。
+                运行到此挂起，在运行详情的审批卡上裁决后从断点续跑（已完成节点不重复执行）。
+              </div>
+            </template>
+
+            <!-- loop -->
+            <template v-else-if="selected.data.nodeType === 'loop'">
+              <div class="wf-form-item"><label>最大迭代次数（防回跳失控）</label>
+                <a-input-number v-model:value="editConfig.maxLoops" :min="1" :max="100" style="width: 140px" />
+              </div>
+              <div class="wf-form-item"><label>分支（按声明序求值；某分支的出边指回前面的节点即构成循环）</label></div>
+              <div v-for="(b, i) in editConfig.branches" :key="i" class="wf-branch">
+                <div class="wf-rows">
+                  <a-input v-model:value="b.key" placeholder="分支键，如 retry" class="wf-row-key" />
+                  <button class="app-btn ghost small" @click="removeBranch(i)">删</button>
+                </div>
+                <a-input v-if="b.key !== 'else'" v-model:value="b.expr"
+                         :placeholder="'表达式，如 {{llm.answer}}.contains(\'DONE\') == false'" />
+                <div v-else class="wf-hint" style="margin-top:4px">else 为兜底分支，无需表达式。</div>
+              </div>
+              <button class="app-btn ghost small" @click="editConfig.branches.push({ key: '', expr: '' })">+ 添加分支</button>
+              <div class="wf-hint">
+                表达式语法同条件分支；超过最大迭代次数即失败终止（当前轮次可见于 trace 的 loopCount）。
+              </div>
+            </template>
+
+            <!-- template -->
+            <template v-else-if="selected.data.nodeType === 'template'">
+              <div class="wf-form-item"><label>模板（聚合多路上游输出拼 prompt）</label>
+                <a-textarea v-model:value="editConfig.template" :rows="8"
+                            :placeholder="'视角一要点：{{subagent_1.answer}}\n\n视角二要点：{{subagent_2.answer}}\n\n请综合以上视角回答：{{start.question}}'" />
+              </div>
+              <div class="wf-hint">输出键：<code>text</code>（渲染后的文本）。</div>
+            </template>
           </div>
           <div class="wf-drawer-actions">
             <button class="app-btn small" @click="applyConfig">应用到画布</button>
@@ -142,9 +246,22 @@
         </a-tab-pane>
 
         <a-tab-pane key="run" tab="运行输出">
+          <!-- 人工审核审批卡：run 挂起在 waiting_approval 时出现，裁决即续跑 -->
+          <div v-if="runResult?.status === 'waiting_approval' && approvalInfo" class="wf-approval-card">
+            <div class="wf-approval-head"><span class="wf-node-icon icon-approval">✋</span> 等待人工审核</div>
+            <div class="wf-approval-prompt">{{ approvalInfo.prompt || approvalInfo.requestArgs }}</div>
+            <div class="wf-approval-meta">
+              <span v-if="approvalInfo.createdAt">挂起于 {{ fmtTime(approvalInfo.createdAt) }}</span>
+              <span>超时按拒绝终止本轮</span>
+            </div>
+            <div class="wf-approval-actions">
+              <button class="app-btn small" :disabled="busy" @click="doApprove(true)">✓ 批准（approve）</button>
+              <button class="app-btn danger small" :disabled="busy" @click="doApprove(false)">✕ 拒绝（reject）</button>
+            </div>
+          </div>
           <template v-if="nodeTrace">
             <div class="wf-trace-meta">
-              <a-tag :color="nodeTrace.status === 'success' ? 'green' : 'red'">{{ nodeTrace.status === 'success' ? '成功' : '失败' }}</a-tag>
+              <a-tag :color="traceTagColor(nodeTrace.status)">{{ traceTagColor(nodeTrace.status) === 'green' ? '成功' : traceTagColor(nodeTrace.status) === 'red' ? '失败' : '等待审核' }}</a-tag>
               <span>耗时 {{ fmtMs(nodeTrace.elapsedMs) }}</span>
               <span v-if="nodeTrace.promptTokens != null">入 {{ nodeTrace.promptTokens }} tok</span>
               <span v-if="nodeTrace.completionTokens != null">出 {{ nodeTrace.completionTokens }} tok</span>
@@ -218,7 +335,8 @@ import '@vue-flow/core/dist/theme-default.css'
 import ModelSelect from '../components/ModelSelect.vue'
 import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
-  runWorkflow, listWorkflowRuns, getWorkflowRun, listKnowledgeBases
+  runWorkflow, listWorkflowRuns, getWorkflowRun, listKnowledgeBases,
+  listAvailableAgents, resolveWorkflowApproval
 } from '../api'
 
 const props = defineProps({
@@ -239,9 +357,16 @@ const TYPE_META = {
   end: { label: '结束', icon: '■' },
   llm: { label: 'LLM 调用', icon: '✦' },
   retrieval: { label: '知识检索', icon: '⌕' },
-  condition: { label: '条件分支', icon: '⑂' }
+  condition: { label: '条件分支', icon: '⑂' },
+  http: { label: 'HTTP 请求', icon: '⇄' },
+  code: { label: '代码执行', icon: '⌨' },
+  subagent: { label: '子智能体', icon: '＠' },
+  approval: { label: '人工审核', icon: '✋' },
+  loop: { label: '循环', icon: '↻' },
+  template: { label: '模板转换', icon: '✎' }
 }
-const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition'].map(t => ({ type: t, ...TYPE_META[t] }))
+const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template']
+  .map(t => ({ type: t, ...TYPE_META[t] }))
 
 // ---------- 状态 ----------
 const nodes = ref([])
@@ -255,7 +380,9 @@ const drawerTab = ref('config')
 const selectedId = ref('')
 const editConfig = ref({})
 const kbOptions = ref([])
-const runResult = ref(null)     // {status, outputs, error, traces}
+const agentOptions = ref([])
+const runResult = ref(null)     // {status, outputs, error, traces, runId}
+const approvalInfo = ref(null)  // waiting_approval 时的待审批信息（prompt/timeoutSeconds）
 const historyModal = ref(false)
 const historyLoading = ref(false)
 const history = ref([])
@@ -297,7 +424,13 @@ const BLANK_CONFIGS = {
   end: { outputs: [{ key: 'answer', value: '' }] },
   llm: { modelRef: '', prompt: '', temperature: null },
   retrieval: { query: '', kbIds: [], topK: 5 },
-  condition: { branches: [{ key: 'ok', expr: '' }] }
+  condition: { branches: [{ key: 'ok', expr: '' }] },
+  http: { method: 'GET', url: '', headers: [], body: '', timeoutMs: 15000 },
+  code: { language: 'python', code: '', timeoutSeconds: 60 },
+  subagent: { agentId: '', prompt: '', modelRef: '' },
+  approval: { prompt: '', timeoutSeconds: 120, branches: [{ key: 'approve' }, { key: 'reject' }] },
+  loop: { maxLoops: 5, branches: [{ key: 'retry', expr: '' }, { key: 'done', expr: '' }] },
+  template: { template: '' }
 }
 const blankConfig = t => JSON.parse(JSON.stringify(BLANK_CONFIGS[t] || {}))
 
@@ -462,7 +595,7 @@ function applyConfig() {
       if (!p.key.trim()) { message.warning('入参名不能为空'); return }
     }
   }
-  if (node.data.nodeType === 'condition') {
+  if (['condition', 'loop'].includes(node.data.nodeType)) {
     const keys = (editConfig.value.branches || []).map(b => b.key.trim())
     if (keys.some(k => !k)) { message.warning('分支键不能为空'); return }
     if (new Set(keys).size !== keys.length) { message.warning('分支键不能重复'); return }
@@ -473,10 +606,26 @@ function applyConfig() {
   if (node.data.nodeType === 'retrieval' && !String(editConfig.value.query || '').trim()) {
     message.warning('检索词不能为空'); return
   }
+  if (node.data.nodeType === 'http' && !String(editConfig.value.url || '').trim()) {
+    message.warning('URL 不能为空'); return
+  }
+  if (node.data.nodeType === 'code' && !String(editConfig.value.code || '').trim()) {
+    message.warning('代码不能为空'); return
+  }
+  if (node.data.nodeType === 'subagent') {
+    if (!editConfig.value.agentId) { message.warning('请选择要委派的智能体'); return }
+    if (!String(editConfig.value.prompt || '').trim()) { message.warning('指令不能为空'); return }
+  }
+  if (node.data.nodeType === 'approval' && !String(editConfig.value.prompt || '').trim()) {
+    message.warning('审批提示不能为空'); return
+  }
+  if (node.data.nodeType === 'template' && !String(editConfig.value.template || '').trim()) {
+    message.warning('模板不能为空'); return
+  }
   const oldConfig = node.data.config || {}
   updateNodeData(node.id, { config: JSON.parse(JSON.stringify(editConfig.value)) })
-  // 条件分支键变更后，悬空的出边摘除（连线时重新选分支）
-  if (node.data.nodeType === 'condition') {
+  // 路由类分支键变更后，悬空的出边摘除（连线时重新选分支）
+  if (['condition', 'loop'].includes(node.data.nodeType)) {
     const keys = new Set((editConfig.value.branches || []).map(b => b.key))
     const dangling = edges.value.filter(e => e.source === node.id && e.data && e.data.branch && !keys.has(e.data.branch))
     if (dangling.length) removeEdges(dangling)
@@ -563,11 +712,19 @@ async function doRun() {
       status: run.status,
       outputs: safeParse(run.outputs),
       error: run.error,
-      traces: safeParse(run.nodeTraces) || []
+      traces: safeParse(run.nodeTraces) || [],
+      runId: run.id
     }
     await replayTraces()
     if (runResult.value.status === 'success') {
       message.success(`运行成功（${fmtMs(run.durationMs)}），点击节点看输入输出`)
+    } else if (runResult.value.status === 'waiting_approval') {
+      // 人工审核挂起：加载审批卡内容（prompt/超时），在抽屉里裁决
+      try {
+        const ar = await getWorkflowPendingApproval(workflowId.value, run.id)
+        approvalInfo.value = ar.data
+      } catch (e) { approvalInfo.value = null }
+      message.info('运行已挂起：等待人工审核')
     } else {
       message.error('运行失败：' + (runResult.value.error || '未知原因'))
     }
@@ -575,6 +732,34 @@ async function doRun() {
     drawerTab.value = 'run'
   } catch (e) {
     message.error('运行失败：' + (e.message || ''))
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 审批裁决：批准/拒绝后后端按快照恢复续跑，返回终态 run——直接替换 runResult 重放染色 */
+async function doApprove(approved) {
+  if (!runResult.value?.runId) return
+  busy.value = true
+  try {
+    const r = await resolveWorkflowApproval(workflowId.value, runResult.value.runId, approved)
+    const run = r.data || {}
+    runResult.value = {
+      status: run.status,
+      outputs: safeParse(run.outputs),
+      error: run.error,
+      traces: safeParse(run.nodeTraces) || [],
+      runId: run.id
+    }
+    approvalInfo.value = null
+    await replayTraces()
+    if (runResult.value.status === 'success') {
+      message.success(`已${approved ? '批准' : '拒绝'}，续跑完成（${fmtMs(run.durationMs)}）`)
+    } else {
+      message.error('续跑失败：' + (runResult.value.error || '未知原因'))
+    }
+  } catch (e) {
+    message.error('审批失败：' + (e.message || ''))
   } finally {
     busy.value = false
   }
@@ -606,7 +791,14 @@ async function openRunDetail(row) {
     const run = r.data || {}
     runResult.value = {
       status: run.status, outputs: safeParse(run.outputs), error: run.error,
-      traces: safeParse(run.nodeTraces) || []
+      traces: safeParse(run.nodeTraces) || [], runId: run.id
+    }
+    approvalInfo.value = null
+    if (run.status === 'waiting_approval') {
+      try {
+        const ar = await getWorkflowPendingApproval(workflowId.value, run.id)
+        approvalInfo.value = ar.data
+      } catch (e) { approvalInfo.value = null }
     }
     historyModal.value = false
     for (const n of nodes.value) updateNodeData(n.id, { run: null })
@@ -630,6 +822,7 @@ async function load() {
       { id: 'end', type: 'wf', position: { x: 420, y: 160 }, data: { nodeType: 'end', label: TYPE_META.end.label, config: blankConfig('end'), run: null } }
     ]
     edges.value = [{ id: 'e_start_end', source: 'start', target: 'end', markerEnd: MarkerType.ArrowClosed, data: {} }]
+    dirty.value = true   // 新建画布尚未落库，如实显示「有未保存改动」
     nextTick(() => fitView({ padding: 0.2 }))
     return
   }
@@ -658,6 +851,17 @@ async function loadKnowledgeBases() {
   } catch (e) { /* 检索节点库列表拿不到就留空（不影响其他功能） */ }
 }
 
+loadAgents()
+async function loadAgents() {
+  try {
+    const r = await listAvailableAgents()
+    agentOptions.value = ((r.data || [])).map(a => ({
+      value: a.id || a.agentId,
+      label: a.name || a.id || a.agentId
+    })).filter(o => o.value)
+  } catch (e) { /* 拿不到就留空：子智能体节点无候选（不影响其他功能） */ }
+}
+
 // ---------- 工具 ----------
 function safeParse(s) {
   if (!s) return null
@@ -672,11 +876,18 @@ function subText(data) {
     case 'llm': return c.prompt ? String(c.prompt).slice(0, 24) : '未配置 Prompt'
     case 'retrieval': return c.query ? `检索 ${String(c.query).slice(0, 18)}` : '未配置检索词'
     case 'condition': return `${(c.branches || []).length} 个分支`
+    case 'http': return `${c.method || 'GET'} ${String(c.url || '').slice(0, 20)}`
+    case 'code': return `${c.language === 'node' ? 'Node' : 'Python'} · ${c.timeoutSeconds || 60}s`
+    case 'subagent': return c.agentId ? `委派 ${String(c.agentId).slice(0, 16)}` : '未选择智能体'
+    case 'approval': return c.prompt ? String(c.prompt).slice(0, 20) : '等待人工确认'
+    case 'loop': return `最多 ${(c.maxLoops || 5)} 轮`
+    case 'template': return c.template ? String(c.template).slice(0, 22) : '未配置模板'
     default: return ''
   }
 }
 
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
+const traceTagColor = s => ({ success: 'green', failed: 'red', waiting: 'orange' }[s] || 'red')
 const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
 const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '—')
@@ -733,12 +944,24 @@ load()
 .wf-node :deep(.vue-flow__handle) { width: 8px; height: 8px; background: var(--app-accent); border: none; }
 .wf-node.run-success { border-color: #52c41a; box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.15); }
 .wf-node.run-failed { border-color: #ff4d4f; box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
+.wf-node.run-waiting { border-color: #fa8c16; box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.2); }
 .wf-node-badge {
   position: absolute; top: -9px; right: -9px;
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 9px; color: #fff;
 }
 .badge-success { background: #52c41a; }
 .badge-failed { background: #ff4d4f; }
+.badge-waiting { background: #fa8c16; }
+
+/* 人工审核审批卡 */
+.wf-approval-card {
+  border: 1.5px solid #fa8c16; border-radius: 8px; padding: 12px 14px;
+  background: #fff7e6; margin-bottom: 14px;
+}
+.wf-approval-head { font-weight: 500; font-size: 13px; margin-bottom: 6px; }
+.wf-approval-prompt { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
+.wf-approval-meta { font-size: 12px; color: var(--app-text3); display: flex; gap: 12px; margin-bottom: 10px; }
+.wf-approval-actions { display: flex; gap: 10px; }
 
 /* 抽屉表单 */
 .wf-form { display: flex; flex-direction: column; gap: 12px; }

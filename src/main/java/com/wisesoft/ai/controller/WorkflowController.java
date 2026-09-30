@@ -98,6 +98,22 @@ public class WorkflowController {
         return ResultJson.ok(workflowService.getRun(id, runId));
     }
 
+    @Operation(summary = "人工审核：待审批信息", description = "run 处于 waiting_approval 时返回审批卡内容（prompt/超时/挂起时刻）；无待审批返回 null")
+    @GetMapping("/{id}/run/{runId}/approval")
+    public ResultJson pendingApproval(@PathVariable String id, @PathVariable String runId) {
+        return ResultJson.ok(workflowService.pendingApproval(id, runId));
+    }
+
+    @Operation(summary = "人工审核：裁决并恢复续跑", description = "body: {approved: true|false}。仅运行发起人可裁决；"
+            + "按挂起快照恢复执行（已完成节点短路回放，不重复消耗 LLM 调用），本次请求内同步跑完并返回终态 run；"
+            + "批准走 approve 分支、拒绝走 reject 分支")
+    @PostMapping("/{id}/run/{runId}/approval")
+    public ResultJson resolveApproval(@PathVariable String id, @PathVariable String runId,
+                                      @RequestBody Map<String, Object> body) {
+        boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        return ResultJson.ok(workflowService.approveRun(id, runId, approved));
+    }
+
     private static String str(Map<String, Object> body, String key) {
         Object v = body.get(key);
         return v == null ? null : String.valueOf(v);
