@@ -519,6 +519,15 @@ public class ConfigService {
         return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret") || key.endsWith(".token"));
     }
 
+    /**
+     * 键是否为「活跃槽位」：只有 {@link #defaults()} 定义的键才会被设置页渲染、保存校验、默认值灌入。
+     * <p>退役键（chat.model / vision.model / embedding.model）不在其中——存量行对用户不可见也不可改，
+     * 引用校验若仍认它们，会形成界面无处解除的死锁（删供应商被看不见的槽位挡住）。</p>
+     */
+    public boolean isLiveKey(String key) {
+        return key != null && defaults().containsKey(key);
+    }
+
     /** 清除线程局部参数覆盖（评估结束后必须调用） */
     public void clearOverride() {
         OVERRIDE.remove();

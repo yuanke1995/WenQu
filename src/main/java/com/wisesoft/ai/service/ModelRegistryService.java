@@ -540,7 +540,8 @@ public class ModelRegistryService {
     }
 
     /**
-     * 删除供应商（连同其模型登记）。被引用（智能体模型 / 用户默认模型 / 系统配置槽位）时拒绝。
+     * 删除供应商（连同其模型登记）。被引用（智能体模型 / 用户默认模型 / 知识库向量 / 系统配置活跃槽位）时拒绝；
+     * 退役配置键（不在 defaults()，设置页不可见）的遗留引用只告警不阻挡。
      */
     public void deleteProvider(String id) {
         Provider p = providerMapper.selectById(id);
@@ -555,12 +556,25 @@ public class ModelRegistryService {
         Long kbRefs = kbMapper.selectCount(new LambdaQueryWrapper<KnowledgeBase>()
                 .likeRight(KnowledgeBase::getEmbeddingRef, prefix));
         if (kbRefs != null && kbRefs > 0) refs.add("知识库绑定向量模型 ×" + kbRefs);
-        Long configRefs = configMapper.selectCount(new LambdaQueryWrapper<com.wisesoft.ai.model.Config>()
-                .likeRight(com.wisesoft.ai.model.Config::getConfigValue, prefix));
-        if (configRefs != null && configRefs > 0) refs.add("系统配置槽位 ×" + configRefs);
+        List<com.wisesoft.ai.model.Config> cfgRefs = configMapper.selectList(
+                new LambdaQueryWrapper<com.wisesoft.ai.model.Config>()
+                        .likeRight(com.wisesoft.ai.model.Config::getConfigValue, prefix));
+        List<String> slotKeys = new ArrayList<>();
+        for (com.wisesoft.ai.model.Config c : cfgRefs) {
+            // 只有活跃键（defaults() 定义、设置页可见可改）才阻挡删除；退役键的遗留行对用户
+            // 不可见也不可改，挡删除是死路——只告警，遗留读取方（记忆向量化等）随删除一并失效
+            if (configService.isLiveKey(c.getConfigKey())) {
+                slotKeys.add(c.getConfigKey());
+            } else {
+                log.warn("[Provider] 遗留配置键 {} 引用了供应商 {}，删除后该配置随之失效", c.getConfigKey(), p.getName());
+            }
+        }
+        if (!slotKeys.isEmpty()) {
+            refs.add("系统配置槽位（" + String.join("、", slotKeys) + "）×" + slotKeys.size());
+        }
         if (!refs.isEmpty()) {
             throw new IllegalArgumentException("供应商「" + p.getName() + "」仍被引用（" + String.join("、", refs)
-                    + "），请先在个人设置/知识库改用其他模型");
+                    + "），请先在个人设置/知识库/系统设置改用其他模型");
         }
         modelMapper.delete(new LambdaQueryWrapper<ModelInfo>().eq(ModelInfo::getProviderId, id));
         providerMapper.deleteById(id);
