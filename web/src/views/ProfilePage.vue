@@ -25,18 +25,7 @@
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
         </div>
 
-        <!-- 向量/重排：仅说明，不提供个人默认（向量归知识库绑定；重排归知识库检索设置） -->
-        <div v-else-if="current === 'embedding'" class="app-card pf-card">
-          <h2 class="app-card-title">向量模型</h2>
-          <p class="pf-hint">向量空间与知识库的向量索引一一对应，归各知识库绑定，不提供个人默认。</p>
-          <p class="pf-sub-hint">请由管理员在「知识库管理」中为每个知识库选择向量模型；换模型自动按库重嵌入。</p>
-        </div>
-
-        <div v-else-if="current === 'rerank'" class="app-card pf-card">
-          <h2 class="app-card-title">重排模型</h2>
-          <p class="pf-hint">重排是知识库检索策略的一部分，归各知识库的「检索参数」配置，不提供个人默认。</p>
-          <p class="pf-sub-hint">请由管理员在「知识库管理 → 编辑」中为知识库选择重排模型；未配置的库不做精排。</p>
-        </div>
+        <!-- 向量/重排不提供个人默认：向量空间与知识库索引一一对应、重排归知识库检索设置，均无个人级配置 -->
 
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
@@ -114,8 +103,6 @@ const router = useRouter()
 const navs = [
   { key: 'chat', label: '聊天模型' },
   { key: 'vision', label: '视觉模型' },
-  { key: 'embedding', label: '向量模型' },
-  { key: 'rerank', label: '重排模型' },
   { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
 ]
@@ -135,7 +122,7 @@ const PANELS = {
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
 
-// 个人默认（全量保存：任一面板保存都提交当前值；重排/向量无个人默认）
+// 个人默认（全量保存：任一面板保存都提交当前值；向量/重排无个人默认，归知识库绑定/检索设置）
 const loading = ref(false)
 const saving = ref(false)
 const pref = ref({ defaultModel: '', defaultVisionModel: '' })
