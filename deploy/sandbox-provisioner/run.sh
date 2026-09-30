@@ -67,7 +67,10 @@ install_deps() {
     "$BOOTSTRAP_PY" -m venv "$VENV"
   fi
   echo "==> 安装依赖"
-  "$VENV/bin/pip" install --disable-pip-version-check -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  # 默认走阿里云镜像（清华 TUNA 曾对本机返回 403 反爬拦截，pypi.org 直连超时），
+  # 可用 PIP_INDEX_URL 覆盖，如：PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple bash run.sh install
+  local index_url="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
+  "$VENV/bin/pip" install --disable-pip-version-check -i "$index_url" \
     -r "$HERE/requirements.txt"
   echo "==> 完成"
 }
