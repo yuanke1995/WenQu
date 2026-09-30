@@ -161,10 +161,18 @@
         <a-button size="small" @click="refreshGraph" style="margin-left:auto">刷新</a-button>
       </div>
 
-      <!-- 图视图：力导向图（节点=实体、边=关系谓词；点节点高亮邻居，可缩放拖拽） -->
+      <!-- 图视图：力导向图（节点=实体、边=关系谓词；点节点 → 下方显示该实体的关系清单） -->
       <div v-show="graphView === 'graph'" class="graph-wrap">
         <div ref="graphChartEl" class="graph-canvas"></div>
         <div v-if="!graphInfo.triples" class="graph-empty">还没有三元组——先点「构建图谱」。</div>
+        <div v-if="selectedEntity" class="graph-panel">
+          <b>{{ selectedEntity }}</b> 的关系（{{ entityRelations.length }}）：
+          <span v-for="(r, i) in entityRelations" :key="i" class="graph-rel">
+            {{ r.subject }} —【{{ r.predicate }}】→ {{ r.object }}
+          </span>
+          <button class="app-link-btn" style="margin-left:auto" @click="selectedEntity = null">收起</button>
+        </div>
+        <div v-else-if="graphInfo.triples" class="graph-note">点一个节点可在下方查看它的关系；拖动节点/空白平移、滚轮缩放。</div>
         <div v-else-if="graphInfo.triples > graphSampled" class="graph-note">图示展示前 {{ graphSampled }} 条关系（按提及度优先），完整清单请切「列表」。</div>
       </div>
 
@@ -452,13 +460,19 @@ const refreshGraph = async () => {
 const onTripleTableChange = pg => { triplePage.value = pg.current; refreshGraph() }
 
 // ==================== 图视图（echarts 力导向图：节点=实体、边=关系） ====================
+// 交互铁律：**init + 一次 setOption 之后绝不再碰图表状态**（部分 setOption 会重建力模拟与漫游坐标系
+// ——roam/拖拽/滚轮就此失灵，前两版都栽在这）。邻居信息走「点击节点 → 图下方关系面板」，纯 Vue 状态。
 const graphView = ref('graph')   // 默认图视图；列表是核对清单
 const graphChartEl = ref(null)
 const graphSampled = 500         // 图视图一次拉取的关系上限（后端放宽到 500，超出部分走列表）
 let chartInstance = null
-let graphNodes = []              // 当前图数据（高亮 setOption 时复用）
-let graphLinks = []
-let highlightName = null         // 点击选中的节点名（null=无高亮）
+const graphLinks = ref([])       // 当前关系（关系面板用）
+const selectedEntity = ref(null) // 点选的实体（null=未选）
+
+const entityRelations = computed(() => {
+  if (!selectedEntity.value) return []
+  return graphLinks.value.filter(l => l.source === selectedEntity.value || l.target === selectedEntity.value)
+})
 
 const onGraphViewChange = () => { if (graphView.value === 'graph') nextTick(renderGraphChart) }
 
@@ -479,40 +493,42 @@ async function renderGraphChart() {
     rows = r.success ? (r.data?.rows || []) : []
   } catch (e) { message.error(e.message || '图谱数据加载失败'); return }
   disposeChart()
-  if (!rows.length) return   // 空态由模板的 .graph-empty 兜底
+  selectedEntity.value = null
+  if (!rows.length) { graphLinks.value = []; return }   // 空态由模板的 .graph-empty 兜底
   // 节点度数（连线越多的实体越大）
   const degree = {}
   const nodeNames = []
   const seen = new Set()
-  graphLinks = rows.map(t => {
+  graphLinks.value = rows.map(t => {
     for (const n of [t.subject, t.object]) {
       degree[n] = (degree[n] || 0) + 1
       if (!seen.has(n)) { seen.add(n); nodeNames.push(n) }
     }
     return { source: t.subject, target: t.object, value: t.predicate, doc: t.doc }
   })
-  graphNodes = nodeNames.map(n => ({
-    name: n,
-    symbolSize: Math.min(48, 14 + (degree[n] || 1) * 4),
-    label: { show: true, fontSize: 10 }
-  }))
   chartInstance = echarts.init(graphChartEl.value)
-  // 交互坑规避（echarts graph 已知问题）：layoutAnimation 开着时拖节点后力模拟会打断漫游控制；
-  // emphasis.focus adjacency 在拖拽场景会卡住高亮态——改用「点击节点手动高亮邻居」（applyHighlight）
+  // 一次性 setOption，此后只读不写——交互全部交给 echarts 原生 roam（拖拽/平移/滚轮缩放）
+  // 关键：graph 漫游只覆盖「初始布局矩形」，平移出新区域后就拖不动了（echarts 内部行为）。
+  // 把视图矩形向四周外扩 1600px，漫游可及范围远超连续平移所需；力布局以中心聚类，视觉不受影响。
+  const wrapRect = graphChartEl.value.getBoundingClientRect()
+  const pad = 1600
   chartInstance.setOption({
     backgroundColor: 'transparent',
     tooltip: {
       formatter: p => p.dataType === 'edge'
         ? `<b>${p.data.source}</b> —【${p.data.value}】→ <b>${p.data.target}</b><br/><span style="color:#999">来源：${p.data.doc || '—'}</span>`
-        : `<b>${p.name}</b><br/><span style="color:#999">点击高亮邻居 · 关联关系 ${degree[p.name] || 0} 条</span>`
+        : `<b>${p.name}</b><br/><span style="color:#999">点击查看该实体的关系</span>`
     },
     series: [{
       type: 'graph', layout: 'force', roam: true, draggable: true, cursor: 'grab',
-      // layoutAnimation 保持开启：false 会造成拖走一个节点后其余节点命中区错位（echarts 已知问题）。
-      // 上轮"拖一下就失效"的真凶是 emphasis.focus adjacency（已移除），力模拟本身是标准拖拽行为
-      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.08, layoutAnimation: true },
-      data: graphNodes,
-      links: graphLinks,
+      left: -pad, top: -pad, width: wrapRect.width + pad * 2, height: wrapRect.height + pad * 2,
+      force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.2, layoutAnimation: true },
+      data: nodeNames.map(n => ({
+        name: n,
+        symbolSize: Math.min(48, 14 + (degree[n] || 1) * 4),
+        label: { show: true, fontSize: 10 }
+      })),
+      links: graphLinks.value,
       label: { color: '#333', position: 'right' },
       lineStyle: { color: '#b9c0cc', curveness: 0.05 },
       edgeLabel: { show: true, fontSize: 10, color: '#8a919e', formatter: '{c}' },
@@ -520,34 +536,13 @@ async function renderGraphChart() {
       itemStyle: { color: '#4f6ef2' }
     }]
   }, true)
-  chartInstance.on('click', onGraphClick)
-  applyHighlight()
-}
-
-/** 点击节点：高亮它的邻居（再点同节点/空白恢复）；手动 setOption 而非 emphasis.focus，避免拖拽后状态卡住 */
-function onGraphClick(params) {
-  if (params.dataType === 'node') {
-    highlightName = highlightName === params.name ? null : params.name
-  } else {
-    highlightName = null
-  }
-  applyHighlight()
-}
-
-function applyHighlight() {
-  if (!chartInstance) return
-  const neighbors = new Set()
-  if (highlightName) {
-    for (const l of graphLinks) {
-      if (l.source === highlightName) neighbors.add(l.target)
-      if (l.target === highlightName) neighbors.add(l.source)
+  // 点节点 = 在图下方显示该实体的关系清单（纯 Vue 状态，零图表突变）
+  chartInstance.on('click', p => {
+    if (p.dataType === 'node') {
+      window.__lastNodeClick = p.name   // 调试口：自动化测试/排障用，无副作用
+      selectedEntity.value = p.name
     }
-  }
-  const dim = n => highlightName && n !== highlightName && !neighbors.has(n)
-  chartInstance.setOption({ series: [{
-    data: graphNodes.map(d => ({ ...d, itemStyle: { opacity: dim(d.name) ? 0.12 : 1 } })),
-    links: graphLinks.map(l => ({ ...l, lineStyle: { opacity: highlightName && l.source !== highlightName && l.target !== highlightName ? 0.06 : 1 } }))
-  }] })
+  })
 }
 
 const onWinResize = () => { if (chartInstance) chartInstance.resize() }
@@ -637,7 +632,16 @@ onBeforeUnmount(() => {
 /* 图谱：工具栏 + 力导向图画布 */
 .graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .graph-wrap { position: relative; }
-.graph-canvas { height: 520px; width: 100%; }
+.graph-canvas { height: 480px; width: 100%; }
+.graph-panel {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; margin-top: 6px;
+  background: var(--app-bg, #fafafa); font-size: 12px;
+}
+.graph-rel {
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px;
+  padding: 2px 8px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+}
 .graph-empty, .graph-note { font-size: 12px; color: var(--app-text3); }
 .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 /* 长标签「GraphRAG 知识图谱」放不下标准 5/24 标签列：放开 nowrap 折成两行，
