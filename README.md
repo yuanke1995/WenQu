@@ -21,7 +21,7 @@
 | 文档解析 | Apache POI 5.2.3（docx/xlsx）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
 | 序列化 / 文档 | fastjson2 2.0.31；springdoc-openapi 2.8.8（Swagger UI，生产默认关） |
 | 安全 | RSA 加密落库模型 API Key（`ConfigCryptoService`）+ SHA-256 哈希签发对外 API Key + 图片 HMAC 签名 URL + PBKDF2 密码哈希 + JWT 登录令牌 + OIDC 单点登录 |
-| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js（`.nvmrc` 固定 Node **18.19.0**，Node ≥18 均可） |
+| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js + @vue-flow/core 1.48.2（工作流画布，锁版本）（`.nvmrc` 固定 Node **18.19.0**，Node ≥18 均可） |
 
 ## 目录结构
 
@@ -65,7 +65,7 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
     ├── src/router.js                # 路由表（/chat 工作台 + /agents 智能体工作台 + /knowledge 知识库 + /artifacts 产物 + /profile 个人设置 + /s/:token 游客分享页 + 管理页；管理页路由带管理员守卫）
     ├── src/api.js / configSchema.js # 接口封装 / 设置项 schema 容器（applyServerSchema 填充）
-    └── src/views/                   # AppLayout(侧边导航+最近会话) + ChatPage(对话) + AgentsHubPage(智能体工作台：模型供应商·智能体·技能·MCP·定时任务 五 Tab)
+    └── src/views/                   # AppLayout(侧边导航+最近会话) + ChatPage(对话) + AgentsHubPage(智能体工作台：模型供应商·智能体·技能·MCP·定时任务·工作流 六 Tab) + WorkflowPanel(工作流列表) + FlowEditor(工作流画布编辑器)
                                      #   KnowledgeBasePage(知识库) + DocumentsPage(文档管理) + ArtifactsPage(我的产物) + ProfilePage(个人设置·长期记忆管理)
                                      #   MembersPage(成员) + PermissionsPage(权限) + DashboardPage(数据看板) + EvaluationPage(检索评估)
                                      #   SettingsPage(系统设置) + ShareChatPage(游客分享对话) + LoginPage + OidcCallbackPage
@@ -197,7 +197,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **智能体（Agent）**：`c_ai_agent` 存智能体预设（模型 / System Prompt / 知识范围 / 工具开关 / MCP / 技能 / 是否子智能体 / 委派列表 / 是否默认）；**智能体会话级绑定**（对齐 Coze/Dify/Claude Projects 主流做法）：会话**首问时锁定**（`c_ai_session.agent_id`，`bindAgent` 以 `isNull(agent_id)` 只写一次），全程同一人设/知识库/工具集——已锁定会话忽略请求里的 agentId，**切换智能体 = 新建会话**；列值语义 `NULL`=未绑定、空串=已决定不绑定（走全局配置），显式不用智能体不会被反复重路由；「自动派遣」= **首问路由一次并锁定**（`agent_dispatched` 事件 + 就地下发 `agent_bound` 锁定结果），不再每轮静默换人；绑定智能体不可访问（被删/权限变更）时 fail-loud 降级提示（`agentUnavailable`/`agentMissing`），不静默回落全局配置；**主智能体可把复杂问题并行委派给子智能体**（各自检索+提炼，汇总节点合并）；**按需委派路由**（`agent.autoRoute`）：主模型先从候选中挑出与问题相关的子智能体，路由结果与**挑选理由**随 SSE 下发并随消息持久化；可开**委派收窄检索范围**（`agent.dispatchNarrowScope`，默认关）：路由挑出子集后主检索收窄到「主智能体库∪被选中助手库」；**结果聚合策略可配**（`agent.aggregateMode`）：`concat` 按分支直拼 / `rerank` 命中按重排分降序合并（高分块优先进上下文预算）/ `supervisor` 监督者二次聚合（LLM 去重合并、按价值排序、结论矛盾显式标注「⚠ 冲突」，失败回退直拼）；要点段字符预算（`agent.digestMaxChars`）防多分支要点挤占上下文；失败分支显式占位（`agent.aggregateMarkFailed`）让模型可声明"该方面资料不足"；智能体页提供**委派编排视图**（主→子 SVG 拓扑图：悬停高亮委派链路、悬空引用与孤儿子智能体警示、点击节点进配置）；对话编排卡片实时展示各分支状态、任务描述、要点、耗时占比条与路由理由
 - **沙盒隔离执行**（`tool.sandbox.enabled`，默认关）：模型经 Function Calling 在**隔离 Linux 容器**内获得 6 个工具——`execute`（shell 命令，**输出实时流式回传**：SSE `tool_output` 逐行增量，长命令不用等跑完才见结果）/ `read_file` / `write_file`（创建语义，改已有文件用 edit_file）/ `edit_file`（精确串替换）/ `ls` / `deliver_artifact`（沙盒文件交付为「我的产物」，扩展名白名单放宽到 py/png/xlsx/zip 等，单个 ≤1MB，路径限定用户数据根）；**scope 挂会话**（同一会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）由定时任务回收容器；数据根 `user-data/shared/{uid}/workspace` 持久化，技能目录 `/home/gem/skills` 只读挂载；命令超时/输出上限/keepalive/删除超时均可在设置页「沙盒」面板调整；**provisioner 容器化部署**（见启动方式第 1 步），Java 客户端强制 HTTP/1.1（uvicorn 拒绝 h2c 升级且会丢 body）；**沙盒运行时依赖必须烧进镜像**（容器内 gem 用户无 sudo，装不了 JDK/Node 等——用 `sandbox-image/Dockerfile` 派生镜像 + `SANDBOX_IMAGE` 指定）；**右栏「沙盒」卡**可浏览/下载会话沙盒工作区文件（`/sandbox/state|tree|download` 只读端点，只 discover 不创建容器）；**工具瞬时故障自动重试**（失败 500ms 重试一次，`tool_status.attempts` 透出尝试次数）
 - **定时执行智能体**（`/agents` → 定时任务 Tab）：智能体按 cron（6 段）或固定间隔自动执行，执行历史与结果会话留痕；调度中心先推进 `next_run_at` 再执行（单实例防重复）、同任务串行（未完成记 `skipped`）
-- **可视化工作流**（画布编辑器开发中，当前为引擎后端）：DSL（JSON）是**唯一真源**——节点/边/变量引用/画布坐标全在其中，画布只是编辑器、引擎只认 DSL；`StateGraph` 执行底座复用（与多智能体编排同源）；结构校验器 fail-loud（11 类节点注册表、成环/悬空/分支键对账/变量引用检查）；**五类核心节点**已可执行：开始 / 结束 / LLM（模型引用过判权，`modelRef` 留空走个人默认）/ 知识库检索（kbIds 库界）/ 条件分支（SpEL 安全求值，禁 `T()`/构造器，`else` 兜底）；变量引用 `{{nodeId.key}}` 统一寻址；`POST /{id}/run` 同步调试运行，**每次运行锁定当时 DSL 快照**（改画布不影响历史回放）+ 节点级 trace（status/输入输出摘要/耗时/token）落库；运行期最大步数闸（`workflow.maxSteps`）；归属 M0~M3 仅创建者可见（M4 接发布语义/智能体绑定/API 触发/画布编辑器）
+- **可视化工作流**（智能体工作台 → 工作流 Tab）：DSL（JSON）是**唯一真源**——节点/边/变量引用/画布坐标全在其中，画布只是编辑器、引擎只认 DSL；`StateGraph` 执行底座复用（与多智能体编排同源）；结构校验器 fail-loud（11 类节点注册表、回跳规则（仅 loop 节点可发起回跳）/悬空/分支键对账/变量引用检查）；**11 类节点全量可执行**：开始 / 结束 / LLM（模型引用过判权，`modelRef` 留空走个人默认）/ 知识库检索（kbIds 库界）/ 条件分支（SpEL 安全求值，禁 `T()`/构造器，`else` 兜底）/ **HTTP 请求**（SSRF 逐跳内网校验 fail-loud、2MB 读取上限）/ **代码执行**（Python/Node 走 Docker 沙盒，非 0 退出码 fail-loud，`tool.sandbox.enabled` 门）/ **子智能体**（复用完整问答管线、可见性按调用者、临时会话跑完即删）/ **人工审核**（挂起 waiting_approval → 审批卡裁决 → 按快照续跑，已完成节点短路回放零重复消耗；approve/reject 双分支；超时回收落 timeout）/ **循环**（回跳 + maxLoops 编译期/运行期双闸）/ **模板转换**（多路输出聚合）；变量引用 `{{nodeId.key}}` 统一寻址；**画布编辑器**：左侧节点面板拖拽/点击添加（新节点瀑布排布）、连线校验（禁自环、start 无入边、end 无出边、非 loop 禁回跳、条件类出边弹窗选已声明分支）、右侧属性抽屉按类型渲染表单、新建画布预置 start→end 骨架；**画布内调试运行**：入参表单 → 同步 run → **node_traces 逐节点回放染色**（成功绿/失败红/待审核橙 + 耗时角标）→ 点节点看输入输出/耗时/token，运行历史可整体回放任一次 run；**每次运行锁定当时 DSL 快照**（改画布不影响历史回放）；运行期最大步数闸（`workflow.maxSteps`）；归属 M0~M3 仅创建者可见（M4 接发布语义/智能体绑定/API 触发）
 - **工具生态**：内置工具（计算器——递归下降自实现表达式求值，仅 `+ - * / % ^` 与括号，**不执行任意代码**；日期）、知识检索工具（命中块注册进引用流）、产物交付工具（`present_artifacts` 落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，SSE 下发卡片）、技能读取工具（渐进披露读 `SKILL.md`）；开关集中在 `tool.*`，**总开关与子开关默认均为 false**
 - **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力（内置目录 + 用户目录），支持新建 / 从 URL 安装（远程域白名单 `skill.remoteAllowedHosts`）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；**按用户隔离**（个人资产），沙盒内以只读投影暴露给容器
 - **MCP 双向**：
@@ -464,7 +464,7 @@ spring:
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |
-| `workflow.*` | `maxSteps`(50) | 工作流单次运行最大图步数（StateGraph recursionLimit，超限 fail-loud） |
+| `workflow.*` | `maxSteps`(50)、`subagentTimeoutMs`(180000) | 工作流单次运行最大图步数（StateGraph recursionLimit，超限 fail-loud）；子智能体节点回答等待超时 |
 | `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | MCP **服务端**：对外提供 `/ai/mcp/{token}` 端点；`allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
 | `sandbox.*` | `provisionerUrl`(127.0.0.1:8002)、`token`(敏感，RSA 入库)、`virtualPathPrefix`(/home/gem/user-data)、`commandTimeoutSeconds`(180)、`maxOutputBytes`(262144)、`keepaliveIntervalSeconds`(30)、`idleReleaseMinutes`(60)、`cleanupIntervalMs`(600000) | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
