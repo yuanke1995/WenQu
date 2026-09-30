@@ -16,7 +16,9 @@
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
           <div class="pf-row">
-            <ModelSelect v-model:value="pref[panelMeta.field]" :type="current"
+            <!-- :key 按面板重挂载：聊天/视觉各用自己的实例，避免共享实例残留上一面板的列表与内部状态；
+                 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
+            <ModelSelect :key="current" v-model="pref[panelMeta.field]" :type="current"
                          inherit-label="不设默认" :width="360" :disabled="loading" />
             <button class="app-btn" :disabled="saving" @click="save">保存</button>
           </div>

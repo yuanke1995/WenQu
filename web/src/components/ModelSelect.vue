@@ -20,6 +20,9 @@
     <a-select-option v-if="inheritLabel && !pill" value="" :label="inheritLabel">
       <span class="ms-inherit">{{ inheritLabel }}</span>
     </a-select-option>
+    <!-- 引用失配兜底：值不在当前列表（模型/供应商登记变化导致）时，antd 触发器会原样显示
+         含供应商 UUID 的引用串；补一个隐藏选项让触发器只显示模型 id 部分 -->
+    <a-select-option v-if="orphanRef" :value="orphanRef" :label="orphanLabel" class="ms-orphan" />
     <a-select-opt-group v-for="g in groups" :key="g.providerId" :label="g.name">
       <a-select-option
         v-for="m in g.models"
@@ -115,6 +118,20 @@ function onChange(v) {
   emit('change', v || '')
 }
 
+// 引用失配检测：值解析不到任何选项时为真（ref = providerId/modelId，providerId 不含斜杠，
+// 取第一个 / 之后作为展示文案）
+const orphanRef = computed(() => {
+  const v = (props.modelValue || '').trim()
+  if (!v) return ''
+  return groups.value.some(g => g.models.some(m => m.ref === v)) ? '' : v
+})
+const orphanLabel = computed(() => {
+  const v = orphanRef.value
+  if (!v) return ''
+  const i = v.indexOf('/')
+  return i === -1 ? v : v.slice(i + 1)
+})
+
 /** 下拉自绘行用：按引用反查所属供应商的图标 / 名称 */
 function iconOf(ref) {
   for (const g of groups.value) {
@@ -130,6 +147,12 @@ function providerNameOf(ref) {
 }
 
 onMounted(() => load())
+
+// 同一实例被切到不同类型槽位时（如个人设置聊天↔视觉共用一个选择器）按缓存重过滤，
+// 否则新槽位展示的还是上一个类型的模型列表
+watch(() => props.type, () => {
+  if (cache.data.length) groups.value = filter(cache.data)
+})
 
 defineExpose({ refresh: () => load(true) })
 
@@ -255,5 +278,9 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
   background: transparent !important;
   font-weight: 500 !important;
   color: var(--app-accent) !important;
+}
+/* 引用失配兜底选项：只参与触发器文案解析，不在下拉里出现 */
+.ms-dropdown .ms-orphan {
+  display: none !important;
 }
 </style>
