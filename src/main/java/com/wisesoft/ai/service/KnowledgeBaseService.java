@@ -9,6 +9,8 @@ import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.KnowledgeBase;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -217,21 +219,52 @@ public class KnowledgeBaseService {
                 kbMapper.insert(def);
             } else if (def.getId() == null || def.getId().isBlank()) {
                 // 历史行主键为空串：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存走到
-                // PUT /api/ai/kb/（空路径变量 → 404）、「文档管理」路由断链——启动后首次触达即自愈：
-                // 换主键 + 迁移 kb_id='' 的历史文档引用到新 id。
-                String newId = java.util.UUID.randomUUID().toString();
-                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                        .eq(KnowledgeBase::getId, "")
-                        .set(KnowledgeBase::getId, newId));
-                docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                        .eq(AiDocument::getKbId, "")
-                        .set(AiDocument::getKbId, newId));
-                def.setId(newId);
-                log.warn("[KB] 默认知识库主键为空串（历史数据），已自愈为新 id {}", newId);
+                // PUT /api/ai/kb/（空路径变量 → 404）、「文档管理」路由断链——触达即自愈。
+                healEmptyDefaultId(def);
             }
             cachedDefaultId = def.getId();
             return def.getId();
         }
+    }
+
+    /**
+     * 启动即自愈一次：defaultId() 只有上传/检索/移库会触达，而「编辑默认库保存」与
+     * 「知识库卡片 → 文档管理」走 /kb/list + PUT /kb/{id}，永远不经过 defaultId()，
+     * 空主键行会一直把 404 和断链暴露给用户。挂在 ApplicationReadyEvent（晚于 SchemaMigrator，
+     * 表结构就绪），与 defaultId() 里的兜底共用同一份迁移逻辑。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void healDefaultKbOnStartup() {
+        try {
+            KnowledgeBase def = kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
+                    .eq(KnowledgeBase::getIsDefault, 1)
+                    .eq(KnowledgeBase::getDeleted, 0)
+                    .last("LIMIT 1"));
+            if (def != null && (def.getId() == null || def.getId().isBlank())) {
+                healEmptyDefaultId(def);
+                cachedDefaultId = null;
+            }
+        } catch (Exception e) {
+            // 启动自愈失败不阻断应用；defaultId() 触达时还有兜底
+            log.warn("[KB] 启动自愈默认库主键失败（触达时重试）: {}", e.getMessage());
+        }
+    }
+
+    /** 空主键默认库自愈本体：换新 id（兼容 '' 与 NULL）+ 迁移 kb_id 空值的历史文档引用。 */
+    private synchronized void healEmptyDefaultId(KnowledgeBase def) {
+        String newId = java.util.UUID.randomUUID().toString();
+        // 只改默认标记行：万一历史上还有其它空主键行，不能把它们一并改成同一个 id（主键冲突）
+        kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getIsDefault, 1)
+                .and(w -> w.eq(KnowledgeBase::getId, "").or().isNull(KnowledgeBase::getId))
+                .set(KnowledgeBase::getId, newId));
+        docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getKbId, "")
+                .or()
+                .isNull(AiDocument::getKbId)
+                .set(AiDocument::getKbId, newId));
+        def.setId(newId);
+        log.warn("[KB] 默认知识库主键为空（历史数据），已自愈为新 id {}", newId);
     }
 
     /**
