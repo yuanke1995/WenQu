@@ -574,9 +574,16 @@ function confirmBranch() {
 }
 
 // ---------- 属性抽屉 ----------
-function onNodeClick({ node }) {
-  selectedId.value = node.id
+function selectNode(id) {
+  const node = findNode(id)
+  if (!node) return
+  selectedId.value = id
+  // editConfig 同步跟随选中节点——否则程序化聚焦后切到属性页点「应用」会把旧配置写进新节点
   editConfig.value = JSON.parse(JSON.stringify(node.data.config || blankConfig(node.data.nodeType)))
+}
+
+function onNodeClick({ node }) {
+  selectNode(node.id)
   drawerTab.value = nodeTrace.value ? 'run' : 'config'
   drawer.value = true
 }
@@ -728,8 +735,11 @@ async function doRun() {
     } else {
       message.error('运行失败：' + (runResult.value.error || '未知原因'))
     }
-    drawer.value = true
+    // 抽屉 body 依赖选中节点（v-if="selected"）：先聚焦关键节点再开，否则弹空壳
+    const focusId = pickFocusNodeId()
+    if (focusId) selectNode(focusId)
     drawerTab.value = 'run'
+    drawer.value = !!focusId
   } catch (e) {
     message.error('运行失败：' + (e.message || ''))
   } finally {
@@ -763,6 +773,18 @@ async function doApprove(approved) {
   } finally {
     busy.value = false
   }
+}
+
+/** 运行结束后抽屉自动聚焦的节点：失败→失败节点、挂起→审批节点、成功→end 节点（没有就最后一条 trace） */
+function pickFocusNodeId() {
+  const traces = runResult.value?.traces || []
+  if (!traces.length) return ''
+  const lastOf = s => { for (let i = traces.length - 1; i >= 0; i--) if (traces[i].status === s) return traces[i]; return null }
+  const t = (runResult.value.status === 'failed' && lastOf('failed'))
+    || (runResult.value.status === 'waiting_approval' && lastOf('waiting'))
+    || [...traces].reverse().find(x => findNode(x.nodeId)?.data.nodeType === 'end')
+    || traces[traces.length - 1]
+  return (t && findNode(t.nodeId)) ? t.nodeId : ''
 }
 
 async function replayTraces() {
@@ -805,8 +827,10 @@ async function openRunDetail(row) {
     for (const t of runResult.value.traces) {
       if (findNode(t.nodeId)) updateNodeData(t.nodeId, { run: { status: t.status, elapsedMs: t.elapsedMs } })
     }
-    drawer.value = true
+    const focusId = pickFocusNodeId()
+    if (focusId) selectNode(focusId)
     drawerTab.value = 'run'
+    drawer.value = !!focusId
   } catch (e) {
     message.error('运行详情加载失败：' + (e.message || ''))
   }
