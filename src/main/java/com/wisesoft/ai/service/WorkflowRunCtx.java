@@ -42,6 +42,22 @@ public final class WorkflowRunCtx {
      */
     final Consumer<String> tokenSink;
 
+    // ---- 工作流图片机制（与主问答管线同语义，镜像 RagService 的 [图片N] 编号口径） ----
+    /**
+     * 全局图片编号 → 原始 URL（有序；retrieval 节点填充）。
+     * 节点把命中块正文里的 [图片]/[图片：描述] 占位替换为全局编号 [图片N：描述]，
+     * N = 本列表序号（1 起）。llm 节点的 prompt 拿到编号标记，回答引用 [图片N]，
+     * 前端按 images[N-1] 渲染真图——与主链路 renderMd 的消费契约一致。
+     */
+    final List<String> imageUrls = new ArrayList<>();
+    /**
+     * 图片列表透传通道（对话型接入）：retrieval 节点完成编号后回调（<b>累计</b>有序原始 URL 列表副本），
+     * 由 RagService 签名后发 SSE image 事件——LLM 开始吐 token 前前端就拿到图片清单，
+     * 与主链路"image 事件先于 token"的时序一致。多个 retrieval 节点按完成序各回调一次（每次都带全量）。
+     * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推）。
+     */
+    final Consumer<List<String>> imageSink;
+
     // ---- M3：人工审核的挂起/恢复（快照短路重放方案） ----
     /**
      * 恢复执行时各节点上次运行的<b>全量</b>输出（nodeId → 裸键输出 map；截断前的原值）。
@@ -64,11 +80,17 @@ public final class WorkflowRunCtx {
 
     WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps) {
-        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, null);
+        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, null, null);
     }
 
     WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink) {
+        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, tokenSink, null);
+    }
+
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
+                   Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink,
+                   Consumer<List<String>> imageSink) {
         this.runId = runId;
         this.uid = uid;
         this.departmentId = departmentId;
@@ -78,6 +100,7 @@ public final class WorkflowRunCtx {
         this.defaultTemperature = defaultTemperature;
         this.maxSteps = maxSteps;
         this.tokenSink = tokenSink;
+        this.imageSink = imageSink;
     }
 
     /**

@@ -56,6 +56,7 @@ public class ScheduleCenter {
     private final SandboxService sandboxService;
     private final DocumentService documentService;
     private final WorkflowService workflowService;
+    private final com.wisesoft.ai.service.TraceService traceService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -70,7 +71,8 @@ public class ScheduleCenter {
                           ScheduledJobService scheduledJobService,
                           SandboxService sandboxService,
                           DocumentService documentService,
-                          WorkflowService workflowService) {
+                          WorkflowService workflowService,
+                          com.wisesoft.ai.service.TraceService traceService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -81,6 +83,7 @@ public class ScheduleCenter {
         this.sandboxService = sandboxService;
         this.documentService = documentService;
         this.workflowService = workflowService;
+        this.traceService = traceService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -153,6 +156,13 @@ public class ScheduleCenter {
                 () -> 60_000,
                 () -> false,
                 () -> workflowService.reapApprovalTimeouts());
+
+        // P1 Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
+        // uk_qalog 唯一键兜底幂等，重复触发不产生重复样本
+        register("Trace 线上采样",
+                () -> configService.getInt("trace.samplingIntervalMs", 86_400_000),
+                () -> false,
+                () -> traceService.sampleDaily());
 
         long now = System.currentTimeMillis();
         for (PeriodicTask task : tasks) {

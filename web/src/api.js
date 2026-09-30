@@ -344,6 +344,35 @@ export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => 
 }
 export const getMcpAuditSummary = () => request('/mcp/audit/summary')
 
+// ---------- P1 执行 Trace 与采样池（运营闭环；管理员） ----------
+export const listTraces = ({ kind, page, size, keyword, hasCitation, rating, days, agentId } = {}) => {
+  const q = new URLSearchParams()
+  if (kind) q.set('kind', kind)
+  if (keyword) q.set('keyword', keyword)
+  if (hasCitation !== undefined && hasCitation !== null && hasCitation !== '') q.set('hasCitation', String(hasCitation))
+  if (rating !== undefined && rating !== null && rating !== '') q.set('rating', String(rating))
+  if (days !== undefined && days !== null) q.set('days', String(days))
+  if (agentId) q.set('agentId', agentId)
+  q.set('page', String(page || 1))
+  q.set('size', String(size || 20))
+  return request('/trace/list?' + q.toString())
+}
+export const getChatTrace = id => request(`/trace/chat/${id}`)
+export const getWorkflowTrace = runId => request(`/trace/workflow/${runId}`)
+export const listTracePool = ({ status, page, size } = {}) => {
+  const q = new URLSearchParams()
+  if (status) q.set('status', status)
+  q.set('page', String(page || 1))
+  q.set('size', String(size || 20))
+  return request('/trace/pool?' + q.toString())
+}
+/** 标注并回流评测集：knowledgeIds = 期望命中的知识块（至少 1 个） */
+export const labelTraceSample = (id, knowledgeIds, note) =>
+  request(`/trace/pool/${id}/label`, { method: 'POST', body: JSON.stringify({ knowledgeIds, note: note || '' }) })
+export const dismissTraceSample = id => request(`/trace/pool/${id}/dismiss`, { method: 'POST' })
+export const runTraceSampling = () => request('/trace/sample/run', { method: 'POST' })
+export const getTraceStats = () => request('/trace/stats')
+
 // ==================== 技能（Skills）（个人资产：每人管自己的技能） ====================
 export const listSkills = () => request('/skill/list')
 export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))

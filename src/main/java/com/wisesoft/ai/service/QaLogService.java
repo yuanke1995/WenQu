@@ -34,11 +34,14 @@ public class QaLogService {
     private final MessageMapper messageMapper;
 
     /**
-     * 异步落问答日志（不阻塞主流程）
+     * 异步落问答日志（不阻塞主流程）。
+     * P1：messageId/agentId 随行落库——messageId 是 trace 详情还原全过程（toolCalls/sources/tokens）
+     * 的关联键，agentId 支撑按智能体筛选。存量行为 NULL，详情按摘要视图降级展示。
      */
     public void logAsync(String sessionId, String question, String answer,
                          List<String> hitDocIds, boolean hasCitation, long elapsedMs,
-                         String rewrittenQuery, String stageMsJson, boolean deepThink) {
+                         String rewrittenQuery, String stageMsJson, boolean deepThink,
+                         String messageId, String agentId) {
         ThreadPoolManager.execute(() -> {
             try {
                 QaLog log = new QaLog();
@@ -53,6 +56,8 @@ public class QaLogService {
                 log.setDeepThink(deepThink ? 1 : 0);
                 log.setElapsedMs((int) Math.min(elapsedMs, Integer.MAX_VALUE));
                 log.setStageMs(stageMsJson);
+                log.setMessageId(messageId);
+                log.setAgentId(agentId);
                 qaLogMapper.insert(log);
             } catch (Exception e) {
                 // L6 fail-loud：问答日志是反馈看板/知识缺口的数据源，丢失升级为 error（含 sessionId 便于排查）
@@ -161,8 +166,8 @@ public class QaLogService {
         return rows;
     }
 
-    /** 从消息 sources JSON 提取引用的知识块 ID（与评估生成同语义） */
-    private List<String> extractKnowledgeIds(String sourcesJson) {
+    /** 从消息 sources JSON 提取引用的知识块 ID（与评估生成同语义；包内共享，TraceService 标注预填复用） */
+    static List<String> extractKnowledgeIds(String sourcesJson) {
         List<String> ids = new ArrayList<>();
         try {
             com.alibaba.fastjson2.JSONArray arr = com.alibaba.fastjson2.JSON.parseArray(sourcesJson);

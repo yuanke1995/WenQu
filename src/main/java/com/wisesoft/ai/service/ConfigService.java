@@ -412,6 +412,9 @@ public class ConfigService {
         d.put("workflow.maxSteps", "50");                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
+        d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
+        d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
+        d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：问答后自动提取 + 注入本人后续问答
         d.put("memory.maxPerUser", "50");                  // 每人记忆条数上限（满后自动提取跳过，个人设置可清理）

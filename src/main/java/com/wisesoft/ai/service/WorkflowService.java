@@ -369,7 +369,7 @@ public class WorkflowService {
         }
         assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "API 触发");
         return execute(row, row.getPublishedDsl(), "api", p.uid(), apiKeyId, row.getPublishedVersion(),
-                "published", inputs, null, p);
+                "published", inputs, null, null, p);
     }
 
     /** 外部调用方查运行记录（补查/回溯用）：可见性口径与触发一致（不可见一律 404） */
@@ -416,6 +416,15 @@ public class WorkflowService {
      */
     public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
                                      Consumer<String> tokenSink) {
+        return runForAgent(workflowId, inputs, p, tokenSink, null);
+    }
+
+    /**
+     * 智能体对话触发（带图片通道）：imageSink 非空时 retrieval 节点完成图片编号后回调
+     * 累计有序原始 URL 列表（RagService 签名后发 SSE image 事件，时序先于 LLM token）。
+     */
+    public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
+                                     Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
         Workflow row = workflowMapper.selectById(workflowId);
         if (row == null) throw new BizException(404, "工作流不存在");
         if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
@@ -427,7 +436,7 @@ public class WorkflowService {
         }
         assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "智能体对话");
         return execute(row, row.getPublishedDsl(), "agent", p.uid(), null, row.getPublishedVersion(),
-                "published", inputs, tokenSink, p);
+                "published", inputs, tokenSink, imageSink, p);
     }
 
     /** 人工审核节点在无审批交互面的触发方式下 fail-loud（不静默自动放行） */
@@ -456,7 +465,7 @@ public class WorkflowService {
     public WorkflowRun run(String id, Map<String, Object> inputs) {
         Workflow row = getOwn(id);
         return execute(row, row.getDsl(), "manual", RequestUser.uid(), null, null, "draft",
-                inputs, null, Principal.current());
+                inputs, null, null, Principal.current());
     }
 
     /**
@@ -470,14 +479,15 @@ public class WorkflowService {
      */
     private WorkflowRun execute(Workflow row, String dslText, String triggerType, String triggeredBy,
                                   String apiKeyId, Integer version, String dslSource,
-                                  Map<String, Object> inputs, Consumer<String> tokenSink, Principal p) {
+                                  Map<String, Object> inputs, Consumer<String> tokenSink,
+                                  Consumer<List<String>> imageSink, Principal p) {
         WorkflowDsl dsl = parseDsl(dslText);
         String runId = UUID.randomUUID().toString();
         WorkflowRunCtx ctx = new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
                 configService.currentOverrides(), inputs,
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50),
-                tokenSink);
+                tokenSink, imageSink);
         WorkflowRun run = new WorkflowRun();
         run.setId(runId);
         run.setWorkflowId(row.getId());

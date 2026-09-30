@@ -464,16 +464,26 @@ public class WorkflowEngine {
             for (Hit h : kept) {
                 if (count >= topK) break;
                 count++;
+                String content = numberImages(h, ctx);
                 Map<String, Object> c = new LinkedHashMap<>();
                 c.put("title", h.title());
                 c.put("titlePath", h.titlePath());
-                c.put("content", h.content());
+                c.put("content", content);
                 c.put("score", h.rerankScore() != null ? h.rerankScore() : h.score());
                 chunks.add(c);
                 if (h.title() != null && !h.title().isBlank()) text.append("【").append(h.title()).append("】");
                 if (h.titlePath() != null && !h.titlePath().isBlank()) text.append(h.titlePath()).append("\n");
                 if (text.length() > 0 && !text.toString().endsWith("\n")) text.append("\n");
-                text.append(h.content() == null ? "" : h.content()).append("\n\n");
+                text.append(content == null ? "" : content).append("\n\n");
+            }
+            // 对话型接入：编号完成后把累计图片清单推给调用方（RagService 签名后发 SSE image 事件，
+            // 时序与主链路一致——image 事件先于 LLM token）。sink 抛错（SSE 已断）不打断节点执行。
+            if (ctx != null && ctx.imageSink != null && !ctx.imageUrls.isEmpty()) {
+                try {
+                    ctx.imageSink.accept(List.copyOf(ctx.imageUrls));
+                } catch (Exception ignore) {
+                    // 同 llm 节点 tokenSink 的容错口径：图仍随 done.finalImages 下发，不丢
+                }
             }
             Map<String, Object> trace = new LinkedHashMap<>();
             trace.put("query", query);
@@ -482,9 +492,61 @@ public class WorkflowEngine {
             trace.put("count", count);
             if (minScore > 0) trace.put("minScore", minScore);
             if (skipped > 0) trace.put("lowScoreSkipped", skipped);
+            if (!ctx.imageUrls.isEmpty()) trace.put("images", ctx.imageUrls.size());
             return new NodeOut(Map.of("chunks", chunks, "text", text.toString().trim(), "count", count),
                     null, null, trace);
         };
+    }
+
+    /**
+     * 命中块图片占位编号（镜像 {@code RagService} 上下文填充的同名逻辑，工作流无片段截取故实现更简）：
+     * 把正文里的 [图片] / [图片：描述] 占位按出现顺序配对块内图片 URL，替换为全局编号 [图片N：描述]
+     * （N 跨节点连续，挂在 ctx 上）；图片多于占位时剩余的以 [图片N] 追加在块尾（与主链路一致）。
+     * 与主链路的差异：无"描述与检索问题相关性"预筛——块本身已经过检索/低分门筛选，
+     * 块内图片的 relevance 由块级命中背书；引用错配由前端只认编号 + 后续图片过滤兜底。
+     */
+    private static final java.util.regex.Pattern IMG_PLACEHOLDER =
+            java.util.regex.Pattern.compile("\\[图片(：.*?)?\\]");
+
+    private String numberImages(Hit h, WorkflowRunCtx ctx) {
+        String raw = h.content() == null ? "" : h.content();
+        List<String> urls = h.images();
+        if (raw.isEmpty()) return raw;
+        if (ctx == null || urls == null || urls.isEmpty()) {
+            // 无 ctx（编译 dry-run）或块无图：无编号能力，占位保持原文（对齐主链路"无图不编号"）
+            return raw;
+        }
+        java.util.regex.Matcher m = IMG_PLACEHOLDER.matcher(raw);
+        StringBuffer sb = new StringBuffer();
+        int idx = 0;
+        while (m.find()) {
+            if (idx >= urls.size()) {
+                m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(m.group()));
+                continue;
+            }
+            String g = m.group();
+            String desc = "";
+            int colon = g.indexOf("：");
+            if (colon >= 0 && g.length() > colon + 2) {
+                desc = g.substring(colon + 1, g.length() - 1).trim();
+            }
+            int seq = ctx.imageUrls.size() + 1;
+            ctx.imageUrls.add(urls.get(idx));
+            String replacement = desc.isEmpty() ? "[图片" + seq + "]" : "[图片" + seq + "：" + desc + "]";
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(replacement));
+            idx++;
+        }
+        m.appendTail(sb);
+        String text = sb.toString();
+        if (idx < urls.size()) {
+            StringBuilder tail = new StringBuilder(text);
+            for (int i = idx; i < urls.size(); i++) {
+                tail.append("\n[图片").append(ctx.imageUrls.size() + 1).append("]");
+                ctx.imageUrls.add(urls.get(i));
+            }
+            text = tail.toString();
+        }
+        return text;
     }
 
     /** 节点低分阈值：config.minScore 声明优先，未声明跟随全局 retrieval.minContextScore（节点线程内经 withReplay 重放） */

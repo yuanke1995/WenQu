@@ -2124,12 +2124,12 @@ public class RagService {
                             processText.isEmpty() ? null : processText,
                             agent.getId(), agent.getName());
 
-                    // 异步落问答日志（不阻塞 SSE 完成）
+                    // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
                     qaLogService.logAsync(st.sessionId, st.question, answer, hitDocIds,
                             !st.sources.isEmpty(), System.currentTimeMillis() - st.startTime,
                             st.queryForLog, st.stageMs.isEmpty() ? null : JSON.toJSONString(st.stageMs),
-                            st.deepThink);
+                            st.deepThink, messageId, agent == null ? null : agent.getId());
 
                     // done 事件：引用来源/相关推荐/消息ID + 校验修正后的内容/图片 + 思考全文 + 本轮全部降级事件（fail-loud）
                     Map<String, Object> donePayload = new LinkedHashMap<>();
@@ -3528,11 +3528,23 @@ public class RagService {
             }
             Map<String, Object> inputs = buildWorkflowInputs(sessionId, question, degradations, degradedCodes);
             StringBuilder streamed = new StringBuilder();
+            // 图片机制（与主链路同口径）：retrieval 节点完成 [图片N] 编号后回调累计原始 URL 列表——
+            // 签名后发 SSE image 事件（时序先于 LLM token，前端按 images[N-1] 渲染回答里的 [图片N]），
+            // 原始列表留给落库（历史接口存原始 URL、读时动态签名）。回调抛错不打断工作流（fail-soft 与 tokenSink 同口径）
+            List<String> workflowImages = new ArrayList<>();
             WorkflowService.Principal p = WorkflowService.Principal.current();   // 流水线线程已 loadIdentity(userId)
             WorkflowRun run = workflowServiceProvider.getObject()
                     .runForAgent(agent.getWorkflowId(), inputs, p, token -> {
                         streamed.append(token);
                         sendSseEvent(emitter, "token", token, sessionId);
+                    }, imgs -> {
+                        if (imgs == null || imgs.isEmpty()) return;
+                        synchronized (workflowImages) {
+                            workflowImages.clear();
+                            workflowImages.addAll(imgs);
+                        }
+                        List<String> signed = imgs.stream().map(imageUrlSigner::signUrl).toList();
+                        sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
                     });
             if (!"success".equals(run.getStatus())) {
                 String reason = run.getError() == null || run.getError().isBlank()
@@ -3545,16 +3557,20 @@ public class RagService {
             String answer = workflowAnswerOf(run);
             Map<String, Object> tokens = workflowTokensOf(run);
             String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
-                    null, null, null, null, null, null, null, JSON.toJSONString(tokens), null, null,
+                    workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
+                    null, JSON.toJSONString(tokens), null, null,
                     agent.getId(), agent.getName());
             qaLogService.logAsync(sessionId, question, answer, List.of(), false,
-                    System.currentTimeMillis() - startTime, question, null, false);
+                    System.currentTimeMillis() - startTime, question, null, false,
+                    messageId, agent.getId());
             Map<String, Object> donePayload = new LinkedHashMap<>();
             donePayload.put("sources", List.of());
             donePayload.put("related", List.of());
             donePayload.put("messageId", messageId);
             donePayload.put("finalContent", answer);
-            donePayload.put("finalImages", List.of());
+            // 与主链路一致地动态签名（前端 onDone 用 finalImages 覆盖流式期间已签名的 images；
+            // 落库存的是原始 URL，此处仅对下发副本签名）
+            donePayload.put("finalImages", workflowImages.stream().map(imageUrlSigner::signUrl).toList());
             donePayload.put("degradations", degradations);
             donePayload.put("artifacts", List.of());
             donePayload.put("toolCalls", List.of());

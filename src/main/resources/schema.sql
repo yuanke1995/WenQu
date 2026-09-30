@@ -199,9 +199,12 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
     `stage_ms`        VARCHAR(500) DEFAULT NULL COMMENT '分段耗时JSON(rewrite/retrieve/generate/citation,距开始的累计ms)',
+    `message_id`      VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮回答消息ID（trace 详情还原 toolCalls/sources/tokens 的关联键；存量行为 NULL）',
+    `agent_id`        VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮生效智能体ID（trace 按智能体筛选；未用智能体为 NULL）',
     `created_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
-    KEY `idx_created` (`created_at`)
+    KEY `idx_created` (`created_at`),
+    KEY `idx_agent_time` (`agent_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI问答日志表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_qa_feedback` (
@@ -689,3 +692,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_version` (
     UNIQUE KEY `uk_wf_version` (`workflow_id`, `version`),
     KEY `idx_wf_time` (`workflow_id`, `published_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流发布版本（M4：发布即落一版，回滚=以历史版本 DSL 再发一版）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_trace_sample` (
+    `id`           VARCHAR(50)  NOT NULL COMMENT '采样ID',
+    `qa_log_id`    VARCHAR(50)  NOT NULL COMMENT '问答日志ID（唯一：一条日志只进一次池）',
+    `message_id`   VARCHAR(50)  DEFAULT NULL COMMENT '回答消息ID（标注时还原全过程）',
+    `source`       VARCHAR(16)  NOT NULL COMMENT '采样来源: bad=差评 nohit=无引用 random=随机',
+    `status`       VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending=待标注 labeled=已回流评测集 dismissed=已忽略',
+    `note`         VARCHAR(500) DEFAULT NULL COMMENT '差评原因/标注备注',
+    `labeled_by`   VARCHAR(64)  DEFAULT NULL COMMENT '标注人 uid',
+    `created_at`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '入池时间',
+    `labeled_at`   DATETIME     DEFAULT NULL COMMENT '处理时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_qalog` (`qa_log_id`),
+    KEY `idx_status_time` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='P1 Trace 采样池（线上对话 → 标注 → 回流评测集）';
