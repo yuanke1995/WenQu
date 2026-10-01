@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.dto.SessionInfo;
+import com.wisesoft.ai.dto.SessionPage;
 import com.wisesoft.ai.mapper.MessageMapper;
 import com.wisesoft.ai.mapper.SessionMapper;
 import com.wisesoft.ai.model.Message;
@@ -22,7 +23,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 /**
  * 会话管理（MySQL + Redis 双层存储）
@@ -134,46 +138,144 @@ public class SessionService {
     }
 
     /**
-     * 查询会话列表（仅当前用户；未登录调用方额外并入 anonymous 存量会话；支持关键词搜索），置顶优先、按更新时间倒序
+     * 查询会话列表（游标分页版；仅当前用户；未登录调用方额外并入 anonymous 存量会话；支持关键词搜索）。
+     * <p>
+     * 排序口径与旧版一致：置顶优先、其余按更新时间倒序（id 兜底同刻排序）。分页设计：
+     * <ul>
+     *   <li>置顶会话数量由用户行为天然有界（个人手动置顶），首页整表返回、不参与游标；</li>
+     *   <li>非置顶会话按 (update_time, id) 复合值游标翻页：cursor = Base64url("epochMillis|会话ID")。
+     *       值比较式（非偏移量），翻页间隙发生增删也不会漏页/重页；</li>
+     *   <li>groupCounts 返回与前端分组口径完全一致的各桶总数（置顶/今天/7天内/更早，仅统计有消息的会话），
+     *       侧栏组头展示全量数字，不随列表递增加载漂移；桶界按服务器本地时区计算（自部署场景服务器与用户同时区）。</li>
+     * </ul>
+     * 异常不做静默吞并：查询失败直接向上抛（前端展示错误），避免"DB 故障伪装成空列表"。
      *
      * @param keyword 可选，按标题或消息内容模糊匹配；空/空白返回全量
+     * @param cursor  分页游标（首页传 null/空白；后续页传上一页返回的 nextCursor）
+     * @param size    每页条数（1~100，服务端强制收敛）
      */
-    public List<SessionInfo> listSessions(String userId, String keyword) {
-        try {
-            LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
-            // 只看自己的会话（+ anonymous 历史兼容池，仅池访问放行时并入，防跨用户捞取）
-            wrapper.eq(Session::getUserId, normalizeUser(userId));
-            if (canAccessAnonymousPool(userId)) {
-                wrapper.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
-            }
-            if (keyword != null && !keyword.isBlank()) {
-                String esc = escapeLike(keyword.trim());
-                wrapper.and(w -> w.like(Session::getTitle, keyword.trim())
-                        .or().inSql(Session::getId,
-                                "SELECT DISTINCT session_id FROM c_ai_message WHERE deleted=0 AND content LIKE '%"
-                                        + esc + "%'"));
-            }
-            wrapper.orderByDesc(Session::getIsPinned)
-                    .orderByDesc(Session::getUpdateTime);
-            return sessionMapper.selectList(wrapper).stream().map(s -> {
-                SessionInfo info = new SessionInfo();
-                info.setId(s.getId());
-                info.setTitle(s.getTitle());
-                info.setMessageCount(s.getMessageCount());
-                info.setUpdateTime(s.getUpdateTime());
-                info.setIsPinned(s.getIsPinned());
-                info.setIsFavorite(s.getIsFavorite());
-                // 会话级智能体绑定（NULL=未绑定不发：前端据此区分「新会话可选」与「已锁定」）
-                if (s.getAgentId() != null) {
-                    info.setAgentId(s.getAgentId());
-                    info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
-                }
-                return info;
-            }).toList();
-        } catch (Exception e) {
-            log.warn("查询会话列表失败: {}", e.getMessage());
-            return Collections.emptyList();
+    public SessionPage listSessions(String userId, String keyword, String cursor, int size) {
+        final String uid = normalizeUser(userId);
+        // anonymous 兼容池口径：仅调用方自身为 anonymous 时并入（等价于旧 canAccessAnonymousPool 判定）
+        final boolean anonPool = RequestUser.ANONYMOUS.equals(uid);
+        final int pageSize = Math.max(1, Math.min(size, 100));
+        final String kw = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+
+        // ---------- 分组计数：窄列查询（is_pinned/update_time/message_count）+ Java 分桶，一次查询覆盖全部桶 ----------
+        LambdaQueryWrapper<Session> countQ = baseWrapper(uid, anonPool, kw);
+        countQ.select(Session::getIsPinned, Session::getUpdateTime, Session::getMessageCount);
+        LocalDateTime startOfToday = LocalDateTime.now().toLocalDate().atStartOfDay();
+        LocalDateTime weekStart = startOfToday.minusDays(6);
+        long pinned = 0, today = 0, week = 0, earlier = 0;
+        for (Session s : sessionMapper.selectList(countQ)) {
+            if (s.getMessageCount() == null || s.getMessageCount() <= 0) continue;
+            if (s.getIsPinned() != null && s.getIsPinned() == 1) { pinned++; continue; }
+            LocalDateTime t = s.getUpdateTime();
+            if (t != null && !t.isBefore(startOfToday)) today++;
+            else if (t != null && !t.isBefore(weekStart)) week++;
+            else earlier++;
         }
+        Map<String, Long> groupCounts = new LinkedHashMap<>();
+        groupCounts.put("pinned", pinned);
+        groupCounts.put("today", today);
+        groupCounts.put("week", week);
+        groupCounts.put("earlier", earlier);
+
+        // ---------- 本页条目：置顶（仅首页） + 非置顶游标页 ----------
+        List<SessionInfo> items = new ArrayList<>();
+        if (cursor == null || cursor.isBlank()) {
+            LambdaQueryWrapper<Session> pinnedQ = baseWrapper(uid, anonPool, kw);
+            pinnedQ.eq(Session::getIsPinned, 1)
+                    .orderByDesc(Session::getUpdateTime);
+            sessionMapper.selectList(pinnedQ).forEach(s -> items.add(toInfo(s)));
+        }
+        LambdaQueryWrapper<Session> pageQ = baseWrapper(uid, anonPool, kw);
+        pageQ.eq(Session::getIsPinned, 0);
+        boolean hasCursor = cursor != null && !cursor.isBlank();
+        if (hasCursor) {
+            PageCursor c = decodeCursor(cursor);
+            // (update_time, id) 复合键续页：严格小于上一页末条，保证同刻会话不重不漏
+            pageQ.and(w -> w.lt(Session::getUpdateTime, c.time())
+                    .or(w2 -> w2.eq(Session::getUpdateTime, c.time()).lt(Session::getId, c.id())));
+        }
+        pageQ.orderByDesc(Session::getUpdateTime)
+                .orderByDesc(Session::getId)
+                .last("LIMIT " + (pageSize + 1)); // 多取一条探测 hasMore；pageSize 已收敛 1~100，无注入面
+        List<Session> rows = sessionMapper.selectList(pageQ);
+        boolean hasMore = rows.size() > pageSize;
+        if (hasMore) rows = rows.subList(0, pageSize);
+        rows.forEach(s -> items.add(toInfo(s)));
+
+        SessionPage page = new SessionPage();
+        page.setItems(items);
+        if (hasMore && !rows.isEmpty()) {
+            page.setNextCursor(encodeCursor(rows.get(rows.size() - 1)));
+            // 极端防御：末条 update_time 为 null 时无法生成游标，按无更多收尾（DATETIME 非空默认，理论不可达）
+            hasMore = page.getNextCursor() != null;
+        }
+        page.setHasMore(hasMore);
+        page.setGroupCounts(groupCounts);
+        page.setTotal(pinned + today + week + earlier);
+        return page;
+    }
+
+    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）与关键词，供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装） */
+    private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw) {
+        LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
+        wrapper.and(w -> {
+            w.eq(Session::getUserId, uid);
+            if (anonPool) w.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
+        });
+        if (kw != null) {
+            String esc = escapeLike(kw);
+            wrapper.and(w -> w.like(Session::getTitle, kw)
+                    .or().inSql(Session::getId,
+                            "SELECT DISTINCT session_id FROM c_ai_message WHERE deleted=0 AND content LIKE '%"
+                                    + esc + "%'"));
+        }
+        return wrapper;
+    }
+
+    /** 实体 → 列表项 DTO（含会话级智能体绑定：NULL=未绑定不发字段） */
+    private SessionInfo toInfo(Session s) {
+        SessionInfo info = new SessionInfo();
+        info.setId(s.getId());
+        info.setTitle(s.getTitle());
+        info.setMessageCount(s.getMessageCount());
+        info.setUpdateTime(s.getUpdateTime());
+        info.setIsPinned(s.getIsPinned());
+        info.setIsFavorite(s.getIsFavorite());
+        if (s.getAgentId() != null) {
+            info.setAgentId(s.getAgentId());
+            info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
+        }
+        return info;
+    }
+
+    // ---------- 游标编解码：Base64url("epochMillis|会话ID")，解码失败一律 400（fail-loud，不给静默重启翻页） ----------
+
+    private static final Base64.Encoder CURSOR_ENC = Base64.getUrlEncoder().withoutPadding();
+    private static final Base64.Decoder CURSOR_DEC = Base64.getUrlDecoder();
+
+    private record PageCursor(LocalDateTime time, String id) {}
+
+    private PageCursor decodeCursor(String cursor) {
+        try {
+            String raw = new String(CURSOR_DEC.decode(cursor), StandardCharsets.UTF_8);
+            int sep = raw.indexOf('|');
+            if (sep <= 0) throw new IllegalArgumentException("cursor 缺少分隔符");
+            long millis = Long.parseLong(raw.substring(0, sep));
+            LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault());
+            return new PageCursor(time, raw.substring(sep + 1));
+        } catch (Exception e) {
+            throw new com.wisesoft.ai.common.BizException(400, "会话列表游标无效，请刷新后重新加载");
+        }
+    }
+
+    private String encodeCursor(Session s) {
+        if (s == null || s.getUpdateTime() == null) return null;
+        long millis = s.getUpdateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        return CURSOR_ENC.encodeToString((millis + "|" + s.getId()).getBytes(StandardCharsets.UTF_8));
     }
 
     /**

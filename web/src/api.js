@@ -222,9 +222,18 @@ export const disableSessionShare = sid => request(`/session/${sid}/share`, { met
 /** 公开只读页（免登录）：按 token 取会话标题与消息 */
 export const getSharedSession = token => request(`/share/session/${encodeURIComponent(token)}`)
 
-/** 列出所有会话（支持 keyword 按标题/消息内容模糊搜索） */
-export const listSessions = (keyword = '') =>
-  request('/sessions' + (keyword ? '?keyword=' + encodeURIComponent(keyword) : ''))
+/**
+ * 列出会话（游标分页）：首页不传 cursor；后续页传上一页返回的 nextCursor。
+ * keyword 按标题/消息内容模糊搜索（分页同样生效）。
+ * 返回 {items, nextCursor, hasMore, groupCounts:{pinned,today,week,earlier}, total}
+ */
+export const listSessions = (keyword = '', cursor = '', size) => {
+  const qs = []
+  if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
+  if (cursor) qs.push('cursor=' + encodeURIComponent(cursor))
+  if (size) qs.push('size=' + size)
+  return request('/sessions' + (qs.length ? '?' + qs.join('&') : ''))
+}
 
 /** 置顶/取消置顶会话 */
 export const pinSession = (sid, pinned) =>

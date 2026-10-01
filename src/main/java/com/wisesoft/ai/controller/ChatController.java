@@ -254,14 +254,19 @@ public class ChatController {
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
 
-    @Operation(summary = "会话列表", description = "列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）；支持 keyword 按标题或消息内容模糊搜索")
+    @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
+            + "首页不传 cursor，后续页传上一页返回的 nextCursor；keyword 按标题或消息内容模糊搜索（分页同样生效）。"
+            + "返回 items / nextCursor / hasMore / groupCounts（置顶/今天/7天内/更早分组总数，仅统计有消息的会话） / total")
     @GetMapping("/sessions")
     public ResultJson listSessions(
             @Parameter(description = "搜索关键词（可选，按标题/消息内容模糊匹配）")
             @RequestParam(value = "keyword", required = false) String keyword,
+            @Parameter(description = "分页游标（首页不传；后续页传上一页返回的 nextCursor）")
+            @RequestParam(value = "cursor", required = false) String cursor,
+            @Parameter(description = "每页条数（默认 10，上限 100）")
+            @RequestParam(value = "size", required = false, defaultValue = "10") int size,
             HttpServletRequest httpRequest) {
-        List<SessionInfo> sessions = sessionService.listSessions(RequestUser.uid(), keyword);
-        return ResultJson.ok(sessions);
+        return ResultJson.ok(sessionService.listSessions(RequestUser.uid(), keyword, cursor, size));
     }
 
     @Operation(summary = "置顶/取消置顶会话", description = "设置会话置顶状态，置顶会话排在列表最前")

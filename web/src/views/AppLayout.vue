@@ -40,11 +40,13 @@
       <div v-if="!collapsed && batchMode" class="sess-batch-bar">
         <span class="batch-count">已选 {{ batchSel.size }}</span>
         <span class="batch-actions">
-          <button class="batch-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : '全选' }}</button>
+          <button class="batch-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : (sessionStore.hasMore ? '全选(已加载)' : '全选') }}</button>
           <button class="batch-btn danger" :disabled="!batchSel.size" @click="confirmBatchDelete">删除</button>
           <button class="batch-btn" @click="exitBatchMode">完成</button>
         </span>
       </div>
+      <!-- 会话列表为游标分页：默认 10 条，点底部「查看更多」每次再渲染 20 条；
+           组头数字是后端全量口径，不随加载进度漂移 -->
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
@@ -53,7 +55,7 @@
           <template v-for="g in groupedSessions" :key="g.label">
             <button v-if="!collapsed" type="button" class="side-label sess-group-label" @click="toggleGroup(g.label)">
               {{ g.label }}
-              <span class="group-count">{{ g.items.length }}</span>
+              <span class="group-count">{{ groupTotal(g.label, g.items.length) }}</span>
               <right-outlined class="group-caret" :class="{ open: !groupHidden(g.label) }" />
             </button>
             <template v-if="collapsed || !groupHidden(g.label)">
@@ -91,8 +93,22 @@
           </div>
             </template>
           </template>
+          <!-- 增量加载入口（居左，内边距与会话行对齐）：查看更多 (N)=剩余可展示条数；
+               点过查看更多后出现「收起」，一键还原首屏 10 条 -->
+          <div v-if="(sessionStore.hasMore || sessionStore.expanded) && !collapsed" class="sess-more">
+            <a-spin v-if="sessionStore.loadingMore" size="small" />
+            <template v-else>
+              <button v-if="sessionStore.hasMore" type="button" class="sess-more-btn" @click="loadMoreSessions">
+                查看更多<template v-if="sessRemaining > 0"> ({{ sessRemaining }})</template>
+              </button>
+              <button v-if="sessionStore.expanded" type="button" class="sess-more-btn collapse" @click="collapseSessions">收起</button>
+            </template>
+          </div>
           <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">
             {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
+            <button v-if="sessionStore.hasMore" type="button" class="sess-empty-more" @click="loadMoreSessions">
+              查看更多
+            </button>
           </div>
         </template>
       </div>
@@ -141,7 +157,7 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
-import { sessionStore, loadSessions, visibleSessions, chatStreams } from './store'
+import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -211,6 +227,13 @@ const toggleGroup = label => {
   localStorage.setItem(GROUPS_KEY, JSON.stringify([...collapsedGroups]))
 }
 const groupHidden = label => !searchKw.value && collapsedGroups.has(label)
+
+// ==================== 会话分页：组头全量数字 + 「查看更多」增量加载 ====================
+// 组头计数用后端 groupCounts（全量口径，仅统计有消息的会话）；后端未返回时回退已加载条数
+const COUNT_KEYS = { 置顶: 'pinned', 今天: 'today', '7 天内': 'week', 更早: 'earlier' }
+const groupTotal = (label, loaded) => sessionStore.counts[COUNT_KEYS[label]] ?? loaded
+// 「查看更多 (N)」的 N：全量 - 已加载可展示数（两者同口径：仅统计有消息的会话）
+const sessRemaining = computed(() => Math.max(0, (sessionStore.total || 0) - visibleSessionList.value.length))
 const isActive = p => route.path === p
 const newChat = () => {
   sessionStore.newChatTick++
@@ -493,6 +516,20 @@ onMounted(async () => {
 .sess-fav-flag { color: var(--app-warn); font-size: 10px; margin-right: 3px; }
 .sess-title.fav { color: var(--app-text); }
 .sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
+/* 游标分页：底部增量加载入口——居左、内边距与 .sess-item 对齐（6px 9px），文本随行首对齐；
+   展开后「查看更多」旁出现「收起」（还原首屏），蓝=主操作、灰=次级操作 */
+.sess-more { display: flex; align-items: center; gap: 10px; padding: 2px 0 4px; }
+.sess-more-btn {
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; color: var(--app-accent); padding: 6px 9px; border-radius: 8px;
+}
+.sess-more-btn:hover { background: var(--app-accent-weak); }
+.sess-more-btn.collapse { color: var(--app-text2); }
+.sess-empty-more {
+  display: block; margin: 6px auto 0; border: none; background: none; cursor: pointer;
+  font-size: 12px; color: var(--app-accent); padding: 2px 8px; border-radius: 4px;
+}
+.sess-empty-more:hover { background: var(--app-accent-weak); }
 
 .side-foot {
   display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
