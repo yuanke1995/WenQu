@@ -464,7 +464,7 @@
                         </div>
                         <check-outlined v-if="currentAgentId === AUTO_AGENT" class="agent-mi-check" />
                       </div>
-                      <div class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+                      <div v-if="!hasDefaultAgent" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
                         <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">默认（全局配置）</span>
@@ -1155,12 +1155,16 @@ const skillAvaStyle = name => {
 
 // ==================== 智能体（4.1）：会话级绑定（首问锁定，切换=新会话） ====================
 const agentList = ref([])                       // 全部主智能体
-// 未绑定会话的待选值：会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置）
+// 未绑定会话的待选值：会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置；
+// '' 在后端有默认智能体时解析为默认智能体，未设默认才走纯系统设置）
 const agentMap = ref({})
 // 已绑定会话的绑定镜像：会话ID → {agentId, agentName}，来源为后端 c_ai_session 的绑定
 // （done 事件即时回填 + 会话列表兜底，刷新页面后仍能判断锁定态）
 const sessionAgent = ref({})
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
+// 是否存在「默认智能体」（isDefault=1）：有则后端把空 agentId（全局配置）解析为它——
+// 「默认（全局配置）」与默认智能体是同一套配置，菜单里只留默认智能体一项，避免两行同义的重复项
+const hasDefaultAgent = computed(() => agentList.value.some(a => a.isDefault === 1 || a.isDefault === true))
 const AUTO_AGENT = '__auto__'                   // 自动派遣哨兵值（请求时转 "auto"，由后端按描述路由）
 /** 会话的智能体绑定（后端权威）：本地镜像优先（本轮刚锁定、会话列表尚未刷新），否则取会话列表项 */
 const boundAgentOf = sid => {

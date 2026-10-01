@@ -2776,10 +2776,13 @@ public class RagService {
      * 单候选直接命中；超时/失败/无命中回落默认智能体，agent.autoDispatch 关闭时直接回落默认）。
      * 派遣结果经 SSE agent_dispatched 下发（路由过程对用户可见）。
      * 其余 agentId 走 agentService.get（无效/不可读返回 null，继承全局）。
+     * agentId 为空（前端「默认（全局配置）」/ 调用方未指定）：有默认智能体（isDefault=1）时
+     * 即用默认智能体——「全局 = 默认智能体」，未填维度仍继承系统设置（智能体覆盖机制本就如此）；
+     * 未设默认智能体才走纯系统设置全局配置。首问会把解析结果锁定进会话，归属/trace 随之正确。
      */
     private Agent resolveAgent(String agentId, String question, String resolvedModel,
                                String sessionId, SseEmitter emitter) {
-        if (agentId == null || agentId.isBlank()) return null;
+        if (agentId == null || agentId.isBlank()) return agentService.defaultAgent();
         if (!"auto".equals(agentId)) return agentService.get(agentId);
         List<Agent> candidates = agentService.dispatchCandidates();
         if (candidates.isEmpty()) return null;
