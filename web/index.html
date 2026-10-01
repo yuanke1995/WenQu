@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="问渠 WenQu —— AI 智能体工作台。答案，自有源头。">
   <title>问渠 · AI 智能体工作台</title>
+  <script>
+    // 防首屏闪烁：样式加载前先定主题（暗色用户不会先闪一帧亮色）。
+    // 与 utils/theme.js 同一存储键；首访问跟随系统，之后以用户选择为准。
+    (function () {
+      try {
+        var t = localStorage.getItem('app_theme')
+        if (!t) t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
+        document.documentElement.dataset.theme = t
+      } catch (e) { /* 存储不可用：留给主题默认（亮色） */ }
+    })()
+  </script>
+  <style>
+    /* 首屏底色（早于打包 CSS 生效，避免白闪）：与 app.css 的 --app-bg 双套一致 */
+    html, body { margin: 0; background: #f7f8fa; }
+    html[data-theme='dark'], html[data-theme='dark'] body { background: #14161a; }
+  </style>
 </head>
 <body>
   <div id="app"></div>

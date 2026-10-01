@@ -3,9 +3,13 @@ import Antd from 'ant-design-vue'
 import { message } from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 import './md.css'
+// 设计令牌全局唯一来源（app.css）：此前只在 AppLayout 里 import——登录页/分享页等
+// 不经布局的页面拿不到 --app-* 变量，这里提到入口统一加载
+import './views/app.css'
 import App from './App.vue'
 import router from './router'
 import { ensureAuth, isLoggedIn, clearAuth } from './utils/auth'
+import { initTheme } from './utils/theme'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -37,6 +41,10 @@ function patchEdgeMinimizeBug() {
   }
 }
 patchEdgeMinimizeBug()
+
+// 主题初始化：index.html 内联脚本已定好 DOM 上的 data-theme（防闪），
+// 这里把它同步进响应式状态（antd ConfigProvider 需要感知亮/暗切换）。
+initTheme()
 
 const app = createApp(App)
 

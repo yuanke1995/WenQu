@@ -77,8 +77,13 @@
       <div class="side-foot">
         <span class="avatar">{{ (userName || '游')[0] }}</span>
         <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
+        <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
+          <button class="app-icon-btn" @click="toggleTheme">
+            <bulb-filled v-if="themeState === 'dark'" /><bulb-outlined v-else />
+          </button>
+        </a-tooltip>
         <a-tooltip title="退出登录" placement="right">
-          <button class="app-icon-btn" style="margin-left:auto" @click="doLogout"><logout-outlined /></button>
+          <button class="app-icon-btn" @click="doLogout"><logout-outlined /></button>
         </a-tooltip>
         <a-tooltip title="个人设置" placement="right">
           <button class="app-icon-btn" @click="goProfile" title="个人设置"><user-outlined /></button>
@@ -99,8 +104,10 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
-         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled } from '@ant-design/icons-vue'
+         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled,
+         BulbOutlined, BulbFilled } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession } from '../api'
+import { themeState, toggleTheme } from '../utils/theme'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions, chatStreams } from './store'
 import { exportSessionMarkdown } from './exportMd'
@@ -242,7 +249,7 @@ onMounted(async () => {
 .pref-label { font-weight: 600; margin-bottom: 8px; }
 .pref-row { display: flex; align-items: center; gap: 8px; }
 .pref-hint { font-size: 12px; color: var(--app-text3, #999); margin-top: 6px; }
-.pwd-err { color: #e64340; font-size: 12px; margin: 0 0 8px; }
+.pwd-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
 .side {
   width: 200px; flex: none; display: flex; flex-direction: column;
   background: var(--app-panel); border-right: 1px solid var(--app-border);
@@ -282,7 +289,7 @@ onMounted(async () => {
   display: flex; align-items: center; padding: 6px 9px; border-radius: 8px;
   font-size: 12px; color: var(--app-text2); cursor: pointer; min-width: 0;
 }
-.sess-item:hover { background: #f2f4f7; }
+.sess-item:hover { background: var(--app-panel-2); }
 .sess-item.active { background: var(--app-accent-weak); color: var(--app-text); }
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
@@ -336,4 +343,27 @@ onMounted(async () => {
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
 .main { flex: 1; min-width: 0; height: 100%; }
+
+/* ==================== 响应式：窄屏适配 ====================
+   此前全站零媒体查询——侧栏固定 200px + 消息区固定内边距，窗口收窄即挤坏。
+   ≤768：侧栏强制收为图标条（与折叠态同款视觉，JS 的 collapsed 状态不动，纯 CSS 覆盖）；
+   ≤1024：会话操作图标常显（触屏无 hover）。 */
+@media (max-width: 1024px) {
+  .sess-op { opacity: 1; }
+}
+@media (max-width: 768px) {
+  .side { width: 56px; padding: 10px 4px; }
+  .side .logo-mark { display: none; }
+  .side .side-logo { justify-content: center; padding: 2px 0 12px; }
+  .side .fold { margin-left: 0; }
+  .side .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+  .side .nav-item > span { display: none; }
+  .side .side-label, .side .sess-search-wrap, .side .sess-title, .side .sess-op,
+  .side .sess-del, .side .sess-export, .side .sess-pin-flag, .side .sess-empty, .side .user-name { display: none; }
+  .side .side-sessions { align-items: center; }
+  .side .sess-item { justify-content: center; padding: 6px 0; width: 100%; }
+  .side .sess-dot { display: block; }
+  .side .side-foot { justify-content: center; flex-wrap: wrap; gap: 6px; padding: 8px 0 2px; }
+  .side .side-foot .app-icon-btn { margin-left: 0 !important; }
+}
 </style>

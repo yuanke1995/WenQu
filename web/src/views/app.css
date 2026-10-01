@@ -4,18 +4,104 @@
  * 变量必须挂 :root：antd 弹窗/下拉/气泡均 teleport 到 body，不在 .app-root
  * 子树内，挂 .app-root 会导致弹窗内 var(--app-*) 全部失效（按钮透明/边框消失）。 */
 :root {
-  --app-bg: #f7f8fa;
-  --app-panel: #ffffff;
-  --app-border: #e6e9ed;
-  --app-text: #1f2329;
-  --app-text2: #5f6570;
-  --app-text3: #98a0aa;
-  --app-accent: #2e6be6;
-  --app-accent-weak: #eef2f7;
+  /* ---- 基础面 ---- */
+  --app-bg: #f7f8fa;              /* 页面底 */
+  --app-panel: #ffffff;           /* 卡片/面板底 */
+  --app-panel-2: #fafbfc;         /* 次级底：表头、hover、内嵌块 */
+  --app-border: #e6e9ed;          /* 常规描边 */
+  --app-border-strong: #d8dde3;   /* 强调描边：分栏线、引用条 */
+  --app-text: #1f2329;            /* 主文本 */
+  --app-text2: #5f6570;           /* 次文本 */
+  --app-text3: #98a0aa;           /* 弱文本/占位 */
+  --app-accent: #2e6be6;          /* 主色 */
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;     /* 主色弱底（选中态/hover 底） */
   --app-danger: #d4552e;
   --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  /* ---- 状态语义弱底/描边/文字（成功/警告/危险/信息；弱底用于卡片/标签背景） ---- */
+  --app-ok-weak: #eaf5ec;
+  --app-ok-weak-hover: #ddefe0;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-warn-text: #a3691b;
+  --app-danger-weak: #fff2f0;
+  --app-danger-border: #ffccc7;
+  --app-danger-text: #cf1322;
+  --app-info-weak: #f0f6ff;
+  --app-info-border: #d6e4ff;
+  --app-accent-disabled: #c6d4f2;
+  /* ---- 代码与滚动条 ---- */
+  --app-code-bg: #f6f8fa;         /* 代码块底 */
+  --app-code-inline-bg: #f0f0f0;  /* 行内代码底 */
+  --app-scrollbar: rgba(0, 0, 0, .18);
+  /* ---- 圆角 ---- */
+  --app-radius-sm: 6px;
   --app-radius: 10px;
+  --app-radius-lg: 14px;
+  /* ---- 阴影层级 ---- */
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow: 0 3px 12px rgba(16, 24, 40, .07);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .12);
+  /* ---- 间距阶梯 ---- */
+  --app-sp-1: 4px; --app-sp-2: 8px; --app-sp-3: 12px; --app-sp-4: 16px; --app-sp-5: 20px; --app-sp-6: 28px;
+  /* ---- 字号阶梯 ---- */
+  --app-fs-xs: 11px; --app-fs-sm: 12px; --app-fs-md: 13px; --app-fs-lg: 15px; --app-fs-xl: 17px;
+  color-scheme: light;
 }
+
+/* 暗色主题：只换 token 值，组件样式零改动。
+   取值原则——不用纯黑（#000 生硬）与纯白文字（#fff 刺眼）；面板比底稍亮形成层次；
+   主色提亮保证暗底对比度（#2e6be6 在深底上偏暗）。data-theme 由 utils/theme.js 维护。 */
+html[data-theme='dark'] {
+  --app-bg: #14161a;
+  --app-panel: #1c1f24;
+  --app-panel-2: #22262c;
+  --app-border: #2d323a;
+  --app-border-strong: #3a414b;
+  --app-text: #e6e8eb;
+  --app-text2: #a8aeb8;
+  --app-text3: #767d88;
+  --app-accent: #5b8cf0;
+  --app-accent-hover: #7aa3f5;
+  --app-accent-weak: #1e2636;
+  --app-danger: #e07a5a;
+  --app-ok: #57a86a;
+  --app-warn: #d9a03f;
+  --app-ok-weak: #1b2a20;
+  --app-ok-weak-hover: #223428;
+  --app-warn-weak: #2c2517;
+  --app-warn-border: #4a3c22;
+  --app-warn-text: #d9a03f;
+  --app-danger-weak: #33201c;
+  --app-danger-border: #5a342a;
+  --app-danger-text: #ff7875;
+  --app-info-weak: #1c2534;
+  --app-info-border: #2c3a52;
+  --app-accent-disabled: #33405c;
+  --app-code-bg: #22262c;
+  --app-code-inline-bg: #2a2f36;
+  --app-scrollbar: rgba(255, 255, 255, .18);
+  --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --app-shadow: 0 3px 12px rgba(0, 0, 0, .4);
+  --app-shadow-lg: 0 12px 32px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+}
+
+/* 键盘可达性：统一焦点环（鼠标点击不显示，Tab 导航显示）。
+   此前全站无一条 focus 样式——纯键盘用户完全失去位置感（审计 P1-13）。 */
+:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+button:focus-visible, [role='button']:focus-visible, a:focus-visible, input:focus-visible,
+textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+/* 输入类控件自带边框高亮，焦点环会叠两层——去掉外环只留边框色 */
+input:focus-visible, textarea:focus-visible { outline: none; }
 .app-root {
   height: 100%;
   display: flex;

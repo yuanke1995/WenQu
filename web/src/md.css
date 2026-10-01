@@ -1,36 +1,37 @@
 /* ==================== Markdown 渲染全局样式 ====================
    由 Chat.vue 的 scoped .md 样式迁移而来（去 :deep），问答页与文档管理共用。
-   渲染产物类：.md 容器 + .md-img（图文交错）/ .ref-sup（引用角标）/ .code-copy（代码复制） */
-.md img { max-width: 100%; max-height: 320px; border: 1px solid #e0e0e0; border-radius: 6px; display: block; margin: 8px 0; cursor: zoom-in; }
+   渲染产物类：.md 容器 + .md-img（图文交错）/ .ref-sup（引用角标）/ .code-copy（代码复制）
+   色值一律走 --app-* token（定义见 views/app.css），暗色模式下自动适配。 */
+.md img { max-width: 100%; max-height: 320px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); display: block; margin: 8px 0; cursor: zoom-in; }
 /* 引用角标 [N] */
-.md .ref-sup { color: #1677ff; font-size: 12px; cursor: pointer; user-select: none; }
+.md .ref-sup { color: var(--app-accent); font-size: 12px; cursor: pointer; user-select: none; }
 /* Markdown 完整渲染样式 */
 .md p { margin: 6px 0; }
 .md h2, .md h3, .md h4, .md h5 { margin: 12px 0 6px; font-weight: 600; }
-.md h2 { font-size: 17px; } .md h3 { font-size: 15px; } .md h4 { font-size: 14px; }
-.md code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 13px; }
-.md pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 8px 0; position: relative; max-height: 360px; overflow-y: auto; }
+.md h2 { font-size: var(--app-fs-xl); } .md h3 { font-size: var(--app-fs-lg); } .md h4 { font-size: var(--app-fs-md); }
+.md code { background: var(--app-code-inline-bg); padding: 1px 4px; border-radius: 3px; font-size: var(--app-fs-md); }
+.md pre { background: var(--app-code-bg); padding: 12px; border-radius: var(--app-radius-sm); overflow-x: auto; font-size: var(--app-fs-md); line-height: 1.5; margin: 8px 0; position: relative; max-height: 360px; overflow-y: auto; }
 .md pre code { background: none; padding: 0; display: block; white-space: pre-wrap; word-break: break-word; }
-.md table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; }
-.md th, .md td { border: 1px solid #e0e0e0; padding: 6px 10px; text-align: left; word-break: break-word; }
-.md th { background: #fafafa; font-weight: 600; white-space: nowrap; }
-.md blockquote { margin: 8px 0; padding: 6px 12px; border-left: 3px solid #d9d9d9; color: #666; background: #fafafa; border-radius: 0 4px 4px 0; }
+.md table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: var(--app-fs-md); }
+.md th, .md td { border: 1px solid var(--app-border); padding: 6px 10px; text-align: left; word-break: break-word; }
+.md th { background: var(--app-panel-2); font-weight: 600; white-space: nowrap; }
+.md blockquote { margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--app-border-strong); color: var(--app-text2); background: var(--app-panel-2); border-radius: 0 4px 4px 0; }
 .md ul, .md ol { margin: 4px 0; padding-left: 20px; }
 .md li { margin: 2px 0; }
 .md li.ul-item.d1 { margin-left: 16px; list-style-type: circle; }
 .md li.ul-item.d2 { margin-left: 32px; list-style-type: square; }
-.md hr { border: none; border-top: 1px solid #e8e8e8; margin: 10px 0; }
+.md hr { border: none; border-top: 1px solid var(--app-border); margin: 10px 0; }
 /* 代码块复制按钮（render 动态创建，页面级委托点击） */
 .md .code-copy {
   position: absolute; top: 8px; right: 8px; z-index: 1;
   width: 26px; height: 26px;
   display: flex; align-items: center; justify-content: center;
   font-size: 14px;
-  color: #555; background: rgba(255,255,255,.85);
-  border: 1px solid #e0e0e0; border-radius: 4px;
+  color: var(--app-text2); background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: 4px;
   cursor: pointer; opacity: 0; transition: opacity .15s;
 }
 .md pre:hover .code-copy { opacity: 1; }
-.md .code-copy:hover { color: #1677ff; border-color: #1677ff; }
-.md .code-copy.copied { color: #52c41a; border-color: #52c41a; }
+.md .code-copy:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.md .code-copy.copied { color: var(--app-ok); border-color: var(--app-ok); }
 .md .ref-sup:hover { text-decoration: underline; }
