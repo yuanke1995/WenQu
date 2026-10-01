@@ -312,8 +312,7 @@ public class ConfigService {
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
-        d.put("chat.showDebugDegradations", "false");      // 回答提示：调试级降级信息开关（默认只显示用户级）
-        d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关）
+        d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关；统管调试显示含降级提示）
         // 接口限流（按用户/IP 固定窗口）
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));

@@ -143,16 +143,17 @@ public class RagService {
     private int streamRetryCount() { return configService.getInt("chat.streamRetryCount", 1); }
 
     /**
-     * 所有降级事件（无命中/改写失败/图片剔除/未标注引用/缓存命中等）统一由 chat.showDebugDegradations 开关控制，
-     * 默认关闭：回答区不展示任何降级提示，全部只进 [FAIL-LOUD] 日志；排障/调试时开启开关才在回答中展示。
+     * 所有降级事件（无命中/改写失败/图片剔除/未标注引用/缓存命中等）统一由 chat.retrievalDebugEnabled 开关控制
+     * （与检索调试入口/归属徽标同属调试显示，一个开关统管），默认关闭：回答区不展示任何降级提示，
+     * 全部只进 [FAIL-LOUD] 日志；排障时开启「检索调试入口」才在回答中展示。
      */
     /** 引用角标 [N]（用于完成阶段校验编号是否超出来源范围，剔除 LLM 编造的无效引用） */
     private static final Pattern CITE_PATTERN = Pattern.compile("\\[(\\d+)]");
 
-    /** fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.showDebugDegradations 开关控制，默认不展示） */
+    /** fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示） */
     private void addDegradation(List<Map<String, String>> list, Set<String> codes, String code, String msg) {
         if (!codes.add(code)) return;
-        if (configService.getBoolean("chat.showDebugDegradations")) {
+        if (configService.getBoolean("chat.retrievalDebugEnabled")) {
             list.add(Map.of("code", code, "msg", msg, "level", "debug"));
         }
     }

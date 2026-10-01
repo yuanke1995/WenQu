@@ -539,7 +539,7 @@ const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', webSearch: '联网搜索',
   ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能（预算）',
-  agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆'
+  agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆', debug: '调试设置'
 }
 // 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），
 // 而不是把英文 key 直接漏到导航上——oidc / sandbox / memory 曾因此显示成裸 key
@@ -570,8 +570,9 @@ watch(advMode, v => {
   }
 })
 
-// 无「恢复本组默认」的分组（API Key 由数据库管理；技能的预算项恢复默认意义不大且与个人技能无关）
-const NO_RESET = ['embedding', 'maintenance', 'apiKey']
+// 无「恢复本组默认」的分组（API Key 由数据库管理；技能的预算项恢复默认意义不大且与个人技能无关；
+// 调试组的落库键前缀是 chat，按 panel 名重置匹配不到键，且两个调试开关默认即关、重置价值低）
+const NO_RESET = ['embedding', 'maintenance', 'apiKey', 'debug']
 
 // 分组顶部说明（与旧版文案一致）
 const PANEL_ALERTS = {
@@ -591,6 +592,7 @@ const PANEL_ALERTS = {
   // 技能与 MCP 的内容已迁到「智能体」页的个人 Tab（每人管自己的），这里只剩上下文预算参数
   skills: [{ type: 'info', msg: '技能内容与启停由每个人在「智能体 → 技能 Skills」里自己管理（内置技能随版本分发，可各自停用）。这里只保留两项预算参数：技能清单注入系统提示的字符上限、单个技能全文读取的字符上限——防止技能过多或过长吃掉上下文预算。' }],
   agent: [{ type: 'info', msg: '并行检索：把一个问题拆成多个检索视角并行执行（各自检索 + 提炼要点）再汇总，改善复杂问题"召回不全"。若当前智能体已配置子智能体，则改为委派子智能体执行——各按自己的知识库范围与角色视角检索。基于 Spring AI Alibaba 的 StateGraph 编排，失败会自动降级为原有单路检索，不影响问答可用性。' }],
+  debug: [{ type: 'warning', msg: '排障专用开关，集中在最后一组统一管理：控制回答界面上调试类元素对所有人的显隐（值经公开配置端点下发，改后需刷新页面生效）。生产环境建议全部关闭。' }],
 }
 
 const loading = ref(false)
