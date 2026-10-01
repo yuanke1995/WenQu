@@ -2127,7 +2127,10 @@ public class RagService {
                     // 一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
                     if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
                         try {
+                            long citeT0 = System.currentTimeMillis();
                             CitationCheckResult ccr = citationConsistencyCheck(answer, sources, st.question, st.model);
+                            // 剔除 0 处也打一条：否则"自检开了没、花了多久"完全不可观测（调参时无法确认防线在位）
+                            log.info("[CITE-CHECK] 自检完成: 剔除 {} 处, 耗时 {} ms", ccr.droppedCount(), System.currentTimeMillis() - citeT0);
                             if (ccr.droppedCount() > 0) {
                                 answer = ccr.text();
                                 sources = ccr.sources();
@@ -3465,10 +3468,26 @@ public class RagService {
         String escapedTag = Pattern.quote(tag);
         Pattern p = Pattern.compile("<" + escapedTag + ">([\\s\\S]*?)</" + escapedTag + ">");
         Matcher m = p.matcher(thinking == null ? "" : thinking);
+        String inner = null;
         if (m.find()) {
-            String[] parts = m.group(1).split("\\|");
+            inner = m.group(1);
+        } else {
+            // 未闭合兜底：思考被长度/异常截断时，检索计划恰好在末尾（<search> 有开头没结尾）——
+            // 按闭合匹配会整块丢失，多路检索静默退化为单路。取最后一个开标签到文本末尾。
+            Matcher om = Pattern.compile("<" + escapedTag + ">([\\s\\S]*)$").matcher(thinking == null ? "" : thinking);
+            if (om.find()) {
+                inner = om.group(1);
+                log.info("[DEEP-THINK] 检索计划标签未闭合（思考截断），按未闭合提取");
+            }
+        }
+        if (inner != null) {
+            String[] parts = inner.split("\\|");
+            // 模型不守"|"格式的常见变体：换行/分号分隔的列表——只有一段但含这些分隔符时再切一次
+            if (parts.length == 1 && (inner.contains("\n") || inner.contains("；") || inner.contains(";"))) {
+                parts = inner.split("\\r?\\n|；|;");
+            }
             List<String> list = Arrays.stream(parts)
-                    .map(String::trim)
+                    .map(s -> s.replaceFirst("^\\s*(?:\\d+[.、)）]|[-*•])\\s*", "").trim()) // 清理 "1. " / "- " 编号前缀
                     .filter(s -> !s.isBlank())
                     .toList();
             if (!list.isEmpty()) {

@@ -140,7 +140,7 @@
                   </div>
                 </template>
               </div>
-              <div v-else class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+              <div v-else class="md" :class="{ streaming: m.loading && !m.failed }" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message) }}</div>
@@ -309,7 +309,7 @@
                 <a-tooltip :title="m.fb != null ? '已评价' : '有帮助'"><button class="app-icon-btn" :class="{ 'fb-active': m.fb === 1 }" :disabled="m.fb != null" @click="openFeedback(m, 1)"><like-outlined /></button></a-tooltip>
                 <a-tooltip :title="m.fb != null ? '已评价' : '没帮助'"><button class="app-icon-btn" :class="{ 'fb-active': m.fb === 0 }" :disabled="m.fb != null" @click="openFeedback(m, 0)"><dislike-outlined /></button></a-tooltip>
                 <a-tooltip title="重新生成"><button class="app-icon-btn" :disabled="loading" @click="regenerate(i)"><reload-outlined /></button></a-tooltip>
-                <a-dropdown :trigger="['hover']">
+                <a-dropdown :trigger="['hover', 'click']">
                   <button class="app-icon-btn" title="更多"><more-outlined /></button>
                   <template #overlay>
                     <a-menu @click="({ key }) => onMoreAction(key, i)">
@@ -329,6 +329,9 @@
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
             <div v-if="m.role === 'user'" class="msg-edit-row">
+              <a-tooltip title="复制问题" placement="top">
+                <copy-outlined class="app-icon-btn" @click="copyUserMessage(m)" />
+              </a-tooltip>
               <a-tooltip title="编辑此问题重新发送" placement="top">
                 <edit-outlined class="app-icon-btn" @click="editMessage(i)" />
               </a-tooltip>
@@ -2755,9 +2758,16 @@ const copyAnswer = async mi => {
     catch (e) { fallbackCopyText(txt) }
   } else fallbackCopyText(txt)
 }
+/** 复制用户的问题（长会话里把问题转走/复问用；此前只有回答能复制） */
+const copyUserMessage = m => {
+  const txt = (m?.content || '').trim()
+  if (!txt) { message.warning('该消息无可复制内容'); return }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(txt).then(() => message.success('已复制')).catch(() => fallbackCopyText(txt))
+  } else fallbackCopyText(txt)
+}
 const fallbackCopyText = txt => {
-  try {
-    const ta = document.createElement('textarea')
+  try {    const ta = document.createElement('textarea')
     ta.value = txt
     ta.setAttribute('readonly', '')
     ta.style.position = 'absolute'
@@ -2990,6 +3000,13 @@ onMounted(async () => {
 }
 .share-actions { margin-top: 14px; display: flex; gap: 8px; }
 .share-intro { font-size: 13px; color: var(--app-text2); line-height: 1.8; margin: 0 0 10px; }
+/* 流式打字光标：贴在正文末尾（.md::after），长回答中段能看出"在出字"而不是卡住了 */
+.md.streaming::after {
+  content: '▍';
+  color: var(--app-accent);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
 .head-panel-btn { margin-left: auto; padding: 4px 12px; }
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }

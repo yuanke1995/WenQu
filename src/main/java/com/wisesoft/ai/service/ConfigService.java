@@ -209,7 +209,7 @@ public class ConfigService {
         // （模型引用 → 供应商网关），DynamicOpenAiChatModel 对解析不出的引用 fail-loud，无全局兜底
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
         d.put("chat.systemPrompt", properties.getSystemPrompt());
-        d.put("chat.citationCheckEnabled", "false");       // 引用语义一致性自检（生成后校验，默认关：每轮多一次模型调用）
+        d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
