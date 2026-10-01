@@ -506,11 +506,15 @@ const onResetGroup = key => {
 // 模型网关的连通性测试已随 baseUrl/API Key 迁至「模型供应商」页（先测后存）；
 // 这里保留关键词引擎探测。
 const probeStates = ref({
-  keyword: { loading: false, result: null }
+  keyword: { loading: false, result: null },
+  ocrMineru: { loading: false, result: null },
+  ocrPp: { loading: false, result: null }
 })
-const probeLabels = { keyword: '关键词引擎' }
+const probeLabels = { keyword: '关键词引擎', ocrMineru: 'MinerU 服务', ocrPp: 'PP-StructureV3 服务' }
 const PROBE_BY_KEY = {
-  'keyword.baseUrl': 'keyword'
+  'keyword.baseUrl': 'keyword',
+  'parse.ocrMineruUri': 'ocrMineru',
+  'parse.ocrPpUri': 'ocrPp'
 }
 const probeKey = f => PROBE_BY_KEY[f.group + '.' + f.key] || ''
 
@@ -521,6 +525,10 @@ const doProbe = async group => {
   const payload = { group }
   if (group === 'keyword') {
     Object.assign(payload, { baseUrl: f.keyword.baseUrl, apiKey: f.keyword.apiKey })
+  } else if (group === 'ocrMineru') {
+    Object.assign(payload, { baseUrl: f.parse?.ocrMineruUri })
+  } else if (group === 'ocrPp') {
+    Object.assign(payload, { baseUrl: f.parse?.ocrPpUri })
   }
   s.loading = true
   s.result = null
@@ -537,7 +545,8 @@ const doProbe = async group => {
 
 // 被探测项改动后清空旧探测结果
 watch(
-  () => [form.value.keyword?.baseUrl, form.value.keyword?.apiKey],
+  () => [form.value.keyword?.baseUrl, form.value.keyword?.apiKey,
+         form.value.parse?.ocrMineruUri, form.value.parse?.ocrPpUri],
   () => {
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }

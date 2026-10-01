@@ -730,7 +730,7 @@
       "backendKey": "parse.qaEnabled",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "qaEnabled",
       "path": "parse.qaEnabled",
       "label": "问答对增强",
@@ -744,7 +744,7 @@
       "backendKey": "parse.qaPerChunk",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "qaPerChunk",
       "path": "parse.qaPerChunk",
       "label": "每块问答对数量",
@@ -763,7 +763,7 @@
       "backendKey": "parse.qaModel",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "qaModel",
       "path": "parse.qaModel",
       "label": "问答对生成模型",
@@ -778,7 +778,7 @@
       "backendKey": "parse.ocrEngine",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrEngine",
       "path": "parse.ocrEngine",
       "label": "PDF 解析引擎",
@@ -787,10 +787,22 @@
       "def": "none",
       "width": 320,
       "options": [
-        { "value": "none", "label": "none（文本抽取，扫描件视觉兜底）" },
-        { "value": "vision", "label": "vision（整份逐页视觉 OCR）" },
-        { "value": "pp_structure_v3", "label": "pp_structure_v3（版面+表格，自托管）" },
-        { "value": "mineru", "label": "mineru（版面 markdown，自托管）" }
+        {
+          "value": "none",
+          "label": "none（文本抽取，扫描件视觉兜底）"
+        },
+        {
+          "value": "vision",
+          "label": "vision（整份逐页视觉 OCR）"
+        },
+        {
+          "value": "pp_structure_v3",
+          "label": "pp_structure_v3（版面+表格，自托管）"
+        },
+        {
+          "value": "mineru",
+          "label": "mineru（版面 markdown，自托管）"
+        }
       ],
       "note": "版面引擎需先自托管对应服务并在下方填地址；解析失败 fail-loud 不回落文本层",
       "tier": 2
@@ -799,7 +811,7 @@
       "backendKey": "parse.ocrMinText",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrMinText",
       "path": "parse.ocrMinText",
       "label": "扫描件判定阈值",
@@ -810,13 +822,14 @@
       "step": 5,
       "width": 160,
       "note": "PDF 文本层少于该字符数判定为扫描件并触发视觉 OCR；仅 none 引擎使用",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=none"
     },
     {
       "backendKey": "parse.ocrDpi",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrDpi",
       "path": "parse.ocrDpi",
       "label": "OCR 页渲染 DPI",
@@ -828,13 +841,14 @@
       "step": 20,
       "width": 160,
       "note": "vision 引擎与扫描件兜底的页渲染清晰度；越高识别越准、耗时与内存越高",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=none,vision"
     },
     {
       "backendKey": "parse.ocrPpUri",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrPpUri",
       "path": "parse.ocrPpUri",
       "label": "PP-StructureV3 服务地址",
@@ -843,13 +857,14 @@
       "def": "http://localhost:8080",
       "width": 300,
       "note": "PaddleX serving 地址；健康检查 GET {uri}/health；仅 pp_structure_v3 引擎使用",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=pp_structure_v3"
     },
     {
       "backendKey": "parse.ocrMineruUri",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrMineruUri",
       "path": "parse.ocrMineruUri",
       "label": "MinerU 服务地址",
@@ -858,13 +873,14 @@
       "def": "http://localhost:30011",
       "width": 300,
       "note": "MinerU http-server 地址；健康检查 GET {uri}/openapi.json；仅 mineru 引擎使用",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=mineru"
     },
     {
       "backendKey": "parse.ocrMineruBackend",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrMineruBackend",
       "path": "parse.ocrMineruBackend",
       "label": "MinerU 解析后端",
@@ -873,17 +889,24 @@
       "def": "pipeline",
       "width": 320,
       "options": [
-        { "value": "pipeline", "label": "pipeline（多语言，CPU 可跑，推荐）" },
-        { "value": "hybrid-auto-engine", "label": "hybrid（本地 VLM，高精度需算力）" }
+        {
+          "value": "pipeline",
+          "label": "pipeline（多语言，CPU 可跑，推荐）"
+        },
+        {
+          "value": "hybrid-auto-engine",
+          "label": "hybrid（本地 VLM，高精度需算力）"
+        }
       ],
       "note": "hybrid 要本地跑 VLM，CPU-only 容器上极慢；仅 mineru 引擎使用",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=mineru"
     },
     {
       "backendKey": "parse.ocrTimeoutMs",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "ocrTimeoutMs",
       "path": "parse.ocrTimeoutMs",
       "label": "版面引擎调用超时(ms)",
@@ -894,13 +917,14 @@
       "step": 60000,
       "width": 180,
       "note": "版面解析服务单次调用超时；大 PDF 版面解析慢，默认 600000=10 分钟",
-      "tier": 2
+      "tier": 2,
+      "vif": "parse.ocrEngine=pp_structure_v3,mineru"
     },
     {
       "backendKey": "parse.childEnabled",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "childEnabled",
       "path": "parse.childEnabled",
       "label": "父子分块",
@@ -914,7 +938,7 @@
       "backendKey": "parse.childSize",
       "panel": "chunk",
       "section": 2,
-      "group": "chunk",
+      "group": "parse",
       "key": "childSize",
       "path": "parse.childSize",
       "label": "子块尺寸(字符)",

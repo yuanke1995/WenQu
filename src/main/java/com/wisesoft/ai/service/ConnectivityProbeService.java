@@ -70,6 +70,8 @@ public class ConnectivityProbeService {
                 case "embedding" -> embeddingProbe(baseUrl, apiKey, model, path, start);
                 case "rerank" -> rerankProbe(baseUrl, apiKey, model, start);
                 case "keyword" -> keywordProbe(baseUrl, apiKey, start);
+                case "ocrmineru" -> ocrMineruProbe(baseUrl, start);
+                case "ocrpp" -> ocrPpProbe(baseUrl, start);
                 default -> fail(start, "不支持的探测类型：" + group);
             };
         } catch (Exception e) {
@@ -156,6 +158,37 @@ public class ConnectivityProbeService {
                     + indexed.get("detail"));
         }
         return ok(start, "可用（服务在线，密钥有效）");
+    }
+
+    /**
+     * MinerU http-server 探测：GET {baseUrl}/openapi.json 并校验 paths 含 /file_parse。
+     * 仅 /openapi.json 返回 200 还不够——要区分「MinerU 就绪」与「同端口跑了别的 OpenAPI 服务」。
+     */
+    private Map<String, Object> ocrMineruProbe(String baseUrl, long start) {
+        String base = value(baseUrl, "parse.ocrMineruUri");
+        if (base.isBlank()) return fail(start, "服务地址为空");
+        String root = stripTrailingSlash(base);
+        if (!isHttpUrl(root)) return fail(start, "地址不合法（仅支持 http/https）：" + root);
+        String url = root + "/openapi.json";
+        try {
+            RestClient client = RestClient.builder().requestFactory(factory()).build();
+            String body = client.get().uri(url).retrieve().toEntity(String.class).getBody();
+            if (body != null && body.contains("\"/file_parse\"")) {
+                return ok(start, "可用（/file_parse 解析端点就绪）");
+            }
+            return fail(start, "服务在线但未提供 /file_parse 端点（确认该地址是 MinerU http-server）："
+                    + cut(safe(body)));
+        } catch (Exception e) {
+            return fail(start, cut(url + " 请求失败：" + rootMessage(e)));
+        }
+    }
+
+    /** PP-StructureV3 serving（PaddleX）探测：GET {baseUrl}/health 返回 2xx 即就绪 */
+    private Map<String, Object> ocrPpProbe(String baseUrl, long start) {
+        String base = value(baseUrl, "parse.ocrPpUri");
+        if (base.isBlank()) return fail(start, "服务地址为空");
+        String root = stripTrailingSlash(base);
+        return get(root + "/health", null, start, "PP-StructureV3 " + root);
     }
 
     // ==================== HTTP 基础 ====================

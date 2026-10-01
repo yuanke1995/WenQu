@@ -103,7 +103,12 @@ const tipText = computed(() => (props.field.tips ? props.tips[props.field.tips] 
 const visible = computed(() => {
   if (!props.field.vif) return true
   for (const cond of props.field.vif.split('&&').map(s => s.trim())) {
-    if (!read(props.form, cond)) return false
+    // 两种形态：path（truthy 显示）与 path=v1,v2（取值命中任一即显示，用于枚举联动）
+    const eq = cond.indexOf('=')
+    if (eq > 0) {
+      const actual = String(read(props.form, cond.slice(0, eq).trim()) ?? '')
+      if (!cond.slice(eq + 1).split(',').map(s => s.trim()).includes(actual)) return false
+    } else if (!read(props.form, cond)) return false
   }
   return true
 })
