@@ -115,6 +115,15 @@
           <a-form-item label="子块尺寸(字符)" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <a-input-number v-model:value="form.p.childSize" :min="100" :max="2000" :step="100" style="width:100%" :placeholder="numPh('parse', 'childSize')" />
           </a-form-item>
+          <a-form-item label="PDF 解析引擎" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-select v-model:value="form.p.ocrEngine" style="width:100%" :options="ocrEngineOptions" :placeholder="valPh('parse', 'ocrEngine')" allow-clear />
+          </a-form-item>
+          <a-form-item label="扫描件阈值(字符)" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-input-number v-model:value="form.p.ocrMinText" :min="0" :step="5" style="width:100%" :placeholder="numPh('parse', 'ocrMinText')" />
+          </a-form-item>
+          <a-form-item label="OCR 渲染 DPI" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-input-number v-model:value="form.p.ocrDpi" :min="72" :max="400" :step="8" style="width:100%" :placeholder="numPh('parse', 'ocrDpi')" />
+          </a-form-item>
           <a-form-item label="图片描述模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
             <ModelSelect v-model="form.p.visionRef" type="vision" width="100%" inherit-label="不描述图片" />
           </a-form-item>
@@ -122,6 +131,8 @@
         <div class="kb-hint" style="margin:4px 0 0">
           改解析参数后需重新解析文档才会生效（不自动重解析全库）；扫描件/图片型 PDF 的 OCR 依赖「图片描述模型」——
           <span class="kb-warn">未绑定时该类文档会解析失败</span>（不产出残缺内容）。
+          纯文本文档建议「PDF 解析引擎」留空或用 none（秒级）；版面引擎（MinerU/PP）专为表格/版面还原，CPU 约 10s/页、
+          <span class="kb-warn">大文档会明显变慢</span>。
         </div>
 
         <!-- 设默认库是全局动作（影响所有人的新建归属），仅管理员 -->
@@ -221,11 +232,19 @@ const triOptions = [
   { value: 'false', label: '关' }
 ]
 
+/** 库级 PDF 解析引擎选项（清空=继承全局；速度差异见标注） */
+const ocrEngineOptions = [
+  { value: 'none', label: '纯文本层（快，秒级）' },
+  { value: 'vision', label: '视觉模型 OCR（逐页识别）' },
+  { value: 'pp_structure_v3', label: 'PP-StructureV3 版面还原' },
+  { value: 'mineru', label: 'MinerU 版面还原（慢，约 10s/页）' }
+]
+
 function blank () {
   return {
     name: '', description: '', embeddingRef: '', isDefault: false, graphEnabled: false,
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
-    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, visionRef: '' }
+    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '' }
   }
 }
 
@@ -240,7 +259,8 @@ const PARSE_KEYS = {
   maxImages: 'chunk.maxImages', structural: 'chunk.structural',
   structuralRatio: 'chunk.structuralRatio', headingDepth: 'chunk.headingDepth',
   qaEnabled: 'parse.qaEnabled', qaPerChunk: 'parse.qaPerChunk',
-  childEnabled: 'parse.childEnabled', childSize: 'parse.childSize'
+  childEnabled: 'parse.childEnabled', childSize: 'parse.childSize',
+  ocrEngine: 'parse.ocrEngine', ocrMinText: 'parse.ocrMinText', ocrDpi: 'parse.ocrDpi'
 }
 
 function hydrateForm (row) {
@@ -263,7 +283,7 @@ function hydrateForm (row) {
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = p[key]
     if (v === undefined || v === '') continue
-    f.p[field] = (field === 'structural' || field === 'qaEnabled' || field === 'childEnabled') ? String(v) : Number(v)
+    f.p[field] = (field === 'structural' || field === 'qaEnabled' || field === 'childEnabled' || field === 'ocrEngine') ? String(v) : Number(v)
   }
   if (p.visionRef) f.p.visionRef = p.visionRef
   return f
@@ -325,6 +345,11 @@ const triPh = (group, key) => {
   const v = gval(group, key)
   return v === '' ? '继承' : `全局（${v === 'true' ? '开' : '关'}）`
 }
+/** 枚举类占位符：显示全局当前值（如 ocrEngine） */
+const valPh = (group, key) => {
+  const v = gval(group, key)
+  return v === '' ? '继承全局' : `继承全局（${v}）`
+}
 
 /**
  * 新建：以当前全局值为**模板**预填解析与检索参数（保存即固化到本库；之后改全局设置不会回溯
@@ -352,6 +377,10 @@ const prefillFromGlobal = async () => {
   const childEnabled = flatVal('parse.childEnabled')
   p.childEnabled = childEnabled === '' ? null : childEnabled
   p.childSize = num(flatVal('parse.childSize'))
+  const ocrEngine = flatVal('parse.ocrEngine')
+  p.ocrEngine = ocrEngine === '' ? null : ocrEngine
+  p.ocrMinText = num(flatVal('parse.ocrMinText'))
+  p.ocrDpi = num(flatVal('parse.ocrDpi'))
   // 检索参数（模板）：此前只预填解析参数，检索参数要用户自己猜当前生效值
   q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
   q.keywordWeight = num(flatVal('retrieval.keywordWeight'))
