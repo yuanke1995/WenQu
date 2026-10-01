@@ -287,6 +287,11 @@ export const toggleScheduledJob = (id, enabled) =>
   request(`/scheduled/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const runScheduledJob = id => request(`/scheduled/${id}/run`, { method: 'POST' })
 export const listScheduledRuns = (id, limit = 20) => request(`/scheduled/${id}/runs?limit=${limit}`)
+// 批量：逐条执行、部分成功是批量固有语义，返回 {succeeded:[id], failed:[{id,name,error}]}
+export const batchDeleteScheduledJobs = ids =>
+  request('/scheduled/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchToggleScheduledJobs = (ids, enabled) =>
+  request('/scheduled/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 
 // ---------- 工作流（DSL 唯一真源；画布只是编辑器） ----------
 export const listWorkflows = () => request('/workflow/list')
@@ -323,6 +328,10 @@ export const unpublishWorkflow = id => request(`/workflow/${id}/unpublish`, { me
 export const listWorkflowVersions = id => request(`/workflow/${id}/versions`)
 /** 回滚到指定版本：以该版本 DSL 再发一版（返回 {version, rolledBackTo}） */
 export const rollbackWorkflow = (id, version) => request(`/workflow/${id}/rollback/${version}`, { method: 'POST' })
+// ---------- 批量操作：逐条执行、部分成功是批量固有语义，返回 {succeeded:[id], failed:[{id,name,error}]} ----------
+export const batchDeleteWorkflows = ids => request('/workflow/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchPublishWorkflows = (ids, note = '') => request('/workflow/batch-publish', { method: 'POST', body: JSON.stringify({ ids, note }) })
+export const batchUnpublishWorkflows = ids => request('/workflow/batch-unpublish', { method: 'POST', body: JSON.stringify({ ids }) })
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */
@@ -375,6 +384,11 @@ export const updateMcpServer = (id, body) => request('/mcp/servers/' + id, { met
 export const setMcpServerEnabled = (id, enabled) =>
   request(`/mcp/servers/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
 export const deleteMcpServer = id => request('/mcp/servers/' + id, { method: 'DELETE' })
+// 批量（只碰自己的）：返回 {succeeded:[id], failed:[{id,name,error}]}；改完连接池统一重建
+export const batchDeleteMcpServers = ids =>
+  request('/mcp/servers/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchSetMcpServersEnabled = (ids, enabled) =>
+  request('/mcp/servers/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 
 /** MCP 调用审计（仅管理员）：外部客户端调用 /ai/mcp 端点的每次工具执行 */
 export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => {
@@ -439,6 +453,11 @@ export const installSkillFromUrl = (url, name) =>
 export const setSkillDisabled = (name, disabled) =>
   request(`/skill/${encodeURIComponent(name)}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
 export const deleteSkill = name => request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })
+// 批量：ids 为技能名（dirName）清单；返回 {succeeded:[name], failed:[{id,name,error}]}
+export const batchDeleteSkills = ids =>
+  request('/skill/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchSetSkillsDisabled = (ids, disabled) =>
+  request('/skill/batch-disabled', { method: 'POST', body: JSON.stringify({ ids, disabled }) })
 
 // ==================== API Key 管理（对外开放问答能力） ====================
 export const listApiKeys = () => request('/api-key/list')
@@ -462,6 +481,9 @@ export const listSubAgents = () => request('/agent/sub')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })
+// 批量删除：逐条判权（内置智能体不可删），返回 {succeeded:[id], failed:[{id,name,error}]}
+export const batchDeleteAgents = ids =>
+  request('/agent/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const setAgentDefault = id => request(`/agent/${id}/default`, { method: 'POST' })
 
 // ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落全局） ====================
@@ -816,6 +838,11 @@ export const updateProvider = (id, body) => request(`/provider/${id}`, { method:
 export const setProviderEnabled = (id, enabled) =>
   request(`/provider/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const deleteProvider = id => request(`/provider/${id}`, { method: 'DELETE' })
+// 批量：逐条判权（平台共享供应商只读），返回 {succeeded:[id], failed:[{id,name,error}]}
+export const batchDeleteProviders = ids =>
+  request('/provider/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchSetProvidersEnabled = (ids, enabled) =>
+  request('/provider/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 export const listProviderModels = id => request(`/provider/${id}/models`)
 export const saveProviderModels = (id, models) =>
   request(`/provider/${id}/models`, { method: 'PUT', body: JSON.stringify(models) })

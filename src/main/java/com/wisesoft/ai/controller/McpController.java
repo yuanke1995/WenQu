@@ -11,6 +11,7 @@ import com.wisesoft.ai.model.McpCallLog;
 import com.wisesoft.ai.model.UserMcp;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.McpClientService;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -140,6 +142,57 @@ public class McpController {
         userMcpMapper.deleteById(row.getId());
         mcpClientService.reload(row.getUid());
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）；
+    // 连接池按 uid 整体重建一次（复用单条删除/启停后的 reload 语义，不做 N 次重建）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除 MCP 服务", description = "body: {ids:[...]}；只删自己的（逐条按单条口径）；"
+            + "返回 {succeeded:[id], failed:[{id,name,error}]}；删除后统一重建本人连接池")
+    @PostMapping("/servers/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要删除的服务");
+        String uid = RequestUser.uid();
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                UserMcp row = own(id);
+                userMcpMapper.deleteById(row.getId());
+                succeeded.add(id);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(id, null, BatchResults.errMsg(e)));
+            }
+        }
+        if (!succeeded.isEmpty()) mcpClientService.reload(uid);
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
+    }
+
+    @Operation(summary = "批量启用/停用 MCP 服务", description = "body: {ids:[...], enabled:true|false}；逐条按单条口径"
+            + "（停用即断开连接、不再暴露其工具）；返回 {succeeded:[id], failed:[{id,name,error}]}；改完统一重建本人连接池")
+    @PostMapping("/servers/batch-enabled")
+    public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        boolean on = Boolean.TRUE.equals(body.get("enabled"));
+        if (ids.isEmpty()) return ResultJson.error("请先选择要操作的服务");
+        String uid = RequestUser.uid();
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                UserMcp row = own(id);
+                row.setEnabled(on ? 1 : 0);
+                userMcpMapper.updateById(row);
+                succeeded.add(id);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(id, null, BatchResults.errMsg(e)));
+            }
+        }
+        if (!succeeded.isEmpty()) mcpClientService.reload(uid);
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 
     @Operation(summary = "重连", description = "按当前配置重建本人的全部连接（改完通常已自动生效；此接口用于失败重试），立即返回、重建在后台进行，最终状态由 /status 轮询得到")

@@ -116,7 +116,7 @@
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                          <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                          <span class="tool-name" :title="toolDesc(t.name)">{{ toolLabel(t.name) }}</span>
                           <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
@@ -184,7 +184,7 @@
                       <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                       <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                       <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                      <span class="tool-name">{{ toolLabel(t.name) }}</span>
+                      <span class="tool-name" :title="toolDesc(t.name)">{{ toolLabel(t.name) }}</span>
                       <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
@@ -211,7 +211,7 @@
               </div>
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
               <div v-if="m.approval" class="approval-card">
-                <div class="approval-title"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
+                <div class="approval-title" :title="toolDesc(m.approval.tool)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
                 <pre v-if="m.approval.args" class="approval-args">{{ m.approval.args }}</pre>
                 <div class="approval-actions">
                   <button class="app-btn small" :disabled="m.approval.busy" @click="resolveApproval(m, true)">批准执行</button>
@@ -865,25 +865,77 @@ import AgentAvatar from '../components/AgentAvatar.vue'
 const route = useRoute()
 const router = useRouter()
 
-// 工具名友好展示（与旧版口径一致）
+// 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档），
+// 内置工具与后端 ToolInventoryService.LABELS 同源但口径更口语；MCP 工具名是用户登记的
+// server 动态合入的（w_q_ 前缀），只映射常用 server 的常用工具（context7 / deepwiki），
+// 未映射的去掉前缀原样展示，不臆造翻译。
 const TOOL_LABELS = {
-  searchKnowledge: '知识库精确检索',
-  presentArtifact: '生成文件产物',
-  deliver_artifact: '交付沙盒产物',
-  calculate: '算术计算',
-  currentDateTime: '获取当前时间',
-  daysBetween: '计算日期差',
-  readSkill: '读取技能',
+  searchKnowledge: '查知识库资料',
+  presentArtifact: '生成文件',
+  deliver_artifact: '保存生成的文件',
+  calculate: '做算术计算',
+  currentDateTime: '查看当前时间',
+  daysBetween: '算日期相差几天',
+  addDays: '推算日期',
+  randomNumber: '生成随机数',
+  uuid: '生成随机编号',
+  unitConvert: '单位换算',
+  textStats: '统计字数',
+  base64: 'Base64 转码',
+  hash: '计算哈希值',
+  readSkill: '读取技能说明',
   webSearch: '联网搜索',
-  execute: '执行沙盒命令',
-  read_file: '读取沙盒文件',
-  write_file: '写入沙盒文件',
-  edit_file: '编辑沙盒文件',
-  ls: '查看沙盒目录'
+  execute: '运行命令',
+  read_file: '读取文件',
+  write_file: '写入文件',
+  edit_file: '编辑文件',
+  ls: '查看文件列表',
+  // MCP（context7）：去 w_q_ 前缀后按裸名匹配
+  resolve_library_id: '查找文档来源',
+  query_docs: '查阅官方文档',
+  // MCP（deepwiki）
+  read_wiki_structure: '查看 Wiki 目录',
+  read_wiki_contents: '阅读 Wiki 内容',
+  ask_question: '向 Wiki 提问'
+}
+// 悬停一句话说明（这个工具到底在干什么；未收录的不显示 title）
+const TOOL_DESCS = {
+  searchKnowledge: '在你上传的知识库里检索相关资料片段',
+  presentArtifact: '把内容整理成可下载的文件',
+  deliver_artifact: '把云端沙盒里生成的文件存进会话，可查看下载',
+  calculate: '精确计算算式，避免模型心算出错',
+  currentDateTime: '获取今天的日期与时间',
+  daysBetween: '计算两个日期之间相差多少天',
+  addDays: '从某个日期加/减 N 天，得到新日期',
+  randomNumber: '在指定范围内生成一个随机数',
+  uuid: '生成一个不会重复的随机编号（UUID）',
+  unitConvert: '长度、重量、温度等单位互相换算',
+  textStats: '统计文本的字数、行数、段落数等',
+  base64: '在文本与 Base64 编码之间互相转换',
+  hash: '给文本算一个「指纹」，用于校验内容是否被改过',
+  readSkill: '按需加载某个技能的详细说明',
+  webSearch: '上网搜索相关资料，结果会作为引用来源',
+  execute: '在隔离的云端沙盒里执行命令行（不影响本机）',
+  read_file: '在云端沙盒里读取文件内容',
+  write_file: '在云端沙盒里新建或覆盖文件',
+  edit_file: '在云端沙盒里修改文件内容',
+  ls: '列出云端沙盒里某个目录下的文件',
+  resolve_library_id: '先确定要查阅哪个库的官方文档',
+  query_docs: '到对应库的官方文档里查找相关内容',
+  read_wiki_structure: '浏览开源项目 Wiki 的目录结构',
+  read_wiki_contents: '阅读开源项目 Wiki 的具体内容',
+  ask_question: '就开源项目 Wiki 的内容提问并取回答案'
 }
 // ⚠️ 与 McpClientService 的 clientInfo name 对应：wen-qu → w_q_（改名时需同步）
 const MCP_CLIENT_PREFIX = 'w_q_'
-const toolLabel = n => TOOL_LABELS[n] || (n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n)
+const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
+const toolLabel = n => {
+  if (TOOL_LABELS[n]) return TOOL_LABELS[n]
+  // MCP 工具记录名带 w_q_ 前缀：先去前缀再试一次映射，未映射的展示裸名
+  const bare = bareToolName(n)
+  return TOOL_LABELS[bare] || bare
+}
+const toolDesc = n => TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || ''
 const toolCallsView = list => {
   if (!Array.isArray(list)) return []
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
@@ -2528,11 +2580,12 @@ const send = () => {
   pendingFiles.value = []
   pickedSkills.value = []
   pendingMentions.value = []
+  pendingHistoryRefs.value = []
   const deep = deepThinkOn.value
   // attachData 留在内存消息上：重新生成/自动重试时可原样重发（历史回放无数据，行为与图片 data: 口径一致）
   messages.value.push({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
-                        skills, mentions, deepThink: deep, time: Date.now() })
-  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions)
+                        skills, mentions, historyRefs, deepThink: deep, time: Date.now() })
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions, null, historyRefs)
 }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {

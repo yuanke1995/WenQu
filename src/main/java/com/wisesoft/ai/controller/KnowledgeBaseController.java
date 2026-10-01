@@ -117,7 +117,8 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kb);
     }
 
-    @Operation(summary = "新建知识库", description = "body: name(必填)/description/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/isDefault/shareConfig；"
+    @Operation(summary = "新建知识库", description = "body: name(必填)/description/icon(图标：wenqu=问渠品牌标 / emoji 字符，省略=默认库图标；"
+            + "设为默认库时恒为 wenqu)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/isDefault/shareConfig；"
             + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置；创建人=当前用户（默认库标记仅管理员可设）")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
@@ -130,6 +131,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
+            + "icon（wenqu=问渠品牌标 / emoji）与 name 仅默认库不可修改（默认库恒为 wenqu 品牌标，名称/图标改值报错）；"
             + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {

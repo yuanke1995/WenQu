@@ -69,6 +69,31 @@ public class WorkflowController {
     }
 
     // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——返回 succeeded/failed（失败条目带原因）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除工作流", description = "body: {ids:[...]}；仅本人创建的可删；"
+            + "返回 {succeeded:[id], failed:[{id,name,error}]}（部分成功是批量固有语义，失败条目逐条带原因）")
+    @PostMapping("/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        return ResultJson.ok(workflowService.batchDelete(ids(body)));
+    }
+
+    @Operation(summary = "批量发布工作流", description = "body: {ids:[...], note?}；逐条走单条发布语义"
+            + "（草稿校验 → 版本号递增 → 冻结）；校验不过的条目进 failed 带原因")
+    @PostMapping("/batch-publish")
+    public ResultJson batchPublish(@RequestBody Map<String, Object> body) {
+        return ResultJson.ok(workflowService.batchPublish(ids(body), str(body, "note")));
+    }
+
+    @Operation(summary = "批量下线工作流", description = "body: {ids:[...]}；逐条已发布 → 草稿；"
+            + "非已发布条目进 failed 带原因（不静默跳过）")
+    @PostMapping("/batch-unpublish")
+    public ResultJson batchUnpublish(@RequestBody Map<String, Object> body) {
+        return ResultJson.ok(workflowService.batchUnpublish(ids(body)));
+    }
+
+    // --------------------------------------------------------------------------------------------------
     // M4：发布与版本
     // --------------------------------------------------------------------------------------------------
 
@@ -174,5 +199,12 @@ public class WorkflowController {
     private static String str(Map<String, Object> body, String key) {
         Object v = body.get(key);
         return v == null ? null : String.valueOf(v);
+    }
+
+    /** body.ids → List&lt;String&gt;（元素按字符串收，兼容前端传数字形态） */
+    private static List<String> ids(Map<String, Object> body) {
+        Object v = body.get("ids");
+        if (!(v instanceof List<?> list)) return List.of();
+        return list.stream().map(String::valueOf).toList();
     }
 }

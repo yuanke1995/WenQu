@@ -7,6 +7,17 @@
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
+      <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起，点「批量管理」进入批量模式；
+           开关放最右：进出模式自身位置不动；仅可管理的供应商可勾选（平台共享只读，不进批量范围） -->
+      <div v-if="list.length" class="batch-group">
+        <template v-if="batchMode">
+          <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
+          <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+        </template>
+        <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+      </div>
     </div>
 
     <div class="app-page-body">
@@ -14,6 +25,8 @@
         <div v-if="list.length" class="pv-grid">
           <div v-for="p in list" :key="p.id" class="app-card pv-card">
             <div class="pv-head">
+              <a-checkbox v-if="batchMode && p.manageable" class="pv-check" :checked="selected.includes(p.id)"
+                          @change="toggleSelect(p.id)" />
               <ProviderIcon :icon="p.icon" :name="p.name" :size="34" />
               <div class="pv-title">
                 <div class="pv-name">
@@ -192,13 +205,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import {
   listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
-  listProviderModels, saveProviderModels, fetchProviderModels, testProvider
+  listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
+  batchDeleteProviders, batchSetProvidersEnabled
 } from '../api'
 
 const list = ref([])
@@ -206,6 +220,75 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
+
+// ---- 批量操作：仅可管理的供应商可勾选（平台共享供应商只读，不进批量范围） ----
+const selected = ref([])
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+const selectableIds = computed(() => list.value.filter(p => p.manageable).map(p => p.id))
+const allChecked = computed(() =>
+  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
+const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+
+/** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个供应商`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchEnabled = async on => {
+  batchBusy.value = true
+  try {
+    const r = await batchSetProvidersEnabled([...selected.value], on)
+    reportBatch(r, on ? '启用' : '停用')
+    await load()
+  } catch (e) {
+    message.error((on ? '批量启用' : '批量停用') + '失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个供应商？`,
+    content: '供应商及其已登记的模型会一并删除；仍被引用或平台共享的条目会失败并逐条给出原因。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteProviders([...selected.value])
+        reportBatch(r, '删除')
+        await load()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
 
 // ---- 编辑弹窗 ----
 const showEdit = ref(false)
@@ -311,6 +394,9 @@ const load = async () => {
   try {
     const r = await listProviders()
     list.value = (r && r.data) || []
+    // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+    const alive = new Set(list.value.map(x => x.id))
+    selected.value = selected.value.filter(id => alive.has(id))
   } catch (e) {
     message.error(e.message || '供应商列表加载失败')
   } finally {
@@ -625,6 +711,11 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 批量操作区（页头最右，分隔线与常规按钮划清界限）：开关恒在最右、进出模式位置不动 */
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.batch-del { color: var(--app-danger); }
+.pv-check { flex: none; }
 /* 内边距/滚动由 .app-page-body 提供（与智能体/技能/MCP 同一套骨架），此处只放网格与卡片细节 */
 .pv-grid {
   display: grid;

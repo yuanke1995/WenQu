@@ -3,6 +3,7 @@ package com.wisesoft.ai.controller;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.service.ScheduledJobService;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -79,6 +82,64 @@ public class ScheduledJobController {
             return ResultJson.ok(null, "已删除");
         } catch (BizException e) {
             return ResultJson.error(e.getMessage());
+        }
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除定时任务", description = "body: {ids:[...]}；只删本人的（逐条按单条口径）；"
+            + "返回 {succeeded:[id], failed:[{id,name,error}]}；已产生的执行记录与结果会话保留")
+    @PostMapping("/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要删除的任务");
+        String uid = RequestUser.uid();
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            String name = jobName(uid, id);
+            try {
+                scheduledJobService.delete(uid, id);
+                succeeded.add(id);
+            } catch (BizException e) {
+                failed.add(BatchResults.failItem(id, name, e.getMessage()));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
+    }
+
+    @Operation(summary = "批量启用/停用定时任务", description = "body: {ids:[...], enabled:true|false}；只操作本人的；"
+            + "启用时从当前时刻往后重算下次执行；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @PostMapping("/batch-enabled")
+    public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        if (ids.isEmpty()) return ResultJson.error("请先选择要操作的任务");
+        String uid = RequestUser.uid();
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            String name = jobName(uid, id);
+            try {
+                scheduledJobService.toggle(uid, id, enabled);
+                succeeded.add(id);
+            } catch (BizException e) {
+                failed.add(BatchResults.failItem(id, name, e.getMessage()));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
+    }
+
+    /** 失败条目要带任务名；detail 拿不到（已被删/并发变动）就回落 id 前缀展示 */
+    private String jobName(String uid, String id) {
+        try {
+            Object d = scheduledJobService.detail(uid, id);
+            Object name = d instanceof Map<?, ?> m ? m.get("name") : null;
+            return name == null ? null : String.valueOf(name);
+        } catch (Exception e) {
+            return null;
         }
     }
 

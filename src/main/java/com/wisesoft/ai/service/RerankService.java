@@ -286,7 +286,15 @@ public class RerankService {
             if (System.currentTimeMillis() - lastFailTs < failCooldownMs()) {
                 return "重排服务调用失败，冷却中（" + failCooldownMs() / 1000 + "s 后自动重试）";
             }
-            return "重排服务探测失败（/v1/models 无响应），请确认本地 reranker 已启动（scripts/win/start_rerank_server.bat）";
+            // 提示按实际路由区分：云端供应商引用失败时指向网关连通性/Key——旧文案写死"本地 reranker"，
+            // 云端路由失败也被指到没起的本地服务，误导排障方向（本地服务明明已停用）
+            ModelRegistryService.ModelRoute r = route();
+            if (r.providerId() != null) {
+                return "重排服务探测失败（/v1/models 无响应），请检查重排模型 " + r.displayName()
+                        + " 的供应商网关 " + r.baseUrl() + " 连通性与 API Key";
+            }
+            return "重排服务探测失败（/v1/models 无响应），请确认本地 reranker 已启动"
+                    + "（scripts/mac/start_rerank_server.sh 或 scripts/win/start_rerank_server.bat）";
         }
         return null;
     }

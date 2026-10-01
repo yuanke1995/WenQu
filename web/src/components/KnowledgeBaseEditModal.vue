@@ -6,6 +6,24 @@
       <a-form-item label="名称" required>
         <a-input v-model:value="form.name" placeholder="如：操作手册库" />
       </a-form-item>
+      <a-form-item label="图标">
+        <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改 -->
+        <div v-if="iconLocked" class="kb-icon-locked">
+          <KbIcon :kb="{ icon: 'wenqu', isDefault: 1 }" :size="26" />
+          <span class="kb-hint">{{ iconLockHint }}</span>
+        </div>
+        <template v-else>
+          <div class="kb-icon-pick">
+            <button v-for="opt in ICON_OPTIONS" :key="opt.value || 'default'" type="button"
+                    class="kb-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
+                    :title="opt.label" :aria-pressed="(form.icon || '') === opt.value"
+                    @click="form.icon = opt.value">
+              <KbIcon :kb="{ icon: opt.value, isDefault: 0 }" :size="22" />
+            </button>
+          </div>
+          <div class="kb-hint" style="margin-top:4px">展示在知识库列表卡片上；不选即默认库图标。</div>
+        </template>
+      </a-form-item>
       <a-form-item label="描述">
         <a-input v-model:value="form.description" placeholder="这个库放什么资料" />
       </a-form-item>
@@ -118,8 +136,25 @@ import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults } from '../api'
 import ModelSelect from './ModelSelect.vue'
+import KbIcon from './KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync } from '../utils/auth'
+
+// 图标可选集（emoji 口径与智能体一致）：''=默认库图标；其余 emoji 原样存库、原样渲染。
+// 「问渠品牌标」不进选择集——它是默认库专属（编辑默认库时锁定态单独展示，见 iconLocked）
+const ICON_OPTIONS = [
+  { value: '', label: '默认图标' },
+  { value: '📚', label: '资料' },
+  { value: '🧠', label: '知识大脑' },
+  { value: '⚖️', label: '法律' },
+  { value: '📊', label: '报表' },
+  { value: '🔍', label: '检索' },
+  { value: '📁', label: '档案' },
+  { value: '🛠️', label: '工具' },
+  { value: '🌐', label: '全网' },
+  { value: '💡', label: '点子' },
+  { value: '📝', label: '笔记' }
+]
 
 // kb 为 null = 新建模式（表单以当前全局值为模板预填）；传对象 = 编辑该库
 const props = defineProps({
@@ -134,7 +169,7 @@ const saving = ref(false)
 
 function blank () {
   return {
-    name: '', description: '', embeddingRef: '', isDefault: false, graphEnabled: false,
+    name: '', description: '', icon: '', embeddingRef: '', isDefault: false, graphEnabled: false,
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '' }
   }
@@ -159,6 +194,8 @@ function hydrateForm (row) {
   const f = blank()
   f.name = row?.name || ''
   f.description = row?.description || ''
+  // 图标：未配时默认库按问渠品牌标预选（口径同智能体：内置默认 wenqu）
+  f.icon = row?.icon || (row?.isDefault === 1 ? 'wenqu' : '')
   f.embeddingRef = row?.embeddingRef || ''
   f.isDefault = row?.isDefault === 1
   f.graphEnabled = row?.graphEnabled === 1
@@ -204,6 +241,17 @@ function serialize (f) {
 }
 
 const form = ref(blank())
+
+// 默认库图标锁定：恒为问渠品牌标（编辑中的默认库，或本次勾选了「设为默认库」）
+const iconLocked = computed(() => props.kb?.isDefault === 1 || form.value.isDefault)
+const iconLockHint = computed(() => props.kb?.isDefault === 1
+  ? `「${props.kb.name || '默认知识库'}」为默认库，固定使用问渠品牌标，不可修改`
+  : '设为默认库后固定使用问渠品牌标，保存后不可修改')
+// 勾选「设为默认库」即锁定为品牌标（取消勾选恢复可自选；默认库被降级时品牌标随身份失效）
+watch(() => form.value.isDefault, on => {
+  if (on) form.value.icon = 'wenqu'
+  else if (props.kb?.isDefault === 1) form.value.icon = ''
+})
 const triOptions = [
   { value: 'true', label: '开' },
   { value: 'false', label: '关' }
@@ -312,6 +360,8 @@ const save = async () => {
     const body = {
       name: form.value.name.trim(),
       description: form.value.description || null,
+      // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存（默认库后端强制 wenqu）
+      icon: form.value.icon || '',
       embeddingRef: form.value.embeddingRef,
       queryParams,
       parseParams,
@@ -338,6 +388,17 @@ const save = async () => {
 
 <style scoped>
 .kb-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 4px; }
+/* 图标选择器（口径同智能体页 ap-icon-pick） */
+.kb-icon-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-icon-opt {
+  width: 34px; height: 34px; border-radius: 9px; padding: 0;
+  border: 1px solid var(--app-border); background: var(--app-panel); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color .15s, box-shadow .15s;
+}
+.kb-icon-opt:hover { border-color: var(--app-accent-border); }
+.kb-icon-opt.on { border-color: var(--app-accent); box-shadow: 0 0 0 2px var(--app-accent-weak); }
+.kb-icon-locked { display: flex; align-items: center; gap: 8px; }
 .kb-divider { margin: 16px 0 4px; font-size: 12px; color: var(--app-text2); }
 .kb-param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
 /* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */

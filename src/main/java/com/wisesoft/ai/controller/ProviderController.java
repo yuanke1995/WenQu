@@ -1,6 +1,7 @@
 package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.dto.ResultJson;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import com.wisesoft.ai.service.ConnectivityProbeService;
 import com.wisesoft.ai.service.ModelRegistryService;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -88,6 +90,67 @@ public class ProviderController {
         if (denied != null) return denied;
         modelRegistryService.deleteProvider(id);
         return ResultJson.ok("已删除");
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除供应商", description = "body: {ids:[...]}；逐条按单条口径判权（普通用户仅可删自己登记的），"
+            + "仍被引用/平台共享的条目失败并带原因；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @PostMapping("/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要删除的供应商");
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            com.wisesoft.ai.model.Provider p = modelRegistryService.providerById(id);
+            if (p == null) {
+                failed.add(BatchResults.failItem(id, null, "供应商不存在（可能已被删除）"));
+                continue;
+            }
+            if (!modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) {
+                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商（平台共享供应商只读）"));
+                continue;
+            }
+            try {
+                modelRegistryService.deleteProvider(id);
+                succeeded.add(id);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(id, p.getName(), BatchResults.errMsg(e)));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
+    }
+
+    @Operation(summary = "批量启用/停用供应商", description = "body: {ids:[...], enabled:true|false}；逐条按单条口径判权；"
+            + "停用后其模型不出现在可用清单；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @PostMapping("/batch-enabled")
+    public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        if (ids.isEmpty()) return ResultJson.error("请先选择要操作的供应商");
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            com.wisesoft.ai.model.Provider p = modelRegistryService.providerById(id);
+            if (p == null) {
+                failed.add(BatchResults.failItem(id, null, "供应商不存在（可能已被删除）"));
+                continue;
+            }
+            if (!modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) {
+                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商（平台共享供应商只读）"));
+                continue;
+            }
+            try {
+                modelRegistryService.setProviderEnabled(id, enabled);
+                succeeded.add(id);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(id, p.getName(), BatchResults.errMsg(e)));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 
     @Operation(summary = "供应商模型列表", description = "某供应商下已登记的模型（含类型/启停）；属管理动作，普通用户仅可查自己登记的")

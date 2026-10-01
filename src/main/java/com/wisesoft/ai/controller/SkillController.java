@@ -2,6 +2,7 @@ package com.wisesoft.ai.controller;
 
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.service.SkillService;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -138,5 +139,48 @@ public class SkillController {
     public ResultJson delete(@PathVariable("name") String name) {
         skillService.delete(RequestUser.uid(), name);
         return ResultJson.ok(Map.of("dirName", name));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除技能", description = "body: {ids:[...]}（技能名/dirName 清单）；逐条按单条口径"
+            + "（仅本人技能可删，内置技能不可删）；返回 {succeeded:[dirName], failed:[{id,name,error}]}")
+    @PostMapping("/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要删除的技能");
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String name : ids) {
+            try {
+                skillService.delete(RequestUser.uid(), name);
+                succeeded.add(name);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(name, name, BatchResults.errMsg(e)));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
+    }
+
+    @Operation(summary = "批量启用/停用技能", description = "body: {ids:[...], disabled:true|false}（技能名/dirName 清单）；"
+            + "停用后不注入清单、readSkill 拒绝读取；内置技能也可停用（按用户记停用位）；返回 {succeeded, failed}")
+    @PostMapping("/batch-disabled")
+    public ResultJson batchDisabled(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        boolean disabled = Boolean.TRUE.equals(body.get("disabled"));
+        if (ids.isEmpty()) return ResultJson.error("请先选择要操作的技能");
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String name : ids) {
+            try {
+                skillService.setDisabled(RequestUser.uid(), name, disabled);
+                succeeded.add(name);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(name, name, BatchResults.errMsg(e)));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 }

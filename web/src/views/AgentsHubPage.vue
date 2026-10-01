@@ -11,8 +11,9 @@
       <a-tab-pane key="agents" tab="智能体"><AgentsPage /></a-tab-pane>
       <a-tab-pane key="skills" tab="技能 Skills"><SkillPanel /></a-tab-pane>
       <a-tab-pane key="mcp" tab="MCP 外部工具"><McpPanel /></a-tab-pane>
-      <a-tab-pane key="scheduled" tab="定时任务"><ScheduledPanel /></a-tab-pane>
+      <!-- 定时任务属治理/运维类，排期一律放最后 -->
       <a-tab-pane key="workflow" tab="工作流"><WorkflowPanel /></a-tab-pane>
+      <a-tab-pane key="scheduled" tab="定时任务"><ScheduledPanel /></a-tab-pane>
     </a-tabs>
   </div>
 </template>
@@ -31,7 +32,7 @@ import WorkflowPanel from './WorkflowPanel.vue'
 const route = useRoute()
 const router = useRouter()
 
-const TABS = ['providers', 'agents', 'skills', 'mcp', 'scheduled', 'workflow']
+const TABS = ['providers', 'agents', 'skills', 'mcp', 'workflow', 'scheduled']
 
 const active = computed({
   get: () => {

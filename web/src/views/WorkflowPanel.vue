@@ -7,16 +7,28 @@
     <div class="app-page-head">
       <h1 class="app-page-title">工作流</h1>
       <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
-      <button class="app-btn" style="margin-left:auto" @click="openEditor('')">
-        <plus-outlined /> 新建工作流
-      </button>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
-      <button class="app-btn" @click="openTemplates">
+      <button class="app-btn" style="margin-left:auto" @click="openTemplates">
         <appstore-outlined /> 模板库
       </button>
       <button class="app-btn" @click="pickImport">
         <upload-outlined /> 导入
       </button>
+      <button class="app-btn" @click="openEditor('')">
+        <plus-outlined /> 新建工作流
+      </button>
+      <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起——点「批量管理」进入批量模式
+          （卡片出现勾选框）；批量模式内按钮常驻未选禁用；开关放最右：进出模式自身位置不动 -->
+      <div v-if="rows.length" class="batch-group">
+        <template v-if="batchMode">
+          <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchPublish">发布</button>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchUnpublish">下线</button>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchExport">导出</button>
+          <button class="app-btn ghost small wf-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+        </template>
+        <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+      </div>
       <input ref="importInput" type="file" accept=".json,application/json" style="display:none" @change="doImport" />
     </div>
 
@@ -32,6 +44,7 @@
         <div v-else class="wf-list">
           <div v-for="r in rows" :key="r.id" class="app-card wf-card">
             <div class="wf-head">
+              <a-checkbox v-if="batchMode" class="wf-check" :checked="selected.includes(r.id)" @change="toggleSelect(r.id)" />
               <!-- 状态用「色点 + 文字」：一眼分清发布态，不靠大色块 -->
               <span class="wf-dot" :class="r.status === 'published' ? 'dot-pub' : 'dot-draft'" />
               <span class="wf-name">{{ r.name }}</span>
@@ -131,7 +144,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
@@ -142,7 +155,8 @@ import WorkflowRunHistory from './WorkflowRunHistory.vue'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
-  listWorkflowTemplates, createWorkflow, getWorkflow
+  listWorkflowTemplates, createWorkflow, getWorkflow,
+  batchDeleteWorkflows, batchPublishWorkflows, batchUnpublishWorkflows
 } from '../api'
 
 const rows = ref([])
@@ -156,11 +170,124 @@ const versionLoading = ref(false)
 const versionRow = ref(null)
 const versions = ref([])
 
+// ---- 批量操作：卡片勾选 + 全选 + 批量发布/下线/导出/删除 ----
+const selected = ref([])        // 勾选的工作流 id
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+const allChecked = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
+const someChecked = computed(() => selected.value.length > 0 && selected.value.length < rows.value.length)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : rows.value.map(r => r.id) }
+
+/** 批量结果汇报：全成功走 message；有失败条目逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个工作流`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个工作流？`,
+    content: '工作流定义会被删除；已产生的运行记录会保留（回放与审计价值独立于定义存在）。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteWorkflows([...selected.value])
+        reportBatch(r, '删除')
+        await load()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
+
+const doBatchPublish = async () => {
+  batchBusy.value = true
+  try {
+    const r = await batchPublishWorkflows([...selected.value], '')
+    reportBatch(r, '发布')
+    await load()
+  } catch (e) {
+    message.error('批量发布失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+const doBatchUnpublish = async () => {
+  batchBusy.value = true
+  try {
+    const r = await batchUnpublishWorkflows([...selected.value])
+    reportBatch(r, '下线')
+    await load()
+  } catch (e) {
+    message.error('批量下线失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+/** 批量导出：逐个取详情，合并为一个 {items:[...]} 文件下载（导入端识别 items 循环创建） */
+const doBatchExport = async () => {
+  batchBusy.value = true
+  try {
+    const items = []
+    for (const id of selected.value) {
+      const r = await getWorkflow(id)
+      const wf = (r && r.data) || {}
+      if (!wf.dsl) { message.error(`「${wf.name || id}」没有 DSL 可导出，已中止`); return }
+      items.push({ name: wf.name, description: wf.description, dsl: JSON.parse(wf.dsl) })
+    }
+    const payload = {
+      exportedFrom: 'wenqu-workflow',
+      exportedAt: new Date().toISOString(),
+      items
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `workflows-${items.length}.workflow.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    message.success(`已导出 ${items.length} 个工作流`)
+  } catch (e) {
+    message.error('批量导出失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
 const load = async () => {
   loading.value = true
   try {
     const r = await listWorkflows()
     rows.value = (r && r.data) || []
+    // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+    const alive = new Set(rows.value.map(x => x.id))
+    selected.value = selected.value.filter(id => alive.has(id))
   } catch (e) {
     message.error('工作流加载失败：' + (e.message || '请刷新重试'))
     rows.value = []
@@ -314,6 +441,8 @@ const doImport = async ev => {
   try {
     const text = await file.text()
     const parsed = JSON.parse(text)
+    // 批量导出格式（{items:[...]}）：逐条创建，部分失败逐条汇报
+    if (parsed && Array.isArray(parsed.items)) { await importMany(parsed.items, file.name); return }
     const dsl = parsed && parsed.dsl ? parsed.dsl : parsed
     const name = (parsed && typeof parsed.name === 'string' && parsed.name.trim()) || '导入的工作流'
     if (!dsl || !Array.isArray(dsl.nodes)) {
@@ -335,6 +464,36 @@ const doImport = async ev => {
   } catch (e) {
     message.error('导入失败：' + (e.message || '（不是合法 JSON 文件）'))
   }
+}
+
+/** 批量导入：items 数组逐条走创建接口（复用全部校验）；成功 n 条 + 失败条目逐条带原因 */
+const importMany = async (items, fileName) => {
+  let ok = 0
+  const failed = []
+  for (const item of items) {
+    if (!item || !item.dsl || !Array.isArray(item.dsl.nodes)) {
+      failed.push(`「${(item && item.name) || '未命名'}」：没有可识别的 DSL（缺少 nodes 字段）`)
+      continue
+    }
+    try {
+      const r = await createWorkflow({
+        name: item.name || '导入的工作流',
+        description: item.description || `导入自 ${fileName}`,
+        dsl: JSON.stringify(item.dsl)
+      })
+      if (r && r.success) ok++
+      else failed.push(`「${(item && item.name) || '未命名'}」：${(r && r.msg) || '校验未通过'}`)
+    } catch (e) {
+      failed.push(`「${(item && item.name) || '未命名'}」：${e.message || ''}`)
+    }
+  }
+  await load()
+  if (!failed.length) message.success(`已导入 ${ok} 个工作流`)
+  else Modal.warning({
+    title: `导入完成：成功 ${ok} 个，失败 ${failed.length} 个`,
+    content: failed.join('；'),
+    okText: '知道了'
+  })
 }
 
 /** 导出：下载 {exportedFrom, name, description, dsl} 包装 JSON（导入接口同款可再导入） */
@@ -369,6 +528,11 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 批量操作区（页头最右，分隔线与常规按钮划清界限）：开关恒在最右、进出模式位置不动 */
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+/* 「批量管理」开关的激活态：品牌色描边提示当前处于批量模式 */
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.wf-check { flex: none; }
 .wf-list { display: flex; flex-direction: column; gap: 10px; }
 .wf-card { display: flex; flex-direction: column; gap: 8px; transition: box-shadow .15s, border-color .15s; }
 .wf-card:hover { box-shadow: 0 3px 12px rgba(0, 0, 0, .07); }

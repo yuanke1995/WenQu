@@ -39,6 +39,12 @@ public class KnowledgeBase {
     private String description;
 
     /**
+     * 图标（与智能体 icon 同口径）：'wenqu'=问渠品牌标；emoji 字符原样存、原样渲染；空=默认库图标。
+     * 默认库（is_default=1）恒为 'wenqu' 且不可修改（新建即写死、编辑改值后端拒绝、存量行启动回填）。
+     */
+    private String icon;
+
+    /**
      * 检索参数（JSON：{"retrieval.vecThreshold":"0.3","retrieval.vectorTopK":"30",...}）。
      * 空=全部继承全局检索设置；只允许检索/重排类的键（白名单在读取处校验）。
      */

@@ -5,28 +5,34 @@
   <div class="app-page">
     <div class="app-page-head">
       <h1 class="app-page-title">技能</h1>
+      <span class="head-count">共 <b>{{ skills.length }}</b> 个 · 生效中 <b>{{ activeCount }}</b></span>
       <span class="head-hint-plain">固化「这类问题该怎么做」的做法说明，模型按需读取后照做；技能只属于你自己</span>
-      <button class="app-btn" style="margin-left:auto" @click="openCreate">
-        <plus-outlined /> 新建技能
-      </button>
+      <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 安装 + 新建 + 批量区（分隔线独立成区） -->
+      <div class="head-r">
+        <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或描述">
+          <template #prefix><search-outlined class="head-search-ic" /></template>
+        </a-input>
+        <a-tooltip title="刷新列表">
+          <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
+        </a-tooltip>
+        <button class="app-btn ghost small" @click="openInstall">从 URL 安装</button>
+        <button class="app-btn" @click="openCreate">
+          <plus-outlined /> 新建技能
+        </button>
+        <!-- 批量区：默认收起，点「批量管理」进入批量模式；开关放最右：进出模式自身位置不动 -->
+        <div v-if="skills.length" class="batch-group">
+          <template v-if="batchMode">
+            <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchDisabled(false)">启用</button>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchDisabled(true)">停用</button>
+            <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+          </template>
+          <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+        </div>
+      </div>
     </div>
 
     <div class="app-page-body">
-      <div class="key-bar">
-        <div class="key-bar-left">
-          <a-input v-model:value="keyword" placeholder="搜索技能名称 / 描述" allow-clear size="small" class="res-search">
-            <template #prefix><search-outlined class="res-search-ic" /></template>
-          </a-input>
-          <span class="key-stat">共 <b>{{ skills.length }}</b> 个技能 · 生效中 <b>{{ activeCount }}</b></span>
-        </div>
-        <div class="key-bar-actions">
-          <a-tooltip title="刷新列表">
-            <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
-          </a-tooltip>
-          <button class="app-btn ghost small" @click="openInstall">从 URL 安装</button>
-        </div>
-      </div>
-
       <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
                message="平台未开启「工具调用」总开关"
                description="技能照常展示，但模型无法调用 readSkill 读取技能正文——清单提示会失效。需管理员在「系统设置 → 工具调用」中开启总开关。" />
@@ -52,6 +58,8 @@
           <div class="skill-grid">
             <div v-for="s in g.list" :key="s.dirName" class="app-card skill-card">
               <div class="skill-card-head">
+                <a-checkbox v-if="batchMode" class="skill-check" :checked="selected.includes(s.dirName)"
+                            @change="toggleSelect(s.dirName)" />
                 <span class="skill-card-name" :title="s.name">{{ s.name }}</span>
                 <span v-if="s.disabled" class="app-pill warn key-tag">已停用</span>
                 <span v-else class="app-pill ok key-tag">生效中</span>
@@ -130,9 +138,10 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl } from '../api'
+import { listSkills, getSkillDetail, createSkill, setSkillDisabled, deleteSkill, installSkillFromUrl,
+         batchDeleteSkills, batchSetSkillsDisabled } from '../api'
 import { renderMd } from '../utils/markdown'
 
 const skills = ref([])
@@ -156,6 +165,75 @@ const filtered = computed(() => {
   return skills.value.filter(s =>
     String(s.name || '').toLowerCase().includes(kw) || String(s.description || '').toLowerCase().includes(kw))
 })
+
+// ---- 批量操作：全选作用于当前搜索过滤后的可见项；内置技能可停用、删除时后端逐条拒绝 ----
+const selected = ref([])
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+const selectableIds = computed(() => filtered.value.map(s => s.dirName))
+const allChecked = computed(() =>
+  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
+const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+
+/** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个技能`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchDisabled = async disabled => {
+  batchBusy.value = true
+  try {
+    const r = await batchSetSkillsDisabled([...selected.value], disabled)
+    reportBatch(r, disabled ? '停用' : '启用')
+    await load()
+  } catch (e) {
+    message.error((disabled ? '批量停用' : '批量启用') + '失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个技能？`,
+    content: '技能删除后不再注入清单；内置技能不可删（后端逐条拒绝并给出原因）。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteSkills([...selected.value])
+        reportBatch(r, '删除')
+        await load()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
 /** 我的技能在前，内置技能在后（内置不可删、只能停用） */
 const groups = computed(() => [
   { title: '我的技能', list: filtered.value.filter(s => s.source !== 'builtin') },
@@ -168,6 +246,9 @@ const load = async () => {
     const r = await listSkills()
     if (r.success && r.data) {
       skills.value = r.data.skills || []
+      // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+      const alive = new Set(skills.value.map(x => x.dirName))
+      selected.value = selected.value.filter(id => alive.has(id))
       toolsEnabled.value = r.data.toolsEnabled !== false
     }
   } catch (e) { message.error(e.message || '技能列表加载失败') }
@@ -251,15 +332,17 @@ onMounted(load)
 </script>
 
 <style scoped>
-.key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
-.key-stat { font-size: 12px; color: var(--app-text2); }
-.key-stat b { color: var(--app-text); font-weight: 600; }
+/* 页头右侧工具组（对齐智能体 Tab）：批量操作 + 搜索 + 刷新 + 安装 + 新建 */
+.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.head-count b { color: var(--app-text); font-weight: 600; }
+.head-search { width: 200px; }
+.head-search-ic { color: var(--app-text3); font-size: 12px; }
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.batch-del { color: var(--app-danger); }
+.skill-check { flex: none; }
 .key-dim { color: var(--app-text3); font-size: 12px; }
-.res-search { width: 220px; }
-.res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
-.res-search-ic { color: var(--app-text3); font-size: 12px; }
 /* 空状态：与「模型供应商」一致——白卡片居中，不用虚线框 */
 .key-empty { text-align: center; padding: 40px 20px; }
 .key-empty-title { font-weight: 600; margin-bottom: 6px; }

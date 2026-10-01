@@ -3,6 +3,7 @@ package com.wisesoft.ai.controller;
 import com.wisesoft.ai.dto.ResultJson;
 import com.wisesoft.ai.service.AgentService;
 import com.wisesoft.ai.service.ResourceVisibilityService;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -87,7 +89,7 @@ public class AgentController {
         return ResultJson.ok(agentService.subAgents());
     }
 
-    @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标 / emoji 字符，省略=默认展示)/"
+    @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"
             + "description/model/systemPrompt/knowledgeScope/"
             + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
@@ -97,7 +99,7 @@ public class AgentController {
         return ResultJson.ok(agentService.create(body));
     }
 
-    @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标 / emoji；内置智能体的名称不可修改）；"
+    @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标（内置「问渠」专属）/ emoji；内置智能体的名称不可修改）；"
             + "工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
@@ -111,6 +113,39 @@ public class AgentController {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentService.delete(id);
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "批量删除智能体", description = "body: {ids:[...]}；逐条按单条删除口径判权"
+            + "（创建者/被授权人/管理员，内置智能体不可删）；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @PostMapping("/batch-delete")
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要删除的智能体");
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            // get() 对不存在/不可读一律返回 null：逐条进 failed 对账，不静默丢
+            com.wisesoft.ai.model.Agent a = agentService.get(id);
+            if (a == null) {
+                failed.add(BatchResults.failItem(id, null, "不存在或无权操作"));
+                continue;
+            }
+            if (!canManage(a)) {
+                failed.add(BatchResults.failItem(id, a.getName(), "仅可管理自己创建或被授权管理的智能体"));
+                continue;
+            }
+            try {
+                agentService.delete(id);
+                succeeded.add(id);
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(id, a.getName(), BatchResults.errMsg(e)));
+            }
+        }
+        return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 
     @Operation(summary = "设为默认", description = "设为默认智能体（其余清零）；仅影响前端下拉预选，不自动强制应用。全局动作，仅管理员")

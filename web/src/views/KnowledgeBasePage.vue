@@ -12,7 +12,7 @@
       <div class="kb-cards">
         <div v-for="kb in list" :key="kb.id" class="app-card kb-card" @click="openDocs(kb)">
           <div class="kb-card-head">
-            <database-outlined class="kb-card-ic" />
+            <KbIcon :kb="kb" :size="22" />
             <span class="kb-name">{{ kb.name }}</span>
             <a-tag v-if="kb.isDefault === 1" color="blue" style="margin-left:auto">默认</a-tag>
           </div>
@@ -99,7 +99,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { PlusOutlined, DatabaseOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -107,6 +107,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 import { listKnowledgeBases, deleteKnowledgeBase, graphBuild, graphStatus, graphTriples, graphClear } from '../api'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
+import KbIcon from '../components/KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync, ensureAuth } from '../utils/auth'
 
@@ -339,7 +340,6 @@ onBeforeUnmount(() => {
 .kb-card { cursor: pointer; display: flex; flex-direction: column; gap: 8px; transition: border-color .15s, box-shadow .15s; }
 .kb-card:hover { border-color: var(--app-accent); box-shadow: 0 4px 16px -6px rgba(46, 107, 230, .25); }
 .kb-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.kb-card-ic { color: var(--app-accent); font-size: 16px; flex: none; }
 .kb-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-card-desc {
   margin: 0; font-size: 12px; color: var(--app-text3); line-height: 1.6; min-height: 38px;

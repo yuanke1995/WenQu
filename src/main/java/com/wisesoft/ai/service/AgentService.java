@@ -282,8 +282,15 @@ public class AgentService {
             a.setName(name);
         }
         if (body.containsKey("description")) a.setDescription(asText(body.get("description"), 500));
-        // 图标：'wenqu'=问渠品牌标 / emoji 字符；空串归一为 null（= 默认展示，前端按内置标记兜底品牌标）
-        if (body.containsKey("icon")) a.setIcon(asText(body.get("icon"), 32));
+        // 图标：'wenqu'=问渠品牌标 / emoji 字符；空串归一为 null（= 默认展示，前端按内置标记兜底品牌标）。
+        // 品牌标为内置「问渠」专属：非内置智能体（含新建）不可使用，直接拒绝（fail-loud）
+        if (body.containsKey("icon")) {
+            String icon = asText(body.get("icon"), 32);
+            if ("wenqu".equals(icon) && !Integer.valueOf(1).equals(a.getIsBuiltin())) {
+                throw new com.wisesoft.ai.common.BizException("问渠品牌标为内置「问渠」专属，其它智能体不可使用");
+            }
+            a.setIcon(icon);
+        }
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
         if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));

@@ -34,6 +34,9 @@ import java.util.Set;
 @Service
 public class KnowledgeBaseService {
 
+    /** 默认库固定图标：问渠品牌标（前端 KbIcon 按此值渲染 BrandMark；默认库图标不可修改） */
+    public static final String ICON_BRAND = "wenqu";
+
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
     private final AgentMapper agentMapper;
@@ -71,9 +74,17 @@ public class KnowledgeBaseService {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setName(str(body.get("name")));
         kb.setDescription(str(body.get("description")));
+        int isDefault = toInt(body.get("isDefault"), 0);
+        kb.setIsDefault(isDefault);
+        // 图标（与智能体同口径）：'wenqu'=问渠品牌标 / emoji 原样存；空=null 默认展示。
+        // 品牌标为默认库专属：非默认库不可用（直接拒绝）；默认库在建库时就写死品牌标
+        String icon = iconOf(body.get("icon"));
+        if (isDefault != 1 && ICON_BRAND.equals(icon)) {
+            throw new com.wisesoft.ai.common.BizException("问渠品牌标为默认知识库专属，其它知识库不可使用");
+        }
+        kb.setIcon(isDefault == 1 ? ICON_BRAND : icon);
         kb.setQueryParams(str(body.get("queryParams")));
         kb.setParseParams(str(body.get("parseParams")));
-        kb.setIsDefault(toInt(body.get("isDefault"), 0));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
         kb.setShareConfig(str(body.get("shareConfig")));
@@ -96,8 +107,32 @@ public class KnowledgeBaseService {
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
         // 只在 body 中出现的字段才写（含显式 null = 清空该维度回退到继承）
         LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getId, id);
-        if (body.containsKey("name")) upd.set(KnowledgeBase::getName, str(body.get("name")));
+        if (body.containsKey("name")) {
+            // 默认库（问渠）名称固定：同内置智能体口径——与现值不同直接拒绝（fail-loud）；
+            // 前端置灰回显原名，正常保存无差异不会被拦
+            String requested = body.get("name") == null ? null : String.valueOf(body.get("name")).trim();
+            if (kb.getIsDefault() != null && kb.getIsDefault() == 1 && !requested.equals(kb.getName())) {
+                throw new com.wisesoft.ai.common.BizException("默认知识库「" + kb.getName() + "」的名称不可修改");
+            }
+            upd.set(KnowledgeBase::getName, requested);
+        }
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
+        // 图标：'wenqu'=问渠品牌标 / emoji；空串归一为 null（= 默认展示）。
+        // 品牌标为默认库专属：默认库恒为 wenqu（改其它值拒绝）；非默认库用 wenqu 也拒绝。
+        // 目标默认状态按「body 带了 isDefault 就用新值」判——「晋升为默认库 + 品牌标」一次提交不被误拒
+        int targetDefault = body.containsKey("isDefault")
+                ? toInt(body.get("isDefault"), 0)
+                : (kb.getIsDefault() == null ? 0 : kb.getIsDefault());
+        if (body.containsKey("icon")) {
+            String icon = iconOf(body.get("icon"));
+            if (targetDefault == 1 && !ICON_BRAND.equals(icon)) {
+                throw new com.wisesoft.ai.common.BizException("默认知识库固定使用问渠品牌标，图标不可修改");
+            }
+            if (targetDefault != 1 && ICON_BRAND.equals(icon)) {
+                throw new com.wisesoft.ai.common.BizException("问渠品牌标为默认知识库专属，其它知识库不可使用");
+            }
+            upd.set(KnowledgeBase::getIcon, icon);
+        }
         if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
         if (body.containsKey("parseParams")) upd.set(KnowledgeBase::getParseParams, str(body.get("parseParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
@@ -111,7 +146,11 @@ public class KnowledgeBaseService {
         }
         if (body.containsKey("isDefault")) {
             int isDef = toInt(body.get("isDefault"), 0);
-            if (isDef == 1) clearDefault();
+            if (isDef == 1) {
+                clearDefault();
+                // 晋升为默认库：图标随默认库规则固定为问渠品牌标（本分支在 icon 分支之后，set 同列后写生效）
+                upd.set(KnowledgeBase::getIcon, ICON_BRAND);
+            }
             upd.set(KnowledgeBase::getIsDefault, isDef);
         }
         // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
@@ -219,6 +258,8 @@ public class KnowledgeBaseService {
                 def.setName("默认知识库");
                 def.setDescription("未显式指定归属的文档都归入本库（历史数据自动兼容）");
                 def.setIsDefault(1);
+                // 默认库恒为问渠品牌标（与新建/编辑的强制口径一致）
+                def.setIcon(ICON_BRAND);
                 def.setDeleted(0);
                 def.setCreatedBy("system");
                 LocalDateTime now = LocalDateTime.now();
@@ -251,6 +292,13 @@ public class KnowledgeBaseService {
             if (def != null && (def.getId() == null || def.getId().isBlank())) {
                 healEmptyDefaultId(def);
                 cachedDefaultId = null;
+            }
+            // 存量默认库图标回填：默认库恒为问渠品牌标（功能上线前的老行 icon 为空，补齐后与新建口径一致）
+            if (def != null && (def.getIcon() == null || def.getIcon().isBlank())) {
+                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getId, def.getId())
+                        .set(KnowledgeBase::getIcon, ICON_BRAND));
+                log.info("[KB] 存量默认知识库图标已回填为问渠品牌标");
             }
         } catch (Exception e) {
             // 启动自愈失败不阻断应用；defaultId() 触达时还有兜底
@@ -327,6 +375,8 @@ public class KnowledgeBaseService {
             m.put("id", kb.getId());
             m.put("name", kb.getName());
             m.put("description", kb.getDescription());
+            // 图标随列表下发：卡片按 KbIcon 口径渲染（'wenqu'=品牌标 / emoji / 空=默认库图标）
+            m.put("icon", kb.getIcon());
             m.put("queryParams", kb.getQueryParams());
             m.put("parseParams", kb.getParseParams());
             // 向量模型引用要随列表下发：卡片展示绑定模型名 + 编辑弹窗回显（缺失会被当成"未绑定"）
@@ -357,6 +407,14 @@ public class KnowledgeBaseService {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /** 图标归一化（与智能体 asText 同口径）：null/空串 → null（默认展示）；超长截断到 32（列宽 VARCHAR(32)） */
+    private static String iconOf(Object o) {
+        if (o == null) return null;
+        String v = String.valueOf(o).trim();
+        if (v.isEmpty()) return null;
+        return v.length() > 32 ? v.substring(0, 32) : v;
     }
 
     private static int toInt(Object o, int def) {

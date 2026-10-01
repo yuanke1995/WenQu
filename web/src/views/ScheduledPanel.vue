@@ -6,6 +6,17 @@
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建任务
       </button>
+      <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起，点「批量管理」进入批量模式；
+           开关放最右：进出模式自身位置不动 -->
+      <div v-if="rows.length" class="batch-group">
+        <template v-if="batchMode">
+          <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
+          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
+          <button class="app-btn ghost small sched-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+        </template>
+        <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+      </div>
     </div>
 
     <div class="app-page-body">
@@ -20,6 +31,7 @@
         <div v-else class="sched-list">
           <div v-for="r in rows" :key="r.id" class="app-card sched-card">
             <div class="sched-head">
+              <a-checkbox v-if="batchMode" class="sched-check" :checked="selected.includes(r.id)" @change="toggleSelect(r.id)" />
               <span class="sched-name">{{ r.name }}</span>
               <a-tag :color="r.enabled ? 'green' : 'default'">{{ r.enabled ? '已启用' : '已停用' }}</a-tag>
               <a-tag v-if="r.lastRun" :color="runColor(r.lastRun.status)">{{ runLabel(r.lastRun.status) }}</a-tag>
@@ -120,7 +132,8 @@ import { PlusOutlined, PlayCircleOutlined, DeleteOutlined, HistoryOutlined } fro
 import ModelSelect from '../components/ModelSelect.vue'
 import {
   listScheduledJobs, createScheduledJob, updateScheduledJob, deleteScheduledJob,
-  toggleScheduledJob, runScheduledJob, listScheduledRuns, listAvailableAgents
+  toggleScheduledJob, runScheduledJob, listScheduledRuns, listAvailableAgents,
+  batchDeleteScheduledJobs, batchToggleScheduledJobs
 } from '../api'
 
 const router = useRouter()
@@ -129,6 +142,73 @@ const rows = ref([])
 const loading = ref(false)
 const saving = ref(false)
 const busyId = ref('')
+
+// ---- 批量操作：任务全部可勾选（个人资产） ----
+const selected = ref([])
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+const allChecked = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
+const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : rows.value.map(r => r.id) }
+
+/** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个任务`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchEnabled = async on => {
+  batchBusy.value = true
+  try {
+    const r = await batchToggleScheduledJobs([...selected.value], on)
+    reportBatch(r, on ? '启用' : '停用')
+    await load()
+  } catch (e) {
+    message.error((on ? '批量启用' : '批量停用') + '失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个定时任务？`,
+    content: '任务删除后不再触发；已产生的执行记录与结果会话会保留。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteScheduledJobs([...selected.value])
+        reportBatch(r, '删除')
+        await load()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
 const showEdit = ref(false)
 const editing = ref(null)
 const showRuns = ref(false)
@@ -167,6 +247,9 @@ const load = async () => {
   try {
     const r = await listScheduledJobs()
     rows.value = (r && r.data) || []
+    // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+    const alive = new Set(rows.value.map(x => x.id))
+    selected.value = selected.value.filter(id => alive.has(id))
   } catch (e) {
     message.error('定时任务加载失败：' + (e.message || '请刷新重试'))
     rows.value = []
@@ -329,6 +412,10 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 批量操作区（页头最右，分隔线与常规按钮划清界限）：开关恒在最右、进出模式位置不动 */
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.sched-check { flex: none; }
 .sched-list { display: flex; flex-direction: column; gap: 10px; }
 .sched-card { display: flex; flex-direction: column; gap: 8px; }
 .sched-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

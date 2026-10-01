@@ -17,6 +17,7 @@ import com.wisesoft.ai.model.WorkflowVersion;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.model.User;
+import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -190,6 +191,70 @@ public class WorkflowService {
     public void delete(String id) {
         Workflow row = getOwn(id);
         workflowMapper.deleteById(row.getId());
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因汇报，不静默吞
+    //（结果结构收口在 {@link BatchResults}，与其余各域的批量接口同口径）
+    // --------------------------------------------------------------------------------------------------
+
+    /** 批量删除（仅本人创建的可删）：返回 {succeeded:[id], failed:[{id,name,error}]} */
+    public Map<String, Object> batchDelete(List<String> ids) {
+        List<Workflow> rows = loadOwnRows(ids);
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (Workflow row : rows) {
+            try {
+                workflowMapper.deleteById(row.getId());
+                log.info("[WORKFLOW] 批量删除工作流 {}（{}）uid={}", row.getName(), row.getId(), row.getUid());
+                succeeded.add(row.getId());
+            } catch (Exception e) {
+                failed.add(BatchResults.failItem(row.getId(), row.getName(), BatchResults.errMsg(e)));
+            }
+        }
+        return BatchResults.result(ids, succeeded, failed);
+    }
+
+    /** 批量发布：逐条复用单条发布语义（草稿校验 → 版本冻结）；校验不过的条目进 failed 带原因 */
+    public Map<String, Object> batchPublish(List<String> ids, String note) {
+        List<Workflow> rows = loadOwnRows(ids);
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (Workflow row : rows) {
+            try {
+                publish(row.getId(), note);
+                succeeded.add(row.getId());
+            } catch (BizException e) {
+                failed.add(BatchResults.failItem(row.getId(), row.getName(), e.getMessage()));
+            }
+        }
+        return BatchResults.result(ids, succeeded, failed);
+    }
+
+    /** 批量下线：逐条已发布 → 草稿；非已发布条目进 failed 带原因（不静默跳过） */
+    public Map<String, Object> batchUnpublish(List<String> ids) {
+        List<Workflow> rows = loadOwnRows(ids);
+        List<String> succeeded = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (Workflow row : rows) {
+            try {
+                unpublish(row.getId());
+                succeeded.add(row.getId());
+            } catch (BizException e) {
+                failed.add(BatchResults.failItem(row.getId(), row.getName(), e.getMessage()));
+            }
+        }
+        return BatchResults.result(ids, succeeded, failed);
+    }
+
+    /** 批量口径只碰本人创建的工作流；空选 = 参数错误 */
+    private List<Workflow> loadOwnRows(List<String> ids) {
+        if (ids == null || ids.isEmpty()) throw new BizException("请先选择要操作的工作流");
+        List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .in(Workflow::getId, ids)
+                .eq(Workflow::getUid, RequestUser.uid()));
+        if (rows.isEmpty()) throw new BizException("所选工作流不存在或无权操作");
+        return rows;
     }
 
     /**

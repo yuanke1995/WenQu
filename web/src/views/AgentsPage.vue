@@ -16,6 +16,15 @@
             <button class="app-icon-btn" :disabled="loading || !agents.length" aria-label="委派编排视图" @click="topoOpen = true"><apartment-outlined /></button>
           </a-tooltip>
           <button class="app-btn small" @click="openCreate">新建智能体</button>
+          <!-- 批量区（分隔线独立成区，不与搜索/新建挤作一堆）。默认收起，点「批量管理」进入批量模式；
+               开关放最右：进出模式自身位置不动；内置智能体不可删，不进勾选范围 -->
+          <div v-if="agents.length" class="batch-group">
+            <template v-if="batchMode">
+              <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+              <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+            </template>
+            <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+          </div>
         </div>
       </div>
 
@@ -49,6 +58,8 @@
             <div class="ap-grid">
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card" @click="openEdit(a)">
                 <div class="ap-card-head">
+                  <a-checkbox v-if="batchMode && !isBuiltin(a)" class="ap-check" :checked="selected.includes(a.id)"
+                              @click.stop @change="toggleSelect(a.id)" />
                   <AgentAvatar :agent="a" :size="24" />
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
                   <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
@@ -123,7 +134,7 @@
             </a-form-item>
             <a-form-item label="图标">
               <div class="ap-icon-pick">
-                <button v-for="opt in ICON_OPTIONS" :key="opt.value || 'default'" type="button"
+                <button v-for="opt in iconOptions" :key="opt.value || 'default'" type="button"
                         class="ap-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
                         :title="opt.label" :aria-pressed="(form.icon || '') === opt.value"
                         @click="form.icon = opt.value">
@@ -400,14 +411,14 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
   SafetyOutlined, PartitionOutlined, GlobalOutlined
 } from '@ant-design/icons-vue'
-import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
+import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
@@ -600,6 +611,11 @@ function buildQueryParams (qp, rr) {
 }
 
 const form = ref(blankForm())
+
+// 图标可选集按身份过滤：问渠品牌标为内置「问渠」专属（后端同样强制），其它智能体的选项里不出现
+const iconOptions = computed(() => form.value.isBuiltin === 1
+  ? ICON_OPTIONS
+  : ICON_OPTIONS.filter(o => o.value !== 'wenqu'))
 
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
@@ -953,6 +969,9 @@ const reload = async () => {
     workflowRows.value = (wr && wr.success && wr.data) ? wr.data : []
     if (pd && pd.success && pd.data) qpDefaults.value = pd.data
     if (ar.success && ar.data) agents.value = ar.data
+    // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+    const alive = new Set(agents.value.map(x => x.id))
+    selected.value = selected.value.filter(id => alive.has(id))
     if (dr.success && dr.data) {
       const list = Array.isArray(dr.data) ? dr.data : (dr.data.list || [])
       kbOptions.value = list.map(k => ({
@@ -1115,6 +1134,65 @@ const doDelete = async id => {
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
 }
+
+// ==================== 批量操作：内置智能体不可删，不进勾选范围 ====================
+const selected = ref([])
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+/** 可勾选集合 = 当前搜索过滤后的非内置智能体（两组：主 + 子） */
+const selectableIds = computed(() =>
+  sections.value.flatMap(sec => sec.members.filter(a => !isBuiltin(a)).map(a => a.id)))
+const allChecked = computed(() =>
+  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
+const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+
+/** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个智能体`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个智能体？`,
+    content: '对话页将不再可选；内置智能体不可删（后端逐条拒绝并给出原因）。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteAgents([...selected.value])
+        reportBatch(r, '删除')
+        await reload()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
+
 const doSetDefault = async id => {
   try {
     const r = await setAgentDefault(id)
@@ -1128,6 +1206,11 @@ onMounted(async () => { })
 </script>
 
 <style scoped>
+/* 批量操作区（页头最右，分隔线与搜索/新建划清界限）：开关恒在最右、进出模式位置不动 */
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.batch-del { color: var(--app-danger); }
+.ap-check { flex: none; }
 .ap-count { font-size: 12px; color: var(--app-text3); }
 .ap-head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ap-search { width: 200px; }

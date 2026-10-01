@@ -5,33 +5,39 @@
   <div class="app-page">
     <div class="app-page-head">
       <h1 class="app-page-title">MCP 外部工具</h1>
+      <span class="head-count">
+        共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
+        <span v-if="checkedAt" class="head-dim">· 更新于 {{ checkedAt }}</span>
+      </span>
       <span class="head-hint-plain">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己</span>
-      <button class="app-btn" style="margin-left:auto" @click="openAdd">
-        <plus-outlined /> 添加服务
-      </button>
+      <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 重连 + 添加 + 批量区（分隔线独立成区） -->
+      <div class="head-r">
+        <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或地址">
+          <template #prefix><search-outlined class="head-search-ic" /></template>
+        </a-input>
+        <a-tooltip title="刷新列表与连接状态（未连上的服务会重试连接）">
+          <button class="app-icon-btn" aria-label="刷新列表与连接状态" :disabled="loading" @click="loadStatus(true)"><reload-outlined /></button>
+        </a-tooltip>
+        <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
+          {{ reloading ? '重连中…' : '全部重连' }}
+        </button>
+        <button class="app-btn" @click="openAdd">
+          <plus-outlined /> 添加服务
+        </button>
+        <!-- 批量区：默认收起，点「批量管理」进入批量模式；开关放最右：进出模式自身位置不动 -->
+        <div v-if="servers.length" class="batch-group">
+          <template v-if="batchMode">
+            <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
+            <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+          </template>
+          <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+        </div>
+      </div>
     </div>
 
     <div class="app-page-body">
-      <div class="key-bar">
-        <div class="key-bar-left">
-          <a-input v-model:value="keyword" placeholder="搜索服务名称 / 地址" allow-clear size="small" class="res-search">
-            <template #prefix><search-outlined class="res-search-ic" /></template>
-          </a-input>
-          <span class="key-stat">
-            共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
-            <span v-if="checkedAt" class="key-dim">· 更新于 {{ checkedAt }}</span>
-          </span>
-        </div>
-        <div class="key-bar-actions">
-          <a-tooltip title="刷新列表与连接状态（未连上的服务会重试连接）">
-            <button class="app-icon-btn" aria-label="刷新列表与连接状态" :disabled="loading" @click="loadStatus(true)"><reload-outlined /></button>
-          </a-tooltip>
-          <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
-            {{ reloading ? '重连中…' : '全部重连' }}
-          </button>
-        </div>
-      </div>
-
       <!-- 工具调用总开关由管理员在系统设置里控制：没开时连上了也调不动，必须让用户看见 -->
       <a-alert v-if="!toolsEnabled" type="warning" show-icon style="margin-bottom:12px"
                message="平台未开启「工具调用」总开关"
@@ -61,6 +67,8 @@
                @click="s.connected && toggleTools(s)">
             <div class="mcp-card-info">
               <div class="mcp-card-head">
+                <a-checkbox v-if="batchMode" class="mcp-check" :checked="selected.includes(s.id)"
+                            @click.stop @change="toggleSelect(s.id)" />
                 <span class="mcp-dot" :class="stateCls(s)"></span>
                 <span class="mcp-card-name">{{ s.name }}</span>
                 <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
@@ -132,9 +140,10 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer } from '../api'
+import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
+         batchDeleteMcpServers, batchSetMcpServersEnabled } from '../api'
 
 const servers = ref([])
 const toolsEnabled = ref(true)   // 平台「工具调用」总开关（管理员控制），关了连上也没用
@@ -156,6 +165,75 @@ const filtered = computed(() => {
   return servers.value.filter(s =>
     String(s.name || '').toLowerCase().includes(kw) || String(s.url || '').toLowerCase().includes(kw))
 })
+
+// ---- 批量操作：全选作用于当前搜索过滤后的可见项 ----
+const selected = ref([])
+const batchBusy = ref(false)
+// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
+const batchMode = ref(false)
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) selected.value = []
+}
+const selectableIds = computed(() => filtered.value.map(s => s.id))
+const allChecked = computed(() =>
+  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
+const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
+const toggleSelect = id => {
+  selected.value = selected.value.includes(id)
+    ? selected.value.filter(x => x !== id)
+    : [...selected.value, id]
+}
+const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+
+/** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
+const reportBatch = (r, verb) => {
+  const data = (r && r.data) || {}
+  const okCount = (data.succeeded || []).length
+  const failed = data.failed || []
+  if (!failed.length) {
+    message.success(`已${verb} ${okCount} 个服务`)
+    return
+  }
+  Modal.warning({
+    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
+    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
+    okText: '知道了'
+  })
+}
+
+const doBatchEnabled = async on => {
+  batchBusy.value = true
+  try {
+    const r = await batchSetMcpServersEnabled([...selected.value], on)
+    reportBatch(r, on ? '启用' : '停用')
+    await loadStatus()
+  } catch (e) {
+    message.error((on ? '批量启用' : '批量停用') + '失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+const doBatchDelete = () => {
+  Modal.confirm({
+    title: `删除选中的 ${selected.value.length} 个服务？`,
+    content: '删除后其工具将不再可用（连接池统一重建）；只删你自己登记的服务。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      batchBusy.value = true
+      try {
+        const r = await batchDeleteMcpServers([...selected.value])
+        reportBatch(r, '删除')
+        await loadStatus()
+      } catch (e) {
+        message.error('批量删除失败：' + (e.message || ''))
+      } finally {
+        batchBusy.value = false
+      }
+    }
+  })
+}
 
 /** 失败态去掉 failed: 前缀只留原因；停用是明确语义，不叫「失败」；连接中是后台建连的过渡态 */
 const stateText = s => {
@@ -188,6 +266,9 @@ const schedulePoll = () => {
 const apply = d => {
   toolsEnabled.value = d?.toolsEnabled !== false
   servers.value = d?.servers || []
+  // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
+  const alive = new Set(servers.value.map(x => x.id))
+  selected.value = selected.value.filter(id => alive.has(id))
   checkedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   schedulePoll()
 }
@@ -285,15 +366,18 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 </script>
 
 <style scoped>
-.key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
-.key-stat { font-size: 12px; color: var(--app-text2); }
-.key-stat b { color: var(--app-text); font-weight: 600; }
+/* 页头右侧工具组（对齐智能体 Tab）：批量操作 + 搜索 + 刷新 + 重连 + 添加 */
+.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.head-count b { color: var(--app-text); font-weight: 600; }
+.head-dim { color: var(--app-text3); font-size: 12px; }
+.head-search { width: 200px; }
+.head-search-ic { color: var(--app-text3); font-size: 12px; }
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
+.batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.batch-del { color: var(--app-danger); }
+.mcp-check { flex: none; }
 .key-dim { color: var(--app-text3); font-size: 12px; }
-.res-search { width: 220px; }
-.res-search :deep(.ant-input-affix-wrapper) { border-radius: 8px; }
-.res-search-ic { color: var(--app-text3); font-size: 12px; }
 /* 空状态：与「模型供应商」一致——白卡片居中，不用虚线框 */
 .key-empty { text-align: center; padding: 40px 20px; }
 .key-empty-title { font-weight: 600; margin-bottom: 6px; }
