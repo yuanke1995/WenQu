@@ -45,22 +45,27 @@
 
     <!-- 图谱浏览（图视图 / 列表 + 构建/状态） -->
     <a-modal v-model:open="graphModal" :title="`知识图谱 · ${graphKb?.name || ''}`" :footer="null" width="860px" @after-open="onGraphModalOpen">
+      <!-- 工具栏三段式：左=视图切换（Segmented，导航语义）· 中=数据状态 · 右=动作区（构建/清空/刷新），
+           切换控件与动作按钮从样式上就分组，避免「分不清是 tab 还是按钮」 -->
       <div class="graph-toolbar">
-        <a-radio-group v-model:value="graphView" size="small" button-style="solid" @change="onGraphViewChange">
-          <a-radio-button value="graph">图视图</a-radio-button>
-          <a-radio-button value="list">列表</a-radio-button>
-        </a-radio-group>
-        <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
-          {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱（存量回溯）' }}
-        </a-button>
-        <span class="kb-hint">
+        <a-segmented v-model:value="graphView" size="small" :options="GRAPH_VIEWS" @change="onGraphViewChange" />
+        <span class="kb-hint graph-stat">
           实体 {{ graphInfo.entities || 0 }} · 三元组 {{ graphInfo.triples || 0 }}
           <template v-if="graphInfo.building">（失败 {{ graphInfo.failed || 0 }}）</template>
         </span>
-        <a-popconfirm title="清空该库全部图谱数据？（三元组/实体/抽取记录全删，可重新构建）" ok-text="清空" cancel-text="取消" @confirm="doClearGraph">
-          <a-button size="small" danger>清空图谱</a-button>
-        </a-popconfirm>
-        <a-button size="small" @click="refreshGraph" style="margin-left:auto">刷新</a-button>
+        <div class="graph-toolbar-actions">
+          <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
+            {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱（存量回溯）' }}
+          </a-button>
+          <a-popconfirm title="清空该库全部图谱数据？（三元组/实体/抽取记录全删，可重新构建）" ok-text="清空" cancel-text="取消" @confirm="doClearGraph">
+            <a-button size="small" danger>清空图谱</a-button>
+          </a-popconfirm>
+          <a-tooltip title="刷新">
+            <a-button size="small" @click="refreshGraph">
+              <template #icon><reload-outlined /></template>
+            </a-button>
+          </a-tooltip>
+        </div>
       </div>
 
       <!-- 图视图：力导向图（节点=实体、边=关系谓词；点节点 → 下方显示该实体的关系清单） -->
@@ -93,7 +98,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { PlusOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DatabaseOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -181,6 +186,10 @@ const onTripleTableChange = pg => { triplePage.value = pg.current; refreshGraph(
 // 交互铁律：**init + 一次 setOption 之后绝不再碰图表状态**（部分 setOption 会重建力模拟与漫游坐标系
 // ——roam/拖拽/滚轮就此失灵，前两版都栽在这）。邻居信息走「点击节点 → 图下方关系面板」，纯 Vue 状态。
 const graphView = ref('graph')   // 默认图视图；列表是核对清单
+const GRAPH_VIEWS = [            // 视图切换选项（Segmented：导航语义，与动作按钮分组）
+  { label: '图视图', value: 'graph' },
+  { label: '列表', value: 'list' }
+]
 const graphChartEl = ref(null)
 const graphSampled = 500         // 图视图一次拉取的关系上限（后端放宽到 500，超出部分走列表）
 let chartInstance = null
@@ -344,6 +353,9 @@ onBeforeUnmount(() => {
 
 /* 图谱：工具栏 + 力导向图画布 */
 .graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.graph-stat { white-space: nowrap; }
+/* 动作区整体靠右，与左侧视图切换/中间状态拉开距离 */
+.graph-toolbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .graph-wrap { position: relative; }
 .graph-canvas { height: 480px; width: 100%; }
 .graph-panel {
