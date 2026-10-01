@@ -175,3 +175,16 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app-btn.ghost:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
 .app-btn.danger { background: transparent; color: var(--app-danger); border: 1px solid #eecdc2; }
 .app-btn.danger:hover { background: #fbecea; }
+
+/* 会话内查找命中高亮（CSS Custom Highlight API）：不在 DOM 里插节点——
+   回答正文是 v-html 渲染的，插 <mark> 会与重渲染/渲染缓存互相打架。
+   浏览器不支持该 API 时聊天页降级为"只定位不标黄"。 */
+::highlight(chat-search) {
+  background-color: rgba(255, 214, 10, .28);
+  color: inherit;
+}
+/* 当前停留的那一处（同一条消息内）用更醒目的底色：只标"哪里命中"不够，还得知道"现在在哪一处" */
+::highlight(chat-search-current) {
+  background-color: rgba(255, 145, 0, .55);
+  color: inherit;
+}

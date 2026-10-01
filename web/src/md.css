@@ -35,3 +35,27 @@
 .md .code-copy:hover { color: var(--app-accent); border-color: var(--app-accent); }
 .md .code-copy.copied { color: var(--app-ok); border-color: var(--app-ok); }
 .md .ref-sup:hover { text-decoration: underline; }
+
+/* ==================== 暗色代码高亮（github-dark 主题的 token 配色，按主题作用域隔离） ====================
+   亮色沿用 highlight.js 的 github 主题（markdown.js 里全局 import）；它自带一套"浅底深字"的
+   token 颜色，暗色下这些深红/深蓝落在深灰代码底上几乎不可读——实测 code 文字 #24292e 落在
+   #22262c 底上。这里把 github-dark 的颜色声明按 html[data-theme=dark] 前缀隔离，只取 color，
+   结构（padding/overflow）统一由 .md pre 控制，避免内层 code 再吃一份 1em padding。 */
+html[data-theme="dark"] .hljs { color: #c9d1d9; }
+html[data-theme="dark"] .hljs-doctag, html[data-theme="dark"] .hljs-keyword, html[data-theme="dark"] .hljs-meta .hljs-keyword, html[data-theme="dark"] .hljs-template-tag, html[data-theme="dark"] .hljs-template-variable, html[data-theme="dark"] .hljs-type, html[data-theme="dark"] .hljs-variable.language_ { color: #ff7b72; }
+html[data-theme="dark"] .hljs-title, html[data-theme="dark"] .hljs-title.class_, html[data-theme="dark"] .hljs-title.class_.inherited__, html[data-theme="dark"] .hljs-title.function_ { color: #d2a8ff; }
+html[data-theme="dark"] .hljs-attr, html[data-theme="dark"] .hljs-attribute, html[data-theme="dark"] .hljs-literal, html[data-theme="dark"] .hljs-meta, html[data-theme="dark"] .hljs-number, html[data-theme="dark"] .hljs-operator, html[data-theme="dark"] .hljs-variable, html[data-theme="dark"] .hljs-selector-attr, html[data-theme="dark"] .hljs-selector-class, html[data-theme="dark"] .hljs-selector-id { color: #79c0ff; }
+html[data-theme="dark"] .hljs-regexp, html[data-theme="dark"] .hljs-string, html[data-theme="dark"] .hljs-meta .hljs-string { color: #a5d6ff; }
+html[data-theme="dark"] .hljs-built_in, html[data-theme="dark"] .hljs-symbol { color: #ffa657; }
+html[data-theme="dark"] .hljs-comment, html[data-theme="dark"] .hljs-code, html[data-theme="dark"] .hljs-formula { color: #8b949e; }
+html[data-theme="dark"] .hljs-name, html[data-theme="dark"] .hljs-quote, html[data-theme="dark"] .hljs-selector-tag, html[data-theme="dark"] .hljs-selector-pseudo { color: #7ee787; }
+html[data-theme="dark"] .hljs-subst { color: #c9d1d9; }
+html[data-theme="dark"] .hljs-section { color: #1f6feb; }
+html[data-theme="dark"] .hljs-bullet { color: #f2cc60; }
+html[data-theme="dark"] .hljs-emphasis { color: #c9d1d9; }
+html[data-theme="dark"] .hljs-strong { color: #c9d1d9; }
+html[data-theme="dark"] .hljs-addition { color: #aff5b4; }
+html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
+
+/* .hljs 自带 padding 与（部分主题的）背景：与 .md pre 的 padding/背景重复，统一去掉 */
+.md pre code.hljs { padding: 0; background: transparent; }

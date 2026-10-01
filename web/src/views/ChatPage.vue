@@ -5,7 +5,26 @@
       <div class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
+        <button class="app-btn ghost head-panel-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
+          <search-outlined /> 查找
+        </button>
         <button class="app-btn ghost head-panel-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
+      </div>
+
+      <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
+      <div v-if="searchOpen" class="chat-search">
+        <search-outlined class="cs-ic" />
+        <input ref="searchInputRef" v-model="searchQuery" class="cs-input"
+               placeholder="在本会话中查找…（Enter 下一个 · Shift+Enter 上一个 · Esc 关闭）"
+               @keydown.enter.exact.prevent="gotoMatch(1)"
+               @keydown.shift.enter.prevent="gotoMatch(-1)"
+               @keydown.esc="closeSearch" />
+        <span class="cs-count">
+          {{ searchQuery.trim() ? (matchedIdxs.length ? (searchPosShown + ' / ' + matchedIdxs.length) : '无匹配') : '' }}
+        </span>
+        <button class="app-icon-btn" :disabled="!matchedIdxs.length" title="上一个匹配" @click="gotoMatch(-1)"><up-outlined /></button>
+        <button class="app-icon-btn" :disabled="!matchedIdxs.length" title="下一个匹配" @click="gotoMatch(1)"><down-outlined /></button>
+        <button class="app-icon-btn" title="关闭查找" @click="closeSearch"><close-outlined /></button>
       </div>
 
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
@@ -25,7 +44,7 @@
           </div>
         </div>
 
-        <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
+        <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
           <div class="msg-block" :class="m.role">
             <div class="bubble" :class="m.role">
               <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
@@ -715,7 +734,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
-         CloseOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+         CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
@@ -2041,6 +2060,130 @@ const onDocClickForMention = e => {
 onMounted(() => document.addEventListener('click', onDocClickForMention))
 onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
 
+// ==================== 会话内查找（Ctrl/⌘+F） ====================
+// 匹配范围 = 每条消息的正文（用户问题 + 助手回答）。工具输出与思考过程不参与——那些是过程信息，
+// 把它们算进结果只会让"找那句话"更难。
+// 高亮走 CSS Custom Highlight API：正文是 v-html 渲染的，往里插 <mark> 会与重渲染/缓存打架；
+// 浏览器不支持该 API 时降级为"只定位不标黄"，功能仍可用（不静默失效，见 paintSearchHighlight）。
+const searchOpen = ref(false)
+const searchQuery = ref('')
+const searchPos = ref(0)
+const searchInputRef = ref(null)
+const matchedIdxs = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return []
+  const out = []
+  messages.value.forEach((m, i) => {
+    if ((m.content || '').toLowerCase().includes(q)) out.push(i)
+  })
+  return out
+})
+const clearSearchHighlight = () => {
+  try {
+    window.CSS?.highlights?.delete('chat-search')
+    window.CSS?.highlights?.delete('chat-search-current')
+  } catch (e) { /* 不支持该 API 时忽略 */ }
+}
+/** 显示用的序号：切会话/改关键词后匹配数可能变小，这里夹住上界（否则出现 4 / 2 这种读数） */
+const searchPosShown = computed(() => {
+  const n = matchedIdxs.value.length
+  return n ? Math.min(searchPos.value, n - 1) + 1 : 0
+})
+/** 逐处命中建 Range，并按所属消息分成「全部命中」与「当前这条消息里的命中」两组——
+ *  当前项用更醒目的颜色，否则用户不知道该看哪一处。
+ *  跳过代码块/工具输出区（代码里命中会亮成一片，且与"找那句话"语义不符）。 */
+const collectSearchRanges = (q, currentMsgIdx) => {
+  const all = [], cur = []
+  const root = box.value
+  if (!root || !q) return { all, cur }
+  const lower = q.toLowerCase()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const p = n.parentElement
+      if (!p || p.closest('pre, code, .code-copy, .tl-io, script, style')) return NodeFilter.FILTER_REJECT
+      return NodeFilter.FILTER_ACCEPT
+    }
+  })
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const rowIdx = node.parentElement?.closest('[data-row-index]')?.dataset.rowIndex
+    const target = (currentMsgIdx != null && rowIdx === String(currentMsgIdx)) ? cur : null
+    const low = (node.nodeValue || '').toLowerCase()
+    let from = 0
+    for (;;) {
+      const at = low.indexOf(lower, from)
+      if (at < 0) break
+      const r = document.createRange()
+      r.setStart(node, at)
+      r.setEnd(node, at + q.length)
+      all.push(r)
+      if (target) target.push(r)
+      from = at + q.length
+    }
+  }
+  return { all, cur }
+}
+const paintSearchHighlight = () => {
+  clearSearchHighlight()
+  const q = searchQuery.value.trim()
+  if (!q) return
+  if (!window.CSS?.highlights || typeof window.Highlight !== 'function') return // 不支持：只定位不标黄
+  try {
+    const list = matchedIdxs.value
+    const curMsgIdx = list.length ? list[Math.min(searchPos.value, list.length - 1)] : null
+    const { all, cur } = collectSearchRanges(q, curMsgIdx)
+    if (all.length) CSS.highlights.set('chat-search', new Highlight(...all))
+    if (cur.length) CSS.highlights.set('chat-search-current', new Highlight(...cur))
+  } catch (e) { /* Range 失效（渲染中）忽略，下次输入重算 */ }
+}
+const scrollToMatch = () => {
+  const list = matchedIdxs.value
+  if (!list.length) return
+  const mi = list[Math.min(searchPos.value, list.length - 1)]
+  box.value?.querySelector(`[data-row-index="${mi}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+const gotoMatch = delta => {
+  const list = matchedIdxs.value
+  if (!list.length) return
+  searchPos.value = (searchPos.value + delta + list.length) % list.length
+  paintSearchHighlight() // 当前项变了：重绘（当前项用更醒目的颜色）
+  scrollToMatch()
+}
+const openSearch = () => {
+  if (!messages.value.length) { message.info('当前会话还没有消息'); return }
+  searchOpen.value = true
+  nextTick(() => searchInputRef.value?.focus?.())
+}
+const closeSearch = () => {
+  searchOpen.value = false
+  searchQuery.value = ''
+  searchPos.value = 0
+  clearSearchHighlight()
+}
+// 关键词变化 → 回到第一个匹配并重绘高亮（消息渲染是异步的，等一帧再画）
+watch(searchQuery, () => {
+  searchPos.value = 0
+  if (!searchOpen.value) return
+  nextTick(() => { paintSearchHighlight(); scrollToMatch() })
+})
+// 切会话/消息增删后旧 Range 已失效：重算（数组引用变化即触发；流式增量不重算，避免每 token 全量扫描）
+watch(messages, () => {
+  if (!searchOpen.value || !searchQuery.value.trim()) return
+  searchPos.value = 0 // 换会话后从头开始，避免停在上一个会话的偏移上
+  nextTick(() => { paintSearchHighlight(); scrollToMatch() })
+})
+// Ctrl/⌘+F 打开会话内查找（在聊天页拦下浏览器原生查找，与主流产品一致）；Esc 关闭
+const onSearchHotkey = e => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault()
+    searchOpen.value ? searchInputRef.value?.focus?.() : openSearch()
+  } else if (e.key === 'Escape' && searchOpen.value) {
+    closeSearch()
+  }
+}
+onMounted(() => document.addEventListener('keydown', onSearchHotkey))
+onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
+
 // ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
 const send = () => {
   const q = text.value.trim()
@@ -2720,6 +2863,23 @@ onMounted(async () => {
 .chat-title { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-tip { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .head-tip:hover { color: var(--app-accent); }
+/* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */
+.chat-search {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  margin: 8px 16px 0; padding: 5px 8px;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm); box-shadow: var(--app-shadow-sm);
+}
+.cs-ic { color: var(--app-text3); font-size: 13px; flex: none; }
+.cs-input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font-size: 13px; color: var(--app-text); padding: 3px 0;
+}
+.cs-input::placeholder { color: var(--app-text3); }
+.cs-count {
+  flex: none; min-width: 56px; text-align: right;
+  font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums;
+}
 .head-panel-btn { margin-left: auto; padding: 4px 12px; }
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }
@@ -3012,8 +3172,9 @@ onMounted(async () => {
   border-color: var(--app-accent);
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
 }
-/* 已选引用标签：输入框内顶部一行，× 可整体移除（@ 引用与技能 chip 共用） */
-.at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; }
+/* 已选引用标签：输入卡片正上方一行，与卡片同宽居中——缺 max-width 会贴窗口左缘，宽屏下像「跑出输入区」；
+   × 可整体移除（@ 引用与技能 chip 共用） */
+.at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; max-width: 860px; margin: 0 auto; }
 .at-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 260px;
   padding: 2px 6px; border-radius: 6px; font-size: 12px;
