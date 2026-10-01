@@ -57,7 +57,11 @@ public class WorkflowApiController {
     @Operation(summary = "查询运行结果", description = "按 runId 查本次运行的状态与结果（触发方与归属一致的才可见）；"
             + "用于外部系统异步核对（同步触发已直接返回，此接口供补查/回溯）")
     @GetMapping("/{id}/run/{runId}")
-    public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId) {
-        return ResultJson.ok(workflowService.getRun(id, runId));
+    public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId,
+                                HttpServletRequest request) {
+        // 与触发端点同口径：带 API Key 的调用方按 Key 归属身份判权（否则匿名身份在内部归属校验处 404）；
+        // 未带 Key（登录令牌调用）时为 null → resolvePrincipal 走当前登录用户，行为不变
+        Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
+        return ResultJson.ok(workflowService.getRunForApi(id, runId, keyId == null ? null : String.valueOf(keyId)));
     }
 }
