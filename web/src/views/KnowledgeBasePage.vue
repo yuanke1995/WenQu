@@ -31,7 +31,8 @@
             <template v-if="isAdmin || kb.createdBy === myUid">
               <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
               <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
-              <button class="app-link-btn danger" :disabled="kb.isDefault === 1" @click="onDelete(kb)">删除</button>
+              <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
+              <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
             </template>
             <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
           </div>

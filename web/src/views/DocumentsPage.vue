@@ -11,14 +11,14 @@
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <!-- 知识库配置直达：解析/检索参数就地改，不用回知识库列表页 -->
+        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
+          <setting-outlined /> 知识库配置
+        </button>
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
           <link-outlined /> 网页导入
-        </button>
-        <!-- 知识库配置直达：解析/检索参数就地改，不用回知识库列表页 -->
-        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
-          <setting-outlined /> 知识库配置
         </button>
         <button v-if="canManageCurrentKb" class="app-btn" :disabled="uploading" @click="uploadVisible = true">
           <upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}
