@@ -235,6 +235,13 @@
                       show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
                       :placeholder="subOptions.length ? '选择允许委派的子智能体（最多 4 个）'
                         : '还没有子智能体——先在列表新建一个「用途 = 子智能体」的条目'" />
+            <!-- M5：委派编排一键转工作流（保存后转换的是已保存的委派关系） -->
+            <div v-if="(form.subAgentIds || []).length" class="ap-block-hint" style="margin:8px 0 0;display:flex;align-items:center;gap:10px">
+              <span>想把这套并行编排变成可画可跑的工作流？</span>
+              <button class="app-btn ghost small" :disabled="toWfLoading" @click="toWorkflow">
+                <partition-outlined /> 转成工作流
+              </button>
+            </div>
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
@@ -387,11 +394,11 @@ import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, RobotOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
-  SafetyOutlined
+  SafetyOutlined, PartitionOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
-         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows } from '../api'
+         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -650,6 +657,37 @@ const MAIN_LINE = Math.floor((TOPO.nodeW - 24) / 11)
 const SUB_NAME = Math.floor((TOPO.subW - 24) / 13)
 const SUB_LINE = Math.floor((TOPO.subW - 24) / 11)
 const subCountOf = a => splitList(a.subAgentIds).length
+
+// ==================== M5：委派编排一键转工作流 ====================
+import { useRoute, useRouter } from 'vue-router'
+const route = useRoute()
+const router = useRouter()
+const toWfLoading = ref(false)
+/**
+ * 把该智能体已保存的委派编排（subAgentIds 并行委派）转成工作流：
+ * 后端按库里的委派关系生成「start 扇出 subagent → template 聚合 → llm 总结 → end」
+ * 并创建草稿工作流；成功后跳到「工作流」Tab，列表首行（更新时间倒序）就是它。
+ */
+const toWorkflow = async () => {
+  if (!form.id) {
+    message.warning('请先保存智能体（委派关系以已保存的为准），再转换工作流')
+    return
+  }
+  toWfLoading.value = true
+  try {
+    const r = await createWorkflowFromAgent(form.id)
+    if (r && r.success) {
+      message.success(`已按已保存的委派关系创建工作流「${r.data.name}」，可在画布继续调整后发布`)
+      router.replace({ query: { ...route.query, tab: 'workflow' } })
+    } else {
+      message.error((r && r.msg) || '转换失败')
+    }
+  } catch (e) {
+    message.error('转换失败：' + (e.message || ''))
+  } finally {
+    toWfLoading.value = false
+  }
+}
 
 /** 边路径：主节点右缘中点 → 子节点左缘中点（贝塞尔）；失效引用画到右列同高的占位符 */
 function edgePath (e) {

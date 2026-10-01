@@ -143,6 +143,34 @@ public class WorkflowController {
         return ResultJson.ok(workflowService.approveRun(id, runId, approved));
     }
 
+    // --------------------------------------------------------------------------------------------------
+    // M5：模板库 / 委派编排转工作流 / 失败检查点续跑
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "内置模板库", description = "M5：内置工作流模板清单（检索问答 / 并行多视角 / 审核流水线）；"
+            + "dsl 字段可直接作为新建接口的 dsl 入参（选用即创建并进画布），llm 节点 modelRef 留空走个人默认模型")
+    @GetMapping("/templates")
+    public ResultJson templates() {
+        return ResultJson.ok(workflowService.templates());
+    }
+
+    @Operation(summary = "委派编排转工作流", description = "M5：把智能体的委派编排（subAgentIds 并行委派）一键转成工作流并创建——"
+            + "start 扇出子智能体节点并行作答 → 模板节点聚合 → LLM 总结 → 结束；主智能体与全部子智能体须对当前用户可读，"
+            + "未配置委派的智能体报错。返回新建的工作流")
+    @PostMapping("/from-agent/{agentId}")
+    public ResultJson fromAgent(@PathVariable("agentId") String agentId) {
+        Workflow row = workflowService.createFromAgent(agentId);
+        return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
+    }
+
+    @Operation(summary = "失败检查点续跑", description = "M5：对 failed/timeout 且带检查点快照的运行从失败点续跑——"
+            + "按 run 锁定的 DSL 快照恢复执行，已成功节点短路回放（不重复消耗 LLM 调用），仅失败节点及其下游真正执行；"
+            + "仅运行发起人可续跑；本次请求内同步跑完并返回终态 run。无快照（失败在首个节点前）时报错引导直接重跑")
+    @PostMapping("/{id}/run/{runId}/resume")
+    public ResultJson resume(@PathVariable("id") String id, @PathVariable("runId") String runId) {
+        return ResultJson.ok(workflowService.resumeRun(id, runId));
+    }
+
     private static String str(Map<String, Object> body, String key) {
         Object v = body.get(key);
         return v == null ? null : String.valueOf(v);

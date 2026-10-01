@@ -276,6 +276,13 @@ export const runWorkflow = (id, inputs) =>
   request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }), timeout: 300000 })
 export const listWorkflowRuns = id => request(`/workflow/${id}/run/list`)
 export const getWorkflowRun = (id, runId) => request(`/workflow/${id}/run/${runId}`)
+// M5 模板库：内置模板清单（选用即把 dsl 作为新建入参）
+export const listWorkflowTemplates = () => request('/workflow/templates')
+// M5 委派编排转工作流：一键把智能体的 subAgentIds 编排转成工作流
+export const createWorkflowFromAgent = agentId => request(`/workflow/from-agent/${agentId}`, { method: 'POST' })
+// M5 失败检查点续跑：failed/timeout 且带快照的运行从失败点续跑（同步返回终态 run）
+export const resumeWorkflowRun = (id, runId) =>
+  request(`/workflow/${id}/run/${runId}/resume`, { method: 'POST', timeout: 300000 })
 /** 人工审核：待审批信息（prompt/超时/挂起时刻），无则 null */
 export const getWorkflowPendingApproval = (id, runId) => request(`/workflow/${id}/run/${runId}/approval`)
 /** 人工审核：裁决并恢复续跑（同步跑完，返回终态 run） */

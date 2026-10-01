@@ -47,6 +47,12 @@ public class WorkflowDsl {
         private Map<String, Object> position;
         /** 类型自有配置（start.inputs / end.outputs / llm.modelRef+prompt / retrieval.query+topK / condition.branches ...） */
         private Map<String, Object> config;
+
+        /** 配置写入便捷方法（map 惰性初始化）——模板构造与编排转换用，免去各处判 null */
+        public void configPut(String key, Object value) {
+            if (config == null) config = new java.util.LinkedHashMap<>();
+            config.put(key, value);
+        }
     }
 
     @Data

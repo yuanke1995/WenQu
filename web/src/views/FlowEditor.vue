@@ -77,7 +77,7 @@
               </div>
               <div class="wf-node-sub">{{ subText(props.data) }}</div>
               <div v-if="props.data.run" class="wf-node-badge" :class="`badge-${props.data.run.status}`">
-                {{ props.data.run.status === 'success' ? '✓' : props.data.run.status === 'waiting' ? '✋' : '✕' }} {{ fmtMs(props.data.run.elapsedMs) }}
+                {{ props.data.run.status === 'success' ? '✓' : props.data.run.status === 'waiting' ? '✋' : props.data.run.status === 'retrying' ? '↻' : '✕' }} {{ fmtMs(props.data.run.elapsedMs) }}
               </div>
             </div>
           </template>
@@ -321,6 +321,12 @@
               <div class="wf-hint">渲染结果在 <code>text</code>，多视角汇总后接 LLM 或直接作答都行。</div>
             </template>
           </div>
+          <!-- M5 节点级失败重试：所有执行型节点通用（start/end 无执行体不显示）；0=不重试 -->
+          <div v-if="selected && !['start', 'end'].includes(selected.data.nodeType)" class="wf-retry-row">
+            <span class="wf-hint" style="margin:0">失败重试：节点执行失败自动重试（LLM 网关抖动、HTTP 超时等瞬时故障），每次重试记录在运行 trace 里</span>
+            <a-input-number v-model:value="editConfig.retries" :min="0" :max="3" :step="1" style="width: 150px"
+                            placeholder="0" addon-before="重试" />
+          </div>
           <div class="wf-drawer-actions">
             <button class="app-btn small" @click="applyConfig">应用到画布</button>
           </div>
@@ -342,7 +348,7 @@
           </div>
           <template v-if="nodeTrace">
             <div class="wf-trace-meta">
-              <a-tag :color="traceTagColor(nodeTrace.status)">{{ traceTagColor(nodeTrace.status) === 'green' ? '成功' : traceTagColor(nodeTrace.status) === 'red' ? '失败' : '等待审核' }}</a-tag>
+              <a-tag :color="traceTagColor(nodeTrace.status)">{{ traceTagText(nodeTrace.status) }}</a-tag>
               <span>耗时 {{ fmtMs(nodeTrace.elapsedMs) }}</span>
               <span v-if="nodeTrace.promptTokens != null">入 {{ nodeTrace.promptTokens }} tok</span>
               <span v-if="nodeTrace.completionTokens != null">出 {{ nodeTrace.completionTokens }} tok</span>
@@ -1309,8 +1315,9 @@ function subText(data) {
 }
 
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
-const traceTagColor = s => ({ success: 'green', failed: 'red', waiting: 'orange' }[s] || 'red')
-const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
+const traceTagColor = s => ({ success: 'green', failed: 'red', waiting: 'orange', retrying: 'gold' }[s] || 'red')
+const traceTagText = s => ({ success: '成功', failed: '失败', waiting: '等待审核', retrying: '重试中' }[s] || s)
+const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
 const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '—')
 
@@ -1418,6 +1425,7 @@ load()
 .wf-node.run-success { border-color: #52c41a; box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.15); }
 .wf-node.run-failed { border-color: #ff4d4f; box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
 .wf-node.run-waiting { border-color: #fa8c16; box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.2); }
+.wf-node.run-retrying { border-color: #faad14; box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.18); }
 .wf-node-badge {
   position: absolute; top: -9px; right: -9px;
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 9px; color: #fff;
@@ -1425,6 +1433,7 @@ load()
 .badge-success { background: #52c41a; }
 .badge-failed { background: #ff4d4f; }
 .badge-waiting { background: #fa8c16; }
+.badge-retrying { background: #faad14; }
 
 /* 人工审核审批卡 */
 .wf-approval-card {
@@ -1467,6 +1476,9 @@ load()
 .wf-branch { border: 1px dashed var(--app-border); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .wf-branch-radio { padding: 2px 0; }
 .wf-hint { font-size: 12px; color: var(--app-text3); line-height: 1.7; }
+/* M5 节点级失败重试（通用高级字段行） */
+.wf-retry-row { display: flex; align-items: center; gap: 12px; border-top: 1px dashed var(--app-border); padding-top: 10px; margin-top: 4px; }
+.wf-retry-row .wf-hint { flex: 1; min-width: 0; }
 /* 变量引用选择器：贴在输入框下方，窄条不抢输入框的视觉主位 */
 .wf-ref-pick { margin-top: 6px; width: 100%; }
 .wf-hint code { background: var(--app-panel); padding: 1px 4px; border-radius: 3px; font-size: 11px; }

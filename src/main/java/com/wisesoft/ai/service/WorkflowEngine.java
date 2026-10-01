@@ -229,13 +229,14 @@ public class WorkflowEngine {
     }
 
     /**
-     * 节点包装层：恢复短路 + 计时 + trace + 输出键加节点前缀进 state。
+     * 节点包装层：恢复短路 + 计时 + trace + 失败重试（M5） + 输出键加节点前缀进 state。
      * <ul>
      *   <li><b>恢复短路</b>：resumeOutputs 含该节点（上次运行的快照）→ 直接回放输出，不执行节点体——
-     *       人工审核恢复时已完成节点零成本续跑；</li>
-     *   <li><b>挂起穿透</b>：{@link WorkflowSuspendException} 不按失败处理（记 waiting trace 后原样上抛，
-     *       由 run 收口转 waiting_approval）；</li>
-     *   <li>其余异常 fail-loud：上抛让整轮 run 落 failed。</li>
+     *       人工审核恢复与失败检查点续跑时已完成节点零成本续跑；</li>
+     *   <li><b>失败重试</b>：config.retries（0~3，默认 0）声明瞬时失败（LLM 网关抖动/HTTP 超时等）
+     *       的自动重试次数——每次失败记一条 retrying trace（含第几次与原因），重试成功记 success trace；
+     *       {@link WorkflowSuspendException}（人工审核挂起）不是失败，不重试；</li>
+     *   <li>重试耗尽 fail-loud：记 failed trace 后上抛，让整轮 run 落 failed（带检查点快照）。</li>
      * </ul>
      */
     private AsyncNodeAction wrap(WorkflowDsl.Node n, WorkflowRunCtx ctx, Function<OverAllState, NodeOut> body) {
@@ -245,28 +246,48 @@ public class WorkflowEngine {
             }
             long t0 = System.currentTimeMillis();
             Map<String, Object> inputSnapshot = ctx == null ? Map.of() : inputSnapshot(n, ctx, state);
-            try {
-                NodeOut out = body.apply(state);
-                long ms = System.currentTimeMillis() - t0;
-                if (ctx != null) {
-                    ctx.trace(n.getId(), n.getType(), "success", inputSnapshot, out.traceOutput(), ms,
-                            out.promptTokens(), out.completionTokens(), null);
-                    ctx.fullOutputs.put(n.getId(), out.output());
+            int attempts = cfgInt(n, "retries", 0, 0, 3) + 1;
+            Exception last = null;
+            for (int attempt = 1; attempt <= attempts; attempt++) {
+                try {
+                    NodeOut out = body.apply(state);
+                    long ms = System.currentTimeMillis() - t0;
+                    if (ctx != null) {
+                        ctx.trace(n.getId(), n.getType(), "success", inputSnapshot, out.traceOutput(), ms,
+                                out.promptTokens(), out.completionTokens(),
+                                attempt > 1 ? "第 " + attempt + " 次尝试成功（前 " + (attempt - 1) + " 次失败已重试）" : null);
+                        ctx.fullOutputs.put(n.getId(), out.output());
+                    }
+                    return namespace(n.getId(), out.output());
+                } catch (WorkflowSuspendException e) {
+                    if (ctx != null) {
+                        ctx.trace(n.getId(), n.getType(), "waiting", inputSnapshot, e.traceOutput,
+                                System.currentTimeMillis() - t0, null, null, null);
+                    }
+                    throw e;
+                } catch (Exception e) {
+                    last = e;
+                    // 还有重试余量 → 记 retrying trace 进入下一轮；耗尽 → 落 failed trace 上抛
+                    if (attempt < attempts) {
+                        if (ctx != null) {
+                            ctx.trace(n.getId(), n.getType(), "retrying", inputSnapshot, null,
+                                    System.currentTimeMillis() - t0, null, null,
+                                    "第 " + attempt + " 次失败，重试中（共 " + (attempts - 1) + " 次重试）："
+                                            + WorkflowRunCtx.abbreviate(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), 300));
+                        }
+                        continue;
+                    }
                 }
-                return namespace(n.getId(), out.output());
-            } catch (WorkflowSuspendException e) {
-                if (ctx != null) {
-                    ctx.trace(n.getId(), n.getType(), "waiting", inputSnapshot, e.traceOutput,
-                            System.currentTimeMillis() - t0, null, null, null);
-                }
-                throw e;
-            } catch (Exception e) {
-                long ms = System.currentTimeMillis() - t0;
-                if (ctx != null) {
-                    ctx.trace(n.getId(), n.getType(), "failed", inputSnapshot, null, ms, null, null, e.getMessage());
-                }
-                throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
             }
+            long ms = System.currentTimeMillis() - t0;
+            if (ctx != null) {
+                ctx.trace(n.getId(), n.getType(), "failed", inputSnapshot, null, ms, null, null,
+                        attempts > 1 && last != null
+                                ? "重试 " + (attempts - 1) + " 次后仍失败：" + WorkflowRunCtx.abbreviate(
+                                        last.getMessage() == null ? last.getClass().getSimpleName() : last.getMessage(), 300)
+                                : (last == null ? null : last.getMessage()));
+            }
+            throw last instanceof RuntimeException re ? re : new IllegalStateException(last);
         });
     }
 

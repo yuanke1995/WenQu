@@ -10,6 +10,14 @@
       <button class="app-btn" style="margin-left:auto" @click="openEditor('')">
         <plus-outlined /> 新建工作流
       </button>
+      <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
+      <button class="app-btn" @click="openTemplates">
+        <appstore-outlined /> 模板库
+      </button>
+      <button class="app-btn" @click="pickImport">
+        <upload-outlined /> 导入
+      </button>
+      <input ref="importInput" type="file" accept=".json,application/json" style="display:none" @change="doImport" />
     </div>
 
     <div class="app-page-body">
@@ -51,6 +59,9 @@
               </button>
               <button class="app-btn ghost small" @click="openVersions(r)">
                 <tags-outlined /> 版本
+              </button>
+              <button class="app-btn ghost small" @click="doExport(r)">
+                <download-outlined /> 导出
               </button>
               <!-- 发布/下线：已发布版本被冻结，草稿继续可改 -->
               <button v-if="r.status === 'published'" class="app-btn ghost small" :disabled="busyId === r.id" @click="doUnpublish(r)">
@@ -95,6 +106,27 @@
         </div>
       </a-spin>
     </a-modal>
+
+    <!-- M5 模板库：选用即以模板 DSL 创建工作流并进画布 -->
+    <a-modal v-model:open="tplModal" title="模板库" :footer="null" width="640px">
+      <a-spin :spinning="tplLoading">
+        <div class="head-hint-plain" style="margin-bottom:10px">
+          内置模板都是可运行的 DSL：选用即创建工作流并进入画布，改好模型 / 知识库等配置后即可调试运行
+        </div>
+        <div class="wf-tpl-list">
+          <div v-for="t in templates" :key="t.key" class="app-card wf-tpl">
+            <div class="wf-head">
+              <span class="wf-name">{{ t.name }}</span>
+              <span class="wf-meta">{{ t.nodeCount }} 节点</span>
+              <button class="app-btn small" style="margin-left:auto" :disabled="tplCreating" @click="useTemplate(t)">
+                使用模板
+              </button>
+            </div>
+            <div class="wf-desc">{{ t.description }}</div>
+          </div>
+        </div>
+      </a-spin>
+    </a-modal>
   </div>
 </template>
 
@@ -103,13 +135,14 @@ import { ref, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
-  StopOutlined, RollbackOutlined, TagsOutlined
+  StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined
 } from '@ant-design/icons-vue'
 import FlowEditor from './FlowEditor.vue'
 import WorkflowRunHistory from './WorkflowRunHistory.vue'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
-  listWorkflowVersions, rollbackWorkflow
+  listWorkflowVersions, rollbackWorkflow,
+  listWorkflowTemplates, createWorkflow, getWorkflow
 } from '../api'
 
 const rows = ref([])
@@ -231,6 +264,103 @@ const summary = dslText => {
   } catch (e) { return 'DSL 解析失败' }
 }
 
+// ---- M5 模板库 / 导入 / 导出 ----
+const tplModal = ref(false)
+const tplLoading = ref(false)
+const tplCreating = ref(false)
+const templates = ref([])
+
+const openTemplates = async () => {
+  tplModal.value = true
+  tplLoading.value = true
+  templates.value = []
+  try {
+    const r = await listWorkflowTemplates()
+    templates.value = (r && r.data) || []
+  } catch (e) {
+    message.error('模板加载失败：' + (e.message || ''))
+  } finally {
+    tplLoading.value = false
+  }
+}
+
+/** 选用模板：以模板 DSL 创建工作流（名称用模板名，画布里可再改），创建后直接进画布 */
+const useTemplate = async t => {
+  tplCreating.value = true
+  try {
+    const r = await createWorkflow({ name: t.name, description: t.description, dsl: t.dsl })
+    if (r && r.success) {
+      message.success(`已从模板「${t.name}」创建工作流`)
+      tplModal.value = false
+      openEditor(r.data.id)   // 进画布继续配置（模型/知识库）
+    } else {
+      message.error((r && r.msg) || '模板创建失败')
+    }
+  } catch (e) {
+    message.error('模板创建失败：' + (e.message || ''))
+  } finally {
+    tplCreating.value = false
+  }
+}
+
+const importInput = ref(null)
+const pickImport = () => { importInput.value && importInput.value.click() }
+
+/** 导入：读导出的 JSON 文件（包装格式 {name, description, dsl} 或裸 DSL 均可），走创建接口复用全部校验 */
+const doImport = async ev => {
+  const file = ev.target.files && ev.target.files[0]
+  ev.target.value = ''   // 允许连续导入同一文件
+  if (!file) return
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text)
+    const dsl = parsed && parsed.dsl ? parsed.dsl : parsed
+    const name = (parsed && typeof parsed.name === 'string' && parsed.name.trim()) || '导入的工作流'
+    if (!dsl || !Array.isArray(dsl.nodes)) {
+      message.error('文件里没有可识别的 DSL（缺少 nodes 字段）')
+      return
+    }
+    const r = await createWorkflow({
+      name,
+      description: (parsed && parsed.description) || `导入自 ${file.name}`,
+      dsl: JSON.stringify(dsl)
+    })
+    if (r && r.success) {
+      message.success(`已导入「${name}」`)
+      await load()
+      openEditor(r.data.id)
+    } else {
+      message.error((r && r.msg) || '导入失败：DSL 校验未通过')
+    }
+  } catch (e) {
+    message.error('导入失败：' + (e.message || '（不是合法 JSON 文件）'))
+  }
+}
+
+/** 导出：下载 {exportedFrom, name, description, dsl} 包装 JSON（导入接口同款可再导入） */
+const doExport = async row => {
+  try {
+    const r = await getWorkflow(row.id)
+    const wf = (r && r.data) || {}
+    if (!wf.dsl) { message.error('该工作流没有 DSL 可导出'); return }
+    const payload = {
+      exportedFrom: 'wenqu-workflow',
+      exportedAt: new Date().toISOString(),
+      name: wf.name,
+      description: wf.description,
+      dsl: JSON.parse(wf.dsl)   // 导出为 DSL 对象（可读），导入时 stringify 回字符串
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${wf.name || 'workflow'}.workflow.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) {
+    message.error('导出失败：' + (e.message || ''))
+  }
+}
+
 const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
 const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
@@ -271,4 +401,7 @@ onMounted(load)
 .wf-version:last-child { border-bottom: none; }
 .wf-version-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wf-version-note { font-size: 13px; color: var(--app-text2); margin-top: 4px; }
+/* M5 模板库弹窗卡片 */
+.wf-tpl-list { display: flex; flex-direction: column; gap: 10px; }
+.wf-tpl { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
 </style>

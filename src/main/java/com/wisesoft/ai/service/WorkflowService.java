@@ -14,6 +14,7 @@ import com.wisesoft.ai.mapper.WorkflowVersionMapper;
 import com.wisesoft.ai.model.Workflow;
 import com.wisesoft.ai.model.WorkflowRun;
 import com.wisesoft.ai.model.WorkflowVersion;
+import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.util.RequestUser;
@@ -78,6 +79,7 @@ public class WorkflowService {
     private final ToolApprovalMapper toolApprovalMapper;
     private final UserMapper userMapper;
     private final ApiKeyMapper apiKeyMapper;
+    private final AgentService agentService;
     private final WorkflowValidator validator;
     private final WorkflowEngine engine;
     private final ConfigService configService;
@@ -231,6 +233,140 @@ public class WorkflowService {
         } catch (Exception e) {
             throw new BizException("DSL 不是合法 JSON：" + e.getMessage());
         }
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // M5：模板库 / 委派编排转工作流
+    // --------------------------------------------------------------------------------------------------
+
+    /** 内置模板清单（见 {@link WorkflowTemplates}）：dsl 字段画布/创建接口直接可用 */
+    public List<Map<String, Object>> templates() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (WorkflowTemplates.Template t : WorkflowTemplates.list()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("key", t.key());
+            m.put("name", t.name());
+            m.put("description", t.description());
+            m.put("nodeCount", t.nodeCount());
+            m.put("dsl", t.dsl());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * M5：把智能体的「委派编排关系」一键转成工作流 DSL 并创建（衔接 AgentsPage 的委派配置）。
+     * <p>
+     * 转换语义：{@code subAgentIds} 的并行委派 → start 扇出 N 个 subagent 节点（各自委派对应
+     * 子智能体、prompt 均取用户问题）→ template 节点聚合各视角 → llm 总结 → end。
+     * 子智能体自身的提示词/知识库范围在问答管线内生效（与主链路委派编排一致），转换不复制内容。
+     * <p>
+     * 可见性：主智能体与全部子智能体都须对当前用户可读（{@link AgentService#get} 逐个校验），
+     * 不可见的委派关系不静默裁剪——fail-loud 报出第一个不可见者。
+     */
+    public Workflow createFromAgent(String agentId) {
+        Agent agent = agentService.get(agentId);
+        if (agent == null) {
+            throw new BizException(404, "智能体不存在或对当前用户不可见");
+        }
+        List<String> subIds = splitCsv(agent.getSubAgentIds());
+        if (subIds.isEmpty()) {
+            throw new BizException("智能体「" + agent.getName() + "」未配置委派编排（子智能体为空），没有可转换的编排关系");
+        }
+        // 子智能体逐个可见性校验（顺带拿名称做节点标注；不可见 = 编排关系对当前用户不完整）
+        Map<String, Agent> subs = new LinkedHashMap<>();
+        for (String sid : subIds) {
+            Agent sub = agentService.get(sid);
+            if (sub == null) {
+                throw new BizException("子智能体（" + sid + "）不存在或对当前用户不可见，无法转换完整编排");
+            }
+            subs.put(sid, sub);
+        }
+        // ---- DSL 构造：start 扇出 → subagent×N → template 聚合 → llm 总结 → end ----
+        List<WorkflowDsl.Node> nodes = new ArrayList<>();
+        WorkflowDsl.Node start = new WorkflowDsl.Node();
+        start.setId("start");
+        start.setType("start");
+        start.setPosition(pos(0));
+        start.configPut("inputs", List.of(Map.of("key", "question", "type", "string", "required", true)));
+        nodes.add(start);
+        StringBuilder tpl = new StringBuilder();
+        int i = 0;
+        for (Agent sub : subs.values()) {
+            i++;
+            WorkflowDsl.Node n = new WorkflowDsl.Node();
+            n.setId("sub_" + i);
+            n.setType("subagent");
+            n.setPosition(pos(1));
+            n.configPut("agentId", sub.getId());
+            n.configPut("prompt", "{{start.question}}");
+            nodes.add(n);
+            tpl.append("【").append(sub.getName()).append("】\n{{sub_").append(i).append(".answer}}\n\n");
+        }
+        WorkflowDsl.Node tplNode = new WorkflowDsl.Node();
+        tplNode.setId("template_1");
+        tplNode.setType("template");
+        tplNode.setPosition(pos(2));
+        tplNode.configPut("template", tpl.toString().trim());
+        nodes.add(tplNode);
+        WorkflowDsl.Node llmSum = new WorkflowDsl.Node();
+        llmSum.setId("llm_sum");
+        llmSum.setType("llm");
+        llmSum.setPosition(pos(3));
+        llmSum.configPut("prompt", "以下是多个智能体对同一问题的各自回答：\n\n{{template_1.text}}"
+                + "\n\n请综合各视角（去重、消解冲突）给出一条最终回答，不要逐条罗列原文。");
+        llmSum.configPut("temperature", 0.5);
+        nodes.add(llmSum);
+        WorkflowDsl.Node end = new WorkflowDsl.Node();
+        end.setId("end_1");
+        end.setType("end");
+        end.setPosition(pos(4));
+        end.configPut("outputs", Map.of("answer", "{{llm_sum.answer}}"));
+        nodes.add(end);
+        List<WorkflowDsl.Edge> edges = new ArrayList<>();
+        for (WorkflowDsl.Node n : nodes) {
+            if ("subagent".equals(n.getType())) edges.add(edge("start", n.getId()));
+        }
+        edges.add(edge("template_1", "llm_sum"));
+        edges.add(edge("llm_sum", "end_1"));
+        // start → sub_i 边已在上面生成；sub_i → template_1 依序补
+        for (int k = 1; k <= subs.size(); k++) edges.add(edge("sub_" + k, "template_1"));
+        WorkflowDsl dsl = new WorkflowDsl();
+        dsl.setNodes(nodes);
+        dsl.setEdges(edges);
+        String dslText = dsl.toJson();
+        List<String> errors = validator.validate(dsl);
+        if (!errors.isEmpty()) {
+            throw new BizException("编排转换结果未通过校验：" + String.join("；", errors));
+        }
+        return create(agent.getName() + " · 编排转工作流",
+                "由智能体「" + agent.getName() + "」的委派编排（" + subs.size() + " 个子智能体并行）一键转换；"
+                        + "可在画布继续调整（改用模板节点直接拼接、或给总结节点指定模型）。",
+                dslText);
+    }
+
+    private static List<String> splitCsv(String csv) {
+        List<String> out = new ArrayList<>();
+        if (csv == null || csv.isBlank()) return out;
+        for (String part : csv.split(",")) {
+            String t = part == null ? "" : part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> pos(int col) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("x", 80 + col * 260);
+        m.put("y", 180);
+        return m;
+    }
+
+    private static WorkflowDsl.Edge edge(String from, String to) {
+        WorkflowDsl.Edge e = new WorkflowDsl.Edge();
+        e.setFrom(from);
+        e.setTo(to);
+        return e;
     }
 
     // --------------------------------------------------------------------------------------------------
@@ -519,9 +655,11 @@ public class WorkflowService {
             // M5：run 硬超时——落 timeout 终态（error 带原因与调参指引），执行线程已中断回收
             log.warn("[WORKFLOW] 运行超时：{}（{}）run={}：{} 秒", row.getName(), row.getId(), run.getId(), e.seconds);
             run.setStatus("timeout");
+            writeCheckpoint(run, ctx);   // 中断前已完成的节点进检查点，支持从失败点续跑
             return finish(run, ctx, "运行超时（" + e.seconds + " 秒未跑完，workflow.runTimeoutSeconds，0=不限制）");
         } catch (BizException e) {
             log.warn("[WORKFLOW] 运行失败：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), e.getMessage());
+            writeCheckpoint(run, ctx);   // M5 检查点：已完成的节点输出进快照（空则不写，无检查点可言）
             return finish(run, ctx, e.getMessage());
         } catch (Exception e) {
             WorkflowSuspendException suspend = findSuspend(e);
@@ -538,8 +676,21 @@ public class WorkflowService {
             }
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.warn("[WORKFLOW] 运行异常：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), cause.toString());
+            writeCheckpoint(run, ctx);   // M5 检查点：同上（引擎层失败重试耗尽后的终态收口）
             return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
         }
+    }
+
+    /**
+     * M5 失败检查点：failed/timeout 收口前，把<b>已成功节点的全量输出</b>写进 run.state_snapshot
+     * （挂起-快照-短路重放范式的失败场景复用）。快照为空（第一个节点都没跑成）时不写——
+     * 没有可恢复的内容，续跑等价于重跑，前端不展示「续跑」入口。
+     */
+    private static void writeCheckpoint(WorkflowRun run, WorkflowRunCtx ctx) {
+        if (ctx.fullOutputs.isEmpty()) return;
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("outputs", ctx.fullOutputs);
+        run.setStateSnapshot(JSON.toJSONString(snapshot));
     }
 
     /** run 级超时信号（内部用）：带超时秒数，收口处转 timeout 终态 */
@@ -655,6 +806,92 @@ public class WorkflowService {
         }
     }
 
+    /**
+     * M5 失败检查点续跑（挂起-快照-短路重放的失败场景复用）：仅运行发起人可续跑；
+     * 按 run 锁定的 DSL 快照恢复执行，<b>已成功节点短路回放</b>（不重复消耗 LLM 调用），
+     * 只有失败节点与其下游真正执行。恢复在本次请求内同步完成——返回的就是终态 run。
+     * <p>
+     * 状态门：failed / timeout 且带检查点快照才可续跑（waiting_approval 走审批接口；
+     * running / success 没有续跑语义）；成功后清快照，再失败则落<b>新的</b>检查点
+     * （短路回放节点同步登记进 fullOutputs，快照始终完整）。
+     */
+    public WorkflowRun resumeRun(String workflowId, String runId) {
+        WorkflowRun run = getRun(workflowId, runId);
+        if (!"failed".equals(run.getStatus()) && !"timeout".equals(run.getStatus())) {
+            throw new BizException("仅失败（failed）或超时（timeout）的运行可续跑（当前：" + run.getStatus()
+                    + "；待审批请走审批接口）");
+        }
+        if (!RequestUser.uid().equals(run.getTriggeredBy())) {
+            throw new BizException(403, "仅运行发起人可续跑");
+        }
+        if (run.getStateSnapshot() == null || run.getStateSnapshot().isBlank()) {
+            throw new BizException("该运行没有检查点快照（失败发生在首个节点完成之前），请直接重新运行");
+        }
+        Map<String, Object> snapshot = JSON.parseObject(run.getStateSnapshot());
+        Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
+        if (outputs == null || outputs.isEmpty()) {
+            throw new BizException("检查点快照为空（失败发生在首个节点完成之前），请直接重新运行");
+        }
+        // 执行不可变：续跑沿用 run 锁定的 DSL 快照（不是当前草稿——改画布不影响这次运行的延续语义）
+        WorkflowDsl dsl = parseDsl(run.getDslSnapshot());
+        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
+                configService.currentOverrides(),
+                parseJsonObject(run.getInputs()),
+                configService.getDouble("chat.temperature"),
+                configService.getInt("workflow.maxSteps", 50));
+        // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整
+        for (Map.Entry<String, Object> e : outputs.entrySet()) {
+            Map<String, Object> nodeOut = new LinkedHashMap<>();
+            if (e.getValue() instanceof Map<?, ?> m) {
+                for (Map.Entry<?, ?> en : m.entrySet()) nodeOut.put(String.valueOf(en.getKey()), en.getValue());
+            }
+            ctx.resumeOutputs.put(e.getKey(), nodeOut);
+            ctx.fullOutputs.put(e.getKey(), nodeOut);
+        }
+        // 之前的 trace 原样保留（续跑节点的新 trace 续写在后面，时间线连续可回放）
+        List<Map<String, Object>> prevTraces = parseTraceList(run.getNodeTraces());
+        ctx.traces.addAll(prevTraces);
+        try {
+            engine.resolveModels(dsl, ctx);
+            CompiledGraph compiled = engine.compile(dsl, ctx);
+            Optional<com.alibaba.cloud.ai.graph.OverAllState> result = invokeGraph(compiled);
+            if (result.isEmpty()) {
+                throw new BizException("续跑未返回终态（可能被步数上限截断，workflow.maxSteps=" + ctx.maxSteps + "）");
+            }
+            run.setStatus("success");
+            run.setOutputs(JSON.toJSONString(engine.extractOutputs(dsl, result.get())));
+            run.setStateSnapshot(null);
+            run.setError(null);
+            log.info("[WORKFLOW] 检查点续跑成功：run={}（{} 节点短路回放）", runId, ctx.resumeOutputs.size());
+            return finish(run, ctx, null);
+        } catch (RunTimeoutException e) {
+            log.warn("[WORKFLOW] 续跑超时：run={}：{} 秒", runId, e.seconds);
+            run.setStatus("timeout");
+            writeCheckpoint(run, ctx);
+            return finish(run, ctx, "续跑超时（" + e.seconds + " 秒未跑完，workflow.runTimeoutSeconds，0=不限制）");
+        } catch (BizException e) {
+            log.warn("[WORKFLOW] 续跑失败：run={}：{}", runId, e.getMessage());
+            writeCheckpoint(run, ctx);
+            return finish(run, ctx, e.getMessage());
+        } catch (Exception e) {
+            WorkflowSuspendException suspend = findSuspend(e);
+            if (suspend != null) {
+                // 续跑撞上人工审核节点（如审批超时终止后的续跑）：落回 waiting_approval，走正常审批流
+                run.setStatus("waiting_approval");
+                Map<String, Object> snap = new LinkedHashMap<>();
+                snap.put("outputs", ctx.fullOutputs);
+                snap.put("pendingNode", suspend.nodeId);
+                run.setStateSnapshot(JSON.toJSONString(snap));
+                log.info("[WORKFLOW] 续跑挂起待审核：run={} 节点={} approval={}", runId, suspend.nodeId, suspend.approvalId);
+                return finish(run, ctx, null);
+            }
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("[WORKFLOW] 续跑异常：run={}：{}", runId, cause.toString());
+            writeCheckpoint(run, ctx);
+            return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
+        }
+    }
+
     /** 某次运行的待审批信息（前端审批卡：prompt/超时/挂起时刻）；无则返回 null */
     public ToolApproval pendingApproval(String workflowId, String runId) {
         getRun(workflowId, runId);
@@ -663,7 +900,6 @@ public class WorkflowService {
                 .eq(ToolApproval::getStatus, "PENDING")
                 .last("LIMIT 1"));
     }
-
     /**
      * 审批超时回收（ScheduleCenter 周期调用）：挂起超过节点 timeoutSeconds 的 run 落 timeout 终态、
      * 审批记录落 TIMEOUT。审核等待是"人在回路"，没有自动恢复语义——超时即终止，重跑新开一轮。

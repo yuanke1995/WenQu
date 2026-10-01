@@ -46,6 +46,14 @@
         </div>
         <div v-if="detail.error" class="wf-run-err" style="margin-bottom:10px">{{ detail.error }}</div>
 
+        <!-- M5 失败检查点续跑：failed/timeout 且带快照的运行从失败点续跑（已成功节点不重复消耗） -->
+        <div v-if="canResume" class="wf-resume">
+          <div class="wf-resume-txt">
+            已完成节点已存入检查点——续跑只重新执行失败节点及其下游（LLM 等已成功节点不重复消耗）
+          </div>
+          <button class="app-btn small" :disabled="resuming" @click="doResume">▶ 从失败点续跑</button>
+        </div>
+
         <!-- 待审批裁决卡（M4 收口：挂起的运行在这里就能批/拒，不必回画布） -->
         <div v-if="detail.status === 'waiting_approval'" class="wf-approval">
           <div class="wf-approval-title">✋ 等待人工审核</div>
@@ -91,11 +99,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import {
-  listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval, resolveWorkflowApproval
+  listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval, resolveWorkflowApproval, resumeWorkflowRun
 } from '../api'
 
 const props = defineProps({
@@ -167,9 +175,40 @@ const doApprove = async approved => {
   }
 }
 
+// ---- M5 失败检查点续跑 ----
+const resuming = ref(false)
+/** 可续跑 = 失败/超时终态且带检查点快照（后端写快照的前提是已有成功节点，无快照时按钮不出现） */
+const canResume = computed(() =>
+  !!detail.value
+  && (detail.value.status === 'failed' || detail.value.status === 'timeout')
+  && !!detail.value.stateSnapshot)
+
+/** 从失败点续跑：接口同步返回终态 run，就地刷新（与 doApprove 同款刷新模式） */
+const doResume = async () => {
+  if (!detail.value) return
+  resuming.value = true
+  try {
+    const r = await resumeWorkflowRun(props.workflowId, detail.value.id)
+    const run = (r && r.data) || null
+    if (run) {
+      message.success(run.status === 'success' ? '续跑完成' : `续跑结束（${runLabel(run.status)}），可再次续跑或重跑`)
+      const idx = runs.value.findIndex(x => x.id === run.id)
+      if (idx >= 0) runs.value[idx] = run
+      detail.value = run
+      traces.value = (safeParse(run.nodeTraces) || []).map(t => ({ ...t, _open: false }))
+    } else {
+      await load()
+    }
+  } catch (e) {
+    message.error('续跑失败：' + (e.message || ''))
+  } finally {
+    resuming.value = false
+  }
+}
+
 const triggerLabel = t => ({ manual: '手动调试', api: 'API 触发', agent: '智能体对话' }[t] || t || '—')
-const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
-const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
+const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
+const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange', retrying: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
 const safeParse = s => { try { return JSON.parse(s) } catch (e) { return null } }
@@ -204,6 +243,9 @@ onMounted(load)
 .wf-approval-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .wf-approval-foot .app-btn { margin-left: 0; }
 .wf-approval-foot .wf-meta { margin-right: auto; }
+/* M5 失败检查点续跑卡 */
+.wf-resume { border: 1px solid var(--app-border); background: var(--app-panel); border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wf-resume-txt { font-size: 13px; color: var(--app-text2); flex: 1; min-width: 220px; }
 .wf-trace { border-top: 1px solid var(--app-border); padding: 6px 0; }
 /* trace 时间线：左轨（状态圆点 + 连线）+ 右侧内容 */
 .wf-timeline { display: flex; flex-direction: column; }
@@ -213,6 +255,7 @@ onMounted(load)
 .td-success { background: #52c41a; box-shadow: 0 0 0 3px rgba(82, 196, 26, .15); }
 .td-failed { background: #ff4d4f; box-shadow: 0 0 0 3px rgba(255, 77, 79, .15); }
 .td-waiting { background: #fa8c16; box-shadow: 0 0 0 3px rgba(250, 140, 22, .18); }
+.td-retrying { background: #faad14; box-shadow: 0 0 0 3px rgba(250, 173, 20, .18); }
 .td-running { background: #1677ff; }
 .wf-tl-line { flex: 1; width: 1.5px; background: var(--app-border); margin: 3px 0; }
 .wf-tl-body { flex: 1; min-width: 0; padding-bottom: 12px; }
