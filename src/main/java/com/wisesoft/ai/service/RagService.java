@@ -611,8 +611,20 @@ public class RagService {
                 return;
             }
 
-            // 检索查询：直接使用原问题（不再做查询改写）
+            // 检索查询：多轮对话先做指代消解改写（retrieval.queryRewriteEnabled 默认开，仅多轮触发——
+            // 首轮无上下文就没有指代，改写纯增加一次 LLM 调用与延迟）。改写是召回的增益优化：
+            // 失败/超时/改写结果异常一律按原句继续检索（原句是保底正确行为，不 fail-loud 阻断问答），
+            // 失败原因记 degradation（queryRewriteFailed）供排障面板可见。
             String retrievalQuery = question;
+            List<Map<String, Object>> rewriteHistory = null;
+            if (configService.getBoolean("retrieval.queryRewriteEnabled")) {
+                rewriteHistory = sessionService.getRecentHistory(sessionId, 3);
+            }
+            if (rewriteHistory != null && rewriteHistory.size() > 1) {
+                // >1 条 = 除本轮刚落库的问题外还有历史轮次，才有指代消解的上下文可用
+                retrievalQuery = rewriteQueryForRetrieval(question, rewriteHistory, resolvedModel,
+                        degradations, degradedCodes);
+            }
             // 图片描述参与检索：识别界面时描述含组件名，能显著提升召回
             if (!userImgs.isEmpty()) {
                 String descJoin = userImgs.stream().map(UserImageService.UserImage::desc)
@@ -967,12 +979,16 @@ public class RagService {
             boolean dedupEnabled = configService.getBoolean("context.dedupEnabled");
             double dedupThreshold = configService.getDouble("context.dedupThreshold", 0.45);
             double dedupPathThreshold = configService.getDouble("context.dedupPathThreshold", 0.28);
-            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）：排序分低于阈值的块不进上下文也不进引用，
-            // 防止词面/文风重叠的跨域弱相关块挤占名额（0.55 只说明"词面像"，不代表 55% 相关）。
-            // 排序分口径与填充顺序一致：rerankScore（启用重排且命中数在重排区间内时）否则融合分 score
-            // ——两种分域数值区间不同，调值前先看检索调试里的实际分数分布；0=关闭；
+            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）——<b>分域双门</b>：排序分有两个来源域，
+            // 数值分布完全不同，一个绝对门不可能同时对两者成立：
+            //   ① rerank 分（0~1 相关性分，重排开启且命中数在重排区间时）→ 门 = retrieval.minContextScore（默认 0.6）；
+            //   ② 加权融合分（vectorWeight×vecNorm + keywordWeight×hitRate，向量单命中常态 0.1~0.4）
+            //      → 门 = retrieval.minFusionScore（默认 0.25，拦跨域词面弱相关块、不误杀单路命中）。
+            // 不分域的后果（修复前实测）：rerank 服务不可用或关闭时，全部融合分低于 0.6 → 上下文被门清空，
+            // 检索"看似无结果"。0 = 关闭对应域的门。调值前先看检索调试面板的实际分数分布（两个域分开看）；
             // 跳过不占 docNo/extra 配额（与去冗余同语义）。
-            double minContextScore = configService.getDouble("retrieval.minContextScore", 0.6);
+            double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
+            double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
             List<Set<String>> selectedTermSets = new ArrayList<>();
             List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
@@ -986,9 +1002,11 @@ public class RagService {
                 }
                 // 最低相关分门：排序分（重排分??融合分，与填充顺序同口径）低于阈值的块不进上下文/引用，不占名额
                 double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();
-                if (minContextScore > 0 && rankScore < minContextScore) {
-                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} rankScore={} (rerank={} score={})",
-                            hit.knowledgeId(), hit.title(), rankScore, hit.rerankScore(), hit.score());
+                // 分域取门：rerank 分走 minContextScore，融合分走 minFusionScore（两域分布不同，见上方说明）
+                double gate = hit.rerankScore() != null ? minRerankGate : minFusionGate;
+                if (gate > 0 && rankScore < gate) {
+                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} rankScore={} gate={} (rerank={} score={})",
+                            hit.knowledgeId(), hit.title(), rankScore, gate, hit.rerankScore(), hit.score());
                     continue;
                 }
                 // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）
@@ -3451,6 +3469,61 @@ public class RagService {
             emitter.complete();
         } catch (Exception e) {
             // 忽略
+        }
+    }
+
+    /**
+     * 多轮检索查询改写（指代消解）：把「对话历史 + 当前问题」交给对话模型改写成一个<b>自包含</b>的检索
+     * query——消解「它/这个/上述」等指代、补全省略的主语与限定词。多轮追问（如先问「X 系统是什么」
+     * 再问「它的部署要求」）按原句检索必然召回不准，这是召回准确性的第一断点。
+     * <p>
+     * 语义边界：改写是召回的<b>增益优化</b>，不是正确性依赖——超时/失败/返回空/与原句相同/异常膨胀
+     * 一律按原句继续检索（原句是保底正确行为，不 fail-loud 阻断问答），失败记 queryRewriteFailed
+     * degradation。隔离：{@link #rewriteExecutor} 专用线程 + 硬超时（retrieval.rewriteTimeoutMs
+     * 默认 8s）——改写慢了宁可不用，不拖慢整轮问答的首字延迟。
+     */
+    private String rewriteQueryForRetrieval(String question, List<Map<String, Object>> history,
+                                            String resolvedModel, List<Map<String, String>> degradations,
+                                            Set<String> degradedCodes) {
+        String historyText = formatHistory(history);
+        String prompt = "你是检索查询改写器。根据对话历史，把「当前问题」改写成一个自包含的检索查询：\n"
+                + "1. 消解指代与省略：「它/这个/该/上述」等替换为历史中的具体实体名；省略的主语与限定词补全。\n"
+                + "2. 只做指代消解与补全，不要扩展新问题，不要回答问题本身。\n"
+                + "3. 保留原问题的语言与术语。\n"
+                + "4. 若当前问题本身已自包含（无指代、无省略），原样输出。\n"
+                + "只输出改写后的查询文本，不要解释、不要加引号。\n\n"
+                + "【对话历史】\n" + historyText + "\n【当前问题】\n" + question;
+        try {
+            long timeoutMs = configService.getLong("retrieval.rewriteTimeoutMs", 8000L);
+            java.util.concurrent.Future<String> f = rewriteExecutor.submit(() ->
+                    chatClient.prompt()
+                            .system("你是检索查询改写器，只输出改写后的查询文本。")
+                            .user(prompt)
+                            .options(OpenAiChatOptions.builder()
+                                    .model(resolvedModel)
+                                    .temperature(0.0)
+                                    .maxTokens(200)
+                                    .build())
+                            .call()
+                            .content());
+            String rewritten = f.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (rewritten == null || rewritten.isBlank()) {
+                addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写返回空，按原句检索");
+                return question;
+            }
+            String q = rewritten.trim().replaceAll("^[\"'「『]+|[\"'」』]+$", "");   // 去模型可能包的引号
+            if (q.isBlank() || q.equals(question) || q.length() > 200) {
+                // 与原句相同（模型判自包含）或异常膨胀（跑题/复读）→ 都按原句更稳
+                return question;
+            }
+            log.info("[RETRIEVE] 多轮改写生效: \"{}\" -> \"{}\"", question, q);
+            return q;
+        } catch (java.util.concurrent.TimeoutException te) {
+            addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写超时（retrieval.rewriteTimeoutMs），按原句检索");
+            return question;
+        } catch (Exception e) {
+            addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写失败，按原句检索: " + e.getMessage());
+            return question;
         }
     }
 

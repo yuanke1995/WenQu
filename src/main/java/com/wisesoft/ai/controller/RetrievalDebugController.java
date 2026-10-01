@@ -29,9 +29,7 @@ import java.util.*;
 @Tag(name = "检索调试", description = "检索链路分步调试，排查召回问题")
 public class RetrievalDebugController {
 
-    /** 与 RagService 保持一致 */
-    private static final int RERANK_MIN = 6;
-    private static final int RERANK_MAX = 15;
+    /** 与 RagService 保持一致：最终上下文条数（重排区间由 RerankService 单一持有，此处不再复刻） */
     private static final int MAX_CONTEXT_HITS = 8;
 
     private final HybridRetrievalService hybridRetrievalService;
@@ -100,22 +98,28 @@ public class RetrievalDebugController {
         List<HybridRetrievalService.Hit> merged = hybridRetrievalService.search(query);
         result.put("merged", merged.stream().map(this::hitMap).toList());
 
-        // 4. 重排（与 RagService 相同条件：6~15 条才重排）
+        // 4. 重排（与生产链路同一入口，判定单一来源）：RerankService.rank 内含完整口径——
+        //    「候选 <rerank.minHits 跳过 / ≥minHits 重排、超 rerank.maxHits 截断 top maxHits 重排」。
+        //    此前本接口自留一份「仅 6~15 条才重排」的旧判定：候选多于此区间时显示 rerankApplied=false，
+        //    而生产在重排（实测候选 65 条仍 top15 重排）——面板与实际不符，按面板调参会得出错误结论。
         List<HybridRetrievalService.Hit> reranked = merged;
-        if (merged.size() > RERANK_MIN && merged.size() <= RERANK_MAX) {
-            String reason = rerankService.debugUnavailableReason();
-            if (reason != null) {
-                // 未启用/服务不可用/冷却中——真实反映"没重排"及原因
-                result.put("rerankApplied", false);
-                result.put("rerankSkipReason", reason);
-            } else {
-                reranked = rerankService.rank(merged, query);
-                result.put("rerankApplied", true);
-            }
-        } else {
+        String reason = rerankService.debugUnavailableReason();
+        if (reason != null) {
+            // 未启用/服务不可用/冷却中——真实反映"没重排"及原因
             result.put("rerankApplied", false);
-            result.put("rerankSkipReason", merged.size() <= RERANK_MIN ? "命中过少（≤" + RERANK_MIN + "）无需重排"
-                    : "命中过多（>" + RERANK_MAX + "）不重排");
+            result.put("rerankSkipReason", reason);
+        } else if (merged.size() < 2) {
+            result.put("rerankApplied", false);
+            result.put("rerankSkipReason", "命中过少（<2）无需重排");
+        } else {
+            reranked = rerankService.rank(merged, query);
+            boolean applied = reranked.stream().anyMatch(h -> h.rerankScore() != null);
+            result.put("rerankApplied", applied);
+            if (!applied) {
+                result.put("rerankSkipReason", "命中过少（< rerank.minHits）或服务不可用，未重排");
+            } else if (reranked.size() > merged.size()) {
+                result.put("rerankNote", "候选 " + merged.size() + " 条，与生产同口径重排头部");
+            }
         }
         result.put("reranked", reranked.stream().map(this::hitMap).toList());
 
@@ -138,6 +142,9 @@ public class RetrievalDebugController {
         m.put("title", h.title());
         m.put("docName", documentMetaCache.getFileName(h.docId()));
         m.put("score", Math.round(h.score() * 100.0) / 100.0);
+        // 重排分（未重排的候选为 null）：融合分与重排分是两个分域，必须分别展示，
+        // 否则按面板看到的融合分去调 minContextScore（只对重排分生效）必然调错
+        if (h.rerankScore() != null) m.put("rerankScore", Math.round(h.rerankScore() * 1000.0) / 1000.0);
         m.put("snippet", snippet(h.content()));
         return m;
     }
