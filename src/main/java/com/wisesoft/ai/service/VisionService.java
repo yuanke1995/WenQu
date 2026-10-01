@@ -151,15 +151,15 @@ public class VisionService {
                 if (attempt < retry) log.warn("图片描述为空，第 {} 次重试", attempt + 1);
             } catch (Exception e) {
                 lastErr = e;
-                if (attempt < retry) log.warn("图片描述失败(第 {} 次)，重试: {}", attempt + 1, e.getMessage());
+                if (attempt < retry) log.warn("图片描述失败(第 {} 次)，重试: {}", attempt + 1, causeChain(e));
             }
         }
         if (result.isBlank()) {
             if (strict && lastErr != null) {
                 throw new IllegalStateException("视觉模型调用失败（重试 " + retry + " 次后仍失败）: "
-                        + (lastErr.getMessage() == null ? lastErr.getClass().getSimpleName() : lastErr.getMessage()), lastErr);
+                        + causeChain(lastErr), lastErr);
             }
-            log.warn("图片描述最终失败: {}", lastErr == null ? "空响应" : lastErr.getMessage());
+            log.warn("图片描述最终失败: {}", lastErr == null ? "空响应" : causeChain(lastErr));
         } else if (cacheKey != null) {
             imageDescCache.put(cacheKey, result, model);
         }
@@ -272,5 +272,20 @@ public class VisionService {
             case "webp" -> "image/webp";
             default -> "image/png";
         };
+    }
+
+    /**
+     * 异常类名 + cause 链拼接（截断 600 字符）。Spring RestClientException 的 getMessage()
+     * 只有 "Error while extracting response for type ... and content type ..." 这层壳，
+     * 真实原因（连接被对端掐断 / 超时 / EOF）在 cause 链里——不展开就永远看不到。
+     */
+    private static String causeChain(Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        for (Throwable c = t; c != null && sb.length() < 600; c = c.getCause() == c ? null : c.getCause()) {
+            if (sb.length() > 0) sb.append(" ← ");
+            sb.append(c.getClass().getSimpleName());
+            if (c.getMessage() != null) sb.append(": ").append(c.getMessage());
+        }
+        return sb.toString();
     }
 }
