@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.AgentMapper;
 import com.wisesoft.ai.mapper.MessageMapper;
 import com.wisesoft.ai.mapper.QaFeedbackMapper;
 import com.wisesoft.ai.mapper.QaLogMapper;
@@ -11,6 +12,7 @@ import com.wisesoft.ai.mapper.TraceSampleMapper;
 import com.wisesoft.ai.mapper.WorkflowMapper;
 import com.wisesoft.ai.mapper.WorkflowRunMapper;
 import com.wisesoft.ai.model.Message;
+import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.QaFeedback;
 import com.wisesoft.ai.model.QaLog;
 import com.wisesoft.ai.model.TraceSample;
@@ -59,6 +61,7 @@ public class TraceService {
     private final TraceSampleMapper sampleMapper;
     private final WorkflowRunMapper runMapper;
     private final WorkflowMapper workflowMapper;
+    private final AgentMapper agentMapper;
     private final RetrievalEvaluationService evalService;
     private final ConfigService configService;
 
@@ -109,7 +112,6 @@ public class TraceService {
             Map<String, Object> r = baseRow(l.getId(), "chat", l.getCreatedAt(), l.getQuestion(),
                     l.getAnswerSummary(), l.getElapsedMs() == null ? null : l.getElapsedMs().longValue());
             r.put("agentId", l.getAgentId());
-            r.put("agentName", agentName(l.getAgentId()));
             r.put("hasCitation", l.getHasCitation());
             r.put("deepThink", l.getDeepThink());
             r.put("hitDocCount", l.getHitDocIds() == null || l.getHitDocIds().isBlank()
@@ -123,6 +125,14 @@ public class TraceService {
         for (Map<String, Object> r : rows) {
             String mid = (String) r.get("messageId");
             r.put("rating", mid == null ? null : ratings.get(mid));
+        }
+        // 批量补智能体名（一页一次 in 查询，非逐行查表；未绑定留空由前端显示「全局」，已删除的回退显示 id）
+        Map<String, String> agentNames = agentNames(rows.stream()
+                .map(r -> (String) r.get("agentId"))
+                .filter(a -> a != null && !a.isBlank()).distinct().toList());
+        for (Map<String, Object> r : rows) {
+            String aid = (String) r.get("agentId");
+            if (aid != null && !aid.isBlank()) r.put("agentName", agentNames.getOrDefault(aid, aid));
         }
         return pageOf(rows, pg.getTotal(), page, size);
     }
@@ -385,9 +395,12 @@ public class TraceService {
         return out;
     }
 
-    /** 列表页轻量：智能体只回 id（名称映射在详情里由消息 agentName 提供，列表不逐行查智能体表） */
-    private String agentName(String agentId) {
-        return agentId;
+    /** 批量解析智能体名（一次 in 查询；名称异常的行跳过，调用方对查不到的回退显示 id） */
+    private Map<String, String> agentNames(List<String> agentIds) {
+        if (agentIds == null || agentIds.isEmpty()) return Map.of();
+        return agentMapper.selectBatchIds(agentIds).stream()
+                .filter(a -> a.getName() != null && !a.getName().isBlank())
+                .collect(Collectors.toMap(Agent::getId, Agent::getName, (a, b) -> a));
     }
 
     private String workflowName(String workflowId) {
