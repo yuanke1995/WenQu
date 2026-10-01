@@ -2140,7 +2140,12 @@ public class RagService {
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
                             toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
                             processText.isEmpty() ? null : processText,
-                            agent.getId(), agent.getName());
+                            // 未使用智能体的问答 agent 为 null（会话未绑定/走全局配置）：必须判空——
+                            // 此前直接 agent.getId() 在 onComplete 回调里抛 NPE，被 reactor 丢弃
+                            // （onComplete 阶段抛异常无处路由），表现为「助手消息不落库 + done 永不
+                            // 下发 + 前端永远转圈」，且日志只有一行 onErrorDropped 极难定位。
+                            agent == null ? null : agent.getId(),
+                            agent == null ? null : agent.getName());
 
                     // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
