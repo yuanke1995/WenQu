@@ -855,9 +855,28 @@
       "label": "MinerU 服务地址",
       "type": "text",
       "tips": "ocrMineruUri",
-      "def": "http://localhost:30001",
+      "def": "http://localhost:30011",
       "width": 300,
       "note": "MinerU http-server 地址；健康检查 GET {uri}/openapi.json；仅 mineru 引擎使用",
+      "tier": 2
+    },
+    {
+      "backendKey": "parse.ocrMineruBackend",
+      "panel": "chunk",
+      "section": 2,
+      "group": "chunk",
+      "key": "ocrMineruBackend",
+      "path": "parse.ocrMineruBackend",
+      "label": "MinerU 解析后端",
+      "type": "select",
+      "tips": "ocrMineruBackend",
+      "def": "pipeline",
+      "width": 320,
+      "options": [
+        { "value": "pipeline", "label": "pipeline（多语言，CPU 可跑，推荐）" },
+        { "value": "hybrid-auto-engine", "label": "hybrid（本地 VLM，高精度需算力）" }
+      ],
+      "note": "hybrid 要本地跑 VLM，CPU-only 容器上极慢；仅 mineru 引擎使用",
       "tier": 2
     },
     {
@@ -2614,6 +2633,7 @@
     "ocrEngine": "PDF 深度解析引擎：none=文本抽取(扫描件自动视觉兜底，历史默认) / vision=整份逐页视觉OCR(不用文本层) / pp_structure_v3、mineru=整份发外部版面解析服务换回带表格与标题层级的 markdown(需自托管并填服务地址)；引擎失败一律 fail-loud 不回落文本层。",
     "ocrPpUri": "PP-StructureV3 版面解析服务地址(PaddleX serving)：健康检查 GET {uri}/health、解析 POST {uri}/layout-parsing。",
     "ocrMineruUri": "MinerU 版面解析服务地址(http-server)：健康检查 GET {uri}/openapi.json、解析 POST {uri}/file_parse。",
+    "ocrMineruBackend": "MinerU 解析后端：pipeline=多语言 CPU 可跑(默认) / hybrid-auto-engine=本地 VLM 高精度(需算力，CPU-only 容器极慢)。",
     "ocrTimeoutMs": "版面引擎单次调用超时 ms：大 PDF 版面解析慢，默认 600000=10 分钟。",
     "chunkStructural": "按文档结构切分：标题层级开新块、达到边界阈值在段落边界断块（避免从句子中间硬切）、章节标题路径注入块上下文。docx 生效；存量文档需重解析后才会按新规则重建知识块。",
     "chunkStructuralRatio": "结构切分边界阈值（maxSize×比例）：块达到该长度时优先在段落边界断块。调低块更小更贴近边界但块数更多；调高更接近原 800 字硬切。",
@@ -2815,6 +2835,7 @@
     "parse.ocrDpi": "文档解析：视觉 OCR 的页渲染 DPI(72~400；越高小字识别越准、耗时与内存越高)",
     "parse.ocrPpUri": "文档解析：PP-StructureV3 版面解析服务地址(PaddleX serving；健康检查 GET {uri}/health)",
     "parse.ocrMineruUri": "文档解析：MinerU 版面解析服务地址(http-server；健康检查 GET {uri}/openapi.json)",
+    "parse.ocrMineruBackend": "文档解析：MinerU 解析后端(pipeline=多语言 CPU 可跑 / hybrid-auto-engine=本地 VLM 高精度需算力)",
     "parse.ocrTimeoutMs": "文档解析：版面引擎单次调用超时 ms(大 PDF 版面解析慢，默认 600000=10 分钟)",
     "parse.childEnabled": "父子分块：超长知识块切成小子块向量化做检索索引(命中子块后返回父块完整正文，短文本召回更准、上下文不丢；确定性切分无 LLM 消耗；改后需重解析生效)",
     "parse.childSize": "父子分块：子块尺寸(字符，100~2000；超过该长度的块才切子块，越小检索越准、embedding 消耗越多)",

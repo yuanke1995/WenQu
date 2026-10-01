@@ -60,7 +60,7 @@ public class MinerUOcrEngine implements OcrEngine {
 
     private String uri() {
         String u = configService.get("parse.ocrMineruUri");
-        return (u == null || u.isBlank()) ? "http://localhost:30001" : u.replaceAll("/+$", "");
+        return (u == null || u.isBlank()) ? "http://localhost:30011" : u.replaceAll("/+$", "");
     }
 
     private Duration timeout() {
@@ -94,10 +94,14 @@ public class MinerUOcrEngine implements OcrEngine {
     @Override
     public List<PageMarkdown> parse(Path pdf, String fileName) throws Exception {
         String base = uri();
-        // 表单参数对齐新栈 MinerUParser 默认值；lang_list 单 part 值 "ch"（FastAPI List[str] 收单值即 ["ch"]）
+        // 表单参数对齐 2.7.6 mineru-api（/file_parse）；lang_list 单 part 值 "ch"（FastAPI List[str] 收单值即 ["ch"]）。
+        // backend 默认 pipeline：多语言通用、无幻觉、CPU 可跑；hybrid-auto-engine 要本地跑 VLM，
+        // CPU-only 容器上极慢（默认值可用 parse.ocrMineruBackend 调整）
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("lang_list", "ch");
-        fields.put("backend", "hybrid-auto-engine");
+        fields.put("backend", configService.get("parse.ocrMineruBackend") == null
+                || configService.get("parse.ocrMineruBackend").isBlank()
+                ? "pipeline" : configService.get("parse.ocrMineruBackend").trim());
         fields.put("parse_method", "auto");
         fields.put("formula_enable", "true");
         fields.put("table_enable", "true");

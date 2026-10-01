@@ -349,7 +349,8 @@ public class ConfigService {
         d.put("parse.ocrDpi", "200");
         d.put("parse.ocrEngine", "none");      // PDF 深度解析引擎：none=文本抽取+扫描件视觉兜底（默认）/ vision=整份逐页视觉OCR / pp_structure_v3 / mineru=外部版面解析服务（失败 fail-loud 不回落）
         d.put("parse.ocrPpUri", "http://localhost:8080");       // PP-StructureV3 服务地址（健康检查 GET {uri}/health）
-        d.put("parse.ocrMineruUri", "http://localhost:30001");  // MinerU 服务地址（健康检查 GET {uri}/openapi.json）
+        d.put("parse.ocrMineruUri", "http://localhost:30011");  // MinerU 服务地址（宿主端口 30011：30001 与 IDEA 内置服务冲突；容器内仍是 30001）
+        d.put("parse.ocrMineruBackend", "pipeline"); // MinerU 解析后端：pipeline=CPU 稳（默认）/ hybrid-auto-engine=本地 VLM 高精度（需算力）
         d.put("parse.ocrTimeoutMs", "600000"); // 版面引擎单次调用超时(ms)：大 PDF 版面解析慢，默认 10 分钟
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");

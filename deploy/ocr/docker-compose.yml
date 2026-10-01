@@ -1,0 +1,37 @@
+# 问渠 OCR 版面解析服务（parse.ocrEngine = mineru 的自托管后端）。
+#
+# 与 sandbox-provisioner 分开编排：OCR 是常驻重服务（首次解析要下载 ~2GB 模型），
+# 不随沙盒 provisioner 重建而重建。老副本 parse.ocrMineruUri 默认值已对齐 30011
+# （宿主 30001 被 IDEA 内置服务占用，故映射到 30011；容器内仍是 30001），
+# 起容器后设置页无需改配置。
+#
+# 用法：
+#   docker compose up -d --build          # 首次构建 ~10 分钟（arm64 原生，无转译）
+#   curl http://127.0.0.1:30011/openapi.json   # 健康检查：paths 应含 /file_parse
+#   docker compose logs -f mineru         # 首次解析时观察模型下载进度
+#
+# 限流绑定：只绑 127.0.0.1（本地开发机，不对外）。
+services:
+  mineru:
+    build: ./mineru
+    image: wenqu-mineru:2.7.6-cpu
+    container_name: wenqu-mineru
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:30011:30001"
+    environment:
+      MINERU_MODEL_SOURCE: modelscope
+      MINERU_HOME: /models
+    volumes:
+      # 模型缓存持久化：首次解析自动下载 ~2GB，重建容器不重复下载
+      - mineru-models:/models
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:30001/openapi.json", "-o", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mineru-models:
