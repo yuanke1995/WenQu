@@ -24,7 +24,6 @@
         </button>
       </nav>
 
-      <div v-if="!collapsed" class="side-label">最近</div>
       <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）；右端内嵌批量管理入口 -->
       <div v-if="!collapsed" class="sess-search-wrap">
         <search-outlined class="sess-search-ic" />
@@ -49,7 +48,10 @@
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
-          <div v-for="s in visibleSessionList" :key="s.id"
+          <!-- 按时间分组展示（后端已按 置顶→更新时间 排序，这里只分桶不改序）；折叠图标条下不显示组头 -->
+          <template v-for="g in groupedSessions" :key="g.label">
+            <div v-if="!collapsed" class="side-label sess-group-label">{{ g.label }}</div>
+            <div v-for="s in g.items" :key="s.id"
                class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id) }"
                :title="s.title" @click="batchMode && !collapsed ? toggleBatchSel(s.id) : openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
@@ -81,6 +83,7 @@
               </a-dropdown>
             </template>
           </div>
+          </template>
           <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">
             {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
           </div>
@@ -156,6 +159,38 @@ const toggleFold = () => {
 }
 
 const visibleSessionList = computed(visibleSessions)
+
+// 会话时间字段稳健解析：ISO 字符串为主（Spring 默认序列化），兼容时间戳/数组/对象形态
+const sessTime = v => {
+  if (!v) return null
+  if (typeof v === 'number') return new Date(v)
+  if (typeof v === 'string') { const d = new Date(v); return isNaN(d.getTime()) ? null : d }
+  if (Array.isArray(v)) return new Date(v[0], (v[1] || 1) - 1, v[2] || 1, v[3] || 0, v[4] || 0, v[5] || 0)
+  if (typeof v === 'object' && v.year) return new Date(v.year, (v.monthValue || 1) - 1, v.dayOfMonth || 1, v.hour || 0, v.minute || 0, v.second || 0)
+  return null
+}
+// 按时间分组（后端已按 置顶→更新时间 排序，这里只分桶不改序）：置顶 / 今天 / 7 天内 / 更早；
+// 组内保持后端序，空组不渲染；批量全选口径仍是 visibleSessionList（平铺），与分组显示无关
+const groupedSessions = computed(() => {
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const weekStart = startOfToday - 6 * 86400000
+  const groups = [
+    { label: '置顶', items: [] },
+    { label: '今天', items: [] },
+    { label: '7 天内', items: [] },
+    { label: '更早', items: [] }
+  ]
+  for (const s of visibleSessionList.value) {
+    if (s.isPinned === 1) { groups[0].items.push(s); continue }
+    const d = sessTime(s.updateTime)
+    const t = d ? d.getTime() : 0
+    if (t >= startOfToday) groups[1].items.push(s)
+    else if (t >= weekStart) groups[2].items.push(s)
+    else groups[3].items.push(s)
+  }
+  return groups.filter(g => g.items.length)
+})
 const isActive = p => route.path === p
 const newChat = () => {
   sessionStore.newChatTick++
@@ -348,6 +383,8 @@ onMounted(async () => {
 .nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
+/* 列表内时间分组组头：比页级标签更贴紧（首组上方由搜索框间距兜底） */
+.sess-group-label { margin: 10px 8px 3px; }
 /* 搜索框右端：分隔线 + 批量管理入口（与搜索同属「管理会话」动线，再点一次退出） */
 .sess-search-div { width: 1px; height: 12px; background: var(--app-border); margin: 0 2px; flex: none; }
 .sess-manage { border: none; background: transparent; color: var(--app-text3); cursor: pointer; font-size: 12px; padding: 2px 5px 2px 3px; margin-right: 3px; display: inline-flex; align-items: center; }
