@@ -1,0 +1,18 @@
+# SearXNG 本地实例（问渠联网搜索 generic 服务商）
+#
+# 启动：  docker compose up -d
+# 验证：  curl 'http://127.0.0.1:8888/search?q=test&format=json'
+# 停止：  docker compose down
+#
+# 问渠侧配置（设置页 · 联网搜索）：
+#   服务商 = generic，服务地址 = http://127.0.0.1:8888，Key 留空
+#   （若问渠跑在容器里而非本机，baseUrl 要改成宿主可达地址，不能写 127.0.0.1）
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: wenqu-searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro

@@ -1,0 +1,19 @@
+# SearXNG 本地实例配置（问渠联网搜索 generic 服务商专用）
+#
+# 最小化配置：基于官方默认值（use_default_settings: true）只覆盖三处——
+# 1. secret_key：实例密钥，随机生成，必须设置否则起不来
+# 2. limiter=false：本地单用户实例必须关。SearXNG 自带的防爬限流会把「无浏览器
+#    指纹的程序化 JSON 请求」当机器人拦掉（429/403），这正是问渠的调用形态
+# 3. search.formats 显式含 json：不加的话 /search?format=json 直接 403
+#    （SearXNG 默认只开 html，这是"通了但返回 403"的头号原因）
+use_default_settings: true
+
+server:
+  secret_key: "d0ebe9f7219447d27d78bf45c010f5312cc8f68adee2be0233fabaf11756dde5"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
