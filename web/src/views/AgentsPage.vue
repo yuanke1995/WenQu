@@ -89,8 +89,8 @@
     <template v-else>
       <div class="app-page-head">
         <button class="app-icon-btn" title="返回列表" aria-label="返回列表" @click="closeEdit"><arrow-left-outlined /></button>
-        <h1 class="app-page-title">{{ editingId ? '配置智能体' : '新建智能体' }}</h1>
-        <span v-if="editingId" class="ap-count">{{ form.name || '未命名' }}</span>
+        <!-- 页头标题即生效摘要（纯文本）：「名称·范围·能力」随表单实时变化 -->
+        <h1 class="app-page-title ap-head-summary"><span>{{ form.name || '未命名智能体' }}</span><span class="ap-sum-tail">·{{ summaryScope }}·</span><span class="ap-sum-tail" :class="{ 'is-accent': capsTouched }">{{ summaryCaps }}</span></h1>
         <div class="ap-head-r">
           <button class="app-btn ghost small" @click="closeEdit">取消</button>
           <button class="app-btn small" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
@@ -98,16 +98,6 @@
       </div>
 
       <div class="app-page-body">
-        <!-- 生效摘要：随表单实时变化，改完一眼知道最终结果 -->
-        <div class="ap-summary">
-          <span class="ap-summary-avatar"><robot-outlined /></span>
-          <span class="ap-summary-name">{{ form.name || '未命名智能体' }}</span>
-          <span class="ap-summary-sep">·</span>
-          <span class="ap-summary-item">{{ summaryScope }}</span>
-          <span class="ap-summary-sep">·</span>
-          <span class="ap-summary-item" :class="{ 'is-accent': capsTouched }">{{ summaryCaps }}</span>
-        </div>
-
         <a-form layout="vertical" class="ap-form">
           <section class="app-card">
             <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份</h2>
@@ -163,6 +153,29 @@
             <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
               纯角色智能体：完全不走资料检索，仅凭系统提示词与对话上下文作答。
               适合通用法律顾问、写作助手这类不挂资料的场景；对话中手动 @ 的文档仍会被参考。
+            </div>
+          </section>
+
+          <!-- 检索参数紧跟知识库范围（库范围→库参数），宽屏双栏时与「身份/提示词」同属左栏 -->
+          <section class="app-card" v-if="!form.isSubagent">
+            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索参数</h2>
+            <p class="ap-block-hint">
+              留空即继承「系统设置 → 检索设置」；只填需要为这个智能体单独调整的项
+              （例如法律类助手提高相似度阈值保精度、操作手册助手放宽阈值保召回）。
+            </p>
+            <div class="qp-grid">
+              <label v-for="f in QP_FIELDS" :key="f.key" class="qp-item">
+                <span class="qp-label">{{ f.label }}</span>
+                <a-input v-model:value="form.qp[f.key]" :placeholder="qpPh(f)" allow-clear />
+              </label>
+              <label class="qp-item">
+                <span class="qp-label">重排服务</span>
+                <!-- 提示独占一行放控件下方：窄栏（格宽 ~284px）下行内放不下会横向溢出、画到隔壁栏卡片上 -->
+                <span class="qp-rerank-ctl">
+                  <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
+                  <span v-if="form.qpRerank === 'inherit' && rerankInheritHint" class="qp-inherit">{{ rerankInheritHint }}</span>
+                </span>
+              </label>
             </div>
           </section>
 
@@ -253,24 +266,6 @@
             <a-select v-model:value="form.workflowId" :options="workflowOptions" allow-clear
                       show-search option-filter-prop="label" style="width:100%"
                       placeholder="不绑定——按下面的模型/知识库/工具配置作答" />
-          </section>
-
-          <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索参数</h2>
-            <p class="ap-block-hint">
-              留空即继承「系统设置 → 检索设置」；只填需要为这个智能体单独调整的项
-              （例如法律类助手提高相似度阈值保精度、操作手册助手放宽阈值保召回）。
-            </p>
-            <div class="qp-grid">
-              <label v-for="f in QP_FIELDS" :key="f.key" class="qp-item">
-                <span class="qp-label">{{ f.label }}</span>
-                <a-input v-model:value="form.qp[f.key]" :placeholder="qpPh(f)" allow-clear />
-              </label>
-              <label class="qp-item">
-                <span class="qp-label">重排服务</span>
-                <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
-              </label>
-            </div>
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
@@ -511,15 +506,17 @@ const qpPh = f => {
   const v = String(qpDefaults.value?.[f.path] ?? '').trim()
   return v === '' ? f.ph : `留空继承全局（当前 ${v}）`
 }
-/** 重排三态的「跟随全局」选项：把全局当前状态亮出来（开启/关闭），读不到则保持原样 */
-const rerankOptions = computed(() => {
+/** 重排三态：恒定短 label（控件宽度稳定，不再把全局状态拼进选项文案——长 label 曾把 qp-grid 轨道按
+ *  min-content 撑出卡片）。全局当前状态改走 rerankInheritHint 灰字，语义对齐其他项的「留空继承全局（当前 X）」 */
+const rerankOptions = [
+  { label: '跟随全局', value: 'inherit' },
+  { label: '开启', value: 'on' },
+  { label: '关闭', value: 'off' }
+]
+/** 继承时的灰字提示：全局重排开关当前状态（读不到则不显示） */
+const rerankInheritHint = computed(() => {
   const v = String(qpDefaults.value?.['rerank.enabled'] ?? '').trim()
-  const cur = v === 'true' ? '当前开启' : (v === 'false' ? '当前关闭' : '')
-  return [
-    { label: cur ? `跟随全局（${cur}）` : '跟随全局', value: 'inherit' },
-    { label: '开启', value: 'on' },
-    { label: '关闭', value: 'off' }
-  ]
+  return v === 'true' ? '全局当前：开启' : (v === 'false' ? '全局当前：关闭' : '')
 })
 
 /** queryParams(JSON 串) → 表单（未配置的项为 null = 继承全局） */
@@ -1141,30 +1138,30 @@ onMounted(async () => { })
   border-top: 1px dashed var(--app-border); padding-top: 6px; margin-top: auto;
 }
 
-/* 配置视图（820px 列在通栏页面里水平居中，宽屏不再贴左） */
-.ap-summary {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 820px;
-  margin: 0 auto 12px; padding: 10px 14px; border-radius: 12px;
-  background: linear-gradient(0deg, var(--app-accent-weak), var(--app-accent-weak));
-  border: 1px solid var(--app-accent-weak); font-size: 12px; color: var(--app-text2);
-}
-.ap-summary-avatar {
-  width: 22px; height: 22px; border-radius: 6px; flex: none; font-size: 11px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--app-panel); color: var(--app-accent);
-}
-.ap-summary-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
-.ap-summary-sep { color: var(--app-text3); }
-.ap-summary-item { color: var(--app-text2); }
-.ap-summary-item.is-accent { color: var(--app-accent); }
+/* 配置视图：宽屏双栏瀑布式（>1440px 双栏，中屏回落单列居中，小屏吃满）。
+   卡片整卡不跨栏（break-inside:avoid），multicol 自动配平两栏高度；
+   卡片语义分组：左≈身份/提示词/知识库/检索参数（检索域），右≈能力/委派/工作流/默认（行为域） */
+/* 页头标题即生效摘要（纯文本）：名称是主文案，范围/能力弱化跟随其后；能力被本智能体覆盖时高亮。
+   超长单行截断，不挤右侧操作按钮 */
+.ap-head-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-sum-tail { color: var(--app-text2); font-weight: 400; }
+.ap-sum-tail.is-accent { color: var(--app-accent); font-weight: 500; }
 
-.ap-form { display: flex; flex-direction: column; gap: 12px; max-width: 820px; margin: 0 auto; }
+/* multicol 不作用于 flex 容器——栏内卡片纵向排布靠 margin，不用 flex/gap */
+.ap-form { columns: 620px 2; column-gap: 12px; max-width: 1320px; margin: 0 auto; }
+.ap-form > section { break-inside: avoid; -webkit-column-break-inside: avoid; margin: 0 0 12px; }
 .ap-form :deep(.ant-form-item) { margin-bottom: 12px; }
 .ap-block-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
+/* 中屏回落单列（620px 柱宽下容器不足自动 1 栏），限宽 900 保证单列可读；小屏吃满宽度 */
+@media (max-width: 1440px) { .ap-form { max-width: 900px; } }
+@media (max-width: 768px) { .ap-form { max-width: none; } }
 /* 检索参数覆盖：两列网格，留空=继承全局 */
 .qp-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 10px 18px; }
 .qp-item { display: flex; align-items: center; gap: 10px; }
 .qp-label { flex: none; width: 88px; font-size: 12.5px; color: var(--app-text2); }
+/* 重排服务的控件列：分段控件 + 下方全局状态灰字（竖排，任何栏宽都不会横向溢出格子） */
+.qp-rerank-ctl { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+.qp-inherit { font-size: 11px; color: var(--app-text3); }
 .ap-pick { margin-top: 12px; }
 .ap-sec-ic { font-size: 13px; color: var(--app-text3); }
 
