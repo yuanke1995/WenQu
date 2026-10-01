@@ -29,12 +29,6 @@
         <search-outlined class="sess-search-ic" />
         <input v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
-        <span class="sess-search-div"></span>
-        <a-tooltip :title="batchMode ? '退出批量管理' : '批量删除会话'">
-          <button class="sess-manage" :class="{ on: batchMode }" @click="batchMode ? exitBatchMode() : enterBatchMode()">
-            <check-square-outlined />
-          </button>
-        </a-tooltip>
       </div>
       <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于当前搜索结果 -->
       <div v-if="!collapsed && batchMode" class="sess-batch-bar">
@@ -42,7 +36,7 @@
         <span class="batch-actions">
           <button class="batch-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : (sessionStore.hasMore ? '全选(已加载)' : '全选') }}</button>
           <button class="batch-btn danger" :disabled="!batchSel.size" @click="confirmBatchDelete">删除</button>
-          <button class="batch-btn" @click="exitBatchMode">完成</button>
+          <button class="batch-btn" @click="exitBatchMode">取消</button>
         </span>
       </div>
       <!-- 会话列表为游标分页：默认 20 条，点底部「查看更多」每次再渲染 20 条；
@@ -84,6 +78,7 @@
                     <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
                     <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
                     <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
+                    <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
                   </a-menu>
@@ -291,6 +286,7 @@ const sessionMenu = (s, key) => {
   if (key === 'rename') renameSession(s)
   else if (key === 'favorite') toggleFavorite(s)
   else if (key === 'export') exportSessionMd(s)
+  else if (key === 'batch') enterBatchMode()
   else if (key === 'delete') confirmDelete(s)
 }
 const confirmDelete = s => {
@@ -450,10 +446,7 @@ onMounted(async () => {
 .group-count { font-size: 10px; color: var(--app-text3); opacity: .8; }
 /* 列表内时间分组组头：比页级标签更贴紧（首组上方由搜索框间距兜底） */
 .sess-group-label { margin: 10px 8px 3px; }
-/* 搜索框右端：分隔线 + 批量管理入口（与搜索同属「管理会话」动线，再点一次退出） */
-.sess-search-div { width: 1px; height: 12px; background: var(--app-border); margin: 0 2px; flex: none; }
-.sess-manage { border: none; background: transparent; color: var(--app-text3); cursor: pointer; font-size: 12px; padding: 2px 5px 2px 3px; margin-right: 3px; display: inline-flex; align-items: center; }
-.sess-manage:hover, .sess-manage.on { color: var(--app-accent); }
+/* 批量管理入口在每条会话「更多」菜单里（搜索框不再内嵌入口） */
 /* 批量操作条：独立一行贴列表上方，主题色弱底提示「处于批量模式」 */
 .sess-batch-bar {
   display: flex; align-items: center; justify-content: space-between;
