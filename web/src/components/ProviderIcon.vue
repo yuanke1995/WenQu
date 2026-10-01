@@ -23,7 +23,8 @@ import { BRAND_PATHS, BRAND_BADGES, BRAND_COLORS } from '../assets/providerIcons
  * 供应商图标渲染（三段兜底）：
  * 1. icon 为 http(s) URL → 图片
  * 2. icon 命中内置官方 SVG（openai/anthropic/gemini/ollama/alibabacloud/huggingface/openrouter/
- *    deepseek/qwen/moonshot(Kimi)/doubao(ByteDance)/hunyuan(Tencent)/qianfan(Baidu)/minimax/vllm）→ 品牌矢量图
+ *    deepseek/qwen/moonshot(Kimi)/doubao(ByteDance)/hunyuan(Tencent)/qianfan(Baidu)/minimax/vllm/
+ *    zhipu(智谱)/siliconflow(硅基流动)）→ 品牌矢量图
  * 3. 其余（内置品牌徽标 key 或空）→ 品牌色字母徽标；空 key 按供应商名首字符 + 确定性色相生成
  * SVG 一律用 BRAND_COLORS 中的官方品牌色填充（无则回退 currentColor），不再跟随文字色导致黑白。
  * 悬浮提示改用 antd Tooltip 且 mouse-enter-delay=0，解决原生 title 在 macOS 下约 2s 才显示的延迟。
