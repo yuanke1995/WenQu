@@ -37,7 +37,10 @@
                message="平台未开启「工具调用」总开关"
                description="服务照常连接与展示，但模型暂时无法调用任何工具（含 MCP 工具）。需管理员在「系统设置 → 工具调用」中开启总开关。" />
 
-      <div v-if="!servers.length" class="app-card key-empty">
+      <div v-if="loading && !servers.length" class="app-card key-empty">
+        <div class="key-dim">加载中…</div>
+      </div>
+      <div v-else-if="!servers.length" class="app-card key-empty">
         <div class="key-empty-title">还没有 MCP 服务</div>
         <div class="key-empty-desc">
           接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
@@ -120,7 +123,7 @@
           {{ probe.loading ? '测试中…' : '测试连接' }}
         </button>
         <button class="app-btn" :disabled="saving" @click="submitForm">
-          {{ saving ? '保存中…' : (form.id ? '保存并重连' : '添加并连接') }}
+          {{ saving ? '保存中…' : (form.id ? '保存' : '添加') }}
         </button>
       </div>
     </a-modal>
@@ -128,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message } from 'ant-design-vue'
 import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer } from '../api'
@@ -154,25 +157,44 @@ const filtered = computed(() => {
     String(s.name || '').toLowerCase().includes(kw) || String(s.url || '').toLowerCase().includes(kw))
 })
 
-/** 失败态去掉 failed: 前缀只留原因；停用是明确语义，不叫「失败」 */
+/** 失败态去掉 failed: 前缀只留原因；停用是明确语义，不叫「失败」；连接中是后台建连的过渡态 */
 const stateText = s => {
   if (!s.enabled) return '已停用'
   if (s.connected) return `已连接 · ${s.toolCount || 0} 个工具`
   const st = s.state || ''
+  if (st === 'connecting') return '连接中…'
   if (st.startsWith('failed:')) return '连接失败：' + st.slice(7)
   return '未连接'
 }
-const stateCls = s => (!s.enabled ? 'muted' : (s.connected ? 'ok' : 'bad'))
+const stateCls = s =>
+  (!s.enabled ? 'muted' : (s.connected ? 'ok' : (s.state === 'connecting' ? 'pending' : 'bad')))
+
+/* 连接在后台进行（进页面/增删改后都有 connecting 过渡态）：链式轮询直到没有连接中的
+   服务为止。不用 setInterval——上一发状态请求本身可能因在线校验拖 1~3s，必须等它回来
+   再排下一发，避免请求堆积。上限 90 发（约 3 分钟）防后端卡死导致无限轮询。 */
+const CONNECTING_POLL_MS = 2000
+const CONNECTING_POLL_MAX = 90
+let pollTimer = null
+let pollCount = 0
+const hasConnecting = () => servers.value.some(s => s.enabled && s.state === 'connecting')
+const stopPoll = () => { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null } }
+const schedulePoll = () => {
+  if (pollTimer || !hasConnecting()) { if (!hasConnecting()) pollCount = 0; return }
+  if (pollCount >= CONNECTING_POLL_MAX) return
+  pollCount++
+  pollTimer = setTimeout(() => { pollTimer = null; loadStatus() }, CONNECTING_POLL_MS)
+}
 
 const apply = d => {
   toolsEnabled.value = d?.toolsEnabled !== false
   servers.value = d?.servers || []
   checkedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  schedulePoll()
 }
 /**
  * 拉状态并整体替换列表。retry=true（点「刷新」按钮）时后端会先对未连上的服务补一次
  * 重连，远端恢复的服务当场翻回绿点；进页面/增删改后的刷新走默认 false（不重试，
- * 避免挂着几个死服务拖慢首屏——重连代价与失败服务数成正比）。
+ * 连接本身在后台进行，状态由上面的轮询收敛）。
  */
 const loadStatus = async (retry = false) => {
   loading.value = true
@@ -189,8 +211,11 @@ const doReload = async () => {
     const r = await reloadMcp()
     if (r.success) {
       apply(r.data)
-      const bad = (r.data?.servers || []).filter(s => s.enabled && !s.connected).length
-      if (bad) message.warning(`已重连，${bad} 个服务仍未连上（见状态详情）`)
+      const list = r.data?.servers || []
+      const pending = list.filter(s => s.enabled && s.state === 'connecting').length
+      const bad = list.filter(s => s.enabled && s.state !== 'connecting' && !s.connected).length
+      if (pending) message.info('重连已发起，连接完成后状态自动刷新')
+      else if (bad) message.warning(`已重连，${bad} 个服务仍未连上（见状态详情）`)
       else message.success('已重连')
     } else message.error(r.msg || '重连失败')
   } catch (e) { message.error(e.message || '重连失败') }
@@ -231,7 +256,7 @@ const submitForm = async () => {
       ? await updateMcpServer(form.value.id, { name, url, type: form.value.type })
       : await addMcpServer({ name, url, type: form.value.type, enabled: true })
     if (r.success) {
-      message.success(form.value.id ? '已保存并重连' : '已添加并连接')
+      message.success(form.value.id ? '已保存，后台连接中' : '已添加，后台连接中')
       formOpen.value = false
       await loadStatus()
     } else message.error(r.msg || '保存失败')
@@ -242,7 +267,7 @@ const toggleEnabled = async (s, on) => {
   togglingId.value = s.id
   try {
     const r = await setMcpServerEnabled(s.id, on)
-    if (r.success) { message.success(on ? '已启用' : '已停用'); await loadStatus() }
+    if (r.success) { message.success(on ? '已启用，后台连接中' : '已停用'); await loadStatus() }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { togglingId.value = '' }
@@ -256,6 +281,7 @@ const removeServer = async s => {
 }
 
 onMounted(loadStatus)
+onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 </script>
 
 <style scoped>
@@ -298,8 +324,10 @@ onMounted(loadStatus)
 .mcp-dot.ok { background: var(--app-ok); }
 .mcp-dot.bad { background: var(--app-danger); }
 .mcp-dot.muted { background: var(--app-text3); }
+.mcp-dot.pending { background: var(--app-warn); }
 .mcp-state { flex: none; }
 .mcp-state.ok { color: var(--app-ok); }
 .mcp-state.muted { color: var(--app-text3); }
+.mcp-state.pending { color: var(--app-warn); }
 .mcp-state.bad { color: var(--app-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

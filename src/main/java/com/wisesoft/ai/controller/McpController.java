@@ -59,7 +59,7 @@ public class McpController {
     private final McpCallLogMapper mcpCallLogMapper;
     private final AdminGuard adminGuard;
 
-    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；retryBroken=true 时先对未连上的服务补一次重连（点「刷新」用），进页面拉状态不要传，避免死服务拖慢首屏")
+    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）")
     @GetMapping("/status")
     public ResultJson status(@RequestParam(value = "retryBroken", required = false) Boolean retryBroken,
                              // verifyOnline=true 才对已连接服务做在线校验（远程 listTools，慢）；只拿服务清单的
@@ -142,7 +142,7 @@ public class McpController {
         return ResultJson.ok(Map.of("id", id));
     }
 
-    @Operation(summary = "重连", description = "按当前配置重建本人的全部连接（改完通常已自动生效；此接口用于失败重试），返回最新状态")
+    @Operation(summary = "重连", description = "按当前配置重建本人的全部连接（改完通常已自动生效；此接口用于失败重试），立即返回、重建在后台进行，最终状态由 /status 轮询得到")
     @PostMapping("/reload")
     public ResultJson reload() {
         String uid = RequestUser.uid();
