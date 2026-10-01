@@ -48,9 +48,15 @@
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
-          <!-- 按时间分组展示（后端已按 置顶→更新时间 排序，这里只分桶不改序）；折叠图标条下不显示组头 -->
+          <!-- 按时间分组展示（后端已按 置顶→更新时间 排序，这里只分桶不改序）；折叠图标条下不显示组头。
+               组头可点击折叠/展开（搜索时强制全展开——搜到却看不见是死胡同） -->
           <template v-for="g in groupedSessions" :key="g.label">
-            <div v-if="!collapsed" class="side-label sess-group-label">{{ g.label }}</div>
+            <button v-if="!collapsed" type="button" class="side-label sess-group-label" @click="toggleGroup(g.label)">
+              {{ g.label }}
+              <span class="group-count">{{ g.items.length }}</span>
+              <right-outlined class="group-caret" :class="{ open: !groupHidden(g.label) }" />
+            </button>
+            <template v-if="collapsed || !groupHidden(g.label)">
             <div v-for="s in g.items" :key="s.id"
                class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id) }"
                :title="s.title" @click="batchMode && !collapsed ? toggleBatchSel(s.id) : openSession(s.id)">
@@ -83,6 +89,7 @@
               </a-dropdown>
             </template>
           </div>
+            </template>
           </template>
           <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">
             {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
@@ -97,8 +104,13 @@
       </a-modal>
 
       <div class="side-foot">
-        <span class="avatar">{{ (userName || '游')[0] }}</span>
-        <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
+        <!-- 头像+用户名即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
+        <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
+          <button class="foot-user" @click="goProfile">
+            <span class="avatar">{{ (userName || '游')[0] }}</span>
+            <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
+          </button>
+        </a-tooltip>
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
             <bulb-filled v-if="themeState === 'dark'" /><bulb-outlined v-else />
@@ -106,9 +118,6 @@
         </a-tooltip>
         <a-tooltip title="退出登录" placement="right">
           <button class="app-icon-btn" @click="doLogout"><logout-outlined /></button>
-        </a-tooltip>
-        <a-tooltip title="个人设置" placement="right">
-          <button class="app-icon-btn" @click="goProfile" title="个人设置"><user-outlined /></button>
         </a-tooltip>
       </div>
     </aside>
@@ -128,7 +137,7 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined,
-         BulbOutlined, BulbFilled } from '@ant-design/icons-vue'
+         BulbOutlined, BulbFilled, RightOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
@@ -191,6 +200,17 @@ const groupedSessions = computed(() => {
   }
   return groups.filter(g => g.items.length)
 })
+
+// 分组折叠状态（记忆到 localStorage，默认全展开）；搜索时强制全展开——搜到却看不见是死胡同
+const GROUPS_KEY = 'app_sess_groups_collapsed'
+const collapsedGroups = reactive(new Set((() => {
+  try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]') } catch { return [] }
+})()))
+const toggleGroup = label => {
+  collapsedGroups.has(label) ? collapsedGroups.delete(label) : collapsedGroups.add(label)
+  localStorage.setItem(GROUPS_KEY, JSON.stringify([...collapsedGroups]))
+}
+const groupHidden = label => !searchKw.value && collapsedGroups.has(label)
 const isActive = p => route.path === p
 const newChat = () => {
   sessionStore.newChatTick++
@@ -359,12 +379,12 @@ onMounted(async () => {
 /* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 隐藏 logo、按钮居中 */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
 .side.collapsed .logo-mark { display: none; }
-/* 折叠态所有图标统一对齐到侧边栏中轴（实测导航图标左偏 4px、头像左偏 2.5px） */
+/* 折叠态导航图标对齐到侧边栏中轴（实测导航图标左偏 4px） */
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
-.side.collapsed .side-foot { justify-content: center; padding-left: 0; padding-right: 0; }
+/* 折叠态：底部改为竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
+   横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
+.side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
-/* 非管理员折叠态：头像+验证按钮放不下（22+8+26 > 40），藏头像只留验证按钮并居中 */
-.side.collapsed .side-foot .avatar:not(:only-child) { display: none; }
 .logo-mark {
   width: 24px; height: 24px; border-radius: 6px; background: var(--app-text);
   color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none;
@@ -383,6 +403,20 @@ onMounted(async () => {
 .nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
+/* 分组头可点折叠：全宽按钮化，箭头指示状态（展开=向下），右侧淡显条数 */
+.sess-group-label {
+  /* 不写 width:calc(100%-12px)：百分比宽 + margin 在滚动容器里会撑出横向溢出（出现横向滚动条），
+     用 flex 列布局默认拉伸 + margin 收窄即可 */
+  display: flex; align-items: center; gap: 4px;
+  border: none; background: transparent; cursor: pointer; padding: 2px 3px; margin: 14px 6px 4px;
+  border-radius: 6px; font-size: 11px; color: var(--app-text3); text-align: left;
+  transition: color .15s, background .15s;
+}
+.sess-group-label:hover { color: var(--app-text2); background: var(--app-panel-2); }
+/* 箭头靠右：文字在左，条数紧贴文字，箭头居行尾指示展开/折叠 */
+.group-caret { margin-left: auto; font-size: 9px; transition: transform .15s; }
+.group-caret.open { transform: rotate(90deg); }
+.group-count { font-size: 10px; color: var(--app-text3); opacity: .8; }
 /* 列表内时间分组组头：比页级标签更贴紧（首组上方由搜索框间距兜底） */
 .sess-group-label { margin: 10px 8px 3px; }
 /* 搜索框右端：分隔线 + 批量管理入口（与搜索同属「管理会话」动线，再点一次退出） */
@@ -429,12 +463,14 @@ onMounted(async () => {
 .sess-item:hover .sess-export { opacity: 1; }
 .sess-export:hover { color: var(--app-accent); }
 
-/* 会话搜索框（列表顶部，防抖走后端检索） */
+/* 会话搜索框（列表顶部，防抖走后端检索）
+   视觉与导航项同一语言：无边框弱底胶囊，聚焦时才浮现边框——
+   此前常驻边框+纯白底，夹在无边框导航项之间显得格格不入 */
 .sess-search-wrap {
-  position: relative; display: flex; align-items: center; margin: 0 2px 6px;
-  border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-bg, #fff);
+  position: relative; display: flex; align-items: center; margin: 6px 2px 6px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--app-panel-2);
 }
-.sess-search-wrap:focus-within { border-color: var(--app-accent); }
+.sess-search-wrap:focus-within { border-color: var(--app-accent); background: var(--app-bg, #fff); }
 .sess-search-ic { color: var(--app-text3); font-size: 11px; margin-left: 7px; flex: none; }
 .sess-search {
   flex: 1; min-width: 0; border: none; outline: none; background: transparent;
@@ -459,15 +495,23 @@ onMounted(async () => {
 .sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
 
 .side-foot {
-  display: flex; align-items: center; gap: 8px; padding: 8px 6px 2px;
+  display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
   border-top: 1px solid var(--app-border);
 }
+/* 头像+用户名 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
+.foot-user {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  border: none; background: transparent; cursor: pointer; padding: 3px 4px;
+  border-radius: 6px; text-align: left;
+  transition: background .15s;
+}
+.foot-user:hover { background: var(--app-accent-weak); }
 .avatar {
   width: 22px; height: 22px; border-radius: 50%; flex: none;
   background: var(--app-accent-weak); color: var(--app-accent);
   font-size: 11px; display: inline-flex; align-items: center; justify-content: center;
 }
-.user-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-name { font-size: 12px; color: var(--app-text2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
 .main { flex: 1; min-width: 0; height: 100%; }
@@ -491,7 +535,7 @@ onMounted(async () => {
   .side .side-sessions { align-items: center; }
   .side .sess-item { justify-content: center; padding: 6px 0; width: 100%; }
   .side .sess-dot { display: block; }
-  .side .side-foot { justify-content: center; flex-wrap: wrap; gap: 6px; padding: 8px 0 2px; }
+  .side .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
   .side .side-foot .app-icon-btn { margin-left: 0 !important; }
 }
 </style>

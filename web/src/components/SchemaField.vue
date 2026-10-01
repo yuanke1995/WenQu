@@ -48,12 +48,13 @@
     </template>
 
     <template v-else-if="field.type === 'password'">
-      <a-input-password v-model:value="value" :style="{ width: (field.width || 420) + 'px' }"
+      <!-- new-password：这是配置项不是登录表单，阻止浏览器把保存的站点凭据自动填进来 -->
+      <a-input-password v-model:value="value" autocomplete="new-password" :style="{ width: (field.width || 420) + 'px' }"
                         :placeholder="field.ph" />
     </template>
 
     <template v-else>
-      <a-input v-model:value="value" :style="{ width: (field.width || 420) + 'px' }" :placeholder="field.ph" />
+      <a-input v-model:value="value" autocomplete="off" :style="{ width: (field.width || 420) + 'px' }" :placeholder="field.ph" />
     </template>
 
     <!-- 扩展位：测试连接按钮、状态标签等由使用方插入 -->

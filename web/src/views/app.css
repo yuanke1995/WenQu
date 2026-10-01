@@ -91,16 +91,12 @@ html[data-theme='dark'] {
 }
 
 /* 键盘可达性：统一焦点环（鼠标点击不显示，Tab 导航显示）。
-   此前全站无一条 focus 样式——纯键盘用户完全失去位置感（审计 P1-13）。 */
+   此前全站无一条 focus 样式——纯键盘用户完全失去位置感（审计 P1-13）。
+   注意：现代浏览器 outline 自动跟随元素自身 border-radius，
+   不要写 border-radius: inherit——那会把元素自己的圆角覆盖成父元素的（输入框聚焦变直角）。 */
 :focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
-}
-button:focus-visible, [role='button']:focus-visible, a:focus-visible, input:focus-visible,
-textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 2px;
-  border-radius: inherit;
 }
 /* 输入类控件自带边框高亮，焦点环会叠两层——去掉外环只留边框色 */
 input:focus-visible, textarea:focus-visible { outline: none; }

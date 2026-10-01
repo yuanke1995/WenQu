@@ -5,13 +5,16 @@
       <div class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
-        <button class="app-btn ghost head-panel-btn" title="分享这段对话（只读链接）" @click="openShare">
-          <share-alt-outlined /> 分享
-        </button>
-        <button class="app-btn ghost head-panel-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
-          <search-outlined /> 查找
-        </button>
-        <button class="app-btn ghost head-panel-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
+        <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
+        <div class="head-actions">
+          <button class="app-icon-btn" title="分享这段对话（只读链接）" @click="openShare">
+            <share-alt-outlined />
+          </button>
+          <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
+            <search-outlined />
+          </button>
+          <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
+        </div>
       </div>
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
@@ -459,7 +462,7 @@
                         </div>
                         <check-outlined v-if="currentAgentId === AUTO_AGENT" class="agent-mi-check" />
                       </div>
-                      <div v-if="!agentList.length" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+                      <div class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
                         <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">默认（全局配置）</span>
@@ -644,7 +647,7 @@
                 <span class="rp-src-ref">[{{ s.ref }}]</span>
                 <span v-if="s.origin === 'MENTION'" class="rp-src-mine" title="本轮你 @ 引用的资料">引用</span>
                 <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
-                <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
+                <span v-if="debugDisplayVisible && fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
               </div>
             </div>
           </div>
@@ -667,7 +670,7 @@
         <div class="ref-card-head">
           <span class="ref-card-no">[{{ refTip.ref }}]</span>
           <span class="ref-card-file" :title="refTip.fileName">{{ refTip.fileName }}</span>
-          <span v-if="refTip.score != null" class="ref-card-score" :title="refTip.scoreLabel">
+          <span v-if="debugDisplayVisible && refTip.score != null" class="ref-card-score" :title="refTip.scoreLabel">
             {{ refTip.scoreLabel }} {{ Number(refTip.score).toFixed(2) }}
           </span>
         </div>
@@ -1357,8 +1360,8 @@ const modelSourceLabel = computed(() => {
 // 「检索调试」/「加入评测集」菜单项专属（管理端点，普通用户必 403）：只在管理员身份下从 /config 读取
 const debugEntryVisible = ref(false)
 // 排障显示开关（chat.retrievalDebugEnabled，设置页「检索调试入口」）：
-// 统一控制回答气泡上的「由 X 回答」归属徽标与「已派遣 X」路由提示。
-// 值必须走 /config/public（管理员/普通用户都能读）——这两条是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
+// 统一控制回答气泡上的「由 X 回答」归属徽标、「已派遣 X」路由提示、引用分值（右栏来源列表分数 + 角标悬浮卡分数）。
+// 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
 // /config 是管理端点，普通用户调它 403 并触发全局「无管理员权限」误报，故不复用。
 const debugDisplayVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
@@ -1582,7 +1585,8 @@ const refHover = e => {
 }
 
 // ===== 引用相关度 + 角标联动（P1 #5）=====
-// 分值口径：rerankScore=重排模型相关度（重排实际执行才有），否则回落检索融合分 score；都缺则不显示
+// 分值口径：rerankScore=重排模型相关度（重排实际执行才有），否则回落检索融合分 score；都缺则不显示。
+// 分值属于调参排障信息，默认不对普通用户露出：显示统一挂 debugDisplayVisible（chat.retrievalDebugEnabled）
 const hoveredRef = ref(null)
 const fmtSourceScore = s => {
   const v = s ? (s.rerankScore != null ? s.rerankScore : s.score) : null
@@ -2946,7 +2950,7 @@ onMounted(async () => {
       debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
     }).catch(() => {})
   }
-  // 同一个开关的「显示」语义走公开端点：归属徽标/派遣提示的显隐对所有人生效（含普通用户）
+  // 同一个开关的「显示」语义走公开端点：归属徽标/派遣提示/引用分值的显隐对所有人生效（含普通用户）
   getRuntimeConfig().then(r => {
     if (!r.success) return
     debugDisplayVisible.value = r.data?.ui?.debugEntry === true
@@ -3007,7 +3011,15 @@ onMounted(async () => {
   animation: caret-blink 1s steps(2, start) infinite;
 }
 @keyframes caret-blink { 50% { opacity: 0; } }
-.head-panel-btn { margin-left: auto; padding: 4px 12px; }
+/* 头部动作区：右对齐一组；分享/查找用全局 app-icon-btn（无框，悬停显 accent-weak 底色） */
+.head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.head-actions .app-icon-btn { font-size: 15px; }
+.head-quiet-btn {
+  border: none; background: transparent; cursor: pointer; padding: 4px 8px;
+  border-radius: 6px; font-size: 12px; color: var(--app-text3);
+  transition: color .15s, background .15s;
+}
+.head-quiet-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }
 .welcome { text-align: center; padding: 72px 20px 40px; }
