@@ -632,7 +632,8 @@ public class DocxParser implements DocumentParser {
      * 超长文本按边界硬切：段落（\n）为单元贪心打包；超长段落按句（。！？；）拆；
      * 单句仍超长按字符硬切（兜底）
      */
-    private List<String> splitByBoundaries(String text, int max) {
+    /** 包内可见：PdfParser 版面分块复用同一套边界语义（段落→句→字符） */
+    static List<String> splitByBoundaries(String text, int max) {
         List<String> result = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
         for (String para : text.split("\n", -1)) {
@@ -652,7 +653,7 @@ public class DocxParser implements DocumentParser {
     }
 
     /** 超长段落按句拆（保留标点），单句仍超长按字符硬切 */
-    private List<String> splitLongPara(String para, int max) {
+    private static List<String> splitLongPara(String para, int max) {
         List<String> pieces = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
         for (String s : splitSentences(para)) {
@@ -677,7 +678,7 @@ public class DocxParser implements DocumentParser {
     }
 
     /** 按句末标点拆句（保留标点）；[图片...] 标记内的标点不拆；无标点返回整段 */
-    private List<String> splitSentences(String para) {
+    private static List<String> splitSentences(String para) {
         List<String> out = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
         boolean inMarker = false;
@@ -696,7 +697,8 @@ public class DocxParser implements DocumentParser {
     }
 
     /** 超长表格按行拆：代码块表格（``` 包裹）重开/闭合围栏；Markdown 表格每段重复表头+分隔行 */
-    private List<String> splitTableRows(String tableText, int max) {
+    /** 包内可见：PdfParser 版面分块复用（Markdown 表格每段重复表头+分隔行） */
+    static List<String> splitTableRows(String tableText, int max) {
         String[] lines = tableText.split("\n", -1);
         if (tableText.startsWith("```")) {
             List<String> rows = new ArrayList<>();

@@ -124,14 +124,18 @@ public class PdfParser implements DocumentParser {
                 String text = stripper.getText(doc).trim();
                 if (text.isEmpty()) continue;
 
-                // 按页累积，超长切分（保证 chunk 粒度与 docx 一致）
-                if (pageBuffer.length() + text.length() > maxSize && pageBuffer.length() > 0) {
-                    chunks.add(new Chunk(pageTitle, pageBuffer.toString().trim(), List.of()));
-                    pageBuffer.setLength(0);
+                // 按页累积，超长切分（保证 chunk 粒度与 docx 一致）；单页本身超限的稠密页
+                // 按段落→句→字符硬切（兜底 embedding token 上限，与版面路径同一套边界语义）
+                for (String piece : text.length() > maxSize
+                        ? DocxParser.splitByBoundaries(text, maxSize) : List.of(text)) {
+                    if (pageBuffer.length() + piece.length() > maxSize && pageBuffer.length() > 0) {
+                        chunks.add(new Chunk(pageTitle, pageBuffer.toString().trim(), List.of()));
+                        pageBuffer.setLength(0);
+                    }
+                    if (pageBuffer.length() > 0) pageBuffer.append("\n");
+                    pageBuffer.append(piece);
+                    pageTitle = "第 " + page + " 页";
                 }
-                if (pageBuffer.length() > 0) pageBuffer.append("\n");
-                pageBuffer.append(text);
-                pageTitle = "第 " + page + " 页";
             }
 
             // 扫描件/图片型 PDF：文本极少 → OCR（fail-loud：未绑定视觉模型先置失败，不白渲染不静默跳过）
@@ -162,30 +166,110 @@ public class PdfParser implements DocumentParser {
         return engine;
     }
 
+    /** ATX 标题行（# ~ ######），行尾可带闭合 #（ATX 规范允许） */
+    private static final java.util.regex.Pattern ATX_HEADING =
+            java.util.regex.Pattern.compile("^(#{1,6})\\s+(.+?)\\s*#*\\s*$");
+
+    /** 版面节：页号 + 最近标题（无则 null，块标题回退「第 N 页」）+ 章节路径（栈深≥2 时非空）+ 节体 */
+    private record MdSection(int page, String title, String titlePath, String body) {}
+
     /**
-     * 引擎输出的页 markdown → 分块（按 maxSize 累积切分）。
-     * 标题沿用「第 N 页」页界语义：块标题取切分时的起始页；
-     * MinerU 整份 markdown 无页界（约定 page=1），切出的多块标题同为「第 1 页」，
-     * 属已知简化——结构感知分块（按标题层级切）见方案 S2。
+     * 引擎输出的页 markdown → 分块（结构感知，方案 S2）。
+     * <p>
+     * ① 页内按 ATX 标题（#~######）切节，标题栈按级别维护（对齐 docx/WebParser 语义：title=最近标题，
+     * titlePath=栈深≥2 时「 &gt; 」连接；MinerU 实测标题全为 h1 平铺，路径退化为空属预期，标题本身仍入 embedding）；
+     * 标题行不重复进正文——content 只承载净正文，路径/标题由 embedding 组装时拼接。
+     * ② 节内按空行分段；Markdown 表格行连续天然同段不跨块。
+     * ③ 顺序贪心累积到 maxSize 成块；单独超限的段：表格走 splitTableRows（每段重复表头）、
+     * 其余走 splitByBoundaries（段落→句→字符硬切）——兜底 embedding token 上限。
+     * <p>
+     * 缺陷背景：MinerU 整份 markdown 是单一「页」（约定 page=1），旧实现只在页间累积切分、
+     * 单页超限从不切，22047 字符整块入库直接撑爆向量化（Tokens exceeds maximum allowed）。
+     * 包内可见供冒烟验证。
      */
-    private List<Chunk> chunksFromPages(List<PageMarkdown> pages, int maxSize) {
+    List<Chunk> chunksFromPages(List<PageMarkdown> pages, int maxSize) {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
-        int startPage = 1;
+        String bufTitle = null;
+        String bufPath = null;
+
         for (PageMarkdown pm : pages) {
-            String text = pm.markdown() == null ? "" : pm.markdown().trim();
-            if (text.isEmpty()) continue;
-            if (buf.length() + text.length() > maxSize && buf.length() > 0) {
-                chunks.add(new Chunk("第 " + startPage + " 页", buf.toString().trim(), List.of()));
-                buf.setLength(0);
-                startPage = pm.page();
+            String md = pm.markdown() == null ? "" : pm.markdown().trim();
+            if (md.isEmpty()) continue;
+            for (MdSection sec : splitSections(md, pm.page())) {
+                for (String block : blocksOf(sec.body())) {
+                    for (String piece : fitBlock(block, maxSize)) {
+                        int sep = buf.length() > 0 ? 2 : 0;   // 块间 "\n\n"
+                        if (buf.length() + sep + piece.length() > maxSize && buf.length() > 0) {
+                            chunks.add(new Chunk(bufTitle, buf.toString().trim(), List.of(), bufPath));
+                            buf.setLength(0);
+                        }
+                        if (buf.length() == 0) {
+                            bufTitle = sec.title() != null ? sec.title() : "第 " + sec.page() + " 页";
+                            bufPath = sec.titlePath();
+                        }
+                        if (buf.length() > 0) buf.append("\n\n");
+                        buf.append(piece);
+                    }
+                }
             }
-            if (buf.length() > 0) buf.append("\n\n");
-            buf.append(text);
         }
         if (buf.length() > 0) {
-            chunks.add(new Chunk("第 " + startPage + " 页", buf.toString().trim(), List.of()));
+            chunks.add(new Chunk(bufTitle, buf.toString().trim(), List.of(), bufPath));
         }
         return chunks;
+    }
+
+    /** 页内按 ATX 标题切节：标题行进标题栈（含自身）但不进正文；纯标题无正文的节不产出（标题经栈传递给后续节） */
+    private List<MdSection> splitSections(String md, int page) {
+        List<MdSection> out = new ArrayList<>();
+        String[] stack = new String[6];
+        StringBuilder body = new StringBuilder();
+        String title = null, path = null;
+        for (String line : md.split("\n", -1)) {
+            java.util.regex.Matcher m = ATX_HEADING.matcher(line.trim());
+            if (m.matches()) {
+                if (body.length() > 0) {
+                    out.add(new MdSection(page, title, path, body.toString().trim()));
+                    body.setLength(0);
+                }
+                int depth = m.group(1).length();
+                stack[depth - 1] = m.group(2).trim();
+                for (int i = depth; i < 6; i++) stack[i] = null;
+                List<String> levels = new ArrayList<>();
+                for (String s : stack) if (s != null) levels.add(s);
+                title = levels.get(levels.size() - 1);
+                path = levels.size() >= 2 ? String.join(" > ", levels) : null;
+            } else {
+                body.append(line).append('\n');
+            }
+        }
+        if (body.length() > 0) out.add(new MdSection(page, title, path, body.toString().trim()));
+        return out;
+    }
+
+    /** 节体按空行分段（表格行/列表行连续不跨段，保持整块） */
+    private static List<String> blocksOf(String body) {
+        List<String> out = new ArrayList<>();
+        for (String p : body.split("\\n\\s*\\n")) {
+            String t = p.strip();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * 单段超限的两种形态：Markdown 管道表格走 splitTableRows（每段重复表头+分隔行）；
+     * 其余（含 PP-StructureV3 的 HTML 表格，超限时按段落→句→字符硬切，表格完整性让位于 token 上限）
+     * 走 splitByBoundaries。均复用 DocxParser 同一套边界语义。
+     */
+    private static List<String> fitBlock(String block, int maxSize) {
+        if (block.length() <= maxSize) return List.of(block);
+        boolean table = block.lines().allMatch(l -> {
+            String t = l.trim();
+            return t.isEmpty() || t.startsWith("|");
+        });
+        return table ? DocxParser.splitTableRows(block, maxSize)
+                     : DocxParser.splitByBoundaries(block, maxSize);
     }
 }
