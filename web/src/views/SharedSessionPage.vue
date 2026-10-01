@@ -25,7 +25,11 @@
             <div class="sh-src-t">引用来源</div>
             <div v-for="(s, si) in m.sources" :key="si" class="sh-src-item">
               <span class="sh-src-ref">[{{ s.ref }}]</span>
-              <span class="sh-src-name">{{ s.fileName || '来源文档不可用' }}<template v-if="s.title"> § {{ s.title }}</template></span>
+              <!-- 联网来源（origin=WEB）：无库内文档名，显示站点名（网页本就公开，不含库内容） -->
+              <span class="sh-src-name">
+                <template v-if="s.origin === 'WEB'">{{ s.siteName || '联网来源' }}<template v-if="s.title"> § {{ s.title }}</template></template>
+                <template v-else>{{ s.fileName || '来源文档不可用' }}<template v-if="s.title"> § {{ s.title }}</template></template>
+              </span>
             </div>
           </div>
         </div>

@@ -191,6 +191,7 @@ public class AgentService {
         if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
         if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
+        if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
         // 工具执行审批三态（auto/ask/off；null=auto）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 单轮工具步数上限（null=继承全局）
@@ -278,6 +279,7 @@ public class AgentService {
         if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
+        if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
         // 工具执行审批三态（auto/ask/off；null 归一为 auto）
         if (body.containsKey("toolApprovalMode")) {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();

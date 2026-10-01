@@ -329,6 +329,8 @@ public class ConfigService {
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
         d.put("artifact.retentionDays", "90");                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
+        d.put("schedule.runLogRetentionDays", "7");            // 定时任务执行日志保留天数（超期物理删除）
+        d.put("schedule.runLogCleanupIntervalMs", "86400000"); // 任务执行日志清理间隔(ms，≤0=暂停)
         d.put("scheduled.enabled", "true");                    // 定时执行智能体总开关
         d.put("scheduled.maxPerUser", "20");                   // 每人定时任务数上限（0=不限）
         d.put("scheduled.timeoutMs", "300000");                // 单次执行超时(ms)
@@ -377,6 +379,17 @@ public class ConfigService {
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
         d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
         d.put("tool.builtin.enabled", "false");            // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
+        // ---------- 联网搜索（工具 webSearch；结果注册进引用体系，与知识库来源同 [N] 编号）----------
+        // 注意：webSearch.apiKey 以 .apiKey 结尾 → 走敏感项 RSA 密文入库（isSensitiveKey），改不得命名
+        d.put("webSearch.enabled", "false");               // 联网搜索总开关（需 tool.enabled 总闸开启）
+        d.put("webSearch.provider", "tavily");            // 服务商：tavily / bocha / generic（自建 SearXNG）
+        d.put("webSearch.baseUrl", "");                   // 服务地址（留空用服务商默认；generic 必填，如 http://127.0.0.1:8888）
+        d.put("webSearch.apiKey", "");                    // 服务 Key（RSA 密文入库；generic 自建可留空）
+        d.put("webSearch.maxResults", "5");               // 单次搜索返回条数上限(1~10)
+        d.put("webSearch.maxCallsPerTurn", "2");          // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
+        d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
+        d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
+        d.put("webSearch.requireApproval", "false");      // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖；false=自动执行
         // 技能的内容与启停已在个人表 c_ai_user_skill / c_ai_skill_disabled（谁装谁管），此处只剩两项预算参数
         d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
         d.put("skill.maxFileChars", "20000");              // 单技能全文读取上限

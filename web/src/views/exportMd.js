@@ -55,6 +55,14 @@ const fmtTime = ts => {
 
 const safeFileName = title => (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
 
+/**
+ * 引用来源行：联网来源（origin=WEB）输出可点击的 Markdown 链接，
+ * 库内来源输出文件名 + 章节（沿用原口径）。
+ */
+const sourceLine = (s, i) => s.origin === 'WEB'
+  ? `${i}. [${s.title || s.siteName || '联网来源'}](${s.url || ''})${s.siteName ? ' · ' + s.siteName : ''}`
+  : `${i}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`
+
 /** 导出该轮问答为 .md（question 为配对的提问消息，可为 null；图片尽量 base64 内嵌） */
 export const exportAnswerMd = async ({ answer, question, title }) => {
   if (!answer || !answer.content) { message.warning('该回答无可导出内容'); return }
@@ -66,8 +74,7 @@ export const exportAnswerMd = async ({ answer, question, title }) => {
     const body = await embedMdImages(answer.content.trim(), imgs)
     parts.push('## 回答\n' + body + '\n')
     if (answer.sources && answer.sources.length) {
-      parts.push('## 引用来源\n' + answer.sources.map((s, si) =>
-        `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n') + '\n')
+      parts.push('## 引用来源\n' + answer.sources.map((s, si) => sourceLine(s, si + 1)).join('\n') + '\n')
     }
     downloadMd(parts.join('\n'), safeFileName(title) + '.md')
   } finally {
@@ -105,8 +112,7 @@ export const exportSessionMarkdown = async (sid, title) => {
         const body = await embedMdImages((m.content || '').trim(), Array.isArray(m.images) ? m.images : [])
         parts.push('**回答**', '', body, '')
         if (m.sources && m.sources.length) {
-          parts.push('**引用来源**', m.sources.map((s, si) =>
-            `${si + 1}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`).join('\n'), '')
+          parts.push('**引用来源**', m.sources.map((s, si) => sourceLine(s, si + 1)).join('\n'), '')
         }
         if ((m.messageId || m.id) && (m.fb === 0 || m.fb === 1)) {
           // 保留评价状态，便于回顾哪些回答被认可

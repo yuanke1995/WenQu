@@ -69,6 +69,9 @@ public class Agent {
     /** MCP 工具：1=开 0=关 NULL=继承 */
     private Integer toolMcp;
 
+    /** 联网搜索工具（webSearch）：1=开 0=关 NULL=继承 */
+    private Integer toolWebsearch;
+
     /**
      * 有副作用工具（沙盒/MCP）执行审批（人在回路）：auto=自动执行（默认）、
      * ask=模型每次调用前暂停等用户确认（拒绝/超时以错误结果回给模型继续）、off=禁用这两类工具。

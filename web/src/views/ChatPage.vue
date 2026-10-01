@@ -245,8 +245,10 @@
                   <div v-if="toolSearchQueries(m).length" class="rt-terms rt-tool-terms">
                     <span class="rt-tool-tag">精确检索</span>{{ toolSearchQueries(m).join('；') }}
                   </div>
-                  <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref" title="点击查看原文" @click="openSource(s)">
-                    <span class="rt-ref-tag">[{{ s.ref }}]</span>{{ (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '') }}
+                  <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref"
+                       :title="s.origin === 'WEB' ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
+                    <span class="rt-ref-tag">[{{ s.ref }}]</span>
+                    <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span>{{ sourceName(s) }}
                     <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
                   </div>
                 </div>
@@ -661,6 +663,7 @@
       <a-spin v-if="sourceLoading" style="display:block;margin:40px auto" />
       <div v-else class="md src-content" @click="openPreview"
            v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages)"></div>
+      <a v-if="sourceUrl" class="src-origin-link" :href="sourceUrl" target="_blank" rel="noopener">打开原网页</a>
     </a-modal>
 
     <!-- 引用角标悬浮卡：Teleport 到 body（不被消息区 overflow 裁剪），fixed 定位跟随角标 -->
@@ -800,6 +803,7 @@ const TOOL_LABELS = {
   currentDateTime: '获取当前时间',
   daysBetween: '计算日期差',
   readSkill: '读取技能',
+  webSearch: '联网搜索',
   execute: '执行沙盒命令',
   read_file: '读取沙盒文件',
   write_file: '写入沙盒文件',
@@ -1489,14 +1493,33 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
 如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
 
 // 引用来源详情弹窗
+/** 来源条目展示名：联网来源（origin=WEB）用站点名，库内来源用文件名 */
+const sourceName = s => s.origin === 'WEB'
+  ? (s.siteName || '联网来源') + (s.title ? ' §' + s.title : '')
+  : (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
 const sourceVisible = ref(false)
 const sourceTitle = ref('')
 const sourceSnippet = ref('')
 const sourceImages = ref([])
 const sourceContent = ref('')
 const sourceLoading = ref(false)
+/** 联网来源（origin=WEB）的原网页地址：库内来源为空，此时弹窗不显示「打开原网页」 */
+const sourceUrl = ref('')
 const openSource = async s => {
   if (!s) return
+  sourceUrl.value = ''
+  // 联网来源没有库内文档可打开：getKnowledgeDetail(knowledgeId) 必然失败，
+  // 走这里展示站点/标题/摘要并给出原网页链接（否则用户点角标得到空白弹窗）
+  if (s.origin === 'WEB') {
+    sourceTitle.value = (s.siteName || '联网来源') + (s.title ? ' §' + s.title : '')
+    sourceSnippet.value = s.snippet || '（该来源未提供摘要）'
+    sourceImages.value = []
+    sourceContent.value = ''
+    sourceLoading.value = false
+    sourceVisible.value = true
+    sourceUrl.value = s.url || ''
+    return
+  }
   sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
   sourceSnippet.value = s.snippet || '（无原文片段）'
   sourceImages.value = Array.isArray(s.images) ? s.images : []
@@ -1554,11 +1577,14 @@ const showRefTip = (el, msgIdx, n) => {
   }
   refTip.value = {
     ref: n,
-    fileName: src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识'),
+    // 联网来源没有 fileName/docId，用站点名；相关度是服务商分，标签也要区分（不是检索融合分）
+    fileName: src.origin === 'WEB'
+      ? (src.siteName || '联网来源')
+      : (src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识')),
     title: src.title || '',
     snippet: src.snippet || '（无原文片段）',
     score: (src.rerankScore != null ? src.rerankScore : src.score),
-    scoreLabel: src.rerankScore != null ? '重排相关度' : '检索融合分',
+    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.rerankScore != null ? '重排相关度' : '检索融合分'),
     src
   }
 }
@@ -3187,6 +3213,10 @@ onMounted(async () => {
 .rt-ref { padding: 3px 0; border-top: 1px dashed var(--app-border); cursor: pointer; }
 .rt-ref:hover { color: var(--app-accent); }
 .rt-ref-tag { color: var(--app-accent); margin-right: 4px; }
+/* 联网来源标记：与库内来源区分开，用户有权知道这条依据是网上的还是库里的 */
+.rt-ref-web { margin: 0 6px; padding: 0 5px; border-radius: 4px; background: var(--app-panel-2);
+  color: var(--app-text3); font-size: 11px; }
+.src-origin-link { display: inline-block; margin-top: 12px; color: var(--app-accent); font-size: 13px; }
 .rt-snip { color: var(--app-text3); margin-top: 2px; }
 
 /* 子智能体编排卡片（仅委派模式；对齐通用智能体平台的子任务卡片：名字+状态+任务描述+要点结果） */

@@ -8,6 +8,8 @@ import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.WorkflowRun;
+import com.wisesoft.ai.service.websearch.WebSearchResult;
+import com.wisesoft.ai.service.websearch.WebSearchTools;
 import com.wisesoft.ai.util.TokenCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -282,6 +284,8 @@ public class RagService {
     private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
     private final BuiltinTools builtinTools;
+    /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
+    private final WebSearchTools webSearchTools;
     /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
     private final SandboxTools sandboxTools;
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
@@ -364,6 +368,7 @@ public class RagService {
                       ArtifactService artifactService,
                       PresentArtifactTool presentArtifactTool,
                       BuiltinTools builtinTools,
+                      WebSearchTools webSearchTools,
                       SandboxTools sandboxTools,
                       SkillService skillService,
                       ChatAttachmentService chatAttachmentService,
@@ -395,6 +400,7 @@ public class RagService {
         this.artifactService = artifactService;
         this.presentArtifactTool = presentArtifactTool;
         this.builtinTools = builtinTools;
+        this.webSearchTools = webSearchTools;
         this.sandboxTools = sandboxTools;
         this.skillService = skillService;
         this.chatAttachmentService = chatAttachmentService;
@@ -890,6 +896,9 @@ public class RagService {
                     .append("\n注意：插入 [图片N] 时，标记前后不要紧贴任何标点，[图片N] 应独立成行；"
                             + "若句末需要标点，放在标记之前的文字末尾，如\"布局组件[图片1]\"，不要写成\"布局组件[图片1]、\"。")
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
+                    // 联网来源与知识库来源同一套编号：不区分对待，否则"来自联网"会成为不标注的借口
+                    .append("\n若本轮提供了联网搜索资料，它与知识库资料同等对待：引用时同样在句末用 [N] 标注，"
+                            + "并只能使用工具实际返回的编号；搜索未覆盖的内容如实说明未找到依据，不得凭常识补写。")
                     .append(relatedPromptLine());
             // 用户长期记忆（跨会话个性化）：注入本人记忆 + 累加使用度；游客分享会话不注入
             // （发布者的个人记忆不外泄给匿名访客）；空记忆/未开启零影响
@@ -1387,6 +1396,22 @@ public class RagService {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
         }
+        // 联网搜索工具（webSearch.enabled 控制，默认关；游客分支在上方已 return，天然不对匿名访客暴露）：
+        // 命中结果注册进本轮引用体系（与知识库来源共用 [N] 编号空间），这是"可溯源的联网"的前提——
+        // 不注册而让模型引用，等于放行无出处的断言。
+        // 审批归属由 webSearch.requireApproval 决定（默认 false=自动执行）：它会把用户输入发到外网并产生
+        // 外部计费，语义上和沙盒/MCP 同级，因此**保留**纳入 sensitiveTools 的开关，但不默认强制 ask
+        // （否则每次搜索都要点确认，联网体验不可用；需要收紧时由管理员开这一项）。
+        if (toolOn(agent, "webSearch.enabled", agent == null ? null : agent.getToolWebsearch())) {
+            boolean requireApproval = configService.getBoolean("webSearch.requireApproval");
+            for (org.springframework.ai.tool.ToolCallback cb :
+                    org.springframework.ai.support.ToolCallbacks.from(webSearchTools)) {
+                callbacks.add(cb);
+                if (requireApproval) {
+                    sensitiveTools.add(cb.getToolDefinition().name());
+                }
+            }
+        }
         // 沙盒工具（隔离执行环境）：tool.sandbox.enabled 控制；暂无智能体级三态覆盖（toolSandbox 列未加，
         // 见 SandboxTools 类注释）——沙盒本身按会话隔离，工具一旦启用对所有会话可用
         if (toolOn(agent, "tool.sandbox.enabled", null)) {
@@ -1555,6 +1580,12 @@ public class RagService {
                             KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
                             KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
                         }
+                        // 联网搜索工具：注入本轮落点（配额扣减 + 引用注册 + 降级提示）。
+                        // 工具对象是全局单例，落点必须按轮注入并即时清理，否则跨会话串号。
+                        boolean webTool = WebSearchTools.TOOL_NAME.equals(name);
+                        if (webTool) {
+                            WebSearchTools.setSink(st);
+                        }
                         try {
                             int[] attempts = {0};
                             String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts);
@@ -1569,6 +1600,9 @@ public class RagService {
                             if (kbTool) {
                                 KnowledgeRetrievalTool.clearSourceRegistrar();
                                 KnowledgeRetrievalTool.clearKbScope();
+                            }
+                            if (webTool) {
+                                WebSearchTools.clearSink();
                             }
                         }
                     }
@@ -2329,7 +2363,7 @@ public class RagService {
      * 单次回答的流式状态与 complete 回调依赖（H2 重试重建流时复用同一状态，旧缓冲被清空）。
      */
     /** 非静态内部类：工具图片注册（registerToolSource）需调用外部实例的 sendSseEvent/imageUrlSigner；生命周期=单轮请求，无泄漏 */
-    private final class AnswerStreamState {
+    private final class AnswerStreamState implements WebSearchTools.WebSearchSink {
         final String sessionId;
         final String question;
         /** 本轮所属用户 uid：技能/MCP 都是个人资产，取工具与取技能时只认它 */
@@ -2368,6 +2402,10 @@ public class RagService {
         volatile Map<String, String> docFileNames;
         /** 工具来源引用编号 → 该来源图片的全局图片编号清单（重复注册同一块时原样返回，供工具文本重复附清单） */
         final Map<Integer, List<Integer>> toolRefImages = new java.util.HashMap<>();
+        /** 本轮联网搜索已执行次数（配额 webSearch.maxCallsPerTurn；<=0 不限制） */
+        final java.util.concurrent.atomic.AtomicInteger webSearchCalls = new java.util.concurrent.atomic.AtomicInteger();
+        /** 已注册的联网来源（归一化 URL → 引用编号）：同一 URL 二次命中复用原编号，不重复占号 */
+        final Map<String, Integer> webRefByUrl = new java.util.HashMap<>();
         /** 精确检索工具的检索范围（与主链路同库界，工具执行线程内生效）：kbIds 限定库，docIds 后过滤命中 */
         volatile java.util.Collection<String> toolScopeKbIds;
         volatile Set<String> toolScopeDocIds;
@@ -2487,6 +2525,59 @@ public class RagService {
             List<Integer> imgSeqs = assignToolImages(h);
             toolRefImages.put(ref, imgSeqs);
             return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
+        }
+
+        // ==================== 联网搜索：引用注册 / 配额 / 降级（WebSearchTools.WebSearchSink） ====================
+
+        /**
+         * 扣减一次联网搜索配额。工具是全局单例，计数必须落在流状态上——否则一次搜索会永久占掉后续问答的额度。
+         */
+        @Override
+        public boolean tryConsumeQuota() {
+            int max = configService.getInt("webSearch.maxCallsPerTurn", 2);
+            if (max <= 0) return true; // 0=不限制
+            return webSearchCalls.incrementAndGet() <= max;
+        }
+
+        /** 搜索失败挂一条本轮降级提示（fail-loud：让用户看见"为什么没搜成"，而不是静默无结果） */
+        @Override
+        public void degrade(String code, String message) {
+            addDegradation(degradations, degradedCodes, code, message);
+        }
+
+        /**
+         * 联网结果注册为引用来源：与库内来源**共用同一编号空间**（主链路 [1..N] 续编），
+         * 前端角标是按 ref 直接索引 sources 的，另起一套编号必然错位；引用自检也因此能一并校验联网引用。
+         * 去重键是归一化 URL（去 utm 等跟踪参数），同一链接不重复占号。
+         *
+         * @return 分配的引用编号（已注册过则返回原编号）
+         */
+        @Override
+        public int register(WebSearchResult r) {
+            String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(r.url());
+            synchronized (sources) {
+                Integer existing = webRefByUrl.get(key);
+                if (existing != null) return existing;
+                int ref = sources.size() + 1;
+                Map<String, Object> src = new LinkedHashMap<>();
+                src.put("ref", ref);
+                src.put("origin", "WEB");
+                src.put("url", r.url());
+                src.put("siteName", r.siteName());
+                src.put("title", r.title());
+                // snippet 即引用自检的证据（citationConsistencyCheck 取 sources[n-1].snippet）——
+                // 联网来源不进 images 图片编号体系（那是库内文档的签名图片，外链图片不适合复用）
+                src.put("snippet", r.snippet());
+                if (r.publishedAt() != null && !r.publishedAt().isBlank()) {
+                    src.put("publishedAt", r.publishedAt());
+                }
+                if (r.score() != null) {
+                    src.put("score", Math.round(r.score() * 1000) / 1000.0);
+                }
+                sources.add(src);
+                webRefByUrl.put(key, ref);
+                return ref;
+            }
         }
 
         /** 已注册过同一知识块 → 返回既有引用编号（未注册返回 null） */

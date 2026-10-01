@@ -389,7 +389,7 @@ import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, RobotOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
-  SafetyOutlined, PartitionOutlined
+  SafetyOutlined, PartitionOutlined, GlobalOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
@@ -418,7 +418,9 @@ const CAPS = [
     gate: ['tool', 'enabled'] },
   { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（MCP 归个人：只对我自己生效）', icon: ApiOutlined,
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
-    gate: ['tool', 'enabled'] }
+    gate: ['tool', 'enabled'] },
+  { key: 'toolWebsearch', label: '联网搜索', desc: '模型可自主联网检索；命中结果登记为网页来源，与知识库来源共用引用编号', icon: GlobalOutlined,
+    kind: 'switch', path: ['webSearch', 'enabled'], gate: ['tool', 'enabled'] }
 ]
 // 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 const SEG = [

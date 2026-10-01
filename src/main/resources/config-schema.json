@@ -74,6 +74,15 @@
       ]
     },
     {
+      "key": "webSearch",
+      "title": "联网搜索（工具 webSearch；结果进引用体系）",
+      "sections": [
+        "服务商与连接（需工具总开关开启）",
+        "检索行为与配额",
+        "安全"
+      ]
+    },
+    {
       "key": "apiKey",
       "title": "API Key 管理（对外开放问答能力）",
       "sections": []
@@ -2455,6 +2464,169 @@
       "tier": 2
     },
     {
+      "backendKey": "webSearch.enabled",
+      "panel": "webSearch",
+      "section": 0,
+      "group": "webSearch",
+      "key": "enabled",
+      "path": "webSearch.enabled",
+      "label": "总开关",
+      "type": "switch",
+      "def": false,
+      "vif": "tool.enabled",
+      "tier": 2,
+      "note": "开启后模型可自主调用联网搜索（关闭时模型完全没有联网能力）。需先开启「工具调用」总开关。",
+      "tips": "webSearchEnabled"
+    },
+    {
+      "backendKey": "webSearch.provider",
+      "panel": "webSearch",
+      "section": 0,
+      "group": "webSearch",
+      "key": "provider",
+      "path": "webSearch.provider",
+      "label": "服务商",
+      "type": "select",
+      "def": "tavily",
+      "options": [
+        {
+          "value": "tavily",
+          "label": "tavily（Tavily Search API，面向 LLM 的摘要）"
+        },
+        {
+          "value": "bocha",
+          "label": "bocha（博查 AI 搜索，国内直连）"
+        },
+        {
+          "value": "generic",
+          "label": "generic（自建 SearXNG / 内部搜索服务）"
+        }
+      ],
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "width": 220,
+      "note": "tavily=Tavily Search API；bocha=博查 AI 搜索（国内直连）；generic=自建 SearXNG / 内部搜索服务",
+      "tips": "webSearchProvider"
+    },
+    {
+      "backendKey": "webSearch.baseUrl",
+      "panel": "webSearch",
+      "section": 0,
+      "group": "webSearch",
+      "key": "baseUrl",
+      "path": "webSearch.baseUrl",
+      "label": "服务地址",
+      "type": "text",
+      "def": "",
+      "width": 360,
+      "ph": "留空用服务商默认地址；generic 必填，如 http://127.0.0.1:8888",
+      "vif": "webSearch.enabled",
+      "tier": 3,
+      "tips": "webSearchBaseUrl"
+    },
+    {
+      "backendKey": "webSearch.apiKey",
+      "panel": "webSearch",
+      "section": 0,
+      "group": "webSearch",
+      "key": "apiKey",
+      "path": "webSearch.apiKey",
+      "label": "服务 Key",
+      "type": "password",
+      "def": "",
+      "width": 320,
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "note": "RSA 加密入库；generic 自建实例通常无鉴权，可留空",
+      "tips": "webSearchApiKey"
+    },
+    {
+      "backendKey": "webSearch.maxResults",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "maxResults",
+      "path": "webSearch.maxResults",
+      "label": "单次结果条数",
+      "type": "number",
+      "def": 5,
+      "min": 1,
+      "max": 10,
+      "width": 180,
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "note": "实际返回可能少于此值（服务商侧决定）",
+      "tips": "webSearchMaxResults"
+    },
+    {
+      "backendKey": "webSearch.maxCallsPerTurn",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "maxCallsPerTurn",
+      "path": "webSearch.maxCallsPerTurn",
+      "label": "单轮搜索次数上限",
+      "type": "number",
+      "def": 2,
+      "min": 0,
+      "max": 5,
+      "width": 180,
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "note": "防模型反复搜索烧配额；0=不限制",
+      "tips": "webSearchMaxCallsPerTurn"
+    },
+    {
+      "backendKey": "webSearch.timeoutMs",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "timeoutMs",
+      "path": "webSearch.timeoutMs",
+      "label": "单次超时(ms)",
+      "type": "number",
+      "def": 8000,
+      "min": 1000,
+      "max": 30000,
+      "width": 180,
+      "vif": "webSearch.enabled",
+      "tier": 3,
+      "tips": "webSearchTimeoutMs"
+    },
+    {
+      "backendKey": "webSearch.snippetChars",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "snippetChars",
+      "path": "webSearch.snippetChars",
+      "label": "单条摘要上限(字符)",
+      "type": "number",
+      "def": 600,
+      "min": 200,
+      "max": 2000,
+      "width": 180,
+      "vif": "webSearch.enabled",
+      "tier": 3,
+      "note": "摘要即引用自检的证据，截断过多会影响溯源判定",
+      "tips": "webSearchSnippetChars"
+    },
+    {
+      "backendKey": "webSearch.requireApproval",
+      "panel": "webSearch",
+      "section": 2,
+      "group": "webSearch",
+      "key": "requireApproval",
+      "path": "webSearch.requireApproval",
+      "label": "纳入执行审批",
+      "type": "switch",
+      "def": false,
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "note": "开启后视同「有副作用工具」：智能体 toolApprovalMode=ask 时执行前需用户确认。默认关（自动执行）。",
+      "tips": "webSearchRequireApproval"
+    },
+    {
       "backendKey": "sandbox.provisionerUrl",
       "panel": "sandbox",
       "section": 0,
@@ -3062,7 +3234,16 @@
     "sandboxCleanupInterval": "扫描\"哪些沙盒空闲了\"的间隔；≤0 暂停该任务。",
     "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力的总开关（默认关），下有两类端点：① per-agent 端点 /ai/mcp/{token}——智能体发布时勾选「MCP 端点」，一个端点就是那一个智能体，token 即凭据，撤销分享立即失效；② 平台级入口 /ai/mcp——一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据是请求头的 API Key，且该 Key 必须在「API Key 管理」里打开 MCP 开关。两类端点都按调用者/发布者自身的可见范围执行。",
     "mcpServerTimeout": "外部客户端调用该智能体时，服务端等待一轮问答完成的上限。超时会向客户端返回错误而不是继续空等；智能体开了深度思考或多子代理时建议调大。",
-    "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。"
+    "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。",
+    "webSearchProvider": "联网搜索服务商。tavily/bocha 为托管服务（需 API Key、按次计费）；generic 走自建 SearXNG 或内部搜索服务（baseUrl 必填，通常无需密钥）。",
+    "webSearchApiKey": "服务商控制台申请的 API Key。以 .apiKey 结尾的配置会 RSA 加密入库；generic 自建实例通常无鉴权，可留空。",
+    "webSearchRequireApproval": "开启后联网搜索视同「有副作用工具」：智能体审批模式为 ask 时，每次搜索前需用户确认。默认关闭（自动执行）——搜索会把用户输入发到外网并产生外部计费，需要收紧时再打开。",
+    "webSearchEnabled": "联网搜索总开关。需先开启「工具调用（Function Calling）」总开关；关闭时模型完全没有联网能力，只能依据知识库与自身知识作答。",
+    "webSearchBaseUrl": "留空用服务商默认地址。generic（自建 SearXNG / 内部搜索服务）必填，如 http://127.0.0.1:8888；用 http 时搜索词与密钥明文传输，仅建议内网自建场景。",
+    "webSearchMaxResults": "单次搜索返回的结果条数上限。服务商实际返回可能少于此值；条数越多上下文占用越大。",
+    "webSearchMaxCallsPerTurn": "单轮问答允许的联网搜索次数。防模型陷入「搜→不满意→再搜」烧配额；0 表示不限制。",
+    "webSearchTimeoutMs": "单次搜索请求的超时时间。超时按失败处理并给出降级提示，不会阻塞整轮回答。",
+    "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。"
   },
   "corePaths": [
     "chat.temperature",
