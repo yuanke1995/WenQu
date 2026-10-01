@@ -67,13 +67,20 @@ public class PdfParser implements DocumentParser {
 
     @Override
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId) throws Exception {
+        return parse(file, fileName, docId, null);
+    }
+
+    @Override
+    public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId,
+                             DocumentParser.ParseProgress progress) throws Exception {
+        DocumentParser.ParseProgress cb = progress != null ? progress : (p, d) -> { };
         int maxSize = configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
         String engineId = configService.get("parse.ocrEngine");
         if (engineId == null || engineId.isBlank()) engineId = "none";
 
         List<Chunk> chunks;
         if ("none".equals(engineId)) {
-            chunks = textLayerParse(file, fileName, maxSize);
+            chunks = textLayerParse(file, fileName, maxSize, cb);
         } else if ("vision".equals(engineId)) {
             // 整份逐页视觉 OCR：文本层不参与（语义见 VisionOcrEngine）
             if (!visionService.parseVisionAvailable()) {
@@ -81,7 +88,7 @@ public class PdfParser implements DocumentParser {
                         + "但所属知识库未绑定图片描述模型——请在知识库编辑的「解析参数 → 图片描述模型」中选择视觉模型后重新解析");
             }
             log.info("[PDF] {} 走 vision 引擎：整份逐页视觉 OCR（不使用文本层）", fileName);
-            chunks = chunksFromPages(engines.get("vision").parse(file, fileName), maxSize);
+            chunks = chunksFromPages(engines.get("vision").parse(file, fileName, cb), maxSize);
         } else {
             OcrEngine engine = engine(engineId);
             String unhealthy = engine.checkHealth();
@@ -90,7 +97,7 @@ public class PdfParser implements DocumentParser {
                         + "；也可在设置页「文档解析默认模板 → PDF 解析引擎」换回 none");
             }
             log.info("[PDF] {} 走 {} 版面解析引擎", fileName, engineId);
-            chunks = chunksFromPages(engine.parse(file, fileName), maxSize);
+            chunks = chunksFromPages(engine.parse(file, fileName, cb), maxSize);
         }
 
         if (chunks.isEmpty()) {
@@ -101,7 +108,8 @@ public class PdfParser implements DocumentParser {
     }
 
     /** none 路径：文本层抽取 + 扫描件视觉兜底（与历史行为完全一致） */
-    private List<Chunk> textLayerParse(java.nio.file.Path file, String fileName, int maxSize) throws Exception {
+    private List<Chunk> textLayerParse(java.nio.file.Path file, String fileName, int maxSize,
+                                       DocumentParser.ParseProgress cb) throws Exception {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
         String pageTitle = "第 1 页";
@@ -133,7 +141,7 @@ public class PdfParser implements DocumentParser {
                     throw new BizException("「" + fileName + "」是扫描件/图片型 PDF，需要 OCR，"
                             + "但所属知识库未绑定图片描述模型——请在知识库编辑的「解析参数 → 图片描述模型」中选择视觉模型后重新解析");
                 }
-                chunks = chunksFromPages(engines.get("vision").parse(file, fileName), maxSize);
+                chunks = chunksFromPages(engines.get("vision").parse(file, fileName, cb), maxSize);
                 if (chunks.isEmpty()) {
                     throw new BizException("「" + fileName + "」OCR 后未识别出任何文字"
                             + "（视觉模型可能不可用或返回空），请检查知识库绑定的图片描述模型后重新解析");

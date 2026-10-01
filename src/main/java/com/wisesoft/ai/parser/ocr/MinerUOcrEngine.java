@@ -93,15 +93,22 @@ public class MinerUOcrEngine implements OcrEngine {
 
     @Override
     public List<PageMarkdown> parse(Path pdf, String fileName) throws Exception {
+        return parse(pdf, fileName, null);
+    }
+
+    @Override
+    public List<PageMarkdown> parse(Path pdf, String fileName,
+                                    com.wisesoft.ai.parser.DocumentParser.ParseProgress progress) throws Exception {
         String base = uri();
         // 表单参数对齐 2.7.6 mineru-api（/file_parse）；lang_list 单 part 值 "ch"（FastAPI List[str] 收单值即 ["ch"]）。
         // backend 默认 pipeline：多语言通用、无幻觉、CPU 可跑；hybrid-auto-engine 要本地跑 VLM，
         // CPU-only 容器上极慢（默认值可用 parse.ocrMineruBackend 调整）
+        String backend = configService.get("parse.ocrMineruBackend") == null
+                || configService.get("parse.ocrMineruBackend").isBlank()
+                ? "pipeline" : configService.get("parse.ocrMineruBackend").trim();
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("lang_list", "ch");
-        fields.put("backend", configService.get("parse.ocrMineruBackend") == null
-                || configService.get("parse.ocrMineruBackend").isBlank()
-                ? "pipeline" : configService.get("parse.ocrMineruBackend").trim());
+        fields.put("backend", backend);
         fields.put("parse_method", "auto");
         fields.put("formula_enable", "true");
         fields.put("table_enable", "true");
@@ -112,21 +119,31 @@ public class MinerUOcrEngine implements OcrEngine {
         fields.put("response_format_zip", "true");
 
         byte[] body = Files.readAllBytes(pdf);
-        log.info("[MinerU] {} 提交版面解析（{}，{}KB）", fileName, base, body.length / 1024);
-        HttpResponse<byte[]> resp = HTTP.send(postMultipart(base + "/file_parse", fileName, body, fields, timeout()),
-                HttpResponse.BodyHandlers.ofByteArray());
+        // 整份提交无逐页回调：等待期按页数×经验单页耗时估进度（hybrid 走 VLM，按 3 倍时长估）
+        int pages;
+        try (org.apache.pdfbox.pdmodel.PDDocument d = org.apache.pdfbox.Loader.loadPDF(pdf.toFile())) {
+            pages = d.getNumberOfPages();
+        }
+        long perPageMs = "pipeline".equals(backend) ? EstimatedProgress.PER_PAGE_MS : EstimatedProgress.PER_PAGE_MS * 3;
+        log.info("[MinerU] {} 提交版面解析（{}，{}KB，{} 页，backend={}）", fileName, base, body.length / 1024, pages, backend);
+        List<PageMarkdown> out;
+        try (EstimatedProgress est = EstimatedProgress.start(progress, "MinerU " + backend, pages, perPageMs)) {
+            HttpResponse<byte[]> resp = HTTP.send(postMultipart(base + "/file_parse", fileName, body, fields, timeout()),
+                    HttpResponse.BodyHandlers.ofByteArray());
 
-        if (resp.statusCode() != 200) {
-            String detail = abbreviateDetail(resp.body());
-            throw new com.wisesoft.ai.common.BizException("MinerU 版面解析请求失败: HTTP " + resp.statusCode() + " " + detail);
+            if (resp.statusCode() != 200) {
+                String detail = abbreviateDetail(resp.body());
+                throw new com.wisesoft.ai.common.BizException("MinerU 版面解析请求失败: HTTP " + resp.statusCode() + " " + detail);
+            }
+            String md = extractMarkdown(resp.body());
+            if (md == null || md.isBlank()) {
+                throw new com.wisesoft.ai.common.BizException("MinerU 响应 zip 中未找到 markdown 结果（服务版本或参数不兼容）");
+            }
+            // MinerU 整份 markdown 无页界，约定 page=1；跨块切分后的标题语义见 PdfParser#chunksFromPages
+            out = List.of(new PageMarkdown(1, md.trim()));
         }
-        String md = extractMarkdown(resp.body());
-        if (md == null || md.isBlank()) {
-            throw new com.wisesoft.ai.common.BizException("MinerU 响应 zip 中未找到 markdown 结果（服务版本或参数不兼容）");
-        }
-        log.info("[MinerU] {} 完成：整份 markdown {} 字符", fileName, md.length());
-        // MinerU 整份 markdown 无页界，约定 page=1；跨块切分后的标题语义见 PdfParser#chunksFromPages
-        return List.of(new PageMarkdown(1, md.trim()));
+        log.info("[MinerU] {} 完成：整份 markdown {} 字符", fileName, out.get(0).markdown().length());
+        return out;
     }
 
     /**

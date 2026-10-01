@@ -40,4 +40,16 @@ public interface OcrEngine {
      * @return 非空列表（全空页/空结果的 fail-loud 由调用方统一判）
      */
     List<PageMarkdown> parse(Path pdf, String fileName) throws Exception;
+
+    /**
+     * 带进度回调的解析：耗时引擎在等待期上报解析进度（DocumentService 落到
+     * c_ai_document.parse_progress/parse_desc，前端文档列表进度条消费）。
+     * 默认实现不回调，保持与旧调用兼容。
+     *
+     * @param progress 进度回调（可为 null 表示不关心进度）
+     */
+    default List<PageMarkdown> parse(Path pdf, String fileName,
+                                     com.wisesoft.ai.parser.DocumentParser.ParseProgress progress) throws Exception {
+        return parse(pdf, fileName);
+    }
 }

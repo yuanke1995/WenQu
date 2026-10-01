@@ -52,6 +52,14 @@ public class VisionOcrEngine implements OcrEngine {
 
     @Override
     public List<PageMarkdown> parse(Path pdf, String fileName) throws Exception {
+        return parse(pdf, fileName, null);
+    }
+
+    @Override
+    public List<PageMarkdown> parse(Path pdf, String fileName,
+                                    com.wisesoft.ai.parser.DocumentParser.ParseProgress progress) throws Exception {
+        com.wisesoft.ai.parser.DocumentParser.ParseProgress cb =
+                progress != null ? progress : (p, d) -> { };
         int dpi = configService.getInt("parse.ocrDpi", 200);
         List<PageMarkdown> pages = new ArrayList<>();
         try (PDDocument doc = Loader.loadPDF(pdf.toFile())) {
@@ -59,6 +67,9 @@ public class VisionOcrEngine implements OcrEngine {
             int total = doc.getNumberOfPages();
             log.info("[vision-OCR] {} 共 {} 页，渲染 DPI={}，逐页视觉模型识别", fileName, total, dpi);
             for (int page = 0; page < total; page++) {
+                // 逐页上报（区间 10→28，30 是 DocumentService 的「分块完成」刻度）：每页一次 LLM 调用，真实进度
+                cb.onProgress(10 + (int) (18.0 * page / Math.max(1, total)),
+                        "视觉 OCR 第 " + (page + 1) + "/" + total + " 页");
                 BufferedImage img = renderer.renderImageWithDPI(page, dpi);
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 ImageIO.write(img, "png", bos);
