@@ -3537,9 +3537,10 @@ onMounted(async () => {
 /* 状态栏：当前智能体卡片 */
 .rp-agent { display: flex; align-items: center; gap: 6px; }
 .rp-agent-ic { font-size: 13px; color: var(--app-accent); flex: none; }
-.rp-agent-row { margin-top: 6px; align-items: baseline; }
+.rp-agent-row { margin-top: 6px; align-items: baseline; flex-wrap: wrap; }
 .rp-val {
-  display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 78%;
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  max-width: 100%; flex-wrap: wrap;
   font-size: 12px; color: var(--app-text);
 }
 .rp-val-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

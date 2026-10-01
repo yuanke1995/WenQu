@@ -1,5 +1,6 @@
 <template>
   <a-select
+    ref="rootRef"
     :value="modelValue || undefined"
     :style="{ width: pill ? pillWidth + 'px' : (typeof width === 'string' ? width : (width || 320) + 'px') }"
     :placeholder="placeholder || '选择模型'"
@@ -8,6 +9,7 @@
     :allow-clear="allowClear"
     :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue }"
     popup-class-name="ms-dropdown"
+    :dropdown-match-select-width="false"
     option-label-prop="label"
     show-search
     option-filter-prop="label"
@@ -50,7 +52,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { DownOutlined, LoadingOutlined } from '@ant-design/icons-vue'
 import { listAvailableModels } from '../api.js'
 import ProviderIcon from './ProviderIcon.vue'
@@ -156,26 +158,30 @@ watch(() => props.type, () => {
 
 defineExpose({ refresh: () => load(true) })
 
-// 幽灵胶囊下宽度随触发器文案收缩（近似 ZCode 的 w-fit）：canvas 实测文本宽 + 内边距/箭头位
+// 幽灵胶囊下宽度随触发器文案收缩（近似 ZCode 的 w-fit）：渲染后用 Range 量真实 DOM 文本宽。
+// 不用 canvas 预估——触发器实际渲染字体（sans-serif 系）与 canvas 字体栈解析结果不一致，
+// canvas 会量窄 ~14%（deepseek-flash 实测：渲染 111px vs canvas 97px），边界名仍会截断；
+// 且 placeholder（生效模型名）是异步解析后到的，必须量渲染结果而不是按 props 时序预估。
+const rootRef = ref(null)
 const pillWidth = ref(props.width)
-let measureCtx = null
-function measurePill() {
+const PILL_MAX = 300      // 极端长名兜底，防挤爆工具栏
+const PILL_CHROME = 40    // 左内边距 12 + 箭头/清除位 24 + 渲染取整缓冲 4
+async function measurePill() {
   if (!props.pill) return
-  let label = props.placeholder || props.inheritLabel || '选择模型'
-  if (props.modelValue) {
-    label = props.modelValue
-    for (const g of groups.value) {
-      const hit = g.models.find(x => x.ref === props.modelValue)
-      if (hit) { label = hit.displayName; break }
-    }
-  }
-  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d')
-  measureCtx.font = '13px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif'
-  const w = Math.ceil(measureCtx.measureText(label || '').width)
-  pillWidth.value = Math.min(props.width, Math.max(120, w + 44))
+  await nextTick()
+  const root = rootRef.value && rootRef.value.$el
+  const item = root && (root.querySelector('.ant-select-selection-item')
+                     || root.querySelector('.ant-select-selection-placeholder'))
+  if (!item) return
+  const range = document.createRange()
+  range.selectNodeContents(item)
+  const w = range.getBoundingClientRect().width
+  if (!w) return
+  // 无下限：宽度严格随文字伸缩（短名收窄、长名放宽），量宽来自渲染后 DOM，不需要防量窄余量
+  pillWidth.value = Math.min(PILL_MAX, Math.ceil(w) + PILL_CHROME)
 }
 watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
-       () => props.pill, () => props.width], measurePill, { immediate: true })
+       () => props.placeholder, () => props.pill, () => props.width], measurePill, { immediate: true })
 </script>
 
 <style scoped>
@@ -239,7 +245,10 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 .ms-pill.ms-has-value :deep(.ant-select-selection-item) {
   color: var(--app-text);
 }
-.ms-pill :deep(.ant-select-selection-item) {
+/* item 与 placeholder 的右内边距一并归零：selector 的 padding-right 24px 已预留箭头位，
+   antd 默认给 placeholder 的 17px 右内边距是重复预留，会额外挤掉 17px 文本宽导致截断 */
+.ms-pill :deep(.ant-select-selection-item),
+.ms-pill :deep(.ant-select-selection-placeholder) {
   padding-inline-end: 0 !important;
 }
 .ms-pill :deep(.ant-select-selection-search) {
@@ -253,6 +262,8 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 <!-- 下拉面板 teleport 到 body，需全局样式（类名经 popup-class-name 传入） -->
 <style>
 .ms-dropdown {
+  /* 宽度自适应内容（dropdownMatchSelectWidth=false），模型名完整展示；仅对极端长名兜底限宽 */
+  max-width: min(72vw, 480px) !important;
   padding: 6px !important;
   border-radius: 12px !important;
 }
