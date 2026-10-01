@@ -1240,7 +1240,8 @@ public class DocumentService {
     public static final Set<String> PARSE_PARAM_KEYS = Set.of(
             "chunk.maxSize", "chunk.overlap", "chunk.maxChunks", "chunk.maxImages",
             "chunk.structural", "chunk.structuralRatio", "chunk.headingDepth",
-            "parse.qaEnabled", "parse.qaPerChunk", "parse.childEnabled", "parse.childSize");
+            "parse.qaEnabled", "parse.qaPerChunk", "parse.childEnabled", "parse.childSize",
+            "parse.ocrEngine", "parse.ocrMinText", "parse.ocrDpi");
 
     /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
     private String parseVisionRef(com.wisesoft.ai.model.KnowledgeBase kb) {

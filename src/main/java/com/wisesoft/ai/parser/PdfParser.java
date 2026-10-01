@@ -1,46 +1,59 @@
 package com.wisesoft.ai.parser;
 
+import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.model.Chunk;
+import com.wisesoft.ai.parser.ocr.OcrEngine;
+import com.wisesoft.ai.parser.ocr.PageMarkdown;
 import com.wisesoft.ai.service.ConfigService;
 import com.wisesoft.ai.service.VisionService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Component;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
- * PDF 解析器（PDFBox 文本抽取 + 扫描件 OCR）
- * 纯文本抽取（按页合并 + 超长切分）；若整份文本极少（扫描件/图片型 PDF），
- * 逐页渲染图片 → 视觉模型 OCR 识别文字（P0-4）。
+ * PDF 解析器（PDFBox 文本抽取 + 可插拔深度解析引擎）
  * <p>
- * OCR 是 <b>fail-loud 不降级</b>：所属知识库未绑定图片描述模型 / 视觉调用失败 / 全文识别为空，
- * 都直接解析失败并给出原因——扫描件丢失 OCR 结果等于内容静默残缺，比解析失败更糟。
+ * 按 {@code parse.ocrEngine} 路由：
+ * <ul>
+ *   <li><b>none（默认）</b>：PDFTextStripper 纯文本抽取（按页合并 + 超长切分）；
+ *       全文少于 {@code parse.ocrMinText} 判定扫描件（图片型 PDF）→ 逐页渲染 → 视觉模型 OCR（P0-4）。</li>
+ *   <li><b>vision</b>：无视文本层，整份逐页渲染 → 视觉模型 OCR（{@link com.wisesoft.ai.parser.ocr.VisionOcrEngine}）。</li>
+ *   <li><b>pp_structure_v3 / mineru</b>：整份 PDF 发外部版面解析服务，换回带标题层级与表格结构的
+ *       markdown 版面块（替代错位行序文本，缩小与 RAGFlow DeepDoc 的差距）。</li>
+ * </ul>
+ * 引擎路径统一 <b>fail-loud 不降级</b>：引擎未知 / 服务不可用 / 视觉调用失败 / 结果为空，
+ * 都直接解析失败并给出原因——扫描件丢失 OCR 结果或版面"悄悄回落"等于内容静默残缺，比解析失败更糟。
  *
  * @author yuanke
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class PdfParser implements DocumentParser {
 
     /** 文本少于该长度判定为扫描件（图片型 PDF），触发 OCR；parse.ocrMinText 可调 */
     private int ocrMinText() { return configService.getInt("parse.ocrMinText", 20); }
-    /** OCR 专用提示词：原样输出文字，不做描述/评论 */
-    private static final String OCR_PROMPT = "请识别图片中的全部文字内容，按原文原样输出。不要描述界面、不要评论、不要输出多余内容。如果图片中几乎没有文字，返回空。";
 
     private final AppProperties properties;
     private final VisionService visionService;
     private final ConfigService configService;
+    private final Map<String, OcrEngine> engines;
+
+    public PdfParser(AppProperties properties, VisionService visionService,
+                     ConfigService configService, List<OcrEngine> engineList) {
+        this.properties = properties;
+        this.visionService = visionService;
+        this.configService = configService;
+        this.engines = engineList.stream().collect(Collectors.toMap(OcrEngine::id, Function.identity()));
+    }
 
     @Override
     public boolean supports(String ext) {
@@ -55,6 +68,40 @@ public class PdfParser implements DocumentParser {
     @Override
     public List<Chunk> parse(java.nio.file.Path file, String fileName, String docId) throws Exception {
         int maxSize = configService.getInt("chunk.maxSize", properties.getChunk().getMaxSize());
+        String engineId = configService.get("parse.ocrEngine");
+        if (engineId == null || engineId.isBlank()) engineId = "none";
+
+        List<Chunk> chunks;
+        if ("none".equals(engineId)) {
+            chunks = textLayerParse(file, fileName, maxSize);
+        } else if ("vision".equals(engineId)) {
+            // 整份逐页视觉 OCR：文本层不参与（语义见 VisionOcrEngine）
+            if (!visionService.parseVisionAvailable()) {
+                throw new BizException("「" + fileName + "」指定 vision 引擎整份 OCR，"
+                        + "但所属知识库未绑定图片描述模型——请在知识库编辑的「解析参数 → 图片描述模型」中选择视觉模型后重新解析");
+            }
+            log.info("[PDF] {} 走 vision 引擎：整份逐页视觉 OCR（不使用文本层）", fileName);
+            chunks = chunksFromPages(engines.get("vision").parse(file, fileName), maxSize);
+        } else {
+            OcrEngine engine = engine(engineId);
+            String unhealthy = engine.checkHealth();
+            if (unhealthy != null) {
+                throw new BizException("「" + fileName + "」版面解析失败：" + unhealthy
+                        + "；也可在设置页「文档解析默认模板 → PDF 解析引擎」换回 none");
+            }
+            log.info("[PDF] {} 走 {} 版面解析引擎", fileName, engineId);
+            chunks = chunksFromPages(engine.parse(file, fileName), maxSize);
+        }
+
+        if (chunks.isEmpty()) {
+            throw new BizException("「" + fileName + "」解析后未得到任何内容（PDF 可能为空，或引擎未识别出文字）");
+        }
+        log.info("[PDF] {} 解析出 {} 个分块（引擎 {}）", fileName, chunks.size(), engineId);
+        return chunks;
+    }
+
+    /** none 路径：文本层抽取 + 扫描件视觉兜底（与历史行为完全一致） */
+    private List<Chunk> textLayerParse(java.nio.file.Path file, String fileName, int maxSize) throws Exception {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
         String pageTitle = "第 1 页";
@@ -83,55 +130,54 @@ public class PdfParser implements DocumentParser {
             if (pageBuffer.length() < ocrMinText()) {
                 log.info("[PDF] {} 文本极少({}字符)，判定为扫描件，走 OCR（每页视觉模型识别）", fileName, pageBuffer.length());
                 if (!visionService.parseVisionAvailable()) {
-                    throw new com.wisesoft.ai.common.BizException("「" + fileName + "」是扫描件/图片型 PDF，需要 OCR，"
+                    throw new BizException("「" + fileName + "」是扫描件/图片型 PDF，需要 OCR，"
                             + "但所属知识库未绑定图片描述模型——请在知识库编辑的「解析参数 → 图片描述模型」中选择视觉模型后重新解析");
                 }
-                chunks = ocrParse(doc, maxSize);
+                chunks = chunksFromPages(engines.get("vision").parse(file, fileName), maxSize);
                 if (chunks.isEmpty()) {
-                    throw new com.wisesoft.ai.common.BizException("「" + fileName + "」OCR 后未识别出任何文字"
+                    throw new BizException("「" + fileName + "」OCR 后未识别出任何文字"
                             + "（视觉模型可能不可用或返回空），请检查知识库绑定的图片描述模型后重新解析");
                 }
             } else if (pageBuffer.length() > 0) {
                 chunks.add(new Chunk(pageTitle, pageBuffer.toString().trim(), List.of()));
             }
         }
-        log.info("[PDF] {} 解析出 {} 个分块", fileName, chunks.size());
         return chunks;
     }
 
-    /** OCR：逐页渲染 → 视觉模型识别文字 → 按页累积切分；单页调用失败直接抛出（不丢页） */
-    private List<Chunk> ocrParse(PDDocument doc, int maxSize) throws Exception {
+    /** 按引擎 id 取引擎；未知配置值 fail-loud（设置页只会下发合法值，防手改库脏数据） */
+    private OcrEngine engine(String id) {
+        OcrEngine engine = engines.get(id);
+        if (engine == null) {
+            throw new BizException("未知的 PDF 解析引擎: " + id + "（可选 none / vision / pp_structure_v3 / mineru）");
+        }
+        return engine;
+    }
+
+    /**
+     * 引擎输出的页 markdown → 分块（按 maxSize 累积切分）。
+     * 标题沿用「第 N 页」页界语义：块标题取切分时的起始页；
+     * MinerU 整份 markdown 无页界（约定 page=1），切出的多块标题同为「第 1 页」，
+     * 属已知简化——结构感知分块（按标题层级切）见方案 S2。
+     */
+    private List<Chunk> chunksFromPages(List<PageMarkdown> pages, int maxSize) {
         List<Chunk> chunks = new ArrayList<>();
-        PDFRenderer renderer = new PDFRenderer(doc);
-        int total = doc.getNumberOfPages();
         StringBuilder buf = new StringBuilder();
-        String title = "第 1 页";
-        for (int page = 0; page < total; page++) {
-            // describeOcr strict：调用失败抛异常（→ 整个解析失败）；返回空串 = 模型确认本页无文字（空白页，合法跳过）
-            String text = ocrPage(renderer, page);
-            if (text.isBlank()) continue;
+        int startPage = 1;
+        for (PageMarkdown pm : pages) {
+            String text = pm.markdown() == null ? "" : pm.markdown().trim();
+            if (text.isEmpty()) continue;
             if (buf.length() + text.length() > maxSize && buf.length() > 0) {
-                chunks.add(new Chunk(title, buf.toString().trim(), List.of()));
+                chunks.add(new Chunk("第 " + startPage + " 页", buf.toString().trim(), List.of()));
                 buf.setLength(0);
+                startPage = pm.page();
             }
-            if (buf.length() > 0) buf.append("\n");
+            if (buf.length() > 0) buf.append("\n\n");
             buf.append(text);
-            title = "第 " + (page + 1) + " 页";
         }
         if (buf.length() > 0) {
-            chunks.add(new Chunk(title, buf.toString().trim(), List.of()));
+            chunks.add(new Chunk("第 " + startPage + " 页", buf.toString().trim(), List.of()));
         }
         return chunks;
-    }
-
-    /** PDF 页 OCR 渲染 DPI（parse.ocrDpi 可配，默认 200）：提高小字识别清晰度（内存/耗时小幅增加） */
-    private int ocrDpi() { return configService.getInt("parse.ocrDpi", 200); }
-
-    private String ocrPage(PDFRenderer renderer, int page) throws Exception {
-        BufferedImage img = renderer.renderImageWithDPI(page, ocrDpi());
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        ImageIO.write(img, "png", bos);
-        String text = visionService.describeOcr(bos.toByteArray(), "png", OCR_PROMPT);
-        return text == null ? "" : text.trim();
     }
 }
