@@ -87,7 +87,8 @@ public class AgentController {
         return ResultJson.ok(agentService.subAgents());
     }
 
-    @Operation(summary = "新建智能体", description = "body 字段：name(必填)/description/model/systemPrompt/knowledgeScope/"
+    @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标 / emoji 字符，省略=默认展示)/"
+            + "description/model/systemPrompt/knowledgeScope/"
             + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
             + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
@@ -96,7 +97,8 @@ public class AgentController {
         return ResultJson.ok(agentService.create(body));
     }
 
-    @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段；工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
+    @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标 / emoji；内置智能体的名称不可修改）；"
+            + "工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");

@@ -26,6 +26,12 @@ public class Agent {
     /** 智能体名称 */
     private String name;
 
+    /**
+     * 图标：'wenqu'=问渠品牌标（BrandMark）；其它非空值=emoji 字符，原样交给前端渲染；
+     * NULL/空=默认展示——内置「问渠」默认用问渠品牌标，其余智能体用机器人图标。
+     */
+    private String icon;
+
     /** 描述 */
     private String description;
 

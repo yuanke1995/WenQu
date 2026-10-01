@@ -445,6 +445,7 @@
                         :title="agentLocked
                           ? `本会话已绑定「${currentAgentName}」，切换智能体会开启新会话`
                           : '选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）'">
+                  <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
                   <span class="agent-pill-name">{{ currentAgentName }}</span>
                   <lock-outlined v-if="agentLocked" class="agent-pill-lock" />
                   <down-outlined class="agent-pill-caret" />
@@ -474,7 +475,7 @@
                       </div>
                       <div v-for="a in agentList" :key="a.id" class="agent-mi"
                            :class="{ active: currentAgentId === a.id }" @click="pickAgent(a.id)">
-                        <span class="agent-mi-ava"><robot-outlined /></span>
+                        <AgentAvatar :agent="a" :size="26" style="margin-top:1px" />
                         <div class="agent-mi-text">
                           <span class="agent-mi-name">
                             {{ a.name }}
@@ -564,7 +565,8 @@
       <div class="rp-card">
         <div class="rp-label">当前智能体</div>
         <div class="rp-strong rp-agent">
-          <robot-outlined class="rp-agent-ic" />
+          <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="18" />
+          <robot-outlined v-else class="rp-agent-ic" />
           <span>{{ currentAgentName }}</span>
         </div>
         <div class="rp-row rp-agent-row">
@@ -791,6 +793,7 @@ import { loadModelIndex } from '../utils/modelRef'
 import ModelSelect from '../components/ModelSelect.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
+import AgentAvatar from '../components/AgentAvatar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1205,6 +1208,12 @@ const currentAgentName = computed(() => {
   if (currentAgentId.value === AUTO_AGENT) return '自动派遣'
   const a = agentList.value.find(x => x.id === currentAgentId.value)
   return a ? a.name : '默认（全局配置）'
+})
+/** 当前生效的智能体对象（仅用于 agent-pill 头像；自动派遣 / 全局配置 = null，不显示头像） */
+const currentAgent = computed(() => {
+  const id = currentAgentId.value
+  if (!id || id === AUTO_AGENT) return null
+  return agentList.value.find(x => x.id === id) || null
 })
 /** 选中智能体：未绑定会话记录待选值；已绑定会话按主流约定「切换 = 开启新会话」 */
 const pickAgent = id => {

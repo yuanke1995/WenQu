@@ -49,7 +49,7 @@
             <div class="ap-grid">
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card" @click="openEdit(a)">
                 <div class="ap-card-head">
-                  <span class="ap-avatar"><robot-outlined /></span>
+                  <AgentAvatar :agent="a" :size="24" />
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
                   <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
@@ -116,7 +116,24 @@
               </div>
             </a-form-item>
             <a-form-item label="名称" required>
-              <a-input v-model:value="form.name" :maxlength="200" placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
+              <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
+                       placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
+              <div v-if="form.isBuiltin === 1" class="ap-block-hint" style="margin:6px 0 0">
+                内置智能体「问渠」的名称不可修改（图标默认用问渠品牌标，可在下方更换）。
+              </div>
+            </a-form-item>
+            <a-form-item label="图标">
+              <div class="ap-icon-pick">
+                <button v-for="opt in ICON_OPTIONS" :key="opt.value || 'default'" type="button"
+                        class="ap-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
+                        :title="opt.label" :aria-pressed="(form.icon || '') === opt.value"
+                        @click="form.icon = opt.value">
+                  <AgentAvatar :agent="{ icon: opt.value, isBuiltin: 0 }" :size="26" />
+                </button>
+              </div>
+              <div class="ap-block-hint" style="margin:6px 0 0">
+                展示在对话页智能体下拉与列表卡片上；不选即默认图标。
+              </div>
             </a-form-item>
             <a-form-item label="描述" style="margin-bottom:0">
               <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
@@ -386,7 +403,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  ArrowLeftOutlined, ReloadOutlined, SearchOutlined, RobotOutlined, IdcardOutlined,
+  ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
   SafetyOutlined, PartitionOutlined, GlobalOutlined
@@ -397,6 +414,7 @@ import { listAgents, createAgent, updateAgent, deleteAgent, setAgentDefault, lis
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
+import AgentAvatar from '../components/AgentAvatar.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 
 // ==================== 能力定义 ====================
@@ -455,6 +473,27 @@ const BUILTIN_TOOL_OPTIONS = [
   { value: 'hash', label: '哈希计算' }
 ]
 
+// 图标可选集（与后端 c_ai_agent.icon 口径一致）：''=默认机器人图标；'wenqu'=问渠品牌标；其余 emoji 原样存库、原样渲染
+const ICON_OPTIONS = [
+  { value: '', label: '默认图标' },
+  { value: 'wenqu', label: '问渠品牌标' },
+  { value: '🤖', label: '机器人' },
+  { value: '🧠', label: '知识大脑' },
+  { value: '💡', label: '点子' },
+  { value: '📚', label: '资料' },
+  { value: '⚖️', label: '法律' },
+  { value: '📊', label: '报表' },
+  { value: '✍️', label: '写作' },
+  { value: '🔍', label: '检索' },
+  { value: '🛠️', label: '工具' },
+  { value: '💬', label: '客服' },
+  { value: '🎯', label: '目标' },
+  { value: '🧭', label: '导航' },
+  { value: '📝', label: '笔记' },
+  { value: '🌐', label: '全网' },
+  { value: '⚡', label: '效率' }
+]
+
 const loading = ref(false)
 const saving = ref(false)
 const keyword = ref('')
@@ -482,6 +521,8 @@ const editingId = ref('')
 const scopeMode = ref('all')
 const blankForm = () => ({
   name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
+  // 图标：''=默认展示（内置「问渠」用问渠品牌标，其余机器人）；'wenqu'=品牌标；emoji=表情
+  icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
   // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
@@ -979,6 +1020,9 @@ const openEdit = a => {
     name: a.name || '',
     description: a.description || '',
     systemPrompt: a.systemPrompt || '',
+    // 内置标记驱动「名称不可修改」；图标未配时内置按问渠品牌标预选（默认问渠的图标）
+    isBuiltin: isBuiltin(a) ? 1 : 0,
+    icon: a.icon || (isBuiltin(a) ? 'wenqu' : ''),
     knowledgeBaseIds: kbs,
     isDefault: isDefault(a),
     toolKnowledge: triStr(a.toolKnowledge),
@@ -1013,6 +1057,8 @@ const save = async () => {
   if (!f.name.trim()) { message.warning('请填写名称'); return }
   const payload = {
     name: f.name.trim(),
+    // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存
+    icon: f.icon || '',
     description: f.description.trim(),
     systemPrompt: f.systemPrompt,
     // 「全部知识库」时清空（空 → 后端存 null → 不限制）；「指定知识库」时存逗号串；
@@ -1118,11 +1164,6 @@ onMounted(async () => { })
   box-shadow: 0 6px 18px -10px rgba(46, 107, 230, .35);
 }
 .ap-card-head { display: flex; align-items: center; gap: 8px; }
-.ap-avatar {
-  width: 24px; height: 24px; border-radius: 7px; flex: none; font-size: 12px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--app-accent-weak); color: var(--app-accent);
-}
 .ap-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-card-tags { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .ap-tag-default {
@@ -1176,6 +1217,16 @@ onMounted(async () => { })
 .qp-inherit { font-size: 11px; color: var(--app-text3); }
 .ap-pick { margin-top: 12px; }
 .ap-sec-ic { font-size: 13px; color: var(--app-text3); }
+/* 图标选择器：一排可选头像块，选中态用品牌色描边 + 光圈 */
+.ap-icon-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-icon-opt {
+  width: 34px; height: 34px; border-radius: 9px; padding: 0;
+  border: 1px solid var(--app-border); background: var(--app-panel); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color .15s, box-shadow .15s;
+}
+.ap-icon-opt:hover { border-color: var(--app-accent-border); }
+.ap-icon-opt.on { border-color: var(--app-accent); box-shadow: 0 0 0 2px var(--app-accent-weak); }
 
 /* 能力行：图标块 + 名称/描述 + 三态控件；只在「已覆盖」时才高亮 */
 .ap-caps { display: flex; flex-direction: column; }

@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
 CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
+    `icon`            VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认展示（内置「问渠」默认用问渠品牌标，其余用机器人图标）',
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见)',

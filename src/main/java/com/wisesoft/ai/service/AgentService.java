@@ -80,6 +80,9 @@ public class AgentService {
             m.put("name", a.getName());
             m.put("description", a.getDescription());
             m.put("isDefault", a.getIsDefault() == null ? 0 : a.getIsDefault());
+            // 头像展示字段：icon（wenqu=品牌标 / emoji）与内置标记（内置「问渠」未配图标时前端也按品牌标兜底）
+            m.put("icon", a.getIcon());
+            m.put("isBuiltin", Integer.valueOf(1).equals(a.getIsBuiltin()) ? 1 : 0);
             out.add(m);
         }
         return out;
@@ -160,6 +163,14 @@ public class AgentService {
         Agent existing = mapper.selectById(id);
         if (existing == null) throw new BizException(404, "智能体不存在");
         ensureManageable(existing);
+        // 内置智能体（「问渠」）的名称是产品身份的一部分：请求体里出现 name 且与现值不一致时直接拒绝（fail-loud，
+        // 不做静默忽略——静默会让用户以为改成功了，刷新后名称"自己变回去"更困惑）
+        if (body != null && body.containsKey("name") && Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+            String requested = body.get("name") == null ? null : String.valueOf(body.get("name")).trim();
+            if (!existing.getName().equals(requested)) {
+                throw new BizException("内置智能体「" + existing.getName() + "」的名称不可修改");
+            }
+        }
         Agent a = toEntity(body, existing);
         a.setUpdateTime(LocalDateTime.now());
         if (Integer.valueOf(1).equals(a.getIsDefault())) {
@@ -181,6 +192,8 @@ public class AgentService {
         Map<String, Object> b = body == null ? java.util.Collections.emptyMap() : body;
         LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, id);
         if (b.containsKey("name")) uw.set(Agent::getName, a.getName());
+        // 图标（wenqu=问渠品牌标 / emoji；空 → null = 默认展示）
+        if (b.containsKey("icon")) uw.set(Agent::getIcon, a.getIcon());
         if (b.containsKey("description")) uw.set(Agent::getDescription, a.getDescription());
         if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
         if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
@@ -269,6 +282,8 @@ public class AgentService {
             a.setName(name);
         }
         if (body.containsKey("description")) a.setDescription(asText(body.get("description"), 500));
+        // 图标：'wenqu'=问渠品牌标 / emoji 字符；空串归一为 null（= 默认展示，前端按内置标记兜底品牌标）
+        if (body.containsKey("icon")) a.setIcon(asText(body.get("icon"), 32));
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
         if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));
