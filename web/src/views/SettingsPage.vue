@@ -771,7 +771,7 @@ onMounted(fetchAndFill)
 </script>
 
 <style scoped>
-.dirty-hint { font-size: 12px; color: #a3691b; background: #faf3e6; border-radius: 6px; padding: 3px 10px; }
+.dirty-hint { font-size: 12px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 6px; padding: 3px 10px; }
 /* .head-hint-plain 已提到 app.css 作为全局共用样式（供应商/知识库/技能/MCP 页也用它） */
 /* 高级设置开关 + 隐藏项提示 */
 .adv-toggle {
@@ -783,7 +783,7 @@ onMounted(fetchAndFill)
   font-size: 11px; color: var(--app-text3); background: var(--app-accent-weak);
   border-radius: 999px; padding: 3px 10px;
 }
-.app-btn.dis { background: #c6d4f2; cursor: not-allowed; }
+.app-btn.dis { background: var(--app-accent-disabled); cursor: not-allowed; }
 .set-body { flex: 1; min-height: 0; display: flex; }
 .set-nav {
   width: 150px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);
@@ -801,8 +801,8 @@ onMounted(fetchAndFill)
 .app-btn.small + .app-btn.small { margin-left: 8px; }
 .probe-btn { margin-left: 8px; }
 .probe-chip { margin-left: 8px; font-size: 11px; border-radius: 999px; padding: 3px 9px; cursor: help; }
-.probe-chip.ok { color: var(--app-ok); background: #eaf5ec; }
-.probe-chip.bad { color: var(--app-danger); background: #fbecea; }
+.probe-chip.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.probe-chip.bad { color: var(--app-danger); background: var(--app-danger-weak); }
 /* API Key 管理（6.5） */
 .key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -833,7 +833,7 @@ onMounted(fetchAndFill)
 .fold-caret { display: inline-block; width: 12px; color: var(--app-text3); }
 .key-usage-body { padding: 10px 0 0 12px; }
 .key-usage-label { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
-.key-code { position: relative; background: #f6f7f9; border: 1px solid var(--app-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
+.key-code { position: relative; background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
 .key-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--app-text); }
 .key-copy {
   position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: none; border-radius: 5px;
@@ -843,16 +843,16 @@ onMounted(fetchAndFill)
 .key-copy:hover { background: var(--app-accent-weak); color: var(--app-accent); }
 .key-copy-ok { color: var(--app-ok); }
 .key-usage-list { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--app-text2); line-height: 1.9; }
-.key-usage-list code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.key-usage-list code { background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 /* 弹窗内 */
 .key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .key-done-warn {
-  background: #fff7e6; border: 1px solid #ffd591; color: #d46b08;
+  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text);
   border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.6;
 }
 .key-done-meta { font-size: 12px; color: var(--app-text2); margin-bottom: 8px; }
 .key-done-box {
-  position: relative; background: #f6f7f9; border: 1px solid var(--app-border); border-radius: 6px;
+  position: relative; background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 6px;
   padding: 12px 36px 12px 12px;
 }
 .key-done-box code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; color: var(--app-text); }
@@ -864,9 +864,9 @@ onMounted(fetchAndFill)
 .audit-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .audit-chip { font-size: 11px; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
 .audit-chip.agent { color: var(--app-accent); background: var(--app-accent-weak); }
-.audit-chip.platform { color: #8c6a1f; background: #faf3e6; }
-.audit-chip.pass { color: var(--app-ok); background: #eaf5ec; }
-.audit-chip.fail { color: var(--app-danger); background: #fbecea; }
+.audit-chip.platform { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.audit-chip.pass { color: var(--app-ok); background: var(--app-ok-weak); }
+.audit-chip.fail { color: var(--app-danger); background: var(--app-danger-weak); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
 </style>

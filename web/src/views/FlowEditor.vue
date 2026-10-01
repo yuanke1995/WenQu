@@ -57,7 +57,7 @@
                  @nodes-change="onNodesChange" @edges-change="onEdgesChange"
                  @node-context-menu="onNodeContextMenu" @edge-context-menu="onEdgeContextMenu"
                  @pane-context-menu="onPaneContextMenu">
-          <Background :gap="16" pattern-color="#d6dae2" :size="1.2" />
+          <Background :gap="16" pattern-color="var(--app-border)" :size="1.2" />
           <MiniMap class="wf-minimap" :node-color="minimapColor" pannable zoomable />
           <Controls class="wf-controls" :show-interactive="false" />
           <template #node-wf="props">
@@ -1337,8 +1337,8 @@ load()
 .wf-tb-sep { width: 1px; height: 14px; background: var(--app-border); }
 /* 状态点：比纯文字更快读出"有没有未保存改动" */
 .wf-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.dot-saved { background: #52c41a; }
-.dot-dirty { background: #fa8c16; }
+.dot-saved { background: var(--app-ok); }
+.dot-dirty { background: var(--app-warn); }
 .wf-tb-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: 4px; }
 .wf-save-hint { font-size: 12px; color: var(--app-text3); white-space: nowrap; }
 .wf-ver { margin: 0; }
@@ -1395,7 +1395,7 @@ load()
 
 /* 画布节点（slot 内容带本组件 scoped 属性，可直接命中） */
 .wf-node {
-  background: #fff; border: 1.5px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel); border: 1.5px solid var(--app-border); border-radius: 10px;
   border-left: 3px solid var(--nc, var(--app-border));
   padding: 8px 12px; min-width: 168px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
@@ -1422,23 +1422,23 @@ load()
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wf-node :deep(.vue-flow__handle) { width: 8px; height: 8px; background: var(--app-accent); border: none; }
-.wf-node.run-success { border-color: #52c41a; box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.15); }
-.wf-node.run-failed { border-color: #ff4d4f; box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
-.wf-node.run-waiting { border-color: #fa8c16; box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.2); }
-.wf-node.run-retrying { border-color: #faad14; box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.18); }
+.wf-node.run-success { border-color: var(--app-ok); box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.15); }
+.wf-node.run-failed { border-color: var(--app-danger); box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
+.wf-node.run-waiting { border-color: var(--app-warn); box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.2); }
+.wf-node.run-retrying { border-color: var(--app-warn); box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.18); }
 .wf-node-badge {
   position: absolute; top: -9px; right: -9px;
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 9px; color: #fff;
 }
-.badge-success { background: #52c41a; }
-.badge-failed { background: #ff4d4f; }
-.badge-waiting { background: #fa8c16; }
-.badge-retrying { background: #faad14; }
+.badge-success { background: var(--app-ok); }
+.badge-failed { background: var(--app-danger); }
+.badge-waiting { background: var(--app-warn); }
+.badge-retrying { background: var(--app-warn); }
 
 /* 人工审核审批卡 */
 .wf-approval-card {
-  border: 1.5px solid #fa8c16; border-radius: 8px; padding: 12px 14px;
-  background: #fff7e6; margin-bottom: 14px;
+  border: 1.5px solid var(--app-warn); border-radius: 8px; padding: 12px 14px;
+  background: var(--app-warn-weak); margin-bottom: 14px;
 }
 .wf-approval-head { font-weight: 500; font-size: 13px; margin-bottom: 6px; }
 .wf-approval-prompt { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
@@ -1454,7 +1454,7 @@ load()
 .wf-node-brief {
   display: flex; gap: 10px; align-items: flex-start;
   border: 1px solid var(--app-border); border-left: 3px solid var(--nc, var(--app-border));
-  border-radius: 8px; padding: 10px 12px; background: var(--app-bg, #fafafa);
+  border-radius: 8px; padding: 10px 12px; background: var(--app-bg, var(--app-panel-2));
 }
 .wf-brief-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .wf-brief-title { font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 8px; }
@@ -1483,11 +1483,11 @@ load()
 .wf-ref-pick { margin-top: 6px; width: 100%; }
 .wf-hint code { background: var(--app-panel); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
 .wf-drawer-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
-.wf-req { color: #ff4d4f; margin-left: 2px; }
+.wf-req { color: var(--app-danger); margin-left: 2px; }
 
 /* 运行输出 */
 .wf-trace-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--app-text3); margin-bottom: 8px; }
-.wf-trace-error { font-size: 13px; color: var(--app-danger, #d4380d); margin: 6px 0; word-break: break-all; }
+.wf-trace-error { font-size: 13px; color: var(--app-danger, var(--app-danger)); margin: 6px 0; word-break: break-all; }
 .wf-trace-block { margin-top: 8px; }
 .wf-trace-label { font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
 .wf-trace-pre {

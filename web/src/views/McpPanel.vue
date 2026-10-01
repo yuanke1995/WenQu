@@ -281,10 +281,10 @@ onMounted(loadStatus)
 .mcp-card-actions .app-link-btn { display: inline-flex; align-items: center; line-height: 1; }
 .mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--app-text3); }
 .mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: #f1f3f5; color: var(--app-text3); }
+.mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: var(--app-panel-2); color: var(--app-text3); }
 .mcp-tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
 .mcp-tool { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
-.mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: #f2f3f5; padding: 1px 5px; border-radius: 4px; }
+.mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; }
 .mcp-tool-desc { min-width: 0; color: var(--app-text3); }
 .mcp-probe-ok { font-size: 12px; color: var(--app-ok); }
 .mcp-probe-bad { font-size: 12px; color: var(--app-danger); word-break: break-all; }

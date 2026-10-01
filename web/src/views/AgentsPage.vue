@@ -199,7 +199,7 @@
               </div>
             </div>
             <!-- 有副作用工具（沙盒/MCP）执行审批（人在回路） -->
-            <div class="ap-cap" style="border-top:1px dashed var(--app-line,#e5e6eb);margin-top:10px;padding-top:12px">
+            <div class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
               <span class="ap-cap-ic"><safety-outlined /></span>
               <div class="ap-cap-l">
                 <div class="ap-cap-name">工具执行确认</div>
@@ -1094,7 +1094,7 @@ onMounted(async () => { })
 }
 .ap-group-count {
   flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px;
-  background: #f1f3f5; color: var(--app-text2);
+  background: var(--app-panel-2); color: var(--app-text2);
 }
 
 /* 卡片列表 */
@@ -1105,7 +1105,7 @@ onMounted(async () => { })
   transition: border-color .15s, box-shadow .15s, transform .15s;
 }
 .ap-card:hover {
-  border-color: #bcd0f7;
+  border-color: var(--app-accent-border);
   box-shadow: 0 6px 18px -10px rgba(46, 107, 230, .35);
 }
 .ap-card-head { display: flex; align-items: center; gap: 8px; }
@@ -1118,11 +1118,11 @@ onMounted(async () => { })
 .ap-card-tags { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .ap-tag-default {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: #eaf5ec; color: var(--app-ok);
+  background: var(--app-ok-weak); color: var(--app-ok);
 }
 .ap-tag-builtin {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: #e8eefc; color: var(--app-accent);
+  background: var(--app-accent-weak); color: var(--app-accent);
 }
 .ap-builtin-hint { font-size: 11px; color: var(--app-text3); padding: 0 4px; }
 .ap-desc {
@@ -1132,21 +1132,21 @@ onMounted(async () => { })
 .ap-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .ap-chip {
   font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 6px;
-  background: #f1f3f5; color: var(--app-text2); white-space: nowrap;
+  background: var(--app-panel-2); color: var(--app-text2); white-space: nowrap;
 }
 .ap-chip-on { background: var(--app-accent-weak); color: var(--app-accent); }
-.ap-chip-warn { background: #faf3e6; color: #a3691b; }
+.ap-chip-warn { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .ap-card-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 2px;
   border-top: 1px dashed var(--app-border); padding-top: 6px; margin-top: auto;
 }
 
-/* 配置视图 */
+/* 配置视图（820px 列在通栏页面里水平居中，宽屏不再贴左） */
 .ap-summary {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 820px;
-  margin-bottom: 12px; padding: 10px 14px; border-radius: 12px;
+  margin: 0 auto 12px; padding: 10px 14px; border-radius: 12px;
   background: linear-gradient(0deg, var(--app-accent-weak), var(--app-accent-weak));
-  border: 1px solid #dbe6fb; font-size: 12px; color: var(--app-text2);
+  border: 1px solid var(--app-accent-weak); font-size: 12px; color: var(--app-text2);
 }
 .ap-summary-avatar {
   width: 22px; height: 22px; border-radius: 6px; flex: none; font-size: 11px;
@@ -1158,7 +1158,7 @@ onMounted(async () => { })
 .ap-summary-item { color: var(--app-text2); }
 .ap-summary-item.is-accent { color: var(--app-accent); }
 
-.ap-form { display: flex; flex-direction: column; gap: 12px; max-width: 820px; }
+.ap-form { display: flex; flex-direction: column; gap: 12px; max-width: 820px; margin: 0 auto; }
 .ap-form :deep(.ant-form-item) { margin-bottom: 12px; }
 .ap-block-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
 /* 检索参数覆盖：两列网格，留空=继承全局 */
@@ -1180,7 +1180,7 @@ onMounted(async () => { })
 .ap-cap-ic {
   width: 30px; height: 30px; border-radius: 8px; flex: none; font-size: 14px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: #f1f3f5; color: var(--app-text2); transition: background .15s, color .15s;
+  background: var(--app-panel-2); color: var(--app-text2); transition: background .15s, color .15s;
 }
 .ap-cap.overridden .ap-cap-ic { background: var(--app-accent-weak); color: var(--app-accent); }
 .ap-cap-l { flex: 1; min-width: 0; }
@@ -1191,40 +1191,40 @@ onMounted(async () => { })
   background: var(--app-accent-weak); color: var(--app-accent);
 }
 .ap-cap-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 2px; }
-.ap-cap-global { color: #b6bdc7; }
+.ap-cap-global { color: var(--app-text3); }
 /* 公开发布弹窗 */
 .pub-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
 .pub-row { display: flex; flex-direction: column; gap: 6px; }
 .pub-row:first-child { flex-direction: row; align-items: center; gap: 10px; }
-.pub-row-t { font-size: 13px; color: var(--app-text2, #4e5460); }
-.pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2, #4e5460); }
+.pub-row-t { font-size: 13px; color: var(--app-text2, var(--app-text2)); }
+.pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2, var(--app-text2)); }
 .pub-copy-row { display: flex; gap: 8px; align-items: center; }
 .pub-iframe { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
-.pub-hint { font-size: 12px; color: var(--app-text3, #8f959e); }
+.pub-hint { font-size: 12px; color: var(--app-text3, var(--app-text3)); }
 
 /* ==================== 委派编排视图（拓扑） ==================== */
 .ap-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
 .ap-lg { display: inline-flex; align-items: center; gap: 6px; }
 .ap-lg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
-.ap-lg-dot.main { background: #fff; border: 1.5px solid var(--app-accent, #4a7dff); }
-.ap-lg-dot.sub { background: #eef3ff; border: 1.5px solid var(--app-accent, #4a7dff); }
+.ap-lg-dot.main { background: var(--app-panel); border: 1.5px solid var(--app-accent, var(--app-accent-hover)); }
+.ap-lg-dot.sub { background: var(--app-accent-weak); border: 1.5px solid var(--app-accent, var(--app-accent-hover)); }
 .ap-topo-warns { margin-bottom: 10px; }
 .ap-topo-warn { font-size: 12px; color: var(--app-danger); padding: 2px 0; }
 .ap-topo-empty { padding: 28px 0; text-align: center; font-size: 13px; color: var(--app-text3); }
 .ap-topo-scroll { display: flex; justify-content: center; overflow: auto; }
 .ap-topo-svg { flex: none; }
-.ap-edge { fill: none; stroke: #b9bfcc; stroke-width: 1.5; opacity: .8; transition: opacity .2s, stroke-width .2s; }
-.ap-edge.on { stroke: var(--app-accent, #4a7dff); stroke-width: 2; opacity: 1; }
+.ap-edge { fill: none; stroke: var(--app-text3); stroke-width: 1.5; opacity: .8; transition: opacity .2s, stroke-width .2s; }
+.ap-edge.on { stroke: var(--app-accent, var(--app-accent-hover)); stroke-width: 2; opacity: 1; }
 .ap-edge.dim { opacity: .1; }
-.ap-edge.miss { stroke: var(--app-danger, #e5484d); stroke-dasharray: 5 4; }
+.ap-edge.miss { stroke: var(--app-danger, var(--app-danger)); stroke-dasharray: 5 4; }
 .ap-node { cursor: pointer; }
 .ap-node.dim { opacity: .18; }
-.ap-nrect { fill: #fff; stroke: var(--app-border, #e3e6ec); stroke-width: 1.2; }
-.ap-nrect.sub { fill: #f4f7ff; }
-.ap-nrect.orphan { stroke-dasharray: 5 4; stroke: #c2c7d1; }
-.ap-phantom { fill: #fff; stroke: var(--app-danger, #e5484d); stroke-dasharray: 4 3; }
-.ap-phantom-t { font-size: 14px; font-weight: 700; fill: var(--app-danger, #e5484d); text-anchor: middle; }
-.ap-nname { font-size: 13px; font-weight: 600; fill: var(--app-text, #24292f); }
-.ap-ndesc { font-size: 11px; fill: var(--app-text3, #8f959e); }
-.ap-nmeta { font-size: 11px; fill: var(--app-text3, #8f959e); }
+.ap-nrect { fill: #fff; stroke: var(--app-border, var(--app-border)); stroke-width: 1.2; }
+.ap-nrect.sub { fill: var(--app-accent-weak); }
+.ap-nrect.orphan { stroke-dasharray: 5 4; stroke: var(--app-text3); }
+.ap-phantom { fill: #fff; stroke: var(--app-danger, var(--app-danger)); stroke-dasharray: 4 3; }
+.ap-phantom-t { font-size: 14px; font-weight: 700; fill: var(--app-danger, var(--app-danger)); text-anchor: middle; }
+.ap-nname { font-size: 13px; font-weight: 600; fill: var(--app-text, var(--app-text)); }
+.ap-ndesc { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }
+.ap-nmeta { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }
 </style>

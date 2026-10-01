@@ -207,8 +207,8 @@ onMounted(load)
 .art-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .art-dot { opacity: 0.6; }
 .art-expire { flex-shrink: 0; }
-.art-expire.warn { color: var(--app-danger, #d4380d); font-weight: 500; }
-.art-del { color: var(--app-danger, #d4380d); }
+.art-expire.warn { color: var(--app-danger, var(--app-danger)); font-weight: 500; }
+.art-del { color: var(--app-danger, var(--app-danger)); }
 .art-empty { text-align: center; padding: 28px 16px; }
 .art-empty-title { margin: 0 0 6px; font-weight: 500; }
 </style>

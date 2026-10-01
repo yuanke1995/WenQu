@@ -248,7 +248,7 @@ onMounted(async () => {
 .pref-section { margin-bottom: 4px; }
 .pref-label { font-weight: 600; margin-bottom: 8px; }
 .pref-row { display: flex; align-items: center; gap: 8px; }
-.pref-hint { font-size: 12px; color: var(--app-text3, #999); margin-top: 6px; }
+.pref-hint { font-size: 12px; color: var(--app-text3, var(--app-text3)); margin-top: 6px; }
 .pwd-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
 .side {
   width: 200px; flex: none; display: flex; flex-direction: column;
@@ -326,7 +326,7 @@ onMounted(async () => {
 .sess-op:hover { color: var(--app-accent); }
 .sess-op.on { opacity: 1; color: var(--app-accent); }
 .sess-pin-flag { color: var(--app-accent); font-size: 10px; flex: none; margin-right: 3px; }
-.sess-fav-flag { color: #faad14; font-size: 10px; margin-right: 3px; }
+.sess-fav-flag { color: var(--app-warn); font-size: 10px; margin-right: 3px; }
 .sess-title.fav { color: var(--app-text); }
 .sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
 

@@ -341,7 +341,7 @@ onMounted(load)
 }
 .sched-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sched-link { font-size: 12px; color: var(--app-accent); cursor: pointer; }
-.sched-del { color: var(--app-danger, #d4380d); }
+.sched-del { color: var(--app-danger, var(--app-danger)); }
 .sched-empty { text-align: center; padding: 28px 16px; }
 .sched-empty-title { margin: 0 0 6px; font-weight: 500; }
 .sched-cron-row { display: flex; gap: 8px; align-items: center; }
@@ -351,7 +351,7 @@ onMounted(load)
 .sched-run { border-bottom: 1px solid var(--app-border); padding-bottom: 8px; }
 .sched-run:last-child { border-bottom: none; }
 .sched-run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.sched-err { margin-top: 6px; font-size: 13px; color: var(--app-danger, #d4380d); }
+.sched-err { margin-top: 6px; font-size: 13px; color: var(--app-danger, var(--app-danger)); }
 .sched-preview {
   margin-top: 6px; font-size: 13px; color: var(--app-text2); white-space: pre-wrap;
   max-height: 120px; overflow: hidden;

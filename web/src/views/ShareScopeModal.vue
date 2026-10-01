@@ -260,7 +260,7 @@ watch(() => props.open, v => { if (v) init() })
 .scope-card {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border: 1px solid var(--app-border); border-radius: 8px; cursor: pointer;
-  background: #fff; transition: border-color .15s, background .15s;
+  background: var(--app-panel); transition: border-color .15s, background .15s;
 }
 .scope-card:hover { border-color: var(--app-accent); }
 .scope-card.active { border-color: var(--app-accent); background: var(--app-accent-weak); }
@@ -272,10 +272,10 @@ watch(() => props.open, v => { if (v) init() })
 .scope-count {
   margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px;
   height: 24px; padding: 0 10px; font-size: 12px; color: var(--app-text2);
-  background: #fff; border: 1px solid var(--app-border); border-radius: 6px; cursor: pointer;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 6px; cursor: pointer;
 }
 .scope-count:hover { border-color: var(--app-accent); }
-.scope-off { font-size: 12px; color: var(--app-text3); padding: 9px 12px; background: #f7f8fa; border-radius: 8px; }
+.scope-off { font-size: 12px; color: var(--app-text3); padding: 9px 12px; background: var(--app-bg); border-radius: 8px; }
 .sel-panel { width: 240px; }
 .sel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .sel-title { font-size: 12px; font-weight: 500; color: var(--app-text); }

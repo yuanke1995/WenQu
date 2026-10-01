@@ -30,6 +30,7 @@
   --app-danger-text: #cf1322;
   --app-info-weak: #f0f6ff;
   --app-info-border: #d6e4ff;
+  --app-accent-border: #bcd0f7;
   --app-accent-disabled: #c6d4f2;
   /* ---- 代码与滚动条 ---- */
   --app-code-bg: #f6f8fa;         /* 代码块底 */
@@ -78,6 +79,7 @@ html[data-theme='dark'] {
   --app-danger-text: #ff7875;
   --app-info-weak: #1c2534;
   --app-info-border: #2c3a52;
+  --app-accent-border: #33405c;
   --app-accent-disabled: #33405c;
   --app-code-bg: #22262c;
   --app-code-inline-bg: #2a2f36;

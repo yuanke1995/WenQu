@@ -196,11 +196,11 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 .ms-empty {
   padding: 8px 0;
   text-align: center;
-  color: #999;
+  color: var(--app-text3);
 }
 .ms-empty-tip {
   font-size: 12px;
-  color: #bbb;
+  color: var(--app-text3);
   margin-top: 2px;
 }
 /* 后缀统一为小箭头（antd 默认的放大镜让选框看起来像搜索框），加载时转圈 */
@@ -219,7 +219,7 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 }
 .ms-pill:hover,
 .ms-pill.ant-select-open {
-  background: #f2f3f5;
+  background: var(--app-panel-2);
 }
 .ms-pill :deep(.ant-select-selector) {
   height: 28px !important;
@@ -272,7 +272,7 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
   font-size: 13px;
 }
 .ms-dropdown .ant-select-item-option-active {
-  background: #f2f3f5 !important;
+  background: var(--app-panel-2) !important;
 }
 .ms-dropdown .ant-select-item-option-selected {
   background: transparent !important;

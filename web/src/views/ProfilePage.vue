@@ -247,6 +247,6 @@ onMounted(() => { load(); loadMemories() })
 .mem-item:last-child { border-bottom: none; }
 .mem-content { flex: 1; min-width: 0; font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-tag { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
-.mem-src { background: #f2f3f5; color: #8f959e; }
+.mem-src { background: var(--app-panel-2); color: var(--app-text3); }
 .mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
 </style>

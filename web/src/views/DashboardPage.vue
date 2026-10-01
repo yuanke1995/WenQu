@@ -639,8 +639,8 @@ onMounted(() => {
 .trace-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .trace-ct { font-size: 12px; color: var(--app-text2); margin-right: 4px; }
 .wf-run-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
-.rd-success { background: #52c41a; }
-.rd-failed { background: #fa8c16; }
+.rd-success { background: var(--app-ok); }
+.rd-failed { background: var(--app-warn); }
 
 /* 详情抽屉 */
 .dt-block { margin-bottom: 12px; }
@@ -658,5 +658,5 @@ onMounted(() => {
 .wf-trace { border-top: 1px dashed var(--app-border); padding: 6px 0; }
 .wf-trace-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
 .wf-trace-name { font-size: 13px; font-weight: 500; font-family: ui-monospace, Menlo, monospace; }
-.wf-run-err { font-size: 12px; color: var(--app-danger, #d4380d); margin-top: 4px; }
+.wf-run-err { font-size: 12px; color: var(--app-danger, var(--app-danger)); margin-top: 4px; }
 </style>

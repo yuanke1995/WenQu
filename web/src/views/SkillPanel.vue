@@ -271,15 +271,15 @@ onMounted(load)
 
 .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 /* 尺寸/圆角/边框复用 .app-card，与模型供应商卡片同规格 */
-.skill-card:hover { border-color: #bcd0f7; }
+.skill-card:hover { border-color: var(--app-accent-border); }
 .skill-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .skill-card-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skill-card-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: 6px 0 8px; height: 38px; overflow: hidden; }
-.skill-desc-warn { color: #a3691b; }
+.skill-desc-warn { color: var(--app-warn-text); }
 .skill-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 2px; border-top: 1px dashed var(--app-border); padding-top: 4px; }
 .skill-tip { font-size: 12px; color: var(--app-text3); line-height: 1.7; margin-bottom: 10px; }
 .skill-view-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
-.skill-view-meta code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.skill-view-meta code { background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .skill-view-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .skill-view-body { max-height: 56vh; overflow-y: auto; border: 1px solid var(--app-border); border-radius: 6px; padding: 12px 14px; }
 </style>

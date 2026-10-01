@@ -305,7 +305,7 @@ const metricsColumns = computed(() => {
     title: '操作', key: 'apply', width: 90,
     customRender: ({ record }) => hasApplyable(record)
       ? h('a', { style: 'color:#2e6be6;cursor:pointer;font-size:12px', onClick: () => applyGroup(record) }, '应用此组')
-      : h('span', { style: 'color:#ccc;font-size:12px' }, '—')
+      : h('span', { style: 'color:var(--app-border-strong);font-size:12px' }, '—')
   })
   return cols
 })
@@ -442,7 +442,7 @@ const buildHealth = data => {
 /* 参数组盒子 */
 .group-box {
   border: 1px solid var(--app-border); border-radius: 8px;
-  padding: 10px 12px; margin-bottom: 10px; background: #fafbfc;
+  padding: 10px 12px; margin-bottom: 10px; background: var(--app-panel-2);
 }
 .group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .group-title { font-weight: 500; color: var(--app-text); font-size: 13px; }
@@ -459,7 +459,7 @@ const buildHealth = data => {
 /* 逐问题明细 */
 .case-expected { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
 .case-hits { font-size: 12px; }
-.hit-row { padding: 2px 0; border-bottom: 1px dashed #f0f0f0; }
+.hit-row { padding: 2px 0; border-bottom: 1px dashed var(--app-code-inline-bg); }
 .hit-good { color: var(--app-ok); }
 .hit-miss { color: var(--app-text2); }
 .hit-score { color: var(--app-text3); margin-left: 8px; }

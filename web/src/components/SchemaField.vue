@@ -119,20 +119,20 @@ const onSelectChange = v => emit('change', props.field, v)
 
 <style scoped>
 .tip-icon {
-  color: #bbb;
+  color: var(--app-text3);
   font-size: 12px;
   margin-left: 4px;
   cursor: help;
 }
 .tip-icon:hover {
-  color: #1677ff;
+  color: var(--app-accent);
 }
 .core-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #faad14;
+  background: var(--app-warn);
   margin-right: 6px;
 }
 </style>

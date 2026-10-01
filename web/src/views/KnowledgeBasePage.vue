@@ -214,6 +214,9 @@ function disposeChart() {
 
 async function renderGraphChart() {
   if (!graphKb.value || !graphChartEl.value) return
+  // echarts 走 canvas 渲染，**不解析 CSS 变量**——必须读变量当前实际值（随主题取亮/暗色值），
+  // 图表文字/连线颜色才能跟随亮暗主题；直接写 var(--app-*) 会静默失效显示默认黑
+  const cssVar = n => (getComputedStyle(document.documentElement).getPropertyValue(n) || '').trim()
   let rows = []
   try {
     const r = await graphTriples(graphKb.value.id, 1, graphSampled)
@@ -256,9 +259,9 @@ async function renderGraphChart() {
         label: { show: true, fontSize: 10 }
       })),
       links: graphLinks.value,
-      label: { color: '#333', position: 'right' },
-      lineStyle: { color: '#b9c0cc', curveness: 0.05 },
-      edgeLabel: { show: true, fontSize: 10, color: '#8a919e', formatter: '{c}' },
+      label: { color: cssVar('--app-text'), position: 'right' },
+      lineStyle: { color: cssVar('--app-text3'), curveness: 0.05 },
+      edgeLabel: { show: true, fontSize: 10, color: cssVar('--app-text2'), formatter: '{c}' },
       edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 7,
       itemStyle: { color: '#4f6ef2' }
     }]
@@ -361,7 +364,7 @@ onBeforeUnmount(() => {
 .graph-panel {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; margin-top: 6px;
-  background: var(--app-bg, #fafafa); font-size: 12px;
+  background: var(--app-bg, var(--app-panel-2)); font-size: 12px;
 }
 .graph-rel {
   background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px;

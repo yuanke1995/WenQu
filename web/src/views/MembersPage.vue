@@ -480,9 +480,9 @@ async function delDept (id) {
 .mem-inline { display: inline-flex; align-items: center; gap: 8px; }
 
 .role-pill { display: inline-flex; align-items: center; font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; }
-.role-pill.r-superadmin { color: var(--app-accent); background: #e8eefc; }
-.role-pill.r-admin { color: #3b6d11; background: #eaf3de; }
-.role-pill.r-user { color: var(--app-text2); background: #f1f3f5; }
+.role-pill.r-superadmin { color: var(--app-accent); background: var(--app-accent-weak); }
+.role-pill.r-admin { color: var(--app-ok); background: var(--app-ok-weak); }
+.role-pill.r-user { color: var(--app-text2); background: var(--app-panel-2); }
 
 .mem-empty { padding: 28px 0; color: var(--app-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }

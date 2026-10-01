@@ -399,11 +399,11 @@ const chipTip = d => {
 
 const typeColor = t => {
   const map = {
-    docx: { bg: '#e6f1fb', fg: '#185fa5' }, doc: { bg: '#e6f1fb', fg: '#185fa5' },
-    pdf: { bg: '#fcebeb', fg: '#a32d2d' }, xlsx: { bg: '#eaf3de', fg: '#3b6d11' }, xls: { bg: '#eaf3de', fg: '#3b6d11' },
-    url: { bg: '#f0eaff', fg: '#5b2ea6' }
+    docx: { bg: 'var(--app-info-weak)', fg: 'var(--app-accent)' }, doc: { bg: 'var(--app-info-weak)', fg: 'var(--app-accent)' },
+    pdf: { bg: 'var(--app-danger-weak)', fg: 'var(--app-danger-text)' }, xlsx: { bg: 'var(--app-ok-weak)', fg: 'var(--app-ok)' }, xls: { bg: 'var(--app-ok-weak)', fg: 'var(--app-ok)' },
+    url: { bg: 'var(--app-accent-weak)', fg: 'var(--app-accent)' }
   }
-  return map[(t || '').toLowerCase()] || { bg: '#f1f3f5', fg: '#5f6570' }
+  return map[(t || '').toLowerCase()] || { bg: 'var(--app-panel-2)', fg: 'var(--app-text2)' }
 }
 
 const route = useRoute()
@@ -1201,16 +1201,16 @@ const fmtTime = t => {
 .head-stat { font-size: 12px; color: var(--app-text3); }
 .batch-bar {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px;
-  background: var(--app-accent-weak); border: 1px solid #c9d9f5; border-radius: 8px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px;
   font-size: 12px; color: var(--app-accent);
 }
 .doc-row {
   display: flex; align-items: center; gap: 10px; padding: 9px 14px;
-  border-bottom: 1px solid #f1f3f5; font-size: 12px; color: var(--app-text2); min-width: 0;
+  border-bottom: 1px solid var(--app-panel-2); font-size: 12px; color: var(--app-text2); min-width: 0;
 }
 .doc-row:last-child { border-bottom: none; }
-.doc-row:not(.head-row):hover { background: #fafbfc; }
-.head-row { font-size: 11px; color: var(--app-text3); background: #fafbfc; border-bottom: 1px solid var(--app-border); user-select: none; }
+.doc-row:not(.head-row):hover { background: var(--app-panel-2); }
+.head-row { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .col-kb { width: 150px; flex: none; }
@@ -1237,7 +1237,7 @@ const fmtTime = t => {
 }
 .drag-mask-tip {
   text-align: center; color: var(--app-accent); font-size: 15px;
-  background: #fff; border: 2px dashed var(--app-accent); border-radius: 12px;
+  background: var(--app-panel); border: 2px dashed var(--app-accent); border-radius: 12px;
   padding: 24px 40px; display: flex; flex-direction: column; gap: 8px; align-items: center;
 }
 /* 知识块编辑：Markdown 工具栏 + 左写右看分栏实时预览 */
@@ -1249,15 +1249,15 @@ const fmtTime = t => {
 /* 切片统计与 Token 列（2.9） */
 .kb-stat { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--app-text3); }
 .kb-stat b { color: var(--app-text); font-weight: 500; }
-.kb-stat-warn { color: #d46b08; }
+.kb-stat-warn { color: var(--app-warn-text); }
 .kb-tok { font-variant-numeric: tabular-nums; color: var(--app-text3); }
 /* 结构导图（3.3 / 3.5） */
 .kb-tree { border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; }
-.kb-tree-head { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; background: #fafbfc; border-bottom: 1px solid var(--app-border); font-size: 12px; font-weight: 500; }
+.kb-tree-head { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); font-size: 12px; font-weight: 500; }
 .kb-tree-tip { font-weight: 400; color: var(--app-text3); }
 .kb-tree-body { max-height: 420px; overflow-y: auto; padding: 4px 0; }
 .kb-tree-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; }
-.kb-tree-row:hover { background: #f7f8fa; }
+.kb-tree-row:hover { background: var(--app-bg); }
 .kb-tree-toggle { flex: none; width: 12px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .kb-tree-name { flex: 1; min-width: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-tree-name:hover { color: var(--app-accent); }
@@ -1278,14 +1278,14 @@ const fmtTime = t => {
 .kb-expand-md :deep(img) { max-width: 100%; }
 .kb-expand-md :deep(table) { margin: 8px 0; }
 /* 搜索命中高亮 */
-.kb-hl { background: #fff1b8; color: inherit; padding: 0 1px; border-radius: 2px; }
+.kb-hl { background: var(--app-warn-weak); color: inherit; padding: 0 1px; border-radius: 2px; }
 /* 内容摘要：两行显示（不再固定截断 80 字） */
 .kb-snippet { color: var(--app-text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* 章节筛选标识（结构导图 → 切片列表），可一键清除 */
 .kb-path-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px;
   padding: 3px 10px; font-size: 12px; color: var(--app-accent);
-  background: var(--app-accent-weak); border: 1px solid #c9d9f5; border-radius: 999px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 999px;
 }
 .kb-path-chip b { font-weight: 600; max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-path-chip-x { border: none; background: transparent; cursor: pointer; color: var(--app-text3); font-size: 14px; line-height: 1; padding: 0 2px; }
@@ -1314,13 +1314,13 @@ const fmtTime = t => {
 .kb-edit-ta { flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); resize: none; font-size: 13px; line-height: 1.7; }
 .kb-edit-preview {
   flex: 1 1 50%; min-width: 0; height: clamp(150px, calc(100vh - 400px), 380px); overflow-y: auto;
-  border: 1px solid var(--app-border); border-radius: 6px; background: #fafbfc;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2);
   padding: 10px 14px; font-size: 14px; line-height: 1.7;
 }
 /* 图片插入菜单项：缩略图 + 编号 */
 .kb-img-item { display: flex; align-items: center; }
 .kb-img-thumb {
   width: 42px; height: 26px; object-fit: cover; border-radius: 3px;
-  margin-right: 8px; border: 1px solid #eee; background: #fafafa;
+  margin-right: 8px; border: 1px solid var(--app-border); background: var(--app-panel-2);
 }
 </style>

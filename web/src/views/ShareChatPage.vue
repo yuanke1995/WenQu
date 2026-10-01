@@ -152,32 +152,32 @@ function stop () {
 </script>
 
 <style scoped>
-.sc-page { display: flex; flex-direction: column; height: 100vh; background: #f7f8fa; }
-.sc-head { display: flex; gap: 12px; align-items: center; padding: 16px 20px; background: #fff; border-bottom: 1px solid #e5e6eb; }
-.sc-avatar { width: 40px; height: 40px; border-radius: 10px; background: #3370ff; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; flex: none; }
-.sc-name { font-size: 16px; font-weight: 600; color: #1f2329; }
-.sc-desc { font-size: 12px; color: #646a73; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 640px; }
+.sc-page { display: flex; flex-direction: column; height: 100vh; background: var(--app-bg); }
+.sc-head { display: flex; gap: 12px; align-items: center; padding: 16px 20px; background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.sc-avatar { width: 40px; height: 40px; border-radius: 10px; background: var(--app-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; flex: none; }
+.sc-name { font-size: 16px; font-weight: 600; color: var(--app-text); }
+.sc-desc { font-size: 12px; color: var(--app-text2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 640px; }
 .sc-list { flex: 1; overflow-y: auto; padding: 20px; }
 .sc-row { display: flex; margin-bottom: 14px; }
 .sc-row.user { justify-content: flex-end; }
 .sc-bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.7; }
-.sc-bubble.user { background: #3370ff; color: #fff; white-space: pre-wrap; word-break: break-word; }
-.sc-bubble.ai { background: #fff; color: #1f2329; border: 1px solid #e5e6eb; }
-.sc-stage { font-size: 12px; color: #8f959e; margin-top: 6px; }
-.sc-stage.live { background: #fff; border: 1px dashed #dcdfe4; border-radius: 8px; padding: 6px 12px; color: #646a73; }
-.sc-empty { text-align: center; padding: 60px 20px; color: #646a73; }
-.sc-empty-t { font-size: 18px; font-weight: 600; color: #1f2329; margin-bottom: 6px; }
+.sc-bubble.user { background: var(--app-accent); color: #fff; white-space: pre-wrap; word-break: break-word; }
+.sc-bubble.ai { background: var(--app-panel); color: var(--app-text); border: 1px solid var(--app-border); }
+.sc-stage { font-size: 12px; color: var(--app-text3); margin-top: 6px; }
+.sc-stage.live { background: var(--app-panel); border: 1px dashed var(--app-border-strong); border-radius: 8px; padding: 6px 12px; color: var(--app-text2); }
+.sc-empty { text-align: center; padding: 60px 20px; color: var(--app-text2); }
+.sc-empty-t { font-size: 18px; font-weight: 600; color: var(--app-text); margin-bottom: 6px; }
 .sc-empty-d { font-size: 13px; }
-.sc-input-wrap { padding: 12px 20px 10px; background: #fff; border-top: 1px solid #e5e6eb; }
+.sc-input-wrap { padding: 12px 20px 10px; background: var(--app-panel); border-top: 1px solid var(--app-border); }
 .sc-input { display: flex; gap: 8px; align-items: flex-end; max-width: 860px; margin: 0 auto; }
-.sc-textarea { flex: 1; resize: none; border: 1px solid #dcdfe4; border-radius: 10px; padding: 9px 12px; font-size: 14px; font-family: inherit; outline: none; }
-.sc-textarea:focus { border-color: #3370ff; }
-.sc-send { width: 40px; height: 40px; border-radius: 10px; border: none; background: #3370ff; color: #fff; cursor: pointer; font-size: 16px; flex: none; }
+.sc-textarea { flex: 1; resize: none; border: 1px solid var(--app-border-strong); border-radius: 10px; padding: 9px 12px; font-size: 14px; font-family: inherit; outline: none; }
+.sc-textarea:focus { border-color: var(--app-accent); }
+.sc-send { width: 40px; height: 40px; border-radius: 10px; border: none; background: var(--app-accent); color: #fff; cursor: pointer; font-size: 16px; flex: none; }
 .sc-send:disabled { background: #bbd0fb; cursor: not-allowed; }
 .sc-send.stop { background: #f53f3f; }
 .sc-foot { max-width: 860px; margin: 6px auto 0; display: flex; justify-content: space-between; font-size: 11px; color: #b0b5bf; }
-.sc-brand { color: #8f959e; text-decoration: none; }
-.sc-brand:hover { color: #3370ff; }
+.sc-brand { color: var(--app-text3); text-decoration: none; }
+.sc-brand:hover { color: var(--app-accent); }
 /* iframe 嵌入紧凑模式：无头部、小内边距 */
 .sc-page.embed .sc-list { padding: 12px; }
 .sc-page.embed .sc-input-wrap { padding: 8px 12px 8px; }
@@ -186,10 +186,10 @@ function stop () {
 /* markdown 基础排版（复用全局 renderMd，气泡内适配） */
 .sc-md :deep(p) { margin: 0 0 8px; }
 .sc-md :deep(p:last-child) { margin-bottom: 0; }
-.sc-md :deep(pre) { background: #f2f3f5; border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12.5px; }
-.sc-md :deep(code) { background: #f2f3f5; border-radius: 3px; padding: 1px 4px; font-size: 12.5px; }
+.sc-md :deep(pre) { background: var(--app-panel-2); border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12.5px; }
+.sc-md :deep(code) { background: var(--app-panel-2); border-radius: 3px; padding: 1px 4px; font-size: 12.5px; }
 .sc-md :deep(pre code) { background: none; padding: 0; }
 .sc-md :deep(table) { border-collapse: collapse; font-size: 13px; }
-.sc-md :deep(th), .sc-md :deep(td) { border: 1px solid #e5e6eb; padding: 4px 8px; }
+.sc-md :deep(th), .sc-md :deep(td) { border: 1px solid var(--app-border); padding: 4px 8px; }
 .sc-md :deep(ul), .sc-md :deep(ol) { padding-left: 20px; margin: 6px 0; }
 </style>

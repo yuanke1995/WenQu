@@ -674,12 +674,12 @@ watch(tab, t => {
 
 .method-pill { display: inline-flex; align-items: center; font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; font-weight: 500; }
 .method-pill.m-get { color: #1a7f37; background: #e6f4ea; }
-.method-pill.m-post { color: #1d5bd6; background: #e8eefc; }
+.method-pill.m-post { color: #1d5bd6; background: var(--app-accent-weak); }
 .method-pill.m-put { color: #9a6700; background: #fff3d6; }
 .method-pill.m-delete { color: #c0392b; background: #fdebea; }
 .method-pill.m-patch { color: #7c3aed; background: #f1eafd; }
-.method-pill.m-all { color: var(--app-text2); background: #f1f3f5; }
+.method-pill.m-all { color: var(--app-text2); background: var(--app-panel-2); }
 
-.app-pill.builtin { color: var(--app-accent); background: #e8eefc; }
+.app-pill.builtin { color: var(--app-accent); background: var(--app-accent-weak); }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
 </style>

@@ -74,21 +74,21 @@ function backToLogin () {
 <style scoped>
 .oidc-wrap {
   height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: var(--app-bg, #f7f8fa); color: var(--app-text, #1f2329);
+  background: var(--app-bg, var(--app-bg)); color: var(--app-text, var(--app-text));
 }
 .oidc-card {
-  width: 380px; background: var(--app-panel, #fff); border: 1px solid var(--app-border, #e6e9ed);
+  width: 380px; background: var(--app-panel, #fff); border: 1px solid var(--app-border, var(--app-border));
   border-radius: 14px; padding: 26px 26px 22px; box-shadow: 0 6px 24px rgba(31, 35, 41, .06);
 }
 .oidc-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
 .brand-mark {
-  width: 32px; height: 32px; border-radius: 9px; background: var(--app-text, #1f2329); color: #fff;
+  width: 32px; height: 32px; border-radius: 9px; background: var(--app-text, var(--app-text)); color: #fff;
   display: inline-flex; align-items: center; justify-content: center; font-size: 15px; flex: none;
 }
 .brand-name { font-size: 14px; font-weight: 500; }
-.brand-slogan { font-size: 11px; color: var(--app-text3, #98a0aa); }
+.brand-slogan { font-size: 11px; color: var(--app-text3, var(--app-text3)); }
 .oidc-title { font-size: 16px; font-weight: 500; margin: 0 0 2px; }
-.oidc-sub { font-size: 12px; color: var(--app-text2, #5f6570); margin: 0; }
-.oidc-err { font-size: 12px; color: var(--app-danger, #d4552e); margin: 8px 0 16px; line-height: 1.6; }
+.oidc-sub { font-size: 12px; color: var(--app-text2, var(--app-text2)); margin: 0; }
+.oidc-err { font-size: 12px; color: var(--app-danger, var(--app-danger)); margin: 8px 0 16px; line-height: 1.6; }
 .oidc-btn { width: 100%; justify-content: center; }
 </style>
