@@ -42,25 +42,34 @@
                    style="margin-bottom:12px" :message="al.msg" />
 
           <div class="app-card set-card">
+            <!-- 定时维护面板内容多（参数表单 + 任务状态 + 执行日志），用页签组织避免一页滚到底。
+                 页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换 -->
+            <a-tabs v-if="current === 'maintenance'" v-model:activeKey="maintTab" class="sched-tabs">
+              <a-tab-pane key="config" tab="参数配置" />
+              <a-tab-pane key="status" tab="运行状态" />
+              <a-tab-pane key="logs" tab="执行日志" />
+            </a-tabs>
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
-              <template v-for="(blk, i) in blocksOf(current, !advMode)" :key="i">
-                <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
+              <template v-if="current !== 'maintenance' || maintTab === 'config'">
+                <template v-for="(blk, i) in blocksOf(current, !advMode)" :key="i">
+                  <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
 
-                <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
-                     技能与 MCP 的内容已迁到「智能体」页的个人 Tab，这里只剩技能的两个上下文预算参数 -->
-                <template v-else-if="blk.type === 'field'">
-                  <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
-                    <template v-if="probeKey(blk.field)" #extra>
-                      <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
-                        {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
-                      </button>
-                      <a-tooltip v-if="probeStates[probeKey(blk.field)].result" :title="probeStates[probeKey(blk.field)].result.detail">
-                        <span class="probe-chip" :class="probeStates[probeKey(blk.field)].result.available ? 'ok' : 'bad'">
-                          {{ probeStates[probeKey(blk.field)].result.available ? '可达' : '不可达' }} {{ probeStates[probeKey(blk.field)].result.latencyMs }}ms
-                        </span>
-                      </a-tooltip>
-                    </template>
-                  </SchemaField>
+                  <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
+                       技能与 MCP 的内容已迁到「智能体」页的个人 Tab，这里只剩技能的两个上下文预算参数 -->
+                  <template v-else-if="blk.type === 'field'">
+                    <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
+                      <template v-if="probeKey(blk.field)" #extra>
+                        <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
+                          {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
+                        </button>
+                        <a-tooltip v-if="probeStates[probeKey(blk.field)].result" :title="probeStates[probeKey(blk.field)].result.detail">
+                          <span class="probe-chip" :class="probeStates[probeKey(blk.field)].result.available ? 'ok' : 'bad'">
+                            {{ probeStates[probeKey(blk.field)].result.available ? '可达' : '不可达' }} {{ probeStates[probeKey(blk.field)].result.latencyMs }}ms
+                          </span>
+                        </a-tooltip>
+                      </template>
+                    </SchemaField>
+                  </template>
                 </template>
               </template>
 
@@ -313,6 +322,146 @@
                                  :share-config="keyShareTarget.shareConfig" :save-fn="saveKeyShareFn" @saved="loadKeys" />
               </template>
 
+              <!-- 定时任务·运行状态页签：ScheduleCenter 内存快照（统计随重启归零）。
+                   暂停/恢复即把间隔配置写 0 / 默认值（参数在「参数配置」页签），复用既有保存链路 -->
+              <template v-if="current === 'maintenance' && maintTab === 'status'">
+                <div class="key-usage-body sched-pane">
+                  <div class="audit-filter">
+                    <span class="key-dim">共 {{ scheduleTasks.length }} 个任务 · 「暂停」= 间隔配置写 0，恢复 = 写回默认值；间隔等参数在「参数配置」页签调整</span>
+                    <a-tooltip title="刷新运行状态">
+                      <button class="app-icon-btn" aria-label="刷新定时任务状态" :disabled="schedLoading" @click="loadSchedule">
+                        <reload-outlined />
+                      </button>
+                    </a-tooltip>
+                  </div>
+                  <a-table :data-source="scheduleTasks" size="small" row-key="name" :pagination="false"
+                           :loading="schedLoading" :scroll="{ x: 1020 }">
+                    <a-table-column title="任务" key="name" width="190">
+                      <template #default="{ record }">
+                        <a-tooltip :title="record.desc">
+                          <span class="key-name">{{ record.name }}</span>
+                        </a-tooltip>
+                        <div v-if="record.configKey" class="sched-cfgkey"><code>{{ record.configKey }}</code></div>
+                        <div v-else class="sched-cfgkey key-dim">内置节拍</div>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="间隔" key="interval" width="90">
+                      <template #default="{ record }">
+                        <span v-if="record.paused" class="key-dim">—</span>
+                        <span v-else>{{ fmtInterval(record.intervalMs) }}</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="状态" key="state" width="80">
+                      <template #default="{ record }">
+                        <span v-if="record.running" class="audit-chip run">执行中</span>
+                        <span v-else-if="record.paused" class="audit-chip paused">已暂停</span>
+                        <span v-else class="audit-chip idle">待触发</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="上次结果" key="last" width="180">
+                      <template #default="{ record }">
+                        <template v-if="record.lastFinishedAt">
+                          <span class="audit-chip" :class="record.lastSuccess ? 'pass' : 'fail'">
+                            {{ record.lastSuccess ? '成功' : '失败' }}
+                          </span>
+                          <a-tooltip v-if="record.lastError" :title="record.lastError">
+                            <span class="sched-err">!</span>
+                          </a-tooltip>
+                          <div class="key-dim">{{ fmtEpoch(record.lastFinishedAt) }} · {{ fmtDuration(record.lastDurationMs) }}</div>
+                        </template>
+                        <span v-else class="key-dim">本轮等待中</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="下次预计" key="next" width="100">
+                      <template #default="{ record }">
+                        <span v-if="record.paused || record.running" class="key-dim">—</span>
+                        <span v-else class="key-dim">{{ fmtCountdown(record.nextDueAt, record.now) }}</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="成败" key="cnt" width="76">
+                      <template #default="{ record }">
+                        <span class="sched-ok">{{ record.successCount }}</span>
+                        <span class="key-dim"> / </span>
+                        <span :class="{ 'sched-bad': record.failCount > 0 }">{{ record.failCount }}</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="暂停" key="pause" width="70">
+                      <template #default="{ record }">
+                        <a-tooltip v-if="record.editable"
+                                   :title="record.paused ? '已暂停，点击恢复默认间隔' : '暂停该任务（间隔写 0，下个节拍生效）'">
+                          <a-switch size="small" :checked="!record.paused"
+                                    :loading="schedToggling === record.name" @change="toggleTaskPause(record)" />
+                        </a-tooltip>
+                        <a-tooltip v-else title="间隔为内置节拍（无对应配置项），不可暂停">
+                          <span class="key-dim">内置</span>
+                        </a-tooltip>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="操作" key="act" width="90">
+                      <template #default="{ record }">
+                        <button class="app-link-btn" :disabled="record.running" @click="doTrigger(record)">
+                          {{ record.running ? '执行中…' : '立即执行' }}
+                        </button>
+                      </template>
+                    </a-table-column>
+                  </a-table>
+                </div>
+              </template>
+
+              <!-- 定时任务·执行日志页签：c_ai_schedule_run 分页（每次执行完成落一行，超期由清理任务删除） -->
+              <template v-if="current === 'maintenance' && maintTab === 'logs'">
+                <div class="key-usage-body sched-pane">
+                  <div class="audit-filter">
+                    <a-select v-model:value="runLogFilter.taskName" size="small" style="width: 180px"
+                              allow-clear placeholder="全部任务" @change="loadRunLogs(true)">
+                      <a-select-option v-for="t in scheduleTasks" :key="t.name" :value="t.name">{{ t.name }}</a-select-option>
+                    </a-select>
+                    <a-select v-model:value="runLogFilter.success" size="small" style="width: 100px"
+                              allow-clear placeholder="全部结果" @change="loadRunLogs(true)">
+                      <a-select-option :value="1">成功</a-select-option>
+                      <a-select-option :value="0">失败</a-select-option>
+                    </a-select>
+                    <button class="app-btn small" :disabled="runLogLoading" @click="loadRunLogs(true)">查询</button>
+                    <a-tooltip title="刷新">
+                      <button class="app-icon-btn" aria-label="刷新执行日志" :disabled="runLogLoading" @click="loadRunLogs(true)">
+                        <reload-outlined />
+                      </button>
+                    </a-tooltip>
+                    <span class="key-dim">保留 {{ runLogRetentionDays }} 天</span>
+                  </div>
+                  <a-table :data-source="runLogRows" size="small" row-key="id" :pagination="false"
+                           :loading="runLogLoading" :scroll="{ x: 820 }">
+                    <a-table-column title="开始时间" key="started" width="140">
+                      <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.startedAt) }}</span></template>
+                    </a-table-column>
+                    <a-table-column title="任务" key="task" width="170" ellipsis>
+                      <template #default="{ record }">{{ record.taskName }}</template>
+                    </a-table-column>
+                    <a-table-column title="触发" key="trigger" width="80">
+                      <template #default="{ record }">
+                        <span class="key-dim">{{ { startup: '启动', auto: '周期', manual: '手动' }[record.triggerType] || record.triggerType }}</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="耗时" key="dur" width="90">
+                      <template #default="{ record }">{{ fmtDuration(record.durationMs) }}</template>
+                    </a-table-column>
+                    <a-table-column title="结果" key="ok">
+                      <template #default="{ record }">
+                        <a-tooltip v-if="!record.success && record.errorMsg" :title="record.errorMsg">
+                          <span class="audit-chip fail">失败</span>
+                        </a-tooltip>
+                        <span v-else class="audit-chip pass">成功</span>
+                      </template>
+                    </a-table-column>
+                  </a-table>
+                  <div class="audit-pager">
+                    <span class="key-dim">共 {{ runLogTotal }} 条</span>
+                    <a-pagination size="small" :current="runLogPage" :page-size="runLogSize" :total="runLogTotal"
+                                  :show-size-changer="false" @change="onRunLogPage" />
+                  </div>
+                </div>
+              </template>
+
               <!-- 技能（Skills）与 MCP 的管理界面已迁到「智能体」页的个人 Tab（每人管自己的），
                    此处不再有自定义面板 -->
 
@@ -331,7 +480,8 @@ import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, Sear
 import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine,
          probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
-         getMcpAuditLogs, getMcpAuditSummary } from '../api'
+         getMcpAuditLogs, getMcpAuditSummary,
+         getScheduleTasks, triggerScheduleTask, getScheduleRuns } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
@@ -767,6 +917,137 @@ const toggleAudit = () => {
 }
 const onAuditPage = p => { auditPage.value = p; loadAudit(false) }
 
+// ==================== 定时任务管理（ScheduleCenter 快照 + 执行日志） ====================
+// 状态/统计来自内存快照（重启归零），执行历史来自 c_ai_schedule_run（按保留期清理）。
+// 面板用页签组织（参数配置 / 运行状态 / 执行日志）避免一页滚到底；后两个页签首次进入时懒加载。
+// 暂停/恢复不另设端点：任务间隔即配置键，写 0 暂停、写默认值恢复，复用既有保存链路（校验/广播一致）。
+const maintTab = ref('config')
+const scheduleTasks = ref([])
+const schedLoading = ref(false)
+const schedToggling = ref('')
+const runLogRows = ref([])
+const runLogTotal = ref(0)
+const runLogPage = ref(1)
+const runLogSize = 20
+const runLogLoading = ref(false)
+const runLogFilter = ref({ taskName: null, success: null })
+
+watch(maintTab, v => {
+  if (v === 'status' && !scheduleTasks.value.length) loadSchedule()
+  if (v === 'logs') loadRunLogs(true)
+})
+
+const loadSchedule = async () => {
+  schedLoading.value = true
+  try {
+    const r = await getScheduleTasks()
+    if (r.success && r.data) scheduleTasks.value = r.data
+    else message.error(r.msg || '定时任务状态加载失败')
+  } catch (e) { message.error(e.message || '定时任务状态加载失败') }
+  finally { schedLoading.value = false }
+}
+
+const loadRunLogs = async (resetPage = false) => {
+  if (resetPage) runLogPage.value = 1
+  runLogLoading.value = true
+  try {
+    const r = await getScheduleRuns({
+      taskName: runLogFilter.value.taskName, success: runLogFilter.value.success,
+      page: runLogPage.value, size: runLogSize
+    })
+    if (r.success && r.data) {
+      runLogRows.value = r.data.rows || []
+      runLogTotal.value = r.data.total || 0
+    } else message.error(r.msg || '执行日志加载失败')
+  } catch (e) { message.error(e.message || '执行日志加载失败') }
+  finally { runLogLoading.value = false }
+}
+const onRunLogPage = p => { runLogPage.value = p; loadRunLogs(false) }
+
+/** 执行日志的保留天数（上方表单 schedule.runLogRetentionDays，随配置加载回显） */
+const runLogRetentionDays = computed(() => {
+  const v = readForm(form.value, 'schedule.runLogRetentionDays')
+  return v == null || v === '' ? 7 : v
+})
+
+/** 暂停/恢复：写间隔配置 0 / 默认值；同步本地表单与基线，避免顶部脏计数误报 */
+const toggleTaskPause = record => {
+  const field = FIELDS.find(f => f.backendKey === record.configKey)
+  if (!field) { message.error('配置定义中找不到 ' + record.configKey); return }
+  const pausing = !record.paused
+  const defVal = Number(field.def ?? 0)
+  Modal.confirm({
+    title: pausing ? `暂停「${record.name}」？` : `恢复「${record.name}」？`,
+    content: pausing
+      ? '把间隔配置写为 0，下一个调度节拍（约 10s）生效；期间任务不再自动触发，仍可手动执行。'
+      : `把间隔配置恢复为默认值（${defVal}ms），下一个调度节拍生效。`,
+    okText: pausing ? '暂停' : '恢复', cancelText: '取消',
+    onOk: async () => {
+      schedToggling.value = record.name
+      try {
+        const target = pausing ? 0 : defVal
+        const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(target) } })
+        if (r.success) {
+          message.success(pausing ? `「${record.name}」已暂停` : `「${record.name}」已恢复（间隔 ${defVal}ms）`)
+          writeForm(form.value, field.path || (field.group + '.' + field.key), target)
+          initialPayload.value = buildPayload()
+          loadSchedule()
+        } else message.error(r.msg || '操作失败')
+      } catch (e) { message.error(e.message || '操作失败') }
+      finally { schedToggling.value = '' }
+    }
+  })
+}
+
+/** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */
+const doTrigger = async record => {
+  try {
+    const r = await triggerScheduleTask(record.name)
+    if (r.success && r.data?.accepted) {
+      message.success(`「${record.name}」已提交执行`)
+      loadSchedule()
+      setTimeout(() => {
+        if (schedOpen.value) loadSchedule()
+        if (runLogOpen.value) loadRunLogs(false)
+      }, 3000)
+    } else {
+      message.warning(r.data?.reason || r.msg || '触发被拒绝（上一轮可能还在执行）')
+    }
+  } catch (e) { message.error(e.message || '触发失败') }
+}
+
+const fmtInterval = ms => {
+  if (ms == null) return '—'
+  if (ms <= 0) return '已暂停'
+  if (ms % 86400000 === 0) return (ms / 86400000) + ' 天'
+  if (ms % 3600000 === 0) return (ms / 3600000) + ' 小时'
+  if (ms % 60000 === 0) return (ms / 60000) + ' 分钟'
+  if (ms % 1000 === 0) return (ms / 1000) + ' 秒'
+  return ms + ' ms'
+}
+/** 任务快照里的时间是纪元毫秒（后端快照统一毫秒，倒计时按同一锚点算）；fmtTs 只认 ISO 串，两者别混用 */
+const fmtEpoch = ms => {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+const fmtDuration = ms => {
+  if (ms == null) return '—'
+  if (ms < 1000) return ms + 'ms'
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's'
+  return Math.floor(ms / 60000) + 'm' + Math.round((ms % 60000) / 1000) + 's'
+}
+const fmtCountdown = (due, serverNow) => {
+  if (!due) return '—'
+  const left = due - (serverNow || Date.now())
+  if (left <= 0) return '即将触发'
+  if (left < 60000) return Math.ceil(left / 1000) + ' 秒内'
+  if (left < 3600000) return Math.ceil(left / 60000) + ' 分钟内'
+  if (left < 86400000) return Math.ceil(left / 3600000) + ' 小时内'
+  return Math.ceil(left / 86400000) + ' 天内'
+}
+
 onMounted(fetchAndFill)
 </script>
 
@@ -867,6 +1148,26 @@ onMounted(fetchAndFill)
 .audit-chip.platform { color: var(--app-warn-text); background: var(--app-warn-weak); }
 .audit-chip.pass { color: var(--app-ok); background: var(--app-ok-weak); }
 .audit-chip.fail { color: var(--app-danger); background: var(--app-danger-weak); }
+/* 定时任务卡片：状态徽标与辅助信息 */
+.audit-chip.run { color: var(--app-accent); background: var(--app-accent-weak); }
+.audit-chip.paused { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.audit-chip.idle { color: var(--app-text3); background: var(--app-border, rgba(127,127,127,.15)); }
+/* 定时维护页签条（风格对齐智能体 hub 的 a-tabs：同样字号/内边距/分割线） */
+.sched-tabs { margin: 0 4px; }
+.sched-tabs :deep(.ant-tabs-nav) { margin-bottom: 0; }
+.sched-tabs :deep(.ant-tabs-tab) { font-size: 13px; padding: 10px 2px; }
+.sched-tabs :deep(.ant-tabs-nav::before) { border-color: var(--app-border); }
+.sched-tabs :deep(.ant-tabs-content-holder) { display: none; }
+.sched-pane { padding: 12px 0 0; }
+.sched-cfgkey { font-size: 11px; margin-top: 2px; }
+.sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
+.sched-err {
+  display: inline-block; margin-left: 6px; width: 16px; height: 16px; line-height: 16px;
+  border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600;
+  color: var(--app-danger); background: var(--app-danger-weak); cursor: help;
+}
+.sched-ok { color: var(--app-ok); }
+.sched-bad { color: var(--app-danger); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
 </style>

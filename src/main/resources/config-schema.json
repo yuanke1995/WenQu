@@ -120,7 +120,8 @@
         "定时执行智能体",
         "网页源定时刷新（url 文档到期自动重抓重建）",
         "GraphRAG（知识图谱，库级开关）",
-        "文档解析队列（并发 / 排队 / 重试）"
+        "文档解析队列（并发 / 排队 / 重试）",
+        "任务执行日志（ScheduleCenter 运行历史）"
       ]
     },
     {
@@ -2775,6 +2776,41 @@
       "tier": 3
     },
     {
+      "backendKey": "schedule.runLogRetentionDays",
+      "panel": "maintenance",
+      "section": 10,
+      "group": "schedule",
+      "key": "runLogRetentionDays",
+      "path": "schedule.runLogRetentionDays",
+      "label": "执行日志保留天数",
+      "type": "number",
+      "tips": "scheduleRunLogRetention",
+      "def": 7,
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "width": 200,
+      "note": "定时任务执行日志（c_ai_schedule_run）的保留天数，超期由「任务执行日志清理」任务物理删除。注意解析队列扫描等高频任务每天可产生上万行日志，保留期别设太长",
+      "tier": 3
+    },
+    {
+      "backendKey": "schedule.runLogCleanupIntervalMs",
+      "panel": "maintenance",
+      "section": 10,
+      "group": "schedule",
+      "key": "runLogCleanupIntervalMs",
+      "path": "schedule.runLogCleanupIntervalMs",
+      "label": "日志清理任务间隔(ms)",
+      "type": "number",
+      "tips": "scheduleRunLogCleanupIntervalMs",
+      "def": 86400000,
+      "width": 220,
+      "note": "≤0 = 暂停日志清理任务（日志会持续累积，不建议）",
+      "min": 0,
+      "step": 3600000,
+      "tier": 3
+    },
+    {
       "backendKey": "mcp.server.enabled",
       "panel": "mcp",
       "section": 0,
@@ -3232,6 +3268,8 @@
     "sandboxDeleteTimeout": "删除沙盒要等容器清理完，允许的最长时间。",
     "sandboxIdleRelease": "会话多久没使用沙盒就回收容器。沙盒里生成的文件会随容器一起消失，所以默认 60 分钟——如果用户需要\"上午生成的文件下午还在\"，把这个值调大即可。0 表示不自动回收。",
     "sandboxCleanupInterval": "扫描\"哪些沙盒空闲了\"的间隔；≤0 暂停该任务。",
+    "scheduleRunLogRetention": "定时任务执行日志的保留天数（每天由「任务执行日志清理」任务删除超期行）。解析队列扫描（默认 5s 一轮）等高频任务会持续产生日志行，7 天约十万行级别，保留期别设太长。",
+    "scheduleRunLogCleanupIntervalMs": "任务执行日志清理的扫描间隔；≤0 暂停该清理任务（日志会持续累积，不建议）。",
     "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力的总开关（默认关），下有两类端点：① per-agent 端点 /ai/mcp/{token}——智能体发布时勾选「MCP 端点」，一个端点就是那一个智能体，token 即凭据，撤销分享立即失效；② 平台级入口 /ai/mcp——一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据是请求头的 API Key，且该 Key 必须在「API Key 管理」里打开 MCP 开关。两类端点都按调用者/发布者自身的可见范围执行。",
     "mcpServerTimeout": "外部客户端调用该智能体时，服务端等待一轮问答完成的上限。超时会向客户端返回错误而不是继续空等；智能体开了深度思考或多子代理时建议调大。",
     "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。",
@@ -3392,6 +3430,8 @@
     "sandbox.deleteTimeoutSeconds": "沙盒删除超时（秒）",
     "sandbox.idleReleaseMinutes": "沙盒空闲回收（分钟，0=不回收）",
     "sandbox.cleanupIntervalMs": "沙盒空闲回收扫描间隔（ms，≤0=暂停）",
+    "schedule.runLogRetentionDays": "定时任务执行日志保留天数（超期物理删除）",
+    "schedule.runLogCleanupIntervalMs": "任务执行日志清理间隔(ms，≤0=暂停)",
     "mcp.server.enabled": "MCP 服务端点（对外提供）",
     "graphrag.modelRef": "GraphRAG 抽取模型（下拉选平台级模型；Key 用供应商登记的，无需另填）",
     "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",

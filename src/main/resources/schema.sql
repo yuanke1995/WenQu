@@ -792,3 +792,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_share` (
     UNIQUE KEY `uk_ss_token` (`token`),
     UNIQUE KEY `uk_ss_session` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话只读分享（链接持有者可看对话，不含工具过程与知识块全文）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '执行记录ID（UUID）',
+    `task_name`    VARCHAR(64)   NOT NULL COMMENT '任务名（ScheduleCenter 注册名，中文）',
+    `trigger_type` VARCHAR(16)   NOT NULL DEFAULT 'auto' COMMENT '触发方式: startup=启动首轮 auto=周期触发 manual=手动触发',
+    `success`      INT           NOT NULL DEFAULT 1 COMMENT '结果: 1=成功 0=失败',
+    `error_msg`    VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（截断 1000 字符）',
+    `duration_ms`  BIGINT        DEFAULT NULL COMMENT '耗时（毫秒）',
+    `started_at`   DATETIME      NOT NULL COMMENT '开始时刻',
+    `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻（与 started_at 同值附近，仅完成时落行）',
+    PRIMARY KEY (`id`),
+    KEY `idx_task_time` (`task_name`, `started_at`),
+    KEY `idx_started` (`started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行日志（ScheduleCenter 每次触发完成后落一行；按保留期定期清理）';

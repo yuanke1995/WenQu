@@ -374,6 +374,19 @@ export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => 
 }
 export const getMcpAuditSummary = () => request('/mcp/audit/summary')
 
+/** 定时任务管理（仅管理员，设置页·定时维护）：ScheduleCenter 运行快照 / 手动触发 / 执行日志 */
+export const getScheduleTasks = () => request('/schedule/tasks')
+export const triggerScheduleTask = name =>
+  request('/schedule/tasks/trigger', { method: 'POST', body: JSON.stringify({ name }) })
+export const getScheduleRuns = ({ taskName, success, page, size } = {}) => {
+  const q = new URLSearchParams()
+  if (taskName) q.set('taskName', taskName)
+  if (success !== undefined && success !== null && success !== '') q.set('success', String(success))
+  q.set('page', String(page || 1))
+  q.set('size', String(size || 20))
+  return request('/schedule/runs?' + q.toString())
+}
+
 // ---------- P1 执行 Trace 与采样池（运营闭环；管理员） ----------
 export const listTraces = ({ kind, page, size, keyword, hasCitation, rating, days, agentId } = {}) => {
   const q = new URLSearchParams()
