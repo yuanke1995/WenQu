@@ -46,13 +46,16 @@ public class PdfParser implements DocumentParser {
     private final VisionService visionService;
     private final ConfigService configService;
     private final Map<String, OcrEngine> engines;
+    private final com.wisesoft.ai.parser.ocr.OcrEngineGate gate;
 
     public PdfParser(AppProperties properties, VisionService visionService,
-                     ConfigService configService, List<OcrEngine> engineList) {
+                     ConfigService configService, List<OcrEngine> engineList,
+                     com.wisesoft.ai.parser.ocr.OcrEngineGate gate) {
         this.properties = properties;
         this.visionService = visionService;
         this.configService = configService;
         this.engines = engineList.stream().collect(Collectors.toMap(OcrEngine::id, Function.identity()));
+        this.gate = gate;
     }
 
     @Override
@@ -91,13 +94,20 @@ public class PdfParser implements DocumentParser {
             chunks = chunksFromPages(engines.get("vision").parse(file, fileName, cb), maxSize);
         } else {
             OcrEngine engine = engine(engineId);
-            String unhealthy = engine.checkHealth();
-            if (unhealthy != null) {
-                throw new BizException("「" + fileName + "」版面解析失败：" + unhealthy
-                        + "；也可在设置页「文档解析默认模板 → PDF 解析引擎」换回 none");
+            // 并发闸：版面服务是 CPU 自托管单实例，批量解析并发打满后健康检查都会超时——
+            // 排队不 fail（进度回调每 5s 反馈已等秒数），持锁后再健康检查（此时服务必然空闲）
+            gate.acquire(engineId, displayName(engineId), fileName, cb);
+            try {
+                String unhealthy = engine.checkHealth();
+                if (unhealthy != null) {
+                    throw new BizException("「" + fileName + "」版面解析失败：" + unhealthy
+                            + "；也可在设置页「文档解析默认模板 → PDF 解析引擎」换回 none");
+                }
+                log.info("[PDF] {} 走 {} 版面解析引擎", fileName, engineId);
+                chunks = chunksFromPages(engine.parse(file, fileName, cb), maxSize);
+            } finally {
+                gate.release(engineId);
             }
-            log.info("[PDF] {} 走 {} 版面解析引擎", fileName, engineId);
-            chunks = chunksFromPages(engine.parse(file, fileName, cb), maxSize);
         }
 
         if (chunks.isEmpty()) {
@@ -172,6 +182,16 @@ public class PdfParser implements DocumentParser {
 
     /** 版面节：页号 + 最近标题（无则 null，块标题回退「第 N 页」）+ 章节路径（栈深≥2 时非空）+ 节体 */
     private record MdSection(int page, String title, String titlePath, String body) {}
+
+    /** 引擎展示名（排队进度文案/日志用） */
+    private static String displayName(String engineId) {
+        return switch (engineId) {
+            case "mineru" -> "MinerU";
+            case "pp_structure_v3" -> "PP-StructureV3";
+            case "vision" -> "视觉模型";
+            default -> engineId;
+        };
+    }
 
     /**
      * 引擎输出的页 markdown → 分块（结构感知，方案 S2）。
