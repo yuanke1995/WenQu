@@ -434,17 +434,25 @@ const approvalOptions = [
   { value: 'ask', label: '执行前确认' },
   { value: 'off', label: '禁用' }
 ]
-// 多实例能力：跟随全局 / 不使用 / 指定（选「指定」才展开具体项多选）
+// 多实例能力：跟随全局 / 指定（选「指定」才展开具体项多选）/ 不使用
 const SEG_MULTI = [
   { label: '跟随全局', value: 'inherit' },
-  { label: '不使用', value: 'none' },
-  { label: '指定', value: 'pick' }
+  { label: '指定', value: 'pick' },
+  { label: '不使用', value: 'none' }
 ]
-// 内置工具可选项（value 与后端 BuiltinTools 的 @Tool 方法名一致，按名匹配注册）
+// 内置工具可选项（value 与后端 BuiltinTools 的 @Tool 方法名一致，按名匹配注册；
+// 中文名与后端 ToolInventoryService.LABELS 保持同步——新增工具两处都要补）
 const BUILTIN_TOOL_OPTIONS = [
   { value: 'calculate', label: '算术计算' },
   { value: 'currentDateTime', label: '当前日期时间' },
-  { value: 'daysBetween', label: '日期相差天数' }
+  { value: 'daysBetween', label: '日期相差天数' },
+  { value: 'addDays', label: '日期推算' },
+  { value: 'randomNumber', label: '随机数' },
+  { value: 'uuid', label: '生成 UUID' },
+  { value: 'unitConvert', label: '单位换算' },
+  { value: 'textStats', label: '文本统计' },
+  { value: 'base64', label: 'Base64 编解码' },
+  { value: 'hash', label: '哈希计算' }
 ]
 
 const loading = ref(false)
@@ -475,7 +483,7 @@ const scopeMode = ref('all')
 const blankForm = () => ({
   name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
-  toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '',
+  toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
   // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: 'auto',
   // 单轮工具调用步数上限：null=跟随全局当前值（agent.maxToolSteps）；0=不限制
@@ -978,6 +986,7 @@ const openEdit = a => {
     toolSkill: triStr(a.toolSkill),
     toolArtifact: triStr(a.toolArtifact),
     toolMcp: triStr(a.toolMcp),
+    toolWebsearch: triStr(a.toolWebsearch),
     toolApprovalMode: a.toolApprovalMode || 'auto',
     maxToolSteps: a.maxToolSteps == null ? null : Number(a.maxToolSteps),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
@@ -1012,6 +1021,7 @@ const save = async () => {
     knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0,
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
+    toolWebsearch: tri(f.toolWebsearch),
     toolApprovalMode: f.toolApprovalMode || 'auto',
     maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
     isDefault: f.isDefault ? 1 : 0,

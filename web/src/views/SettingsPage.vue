@@ -33,7 +33,7 @@
             <span v-if="!advMode && hiddenHere > 0" class="adv-hidden-hint">
               已隐藏 {{ hiddenHere }} 项高级配置（右上角「高级设置」可查看）
             </span>
-            <button v-if="!NO_RESET.includes(current)" class="app-btn ghost" :disabled="resettingKey === current" @click="onResetGroup(current)">
+            <button v-if="!NO_RESET.includes(activeFormPanel)" class="app-btn ghost" :disabled="resettingKey === activeFormPanel" @click="onResetGroup(activeFormPanel)">
               恢复本组默认
             </button>
           </div>
@@ -42,6 +42,13 @@
                    style="margin-bottom:12px" :message="al.msg" />
 
           <div class="app-card set-card">
+            <!-- 工具族合并入口：总开关与子工具 / 联网搜索（后续新工具族继续加页签）——
+                 避免左侧导航随工具面板膨胀；页签风格与「定时维护」一致（a-tabs），
+                 pane 留空只当页签条，内容在下方按 toolTab 对应的 panel 字段渲染 -->
+            <a-tabs v-if="current === 'tool'" v-model:activeKey="toolTab" class="sched-tabs">
+              <a-tab-pane key="tool" tab="总开关与子工具" />
+              <a-tab-pane key="webSearch" tab="联网搜索" />
+            </a-tabs>
             <!-- 定时维护面板内容多（参数表单 + 任务状态 + 执行日志），用页签组织避免一页滚到底。
                  页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换 -->
             <a-tabs v-if="current === 'maintenance'" v-model:activeKey="maintTab" class="sched-tabs">
@@ -49,9 +56,41 @@
               <a-tab-pane key="status" tab="运行状态" />
               <a-tab-pane key="logs" tab="执行日志" />
             </a-tabs>
+
+            <!-- 工具清单（仅「总开关与子工具」页签显示）：运行时注册的工具全景，
+                 名称与 @Tool 方法一致、开关与下方表单对应；联网搜索页签不重复展示 -->
+            <div v-if="current === 'tool' && toolTab === 'tool'" class="tool-inv">
+              <div class="tool-inv-head">
+                <span class="cfg-sub">当前注册的工具（{{ toolInvTotal }} 个 · 名称即模型看到的工具名）</span>
+                <a-tooltip title="刷新清单">
+                  <button class="app-icon-btn" aria-label="刷新工具清单" :disabled="toolInvLoading" @click="loadToolInventory">
+                    <reload-outlined />
+                  </button>
+                </a-tooltip>
+              </div>
+              <a-spin v-if="toolInvLoading" size="small" style="display:block;margin:14px auto" />
+              <div v-else-if="toolInv.length" class="tool-inv-groups">
+                <div v-for="g in toolInv" :key="g.family" class="tool-inv-group">
+                  <div class="tool-inv-family">
+                    <span class="tool-inv-family-name">{{ g.familyLabel }}</span>
+                    <span class="tool-inv-state" :class="{ on: g.enabled }">{{ g.enabled ? '可用' : '未启用' }}</span>
+                    <code v-if="g.globalKey" class="tool-inv-key">{{ g.globalKey }}</code>
+                  </div>
+                  <div class="tool-inv-items">
+                    <a-tooltip v-for="t in g.tools" :key="t.name" :title="t.description">
+                      <span class="tool-inv-chip" :class="{ sensitive: t.sensitive }">
+                        {{ t.label }}<span v-if="t.sensitive" class="tool-inv-s">敏</span>
+                      </span>
+                    </a-tooltip>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="key-dim" style="padding:6px 2px">工具清单仅管理员可见（或后端暂未注册任何工具）。</div>
+            </div>
+
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <template v-if="current !== 'maintenance' || maintTab === 'config'">
-                <template v-for="(blk, i) in blocksOf(current, !advMode)" :key="i">
+                <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode)" :key="i">
                   <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
 
                   <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
@@ -481,7 +520,8 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine
          probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
          getMcpAuditLogs, getMcpAuditSummary,
-         getScheduleTasks, triggerScheduleTask, getScheduleRuns } from '../api'
+         getScheduleTasks, triggerScheduleTask, getScheduleRuns,
+         getToolInventory } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
@@ -489,7 +529,7 @@ import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
   chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
-  context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用',
+  context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', webSearch: '联网搜索',
   ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能（预算）',
   agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆'
 }
@@ -500,11 +540,20 @@ const groupLabel = key => NAV_LABELS[key]
 const current = ref('chat')
 const currentPanel = computed(() => PANELS.find(p => p.key === current.value))
 
+// 工具族页签：联网搜索并入「工具调用」面板（导航不再单列），后续新工具族继续加页签。
+// activeFormPanel = 当前实际渲染字段所属的 panel key（「恢复本组默认」/高级隐藏计数都按它算）
+const toolTab = ref('tool')
+const activeFormPanel = computed(() => current.value === 'tool' ? toolTab.value : current.value)
+
 // 高级设置模式（默认关，持久化）：关=只显示核心项（模型服务 + 回答行为），开=显示全部调优参数。
 // 对标成熟产品的设置体系——全局设置保持精简，细粒度参数按需展开，避免设置页被 180+ 项淹没。
 const advMode = ref(localStorage.getItem('app_adv_settings') === '1')
-const navPanels = computed(() => advMode.value ? PANELS : corePanels())
-const hiddenHere = computed(() => advMode.value ? 0 : hiddenFieldCount(current.value))
+const navPanels = computed(() => {
+  const list = advMode.value ? PANELS : corePanels()
+  // 联网搜索已并入「工具调用」页签，导航不再单列
+  return list.filter(p => p.key !== 'webSearch')
+})
+const hiddenHere = computed(() => advMode.value ? 0 : hiddenFieldCount(activeFormPanel.value))
 watch(advMode, v => {
   localStorage.setItem('app_adv_settings', v ? '1' : '0')
   // 关掉高级模式时，若当前分组已不在导航中（纯高级分组），切到第一个核心分组，避免停在空白页
@@ -877,7 +926,31 @@ const delKey = async id => {
 // 切到 API Key 面板时自动拉一次最新列表（数据可能在别处改过）
 watch(current, k => {
   if (k === 'apiKey') loadKeys()
+  // 工具面板：清单是运行时注册的，进面板时拉最新（后端加过新工具后不用重启前端）
+  if (k === 'tool') loadToolInventory()
 })
+
+// ==================== 工具清单（管理员视角：本平台注册了哪些 @Tool） ====================
+const toolInv = ref([])
+const toolInvLoading = ref(false)
+const toolInvTotal = computed(() => toolInv.value.reduce((n, g) => n + (g.tools?.length || 0), 0))
+const loadToolInventory = async () => {
+  toolInvLoading.value = true
+  try {
+    const r = await getToolInventory()
+    if (r.success) {
+      toolInv.value = r.data || []
+    } else {
+      toolInv.value = []
+      message.warning(r.msg || '工具清单加载失败（该接口仅管理员可用）')
+    }
+  } catch (e) {
+    // 非管理员 403：清单区显示为空，面板其余功能不受影响
+    toolInv.value = []
+  } finally {
+    toolInvLoading.value = false
+  }
+}
 
 // ==================== MCP 调用审计（仅管理员，后端 requireAdmin 兜底） ====================
 const auditOpen = ref(false)
@@ -1161,6 +1234,24 @@ onMounted(fetchAndFill)
 .sched-pane { padding: 12px 0 0; }
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
+
+/* 工具清单（工具调用面板 · 页签条下方）：运行时注册的全景只读视图，敏=有副作用工具；
+   嵌在 set-card 内部，用底部分隔线与下方表单区分（不再是独立卡片） */
+.tool-inv { margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid var(--app-border); }
+.tool-inv-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.tool-inv-group { padding: 10px 0; border-top: 1px solid var(--app-border); }
+.tool-inv-group:first-of-type { border-top: none; padding-top: 4px; }
+.tool-inv-family { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tool-inv-family-name { font-weight: 500; }
+.tool-inv-state { font-size: 12px; padding: 0 8px; border-radius: 4px;
+  background: var(--app-warn-weak); color: var(--app-warn-text); }
+.tool-inv-state.on { background: var(--app-ok-weak); color: var(--app-ok); }
+.tool-inv-key { font-size: 11px; color: var(--app-text3); }
+.tool-inv-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.tool-inv-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border-radius: 5px; background: var(--app-panel-2); font-size: 12px; cursor: default; }
+.tool-inv-chip.sensitive { border: 1px solid var(--app-danger-border); }
+.tool-inv-s { font-size: 10px; color: var(--app-danger-text); }
 .sched-err {
   display: inline-block; margin-left: 6px; width: 16px; height: 16px; line-height: 16px;
   border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600;

@@ -352,6 +352,9 @@ export async function downloadDocumentSource (id, fileName) {
   URL.revokeObjectURL(url)
 }
 
+// ==================== 工具清单（管理员：已注册 @Tool 全景，设置页·工具调用面板展示） ====================
+export const getToolInventory = () => request('/tools')
+
 // ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
 export const getMcpStatus = () => request('/mcp/status')
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
