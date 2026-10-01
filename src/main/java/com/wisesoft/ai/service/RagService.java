@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.dto.ChatRequest;
 import com.wisesoft.ai.model.Agent;
+import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.WorkflowRun;
 import com.wisesoft.ai.util.TokenCounter;
@@ -302,6 +303,8 @@ public class RagService {
      */
     private final org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider;
     private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
+    /** @ 引用：被引文档的块直接前置进上下文（不经检索，不参与相关性门） */
+    private final com.wisesoft.ai.mapper.KnowledgeMapper knowledgeMapper;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -373,7 +376,8 @@ public class RagService {
                       ModelRegistryService modelRegistryService,
                       UserMemoryService userMemoryService,
                       org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
-                      com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper) {
+                      com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper,
+                      com.wisesoft.ai.mapper.KnowledgeMapper knowledgeMapper) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -404,6 +408,7 @@ public class RagService {
         this.workflowServiceProvider = workflowServiceProvider;
         this.modelRegistryService = modelRegistryService;
         this.toolApprovalMapper = toolApprovalMapper;
+        this.knowledgeMapper = knowledgeMapper;
     }
 
     /**
@@ -435,6 +440,19 @@ public class RagService {
                      List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter,
                      boolean guestMode, boolean regenerate) {
+        chat(sessionId, question, userImages, attachments, skills, null, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate);
+    }
+
+    /**
+     * @param mentions 输入框 @ 引用（**已由控制器完成可见性校验**——这里不再鉴权，只按语义用）：
+     *                 kb=本轮检索收窄到这些库；doc=该文档的块不经检索直接前置进上下文
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -456,7 +474,7 @@ public class RagService {
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
                 boolean identity = loadIdentity(userId);
                 try {
-                    runChat(sessionId, question, userImages, attachments, skills, useDeepThink,
+                    runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
                             agentId, modelOverride, userId, emitter, guestMode, regenerate);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
@@ -478,7 +496,8 @@ public class RagService {
      * 问答流水线主体（独立线程执行）：图片/附件处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
     private void runChat(String sessionId, String question, List<String> userImages,
-                         List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
+                         List<ChatRequest.Attachment> attachments, List<String> skills,
+                         List<ChatRequest.Mention> mentions, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
                          boolean guestMode, boolean regenerate) {
         long startTime = System.currentTimeMillis();
@@ -523,6 +542,20 @@ public class RagService {
         // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
         // 重赋值为「主智能体库 ∪ 被选中子智能体库」（见检索前的路由段），因此不能声明为 final
         java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
+        // @ 引用（输入框显式指定，**优先于智能体配置**——与「手动指定优先」的既有口径一致）：
+        //   kb  → 本轮检索收窄到被引库，不跑无关库、不让无关块挤占上下文名额；
+        //   doc → 该文档的块不经检索直接前置进上下文（用户认为它相关，不该被相关性门/排序挡掉），
+        //         检索范围同时收窄到这些文档所属库（否则无关库的块会与之竞争名额）。
+        final MentionScope mentionScope = MentionScope.of(mentions);
+        if (mentionScope != null) {
+            Set<String> mentionKbs = new LinkedHashSet<>(mentionScope.kbIds());
+            mentionKbs.addAll(mentionScope.docKbIds());
+            if (!mentionKbs.isEmpty()) {
+                log.info("[MENTION] 本轮按 @ 引用收窄检索范围：{} 个库；强制前置 {} 篇文档",
+                        mentionKbs.size(), mentionScope.docIds().size());
+                scopeKbIds = mentionKbs;
+            }
+        }
         // 深度思考按生效模型的能力归一：none=不支持强制关、always=恒思考强制开、switchable=用户开关
         final String modelThinking = modelRegistryService.referenceThinking(resolvedModel);
         final boolean useDeepThink;
@@ -538,7 +571,10 @@ public class RagService {
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
         final boolean knowledgeOff = agent != null && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
         // 检索范围：智能体关联的知识库（主路径）→ 库内文档；knowledgeScope 降级为「库内再细选文档」
-        final Set<String> scopeDocIds = resolveScopeDocIds(agent);
+        // @ 文档时收窄到这些文档（显式指定优先）——用户就是在问这份文档，别的文档的块不该进上下文
+        final Set<String> scopeDocIds = mentionScope != null && !mentionScope.docIds().isEmpty()
+                ? new LinkedHashSet<>(mentionScope.docIds())
+                : resolveScopeDocIds(agent);
         // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
         final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
@@ -605,8 +641,11 @@ public class RagService {
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
             if (knowledgeOff) {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
+                // 该分支不检索，但用户手动 @ 的文档仍按「手动指定优先」取块前置
+                // （方法注释里承诺已久的语义，此前只有注释没有实现）
+                String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
-                        preHeartbeat, emitter, startTime, thinkingHolder, degradations, degradedCodes,
+                        mentionText, preHeartbeat, emitter, startTime, thinkingHolder, degradations, degradedCodes,
                         agent, stageMs, resolvedModel, guestMode);
                 return;
             }
@@ -946,6 +985,23 @@ public class RagService {
             // （subOutcome 在检索阶段就已产出：子代理命中并入 mainHits、要点注入 system）
             List<HybridRetrievalService.Hit> mainHits = new ArrayList<>();
             Set<String> seenKid = new HashSet<>();
+            // @ 引用的文档块优先级最高（用户显式指定）：不经检索直接置于最前，并在填充段跳过
+            // 相关性门与信息增益去冗余（显式指定 = 强相关，不该被算法判掉——否则用户看到的行为就是"@ 没用"）
+            Set<String> mentionKids = new HashSet<>();
+            for (Knowledge k : loadMentionChunks(mentionScope, degradations, degradedCodes)) {
+                if (k.getId() == null || !seenKid.add(k.getId())) continue;
+                mentionKids.add(k.getId());
+                List<String> kImgs = List.of();
+                try {
+                    if (k.getImages() != null && !k.getImages().isBlank()) {
+                        kImgs = JSON.parseArray(k.getImages(), String.class);
+                    }
+                } catch (Exception ignored) {
+                    // 图片解析失败不影响文本入上下文（图片是增强项）
+                }
+                mainHits.add(new HybridRetrievalService.Hit(k.getId(), k.getDocId(), k.getTitle(), k.getContent(),
+                        kImgs, 1.0, k.getChunkIndex(), k.getTitlePath(), null));
+            }
             // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束
             if (subOutcome != null) {
                 for (HybridRetrievalService.Hit h : subOutcome.hits()) {
@@ -1001,16 +1057,18 @@ public class RagService {
                     if (docNo > maxContextHits) break;
                 }
                 // 最低相关分门：排序分（重排分??融合分，与填充顺序同口径）低于阈值的块不进上下文/引用，不占名额
+                // @ 引用块（用户显式指定）豁免门与去冗余：用户说它相关，算法没有否决权
+                boolean mentioned = hit.knowledgeId() != null && mentionKids.contains(hit.knowledgeId());
                 double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();
                 // 分域取门：rerank 分走 minContextScore，融合分走 minFusionScore（两域分布不同，见上方说明）
                 double gate = hit.rerankScore() != null ? minRerankGate : minFusionGate;
-                if (gate > 0 && rankScore < gate) {
+                if (!mentioned && gate > 0 && rankScore < gate) {
                     log.debug("[CTX] 低于最低相关分跳过: kid={} title={} rankScore={} gate={} (rerank={} score={})",
                             hit.knowledgeId(), hit.title(), rankScore, gate, hit.rerankScore(), hit.score());
                     continue;
                 }
                 // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）
-                if (dedupEnabled && !selectedTermSets.isEmpty()
+                if (!mentioned && dedupEnabled && !selectedTermSets.isEmpty()
                         && isRedundantHit(hit, selectedTermSets, selectedPaths, dedupThreshold, dedupPathThreshold)) {
                     log.debug("[CTX] 信息增益去冗余跳过: kid={} title={}", hit.knowledgeId(), hit.title());
                     continue;
@@ -1099,6 +1157,8 @@ public class RagService {
                 // 引用来源（ref 与上下文编号对应，回答中 [1] 即可溯源）
                 Map<String, Object> src = new LinkedHashMap<>();
                 src.put("ref", docNo);
+                // 来源出处：MENTION=用户 @ 显式引用（前端标注「你引用的」）；RETRIEVAL=常规检索命中
+                src.put("origin", mentioned ? "MENTION" : "RETRIEVAL");
                 src.put("knowledgeId", hit.knowledgeId());
                 src.put("docId", hit.docId());
                 src.put("fileName", fileNameMap.get(hit.docId()));
@@ -2898,6 +2958,84 @@ public class RagService {
         return byKb != null ? byKb : fine;
     }
 
+    /**
+     * @ 引用的检索范围解析（控制器已完成存在性与可见性校验，这里只做形态归类）。
+     * <p>{@code docKbIds}：被引文档所属库——@ 文档时检索范围同样收窄到这些库，
+     * 否则别的库的块会与「强制前置」的文档块竞争上下文名额。
+     */
+    private record MentionScope(Set<String> kbIds, Set<String> docIds, Set<String> docKbIds) {
+        static MentionScope of(List<ChatRequest.Mention> mentions) {
+            if (mentions == null || mentions.isEmpty()) return null;
+            Set<String> kbs = new LinkedHashSet<>();
+            Set<String> docs = new LinkedHashSet<>();
+            Set<String> docKbs = new LinkedHashSet<>();
+            for (ChatRequest.Mention m : mentions) {
+                if (m == null || m.getId() == null || m.getId().isBlank()) continue;
+                if ("kb".equals(m.getType())) {
+                    kbs.add(m.getId());
+                } else if ("doc".equals(m.getType())) {
+                    docs.add(m.getId());
+                    if (m.getKbId() != null && !m.getKbId().isBlank()) docKbs.add(m.getKbId());
+                }
+            }
+            return (kbs.isEmpty() && docs.isEmpty()) ? null : new MentionScope(kbs, docs, docKbs);
+        }
+    }
+
+    /**
+     * 加载 @ 引用文档的内容块（每篇前 N 块，chunkIndex 升序，仅 status=0 的生效块）。
+     * 用户显式指定 = 强相关：这些块**不走检索、不参与相关性门与信息增益去冗余**
+     * （见填充段的 mentionKids 判定），保证「我 @ 的文档一定被读到」。
+     */
+    private List<Knowledge> loadMentionChunks(MentionScope scope, List<Map<String, String>> degradations,
+                                              Set<String> degradedCodes) {
+        if (scope == null || scope.docIds().isEmpty()) return List.of();
+        int perDoc = Math.max(1, configService.getInt("retrieval.mentionDocChunks", 3));
+        try {
+            List<Knowledge> all = knowledgeMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
+                            .in(Knowledge::getDocId, scope.docIds())
+                            .eq(Knowledge::getStatus, 0)
+                            .orderByAsc(Knowledge::getChunkIndex));
+            Map<String, Integer> taken = new HashMap<>();
+            List<Knowledge> out = new ArrayList<>();
+            for (Knowledge k : all) {
+                if (taken.merge(k.getDocId(), 1, Integer::sum) <= perDoc) out.add(k);
+            }
+            if (out.isEmpty()) {
+                // 显式 @ 了文档却取不到内容（未解析/解析失败/全部停用）——不能静默变成"什么都没引用"
+                log.warn("[FAIL-LOUD] @ 引用的文档没有可用内容块（未解析或全部停用）: docs={}", scope.docIds());
+                addDegradation(degradations, degradedCodes, "mentionEmpty",
+                        "你引用的文档还没有可用的解析内容，本轮不会把它作为参考资料");
+            } else {
+                log.info("[MENTION] @ 引用文档块前置 {} 块（{} 篇，每篇上限 {}）",
+                        out.size(), scope.docIds().size(), perDoc);
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] @ 引用文档块加载失败: {}", e.toString());
+            addDegradation(degradations, degradedCodes, "mentionLoadFailed", "引用的文档内容读取失败，本轮未带入");
+            return List.of();
+        }
+    }
+
+    /** @ 引用文档块的文本化（供「不使用知识库」分支直接用：该分支不检索，把被引内容作为参考资料注入问题） */
+    private String buildMentionText(List<Knowledge> chunks) {
+        if (chunks == null || chunks.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        int i = 1;
+        for (Knowledge k : chunks) {
+            sb.append("\n[").append(i++).append("] ");
+            if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) sb.append(k.getTitlePath());
+            if (k.getTitle() != null && !k.getTitle().isBlank()) {
+                if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) sb.append(" / ");
+                sb.append(k.getTitle());
+            }
+            sb.append('\n').append(k.getContent() == null ? "" : k.getContent()).append('\n');
+        }
+        return sb.toString();
+    }
+
     /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */
     private List<HybridRetrievalService.Hit> applyScope(List<HybridRetrievalService.Hit> hits, Set<String> scopeDocIds) {
         if (scopeDocIds == null || hits == null) return hits;
@@ -3770,17 +3908,23 @@ public class RagService {
     private void runNoKnowledgeChat(String sessionId, String question, String userId,
                                     List<UserImageService.UserImage> userImgs,
                                     String imgDescText, String attachmentText, String userSkillText,
+                                    String mentionText,
                                     java.util.concurrent.ScheduledFuture<?> preHeartbeat,
                                     SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel, boolean guestMode) {
         try {
-            // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答
+            // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答；
+            // 例外：用户 @ 了文档（mentionText 非空）时有参考资料，引用规则按主链路口径放开
+            boolean hasMention = mentionText != null && !mentionText.isBlank();
             StringBuilder system = new StringBuilder(resolveSystemPrompt(agent))
                     .append("\n\n【本轮对话说明】\n")
-                    .append("本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，")
-                    .append("不要输出 [N] 来源标注（本轮没有参考资料）。");
+                    .append(hasMention
+                            ? "本助手未启用知识库检索，但用户本轮显式引用了指定文档（见下方【本轮显式引用的资料】）。"
+                              + "回答时请以该资料为准，并在引用处标注对应的 [N] 编号。"
+                            : "本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，"
+                              + "不要输出 [N] 来源标注（本轮没有参考资料）。");
             // 用户长期记忆（与主链路同口径；游客分享会话不注入）
             if (!guestMode) {
                 String memoryText = userMemoryService.injectText(userId, question);
@@ -3808,6 +3952,10 @@ public class RagService {
             }
             if (attachmentText != null && !attachmentText.isBlank()) {
                 userQuestion.append("\n\n用户上传了附件，内容如下（请结合附件内容回答问题）：\n").append(attachmentText);
+            }
+            if (hasMention) {
+                userQuestion.append("\n\n【本轮显式引用的资料】用户通过 @ 指定了以下文档内容，"
+                        + "回答时请优先依据这些资料，并在引用处标注 [N] 编号：\n").append(mentionText);
             }
             String user = userQuestion.toString();
 

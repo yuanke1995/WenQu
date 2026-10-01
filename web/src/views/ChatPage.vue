@@ -40,6 +40,15 @@
                   <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
                 </span>
               </div>
+              <!-- @ 引用（本轮显式指定的知识库/文档）：只对当轮生效，随内存消息展示 -->
+              <div v-if="m.role === 'user' && m.mentions && m.mentions.length" class="msg-files">
+                <span v-for="(mm, mi) in m.mentions" :key="mi" class="msg-file"
+                      :title="mm.type === 'kb' ? '引用的知识库（本轮检索范围）' : '引用的文档（内容直接带入上下文）'">
+                  <database-outlined v-if="mm.type === 'kb'" class="msg-file-ic" />
+                  <file-text-outlined v-else class="msg-file-ic" />
+                  <span class="msg-file-name">{{ mm.name || mm.id }}</span>
+                </span>
+              </div>
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
               <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
               <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
@@ -319,6 +328,17 @@
             <span class="at-chip-del" title="移除该技能" @click="toggleSkill(n)">×</span>
           </span>
         </div>
+        <div v-if="pendingMentions.length" class="at-chips">
+          <span v-for="(mm, mi) in pendingMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
+                :class="'mention-' + mm.type"
+                :title="mm.type === 'kb' ? '本轮检索收窄到该知识库' : '该文档内容直接带入本轮上下文'">
+            <database-outlined v-if="mm.type === 'kb'" class="at-chip-ic" />
+            <file-text-outlined v-else class="at-chip-ic" />
+            <span class="at-chip-name">{{ mm.name || mm.id }}</span>
+            <span class="at-chip-del" title="移除该引用" @click="removeMention(mi)">×</span>
+          </span>
+          <span class="at-chips-note">引用只对本轮生效</span>
+        </div>
         <div v-if="pendingImages.length" class="pending-imgs">
           <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
             <img :src="p.dataUrl" alt="待发送图片" @click="previewPendingImage(pi)" />
@@ -326,7 +346,57 @@
           </div>
         </div>
         <div class="input-box">
-          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行"
+          <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
+          <div v-if="mentionOpen" class="mention-panel">
+            <div class="mention-head">
+              <input ref="mentionSearchRef" v-model="mentionQuery" class="mention-search"
+                     placeholder="搜索知识库或文档…" @keydown.esc="closeMentionPanel" />
+              <button class="app-icon-btn" title="关闭" @click="closeMentionPanel"><close-outlined /></button>
+            </div>
+            <div class="mention-tabs">
+              <button class="mention-tab" :class="{ on: mentionTab === 'kb' }" @click="mentionTab = 'kb'">
+                <database-outlined /> 知识库 {{ mentionKbs.length }}
+              </button>
+              <button class="mention-tab" :class="{ on: mentionTab === 'doc' }" @click="mentionTab = 'doc'">
+                <file-text-outlined /> 文档 {{ mentionDocs.length }}
+              </button>
+            </div>
+            <div class="mention-list">
+              <div v-if="mentionLoading" class="mention-empty">加载中…</div>
+              <template v-else-if="mentionTab === 'kb'">
+                <div v-for="k in mentionKbFiltered" :key="k.id" class="mention-item"
+                     :class="{ on: isMentioned('kb', k.id) }" @click="toggleMention('kb', k)">
+                  <span class="mention-ava"><database-outlined /></span>
+                  <div class="mention-text">
+                    <span class="mention-name">{{ k.name }}</span>
+                    <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
+                  </div>
+                  <check-outlined v-if="isMentioned('kb', k.id)" class="mention-check" />
+                </div>
+                <div v-if="!mentionKbFiltered.length" class="mention-empty">
+                  {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
+                </div>
+              </template>
+              <template v-else>
+                <div v-for="d in mentionDocFiltered" :key="d.id" class="mention-item"
+                     :class="{ on: isMentioned('doc', d.id) }" @click="toggleMention('doc', d)">
+                  <span class="mention-ava"><file-text-outlined /></span>
+                  <div class="mention-text">
+                    <span class="mention-name">{{ d.fileName }}</span>
+                    <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
+                  </div>
+                  <check-outlined v-if="isMentioned('doc', d.id)" class="mention-check" />
+                </div>
+                <div v-if="!mentionDocFiltered.length" class="mention-empty">
+                  {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
+                </div>
+              </template>
+            </div>
+            <div class="mention-foot">
+              @ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文
+            </div>
+          </div>
+          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行（输入 @ 引用知识库/文档）"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @keydown="onInputKeydown" />
           <div class="input-toolbar">
@@ -538,6 +608,7 @@
                    @click.stop="locateSource(s)"
                    @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
                 <span class="rp-src-ref">[{{ s.ref }}]</span>
+                <span v-if="s.origin === 'MENTION'" class="rp-src-mine" title="本轮你 @ 引用的资料">引用</span>
                 <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
                 <span v-if="fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
               </div>
@@ -634,10 +705,12 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
-         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined } from '@ant-design/icons-vue'
+         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
+         CloseOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, addEvalCase } from '../api'
+         listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
+         listKnowledgeBases, listDocuments } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -1853,6 +1926,98 @@ const addFiles = files => {
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
 
+// ==================== @ 引用（本轮显式指定知识库/文档） ====================
+// 语义：kb=本轮检索收窄到该库；doc=该文档内容块强制前置进上下文（不经检索、不受相关性门/去冗余约束）。
+// 交互：输入框敲 @ 唤起候选面板（面板内搜索 + Tab 切库/文档 + 多选），选中项以 chip 显示在输入框上方。
+// 引用只对当轮生效（与会话级智能体绑定不同）：不落库、不跨轮继承，重新生成时随内存消息重发。
+const mentionOpen = ref(false)
+const mentionTab = ref('kb')
+const mentionQuery = ref('')
+const mentionLoading = ref(false)
+const mentionKbs = ref([])
+const mentionDocs = ref([])
+const pendingMentions = ref([])
+const mentionSearchRef = ref(null)
+const MAX_MENTIONS = 10
+
+const isMentioned = (type, id) => pendingMentions.value.some(m => m.type === type && m.id === id)
+const toggleMention = (type, item) => {
+  const id = item.id
+  if (isMentioned(type, id)) {
+    pendingMentions.value = pendingMentions.value.filter(m => !(m.type === type && m.id === id))
+    return
+  }
+  if (pendingMentions.value.length >= MAX_MENTIONS) {
+    message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档`)
+    return
+  }
+  pendingMentions.value.push({
+    type,
+    id,
+    name: type === 'kb' ? item.name : item.fileName,
+    kbId: type === 'doc' ? (item.kbId || '') : ''
+  })
+}
+const removeMention = i => pendingMentions.value.splice(i, 1)
+
+const openMentionPanel = () => {
+  mentionOpen.value = true
+  mentionQuery.value = ''
+  nextTick(() => mentionSearchRef.value?.focus?.())
+  if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
+}
+const closeMentionPanel = () => { mentionOpen.value = false }
+
+/** 候选懒加载（首次打开面板时拉取）：库按共享范围过滤（/kb/list 已做），文档同理（/document/list 已做） */
+const loadMentionCandidates = async () => {
+  mentionLoading.value = true
+  try {
+    const [kbRes, docRes] = await Promise.all([listKnowledgeBases(), listDocuments()])
+    mentionKbs.value = (kbRes?.data || []).map(k => ({
+      id: k.id, name: k.name, desc: k.description || '', docCount: k.docCount
+    }))
+    mentionDocs.value = (docRes?.data || []).map(d => ({
+      id: d.id, fileName: d.fileName, kbId: d.kbId, status: d.status
+    }))
+  } catch (e) {
+    message.error('引用候选加载失败：' + (e.message || ''))
+  } finally {
+    mentionLoading.value = false
+  }
+}
+
+/**
+ * 文档可用性提示（与文档页状态口径一致：0=已入库 / 1=已停用 / 2=解析中 / 3=解析失败）。
+ * 只有 0 能引用出内容，其余如实说明——不能让用户 @ 了一个还没解析完的文档后以为系统没生效。
+ */
+const mentionDocStatus = d => {
+  if (d.status === 0) return '已入库'
+  if (d.status === 1) return '已停用（不参与引用）'
+  if (d.status === 2) return '解析中（引用后可能没有内容）'
+  if (d.status === 3) return '解析失败（引用不到内容）'
+  return ''
+}
+
+const mentionMatch = (text, q) => !q || String(text || '').toLowerCase().includes(q.toLowerCase())
+// 归一化：剥掉开头的 @（唤起键有时会连带落进搜索框，不能让候选被 "@" 过滤成空）
+const mentionQueryNorm = computed(() => mentionQuery.value.replace(/^@+/, '').trim())
+const mentionKbFiltered = computed(() =>
+  mentionKbs.value.filter(k => mentionMatch(k.name, mentionQueryNorm.value) || mentionMatch(k.desc, mentionQueryNorm.value)))
+const mentionDocFiltered = computed(() =>
+  mentionDocs.value
+    .filter(d => mentionMatch(d.fileName, mentionQueryNorm.value))
+    .slice(0, 120))
+
+/** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层） */
+const onDocClickForMention = e => {
+  if (!mentionOpen.value) return
+  const el = e.target
+  if (el && el.closest && (el.closest('.mention-panel') || el.closest('.input-box'))) return
+  mentionOpen.value = false
+}
+onMounted(() => document.addEventListener('click', onDocClickForMention))
+onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
+
 // ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
 const send = () => {
   const q = text.value.trim()
@@ -1861,6 +2026,8 @@ const send = () => {
   const atts = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, data: f.dataUrl }))
   const attsMeta = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, size: f.size }))
   const skills = [...pickedSkills.value]
+  // @ 引用（本轮显式指定的知识库/文档）：与问题一起提交，服务端按可见性校验后收窄检索范围/强制前置
+  const mentions = pendingMentions.value.map(m => ({ type: m.type, id: m.id, name: m.name, kbId: m.kbId || '' }))
   if ((!q && !imgs.length && !atts.length) || loading.value) return
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
   if (!effectiveModel.value) {
@@ -1871,11 +2038,12 @@ const send = () => {
   pendingImages.value = []
   pendingFiles.value = []
   pickedSkills.value = []
+  pendingMentions.value = []
   const deep = deepThinkOn.value
   // attachData 留在内存消息上：重新生成/自动重试时可原样重发（历史回放无数据，行为与图片 data: 口径一致）
   messages.value.push({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
-                        skills, deepThink: deep, time: Date.now() })
-  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills)
+                        skills, mentions, deepThink: deep, time: Date.now() })
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions)
 }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
@@ -1883,6 +2051,20 @@ const onInputKeydown = e => {
     if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）不发送
     e.preventDefault()
     send()
+    return
+  }
+  // @ 唤起引用候选面板：仅在「行首 / 空格后」触发（此时 @ 的语义就是引用唤起），
+  // 并拦下默认输入——否则这个 @ 会随后的输入事件落到刚聚焦的面板搜索框里，
+  // 把候选按 "@" 过滤成空（实测踩到：面板打开却显示"没有匹配的文档"）。
+  // 句中/词中的 @（邮箱 a@b.com、@某人）不拦截，照常输入。
+  if (e.key === '@' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
+    const ta = e.target
+    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
+    const before = text.value.slice(0, pos)
+    if (!before || /\s$/.test(before)) {
+      e.preventDefault()
+      openMentionPanel()
+    }
   }
 }
 
@@ -1919,7 +2101,7 @@ async function resolveApproval (m, approved) {
 }
 
 const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
-                      attachments = [], skills = [], prev = null) => {
+                      attachments = [], skills = [], mentions = [], prev = null) => {
   // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
@@ -1960,6 +2142,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     deepThink,
     attachments,
     skills,
+    mentions,
     // 重发标记（重新生成/自动重试走 replaceMsg 路径）：后端跳过用户消息重复落库
     regenerate: replaceMsg != null,
     agentId,
@@ -2175,7 +2358,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         setTimeout(() => {
           // 记录仍是本轮且气泡还在流式态才重试；用户已停止/记录已被清理则直接收尾
           if (chatStreams.get(sid) === st && msg.loading) {
-            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, { sid, agentId, model })
+            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, mentions, { sid, agentId, model })
           } else {
             msg.retrying = false
             if (chatStreams.get(sid) === st) chatStreams.delete(sid)
@@ -2219,8 +2402,10 @@ const regenerate = mi => {
       // 附件/技能随内存消息重发（历史回放的消息无 attachData，则不带附件重试）
       const atts = Array.isArray(messages.value[i].attachData) ? messages.value[i].attachData : []
       const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
+      // @ 引用随内存消息重发（历史回放无该数据则不重发；引用只对当轮检索生效）
+      const mentions = Array.isArray(messages.value[i].mentions) ? messages.value[i].mentions : []
       // 传消息对象（不是下标）：流式状态已按会话拆分，replace 走对象身份
-      streamAnswer(messages.value[i].content, imgs, messages.value[mi], false, 1, deep, atts, skills)
+      streamAnswer(messages.value[i].content, imgs, messages.value[mi], false, 1, deep, atts, skills, mentions)
       return
     }
   }
@@ -2719,22 +2904,7 @@ onMounted(async () => {
   border-color: var(--app-accent);
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
 }
-/* @ 引用候选浮层：贴在输入框上方，与输入卡片同宽 */
-.at-panel {
-  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 20;
-  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(16, 24, 40, .1); padding: 4px; max-height: 260px; overflow-y: auto;
-}
-.at-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-.at-item.active { background: var(--app-accent-weak); }
-.at-ic {
-  flex: none; width: 18px; height: 18px; border-radius: 4px; background: var(--app-accent-weak);
-  color: var(--app-accent); font-size: 10px; display: flex; align-items: center; justify-content: center;
-}
-.at-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.at-meta { flex: none; font-size: 11px; color: var(--app-text3); }
-.at-tip { padding: 5px 8px 3px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); margin-top: 2px; }
-/* 已选引用标签：输入框内顶部一行，× 可整体移除 */
+/* 已选引用标签：输入框内顶部一行，× 可整体移除（@ 引用与技能 chip 共用） */
 .at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; }
 .at-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 260px;
@@ -2744,6 +2914,50 @@ onMounted(async () => {
 .at-chip-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .at-chip-del { flex: none; cursor: pointer; font-size: 13px; line-height: 1; opacity: .65; padding: 0 1px; }
 .at-chip-del:hover { opacity: 1; color: var(--app-danger); }
+/* @ 引用 chip：知识库/文档用图标与底色区隔（技能 chip 沿用 .skill-chip 原样） */
+.at-chips-note { font-size: 11px; color: var(--app-text3); align-self: center; margin-left: 2px; }
+.at-chip-ic { font-size: 12px; flex: none; }
+.mention-chip.mention-doc { background: var(--app-warn-weak); color: var(--app-warn-text); }
+
+/* @ 引用候选面板：贴输入框上沿（不遮断正文输入，点面板外关闭） */
+.mention-panel {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 40;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 12px;
+  box-shadow: var(--app-shadow-lg); display: flex; flex-direction: column; overflow: hidden;
+}
+.mention-head {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--app-border);
+}
+.mention-search {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font-size: 13px; color: var(--app-text); padding: 4px 0;
+}
+.mention-search::placeholder { color: var(--app-text3); }
+.mention-tabs { display: flex; gap: 4px; padding: 8px 10px 2px; }
+.mention-tab {
+  display: inline-flex; align-items: center; gap: 4px; border: none; cursor: pointer;
+  background: transparent; color: var(--app-text3); font-size: 12px;
+  padding: 3px 9px; border-radius: 999px;
+}
+.mention-tab:hover { background: var(--app-panel-2); color: var(--app-text2); }
+.mention-tab.on { background: var(--app-accent-weak); color: var(--app-accent); }
+.mention-list { overflow-y: auto; padding: 6px; max-height: 264px; }
+.mention-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.mention-item:hover { background: var(--app-panel-2); }
+.mention-item.on { background: var(--app-accent-weak); }
+.mention-ava {
+  width: 24px; height: 24px; border-radius: 6px; flex: none; font-size: 13px;
+  background: var(--app-panel-2); color: var(--app-text2);
+  display: flex; align-items: center; justify-content: center;
+}
+.mention-item.on .mention-ava { background: var(--app-accent); color: #fff; }
+.mention-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mention-name { font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-desc { font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-check { color: var(--app-accent); flex: none; }
+.mention-empty { padding: 18px 8px; text-align: center; font-size: 12px; color: var(--app-text3); }
+.mention-foot { padding: 7px 12px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); }
 .input-area { resize: none; padding: 6px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
 .input-area:focus { border: none; box-shadow: none; }
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
@@ -2963,6 +3177,10 @@ onMounted(async () => {
 
 /* 引用相关度 + 角标联动（右栏 ↔ 正文） */
 .rp-src-ref { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-src-mine {
+  flex: none; font-size: 10px; line-height: 1.5; padding: 0 4px; border-radius: 4px;
+  background: var(--app-warn-weak); color: var(--app-warn-text);
+}
 .rp-src-score { flex: none; font-size: 11px; color: var(--app-accent); }
 .rp-src-sub .rp-src-name { flex: 1; min-width: 0; }
 .rp-src-sub.hl { background: var(--app-accent-weak); border-radius: 4px; }

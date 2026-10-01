@@ -59,6 +59,9 @@ public class ChatController {
     private final AuthService authService;
     private final com.wisesoft.ai.service.MenuService menuService;
     private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
+    private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
+    private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
+    private final com.wisesoft.ai.mapper.AiDocumentMapper documentMapper;
 
     /**
      * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
@@ -154,15 +157,78 @@ public class ChatController {
         // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
         modelRegistryService.assertUsable(request.getModel(), userId, RequestUser.role());
 
+        // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
+        // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
+        List<ChatRequest.Mention> mentions = validateMentions(request.getMentions(), httpRequest);
+
         // 超时配置化（chat.sseTimeoutMs，默认 5 分钟）；超时由 RagService.onTimeout 先发 warn 再 dispose（fail-loud）
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
         SseEmitter emitter = new SseEmitter(sseTimeout);
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
-        ragService.chat(sessionId, question, images, attachments, request.getSkills(),
+        ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
                 false, request.isRegenerate());
         return emitter;
+    }
+
+    /**
+     * @ 引用校验（fail-loud）：类型合法、资源存在、当前用户在共享范围内。
+     * 不可见按「不存在」处理（不泄露存在性，与文档接口同一口径）；展示名以库里实名为准，不信任客户端传值。
+     * 返回归一后的引用列表（null 表示无引用）。
+     */
+    private List<ChatRequest.Mention> validateMentions(List<ChatRequest.Mention> mentions,
+                                                       HttpServletRequest httpRequest) {
+        if (mentions == null || mentions.isEmpty()) return null;
+        int max = Math.max(1, configService.getInt("chat.maxMentionsPerMessage", 10));
+        if (mentions.size() > max) {
+            throw new BizException("一次最多引用 " + max + " 个知识库/文档");
+        }
+        boolean admin = adminGuard.isAdmin(httpRequest);
+        var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
+        var principal = new com.wisesoft.ai.service.ResourceVisibilityService.Principal(
+                RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+        List<ChatRequest.Mention> out = new java.util.ArrayList<>();
+        for (ChatRequest.Mention m : mentions) {
+            if (m == null) continue;
+            String type = m.getType() == null ? "" : m.getType().trim().toLowerCase();
+            String id = m.getId() == null ? "" : m.getId().trim();
+            if (id.isEmpty()) {
+                throw new BizException("引用项缺少资源 ID");
+            }
+            ChatRequest.Mention normalized = new ChatRequest.Mention();
+            if ("kb".equals(type)) {
+                var kb = kbService.get(id);
+                if (kb == null || (!admin
+                        && !visibility.canRead(principal, kb.getShareConfig(), kb.getCreatedBy(), kind))) {
+                    throw new BizException("引用的知识库不存在或无权访问");
+                }
+                normalized.setType("kb");
+                normalized.setId(kb.getId());
+                normalized.setName(kb.getName());
+            } else if ("doc".equals(type)) {
+                var doc = documentMapper.selectById(id);
+                if (doc == null || (!admin
+                        && !visibility.canRead(principal, doc.getShareConfig(), doc.getCreatedBy(), kind))) {
+                    throw new BizException("引用的文档不存在或无权访问");
+                }
+                // 文档所属库同样须可见（与文档列表接口的两级过滤一致）
+                if (!admin && doc.getKbId() != null) {
+                    var kb = kbService.get(doc.getKbId());
+                    if (kb == null || !visibility.canRead(principal, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                        throw new BizException("引用的文档不存在或无权访问");
+                    }
+                }
+                normalized.setType("doc");
+                normalized.setId(doc.getId());
+                normalized.setName(doc.getFileName());
+                normalized.setKbId(doc.getKbId() == null ? kbService.defaultId() : doc.getKbId());
+            } else {
+                throw new BizException("不支持的引用类型：" + m.getType() + "（仅支持 kb / doc）");
+            }
+            out.add(normalized);
+        }
+        return out.isEmpty() ? null : out;
     }
 
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"

@@ -29,6 +29,33 @@ public class ChatRequest {
     @Schema(description = "用户上传附件（文档类，非图片）：名称/类型/内容（data URL），内容由服务端解析为文本注入本轮上下文")
     private List<Attachment> attachments;
 
+    @Schema(description = "输入框 @ 引用（本轮显式指定的资料范围）：kb=检索收窄到这些知识库；doc=该文档的块强制进上下文")
+    private List<Mention> mentions;
+
+    /**
+     * @ 引用（用户显式指定，优先于智能体配置）：
+     * <ul>
+     *   <li>{@code kb}：本轮检索范围收窄到被引库；</li>
+     *   <li>{@code doc}：该文档的内容块**不经检索直接前置**进上下文（用户认为它相关，不该被相关性门/排序挡掉）。</li>
+     * </ul>
+     * 服务端会按当前用户做可见性校验（fail-loud：不可见/不存在直接拒绝，不静默忽略）。
+     */
+    @Data
+    @Schema(description = "@ 引用项")
+    public static class Mention {
+        @Schema(description = "类型：kb=知识库 / doc=文档", example = "doc")
+        private String type;
+
+        @Schema(description = "资源 ID", example = "uuid-xxxx")
+        private String id;
+
+        @Schema(description = "展示名（仅回显参考，服务端不信任该值，以 id 查库为准）", example = "需求说明.docx")
+        private String name;
+
+        @Schema(description = "type=doc 时由服务端回填的所属知识库 ID（检索范围据此收窄到该库）")
+        private String kbId;
+    }
+
     @Schema(description = "本轮指定使用的技能名列表（输入框「+」菜单主动选用；注入技能全文到本轮 system prompt）")
     private List<String> skills;
 

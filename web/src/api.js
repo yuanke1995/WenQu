@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], regenerate = false
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], regenerate = false
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -119,7 +119,9 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       regenerate: regenerate || undefined,
       // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
-      skills: Array.isArray(skills) && skills.length ? skills : undefined
+      skills: Array.isArray(skills) && skills.length ? skills : undefined,
+      // 输入框 @ 引用（[{type:'kb'|'doc', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容（服务端校验可见性）
+      mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined
     }),
     signal: inner.signal
   }).then(res => {
