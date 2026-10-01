@@ -354,6 +354,9 @@ public class ConfigService {
         d.put("deepReasoning.autoRouteKeywords", "如果,当,对比,区别,以及,同时,多个,分别,为什么");
         d.put("chat.maxImagesPerMessage", "9");
         d.put("chat.maxImageMb", "10");
+        // 聊天附件：上传换 fileId 落盘，超保留期由 ScheduleCenter 清理（0=不清理）
+        d.put("chat.uploadRetentionHours", "24");
+        d.put("chat.uploadCleanupIntervalMs", "3600000");
         d.put("retrieval.relatedCount", "3");
         d.put("parse.embedBatchSize", "10");
         d.put("parse.ocrDpi", "200");

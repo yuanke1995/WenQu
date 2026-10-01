@@ -314,10 +314,12 @@
       <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
         <div v-if="dragOver" class="drop-overlay">松开以添加图片或附件</div>
         <div v-if="pendingFiles.length" class="pending-files">
-          <div v-for="(f, fi) in pendingFiles" :key="fi" class="pending-file" :title="f.name">
+          <div v-for="(f, fi) in pendingFiles" :key="fi" class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
             <file-text-outlined class="pending-file-ic" />
             <span class="pending-file-name">{{ f.name }}</span>
-            <span class="pending-file-size">{{ fmtSize(f.size) }}</span>
+            <span v-if="f.uploading" class="pending-file-size">上传中…</span>
+            <span v-else-if="f.error" class="pending-file-size">上传失败</span>
+            <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
             <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
           </div>
         </div>
@@ -710,7 +712,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
-         listKnowledgeBases, listDocuments } from '../api'
+         listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -1868,7 +1870,9 @@ const onPasteImages = e => {
   addImageFiles(imgs)
 }
 
-// ==================== 附件上传（「+」菜单选择/拖入，转 dataURL 随请求发送，服务端解析文本） ====================
+// ==================== 附件上传（「+」菜单选择/拖入 → 先传换 fileId，问答请求只带 fileId） ====================
+// 此前附件以 base64 内联在 /chat 的 JSON body 里：5×15MB 会打出 ~100MB 的字符串，弱网必挂、
+// 断线要整包重传、后端也得先把整包读进内存。现在文件先走 multipart 上传落盘换号，请求体只带 id。
 const MAX_FILES = 5
 const MAX_FILE_MB = 15
 // 与后端 ChatAttachmentService 的类型白名单一致（doc/ppt 老格式未引入 scratchpad，不支持）
@@ -1897,12 +1901,27 @@ const fmtSize = n => {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
   return (n / 1024 / 1024).toFixed(1) + ' MB'
 }
-const readFileDataUrl = file => new Promise((resolve, reject) => {
-  const r = new FileReader()
-  r.onload = () => resolve(r.result)
-  r.onerror = () => reject(new Error('读取失败'))
-  r.readAsDataURL(file)
-})
+/** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去） */
+const uploadOneFile = async f => {
+  const item = { name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '' }
+  pendingFiles.value.push(item)
+  try {
+    const r = await uploadChatAttachment(f)
+    const d = r?.data || {}
+    if (!d.fileId) throw new Error('上传未返回文件标识')
+    item.fileId = d.fileId
+    item.name = d.name || item.name
+    item.mime = d.mime || item.mime
+    if (d.size) item.size = d.size
+    item.uploading = false
+  } catch (e) {
+    item.uploading = false
+    item.error = e.message || '上传失败'
+    message.error(`附件上传失败：${f.name} — ${item.error}`)
+  }
+}
+/** 是否存在还没传完的附件（发送前拦一道：不然用户以为发出去了，其实附件没带上） */
+const hasUploadingFile = () => pendingFiles.value.some(f => f.uploading)
 /** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致） */
 const addFiles = files => {
   for (const f of files) {
@@ -1918,10 +1937,7 @@ const addFiles = files => {
       continue
     }
     if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${f.name}`); continue }
-    readFileDataUrl(f).then(dataUrl => {
-      if (pendingFiles.value.length >= MAX_FILES) return
-      pendingFiles.value.push({ name: f.name, size: f.size, mime: f.type || '', dataUrl })
-    }).catch(() => message.error(`附件读取失败: ${f.name}`))
+    uploadOneFile(f)
   }
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
@@ -2022,9 +2038,18 @@ onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
 const send = () => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
-  // 附件随请求发送（服务端解析文本注入本轮上下文）；技能仅对本轮生效
-  const atts = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, data: f.dataUrl }))
-  const attsMeta = pendingFiles.value.map(f => ({ name: f.name, mime: f.mime, size: f.size }))
+  // 附件只带 fileId（内容已先上传落盘）；未传完的不带走，并明确拦下这次发送——
+  // 默默发出去会让用户以为附件生效了，实际模型根本没看到这份材料
+  if (hasUploadingFile()) {
+    message.warning('附件还在上传中，请稍候再发送')
+    return
+  }
+  const atts = pendingFiles.value
+    .filter(f => f.fileId && !f.error)
+    .map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
+  const attsMeta = pendingFiles.value
+    .filter(f => f.fileId && !f.error)
+    .map(f => ({ name: f.name, mime: f.mime, size: f.size }))
   const skills = [...pickedSkills.value]
   // @ 引用（本轮显式指定的知识库/文档）：与问题一起提交，服务端按可见性校验后收窄检索范围/强制前置
   const mentions = pendingMentions.value.map(m => ({ type: m.type, id: m.id, name: m.name, kbId: m.kbId || '' }))
@@ -3067,6 +3092,7 @@ onMounted(async () => {
 
 /* 待发送附件条 + 技能选中标签 */
 .pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: 860px; }
+.pending-file.err { background: var(--app-danger-weak); border-color: var(--app-danger-border); color: var(--app-danger-text); }
 .pending-file {
   display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
   padding: 5px 8px; border-radius: 8px; font-size: 12px;

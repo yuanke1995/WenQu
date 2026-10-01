@@ -503,6 +503,13 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
   })
 }
 
+/** 聊天附件上传（onProgress 接收 0-100 百分比）：返回 {fileId,name,mime,size}，问答请求只带 fileId */
+export function uploadChatAttachment(file, onProgress) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload('/chat/attachment', fd, onProgress)
+}
+
 /** 上传文档（onProgress 接收 0-100 百分比） */
 export function uploadDocument(file, description, onProgress, kbId) {
   const fd = new FormData()

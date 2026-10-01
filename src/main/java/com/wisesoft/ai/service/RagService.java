@@ -611,7 +611,8 @@ public class RagService {
 
             // 0.1 用户上传附件（文档类）：解析为纯文本注入本轮上下文。
             //     单附件解析失败以可读错误说明占位、其余照常（不拖垮整轮）；元信息（名称/体积）随消息持久化供气泡回显
-            List<ChatAttachmentService.PreparedAttachment> preparedAtts = chatAttachmentService.prepare(attachments);
+            List<ChatAttachmentService.PreparedAttachment> preparedAtts =
+                    chatAttachmentService.prepare(attachments, userId);
             String attachmentText = chatAttachmentService.buildContextText(preparedAtts);
             List<Map<String, Object>> attachmentsMeta = new ArrayList<>();
             if (attachments != null) {

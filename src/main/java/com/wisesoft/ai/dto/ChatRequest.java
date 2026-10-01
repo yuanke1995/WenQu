@@ -26,7 +26,7 @@ public class ChatRequest {
     @Schema(description = "用户上传图片（data URL 格式，如 data:image/jpeg;base64,xxx）")
     private List<String> images;
 
-    @Schema(description = "用户上传附件（文档类，非图片）：名称/类型/内容（data URL），内容由服务端解析为文本注入本轮上下文")
+    @Schema(description = "用户上传附件（文档类，非图片）：先经 /chat/attachment 上传换 fileId，这里只带引用（不内联内容）")
     private List<Attachment> attachments;
 
     @Schema(description = "输入框 @ 引用（本轮显式指定的资料范围）：kb=检索收窄到这些知识库；doc=该文档的块强制进上下文")
@@ -60,19 +60,21 @@ public class ChatRequest {
     private List<String> skills;
 
     /**
-     * 聊天附件（文档类）：图片走 images（多模态 data URL），其余文件走这里由服务端解析文本。
+     * 聊天附件（文档类）：图片走 images（多模态 data URL），其余文件先上传换 fileId，
+     * 服务端按 (fileId, 当前用户) 读回并解析文本注入本轮上下文。
+     * <p>不再内联 base64：5×15MB 附件会打出 ~100MB 的 JSON body，弱网必挂且失败要整包重传。
      */
     @Data
     @Schema(description = "聊天附件")
     public static class Attachment {
-        @Schema(description = "文件名（含扩展名）", example = "需求说明.docx")
+        @Schema(description = "上传接口返回的文件标识（/chat/attachment）", example = "3f2b...c9")
+        private String fileId;
+
+        @Schema(description = "文件名（含扩展名；仅回显与类型判定用，服务端以元信息为准）", example = "需求说明.docx")
         private String name;
 
         @Schema(description = "MIME 类型", example = "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         private String mime;
-
-        @Schema(description = "文件内容（data URL 或裸 base64）")
-        private String data;
     }
 
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")

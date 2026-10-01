@@ -363,6 +363,37 @@
       "tier": 3
     },
     {
+      "backendKey": "chat.uploadRetentionHours",
+      "panel": "chat",
+      "section": 4,
+      "group": "chat",
+      "key": "uploadRetentionHours",
+      "path": "chat.uploadRetentionHours",
+      "label": "附件保留时长(小时)",
+      "type": "number",
+      "def": 24,
+      "min": 0,
+      "max": 720,
+      "width": 200,
+      "note": "聊天附件上传后落盘供问答读取，超过该时长由定时任务删除（0=不清理）；附件是「当轮看一眼」的轻路径，长时间留盘只会占空间",
+      "tier": 3
+    },
+    {
+      "backendKey": "chat.uploadCleanupIntervalMs",
+      "panel": "chat",
+      "section": 4,
+      "group": "chat",
+      "key": "uploadCleanupIntervalMs",
+      "path": "chat.uploadCleanupIntervalMs",
+      "label": "附件清理间隔(ms)",
+      "type": "number",
+      "def": 3600000,
+      "min": 0,
+      "width": 200,
+      "note": "过期附件清理任务的运行间隔（0=暂停）",
+      "tier": 3
+    },
+    {
       "backendKey": "chat.retrievalDebugEnabled",
       "panel": "chat",
       "section": 5,

@@ -23,7 +23,6 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -31,12 +30,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 聊天附件解析：把用户在输入框上传的文档类附件（data URL/base64）解码并抽取纯文本，
- * 注入本轮问答上下文（图片走 images 多模态链路，不经此服务）。
+ * 聊天附件解析：把用户在输入框上传的文档类附件（**先经 {@link ChatUploadService} 上传换 fileId**）
+ * 读回并抽取纯文本，注入本轮问答上下文（图片走 images 多模态链路，不经此服务）。
  *
  * <p>与知识库解析器（{@link com.wisesoft.ai.parser.DocumentParser}）的差别：知识库解析为建库服务、
  * 可 OCR 可切块；聊天附件是「当轮看一眼」的轻路径——只做文本抽取（PDF 不触发扫描件 OCR），
- * 超长截断（chat.attachmentMaxChars / chat.attachmentTotalChars），不落盘、不进向量库。
+ * 超长截断（chat.attachmentMaxChars / chat.attachmentTotalChars），不进向量库。
  *
  * @author yuanke
  */
@@ -46,6 +45,7 @@ import java.util.Set;
 public class ChatAttachmentService {
 
     private final ConfigService configService;
+    private final ChatUploadService chatUploadService;
 
     /** 文本类扩展名（UTF-8 直读；代码/配置/标记语言都按纯文本对待） */
     private static final Set<String> TEXT_EXTS = Set.of(
@@ -74,17 +74,19 @@ public class ChatAttachmentService {
     }
 
     /**
-     * 解析全部附件（数量/体积校验在控制器已完成）：单附件失败不拖垮整轮——
+     * 解析全部附件（数量/存在性校验在控制器已完成）：单附件失败不拖垮整轮——
      * 该附件文本置为可读错误说明，其余附件照常注入（fail-loud 到用户可见文案而非静默丢弃）。
+     *
+     * @param uid 附件归属者：fileId 只在本人目录下可读（他人 fileId 一律视为不存在）
      */
-    public List<PreparedAttachment> prepare(List<ChatRequest.Attachment> attachments) {
+    public List<PreparedAttachment> prepare(List<ChatRequest.Attachment> attachments, String uid) {
         List<PreparedAttachment> out = new ArrayList<>();
         if (attachments == null || attachments.isEmpty()) return out;
         int maxChars = Math.max(500, configService.getInt("chat.attachmentMaxChars", 8000));
         for (ChatRequest.Attachment a : attachments) {
             String name = sanitizeName(a.getName());
             try {
-                byte[] bytes = decode(a.getData());
+                byte[] bytes = chatUploadService.read(a.getFileId(), uid);
                 out.add(new PreparedAttachment(name, a.getMime(), bytes.length,
                         extractText(name, bytes, maxChars), false));
             } catch (Exception e) {
@@ -209,19 +211,6 @@ public class ChatAttachmentService {
                 }
             }
             return sb.toString();
-        }
-    }
-
-    /** base64 解码：接受 data URL（data:*;base64,xxx）或裸 base64 */
-    private byte[] decode(String data) {
-        if (data == null || data.isBlank()) throw new BizException("附件内容为空");
-        String b64 = data;
-        int comma = data.indexOf(',');
-        if (data.startsWith("data:") && comma > 0) b64 = data.substring(comma + 1);
-        try {
-            return Base64.getMimeDecoder().decode(b64);
-        } catch (IllegalArgumentException e) {
-            throw new BizException("附件内容不是有效的 base64 数据");
         }
     }
 

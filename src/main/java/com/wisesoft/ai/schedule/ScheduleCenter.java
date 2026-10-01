@@ -58,6 +58,7 @@ public class ScheduleCenter {
     private final WorkflowService workflowService;
     private final com.wisesoft.ai.service.TraceService traceService;
     private final com.wisesoft.ai.service.ParseQueueService parseQueueService;
+    private final com.wisesoft.ai.service.ChatUploadService chatUploadService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -74,7 +75,8 @@ public class ScheduleCenter {
                           DocumentService documentService,
                           WorkflowService workflowService,
                           com.wisesoft.ai.service.TraceService traceService,
-                          com.wisesoft.ai.service.ParseQueueService parseQueueService) {
+                          com.wisesoft.ai.service.ParseQueueService parseQueueService,
+                          com.wisesoft.ai.service.ChatUploadService chatUploadService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -87,6 +89,7 @@ public class ScheduleCenter {
         this.workflowService = workflowService;
         this.traceService = traceService;
         this.parseQueueService = parseQueueService;
+        this.chatUploadService = chatUploadService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -102,6 +105,13 @@ public class ScheduleCenter {
                 () -> configService.getInt("images.chatCleanupIntervalMs", 86_400_000),
                 () -> false,
                 () -> userImageService.cleanupChatImages(configService.getLong("images.chatRetentionMillis", 7L * 24 * 3600 * 1000)));
+        // 聊天附件超期清理：上传的附件换 fileId 落盘供问答读取，保留期过后删除
+        //（间隔 chat.uploadCleanupIntervalMs，保留期 chat.uploadRetentionHours，≤0 = 不清理）
+        register("聊天附件超期清理",
+                () -> configService.getInt("chat.uploadCleanupIntervalMs", 3_600_000),
+                () -> false,
+                () -> chatUploadService.cleanupExpired());
+
         // 检索质量自动体检：按线上参数跑评估集并与上期对比（间隔 eval.autoIntervalMs，默认每日；≤0 停用）。
         // 评估集为空自动跳过并记录（生成评估集后无需重启即生效）；下滑结论落在 eval.lastReport 供看板红绿灯
         register("检索评估自动体检",

@@ -62,6 +62,20 @@ public class ChatController {
     private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
     private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
     private final com.wisesoft.ai.mapper.AiDocumentMapper documentMapper;
+    private final com.wisesoft.ai.service.ChatUploadService chatUploadService;
+
+    @Operation(summary = "上传聊天附件", description = "把聊天附件先上传换 fileId（问答请求体只带 fileId，不再内联 base64）；"
+            + "文件按用户隔离落盘、超期自动清理；按用户限频（ratelimit.uploadPerMinute）")
+    @ApiResponse(responseCode = "200", description = "返回 {fileId,name,mime,size}")
+    @PostMapping("/chat/attachment")
+    public ResultJson uploadAttachment(
+            @Parameter(description = "附件文件") @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+            HttpServletRequest httpRequest) {
+        String userId = RequestUser.uid();
+        rateLimitService.checkRateLimit("upload", RequestUser.ANONYMOUS.equals(userId)
+                ? "ip:" + clientIp(httpRequest) : "user:" + userId);
+        return ResultJson.ok(chatUploadService.save(file, userId), "上传完成");
+    }
 
     /**
      * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
@@ -110,30 +124,26 @@ public class ChatController {
             }
         }
 
-        // 附件上限：数量与单件体积（同图片口径防 base64 洪峰）；类型白名单在发送前就拒绝（避免白传体积）
+        // 附件：请求体只带 fileId（内容已先行上传落盘换号）。
+        // 数量上限 + 存在性与归属校验（拿别人的 fileId 一律拒绝）；类型与体积在上传接口已把关，
+        // 这里不再按 base64 字符量估算——口径的变化正是这次改造的目的（body 从 ~100MB 降到几十字节）
         List<ChatRequest.Attachment> attachments = request.getAttachments();
         if (attachments != null && !attachments.isEmpty()) {
             int maxAtt = Math.max(1, configService.getInt("chat.maxAttachmentsPerMessage", 5));
             if (attachments.size() > maxAtt) {
                 throw new BizException("一次最多上传 " + maxAtt + " 个附件");
             }
-            int maxAttMb = Math.max(1, configService.getInt("chat.maxAttachmentMb", 15));
-            long maxBase64Chars = maxAttMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
             for (ChatRequest.Attachment att : attachments) {
-                if (att == null || att.getName() == null || att.getName().isBlank()
-                        || att.getData() == null || att.getData().isBlank()) {
-                    throw new BizException("附件信息不完整（缺少文件名或内容）");
+                if (att == null || att.getFileId() == null || att.getFileId().isBlank()) {
+                    throw new BizException("附件信息不完整（缺少上传标识，请重新上传）");
                 }
-                if (!ChatAttachmentService.supportedExt(att.getName())) {
-                    throw new BizException("暂不支持的附件类型：" + att.getName()
-                            + "（支持 PDF / Word / Excel / PPT / 文本与代码文件）");
+                var meta = chatUploadService.stat(att.getFileId(), userId);
+                if (meta == null) {
+                    throw new BizException("附件不存在或已过期，请重新上传");
                 }
-                String data = att.getData();
-                int comma = data.indexOf(',');
-                long chars = data.length() - (data.startsWith("data:") && comma > 0 ? comma + 1 : 0);
-                if (chars > maxBase64Chars) {
-                    throw new BizException("单个附件不能超过 " + maxAttMb + "MB：" + att.getName());
-                }
+                // 名称/MIME 以服务端元信息为准：客户端可随意伪造展示名，解析与展示都该信落盘时的记录
+                att.setName(meta.name());
+                att.setMime(meta.mime());
             }
         }
 
