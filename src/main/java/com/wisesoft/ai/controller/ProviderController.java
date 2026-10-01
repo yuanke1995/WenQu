@@ -99,7 +99,7 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.listModels(id));
     }
 
-    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/other), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
+    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
     @PutMapping("/{id}/models")
     public ResultJson saveModels(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -122,7 +122,7 @@ public class ProviderController {
                 providerId, str(body.get("baseUrl")), str(body.get("apiKey"))));
     }
 
-    @Operation(summary = "供应商连通性测试", description = "先测后存：用表单未保存值探测（modelType 决定探测方式：chat/vision 发最小补全、embedding 发真实向量、rerank 探测服务）；providerId 传入时 apiKey 可用掩码（用库中真实密钥），但须对该供应商有管理权")
+    @Operation(summary = "供应商连通性测试", description = "先测后存：用表单未保存值探测（modelType 决定探测方式：chat/vision/omni 发最小补全、embedding 发真实向量、rerank 探测服务、audio 探网关可达）；providerId 传入时 apiKey 可用掩码（用库中真实密钥），但须对该供应商有管理权")
     @PostMapping("/test")
     public ResultJson test(@RequestBody Map<String, Object> body) {
         String providerId = str(body.get("providerId"));
@@ -141,6 +141,8 @@ public class ProviderController {
             case ModelRegistryService.TYPE_VISION -> "vision";
             case ModelRegistryService.TYPE_EMBEDDING -> "embedding";
             case ModelRegistryService.TYPE_RERANK -> "rerank";
+            case ModelRegistryService.TYPE_OMNI -> "chat";      // 全模态走 chat completions，可真实探测
+            case ModelRegistryService.TYPE_AUDIO -> "audio";    // 语音：网关可达性探测（ASR/TTS 协议各家不一）
             default -> "chat";
         };
         String path = str(body.get("completionsPath"));

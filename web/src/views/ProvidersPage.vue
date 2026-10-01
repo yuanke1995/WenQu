@@ -114,7 +114,7 @@
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
         </button>
         <button class="app-btn" @click="addManualRow">手动添加</button>
-        <span class="pv-hint" style="margin-left:auto">类型可改（聊天/视觉/向量/重排/其他）；保存后生效</span>
+        <span class="pv-hint" style="margin-left:auto">类型可改（聊天/视觉/向量/重排/语音/全模态/其他）；保存后生效</span>
       </div>
 
       <!-- 拉取候选：搜索 + 按行添加（类型在下方表格可改，无需勾选） -->
@@ -284,6 +284,8 @@ const typeOptions = [
   { label: '视觉', value: 'vision' },
   { label: '向量', value: 'embedding' },
   { label: '重排', value: 'rerank' },
+  { label: '语音', value: 'audio' },
+  { label: '全模态', value: 'omni' },
   { label: '其他', value: 'other' },
 ]
 
@@ -292,6 +294,8 @@ const TYPE_META = {
   vision: { label: '视觉', color: 'geekblue' },
   embedding: { label: '向量', color: 'purple' },
   rerank: { label: '重排', color: 'cyan' },
+  audio: { label: '语音', color: 'orange' },
+  omni: { label: '全模态', color: 'gold' },
   other: { label: '其他', color: 'default' },
 }
 
@@ -481,7 +485,7 @@ const clearTestState = record => {
   }
 }
 
-/** 单模型连通性测试：chat/vision 发最小补全、embedding 真实向量一次、rerank 探服务（后端分派） */
+/** 单模型连通性测试：chat/vision/omni 发最小补全、embedding 真实向量一次、rerank 探服务、audio 探网关可达（后端分派） */
 const doTestModel = async record => {
   const p = modelProvider.value
   if (!p || !record.modelId || !record.modelId.trim()) {

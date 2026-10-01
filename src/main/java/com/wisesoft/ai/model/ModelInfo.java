@@ -32,7 +32,7 @@ public class ModelInfo {
     /** 展示名（空=同 model_id） */
     private String displayName;
 
-    /** 类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 other=其他 */
+    /** 类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 audio=语音 omni=全模态 other=其他 */
     private String modelType;
 
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */

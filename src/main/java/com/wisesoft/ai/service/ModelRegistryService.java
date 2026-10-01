@@ -56,8 +56,11 @@ public class ModelRegistryService {
     public static final String TYPE_VISION = "vision";
     public static final String TYPE_EMBEDDING = "embedding";
     public static final String TYPE_RERANK = "rerank";
+    public static final String TYPE_AUDIO = "audio";
+    public static final String TYPE_OMNI = "omni";
     public static final String TYPE_OTHER = "other";
-    public static final List<String> TYPES = List.of(TYPE_CHAT, TYPE_VISION, TYPE_EMBEDDING, TYPE_RERANK, TYPE_OTHER);
+    public static final List<String> TYPES = List.of(TYPE_CHAT, TYPE_VISION, TYPE_EMBEDDING, TYPE_RERANK,
+            TYPE_AUDIO, TYPE_OMNI, TYPE_OTHER);
 
     private final ProviderMapper providerMapper;
     private final ModelInfoMapper modelMapper;
@@ -676,7 +679,8 @@ public class ModelRegistryService {
     /**
      * 模型类型名称启发式自动分类（拉取候选的默认值，用户在界面可改）：
      * rerank/ranker → 重排；embed/bge/gte → 向量；vision/vl/llava → 视觉；
-     * dall/whisper/tts/moderation/davinci 等 → 其他；其余 → 聊天。
+     * omni → 全模态；asr/tts/whisper/paraformer/cosyvoice/audio 等 → 语音；
+     * dall/moderation/davinci 等 → 其他；其余 → 聊天。
      */
     public static String guessType(String modelId) {
         String m = (modelId == null ? "" : modelId).toLowerCase();
@@ -684,7 +688,11 @@ public class ModelRegistryService {
         if (m.contains("embed") || m.startsWith("bge-") || m.startsWith("gte-") || m.contains("/embedding")) return TYPE_EMBEDDING;
         if (m.contains("vision") || m.contains("llava") || m.contains("internvl") || m.contains("qvq")
                 || VL_TOKEN.matcher(m).find()) return TYPE_VISION;
-        if (m.contains("dall") || m.contains("whisper") || m.contains("tts") || m.contains("moderation")
+        if (m.contains("omni")) return TYPE_OMNI;
+        if (m.contains("asr") || m.contains("tts") || m.contains("audio") || m.contains("speech")
+                || m.contains("whisper") || m.contains("paraformer") || m.contains("cosyvoice")
+                || m.contains("sensevoice") || m.contains("sambert")) return TYPE_AUDIO;
+        if (m.contains("dall") || m.contains("moderation")
                 || m.contains("davinci") || m.contains("babbage") || m.contains("stable-diffusion")
                 || m.contains("flux") || m.contains("sora") || m.contains("video")) return TYPE_OTHER;
         return TYPE_CHAT;

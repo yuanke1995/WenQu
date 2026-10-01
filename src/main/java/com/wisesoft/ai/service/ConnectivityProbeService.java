@@ -29,6 +29,7 @@ import java.util.Map;
  *   <li>embedding：复用 {@link DynamicEmbeddingModel#probe}，额外返回模型向量维度；</li>
  *   <li>rerank：真实 POST {baseUrl}/rerank 一次（与 {@link RerankService} 同款载荷；Key 非空时附带 Bearer，
  *       云端 rerank 网关必需——GET /models 不带 Key 会被判 401）；</li>
+ *   <li>audio：GET {baseUrl}/v1/models 验证网关可达与 Key 有效（ASR/TTS 端点协议各家不一，不做最小调用）；</li>
  *   <li>keyword：GET {baseUrl}/health 探活 + GET {baseUrl}/indexes（带 master key）验证密钥是否被接受。</li>
  * </ul>
  *
@@ -69,6 +70,7 @@ public class ConnectivityProbeService {
                 case "vision" -> chatProbe("vision", baseUrl, apiKey, model, null, start);
                 case "embedding" -> embeddingProbe(baseUrl, apiKey, model, path, start);
                 case "rerank" -> rerankProbe(baseUrl, apiKey, model, start);
+                case "audio" -> audioProbe(baseUrl, apiKey, start);
                 case "keyword" -> keywordProbe(baseUrl, apiKey, start);
                 case "ocrmineru" -> ocrMineruProbe(baseUrl, start);
                 case "ocrpp" -> ocrPpProbe(baseUrl, start);
@@ -189,6 +191,24 @@ public class ConnectivityProbeService {
         if (base.isBlank()) return fail(start, "服务地址为空");
         String root = stripTrailingSlash(base);
         return get(root + "/health", null, start, "PP-StructureV3 " + root);
+    }
+
+    /**
+     * 语音模型探测（ASR/TTS）：各家语音端点协议不一（multipart 上传 / 二进制音频响应），
+     * 无统一的最小探测载荷——退而验证网关可达性与 Key 是否被接受（GET {base}/v1/models），
+     * 并明确标注未实际调用语音端点；网关不实现 /models 时如实按失败返回。
+     */
+    private Map<String, Object> audioProbe(String baseUrl, String apiKey, long start) {
+        String base = nvl(baseUrl);
+        if (base.isBlank()) return fail(start, "网关地址为空");
+        // 与运行时同款路径归一：版本段尾缀（…/v1、…/v4）自动移入模型列表路径
+        String[] np = DynamicOpenAiChatModel.normalize(base, "", "/v1/models", "/models");
+        String url = np[0] + np[1];
+        Map<String, Object> r = get(url, apiKey, start, "语音网关 " + url);
+        if (Boolean.TRUE.equals(r.get("available"))) {
+            r.put("detail", "网关可达（未实际调用语音端点——ASR/TTS 协议各家不一，模型本身请通过业务功能验证）");
+        }
+        return r;
     }
 
     // ==================== HTTP 基础 ====================

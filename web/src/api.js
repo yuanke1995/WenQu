@@ -786,7 +786,7 @@ export const saveProviderModels = (id, models) =>
 /** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 可传掩码（后端用库中真实 Key） */
 export const fetchProviderModels = (baseUrl, apiKey, providerId) =>
   request('/provider/models/fetch', { method: 'POST', body: JSON.stringify({ baseUrl, apiKey, providerId }), timeout: 20000 })
-/** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank） */
+/** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank/audio/omni） */
 export const testProvider = body =>
   request('/provider/test', { method: 'POST', body: JSON.stringify(body), timeout: 20000 })
 /** 可用模型清单（登录即可用；type 过滤如 chat/vision/embedding/rerank）：[{providerId,name,icon,models:[{ref,modelId,displayName,type}]}]。
