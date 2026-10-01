@@ -72,11 +72,10 @@
                   <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
                   <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
                   <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
-                  <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
+                  <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路；内置以卡片右上角「内置」标记区分 -->
                   <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                     <button class="app-link-btn danger" @click.stop>删除</button>
                   </a-popconfirm>
-                  <span v-else class="ap-builtin-hint">系统内置</span>
                 </div>
               </article>
             </div>
@@ -1174,7 +1173,6 @@ onMounted(async () => { })
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: var(--app-accent-weak); color: var(--app-accent);
 }
-.ap-builtin-hint { font-size: 11px; color: var(--app-text3); padding: 0 4px; }
 .ap-desc {
   font-size: 12px; color: var(--app-text2); line-height: 1.6; margin: 0; min-height: 32px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
