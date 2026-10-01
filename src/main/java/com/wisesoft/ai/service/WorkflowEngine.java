@@ -312,6 +312,15 @@ public class WorkflowEngine {
         return Math.max(min, Math.min(max, val));
     }
 
+    /** 布尔配置：true/1 均视为开（画布开关落 boolean，手写 DSL 可能给 "1"/"true"） */
+    private static boolean cfgBool(WorkflowDsl.Node n, String key, boolean dft) {
+        Object v = n.getConfig() == null ? null : n.getConfig().get(key);
+        if (v == null) return dft;
+        if (v instanceof Boolean b) return b;
+        String s = String.valueOf(v).trim().toLowerCase();
+        return "true".equals(s) || "1".equals(s);
+    }
+
     /**
      * LLM 节点：渲染 prompt → ChatClient 调用（模型引用已在 run 前 assertUsable 并解析进 ctx）。
      * 显式 internalToolExecutionEnabled(false)：chatClient 挂了 ToolCall Advisor，裸调用会抛；
@@ -668,6 +677,116 @@ public class WorkflowEngine {
     private static final int MAX_REDIRECT_HOPS = 5;
     private static final int MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024;   // 响应体读取上限（超限拒绝，防拖垮实例）
     private static final int HTTP_BODY_STATE_CHARS = 20_000;         // 进 state 的正文截断（trace 同）
+    /** SPA 壳判定：原始 HTML 超过该长度必有真实内容，不再做特征匹配（壳实测 1~3KB，如百度汉语壳 1580B） */
+    private static final int SPA_SHELL_MAX_CHARS = 4_096;
+
+    /**
+     * 渲染抓取（http 节点 render 模式）：Playwright + Chromium 在沙盒内无头渲染后输出 JSON。
+     * URL 由引擎以 JSON 字符串字面量嵌入（Jackson 转义，防注入）；输出 ensure_ascii（默认），
+     * 全 ASCII——沙盒 execute 有 maxOutputBytes（默认 256KB）截断，正文预截 3 万字符（约 ≤180KB）
+     * 保证 JSON 完整可解析；总结场景下游 clean 只取 6 千字符文本，够用。
+     */
+    private static final String RENDER_PY = """
+            import json
+            from playwright.sync_api import sync_playwright
+
+            url = __URL_JSON__
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True, channel="chromium",
+                        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+                    ctx = browser.new_context(
+                        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                        locale="zh-CN", timezone_id="Asia/Shanghai",
+                        viewport={"width": 1440, "height": 900})
+                    # 隐藏 webdriver 指纹：只帮「仅做 JS 指纹检测」的站点；强 WAF（百度安全验证等
+                    # 弹交互验证码的）属站方明确的真人要求，不做验证码绕过
+                    ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); window.chrome = window.chrome || {runtime: {}};")
+                    page = ctx.new_page()
+                    resp = page.goto(url, wait_until="networkidle", timeout=25000)
+                    html = page.content()
+                    status = resp.status if resp else 0
+                    ctype = (resp.headers.get("content-type", "") if resp else "") or "text/html"
+                    browser.close()
+            except Exception as e:
+                print(json.dumps({"renderError": str(e)[:300]}, ensure_ascii=False))
+                raise SystemExit(3)
+            print(json.dumps({"status": status, "contentType": ctype, "body": html[:30000]}, ensure_ascii=True))
+            """;
+
+    /**
+     * 前端渲染（SPA）页面壳判定（静态可测）：HTML 响应 + 体积小 + 命中「启用 JavaScript」类提示词。
+     * 特征在<b>去空白后的小写</b>上匹配——中文提示通常无空格、英文提示空格不统一；
+     * 刻意收紧为「提示词 + 体积」双条件，避免对引用了这类措辞的正常页面误报。
+     */
+    static boolean isSpaShell(String body, String contentType) {
+        if (body == null || body.isEmpty() || body.length() > SPA_SHELL_MAX_CHARS) return false;
+        if (contentType != null && !contentType.isBlank() && !contentType.toLowerCase().contains("html")) return false;
+        String flat = body.toLowerCase().replaceAll("\\s+", "");
+        return flat.contains("enablejavascript")            // Please/Enable JavaScript to...
+                || flat.contains("javascriptenabled")       // ...without JavaScript enabled
+                || flat.contains("javascriptisdisabled")
+                || flat.contains("requiresjavascript")
+                || flat.contains("needjavascript")
+                || flat.contains("请启用javascript")
+                || flat.contains("需要启用javascript")
+                || flat.contains("浏览器不支持javascript");
+    }
+
+    /**
+     * 渲染抓取（render 模式）：URL 先过 SSRF 校验，再把 Playwright 脚本放进沙盒执行——无头 Chromium
+     * 加载页面、等 networkidle 后取渲染后 DOM，输出 JSON（status/contentType/body）。输出键与普通模式
+     * 完全一致，下游节点无感知差异。脚本/注入文件用 putFile（覆盖语义 + /tmp 可写 + fail-loud）。
+     * <p>
+     * 边界如实标注：目标站点有反爬（无头浏览器指纹被 WAF 识别）时照样拿不到（如百度系返回 403
+     * 安全验证页）——渲染抓取解决「JS 渲染」，不解决「反爬」。
+     */
+    private NodeOut renderFetch(WorkflowDsl.Node n, WorkflowRunCtx ctx, URI uri, int timeoutMs) {
+        if (!configService.getBoolean("tool.sandbox.enabled")) {
+            throw new BizException("节点「" + n.getId() + "」渲染抓取依赖沙盒，请先在设置页开启「沙盒工具」（tool.sandbox.enabled）");
+        }
+        SsrfGuard.requirePublicHost(uri);   // 沙盒内发起的请求 JVM 管不到，主 URL 必须先过校验
+        String urlJson;
+        try {
+            urlJson = CODE_INPUTS_MAPPER.writeValueAsString(uri.toString());
+        } catch (Exception ex) {
+            throw new BizException("节点「" + n.getId() + "」渲染 URL 序列化失败：" + ex.getMessage());
+        }
+        String file = "/tmp/wf_render_" + n.getId() + "_" + System.currentTimeMillis() + ".py";
+        // 超时：渲染含浏览器启动与 networkidle 等待，钳在 30~120s（timeoutMs 只配普通模式的 HTTP 超时）
+        int timeoutSeconds = Math.max(30, Math.min(120, timeoutMs / 1000));
+        ProvisionerSandboxBackend.ExecuteResponse resp = withReplay(ctx, () -> {
+            ProvisionerSandboxBackend backend = sandboxService.backend("workflow", ctx.uid);
+            backend.putFile(file, RENDER_PY.replace("__URL_JSON__", urlJson));
+            return backend.execute("python3 " + file, timeoutSeconds);
+        });
+        String output = resp.output() == null ? "" : resp.output().trim();
+        if (resp.exitCode() == null || resp.exitCode() != 0) {
+            throw new BizException("节点「" + n.getId() + "」渲染抓取失败（exit=" + resp.exitCode() + "）："
+                    + WorkflowRunCtx.abbreviate(output, 500));
+        }
+        Map<String, Object> parsed;
+        try {
+            parsed = CODE_INPUTS_MAPPER.readValue(output, Map.class);
+        } catch (Exception ex) {
+            throw new BizException("节点「" + n.getId() + "」渲染输出不是合法 JSON（可能被输出上限截断）："
+                    + WorkflowRunCtx.abbreviate(output, 300));
+        }
+        int status = parsed.get("status") instanceof Number num ? num.intValue() : 0;
+        String contentType = String.valueOf(parsed.getOrDefault("contentType", ""));
+        String body = String.valueOf(parsed.getOrDefault("body", ""));
+        Map<String, Object> trace = new LinkedHashMap<>();
+        trace.put("url", uri.toString());
+        trace.put("render", true);
+        trace.put("status", status);
+        trace.put("contentType", contentType);
+        trace.put("bodyChars", body.length());
+        String stateBody = body.length() > HTTP_BODY_STATE_CHARS
+                ? body.substring(0, HTTP_BODY_STATE_CHARS) + "…（已截断，全长 " + body.length() + " 字符）"
+                : body;
+        return new NodeOut(Map.of("status", status, "body", stateBody, "contentType", contentType),
+                null, null, trace);
+    }
 
     /**
      * HTTP 请求节点：方法/URL/头/体 + 超时；SSRF 复用 SsrfGuard 逐跳内网校验（fail-loud）。
@@ -689,6 +808,10 @@ public class WorkflowEngine {
                 throw new BizException("节点「" + n.getId() + "」URL 不合法：" + url);
             }
             int timeoutMs = cfgInt(n, "timeoutMs", 15_000, 1_000, 60_000);
+            // 渲染抓取模式（SPA）：不走 Java HttpClient，改在沙盒里用 Playwright 无头浏览器执行 JS 后取 DOM
+            if (cfgBool(n, "render", false)) {
+                return renderFetch(n, ctx, uri, timeoutMs);
+            }
             Map<String, String> headers = new LinkedHashMap<>();
             Object hCfg = n.getConfig() == null ? null : n.getConfig().get("headers");
             if (hCfg instanceof Map<?, ?> m) {
@@ -755,6 +878,13 @@ public class WorkflowEngine {
             }
             if (bodyText.isEmpty() && status >= 300 && status < 400) {
                 throw new BizException("节点「" + n.getId() + "」重定向超过 " + MAX_REDIRECT_HOPS + " 次，已停止跟进");
+            }
+            // SPA 壳检测：前端渲染页面的 HTTP 原始响应只有挂载点空壳 + 「启用 JavaScript」提示，
+            // 正文要等浏览器执行 JS 后由接口拉取——纯 HTTP 抓取永远拿不到。抓到壳就 fail-loud 指明
+            // 能力边界，不把壳文本喂给下游 LLM 产出「无法总结」式回答（2026-10-01 百度汉语实测）。
+            if (isSpaShell(bodyText, contentType)) {
+                throw new BizException("节点「" + n.getId() + "」抓到的是前端渲染（SPA）页面壳，正文需浏览器执行 JavaScript 才存在，"
+                        + "HTTP 抓取拿不到（" + url + "）。请改用服务端渲染的数据源，或等引擎提供渲染抓取能力");
             }
             Map<String, Object> trace = new LinkedHashMap<>();
             trace.put("url", url);

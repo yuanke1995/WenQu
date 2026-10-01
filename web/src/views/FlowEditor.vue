@@ -226,7 +226,11 @@
               <div class="wf-form-item"><label>超时（ms，1s~60s）</label>
                 <a-input-number v-model:value="editConfig.timeoutMs" :min="1000" :max="60000" :step="1000" style="width: 140px" />
               </div>
-              <div class="wf-hint">响应体进 state 时截断 2 万字符（trace 同步截断）。</div>
+              <div class="wf-form-item"><label>渲染抓取（SPA 页面）</label>
+                <a-checkbox v-model:checked="editConfig.render" style="white-space: nowrap; flex: none">用无头浏览器执行 JS 后取内容</a-checkbox>
+                <div class="wf-hint" style="margin-top:4px">前端渲染页面（抓到的只有"启用 JavaScript"壳）勾选此项；需沙盒开启，且超时下限 30s。注意：目标站反爬（如百度安全验证）仍会拦截。</div>
+              </div>
+              <div class="wf-hint">响应体进 state 时截断 2 万字符（trace 同步截断）；渲染模式输出渲染后 DOM，预截 3 万字符。</div>
             </template>
 
             <!-- code -->

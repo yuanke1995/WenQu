@@ -1,4 +1,4 @@
-# 派生沙盒镜像：在官方 all-in-one-sandbox 基础上加 JDK。
+# 派生沙盒镜像：在官方 all-in-one-sandbox 基础上加 JDK 与渲染抓取能力。
 #
 # 为什么不进沙盒再装：沙盒内 agent 命令以 gem（uid 1000）普通用户执行，
 # 不在 sudoers 里，apt 安装必然权限不足 —— 运行时环境必须在镜像层解决。
@@ -14,3 +14,10 @@ FROM enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openjdk-17-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
+
+# 渲染抓取（SPA）：Playwright + Chromium（工作流 http 节点 render 模式依赖）。
+# PLAYWRIGHT_BROWSERS_PATH 指向系统路径：构建期以 root 安装，运行期 gem 用户
+# 只读执行——装进默认 ~/.cache 会落 root 家目录，gem 读不到。
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN pip3 install --no-cache-dir playwright \
+    && python3 -m playwright install --with-deps chromium
