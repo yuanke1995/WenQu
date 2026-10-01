@@ -25,26 +25,45 @@
       </nav>
 
       <div v-if="!collapsed" class="side-label">最近</div>
-      <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配） -->
+      <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）；右端内嵌批量管理入口 -->
       <div v-if="!collapsed" class="sess-search-wrap">
         <search-outlined class="sess-search-ic" />
         <input v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
+        <span class="sess-search-div"></span>
+        <a-tooltip :title="batchMode ? '退出批量管理' : '批量删除会话'">
+          <button class="sess-manage" :class="{ on: batchMode }" @click="batchMode ? exitBatchMode() : enterBatchMode()">
+            <check-square-outlined />
+          </button>
+        </a-tooltip>
+      </div>
+      <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于当前搜索结果 -->
+      <div v-if="!collapsed && batchMode" class="sess-batch-bar">
+        <span class="batch-count">已选 {{ batchSel.size }}</span>
+        <span class="batch-actions">
+          <button class="batch-btn" @click="toggleSelectAll">{{ allSelected ? '取消全选' : '全选' }}</button>
+          <button class="batch-btn danger" :disabled="!batchSel.size" @click="confirmBatchDelete">删除</button>
+          <button class="batch-btn" @click="exitBatchMode">完成</button>
+        </span>
       </div>
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
           <div v-for="s in visibleSessionList" :key="s.id"
-               class="sess-item" :class="{ active: isActive('/chat') && route.query.sid === s.id }"
-               :title="s.title" @click="openSession(s.id)">
+               class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id) }"
+               :title="s.title" @click="batchMode && !collapsed ? toggleBatchSel(s.id) : openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
             <template v-else>
+              <!-- 批量模式：行首勾选块，点行即切换选中（不进会话、hover 操作隐藏） -->
+              <span v-if="batchMode" class="batch-check" :class="{ on: batchSel.has(s.id) }">
+                <check-outlined v-if="batchSel.has(s.id)" />
+              </span>
               <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
               <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
                 <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
               </span>
             </template>
-            <template v-if="!collapsed">
+            <template v-if="!collapsed && !batchMode">
               <a-tooltip :title="s.isPinned === 1 ? '取消置顶' : '置顶'">
                 <button class="sess-op" :class="{ on: s.isPinned === 1 }" @click.stop="togglePin(s)"><pushpin-outlined /></button>
               </a-tooltip>
@@ -53,7 +72,7 @@
                 <template #overlay>
                   <a-menu @click="({ key }) => sessionMenu(s, key)">
                     <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
-                    <a-menu-item key="favorite">{{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
+                    <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
                     <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
@@ -104,9 +123,10 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
-         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled,
+         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
+         CheckOutlined, CheckSquareOutlined,
          BulbOutlined, BulbFilled } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession } from '../api'
+import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions, chatStreams } from './store'
@@ -224,6 +244,50 @@ const delSession = async sid => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
+// ==================== 批量删除（后端 /sessions/batch-delete 既有：逐条校验归属、软删、返回成功数） ====================
+const batchMode = ref(false)
+const batchSel = ref(new Set())
+const allSelected = computed(() =>
+  visibleSessionList.value.length > 0 && visibleSessionList.value.every(s => batchSel.value.has(s.id)))
+const enterBatchMode = () => { batchMode.value = true; batchSel.value = new Set() }
+const exitBatchMode = () => { batchMode.value = false; batchSel.value = new Set() }
+const toggleBatchSel = id => {
+  const next = new Set(batchSel.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  batchSel.value = next
+}
+const toggleSelectAll = () => {
+  batchSel.value = allSelected.value ? new Set() : new Set(visibleSessionList.value.map(s => s.id))
+}
+const confirmBatchDelete = () => {
+  const ids = [...batchSel.value]
+  if (!ids.length) return
+  Modal.confirm({
+    title: `删除选中的 ${ids.length} 个会话？`,
+    content: '会话与消息记录会被删除，不可恢复。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: () => doBatchDelete(ids)
+  })
+}
+const doBatchDelete = async ids => {
+  try {
+    // 与单个删除一致：先中止选中会话的后台流，防止往已删除的会话落库回答
+    ids.forEach(sid => {
+      const st = chatStreams.get(sid)
+      if (st) { chatStreams.delete(sid); st.abort.abort() }
+    })
+    const res = await batchDeleteSessionsApi(ids)
+    message.success(`已删除 ${res?.deleted ?? ids.length} 个会话`)
+    exitBatchMode()
+    await loadSessions(searchKw.value.trim())
+    // 当前打开的会话在被删列表里 → 回对话页重新挑会话
+    if (route.query.sid && ids.includes(route.query.sid)) {
+      router.push('/chat').catch(() => {})
+      sessionStore.autoPickTick++
+    }
+  } catch (e) { message.error(e.message || '批量删除失败') }
+}
+
 // 个人设置：独立页（默认模型三类 + 修改密码）
 const goProfile = () => router.push('/profile')
 
@@ -284,13 +348,40 @@ onMounted(async () => {
 .nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
+/* 搜索框右端：分隔线 + 批量管理入口（与搜索同属「管理会话」动线，再点一次退出） */
+.sess-search-div { width: 1px; height: 12px; background: var(--app-border); margin: 0 2px; flex: none; }
+.sess-manage { border: none; background: transparent; color: var(--app-text3); cursor: pointer; font-size: 12px; padding: 2px 5px 2px 3px; margin-right: 3px; display: inline-flex; align-items: center; }
+.sess-manage:hover, .sess-manage.on { color: var(--app-accent); }
+/* 批量操作条：独立一行贴列表上方，主题色弱底提示「处于批量模式」 */
+.sess-batch-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 2px 6px; padding: 5px 8px; border-radius: 7px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-weak);
+  font-size: 11px; color: var(--app-text2);
+}
+.batch-count { white-space: nowrap; }
+.batch-actions { display: inline-flex; align-items: center; gap: 7px; }
+.batch-btn { border: none; background: transparent; color: var(--app-accent); cursor: pointer; font-size: 11px; padding: 0; }
+.batch-btn.danger { color: var(--app-danger); }
+.batch-btn:disabled { color: var(--app-text3); cursor: not-allowed; }
+/* 批量模式行首勾选块（选中填主题色 + 白勾） */
+.batch-check {
+  width: 14px; height: 14px; border-radius: 4px; flex: none; margin-right: 6px;
+  border: 1px solid var(--app-border); background: var(--app-panel);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; color: #fff;
+}
+.batch-check.on { background: var(--app-accent); border-color: var(--app-accent); }
 .side-sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .sess-item {
   display: flex; align-items: center; padding: 6px 9px; border-radius: 8px;
   font-size: 12px; color: var(--app-text2); cursor: pointer; min-width: 0;
+  transition: background .12s;
 }
 .sess-item:hover { background: var(--app-panel-2); }
-.sess-item.active { background: var(--app-accent-weak); color: var(--app-text); }
+/* 当前行：弱底 + 左缘主题色窄条（比纯底色多一层方位感）；批量选中行共用弱底（无窄条） */
+.sess-item.active { background: var(--app-accent-weak); color: var(--app-text); box-shadow: inset 2px 0 0 var(--app-accent); }
+.sess-item.picked { background: var(--app-accent-weak); color: var(--app-text); }
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
 .sess-item.active .sess-dot { background: var(--app-accent); }
