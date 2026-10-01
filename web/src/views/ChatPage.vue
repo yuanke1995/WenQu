@@ -8,7 +8,7 @@
         <button class="app-btn ghost head-panel-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
       </div>
 
-      <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @scroll="onMessagesScroll">
+      <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <div class="welcome-mark">渠</div>
           <h2>有什么可以帮你？</h2>
@@ -554,6 +554,23 @@
       <div v-else class="md src-content" @click="openPreview"
            v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages)"></div>
     </a-modal>
+
+    <!-- 引用角标悬浮卡：Teleport 到 body（不被消息区 overflow 裁剪），fixed 定位跟随角标 -->
+    <Teleport to="body">
+      <div v-if="refTip" class="ref-card" :style="refCardStyle"
+           @mouseenter="cancelCloseRefTip" @mouseleave="scheduleCloseRefTip">
+        <div class="ref-card-head">
+          <span class="ref-card-no">[{{ refTip.ref }}]</span>
+          <span class="ref-card-file" :title="refTip.fileName">{{ refTip.fileName }}</span>
+          <span v-if="refTip.score != null" class="ref-card-score" :title="refTip.scoreLabel">
+            {{ refTip.scoreLabel }} {{ Number(refTip.score).toFixed(2) }}
+          </span>
+        </div>
+        <div v-if="refTip.title" class="ref-card-title">§ {{ refTip.title }}</div>
+        <div class="ref-card-snippet">{{ refTip.snippet }}</div>
+        <button v-if="refTip.src" class="ref-card-btn" type="button" @click.stop="refTipOpenSource">查看原文 →</button>
+      </div>
+    </Teleport>
 
     <!-- 回答反馈弹窗 -->
     <a-modal v-model:open="feedbackVisible" title="反馈" :footer="null" :width="440">
@@ -1355,25 +1372,74 @@ const openSource = async s => {
   finally { sourceLoading.value = false }
 }
 
-// 引用角标悬浮提示：悬停时从 sources 取标题/片段写入原生 title（含精确检索工具来源，数据 done 后可用；
-// 原生 title 零依赖，点击角标仍走引用弹窗看完整原文）。同时驱动角标 ↔ 右栏来源联动：
-// 悬停正文 [n] → 右栏对应来源高亮（hoveredRef）；移出到其他元素即清除
+// 引用角标悬浮卡（自绘浮层，替代原生 title——原生 title 有约 1s 延迟、不可样式化、
+// 换行不渲染、也放不下相关度）：展示序号 + 来源文件 + 章节 + 片段 + 相关度，
+// 「查看原文」跳来源弹窗；同时驱动右栏来源联动（hoveredRef 高亮）。
+const refTip = ref(null)
+const refTipPos = ref({ left: 12, top: 0, above: false })
+let refTipTimer = null
+const refCardStyle = computed(() => {
+  const w = Math.min(400, Math.max(260, window.innerWidth - 24))
+  const left = Math.max(12, Math.min(refTipPos.value.left, window.innerWidth - w - 12))
+  return {
+    left: left + 'px',
+    top: refTipPos.value.top + 'px',
+    width: w + 'px',
+    transform: refTipPos.value.above ? 'translateY(-100%)' : 'none'
+  }
+})
+const cancelCloseRefTip = () => { if (refTipTimer) { clearTimeout(refTipTimer); refTipTimer = null } }
+const closeRefTip = () => { cancelCloseRefTip(); refTip.value = null }
+/** 延迟关闭：角标 → 浮层之间有一段空隙，立即关闭会闪 */
+const scheduleCloseRefTip = () => {
+  cancelCloseRefTip()
+  refTipTimer = setTimeout(() => { refTip.value = null }, 160)
+}
+const showRefTip = (el, msgIdx, n) => {
+  const src = messages.value[msgIdx]?.sources?.[n - 1]
+  const r = el.getBoundingClientRect()
+  const above = r.bottom + 240 > window.innerHeight
+  refTipPos.value = { left: r.left, top: above ? r.top - 6 : r.bottom + 6, above }
+  if (!src) {
+    // 来源未随本轮下发（如工具模式：模型引用的是 searchKnowledge 工具返回的【引用N】，
+    // 该结果在工具卡片里而不在 sources）——不静默无响应，给明确说明
+    refTip.value = {
+      ref: n, fileName: '', title: '',
+      snippet: '本轮的引用来源未随消息下发。若本轮调用了「知识库检索」工具，可在工具卡片中查看检索到的原文片段。',
+      score: null, scoreLabel: '', src: null
+    }
+    return
+  }
+  refTip.value = {
+    ref: n,
+    fileName: src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识'),
+    title: src.title || '',
+    snippet: src.snippet || '（无原文片段）',
+    score: (src.rerankScore != null ? src.rerankScore : src.score),
+    scoreLabel: src.rerankScore != null ? '重排相关度' : '检索融合分',
+    src
+  }
+}
+const refTipOpenSource = () => {
+  const s = refTip.value && refTip.value.src
+  closeRefTip()
+  if (s) openSource(s)
+}
+
 const refHover = e => {
   const t = e.target
   if (!t || !t.classList) return
   if (!t.classList.contains('ref-sup')) {
     if (hoveredRef.value != null) hoveredRef.value = null
+    scheduleCloseRefTip()
     return
   }
-  hoveredRef.value = Number(t.dataset.ref)
-  if (t.dataset.tipSet) return
+  cancelCloseRefTip()
+  const n = Number(t.dataset.ref)
+  hoveredRef.value = n
   const mdEl = t.closest('.md')
   const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
-  const src = messages.value[msgIdx]?.sources?.[Number(t.dataset.ref) - 1]
-  t.title = src
-    ? `[${t.dataset.ref}] ${(src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识'))}${src.title ? ' §' + src.title : ''}\n${src.snippet || '（无原文片段）'}`
-    : `[${t.dataset.ref}] 来源信息加载中`
-  t.dataset.tipSet = '1'
+  showRefTip(t, msgIdx, n)
 }
 
 // ===== 引用相关度 + 角标联动（P1 #5）=====
@@ -2950,6 +3016,30 @@ onMounted(async () => {
 .approval-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
 .approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .approval-hint { font-size: 12px; color: var(--app-text3); }
+
+/* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */
+.ref-card {
+  position: fixed; z-index: 3000; background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-lg); padding: 10px 12px;
+}
+.ref-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ref-card-no { color: var(--app-accent); font-size: 12px; font-weight: 600; flex: none; }
+.ref-card-file {
+  font-size: 12px; color: var(--app-text); font-weight: 500; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ref-card-score { font-size: 11px; color: var(--app-text3); margin-left: auto; flex: none; }
+.ref-card-title { font-size: 12px; color: var(--app-text2); margin-bottom: 4px; }
+.ref-card-snippet {
+  font-size: 12px; color: var(--app-text2); line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ref-card-btn {
+  margin-top: 8px; padding: 0; border: none; background: transparent;
+  color: var(--app-accent); font-size: 12px; cursor: pointer;
+}
+.ref-card-btn:hover { text-decoration: underline; }
 
 /* ==================== 响应式：窄屏适配 ====================
    此前固定内边距 + 固定 230px 右栏，窄窗口下消息区被挤成细条。 */
