@@ -1324,3 +1324,17 @@ const fmtTime = t => {
   margin-right: 8px; border: 1px solid var(--app-border); background: var(--app-panel-2);
 }
 </style>
+
+<style scoped>
+/* ==================== 窄屏适配（此前列宽全固定 ≈850px + 名称列，≤768 名称列被挤没） ====================
+   低优列按屏宽逐级隐藏，保住「文件名 + 状态 + 操作」这条主线；隐藏比挤压可读。 */
+@media (max-width: 900px) {
+  .col-kb, .col-time { display: none; }
+  .col-act { width: 210px; }
+}
+@media (max-width: 640px) {
+  .col-num, .col-size, .col-status { display: none; }
+  .col-act { width: 158px; }
+  .doc-row { gap: 8px; }
+}
+</style>

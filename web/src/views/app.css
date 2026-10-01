@@ -188,3 +188,13 @@ input:focus-visible, textarea:focus-visible { outline: none; }
   background-color: rgba(255, 145, 0, .55);
   color: inherit;
 }
+
+/* ==================== 全局窄屏兜底（二梯队页面的公共破版点） ==================== */
+@media (max-width: 768px) {
+  /* 宽弹窗（图谱 860 / 各类表单 520+）收进视口，避免横向溢出 */
+  .ant-modal { max-width: calc(100vw - 16px) !important; margin: 8px auto !important; }
+  /* 未设 scroll.x 的 antd 表格内容超宽时横向滚动，而不是挤压/溢出容器 */
+  .ant-table-wrapper .ant-table-content { overflow-x: auto; }
+  /* 页头「标题 + 按钮组」折行（按钮多的页面如文档/知识库） */
+  .app-page-head { flex-wrap: wrap; row-gap: 8px; }
+}

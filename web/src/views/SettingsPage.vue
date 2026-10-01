@@ -99,7 +99,7 @@
                   <button class="app-btn ghost small" @click="keyKeyword = ''">清除搜索</button>
                 </div>
 
-                <a-table v-else :data-source="filteredKeys" size="small" row-key="id" :pagination="false">
+                <a-table v-else :data-source="filteredKeys" size="small" row-key="id" :pagination="false" :scroll="{ x: 900 }">
                   <a-table-column title="名称" key="name" ellipsis>
                     <template #default="{ record }">
                       <span class="key-name-wrap">
@@ -210,7 +210,7 @@
                         </button>
                       </a-tooltip>
                     </div>
-                    <a-table :data-source="auditRows" size="small" row-key="id" :pagination="false" :loading="auditLoading">
+                    <a-table :data-source="auditRows" size="small" row-key="id" :pagination="false" :loading="auditLoading" :scroll="{ x: 820 }">
                       <a-table-column title="时间" key="time" width="130">
                         <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.createdAt) }}</span></template>
                       </a-table-column>
