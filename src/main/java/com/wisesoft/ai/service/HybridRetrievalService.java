@@ -268,15 +268,33 @@ public class HybridRetrievalService {
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(configService.getInt("retrieval.searchTimeoutMs", 8000), TimeUnit.MILLISECONDS);
-            // 合并：同一 knowledgeId 保留 score 最高者（跨 query 分数同体系可直接 max）
+            // 合并：同一 knowledgeId 保留 score 最高者（跨 query 分数同体系可直接 max），
+            // 并统计每块被几个子查询命中——多路共识是强相关信号：只被一路命中的块可能是某次
+            // 改写的偶然召回，而多路都命中说明该块与问题的多个侧面都相关。
+            double consensusBonus = configService.getDouble("retrieval.multiConsensusBonus", 0.05);
             Map<String, Hit> merged = new LinkedHashMap<>();
+            Map<String, Integer> hitByQueries = new HashMap<>();
             for (CompletableFuture<List<Hit>> f : futures) {
                 List<Hit> hits = f.isDone() ? f.getNow(List.of()) : List.of();
                 for (Hit h : hits) {
+                    hitByQueries.merge(h.knowledgeId(), 1, Integer::sum);
                     merged.merge(h.knowledgeId(), h, (a, b) -> a.score() >= b.score() ? a : b);
                 }
             }
             List<Hit> result = new ArrayList<>(merged.values());
+            if (consensusBonus > 0) {
+                // 加成 = (命中路数-1) × bonus，封顶 2×bonus（3 路以上不再增长，防极端放大挤掉高分块）
+                for (int i = 0; i < result.size(); i++) {
+                    Hit h = result.get(i);
+                    int count = hitByQueries.getOrDefault(h.knowledgeId(), 1);
+                    if (count >= 2) {
+                        double bonus = Math.min(count - 1, 2) * consensusBonus;
+                        result.set(i, new Hit(h.knowledgeId(), h.docId(), h.title(), h.content(),
+                                h.images(), h.score() + bonus, h.chunkIndex(), h.titlePath(), h.rerankScore()));
+                        log.debug("[RAG] 多路共识加分: kid={} 命中路数={} bonus={}", h.knowledgeId(), count, bonus);
+                    }
+                }
+            }
             result.sort((a, b) -> Double.compare(b.score(), a.score()));
             return result;
         } catch (Exception e) {

@@ -421,22 +421,11 @@ public class RetrievalEvaluationService {
                 .toList();
     }
 
-    /** 深度思考多路近似：确定性拆子问题逐 query 检索，按 knowledgeId 保留最高分合并（等价 searchMulti 语义） */
+    /** 深度思考多路近似：确定性拆子问题后委托生产入口 searchMulti（并行 + 超时降级 + 多路共识加分）。
+     * 此前在此处独立复刻了一份"max 合并"——与生产的合并语义（A1 双命中叠加之后又加了共识加分）
+     * 必然漂移（同检索调试面板的教训：两处实现必然不一致），评测口径必须与生产同源。 */
     private List<HybridRetrievalService.Hit> multiSearch(String question) {
-        List<String> queries = subQueries(question);
-        Map<String, HybridRetrievalService.Hit> merged = new LinkedHashMap<>();
-        for (String q : queries) {
-            try {
-                for (HybridRetrievalService.Hit h : retrievalService.search(q)) {
-                    merged.merge(h.knowledgeId(), h, (a, b) -> a.score() >= b.score() ? a : b);
-                }
-            } catch (Exception e) {
-                log.debug("[Eval] 多路检索子路失败: {}", e.getMessage());
-            }
-        }
-        return merged.values().stream()
-                .sorted(Comparator.comparingDouble(HybridRetrievalService.Hit::score).reversed())
-                .toList();
+        return retrievalService.searchMulti(subQueries(question));
     }
 
     /** 子问题拆分：含连接词拆段；否则主问题 + 关键词词元组合（确定性近似，不调 LLM） */

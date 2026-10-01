@@ -251,9 +251,12 @@ public class ConfigService {
         d.put("context.historyPerMsgChars", String.valueOf(properties.getContext().getHistoryPerMsgChars()));
         d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
+        d.put("context.maxBlocksPerDoc", "3");             // 单文档块数配额（0=不限制；@ 引用块豁免）
         d.put("context.dedupEnabled", "true");             // 信息增益去冗余（默认开）
         d.put("context.dedupThreshold", "0.45");           // 词元重叠阈值（越高越宽松）
         d.put("context.dedupPathThreshold", "0.28");       // 同章节路径下重叠阈值
+        d.put("context.adjacentMergeEnabled", "true");     // 相邻块合并（同文档 chunk 连续命中拼接进上下文）
+        d.put("context.adjacentMergeMaxChunks", "3");      // 单次相邻合并的块数上限
         d.put("deepReasoning.enabled", String.valueOf(properties.getDeepReasoning().isEnabled()));
         d.put("deepReasoning.thinkingMode", properties.getDeepReasoning().getThinkingMode());
         d.put("deepReasoning.enableThinking", String.valueOf(properties.getDeepReasoning().isEnableThinking()));
@@ -277,6 +280,7 @@ public class ConfigService {
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
+        d.put("retrieval.multiConsensusBonus", "0.03");    // 深度思考多路检索的共识加分（被≥2个子查询命中的块；0=关；评测实测 0.03 最优）
         // 重排行为参数
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());

@@ -1029,6 +1029,23 @@ public class RagService {
                 // 子代理块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
                 if (h.knowledgeId() == null || seenKid.add(h.knowledgeId())) mainHits.add(h);
             }
+            // 相邻块合并（进上下文前的组装策略，不改检索结果本身）：同文档 chunk 序号连续的命中块
+            // 拼成一块再填充——切块常把一段完整流程切成相邻几片，逐块独立既碎片化又互相挤名额；
+            // 合并后一块讲完整个流程，引用编号也更省。@ 引用块不参与（保持"显式指定优先展示"语义）。
+            Set<String> adjacentMergedKids = new HashSet<>();
+            if (configService.getBoolean("context.adjacentMergeEnabled")) {
+                List<HybridRetrievalService.Hit> mergedList = mergeAdjacentHits(mainHits, mentionKids,
+                        Math.max(2, configService.getInt("context.adjacentMergeMaxChunks", 3)));
+                if (mergedList != mainHits) {
+                    // 合并块豁免片段截取（见填充循环）：相邻块是连续流程，150 字窗口恰好把完整性切没；
+                    // 长度由 token 预算兜底（超预算 break / 截断，见预算控制段）
+                    for (HybridRetrievalService.Hit h : mergedList) {
+                        if (!mentionKids.contains(h.knowledgeId())) adjacentMergedKids.add(h.knowledgeId());
+                    }
+                    log.debug("[CTX] 相邻块合并: {} 块 → {} 块", mainHits.size(), mergedList.size());
+                    mainHits = mergedList;
+                }
+            }
             // 关联块扩散已移除（对齐精简检索链路）：只使用主检索命中，不做引用关系扩散与父章节带出
             Map<String, String> refOrigins = new HashMap<>();
             List<HybridRetrievalService.Hit> allHits = new ArrayList<>(mainHits);
@@ -1059,6 +1076,9 @@ public class RagService {
             // 跳过不占 docNo/extra 配额（与去冗余同语义）。
             double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
             double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
+            // 单文档块数配额（0=不限制）：docId → 已进上下文的块数
+            int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
+            Map<String, Integer> docBlockCount = new HashMap<>();
             List<Set<String>> selectedTermSets = new ArrayList<>();
             List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
@@ -1073,6 +1093,14 @@ public class RagService {
                 // 最低相关分门：排序分（重排分??融合分，与填充顺序同口径）低于阈值的块不进上下文/引用，不占名额
                 // @ 引用块（用户显式指定）豁免门与去冗余：用户说它相关，算法没有否决权
                 boolean mentioned = hit.knowledgeId() != null && mentionKids.contains(hit.knowledgeId());
+                // 单文档配额：同一文档最多进 maxBlocksPerDoc 块（0=不限制）——一个文档讲不清的问题才需要
+                // 多来源；单文档刷屏挤掉的正是「其它文档的视角」。@ 引用块豁免（显式指定不受算法约束）。
+                if (!mentioned && maxBlocksPerDoc > 0 && hit.docId() != null && !hit.docId().isBlank()
+                        && docBlockCount.merge(hit.docId(), 1, Integer::sum) > maxBlocksPerDoc) {
+                    log.debug("[CTX] 单文档配额跳过: docId={} kid={} title={}",
+                            hit.docId(), hit.knowledgeId(), hit.title());
+                    continue;
+                }
                 double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();
                 // 分域取门：rerank 分走 minContextScore，融合分走 minFusionScore（两域分布不同，见上方说明）
                 double gate = hit.rerankScore() != null ? minRerankGate : minFusionGate;
@@ -1129,9 +1157,11 @@ public class RagService {
                 matcher.appendTail(sb);
                 text = sb.toString();
 
-                // 块内片段截取：按检索词元定位命中位置，取 ±窗口（省 token 保精度；未命中则整块）
+                // 块内片段截取：按检索词元定位命中位置，取 ±窗口（省 token 保精度；未命中则整块）。
+                // 相邻合并块豁免：多段拼接的完整流程被窗口截回第一段附近，合并就白做了——
+                // 长度由预算控制兜底（超预算 break/截断），信息量不低于"3 块各截 150 字"的旧形态。
                 String fullTextForImg = text; // 截取前的完整文本（占位已替换为 [图片N：desc]）
-                if (snippetWindow > 0) {
+                if (snippetWindow > 0 && !adjacentMergedKids.contains(hit.knowledgeId())) {
                     text = extractHitSnippet(fullTextForImg, retrievalTerms, snippetWindow);
                     // 片段截取会丢掉窗口外的 [图片N：描述] 占位 → LLM 看不到图、漏配图。
                     // 把片段里没有的图片占位（描述截断到 60 字符）追加到片段末尾，保证 LLM 有完整配图依据
@@ -3228,6 +3258,79 @@ public class RagService {
         // 剥离图片标记与【上下文】章节路径前缀（结构切分注入，不展示给用户）
         String s = content.replaceAll("\\[图片[^\\]]*\\]|【上下文】[^\\n]*\\n?", " ").trim();
         return s.length() > SNIPPET_LEN ? s.substring(0, SNIPPET_LEN) + "…" : s;
+    }
+
+    /**
+     * 相邻块合并（纯函数，供单测）：把同文档 chunk 序号连续（间隔 ≤1）的命中块按序拼成一块。
+     * <ul>
+     *   <li>豁免块（@ 引用等显式指定）不参与合并、原位保留；</li>
+     *   <li>合并块内容按 chunkIndex 升序以空行拼接，分数/重排分取 run 内最高（合并块代表整段
+     *       流程的相关性，不该低于任何成员，避免被相关性门误杀）；图片列表按序拼接；</li>
+     *   <li>run 长度受 maxChunks 限制——超长 run 截断后，剩余成员从断点继续扫描（可再成新 run），
+     *       防止把整章拼成一块吃掉全部上下文预算；</li>
+     *   <li>合并块占用 run 首块在原列表中的位置（不打乱原相关性排序），其余成员移除。</li>
+     * </ul>
+     * 只影响上下文组装，不改检索结果本身（评估/调试面板看到的是原始召回）。
+     */
+    public static List<HybridRetrievalService.Hit> mergeAdjacentHits(
+            List<HybridRetrievalService.Hit> hits, Set<String> exemptKids, int maxChunks) {
+        if (hits == null || hits.size() < 2 || maxChunks < 2) return hits;
+        List<HybridRetrievalService.Hit> sortable = new ArrayList<>();
+        for (HybridRetrievalService.Hit h : hits) {
+            boolean exempt = h.knowledgeId() != null && exemptKids.contains(h.knowledgeId());
+            if (!exempt && h.docId() != null && !h.docId().isBlank()
+                    && h.chunkIndex() != null && h.content() != null && !h.content().isBlank()) {
+                sortable.add(h);
+            }
+        }
+        if (sortable.size() < 2) return hits;
+        sortable.sort(java.util.Comparator
+                .comparing((HybridRetrievalService.Hit h) -> h.docId())
+                .thenComparingInt(HybridRetrievalService.Hit::chunkIndex));
+        Map<String, HybridRetrievalService.Hit> mergedByKid = new HashMap<>();
+        Set<String> consumedKids = new HashSet<>();
+        int i = 0;
+        while (i < sortable.size()) {
+            HybridRetrievalService.Hit first = sortable.get(i);
+            int j = i + 1;
+            while (j < sortable.size()
+                    && sortable.get(j).docId().equals(first.docId())
+                    && sortable.get(j).chunkIndex() - sortable.get(j - 1).chunkIndex() == 1
+                    && j - i < maxChunks) {
+                j++;
+            }
+            if (j - i >= 2) {
+                StringBuilder sb = new StringBuilder();
+                double bestScore = 0, bestRerank = -1;
+                boolean hasRerank = false;
+                List<String> mergedImgs = new ArrayList<>();
+                for (int t = i; t < j; t++) {
+                    HybridRetrievalService.Hit part = sortable.get(t);
+                    if (t > i) sb.append("\n\n");
+                    sb.append(part.content());
+                    bestScore = Math.max(bestScore, part.score());
+                    if (part.rerankScore() != null) {
+                        hasRerank = true;
+                        bestRerank = Math.max(bestRerank, part.rerankScore());
+                    }
+                    if (part.images() != null) mergedImgs.addAll(part.images());
+                    if (t > i) consumedKids.add(part.knowledgeId());
+                }
+                mergedByKid.put(first.knowledgeId(), new HybridRetrievalService.Hit(
+                        first.knowledgeId(), first.docId(), first.title(), sb.toString(),
+                        mergedImgs, bestScore, first.chunkIndex(), first.titlePath(),
+                        hasRerank ? bestRerank : null));
+            }
+            i = j;
+        }
+        if (mergedByKid.isEmpty()) return hits;
+        List<HybridRetrievalService.Hit> rebuilt = new ArrayList<>(hits.size());
+        for (HybridRetrievalService.Hit h : hits) {
+            if (consumedKids.contains(h.knowledgeId())) continue;
+            HybridRetrievalService.Hit m = mergedByKid.get(h.knowledgeId());
+            rebuilt.add(m != null ? m : h);
+        }
+        return rebuilt;
     }
 
     /**

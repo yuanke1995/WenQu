@@ -1130,6 +1130,23 @@
       "tier": 2
     },
     {
+      "backendKey": "retrieval.multiConsensusBonus",
+      "panel": "retrieval",
+      "section": 1,
+      "group": "retrieval",
+      "key": "multiConsensusBonus",
+      "path": "retrieval.multiConsensusBonus",
+      "label": "多路共识加分",
+      "type": "number",
+      "def": 0.03,
+      "min": 0,
+      "max": 0.3,
+      "step": 0.01,
+      "width": 200,
+      "note": "深度思考多路检索时，被多个子查询同时命中的块获得加成（第 2 路起每多一路 +该值，封顶 2 倍）——多路共识是强相关信号；0=关闭。评测实测（24 case）：0.03 时 MRR +0.022、recall@5 +0.014 综合最优；0.05 过强反致 MRR -0.006（重叠噪声块被顶过高）",
+      "tier": 3
+    },
+    {
       "backendKey": "retrieval.queryRewriteEnabled",
       "panel": "retrieval",
       "section": 1,
@@ -1369,6 +1386,21 @@
       "tier": 2
     },
     {
+      "backendKey": "context.maxBlocksPerDoc",
+      "panel": "context",
+      "section": 1,
+      "group": "context",
+      "key": "maxBlocksPerDoc",
+      "path": "context.maxBlocksPerDoc",
+      "label": "单文档块数配额",
+      "type": "number",
+      "def": 3,
+      "min": 0,
+      "width": 200,
+      "note": "同一文档最多进上下文的块数（0=不限制）：防止单一文档占满全部名额挤掉其它来源；@ 引用块豁免（用户显式指定不受配额约束）",
+      "tier": 2
+    },
+    {
       "backendKey": "context.dedupEnabled",
       "panel": "context",
       "section": 2,
@@ -1381,6 +1413,36 @@
       "def": true,
       "note": "跳过与已选块语义重复的候选块（同一操作被切成多块时只保留最高相关那块，防重复进上下文与表述不一致）",
       "tier": 2
+    },
+    {
+      "backendKey": "context.adjacentMergeEnabled",
+      "panel": "context",
+      "section": 2,
+      "group": "context",
+      "key": "adjacentMergeEnabled",
+      "path": "context.adjacentMergeEnabled",
+      "label": "相邻块合并",
+      "type": "switch",
+      "def": true,
+      "width": 200,
+      "note": "同文档 chunk 序号连续的命中块合并为一块再进上下文（内容按序拼接）：文档切块常把一段完整流程切成相邻几片，逐块独立进上下文既碎又互相挤名额；合并后一块讲完整个流程，引用也只占一个编号",
+      "tier": 2
+    },
+    {
+      "backendKey": "context.adjacentMergeMaxChunks",
+      "panel": "context",
+      "section": 2,
+      "group": "context",
+      "key": "adjacentMergeMaxChunks",
+      "path": "context.adjacentMergeMaxChunks",
+      "label": "合并块数上限",
+      "type": "number",
+      "def": 3,
+      "min": 2,
+      "max": 8,
+      "width": 200,
+      "note": "单次相邻合并最多拼进几块（防止把整章拼成一块吃掉全部上下文预算）",
+      "tier": 3
     },
     {
       "backendKey": "context.dedupThreshold",
