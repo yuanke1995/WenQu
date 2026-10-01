@@ -105,9 +105,17 @@ public class McpClientService {
      * 某用户的服务一览：每条服务的名称/地址/类型/启停/连接状态/可用工具。
      * 没登记服务时返回空列表（前端据此显示"还没有 MCP 服务"）。
      *
-     * @param uid 归属用户
+     * <p>两个读取档位：{@code verifyOnline=true} 对每个已连接服务同步发一次 listTools 在线校验
+     * （远程 IO，单请求 1s~3.5s+、远端挂起要吃满 60s 请求超时）——MCP 管理页要"此刻真实状态"，
+     * 值得付这个代价；{@code verifyOnline=false} 只读连接池里最近一次已知状态与配置清单
+     * （纯本地内存）。只想拿服务清单的消费方（如智能体页填充「MCP 外部工具」下拉）一律走这档：
+     * 曾把在线校验无条件织进本接口，智能体页每次进入都被远程 MCP 的延迟劫持（整页
+     * Promise.all 等它，转圈数秒起步）。
+     *
+     * @param uid          归属用户
+     * @param verifyOnline true=对已连接服务做在线校验（可把"假绿"翻成失败）；false=只报最近已知状态
      */
-    public List<Map<String, Object>> serverStatuses(String uid) {
+    public List<Map<String, Object>> serverStatuses(String uid, boolean verifyOnline) {
         if (uid == null || uid.isBlank()) return List.of();
         UserPool pool = ensureConnections(uid);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -130,7 +138,7 @@ public class McpClientService {
                 // 客户端发一次 listTools 取工具列表，这里把它当作在线校验：失败就把状态翻成 failed
                 // （而不是被 catch 吞掉继续显示绿色），成功则保持 connected（若上轮因瞬时错误被误标
                 // failed，这一刻也会自动恢复）。改配置/空闲回收重建连接时另走 ensureConnections 重连。
-                if ("connected".equals(disp)) {
+                if (verifyOnline && "connected".equals(disp)) {
                     McpSyncClient c = pool.clients.get(row.getName());
                     if (c == null) {
                         pool.states.put(row.getName(), "failed:连接已失效");

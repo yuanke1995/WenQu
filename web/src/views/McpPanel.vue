@@ -177,7 +177,8 @@ const apply = d => {
 const loadStatus = async (retry = false) => {
   loading.value = true
   try {
-    const r = await getMcpStatus(retry)
+    // 本页要的是「此刻真实状态」：恒带 verifyOnline=true 在线校验（别的消费方别学——智能体页只要服务清单）
+    const r = await getMcpStatus(retry, true)
     if (r.success) apply(r.data)
   } catch (e) { message.error(e.message || '状态加载失败') }
   finally { loading.value = false }

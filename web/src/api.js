@@ -356,8 +356,16 @@ export async function downloadDocumentSource (id, fileName) {
 export const getToolInventory = () => request('/tools')
 
 // ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
-/** retryBroken=true：先对未连上的服务补一次重连再出列表（MCP 页点「刷新」用；默认只读状态） */
-export const getMcpStatus = retry => request('/mcp/status' + (retry ? '?retryBroken=true' : ''))
+/** retryBroken=true：先对未连上的服务补一次重连再出列表（MCP 页点「刷新」用）；
+ *  verifyOnline=true：对已连接服务做在线校验（远程 listTools，慢）——只有 MCP 管理页要"此刻真实状态"
+ *  时才传；只需要服务清单/最近状态的调用方（如智能体页填充下拉）别传，否则页面加载会被远程 MCP
+ *  的握手延迟拖住（context7 单请求 1~3.5s+，远端挂起要吃满 60s 超时）。默认后端只读本地已知状态 */
+export const getMcpStatus = (retry, verifyOnline) => {
+  const qs = []
+  if (retry) qs.push('retryBroken=true')
+  if (verifyOnline) qs.push('verifyOnline=true')
+  return request('/mcp/status' + (qs.length ? '?' + qs.join('&') : ''))
+}
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
 export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', body: JSON.stringify({ url, type }) })
 export const addMcpServer = body => request('/mcp/servers', { method: 'POST', body: JSON.stringify(body) })
