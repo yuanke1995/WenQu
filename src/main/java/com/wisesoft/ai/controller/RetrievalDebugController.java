@@ -6,6 +6,7 @@ import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.service.DocumentMetaCache;
 import com.wisesoft.ai.service.HybridRetrievalService;
+import com.wisesoft.ai.service.KnowledgeBaseService;
 import com.wisesoft.ai.service.KeywordExtractor;
 import com.wisesoft.ai.service.RerankService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,16 +38,22 @@ public class RetrievalDebugController {
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
     private final KnowledgeMapper knowledgeMapper;
+    private final KnowledgeBaseService kbService;
 
     @Operation(summary = "检索链路调试",
-            description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题")
+            description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）")
     @PostMapping("/retrieval")
     public ResultJson debug(
-            @Parameter(description = "{\"question\": \"检索问题\"}")
-            @RequestBody Map<String, String> body) {
-        String query = body.get("question");
-        if (query == null || query.isBlank()) {
+            @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")
+            @RequestBody Map<String, Object> body) {
+        String query = body.get("question") == null ? "" : String.valueOf(body.get("question"));
+        if (query.isBlank()) {
             throw new BizException("请输入问题");
+        }
+        // 可选库范围（对照实验：同一问题在文本抽取库 vs OCR 库分别检索对比）
+        java.util.Collection<String> kbIds = null;
+        if (body.get("kbIds") instanceof List<?> l && !l.isEmpty()) {
+            kbIds = l.stream().map(String::valueOf).filter(s -> !s.isBlank()).toList();
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("query", query);
@@ -67,8 +74,8 @@ public class RetrievalDebugController {
             return m;
         }).toList());
 
-        // 2. 向量命中（相似度分）
-        List<Document> vectorDocs = hybridRetrievalService.vectorSearch(query);
+        // 2. 向量命中（相似度分；kbIds 限定库范围与 merged 段一致）
+        List<Document> vectorDocs = hybridRetrievalService.vectorSearch(query, null, kbIds);
         result.put("vectorHits", vectorDocs.stream().map(doc -> {
             Map<String, Object> m = new LinkedHashMap<>();
             String kid = String.valueOf(doc.getId());
@@ -94,8 +101,16 @@ public class RetrievalDebugController {
             return m;
         }).toList());
 
-        // 3. 合并（RagService 实际使用的检索结果）
-        List<HybridRetrievalService.Hit> merged = hybridRetrievalService.search(query);
+        // 3. 合并（RagService 实际使用的检索结果；kbIds 限定库范围——对照实验/单库排查）
+        List<HybridRetrievalService.Hit> merged = hybridRetrievalService.search(query, null, kbIds);
+        if (kbIds != null) {
+            // 关键词路不受 kbIds 约束（产品现状：向量路按库索引过滤，关键词路全库）——
+            // 按目标库的文档集合后过滤，与主链路 scopeKbIds（向量路）+ scopeDocIds（合并后）的组合口径一致
+            Set<String> scopeDocs = new HashSet<>(kbService.docIdsOf(new java.util.ArrayList<>(kbIds)));
+            merged = merged.stream()
+                    .filter(h -> h.docId() != null && scopeDocs.contains(h.docId()))
+                    .toList();
+        }
         result.put("merged", merged.stream().map(this::hitMap).toList());
 
         // 4. 重排（与生产链路同一入口，判定单一来源）：RerankService.rank 内含完整口径——
@@ -140,6 +155,8 @@ public class RetrievalDebugController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("knowledgeId", h.knowledgeId());
         m.put("title", h.title());
+        m.put("docId", h.docId());
+        m.put("chunkIndex", h.chunkIndex());
         m.put("docName", documentMetaCache.getFileName(h.docId()));
         m.put("score", Math.round(h.score() * 100.0) / 100.0);
         // 重排分（未重排的候选为 null）：融合分与重排分是两个分域，必须分别展示，
