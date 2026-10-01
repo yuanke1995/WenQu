@@ -17,6 +17,10 @@
         <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
           <link-outlined /> 网页导入
         </button>
+        <!-- 知识库配置直达：解析/检索参数就地改，不用回知识库列表页 -->
+        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
+          <setting-outlined /> 知识库配置
+        </button>
         <a-upload v-if="canManageCurrentKb" :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
           <button class="app-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
         </a-upload>
@@ -335,6 +339,9 @@
     <ShareScopeModal v-model:open="shareVisible" resource-label="文档" read-verb="查看并检索"
                      :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="fetchList" />
 
+    <!-- 知识库配置（与知识库列表页同一弹窗组件）：当前库的解析/检索参数就地改，保存后刷新库信息 -->
+    <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" @saved="fetchKbs" />
+
     <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
       <img :src="kbImgUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
@@ -352,7 +359,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined } from '@ant-design/icons-vue'
+import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
@@ -361,6 +368,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
          getDocumentQueueStats } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
+import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
 import { isAdminSync, ensureAuth } from '../utils/auth'
@@ -417,6 +425,18 @@ const currentKbName = computed(() => {
   const k = kbases.value.find(x => x.id === currentKbId.value)
   return k ? k.name : '知识库'
 })
+
+// ==================== 知识库配置（文档列表页直达） ====================
+// 当前库行对象来自 fetchKbs 的列表缓存（含 parseParams/queryParams），弹窗组件据此回填表单
+const kbCfgVisible = ref(false)
+const currentKb = computed(() => kbases.value.find(x => x.id === currentKbId.value) || null)
+const openKbConfig = () => {
+  if (!currentKb.value) {
+    message.warning('知识库信息尚未加载完成，请稍候重试')
+    return
+  }
+  kbCfgVisible.value = true
+}
 
 const list = ref([])
 const currentDoc = ref(null)   // 当前打开抽屉（知识块/版本）的文档行：判定行内管理按钮显隐
