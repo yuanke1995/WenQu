@@ -3,7 +3,7 @@
     <!-- 左侧边栏：logo / 导航 / 最近会话 / 底部用户区（可折叠为图标条） -->
     <aside class="side" :class="{ collapsed }">
       <div class="side-logo">
-        <span class="logo-mark">渠</span>
+        <BrandMark :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
         <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
           <menu-unfold-outlined v-if="collapsed" />
@@ -158,6 +158,7 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
 import { themeState, toggleTheme } from '../utils/theme'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
+import BrandMark from '../components/BrandMark.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -401,17 +402,14 @@ onMounted(async () => {
 .side-logo { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
 /* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 隐藏 logo、按钮居中 */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
-.side.collapsed .logo-mark { display: none; }
+.side.collapsed .side-logo svg { display: none; }
 /* 折叠态导航图标对齐到侧边栏中轴（实测导航图标左偏 4px） */
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
 /* 折叠态：底部改为竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
    横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
 .side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
-.logo-mark {
-  width: 24px; height: 24px; border-radius: 6px; background: var(--app-text);
-  color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none;
-}
+/* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
 .fold { margin-left: auto; }
 .side.collapsed .fold { margin-left: 0; }
@@ -562,7 +560,7 @@ onMounted(async () => {
 }
 @media (max-width: 768px) {
   .side { width: 56px; padding: 10px 4px; }
-  .side .logo-mark { display: none; }
+  .side .side-logo svg { display: none; }
   .side .side-logo { justify-content: center; padding: 2px 0 12px; }
   .side .fold { margin-left: 0; }
   .side .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }

@@ -2,7 +2,7 @@
   <div class="oidc-wrap">
     <div class="oidc-card">
       <div class="oidc-brand">
-        <span class="brand-mark">渠</span>
+        <BrandMark :size="32" class="brand-mark" />
         <div>
           <div class="brand-name">问渠</div>
           <div class="brand-slogan">答案，自有源头 · Ask the source.</div>
@@ -31,6 +31,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { exchangeOidcCode } from '../api'
 import { setToken, ensureAuth } from '../utils/auth'
+import BrandMark from '../components/BrandMark.vue'
 import './app.css'
 
 const route = useRoute()
@@ -81,10 +82,8 @@ function backToLogin () {
   border-radius: 14px; padding: 26px 26px 22px; box-shadow: 0 6px 24px rgba(31, 35, 41, .06);
 }
 .oidc-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-.brand-mark {
-  width: 32px; height: 32px; border-radius: 9px; background: var(--app-text, var(--app-text)); color: #fff;
-  display: inline-flex; align-items: center; justify-content: center; font-size: 15px; flex: none;
-}
+/* 品牌标 = BrandMark 组件（自带圆角与品牌渐变） */
+.brand-mark { flex: none; display: block; }
 .brand-name { font-size: 14px; font-weight: 500; }
 .brand-slogan { font-size: 11px; color: var(--app-text3, var(--app-text3)); }
 .oidc-title { font-size: 16px; font-weight: 500; margin: 0 0 2px; }

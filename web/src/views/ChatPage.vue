@@ -35,7 +35,7 @@
 
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
-          <div class="welcome-mark">渠</div>
+          <BrandMark :size="44" class="welcome-mark" />
           <h2>有什么可以帮你？</h2>
           <p>智能体与知识库问答，支持图片提问与深度思考</p>
           <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析） -->
@@ -790,6 +790,7 @@ import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import ModelSelect from '../components/ModelSelect.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
+import BrandMark from '../components/BrandMark.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -3049,10 +3050,8 @@ onMounted(async () => {
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }
 .welcome { text-align: center; padding: 72px 20px 40px; }
-.welcome-mark {
-  width: 44px; height: 44px; border-radius: 12px; background: var(--app-text); color: #fff;
-  font-size: 20px; display: inline-flex; align-items: center; justify-content: center;
-}
+/* 品牌标 = BrandMark 组件（自带圆角与品牌渐变），留出与标题的间距 */
+.welcome-mark { display: block; margin: 0 auto; }
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
 .welcome p { color: var(--app-text3); margin: 0 0 18px; }
 

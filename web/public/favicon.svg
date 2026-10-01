@@ -1,0 +1,14 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 问渠产品图标：蓝渐变圆角方 + 三道活水波线 + 源头圆点（问渠那得清如许？为有源头活水来） -->
+  <defs>
+    <linearGradient id="wq-brand-g" x1="14" y1="4" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5E93F5"/>
+      <stop offset="1" stop-color="#2A5FE0"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#wq-brand-g)"/>
+  <circle cx="46" cy="16.5" r="3.6" fill="#fff"/>
+  <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+  <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+  <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+</svg>
