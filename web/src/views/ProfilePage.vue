@@ -11,8 +11,23 @@
         </button>
       </nav>
       <section class="pf-content">
+        <!-- 个人资料（自助：仅昵称，uid 不可改） -->
+        <div v-if="current === 'profile'" class="app-card pf-card">
+          <h2 class="app-card-title">个人资料</h2>
+          <p class="pf-hint">
+            昵称显示在侧边栏与成员列表，同时也是登录标识之一（可用 uid 或昵称登录）。
+            登录账号（uid）不可修改。
+          </p>
+          <div class="pf-row">
+            <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear style="width:320px"
+                     placeholder="显示名称，如 张三" @pressEnter="saveNickname" />
+            <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
+          </div>
+          <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
+        </div>
+
         <!-- 各类型个人默认模型面板 -->
-        <div v-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
+        <div v-else-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
           <div class="pf-row">
@@ -50,9 +65,17 @@
         <div v-else-if="current === 'memory'" class="app-card pf-card">
           <h2 class="app-card-title">我的长期记忆</h2>
           <p class="pf-hint">
-            系统会在每轮问答后自动提炼值得长期记住的信息（偏好、项目背景、明确要求记住的事），
+            开启时，系统会在每轮问答后自动提炼值得长期记住的信息（偏好、项目背景、明确要求记住的事），
             并在你之后的对话中自动带上。这里可以查看、修改、删除——删掉的就永远不会再被提起。
           </p>
+          <!-- 用户级开关：仅控制「自动生成」，已存记忆的注入不受影响（逐条删除即可） -->
+          <div class="pf-row mem-auto-row">
+            <div class="mem-auto-text">
+              <div class="mem-auto-title">自动提炼记忆</div>
+              <div class="pf-sub-hint">关闭后不再从你的对话中自动生成新记忆；已存的记忆仍会注入，可逐条删除。</div>
+            </div>
+            <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
+          </div>
           <div class="pf-row" style="margin-bottom:12px">
             <a-input v-model:value="memDraft" :maxlength="500" allow-clear style="flex:1"
                      placeholder="手动添加一条记忆，如：我负责 XX 系统的运维" @pressEnter="addMemory" />
@@ -93,20 +116,21 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { clearAuth } from '../utils/auth'
-import { changePasswordApi, getUserPreference, setUserPreference,
+import { clearAuth, ensureAuth } from '../utils/auth'
+import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 
 const router = useRouter()
 
 const navs = [
+  { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '聊天模型' },
   { key: 'vision', label: '视觉模型' },
   { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
 ]
-const current = ref('chat')
+const current = ref('profile')
 
 const PANELS = {
   chat: {
@@ -136,6 +160,8 @@ const load = async () => {
       defaultModel: d.defaultModel || '',
       defaultVisionModel: d.defaultVisionModel || ''
     }
+    // 用户级记忆开关（后端口径：null 视为开）
+    memAutoEnabled.value = d.memoryEnabled !== false
   } catch (e) { /* 拉取失败保持空（未设默认） */ }
   finally { loading.value = false }
 }
@@ -173,6 +199,40 @@ const submitPwd = async () => {
     }
   } catch (e) { message.error(e.message || '修改失败') }
   finally { pwdSaving.value = false }
+}
+
+// ---- 个人资料：昵称（自助修改；保存后刷新身份缓存，侧栏名立即同步） ----
+const nickSaving = ref(false)
+const nickForm = ref({ username: '' })
+const saveNickname = async () => {
+  const name = nickForm.value.username.trim()
+  if (!name) return
+  nickSaving.value = true
+  try {
+    const r = await updateMyProfile(name)
+    if (r && r.success !== false) {
+      message.success('昵称已保存')
+      await ensureAuth(true) // 刷新 /auth/me 缓存 → AppLayout 的 computed userName 立即跟着变
+    } else message.error(r?.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
+  finally { nickSaving.value = false }
+}
+
+// ---- 长期记忆：用户级自动提炼开关（仅关生成，不关注入） ----
+const memAutoEnabled = ref(true)
+const memAutoSaving = ref(false)
+const toggleMemAuto = async checked => {
+  memAutoSaving.value = true
+  try {
+    const r = await setUserPreference({ memoryEnabled: checked })
+    if (r && r.success !== false) {
+      memAutoEnabled.value = checked
+      message.success(checked ? '已开启自动提炼记忆' : '已关闭自动提炼记忆')
+    } else { message.error(r?.msg || '保存失败'); await load() }
+  } catch (e) {
+    message.error(e.message || '保存失败')
+    await load() // 回落服务端状态，避免开关与服务端不一致
+  } finally { memAutoSaving.value = false }
 }
 
 // ---- 长期记忆：列表 / 手动添加 / 编辑 / 删除（注入与自动提取在后端完成） ----
@@ -224,7 +284,11 @@ const removeMemory = async m => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-onMounted(() => { load(); loadMemories() })
+onMounted(() => {
+  load()
+  loadMemories()
+  ensureAuth().then(me => { nickForm.value.username = me.username || '' })
+})
 </script>
 
 <style scoped>
@@ -249,4 +313,9 @@ onMounted(() => { load(); loadMemories() })
 .mem-tag { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
 .mem-src { background: var(--app-panel-2); color: var(--app-text3); }
 .mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
+/* 自动提炼开关行：左说明右开关，与手动添加行之间留分隔 */
+.mem-auto-row { padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); }
+.mem-auto-text { flex: 1; min-width: 0; }
+.mem-auto-title { font-size: 13px; color: var(--app-text); font-weight: 500; margin-bottom: 2px; }
+.mem-auto-row .pf-sub-hint { margin: 0; }
 </style>

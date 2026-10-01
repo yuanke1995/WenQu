@@ -45,7 +45,7 @@
           <button class="batch-btn" @click="exitBatchMode">完成</button>
         </span>
       </div>
-      <!-- 会话列表为游标分页：默认 10 条，点底部「查看更多」每次再渲染 20 条；
+      <!-- 会话列表为游标分页：默认 20 条，点底部「查看更多」每次再渲染 20 条；
            组头数字是后端全量口径，不随加载进度漂移 -->
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
@@ -94,7 +94,7 @@
             </template>
           </template>
           <!-- 增量加载入口（居左，内边距与会话行对齐）：查看更多 (N)=剩余可展示条数；
-               点过查看更多后出现「收起」，一键还原首屏 10 条 -->
+               点过查看更多后出现「收起」，一键还原首屏 20 条 -->
           <div v-if="(sessionStore.hasMore || sessionStore.expanded) && !collapsed" class="sess-more">
             <a-spin v-if="sessionStore.loadingMore" size="small" />
             <template v-else>
@@ -129,7 +129,14 @@
         </a-tooltip>
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
-            <bulb-filled v-if="themeState === 'dark'" /><bulb-outlined v-else />
+            <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色），替代原先的灯泡 -->
+            <svg v-if="themeState === 'dark'" class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+            </svg>
+            <svg v-else class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
           </button>
         </a-tooltip>
         <a-tooltip title="退出登录" placement="right">
@@ -153,10 +160,10 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined,
-         BulbOutlined, BulbFilled, RightOutlined } from '@ant-design/icons-vue'
+         RightOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
-import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
+import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import { exportSessionMarkdown } from './exportMd'
@@ -165,7 +172,11 @@ import './app.css'
 const route = useRoute()
 const router = useRouter()
 const isAdmin = ref(isAdminSync())
-const userName = ref('')
+// 侧栏显示名：读 auth.js 的响应式镜像——个人设置改完昵称 ensureAuth(true) 后这里立即跟着变，无需刷新
+const userName = computed(() => {
+  const i = authUser.value
+  return ((i && (i.username || i.user)) || '')
+})
 
 // 侧边栏菜单：/auth/me 下发的菜单树（顶级渲染为导航项；子级预留，当前侧边栏一层平铺）
 const ICONS = {
@@ -381,7 +392,6 @@ const doLogout = async () => {
 onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
-  userName.value = (info && (info.username || info.user)) || ''
   navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
   loadSessions()
 })

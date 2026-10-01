@@ -1,6 +1,7 @@
 package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.mapper.DepartmentMapper;
 import com.wisesoft.ai.mapper.UserMapper;
@@ -154,16 +155,19 @@ public class OrgService {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("defaultModel", u == null ? null : u.getDefaultModel());
         m.put("defaultVisionModel", u == null ? null : u.getDefaultVisionModel());
+        // 用户级长期记忆开关（null=历史行缺省，视为开）：个人设置「长期记忆」页开关数据源
+        m.put("memoryEnabled", u == null || !Integer.valueOf(0).equals(u.getMemoryEnabled()));
         m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT, uid, role));
         return m;
     }
 
     /**
-     * 设置个人默认模型（二元组全量保存）：每个值 null=不修改，空串=清除，引用=设置。
-     * 校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
+     * 设置个人偏好（多槽位，字段缺省(null)=不修改，空串=清除）：
+     * 个人默认模型校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
+     * memoryEnabled=用户级长期记忆自动提炼开关（Boolean，null=不修改）。
      * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排个人默认已退役（归知识库检索设置）。
      */
-    public void setPreference(String uid, String chatRef, String visionRef) {
+    public void setPreference(String uid, String chatRef, String visionRef, Boolean memoryEnabled) {
         User u = userMapper.selectById(uid);
         if (u == null) throw new BizException("用户不存在");
         String role = u.getRole();
@@ -177,10 +181,29 @@ public class OrgService {
             validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉", uid, role);
             u.setDefaultVisionModel(v.isEmpty() ? null : v);
         }
+        if (memoryEnabled != null) {
+            u.setMemoryEnabled(Boolean.TRUE.equals(memoryEnabled) ? 1 : 0);
+        }
         userMapper.updateById(u);
-        log.info("[AUDIT] 个人默认模型已更新 uid={} chat={} vision={}", uid,
+        log.info("[AUDIT] 个人偏好已更新 uid={} chat={} vision={} memoryEnabled={}", uid,
                 chatRef == null ? "(未改)" : chatRef.isBlank() ? "(清空)" : chatRef,
-                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef);
+                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef,
+                memoryEnabled == null ? "(未改)" : memoryEnabled);
+    }
+
+    /**
+     * 本人修改昵称（username 即显示名称，也是登录标识之一；uid 不可改）。
+     * 只动 username 一列（LambdaUpdateWrapper 窄更新，避免整实体回写与他人并发改其它列互相覆盖）。
+     */
+    public void updateOwnProfile(String uid, String username) {
+        if (uid == null || uid.isBlank()) throw new BizException("未登录");
+        String name = normalizeName(username, "昵称");
+        if (userMapper.selectById(uid) == null) throw new BizException("用户不存在");
+        ensureUsernameUnique(name, uid);
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getUid, uid)
+                .set(User::getUsername, name));
+        log.info("[AUDIT] 用户修改昵称 uid={} username={}", uid, name);
     }
 
     /** 校验个人默认模型引用：存在、对本人可用、且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */

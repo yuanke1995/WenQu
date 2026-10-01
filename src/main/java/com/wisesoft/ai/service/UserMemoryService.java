@@ -6,7 +6,9 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.mapper.UserMemoryMapper;
+import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.model.UserMemory;
 import com.wisesoft.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +31,9 @@ import java.util.stream.Collectors;
  * 写入两条路 + 一条注入：
  * <ul>
  *   <li><b>自动提取</b>（{@link #maybeExtract}）：每轮问答完成后**异步**调 LLM 提炼值得长期
- *       记住的事实（偏好/项目背景/明确要求记住的事），最多 3 条；best-effort 失败仅日志；</li>
+ *       记住的事实（偏好/项目背景/明确要求记住的事），最多 3 条；best-effort 失败仅日志；
+ *       受两级开关控制：全局 {@code memory.enabled}（管理端配置）+ 用户级
+ *       {@code c_ai_user.memory_enabled}（个人设置「自动提炼记忆」，仅关生成，不关注入）；</li>
  *   <li><b>手动管理</b>（addManual/updateContent/delete）：个人设置页增删改，自动提取的条目
  *       记录来源会话便于溯源删除；</li>
  *   <li><b>注入</b>（{@link #injectText}）：每轮问答把本人记忆按预算拼进 system prompt，
@@ -45,6 +49,7 @@ import java.util.stream.Collectors;
 public class UserMemoryService {
 
     private final UserMemoryMapper memoryMapper;
+    private final UserMapper userMapper;
     private final ConfigService configService;
     /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，模型名由调用方 per-request 显式传入） */
     private final ChatModel chatModel;
@@ -59,6 +64,22 @@ public class UserMemoryService {
 
     private boolean enabled() {
         return configService.getBoolean("memory.enabled");
+    }
+
+    /**
+     * 用户级开关（个人设置「长期记忆 → 自动提炼记忆」，c_ai_user.memory_enabled）：
+     * 仅显式 0 视为关闭，1/null（历史行加列前的缺省口径）一律视为开启。
+     * 读取失败按开启处理并告警——本方法处于「绝不影响问答主链路」的 best-effort 契约内，
+     * 若让异常抛出会打断 done 回调链（reactor onErrorDropped 坑），与既有 enabled() 等判断同层级。
+     */
+    private boolean autoExtractEnabledFor(String uid) {
+        try {
+            User u = userMapper.selectById(uid);
+            return u == null || !Integer.valueOf(0).equals(u.getMemoryEnabled());
+        } catch (Exception e) {
+            log.warn("[Memory] 用户记忆开关读取失败（按开启处理）: uid={} {}", uid, e.getMessage());
+            return true;
+        }
     }
 
     private int maxPerUser() {
@@ -215,6 +236,7 @@ public class UserMemoryService {
         if (guestMode) return;                       // 游客会话：不注入也不提取
         if (!enabled()) return;
         if (uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) return;
+        if (!autoExtractEnabledFor(uid)) return;     // 用户级开关：本人关闭了自动提炼
         if (question == null || question.isBlank()) return;
         String q = question.length() > EXTRACT_USER_CHARS ? question.substring(0, EXTRACT_USER_CHARS) : question;
         String a = answer == null ? "" : (answer.length() > EXTRACT_ANSWER_CHARS ? answer.substring(0, EXTRACT_ANSWER_CHARS) : answer);

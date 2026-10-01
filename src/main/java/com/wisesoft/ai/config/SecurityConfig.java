@@ -94,8 +94,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 管理员登记的为平台级（所有人可用）。资源级判定在 ProviderController.denyUnlessManageable
         // 内做（改/删/启停/登记模型必须先通过归属校验），这里只按端点放行。
         if (isProviderSelfEndpoint(method, path)) return true;
-        // 个人偏好（本人默认模型）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
+        // 个人偏好（本人默认模型 + 记忆开关）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
+        // 自助修改昵称（PUT /user/profile，仅本人：uid 取登录态，Controller 内只动本人 username 列）
+        if ("PUT".equals(method) && path.equals("/api/ai/user/profile")) return true;
         if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;
         // 知识库 / 文档 / 智能体对普通用户开放**自建自管**（2026-09-26，用户数据隔离由
         // ResourceVisibilityService 在 Controller 内做资源级判定：创建者=可管理、他人按共享范围、

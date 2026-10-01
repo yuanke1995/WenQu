@@ -80,18 +80,37 @@ public class UserController {
                 com.wisesoft.ai.util.RequestUser.role()));
     }
 
-    @Operation(summary = "设置个人默认模型", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\"}；"
-            + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效，视觉模型用于聊天上传图片理解。"
+    @Operation(summary = "设置个人偏好", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\",\"memoryEnabled\":true|false}；"
+            + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效，视觉模型用于聊天上传图片理解；"
+            + "memoryEnabled=用户级长期记忆自动提炼开关（仅关生成，已存记忆仍注入）。"
             + "重排/向量模型不提供个人默认（重排归知识库检索设置，向量归知识库绑定）")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
                 body.containsKey("defaultModel") ? str(body.get("defaultModel")) : null,
-                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null);
+                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null,
+                body.containsKey("memoryEnabled") ? bool(body.get("memoryEnabled")) : null);
+        return ResultJson.ok("已保存");
+    }
+
+    @Operation(summary = "修改我的昵称", description = "{\"username\":\"新昵称\"}；仅本人（uid 取登录态，不可改 uid）；"
+            + "昵称即显示名称，也是登录标识之一（可用 uid 或昵称登录），需全库唯一")
+    @PutMapping("/profile")
+    public ResultJson updateOwnProfile(@RequestBody Map<String, Object> body) {
+        orgService.updateOwnProfile(com.wisesoft.ai.util.RequestUser.uid(), str(body.get("username")));
         return ResultJson.ok("已保存");
     }
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /** 布尔稳健解析：接受 true/false 与 1/0（JSON 布尔经 Map 后可能为 Boolean 或字符串） */
+    private static Boolean bool(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        if ("1".equals(s) || "true".equalsIgnoreCase(s)) return Boolean.TRUE;
+        if ("0".equals(s) || "false".equalsIgnoreCase(s)) return Boolean.FALSE;
+        throw new IllegalArgumentException("memoryEnabled 需为布尔值");
     }
 }

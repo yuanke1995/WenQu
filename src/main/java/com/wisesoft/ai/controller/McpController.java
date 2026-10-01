@@ -59,12 +59,13 @@ public class McpController {
     private final McpCallLogMapper mcpCallLogMapper;
     private final AdminGuard adminGuard;
 
-    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）")
+    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；retryBroken=true 时先对未连上的服务补一次重连（点「刷新」用），进页面拉状态不要传，避免死服务拖慢首屏")
     @GetMapping("/status")
-    public ResultJson status() {
+    public ResultJson status(@RequestParam(value = "retryBroken", required = false) Boolean retryBroken) {
         String uid = RequestUser.uid();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("toolsEnabled", configService.getBoolean("tool.enabled"));
+        if (Boolean.TRUE.equals(retryBroken)) mcpClientService.retryBroken(uid);
         data.put("servers", mcpClientService.serverStatuses(uid));
         return ResultJson.ok(data);
     }
@@ -143,7 +144,7 @@ public class McpController {
     public ResultJson reload() {
         String uid = RequestUser.uid();
         mcpClientService.reload(uid);
-        return status();
+        return status(null); // 重连刚整池重建过，无需再补重连
     }
 
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"")

@@ -2,10 +2,13 @@
 // 本地登录 → 持有 JWT（localStorage），请求头 Authorization: Bearer <token>；
 // 管理员由后端按「管理员级角色」判定（内置 admin/superadmin 或自定义 admin_flag=1），
 // 前端经 /auth/me 回显缓存；/auth/me 同时下发当前角色可见的侧边栏菜单树（menus）。
+import { ref } from 'vue'
 import { getAuthMe } from '../api'
 
 const TOKEN_KEY = 'ai_token'
 let cached = null // { user, username, role, admin, menus } | null（会话内缓存，失效后由 ensureAuth 重拉）
+// 响应式镜像（ensureAuth 每次刷新都会同步）：供需要「昵称改完侧栏立刻变」的组件读
+export const authUser = ref(null)
 
 export const getToken = () => {
   try { return localStorage.getItem(TOKEN_KEY) || '' } catch (e) { return '' }
@@ -41,7 +44,7 @@ export function menuHasPath (path) {
 
 /** 拉取/复用身份信息（含 admin 角色与菜单树）；失败按未登录处理 */
 export async function ensureAuth (force = false) {
-  if (cached && !force) return cached
+  if (cached && !force) { authUser.value = cached; return cached }
   try {
     const body = await getAuthMe()
     // api.js request() 返回整个 ResultJson（success/code/msg/data）——身份在 data 里
@@ -57,5 +60,6 @@ export async function ensureAuth (force = false) {
   } catch (e) {
     cached = { user: 'anonymous', username: '', role: 'user', admin: false, menus: [] }
   }
+  authUser.value = cached
   return cached
 }

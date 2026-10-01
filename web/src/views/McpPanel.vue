@@ -23,8 +23,8 @@
           </span>
         </div>
         <div class="key-bar-actions">
-          <a-tooltip title="刷新连接状态">
-            <button class="app-icon-btn" aria-label="刷新连接状态" :disabled="loading" @click="loadStatus"><reload-outlined /></button>
+          <a-tooltip title="刷新列表与连接状态（未连上的服务会重试连接）">
+            <button class="app-icon-btn" aria-label="刷新列表与连接状态" :disabled="loading" @click="loadStatus(true)"><reload-outlined /></button>
           </a-tooltip>
           <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
             {{ reloading ? '重连中…' : '全部重连' }}
@@ -169,10 +169,15 @@ const apply = d => {
   servers.value = d?.servers || []
   checkedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
 }
-const loadStatus = async () => {
+/**
+ * 拉状态并整体替换列表。retry=true（点「刷新」按钮）时后端会先对未连上的服务补一次
+ * 重连，远端恢复的服务当场翻回绿点；进页面/增删改后的刷新走默认 false（不重试，
+ * 避免挂着几个死服务拖慢首屏——重连代价与失败服务数成正比）。
+ */
+const loadStatus = async (retry = false) => {
   loading.value = true
   try {
-    const r = await getMcpStatus()
+    const r = await getMcpStatus(retry)
     if (r.success) apply(r.data)
   } catch (e) { message.error(e.message || '状态加载失败') }
   finally { loading.value = false }

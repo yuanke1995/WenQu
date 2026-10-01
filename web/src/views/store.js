@@ -46,8 +46,8 @@ export const chatStreams = shallowReactive(new Map())
 // 旧代次的迟到的响应直接丢弃，防止旧页数据追加进新列表造成重复/错序
 let loadGen = 0
 
-// 分页节奏：首屏 10 条，点「查看更多」每次再渲染 20 条（用户指定交互）
-const FIRST_PAGE_SIZE = 10
+// 分页节奏：首屏 20 条，点「查看更多」每次再渲染 20 条（用户指定交互）
+const FIRST_PAGE_SIZE = 20
 const MORE_PAGE_SIZE = 20
 
 export async function loadSessions (keyword) {
@@ -97,7 +97,7 @@ export async function loadMoreSessions () {
   }
 }
 
-// 「收起」：还原到最近一次整表加载（loadSessions）后的首屏状态（默认 10 条，今天组展开）；
+// 「收起」：还原到最近一次整表加载（loadSessions）后的首屏状态（默认 20 条，今天组展开）；
 // bump loadGen 使在途的增量加载响应作废，防止迟到的旧页数据追加进已收起的列表
 export function collapseSessions () {
   const fp = sessionStore.firstPage

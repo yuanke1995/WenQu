@@ -356,7 +356,8 @@ export async function downloadDocumentSource (id, fileName) {
 export const getToolInventory = () => request('/tools')
 
 // ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
-export const getMcpStatus = () => request('/mcp/status')
+/** retryBroken=true：先对未连上的服务补一次重连再出列表（MCP 页点「刷新」用；默认只读状态） */
+export const getMcpStatus = retry => request('/mcp/status' + (retry ? '?retryBroken=true' : ''))
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
 export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', body: JSON.stringify({ url, type }) })
 export const addMcpServer = body => request('/mcp/servers', { method: 'POST', body: JSON.stringify(body) })
@@ -821,13 +822,16 @@ export const listAvailableModels = async (type = '') => {
   return (r && r.success && Array.isArray(r.data)) ? r.data : []
 }
 
-// ---- 个人偏好（个人设置：默认模型） ----
+// ---- 个人偏好（个人设置：默认模型 / 记忆开关 / 昵称） ----
 export const getUserPreference = () => request('/user/preference')
 export const setUserPreference = payload =>
   request('/user/preference', {
     method: 'PUT',
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
+// 自助修改昵称（仅本人；uid 不可改）
+export const updateMyProfile = username =>
+  request('/user/profile', { method: 'PUT', body: JSON.stringify({ username }) })
 
 // ---- 沙盒工作区浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
 export const sandboxState = sessionId =>

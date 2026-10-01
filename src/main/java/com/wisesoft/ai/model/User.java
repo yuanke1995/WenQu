@@ -52,6 +52,9 @@ public class User {
     @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
     private String defaultVisionModel;
 
+    /** 用户级长期记忆自动提炼开关（个人设置「长期记忆」页可改）: 1=开, 0=关；null 视为开（历史行为兜底口径） */
+    private Integer memoryEnabled;
+
     // 个人默认重排模型已退役（重排归知识库检索设置；存量库该列无害保留）
 
     /** OIDC 身份标识（IdP 的 sub，唯一索引）：空=未绑定单点登录。

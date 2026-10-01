@@ -149,6 +149,8 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app-icon-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 .app-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
 .app-icon-btn.danger:hover { color: var(--app-danger); background: #fbecea; }
+/* 内联 SVG 图标（如侧栏主题切换的日/月）：随按钮字号与 currentColor 走，与 antd 图标同尺寸 */
+.app-icon-btn .theme-ico { width: 1em; height: 1em; display: block; }
 
 /* 链接式小按钮（表格操作列） */
 .app-link-btn {

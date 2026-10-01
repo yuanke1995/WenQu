@@ -179,6 +179,47 @@ public class McpClientService {
     }
 
     /**
+     * 对未连上的服务补一次重连（仅 enabled 且状态非 connected 的，健康连接一律不动）。
+     * <p>{@link #serverStatuses} 只做「已连接 → 在线校验」的单向翻转：远端恢复后，失败状态会
+     * 一直停在 failed 上，必须整池重建（reload）才能恢复。而「刷新」的语义是把列表刷成当前
+     * 真实状态，所以显式刷新时先补一次重连（只碰坏连接，代价与失败服务数成正比），
+     * 再由 serverStatuses 正常出列表。只在用户点「刷新」时调用——进页面拉状态不重试，
+     * 避免挂着几个死服务把首屏状态请求拖到超时。
+     */
+    public void retryBroken(String uid) {
+        if (uid == null || uid.isBlank()) return;
+        UserPool pool = ensureConnections(uid);
+        synchronized (pool) {
+            for (UserMcp row : pool.rows) {
+                if (!Integer.valueOf(1).equals(row.getEnabled())) continue;
+                String name = row.getName();
+                if (name == null || name.isBlank() || row.getUrl() == null || row.getUrl().isBlank()) continue;
+                if ("connected".equals(pool.states.get(name)) && pool.clients.get(name) != null) continue;
+                McpSyncClient old = pool.clients.get(name);
+                if (old != null) {
+                    pool.clients.remove(name);
+                    try {
+                        old.closeGracefully();
+                    } catch (Exception ignore) {
+                        // 旧连接多半已死，关闭失败不影响重建
+                    }
+                }
+                try {
+                    String type = row.getType() == null || row.getType().isBlank() ? "streamable" : row.getType();
+                    McpSyncClient client = connect(name, row.getUrl(), type);
+                    client.initialize();
+                    pool.clients.put(name, client);
+                    pool.states.put(name, "connected");
+                    log.info("[MCP] uid={} server {} 刷新时重连成功", uid, name);
+                } catch (Exception e) {
+                    pool.states.put(name, "failed:" + e.getMessage());
+                    log.info("[MCP] uid={} server {} 刷新时重连仍失败: {}", uid, name, e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
      * 重连某个用户的全部服务（增删/改地址后想立刻生效时用；不重建也会在下一次取工具时按指纹自动生效）。
      */
     public void reload(String uid) {

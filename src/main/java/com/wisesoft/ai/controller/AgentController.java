@@ -88,7 +88,7 @@ public class AgentController {
     }
 
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/description/model/systemPrompt/knowledgeScope/"
-            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp(1开0关，省略=继承)/"
+            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
             + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
     @PostMapping
