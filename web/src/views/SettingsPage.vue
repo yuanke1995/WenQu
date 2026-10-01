@@ -57,37 +57,6 @@
               <a-tab-pane key="logs" tab="执行日志" />
             </a-tabs>
 
-            <!-- 工具清单（仅「总开关与子工具」页签显示）：运行时注册的工具全景，
-                 名称与 @Tool 方法一致、开关与下方表单对应；联网搜索页签不重复展示 -->
-            <div v-if="current === 'tool' && toolTab === 'tool'" class="tool-inv">
-              <div class="tool-inv-head">
-                <span class="cfg-sub">当前注册的工具（{{ toolInvTotal }} 个 · 名称即模型看到的工具名）</span>
-                <a-tooltip title="刷新清单">
-                  <button class="app-icon-btn" aria-label="刷新工具清单" :disabled="toolInvLoading" @click="loadToolInventory">
-                    <reload-outlined />
-                  </button>
-                </a-tooltip>
-              </div>
-              <a-spin v-if="toolInvLoading" size="small" style="display:block;margin:14px auto" />
-              <div v-else-if="toolInv.length" class="tool-inv-groups">
-                <div v-for="g in toolInv" :key="g.family" class="tool-inv-group">
-                  <div class="tool-inv-family">
-                    <span class="tool-inv-family-name">{{ g.familyLabel }}</span>
-                    <span class="tool-inv-state" :class="{ on: g.enabled }">{{ g.enabled ? '可用' : '未启用' }}</span>
-                    <code v-if="g.globalKey" class="tool-inv-key">{{ g.globalKey }}</code>
-                  </div>
-                  <div class="tool-inv-items">
-                    <a-tooltip v-for="t in g.tools" :key="t.name" :title="t.description">
-                      <span class="tool-inv-chip" :class="{ sensitive: t.sensitive }">
-                        {{ t.label }}<span v-if="t.sensitive" class="tool-inv-s">敏</span>
-                      </span>
-                    </a-tooltip>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="key-dim" style="padding:6px 2px">工具清单仅管理员可见（或后端暂未注册任何工具）。</div>
-            </div>
-
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <template v-if="current !== 'maintenance' || maintTab === 'config'">
                 <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode)" :key="i">
@@ -505,6 +474,45 @@
                    此处不再有自定义面板 -->
 
             </a-form>
+
+            <!-- 工具清单（面板最底部，仅「总开关与子工具」页签显示）：运行时注册的工具全景。
+                 有独立全局开关的族可直接切换启用/禁用（写对应配置键、立即生效）；
+                 技能跟随工具总闸、MCP 按用户登记，无独立开关故只读 -->
+            <div v-if="current === 'tool' && toolTab === 'tool'" class="tool-inv">
+              <div class="tool-inv-head">
+                <span class="cfg-sub">当前注册的工具（{{ toolInvTotal }} 个 · 名称即模型看到的工具名；开关与上方表单同一配置键）</span>
+                <a-tooltip title="刷新清单">
+                  <button class="app-icon-btn" aria-label="刷新工具清单" :disabled="toolInvLoading" @click="loadToolInventory">
+                    <reload-outlined />
+                  </button>
+                </a-tooltip>
+              </div>
+              <a-spin v-if="toolInvLoading" size="small" style="display:block;margin:14px auto" />
+              <div v-else-if="toolInv.length" class="tool-inv-groups">
+                <div v-for="g in toolInv" :key="g.family" class="tool-inv-group">
+                  <div class="tool-inv-family">
+                    <span class="tool-inv-family-name">{{ g.familyLabel }}</span>
+                    <a-switch v-if="g.globalKey && g.globalKey !== 'tool.enabled'" size="small"
+                              :checked="g.enabled" :loading="familySaving === g.family"
+                              :title="g.enabled ? '点击停用该工具族' : '点击启用该工具族'"
+                              @change="v => toggleFamily(g, v)" />
+                    <span v-else class="tool-inv-state" :class="{ on: g.enabled }"
+                          :title="g.family === 'skill' ? '技能无独立开关，跟随工具总开关' : '按用户登记动态接入，无全局开关'">
+                      {{ g.enabled ? '可用' : '未启用' }}
+                    </span>
+                    <code v-if="g.globalKey" class="tool-inv-key">{{ g.globalKey }}</code>
+                  </div>
+                  <div class="tool-inv-items">
+                    <a-tooltip v-for="t in g.tools" :key="t.name" :title="t.description">
+                      <span class="tool-inv-chip" :class="{ sensitive: t.sensitive }">
+                        {{ t.label }}<span v-if="t.sensitive" class="tool-inv-s">敏</span>
+                      </span>
+                    </a-tooltip>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="key-dim" style="padding:6px 2px">工具清单仅管理员可见（或后端暂未注册任何工具）。</div>
+            </div>
           </div>
         </a-spin>
       </section>
@@ -952,6 +960,29 @@ const loadToolInventory = async () => {
   }
 }
 
+// 清单内直接切换工具族启用/禁用：写该族的全局配置键（与上方表单同一键），保存即生效。
+// 提交值用字符串（与表单提交形态一致），同步回写 form 后把本组视为已保存（不产生 dirty 提示）
+const familySaving = ref('')
+const toggleFamily = async (g, val) => {
+  if (!g.globalKey || g.globalKey === 'tool.enabled') return
+  familySaving.value = g.family
+  try {
+    const r = await saveConfig({ [g.globalKey]: String(val) })
+    if (r.success) {
+      message.success(`${g.familyLabel}已${val ? '启用' : '停用'}，立即生效`)
+      writeForm(form.value, g.globalKey, val)
+      initialPayload.value = buildPayload()
+    } else {
+      message.error(r.msg || '保存失败')
+    }
+  } catch (e) {
+    message.error(e.message || '保存失败')
+  } finally {
+    familySaving.value = ''
+    loadToolInventory() // 无论成败都回显服务端真实状态
+  }
+}
+
 // ==================== MCP 调用审计（仅管理员，后端 requireAdmin 兜底） ====================
 const auditOpen = ref(false)
 const auditLoading = ref(false)
@@ -1235,9 +1266,9 @@ onMounted(fetchAndFill)
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
 
-/* 工具清单（工具调用面板 · 页签条下方）：运行时注册的全景只读视图，敏=有副作用工具；
-   嵌在 set-card 内部，用底部分隔线与下方表单区分（不再是独立卡片） */
-.tool-inv { margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid var(--app-border); }
+/* 工具清单（工具调用面板 · 最底部）：运行时注册的全景只读视图 + 族级启用开关，敏=有副作用工具；
+   嵌在 set-card 内部，用顶部分隔线与上方表单区分 */
+.tool-inv { margin: 14px 0 0; padding: 14px 0 0; border-top: 1px solid var(--app-border); }
 .tool-inv-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .tool-inv-group { padding: 10px 0; border-top: 1px solid var(--app-border); }
 .tool-inv-group:first-of-type { border-top: none; padding-top: 4px; }
