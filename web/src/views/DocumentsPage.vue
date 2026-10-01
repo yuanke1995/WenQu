@@ -11,7 +11,6 @@
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
@@ -21,9 +20,9 @@
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
           <setting-outlined /> 知识库配置
         </button>
-        <a-upload v-if="canManageCurrentKb" :before-upload="beforeUpload" :show-upload-list="false" :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
-          <button class="app-btn" :disabled="uploading"><upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}</button>
-        </a-upload>
+        <button v-if="canManageCurrentKb" class="app-btn" :disabled="uploading" @click="uploadVisible = true">
+          <upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}
+        </button>
       </div>
     </div>
     <a-progress v-if="uploading" :percent="uploadPercent" size="small" style="max-width:420px;margin:10px 20px 0" />
@@ -32,8 +31,31 @@
     <a-modal v-model:open="urlVisible" title="网页导入" :confirm-loading="importing" :width="540" ok-text="抓取并导入" @ok="submitImportUrl">
       <a-alert type="info" show-icon message="每行一个 URL（最多 20 个），抓取正文后按与上传相同的链路分块入库" style="margin-bottom:10px" />
       <a-textarea v-model:value="urlText" :rows="5" placeholder="https://example.com/article" />
-      <div style="margin-top:8px;color:#646a73;font-size:12px">
-        描述沿用右上角「文档描述」输入框（可选）；同名页面重复导入会替换旧内容；仅支持 http/https 公网地址
+      <a-input v-model:value="urlDesc" placeholder="文档描述（可选）" style="margin-top:10px" allow-clear />
+      <div style="margin-top:8px;color:var(--app-text3);font-size:12px">
+        同名页面重复导入会替换旧内容；仅支持 http/https 公网地址
+      </div>
+    </a-modal>
+
+    <!-- 上传文档：选文件 + 描述一个弹窗内完成（描述原先孤在顶栏，对下一次上传生效，语义不明） -->
+    <a-modal v-model:open="uploadVisible" title="上传文档" :confirm-loading="uploading" :width="560" ok-text="开始上传" @ok="submitUpload">
+      <a-upload-dragger :before-upload="collectPendingFile" :show-upload-list="false"
+                        :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
+        <p class="ant-upload-drag-icon"><inbox-outlined /></p>
+        <p class="ant-upload-text">点击或拖拽文件到此处</p>
+        <p class="ant-upload-hint">支持 {{ uploadCfg.allowedExts.join(' / ') }}，单文件不超过 {{ uploadCfg.maxFileSizeLabel }}，可多选</p>
+      </a-upload-dragger>
+      <div v-if="pendingFiles.length" class="upload-pending">
+        <div v-for="(f, i) in pendingFiles" :key="i" class="upload-pending-row">
+          <file-outlined class="upf-ic" />
+          <span class="upf-name" :title="f.name">{{ f.name }}</span>
+          <span class="upf-size">{{ fmtSize(f.size) }}</span>
+          <button class="app-icon-btn" :disabled="uploading" title="移除" @click="pendingFiles.splice(i, 1)"><close-outlined /></button>
+        </div>
+      </div>
+      <a-input v-model:value="uploadDesc" placeholder="文档描述（可选）" style="margin-top:10px" allow-clear />
+      <div style="margin-top:8px;color:var(--app-text3);font-size:12px">
+        提交后进入解析队列按并发逐个执行；也可以直接把文件拖到列表页上传（不带描述）
       </div>
     </a-modal>
 
@@ -359,7 +381,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined } from '@ant-design/icons-vue'
+import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined,
+         InboxOutlined, FileOutlined, CloseOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
@@ -445,7 +468,6 @@ const uploading = ref(false)
 const uploadPercent = ref(0)
 const deletingId = ref('')
 const reparsingId = ref('')
-const desc = ref('')
 const dragDepth = ref(0)
 const selectedKeys = ref([])
 let pollTimer = null
@@ -576,7 +598,12 @@ function stopPolling () {
 }
 
 async function beforeUpload (fileList) {
-  const files = Array.isArray(fileList) ? fileList : [fileList]
+  submitFiles(Array.isArray(fileList) ? fileList : [fileList], undefined)
+  return false   // 拦下 ant Upload 的自动上传，提交由 submitFiles 接管
+}
+
+/** 上传提交共用：文件校验 + 批量提交 + 结果提示，返回是否全部提交成功。desc 为 undefined 表示无描述（拖拽/粘贴直传） */
+async function submitFiles (files, desc) {
   const bad = files.find(f => {
     const ext = (f.name.split('.').pop() || '').toLowerCase()
     return !uploadCfg.value.allowedExts.includes(ext) || f.size > uploadCfg.value.maxFileSize
@@ -588,17 +615,41 @@ async function beforeUpload (fileList) {
   uploading.value = true
   uploadPercent.value = 0
   try {
-    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc.value?.trim() || undefined, route.params.kbId)
+    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc, route.params.kbId)
     if (r.success) {
       const failed = (r.data || []).filter(x => !x.success)
       if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
       else message.success(`已提交 ${files.length} 个文档解析`)
-      desc.value = ''
       fetchList()
-    } else message.error(r.msg || '上传失败')
-  } catch (e) { message.error(e.message || '上传失败') }
+      return true
+    }
+    message.error(r.msg || '上传失败')
+    return false
+  } catch (e) { message.error(e.message || '上传失败'); return false }
   finally { uploading.value = false }
+}
+
+// ==================== 上传弹窗（选文件 + 描述一体化） ====================
+const uploadVisible = ref(false)
+const uploadDesc = ref('')
+const pendingFiles = ref([])
+/** 弹窗内选择/拖入文件：只收集不提交（确定时统一提交），校验不过直接拦下 */
+function collectPendingFile (file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase()
+  if (!uploadCfg.value.allowedExts.includes(ext) || file.size > uploadCfg.value.maxFileSize) {
+    message.error(`${file.name} 不支持或超过 ${uploadCfg.value.maxFileSizeLabel}（支持 ${uploadCfg.value.allowedExts.join('/')}）`)
+    return false
+  }
+  if (!pendingFiles.value.some(f => f.name === file.name && f.size === file.size)) pendingFiles.value.push(file)
   return false
+}
+async function submitUpload () {
+  if (!pendingFiles.value.length) { message.warning('请先选择要上传的文件'); return }
+  const ok = await submitFiles([...pendingFiles.value], uploadDesc.value?.trim() || undefined)
+  if (!ok) return   // 失败保留弹窗内容便于重试
+  pendingFiles.value = []
+  uploadDesc.value = ''
+  uploadVisible.value = false
 }
 const onDrop = e => {
   dragDepth.value = 0
@@ -619,6 +670,7 @@ const onPaste = e => {
 // ==================== 网页导入（URL 抓取入库，与上传共用解析链路） ====================
 const urlVisible = ref(false)
 const urlText = ref('')
+const urlDesc = ref('')
 const importing = ref(false)
 async function submitImportUrl () {
   const urls = [...new Set(urlText.value.split(/\s+/).map(s => s.trim()).filter(Boolean))]
@@ -630,7 +682,7 @@ async function submitImportUrl () {
   try {
     for (const u of urls) {
       try {
-        const r = await importDocumentFromUrl(u, desc.value?.trim() || undefined, route.params.kbId)
+        const r = await importDocumentFromUrl(u, urlDesc.value?.trim() || undefined, route.params.kbId)
         if (r && r.success !== false) ok.push(u)
         else fail.push(u + '：' + (r?.msg || '失败'))
       } catch (e) { fail.push(u + '：' + (e.message || '失败')) }
@@ -641,7 +693,7 @@ async function submitImportUrl () {
     } else {
       message.success(`已提交 ${ok.length} 个网页解析`)
     }
-    if (ok.length) { urlText.value = ''; urlVisible.value = false; fetchList() }
+    if (ok.length) { urlText.value = ''; urlDesc.value = ''; urlVisible.value = false; fetchList() }
   } finally { importing.value = false }
 }
 
@@ -765,11 +817,15 @@ const imgCountOf = r => {
     return Array.isArray(im) ? im.length : 0
   } catch (e) { return 0 }
 }
+// 章节路径唯一口径：后端只在标题层级≥2 时才写 titlePath（单层标题/MinerU h1 平铺时为空），
+// 此时树回退用 title 当路径——建树与点章节名过滤必须同源，否则点过去永远匹配不上（历史 bug）
+const normPath = r => String(r.titlePath || r.title || '未分类')
+    .split('>').map(s => s.trim()).filter(Boolean).join(' > ')
 const kbTreeRows = computed(() => {
   const mk = (name, path) => ({ name, path, children: new Map(), own: [], tokens: 0, imgs: 0, count: 0 })
   const root = mk('', '')
   for (const r of kbFilteredList.value) {
-    const parts = String(r.titlePath || r.title || '未分类').split('>').map(s => s.trim()).filter(Boolean)
+    const parts = normPath(r).split(' > ').filter(Boolean)
     let node = root
     let path = ''
     for (const p of parts) {
@@ -823,7 +879,7 @@ const kbFilteredList = computed(() => {
   const kw = kbSearch.value.trim().toLowerCase()
   return kbList.value.filter(k => {
     if (path) {
-      const p = k.titlePath || ''
+      const p = normPath(k)
       if (p !== path && !p.startsWith(path + ' > ')) return false
     }
     if (!kw) return true
@@ -1198,6 +1254,13 @@ const fmtTime = t => {
 </script>
 
 <style scoped>
+/* 上传弹窗：待传文件清单 */
+.upload-pending { margin-top: 10px; border: 1px solid var(--app-border); border-radius: 6px; max-height: 180px; overflow-y: auto; }
+.upload-pending-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; }
+.upload-pending-row + .upload-pending-row { border-top: 1px solid var(--app-border); }
+.upf-ic { color: var(--app-text3); flex: none; }
+.upf-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--app-text); }
+.upf-size { flex: none; color: var(--app-text3); font-size: 11px; }
 .head-stat { font-size: 12px; color: var(--app-text3); }
 .batch-bar {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px;
