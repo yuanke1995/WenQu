@@ -174,6 +174,12 @@ public class DocumentController {
         return ResultJson.ok(results);
     }
 
+    @Operation(summary = "解析队列状态", description = "当前解析队列的排队数/执行数/终态数（前端展示「排队 N / 执行 M」，并对齐轮询）")
+    @GetMapping("/queue/stats")
+    public ResultJson queueStats() {
+        return ResultJson.ok(documentService.queueStats(), "解析队列状态");
+    }
+
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
             + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
             + "普通用户仅返回共享范围内可见的库与文档")

@@ -57,6 +57,7 @@ public class ScheduleCenter {
     private final DocumentService documentService;
     private final WorkflowService workflowService;
     private final com.wisesoft.ai.service.TraceService traceService;
+    private final com.wisesoft.ai.service.ParseQueueService parseQueueService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -72,7 +73,8 @@ public class ScheduleCenter {
                           SandboxService sandboxService,
                           DocumentService documentService,
                           WorkflowService workflowService,
-                          com.wisesoft.ai.service.TraceService traceService) {
+                          com.wisesoft.ai.service.TraceService traceService,
+                          com.wisesoft.ai.service.ParseQueueService parseQueueService) {
         this.configService = configService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
@@ -84,6 +86,7 @@ public class ScheduleCenter {
         this.documentService = documentService;
         this.workflowService = workflowService;
         this.traceService = traceService;
+        this.parseQueueService = parseQueueService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -134,6 +137,13 @@ public class ScheduleCenter {
                 () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
                 () -> false,
                 () -> scheduledJobService.tick());
+
+        // 文档解析队列扫描：把 c_ai_parse_task 里到期的任务抢占后投给 worker 池执行（间隔 parse.queue.scanIntervalMs，默认 5s；≤0 暂停）。
+        // 上传/重解析只往这张表登记一行，解析全靠这里的扫描器推动——批量上传不会因为"队列内存溢出/满"丢任务。
+        register("文档解析队列扫描",
+                () -> configService.getInt("parse.queue.scanIntervalMs", 5_000),
+                () -> false,
+                () -> parseQueueService.scan());
 
         // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（间隔 web.refreshScanIntervalMs，默认 60s；≤0 暂停）。
         // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。

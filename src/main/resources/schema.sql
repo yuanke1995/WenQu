@@ -60,6 +60,27 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     KEY `idx_next_refresh` (`next_refresh_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI文档表';
 
+CREATE TABLE IF NOT EXISTS `c_ai_parse_task` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `doc_id`        VARCHAR(50)  NOT NULL COMMENT '所属文档ID（与 c_ai_document.id 对应）',
+    `kb_id`         VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID',
+    `status`        TINYINT      NOT NULL DEFAULT 0 COMMENT '状态: 0=queued待解析, 1=running执行中, 2=succeeded成功, 3=retryable可重试, 4=dead终态失败',
+    `attempt`       INT          NOT NULL DEFAULT 0 COMMENT '已尝试次数',
+    `max_attempt`   INT          NOT NULL DEFAULT 3 COMMENT '最大尝试次数（超过转 dead）',
+    `next_run_at`   DATETIME     NOT NULL COMMENT '最早可执行时刻（退避重试由此推迟）',
+    `lease_until`   DATETIME     DEFAULT NULL COMMENT '租约到期时刻：进程崩溃或任务卡死超时后由扫描器回收回 queued',
+    `priority`      TINYINT      NOT NULL DEFAULT 0 COMMENT '优先级（大者优先，如用户手动重解析优先）',
+    `error`         VARCHAR(500) DEFAULT NULL COMMENT '失败原因（status=3/4 时可见）',
+    `worker`        VARCHAR(128) DEFAULT NULL COMMENT '执行者标识（实例+线程，仅本实例执行自己抢到的任务）',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `start_time`    DATETIME     DEFAULT NULL COMMENT '开始执行时刻',
+    `finish_time`   DATETIME     DEFAULT NULL COMMENT '结束时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_due` (`status`, `next_run_at`),
+    KEY `idx_doc` (`doc_id`),
+    KEY `idx_worker` (`worker`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档解析持久化任务队列（上传只登记，解析由扫描器抢占执行，队列满不丢任务）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `doc_id`       VARCHAR(50)  DEFAULT NULL COMMENT '所属文档ID',

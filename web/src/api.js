@@ -546,6 +546,9 @@ export const reparseDocument = id =>
 export const refreshConfigDocument = (id, autoRefresh, refreshCron) =>
   request(`/document/${id}/refresh-config?autoRefresh=${autoRefresh}${refreshCron ? `&refreshCron=${encodeURIComponent(refreshCron)}` : ''}`, { method: 'PUT' })
 
+/** 文档解析队列状态（排队 / 执行 / 作废计数）：上传只登记任务，解析由后台队列推进 */
+export const getDocumentQueueStats = () => request('/document/queue/stats')
+
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
 

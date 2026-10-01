@@ -281,7 +281,15 @@ public class ConfigService {
         d.put("keyword.baseUrl", properties.getKeyword().getBaseUrl());
         d.put("keyword.apiKey", properties.getKeyword().getApiKey());   // master key RSA 加密入库（设置页可改，改后客户端自动重建）；未配置时回退 env AI_MEILI_KEY
         // 解析行为参数
-        d.put("parse.concurrency", "2");                   // 文档解析并发数
+        d.put("parse.concurrency", "3");                   // 文档解析 worker 并发数（队列worker 数；下游 OCR/视觉/embedding 另有闸门限流）
+        d.put("parse.queue.capacity", "500");              // 解析队列容量：排队满则上传直接拒（不再是"收下再丢解析任务"）
+        d.put("parse.queue.scanIntervalMs", "5000");       // 解析队列扫描间隔（≤0 暂停：解析不再自动执行）
+        d.put("parse.taskTimeoutMs", "1200000");           // 单个解析任务总超时（超时中断线程；租约随后回收，崩溃也能自愈）
+        d.put("parse.taskLeaseSeconds", "0");              // 任务租约时长(秒)；0=按 taskTimeoutMs+300 自动算
+        d.put("parse.retryMaxAttempts", "3");              // 解析失败最大尝试次数（超过转终态 dead，不再退避）
+        d.put("parse.retryBackoffSeconds", "5");           // 解析失败退避基数(秒)：第 n 次等 base×2^(n-1)（封顶 300s）
+        d.put("parse.embedConcurrency", "2");              // 向量化并发闸（多文档并行解析时防打爆 embedding 服务）
+        d.put("parse.ocrGateConcurrency", "1");            // 版面引擎并发闸：自托管单实例服务一次只吃一份，默认守住 1
         d.put("parse.ocrMinText", "20");                   // PDF 文本少于该长度判定扫描件触发 OCR
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
         d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）

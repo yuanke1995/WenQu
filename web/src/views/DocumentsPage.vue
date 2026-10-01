@@ -6,6 +6,10 @@
         <a-breadcrumb-item>{{ currentKbName }}</a-breadcrumb-item>
       </a-breadcrumb>
       <span class="head-stat">{{ summaryText }}</span>
+      <!-- 解析队列指示：上传只登记任务，队列逐个执行。让用户看到"在排队"而不是"没反应/丢了" -->
+      <a-tooltip v-if="queueText" :title="'上传只登记解析任务，后台队列按并发逐个执行（队列满会直接拒绝新上传，不会先收下再丢）+ 失败任务可点「重解析」重试'">
+        <span class="app-pill warn queue-chip">{{ queueText }}</span>
+      </a-tooltip>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <a-input v-model:value="desc" placeholder="文档描述（可选）" style="width:160px" size="small" allow-clear />
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
@@ -354,7 +358,8 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument } from '../api'
+         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
+         getDocumentQueueStats } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
@@ -424,6 +429,37 @@ const desc = ref('')
 const dragDepth = ref(0)
 const selectedKeys = ref([])
 let pollTimer = null
+let pollTicks = 0
+/** 解析队列计数（后端 c_ai_parse_task 统计，非 table_rows 估算） */
+const queueStats = ref({ queued: 0, running: 0, dead: 0 })
+const queueText = computed(() => {
+  const q = queueStats.value
+  const parts = []
+  if (q.queued > 0) parts.push('排队 ' + q.queued)
+  if (q.running > 0) parts.push('执行 ' + q.running)
+  if (q.dead > 0) parts.push('作废 ' + q.dead)
+  return parts.join(' · ')
+})
+async function fetchQueueStats () {
+  try {
+    const r = await getDocumentQueueStats()
+    const d = r && r.success ? r.data : null
+    if (d) {
+      queueStats.value = {
+        queued: Number(d.queued || 0),
+        running: Number(d.running || 0),
+        dead: Number(d.dead || 0)
+      }
+    }
+  } catch (e) { /* 队列统计是附加信息，失败不影响列表主流程 */ }
+}
+/** 是否还在等队列：有文档在解析中，或队列里还有没消化的任务。
+ *  封顶 tick 数——队列长时间不消化（如闸门卡死）时不再空转刷新。 */
+function shouldPoll () {
+  if (list.value.some(d => d.status === 2)) return true
+  if (pollTicks >= 400) return false
+  return queueStats.value.queued > 0 || queueStats.value.running > 0
+}
 
 const summaryText = computed(() => {
   const total = list.value.length
@@ -475,16 +511,26 @@ const onMoveKb = async (d, v) => {
   } catch (e) { message.error('移动失败') }
 }
 
+/**
+ * 拉取当前库文档列表并合并命中列。
+ * kbId 必传语义：不传后端返回全部库的文档，会让别的库文档混进当前库列表。
+ */
+async function loadDocs (kbId) {
+  // 命中统计是管理端点：普通用户不调（命中列显示 0），避免 403 触发全局误报提示
+  const statsP = isAdminSync() ? getDocumentStats() : Promise.resolve(null)
+  const [r, stats] = await Promise.all([listDocuments(kbId), statsP])
+  if (!r.success) return null
+  const hitMap = (stats && stats.success && stats.data) ? stats.data : {}
+  return (r.data || []).map(d => ({ ...d, hitCount: hitMap[d.id] || 0 }))
+}
 async function fetchList () {
   loading.value = true
   try {
-    // 命中统计是管理端点：普通用户不调（命中列显示 0），避免 403 触发全局误报提示
-    const statsP = isAdminSync() ? getDocumentStats() : Promise.resolve(null)
-    const [r, stats] = await Promise.all([listDocuments(route.params.kbId), statsP])
-    if (r.success) {
-      const hitMap = (stats && stats.success && stats.data) ? stats.data : {}
-      list.value = (r.data || []).map(d => ({ ...d, hitCount: hitMap[d.id] || 0 }))
-      if (list.value.some(d => d.status === 2)) startPolling()
+    const docs = await loadDocs(currentKbId.value || route.params.kbId)
+    if (docs) {
+      list.value = docs
+      fetchQueueStats()
+      if (shouldPoll()) startPolling()
       else stopPolling()
     }
   } catch (e) { message.error(e.message || '获取列表失败') }
@@ -492,13 +538,16 @@ async function fetchList () {
 }
 function startPolling () {
   if (pollTimer) return
+  pollTicks = 0
   pollTimer = setInterval(async () => {
     try {
-      const r = await listDocuments()
-      if (r.success) {
-        list.value = r.data || []
-        if (!list.value.some(d => d.status === 2)) stopPolling()
-      }
+      // 轮询必须带当前库 ID：listDocuments() 不传参=全库，会把别的库文档灌进当前库列表
+      const docs = await loadDocs(currentKbId.value || route.params.kbId)
+      if (!docs) return
+      list.value = docs
+      fetchQueueStats()
+      if (!shouldPoll()) { stopPolling(); return }
+      pollTicks++
     } catch (e) { /* 轮询失败忽略 */ }
   }, 3000)
 }
@@ -1157,6 +1206,8 @@ const fmtTime = t => {
 .col-time { width: 130px; flex: none; }
 .col-act { width: 250px; flex: none; text-align: right; white-space: nowrap; }
 .parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 解析队列指示：队列非空时常驻页头，点工具栏按钮/刷新不会丢 */
+.queue-chip { flex: none; cursor: default; }
 /* 共享范围列表标记（弹窗两区表单已抽为公共组件 ShareScopeModal） */
 .scope-tag { flex: none; }
 .drag-mask {

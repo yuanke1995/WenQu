@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.common.ParseFatalException;
 import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.KnowledgeMapper;
@@ -101,6 +102,8 @@ public class DocumentService {
     private final ChildChunkService childChunkService;
     /** Redis：全量重嵌入分布式互斥锁（多副本共享库时防两个实例互删对方正在重建的索引） */
     private final StringRedisTemplate redisTemplate;
+    /** 文档解析任务队列：上传/重解析只登记任务，执行由队列扫描器抢占（队列满不丢任务、失败自动退避重试） */
+    private final ParseQueueService parseQueue;
     /** 解析进度节流守卫：docId -> 已上报 progress（值未变化不写库） */
     private final Map<String, Integer> progressGuard = new ConcurrentHashMap<>();
     /** 图片描述补齐进行中标志（docId -> true；防并发重复触发） */
@@ -122,25 +125,14 @@ public class DocumentService {
     /** 锁 TTL：任务每批刷新续期；实例崩溃后最多 TTL 秒自愈（不再永久降级） */
     private static final long REEMBED_LOCK_TTL_SECONDS = 120;
 
-    /** 解析线程池（并发 parse.concurrency 可调：避免多文档同时解析打爆 embedding/Ollama；保存即生效） */
-    private ThreadPoolExecutor parseExecutor;
-
-    /** 提交解析任务前同步并发数（parse.concurrency，DB 配置保存即生效） */
-    private void syncParseConcurrency() {
-        int c = configService.getInt("parse.concurrency", 2);
-        if (c > 0 && c != parseExecutor.getCorePoolSize()) {
-            parseExecutor.setCorePoolSize(c);
-            parseExecutor.setMaximumPoolSize(c);
-            log.info("[Parse] 解析并发调整为 {}", c);
-        }
-    }
+    /**
+     * 文档解析已改为「持久化任务队列 + 扫描器抢占」（见 {@link ParseQueueService}），
+     * 本类不再自建解析线程池：上传只登记任务，worker 池与扫描器都在 ParseQueueService 里。
+     * 并发上限 parse.concurrency，下游 OCR / 视觉 /embedding 另有闸门限流（改并发前先看那几处）。
+     */
 
     @PostConstruct
     void init() {
-        // 命名线程工厂：线程 dump 可辨识解析任务归属。非守护线程——停机时 shutdown() 不打断在跑解析，
-        // 让其自然收尾（真被强杀残留的 status=2 由启动对账 recoverStuckParsing 复位）
-        parseExecutor = new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(50),
-                r -> new Thread(r, "doc-parse"));
         // 跨平台保护：Windows 绝对路径（如 D:/xxx、C:\xxx）在非 Windows 系统上会被 Paths.get() 当作
         // 相对路径，拼到 Tomcat 工作目录下导致上传/落盘失败。检测到即回退默认 ./data 并告警。
         String dir = properties.getImages().getDir();
@@ -160,6 +152,10 @@ public class DocumentService {
      * 复位为 3（失败）而非 0：其知识块可能只写了一半，需用户显式重解析或重新上传修复；
      * 向量路与关键词路均按 status=0 过滤，status=3 期间残留半成品不会进入检索上下文。
      * <p>
+     * 队列化之后多一层判断：崩溃前刚入队或刚被抢占的任务，行还在 c_ai_parse_task 里（租约会由扫描器回收后重跑），
+     * 这种不能判失败——判了就丢掉一次本可以自动恢复的解析。只有**没有任何任务行**的残留 status=2 才是真丢失，
+     * 才复位为失败等人工处理。
+     * <p>
      * 注意：多副本部署时本方法可能复位其他实例正在解析的文档（其检查点会感知并停止）。
      * 若采用多副本，应把 parse.recoverStuckOnStartup 置 false 并改由运维单点执行。
      */
@@ -172,24 +168,27 @@ public class DocumentService {
             List<AiDocument> stuck = documentMapper.selectList(
                     new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getStatus, 2));
             if (stuck.isEmpty()) return;
+            int recovered = 0, handed = 0;
             for (AiDocument d : stuck) {
+                if (parseQueue.hasActiveTask(d.getId())) {
+                    handed++;
+                    log.warn("[Recover] 文档 {} ({}) 仍有未结束的解析任务，交给队列重跑（不判失败）",
+                            d.getFileName(), d.getId());
+                    continue;
+                }
                 documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                         .eq(AiDocument::getId, d.getId())
                         .eq(AiDocument::getStatus, 2)
                         .set(AiDocument::getStatus, 3)
                         .set(AiDocument::getFailReason, "服务重启中断解析，请重新解析或重新上传")
                         .set(AiDocument::getParseDesc, "解析中断(服务重启)"));
+                recovered++;
                 log.warn("[Recover] 复位残留解析中文档: {} ({})", d.getFileName(), d.getId());
             }
-            log.info("[Recover] 启动对账完成，复位 {} 个残留'解析中'文档", stuck.size());
+            log.info("[Recover] 启动对账完成：复位 {} 个残留'解析中'文档，{} 个已交队列重跑", recovered, handed);
         } catch (Exception e) {
             log.warn("[Recover] 启动对账失败: {}", e.getMessage());
         }
-    }
-
-    @PreDestroy
-    void shutdown() {
-        parseExecutor.shutdown();
     }
 
     /**
@@ -233,6 +232,12 @@ public class DocumentService {
     /** 上传主体（已按文件名串行）：优先复用同名文档走 diff，否则新建 */
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
                                 DocumentParser parser, String targetKbId) throws Exception {
+        // 背压：队列排满时**在落盘建记录之前**就拒绝，而不是先收下、再在线程池里丢掉解析任务。
+        // 旧实现是后者（队列满→删记录→报"解析队列繁忙"），用户看到的就是"传上去了却解析失败"。
+        if (parseQueue.isBackpressured()) {
+            throw new BizException("解析队列已满（" + parseQueue.queuedCount() + "/" + parseQueue.capacity()
+                    + "），请稍后再上传");
+        }
         // 同名文档优先复用其 docId 走 diff 重解析（upsert 语义：文档身份/knowledgeId 稳定，未变块增量复用、只重嵌变更处）；
         // 无可复用（无同名，或同名均解析中已清理）时走全新上传
         AiDocument reusable = reusableTarget(fileName);
@@ -262,27 +267,18 @@ public class DocumentService {
         doc.setCreatedBy(RequestUser.uid());
         documentMapper.insert(doc);
         documentMetaCache.invalidate(doc.getId());
-        updateProgress(doc.getId(), 0, "已提交,等待解析");
-
-        Path source;
+        // 源文件落盘（解析期读取；重解析复用同一份）
         try {
-            source = saveSourceFile(file, doc.getId(), fileName);
+            saveSourceFile(file, doc.getId(), fileName);
         } catch (Exception e) {
             // 补偿：源文件落盘失败时清理刚插入的记录，避免残留"解析中"脏数据
             log.warn("源文件落盘失败，清理记录: {} error={}", doc.getId(), e.getMessage());
             documentMapper.deleteById(doc.getId());
             throw e;
         }
-        final DocumentParser fp = parser;
-        syncParseConcurrency();
-        try {
-            parseExecutor.submit(() -> processUpload(doc.getId(), fileName, source, fp));
-        } catch (RejectedExecutionException e) {
-            // L9 fail-loud：队列满（≥50 待解析任务）：拒绝新任务并告知当前队列数，清理本次记录避免脏数据
-            int queued = parseExecutor == null ? 0 : parseExecutor.getQueue().size();
-            documentMapper.deleteById(doc.getId());
-            throw new BizException("解析队列繁忙（当前排队 " + queued + " 个任务），请稍后再试");
-        }
+        // 登记驱动：只往持久化队列塞一行任务就返回，解析由扫描器抢占执行。
+        // 旧实现在这里 submit 到 fixed(2)+LBQ(50)+AbortPolicy，队列满就删掉刚建好的文档记录——批量上传时数据就这么丢了。
+        parseQueue.enqueue(doc.getId(), doc.getKbId(), 0);
         return doc;
     }
 
@@ -833,7 +829,13 @@ public class DocumentService {
         Exception lastErr = null;
         for (int attempt = 0; attempt <= retryCount; attempt++) {
             try {
-                store.add(batch);
+                // 并发闸：多文档并行解析时 vectorAdd 会把 embedding 服务打爆，闸门放行的批数由 parse.embedConcurrency 控制
+                parseQueue.acquireEmbedPermission();
+                try {
+                    store.add(batch);
+                } finally {
+                    parseQueue.releaseEmbedPermission();
+                }
                 return;
             } catch (Exception e) {
                 lastErr = e;
@@ -884,7 +886,13 @@ public class DocumentService {
         Exception lastErr = null;
         for (int attempt = 0; attempt <= retryCount; attempt++) {
             try {
-                store.add(batch);
+                // 并发闸（parse.embedConcurrency）：向量化是解析链路里最重的下游，必须限并发
+                parseQueue.acquireEmbedPermission();
+                try {
+                    store.add(batch);
+                } finally {
+                    parseQueue.releaseEmbedPermission();
+                }
                 return;
             } catch (Exception e) {
                 lastErr = e;
@@ -944,7 +952,8 @@ public class DocumentService {
                 chunks = new ArrayList<>(chunks.subList(0, maxChunks));
             }
             if (chunks.isEmpty()) {
-                throw new BizException("文档未解析出任何内容");
+                // 终态错误：重试多少次都还是空，交给队列直接置 dead，别白耗一轮退避
+                throw new ParseFatalException("文档未解析出任何内容");
             }
             // 删除感知：解析过程中文档被删除则立即停止并清理本次产物（避免孤儿数据/白耗资源）
             if (!isDocAlive(docId)) { cleanupPartial(docId, aiDocs); return; }
@@ -1780,12 +1789,11 @@ public class DocumentService {
     public void reparse(String docId) {
         AiDocument doc = documentMapper.selectById(docId);
         if (doc == null) throw new BizException("文档不存在");
-        Path source = sourceFile(docId, doc.getFileName());
-        if (!Files.exists(source)) throw new BizException("源文件缺失，无法重解析（请重新上传）");
-        DocumentParser parser = parsers.stream().filter(p -> p.supports(doc.getFileType()))
-                .findFirst().orElse(null);
-        if (parser == null) throw new BizException("不支持的文件格式");
-
+        // 背压先判：CAS 会先把文档置"解析中"，判晚了回滚也会留下脏状态
+        if (parseQueue.isBackpressured()) {
+            throw new BizException("解析队列已满（" + parseQueue.queuedCount() + "/" + parseQueue.capacity()
+                    + "），请稍后再试");
+        }
         // 并发防护（多实例也原子）：CAS 抢占"解析中"状态，失败说明已有解析在进行
         tryLockParsing(docId);
 
@@ -1798,34 +1806,43 @@ public class DocumentService {
         // 不整体删除旧向量与知识块：processUpload 的 diff 式重建依赖它们做 content_hash 匹配
         // （未变块保留 id+向量，变更/删除块由 processUpload 清理；失败时旧内容可回退保留）
         // 也不清空图片目录：内容寻址文件名下，未变图片文件保留供复用块引用，变更/删除图的旧文件由 processUpload 成功后孤儿清扫
-        // 提交前保存"解析前"状态：下方 setStatus(2) 会改写内存对象，队列满恢复分支必须用此原值，
-        // 否则恢复语句把状态重置回 2（沿用 doc.getStatus() 的原实现会让文档永久卡在"解析中"）
-        int origStatus = doc.getStatus() == null ? 0 : doc.getStatus();
-        // 队列满恢复时一并回滚解析态字段：下方 updateProgress 会把 parse_desc 改写为"重新解析中"，
-        // 只回滚 status 会让已入库文档悬浮显示"重新解析中"（终态与描述不一致）
-        Integer origProgress = doc.getParseProgress();
-        String origParseDesc = doc.getParseDesc();
-        String origFailReason = doc.getFailReason();
         doc.setStatus(2);
         doc.setFailReason(null);
         documentMapper.updateById(doc);
         documentMetaCache.invalidate(docId);
-        updateProgress(docId, 0, "重新解析中");
+        updateProgress(docId, 0, "重新解析中（已入队）");
 
-        final DocumentParser fp = parser;
-        syncParseConcurrency();
-        try {
-            parseExecutor.submit(() -> processUpload(docId, doc.getFileName(), source, fp));
-        } catch (RejectedExecutionException e) {
-            // 队列满：恢复文档原状态与解析态字段（避免停留在"解析中"或残留"重新解析中"描述）
-            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                    .eq(AiDocument::getId, docId)
-                    .set(AiDocument::getStatus, origStatus)
-                    .set(AiDocument::getParseProgress, origProgress)
-                    .set(AiDocument::getParseDesc, origParseDesc)
-                    .set(AiDocument::getFailReason, origFailReason));
-            throw new BizException("解析队列繁忙（已有 50 个待解析任务），请稍后再试");
+        // 作废同一文档上未结束的旧任务，避免两个任务抢跑同一文档（runParseTask 侧也有 lease 保护）
+        parseQueue.killActiveByDoc(docId);
+        // 登记驱动：手动重解析优先级高于自动排队（priority=1）
+        parseQueue.enqueue(docId, doc.getKbId(), 1);
+    }
+
+    /**
+     * 重解析/上传登记后的任务入口：由 {@link ParseQueueService} 在 worker 线程里调用。
+     * 源文件缺失、格式不支持这类问题在这里一次性校验清楚（旧实现是在 reparse 里校验后才 submit，
+     * 队列化后校验点只能是执行侧，登记侧无权拦）。
+     */
+    public void runParseTask(String taskId, String docId) throws Exception {
+        AiDocument doc = documentMapper.selectById(docId);
+        if (doc == null) {
+            throw new BizException("文档不存在，无法解析");
         }
+        Path source = sourceFile(docId, doc.getFileName());
+        if (!Files.exists(source)) {
+            throw new BizException("源文件缺失，无法解析（请重新上传：" + doc.getFileName() + "）");
+        }
+        DocumentParser parser = parsers.stream().filter(p -> p.supports(doc.getFileType()))
+                .findFirst().orElse(null);
+        if (parser == null) {
+            throw new ParseFatalException("不支持的文件格式: ." + doc.getFileType());
+        }
+        processUpload(docId, doc.getFileName(), source, parser);
+    }
+
+    /** 解析队列统计（前端展示「排队 N / 执行 M」） */
+    public Map<String, Object> queueStats() {
+        return parseQueue.queueStats();
     }
 
     /**
@@ -1879,8 +1896,8 @@ public class DocumentService {
             } catch (Exception e) {
                 log.warn("[{}] 替换前保存快照失败: {}", docId, e.getMessage());
             }
-            // 覆盖源文件（同 docId 同路径）
-            Path source = saveSourceFile(file, docId, existing.getFileName());
+            // 覆盖源文件（同 docId 同路径）；解析期由 runParseTask 按 docId 重新取路径读取
+            saveSourceFile(file, docId, existing.getFileName());
             // 更新元数据并置解析中
             existing.setFileSize(file.getSize());
             existing.setDescription(description);
@@ -1890,13 +1907,11 @@ public class DocumentService {
             documentMetaCache.invalidate(docId);
             updateProgress(docId, 0, "已提交,等待解析");
 
-            final DocumentParser fp = parser;
-            syncParseConcurrency();
-            parseExecutor.submit(() -> processUpload(docId, existing.getFileName(), source, fp));
+            // 登记驱动：入队一行任务即返回（解析由扫描器抢占执行，不再受线程池容量影响）
+            parseQueue.killActiveByDoc(docId);
+            parseQueue.enqueue(docId, existing.getKbId(), 0);
             submitted = true;
             return existing;
-        } catch (RejectedExecutionException e) {
-            throw new BizException("解析队列繁忙（已有 50 个待解析任务），请稍后再试");
         } finally {
             // 未成功提交解析任务时恢复原状态与解析态字段（避免卡在"解析中"或残留错误描述）
             if (!submitted) {
