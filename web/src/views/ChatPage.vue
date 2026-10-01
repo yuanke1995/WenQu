@@ -5,6 +5,9 @@
       <div class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
+        <button class="app-btn ghost head-panel-btn" title="分享这段对话（只读链接）" @click="openShare">
+          <share-alt-outlined /> 分享
+        </button>
         <button class="app-btn ghost head-panel-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
           <search-outlined /> 查找
         </button>
@@ -671,6 +674,37 @@
       </div>
     </Teleport>
 
+    <!-- 会话分享（只读链接） -->
+    <a-modal v-model:open="shareVisible" title="分享这段对话" :footer="null" width="520px">
+      <a-spin :spinning="shareLoading">
+        <template v-if="shareInfo.enabled">
+          <div class="share-link-row">
+            <input class="share-link" :value="shareUrl" readonly @focus="$event.target.select()" />
+            <button class="app-btn" @click="copyShareLink"><copy-outlined /> 复制</button>
+          </div>
+          <div class="share-meta">
+            链接展示的是这段对话的<strong>最新内容</strong>（后续继续提问也会一并出现在分享页）；
+            拿到链接的人只能查看，不能继续提问<span v-if="shareInfo.visitCount"> · 已被访问 {{ shareInfo.visitCount }} 次</span>
+          </div>
+          <div class="share-warn">
+            分享内容包含完整问答与引用来源的文档名/章节。请确认其中没有不适合外发的内容。
+          </div>
+          <div class="share-actions">
+            <button class="app-btn ghost" @click="openSharedPage">预览</button>
+            <button class="app-btn ghost" @click="regenerateShareLink">换一个新链接</button>
+            <button class="app-btn ghost danger" @click="doDisableShare">停止分享</button>
+          </div>
+        </template>
+        <template v-else>
+          <p class="share-intro">
+            生成一个只读链接，拿到链接的人可以查看这段对话的问答与引用来源，<strong>不能继续提问</strong>。
+          </p>
+          <p class="share-intro">链接随时可以停止；停止后重新生成会换新链接，旧链接立即失效。</p>
+          <button class="app-btn" @click="doEnableShare"><share-alt-outlined /> 生成分享链接</button>
+        </template>
+      </a-spin>
+    </a-modal>
+
     <!-- 回答反馈弹窗 -->
     <a-modal v-model:open="feedbackVisible" title="反馈" :footer="null" :width="440">
       <a-textarea v-model:value="feedbackText" placeholder="可选：告诉我们哪里不满意" :rows="3" />
@@ -734,11 +768,12 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
-         CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons-vue'
+         CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
-         listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
+         listKnowledgeBases, listDocuments, uploadChatAttachment,
+         getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams } from './store'
 import { exportAnswerMd } from './exportMd'
@@ -2184,6 +2219,66 @@ const onSearchHotkey = e => {
 onMounted(() => document.addEventListener('keydown', onSearchHotkey))
 onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
 
+// ==================== 会话分享（只读链接） ====================
+// 分享的是"这段对话"：链接持有者可看不可续聊。链接展示的是会话**最新内容**（后端按 token 实时读，
+// 不是快照）——所以弹窗里必须讲清楚，否则用户后续聊到敏感内容时不会意识到分享页也跟着变了。
+const shareVisible = ref(false)
+const shareLoading = ref(false)
+const shareInfo = ref({ enabled: false, token: '', visitCount: 0 })
+const shareUrl = computed(() => (shareInfo.value.token ? `${location.origin}/shared/${shareInfo.value.token}` : ''))
+
+const openShare = async () => {
+  if (!messages.value.length) { message.info('当前会话还没有内容可分享'); return }
+  shareVisible.value = true
+  shareLoading.value = true
+  try {
+    const r = await getSessionShare(currentSessionId.value)
+    shareInfo.value = r?.data || { enabled: false, token: '', visitCount: 0 }
+  } catch (e) {
+    message.error('读取分享状态失败：' + (e.message || ''))
+  } finally {
+    shareLoading.value = false
+  }
+}
+/** 生成或换新链接（后端对已开启的分享再次开启会换 token，旧链接立即失效） */
+const doEnableShare = async (regenerate = false) => {
+  shareLoading.value = true
+  try {
+    const r = await enableSessionShare(currentSessionId.value)
+    shareInfo.value = { ...(r?.data || {}), enabled: true, visitCount: 0 }
+    message.success(regenerate ? '已换新链接，旧链接立即失效' : '分享链接已生成')
+  } catch (e) {
+    message.error('生成失败：' + (e.message || ''))
+  } finally {
+    shareLoading.value = false
+  }
+}
+const regenerateShareLink = () => doEnableShare(true)
+const doDisableShare = async () => {
+  shareLoading.value = true
+  try {
+    await disableSessionShare(currentSessionId.value)
+    shareInfo.value = { enabled: false, token: '', visitCount: 0 }
+    message.success('已停止分享，链接立即失效')
+  } catch (e) {
+    message.error('停止失败：' + (e.message || ''))
+  } finally {
+    shareLoading.value = false
+  }
+}
+const copyShareLink = async () => {
+  const url = shareUrl.value
+  if (!url) return
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url)
+    else fallbackCopyText(url)
+    message.success('链接已复制')
+  } catch (e) {
+    fallbackCopyText(url)
+  }
+}
+const openSharedPage = () => { if (shareUrl.value) window.open(shareUrl.value, '_blank', 'noopener') }
+
 // ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
 const send = () => {
   const q = text.value.trim()
@@ -2880,6 +2975,21 @@ onMounted(async () => {
   flex: none; min-width: 56px; text-align: right;
   font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums;
 }
+/* 会话分享弹窗 */
+.share-link-row { display: flex; gap: 8px; align-items: center; }
+.share-link {
+  flex: 1; min-width: 0; padding: 7px 10px; font-size: 13px;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
+  background: var(--app-panel-2); color: var(--app-text);
+}
+.share-meta { margin-top: 10px; font-size: 12px; color: var(--app-text2); line-height: 1.7; }
+.share-warn {
+  margin-top: 10px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border);
+  color: var(--app-warn-text); border-radius: var(--app-radius-sm);
+}
+.share-actions { margin-top: 14px; display: flex; gap: 8px; }
+.share-intro { font-size: 13px; color: var(--app-text2); line-height: 1.8; margin: 0 0 10px; }
 .head-panel-btn { margin-left: auto; padding: 4px 12px; }
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }

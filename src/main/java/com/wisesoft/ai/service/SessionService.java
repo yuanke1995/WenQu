@@ -97,6 +97,12 @@ public class SessionService {
         return session;
     }
 
+    /** 按 id 取会话（**不做归属校验**，调用方负责）：会话只读分享页按 token 取标题用 */
+    public Session sessionById(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        return sessionMapper.selectById(sessionId);
+    }
+
     /** anonymous 池访问门槛：仅调用方自身为 anonymous（未登录）时可访问 */
     private boolean canAccessAnonymousPool(String userId) {
         return RequestUser.ANONYMOUS.equals(normalizeUser(userId));

@@ -212,6 +212,16 @@ export const getHistory = sid => request(`/session/${sid}`)
 /** 清除会话（Redis 缓存） */
 export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE' })
 
+// ==================== 会话只读分享（链接持有者可看，不可续聊） ====================
+/** 查询分享状态（仅会话所有者）：{enabled, token, visitCount, lastVisitAt} */
+export const getSessionShare = sid => request(`/session/${sid}/share`)
+/** 开启（或重新生成）分享链接：停止后重新开启会换新 token，旧链接立即失效 */
+export const enableSessionShare = sid => request(`/session/${sid}/share`, { method: 'POST' })
+/** 停止分享：链接立即失效 */
+export const disableSessionShare = sid => request(`/session/${sid}/share`, { method: 'DELETE' })
+/** 公开只读页（免登录）：按 token 取会话标题与消息 */
+export const getSharedSession = token => request(`/share/session/${encodeURIComponent(token)}`)
+
 /** 列出所有会话（支持 keyword 按标题/消息内容模糊搜索） */
 export const listSessions = (keyword = '') =>
   request('/sessions' + (keyword ? '?keyword=' + encodeURIComponent(keyword) : ''))

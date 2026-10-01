@@ -63,6 +63,7 @@ public class ChatController {
     private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
     private final com.wisesoft.ai.mapper.AiDocumentMapper documentMapper;
     private final com.wisesoft.ai.service.ChatUploadService chatUploadService;
+    private final com.wisesoft.ai.service.SessionShareService sessionShareService;
 
     @Operation(summary = "上传聊天附件", description = "把聊天附件先上传换 fileId（问答请求体只带 fileId，不再内联 base64）；"
             + "文件按用户隔离落盘、超期自动清理；按用户限频（ratelimit.uploadPerMinute）")
@@ -407,6 +408,43 @@ public class ChatController {
                 ? List.of() : JSON.parseArray(k.getImages(), String.class);
         m.put("images", imageUrlSigner.signUrls(kImgs));
         return ResultJson.ok(m);
+    }
+
+    @Operation(summary = "查询会话分享状态", description = "返回 {enabled, token, visitCount, lastVisitAt}；未分享返回 enabled=false。仅会话所有者可查")
+    @GetMapping("/session/{sessionId}/share")
+    public ResultJson getSessionShare(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        var s = sessionShareService.get(sessionId);
+        boolean on = s != null && s.getEnabled() != null && s.getEnabled() == 1;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("enabled", on);
+        out.put("token", on ? s.getToken() : "");
+        out.put("visitCount", s == null || s.getVisitCount() == null ? 0 : s.getVisitCount());
+        out.put("lastVisitAt", s == null ? null : s.getLastVisitAt());
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "开启会话分享", description = "生成（或重新生成）只读分享链接；停止后重新开启会换新 token，"
+            + "旧链接立即失效。仅会话所有者可操作")
+    @PostMapping("/session/{sessionId}/share")
+    public ResultJson enableSessionShare(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        var s = sessionShareService.enable(sessionId, RequestUser.uid());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("enabled", true);
+        out.put("token", s.getToken());
+        return ResultJson.ok(out, "分享链接已生成");
+    }
+
+    @Operation(summary = "停止会话分享", description = "停用后链接立即失效（记录保留，再次开启会换新 token）")
+    @DeleteMapping("/session/{sessionId}/share")
+    public ResultJson disableSessionShare(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        sessionShareService.disable(sessionId);
+        return ResultJson.ok("已停止分享");
     }
 
     @Operation(summary = "删除一轮对话", description = "按对话组删除：指定该轮回答（assistant 消息）ID，连同其前面的用户问题一起软删除，并清理 Redis 兜底缓存。立即生效，前端 5 秒内可调撤销接口恢复")

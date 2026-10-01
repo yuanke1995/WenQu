@@ -54,9 +54,30 @@ public class ShareController {
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final com.wisesoft.ai.service.ConfigService configService;
+    private final com.wisesoft.ai.service.SessionShareService sessionShareService;
 
     /** 单条提问长度上限（与对话页同量级的防滥用口径） */
     private static final int MAX_QUESTION_CHARS = 8000;
+
+    /**
+     * 会话只读分享（免登录）：按 token 取回被分享会话的标题与消息。
+     * <p>
+     * 与智能体分享的差别：这里没有"以分享者身份执行"的授权语义——只读、且内容已裁剪
+     * （消息正文 + 来源的文档名/章节/相关度；不含知识块全文、工具过程、思考全文与用量）。
+     * 停用或换 token 后立即 404（不区分"不存在"与"已停用"，不泄露存在性）。
+     */
+    @Operation(summary = "会话只读分享", description = "按分享 token 取回会话标题与消息（只读，免登录）")
+    @GetMapping("/session/{token}")
+    public ResultJson sharedSession(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token) {
+        var share = sessionShareService.resolvePublic(token);
+        if (share == null) throw new BizException(404, "分享链接无效或已停止访问");
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("title", sessionShareService.sessionTitle(share.getSessionId()));
+        out.put("sharedAt", share.getCreateTime());
+        out.put("messages", sessionShareService.publicHistory(share.getSessionId()));
+        return ResultJson.ok(out);
+    }
 
     @Operation(summary = "分享信息", description = "token 换取智能体公开信息（名称/描述；不含提示词与知识库配置）")
     @GetMapping("/{token}/info")

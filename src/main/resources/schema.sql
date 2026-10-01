@@ -776,3 +776,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_graph_extract` (
     UNIQUE KEY `uk_chunk` (`chunk_id`),
     KEY `idx_doc` (`doc_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 抽取记录（哈希增量与失败率的账本）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_session_share` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '分享ID（UUID）',
+    `session_id`    VARCHAR(50)  NOT NULL COMMENT '被分享的会话ID',
+    `token`         VARCHAR(64)  NOT NULL COMMENT '公开访问令牌（链接即凭据，重新开启会换新 token 使旧链接失效）',
+    `enabled`       INT          NOT NULL DEFAULT 1 COMMENT '1=链接可访问 0=已停止',
+    `created_by`    VARCHAR(64)  DEFAULT NULL COMMENT '发起分享的 uid（仅会话所有者可分享）',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '首次分享时间',
+    `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `visit_count`   INT          NOT NULL DEFAULT 0 COMMENT '链接访问次数',
+    `last_visit_at` DATETIME     DEFAULT NULL COMMENT '最近访问时刻',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ss_token` (`token`),
+    UNIQUE KEY `uk_ss_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话只读分享（链接持有者可看对话，不含工具过程与知识块全文）';

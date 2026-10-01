@@ -17,6 +17,7 @@ import Profile from './views/ProfilePage.vue'
 import Artifacts from './views/ArtifactsPage.vue'
 import OidcCallback from './views/OidcCallbackPage.vue'
 import ShareChat from './views/ShareChatPage.vue'
+import SharedSession from './views/SharedSessionPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -27,6 +28,8 @@ const router = createRouter({
     { path: '/auth/oidc/callback', component: OidcCallback, meta: { title: '单点登录', public: true } },
     // 智能体公开分享（/s/{token} 免登录对话；?embed=1 为 iframe 嵌入的紧凑模式）
     { path: '/s/:token', component: ShareChat, meta: { title: '智能体对话', public: true } },
+    // 会话只读分享（/shared/{token} 免登录查看一段对话；不能续聊，内容为正文 + 来源文档名）
+    { path: '/shared/:token', component: SharedSession, meta: { title: '对话分享', public: true } },
     { path: '/chat', component: AppLayout, children: [{ path: '', component: Chat }] },
     { path: '/profile', component: AppLayout, children: [{ path: '', component: Profile }], meta: { title: '个人设置' } },
     // 智能体工作台不再要求管理员：技能 Skills 与 MCP 是个人资产，所有人都要能进来管自己的；
