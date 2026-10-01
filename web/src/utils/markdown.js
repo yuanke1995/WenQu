@@ -121,8 +121,32 @@ const ensureTableSpacing = text => {
   return res.join('\n')
 }
 
+// 渲染缓存（LRU）：renderMd 是纯函数，但模板里直接 v-html="renderMd(...)" 调用——
+// 任何响应式状态变化都会让 v-for 全列表重新跑完整管线（markdown-it + DOMPurify + TreeWalker +
+// DOM 后处理），消息越多越卡。按输入 key 缓存后，已渲染消息零成本复用；流式段的 content
+// 每次变化必然 miss，其渲染频率由调用方的节流控制（本缓存不管流式）。
+const RENDER_CACHE = new Map()      // key → html；Map 保持插入序，命中即重插实现 LRU
+const RENDER_CACHE_MAX = 200
+const imagesKeyOf = imgs => (imgs && imgs.length ? imgs.join('\u0001') : '')
+
 export const renderMd = (t, images = []) => {
   if (!t) return ''
+  const key = t + '\u0000' + imagesKeyOf(images)
+  const cached = RENDER_CACHE.get(key)
+  if (cached !== undefined) {
+    RENDER_CACHE.delete(key)
+    RENDER_CACHE.set(key, cached)
+    return cached
+  }
+  const html = renderMdInner(t, images)
+  RENDER_CACHE.set(key, html)
+  if (RENDER_CACHE.size > RENDER_CACHE_MAX) {
+    RENDER_CACHE.delete(RENDER_CACHE.keys().next().value)
+  }
+  return html
+}
+
+const renderMdInner = (t, images = []) => {
   // ① 预处理：图片标记 [图片N：描述]/[图片N] → markdown 图片占位（保留位置/顺序）
   // 只吞行内空白与标点，不吞换行：占位符后的空行承担"图片与后续块（表格/段落）分段"的语义，
   // 吞掉会把表格首行粘进图片行，表格永远无法成块渲染

@@ -13,6 +13,16 @@
           <div class="welcome-mark">渠</div>
           <h2>有什么可以帮你？</h2>
           <p>智能体与知识库问答，支持图片提问与深度思考</p>
+          <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析） -->
+          <div class="welcome-samples">
+            <button v-for="q in SAMPLE_QUESTIONS" :key="q.text" class="ws-card" type="button" @click="ask(q.text)">
+              <span class="ws-ic">{{ q.icon }}</span>
+              <span class="ws-text">
+                <span class="ws-label">{{ q.label }}</span>
+                <span class="ws-q">{{ q.text }}</span>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
@@ -100,6 +110,17 @@
                 </template>
               </div>
               <div v-else class="md" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+              <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
+              <div v-if="m.errorCard" class="msg-error-card">
+                <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message) }}</div>
+                <div class="mec-actions">
+                  <button class="app-btn ghost small" @click="regenerate(i)"><redo-outlined /> 重新生成</button>
+                </div>
+                <details class="mec-detail">
+                  <summary>异常详情</summary>
+                  <pre class="mec-raw">{{ m.errorCard.message }}</pre>
+                </details>
+              </div>
               <!-- 气泡级进度行：一轮里同时只显示一处（互斥见 busyOf），工具/深度思考/审批由各自构件表达 -->
               <div v-if="busyOf(m)" class="busy-hint" :class="{ warn: busyOf(m).warn }">
                 <loading-outlined spin />
@@ -596,7 +617,7 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
-         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined } from '@ant-design/icons-vue'
+         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase } from '../api'
@@ -1838,7 +1859,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const model = prev ? prev.model : (currentOverrideModel.value || '')
   // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [] }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -1849,6 +1870,23 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   if (viewing()) scrollForce()
   let full = ''
   let gotToken = false
+  // 流式渲染节流：token 只进缓冲 full，每 120ms 批量刷一次 msg.content 与时间线文本区间——
+  // 每个 token 都写响应式字段会让整页消息列表重跑渲染管线（renderMd 全量 × 消息数），
+  // 长回答越流越卡。done/停止等终态路径 flushNow() 保底：最终态完整、不丢已流出内容。
+  let flushTimer = null
+  let flushedLen = 0
+  const flushNow = () => {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+    if (full.length > flushedLen) {
+      extendTimelineText(msg, flushedLen, full.length)
+      flushedLen = full.length
+    }
+    if (msg.content !== full) msg.content = full
+  }
+  const flushSoon = () => {
+    if (flushTimer) return
+    flushTimer = setTimeout(flushNow, 120)
+  }
   sendQuestion(sid, question, imgs, {
     signal: abort.signal,
     deepThink,
@@ -1872,7 +1910,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (j.thinking) msg.thinking = j.thinking
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: t => { gotToken = true; const prevLen = full.length; full += t; msg.content = full; extendTimelineText(msg, prevLen, full.length); msg.stage = ''; msg.thinkLoading = false; liveScroll() },
+    onToken: t => { gotToken = true; full += t; flushSoon(); msg.stage = ''; msg.thinkLoading = false },
     onProcess: t => {
       // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）
       const prevLen = (msg.processText || '').length
@@ -2007,6 +2045,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 忽略 */ }
     },
     onDone: contentJson => {
+      flushNow()   // 终态保底：把缓冲里未刷的正文与时间线刷进响应式（停止生成/最终正文对比都依赖它）
       let sources = [], related = [], messageId = null, degradations = []
       try {
         const p = JSON.parse(contentJson || '{}')
@@ -2076,17 +2115,31 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }, 2500)
         return
       }
-      // 错误正文整体替换：时间线文本区间失效 → 清空回退分组兜底
-      msg.timeline = []
-      msg.content = '😅 ' + e
+      // 错误不再整体替换正文：flushNow 保留已流出的半程内容与时间线，挂独立错误卡
+      // （分类文案 + 重新生成 + 异常详情折叠，对齐主流产品的失败态；此前「😅+裸异常」写进气泡
+      //  会冲掉半程内容，长回答生成到 90% 失败时全部丢失）
+      flushNow()
       msg.loading = false
       msg.retrying = false
       msg.failed = true
+      msg.errorCard = { message: String(e), at: Date.now() }
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       message.error(e)
       if (viewing()) scrollForce()
     }
   })
+}
+
+/** 错误分类文案（原始异常收进「异常详情」折叠；映射常见失败原因给出可行动提示） */
+const errorBrief = raw => {
+  const s = String(raw || '')
+  if (/AbortError|aborted?/i.test(s)) return '生成已停止'
+  if (/timeout|timed?\s*out/i.test(s)) return '请求超时：模型服务响应过慢或网络不稳定，可重试'
+  if (/Failed to fetch|NetworkError|network/i.test(s)) return '网络连接失败：请检查网络或代理设置'
+  if (/401|Unauthorized/i.test(s)) return '鉴权失败：登录已过期，请重新登录'
+  if (/429|rate\s*limit/i.test(s)) return '请求过于频繁：模型服务限流，稍后重试'
+  if (/5\d{2}|Bad Gateway|Service Unavailable/i.test(s)) return '模型服务异常：稍后重试，或到设置页检查供应商状态'
+  return '生成失败，可重试或更换模型'
 }
 
 const regenerate = mi => {
@@ -2247,6 +2300,14 @@ const stop = () => {
   }
 }
 
+// 空态示例问题（通用四类，不绑定具体知识库——点击即发，检索链路自动走当前智能体/全局库）
+const SAMPLE_QUESTIONS = [
+  { icon: '🔍', label: '知识检索', text: '帮我查一下系统操作手册里的登录步骤' },
+  { icon: '📝', label: '总结提炼', text: '把这篇文档的核心要点总结成 5 条' },
+  { icon: '✍️', label: '辅助写作', text: '帮我起草一份项目周报的框架' },
+  { icon: '📊', label: '对比分析', text: '对比一下方案 A 和方案 B 的优劣' }
+]
+
 const ask = q => { text.value = q; nextTick(send) }
 
 // 贴底自动滚动（上翻回看历史暂停跟随）
@@ -2320,6 +2381,34 @@ onMounted(async () => {
 }
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
 .welcome p { color: var(--app-text3); margin: 0 0 18px; }
+
+/* 空态示例问题卡片：2×2 网格，点击即发 */
+.welcome-samples { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 560px; margin: 0 auto; text-align: left; }
+.ws-card {
+  display: flex; align-items: flex-start; gap: 9px; text-align: left;
+  border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel, #fff);
+  padding: 11px 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.ws-card:hover { border-color: var(--app-accent); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
+.ws-ic { font-size: 16px; line-height: 1.3; flex: none; }
+.ws-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-label { font-size: 11px; color: var(--app-text3); }
+.ws-q { font-size: 13px; color: var(--app-text2); }
+
+/* 消息错误卡：独立于正文气泡（半程内容保留在上方），分类文案 + 重试 + 详情折叠 */
+.msg-error-card {
+  margin-top: 8px; border: 1px solid #ffccc7; border-radius: 8px;
+  background: #fff2f0; padding: 9px 12px;
+}
+.mec-head { font-size: 13px; color: #cf1322; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.mec-ic { font-size: 13px; }
+.mec-actions { margin-top: 7px; display: flex; gap: 8px; }
+.mec-detail { margin-top: 7px; }
+.mec-detail summary { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
+.mec-raw {
+  margin: 6px 0 0; font-size: 11px; color: var(--app-text2); white-space: pre-wrap; word-break: break-all;
+  background: rgba(0, 0, 0, .03); border-radius: 6px; padding: 7px 9px; max-height: 160px; overflow: auto;
+}
 
 .row { display: flex; margin-bottom: 20px; justify-content: center; }
 .msg-block { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: min(94%, 860px); width: 100%; }

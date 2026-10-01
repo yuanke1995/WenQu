@@ -25,6 +25,12 @@
       </nav>
 
       <div v-if="!collapsed" class="side-label">最近</div>
+      <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配） -->
+      <div v-if="!collapsed" class="sess-search-wrap">
+        <search-outlined class="sess-search-ic" />
+        <input v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
+        <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
+      </div>
       <div class="side-sessions">
         <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
         <template v-else>
@@ -32,19 +38,41 @@
                class="sess-item" :class="{ active: isActive('/chat') && route.query.sid === s.id }"
                :title="s.title" @click="openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
-            <span v-else class="sess-title">{{ s.title || '新对话' }}</span>
+            <template v-else>
+              <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
+              <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
+                <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
+              </span>
+            </template>
             <template v-if="!collapsed">
-              <a-tooltip title="导出 Markdown">
-                <span class="sess-export" @click.stop="exportSessionMd(s)"><download-outlined /></span>
+              <a-tooltip :title="s.isPinned === 1 ? '取消置顶' : '置顶'">
+                <button class="sess-op" :class="{ on: s.isPinned === 1 }" @click.stop="togglePin(s)"><pushpin-outlined /></button>
               </a-tooltip>
-              <a-popconfirm title="删除该会话？" ok-text="删除" cancel-text="取消" @confirm.stop="delSession(s.id)">
-                <span class="sess-del" @click.stop><delete-outlined /></span>
-              </a-popconfirm>
+              <a-dropdown trigger="['click']" placement="bottomRight">
+                <button class="sess-op" @click.stop><more-outlined /></button>
+                <template #overlay>
+                  <a-menu @click="({ key }) => sessionMenu(s, key)">
+                    <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
+                    <a-menu-item key="favorite">{{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
+                    <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
             </template>
           </div>
-          <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">暂无会话</div>
+          <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">
+            {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
+          </div>
         </template>
       </div>
+
+      <!-- 重命名会话 -->
+      <a-modal v-model:open="renameState.open" title="重命名会话" ok-text="保存" cancel-text="取消" @ok="doRename">
+        <a-input v-model:value="renameState.title" :maxlength="50" placeholder="会话标题（≤50 字）"
+                 @press-enter="doRename" />
+      </a-modal>
 
       <div class="side-foot">
         <span class="avatar">{{ (userName || '游')[0] }}</span>
@@ -65,13 +93,14 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
-         LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi } from '../api'
+         LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
+         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession } from '../api'
 import { ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, visibleSessions, chatStreams } from './store'
 import { exportSessionMarkdown } from './exportMd'
@@ -111,6 +140,63 @@ const openSession = sid => router.push({ path: '/chat', query: { sid } })
 const exportSessionMd = s => {
   if (s && s.id) exportSessionMarkdown(s.id, s.title || 'AI对话')
 }
+
+// ==================== 会话管理（重命名/置顶/收藏/搜索：后端接口既有，此处接线 UI） ====================
+const togglePin = async s => {
+  try {
+    await pinSession(s.id, s.isPinned !== 1)
+    await loadSessions()
+  } catch (e) { message.error(e.message || '操作失败') }
+}
+const toggleFavorite = async s => {
+  try {
+    await favoriteSession(s.id, s.isFavorite !== 1)
+    await loadSessions()
+  } catch (e) { message.error(e.message || '操作失败') }
+}
+const renameState = reactive({ open: false, id: '', title: '' })
+const renameSession = s => {
+  renameState.open = true
+  renameState.id = s.id
+  renameState.title = s.title || ''
+}
+const doRename = async () => {
+  const t = renameState.title.trim()
+  if (!t) { message.warning('标题不能为空'); return }
+  try {
+    await renameSessionApi(renameState.id, t)
+    message.success('已重命名')
+    renameState.open = false
+    await loadSessions()
+  } catch (e) { message.error(e.message || '重命名失败') }
+}
+const sessionMenu = (s, key) => {
+  if (key === 'rename') renameSession(s)
+  else if (key === 'favorite') toggleFavorite(s)
+  else if (key === 'export') exportSessionMd(s)
+  else if (key === 'delete') confirmDelete(s)
+}
+const confirmDelete = s => {
+  Modal.confirm({
+    title: '删除该会话？',
+    content: '会话与消息记录会被删除，不可恢复。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: () => delSession(s.id)
+  })
+}
+// 会话搜索（300ms 防抖走后端 keyword 检索；空串恢复全量）
+const searchKw = ref('')
+let searchTimer = null
+const onSearchInput = () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => loadSessions(searchKw.value.trim()), 300)
+}
+const clearSearch = () => {
+  searchKw.value = ''
+  clearTimeout(searchTimer)
+  loadSessions('')
+}
+onUnmounted(() => clearTimeout(searchTimer))
 
 const delSession = async sid => {
   try {
@@ -207,6 +293,34 @@ onMounted(async () => {
 .sess-export { color: var(--app-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
 .sess-item:hover .sess-export { opacity: 1; }
 .sess-export:hover { color: var(--app-accent); }
+
+/* 会话搜索框（列表顶部，防抖走后端检索） */
+.sess-search-wrap {
+  position: relative; display: flex; align-items: center; margin: 0 2px 6px;
+  border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-bg, #fff);
+}
+.sess-search-wrap:focus-within { border-color: var(--app-accent); }
+.sess-search-ic { color: var(--app-text3); font-size: 11px; margin-left: 7px; flex: none; }
+.sess-search {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font-size: 12px; padding: 5px 6px 5px 5px; color: var(--app-text);
+}
+.sess-search::placeholder { color: var(--app-text3); }
+.sess-search-clear { border: none; background: transparent; color: var(--app-text3); cursor: pointer; padding: 2px 6px; font-size: 10px; }
+.sess-search-clear:hover { color: var(--app-text); }
+
+/* 会话项操作区（hover 出现）：置顶快捷按钮 + 更多菜单（重命名/收藏/导出/删除） */
+.sess-op {
+  border: none; background: transparent; color: var(--app-text3); opacity: 0;
+  flex: none; margin-left: 4px; font-size: 12px; cursor: pointer; padding: 0 1px;
+  display: inline-flex; align-items: center;
+}
+.sess-item:hover .sess-op { opacity: 1; }
+.sess-op:hover { color: var(--app-accent); }
+.sess-op.on { opacity: 1; color: var(--app-accent); }
+.sess-pin-flag { color: var(--app-accent); font-size: 10px; flex: none; margin-right: 3px; }
+.sess-fav-flag { color: #faad14; font-size: 10px; margin-right: 3px; }
+.sess-title.fav { color: var(--app-text); }
 .sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
 
 .side-foot {
