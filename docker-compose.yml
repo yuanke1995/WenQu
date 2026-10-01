@@ -35,7 +35,7 @@ services:
     image: mysql:8.4
     container_name: ai-doc-mysql
     environment:
-      MYSQL_DATABASE: ${DB_NAME:-ai_doc_assistant}
+      MYSQL_DATABASE: ${DB_NAME:-wenqu_ai}
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -64,7 +64,7 @@ services:
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
       DB_HOST: ${DB_HOST:-mysql}
       DB_PORT: ${DB_PORT:-3306}
-      DB_NAME: ${DB_NAME:-ai_doc_assistant}
+      DB_NAME: ${DB_NAME:-wenqu_ai}
       DB_USERNAME: ${DB_USERNAME:-root}
       # JVM 内存（容器内存限制的 60~75%；如 deploy 时 --memory=2g 建议 -Xmx1400m）
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx1400m}

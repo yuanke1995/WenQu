@@ -1,6 +1,6 @@
 -- ============================================
 -- 问渠 WenQu —— AI 智能体工作台 数据库表结构
--- 数据库: ai_doc_assistant（库名保持不变，改名需数据迁移）
+-- 数据库: wenqu_ai（库名经 DB_NAME 按环境配置；已有存量库改名需数据迁移）
 --
 -- 存量库升级：无需手动执行 ALTER。启动时 SchemaMigrator 会解析本文件，
 -- 自动为存量表补齐缺失的「列」与「索引」（幂等，失败仅告警不阻塞启动）；
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `kb_id`        VARCHAR(50)  NOT NULL COMMENT '知识库ID（c_ai_document.kb_id 的外键）',
     `name`         VARCHAR(200) NOT NULL COMMENT '知识库名称',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '描述',
+    `icon`         VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认库图标（默认库恒为 wenqu 且不可修改，其余库空=默认库图标）',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索参数(JSON: {"retrieval.vecThreshold":"0.3",...}; 空=全部继承全局检索设置)',
     `parse_params` TEXT         DEFAULT NULL COMMENT '解析参数(JSON: chunk.maxSize/overlap/maxChunks/maxImages/structural/structuralRatio/headingDepth + visionRef; 空=全部继承全局解析设置)',
     `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
