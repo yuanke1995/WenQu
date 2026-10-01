@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], regenerate = false
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], regenerate = false, replaceMessageId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -108,6 +108,18 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     if (signal.aborted) inner.abort()
     else signal.addEventListener('abort', () => inner.abort())
   }
+  // 终态闸门：整条流最多收尾一次。此前 done 事件先调 end()（触发一次无载荷的 onDone）
+  // 再调 onDone(content)，**回调被调用两次**——处理逻辑是"重新赋值"所以一直没暴露，
+  // 直到按消息状态做增量操作（重新生成的版本序列）出现重复计数。所有终态路径统一走这里。
+  let ended = false
+  let donePayload = null
+  const end = err => {
+    if (ended) return
+    ended = true
+    stopIdle()
+    if (err) onError(err)
+    else onDone(donePayload)
+  }
 
   fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -117,6 +129,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       agentId: agentId || '', model: model || '',
       // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
       regenerate: regenerate || undefined,
+      // 重新生成时被替换的旧回答消息 ID：新回答落库前先软删它，历史里只留最新一版
+      replaceMessageId: replaceMessageId || undefined,
       // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       skills: Array.isArray(skills) && skills.length ? skills : undefined,
@@ -126,29 +140,19 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     signal: inner.signal
   }).then(res => {
     if (!res.ok) {
-      stopIdle()
       if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
-      res.json().then(d => onError(d?.msg || '请求失败: ' + res.status)).catch(() => onError('请求失败: ' + res.status))
+      res.json().then(d => end(d?.msg || '请求失败: ' + res.status)).catch(() => end('请求失败: ' + res.status))
       return
     }
     armIdle()
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    let ended = false
-    let sawDoneEvent = false
-    const end = err => {
-      if (ended) return
-      ended = true
-      stopIdle()
-      if (err) onError(err)
-      else onDone()
-    }
     const read = () => {
       reader.read().then(({ done, value }) => {
         // 流关闭但从未收到 done/error 事件：连接被中间层/服务端提前掐断，
         // 按失败上报（fail-loud），不能假装正常结束把半截回答留在屏上
-        if (done) { end(sawDoneEvent ? undefined : '连接被提前关闭，回答未正常结束，请重试'); return }
+        if (done) { end(donePayload !== null ? undefined : '连接被提前关闭，回答未正常结束，请重试'); return }
         armIdle() // 收到数据（任意字节）即视为存活
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -175,8 +179,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
               else if (d.type === 'agent_bound') { onAgentBound && onAgentBound(d.content) } // content 为 {locked,agentId,agentName}：会话级绑定结果（首问解析并锁定后立即下发，不等整轮结束）
               else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
-              else if (d.type === 'done') { sawDoneEvent = true; end(); onDone(d.content); return } // content 为 {sources,related,degradations} JSON 字符串
-              else if (d.type === 'error') { end(); onError(d.content); return }
+              else if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,degradations} JSON 字符串
+              else if (d.type === 'error') { end(d.content); return }
             } catch (e) {
               console.warn('[SSE] JSON 解析失败，已忽略该行:', e.message)
             }
@@ -192,12 +196,10 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     }
     read()
   }).catch(e => {
-    if (e.name === 'AbortError') {
-      if (idleTimedOut) onError('长时间未收到响应，连接已中断，请重试')
-      else onDone() // 用户主动停止，按正常结束处理
-    } else {
-      onError('请求失败: ' + e.message)
-    }
+    // 同一道闸门收尾：用户主动停止按正常结束（onDone 无载荷 → 前端收尾为「已停止生成」），
+    // 空闲超时与其它错误按可重试错误上报。此前这里不走 end()，与内层 reader 的收尾可能各调一次回调
+    if (e.name === 'AbortError') end(idleTimedOut ? '长时间未收到响应，连接已中断，请重试' : undefined)
+    else end('请求失败: ' + e.message)
   })
 }
 

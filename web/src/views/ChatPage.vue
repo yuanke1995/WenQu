@@ -275,6 +275,13 @@
               <button class="app-btn ghost" :disabled="loading" @click="regenerate(i)"><reload-outlined /> 重试</button>
             </div>
             <div v-if="m.role === 'ai' && !m.loading && (m.messageId || m.time)" class="fb-row">
+              <!-- 重新生成的多版本切换器（版本只保留在当前会话内：刷新后为最后一版） -->
+              <div v-if="m.versions && m.versions.length > 1" class="ver-switch"
+                   title="这一题有多个重新生成的版本，可来回切换（仅当前会话内保留，刷新后为最后一版）">
+                <button class="ver-btn" :disabled="(m.vIndex || 0) === 0" @click="switchVersion(i, -1)">‹</button>
+                <span class="ver-idx">{{ (m.vIndex || 0) + 1 }}/{{ m.versions.length }}</span>
+                <button class="ver-btn" :disabled="(m.vIndex || 0) >= m.versions.length - 1" @click="switchVersion(i, 1)">›</button>
+              </div>
               <template v-if="m.messageId">
                 <a-tooltip title="复制"><button class="app-icon-btn" @click="copyAnswer(i)"><copy-outlined /></button></a-tooltip>
                 <a-tooltip :title="m.fb != null ? '已评价' : '有帮助'"><button class="app-icon-btn" :class="{ 'fb-active': m.fb === 1 }" :disabled="m.fb != null" @click="openFeedback(m, 1)"><like-outlined /></button></a-tooltip>
@@ -2132,6 +2139,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const sid = prev ? prev.sid : currentSessionId.value
   const agentId = prev ? prev.agentId : (currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''))
   const model = prev ? prev.model : (currentOverrideModel.value || '')
+  // 重新生成：被替换的旧回答 ID 必须在下面 fresh 覆盖之前捕获（fresh 会把 messageId 置空，
+  // 覆盖后再读就永远是空 → 后端不软删旧回答 → 刷新后同一问题出现两条答案）
+  const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
   // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
   const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null }
@@ -2170,6 +2180,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     mentions,
     // 重发标记（重新生成/自动重试走 replaceMsg 路径）：后端跳过用户消息重复落库
     regenerate: replaceMsg != null,
+    // 被替换的旧回答消息 ID（仅重新生成时非空：自动重试的那一轮还没落库，messageId 为 null）；
+    // 后端据此在落库前软删旧行，历史里只留最新一版
+    replaceMessageId: replacedMessageId,
     agentId,
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
     model,
@@ -2374,6 +2387,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       if (viewing()) scrollForce()
       if (isFirstMessage) loadSessions()
+      // 重新生成：把刚完成的这一版追加进版本序列并切到它（气泡底部出现 ‹ n/N › 切换器）。
+      // 自动重试（prev 非空）不追加：那是同一版本的重试，不是新版本——否则失败重试一次就多出一版
+      if (!prev && Array.isArray(msg.versions) && msg.versions.length) {
+        msg.versions.push(snapshotVersion(msg))
+        msg.vIndex = msg.versions.length - 1
+      }
     },
     onWarn: w => { msg.warnMsg = w; liveScroll() },
     onError: e => {
@@ -2418,6 +2437,51 @@ const errorBrief = raw => {
   return '生成失败，可重试或更换模型'
 }
 
+// ==================== 重新生成多版本（同一问题的多次回答可来回切换） ====================
+// 语义：v1 是首次回答；每次「重新生成」把新完成的回答追加为新版本，气泡底部出现 ‹ 1/2 › 切换器。
+// 版本只存在于当前会话内存里：历史接口按「一题一答」返回，重新生成时后端会把旧回答软删（见
+// replaceMessageId），所以刷新后看到的是最后一版——想保留哪一版就切到哪一版再刷新是不成立的，
+// 这一点在切换器上有提示，不做假承诺。
+const snapshotVersion = m => ({
+  content: m.content || '',
+  sources: m.sources || [],
+  related: m.related || [],
+  thinking: m.thinking || '',
+  timeline: m.timeline || [],
+  artifacts: m.artifacts || [],
+  toolCalls: m.toolCalls || [],
+  subagents: m.subagents || [],
+  plan: m.plan || null,
+  processText: m.processText || '',
+  degradations: m.degradations || [],
+  retrieved: m.retrieved || null,
+  doneTime: m.doneTime || null
+})
+const applyVersion = (m, v) => {
+  m.content = v.content
+  m.sources = v.sources
+  m.related = v.related
+  m.thinking = v.thinking
+  m.timeline = v.timeline
+  m.artifacts = v.artifacts
+  m.toolCalls = v.toolCalls
+  m.subagents = v.subagents
+  m.plan = v.plan
+  m.processText = v.processText
+  m.degradations = v.degradations
+  m.retrieved = v.retrieved
+  m.doneTime = v.doneTime
+}
+const switchVersion = (mi, delta) => {
+  const m = messages.value[mi]
+  if (!m || !Array.isArray(m.versions) || m.versions.length < 2) return
+  const cur = m.vIndex || 0
+  const ni = Math.max(0, Math.min(m.versions.length - 1, cur + delta))
+  if (ni === cur) return
+  m.vIndex = ni
+  applyVersion(m, m.versions[ni])
+}
+
 const regenerate = mi => {
   if (loading.value) return
   for (let i = mi - 1; i >= 0; i--) {
@@ -2429,8 +2493,15 @@ const regenerate = mi => {
       const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
       // @ 引用随内存消息重发（历史回放无该数据则不重发；引用只对当轮检索生效）
       const mentions = Array.isArray(messages.value[i].mentions) ? messages.value[i].mentions : []
+      // 多版本：首次重新生成前把当前回答快照为 v1（后续版本在 done 时追加）。已有 versions 说明
+      // 这条消息本就是多版本序列（当前展示的必然在序列里），无需再快照
+      const ai = messages.value[mi]
+      if (!Array.isArray(ai.versions) || !ai.versions.length) {
+        ai.versions = [snapshotVersion(ai)]
+        ai.vIndex = 0
+      }
       // 传消息对象（不是下标）：流式状态已按会话拆分，replace 走对象身份
-      streamAnswer(messages.value[i].content, imgs, messages.value[mi], false, 1, deep, atts, skills, mentions)
+      streamAnswer(messages.value[i].content, imgs, ai, false, 1, deep, atts, skills, mentions)
       return
     }
   }
@@ -2895,6 +2966,18 @@ onMounted(async () => {
 .dispatch-desc { color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
 
 .fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
+/* 重新生成的多版本切换器：与操作图标同一行，弱化呈现 */
+.ver-switch {
+  display: inline-flex; align-items: center; gap: 1px; margin-right: 10px;
+  font-size: 12px; color: var(--app-text3); user-select: none;
+}
+.ver-btn {
+  border: none; background: transparent; cursor: pointer; color: var(--app-text2);
+  font-size: 15px; line-height: 1; padding: 0 5px; border-radius: 4px;
+}
+.ver-btn:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-accent); }
+.ver-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ver-idx { font-variant-numeric: tabular-nums; }
 .fb-row :deep(.fb-active) { color: var(--app-accent); }
 .retry-row { margin-top: 8px; }
 .msg-edit-row {

@@ -453,6 +453,19 @@ public class RagService {
                      List<ChatRequest.Mention> mentions, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter,
                      boolean guestMode, boolean regenerate) {
+        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate, null);
+    }
+
+    /**
+     * @param replaceMessageId 重新生成时被替换的旧回答消息 ID：落库前软删它，历史里只留最新一版
+     *                         （不传则新回答与旧回答并存，刷新后同一问题出现两条答案）
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate, String replaceMessageId) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -475,7 +488,7 @@ public class RagService {
                 boolean identity = loadIdentity(userId);
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
-                            agentId, modelOverride, userId, emitter, guestMode, regenerate);
+                            agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -499,7 +512,7 @@ public class RagService {
                          List<ChatRequest.Attachment> attachments, List<String> skills,
                          List<ChatRequest.Mention> mentions, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
-                         boolean guestMode, boolean regenerate) {
+                         boolean guestMode, boolean regenerate, String replaceMessageId) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -535,7 +548,7 @@ public class RagService {
                         "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
             }
             runWorkflowChat(sessionId, question, userId, emitter, startTime, degradations, degradedCodes,
-                    agent, guestMode, regenerate);
+                    agent, guestMode, regenerate, replaceMessageId);
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
@@ -647,7 +660,7 @@ public class RagService {
                 String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
                         mentionText, preHeartbeat, emitter, startTime, thinkingHolder, degradations, degradedCodes,
-                        agent, stageMs, resolvedModel, guestMode);
+                        agent, stageMs, resolvedModel, guestMode, replaceMessageId);
                 return;
             }
 
@@ -1242,6 +1255,7 @@ public class RagService {
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
+            st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
@@ -2195,6 +2209,11 @@ public class RagService {
                     tokens.put("prompt", promptTokens);
                     tokens.put("outputIsReal", realOutput);
                     tokens.put("total", promptTokens + outputTokens);
+                    // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
+                    // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案
+                    if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
+                        sessionService.deleteMessage(st.replaceMessageId);
+                    }
                     // 12 参重载（含 tokens）：助手消息把用量 JSON 随行落库（历史回看/会话累计的数据源）
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
@@ -2350,6 +2369,8 @@ public class RagService {
         volatile java.util.List<Map<String, Object>> subagentBranches = List.of();
         /** 按需委派的路由结果（{candidates,picked,names}；未启用路由时为 null），随 done 下发并持久化 */
         volatile Map<String, Object> subagentRoute = null;
+        /** 重新生成时被替换的旧回答消息 ID：落库前软删旧行（历史只留最新一版；null=普通问答） */
+        volatile String replaceMessageId;
 
         AnswerStreamState(String sessionId, String question, String userId, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
@@ -3735,7 +3756,8 @@ public class RagService {
      */
     private void runWorkflowChat(String sessionId, String question, String userId, SseEmitter emitter,
                                  long startTime, List<Map<String, String>> degradations,
-                                 Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate) {
+                                 Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate,
+                                 String replaceMessageId) {
         sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
         java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
@@ -3773,6 +3795,10 @@ public class RagService {
             }
             String answer = workflowAnswerOf(run);
             Map<String, Object> tokens = workflowTokensOf(run);
+            // 重新生成：先软删被替换的旧回答（与主链路口径一致，避免历史出现两条答案）
+            if (replaceMessageId != null && !replaceMessageId.isBlank()) {
+                sessionService.deleteMessage(replaceMessageId);
+            }
             String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
                     workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
                     null, JSON.toJSONString(tokens), null, null,
@@ -3914,7 +3940,7 @@ public class RagService {
                                     SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
-                                    String resolvedModel, boolean guestMode) {
+                                    String resolvedModel, boolean guestMode, String replaceMessageId) {
         try {
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答；
             // 例外：用户 @ 了文档（mentionText 非空）时有参考资料，引用规则按主链路口径放开
@@ -3977,6 +4003,7 @@ public class RagService {
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
+            st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）

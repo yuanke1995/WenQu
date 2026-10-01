@@ -717,6 +717,21 @@ public class SessionService {
      *
      * @return 实际删除条数
      */
+    /**
+     * 软删单条消息（重新生成本轮回答时替换旧回答用）。
+     * <p>不删的后果：历史里同一问题会留下两条答案（新的那条是重新生成的结果），刷新后用户看到重复回答。
+     * 软删保留在撤销窗口内可恢复（与按组删除同一口径）。
+     */
+    public void deleteMessage(String messageId) {
+        if (messageId == null || messageId.isBlank()) return;
+        try {
+            messageMapper.deleteById(messageId);
+        } catch (Exception e) {
+            // 删不掉只影响"历史去重"，不该拖垮本次落库；但必须留痕（历史会出现两条答案）
+            log.warn("[FAIL-LOUD] 旧回答消息软删失败（历史将保留两条答案）: id={} - {}", messageId, e.getMessage());
+        }
+    }
+
     public int deleteRound(String sessionId, String assistantMessageId) {
         Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null || !sessionId.equals(assistant.getSessionId())) return 0;

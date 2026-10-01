@@ -89,4 +89,8 @@ public class ChatRequest {
 
     @Schema(description = "重新生成/自动重试标记：true=该问题的用户消息已随上一轮请求即时落库，后端跳过重复落库（防重发产生重复历史行）")
     private boolean regenerate;
+
+    @Schema(description = "重新生成时被替换的旧回答消息 ID：落库前软删该条，历史里只留最新一版"
+            + "（不传则新回答会与旧回答并存，刷新后同一问题出现两条答案）")
+    private String replaceMessageId;
 }
