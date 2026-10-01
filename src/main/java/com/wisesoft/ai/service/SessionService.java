@@ -840,6 +840,21 @@ public class SessionService {
         }
     }
 
+    /**
+     * 按 ID 查单条消息，且必须属于指定会话（# 历史引用的取数入口）。
+     * 不存在 / 跨会话 / 已软删 一律返回 null——调用方（控制器同步段）据此 fail-loud，
+     * 不静默忽略：用户显式引用了一条消息却没生效，比报错更糟。
+     * 内容一律以库为准，客户端传的任何文本不采信。
+     */
+    public Message findMessageInSession(String sessionId, String messageId) {
+        if (sessionId == null || sessionId.isBlank()
+                || messageId == null || messageId.isBlank()) return null;
+        return messageMapper.selectOne(new LambdaQueryWrapper<Message>()
+                .eq(Message::getId, messageId)
+                .eq(Message::getSessionId, sessionId)
+                .last("LIMIT 1"));
+    }
+
     public int deleteRound(String sessionId, String assistantMessageId) {
         Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null || !sessionId.equals(assistant.getSessionId())) return 0;

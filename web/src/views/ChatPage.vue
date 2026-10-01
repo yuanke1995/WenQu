@@ -378,6 +378,15 @@
           </span>
           <span class="at-chips-note">引用只对本轮生效</span>
         </div>
+        <div v-if="pendingHistoryRefs.length" class="at-chips">
+          <span v-for="(hr, hi) in pendingHistoryRefs" :key="hr.messageId" class="at-chip hist-chip"
+                title="该条历史问答会作为本轮上下文带给模型">
+            <history-outlined class="at-chip-ic" />
+            <span class="at-chip-name">{{ histChipLabel(hr) || hr.messageId }}</span>
+            <span class="at-chip-del" title="移除该引用" @click="removeHistoryRef(hi)">×</span>
+          </span>
+          <span class="at-chips-note">历史引用只对本轮生效</span>
+        </div>
         <div v-if="pendingImages.length" class="pending-imgs">
           <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
             <img :src="p.dataUrl" alt="待发送图片" @click="previewPendingImage(pi)" />
@@ -435,7 +444,52 @@
               @ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文
             </div>
           </div>
-          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行（输入 @ 引用知识库/文档）"
+          <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
+          <div v-if="slashOpen" class="mention-panel">
+            <div class="mention-head">
+              <input ref="slashSearchRef" v-model="slashQuery" class="mention-search"
+                     placeholder="搜索快捷命令…" @keydown.esc="closeSlashPanel" />
+              <button class="app-icon-btn" title="关闭" @click="closeSlashPanel"><close-outlined /></button>
+            </div>
+            <div class="mention-list">
+              <div v-for="c in slashFiltered" :key="c.key" class="mention-item" @click="runSlashCommand(c)">
+                <span class="mention-ava"><component :is="c.icon" /></span>
+                <div class="mention-text">
+                  <span class="mention-name">{{ c.name }}</span>
+                  <span class="mention-desc">{{ c.desc }}</span>
+                </div>
+                <span class="slash-kind" :class="c.kind === 'tpl' ? 'k-tpl' : 'k-act'">{{ c.kind === 'tpl' ? '模板' : '操作' }}</span>
+              </div>
+              <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
+            </div>
+            <div class="mention-foot">/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行</div>
+          </div>
+          <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
+          <div v-if="histOpen" class="mention-panel">
+            <div class="mention-head">
+              <input ref="histSearchRef" v-model="histQuery" class="mention-search"
+                     placeholder="搜索本会话历史问答…" @keydown.esc="closeHistPanel" />
+              <button class="app-icon-btn" title="关闭" @click="closeHistPanel"><close-outlined /></button>
+            </div>
+            <div class="mention-list">
+              <div v-for="m in histCandidates" :key="m.messageId" class="mention-item"
+                   :class="{ on: isHistPicked(m.messageId) }" @click="toggleHistoryRef(m)">
+                <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
+                  {{ m.role === 'user' ? '问' : '答' }}
+                </span>
+                <div class="mention-text">
+                  <span class="mention-name">{{ histItemTitle(m) }}</span>
+                  <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
+                </div>
+                <check-outlined v-if="isHistPicked(m.messageId)" class="mention-check" />
+              </div>
+              <div v-if="!histCandidates.length" class="mention-empty">
+                {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
+              </div>
+            </div>
+            <div class="mention-foot"># 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
+          </div>
+          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @keydown="onInputKeydown" />
           <div class="input-toolbar">
@@ -494,6 +548,18 @@
                   </div>
                 </template>
               </a-dropdown>
+              <a-tooltip title="快捷命令（输入 / 唤起）：常用问法模板与会话操作">
+                <button class="app-icon-btn" :class="{ 'toolbar-btn-on': slashOpen }"
+                        :disabled="loading" @click="slashOpen ? closeSlashPanel() : openSlashPanel()">
+                  <thunderbolt-outlined />
+                </button>
+              </a-tooltip>
+              <a-tooltip title="引用历史问答（输入 # 唤起）：把本会话早前的问答指定为本轮上下文">
+                <button class="app-icon-btn" :class="{ 'toolbar-btn-on': histOpen || pendingHistoryRefs.length }"
+                        :disabled="loading" @click="histOpen ? closeHistPanel() : openHistPanel()">
+                  <history-outlined />
+                </button>
+              </a-tooltip>
               <a-dropdown v-model:open="addMenuOpen" :trigger="['click']" placement="topLeft">
                 <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addMenuOpen || pickedSkills.length }"
                         title="添加附件 / 选用技能">
@@ -779,7 +845,8 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
-         CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
+         CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
+         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
@@ -787,7 +854,7 @@ import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback 
          getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams } from './store'
-import { exportAnswerMd } from './exportMd'
+import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -2132,15 +2199,118 @@ const mentionDocFiltered = computed(() =>
     .filter(d => mentionMatch(d.fileName, mentionQueryNorm.value))
     .slice(0, 120))
 
-/** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层） */
+/** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层）；
+ *  @ 引用 / / 命令 / # 历史引用三个面板共用同一关闭监听（同一容器、同一交互约定） */
 const onDocClickForMention = e => {
-  if (!mentionOpen.value) return
+  if (!mentionOpen.value && !slashOpen.value && !histOpen.value) return
   const el = e.target
   if (el && el.closest && (el.closest('.mention-panel') || el.closest('.input-box'))) return
   mentionOpen.value = false
+  slashOpen.value = false
+  histOpen.value = false
 }
 onMounted(() => document.addEventListener('click', onDocClickForMention))
 onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
+
+// ==================== / 快捷命令面板（模板插入 + 会话操作） ====================
+const slashOpen = ref(false)
+const slashQuery = ref('')
+const slashSearchRef = ref(null)
+// kind: tpl=插入问法框架到输入框（可再编辑）；act=会话级操作，立即执行
+// 模板贴合本系统场景：资料类问法配合 @ 文档/知识库使用，检索类问法用于优化提问
+const slashCommands = [
+  { key: 'tpl-summary', kind: 'tpl', icon: FileTextOutlined, name: '总结资料',
+    desc: '生成总结问法框架，配合 @ 文档使用', tpl: '请总结以下内容的要点与结论：\n' },
+  { key: 'tpl-translate', kind: 'tpl', icon: TranslationOutlined, name: '翻译内容',
+    desc: '中英互译框架，保留专业术语', tpl: '请把以下内容翻译成英文，保留专业术语：\n' },
+  { key: 'tpl-polish', kind: 'tpl', icon: EditOutlined, name: '润色改写',
+    desc: '让文字更通顺、专业', tpl: '请润色以下文字，使其更通顺、专业：\n' },
+  { key: 'tpl-explain', kind: 'tpl', icon: BulbOutlined, name: '通俗解释',
+    desc: '用大白话解释概念并举例', tpl: '请用通俗的语言解释以下概念，并给出例子：\n' },
+  { key: 'tpl-compare', kind: 'tpl', icon: CopyOutlined, name: '多维对比',
+    desc: '多维度对比分析并给出建议', tpl: '请从多个维度对比分析以下内容，最后给出选择建议：\n' },
+  { key: 'tpl-optimize', kind: 'tpl', icon: QuestionCircleOutlined, name: '优化提问',
+    desc: '把问题改写为更适合知识库检索的表述', tpl: '请帮我优化下面这个问题的表述，使其更适合用于知识库检索：\n' },
+  { key: 'act-export', kind: 'act', icon: FileTextOutlined, name: '导出会话 Markdown',
+    desc: '把当前会话全部问答导出为 .md 文件',
+    run: () => { if (!currentSessionId.value) { message.warning('当前没有可导出的会话'); return } exportSessionMarkdown(currentSessionId.value, currentSessionTitle.value) } },
+  { key: 'act-new', kind: 'act', icon: PlusOutlined, name: '新建会话',
+    desc: '开一个空白会话（当前会话保留在侧边栏）',
+    run: () => createNewSession() }
+]
+const openSlashPanel = () => {
+  histOpen.value = false
+  mentionOpen.value = false
+  slashOpen.value = true
+  slashQuery.value = ''
+  nextTick(() => slashSearchRef.value?.focus?.())
+}
+const closeSlashPanel = () => { slashOpen.value = false }
+// 归一化：剥掉开头的 /（唤起键有时会连带落进搜索框，不能让候选被 "/" 过滤成空）
+const slashQueryNorm = computed(() => slashQuery.value.replace(/^\/+/, '').trim())
+const slashFiltered = computed(() => {
+  const q = slashQueryNorm.value.toLowerCase()
+  if (!q) return slashCommands
+  return slashCommands.filter(c => c.name.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q))
+})
+const runSlashCommand = c => {
+  slashOpen.value = false
+  if (c.kind === 'tpl') {
+    // 追加而非替换：输入框已有内容时不吞掉用户已打的字；光标落到末尾方便接着补内容
+    text.value = (text.value ? text.value.replace(/\s+$/, '') + '\n' : '') + c.tpl
+    nextTick(() => {
+      const ta = textareaRef.value
+      if (!ta) return
+      ta.focus?.()
+      const el = ta.resizableTextArea?.textArea
+      if (el) el.setSelectionRange(el.value.length, el.value.length)
+    })
+  } else {
+    c.run?.()
+  }
+}
+
+// ==================== # 历史引用面板（勾选本会话历史问答 → 本轮上下文） ====================
+const MAX_HISTORY_REFS = 10
+const histOpen = ref(false)
+const histQuery = ref('')
+const histSearchRef = ref(null)
+const pendingHistoryRefs = ref([])
+// 候选池：当前会话已落库的消息（有 messageId=服务端已确认、非流式中、正文非空）。
+// 历史回放的消息自带 messageId（getHistory 下发），当场发的消息在 done 事件回填后也可引用
+const histPool = computed(() => messages.value.filter(m =>
+  m.messageId && !m.loading && m.content && String(m.content).trim()
+    && (m.role === 'user' || m.role === 'ai' || m.role === 'assistant')))
+const histQueryNorm = computed(() => histQuery.value.replace(/^#+/, '').trim())
+const histCandidates = computed(() => {
+  const q = histQueryNorm.value.toLowerCase()
+  const pool = histPool.value.filter(m => !q || String(m.content).toLowerCase().includes(q))
+  return pool.slice(-60).reverse()   // 最近的在前，最多列 60 条（防超长会话渲染卡顿）
+})
+const histItemTitle = m => String(m.content).replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+const histItemDigest = histItemTitle
+const histChipLabel = h => h.digest || ''
+const isHistPicked = id => pendingHistoryRefs.value.some(h => h.messageId === id)
+const toggleHistoryRef = m => {
+  if (isHistPicked(m.messageId)) {
+    pendingHistoryRefs.value = pendingHistoryRefs.value.filter(h => h.messageId !== m.messageId)
+    return
+  }
+  if (pendingHistoryRefs.value.length >= MAX_HISTORY_REFS) {
+    message.warning(`一次最多引用 ${MAX_HISTORY_REFS} 条历史消息`)
+    return
+  }
+  pendingHistoryRefs.value.push({ messageId: m.messageId, role: m.role, digest: histItemDigest(m) })
+}
+const removeHistoryRef = i => pendingHistoryRefs.value.splice(i, 1)
+const openHistPanel = () => {
+  slashOpen.value = false
+  mentionOpen.value = false
+  histOpen.value = true
+  histQuery.value = ''
+  nextTick(() => histSearchRef.value?.focus?.())
+}
+const closeHistPanel = () => { histOpen.value = false }
 
 // ==================== 会话内查找（Ctrl/⌘+F） ====================
 // 匹配范围 = 每条消息的正文（用户问题 + 助手回答）。工具输出与思考过程不参与——那些是过程信息，
@@ -2345,6 +2515,8 @@ const send = () => {
   const skills = [...pickedSkills.value]
   // @ 引用（本轮显式指定的知识库/文档）：与问题一起提交，服务端按可见性校验后收窄检索范围/强制前置
   const mentions = pendingMentions.value.map(m => ({ type: m.type, id: m.id, name: m.name, kbId: m.kbId || '' }))
+  // # 历史引用（本轮显式指定的会话历史问答）：只带 messageId，内容由服务端按会话归属查库回填
+  const historyRefs = pendingHistoryRefs.value.map(h => ({ messageId: h.messageId }))
   if ((!q && !imgs.length && !atts.length) || loading.value) return
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
   if (!effectiveModel.value) {
@@ -2370,7 +2542,7 @@ const onInputKeydown = e => {
     send()
     return
   }
-  // @ 唤起引用候选面板：仅在「行首 / 空格后」触发（此时 @ 的语义就是引用唤起），
+  // @ / 唤起引用候选面板：仅在「行首 / 空格后」触发（此时 @ 的语义就是引用唤起），
   // 并拦下默认输入——否则这个 @ 会随后的输入事件落到刚聚焦的面板搜索框里，
   // 把候选按 "@" 过滤成空（实测踩到：面板打开却显示"没有匹配的文档"）。
   // 句中/词中的 @（邮箱 a@b.com、@某人）不拦截，照常输入。
@@ -2381,6 +2553,28 @@ const onInputKeydown = e => {
     if (!before || /\s$/.test(before)) {
       e.preventDefault()
       openMentionPanel()
+    }
+    return
+  }
+  // / 唤起快捷命令面板：同 @ 的「行首 / 空格后」口径（句中的 / 如 URL path 不拦截）
+  if (e.key === '/' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
+    const ta = e.target
+    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
+    const before = text.value.slice(0, pos)
+    if (!before || /\s$/.test(before)) {
+      e.preventDefault()
+      openSlashPanel()
+    }
+    return
+  }
+  // # 唤起历史引用面板：同 @ 的「行首 / 空格后」口径
+  if (e.key === '#' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
+    const ta = e.target
+    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
+    const before = text.value.slice(0, pos)
+    if (!before || /\s$/.test(before)) {
+      e.preventDefault()
+      openHistPanel()
     }
   }
 }
@@ -2418,7 +2612,7 @@ async function resolveApproval (m, approved) {
 }
 
 const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
-                      attachments = [], skills = [], mentions = [], prev = null) => {
+                      attachments = [], skills = [], mentions = [], prev = null, historyRefs = []) => {
   // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
@@ -2463,6 +2657,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     attachments,
     skills,
     mentions,
+    // # 历史引用（[{messageId}]，重新生成时随内存消息原样重发）：服务端按会话归属校验后前置内容
+    historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : [],
     // 重发标记（重新生成/自动重试走 replaceMsg 路径）：后端跳过用户消息重复落库
     regenerate: replaceMsg != null,
     // 被替换的旧回答消息 ID（仅重新生成时非空：自动重试的那一轮还没落库，messageId 为 null）；
@@ -2687,7 +2883,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         setTimeout(() => {
           // 记录仍是本轮且气泡还在流式态才重试；用户已停止/记录已被清理则直接收尾
           if (chatStreams.get(sid) === st && msg.loading) {
-            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, mentions, { sid, agentId, model })
+            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, mentions, { sid, agentId, model }, historyRefs)
           } else {
             msg.retrying = false
             if (chatStreams.get(sid) === st) chatStreams.delete(sid)
@@ -2778,6 +2974,8 @@ const regenerate = mi => {
       const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
       // @ 引用随内存消息重发（历史回放无该数据则不重发；引用只对当轮检索生效）
       const mentions = Array.isArray(messages.value[i].mentions) ? messages.value[i].mentions : []
+      // # 历史引用同口径：重新生成保留原引用（该轮答案本就是基于这些历史得出的）
+      const historyRefs = Array.isArray(messages.value[i].historyRefs) ? messages.value[i].historyRefs : []
       // 多版本：首次重新生成前把当前回答快照为 v1（后续版本在 done 时追加）。已有 versions 说明
       // 这条消息本就是多版本序列（当前展示的必然在序列里），无需再快照
       const ai = messages.value[mi]
@@ -2786,7 +2984,7 @@ const regenerate = mi => {
         ai.vIndex = 0
       }
       // 传消息对象（不是下标）：流式状态已按会话拆分，replace 走对象身份
-      streamAnswer(messages.value[i].content, imgs, ai, false, 1, deep, atts, skills, mentions)
+      streamAnswer(messages.value[i].content, imgs, ai, false, 1, deep, atts, skills, mentions, null, historyRefs)
       return
     }
   }
@@ -3368,6 +3566,8 @@ onMounted(async () => {
 .at-chips-note { font-size: 11px; color: var(--app-text3); align-self: center; margin-left: 2px; }
 .at-chip-ic { font-size: 12px; flex: none; }
 .mention-chip.mention-doc { background: var(--app-warn-weak); color: var(--app-warn-text); }
+/* # 历史引用 chip：info 弱底与 kb（主色）/doc（warn）区分 */
+.at-chip.hist-chip { background: var(--app-info-weak); color: var(--app-accent); border: 1px solid var(--app-info-border); }
 
 /* @ 引用候选面板：贴输入框上沿（不遮断正文输入，点面板外关闭） */
 .mention-panel {
@@ -3408,6 +3608,16 @@ onMounted(async () => {
 .mention-check { color: var(--app-accent); flex: none; }
 .mention-empty { padding: 18px 8px; text-align: center; font-size: 12px; color: var(--app-text3); }
 .mention-foot { padding: 7px 12px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); }
+/* # 历史引用面板：问/答头像按角色着色（问=主色、答=弱底），一眼分清引用的是问题还是回答 */
+.mention-ava.hist-ava-q { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+.mention-ava.hist-ava-a { font-weight: 600; }
+/* / 命令面板：右侧类型徽标（模板=可再编辑 / 操作=立即执行），与勾选态视觉区分 */
+.slash-kind {
+  flex: none; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  background: var(--app-panel-2); color: var(--app-text3);
+}
+.slash-kind.k-tpl { background: var(--app-accent-weak); color: var(--app-accent); }
+.slash-kind.k-act { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .input-area { resize: none; padding: 6px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
 .input-area:focus { border: none; box-shadow: none; }
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }

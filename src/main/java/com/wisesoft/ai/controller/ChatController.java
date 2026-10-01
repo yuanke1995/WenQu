@@ -172,6 +172,9 @@ public class ChatController {
         // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
         List<ChatRequest.Mention> mentions = validateMentions(request.getMentions(), httpRequest);
 
+        // # 历史引用校验（同上，同步段 fail-loud）：messageId 必须属于当前会话，内容由服务端查库回填
+        List<ChatRequest.HistoryRef> historyRefs = validateHistoryRefs(sessionId, request.getHistoryRefs());
+
         // 超时配置化（chat.sseTimeoutMs，默认 5 分钟）；超时由 RagService.onTimeout 先发 warn 再 dispose（fail-loud）
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
@@ -179,7 +182,7 @@ public class ChatController {
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
-                false, request.isRegenerate(), request.getReplaceMessageId());
+                false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs);
         return emitter;
     }
 
@@ -237,6 +240,38 @@ public class ChatController {
             } else {
                 throw new BizException("不支持的引用类型：" + m.getType() + "（仅支持 kb / doc）");
             }
+            out.add(normalized);
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /**
+     * # 历史引用校验（fail-loud，与会话归属同一同步段）：messageId 必填、必须属于当前会话。
+     * 角色与内容一律按库回填，客户端传值不采信（与会话内消息同一份事实源）。
+     * 返回归一后的引用列表（null 表示无引用）。
+     */
+    private List<ChatRequest.HistoryRef> validateHistoryRefs(String sessionId,
+                                                             List<ChatRequest.HistoryRef> refs) {
+        if (refs == null || refs.isEmpty()) return null;
+        int max = Math.max(1, configService.getInt("chat.maxHistoryRefsPerMessage", 10));
+        if (refs.size() > max) {
+            throw new BizException("一次最多引用 " + max + " 条历史消息");
+        }
+        List<ChatRequest.HistoryRef> out = new java.util.ArrayList<>();
+        for (ChatRequest.HistoryRef r : refs) {
+            if (r == null) continue;
+            String mid = r.getMessageId() == null ? "" : r.getMessageId().trim();
+            if (mid.isEmpty()) {
+                throw new BizException("历史引用缺少消息 ID");
+            }
+            var msg = sessionService.findMessageInSession(sessionId, mid);
+            if (msg == null) {
+                throw new BizException("引用的历史消息不存在或不属于当前会话");
+            }
+            ChatRequest.HistoryRef normalized = new ChatRequest.HistoryRef();
+            normalized.setMessageId(msg.getId());
+            normalized.setRole(msg.getRole());
+            normalized.setContent(msg.getContent() == null ? "" : msg.getContent());
             out.add(normalized);
         }
         return out.isEmpty() ? null : out;

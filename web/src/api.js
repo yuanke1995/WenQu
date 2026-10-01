@@ -89,7 +89,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], regenerate = false, replaceMessageId = ''
+    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -135,7 +135,9 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       skills: Array.isArray(skills) && skills.length ? skills : undefined,
       // 输入框 @ 引用（[{type:'kb'|'doc', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容（服务端校验可见性）
-      mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined
+      mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
+      // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
+      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
     }),
     signal: inner.signal
   }).then(res => {

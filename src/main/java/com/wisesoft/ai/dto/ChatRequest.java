@@ -32,6 +32,28 @@ public class ChatRequest {
     @Schema(description = "输入框 @ 引用（本轮显式指定的资料范围）：kb=检索收窄到这些知识库；doc=该文档的块强制进上下文")
     private List<Mention> mentions;
 
+    @Schema(description = "输入框 # 引用的会话历史消息：服务端按 messageId 从当前会话读回内容，前置进本轮上下文（不信任客户端传的任何文本）")
+    private List<HistoryRef> historyRefs;
+
+    /**
+     * # 历史引用（用户从本会话历史中显式挑选的问答）：
+     * messageId 必须属于当前会话（服务端同步段校验，fail-loud：不存在/跨会话直接拒绝）。
+     * 与 @ doc 的差异：doc 从知识库取解析块，这里从会话消息表取原文——
+     * 内容一律服务端按 id 查库回填，客户端只传引用不传文本。
+     */
+    @Data
+    @Schema(description = "# 历史引用项")
+    public static class HistoryRef {
+        @Schema(description = "被引用的消息 ID（须属于当前会话）", example = "uuid-xxxx")
+        private String messageId;
+
+        @Schema(description = "角色（服务端按库回填：user / assistant），客户端传值不采信", example = "assistant")
+        private String role;
+
+        @Schema(description = "消息内容（服务端按库回填，客户端传值不采信）")
+        private String content;
+    }
+
     /**
      * @ 引用（用户显式指定，优先于智能体配置）：
      * <ul>

@@ -473,6 +473,20 @@ public class RagService {
                      List<ChatRequest.Mention> mentions, boolean deepThink,
                      String agentId, String modelOverride, String userId, SseEmitter emitter,
                      boolean guestMode, boolean regenerate, String replaceMessageId) {
+        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId, null);
+    }
+
+    /**
+     * @param historyRefs 输入框 # 引用的会话历史消息（**已由控制器完成归属校验并按库回填内容**——
+     *                    这里不再校验，只负责把内容前置进本轮上下文）
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate, String replaceMessageId,
+                     List<ChatRequest.HistoryRef> historyRefs) {
         // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
         if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
             deepThink = shouldAutoDeepThink(question);
@@ -495,7 +509,8 @@ public class RagService {
                 boolean identity = loadIdentity(userId);
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
-                            agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId);
+                            agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
+                            historyRefs);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -519,7 +534,8 @@ public class RagService {
                          List<ChatRequest.Attachment> attachments, List<String> skills,
                          List<ChatRequest.Mention> mentions, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
-                         boolean guestMode, boolean regenerate, String replaceMessageId) {
+                         boolean guestMode, boolean regenerate, String replaceMessageId,
+                         List<ChatRequest.HistoryRef> historyRefs) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -657,6 +673,9 @@ public class RagService {
                         attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta));
             }
 
+            // # 历史引用文本（两条生成分支共用）：用户从本会话历史显式挑选的问答，前置进本轮上下文
+            String historyRefText = buildHistoryRefText(historyRefs);
+
             // 0.4 智能体声明「不使用知识库」：跳过改写/深度思考/检索/子代理编排整条链路，
             //     直接走生成（仅 @ 引用的文档块会前置进上下文）。图片提问也不走视觉检索，
             //     但图片描述仍会随问题发给模型（多模态理解与知识库无关）。
@@ -666,8 +685,8 @@ public class RagService {
                 // （方法注释里承诺已久的语义，此前只有注释没有实现）
                 String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
-                        mentionText, preHeartbeat, emitter, startTime, thinkingHolder, degradations, degradedCodes,
-                        agent, stageMs, resolvedModel, guestMode, replaceMessageId);
+                        mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
+                        degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId);
                 return;
             }
 
@@ -981,6 +1000,12 @@ public class RagService {
             if (!attachmentText.isBlank()) {
                 userQuestion.append("\n\n用户上传了附件，内容如下（请结合附件内容回答问题，引用时注明来自哪个附件）：\n")
                         .append(attachmentText);
+            }
+            // # 历史引用前置：用户显式挑选的本会话历史问答（内容与「对话历史」同源，但由用户点名——
+            // 不受「最近 N 轮」窗口限制，长会话里早于窗口的问答也能被重新带上）
+            if (!historyRefText.isBlank()) {
+                userQuestion.append("\n\n【本轮引用的历史对话】用户从本会话历史中指定了以下问答作为本轮参考，"
+                        + "请结合它们回答当前问题：\n").append(historyRefText);
             }
             // 思考链注入：把深度思考的推理过程（截断）作为参考注入，让"想过的"作用于"答"；
             // 明确说明必须以参考资料为准，思考只是辅助拆解
@@ -3186,6 +3211,28 @@ public class RagService {
         return sb.toString();
     }
 
+    /**
+     * # 历史引用的文本化：用户从本会话历史点名的问答，按「[N] 问 / 答」成对编组前置。
+     * 单条超长截断（chat.historyRefMaxChars，默认 4000 字符）——引用是给模型指重点的，
+     * 不是整卷搬运；截断是显式行为，尾部带省略标记，不静默吞掉。
+     */
+    private String buildHistoryRefText(List<ChatRequest.HistoryRef> refs) {
+        if (refs == null || refs.isEmpty()) return "";
+        int maxChars = Math.max(200, configService.getInt("chat.historyRefMaxChars", 4000));
+        StringBuilder sb = new StringBuilder();
+        int i = 1;
+        for (ChatRequest.HistoryRef r : refs) {
+            if (r == null) continue;
+            boolean isUser = "user".equalsIgnoreCase(r.getRole());
+            String content = r.getContent() == null ? "" : r.getContent().trim();
+            if (content.isEmpty()) continue;
+            if (content.length() > maxChars) content = content.substring(0, maxChars) + "…（已截断）";
+            sb.append('[').append(i++).append("] ")
+              .append(isUser ? "问" : "答").append("：").append(content).append('\n');
+        }
+        return sb.toString();
+    }
+
     /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */
     private List<HybridRetrievalService.Hit> applyScope(List<HybridRetrievalService.Hit> hits, Set<String> scopeDocIds) {
         if (scopeDocIds == null || hits == null) return hits;
@@ -4152,7 +4199,7 @@ public class RagService {
     private void runNoKnowledgeChat(String sessionId, String question, String userId,
                                     List<UserImageService.UserImage> userImgs,
                                     String imgDescText, String attachmentText, String userSkillText,
-                                    String mentionText,
+                                    String mentionText, String historyRefText,
                                     java.util.concurrent.ScheduledFuture<?> preHeartbeat,
                                     SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
@@ -4200,6 +4247,10 @@ public class RagService {
             if (hasMention) {
                 userQuestion.append("\n\n【本轮显式引用的资料】用户通过 @ 指定了以下文档内容，"
                         + "回答时请优先依据这些资料，并在引用处标注 [N] 编号：\n").append(mentionText);
+            }
+            if (historyRefText != null && !historyRefText.isBlank()) {
+                userQuestion.append("\n\n【本轮引用的历史对话】用户从本会话历史中指定了以下问答作为本轮参考，"
+                        + "请结合它们回答当前问题：\n").append(historyRefText);
             }
             String user = userQuestion.toString();
 
