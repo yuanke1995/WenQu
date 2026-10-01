@@ -5,10 +5,11 @@
 # （宿主 30001 被 IDEA 内置服务占用，故映射到 30011；容器内仍是 30001），
 # 起容器后设置页无需改配置。
 #
-# 用法：
-#   docker compose up -d --build          # 首次构建 ~10 分钟（arm64 原生，无转译）
-#   curl http://127.0.0.1:30011/openapi.json   # 健康检查：paths 应含 /file_parse
-#   docker compose logs -f mineru         # 首次解析时观察模型下载进度
+# 用法（推荐走脚本，已封装构建/启动等待/探活）：
+#   scripts/mac/start-ocr.sh start        # 首次构建 ~10 分钟（arm64 原生，无转译）
+#   scripts/mac/start-ocr.sh health       # /openapi.json 探活：paths 应含 /file_parse
+#   scripts/mac/start-ocr.sh logs         # 首次解析时观察模型下载进度
+#   scripts/win/start-ocr.bat start       # Windows 同款（start|stop|status|health|logs）
 #
 # 限流绑定：只绑 127.0.0.1（本地开发机，不对外）。
 services:
