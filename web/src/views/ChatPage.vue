@@ -662,7 +662,7 @@
         <div class="rp-card">
           <div class="rp-label">最近一次检索</div>
           <template v-if="lastRetrieved || lastSources.length">
-            <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
+            <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
             <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
             <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
             <template v-if="toolSearchQueries(lastAi).length">
@@ -682,7 +682,7 @@
             <span class="rp-ctx-fill" :class="ctxLevel" :style="{ width: ctxPct + '%' }"></span>
           </div>
           <div class="rp-row" :style="lastTokens.budget > 0 ? 'margin-top:5px' : ''"><span>上下文 {{ fmtTokens(lastTokens.context) }}<template v-if="lastTokens.budget > 0">（{{ ctxPct }}%）</template></span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
-          <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }} · 上下文填入 {{ lastTokens.hits }} 块</div>
+          <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template></div>
         </div>
       </template>
       <!-- 会话视图：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
@@ -693,9 +693,9 @@
         <div v-else-if="roundCount" class="rp-meta">恢复的历史轮次不含用量记录</div>
         <div v-else class="rp-meta">发送问题后统计</div>
         <div class="rp-divider"></div>
-        <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
-        <div class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮 · 引用 {{ sessionRetrieval.refs }} 段</span><span class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
-        <div class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
+        <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span v-if="sessionArtifacts.length > 0" class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
+        <div v-if="sessionRetrieval.rounds > 0" class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮<template v-if="sessionRetrieval.refs > 0"> · 引用 {{ sessionRetrieval.refs }} 段</template></span><span v-if="sessionRetrieval.search > 0" class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
+        <div v-if="sessionRetrieval.tools > 0" class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
       </div>
       <!-- 引用来源：有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则） -->
       <div v-if="groupedSources.length" class="rp-card">
