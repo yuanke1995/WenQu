@@ -128,16 +128,34 @@ public class WorkflowController {
         return ResultJson.ok(workflowService.validate(str(body, "dsl")));
     }
 
-    @Operation(summary = "调试运行（同步）", description = "body: {inputs?}（开始节点入参，{{start.key}} 取值来源）。"
-            + "执行前 fail-fast：必填入参缺失 / llm 节点模型不可用直接报错；"
-            + "执行失败不抛 500——返回 status=failed 的 run（error + node_traces 可定位问题节点）；"
+    @Operation(summary = "调试运行（默认同步；async=true 异步）", description = "body: {inputs?, async?}（开始节点入参，{{start.key}} 取值来源）。"
+            + "同步（默认）：本次请求内跑完并返回终态 run，失败不抛 500——返回 status=failed 的 run（error + node_traces 可定位问题节点）。"
+            + "异步（async=true）：创建即返回 status=queued 的 run，实际执行在派发池；前端订阅 /run/{runId}/stream 边跑边亮，"
+            + "队列满会直接失败（workflow.runQueueCapacity）。执行前 fail-fast：必填入参缺失 / llm 节点模型不可用直接报错；"
             + "每次运行锁定当时 DSL 快照，改画布不影响历史回放")
     @PostMapping("/{id}/run")
     public ResultJson run(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
         @SuppressWarnings("unchecked")
         Map<String, Object> inputs = body == null || !(body.get("inputs") instanceof Map) ? Map.of()
                 : (Map<String, Object>) body.get("inputs");
-        return ResultJson.ok(workflowService.run(id, inputs));
+        boolean async = body != null && Boolean.TRUE.equals(body.get("async"));
+        return ResultJson.ok(async ? workflowService.runAsync(id, inputs) : workflowService.run(id, inputs));
+    }
+
+    @Operation(summary = "运行进度流（SSE）", description = "第 2 期：订阅某次运行的实时进度——节点完成推 trace 事件、"
+            + "状态迁移推 status 事件、收口推 done 事件（带终态 run 全量）后关流；订阅瞬间先回放 snapshot（当前状态 + 已产生 trace），"
+            + "断线重连不丢时间线；已终态则回放后立即关闭")
+    @GetMapping(value = "/{id}/run/{runId}/stream", produces = "text/event-stream;charset=UTF-8")
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter runStream(@PathVariable("id") String id,
+                                                                                     @PathVariable("runId") String runId) {
+        return workflowService.subscribeRunStream(id, runId);
+    }
+
+    @Operation(summary = "取消排队中的运行", description = "第 2 期：仅 status=queued 的运行可取消（条件更新 queued→failed，"
+            + "与任务启动的 queued→running 互斥）；已在运行 / 已结束报错——运行中的 LLM/HTTP 节点无法安全打断")
+    @PostMapping("/{id}/run/{runId}/cancel")
+    public ResultJson cancelRun(@PathVariable("id") String id, @PathVariable("runId") String runId) {
+        return ResultJson.ok(workflowService.cancelQueuedRun(id, runId));
     }
 
     @Operation(summary = "运行记录列表", description = "最近 50 条（新→旧）：状态/触发方式/耗时/错误摘要；trace 详情见单条接口")

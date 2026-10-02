@@ -99,11 +99,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message } from 'ant-design-vue'
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import {
-  listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval, resolveWorkflowApproval, resumeWorkflowRun
+  listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval, resolveWorkflowApproval, resumeWorkflowRun,
+  subscribeWorkflowRun
 } from '../api'
 
 const props = defineProps({
@@ -132,6 +133,7 @@ const load = async () => {
 }
 
 const openDetail = async row => {
+  closeStream()
   try {
     const r = await getWorkflowRun(props.workflowId, row.id)
     detail.value = (r && r.data) || null
@@ -146,10 +148,66 @@ const openDetail = async row => {
     // 列表里同步更新这一条（裁决后续跑的终态要回写进列表）
     const idx = runs.value.findIndex(x => x.id === row.id)
     if (idx >= 0 && detail.value) runs.value[idx] = detail.value
+    // 第 2 期：运行中/排队中的运行接进度流，实时看节点时间线
+    if (detail.value && (detail.value.status === 'queued' || detail.value.status === 'running')) {
+      streamAbort.value = subscribeWorkflowRun(props.workflowId, detail.value.id, onStreamEvent,
+        e => message.error('进度流中断：' + (e.message || '')))
+    }
   } catch (e) {
     message.error('运行详情加载失败：' + (e.message || ''))
   }
 }
+
+/** 进度流：snapshot 回放 / trace 增量 / status 迁移 / done 收口（时间线实时增长） */
+const onStreamEvent = (name, payload) => {
+  if (name === 'snapshot') {
+    traces.value = (((payload && payload.traces) || [])).map(t => ({ ...t, _open: false }))
+    if (detail.value && payload) detail.value = { ...detail.value, status: payload.status || detail.value.status }
+    return
+  }
+  if (name === 'trace' && payload) {
+    traces.value = [...traces.value, { ...payload, _open: false }]
+    return
+  }
+  if (name === 'status' && payload && detail.value) {
+    detail.value = { ...detail.value, status: payload.status }
+    return
+  }
+  if (name === 'done' && payload) {
+    closeStream()
+    finalizeDone(payload)
+    return
+  }
+  if (name === 'close') closeStream()
+}
+
+/** 终态收口：用 done 的 run 全量定格详情并回写列表 */
+const finalizeDone = payload => {
+  if (!detail.value) return
+  const run = {
+    ...detail.value,
+    status: (payload && payload.status) || detail.value.status,
+    outputs: (payload && payload.outputs) != null ? payload.outputs : detail.value.outputs,
+    error: (payload && payload.error) != null ? payload.error : detail.value.error,
+    durationMs: (payload && payload.durationMs) != null ? payload.durationMs : detail.value.durationMs,
+    nodeTraces: (payload && payload.nodeTraces) || detail.value.nodeTraces
+  }
+  detail.value = run
+  traces.value = (safeParse(run.nodeTraces) || []).map(t => ({ ...t, _open: false }))
+  const idx = runs.value.findIndex(x => x.id === run.id)
+  if (idx >= 0) runs.value[idx] = run
+  if (run.status === 'success') message.success('运行完成')
+  else if (run.status === 'failed') message.error('运行失败：' + (run.error || '未知原因'))
+}
+
+const streamAbort = ref(null)
+function closeStream () {
+  if (streamAbort.value) {
+    try { streamAbort.value() } catch (e) { /* 已关闭 */ }
+    streamAbort.value = null
+  }
+}
+onBeforeUnmount(closeStream)
 
 /** 裁决并同步续跑：接口返回终态 run，就地刷新详情与列表 */
 const doApprove = async approved => {
@@ -207,8 +265,8 @@ const doResume = async () => {
 }
 
 const triggerLabel = t => ({ manual: '手动调试', api: 'API 触发', agent: '智能体对话' }[t] || t || '—')
-const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
-const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange', retrying: 'orange' }[s] || 'default')
+const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
+const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange', retrying: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
 const safeParse = s => { try { return JSON.parse(s) } catch (e) { return null } }

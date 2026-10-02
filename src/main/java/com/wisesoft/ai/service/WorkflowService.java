@@ -113,6 +113,15 @@ public class WorkflowService {
     private final WorkflowEngine engine;
     private final ConfigService configService;
     private final ResourceVisibilityService visibility;
+    private final WorkflowRunStreamService stream;
+
+    /**
+     * 异步运行派发池（第 2 期：run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
+     * 有界队列 workflow.runQueueCapacity——队列满即拒绝（fail-loud，不无限堆积）。
+     * 与 run 级超时用的 {@link #RUN_POOL} 分开：异步任务若与超时包装同池，池满时会自我等待死锁。
+     * 并发/队列容量在首次使用时读配置（改配置需重启生效）。
+     */
+    private volatile java.util.concurrent.ThreadPoolExecutor dispatchPool;
 
     /**
      * 运行主体（触发者身份）：M4 起触发者不一定是登录用户——外部 API Key 触发时身份是
@@ -761,23 +770,125 @@ public class WorkflowService {
     public WorkflowRun run(String id, Map<String, Object> inputs) {
         Principal p = Principal.current();
         Workflow row = loadVisible(id, p);
-        boolean manage = visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
-                ResourceVisibilityService.ResourceKind.WORKFLOW);
-        if (manage) {
-            // 管理权（创建者/共享管理）：调试运行跑草稿（画布所见即所跑）
-            return execute(row, row.getDsl(), "manual", p.uid(), null, null, "draft",
-                    inputs, null, null, p);
-        }
-        // 只读共享者：只能跑已发布版本——草稿是创建者未定稿的工作副本，不对共享只读者暴露
-        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
-            throw new BizException("工作流「" + row.getName() + "」尚未发布：共享只读用户只能运行已发布版本");
-        }
-        return execute(row, row.getPublishedDsl(), "manual", p.uid(), null, row.getPublishedVersion(),
-                "published", inputs, null, null, p);
+        RunTarget t = resolveRunTarget(row, p);
+        return execute(row, t.dslText, "manual", p.uid(), null, t.version, t.dslSource, inputs, null, null, p);
     }
 
     /**
-     * 执行内核：落 run 记录 → 入参校验 → 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取。
+     * 第 2 期：异步调试运行——创建即返回 {@code status=queued} 的 run，实际执行在派发池里跑，
+     * 前端订阅 {@code /run/{runId}/stream} 边跑边亮。DSL 选择与同步 {@link #run} 同口径
+     * （管理权跑草稿、共享只读跑已发布版本）；DSL 在入队前先解析（坏图 fail-loud，不占队列）。
+     */
+    public WorkflowRun runAsync(String id, Map<String, Object> inputs) {
+        Principal p = Principal.current();
+        Workflow row = loadVisible(id, p);
+        RunTarget t = resolveRunTarget(row, p);
+        WorkflowDsl dsl = parseDsl(t.dslText);   // 入队前解析：坏 DSL 立即报错，不占用队列
+        WorkflowRun run = newRun(row, t.dslText, "manual", p.uid(), null, t.version, t.dslSource, inputs);
+        run.setStatus("queued");
+        WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, null, null);
+        ctx.setTraceSink(tr -> stream.publishTrace(run.getId(), tr));   // 节点完成即推
+        runMapper.insert(run);
+        submitAsync(run, ctx, row, dsl);
+        return run;
+    }
+
+    /** 本次调试运行要跑哪份 DSL（管理权→草稿；共享只读→已发布版本，未发布则 fail-loud） */
+    private RunTarget resolveRunTarget(Workflow row, Principal p) {
+        if (visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
+                ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+            return new RunTarget(row.getDsl(), null, "draft");
+        }
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException("工作流「" + row.getName() + "」尚未发布：共享只读用户只能运行已发布版本");
+        }
+        return new RunTarget(row.getPublishedDsl(), row.getPublishedVersion(), "published");
+    }
+
+    private record RunTarget(String dslText, Integer version, String dslSource) {
+    }
+
+    /** 派发池（懒建；core=max=并发上限，有界队列=排队容量，满则拒绝） */
+    private java.util.concurrent.ThreadPoolExecutor dispatchPool() {
+        java.util.concurrent.ThreadPoolExecutor p = dispatchPool;
+        if (p != null) return p;
+        synchronized (this) {
+            if (dispatchPool == null) {
+                int concurrency = Math.max(1, configService.getInt("workflow.maxConcurrentRuns", 4));
+                int capacity = Math.max(1, configService.getInt("workflow.runQueueCapacity", 50));
+                dispatchPool = new java.util.concurrent.ThreadPoolExecutor(concurrency, concurrency,
+                        60L, java.util.concurrent.TimeUnit.SECONDS,
+                        new java.util.concurrent.LinkedBlockingQueue<>(capacity),
+                        r -> {
+                            Thread t = new Thread(r, "wf-async");
+                            t.setDaemon(true);
+                            return t;
+                        });
+            }
+            return dispatchPool;
+        }
+    }
+
+    /**
+     * 投递异步运行。任务启动时用<b>条件更新 queued→running</b> 占位：被取消（状态已非 queued）则直接退出——
+     * 与 {@link #cancelQueuedRun} 的 queued→failed 条件更新互斥，天然无竞态（不靠 Future.cancel 的时序）。
+     * 队列满则拒绝并落 failed（fail-loud，不静默排队到天荒地老）。
+     */
+    private void submitAsync(WorkflowRun run, WorkflowRunCtx ctx, Workflow row, WorkflowDsl dsl) {
+        try {
+            dispatchPool().execute(() -> {
+                int started = runMapper.update(null, new LambdaUpdateWrapper<WorkflowRun>()
+                        .eq(WorkflowRun::getId, run.getId())
+                        .eq(WorkflowRun::getStatus, "queued")
+                        .set(WorkflowRun::getStatus, "running"));
+                if (started == 0) return;   // 已被取消：状态不再是 queued
+                run.setStatus("running");
+                stream.publishStatus(run.getId(), "running", null);
+                runGraph(run, ctx, row, dsl);
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            run.setStatus("failed");
+            run.setError("运行队列已满（workflow.runQueueCapacity=" + configService.getInt("workflow.runQueueCapacity", 50)
+                    + "），请稍后重试");
+            run.setFinishedAt(LocalDateTime.now());
+            run.setDurationMs(0L);
+            runMapper.updateById(run);
+            stream.publishDone(run.getId(), run);
+            throw new BizException("运行队列已满，请稍后重试");
+        }
+    }
+
+    /**
+     * 取消排队中的运行（第 2 期）：条件更新 queued→failed，与任务启动的 queued→running 互斥——
+     * 只有一个能成功。已在运行 / 已结束则报错（不做中断式取消：运行中的 LLM/HTTP 节点无法安全打断）。
+     */
+    public WorkflowRun cancelQueuedRun(String workflowId, String runId) {
+        requireRead(workflowId);
+        WorkflowRun run = runMapper.selectById(runId);
+        if (run == null || !workflowId.equals(run.getWorkflowId())) {
+            throw new BizException(404, "运行记录不存在");
+        }
+        String reason = "已取消排队（用户取消）";
+        int updated = runMapper.update(null, new LambdaUpdateWrapper<WorkflowRun>()
+                .eq(WorkflowRun::getId, runId)
+                .eq(WorkflowRun::getStatus, "queued")
+                .set(WorkflowRun::getStatus, "failed")
+                .set(WorkflowRun::getError, reason)
+                .set(WorkflowRun::getFinishedAt, LocalDateTime.now()));
+        if (updated == 0) {
+            throw new BizException("该运行已开始或已结束，无法取消排队");
+        }
+        run.setStatus("failed");
+        run.setError(reason);
+        run.setFinishedAt(LocalDateTime.now());
+        run.setDurationMs(0L);
+        stream.publishDone(runId, run);
+        log.info("[WORKFLOW] 取消排队运行：workflow={} run={}", workflowId, runId);
+        return run;
+    }
+
+    /**
+     * 同步执行内核（调试运行 / API / 智能体 / 定时共用）：建 ctx + run 记录 → 图执行 → 收口。
      * 失败不抛（返回 status=failed 的 run，error 带原因）——调试入口要让用户拿到 trace。
      * <b>人工审核挂起</b>：审核节点落 PENDING 审批记录后抛 WorkflowSuspendException，
      * run 落 waiting_approval + 状态快照（已完成节点全量输出），审批接口按快照恢复续跑。
@@ -790,14 +901,17 @@ public class WorkflowService {
                                   Map<String, Object> inputs, Consumer<String> tokenSink,
                                   Consumer<List<String>> imageSink, Principal p) {
         WorkflowDsl dsl = parseDsl(dslText);
-        String runId = UUID.randomUUID().toString();
-        WorkflowRunCtx ctx = new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
-                configService.currentOverrides(), inputs,
-                configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", 50),
-                tokenSink, imageSink);
+        WorkflowRun run = newRun(row, dslText, triggerType, triggeredBy, apiKeyId, version, dslSource, inputs);
+        WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, tokenSink, imageSink);
+        runMapper.insert(run);
+        return runGraph(run, ctx, row, dsl);
+    }
+
+    /** 建运行记录（未落库；status 由调用方按同步/异步设定） */
+    private WorkflowRun newRun(Workflow row, String dslText, String triggerType, String triggeredBy,
+                               String apiKeyId, Integer version, String dslSource, Map<String, Object> inputs) {
         WorkflowRun run = new WorkflowRun();
-        run.setId(runId);
+        run.setId(UUID.randomUUID().toString());
         run.setWorkflowId(row.getId());
         run.setDslSnapshot(dslText);   // 执行不可变：锁定本次运行用的 DSL（对齐 Coze run 语义）
         run.setTriggerType(triggerType);
@@ -808,9 +922,23 @@ public class WorkflowService {
         run.setStatus("running");
         run.setInputs(JSON.toJSONString(inputs == null ? Map.of() : inputs));
         run.setStartedAt(LocalDateTime.now());
-        runMapper.insert(run);
+        return run;
+    }
+
+    /** 建运行上下文（trace 增量回调由调用方按需安装，见 {@code ctx.setTraceSink}） */
+    private WorkflowRunCtx newCtx(String runId, Principal p, Map<String, Object> inputs,
+                                  Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
+        return new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
+                configService.currentOverrides(), inputs,
+                configService.getDouble("chat.temperature"),
+                configService.getInt("workflow.maxSteps", 50),
+                tokenSink, imageSink);
+    }
+
+    /** 图执行内核（同步/异步共用）：入参校验 → 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取 → 收口 */
+    private WorkflowRun runGraph(WorkflowRun run, WorkflowRunCtx ctx, Workflow row, WorkflowDsl dsl) {
         try {
-            WorkflowEngine.checkStartInputs(dsl, inputs);
+            WorkflowEngine.checkStartInputs(dsl, ctx.inputs);
             engine.resolveModels(dsl, ctx);
             CompiledGraph compiled = engine.compile(dsl, ctx);
             Optional<com.alibaba.cloud.ai.graph.OverAllState> result = invokeGraph(compiled);
@@ -937,6 +1065,7 @@ public class WorkflowService {
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50));
+        ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
         Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
         if (outputs != null) {
@@ -1011,6 +1140,7 @@ public class WorkflowService {
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50));
+        ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整
         for (Map.Entry<String, Object> e : outputs.entrySet()) {
             Map<String, Object> nodeOut = new LinkedHashMap<>();
@@ -1171,6 +1301,12 @@ public class WorkflowService {
         run.setDurationMs(System.currentTimeMillis() - ctx.t0);
         runMapper.updateById(run);
         fireCallbackIfConfigured(run);   // 终态回调（配置了才发；异步、失败不影响收口）
+        // 进度流收口：终态关流；挂起（非终态）只推状态、保持流打开（等审批/超时回收再关）
+        if (WorkflowRunStreamService.isTerminal(run.getStatus())) {
+            stream.publishDone(run.getId(), run);
+        } else {
+            stream.publishStatus(run.getId(), run.getStatus(), null);
+        }
         return run;
     }
 
@@ -1191,6 +1327,15 @@ public class WorkflowService {
             throw new BizException(404, "运行记录不存在");
         }
         return r;
+    }
+
+    /**
+     * 订阅某次运行的进度流（第 2 期）：读取权校验后，按 run 快照（当前状态 + 已产生 trace）订阅——
+     * 订阅前完成的节点由快照回放补齐，已终态则回放后立即关闭（断线重连 / 迟到订阅都不丢时间线）。
+     */
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter subscribeRunStream(String workflowId, String runId) {
+        WorkflowRun run = getRun(workflowId, runId);
+        return stream.subscribe(runId, run.getStatus(), parseTraceList(run.getNodeTraces()));
     }
 
     // --------------------------------------------------------------------------------------------------

@@ -305,6 +305,56 @@ export const validateWorkflowDsl = dsl => request('/workflow/validate', { method
 /** 同步调试运行（LLM/检索耗时可达分钟级，放宽超时）；失败不抛——返回 status=failed 的 run */
 export const runWorkflow = (id, inputs) =>
   request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }), timeout: 300000 })
+/** 第 2 期：异步调试运行——创建即返回 status=queued 的 run，配合 subscribeWorkflowRun 边跑边亮 */
+export const runWorkflowAsync = (id, inputs) =>
+  request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs, async: true }) })
+/** 第 2 期：取消排队中的运行（仅 queued 可取消；已开始/已结束报错） */
+export const cancelWorkflowRun = (id, runId) =>
+  request(`/workflow/${id}/run/${runId}/cancel`, { method: 'POST' })
+/**
+ * 第 2 期：订阅运行进度流（SSE over fetch——EventSource 不能带鉴权头，故用 fetch + reader）。
+ * 事件：snapshot（订阅瞬间状态 + 已产生 trace）/ trace（节点完成）/ status（状态迁移）/ done（终态 run 全量）。
+ * @returns abort 函数（组件卸载 / 开始新一轮运行前调用）
+ */
+export function subscribeWorkflowRun (workflowId, runId, onEvent, onError) {
+  const controller = new AbortController()
+  fetch(`${BASE}/workflow/${workflowId}/run/${runId}/stream`, {
+    headers: { Authorization: 'Bearer ' + authToken(), Accept: 'text/event-stream' },
+    signal: controller.signal
+  }).then(res => {
+    if (!res.ok || !res.body) {
+      onError && onError(new Error('进度流连接失败(' + res.status + ')'))
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let eventName = ''
+    const read = () => {
+      reader.read().then(({ done, value }) => {
+        if (done) { onEvent && onEvent('close', null); return }
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const raw of lines) {
+          const line = raw.replace(/\r$/, '')
+          if (!line) { eventName = ''; continue }          // 空行 = 一个事件结束
+          if (line.startsWith(':')) continue               // 心跳注释行
+          if (line.startsWith('event:')) { eventName = line.substring(6).trim(); continue }
+          if (line.startsWith('data:')) {
+            const txt = line.substring(5).trim()
+            let payload = null
+            try { payload = txt ? JSON.parse(txt) : null } catch (e) { payload = null }
+            onEvent && onEvent(eventName || 'message', payload)
+          }
+        }
+        read()
+      }).catch(e => { if (e.name !== 'AbortError') onError && onError(e) })
+    }
+    read()
+  }).catch(e => { if (e.name !== 'AbortError') onError && onError(e) })
+  return () => controller.abort()
+}
 export const listWorkflowRuns = id => request(`/workflow/${id}/run/list`)
 export const getWorkflowRun = (id, runId) => request(`/workflow/${id}/run/${runId}`)
 // M5 模板库：内置模板清单（选用即把 dsl 作为新建入参）

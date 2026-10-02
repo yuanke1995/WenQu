@@ -695,8 +695,8 @@ const doExport = async row => {
   }
 }
 
-const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
-const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
+const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
+const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 
 onMounted(load)
@@ -724,6 +724,7 @@ onMounted(load)
 .wf-last { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text3); }
 .wf-run-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .rd-success { background: var(--app-ok); }
+.rd-queued { background: var(--app-text3); }
 .rd-failed { background: var(--app-danger); }
 .rd-running { background: var(--app-accent); }
 .rd-timeout { background: var(--app-warn); }

@@ -337,6 +337,12 @@
         </a-tab-pane>
 
         <a-tab-pane key="run" tab="运行输出">
+          <!-- 排队中（第 2 期）：并发满时进入队列，可取消（条件更新 queued→failed） -->
+          <div v-if="runResult?.status === 'queued'" class="wf-queued-card">
+            <a-spin size="small" />
+            <span class="wf-queued-txt">已进入运行队列，等待执行…</span>
+            <button class="app-btn ghost small" @click="doCancelQueued">取消排队</button>
+          </div>
           <!-- 人工审核审批卡：run 挂起在 waiting_approval 时出现，裁决即续跑 -->
           <div v-if="runResult?.status === 'waiting_approval' && approvalInfo" class="wf-approval-card">
             <div class="wf-approval-head"><span class="wf-node-ico" style="background: rgba(250, 140, 22, 0.12); color: #d4380d"><span class="wf-node-icon">✋</span></span> 等待人工审核</div>
@@ -473,7 +479,8 @@ import '@vue-flow/controls/dist/style.css'
 import ModelSelect from '../components/ModelSelect.vue'
 import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
-  runWorkflow, listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
+  runWorkflowAsync, cancelWorkflowRun, subscribeWorkflowRun,
+  listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
   listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow
 } from '../api'
 
@@ -1108,10 +1115,27 @@ async function doPublish() {
   }
 }
 
-// ---------- 运行（同步调试 + trace 回放染色） ----------
+// ---------- 运行（第 2 期：异步 + SSE 边跑边亮） ----------
 function openRun() {
   for (const k of Object.keys(runInputs)) delete runInputs[k]
   runModal.value = true
+}
+
+/** 正在观看的运行流的中断函数（开始新一轮 / 离开画布时调用，避免泄漏与串台） */
+const streamAbort = ref(null)
+
+/** 关掉当前进度流（幂等） */
+function closeStream () {
+  if (streamAbort.value) {
+    try { streamAbort.value() } catch (e) { /* 已关闭 */ }
+    streamAbort.value = null
+  }
+}
+
+/** 把一条 trace 立即染到画布节点上（流式；节点可能已被删则跳过） */
+function applyTrace (t) {
+  if (!t || !findNode(t.nodeId)) return
+  updateNodeData(t.nodeId, { run: { status: t.status, elapsedMs: t.elapsedMs } })
 }
 
 async function doRun() {
@@ -1119,44 +1143,102 @@ async function doRun() {
   for (const p of startInputs.value) {
     if (p.required && !(runInputs[p.key] || '').trim()) { message.warning(`请填写入参 ${p.key}`); return }
   }
-  busy.value = true
+  closeStream()
   runModal.value = false
   // 清上一轮染色
   for (const n of nodes.value) if (n.data.run) updateNodeData(n.id, { run: null })
   try {
-    const r = await runWorkflow(workflowId.value, { ...runInputs })
+    // 异步提交：创建即返回 queued 的 run，随后订阅进度流
+    const r = await runWorkflowAsync(workflowId.value, { ...runInputs })
     const run = r.data || {}
-    runResult.value = {
-      status: run.status,
-      outputs: safeParse(run.outputs),
-      error: run.error,
-      traces: safeParse(run.nodeTraces) || [],
-      runId: run.id
-    }
-    await replayTraces()
-    if (runResult.value.status === 'success') {
-      message.success(`运行成功（${fmtMs(run.durationMs)}），点击节点看输入输出`)
-    } else if (runResult.value.status === 'waiting_approval') {
-      // 人工审核挂起：加载审批卡内容（prompt/超时），在抽屉里裁决
-      try {
-        const ar = await getWorkflowPendingApproval(workflowId.value, run.id)
-        approvalInfo.value = ar.data
-      } catch (e) { approvalInfo.value = null }
-      message.info('运行已挂起：等待人工审核')
-    } else {
-      message.error('运行失败：' + (runResult.value.error || '未知原因'))
-    }
+    runResult.value = { status: run.status, outputs: null, error: null, traces: [], runId: run.id }
+    approvalInfo.value = null
     // 抽屉 body 依赖选中节点（v-if="selected"）：先聚焦关键节点再开，否则弹空壳
-    const focusId = pickFocusNodeId()
-    if (focusId) selectNode(focusId)
     drawerTab.value = 'run'
-    drawer.value = !!focusId
+    if (run.status === 'queued') message.info('已进入运行队列…')
+    streamAbort.value = subscribeWorkflowRun(workflowId.value, run.id, onStreamEvent, e => {
+      message.error('进度流中断：' + (e.message || ''))
+    })
   } catch (e) {
     message.error('运行失败：' + (e.message || ''))
-  } finally {
-    busy.value = false
   }
 }
+
+/** 进度流事件分发：snapshot 回放 / trace 增量 / status 迁移 / done 收口 */
+function onStreamEvent (name, payload) {
+  if (name === 'snapshot') {
+    // 订阅瞬间的快照：补齐订阅前已完成的节点（重连/迟到订阅不丢时间线）
+    const traces = (payload && payload.traces) || []
+    runResult.value = { ...(runResult.value || {}), status: (payload && payload.status) || 'running', traces }
+    for (const t of traces) applyTrace(t)
+    return
+  }
+  if (name === 'trace' && payload) {
+    if (runResult.value) runResult.value.traces = [...(runResult.value.traces || []), payload]
+    applyTrace(payload)
+    return
+  }
+  if (name === 'status' && payload) {
+    if (runResult.value) runResult.value.status = payload.status
+    if (payload.status === 'running') message.info('开始执行…')
+    return
+  }
+  if (name === 'done' && payload) {
+    finalizeRun(payload)
+    return
+  }
+  if (name === 'close') {
+    // 流关闭但没收到 done：多为网络中断；提示用户可刷新查看
+    if (runResult.value && !['success', 'failed', 'timeout'].includes(runResult.value.status)) {
+      message.warning('进度流已断开，运行可能仍在后台进行；可打开「运行历史」查看最终结果')
+    }
+    closeStream()
+  }
+}
+
+/** 终态收口：用 done 事件里的 run 全量信息定格（traces 以服务端为准，避免增量与落库口径不一致） */
+async function finalizeRun (payload) {
+  closeStream()
+  const traces = safeParse(payload && payload.nodeTraces) || (runResult.value?.traces || [])
+  runResult.value = {
+    status: (payload && payload.status) || 'failed',
+    outputs: safeParse(payload && payload.outputs),
+    error: payload && payload.error,
+    traces,
+    runId: (payload && payload.runId) || (runResult.value?.runId)
+  }
+  // 兜底：done 里若有增量未覆盖的节点（正常不会），按终态重染一遍
+  for (const t of traces) applyTrace(t)
+  if (runResult.value.status === 'success') {
+    message.success(`运行成功（${fmtMs(payload && payload.durationMs)}），点击节点看输入输出`)
+  } else if (runResult.value.status === 'waiting_approval') {
+    try {
+      const ar = await getWorkflowPendingApproval(workflowId.value, runResult.value.runId)
+      approvalInfo.value = ar.data
+    } catch (e) { approvalInfo.value = null }
+    message.info('运行已挂起：等待人工审核')
+  } else {
+    message.error('运行失败：' + (runResult.value.error || '未知原因'))
+  }
+  const focusId = pickFocusNodeId()
+  if (focusId) selectNode(focusId)
+  drawerTab.value = 'run'
+  drawer.value = !!focusId
+}
+
+/** 取消排队（仅 queued 可取消；后端条件更新，已在运行会报错） */
+async function doCancelQueued () {
+  const runId = runResult.value?.runId
+  if (!runId) return
+  try {
+    await cancelWorkflowRun(workflowId.value, runId)
+    message.success('已取消排队')
+  } catch (e) {
+    message.error('取消失败：' + (e.message || ''))
+  }
+}
+
+onBeforeUnmount(closeStream)
 
 /** 审批裁决：批准/拒绝后后端按快照恢复续跑，返回终态 run——直接替换 runResult 重放染色 */
 async function doApprove(approved) {
@@ -1448,6 +1530,12 @@ load()
   border: 1.5px solid var(--app-warn); border-radius: 8px; padding: 12px 14px;
   background: var(--app-warn-weak); margin-bottom: 14px;
 }
+/* 排队中卡片（第 2 期）：并发满时进入队列，提供取消入口 */
+.wf-queued-card {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-bg);
+}
+.wf-queued-txt { flex: 1 1 auto; font-size: 13px; color: var(--app-text2); }
 .wf-approval-head { font-weight: 500; font-size: 13px; margin-bottom: 6px; }
 .wf-approval-prompt { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
 .wf-approval-meta { font-size: 12px; color: var(--app-text3); display: flex; gap: 12px; margin-bottom: 10px; }

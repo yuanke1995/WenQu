@@ -75,6 +75,18 @@ public final class WorkflowRunCtx {
 
     /** 节点 trace（完成序；同步串行图无并发写，并行图(M3)再上锁） */
     final List<Map<String, Object>> traces = new ArrayList<>();
+    /**
+     * 节点 trace 增量回调（第 2 期：实时进度）。非空时每写一条 trace 立即回调一次，
+     * 由运行流服务转成 SSE 事件推给前端——画布"边跑边亮"不依赖跑完后的批量回放。
+     * 同步/异步调试运行之外（API、智能体、定时）为 null。
+     */
+    private volatile Consumer<Map<String, Object>> traceSink;
+
+    /** 安装 trace 增量回调（运行开始前设置；回调异常不得影响执行） */
+    void setTraceSink(Consumer<Map<String, Object>> sink) {
+        this.traceSink = sink;
+    }
+
     /** 开始时刻（run 总耗时用） */
     final long t0 = System.currentTimeMillis();
 
@@ -121,6 +133,15 @@ public final class WorkflowRunCtx {
         if (completionTokens != null) t.put("completionTokens", completionTokens);
         if (error != null && !error.isBlank()) t.put("error", abbreviate(error, 500));
         traces.add(t);
+        // 实时进度：节点一完成立即推一条（回调异常绝不能影响执行，故整体兜住）
+        Consumer<Map<String, Object>> sink = this.traceSink;
+        if (sink != null) {
+            try {
+                sink.accept(t);
+            } catch (Exception ignored) {
+                // 推送失败不影响运行本身
+            }
+        }
     }
 
     /** trace 落库前的整体快照（JSON 序列化用） */
