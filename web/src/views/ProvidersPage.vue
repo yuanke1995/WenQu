@@ -1,8 +1,9 @@
 <template>
-  <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区 -->
+  <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（页名 sr-only + 说明 + 主操作）+ 带内边距的内容区 -->
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">模型供应商</h1>
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
+      <h1 class="app-page-title sr-only">模型供应商</h1>
       <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。谁建归谁：你新建的供应商只有你能看到和使用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商

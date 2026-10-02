@@ -3,7 +3,8 @@
        技能 Skills 与 MCP 是**个人资产**（每人管自己的，2026-09-26 从「系统设置」迁出）；
        智能体对普通用户开放**自建自管**（后端按 ResourceVisibilityService 做资源级隔离：
        只能看到/管理自己创建的、内置问渠与共享给自己的，未配置共享=私有）；
-       模型供应商谁建归谁（2026-10）：所有人只看到自己登记的网关与 Key，管理员级保留全量运维视角。 -->
+       模型供应商谁建归谁（2026-10）：所有人只看到自己登记的网关与 Key。
+       2026-10-02 起全部资源严格按 userId 隔离：管理员级也不再有任何全量视角。 -->
   <div class="app-page">
     <a-tabs v-model:activeKey="active" class="hub-tabs" destroy-inactive-tab-pane>
       <a-tab-pane key="providers" tab="模型供应商"><ProvidersPage /></a-tab-pane>

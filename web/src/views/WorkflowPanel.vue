@@ -5,7 +5,8 @@
     <!-- 编辑态（editingId !== null）或运行历史态，整页替换列表；列表头/列表体随之隐藏 -->
     <template v-if="editingId === null && historyId === null">
     <div class="app-page-head">
-      <h1 class="app-page-title">工作流</h1>
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
+      <h1 class="app-page-title sr-only">工作流</h1>
       <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
       <button class="app-btn" style="margin-left:auto" @click="openTemplates">

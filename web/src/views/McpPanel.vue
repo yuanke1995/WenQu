@@ -4,7 +4,8 @@
        页面骨架与「模型供应商」Tab 一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区。 -->
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">MCP 外部工具</h1>
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
+      <h1 class="app-page-title sr-only">MCP 外部工具</h1>
       <span class="head-count">
         共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
         <span v-if="checkedAt" class="head-dim">· 更新于 {{ checkedAt }}</span>

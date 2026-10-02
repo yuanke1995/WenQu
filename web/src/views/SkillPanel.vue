@@ -4,7 +4,8 @@
        页面骨架与「模型供应商」Tab 一致：标题栏（标题 + 说明 + 主操作）+ 带内边距的内容区。 -->
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">技能</h1>
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
+      <h1 class="app-page-title sr-only">技能</h1>
       <span class="head-count">共 <b>{{ skills.length }}</b> 个 · 生效中 <b>{{ activeCount }}</b></span>
       <span class="head-hint-plain">固化「这类问题该怎么做」的做法说明，模型按需读取后照做；技能只属于你自己</span>
       <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 安装 + 新建 + 批量区（分隔线独立成区） -->

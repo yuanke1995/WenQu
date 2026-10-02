@@ -1,7 +1,8 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">定时任务</h1>
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
+      <h1 class="app-page-title sr-only">定时任务</h1>
       <span class="head-hint-plain">到点自动用「智能体 + 指令」跑一次完整问答，结果落进该任务的专属会话</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建任务

@@ -3,8 +3,10 @@
     <!-- ==================== 列表视图 ==================== -->
     <template v-if="!editing">
       <div class="app-page-head">
-        <h1 class="app-page-title">智能体</h1>
-        <span class="ap-count">共 {{ agents.length }} 个</span>
+        <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
+        <h1 class="app-page-title sr-only">智能体</h1>
+        <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
+        <span class="head-hint-plain">一个智能体就是一组对话预设：选好模型、写好角色提示词、圈定知识库范围、按需开启能力；对话时在输入框上方选用，这一轮问答就按它走</span>
         <div class="ap-head-r">
           <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
             <template #prefix><search-outlined class="ap-search-ic" /></template>
@@ -1222,7 +1224,8 @@ onMounted(async () => { })
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
 .batch-del { color: var(--app-danger); }
 .ap-check { flex: none; }
-.ap-count { font-size: 12px; color: var(--app-text3); }
+.ap-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.ap-count b { color: var(--app-text); font-weight: 600; }
 .ap-head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ap-search { width: 200px; }
 .ap-search-ic { color: var(--app-text3); }
