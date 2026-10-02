@@ -121,6 +121,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) return true;
         // 工作流（个人资产）：M0~M3 仅创建者本人可见可管（WorkflowService 按 uid 归属校验；M4 随发布语义启用共享）
         if (path.equals("/api/ai/workflow") || path.startsWith("/api/ai/workflow/")) return true;
+        // 工作流凭据（第 3 期，个人资产）：http 节点以 {{credential:名称}} 引用；值加密落库、出参脱敏，
+        // 控制器一律按 RequestUser.uid() 过滤（看不到也改不了别人的），故与技能/MCP 同口径不要求管理员
+        if (path.equals("/api/ai/credential") || path.startsWith("/api/ai/credential/")) return true;
         // 工作流开放接口（M4）：/api/ai/v1/workflows/**——对外系统持 API Key 触发已发布工作流。
         // 与普通用户白名单同层（API Key 走第 1 层放行分支）；权限面收在 WorkflowService 内：
         // 工作流对该身份可读才可触发，不可见/未发布一律拒绝，不因端点开放而放宽资源级判定。

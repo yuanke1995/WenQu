@@ -395,6 +395,11 @@ export const runWorkflowScheduleNow = id =>
 export const batchDeleteWorkflows = ids => request('/workflow/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const batchPublishWorkflows = (ids, note = '') => request('/workflow/batch-publish', { method: 'POST', body: JSON.stringify({ ids, note }) })
 export const batchUnpublishWorkflows = ids => request('/workflow/batch-unpublish', { method: 'POST', body: JSON.stringify({ ids }) })
+// ---------- 第 3 期：工作流凭据（http 节点 {{credential:名称}} 引用；个人资产，值加密落库、出参脱敏） ----------
+export const listCredentials = () => request('/credential/list')
+export const createCredential = body => request('/credential', { method: 'POST', body: JSON.stringify(body) })
+export const updateCredential = (id, body) => request(`/credential/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteCredential = id => request(`/credential/${id}`, { method: 'DELETE' })
 /** 新建知识库：{name, description, queryParams, isDefault} */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
 /** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */

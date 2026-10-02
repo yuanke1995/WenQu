@@ -16,6 +16,7 @@
       <span class="flex-gap"></span>
       <div class="wf-tb-actions">
         <button class="app-btn ghost small" :disabled="busy" @click="doValidate">校验</button>
+        <button class="app-btn ghost small" :disabled="busy" @click="openCredentials">凭据</button>
         <button class="app-btn ghost small" :disabled="busy" @click="showHistory">运行历史</button>
         <button class="app-btn small" :disabled="busy || !workflowId" @click="openRun">
           <play-circle-outlined /> 运行
@@ -214,13 +215,33 @@
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('url', v, '')" />
               </div>
-              <div class="wf-form-item"><label>请求头</label></div>
+              <div class="wf-form-item">
+                <label>请求头</label>
+                <button class="app-btn ghost small" @click="openCredentials">🔑 管理凭据</button>
+              </div>
               <div v-for="(h, i) in editConfig.headers" :key="i" class="wf-rows">
                 <a-input v-model:value="h.key" placeholder="Header" class="wf-row-key" />
-                <a-input v-model:value="h.value" placeholder="值（支持引用）" class="wf-row-value" />
+                <a-input v-model:value="h.value" placeholder="值（支持引用 / 凭据）" class="wf-row-value" />
+                <a-popover v-if="credentialNames.length" trigger="click" placement="bottomRight">
+                  <template #content>
+                    <div class="sel-panel">
+                      <div class="sel-head"><span class="sel-title">插入凭据</span></div>
+                      <div class="sel-list">
+                        <div v-for="cn in credentialNames" :key="cn" class="sel-item" @click="insertCredential(i, cn)">
+                          <span class="sel-label">{{ cn }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <button class="app-btn ghost small" title="插入凭据引用">🔑</button>
+                </a-popover>
                 <button class="app-btn ghost small" @click="editConfig.headers.splice(i, 1)">删</button>
               </div>
               <button class="app-btn ghost small" @click="editConfig.headers.push({ key: '', value: '' })">+ 添加请求头</button>
+              <div class="wf-hint">
+                Header 值可写 <code v-pre>{{credential:名称}}</code>：运行时按运行发起人解密填入，
+                明文不进 DSL、不进运行 trace；未配置该名称会直接报错。
+              </div>
               <div v-if="editConfig.method !== 'GET'" class="wf-form-item" style="margin-top:8px"><label>请求体（支持引用）</label>
                 <a-textarea v-model:value="editConfig.body" :rows="4" placeholder="原始请求体，如 JSON" />
                 <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
@@ -324,6 +345,43 @@
               </div>
               <div class="wf-hint">渲染结果在 <code>text</code>，多视角汇总后接 LLM 或直接作答都行。</div>
             </template>
+
+            <!-- skill（第 3 期）：技能全文注入下游上下文 -->
+            <template v-else-if="selected.data.nodeType === 'skill'">
+              <div class="wf-form-item"><label>技能（可多选，全文注入下游 LLM 上下文）</label>
+                <a-select v-model:value="editConfig.skills" mode="multiple" size="small" style="width:100%"
+                          :options="skillOptions" show-search option-filter-prop="label"
+                          placeholder="选择你名下的技能（不含已停用的）" />
+              </div>
+              <div class="wf-hint">
+                输出 <code>text</code>：把所选技能全文拼成一段「按技能要求作答」的上下文，下游 LLM 节点用
+                <code v-pre>{{skill_1.text}}</code> 引用即可。技能是个人资产，按运行发起人取用。
+              </div>
+            </template>
+
+            <!-- mcp（第 3 期）：调用 MCP 工具 -->
+            <template v-else-if="selected.data.nodeType === 'mcp'">
+              <div class="wf-form-item"><label>MCP 服务（你名下已启用的）</label>
+                <a-select v-model:value="editConfig.server" size="small" style="width:100%"
+                          :options="mcpServerOptions" show-search option-filter-prop="label"
+                          placeholder="选择 MCP 服务" @change="onMcpServerChange" />
+              </div>
+              <div class="wf-form-item"><label>工具</label>
+                <a-select v-model:value="editConfig.tool" size="small" style="width:100%"
+                          :options="mcpToolOptions" show-search option-filter-prop="label"
+                          :disabled="!editConfig.server" placeholder="选择该服务下的工具" />
+              </div>
+              <div class="wf-form-item"><label>参数（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label></div>
+              <div v-for="(a, i) in editConfig.args" :key="i" class="wf-rows">
+                <a-input v-model:value="a.key" size="small" placeholder="参数名" style="width:38%" />
+                <a-input v-model:value="a.value" size="small" placeholder="值 / {{nodeId.key}}" style="width:44%" />
+                <button class="app-btn ghost small" @click="editConfig.args.splice(i, 1)">删</button>
+              </div>
+              <button class="app-btn ghost small" @click="editConfig.args.push({ key: '', value: '' })">+ 添加参数</button>
+              <div class="wf-hint">
+                输出 <code>result</code>（工具返回文本）。只调用你名下已启用的服务：服务未启用、连接失败或不属于当前用户会直接报错。
+              </div>
+            </template>
           </div>
           <!-- M5 节点级失败重试：所有执行型节点通用（start/end 无执行体不显示）；0=不重试 -->
           <div v-if="selected && !['start', 'end'].includes(selected.data.nodeType)" class="wf-retry-row">
@@ -377,6 +435,39 @@
         </a-tab-pane>
       </a-tabs>
     </a-drawer>
+
+    <!-- 第 3 期：凭据管理（个人资产，值加密落库、出参脱敏） -->
+    <a-modal v-model:open="credModal" title="凭据管理" :footer="null" width="620px">
+      <div class="wf-hint" style="margin-bottom:10px">
+        供 HTTP 节点以 <code v-pre>{{credential:名称}}</code> 引用：值加密保存，不进 DSL / 运行记录；
+        运行时按<strong>运行发起人</strong>解密填入，因此共享工作流时应各自准备自己的凭据。
+      </div>
+      <a-spin :spinning="credLoading">
+        <div v-for="c in credentials" :key="c.id" class="cred-row">
+          <div class="cred-main">
+            <span class="cred-name">{{ c.name }}</span>
+            <span class="cred-val">{{ c.valueMasked || '（空）' }}</span>
+            <span v-if="c.remark" class="wf-meta">{{ c.remark }}</span>
+          </div>
+          <button class="app-btn ghost small" @click="editCredential(c)">编辑</button>
+          <button class="app-btn ghost small wf-del" @click="removeCredential(c)">删除</button>
+        </div>
+        <div v-if="!credentials.length && !credLoading" class="wf-hint">还没有凭据——在下面添加第一条。</div>
+      </a-spin>
+      <div class="cred-form">
+        <div class="cred-form-title">{{ credForm.id ? '编辑凭据' : '新建凭据' }}</div>
+        <div class="wf-rows">
+          <a-input v-model:value="credForm.name" size="small" placeholder="名称（引用时用它，如 apiKey）" style="width:40%" />
+          <a-input-password v-model:value="credForm.value" size="small"
+                            :placeholder="credForm.id ? '值（留空保持不变）' : '值（密钥/Token）'" style="width:44%" />
+        </div>
+        <div class="wf-rows" style="margin-top:6px">
+          <a-input v-model:value="credForm.remark" size="small" placeholder="备注（可选）" style="width:86%" />
+          <button class="app-btn small" :disabled="credSaving" @click="saveCredential">{{ credForm.id ? '保存' : '添加' }}</button>
+          <button v-if="credForm.id" class="app-btn ghost small" @click="resetCredForm">取消</button>
+        </div>
+      </div>
+    </a-modal>
 
     <!-- 条件出边选分支 -->
     <a-modal v-model:open="branchPick" title="选择分支" ok-text="连上" cancel-text="取消" @ok="confirmBranch" @cancel="pendingConn = null">
@@ -481,7 +572,9 @@ import {
   getWorkflow, createWorkflow, updateWorkflow, validateWorkflowDsl,
   runWorkflowAsync, cancelWorkflowRun, subscribeWorkflowRun,
   listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
-  listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow
+  listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow,
+  listAvailableSkills, getMcpStatus,
+  listCredentials, createCredential, updateCredential, deleteCredential
 } from '../api'
 
 const props = defineProps({
@@ -519,16 +612,19 @@ const TYPE_META = {
   subagent: { label: '子智能体', icon: '＠', color: '#2f54eb', brief: '委派某个智能体按它自己的配置作答', out: ['answer'] },
   approval: { label: '人工审核', icon: '✋', color: '#d4380d', brief: '挂起等人拍板，批准/拒绝各走一支', out: ['route'] },
   loop: { label: '循环', icon: '↻', color: '#d4b106', brief: '按分支回跳重跑，最多 maxLoops 轮', out: ['route', 'loopCount'] },
-  template: { label: '模板转换', icon: '✎', color: '#08979c', brief: '把多路上游输出拼成一段文本', out: ['text'] }
+  template: { label: '模板转换', icon: '✎', color: '#08979c', brief: '把多路上游输出拼成一段文本', out: ['text'] },
+  skill: { label: '技能', icon: '📘', color: '#c41d7f', brief: '把所选技能全文注入下游 LLM 上下文', out: ['text', 'skills'] },
+  mcp: { label: 'MCP 工具', icon: '🔌', color: '#1d39c4', brief: '调用你名下 MCP 服务里的某个工具', out: ['result', 'server', 'tool'] }
 }
-const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template']
+const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template', 'skill', 'mcp']
   .map(t => ({ type: t, ...TYPE_META[t] }))
-/** 左侧节点面板分组（11 类平铺太散，按用途分组更好找） */
+/** 左侧节点面板分组（13 类平铺太散，按用途分组更好找） */
 const PALETTE_GROUPS = [
   { title: '流程', types: ['start', 'end'] },
   { title: '模型', types: ['llm', 'subagent'] },
   { title: '数据', types: ['retrieval', 'http', 'code', 'template'] },
-  { title: '控制', types: ['condition', 'approval', 'loop'] }
+  { title: '控制', types: ['condition', 'approval', 'loop'] },
+  { title: '生态', types: ['skill', 'mcp'] }
 ]
 /** 类型色（未知类型回落灰） */
 const colorOf = t => (TYPE_META[t]?.color) || '#8c8c8c'
@@ -610,7 +706,9 @@ const OUTPUT_KEYS = {
   subagent: ['answer'],
   approval: ['route'],
   loop: ['route', 'loopCount'],
-  template: ['text']
+  template: ['text'],
+  skill: ['text', 'skills'],
+  mcp: ['result', 'server', 'tool']
 }
 
 /** 某节点的全部上游祖先（沿入边反向 BFS；loop 回跳成环由 seen 去重兜住）。
@@ -676,7 +774,9 @@ const BLANK_CONFIGS = {
   subagent: { agentId: '', prompt: '', modelRef: '' },
   approval: { prompt: '', timeoutSeconds: 120, branches: [{ key: 'approve' }, { key: 'reject' }] },
   loop: { maxLoops: 5, branches: [{ key: 'retry', expr: '' }, { key: 'done', expr: '' }] },
-  template: { template: '' }
+  template: { template: '' },
+  skill: { skills: [] },
+  mcp: { server: '', tool: '', args: [] }
 }
 const blankConfig = t => JSON.parse(JSON.stringify(BLANK_CONFIGS[t] || {}))
 
@@ -1006,6 +1106,17 @@ function applyConfig() {
   }
   if (node.data.nodeType === 'retrieval' && !String(editConfig.value.query || '').trim()) {
     message.warning('检索词不能为空'); return
+  }
+  // 第 3 期生态节点：必填项前端先拦一层
+  if (node.data.nodeType === 'skill' && !(editConfig.value.skills || []).length) {
+    message.warning('请至少选择一个技能'); return
+  }
+  if (node.data.nodeType === 'mcp') {
+    if (!String(editConfig.value.server || '').trim()) { message.warning('请选择 MCP 服务'); return }
+    if (!String(editConfig.value.tool || '').trim()) { message.warning('请选择工具'); return }
+    const keys = (editConfig.value.args || []).map(a => String(a.key || '').trim())
+    if (keys.some(k => !k)) { message.warning('MCP 参数名不能为空'); return }
+    if (new Set(keys).size !== keys.length) { message.warning('MCP 参数名不能重复'); return }
   }
   if (node.data.nodeType === 'http' && !String(editConfig.value.url || '').trim()) {
     message.warning('URL 不能为空'); return
@@ -1400,15 +1511,128 @@ function subText(data) {
     case 'approval': return c.prompt ? String(c.prompt).slice(0, 20) : '等待人工确认'
     case 'loop': return `最多 ${(c.maxLoops || 5)} 轮`
     case 'template': return c.template ? String(c.template).slice(0, 22) : '未配置模板'
+    case 'skill': return (c.skills || []).length ? `技能 ${(c.skills || []).join('、').slice(0, 20)}` : '未选择技能'
+    case 'mcp': return c.tool ? `MCP ${String(c.tool).slice(0, 20)}` : '未选择工具'
     default: return ''
   }
+}
+
+// ---------- 第 3 期：技能 / MCP 选项与凭据管理 ----------
+const skillOptions = ref([])
+const mcpServers = ref([])
+const mcpServerOptions = computed(() => mcpServers.value
+  .filter(s => s.enabled !== false)
+  .map(s => ({ value: s.name, label: s.name + (s.state && s.state !== 'connected' ? `（${s.state}）` : '') })))
+const mcpToolOptions = computed(() => {
+  const s = mcpServers.value.find(x => x.name === editConfig.value.server)
+  return ((s && s.tools) || []).map(t => ({ value: t.name, label: t.name + (t.description ? ` — ${String(t.description).slice(0, 40)}` : '') }))
+})
+
+/** 技能候选（个人资产：内置 + 本人自建，不含已停用）；只取一次，节点表单按需展示 */
+async function loadSkillOptions () {
+  if (skillOptions.value.length) return
+  try {
+    const r = await listAvailableSkills()
+    skillOptions.value = ((r && r.data) || []).map(s => ({ value: s.name, label: s.name + (s.description ? ` — ${String(s.description).slice(0, 30)}` : '') }))
+  } catch (e) { /* 下拉加载失败不阻断编辑 */ }
+}
+
+/** MCP 服务清单（只读本地已知状态，不做在线校验——避免被远程 MCP 握手延迟拖住画布） */
+async function loadMcpServers () {
+  if (mcpServers.value.length) return
+  try {
+    const r = await getMcpStatus(false, false)
+    mcpServers.value = (r && r.data) || []
+  } catch (e) { /* 同上 */ }
+}
+
+/** 换服务时清掉已选工具（工具清单随服务变） */
+function onMcpServerChange () { editConfig.value.tool = '' }
+
+watch(() => selected.value?.data?.nodeType, t => {
+  if (t === 'skill') loadSkillOptions()
+  if (t === 'mcp') loadMcpServers()
+  if (t === 'http') loadCredentials()   // 请求头旁要列可插入的凭据名
+})
+
+// ---- 凭据管理（值加密落库、出参脱敏；明文只在运行时解密） ----
+const credModal = ref(false)
+const credLoading = ref(false)
+const credSaving = ref(false)
+const credentials = ref([])
+const credentialNames = ref([])
+const credForm = ref({ id: '', name: '', value: '', remark: '' })
+
+const loadCredentials = async () => {
+  credLoading.value = true
+  try {
+    const r = await listCredentials()
+    credentials.value = (r && r.data) || []
+    credentialNames.value = credentials.value.map(c => c.name)
+  } catch (e) {
+    message.error('凭据加载失败：' + (e.message || ''))
+  } finally {
+    credLoading.value = false
+  }
+}
+
+const openCredentials = () => { credModal.value = true; loadCredentials() }
+const resetCredForm = () => { credForm.value = { id: '', name: '', value: '', remark: '' } }
+const editCredential = c => { credForm.value = { id: c.id, name: c.name, value: '', remark: c.remark || '' } }
+
+const saveCredential = async () => {
+  const f = credForm.value
+  if (!String(f.name || '').trim()) { message.warning('请填写凭据名称'); return }
+  if (!f.id && !String(f.value || '').trim()) { message.warning('请填写凭据值'); return }
+  credSaving.value = true
+  try {
+    const body = { name: f.name, value: f.value, remark: f.remark }
+    const r = f.id ? await updateCredential(f.id, body) : await createCredential(body)
+    if (r && r.success) {
+      message.success(f.id ? '凭据已保存' : '凭据已添加')
+      resetCredForm()
+      await loadCredentials()
+    } else {
+      message.error((r && r.msg) || '保存失败')
+    }
+  } catch (e) {
+    message.error('保存失败：' + (e.message || ''))
+  } finally {
+    credSaving.value = false
+  }
+}
+
+const removeCredential = c => {
+  Modal.confirm({
+    title: `删除凭据「${c.name}」？`,
+    content: '引用它的工作流节点在下次运行时会直接报错（提示未配置该凭据）。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        await deleteCredential(c.id)
+        message.success('已删除')
+        if (credForm.value.id === c.id) resetCredForm()
+        await loadCredentials()
+      } catch (e) {
+        message.error('删除失败：' + (e.message || ''))
+      }
+    }
+  })
+}
+
+/** 把 {{credential:名称}} 追加到某条请求头的值里 */
+const insertCredential = (idx, name) => {
+  const rows = editConfig.value.headers || []
+  if (!rows[idx]) return
+  const cur = String(rows[idx].value || '')
+  rows[idx].value = cur ? cur + `{{credential:${name}}}` : `{{credential:${name}}}`
 }
 
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
 const traceTagColor = s => ({ success: 'green', failed: 'red', waiting: 'orange', retrying: 'gold' }[s] || 'red')
 const traceTagText = s => ({ success: '成功', failed: '失败', waiting: '等待审核', retrying: '重试中' }[s] || s)
-const runLabel = s => ({ running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
-const runColor = s => ({ running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
+const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
+const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '—')
 
 load()
@@ -1536,6 +1760,25 @@ load()
   border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-bg);
 }
 .wf-queued-txt { flex: 1 1 auto; font-size: 13px; color: var(--app-text2); }
+/* 凭据管理（第 3 期） */
+.cred-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+.cred-main { flex: 1 1 auto; display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.cred-name { font-size: 13px; font-weight: 500; }
+.cred-val { font-size: 12px; color: var(--app-text3); font-family: ui-monospace, monospace; }
+.cred-form { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); }
+.cred-form-title { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.wf-del { color: var(--app-danger, #d4380d); }
+/* 凭据插入浮层（与共享弹窗的选择列表同观感；组件 scoped 样式不跨组件，故此处自带一份） */
+.sel-panel { width: 220px; }
+.sel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.sel-title { font-size: 12px; font-weight: 500; color: var(--app-text); }
+.sel-list { max-height: 200px; overflow-y: auto; }
+.sel-item { padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.sel-item:hover { background: var(--app-accent-weak); }
+.sel-label { font-size: 12px; color: var(--app-text2); }
 .wf-approval-head { font-weight: 500; font-size: 13px; margin-bottom: 6px; }
 .wf-approval-prompt { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
 .wf-approval-meta { font-size: 12px; color: var(--app-text3); display: flex; gap: 12px; margin-bottom: 10px; }

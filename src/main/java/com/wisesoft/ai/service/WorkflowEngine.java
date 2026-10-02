@@ -85,6 +85,14 @@ public class WorkflowEngine {
             java.util.regex.Pattern.compile("\\{\\{\\s*([A-Za-z0-9_-]+)\\.([A-Za-z0-9_]+)\\s*\\}\\}");
 
     /**
+     * 凭据引用语法（第 3 期）：{@code {{credential:名称}}}——http 节点的 URL / 请求头 / 请求体里可用，
+     * 执行时按归属人解密替换为明文。刻意与 {@link #VAR_REF} 的「node.key」形态区分（冒号非点），
+     * 因此不会混进变量引用的输入快照，也不会被误当作节点输出引用。
+     */
+    private static final java.util.regex.Pattern CRED_REF =
+            java.util.regex.Pattern.compile("\\{\\{\\s*credential\\s*:\\s*([^{}]+?)\\s*\\}\\}");
+
+    /**
      * 代码节点的上游数据注入路径：引擎进沙盒执行代码前，把<b>开始节点入参</b>（裸键，如 {@code question}）
      * 与<b>各节点输出</b>（{@code wf:<id>.<key>}）序列化成 JSON 写到该路径，代码自行读取——code 节点不做
      * {{}} 渲染，这是动态数据进入代码的唯一通道（契约固定：/tmp/wf_inputs.json）。
@@ -107,6 +115,9 @@ public class WorkflowEngine {
     private final SessionService sessionService;
     private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
     private final RerankService rerankService;
+    private final SkillService skillService;
+    private final McpClientService mcpClientService;
+    private final CredentialService credentialService;
 
     public WorkflowEngine(WorkflowValidator validator, ChatClient chatClient,
                           HybridRetrievalService retrievalService, ConfigService configService,
@@ -115,7 +126,8 @@ public class WorkflowEngine {
                           SandboxService sandboxService, AgentService agentService,
                           RagService ragService, SessionService sessionService,
                           com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper,
-                          RerankService rerankService) {
+                          RerankService rerankService, SkillService skillService,
+                          McpClientService mcpClientService, CredentialService credentialService) {
         this.validator = validator;
         this.chatClient = chatClient;
         this.retrievalService = retrievalService;
@@ -128,14 +140,19 @@ public class WorkflowEngine {
         this.sessionService = sessionService;
         this.toolApprovalMapper = toolApprovalMapper;
         this.rerankService = rerankService;
+        this.skillService = skillService;
+        this.mcpClientService = mcpClientService;
+        this.credentialService = credentialService;
     }
 
     /**
-     * 当前可编译执行的节点类型（M3 起 11 类全量开放；start/end 虚实各半见 buildGraph）。
+     * 当前可编译执行的节点类型（M3 起 11 类全量开放；第 3 期补 skill / mcp 两类生态节点；
+     * start/end 虚实各半见 buildGraph）。
      */
     public static final List<String> EXECUTABLE = List.of(
             "start", "end", "llm", "retrieval", "condition",
-            "http", "code", "subagent", "approval", "loop", "template");
+            "http", "code", "subagent", "approval", "loop", "template",
+            "skill", "mcp");
 
     /** 条件类（路由器）节点：出边携带分支键、节点体内裁决路由（condition/approval/loop 同范式） */
     public static final Set<String> ROUTER_TYPES = Set.of("condition", "approval", "loop");
@@ -314,6 +331,8 @@ public class WorkflowEngine {
             case "approval" -> approvalBody(n, ctx);
             case "loop" -> routerBody(n, ctx, true);
             case "template" -> templateBody(n, ctx);
+            case "skill" -> skillBody(n, ctx);
+            case "mcp" -> mcpBody(n, ctx);
             case "end" -> endBody(n, ctx);
             default -> throw new BizException("节点「" + n.getId() + "」类型 " + n.getType() + " 无执行体");
         };
@@ -842,17 +861,19 @@ public class WorkflowEngine {
      */
     private Function<OverAllState, NodeOut> httpBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
+            Secrets secrets = new Secrets(ctx);   // 本次执行的凭据解析器（明文只活在这里）
             String method = cfgStr(n, "method", false).toUpperCase();
             if (method.isEmpty()) method = "GET";
             if (!List.of("GET", "POST", "PUT", "DELETE").contains(method)) {
                 throw new BizException("节点「" + n.getId() + "」不支持的 HTTP 方法：" + method);
             }
-            String url = render(cfgStr(n, "url", true), ref -> resolveRef(ref, ctx, state));
+            // URL/请求头/请求体三处都支持 {{credential:名称}}：解析成明文出站，模板本身留在 DSL 里
+            String url = secrets.resolve(render(cfgStr(n, "url", true), ref -> resolveRef(ref, ctx, state)), n.getId());
             URI uri;
             try {
                 uri = URI.create(url.trim());
             } catch (Exception e) {
-                throw new BizException("节点「" + n.getId() + "」URL 不合法：" + url);
+                throw new BizException("节点「" + n.getId() + "」URL 不合法：" + secrets.redact(url));
             }
             int timeoutMs = cfgInt(n, "timeoutMs", 15_000, 1_000, 60_000);
             // 渲染抓取模式（SPA）：不走 Java HttpClient，改在沙盒里用 Playwright 无头浏览器执行 JS 后取 DOM
@@ -864,19 +885,20 @@ public class WorkflowEngine {
             if (hCfg instanceof Map<?, ?> m) {
                 for (Map.Entry<?, ?> e : m.entrySet()) {
                     if (e.getKey() != null) {
-                        headers.put(String.valueOf(e.getKey()),
-                                render(String.valueOf(e.getValue() == null ? "" : e.getValue()), ref -> resolveRef(ref, ctx, state)));
+                        headers.put(String.valueOf(e.getKey()), secrets.resolve(render(
+                                String.valueOf(e.getValue() == null ? "" : e.getValue()), ref -> resolveRef(ref, ctx, state)), n.getId()));
                     }
                 }
             } else if (hCfg instanceof List<?> list) {
                 for (Object o : list) {
                     if (o instanceof Map<?, ?> m && m.get("key") != null) {
-                        headers.put(String.valueOf(m.get("key")),
-                                render(String.valueOf(m.get("value") == null ? "" : m.get("value")), ref -> resolveRef(ref, ctx, state)));
+                        headers.put(String.valueOf(m.get("key")), secrets.resolve(render(
+                                String.valueOf(m.get("value") == null ? "" : m.get("value")), ref -> resolveRef(ref, ctx, state)), n.getId()));
                     }
                 }
             }
-            String reqBody = "GET".equals(method) ? null : render(cfgStr(n, "body", false), ref -> resolveRef(ref, ctx, state));
+            String reqBody = "GET".equals(method) ? null
+                    : secrets.resolve(render(cfgStr(n, "body", false), ref -> resolveRef(ref, ctx, state)), n.getId());
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)   // 明文 http 的 h2c 升级坑，钉死 HTTP/1.1
@@ -904,7 +926,7 @@ public class WorkflowEngine {
                     Thread.currentThread().interrupt();
                     throw new BizException("节点「" + n.getId() + "」HTTP 请求被中断");
                 } catch (java.io.IOException e) {
-                    throw new BizException("节点「" + n.getId() + "」HTTP 请求失败：" + e.getMessage());
+                    throw new BizException("节点「" + n.getId() + "」HTTP 请求失败：" + secrets.redact(e.getMessage()));
                 }
                 status = resp.statusCode();
                 if (status >= 300 && status < 400) {
@@ -931,11 +953,12 @@ public class WorkflowEngine {
             // 能力边界，不把壳文本喂给下游 LLM 产出「无法总结」式回答（2026-10-01 百度汉语实测）。
             if (isSpaShell(bodyText, contentType)) {
                 throw new BizException("节点「" + n.getId() + "」抓到的是前端渲染（SPA）页面壳，正文需浏览器执行 JavaScript 才存在，"
-                        + "HTTP 抓取拿不到（" + url + "）。可在节点配置开启「渲染抓取（SPA 页面）」改走沙盒无头浏览器执行 JS，"
+                        + "HTTP 抓取拿不到（" + secrets.redact(url) + "）。可在节点配置开启「渲染抓取（SPA 页面）」改走沙盒无头浏览器执行 JS，"
                         + "或改用服务端渲染的数据源");
             }
             Map<String, Object> trace = new LinkedHashMap<>();
-            trace.put("url", url);
+            // trace 里的 URL 也脱敏：用户可能把凭据放在 query 上（如 ?key={{credential:xx}}）
+            trace.put("url", secrets.redact(url));
             trace.put("status", status);
             trace.put("contentType", contentType);
             trace.put("bodyChars", bodyText.length());
@@ -1110,6 +1133,122 @@ public class WorkflowEngine {
         };
     }
 
+    // ---- 第 3 期：skill / mcp（生态节点） ----
+
+    /**
+     * 技能节点：把所选技能的<b>全文</b>注入下游上下文（与聊天「+」菜单的「本轮指定技能」同一约定，
+     * 见 {@code RagService.buildUserSkillText}）——输出 {@code text}，下游 llm 节点用
+     * {@code {{skill_1.text}}} 引用即可让模型按技能要求作答。
+     * <p>
+     * 技能是个人资产（不共享）：按 {@code ctx.uid} 取，名字不存在/已停用即 fail-loud，不静默降级。
+     * 单个技能正文由 {@code SkillService.readContent} 按 {@code skill.maxFileChars} 截断（与聊天同口径）。
+     */
+    private Function<OverAllState, NodeOut> skillBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            List<String> names = cfgStrList(n, "skills");
+            if (names.isEmpty()) {
+                throw new BizException("节点「" + n.getId() + "」未选择任何技能");
+            }
+            StringBuilder sb = new StringBuilder();
+            List<String> loaded = new ArrayList<>();
+            for (String name : names) {
+                String content = withReplay(ctx, () -> skillService.readContent(ctx.uid, name));
+                if (content == null || content.isBlank()) {
+                    throw new BizException("节点「" + n.getId() + "」技能「" + name + "」不存在、已停用或对当前用户不可用");
+                }
+                loaded.add(name);
+                sb.append("\n\n### 技能：").append(name).append("\n").append(content);
+            }
+            String text = "\n\n【工作流指定技能】请先完整阅读以下技能说明，再严格按技能要求处理后续任务：" + sb;
+            Map<String, Object> trace = new LinkedHashMap<>();
+            trace.put("skills", loaded);
+            trace.put("chars", text.length());
+            return new NodeOut(Map.of("text", text, "skills", loaded), null, null, trace);
+        };
+    }
+
+    /**
+     * MCP 工具节点：调用某个 MCP server 的指定工具。参数模板（config.args）先做变量渲染，
+     * 再序列化为 JSON 传给工具（Spring AI {@code ToolCallback.call}）。
+     * <p>
+     * 可见性：只取 {@code ctx.uid} 名下已启用的 server（{@code McpClientService.toolCallbacks(uid, {server})}
+     * 内部按归属过滤），非本人/未启用的服务拿不到工具 → fail-loud，不静默降级。
+     * 输出 {@code result}（工具返回文本）与 {@code server}/{@code tool} 便于下游与 trace 追溯。
+     */
+    private Function<OverAllState, NodeOut> mcpBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            String server = cfgStr(n, "server", true);
+            String tool = cfgStr(n, "tool", true);
+            Map<String, Object> args = renderArgs(n, ctx, state);
+            List<org.springframework.ai.tool.ToolCallback> callbacks =
+                    withReplay(ctx, () -> mcpClientService.toolCallbacks(ctx.uid, Set.of(server)));
+            org.springframework.ai.tool.ToolCallback target = callbacks.stream()
+                    .filter(c -> c.getToolDefinition() != null && tool.equals(c.getToolDefinition().name()))
+                    .findFirst().orElse(null);
+            if (target == null) {
+                throw new BizException("节点「" + n.getId() + "」在 MCP 服务「" + server + "」下找不到工具「" + tool
+                        + "」（服务未启用、连接失败或不属于当前用户）");
+            }
+            String result;
+            try {
+                result = withReplay(ctx, () -> target.call(com.alibaba.fastjson2.JSON.toJSONString(args)));
+            } catch (Exception e) {
+                throw new BizException("节点「" + n.getId() + "」调用 MCP 工具「" + tool + "」失败："
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+            if (result == null) result = "";
+            Map<String, Object> trace = new LinkedHashMap<>();
+            trace.put("server", server);
+            trace.put("tool", tool);
+            trace.put("args", args);
+            trace.put("result", result);
+            return new NodeOut(Map.of("result", result, "server", server, "tool", tool), null, null, trace);
+        };
+    }
+
+    /** MCP 参数模板：config.args（Map 或 [{key,value}] 列表）逐值渲染 {{node.key}}；键为参数名 */
+    private static Map<String, Object> renderArgs(WorkflowDsl.Node n, WorkflowRunCtx ctx, OverAllState state) {
+        Object raw = n.getConfig() == null ? null : n.getConfig().get("args");
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (raw instanceof Map<?, ?> m) {
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (e.getKey() == null) continue;
+                out.put(String.valueOf(e.getKey()), renderValue(e.getValue(), ctx, state));
+            }
+        } else if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m && m.get("key") != null) {
+                    out.put(String.valueOf(m.get("key")), renderValue(m.get("value"), ctx, state));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 参数值渲染：字符串做 {{node.key}} 替换；数字/布尔原样保留（JSON 类型不丢） */
+    private static Object renderValue(Object v, WorkflowRunCtx ctx, OverAllState state) {
+        if (v instanceof String s) return render(s, ref -> resolveRef(ref, ctx, state));
+        return v;
+    }
+
+    /** 字符串列表配置（数组或逗号分隔；去空去重保序） */
+    private static List<String> cfgStrList(WorkflowDsl.Node n, String key) {
+        Object v = n.getConfig() == null ? null : n.getConfig().get(key);
+        List<String> out = new ArrayList<>();
+        if (v instanceof List<?> list) {
+            for (Object o : list) {
+                String s = o == null ? "" : String.valueOf(o).trim();
+                if (!s.isEmpty() && !out.contains(s)) out.add(s);
+            }
+        } else if (v != null) {
+            for (String part : String.valueOf(v).split(",")) {
+                String s = part.trim();
+                if (!s.isEmpty() && !out.contains(s)) out.add(s);
+            }
+        }
+        return out;
+    }
+
     /** 结束节点：渲染 config.outputs（值 = 模板或字面量）写进 state——到达路径与产出均可回放 */
     private Function<OverAllState, NodeOut> endBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -1129,6 +1268,59 @@ public class WorkflowEngine {
     // --------------------------------------------------------------------------------------------------
     // 运行支持：身份/配置重放、变量解析渲染、输入快照、出参提取、模型预解析
     // --------------------------------------------------------------------------------------------------
+
+    /**
+     * 单次 http 节点执行的凭据解析器（第 3 期）：把 {@code {{credential:名称}}} 换成明文，
+     * 并记住本次用到的明文，用于 trace 与报错的脱敏出口。
+     * <p>
+     * 明文只活在这个对象里（节点执行结束即可回收），不写入 state、不进 trace、不打日志；
+     * 名称未配置 → fail-loud（不静默留空，否则会把残缺的 URL/请求头发出去）。
+     */
+    private final class Secrets {
+        private final WorkflowRunCtx ctx;
+        /** 本次用到的明文（脱敏用；去重） */
+        private final List<String> values = new ArrayList<>();
+        /** 该用户凭据明文（名称 → 明文），首次用到时查一次库 */
+        private Map<String, String> cache;
+
+        Secrets(WorkflowRunCtx ctx) {
+            this.ctx = ctx;
+        }
+
+        private String plain(String name) {
+            if (cache == null) {
+                cache = withReplay(ctx, () -> credentialService.plainByName(ctx.uid));
+            }
+            return cache.get(name);
+        }
+
+        /** 把 {{credential:名称}} 替换为明文（按归属人取；未配置 → fail-loud） */
+        String resolve(String template, String nodeId) {
+            if (template == null || template.isEmpty()) return template;
+            java.util.regex.Matcher m = CRED_REF.matcher(template);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                String name = m.group(1).trim();
+                String plain = plain(name);
+                if (plain == null) {
+                    throw new BizException("节点「" + nodeId + "」引用了未配置的凭据「" + name
+                            + "」：请先在画布的「凭据」里添加（值加密保存，不会写进 DSL）");
+                }
+                if (!plain.isEmpty() && !values.contains(plain)) values.add(plain);
+                m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(plain));
+            }
+            m.appendTail(sb);
+            return sb.toString();
+        }
+
+        /** 脱敏：把本次用到的明文替换为 ****（trace 与报错出口专用） */
+        String redact(String s) {
+            if (s == null || values.isEmpty()) return s;
+            String out = s;
+            for (String v : values) out = out.replace(v, "****");
+            return out;
+        }
+    }
 
     /**
      * 节点体内的身份与配置重放：线程上已有**同一**身份（顺序执行=触发线程）则不动；

@@ -728,6 +728,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_version` (
     KEY `idx_wf_time` (`workflow_id`, `published_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流发布版本（M4：发布即落一版，回滚=以历史版本 DSL 再发一版）';
 
+CREATE TABLE IF NOT EXISTS `c_ai_credential` (
+    `id`          VARCHAR(50)   NOT NULL COMMENT '凭据ID（UUID）',
+    `uid`         VARCHAR(64)   NOT NULL COMMENT '归属人 uid（个人资产，不共享）',
+    `name`        VARCHAR(64)   NOT NULL COMMENT '凭据名称（工作流里以 {{credential:名称}} 引用；同一用户内唯一）',
+    `value`       VARCHAR(4000) DEFAULT NULL COMMENT '凭据值（RSA 密文，复用 ConfigCryptoService；出参一律脱敏）',
+    `remark`      VARCHAR(200)  DEFAULT NULL COMMENT '用途备注',
+    `create_time` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_cred_uid_name` (`uid`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流凭据（http 节点引用；个人资产，值加密落库、出参脱敏）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_trace_sample` (
     `id`           VARCHAR(50)  NOT NULL COMMENT '采样ID',
     `qa_log_id`    VARCHAR(50)  NOT NULL COMMENT '问答日志ID（唯一：一条日志只进一次池）',
