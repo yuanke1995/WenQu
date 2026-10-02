@@ -74,10 +74,13 @@ public class KnowledgeRetrievalTool {
 
     private final HybridRetrievalService hybridRetrievalService;
     private final ConfigService configService;
+    private final RerankService rerankService;
 
-    public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService) {
+    public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService,
+                                  RerankService rerankService) {
         this.hybridRetrievalService = hybridRetrievalService;
         this.configService = configService;
+        this.rerankService = rerankService;
     }
 
     /**
@@ -113,13 +116,24 @@ public class KnowledgeRetrievalTool {
                     .filter(h -> h.docId() != null && scope.docIds().contains(h.docId()))
                     .toList();
         }
-        // 最低相关分门（与主链路上下文填充同口径：排序分=重排分??融合分，retrieval.minContextScore，0=关）：
-        // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板
-        double minContextScore = configService.getDouble("retrieval.minContextScore", 0.6);
-        if (minContextScore > 0 && hits != null) {
+        // 补重排（强制窗口）：search() 只出融合分，本工具此前从未重排，相关分门发生在两个分值域上——
+        // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，
+        // 全部混进工具结果并注册进引用面板。rankForced 不受 minHits 窗口限制（工具候选可能不足 6 条），
+        // 失败时回退融合分序（rerankScore=null，走下方融合门），与主链路降级语义一致。
+        hits = rerankService.rankForced(hits, query.trim());
+        // 最低相关分门（分域双门，与主链路上下文填充同款语义）：重排分走 retrieval.minContextScore（0.6），
+        // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.25）——两个分值域分布不同，一个绝对门
+        // 不可能同时对两者成立；重排本轮实际执行过时，未重排候选不得借融合门入场（单侧约束）。
+        // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板。0=关闭对应域的门。
+        boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
+        double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
+        double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
+        if (hits != null && (minRerankGate > 0 || minFusionGate > 0)) {
             hits = hits.stream().filter(h -> {
+                if (rerankActive && h.rerankScore() == null) return false;
                 double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
-                return rankScore >= minContextScore;
+                double gate = h.rerankScore() != null ? minRerankGate : minFusionGate;
+                return gate <= 0 || rankScore >= gate;
             }).toList();
         }
         if (hits == null || hits.isEmpty()) {
