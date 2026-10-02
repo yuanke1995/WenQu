@@ -38,6 +38,12 @@ public class ModelInfo {
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */
     private String thinking;
 
+    /** 上下文窗口 token（NULL=未声明，回落全局「默认窗口」；上下文预算 = 窗口×安全系数−输出限制） */
+    private Integer contextWindow;
+
+    /** 最大输出 token（NULL=未声明，回落全局「输出限制」；作为 max_tokens 随请求下发） */
+    private Integer maxOutput;
+
     /** 启用: 1=启用 0=停用 */
     private Integer enabled;
 

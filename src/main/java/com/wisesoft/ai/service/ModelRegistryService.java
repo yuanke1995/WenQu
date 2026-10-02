@@ -186,6 +186,23 @@ public class ModelRegistryService {
         return resolveReference(modelValue);
     }
 
+    /**
+     * 按引用 {@code {providerId}/{modelId}} 取模型登记行（含窗口/最大输出声明）。
+     * 非引用格式 / 未登记 → null（调用方回落全局配置）。
+     */
+    public ModelInfo modelInfoOf(String reference) {
+        if (reference == null) return null;
+        String v = reference.trim();
+        int i = v.indexOf('/');
+        if (i <= 0 || i == v.length() - 1) return null;
+        String pid = v.substring(0, i);
+        String mid = v.substring(i + 1);
+        for (ModelInfo m : models) {
+            if (pid.equals(m.getProviderId()) && mid.equals(m.getModelId())) return m;
+        }
+        return null;
+    }
+
     /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
      *  模型值可被知识库/智能体的检索参数覆盖（线程局部 rerank.model 覆盖经 ConfigService.get 生效）。 */
     public ModelRoute rerankRoute() {
@@ -358,6 +375,8 @@ public class ModelRegistryService {
             m.put("displayName", mi.getDisplayName());
             m.put("modelType", mi.getModelType());
             m.put("thinking", resolveThinking(mi));
+            m.put("contextWindow", mi.getContextWindow());
+            m.put("maxOutput", mi.getMaxOutput());
             m.put("enabled", !Integer.valueOf(0).equals(mi.getEnabled()));
             m.put("remark", mi.getRemark());
             result.add(m);
@@ -585,6 +604,19 @@ public class ModelRegistryService {
             mi.setModelType(type);
             String thinking = str(item.get("thinking"));
             mi.setThinking(THINKING_LEVELS.contains(thinking) ? thinking : "auto");
+            mi.setContextWindow(intOrNull(item.get("contextWindow")));
+            mi.setMaxOutput(intOrNull(item.get("maxOutput")));
+            // 跨字段一致性（预算 = 窗口×安全系数−输出限制）：两个都声明时输出不能吃光预算——
+            // 否则该模型下上下文预算被运行时托底成 1000，检索资料塞不进。安全系数沿用全局配置。
+            if (mi.getContextWindow() != null && mi.getMaxOutput() != null) {
+                double safety = Math.max(0.1, Math.min(1, configService.getDouble("context.safetyFactor")));
+                long windowBudget = (long) (mi.getContextWindow() * safety);
+                if (mi.getMaxOutput() >= windowBudget) {
+                    throw new IllegalArgumentException("模型 " + modelId.trim() + " 的最大输出（" + mi.getMaxOutput()
+                            + "）必须小于其上下文窗口预算（" + mi.getContextWindow() + " × 安全系数 " + safety
+                            + " = " + windowBudget + "），否则该模型下检索资料将无法填入上下文");
+                }
+            }
             Object en = item.get("enabled");
             mi.setEnabled(en == null || Boolean.parseBoolean(String.valueOf(en)) ? 1 : 0);
             mi.setRemark(str(item.get("remark")));
@@ -936,6 +968,19 @@ public class ModelRegistryService {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /** 前端表单值 → Integer（空串/null/非数字 → null=未声明；负数视为未声明） */
+    private static Integer intOrNull(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty()) return null;
+        try {
+            int v = Integer.parseInt(s);
+            return v > 0 ? v : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String trim(String s) {

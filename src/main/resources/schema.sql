@@ -442,6 +442,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
     `display_name` VARCHAR(255) DEFAULT NULL COMMENT '展示名（空=同 model_id）',
     `model_type`   VARCHAR(16)  DEFAULT 'chat' COMMENT '类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 audio=语音 omni=全模态 other=其他',
     `thinking`     VARCHAR(16)  DEFAULT 'auto' COMMENT '思考能力(仅聊天模型有意义): auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考',
+    `context_window` INT        DEFAULT NULL COMMENT '上下文窗口 token（NULL=未声明，回落全局默认窗口；上下文预算=窗口×安全系数−输出限制）',
+    `max_output`   INT          DEFAULT NULL COMMENT '最大输出 token（NULL=未声明，回落全局输出限制；作为 max_tokens 随请求下发）',
     `enabled`      INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',
     `remark`       VARCHAR(255) DEFAULT NULL COMMENT '备注（如上下文窗口说明）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

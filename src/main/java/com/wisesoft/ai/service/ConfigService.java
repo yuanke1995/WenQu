@@ -242,7 +242,6 @@ public class ConfigService {
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
         d.put("rerank.model", "");                         // 重排全局默认模型引用（{providerId}/{modelId}；空=回落 rerank.baseUrl 本地服务）
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
-        d.put("context.modelWindows", properties.getContext().getModelWindows());
         d.put("context.defaultWindowTokens", String.valueOf(properties.getContext().getDefaultWindowTokens()));
         d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
         d.put("context.costCapTokens", String.valueOf(properties.getContext().getCostCapTokens()));
@@ -651,6 +650,31 @@ public class ConfigService {
         }
     }
 
+    /** 上下文预算跨字段校验涉及的键（任一被本次提交触碰才触发一致性校验，存量矛盾值不拦无关保存） */
+    private static final Set<String> CONTEXT_BUDGET_KEYS = Set.of(
+            "context.maxOutputTokens", "context.defaultWindowTokens", "context.safetyFactor");
+
+    /** 提交值优先解析 long：提交值缺失/非法回落当前生效值（合法性已由 schema 单字段校验保证，这里只兜解析） */
+    private static long longOf(Map<String, String> updates, String key, long fallback) {
+        String v = updates.get(key);
+        if (v == null || v.isBlank()) return fallback;
+        try {
+            return Long.parseLong(v.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    /** 提交值优先解析 double：提交值缺失/非法回落当前生效值 */
+    private static double parseDoubleOf(String v, double fallback) {
+        if (v == null || v.isBlank()) return fallback;
+        try {
+            return Double.parseDouble(v.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
     /** 保存可编辑项（白名单校验）→ 写 DB + 刷新缓存 */
     public Map<String, String> update(Map<String, Map<String, String>> groups) {
         Map<String, String> updates = new HashMap<>();
@@ -677,6 +701,21 @@ public class ConfigService {
         for (Map.Entry<String, String> kv : updates.entrySet()) {
             String err = schema.validate(kv.getKey(), kv.getValue());
             if (err != null) throw new IllegalArgumentException(err);
+        }
+        // 上下文预算一致性（跨字段，schema 的单字段校验覆盖不了）：预算 = 窗口×安全系数 − 输出限制，
+        // 输出限制 ≥ 默认窗口预算时预算被运行时托底成 1000（检索资料塞不进）——保存时就拦住，不给静默出错的机会。
+        // 仅当本次提交触碰了参与运算的键才校验：存量矛盾值不阻止无关配置的保存。
+        if (updates.keySet().stream().anyMatch(CONTEXT_BUDGET_KEYS::contains)) {
+            long maxOutput = longOf(updates, "context.maxOutputTokens", getInt("context.maxOutputTokens"));
+            long defaultWindow = longOf(updates, "context.defaultWindowTokens", getInt("context.defaultWindowTokens"));
+            double safety = parseDoubleOf(updates.get("context.safetyFactor"), getDouble("context.safetyFactor"));
+            long windowBudget = (long) (defaultWindow * Math.max(0.1, Math.min(1, safety)));
+            if (maxOutput >= windowBudget) {
+                throw new IllegalArgumentException("输出限制 token（" + maxOutput + "）必须小于默认窗口预算（默认窗口 "
+                        + defaultWindow + " × 安全系数 " + safety + " = " + windowBudget
+                        + "），否则未声明窗口的模型上下文预算会被耗尽（检索资料无法填入）。"
+                        + "请调小输出限制，或调大默认窗口/安全系数；模型各自的窗口与最大输出请在模型管理中按模型声明");
+            }
         }
         // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）。
         // 这是"服务可达性"而不是"取值合法性"，故留在代码里而不进 schema。

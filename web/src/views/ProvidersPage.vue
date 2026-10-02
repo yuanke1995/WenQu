@@ -121,13 +121,13 @@
 
     <!-- 模型管理 -->
     <a-modal v-model:open="showModels" :title="`管理模型 — ${modelProvider ? modelProvider.name : ''}`"
-             :width="680" :footer="null" @cancelled="showModels = false">
+             :width="960" :footer="null" @cancelled="showModels = false">
       <div class="pv-models-toolbar">
         <button class="app-btn" :disabled="fetching" @click="onFetch">
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
         </button>
         <button class="app-btn" @click="addManualRow">手动添加</button>
-        <span class="pv-hint" style="margin-left:auto">类型可改（聊天/视觉/向量/重排/语音/全模态/其他）；保存后生效</span>
+        <span class="pv-hint" style="margin-left:auto">类型可改；窗口/输出按模型名自动预填（请核对官方值），留空用全局默认；保存后生效</span>
       </div>
 
       <!-- 拉取候选：搜索 + 按行添加（类型在下方表格可改，无需勾选） -->
@@ -159,10 +159,10 @@
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'modelId'">
             <a-input v-model:value="record.modelId" size="small" placeholder="模型名（调用 API 原样透传）"
-                     :disabled="!record.isNew" style="min-width:200px" @change="clearTestState(record)" />
+                     :disabled="!record.isNew" style="min-width:150px" @change="onModelIdChange(record)" />
           </template>
           <template v-else-if="column.key === 'displayName'">
-            <a-input v-model:value="record.displayName" size="small" placeholder="默认同模型名" />
+            <a-input v-model:value="record.displayName" size="small" placeholder="同模型名" />
           </template>
           <template v-else-if="column.key === 'modelType'">
             <a-select v-model:value="record.modelType" size="small" :options="typeOptions" style="width:100px"
@@ -171,6 +171,18 @@
           <template v-else-if="column.key === 'thinking'">
             <a-select v-model:value="record.thinking" size="small" :options="thinkingOptions"
                       style="width:100%" :disabled="record.modelType !== 'chat'" />
+          </template>
+          <template v-else-if="column.key === 'ctx'">
+            <!-- 上下文窗口/最大输出（模型固有属性声明，NULL=用全局默认）：上下文预算 = 窗口×安全系数−最大输出 -->
+            <a-tooltip title="上下文窗口 / 最大输出 token（留空用全局默认值）。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出">
+              <div class="pv-ctx-pair">
+                <a-input-number v-model:value="record.contextWindow" size="small" :min="1" :step="1000"
+                                placeholder="窗口" class="pv-ctx-num" />
+                <span class="pv-ctx-slash">/</span>
+                <a-input-number v-model:value="record.maxOutput" size="small" :min="1" :step="512"
+                                placeholder="输出" class="pv-ctx-num" />
+              </div>
+            </a-tooltip>
           </template>
           <template v-else-if="column.key === 'enabled'">
             <a-switch v-model:checked="record.enabled" size="small" />
@@ -544,10 +556,11 @@ let rowSeq = 0
 const modelCols = [
   { title: '模型名', key: 'modelId' },
   { title: '展示名', key: 'displayName', width: 120 },
-  { title: '类型', key: 'modelType', width: 92 },
-  { title: '思考', key: 'thinking', width: 96 },
-  { title: '启用', key: 'enabled', width: 56 },
-  { title: '操作', key: 'action', width: 148 }
+  { title: '类型', key: 'modelType', width: 80 },
+  { title: '思考', key: 'thinking', width: 84 },
+  { title: '窗口 / 输出', key: 'ctx', width: 156 },
+  { title: '启用', key: 'enabled', width: 44 },
+  { title: '操作', key: 'action', width: 150 }
 ]
 
 // 思考能力选项（auto=按模型名判定）；仅对聊天模型有意义，其他类型存了也不生效
@@ -561,6 +574,36 @@ const thinkingOptions = [
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */
 const testStates = ref({})
 const testState = record => testStates.value[record.rowKey] || { loading: false, ok: null, latencyMs: 0, text: '' }
+
+// 常见模型家族的窗口/输出预填建议：纯表单便利（官方数值随版本会变，保存前请核对），运行时不读它，
+// 留空/清空即回落全局默认——避免重蹈旧「模型窗口映射」写死数值过时变化石的覆辙
+const MODEL_PRESET_HINTS = [
+  { kw: 'deepseek', window: 65536, output: 8192 },
+  { kw: 'qwen', window: 131072, output: 8192 },
+  { kw: 'glm', window: 131072, output: 8192 },
+  { kw: 'gpt', window: 128000, output: 16384 },
+  { kw: 'claude', window: 200000, output: 8192 },
+  { kw: 'gemini', window: 1048576, output: 65536 },
+  { kw: 'kimi', window: 131072, output: 8192 },
+  { kw: 'moonshot', window: 131072, output: 8192 }
+]
+const guessCtx = modelId => {
+  const id = (modelId || '').toLowerCase()
+  const hit = MODEL_PRESET_HINTS.find(p => id.includes(p.kw))
+  return hit ? { contextWindow: hit.window, maxOutput: hit.output } : null
+}
+
+/** 新增行填写模型名后按家族预填窗口/输出（两项任一已填/手改过就不覆盖） */
+const applyCtxPreset = record => {
+  if (!record.isNew || record.contextWindow != null || record.maxOutput != null) return
+  const g = guessCtx(record.modelId)
+  if (g) Object.assign(record, g)
+}
+
+const onModelIdChange = record => {
+  clearTestState(record)
+  applyCtxPreset(record)
+}
 
 /** 模型名/类型改动后旧测试结果失效，清除 */
 const clearTestState = record => {
@@ -628,6 +671,7 @@ const openModels = async p => {
       rowKey: 'db-' + m.id, id: m.id,
       modelId: m.modelId, displayName: m.displayName || '',
       modelType: m.modelType || 'chat', thinking: m.thinking || 'auto',
+      contextWindow: m.contextWindow ?? null, maxOutput: m.maxOutput ?? null,
       enabled: m.enabled !== false, isNew: false
     }))
   } catch (e) {
@@ -656,10 +700,12 @@ const onFetch = async () => {
 /** 候选加入待保存列表（类型用后端自动分类结果，加入后可在下方表格修改） */
 const addCandidate = c => {
   if (inModels(c.modelId)) return
-  models.value.push({
+  const row = {
     rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '', thinking: 'auto',
-    modelType: c.guessedType, enabled: true, isNew: true
-  })
+    modelType: c.guessedType, contextWindow: null, maxOutput: null, enabled: true, isNew: true
+  }
+  applyCtxPreset(row)
+  models.value.push(row)
 }
 
 const importAllCandidates = () => {
@@ -675,7 +721,7 @@ const importAllCandidates = () => {
 const addManualRow = () => {
   models.value.push({
     rowKey: 'new-' + (++rowSeq), modelId: '', displayName: '', thinking: 'auto',
-    modelType: 'chat', enabled: true, isNew: true
+    modelType: 'chat', contextWindow: null, maxOutput: null, enabled: true, isNew: true
   })
 }
 
@@ -692,6 +738,8 @@ const saveModels = async () => {
       displayName: (m.displayName || '').trim() || null,
       modelType: m.modelType || 'chat',
       thinking: m.modelType === 'chat' ? (m.thinking || 'auto') : 'auto',
+      contextWindow: m.contextWindow || null,
+      maxOutput: m.maxOutput || null,
       enabled: m.enabled !== false
     }))
   savingModels.value = true
@@ -716,6 +764,10 @@ onMounted(load)
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
 .batch-del { color: var(--app-danger); }
 .pv-check { flex: none; }
+/* 窗口/输出双数字输入：等宽小输入框夹一个斜杠分隔符 */
+.pv-ctx-pair { display: flex; align-items: center; gap: 4px; }
+.pv-ctx-num { flex: 1; min-width: 0; }
+.pv-ctx-slash { color: var(--app-text3); flex: none; }
 /* 内边距/滚动由 .app-page-body 提供（与智能体/技能/MCP 同一套骨架），此处只放网格与卡片细节 */
 .pv-grid {
   display: grid;
@@ -756,7 +808,7 @@ onMounted(load)
 .pv-icon-cell.active { border-color: var(--app-accent); background: #e6f4ff; }
 .pv-test-ok { color: var(--app-ok, var(--app-ok)); font-size: 12px; margin-left: 8px; }
 .pv-test-err { color: var(--app-danger); font-size: 12px; margin-left: 8px; }
-.pv-row-actions { display: flex; align-items: center; gap: 10px; }
+.pv-row-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .app-link-btn.t-ok { color: var(--app-ok, var(--app-ok)); }
 .app-link-btn.t-bad { color: var(--app-danger); }
 .pv-probe-chip.ok { color: var(--app-ok, var(--app-ok)); background: #f6ffed; }

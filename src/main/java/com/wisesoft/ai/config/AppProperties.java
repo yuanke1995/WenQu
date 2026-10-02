@@ -201,13 +201,13 @@ public class AppProperties {
 
     /**
      * 上下文与长度控制（价值驱动填充）：
-     * 预算 = min(模型窗口 × 安全系数 − 预留输出, 成本软上限)；块按相关度降序累积填充，历史按预算裁剪
+     * 预算 = min(模型窗口 × 安全系数 − 预留输出, 成本软上限)；块按相关度降序累积填充，历史按预算裁剪。
+     * 窗口/最大输出按模型声明（c_ai_model.context_window / max_output，模型管理页维护），
+     * 未声明的模型回落这里的全局默认值。
      */
     @Data
     public static class Context {
-        /** 模型上下文窗口映射（格式 "模型名子串=token,模型名子串=token"，按请求模型的模型名子串匹配；未匹配用默认值） */
-        private String modelWindows = "qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768";
-        /** 未匹配到模型时的默认窗口（token） */
+        /** 未声明窗口的模型使用的默认窗口（token） */
         private int defaultWindowTokens = 32768;
         /** 窗口安全系数（0~1，预留余量防超窗） */
         private double safetyFactor = 0.7;
