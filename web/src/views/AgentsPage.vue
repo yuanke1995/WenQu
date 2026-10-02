@@ -979,7 +979,10 @@ const reload = async () => {
       // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
       listWorkflows().catch(() => null)
     ])
-    workflowRows.value = (wr && wr.success && wr.data) ? wr.data : []
+    // /workflow/list 的 data 是分栏对象 { mine:[], shared:[] }（非数组），必须摊平再用，
+    // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine/shared 解）
+    const wd = (wr && wr.success && wr.data) || {}
+    workflowRows.value = [...(wd.mine || []), ...(wd.shared || [])]
     if (pd && pd.success && pd.data) qpDefaults.value = pd.data
     if (ar.success && ar.data) agents.value = ar.data
     // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）

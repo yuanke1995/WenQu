@@ -252,7 +252,7 @@
                 <a-input-number v-model:value="editConfig.timeoutMs" :min="1000" :max="60000" :step="1000" style="width: 140px" />
               </div>
               <div class="wf-form-item"><label>渲染抓取（SPA 页面）</label>
-                <a-checkbox v-model:checked="editConfig.render" style="white-space: nowrap; flex: none">用无头浏览器执行 JS 后取内容</a-checkbox>
+                <a-checkbox v-model:checked="editConfig.render">用无头浏览器执行 JS 后取内容</a-checkbox>
                 <div class="wf-hint" style="margin-top:4px">前端渲染页面（抓到的只有"启用 JavaScript"壳）勾选此项；需沙盒开启，且超时下限 30s。注意：目标站反爬（如百度安全验证）仍会拦截。</div>
               </div>
               <div class="wf-hint">响应体进 state 时截断 2 万字符（trace 同步截断）；渲染模式输出渲染后 DOM，预截 3 万字符。</div>
@@ -1789,7 +1789,10 @@ load()
 
 /* 抽屉表单 */
 .wf-form { display: flex; flex-direction: column; gap: 14px; }
-.wf-form-item label { display: block; font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
+/* 只作用于本表单自绘的 label。antd 组件根节点本身就是 <label class="ant-*">（Checkbox/Radio 等），
+   且 Vue scoped 会把父 scope id 加到子组件根元素上，所以这条规则必然命中它们；
+   display:block 盖掉组件的 inline-flex 后，勾选框与文字会被拆成两行。故按组件前缀排除。 */
+.wf-form-item label:not([class*="ant-"]) { display: block; font-size: 12px; color: var(--app-text3); margin-bottom: 4px; }
 .wf-form-item { font-size: 13px; }
 .wf-form-static { color: var(--app-text2); font-family: monospace; font-size: 12px; }
 /* 节点说明卡：类型色贯穿（左边条 + 图标底衬），输出键 chip 化 */
