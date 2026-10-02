@@ -931,7 +931,8 @@ public class WorkflowEngine {
             // 能力边界，不把壳文本喂给下游 LLM 产出「无法总结」式回答（2026-10-01 百度汉语实测）。
             if (isSpaShell(bodyText, contentType)) {
                 throw new BizException("节点「" + n.getId() + "」抓到的是前端渲染（SPA）页面壳，正文需浏览器执行 JavaScript 才存在，"
-                        + "HTTP 抓取拿不到（" + url + "）。请改用服务端渲染的数据源，或等引擎提供渲染抓取能力");
+                        + "HTTP 抓取拿不到（" + url + "）。可在节点配置开启「渲染抓取（SPA 页面）」改走沙盒无头浏览器执行 JS，"
+                        + "或改用服务端渲染的数据源");
             }
             Map<String, Object> trace = new LinkedHashMap<>();
             trace.put("url", url);

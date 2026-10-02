@@ -215,6 +215,21 @@ public class ScheduleCenter {
                 () -> false,
                 () -> workflowService.reapApprovalTimeouts());
 
+        // 工作流运行记录清理：c_ai_workflow_run 按保留期物理删除（保留期 workflow.runLogRetentionDays，默认 30 天）。
+        // dsl_snapshot + node_traces 是大字段，随运行次数无限膨胀——与任务执行日志清理同一口径；
+        // 挂起审批的 run 由清理方法内部排除，不丢人工裁决现场。
+        register("工作流运行记录清理", "物理删除超过保留期（workflow.runLogRetentionDays）的工作流运行记录",
+                "workflow.runCleanupIntervalMs",
+                () -> configService.getInt("workflow.runCleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> {
+                    int days = Math.max(1, configService.getInt("workflow.runLogRetentionDays", 30));
+                    int purged = workflowService.cleanupExpiredRuns(days);
+                    if (purged > 0) {
+                        log.info("[Schedule] 工作流运行记录已清理 {} 条（保留 {} 天）", purged, days);
+                    }
+                });
+
         // P1 Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
         // uk_qalog 唯一键兜底幂等，重复触发不产生重复样本
         register("Trace 线上采样", "线上对话按规则入采样池（差评必采 + 无引用/随机），供标注回流评测集",

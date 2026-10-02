@@ -1012,6 +1012,17 @@ public class WorkflowService {
         return reaped;
     }
 
+    /**
+     * 运行记录超期物理清理（ScheduleCenter「工作流运行记录清理」周期调用）：按 startedAt 删超期行——
+     * dsl_snapshot 与 node_traces 是大字段，不清理会随运行次数无限膨胀（与任务执行日志/产物清理同一口径）。
+     * 挂起审批的 run 不删：c_ai_tool_approval 还引用着它，删了会丢人工裁决现场（正常由审批超时回收兜底落终态）。
+     */
+    public int cleanupExpiredRuns(int retentionDays) {
+        return runMapper.delete(new LambdaQueryWrapper<WorkflowRun>()
+                .lt(WorkflowRun::getStartedAt, LocalDateTime.now().minusDays(retentionDays))
+                .ne(WorkflowRun::getStatus, "waiting_approval"));
+    }
+
     /** JSON 对象解析（空/非法返回空 map，不抛） */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> parseJsonObject(String s) {
