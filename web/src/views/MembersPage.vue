@@ -21,7 +21,7 @@
         <!-- 工具栏：搜索 + 计数 + 新建 -->
         <div class="mem-toolbar">
           <a-input v-model:value="keyword" allow-clear size="small" class="mem-search"
-                   :placeholder="tab === 'users' ? '搜索用户名 / 用户标识' : '搜索部门名称'">
+                   :placeholder="tab === 'users' ? '搜索昵称 / 登录账号' : '搜索部门名称'">
             <template #prefix><search-outlined class="mem-search-ic" /></template>
           </a-input>
           <a-select v-if="tab === 'users'" v-model:value="deptFilter" allow-clear size="small" class="mem-filter"
@@ -127,12 +127,12 @@
     <a-modal v-model:open="userModal" :title="userForm.isEdit ? '编辑用户' : '新建用户'" :width="480"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="saveUser">
       <a-form layout="vertical" style="margin-top:4px">
-        <a-form-item label="用户标识（uid）" :validate-status="uidError ? 'error' : ''" :help="uidError">
+        <a-form-item label="登录账号" :validate-status="uidError ? 'error' : ''" :help="uidError">
           <a-input v-model:value="userForm.uid" :disabled="userForm.isEdit"
-                   placeholder="登录标识，如 alice（建后不可修改）" @change="uidError = ''" />
+                   placeholder="请输入登录账号" @change="uidError = ''" />
         </a-form-item>
-        <a-form-item label="用户名">
-          <a-input v-model:value="userForm.username" maxlength="100" placeholder="显示名称，如 张三" />
+        <a-form-item label="用户昵称">
+          <a-input v-model:value="userForm.username" maxlength="100" placeholder="显示昵称，如 张三" />
         </a-form-item>
         <template v-if="!userForm.isEdit">
           <a-form-item label="初始密码" :validate-status="pwdError ? 'error' : ''" :help="pwdError">
@@ -359,7 +359,7 @@ async function saveUser () {
   pwdError.value = ''
   if (!f.isEdit) {
     const uid = String(f.uid || '').trim()
-    if (!uid) { uidError.value = '请填写用户标识'; return }
+    if (!uid) { uidError.value = '请填写登录账号'; return }
     if (!/^[A-Za-z0-9_@.\-]+$/.test(uid)) { uidError.value = '仅允许字母、数字及 _ @ . -'; return }
     if (!f.password || f.password.length < 6) { pwdError.value = '密码至少 6 位'; return }
     if (f.password !== f.confirm) { pwdError.value = '两次输入的密码不一致'; return }

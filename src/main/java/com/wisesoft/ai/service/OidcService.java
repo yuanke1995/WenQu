@@ -266,7 +266,7 @@ public class OidcService {
         } catch (org.springframework.dao.DuplicateKeyException e) {
             User raced = findByOidcSub(ex.sub());
             if (raced != null) return assertUsable(raced);
-            throw new BizException("创建 OIDC 账号失败（账号标识或用户名冲突），请重试或联系管理员");
+            throw new BizException("创建 OIDC 账号失败（登录账号或昵称冲突），请重试或联系管理员");
         }
         log.info("[AUDIT] OIDC 自动建档 uid={} username={} role={} dept={}", uid, username, role, deptId);
         return u;
@@ -327,7 +327,7 @@ public class OidcService {
             String c = candidate + "-" + i;
             if (c.length() <= USERNAME_MAX && usernameFree(c)) return c;
         }
-        throw new BizException("无法生成可用用户名，请联系管理员");
+        throw new BizException("无法生成可用昵称，请联系管理员");
     }
 
     private boolean usernameFree(String username) {

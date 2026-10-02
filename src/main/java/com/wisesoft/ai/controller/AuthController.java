@@ -40,12 +40,11 @@ public class AuthController {
                 "初始化成功");
     }
 
-    @Operation(summary = "登录", description = "{\"identifier\":\"uid 或用户名\",\"password\":\"...\"}；返回 {token, user}")
+    @Operation(summary = "登录", description = "{\"identifier\":\"登录账号（uid）\",\"password\":\"...\"}；返回 {token, user}；昵称仅作展示、不参与登录")
     @PostMapping("/login")
     public ResultJson login(@RequestBody Map<String, String> body) {
         String id = body.get("identifier");
         if (id == null || id.isBlank()) id = body.get("uid");
-        if (id == null || id.isBlank()) id = body.get("username");
         return ResultJson.ok(authService.login(id, body.get("password")), "登录成功");
     }
 

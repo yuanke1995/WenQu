@@ -9,8 +9,11 @@
 
     <!-- 内容框：限宽居中——背景与波纹通铺全幅，内容不随超宽屏越拉越散 -->
     <div class="login-frame">
-      <!-- 「源头」圆点：锚定内容框右上角，与左上品牌区呼应 -->
-      <span class="hero-dot"></span>
+      <!-- 「源头」圆点：锚定内容框右上角，与左上品牌区呼应；兼作登录页唯一常驻的主题切换入口——
+           视觉仍是 10px 圆点（画在 ::after 上），按钮本体扩到 32px 保证可点，悬停放大提亮提示可交互 -->
+      <button class="hero-dot" type="button"
+              :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'"
+              aria-label="切换亮色/暗色主题" @click="toggleTheme"></button>
 
       <!-- 左：品牌叙事面板。立意取自品牌出处「问渠那得清如许？为有源头活水来」，窄屏整栏隐藏 -->
       <aside class="login-hero">
@@ -44,20 +47,22 @@
             </div>
           </div>
 
+          <!-- 卡片头：标题右侧一道品牌蓝渐隐细线填补留白（呼应右上圆点与底部波纹）；
+               副标题只说有信息量的话——输入框自带标签，普通登录只留一句欢迎 -->
           <h3 class="login-title">{{ isInit ? '初始化管理员' : '登录' }}</h3>
-          <p class="login-sub">{{ isInit ? '首次使用：创建第一个超级管理员账号' : '请输入账号与密码' }}</p>
+          <p class="login-sub">{{ isInit ? '首次使用：创建第一个超级管理员账号' : '欢迎回来' }}</p>
 
           <a-form layout="vertical" @submit.prevent>
             <template v-if="isInit">
-              <a-form-item label="用户标识（uid）">
-                <a-input v-model:value="form.uid" placeholder="如 admin" autocomplete="off" />
+              <a-form-item label="登录账号">
+                <a-input v-model:value="form.uid" placeholder="请输入登录账号" autocomplete="off" />
               </a-form-item>
-              <a-form-item label="用户名">
-                <a-input v-model:value="form.username" placeholder="显示名称，如 管理员" autocomplete="off" />
+              <a-form-item label="用户昵称">
+                <a-input v-model:value="form.username" placeholder="显示昵称，如 管理员" autocomplete="off" />
               </a-form-item>
             </template>
-            <a-form-item v-else label="账号">
-              <a-input v-model:value="form.identifier" placeholder="uid 或用户名" autocomplete="username" @pressEnter="submit" />
+            <a-form-item v-else label="登录账号">
+              <a-input v-model:value="form.identifier" placeholder="请输入登录账号" autocomplete="username" @pressEnter="submit" />
             </a-form-item>
 
             <a-form-item label="密码">
@@ -81,7 +86,7 @@
           </template>
 
           <p v-if="error" class="login-err">{{ error }}</p>
-          <p v-if="isInit" class="login-hint">系统尚无可用账号，创建后即以此账号登录。密码至少 6 位。</p>
+          <p v-if="isInit" class="login-hint">系统尚无可用账号，创建后即以此账号登录；登录账号创建后不可修改。密码至少 6 位。</p>
         </div>
       </main>
     </div>
@@ -95,6 +100,7 @@ import { message } from 'ant-design-vue'
 import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl } from '../api'
 import { setToken } from '../utils/auth'
 import BrandMark from '../components/BrandMark.vue'
+import { themeState, toggleTheme } from '../utils/theme'
 import './app.css'
 
 const route = useRoute()
@@ -146,8 +152,8 @@ async function submit () {
   error.value = ''
   const f = form.value
   if (isInit.value) {
-    if (!String(f.uid).trim()) { error.value = '请填写用户标识'; return }
-    if (!String(f.username).trim()) { error.value = '请填写用户名'; return }
+    if (!String(f.uid).trim()) { error.value = '请填写登录账号'; return }
+    if (!String(f.username).trim()) { error.value = '请填写用户昵称'; return }
     if (!f.password) { error.value = '请填写密码'; return }
     if (f.password !== f.confirm) { error.value = '两次输入的密码不一致'; return }
   } else {
@@ -195,13 +201,26 @@ async function submit () {
   position: absolute; left: 64px; top: 0; bottom: 0; z-index: 1;
   display: flex; align-items: center;
 }
-/* 「源头」圆点：呼应品牌标右上角的白点，缓慢呼吸 */
+/* 「源头」圆点：呼应品牌标右上角的白点，缓慢呼吸；兼作主题切换按钮——
+   圆点画在 ::after 上保持 10px 视觉，按钮本体 32px 且居中对齐原圆点位（原中心 top 61 / right 77） */
 .hero-dot {
-  position: absolute; top: 56px; right: 72px; width: 10px; height: 10px; border-radius: 50%;
+  position: absolute; top: 45px; right: 61px; width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: none; background: transparent; cursor: pointer;
+}
+.hero-dot::after {
+  content: ''; width: 10px; height: 10px; border-radius: 50%;
   background: #2a5fe0; opacity: .85;
   box-shadow: 0 0 0 6px rgba(42, 95, 224, .10), 0 0 26px 8px rgba(42, 95, 224, .16);
   animation: hero-pulse 5s ease-in-out infinite;
+  transition: transform .2s ease, box-shadow .2s ease;
 }
+.hero-dot:hover::after,
+.hero-dot:focus-visible::after {
+  transform: scale(1.4);
+  box-shadow: 0 0 0 8px rgba(42, 95, 224, .14), 0 0 30px 10px rgba(42, 95, 224, .22);
+}
+.hero-dot:focus-visible { outline: 2px solid #2a5fe0; outline-offset: 2px; border-radius: 50%; }
 @keyframes hero-pulse { 0%, 100% { opacity: .85; } 50% { opacity: .45; } }
 .hero-inner { position: relative; z-index: 1; padding: 40px 0; }
 .hero-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
@@ -221,7 +240,7 @@ async function submit () {
 .hero-waves .w1 { fill: rgba(94, 147, 245, .10); }
 .hero-waves .w2 { fill: rgba(94, 147, 245, .08); }
 .hero-waves .w3 { fill: rgba(42, 95, 224, .10); }
-@media (prefers-reduced-motion: reduce) { .hero-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .hero-dot::after { animation: none; } }
 
 /* 暗色：深底淡蓝晕染，诗句与圆点提亮到可读档 */
 html[data-theme='dark'] .login-wrap {
@@ -231,7 +250,10 @@ html[data-theme='dark'] .login-wrap {
     radial-gradient(720px 380px at 12% 6%, rgba(91, 140, 240, .09), transparent 60%),
     linear-gradient(165deg, #161a24 0%, #14161a 50%, #111420 100%);
 }
-html[data-theme='dark'] .hero-dot { background: #5b8cf0; box-shadow: 0 0 0 6px rgba(91, 140, 240, .12), 0 0 26px 8px rgba(91, 140, 240, .18); }
+html[data-theme='dark'] .hero-dot::after { background: #5b8cf0; box-shadow: 0 0 0 6px rgba(91, 140, 240, .12), 0 0 26px 8px rgba(91, 140, 240, .18); }
+html[data-theme='dark'] .hero-dot:hover::after,
+html[data-theme='dark'] .hero-dot:focus-visible::after { box-shadow: 0 0 0 8px rgba(91, 140, 240, .16), 0 0 30px 10px rgba(91, 140, 240, .24); }
+html[data-theme='dark'] .hero-dot:focus-visible { outline-color: #5b8cf0; }
 html[data-theme='dark'] .hero-poem { color: #9db9f5; }
 html[data-theme='dark'] .hero-feats li::before { background: rgba(91, 140, 240, .7); }
 html[data-theme='dark'] .hero-waves .w1 { fill: rgba(91, 140, 240, .10); }
@@ -258,7 +280,18 @@ html[data-theme='dark'] .login-card { box-shadow: 0 12px 36px rgba(0, 0, 0, .4);
 .brand-mark { flex: none; display: block; }
 .brand-name { font-size: 14px; font-weight: 500; }
 .brand-slogan { font-size: 11px; color: var(--app-text3, var(--app-text3)); }
-.login-title { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+.login-title {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 20px; font-weight: 600; letter-spacing: 1px; margin: 0 0 6px;
+}
+/* 标题渐隐细线：从品牌蓝淡出到透明，右端与卡片内边距对齐 */
+.login-title::after {
+  content: ''; flex: 1; height: 2px; border-radius: 1px;
+  background: linear-gradient(90deg, rgba(42, 95, 224, .30), rgba(42, 95, 224, 0));
+}
+html[data-theme='dark'] .login-title::after {
+  background: linear-gradient(90deg, rgba(91, 140, 240, .35), rgba(91, 140, 240, 0));
+}
 .login-sub { font-size: 13px; color: var(--app-text2, var(--app-text2)); margin: 0 0 18px; }
 .login-btn { width: 100%; justify-content: center; }
 .login-divider {

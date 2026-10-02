@@ -76,8 +76,8 @@ public class AuthService {
     /** 初始化管理员：仅在「无任何已设密码用户」时允许；创建或升级指定用户为 superadmin 并设置密码，随后直接登录 */
     @Transactional
     public Map<String, Object> initializeAdmin(String uid, String username, String password) {
-        String u = required(uid, "用户标识");
-        String name = required(username, "用户名");
+        String u = required(uid, "登录账号");
+        String name = required(username, "用户昵称");
         checkPassword(password);
         if (!needsInitialize()) throw new BizException("系统已初始化，请直接登录或由管理员添加账号");
 
@@ -105,12 +105,12 @@ public class AuthService {
         return login(u, password);
     }
 
-    /** 登录：identifier 允许 uid 或用户名 */
+    /** 登录：identifier 仅认 uid（登录账号）；昵称仅作展示，不再参与登录 */
     @Transactional
     public Map<String, Object> login(String identifier, String password) {
         String id = required(identifier, "账号");
         required(password, "密码");
-        User user = findByIdentifier(id);
+        User user = userMapper.selectById(id);
         // 统一文案，不暴露"账号是否存在"
         if (user == null) throw new BizException("账号或密码不正确");
         if (user.getStatus() != null && user.getStatus() == 0) throw new BizException("账号已被禁用");
@@ -140,7 +140,7 @@ public class AuthService {
 
     /** 本人改密（校验旧密码） */
     public void changePassword(String uid, String oldPassword, String newPassword) {
-        required(uid, "用户标识");
+        required(uid, "登录账号");
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         if (!AuthCrypto.verifyPassword(user.getPasswordHash(), oldPassword)) {
@@ -206,13 +206,6 @@ public class AuthService {
     }
 
     // ==================== 内部 ====================
-
-    private User findByIdentifier(String identifier) {
-        User byId = userMapper.selectById(identifier);
-        if (byId != null) return byId;
-        return userMapper.selectOne(new LambdaQueryWrapper<User>()
-                .eq(User::getUsername, identifier).last("LIMIT 1"));
-    }
 
     private void registerFailure(User user) {
         int max = properties.getAuth().getMaxLoginFailures();

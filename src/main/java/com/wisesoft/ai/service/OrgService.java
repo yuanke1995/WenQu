@@ -97,7 +97,7 @@ public class OrgService {
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色） */
     public User createUser(String uid, String username, String departmentId, String role, String password) {
         String u = normalizeUid(uid);
-        if (userMapper.selectById(u) != null) throw new BizException("该用户标识已存在");
+        if (userMapper.selectById(u) != null) throw new BizException("该登录账号已存在");
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, null);
         String r = normalizeRole(role);
@@ -192,7 +192,7 @@ public class OrgService {
     }
 
     /**
-     * 本人修改昵称（username 即显示名称，也是登录标识之一；uid 不可改）。
+     * 本人修改昵称（username 仅作展示昵称；登录只认 uid，uid 不可改）。
      * 只动 username 一列（LambdaUpdateWrapper 窄更新，避免整实体回写与他人并发改其它列互相覆盖）。
      */
     public void updateOwnProfile(String uid, String username) {
@@ -231,9 +231,9 @@ public class OrgService {
 
     private static String normalizeUid(String uid) {
         String u = uid == null ? "" : uid.trim();
-        if (u.isEmpty()) throw new BizException("用户标识不能为空");
-        if (!u.matches(UID_PATTERN)) throw new BizException("用户标识含非法字符（仅允许字母/数字/_@.-）");
-        if (u.length() > 64) throw new BizException("用户标识过长");
+        if (u.isEmpty()) throw new BizException("登录账号不能为空");
+        if (!u.matches(UID_PATTERN)) throw new BizException("登录账号含非法字符（仅允许字母/数字/_@.-）");
+        if (u.length() > 64) throw new BizException("登录账号过长");
         return u;
     }
 
@@ -266,12 +266,12 @@ public class OrgService {
         if (c != null && c > 0) throw new BizException("部门名称已存在");
     }
 
-    /** 用户名唯一（登录可按用户名） */
+    /** 昵称全库唯一（仅展示用，不参与登录） */
     private void ensureUsernameUnique(String username, String excludeUid) {
         LambdaQueryWrapper<User> q = new LambdaQueryWrapper<User>().eq(User::getUsername, username);
         if (excludeUid != null) q.ne(User::getUid, excludeUid);
         Long c = userMapper.selectCount(q);
-        if (c != null && c > 0) throw new BizException("用户名已存在");
+        if (c != null && c > 0) throw new BizException("昵称已被占用");
     }
 
     private void ensureDeptExists(String departmentId) {

@@ -403,7 +403,7 @@ public class ChatController {
         return ResultJson.ok("会话已删除");
     }
 
-    @Operation(summary = "清空会话", description = "清空当前用户名下的全部会话数据")
+    @Operation(summary = "清空会话", description = "清空当前账号名下的全部会话数据")
     @DeleteMapping("/sessions")
     public ResultJson clearAllSessions(HttpServletRequest httpRequest) {
         sessionService.clearAll(RequestUser.uid());

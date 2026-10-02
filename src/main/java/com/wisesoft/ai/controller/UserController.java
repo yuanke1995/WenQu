@@ -27,7 +27,7 @@ public class UserController {
     private final com.wisesoft.ai.service.AuthService authService;
     private final com.wisesoft.ai.service.RoleService roleService;
 
-    @Operation(summary = "用户列表", description = "返回全部用户（按用户名升序）")
+    @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(orgService.listUsers());
@@ -45,7 +45,7 @@ public class UserController {
             + "普通用户仅可改自己的密码（本端点对普通用户开放，改别人由管理员端点拦截）")
     @PutMapping("/{uid}/password")
     public ResultJson resetPassword(
-            @Parameter(description = "用户标识") @PathVariable("uid") String uid,
+            @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
         // 自助改密：非管理员级角色只允许改自己的（uid 来自路径，但必须与登录态一致，防止代改）
         if (!roleService.isAdminCode(com.wisesoft.ai.util.RequestUser.role())
@@ -59,7 +59,7 @@ public class UserController {
     @Operation(summary = "修改用户", description = "{\"username\": \"\", \"departmentId\": \"\", \"role\": \"\", \"status\": 1|0}")
     @PutMapping("/{uid}")
     public ResultJson update(
-            @Parameter(description = "用户标识") @PathVariable("uid") String uid,
+            @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
         Integer status = body.get("status") == null ? null : Integer.parseInt(String.valueOf(body.get("status")));
         orgService.updateUser(uid, str(body.get("username")), str(body.get("departmentId")), str(body.get("role")), status);
@@ -68,7 +68,7 @@ public class UserController {
 
     @Operation(summary = "删除用户", description = "最后一名超级管理员不可删除")
     @DeleteMapping("/{uid}")
-    public ResultJson delete(@Parameter(description = "用户标识") @PathVariable("uid") String uid) {
+    public ResultJson delete(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid) {
         orgService.deleteUser(uid);
         return ResultJson.ok("已删除");
     }
@@ -94,7 +94,7 @@ public class UserController {
     }
 
     @Operation(summary = "修改我的昵称", description = "{\"username\":\"新昵称\"}；仅本人（uid 取登录态，不可改 uid）；"
-            + "昵称即显示名称，也是登录标识之一（可用 uid 或昵称登录），需全库唯一")
+            + "昵称即显示名称，仅作展示（登录只认 uid），需全库唯一")
     @PutMapping("/profile")
     public ResultJson updateOwnProfile(@RequestBody Map<String, Object> body) {
         orgService.updateOwnProfile(com.wisesoft.ai.util.RequestUser.uid(), str(body.get("username")));

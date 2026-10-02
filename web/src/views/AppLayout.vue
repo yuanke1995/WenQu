@@ -115,7 +115,7 @@
       </a-modal>
 
       <div class="side-foot">
-        <!-- 头像+用户名即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
+        <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
             <span class="avatar">{{ (userName || '游')[0] }}</span>
@@ -536,7 +536,7 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
   border-top: 1px solid var(--app-border);
 }
-/* 头像+用户名 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
+/* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
 .foot-user {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
   border: none; background: transparent; cursor: pointer; padding: 3px 4px;

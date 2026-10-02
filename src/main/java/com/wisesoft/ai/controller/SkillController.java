@@ -111,7 +111,7 @@ public class SkillController {
         return ResultJson.ok(m);
     }
 
-    @Operation(summary = "新建技能", description = "body: {name, description, content}；落到当前用户名下")
+    @Operation(summary = "新建技能", description = "body: {name, description, content}；落到当前账号名下")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
         SkillService.Skill s = skillService.create(RequestUser.uid(),
