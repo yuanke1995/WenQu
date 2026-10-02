@@ -2634,8 +2634,12 @@ public class RagService {
         String registerMcpCitations(String toolName, String result) {
             if (result == null || result.isBlank()) return result;
             if (!configService.getBoolean("tool.mcpCiteEnabled")) return result;
+            // MCP 结果常是 JSON 转义文本（换行为字面 \n 两字符序列）：先还原成真实空白再做
+            // URL/标题/摘要提取——否则摘要把 "\n\n\n" 原样带进引用弹窗、标题按行切分失效（title 全空）。
+            // 只用于提取；返回给模型的仍是原结果（转义文本可能含代码示例里的合法 \n，还原会改坏样例）。
             int perAnswerCap = configService.getInt("tool.mcpCiteMaxRefs", 10);
-            Matcher um = MCP_URL_PATTERN.matcher(result);
+            String text = result.replace("\\n", "\n").replace("\\r", "\n").replace("\\t", " ");
+            Matcher um = MCP_URL_PATTERN.matcher(text);
             List<String> footnotes = new ArrayList<>();
             Set<String> seenRaw = new HashSet<>();
             int perCall = 0;
@@ -2643,8 +2647,8 @@ public class RagService {
                 String url = trimUrlTail(um.group());
                 if (url.length() < 12 || !seenRaw.add(url)) continue;
                 String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(url);
-                String title = mcpTitleNear(result, um.start());
-                String snippet = mcpSnippetAfter(result, um.end());
+                String title = mcpTitleNear(text, um.start());
+                String snippet = mcpSnippetAfter(text, um.end());
                 int ref;
                 synchronized (sources) {
                     Integer existing = webRefByUrl.get(key);
