@@ -2641,39 +2641,67 @@ public class RagService {
             String text = result.replace("\\n", "\n").replace("\\r", "\n").replace("\\t", " ");
             Matcher um = MCP_URL_PATTERN.matcher(text);
             List<String> footnotes = new ArrayList<>();
+            List<String[]> fresh = new ArrayList<>();   // [url, title, snippet]
             Set<String> seenRaw = new HashSet<>();
-            int perCall = 0;
-            while (um.find() && perCall < 3) {
+            while (um.find() && fresh.size() < 3) {
                 String url = trimUrlTail(um.group());
                 if (url.length() < 12 || !seenRaw.add(url)) continue;
                 String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(url);
                 String title = mcpTitleNear(text, um.start(), um.end(), url);
                 String snippet = mcpSnippetAfter(text, um.end());
+                Integer existing;
+                synchronized (sources) { existing = webRefByUrl.get(key); }
+                if (existing != null) {
+                    footnotes.add("[" + existing + "] " + title + "（" + mcpHostOf(url) + "）"); // 同源（含联网已注册的）复用原编号
+                    continue;
+                }
+                fresh.add(new String[]{url, title, snippet});
+            }
+            if (fresh.isEmpty() && footnotes.isEmpty()) return result;
+            // 批量重排：给每条片段一个对用户问题的真实相关度（重排分 0~1，与库内来源同域透出）——
+            // 否则 MCP 来源无分数（WEB 的分来自搜索引擎，MCP 没有现成分）。不可用/失败时无分注册
+            // （前端不显示分数行），不阻塞引用注册本身。rankForced 返回按分排序，用 content 映射回候选。
+            Map<String, Double> scoreBySnippet = new HashMap<>();
+            if (!fresh.isEmpty()) {
+                List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
+                for (String[] f : fresh) {
+                    toRank.add(new HybridRetrievalService.Hit(null, "", f[1], f[2],
+                            List.of(), 0d, null, null, null));
+                }
+                for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question)) {
+                    if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
+                }
+            }
+            for (String[] f : fresh) {
+                if (mcpCiteCount.incrementAndGet() > perAnswerCap) {
+                    mcpCiteCount.decrementAndGet();
+                    break; // 本轮配额用尽：后续 URL 不再注册
+                }
+                String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(f[0]);
+                Double score = scoreBySnippet.get(f[2]);
                 int ref;
                 synchronized (sources) {
-                    Integer existing = webRefByUrl.get(key);
-                    if (existing == null) {
-                        if (mcpCiteCount.incrementAndGet() > perAnswerCap) {
-                            mcpCiteCount.decrementAndGet();
-                            break; // 本轮配额用尽：后续 URL 不再注册
-                        }
+                    Integer existing = webRefByUrl.get(key); // 双检（重排耗时窗口内可能并发注册同源）
+                    if (existing != null) {
+                        ref = existing; // 同一来源（含联网搜索已注册的）复用原编号
+                    } else {
                         ref = sources.size() + 1;
                         Map<String, Object> src = new LinkedHashMap<>();
                         src.put("ref", ref);
                         src.put("origin", "MCP");
-                        src.put("url", url);
-                        src.put("siteName", mcpHostOf(url));
-                        src.put("title", title);
+                        src.put("url", f[0]);
+                        src.put("siteName", mcpHostOf(f[0]));
+                        src.put("title", f[1]);
                         // snippet 即引用自检的证据（citationConsistencyCheck 取 sources[n-1].snippet）
-                        src.put("snippet", snippet);
+                        src.put("snippet", f[2]);
+                        if (score != null) {
+                            src.put("rerankScore", Math.round(score * 1000) / 1000.0);
+                        }
                         sources.add(src);
                         webRefByUrl.put(key, ref);
-                    } else {
-                        ref = existing; // 同一来源（含联网搜索已注册的）复用原编号
                     }
                 }
-                footnotes.add("[" + ref + "] " + title + "（" + mcpHostOf(url) + "）");
-                perCall++;
+                footnotes.add("[" + ref + "] " + f[1] + "（" + mcpHostOf(f[0]) + "）");
             }
             if (footnotes.isEmpty()) return result;
             log.info("[MCP] 工具 {} 注册 {} 条引用来源", toolName, footnotes.size());

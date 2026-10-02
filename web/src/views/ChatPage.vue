@@ -1729,7 +1729,7 @@ const showRefTip = (el, msgIdx, n) => {
     title: src.title || '',
     snippet: src.snippet || '（无原文片段）',
     score: (src.rerankScore != null ? src.rerankScore : src.score),
-    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.origin === 'MCP' ? '' : (src.rerankScore != null ? '重排相关度' : '检索融合分')),
+    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.rerankScore != null ? '重排相关度' : (src.origin === 'MCP' ? '' : '检索融合分')),
     src
   }
 }
