@@ -316,6 +316,8 @@ public class RagService {
     private final SandboxTools sandboxTools;
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
     private final SkillService skillService;
+    /** 个人配置覆盖（个人设置 → 对话偏好）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
+    private final UserConfigService userConfigService;
     /** 聊天附件（文档类）：解码/解析为纯文本注入本轮上下文（图片走 images 多模态，不经此服务） */
     private final ChatAttachmentService chatAttachmentService;
     /** SubAgent 并行编排（4.3）：多视角并行检索 + 要点提炼（agent.enabled 控制，默认关） */
@@ -406,6 +408,7 @@ public class RagService {
                       com.wisesoft.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
                       UserMemoryService userMemoryService,
+                      UserConfigService userConfigService,
                       org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
                       com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper,
                       com.wisesoft.ai.mapper.KnowledgeMapper knowledgeMapper) {
@@ -437,6 +440,7 @@ public class RagService {
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
         this.userMemoryService = userMemoryService;
+        this.userConfigService = userConfigService;
         this.workflowServiceProvider = workflowServiceProvider;
         this.modelRegistryService = modelRegistryService;
         this.toolApprovalMapper = toolApprovalMapper;
@@ -532,6 +536,10 @@ public class RagService {
                 // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
                 boolean identity = loadIdentity(userId);
+                // 个人配置覆盖（个人设置 → 对话偏好）：随身份一次性载入，本轮内 configService.get 对
+                // personal 字段优先读个人值（温度/多轮记忆轮数/相关追问条数/个人附加指令）。
+                // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
+                configService.putUserOverrides(userConfigService.overrides(userId));
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
                             agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
@@ -541,6 +549,7 @@ public class RagService {
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
                     configService.clearOverride();
+                    configService.clearUserOverrides();
                 }
             });
         } catch (RejectedExecutionException e) {
@@ -3231,11 +3240,17 @@ public class RagService {
         }
     }
 
-    /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值） */
+    /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值）；
+     *  末尾追加「个人附加指令」（个人设置 → 对话偏好；全局值为平台附加指令，个人值按个人覆盖生效） */
     private String resolveSystemPrompt(Agent agent) {
         String p = (agent != null && agent.getSystemPrompt() != null && !agent.getSystemPrompt().isBlank())
                 ? agent.getSystemPrompt() : configService.get("chat.systemPrompt");
-        return (p == null || p.isBlank()) ? properties.getSystemPrompt() : p;
+        String base = (p == null || p.isBlank()) ? properties.getSystemPrompt() : p;
+        String extra = configService.get("chat.userSystemPrompt");
+        if (extra != null && !extra.isBlank()) {
+            base = base + "\n\n【用户个人附加要求】\n" + extra.trim();
+        }
+        return base;
     }
 
     /** 工具开关三态解析：智能体显式设了 1/0 则强制覆盖，否则继承全局开关 */

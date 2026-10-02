@@ -215,9 +215,12 @@ public class SubAgentOrchestrator {
          * 分支线程内重放这份快照，否则分支检索（topK / 权重 / 阈值）静默退化为全局配置。
          */
         final Map<String, String> baseOverrides;
+        /** 创建上下文时父线程的个人配置覆盖快照（个人设置 → 对话偏好）：与 baseOverrides 同理，
+         *  分支线程内需重放（分支的要点提炼读 chat.temperature 等 personal 字段）。 */
+        final Map<String, String> baseUserOverrides;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
-               String resolvedModel, Map<String, String> baseOverrides) {
+               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
@@ -226,6 +229,7 @@ public class SubAgentOrchestrator {
             this.delegated = subAgents != null && !subAgents.isEmpty();
             this.resolvedModel = resolvedModel;
             this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
+            this.baseUserOverrides = baseUserOverrides == null ? Map.of() : baseUserOverrides;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -308,7 +312,7 @@ public class SubAgentOrchestrator {
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
         RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel,
-                configService.currentOverrides());
+                configService.currentOverrides(), configService.currentUserOverrides());
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
@@ -506,15 +510,20 @@ public class SubAgentOrchestrator {
      */
     private void runWithOverrides(RunCtx ctx, Runnable task) {
         Map<String, String> ov = ctx.baseOverrides;
-        if (ov == null || ov.isEmpty()) {
+        Map<String, String> uv = ctx.baseUserOverrides;
+        boolean hasOv = ov != null && !ov.isEmpty();
+        boolean hasUv = uv != null && !uv.isEmpty();
+        if (!hasOv && !hasUv) {
             task.run();
             return;
         }
-        configService.putOverrides(ov);
+        if (hasOv) configService.putOverrides(ov);
+        if (hasUv) configService.putUserOverrides(uv);
         try {
             task.run();
         } finally {
-            configService.clearOverride();
+            if (hasOv) configService.clearOverride();
+            if (hasUv) configService.clearUserOverrides();
         }
     }
 

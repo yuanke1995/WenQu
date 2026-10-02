@@ -1181,8 +1181,8 @@ public class DocumentService {
             log.info("[{}] 解析成功: {} chunks", docId, chunks.size());
             // 图片描述补齐：解析中视觉调用失败/超限的图，后台补描述并回写知识块（图片语义全部进入 RAG）
             backfillImageDescriptions(docId);
-            // P1 GraphRAG：库级开关开启时异步抽实体关系三元组（uid=null=系统身份：平台级模型可用，
-            // 个人级供应商按判权被拒——抽取是系统行为，不接任何用户的个人模型）
+            // P1 GraphRAG：库级开关开启时异步抽实体关系三元组（抽取模型与判权按库主，
+            // 见 GraphRagService.extractDoc；这里传的 uid 仅作库主缺失时的兜底）
             graphRagService.onDocParsed(docId, null, "user");
         } catch (Exception e) {
             // 删除场景：线程被 delete() 中断（interrupt）或检查点发现删除 → 只清理产物，不置失败状态

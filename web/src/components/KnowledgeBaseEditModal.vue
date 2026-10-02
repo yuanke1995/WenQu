@@ -127,8 +127,14 @@
       <a-form-item label="GraphRAG 知识图谱" class="kb-item-wrap-label" style="margin-top:4px">
         <a-switch v-model:checked="form.graphEnabled" />
         <div class="kb-hint" style="margin-top:4px">
-          开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）。
-          需在系统设置 → 定时维护 → GraphRAG 配置抽取模型；已有文档点列表页「构建图谱」回溯。
+          开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）；已有文档点列表页「构建图谱」回溯。
+        </div>
+      </a-form-item>
+      <a-form-item v-if="form.graphEnabled" label="图谱抽取模型" class="kb-item-wrap-label">
+        <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随系统兜底模型" />
+        <div class="kb-hint" style="margin-top:4px">
+          本库抽三元组用的聊天模型（归你所有：谁建库用谁的模型，抽取消耗的 token 记在所选模型上）。
+          留空回落系统设置的兜底模型——若非你登记的模型，开启时会被拒绝，请在此选择自己的模型。
         </div>
       </a-form-item>
     </a-form>
@@ -173,7 +179,7 @@ const saving = ref(false)
 
 function blank () {
   return {
-    name: '', description: '', icon: '', embeddingRef: '', isDefault: false, graphEnabled: false,
+    name: '', description: '', icon: '', embeddingRef: '', isDefault: false, graphEnabled: false, graphModelRef: '',
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
@@ -203,6 +209,7 @@ function hydrateForm (row) {
   f.embeddingRef = row?.embeddingRef || ''
   f.isDefault = row?.isDefault === 1
   f.graphEnabled = row?.graphEnabled === 1
+  f.graphModelRef = row?.graphModelRef || ''
   let q = {}
   let p = {}
   try { q = row?.queryParams ? JSON.parse(row.queryParams) : {} } catch { q = {} }
@@ -372,7 +379,8 @@ const save = async () => {
       queryParams,
       parseParams,
       isDefault: form.value.isDefault ? 1 : 0,
-      graphEnabled: form.value.graphEnabled ? 1 : 0
+      graphEnabled: form.value.graphEnabled ? 1 : 0,
+      graphModelRef: form.value.graphModelRef || ''
     }
     const saved = props.kb
       ? await updateKnowledgeBase(props.kb.id, body)

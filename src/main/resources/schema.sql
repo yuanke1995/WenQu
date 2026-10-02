@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
     `embedding_dimensions` INT DEFAULT NULL COMMENT '本库向量索引维度（绑定/切换向量模型重嵌后回写）',
     `graph_enabled` INT DEFAULT 0 COMMENT 'GraphRAG 开关（库级，默认关）: 1=解析后抽实体关系三元组，检索时一跳图扩展',
+    `graph_model_ref` VARCHAR(255) DEFAULT NULL COMMENT 'GraphRAG 抽取模型（引用 providerId/modelId；归库主，判权按库主可用；空=回落系统设置的 graphrag.modelRef，再空则抽取 fail-loud）',
     `is_default`   INT          DEFAULT 0 COMMENT '是否个人默认库: 1=该归属人的默认库（问渠，每人一张、系统懒创建；未指定库的文档兜底归属）',
     `builtin`      INT          DEFAULT 0 COMMENT '官方内置库: 1=系统随版本同步的内置知识库（如问渠使用手册；全员只读、不接受上传/编辑/删除，内容按源文件指纹增量重建）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
@@ -159,6 +160,23 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
     `embedding`      TEXT         DEFAULT NULL COMMENT '记忆向量（JSON float 数组；语义去重与注入检索用）',
     KEY `idx_mem_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户长期记忆（跨会话事实/偏好；注入本人后续问答的 system prompt）';
+
+-- ============================================
+-- 2026-10-02: 个人配置覆盖（个人设置 → 对话偏好）
+-- 键限定为 config-schema.json 中标记 personal 的字段（温度/多轮记忆轮数/相关追问条数/
+-- 个人附加指令/深度思考默认）：个人值覆盖系统全局值（个人设置页保存），仅对该用户本人的
+-- 问答生效；清空 = 删除本行 = 回落全局。存储与全局配置同构（配置键 + 值），加参数只改 schema。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_user_config` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `uid`          VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `config_key`   VARCHAR(128) NOT NULL COMMENT '配置键（config-schema.json 的 backendKey，须标记 personal）',
+    `config_value` TEXT         DEFAULT NULL COMMENT '个人覆盖值（与全局配置同格式；空=未设置）',
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_uid_config_key` (`uid`, `config_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人配置覆盖（personal 字段；覆盖全局值，仅本人问答生效）';
 -- 说明：idx_doc_deleted 覆盖按文档取块 + 逻辑删除过滤（增量 diff/孤儿清扫/快照/关键词路 doc 过滤）；
 -- idx_doc_id 为其最左前缀、已冗余，可在窗口期手动 DROP（SchemaMigrator 不会自动删索引）。
 -- 关键词检索：默认走 MySQL content/title LIKE（全表扫描，知识块量大时慢）；

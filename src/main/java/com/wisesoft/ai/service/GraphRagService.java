@@ -50,8 +50,10 @@ import java.util.stream.Collectors;
  *   <li><b>构建</b>：手动按钮回溯存量（分页逐文档串行），进度内存可查；清图是显式动作。</li>
  * </ul>
  * <p>
- * 模型口径：<code>graphrag.modelRef</code> 必须显式配置（空 = 不抽取并告警）——异步任务没有用户
- * 上下文，不接「个人默认模型」的隐式回落；个人级供应商模型在系统身份下会被判权拒绝（符合预期）。
+ * 模型口径（2026-10 库级化）：抽取模型<b>归知识库</b>——知识库编辑里绑定（<code>graph_model_ref</code>，
+ * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的存量库回落系统设置
+ * <code>graphrag.modelRef</code>（判权同样按库主，非库主可用的模型会被拒）。两者皆空 = 不抽取并告警。
+ * 不接「个人默认聊天模型」的隐式回落：抽取烧 token，模型必须显式选择。
  *
  * @author yuanke
  */
@@ -159,7 +161,7 @@ public class GraphRagService {
         p.total = docs.size();
         p.startedAt = LocalDateTime.now().toString();
         buildProgress.put(kbId, p);
-        // 身份捕获：build 是管理员按钮触发，uid/role 传入抽取链路做个人级模型判权
+        // 身份兜底：抽取模型判权按库主（extractDoc 内解析）；库主缺失时才回落到触发者身份
         String uid = com.wisesoft.ai.util.RequestUser.uid();
         String role = com.wisesoft.ai.util.RequestUser.role();
         ThreadPoolManager.execute(() -> {
@@ -258,11 +260,20 @@ public class GraphRagService {
      * @return 本次新抽出的三元组条数
      */
     int extractDoc(String docId, String kbId, String uid, String role) {
-        String modelRef = configService.get("graphrag.modelRef") == null ? "" : configService.get("graphrag.modelRef").trim();
+        // 抽取模型：库级绑定优先（知识库编辑里选择，归库主），空则回落系统设置 graphrag.modelRef。
+        // 判权主体一律按**库主**：抽取跑在异步线程、没有请求身份，谁建库烧谁的模型——
+        // 这也是先前"uid=null 系统身份"口径下任意引用都会被判权拒绝（抽取静默失败）的修复。
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        String kbRef = kb == null || kb.getGraphModelRef() == null ? "" : kb.getGraphModelRef().trim();
+        String principalUid = kb != null && kb.getCreatedBy() != null && !kb.getCreatedBy().isBlank()
+                ? kb.getCreatedBy() : uid;
+        String modelRef = kbRef.isEmpty()
+                ? String.valueOf(configService.get("graphrag.modelRef")).trim() : kbRef;
         if (modelRef.isEmpty()) {
-            throw new BizException("未配置 graphrag.modelRef（设置页 → 工程维护 → GraphRAG），抽取跳过");
+            throw new BizException("未配置 GraphRAG 抽取模型：请在知识库编辑里选择抽取模型"
+                    + "（或由管理员配置系统设置 → 定时维护 → GraphRAG 的兜底模型），抽取跳过");
         }
-        modelRegistryService.assertUsable(modelRef, uid, role);
+        modelRegistryService.assertUsable(modelRef, principalUid, role);
         List<Knowledge> chunks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
                 .eq(Knowledge::getDocId, docId).orderByAsc(Knowledge::getChunkIndex));
         Map<String, GraphExtract> account = new HashMap<>();

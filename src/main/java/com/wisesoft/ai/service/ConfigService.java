@@ -307,6 +307,11 @@ public class ConfigService {
         d.put("chat.remainTokenFloor", "800");             // 上下文填充保留下限
         d.put("chat.truncateFallbackChars", "200");        // 超预算截断兜底字符数
         d.put("chat.historyRounds", "5");                  // 多轮记忆注入轮数
+        // 个人附加指令（个人设置 → 对话偏好，personal）：追加在系统提示词之后的个人要求；
+        // 全局值为平台层附加指令（可留空），个人值按个人覆盖机制生效
+        d.put("chat.userSystemPrompt", "");
+        // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
+        d.put("chat.deepThinkDefault", "false");
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
@@ -538,6 +543,16 @@ public class ConfigService {
     /** 评估批量对比用的线程局部参数覆盖（仅当前线程生效，finally 必须 clear；不写 DB 不污染配置） */
     private static final ThreadLocal<Map<String, String>> OVERRIDE = new ThreadLocal<>();
 
+    /**
+     * 个人配置覆盖（个人设置 → 对话偏好）的线程局部快照：由问答流水线在装载身份后一次性载入
+     * （键仅限 schema 标记 personal 的字段），只作用于本线程——管理端读取（Tomcat 线程）与
+     * 定时任务/评估等无用户上下文的线程读到的仍是全局值。
+     * <p>
+     * 优先级：显式覆盖（{@link #putOverrides}，评估用）&gt; 个人覆盖 &gt; 全局缓存/默认值。
+     * 池化线程复用，finally 必须 clear（见 {@link #clearUserOverrides()}）。
+     */
+    private static final ThreadLocal<Map<String, String>> USER_OVERRIDE = new ThreadLocal<>();
+
     /** 设置线程局部参数覆盖（评估用），返回 this 便于 finally 中 clearOverride */
     public void putOverrides(Map<String, String> overrides) {
         if (overrides == null || overrides.isEmpty()) return;
@@ -573,6 +588,29 @@ public class ConfigService {
     }
 
     /**
+     * 装载本轮用户的个人配置覆盖（个人设置 → 对话偏好；键仅限 schema 标记 personal 的字段）。
+     * 调用方（问答流水线线程）负责 finally 里 {@link #clearUserOverrides()}；空/null 视为清除。
+     */
+    public void putUserOverrides(Map<String, String> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            USER_OVERRIDE.remove();
+        } else {
+            USER_OVERRIDE.set(new HashMap<>(overrides));
+        }
+    }
+
+    /** 清除个人配置覆盖（池化线程复用，本轮问答结束必须调用） */
+    public void clearUserOverrides() {
+        USER_OVERRIDE.remove();
+    }
+
+    /** 取当前线程个人配置覆盖的快照（副本，可能为空；供并行子线程重放，见 SubAgentOrchestrator） */
+    public Map<String, String> currentUserOverrides() {
+        Map<String, String> cur = USER_OVERRIDE.get();
+        return cur == null || cur.isEmpty() ? Map.of() : new HashMap<>(cur);
+    }
+
+    /**
      * 取当前线程参数覆盖的快照（副本，可能为空）。
      * <p>用途：把本轮覆盖**显式**交给并行子线程——ThreadLocal 不随任务提交跨线程继承，
      * 池化线程里读到的永远是空覆盖（静默退化为全局配置）。调用方在子线程内 putOverrides(snapshot)
@@ -584,12 +622,17 @@ public class ConfigService {
     }
 
     /**
-     * 读取配置（线程局部覆盖 → 缓存 → 默认值）。
+     * 读取配置（显式覆盖 → 个人覆盖 → 缓存 → 默认值）。
      * 敏感项 RSA 密文在此透明解密（见 {@link #isSensitiveKey}）：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
      */
     public String get(String key) {
         Map<String, String> ov = OVERRIDE.get();
         if (ov != null && ov.containsKey(key)) return ov.get(key);
+        Map<String, String> pv = USER_OVERRIDE.get();
+        if (pv != null) {
+            String u = pv.get(key);
+            if (u != null && !u.isBlank()) return u;
+        }
         String v = cache.get(key);
         if (v == null) v = defaults().getOrDefault(key, "");
         return isSensitiveKey(key) ? crypto.decrypt(v) : v;

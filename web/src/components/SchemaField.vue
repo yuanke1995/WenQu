@@ -6,12 +6,14 @@
         <span style="display:inline-flex;align-items:center">
           <span v-if="field.core" class="core-dot"></span>{{ field.label }}
           <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
+          <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
           <question-circle-outlined class="tip-icon" />
         </span>
       </a-tooltip>
       <span v-else style="display:inline-flex;align-items:center">
         <span v-if="field.core" class="core-dot"></span>{{ field.label }}
         <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
+        <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
       </span>
     </template>
 

@@ -67,9 +67,13 @@ public class KnowledgeBase {
 
     /**
      * GraphRAG 开关（库级，默认关）：1=解析后抽实体关系三元组、检索时一跳图扩展。
-     * 开启后需配置全局 graphrag.modelRef 才会真的抽取（异步任务 fail-loud 提示）。
+     * 开启后由本库绑定的 graphModelRef 抽取（未绑定则回落系统设置的 graphrag.modelRef，仍为空则 fail-loud）。
      */
     private Integer graphEnabled;
+
+    /** GraphRAG 抽取模型（引用 providerId/modelId；归库主——判权按库主可用，谁建库烧谁的模型）。
+     * 空=回落系统设置 graphrag.modelRef（判权仍按库主，非库主可用的模型会被拒）。 */
+    private String graphModelRef;
 
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;

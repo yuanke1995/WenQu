@@ -26,6 +26,7 @@ public class UserController {
     private final OrgService orgService;
     private final com.wisesoft.ai.service.AuthService authService;
     private final com.wisesoft.ai.service.RoleService roleService;
+    private final com.wisesoft.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）")
     @GetMapping("/list")
@@ -99,6 +100,21 @@ public class UserController {
     public ResultJson updateOwnProfile(@RequestBody Map<String, Object> body) {
         orgService.updateOwnProfile(com.wisesoft.ai.util.RequestUser.uid(), str(body.get("username")));
         return ResultJson.ok("已保存");
+    }
+
+    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好：可个人覆盖的字段定义（config-schema.json 标记 personal）"
+            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。字段键如 chat.temperature / chat.historyRounds / "
+            + "retrieval.relatedCount / chat.userSystemPrompt / chat.deepThinkDefault")
+    @GetMapping("/settings")
+    public ResultJson getSettings() {
+        return ResultJson.ok(userConfigService.describe(com.wisesoft.ai.util.RequestUser.uid()));
+    }
+
+    @Operation(summary = "保存个人对话偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal）；"
+            + "字段缺省=不修改，空串=清除该项回落系统全局；保存即生效（仅对本人问答生效）")
+    @PutMapping("/settings")
+    public ResultJson saveSettings(@RequestBody Map<String, Object> body) {
+        return ResultJson.ok(userConfigService.save(com.wisesoft.ai.util.RequestUser.uid(), body), "已保存");
     }
 
     private static String str(Object o) {

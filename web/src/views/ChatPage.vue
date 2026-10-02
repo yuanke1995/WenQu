@@ -852,7 +852,7 @@ import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, File
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, addEvalCase,
+         listAvailableSkills, getUserPreference, getUserSettings, approveToolCall, addEvalCase,
          listKnowledgeBases, listDocuments, uploadChatAttachment,
          getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
@@ -1240,10 +1240,13 @@ const deepThinkDefaults = (() => {
   } catch (e) { return {} }
 })()
 const deepThinkMap = ref({ ...deepThinkDefaults })
+/** 个人设置 → 对话偏好 的「深度思考默认开启」（跨设备生效的服务端默认；null=未设置，回落浏览器本地默认） */
+const serverDeepThinkDefault = ref(null)
 const deepThinkOn = computed(() => {
   if (thinkCap.value.locked) return true
   const explicit = deepThinkMap.value[effectiveModel.value]
   if (explicit !== undefined) return explicit === 1
+  if (serverDeepThinkDefault.value !== null) return serverDeepThinkDefault.value
   return deepThinkMap.value.__default === true
 })
 const toggleDeepThink = () => {
@@ -3262,6 +3265,11 @@ onMounted(async () => {
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
+  }).catch(() => {})
+  // 深度思考默认（个人设置 → 对话偏好）：显式设置过才覆盖浏览器本地默认（未设置=null 走本地）
+  getUserSettings().then(r => {
+    const v = r && r.data && r.data.values ? r.data.values['chat.deepThinkDefault'] : undefined
+    if (v === 'true' || v === 'false') serverDeepThinkDefault.value = v === 'true'
   }).catch(() => {})
   loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
 })

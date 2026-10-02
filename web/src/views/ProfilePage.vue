@@ -26,7 +26,7 @@
           <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
         </div>
 
-        <!-- 各类型个人默认模型面板 -->
+        <!-- 个人默认模型面板（聊天面板同时承载「对话偏好」个人覆盖项，保存按钮统一提交） -->
         <div v-else-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -35,9 +35,32 @@
                  用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
             <ModelSelect :key="current" v-model="pref[panelMeta.field]" :type="current"
                          inherit-label="不设默认" :width="360" :disabled="loading" />
-            <button class="app-btn" :disabled="saving" @click="save">保存</button>
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
+
+          <!-- 对话偏好（仅聊天面板）：个人覆盖系统设置的体验类参数，仅对本人问答生效 -->
+          <template v-if="current === 'chat'">
+            <a-divider style="margin:16px 0 12px" />
+            <p class="pf-hint">
+              回答偏好默认取「系统设置」的全局值；修改后仅对你<strong>自己</strong>的问答生效（跨设备同步），
+              只有被修改过的项才记为你的个人设置，其余继续跟随全局。
+            </p>
+            <a-spin :spinning="prefLoading">
+              <a-form v-if="prefFields.length" layout="vertical" style="max-width:560px">
+                <SchemaField v-for="f in prefFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
+              </a-form>
+              <p v-else-if="!prefLoading" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
+            </a-spin>
+            <p v-if="prefPersonalKeys.length" class="pf-sub-hint">
+              当前已设个人值：{{ prefPersonalKeys.join('、') }}
+              <button class="app-link-btn" :disabled="saving" @click="clearPrefs">全部恢复跟随系统</button>
+            </p>
+          </template>
+
+          <div class="pf-row" style="margin-top:14px">
+            <button class="app-btn" :disabled="saving" @click="save">保存</button>
+            <button v-if="current === 'chat' && prefDirty" class="app-link-btn" :disabled="saving" @click="loadPrefs">还原修改</button>
+          </div>
         </div>
 
         <!-- 向量/重排不提供个人默认：向量空间与知识库索引一一对应、重排归知识库检索设置，均无个人级配置 -->
@@ -118,14 +141,16 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile,
+         getUserSettings, saveUserSettings,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
+import SchemaField from '../components/SchemaField.vue'
 
 const router = useRouter()
 
 const navs = [
   { key: 'profile', label: '个人资料' },
-  { key: 'chat', label: '聊天模型' },
+  { key: 'chat', label: '聊天模型与偏好' },
   { key: 'vision', label: '视觉模型' },
   { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
@@ -134,8 +159,8 @@ const current = ref('profile')
 
 const PANELS = {
   chat: {
-    field: 'defaultModel', title: '聊天模型',
-    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用。',
+    field: 'defaultModel', title: '聊天模型与偏好',
+    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用；下方「回答偏好」可按需覆盖系统全局值。',
     tail: '清空（选「不设默认」）后每次对话需手动选择模型。'
   },
   vision: {
@@ -169,12 +194,115 @@ const load = async () => {
 const save = async () => {
   saving.value = true
   try {
+    // 个人默认模型（原有全量提交口径）
     await setUserPreference(pref.value)
-    message.success('个人默认模型已保存')
+    // 对话偏好（仅聊天面板）：只提交与预填不同的项，未改动的继续跟随全局
+    if (current.value === 'chat') {
+      const payload = changedPrefPayload()
+      if (Object.keys(payload).length) {
+        const r = await saveUserSettings(payload)
+        if (r && r.success === false) { message.error(r.msg || '保存失败'); return }
+      }
+    }
+    message.success('已保存')
+    await load()
+    if (current.value === 'chat') await loadPrefs()
   } catch (e) {
     message.error(e.message || '保存失败')
     await load() // 回落服务端状态，避免本地与服务端不一致
   } finally { saving.value = false }
+}
+
+// ---- 对话偏好：个人覆盖系统全局（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
+// 表单预填「生效值」（个人值 > 全局值 > schema 默认值）：用户看到的就是当前生效值；
+// 保存时只提交与预填不同的项（未改动的继续跟随全局，避免把全局值"复制"成个人值）。
+const prefLoading = ref(false)
+const prefFields = ref([])
+const prefTips = ref({})
+const prefForm = ref({})
+const prefInitial = ref({})
+const prefPersonalKeys = ref([])
+
+const setByPath = (obj, path, v) => {
+  const seg = path.split('.')
+  let t = obj
+  for (let i = 0; i < seg.length - 1; i++) { t[seg[i]] = t[seg[i]] || {}; t = t[seg[i]] }
+  t[seg[seg.length - 1]] = v
+}
+const getByPath = (obj, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), obj)
+/** 生效值 → 控件值：switch 用布尔、number 用数字、文本原样（空=控件空） */
+const toControl = (field, raw) => {
+  const v = raw == null ? '' : String(raw)
+  if (field.type === 'switch') return v === 'true'
+  if (field.type === 'number' || field.type === 'range') return v === '' ? null : Number(v)
+  return v
+}
+/** 控件值 → 提交值：全部归一为字符串（后端按字符串存/校验，与设置页同口径） */
+const toSubmit = (field, v) => {
+  if (field.type === 'switch') return v ? 'true' : 'false'
+  if (v == null) return ''
+  return String(v).trim()
+}
+// 数字控件 null 与空串等价（：只比较"是否被改过"，null/'' 归一避免误判脏）
+const norm = v => (v == null ? '' : String(v))
+
+const loadPrefs = async () => {
+  prefLoading.value = true
+  try {
+    const r = await getUserSettings()
+    const d = (r && r.data) || {}
+    const fields = d.fields || []
+    const values = d.values || {}
+    const globals = d.globals || {}
+    const form = {}
+    const init = {}
+    const labels = []
+    for (const f of fields) {
+      const personal = values[f.path]
+      if (personal !== undefined && personal !== '') labels.push(f.label)
+      const effective = (personal !== undefined && personal !== '') ? personal
+        : (globals[f.path] !== undefined && globals[f.path] !== '' ? globals[f.path] : f.def)
+      const ctrl = toControl(f, effective)
+      setByPath(form, f.path, ctrl)
+      setByPath(init, f.path, ctrl)
+    }
+    prefFields.value = fields
+    prefTips.value = d.tips || {}
+    prefForm.value = form
+    prefInitial.value = init
+    prefPersonalKeys.value = labels
+  } catch (e) { /* 拉取失败保持空面板 */ }
+  finally { prefLoading.value = false }
+}
+const prefDirty = computed(() => {
+  for (const f of prefFields.value) {
+    if (norm(getByPath(prefForm.value, f.path)) !== norm(getByPath(prefInitial.value, f.path))) return true
+  }
+  return false
+})
+/** 与预填不同的项 → 提交载荷（统一转字符串；未被改动的项不提交，继续跟随全局） */
+const changedPrefPayload = () => {
+  const payload = {}
+  for (const f of prefFields.value) {
+    const cur = getByPath(prefForm.value, f.path)
+    if (norm(cur) !== norm(getByPath(prefInitial.value, f.path))) {
+      payload[f.path] = toSubmit(f, cur)
+    }
+  }
+  return payload
+}
+/** 全部恢复跟随系统：清空本人所有个人覆盖（后端按空串=删行） */
+const clearPrefs = async () => {
+  const payload = {}
+  for (const f of prefFields.value) payload[f.path] = ''
+  saving.value = true
+  try {
+    const r = await saveUserSettings(payload)
+    if (r && r.success === false) { message.error(r.msg || '操作失败'); return }
+    message.success('已全部恢复跟随系统')
+    await loadPrefs()
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { saving.value = false }
 }
 
 // ---- 账号安全：修改密码（成功后强制重新登录） ----
@@ -287,6 +415,7 @@ const removeMemory = async m => {
 onMounted(() => {
   load()
   loadMemories()
+  loadPrefs()
   ensureAuth().then(me => { nickForm.value.username = me.username || '' })
 })
 </script>

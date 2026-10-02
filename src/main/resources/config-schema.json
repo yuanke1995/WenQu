@@ -183,6 +183,7 @@
       "max": 2,
       "step": 0.1,
       "width": 200,
+      "personal": true,
       "tier": 1
     },
     {
@@ -199,6 +200,37 @@
       "rows": 4,
       "ph": "AI 助手的角色与回答风格（引用/图片/追问规则由系统固定，不可修改）",
       "tier": 1
+    },
+    {
+      "backendKey": "chat.userSystemPrompt",
+      "panel": "chat",
+      "section": 1,
+      "group": "chat",
+      "key": "userSystemPrompt",
+      "path": "chat.userSystemPrompt",
+      "label": "附加指令",
+      "type": "textarea",
+      "tips": "userSystemPrompt",
+      "def": "",
+      "rows": 3,
+      "ph": "追加在系统提示词之后的附加要求，如回答语言、篇幅与格式偏好（个人可覆盖）",
+      "personal": true,
+      "tier": 2
+    },
+    {
+      "backendKey": "chat.deepThinkDefault",
+      "panel": "chat",
+      "section": 1,
+      "group": "chat",
+      "key": "deepThinkDefault",
+      "path": "chat.deepThinkDefault",
+      "label": "深度思考默认开启",
+      "type": "switch",
+      "tips": "deepThinkDefault",
+      "def": false,
+      "note": "对话页深度思考开关的初始状态：未按模型单独设置过时按此值（支持开关的模型）；对话页手动切换仍按模型记忆",
+      "personal": true,
+      "tier": 2
     },
     {
       "backendKey": "chat.citationCheckEnabled",
@@ -229,6 +261,7 @@
       "max": 8,
       "width": 200,
       "note": "回答末尾 <related> 推荐的用户可能追问数",
+      "personal": true,
       "tier": 2
     },
     {
@@ -246,6 +279,7 @@
       "max": 20,
       "width": 200,
       "core": true,
+      "personal": true,
       "tier": 1
     },
     {
@@ -3037,12 +3071,12 @@
       "group": "graphrag",
       "key": "modelRef",
       "path": "graphrag.modelRef",
-      "label": "抽取模型引用",
+      "label": "兜底抽取模型",
       "type": "model",
       "def": "",
       "tier": 2,
       "width": 420,
-      "note": "系统身份抽取：个人级供应商不可用，Key 用所选供应商登记的；留空 = 不抽取",
+      "note": "仅作回退：各知识库在「知识库编辑 → GraphRAG」绑定自己的抽取模型（归库主）；未绑定的库回落此模型，且判权仍按库主——非库主登记的个人供应商模型会在【开启图谱时被拒绝】，请在对应知识库里改绑可用模型；留空且库内未绑定 = 不抽取",
       "modelType": "chat",
       "allowClear": true
     },
@@ -3368,6 +3402,8 @@
     "maxImagesPerMessage": "单条消息最多携带的图片张数。超限直接拒绝，防止 base64 大载荷压垮解码与视觉处理。默认 9。",
     "maxImageMb": "单张图片的体积上限（MB，按原图计；base64 编码后约为 4/3 倍）。超限拒绝发送。默认 10。",
     "relatedCount": "回答末尾 <related> 相关追问的推荐条数，提示词里的示例会与该数量保持一致。默认 3。",
+    "userSystemPrompt": "追加在系统提示词之后的补充要求：系统提示词（或所选智能体的提示词）原文保留，本段以「用户个人附加要求」标记接在其后。适合放回答语言、篇幅、格式与口吻偏好；引用标注、配图、追问等平台硬性规则无法通过这里改写。个人可覆盖：在「个人设置 → 对话偏好」中填写自己的内容，仅对本人问答生效。",
+    "deepThinkDefault": "对话页「深度思考」开关的初始状态：对支持开关的模型，用户未在对话页手动设置过时按此值（支持的模型三态：不支持/可开关/恒思考，仅『可开关』受影响）；对话页的手动切换按模型单独记忆、不回写这里。个人可覆盖：在「个人设置 → 对话偏好」中设置自己的默认。",
     "embedBatchSize": "向量化分批大小（每批嵌入的知识块条数）。需与 embedding 上游接口的单次请求上限匹配，调大可提速但可能被限流。默认 10。",
     "ocrDpi": "PDF 扫描页 OCR 渲染 DPI：越高小字越清晰、识别率越好，但内存与耗时随之增加。默认 200。",
     "rlWindowSeconds": "限流固定窗口的长度（秒）：窗口内按「次/分钟」配置的额度计数，窗口越长突发容纳越多。默认 60。",
@@ -3477,6 +3513,8 @@
   "editable": {
     "chat.temperature": "回答温度(0~2)",
     "chat.systemPrompt": "AI助手系统提示词（角色与回答风格）",
+    "chat.userSystemPrompt": "附加指令（追加在系统提示词之后；平台层值可留空，个人可在个人设置中覆盖）",
+    "chat.deepThinkDefault": "深度思考默认开启（对话页开关的初始状态；个人可覆盖）",
     "chat.pipelineThreads": "问答流水线线程数(保存即生效)",
     "chat.streamRetryCount": "主 LLM 流式中断自动重试次数(未输出token时,0=关闭)",
     "chat.sseTimeoutMs": "问答 SSE 超时(毫秒,默认300000)",

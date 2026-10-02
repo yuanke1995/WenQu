@@ -948,6 +948,13 @@ export const setUserPreference = payload =>
 export const updateMyProfile = username =>
   request('/user/profile', { method: 'PUT', body: JSON.stringify({ username }) })
 
+// ---- 个人对话偏好（个人设置 → 对话偏好；键为 config-schema.json 标记 personal 的字段） ----
+/** 读取：{fields, tips, values（本人个人值）, globals（系统全局值，界面「跟随系统」参照）} */
+export const getUserSettings = () => request('/user/settings')
+/** 保存：扁平的 {配置键: 值}；空串=清除该项回落全局 */
+export const saveUserSettings = values =>
+  request('/user/settings', { method: 'PUT', body: JSON.stringify(values || {}) })
+
 // ---- 沙盒工作区浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
 export const sandboxState = sessionId =>
   request(`/sandbox/state?sessionId=${encodeURIComponent(sessionId || '')}`, { timeout: 15000 })

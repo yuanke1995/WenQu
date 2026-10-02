@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ public class ConfigSchemaService {
     /** 字段定义（内部用；下发给前端的是原始 JSON，保留 group/key/path/submitKey 等表单属性） */
     public record Field(String key, String panel, String label, String type,
                         Double min, Double max, Double step, Double factor,
-                        int tier, List<String> options, String help) {
+                        int tier, List<String> options, String help, boolean personal) {
     }
 
     private final List<JSONObject> panels;
@@ -103,7 +104,8 @@ public class ConfigSchemaService {
                 }
                 Field f = new Field(key, j.getString("panel"), j.getString("label"), j.getString("type"),
                         dbl(j, "min"), dbl(j, "max"), dbl(j, "step"), dbl(j, "factor"),
-                        j.getIntValue("tier", 2), List.copyOf(opts), h.get(key));
+                        j.getIntValue("tier", 2), List.copyOf(opts), h.get(key),
+                        j.getBooleanValue("personal", false));
                 if (byKey.put(key, f) != null) {
                     throw new IllegalStateException("config-schema.json 字段 backendKey 重复: " + key);
                 }
@@ -130,6 +132,34 @@ public class ConfigSchemaService {
     public int tier(String key) {
         Field f = byKey.get(key);
         return f == null ? 2 : f.tier();
+    }
+
+    /**
+     * 字段是否允许个人覆盖（个人设置 → 对话偏好；值存 c_ai_user_config，覆盖系统全局值）。
+     * 未定义字段按 false（fail-closed：个人保存接口只接受 schema 显式标记 personal 的键）。
+     */
+    public boolean isPersonal(String key) {
+        Field f = byKey.get(key);
+        return f != null && f.personal();
+    }
+
+    /** schema 中标记 personal 的字段原始定义（个人设置页渲染用，保留 label/type/min/max/def 等表单属性） */
+    public List<JSONObject> personalFields() {
+        List<JSONObject> out = new ArrayList<>();
+        for (JSONObject j : rawFields) {
+            if (j.getBooleanValue("personal", false)) out.add(j);
+        }
+        return out;
+    }
+
+    /** 指定 tips 键的文案子集（个人设置页只下发个人字段用到的 tips，避免整体文案包过大） */
+    public Map<String, String> tipsOf(Collection<String> tipsKeys) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String k : tipsKeys) {
+            String v = tips.get(k);
+            if (v != null) out.put(k, v);
+        }
+        return out;
     }
 
     /** 字段中文说明（落 c_ai_config.remark）；未知键返回 null */

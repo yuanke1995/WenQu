@@ -47,6 +47,8 @@ public class KnowledgeBaseService {
     /** 启动迁移把原全局默认库划转给第一个管理员（谁建归谁）；RoleService 仅依赖 Mapper，无循环依赖 */
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
     private final com.wisesoft.ai.service.RoleService roleService;
+    /** 读全局 graphrag.modelRef（库级抽取模型未绑定时的兜底，保存时校验其对库主可用） */
+    private final ConfigService configService;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -56,13 +58,15 @@ public class KnowledgeBaseService {
                                 AgentMapper agentMapper,
                                 com.wisesoft.ai.service.ModelRegistryService modelRegistryService,
                                 com.wisesoft.ai.mapper.UserMapper userMapper,
-                                com.wisesoft.ai.service.RoleService roleService) {
+                                com.wisesoft.ai.service.RoleService roleService,
+                                ConfigService configService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
         this.userMapper = userMapper;
         this.roleService = roleService;
+        this.configService = configService;
     }
 
     // ==================== 读写 ====================
@@ -109,9 +113,15 @@ public class KnowledgeBaseService {
         kb.setParseParams(str(body.get("parseParams")));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
+        // GraphRAG 抽取模型（库级，归库主）：空=回落系统设置 graphrag.modelRef
+        kb.setGraphModelRef(validateGraphModelRef(str(body.get("graphModelRef"))));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
                 com.wisesoft.ai.util.RequestUser.role()));
+        // 开关开启时保存即校验抽取模型可用（库级优先、回落全局；对库主不可用一律拦下，
+        // 避免"开关开着、解析后抽取永远失败"的静默状态）
+        ensureGraphModelUsable(kb.getGraphEnabled(), kb.getGraphModelRef(), uid,
+                com.wisesoft.ai.util.RequestUser.role());
         kb.setCreatedBy(uid);
         kb.setDeleted(0);
         LocalDateTime now = LocalDateTime.now();
@@ -169,11 +179,25 @@ public class KnowledgeBaseService {
             upd.set(KnowledgeBase::getEmbeddingDimensions, null);
         }
         // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
+        int resultingGraph = kb.getGraphEnabled() == null ? 0 : kb.getGraphEnabled();
         if (body.containsKey("graphEnabled")) {
             Object v = body.get("graphEnabled");
             boolean on = Boolean.TRUE.equals(v) || "1".equals(String.valueOf(v)) || Integer.valueOf(1).equals(v);
             upd.set(KnowledgeBase::getGraphEnabled, on ? 1 : 0);
+            resultingGraph = on ? 1 : 0;
         }
+        // GraphRAG 抽取模型（库级绑定，可清除=回落全局）：提交即校验引用有效性/类型/归属
+        String resultingGraphRef = kb.getGraphModelRef();
+        if (body.containsKey("graphModelRef")) {
+            resultingGraphRef = validateGraphModelRef(str(body.get("graphModelRef")));
+            upd.set(KnowledgeBase::getGraphModelRef, resultingGraphRef);
+        }
+        // 开关开启时保存即校验抽取模型可用（含"仅改名字"的保存：存量开着开关却没模型的库
+        // 在此被拦下并给出明确指引，不让它在运行时静默失败）
+        ensureGraphModelUsable(resultingGraph, resultingGraphRef,
+                kb.getCreatedBy() == null || kb.getCreatedBy().isBlank()
+                        ? com.wisesoft.ai.util.RequestUser.uid() : kb.getCreatedBy(),
+                com.wisesoft.ai.util.RequestUser.role());
         upd.set(KnowledgeBase::getUpdateTime, LocalDateTime.now());
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
         // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本项目已踩过同一坑）
@@ -244,6 +268,49 @@ public class KnowledgeBaseService {
             throw new com.wisesoft.ai.common.BizException("知识库向量模型需为向量类型（当前所选为 " + type + " 类型）");
         }
         return v;
+    }
+
+    /**
+     * GraphRAG 抽取模型校验（库级，可空=回落全局）：非空时必须可解析、对库主可用、且为聊天类型。
+     * 与 {@link #validateEmbeddingRef} 同口径（谁建库用谁的模型），差别在不强制必填。
+     */
+    public String validateGraphModelRef(String ref) {
+        String v = ref == null ? "" : ref.trim();
+        if (v.isEmpty()) return null;
+        if (modelRegistryService.resolveReference(v) == null) {
+            throw new com.wisesoft.ai.common.BizException("GraphRAG 抽取模型无效或已被删除，请重新选择");
+        }
+        String type = modelRegistryService.referenceType(v);
+        if (type != null && !com.wisesoft.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)) {
+            throw new com.wisesoft.ai.common.BizException("GraphRAG 抽取模型需为聊天类型（当前所选为 " + type + " 类型）");
+        }
+        return v;
+    }
+
+    /**
+     * 开启 GraphRAG 时的抽取模型把关：库级引用优先，空则回落系统设置 graphrag.modelRef。
+     * 保存时即校验"对库主可用"——抽取是异步任务、没有请求身份，运行时判权只按库主，
+     * 非库主可用的模型（他人个人供应商）必然被拒，不能等到抽取时才发现。
+     */
+    private void ensureGraphModelUsable(int graphEnabled, String kbRef, String uid, String role) {
+        if (graphEnabled != 1) return;
+        String effective = kbRef == null || kbRef.isBlank()
+                ? String.valueOf(configService.get("graphrag.modelRef")).trim() : kbRef.trim();
+        if (effective.isEmpty()) {
+            throw new com.wisesoft.ai.common.BizException(
+                    "开启 GraphRAG 需先选择抽取模型（本库未绑定，系统设置也未配置 graphrag.modelRef）");
+        }
+        try {
+            modelRegistryService.assertUsable(effective, uid, role);
+        } catch (com.wisesoft.ai.common.BizException e) {
+            // 补 GraphRAG 上下文：用户看到"无法使用"时未必知道生效的是库级绑定还是系统兜底模型
+            throw new com.wisesoft.ai.common.BizException("GraphRAG 抽取模型不可用：" + e.getMessage()
+                    + "（请在知识库编辑里选择你登记过的聊天模型）");
+        }
+        String type = modelRegistryService.referenceType(effective);
+        if (type != null && !com.wisesoft.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)) {
+            throw new com.wisesoft.ai.common.BizException("GraphRAG 抽取模型需为聊天类型（当前生效配置为 " + type + " 类型）");
+        }
     }
 
     /** 绑定了向量模型的未删除知识库（per-KB 向量索引按此枚举；向量模型必绑后即全部知识库） */
@@ -469,6 +536,10 @@ public class KnowledgeBaseService {
             // 向量模型引用要随列表下发：卡片展示绑定模型名 + 编辑弹窗回显（缺失会被当成"未绑定"）
             m.put("embeddingRef", kb.getEmbeddingRef());
             m.put("embeddingDimensions", kb.getEmbeddingDimensions());
+            // GraphRAG 开关与库级抽取模型同样要随列表下发：编辑弹窗回显（缺失会让开关显示为关，
+            // 保存时把已开启的图谱开关静默关掉）
+            m.put("graphEnabled", kb.getGraphEnabled());
+            m.put("graphModelRef", kb.getGraphModelRef());
             m.put("isDefault", kb.getIsDefault());
             // 官方内置库标记随列表下发：前端挂「官方」徽标并隐藏编辑/删除入口
             m.put("builtin", kb.getBuiltin());
