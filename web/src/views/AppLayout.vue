@@ -122,6 +122,34 @@
             <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
           </button>
         </a-tooltip>
+        <!-- 站内通知铃铛：Badge=未读数（30s 轮询），点开拉列表；popover 挂 body，样式走底部非 scoped 块 -->
+        <a-popover v-model:open="notifOpen" trigger="click" placement="topRight" overlay-class-name="notif-popover" @open-change="onNotifOpen">
+          <template #content>
+            <div class="notif-panel">
+              <div class="notif-head">
+                <span class="notif-title">通知</span>
+                <button v-if="unreadCount > 0" class="notif-readall" @click="markAllRead">全部已读</button>
+              </div>
+              <a-spin v-if="notifLoading" size="small" style="display:block;margin:24px auto" />
+              <div v-else-if="!notifItems.length" class="notif-empty">暂无通知</div>
+              <div v-else class="notif-list">
+                <button v-for="n in notifItems" :key="n.id" class="notif-item" :class="{ unread: !n.readFlag }" @click="openNotif(n)">
+                  <component :is="notifIcon(n.type)" class="notif-ic" :class="notifClass(n.type)" />
+                  <span class="notif-body">
+                    <span class="notif-item-title">{{ n.title }}<span v-if="!n.readFlag" class="notif-dot" /></span>
+                    <span v-if="n.content" class="notif-content">{{ n.content }}</span>
+                    <span class="notif-time">{{ notifTime(n.createTime) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </template>
+          <a-badge :count="unreadCount" :offset="[-4, 4]" size="small" :title="''">
+            <a-tooltip title="通知" placement="right">
+              <button class="app-icon-btn"><bell-outlined /></button>
+            </a-tooltip>
+          </a-badge>
+        </a-popover>
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
             <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色），替代原先的灯泡 -->
@@ -155,8 +183,9 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined,
-         RightOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
+         RightOutlined, BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
+         notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
@@ -385,12 +414,91 @@ const doLogout = async () => {
   router.replace('/login')
 }
 
+// ==================== 站内通知（铃铛）：未读数 30s 轮询，点开拉列表 ====================
+// 后端触发面：解析终态（成功/终态失败）、工作流失败/超时/挂起待审核（非 manual 的失败才通知——
+// manual 的发起人正在画布前看 SSE 实时进度）、网页源自动刷新失败。接收人=资源归属人。
+const notifOpen = ref(false)
+const notifLoading = ref(false)
+const notifItems = ref([])
+const unreadCount = ref(0)
+let notifTimer = null
+
+// 类型 → 图标/语义色：成功绿、失败红、等待/超时黄
+const NOTIF_ICONS = {
+  'parse.done': CheckCircleFilled,
+  'parse.failed': CloseCircleFilled,
+  'workflow.failed': CloseCircleFilled,
+  'workflow.timeout': ExclamationCircleFilled,
+  'workflow.approval': ExclamationCircleFilled,
+  'web.refresh.failed': CloseCircleFilled
+}
+const NOTIF_TONES = {
+  'parse.done': 'ok',
+  'parse.failed': 'err',
+  'workflow.failed': 'err',
+  'workflow.timeout': 'warn',
+  'workflow.approval': 'warn',
+  'web.refresh.failed': 'err'
+}
+const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
+const notifClass = t => NOTIF_TONES[t] || ''
+// 复用会话时间的稳健解析（ISO/数组/对象形态都兼容）
+const notifTime = v => {
+  const d = sessTime(v)
+  if (!d) return ''
+  const diff = Date.now() - d.getTime()
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+// 未读数轮询：失败静默（登录态失效由 app:unauthorized 全局接管，轮询自身不弹错）
+const refreshUnread = async () => {
+  try {
+    const res = await notificationUnreadCount()
+    unreadCount.value = res?.count || 0
+  } catch { /* 下一轮再试 */ }
+}
+const loadNotifs = async () => {
+  notifLoading.value = true
+  try {
+    const res = await notificationList(50)
+    notifItems.value = res?.items || []
+    unreadCount.value = res?.unreadCount || 0
+  } catch (e) { message.error(e.message || '通知加载失败') }
+  finally { notifLoading.value = false }
+}
+const onNotifOpen = open => { if (open) loadNotifs() }
+const markAllRead = async () => {
+  try {
+    await notificationMarkAllRead()
+    notifItems.value = notifItems.value.map(n => ({ ...n, readFlag: 1 }))
+    unreadCount.value = 0
+  } catch (e) { message.error(e.message || '操作失败') }
+}
+// 点击通知：先本地置已读（乐观更新，失败回滚），再按 ref 跳转
+const openNotif = async n => {
+  if (!n.readFlag) {
+    n.readFlag = 1
+    unreadCount.value = Math.max(0, unreadCount.value - 1)
+    notificationMarkRead([n.id]).catch(() => { n.readFlag = 0; refreshUnread() })
+  }
+  if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
+  else if (n.refType === 'workflow' && n.refId) router.push({ path: '/agents', query: { tab: 'workflow' } })
+  notifOpen.value = false
+}
+
 onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
   navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
   loadSessions()
+  refreshUnread()
+  notifTimer = setInterval(refreshUnread, 30_000)
 })
+onUnmounted(() => clearInterval(notifTimer))
 </script>
 
 <style scoped>
@@ -576,4 +684,31 @@ onMounted(async () => {
   .side .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
   .side .side-foot .app-icon-btn { margin-left: 0 !important; }
 }
+</style>
+
+<!-- 站内通知面板样式：popover 内容 teleport 到 body，scoped 特性丢失，必须用非 scoped 块；
+     全部类挂在 .notif-popover 下防全局泄漏 -->
+<style>
+.notif-popover .ant-popover-inner { padding: 10px; border-radius: var(--app-radius); }
+.notif-popover .notif-panel { width: 320px; }
+.notif-popover .notif-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; border-bottom: 1px solid var(--app-border); }
+.notif-popover .notif-title { font-weight: 600; font-size: 13px; color: var(--app-text); }
+.notif-popover .notif-readall { border: none; background: none; color: var(--app-accent); cursor: pointer; font-size: 12px; padding: 0; }
+.notif-popover .notif-readall:hover { color: var(--app-accent-hover); }
+.notif-popover .notif-empty { padding: 30px 0; text-align: center; color: var(--app-text3); font-size: 12px; }
+.notif-popover .notif-list { max-height: 380px; overflow-y: auto; scrollbar-width: thin; }
+.notif-popover .notif-item { display: flex; gap: 10px; align-items: flex-start; width: 100%; border: none; background: none; text-align: left; padding: 10px 8px; border-radius: 8px; cursor: pointer; }
+.notif-popover .notif-item:hover { background: var(--app-panel-2); }
+.notif-popover .notif-item.unread { background: var(--app-accent-weak); }
+.notif-popover .notif-item.unread:hover { background: var(--app-panel-2); }
+.notif-popover .notif-ic { font-size: 16px; margin-top: 2px; flex: none; }
+.notif-popover .notif-ic.ok { color: var(--app-ok); }
+.notif-popover .notif-ic.err { color: var(--app-danger); }
+.notif-popover .notif-ic.warn { color: var(--app-warn); }
+.notif-popover .notif-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.notif-popover .notif-item-title { font-size: 13px; color: var(--app-text); line-height: 1.4; }
+.notif-popover .notif-item.unread .notif-item-title { font-weight: 600; }
+.notif-popover .notif-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); margin-left: 6px; vertical-align: middle; }
+.notif-popover .notif-content { font-size: 12px; color: var(--app-text2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
+.notif-popover .notif-time { font-size: 11px; color: var(--app-text3); }
 </style>

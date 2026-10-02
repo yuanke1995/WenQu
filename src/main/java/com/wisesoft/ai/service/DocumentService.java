@@ -11,6 +11,7 @@ import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.KnowledgeMapper;
 import com.wisesoft.ai.model.AiDocument;
+import com.wisesoft.ai.model.Notification;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.Chunk;
@@ -100,6 +101,8 @@ public class DocumentService {
     private final QaIndexService qaIndexService;
     /** 父子分块索引：超长块切子块向量化，命中后返回父块正文（parse.childEnabled，best-effort） */
     private final ChildChunkService childChunkService;
+    /** 站内通知：网页源自动刷新失败等异步事件的用户可感知面（旁路，失败不影响主链路） */
+    private final NotificationService notificationService;
     /** Redis：全量重嵌入分布式互斥锁（多副本共享库时防两个实例互删对方正在重建的索引） */
     private final StringRedisTemplate redisTemplate;
     /** 文档解析任务队列：上传/重解析只登记任务，执行由队列扫描器抢占（队列满不丢任务、失败自动退避重试） */
@@ -371,6 +374,10 @@ public class DocumentService {
                 log.info("[WEB-REFRESH] 刷新完成 doc={} url={}", doc.getId(), doc.getSourceUrl());
             } catch (Exception e) {
                 log.warn("[FAIL-LOUD] 网页源刷新失败 doc={} url={}: {}", doc.getId(), doc.getSourceUrl(), e.getMessage());
+                notificationService.create(doc.getCreatedBy(), Notification.TYPE_WEB_REFRESH_FAILED,
+                        "网页源「" + doc.getFileName() + "」自动刷新失败",
+                        "源地址 " + doc.getSourceUrl() + "：下次刷新时间已顺延；可在文档管理中手动重试。",
+                        "kb", doc.getKbId());
                 // 失败也推进 next_refresh_at（按 cron 或兜底 1 天），避免立刻重试打爆源站
                 documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                         .eq(AiDocument::getId, doc.getId())

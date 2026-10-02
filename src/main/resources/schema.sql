@@ -832,3 +832,19 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
     KEY `idx_task_time` (`task_name`, `started_at`),
     KEY `idx_started` (`started_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行日志（ScheduleCenter 每次触发完成后落一行；按保留期定期清理）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_notification` (
+    `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',
+    `uid`         VARCHAR(64)   NOT NULL COMMENT '接收人（uid；每人只看自己的通知）',
+    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败',
+    `title`       VARCHAR(200)  NOT NULL COMMENT '一句话标题（列表主文本）',
+    `content`     VARCHAR(1000) DEFAULT NULL COMMENT '详情（块数/失败原因等，落库前截断）',
+    `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流',
+    `ref_id`      VARCHAR(50)   DEFAULT NULL COMMENT '跳转目标 ID（kbId / workflowId；空=不可跳转）',
+    `read_flag`   INT           NOT NULL DEFAULT 0 COMMENT '0=未读 1=已读（read 是 MySQL 保留字，列名带 _flag 后缀）',
+    `read_time`   DATETIME      DEFAULT NULL COMMENT '已读时刻',
+    `create_time` DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '产生时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_nt_uid_time` (`uid`, `create_time`),
+    KEY `idx_nt_uid_unread` (`uid`, `read_flag`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';

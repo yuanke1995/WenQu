@@ -77,6 +77,7 @@ public class ScheduleCenter {
     private final com.wisesoft.ai.service.TraceService traceService;
     private final com.wisesoft.ai.service.ParseQueueService parseQueueService;
     private final com.wisesoft.ai.service.ChatUploadService chatUploadService;
+    private final com.wisesoft.ai.service.NotificationService notificationService;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
@@ -97,6 +98,7 @@ public class ScheduleCenter {
                           com.wisesoft.ai.service.TraceService traceService,
                           com.wisesoft.ai.service.ParseQueueService parseQueueService,
                           com.wisesoft.ai.service.ChatUploadService chatUploadService,
+                          com.wisesoft.ai.service.NotificationService notificationService,
                           ScheduleRunLogMapper scheduleRunLogMapper) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
@@ -112,6 +114,7 @@ public class ScheduleCenter {
         this.traceService = traceService;
         this.parseQueueService = parseQueueService;
         this.chatUploadService = chatUploadService;
+        this.notificationService = notificationService;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
     }
 
@@ -257,6 +260,20 @@ public class ScheduleCenter {
                     int purged = purgeRunLogs(days);
                     if (purged > 0) {
                         log.info("[Schedule] 执行日志已清理 {} 行（保留 {} 天）", purged, days);
+                    }
+                });
+
+        // 站内通知清理：c_ai_notification 按保留期物理删除（保留期 notification.retentionDays，默认 30 天）。
+        // 通知指向的解析任务/运行记录本身也有保留期，通知活得比它们久没有回溯价值；不区分已读未读。
+        register("站内通知清理", "物理删除超过保留期（notification.retentionDays）的站内通知",
+                "notification.cleanupIntervalMs",
+                () -> configService.getInt("notification.cleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> {
+                    int days = Math.max(1, configService.getInt("notification.retentionDays", 30));
+                    int purged = notificationService.cleanupExpired(days);
+                    if (purged > 0) {
+                        log.info("[Schedule] 站内通知已清理 {} 条（保留 {} 天）", purged, days);
                     }
                 });
 

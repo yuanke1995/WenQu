@@ -1,0 +1,67 @@
+package com.wisesoft.ai.model;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 站内通知（一行 = 给某用户的一条通知）。
+ * <p>
+ * 产生方是各异步链路的终态收口处（解析队列 / 工作流收口 / 网页源刷新），
+ * 消费方是前端铃铛（轮询未读数 + 拉列表）。通知是主链路的旁路：落库失败只告警，
+ * 绝不影响解析/运行本身的收口（见 {@code NotificationService.create} 的边界说明）。
+ *
+ * @author yuanke
+ */
+@Data
+@TableName("c_ai_notification")
+public class Notification {
+
+    @TableId(type = IdType.ASSIGN_UUID)
+    private String id;
+
+    /** 接收人（uid） */
+    private String uid;
+
+    /** 类型常量见下方 */
+    private String type;
+
+    /** 一句话标题（列表主文本） */
+    private String title;
+
+    /** 详情（块数/失败原因等） */
+    private String content;
+
+    /** 跳转目标类型: kb / workflow（空=不可跳转） */
+    private String refType;
+
+    /** 跳转目标 ID（kbId / workflowId） */
+    private String refId;
+
+    /** 0=未读 1=已读（read 是 MySQL 保留字，Java 字段名避开） */
+    private Integer readFlag;
+
+    /** 已读时刻 */
+    private LocalDateTime readTime;
+
+    /** 产生时刻 */
+    private LocalDateTime createTime;
+
+    // ==================== 类型常量（与 schema.sql 注释一一对应） ====================
+
+    /** 文档解析完成 */
+    public static final String TYPE_PARSE_DONE = "parse.done";
+    /** 文档解析终态失败（不重试） */
+    public static final String TYPE_PARSE_FAILED = "parse.failed";
+    /** 工作流运行失败 */
+    public static final String TYPE_WORKFLOW_FAILED = "workflow.failed";
+    /** 工作流运行超时 */
+    public static final String TYPE_WORKFLOW_TIMEOUT = "workflow.timeout";
+    /** 工作流运行挂起待人工审核 */
+    public static final String TYPE_WORKFLOW_APPROVAL = "workflow.approval";
+    /** 网页源自动刷新失败 */
+    public static final String TYPE_WEB_REFRESH_FAILED = "web.refresh.failed";
+}

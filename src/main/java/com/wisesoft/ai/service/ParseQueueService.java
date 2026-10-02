@@ -1,7 +1,10 @@
 package com.wisesoft.ai.service;
 
 import com.wisesoft.ai.common.ParseFatalException;
+import com.wisesoft.ai.mapper.AiDocumentMapper;
 import com.wisesoft.ai.mapper.ParseTaskMapper;
+import com.wisesoft.ai.model.AiDocument;
+import com.wisesoft.ai.model.Notification;
 import com.wisesoft.ai.model.ParseTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -64,6 +67,10 @@ public class ParseQueueService {
     private final ConfigService configService;
     /** 解析执行体：DocumentService。构造注入必须 @Lazy——DocumentService 本身又注入本类，否则构造环 */
     private final DocumentService documentService;
+    /** 文档行只读（解析终态通知取归属人/文件名/块数）：mapper 无状态，直接注入不参与构造环 */
+    private final AiDocumentMapper aiDocumentMapper;
+    /** 站内通知：解析终态（成功/终态失败）的用户可感知面。旁路语义，落库失败不影响解析收口 */
+    private final NotificationService notificationService;
     /** 配置变更时（parse.embedConcurrency）按需增减许可 */
     private final Gate embedGate;
 
@@ -80,10 +87,13 @@ public class ParseQueueService {
     });
 
     public ParseQueueService(ParseTaskMapper parseTaskMapper, ConfigService configService,
-                             @org.springframework.context.annotation.Lazy DocumentService documentService) {
+                             @org.springframework.context.annotation.Lazy DocumentService documentService,
+                             AiDocumentMapper aiDocumentMapper, NotificationService notificationService) {
         this.parseTaskMapper = parseTaskMapper;
         this.configService = configService;
         this.documentService = documentService;
+        this.aiDocumentMapper = aiDocumentMapper;
+        this.notificationService = notificationService;
         this.embedGate = new Gate(Math.max(1, configService.getInt("parse.embedConcurrency", 2)));
     }
 
@@ -189,6 +199,7 @@ public class ParseQueueService {
         try {
             documentService.runParseTask(taskId, docId);
             parseTaskMapper.markSucceeded(taskId);
+            notifyParseOutcome(docId, null);
             log.info("[PARSE-QUEUE] 任务成功 task={} doc={} 耗时 {}s", taskId, docId, (System.currentTimeMillis() - start) / 1000);
         } catch (Throwable e) {
             handleFailure(taskId, docId, e);
@@ -197,11 +208,37 @@ public class ParseQueueService {
         }
     }
 
+    /**
+     * 解析终态通知（成功 / 终态失败；retryable 中间态不通知——用户等的是结果不是过程）。
+     * 接收人取文档 createdBy（后台线程无登录态，不读 RequestUser）；文档行已删（解析中删除）
+     * 则没有接收对象，跳过。通知是旁路，create 内部已全捕获，失败不影响解析收口。
+     */
+    private void notifyParseOutcome(String docId, String error) {
+        try {
+            AiDocument doc = aiDocumentMapper.selectById(docId);
+            if (doc == null) return;
+            if (error == null) {
+                notificationService.create(doc.getCreatedBy(), Notification.TYPE_PARSE_DONE,
+                        "文档「" + doc.getFileName() + "」解析完成",
+                        doc.getChunkCount() == null ? null : "共 " + doc.getChunkCount() + " 个知识块，可开始提问与检索。",
+                        "kb", doc.getKbId());
+            } else {
+                notificationService.create(doc.getCreatedBy(), Notification.TYPE_PARSE_FAILED,
+                        "文档「" + doc.getFileName() + "」解析失败",
+                        error + "（重试已达上限或为不可重试错误；可在文档管理中重新解析）",
+                        "kb", doc.getKbId());
+            }
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 解析终态通知组装失败（不影响收口）doc={}: {}", docId, e.getMessage());
+        }
+    }
+
     private void handleFailure(String taskId, String docId, Throwable e) {
         String msg = safeMessage(e);
         boolean fatal = isFatal(e);
         if (fatal) {
             parseTaskMapper.markDead(taskId, msg);
+            notifyParseOutcome(docId, msg);   // 终态失败才通知（retryable 还有退避重试，属中间态）
             log.warn("[PARSE-QUEUE] 任务终态失败（不重试） task={} doc={}: {}", taskId, docId, msg);
         } else {
             try {

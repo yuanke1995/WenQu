@@ -121,7 +121,8 @@
         "GraphRAG（知识图谱，库级开关）",
         "文档解析队列（并发 / 排队 / 重试）",
         "任务执行日志（ScheduleCenter 运行历史）",
-        "工作流运行治理（步数 / 超时 / 记录清理）"
+        "工作流运行治理（步数 / 超时 / 记录清理）",
+        "站内通知（铃铛，异步事件可感知面）"
       ]
     },
     {
@@ -2946,6 +2947,41 @@
       "tier": 3
     },
     {
+      "backendKey": "notification.retentionDays",
+      "panel": "maintenance",
+      "section": 12,
+      "group": "notification",
+      "key": "retentionDays",
+      "path": "notification.retentionDays",
+      "label": "通知保留天数",
+      "type": "number",
+      "tips": "notificationRetention",
+      "def": 30,
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "width": 200,
+      "note": "站内通知（铃铛）超期物理删除，不区分已读未读；通知指向的运行记录/解析任务本身也有保留期",
+      "tier": 3
+    },
+    {
+      "backendKey": "notification.cleanupIntervalMs",
+      "panel": "maintenance",
+      "section": 12,
+      "group": "notification",
+      "key": "cleanupIntervalMs",
+      "path": "notification.cleanupIntervalMs",
+      "label": "通知清理间隔(ms)",
+      "type": "number",
+      "tips": "notificationCleanupInterval",
+      "def": 86400000,
+      "width": 220,
+      "note": "≤0 = 暂停清理任务（通知会持续累积，不建议）",
+      "min": 0,
+      "step": 3600000,
+      "tier": 3
+    },
+    {
       "backendKey": "mcp.server.enabled",
       "panel": "mcp",
       "section": 0,
@@ -3423,7 +3459,9 @@
     "webSearchMaxResults": "单次搜索返回的结果条数上限。服务商实际返回可能少于此值；条数越多上下文占用越大。",
     "webSearchMaxCallsPerTurn": "单轮问答允许的联网搜索次数。防模型陷入「搜→不满意→再搜」烧配额；0 表示不限制。",
     "webSearchTimeoutMs": "单次搜索请求的超时时间。超时按失败处理并给出降级提示，不会阻塞整轮回答。",
-    "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。"
+    "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。",
+    "notificationRetention": "站内通知（解析完成/失败、工作流失败/超时/待审核、网页源刷新失败）的保留天数：超期物理删除，不区分已读未读。通知指向的运行记录与解析任务本身也有各自的保留期，通知活得比它们久没有回溯价值。",
+    "notificationCleanupInterval": "站内通知清理任务的运行间隔（毫秒，默认每日）。≤0 = 暂停清理任务（通知会持续累积，不建议）。"
   },
   "corePaths": [
     "chat.temperature",

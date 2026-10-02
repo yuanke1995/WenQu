@@ -16,6 +16,7 @@ import com.wisesoft.ai.model.Workflow;
 import com.wisesoft.ai.model.WorkflowRun;
 import com.wisesoft.ai.model.WorkflowVersion;
 import com.wisesoft.ai.model.Agent;
+import com.wisesoft.ai.model.Notification;
 import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.thread.ThreadPoolManager;
@@ -114,6 +115,7 @@ public class WorkflowService {
     private final ConfigService configService;
     private final ResourceVisibilityService visibility;
     private final WorkflowRunStreamService stream;
+    private final NotificationService notificationService;
 
     /**
      * 异步运行派发池（第 2 期：run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
@@ -1301,6 +1303,7 @@ public class WorkflowService {
         run.setDurationMs(System.currentTimeMillis() - ctx.t0);
         runMapper.updateById(run);
         fireCallbackIfConfigured(run);   // 终态回调（配置了才发；异步、失败不影响收口）
+        notifyRunOutcome(run);           // 站内通知（旁路，失败不影响收口）
         // 进度流收口：终态关流；挂起（非终态）只推状态、保持流打开（等审批/超时回收再关）
         if (WorkflowRunStreamService.isTerminal(run.getStatus())) {
             stream.publishDone(run.getId(), run);
@@ -1308,6 +1311,37 @@ public class WorkflowService {
             stream.publishStatus(run.getId(), run.getStatus(), null);
         }
         return run;
+    }
+
+    /**
+     * 运行终态/挂起的站内通知（通知是旁路，内部已全捕获，失败不影响收口）：
+     * <ul>
+     *   <li><b>挂起待审核</b>：一律通知发起人——挂起意味着"等人裁决"，人在画布前也可能中途离开；</li>
+     *   <li><b>失败/超时</b>：非 manual 触发才通知——manual 的发起人正在画布前看 SSE 实时进度，
+     *       通知是噪音；schedule/api/agent 触发的发起人此时不在现场，必须可感知。</li>
+     * </ul>
+     */
+    private void notifyRunOutcome(WorkflowRun run) {
+        String status = run.getStatus();
+        if ("waiting_approval".equals(status)) {
+            notificationService.create(run.getTriggeredBy(), Notification.TYPE_WORKFLOW_APPROVAL,
+                    "工作流「" + workflowName(run.getWorkflowId()) + "」运行挂起待审核",
+                    "运行已在人工审核节点暂停，前往工作流画布查看并裁决。",
+                    "workflow", run.getWorkflowId());
+        } else if (("failed".equals(status) || "timeout".equals(status))
+                && !"manual".equals(run.getTriggerType())) {
+            String type = "timeout".equals(status) ? Notification.TYPE_WORKFLOW_TIMEOUT : Notification.TYPE_WORKFLOW_FAILED;
+            notificationService.create(run.getTriggeredBy(), type,
+                    "工作流「" + workflowName(run.getWorkflowId()) + "」运行" + ("timeout".equals(status) ? "超时" : "失败"),
+                    (run.getError() == null || run.getError().isBlank()) ? null : run.getError(),
+                    "workflow", run.getWorkflowId());
+        }
+    }
+
+    /** 工作流名（通知文案用；行已删/不存在时回落 ID，不让通知发不出去） */
+    private String workflowName(String workflowId) {
+        Workflow w = workflowMapper.selectById(workflowId);
+        return w == null ? workflowId : w.getName();
     }
 
     /** 某工作流的运行记录（最近 50 条，新→旧）：读取权校验后按 started_at 倒序（共享只读者可见） */

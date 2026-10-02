@@ -973,3 +973,9 @@ export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POS
 export const graphStatus = kbId => request(`/graph/${kbId}/status`)
 export const graphTriples = (kbId, page = 1, size = 20) => request(`/graph/${kbId}/triples?page=${page}&size=${size}`)
 export const graphClear = kbId => request(`/graph/${kbId}`, { method: 'DELETE' })
+
+// ---------- 站内通知（铃铛；解析/工作流/网页源刷新等异步事件的用户可感知面） ----------
+export const notificationList = (limit = 50) => request(`/notification/list?limit=${limit}`)
+export const notificationUnreadCount = () => request('/notification/unread-count')
+export const notificationMarkRead = ids => request('/notification/read', { method: 'POST', body: JSON.stringify({ ids }) })
+export const notificationMarkAllRead = () => request('/notification/read-all', { method: 'POST' })
