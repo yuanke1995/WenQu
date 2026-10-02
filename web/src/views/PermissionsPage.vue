@@ -197,9 +197,11 @@
               </span>
             </template>
             <template #optionLabel="opt">
+              <!-- opt 可能为 undefined：库里存了不在 ICONS 里的旧图标名时，select 找不到对应 option，
+                   antd 的 optionLabelRender 会以 undefined 调用本插槽（SingleSelector.js:135），必须容错 -->
               <span class="rb-icon-opt">
-                <component :is="iconOf(opt.value)" class="rb-icon-opt-ic" />
-                <span class="rb-icon-opt-name">{{ opt.label }}</span>
+                <component :is="iconOf(opt?.value)" class="rb-icon-opt-ic" />
+                <span class="rb-icon-opt-name">{{ opt?.label }}</span>
               </span>
             </template>
           </a-select>
@@ -297,7 +299,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined,
          BarChartOutlined, ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined,
-         FolderOutlined, UserOutlined, FileOutlined } from '@ant-design/icons-vue'
+         FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
@@ -333,7 +335,7 @@ const roles = ref([])
 const ICONS = {
   MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined, BarChartOutlined,
   ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined,
-  FolderOutlined, UserOutlined, FileOutlined
+  FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined
 }
 /** 图标中文名（值仍存英文类名，只用于界面展示；未登记的按类名原样显示） */
 const ICON_LABELS = {
@@ -348,7 +350,8 @@ const ICON_LABELS = {
   AppstoreOutlined: '应用',
   FolderOutlined: '文件夹',
   UserOutlined: '用户',
-  FileOutlined: '文件'
+  FileOutlined: '文件',
+  FileTextOutlined: '文档'
 }
 const iconOf = name => ICONS[name] || FileOutlined
 const iconLabel = name => ICON_LABELS[name] || name

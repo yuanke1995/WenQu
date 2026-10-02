@@ -153,7 +153,7 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
-         SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
+         FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined,
          RightOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
@@ -177,7 +177,7 @@ const userName = computed(() => {
 const ICONS = {
   MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined, BarChartOutlined,
   ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined, PlusOutlined,
-  FolderOutlined, UserOutlined, FileOutlined
+  FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined
 }
 const iconOf = name => ICONS[name] || FileOutlined
 // ensureAuth 填充的是模块级缓存（非响应式），故挂载后显式赋值
