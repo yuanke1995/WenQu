@@ -59,7 +59,7 @@
 
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <template v-if="current !== 'maintenance' || maintTab === 'config'">
-                <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode)" :key="i">
+                <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode, form)" :key="i">
                   <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
 
                   <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。

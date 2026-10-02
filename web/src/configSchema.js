@@ -50,11 +50,13 @@ export function hiddenFieldCount (panel) {
 /**
  * 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入。
  * @param coreOnly true=基础模式，只渲染核心字段（该节全被隐藏时不输出标题）
+ * @param form 传入时按 vif 过滤不可见字段——某节字段全被隐藏时标题一并隐藏
+ *             （如 MCP「安全与限频」挂在「对外提供端点」开关下）
  */
-export function blocksOf (panel, coreOnly = false) {
+export function blocksOf (panel, coreOnly = false, form = null) {
   const p = PANELS.find(x => x.key === panel)
   const blocks = []
-  const keep = f => !coreOnly || isCoreField(f)
+  const keep = f => (!coreOnly || isCoreField(f)) && (!form || isVisible(f, form))
   for (let i = 0; i < p.sections.length; i++) {
     const fs = FIELDS.filter(f => f.panel === panel && f.section === i && !f.groupedUnder && keep(f))
     if (!fs.length) continue
@@ -94,14 +96,15 @@ export function writeForm (obj, path, value) {
   t[seg[seg.length - 1]] = value
 }
 
-/** 条件显示：vif 形如 "vision.enabled" 或 "a.b && c.d" */
+/** 条件显示：vif 形如 "a.b"、"a.b && c.d" 或 "a.b=v1,v2"（取值命中任一即显示，用于枚举联动） */
 export function isVisible (field, form) {
   if (!field.vif) return true
   for (const cond of field.vif.split('&&').map(s => s.trim())) {
-    const seg = cond.split('.')
-    let v = form
-    for (const s of seg) { if (v == null) return false; v = v[s] }
-    if (!v) return false
+    const eq = cond.indexOf('=')
+    if (eq > 0) {
+      const actual = String(readForm(form, cond.slice(0, eq).trim()) ?? '')
+      if (!cond.slice(eq + 1).split(',').map(s => s.trim()).includes(actual)) return false
+    } else if (!readForm(form, cond)) return false
   }
   return true
 }
