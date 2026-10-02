@@ -111,3 +111,46 @@ export function collapseSessions () {
 
 // 侧边栏展示：隐藏空会话（与旧版口径一致，空会话由聊天页"无感复用"逻辑管理）
 export const visibleSessions = () => sessionStore.list.filter(s => (s.messageCount ?? 0) > 0)
+
+// 首条消息发出即把会话抬进侧栏列表（不等回答完成）：列表隐藏空会话，若等 onDone 才刷新，
+// 长回答生成期间新会话在侧栏不可见。纯本地乐观更新，权威数据仍由 onDone 后的 loadSessions 兜底
+export function markSessionActive (sid, question) {
+  if (!sid || sessionStore.keyword) return   // 搜索态下列表是关键字过滤结果，交给权威刷新
+  const now = new Date().toISOString()
+  const title = (question || '').trim().slice(0, 50).trim()
+  const lift = item => {
+    if (title && !item.title) item.title = title
+    item.messageCount = Math.max(item.messageCount ?? 0, 1)
+    item.updateTime = now
+    // 置顶区保持在前，非置顶里最新更新的排最前（此后 onDone 的整表刷新会恢复权威序）
+    if (item.isPinned !== 1) {
+      const pinnedCount = sessionStore.list.filter(s => s.isPinned === 1).length
+      const idx = sessionStore.list.indexOf(item)
+      if (idx !== pinnedCount) {
+        sessionStore.list.splice(idx, 1)
+        sessionStore.list.splice(pinnedCount, 0, item)
+      }
+    }
+  }
+  const item = sessionStore.list.find(s => s.id === sid)
+  const wasVisible = !!item && (item.messageCount ?? 0) > 0
+  if (item) lift(item)
+  else sessionStore.list.splice(sessionStore.list.filter(s => s.isPinned === 1).length, 0,
+    { id: sid, title: title || '', messageCount: 1, updateTime: now, isPinned: 0, isFavorite: 0 })
+  if (!wasVisible) {
+    sessionStore.counts.today = (sessionStore.counts.today || 0) + 1
+    sessionStore.total = (sessionStore.total || 0) + 1
+  }
+  // 首屏快照同步：「收起」按它还原，不同步会把刚抬进来的会话抹掉
+  if (sessionStore.firstPage) {
+    const fpItem = sessionStore.firstPage.items.find(s => s.id === sid)
+    if (fpItem) {
+      if (title && !fpItem.title) fpItem.title = title
+      fpItem.messageCount = Math.max(fpItem.messageCount ?? 0, 1)
+      fpItem.updateTime = now
+    } else {
+      sessionStore.firstPage.items.splice(sessionStore.firstPage.items.filter(s => s.isPinned === 1).length, 0,
+        { id: sid, title: title || '', messageCount: 1, updateTime: now, isPinned: 0, isFavorite: 0 })
+    }
+  }
+}

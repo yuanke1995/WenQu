@@ -856,7 +856,7 @@ import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback 
          listKnowledgeBases, listDocuments, uploadChatAttachment,
          getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
-import { sessionStore, loadSessions, chatStreams } from './store'
+import { sessionStore, loadSessions, chatStreams, markSessionActive } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
@@ -2696,6 +2696,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
+  // 首条消息发出即把会话抬进侧栏列表（列表隐藏空会话，等 onDone 才刷新的话长回答期间不可见）
+  if (isFirstMessage) markSessionActive(sid, question)
   if (viewing()) scrollForce()
   let full = ''
   let gotToken = false
