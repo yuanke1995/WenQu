@@ -1,5 +1,11 @@
 <template>
   <div class="oidc-wrap">
+    <!-- 底部活水波纹：与登录页同一视觉（品牌标三道波线的呼应） -->
+    <svg class="oidc-waves" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0,160 C180,120 320,196 540,168 C760,140 900,96 1080,132 C1240,164 1360,180 1440,168 L1440,320 L0,320 Z" fill="rgba(94,147,245,.10)" />
+      <path d="M0,206 C200,170 360,238 560,214 C780,188 920,150 1100,178 C1260,202 1370,214 1440,206 L1440,320 L0,320 Z" fill="rgba(94,147,245,.08)" />
+      <path d="M0,246 C220,214 380,272 580,252 C800,230 940,200 1120,220 C1270,236 1380,248 1440,242 L1440,320 L0,320 Z" fill="rgba(42,95,224,.10)" />
+    </svg>
     <div class="oidc-card">
       <div class="oidc-brand">
         <BrandMark :size="32" class="brand-mark" />
@@ -74,12 +80,20 @@ function backToLogin () {
 
 <style scoped>
 .oidc-wrap {
-  height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: var(--app-bg, var(--app-bg)); color: var(--app-text, var(--app-text));
+  position: relative; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  /* 与登录页右侧表单区同款淡晕染，过渡时视觉不断层 */
+  background:
+    radial-gradient(880px 460px at 100% 0%, rgba(94, 147, 245, .08), transparent 55%),
+    radial-gradient(880px 460px at 0% 100%, rgba(42, 95, 224, .07), transparent 55%),
+    var(--app-bg, var(--app-bg));
+  color: var(--app-text, var(--app-text));
 }
+.oidc-waves { position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 200px; pointer-events: none; }
+html[data-theme='dark'] .oidc-waves { opacity: .8; }
 .oidc-card {
+  position: relative; z-index: 1;
   width: 380px; background: var(--app-panel, #fff); border: 1px solid var(--app-border, var(--app-border));
-  border-radius: 14px; padding: 26px 26px 22px; box-shadow: 0 6px 24px rgba(31, 35, 41, .06);
+  border-radius: 14px; padding: 26px 26px 22px; box-shadow: 0 12px 36px rgba(31, 60, 120, .10);
 }
 .oidc-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
 /* 品牌标 = BrandMark 组件（自带圆角与品牌渐变） */
