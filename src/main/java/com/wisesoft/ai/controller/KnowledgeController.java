@@ -52,20 +52,14 @@ public class KnowledgeController {
     private final KeywordIndexService keywordIndexService;
     private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
     private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
-    private final com.wisesoft.ai.service.RoleService roleService;
-
-    private boolean admin() {
-        return roleService.isAdminCode(RequestUser.role());
-    }
 
     private com.wisesoft.ai.service.ResourceVisibilityService.Principal principal() {
         return new com.wisesoft.ai.service.ResourceVisibilityService.Principal(
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 文档可读（列块/搜索命中的门槛）：文档未配置共享时跟随所属库；无归属文档的块仅管理员级 */
+    /** 文档可读（列块/搜索命中的门槛）：文档未配置共享时跟随所属库（数据按 userId 隔离） */
     private void requireDocReadable(AiDocument doc) {
-        if (admin()) return;
         var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         if (doc == null || !visibility.canReadDocFollowKb(principal(), doc.getShareConfig(), doc.getCreatedBy())) {
             throw new BizException("无权访问该文档的知识块");
@@ -78,9 +72,8 @@ public class KnowledgeController {
         }
     }
 
-    /** 文档可管理（改块/删块的门槛）：创建者/被授权人/管理员级；无归属文档的块仅管理员级 */
+    /** 文档可管理（改块/删块的门槛）：创建者/被授权人（数据按 userId 隔离） */
     private void requireDocManageable(AiDocument doc) {
-        if (admin()) return;
         if (doc == null || !visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
                 com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             throw new BizException("仅可管理自己上传或被授权管理的文档的知识块");
@@ -172,8 +165,9 @@ public class KnowledgeController {
         final List<String> terms = extracted.size() > 5 ? new ArrayList<>(extracted.subList(0, 5)) : extracted;
 
         // 普通用户先按放大窗口取候选，再按可见文档过滤后裁回 limit（DB LIMIT 在过滤前，直接 50 会漏）
-        boolean admin = admin();
-        int fetch = admin ? Math.min(Math.max(1, limit), 50) : Math.min(Math.max(1, limit) * 4, 200);
+        // 所有人同口径（数据按 userId 隔离）：先按放大窗口取候选，再按可见文档过滤后裁回 limit
+        // （DB LIMIT 在过滤前，直接取 limit 会漏掉过滤后不足的量）
+        int fetch = Math.min(Math.max(1, limit) * 4, 200);
         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge> wrapper =
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge>()
                         .last("LIMIT " + fetch);
@@ -185,29 +179,27 @@ public class KnowledgeController {
             }
         });
         List<Knowledge> hits = knowledgeMapper.selectList(wrapper);
-        if (!admin) {
-            java.util.Set<String> docIds = new java.util.HashSet<>();
-            for (Knowledge k : hits) {
-                if (k.getDocId() != null && !k.getDocId().isBlank()) docIds.add(k.getDocId());
-            }
-            Map<String, AiDocument> docById = new LinkedHashMap<>();
-            if (!docIds.isEmpty()) {
-                for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                        .in(AiDocument::getId, docIds))) {
-                    docById.put(d.getId(), d);
-                }
-            }
-            hits = hits.stream().filter(k -> {
-                AiDocument doc = k.getDocId() == null ? null : docById.get(k.getDocId());
-                try {
-                    requireDocReadable(doc);
-                    return true;
-                } catch (BizException denied) {
-                    return false;
-                }
-            }).toList();
-            if (hits.size() > limit) hits = hits.subList(0, Math.min(Math.max(1, limit), 50));
+        java.util.Set<String> docIds = new java.util.HashSet<>();
+        for (Knowledge k : hits) {
+            if (k.getDocId() != null && !k.getDocId().isBlank()) docIds.add(k.getDocId());
         }
+        Map<String, AiDocument> docById = new LinkedHashMap<>();
+        if (!docIds.isEmpty()) {
+            for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .in(AiDocument::getId, docIds))) {
+                docById.put(d.getId(), d);
+            }
+        }
+        hits = hits.stream().filter(k -> {
+            AiDocument doc = k.getDocId() == null ? null : docById.get(k.getDocId());
+            try {
+                requireDocReadable(doc);
+                return true;
+            } catch (BizException denied) {
+                return false;
+            }
+        }).toList();
+        if (hits.size() > limit) hits = hits.subList(0, Math.min(Math.max(1, limit), 50));
         List<Map<String, Object>> rows = hits.stream().map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", k.getId());

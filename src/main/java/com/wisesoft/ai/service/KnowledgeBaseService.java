@@ -296,10 +296,11 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 启动迁移：默认库从「全局一张」过渡为「每人一张」。
+     * 启动迁移：默认库「每人一张」校准（按归属人分组）。
      * <ul>
-     *   <li>多余的 is_default=1 行降级为普通库（历史 clearDefault 已保证唯一，这里兜底）；</li>
-     *   <li>原全局默认库按谁建归谁划转：created_by 是真实用户归他，system/空 → 第一个管理员；</li>
+     *   <li>同一归属人出现多张默认库时保留最早一张，其余降级为普通库。注意分组口径是归属人——
+     *       不能全局只留一张：否则每次重启都会把其他用户已懒创建的个人默认库误降级（2026-10-02 修复）；</li>
+     *   <li>遗留全局默认库（created_by 为 system/空）按谁建归谁划转：归第一个管理员；</li>
      *   <li>名称统一为「问渠」、品牌标回填；空主键自愈；无归属历史文档归入该库（kb_id 必填不变量）。</li>
      * </ul>
      * 其余用户此后首次触达时由 {@link #defaultId(String)} 懒创建各自的空默认库。
@@ -312,16 +313,26 @@ public class KnowledgeBaseService {
                     .eq(KnowledgeBase::getDeleted, 0)
                     .orderByAsc(KnowledgeBase::getCreateTime)
                     .orderByAsc(KnowledgeBase::getId));
-            for (int i = 1; i < defs.size(); i++) {
-                KnowledgeBase extra = defs.get(i);
+            // 每个归属人只保留最早一张；created_by 为 system/空 的遗留全局默认库视作同一组（组主 = "__legacy__"）
+            Map<String, KnowledgeBase> keptByOwner = new LinkedHashMap<>();
+            List<KnowledgeBase> demoted = new ArrayList<>();
+            for (KnowledgeBase d : defs) {
+                String owner = (d.getCreatedBy() == null || d.getCreatedBy().isBlank()
+                        || "system".equals(d.getCreatedBy())) ? "__legacy__" : d.getCreatedBy();
+                if (keptByOwner.putIfAbsent(owner, d) != null) demoted.add(d);
+            }
+            for (KnowledgeBase extra : demoted) {
                 kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
                         .eq(KnowledgeBase::getId, extra.getId())
                         .set(KnowledgeBase::getIsDefault, 0)
                         .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
-                log.warn("[KB] 默认知识库应每人一个，多余默认行已降级为普通库: {}（{}）", extra.getName(), extra.getId());
+                log.warn("[KB] 默认知识库每人一张，同归属人的多余默认行已降级为普通库: {}（{}）", extra.getName(), extra.getId());
             }
-            if (defs.isEmpty()) return;
-            KnowledgeBase def = defs.get(0);
+            KnowledgeBase def = keptByOwner.remove("__legacy__");
+            if (def == null && !keptByOwner.isEmpty()) {
+                def = keptByOwner.values().iterator().next();
+            }
+            if (def == null) return;
             if (def.getId() == null || def.getId().isBlank()) {
                 healEmptyDefaultId(def);
                 defaultIdByUid.clear();

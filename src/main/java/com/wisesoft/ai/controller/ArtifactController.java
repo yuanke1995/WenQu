@@ -36,11 +36,6 @@ import java.util.Map;
 public class ArtifactController {
 
     private final ArtifactService artifactService;
-    private final com.wisesoft.ai.service.RoleService roleService;
-
-    private boolean admin() {
-        return roleService.isAdminCode(RequestUser.role());
-    }
 
     @Operation(summary = "我的产物列表", description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址")
     @GetMapping("/list")
@@ -52,7 +47,7 @@ public class ArtifactController {
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         try {
-            boolean ok = artifactService.softDelete(id, RequestUser.uid(), admin());
+            boolean ok = artifactService.softDelete(id, RequestUser.uid());
             return ok ? ResultJson.ok(null, "已删除") : ResultJson.error("产物不存在或已删除");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(403, e.getMessage());
@@ -74,7 +69,7 @@ public class ArtifactController {
         List<String> skipped = new ArrayList<>();
         for (String id : req.ids()) {
             try {
-                if (artifactService.softDelete(id, RequestUser.uid(), admin())) {
+                if (artifactService.softDelete(id, RequestUser.uid())) {
                     deleted++;
                 } else {
                     skipped.add(id);

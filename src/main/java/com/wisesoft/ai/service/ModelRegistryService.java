@@ -311,19 +311,17 @@ public class ModelRegistryService {
     // ==================== 归属（谁建归谁）与可用性 ====================
 
     /**
-     * 该供应商是否对请求者可见可用：仅归属人本人（管理员级保留全部可见可用的运维视角，
-     * 但管理员建的供应商同样归管理员本人，不再是全员共享的平台级）。
+     * 该供应商是否对请求者可见可用：仅归属人本人（数据按 userId 隔离，任何角色不再有全量运维视角；
+     * 2026-10-02 起管理员级也不例外——管理员建的供应商归管理员本人）。
      */
     public boolean canUse(Provider p, String uid, String role) {
         if (p == null) return false;
-        if (roleService.isAdminCode(role)) return true;
         return uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
     }
 
-    /** 该供应商是否对请求者可管理（改 / 删 / 启停 / 登记模型）：归属人本人；管理员级可管全部 */
+    /** 该供应商是否对请求者可管理（改 / 删 / 启停 / 登记模型）：仅归属人本人 */
     public boolean canManage(Provider p, String uid, String role) {
         if (p == null) return false;
-        if (roleService.isAdminCode(role)) return true;
         return uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
     }
 
@@ -372,7 +370,7 @@ public class ModelRegistryService {
 
     /**
      * 供应商列表（管理界面；apiKey 脱敏为 ****后4位）。
-     * 按归属过滤：管理员级见全部；普通用户仅见自己登记的。每行附 manageable，
+     * 按归属过滤：仅见自己登记的（数据按 userId 隔离）。每行附 manageable，
      * 供前端决定是否给出编辑、删除、启停、模型登记入口。
      */
     public List<Map<String, Object>> listProviders(String uid, String role) {

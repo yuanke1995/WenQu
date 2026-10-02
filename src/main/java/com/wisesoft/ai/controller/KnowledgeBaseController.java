@@ -46,22 +46,16 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseService kbService;
     private final DocumentService documentService;
     private final ResourceVisibilityService visibility;
-    private final com.wisesoft.ai.service.RoleService roleService;
     /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
     private final com.wisesoft.ai.service.ConfigService configService;
-
-    private boolean admin() {
-        return roleService.isAdminCode(RequestUser.role());
-    }
 
     private ResourceVisibilityService.Principal principal() {
         return new ResourceVisibilityService.Principal(
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 非管理员时校验"能管理该库"，否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
+    /** 校验"能管理该库"（数据按 userId 隔离：创建者或共享 manage 命中），否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
     private void requireManage(KnowledgeBase kb) {
-        if (admin()) return;
         if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             throw new BizException("仅可管理自己创建或被授权管理的知识库");
@@ -92,7 +86,7 @@ public class KnowledgeBaseController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；普通用户只返回自己创建的（含个人默认库）与显式共享给自己的")
+    @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；所有人只返回自己创建的（含个人默认库）与显式共享给自己的（数据按 userId 隔离）")
     @GetMapping("/list")
     public ResultJson list() {
         // 进知识库页即确保本人已有个人默认库（问渠）：懒创建只挂在写路径的话，
@@ -100,21 +94,19 @@ public class KnowledgeBaseController {
         String uid = RequestUser.uid();
         if (uid != null && !uid.isBlank()) kbService.defaultId(uid);
         List<Map<String, Object>> all = kbService.listWithCounts();
-        if (!admin()) {
-            var p = principal();
-            all = all.stream().filter(m -> visibility.canRead(p,
-                    (String) m.get("shareConfig"), (String) m.get("createdBy"),
-                    ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)).toList();
-        }
+        var p = principal();
+        all = all.stream().filter(m -> visibility.canRead(p,
+                (String) m.get("shareConfig"), (String) m.get("createdBy"),
+                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)).toList();
         return ResultJson.ok(all);
     }
 
-    @Operation(summary = "知识库详情", description = "普通用户仅自己创建的（含个人默认库）与共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
+    @Operation(summary = "知识库详情", description = "仅自己创建的（含个人默认库）与共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) return ResultJson.error("知识库不存在");
-        if (!admin() && !visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),
+        if (!visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             return ResultJson.error("知识库不存在");
         }
@@ -172,17 +164,15 @@ public class KnowledgeBaseController {
         com.wisesoft.ai.model.AiDocument before = documentService.getDoc(docId);
         if (before == null) return ResultJson.error("文档不存在");
         String fromKbId = before.getKbId();
-        if (!admin()) {
-            // 文档本身也要有管理权（创建者或共享 manage 命中），防止拿别人的文档当搬运工
-            if (!visibility.canManage(principal(), before.getShareConfig(), before.getCreatedBy(),
-                    ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-                throw new BizException("仅可管理自己上传或被授权管理的文档");
-            }
-            // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按其库配置判定）
-            requireManage(fromKbId == null ? null : kbService.get(fromKbId));
-            String defId = kbService.defaultId(RequestUser.uid());
-            requireManage(toKbId == null ? kbService.get(defId) : kbService.get(toKbId));
+        // 文档本身也要有管理权（创建者或共享 manage 命中），防止拿别人的文档当搬运工
+        if (!visibility.canManage(principal(), before.getShareConfig(), before.getCreatedBy(),
+                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            throw new BizException("仅可管理自己上传或被授权管理的文档");
         }
+        // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按其库配置判定）
+        requireManage(fromKbId == null ? null : kbService.get(fromKbId));
+        String defId = kbService.defaultId(RequestUser.uid());
+        requireManage(toKbId == null ? kbService.get(defId) : kbService.get(toKbId));
         boolean ok = kbService.moveDoc(docId, toKbId, RequestUser.uid());
         if (ok) {
             documentService.migrateDocAsync(docId, fromKbId, toKbId);

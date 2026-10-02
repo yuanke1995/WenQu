@@ -42,7 +42,7 @@ public class DocumentController {
     private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
     private final com.wisesoft.ai.service.RoleService roleService;
 
-    // ==================== 资源级权限（普通用户自建自管，管理员级全量） ====================
+    // ==================== 资源级权限（自建自管，数据按 userId 隔离，无角色直通） ====================
 
     private boolean admin() {
         return roleService.isAdminCode(RequestUser.role());
@@ -53,9 +53,8 @@ public class DocumentController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 文档管理权：普通用户=创建者（文档 share_config 的 manage 命中亦可）；库语义 KNOWLEDGE_BASE */
+    /** 文档管理权：创建者（文档 share_config 的 manage 命中亦可）；库语义 KNOWLEDGE_BASE */
     private void requireDocManage(com.wisesoft.ai.model.AiDocument doc) {
-        if (admin()) return;
         if (doc == null) throw new BizException("文档不存在");
         if (!visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
                 com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
@@ -69,7 +68,6 @@ public class DocumentController {
      */
     private void requireDocRead(com.wisesoft.ai.model.AiDocument doc) {
         if (doc == null) throw new BizException("文档不存在");
-        if (admin()) return;
         var p = principal();
         var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         if (!visibility.canReadDocFollowKb(p, doc.getShareConfig(), doc.getCreatedBy())) {
@@ -85,7 +83,6 @@ public class DocumentController {
 
     /** 目标库管理权（上传/移动的落点校验；kbId 空=默认库，同样按其库配置判定） */
     private void requireKbManage(String kbId) {
-        if (admin()) return;
         String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId(RequestUser.uid()) : kbId;
         var kb = id == null ? null : kbService.get(id);
         if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
@@ -189,8 +186,7 @@ public class DocumentController {
     @GetMapping("/list")
     public ResultJson list(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
         List<com.wisesoft.ai.model.AiDocument> docs = documentService.list(kbId);
-        if (admin()) return ResultJson.ok(docs);
-        // 普通用户：库可见（个人默认库=归属人私有）+ 文档显式共享判定（未配置=跟随库），双重过滤（库不可见时按空列表处理，不泄露存在性）
+        // 所有人：库可见（个人默认库=归属人私有）+ 文档显式共享判定（未配置=跟随库），双重过滤（库不可见时按空列表处理，不泄露存在性）
         var p = principal();
         var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         if (kbId != null && !kbId.isBlank()) {
@@ -308,7 +304,6 @@ public class DocumentController {
         // 逐个校验管理权：无权限的文档跳过并在结果中说明，不让批量操作变成越权通道
         List<String> allowed = new ArrayList<>();
         for (String docId : ids) {
-            if (admin()) { allowed.add(docId); continue; }
             var doc = documentService.getDoc(docId);
             if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
                     com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
@@ -361,7 +356,6 @@ public class DocumentController {
         // 逐个校验管理权：无权限的文档跳过（批量启停用不该成为越权通道）
         List<String> allowed = new ArrayList<>();
         for (String docId : ids) {
-            if (admin()) { allowed.add(docId); continue; }
             var doc = documentService.getDoc(docId);
             if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
                     com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {

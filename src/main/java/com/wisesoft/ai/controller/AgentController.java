@@ -24,11 +24,11 @@ import java.util.Map;
 /**
  * 智能体配置接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
  * <p>
- * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 AGENT）——谁建归谁：
+ * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 AGENT）——谁建归谁，按 userId 隔离：
  * <ul>
- *   <li>创建者 → 可管理自己的智能体（创建者短路）；未配置共享＝私有，仅创建者与管理员级可见；</li>
+ *   <li>创建者 → 可管理自己的智能体（创建者短路）；未配置共享＝私有，仅创建者可见；</li>
  *   <li>他人 → 仅按智能体显式配置的 share_config 共享范围可见可用；</li>
- *   <li>内置「问渠」是系统默认：所有登录用户可读可用（配置仍只由管理员级维护，普通用户不可改）；</li>
+ *   <li>内置「问渠」是系统默认：所有登录用户可读可用（归属 admin，仅其可配置，普通用户不可改）；</li>
  *   <li>列表/编辑/删除/共享都按上述范围判定，看不见的智能体当不存在（不泄露存在性）。</li>
  * </ul>
  * 刻意保留管理员专属：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选），
@@ -44,7 +44,6 @@ public class AgentController {
 
     private final AgentService agentService;
     private final ResourceVisibilityService visibility;
-    private final com.wisesoft.ai.service.RoleService roleService;
     private final com.wisesoft.ai.service.AgentShareService agentShareService;
     private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
 
@@ -54,25 +53,22 @@ public class AgentController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 当前用户能否管理该智能体（管理员级角色照旧全量；普通用户=创建者或共享 manage 命中） */
+    /** 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中，无角色直通） */
     private boolean canManage(com.wisesoft.ai.model.Agent a) {
         if (a == null) return false;
-        if (roleService.isAdminCode(RequestUser.role())) return true;
         return visibility.canManage(principal(), a.getShareConfig(), a.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.AGENT);
     }
 
-    @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；普通用户只返回自己创建的、内置问渠与显式共享给自己的；"
-            + "每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）")
+    @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；所有人只返回自己创建的、内置问渠与显式共享给自己的"
+            + "（数据按 userId 隔离）；每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）")
     @GetMapping("/list")
     public ResultJson list() {
         List<com.wisesoft.ai.model.Agent> agents = agentService.list();
         for (com.wisesoft.ai.model.Agent a : agents) {
             a.setManageable(canManage(a) ? 1 : 0);
         }
-        if (!roleService.isAdminCode(RequestUser.role())) {
-            agents = agents.stream().filter(agentService::readable).toList();
-        }
+        agents = agents.stream().filter(agentService::readable).toList();
         return ResultJson.ok(agents);
     }
 

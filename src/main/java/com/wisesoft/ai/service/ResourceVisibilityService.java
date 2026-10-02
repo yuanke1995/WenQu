@@ -20,21 +20,21 @@ import java.util.*;
  * </pre>
  * 权限解析顺序（{@link #resolve}）：
  * <ol>
- *   <li>superadmin → MANAGE（短路）</li>
- *   <li>管理员级角色（admin_flag=1）→ MANAGE（短路，运维视角：见全部可管全部，与供应商归属同口径）</li>
  *   <li>创建者（created_by == uid）→ MANAGE（短路）</li>
  *   <li>manage_scope 命中 且（read_scope 缺失 或 read 也命中）→ MANAGE</li>
  *   <li>read_scope 命中 → READ；否则 NONE</li>
- *   <li>第 4~5 步结果再套 <b>角色上限</b>（{@link #roleCeiling}）取小</li>
+ *   <li>第 2~3 步结果再套 <b>角色上限</b>（{@link #roleCeiling}）取小</li>
  * </ol>
  * 语义要点：
  * <ul>
  *   <li>{@code access_level=global} → 全员命中；{@code department} 比对用户部门；{@code user} 比对 uid</li>
- *   <li>scope 为 {@code null}（未声明）→ <b>不命中任何人</b>：故「manage_scope 缺失」＝除超管/创建者外无人可管理</li>
- *   <li><b>share_config 为空（未配置）＝私有（谁建归谁，2026-10）</b>：仅创建者与管理员级可见可管，
+ *   <li>scope 为 {@code null}（未声明）→ <b>不命中任何人</b>：故「manage_scope 缺失」＝除创建者外无人可管理</li>
+ *   <li><b>share_config 为空（未配置）＝私有（谁建归谁，2026-10）</b>：仅创建者可见可管，
  *       不再有「未配置=全员共享」。个人默认知识库（isDefault=1）同理是私有库（归属人=本人），
  *       只多了名称/品牌标锁定与不可删约束，不享任何可见性豁免。</li>
- *   <li>角色上限（RBAC 化，2026-09-26）：管理员级角色各资源均 MANAGE 上限（已被第 2 步短路覆盖）；
+ *   <li><b>数据按 userId 隔离（2026-10-02）</b>：不再有任何角色的全量短路——superadmin/管理员级
+ *       与普通用户同口径，只有创建者与显式共享范围内可见可管（无归属的历史数据已迁给 admin）</li>
+ *   <li>角色上限（RBAC 化，2026-09-26）：管理员级角色各资源均 MANAGE 上限（仅作为上限，不再是直通）；
  *       普通角色 KNOWLEDGE_BASE 封顶 READ、AGENT/API_KEY 为 MANAGE
  *       （个人资产语义：任何已启用角色都能管理自己创建的智能体/Key）</li>
  *   <li><b>刻意比对标实现宽松的一点</b>：未声明 {@code version} 的历史配置在<b>读取</b>时不报错（按内容解析），
@@ -151,9 +151,9 @@ public class ResourceVisibilityService {
      */
     public Permission resolve(Principal p, String shareConfigJson, String createdBy, ResourceKind kind) {
         if (p == null) p = Principal.ANONYMOUS;
-        if (p.superadmin()) return Permission.MANAGE;
-        // 管理员级角色短路（运维视角，与供应商归属同口径）：非 superadmin 的自定义管理员也全量可见可管
-        if (roleService.isAdminCode(p.role())) return Permission.MANAGE;
+
+        // 数据按 userId 隔离（2026-10-02）：不再有任何角色的全量短路——创建者 + 显式共享范围
+        // 之外一律不可见不可管，管理员级（含 superadmin）也不例外。
 
         // 未配置 → 私有（谁建归谁）；已配置 → 按声明的 scope（缺失＝不命中任何人）
         ShareConfig cfg = parse(shareConfigJson);

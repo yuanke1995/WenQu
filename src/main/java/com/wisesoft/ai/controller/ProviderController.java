@@ -34,7 +34,7 @@ public class ProviderController {
     private final ModelRegistryService modelRegistryService;
     private final ConnectivityProbeService connectivityProbeService;
 
-    @Operation(summary = "供应商列表", description = "按归属过滤：管理员级见全部；普通用户仅见自己登记的。apiKey 脱敏；每行带 ownerUid/manageable")
+    @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；每行带 ownerUid/manageable")
     @GetMapping
     public ResultJson list() {
         return ResultJson.ok(modelRegistryService.listProviders(RequestUser.uid(), RequestUser.role()));

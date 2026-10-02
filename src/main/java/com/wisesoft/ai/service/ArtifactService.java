@@ -254,11 +254,11 @@ public class ArtifactService {
         return out;
     }
 
-    /** 取单个产物（校验归属；管理员可越权）。返回 null = 不存在或已删除。 */
-    public Artifact getOwned(String id, String uid, boolean admin) {
+    /** 取单个产物（校验归属，数据按 userId 隔离）。返回 null = 不存在或已删除。 */
+    public Artifact getOwned(String id, String uid) {
         Artifact row = id == null ? null : artifactMapper.selectById(id);
         if (row == null || Integer.valueOf(1).equals(row.getDeleted())) return null;
-        if (!admin && !Objects.equals(row.getUid(), uid)) {
+        if (!Objects.equals(row.getUid(), uid)) {
             throw new IllegalArgumentException("无权访问他人的产物");
         }
         return row;
@@ -272,8 +272,8 @@ public class ArtifactService {
      * （只在 WHERE 上补 {@code deleted=0}）⇒「{@code row.setDeleted(1)} + {@code updateById}」是静默无效的：
      * 文件被删掉、记录却仍是未删除状态，于是列表里留着一条下载必然 404 的行。
      */
-    public boolean softDelete(String id, String uid, boolean admin) {
-        Artifact row = getOwned(id, uid, admin);
+    public boolean softDelete(String id, String uid) {
+        Artifact row = getOwned(id, uid);
         if (row == null) return false;
         deleteFileQuietly(row.getObjectKey());
         artifactMapper.deleteById(row.getId());
