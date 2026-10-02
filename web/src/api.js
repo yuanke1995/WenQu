@@ -838,7 +838,7 @@ export const updateProvider = (id, body) => request(`/provider/${id}`, { method:
 export const setProviderEnabled = (id, enabled) =>
   request(`/provider/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const deleteProvider = id => request(`/provider/${id}`, { method: 'DELETE' })
-// 批量：逐条判权（平台共享供应商只读），返回 {succeeded:[id], failed:[{id,name,error}]}
+// 批量：逐条判权（仅自己登记的可管理），返回 {succeeded:[id], failed:[{id,name,error}]}
 export const batchDeleteProviders = ids =>
   request('/provider/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const batchSetProvidersEnabled = (ids, enabled) =>

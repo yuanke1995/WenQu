@@ -104,8 +104,61 @@ public class ModelRegistryService {
         reload();
         migrateLegacyConfigs();
         repairKbEmbeddingRefs();
+        backfillOwnerUid();
         startRedisSync();
         log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型", providers.size(), models.size());
+    }
+
+    /**
+     * 存量无主供应商归属回填（启动迁移，幂等）：归属已改为「谁建归谁」，不再有 owner_uid 为空的
+     * 平台共享供应商。历史平台级行去向：created_by 是真实用户 → 归创建人；系统迁移生成的
+     * （created_by=system/空）→ 归第一个管理员；查不到管理员则保持无主（仅管理员级可见可用，下次启动重试）。
+     */
+    private void backfillOwnerUid() {
+        try {
+            List<Provider> orphans = new ArrayList<>();
+            for (Provider p : providers) {
+                if (p.getOwnerUid() == null || p.getOwnerUid().isBlank()) orphans.add(p);
+            }
+            if (orphans.isEmpty()) return;
+            String fallbackAdmin = firstAdminUid();
+            int backfilled = 0;
+            for (Provider p : orphans) {
+                String creator = p.getCreatedBy();
+                if (creator != null && !creator.isBlank() && !"system".equals(creator)) {
+                    p.setOwnerUid(creator);
+                } else if (fallbackAdmin != null) {
+                    p.setOwnerUid(fallbackAdmin);
+                } else {
+                    log.warn("[Provider] 供应商 {}（{}）无归属且找不到管理员可认领，保持无主（仅管理员级可见）",
+                            p.getName(), p.getId());
+                    continue;
+                }
+                providerMapper.updateById(p);
+                backfilled++;
+                log.info("[Provider] 存量无主供应商已回填归属: {} → {}", p.getName(), p.getOwnerUid());
+            }
+            if (backfilled > 0) {
+                reload();
+                log.info("[Provider] 供应商归属回填完成: {} 个（原平台共享，现谁建归谁）", backfilled);
+            }
+        } catch (Exception e) {
+            log.warn("[Provider] 供应商归属回填失败（不影响启动，下次启动重试）: {}", e.getMessage());
+        }
+    }
+
+    /** 第一个管理员级用户 uid（按创建时间最早；供无主存量行认领） */
+    private String firstAdminUid() {
+        List<String> codes = roleService.adminCodes();
+        if (codes.isEmpty()) return null;
+        List<com.wisesoft.ai.model.User> admins = userMapper.selectList(
+                new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
+                        .in(com.wisesoft.ai.model.User::getRole, codes)
+                        .orderByAsc(com.wisesoft.ai.model.User::getCreateTime));
+        for (com.wisesoft.ai.model.User u : admins) {
+            if (u.getUid() != null && !u.getUid().isBlank()) return u.getUid();
+        }
+        return null;
     }
 
     /** 全量重读供应商与模型库（本地变更 / Redis 订阅通知时调用） */
@@ -255,25 +308,23 @@ public class ModelRegistryService {
         return p == null ? null : crypto.decrypt(p.getApiKey());
     }
 
-    // ==================== 归属（平台级 / 个人级）与可用性 ====================
+    // ==================== 归属（谁建归谁）与可用性 ====================
 
-    /** 平台级供应商：owner_uid 为空——管理员维护，所有人可见可用（存量行/迁移种子均无归属） */
-    public static boolean isPlatform(Provider p) {
-        return p == null || p.getOwnerUid() == null || p.getOwnerUid().isBlank();
-    }
-
-    /** 该供应商是否对请求者可见可用：平台级全员可用；个人级仅归属人（管理员级另可全部管理） */
+    /**
+     * 该供应商是否对请求者可见可用：仅归属人本人（管理员级保留全部可见可用的运维视角，
+     * 但管理员建的供应商同样归管理员本人，不再是全员共享的平台级）。
+     */
     public boolean canUse(Provider p, String uid, String role) {
         if (p == null) return false;
-        if (isPlatform(p) || roleService.isAdminCode(role)) return true;
+        if (roleService.isAdminCode(role)) return true;
         return uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
     }
 
-    /** 该供应商是否对请求者可管理（改 / 删 / 启停 / 登记模型）：管理员级全部；个人级仅归属人 */
+    /** 该供应商是否对请求者可管理（改 / 删 / 启停 / 登记模型）：归属人本人；管理员级可管全部 */
     public boolean canManage(Provider p, String uid, String role) {
         if (p == null) return false;
         if (roleService.isAdminCode(role)) return true;
-        return !isPlatform(p) && uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
+        return uid != null && !uid.isBlank() && uid.equals(p.getOwnerUid());
     }
 
     /**
@@ -321,8 +372,8 @@ public class ModelRegistryService {
 
     /**
      * 供应商列表（管理界面；apiKey 脱敏为 ****后4位）。
-     * 按请求者归属过滤：管理员级见全部；普通角色见「平台级 + 自己登记的」。
-     * 每行附 platform / mine / manageable，供前端决定是否给出编辑、删除、启停、模型登记入口。
+     * 按归属过滤：管理员级见全部；普通用户仅见自己登记的。每行附 manageable，
+     * 供前端决定是否给出编辑、删除、启停、模型登记入口。
      */
     public List<Map<String, Object>> listProviders(String uid, String role) {
         List<Provider> ps = new ArrayList<>();
@@ -345,8 +396,7 @@ public class ModelRegistryService {
             m.put("enabled", !Integer.valueOf(0).equals(p.getEnabled()));
             m.put("remark", p.getRemark());
             m.put("sortOrder", p.getSortOrder());
-            m.put("platform", isPlatform(p));
-            m.put("mine", !isPlatform(p) && uid != null && uid.equals(p.getOwnerUid()));
+            m.put("ownerUid", p.getOwnerUid());
             m.put("manageable", canManage(p, uid, role));
             Map<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
             for (String t : TYPES) typeCounts.put(t, 0);
@@ -477,13 +527,12 @@ public class ModelRegistryService {
     /**
      * 新建/更新供应商。rawApiKey 为空或 **** 掩码时保留库中已存密钥（编辑场景未重输 Key）。
      * <p>
-     * 归属：新建时由创建者角色决定——管理员级建的 = 平台级（ownerUid 空，所有人可见可用），
-     * 普通用户建的 = 个人级（ownerUid = 本人，只有自己可见可用）。编辑不改归属（谁登记的永远属于谁）。
+     * 归属：谁建归谁——新建一律 ownerUid = 创建人（管理员建的也归管理员本人，不共享给他人）。
+     * 编辑不改归属（谁登记的永远属于谁）。
      */
     public Provider saveProvider(String id, String name, String icon, String baseUrl, String rawApiKey,
                                  String completionsPath, String embeddingsPath, String apiType,
-                                 Boolean enabled, String remark, Integer sortOrder, String operator,
-                                 String operatorRole) {
+                                 Boolean enabled, String remark, Integer sortOrder, String operator) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("供应商名称不能为空");
         String url = baseUrl == null ? "" : baseUrl.trim();
         while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
@@ -501,8 +550,8 @@ public class ModelRegistryService {
             p = new Provider();
             p.setId(UUID.randomUUID().toString());
             p.setCreatedBy(operator);
-            // 管理员级建的 = 平台级（所有人可用）；普通用户建的 = 个人级（仅本人可用）
-            p.setOwnerUid(roleService.isAdminCode(operatorRole) ? null : operator);
+            // 谁建归谁（管理员建的也归本人，不再有平台共享）
+            p.setOwnerUid(operator);
         }
         p.setName(name.trim());
         p.setIcon(icon == null ? "" : icon.trim());
@@ -521,8 +570,7 @@ public class ModelRegistryService {
         p.setSortOrder(sortOrder == null ? 0 : sortOrder);
         if (isNew) {
             providerMapper.insert(p);
-            log.info("[Provider] 供应商已创建: {}（{}）by {}，归属={}", p.getName(), p.getBaseUrl(), operator,
-                    isPlatform(p) ? "平台级" : "个人级:" + p.getOwnerUid());
+            log.info("[Provider] 供应商已创建: {}（{}）by {}，归属={}", p.getName(), p.getBaseUrl(), operator, p.getOwnerUid());
         } else {
             providerMapper.updateById(p);
             log.info("[Provider] 供应商已更新: {}（{}）by {}", p.getName(), p.getBaseUrl(), operator);

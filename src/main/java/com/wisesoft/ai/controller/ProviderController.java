@@ -19,8 +19,8 @@ import java.util.Map;
  * 模型供应商接口：供应商 CRUD + 远程拉取模型列表 + 可用模型清单（登录即可用，
  * 供聊天页模型选择器 / 智能体编辑 / 个人设置）。
  * <p>
- * 归属（2026-09-26）：管理员级建的 = 平台级（所有人可见可用，只读给普通用户）；
- * 普通用户建的 = 个人级（ownerUid=本人，只有自己可见可用，不共享）。
+ * 归属（2026-10）：谁建归谁——供应商一律归属创建人（ownerUid=创建人 uid），仅归属人可见可用，
+ * 不存在平台共享。管理员级保留全部供应商的管理视角（运维需要），但其新建的同样归本人。
  * 写操作一律先按归属判权，越权 fail-loud，不做静默忽略。
  *
  * @author yuanke
@@ -34,7 +34,7 @@ public class ProviderController {
     private final ModelRegistryService modelRegistryService;
     private final ConnectivityProbeService connectivityProbeService;
 
-    @Operation(summary = "供应商列表", description = "按归属过滤：管理员级见全部；普通用户见「平台级 + 自己登记的」。apiKey 脱敏；每行带 platform/mine/manageable")
+    @Operation(summary = "供应商列表", description = "按归属过滤：管理员级见全部；普通用户仅见自己登记的。apiKey 脱敏；每行带 ownerUid/manageable")
     @GetMapping
     public ResultJson list() {
         return ResultJson.ok(modelRegistryService.listProviders(RequestUser.uid(), RequestUser.role()));
@@ -47,17 +47,17 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.available(type, RequestUser.uid(), RequestUser.role()));
     }
 
-    @Operation(summary = "新建供应商", description = "{\"name\":\"DeepSeek\",\"icon\":\"deepseek\",\"baseUrl\":\"https://api.deepseek.com\",\"apiKey\":\"明文（保存时 RSA 加密）\",\"completionsPath\":\"可选\",\"embeddingsPath\":\"可选\",\"enabled\":true}。管理员级建的=平台级（所有人可用），普通用户建的=个人级（仅自己可用）")
+    @Operation(summary = "新建供应商", description = "{\"name\":\"DeepSeek\",\"icon\":\"deepseek\",\"baseUrl\":\"https://api.deepseek.com\",\"apiKey\":\"明文（保存时 RSA 加密）\",\"completionsPath\":\"可选\",\"embeddingsPath\":\"可选\",\"enabled\":true}。谁建归谁：仅创建人可见可用")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(modelRegistryService.saveProvider(
                 null, str(body.get("name")), str(body.get("icon")), str(body.get("baseUrl")),
                 str(body.get("apiKey")), str(body.get("completionsPath")), str(body.get("embeddingsPath")),
                 str(body.get("apiType")), bool(body.get("enabled")), str(body.get("remark")),
-                intOrNull(body.get("sortOrder")), RequestUser.uid(), RequestUser.role()), "已创建");
+                intOrNull(body.get("sortOrder")), RequestUser.uid()), "已创建");
     }
 
-    @Operation(summary = "更新供应商", description = "字段同新建；apiKey 留空或 **** 掩码表示不修改已存密钥。普通用户仅可改自己登记的（平台级供应商只读）")
+    @Operation(summary = "更新供应商", description = "字段同新建；apiKey 留空或 **** 掩码表示不修改已存密钥。仅可改自己登记的")
     @PutMapping("/{id}")
     public ResultJson update(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -68,7 +68,7 @@ public class ProviderController {
                 id, str(body.get("name")), str(body.get("icon")), str(body.get("baseUrl")),
                 str(body.get("apiKey")), str(body.get("completionsPath")), str(body.get("embeddingsPath")),
                 str(body.get("apiType")), bool(body.get("enabled")), str(body.get("remark")),
-                intOrNull(body.get("sortOrder")), RequestUser.uid(), RequestUser.role()), "已保存");
+                intOrNull(body.get("sortOrder")), RequestUser.uid()), "已保存");
     }
 
     @Operation(summary = "启用/停用供应商", description = "{\"enabled\":true|false}；停用后其模型不出现在可用清单。普通用户仅可操作自己登记的")
@@ -96,8 +96,8 @@ public class ProviderController {
     // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
     // --------------------------------------------------------------------------------------------------
 
-    @Operation(summary = "批量删除供应商", description = "body: {ids:[...]}；逐条按单条口径判权（普通用户仅可删自己登记的），"
-            + "仍被引用/平台共享的条目失败并带原因；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @Operation(summary = "批量删除供应商", description = "body: {ids:[...]}；逐条按单条口径判权（仅可删自己登记的），"
+            + "仍被引用的条目失败并带原因；返回 {succeeded:[id], failed:[{id,name,error}]}")
     @PostMapping("/batch-delete")
     public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -111,7 +111,7 @@ public class ProviderController {
                 continue;
             }
             if (!modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) {
-                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商（平台共享供应商只读）"));
+                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商"));
                 continue;
             }
             try {
@@ -140,7 +140,7 @@ public class ProviderController {
                 continue;
             }
             if (!modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) {
-                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商（平台共享供应商只读）"));
+                failed.add(BatchResults.failItem(id, p.getName(), "仅可管理自己登记的供应商"));
                 continue;
             }
             try {
@@ -213,8 +213,7 @@ public class ProviderController {
     }
 
     /**
-     * 写操作前置校验：请求者必须对该供应商有管理权——管理员级可管全部；
-     * 普通用户只能管自己登记的个人级供应商（平台级共享供应商对他们只读）。
+     * 写操作前置校验：请求者必须对该供应商有管理权——归属人本人；管理员级可管全部（运维视角）。
      *
      * @return null = 放行；非 null = 直接返回该拒绝结果（fail-loud，不静默跳过）
      */
@@ -222,7 +221,7 @@ public class ProviderController {
         com.wisesoft.ai.model.Provider p = modelRegistryService.providerById(providerId);
         if (p == null) return ResultJson.error("供应商不存在（可能已被删除，请刷新后重试）");
         if (modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) return null;
-        return ResultJson.error("仅可管理自己登记的供应商；「" + p.getName() + "」是平台共享供应商，对普通用户只读");
+        return ResultJson.error("仅可管理自己登记的供应商；「" + p.getName() + "」不是你登记的");
     }
 
     private static String str(Object o) {

@@ -3,12 +3,12 @@
   <div class="app-page">
     <div class="app-page-head">
       <h1 class="app-page-title">模型供应商</h1>
-      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。平台供应商所有人可用，你新建的只有自己可用</span>
+      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。谁建归谁：你新建的供应商只有你能看到和使用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
       <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起，点「批量管理」进入批量模式；
-           开关放最右：进出模式自身位置不动；仅可管理的供应商可勾选（平台共享只读，不进批量范围） -->
+           开关放最右：进出模式自身位置不动；列表里的供应商都是自己可管理的，可勾选 -->
       <div v-if="list.length" class="batch-group">
         <template v-if="batchMode">
           <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
@@ -31,9 +31,9 @@
               <div class="pv-title">
                 <div class="pv-name">
                   {{ p.name }}
-                  <!-- 归属：平台级=管理员登记、所有人可用（只读）；个人级=自己登记的，别人看不见 -->
-                  <a-tag :color="p.platform ? 'blue' : 'green'" class="pv-scope-tag">
-                    {{ p.platform ? '平台共享' : '仅自己' }}
+                  <!-- 归属提示：只在看到别人的供应商时出现（管理员视角）；自己的不显示避免噪音 -->
+                  <a-tag v-if="p.ownerUid && p.ownerUid !== me" color="default" class="pv-owner-tag">
+                    归属 {{ p.ownerUid }}
                   </a-tag>
                   <a-tag v-if="!p.enabled" color="default" class="pv-disabled-tag">已停用</a-tag>
                 </div>
@@ -49,7 +49,6 @@
               <span v-if="!p.modelCount" class="pv-none">未登记模型</span>
             </div>
             <div class="pv-remark" v-if="p.remark">{{ p.remark }}</div>
-            <!-- 平台供应商对普通用户只读：不给编辑/删除/登记模型入口，避免"点了报错"的死路 -->
             <div class="pv-actions">
               <template v-if="p.manageable">
                 <button class="app-link-btn" @click="openModels(p)">
@@ -61,7 +60,6 @@
                   <button class="app-link-btn danger">删除</button>
                 </a-popconfirm>
               </template>
-              <span v-else class="pv-readonly">平台供应商由管理员维护，你可用它的模型但不可修改</span>
             </div>
           </div>
         </div>
@@ -221,6 +219,7 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
+import { authUser } from '../utils/auth'
 import {
   listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
@@ -233,7 +232,10 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
 
-// ---- 批量操作：仅可管理的供应商可勾选（平台共享供应商只读，不进批量范围） ----
+// 当前登录人 uid（归属提示只用它判断「这是不是别人的供应商」）
+const me = computed(() => authUser.value?.user || '')
+
+// ---- 批量操作：列表里的供应商都是自己可管理的，可勾选 ----
 const selected = ref([])
 const batchBusy = ref(false)
 // 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
@@ -285,7 +287,7 @@ const doBatchEnabled = async on => {
 const doBatchDelete = () => {
   Modal.confirm({
     title: `删除选中的 ${selected.value.length} 个供应商？`,
-    content: '供应商及其已登记的模型会一并删除；仍被引用或平台共享的条目会失败并逐条给出原因。',
+    content: '供应商及其已登记的模型会一并删除；仍被引用的条目会失败并逐条给出原因。',
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       batchBusy.value = true
@@ -779,8 +781,7 @@ onMounted(load)
 .pv-title { flex: 1; min-width: 0; }
 .pv-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .pv-disabled-tag { font-size: 11px; line-height: 16px; }
-.pv-scope-tag { font-size: 11px; line-height: 16px; }
-.pv-readonly { font-size: 12px; color: var(--app-text3, var(--app-text3)); }
+.pv-owner-tag { font-size: 11px; line-height: 16px; }
 .pv-url {
   font-size: 12px; color: var(--app-text3, var(--app-text3));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
