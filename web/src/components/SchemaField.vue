@@ -1,7 +1,8 @@
 <template>
   <a-form-item v-if="visible">
     <template #label>
-      <a-tooltip v-if="tipText" :title="tipText" placement="top">
+      <a-tooltip v-if="tipText" :title="tipText" placement="top"
+                 :overlay-inner-style="{ whiteSpace: 'pre-line' }">
         <span style="display:inline-flex;align-items:center">
           <span v-if="field.core" class="core-dot"></span>{{ field.label }}
           <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
@@ -59,8 +60,6 @@
 
     <!-- 扩展位：测试连接按钮、状态标签等由使用方插入 -->
     <slot name="extra" :field="field" />
-
-    <span v-if="field.note" style="margin-left:12px;color:#999;font-size:12px">{{ field.note }}</span>
   </a-form-item>
 </template>
 
@@ -99,7 +98,13 @@ const pairValue = computed({
   set: v => pairPath.value && write(props.form, pairPath.value, v)
 })
 
-const tipText = computed(() => (props.field.tips ? props.tips[props.field.tips] : '') || '')
+// 问号悬浮文案：tips 长说明 + note 短备注合并（note 原先是控件旁内联灰字，现统一收进问号 tip，
+// 换行分段展示——设置页不再有裸露的说明文字）
+const tipText = computed(() => {
+  const t = (props.field.tips ? props.tips[props.field.tips] : '') || ''
+  const n = props.field.note || ''
+  return [t, n].filter(Boolean).join('\n')
+})
 
 const visible = computed(() => {
   if (!props.field.vif) return true
