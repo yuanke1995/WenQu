@@ -662,7 +662,7 @@ public class McpServerService {
         java.util.Set<String> ids = new java.util.HashSet<>();
         for (KnowledgeBase kb : knowledgeBaseService.list()) {
             if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                    ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
                 ids.add(kb.getId());
             }
         }

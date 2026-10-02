@@ -44,11 +44,15 @@ public class KbVectorStoreRegistry {
     private volatile JedisPooled sharedJedis;
 
     /**
-     * 按知识库路由向量库：每个库都按自己的绑定模型路由独立索引；
-     * kbId 空（防御：迁移后不应出现）或库行查不到（已删）→ 默认库的独立索引。
+     * 按知识库路由向量库：每个库都按自己的绑定模型路由独立索引。
+     * kbId 空 → fail-loud：文档归属在启动迁移后必填，走到这里说明上游传了空库，
+     * 悄悄落到「某个默认库」会写错索引（默认库已每用户化，此处也无从解析归属）。
      */
     public VectorStore storeForKb(String kbId) {
-        String effective = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        if (kbId == null || kbId.isBlank()) {
+            throw new IllegalStateException("文档未归属任何知识库（kbId 为空），无法路由向量库；请检查该文档的 kb_id 数据");
+        }
+        String effective = kbId.trim();
         RedisVectorStore custom = byKb.get(effective);
         if (custom != null) return custom;
         KnowledgeBase kb = kbService.get(effective);

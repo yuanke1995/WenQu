@@ -773,13 +773,14 @@ const shareTarget = ref({ id: '', shareConfig: '' })
 // 保存回调透传给组件：组件只负责表单与校验，打哪个接口由调用方决定
 const saveShareFn = json => updateDocumentShare(shareTarget.value.id, json)
 
-// 文档行的共享范围标记：仅非全员时显示（全员=默认，不显示以免噪音）
+// 文档行的共享范围标记：仅显式共享时显示（未配置=跟随库即默认，不显示以免噪音）
 function scopeLabel (d) {
   if (!d.shareConfig || !String(d.shareConfig).trim()) return ''
   let cfg = null
   try { cfg = JSON.parse(d.shareConfig) } catch (e) { return '' }
   const r = (cfg && cfg.read_scope) || {}
   const lvl = r.access_level || 'global'
+  if (lvl === 'global') return '全员共享'
   if (lvl === 'department') {
     const n = Array.isArray(r.department_ids) ? r.department_ids.length : 0
     return n ? '限 ' + n + ' 个部门' : '部门可见'

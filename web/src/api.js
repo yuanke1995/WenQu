@@ -486,7 +486,7 @@ export const batchDeleteAgents = ids =>
   request('/agent/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const setAgentDefault = id => request(`/agent/${id}/default`, { method: 'POST' })
 
-// ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落全局） ====================
+// ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落私有：仅自己） ====================
 export const updateAgentShare = (id, shareConfig) =>
   request(`/agent/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 export const updateApiKeyShare = (id, shareConfig) =>

@@ -37,21 +37,32 @@ public class KnowledgeBaseService {
     /** 默认库固定图标：问渠品牌标（前端 KbIcon 按此值渲染 BrandMark；默认库图标不可修改） */
     public static final String ICON_BRAND = "wenqu";
 
+    /** 个人默认知识库固定名称（问渠，与内置问渠智能体同品牌：智能体全局一个，默认库每人一个） */
+    public static final String BUILTIN_NAME = "问渠";
+
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
     private final AgentMapper agentMapper;
     private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
+    /** 启动迁移把原全局默认库划转给第一个管理员（谁建归谁）；RoleService 仅依赖 Mapper，无循环依赖 */
+    private final com.wisesoft.ai.mapper.UserMapper userMapper;
+    private final com.wisesoft.ai.service.RoleService roleService;
 
-    /** 默认库缓存（避免每次检索都查库；is_default 变更时由 update/create 失效） */
-    private volatile String cachedDefaultId;
+    /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public KnowledgeBaseService(KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
                                 AgentMapper agentMapper,
-                                com.wisesoft.ai.service.ModelRegistryService modelRegistryService) {
+                                com.wisesoft.ai.service.ModelRegistryService modelRegistryService,
+                                com.wisesoft.ai.mapper.UserMapper userMapper,
+                                com.wisesoft.ai.service.RoleService roleService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
+        this.userMapper = userMapper;
+        this.roleService = roleService;
     }
 
     // ==================== 读写 ====================
@@ -69,20 +80,21 @@ public class KnowledgeBaseService {
         return kbMapper.selectById(id);
     }
 
-    /** 新建：名称/向量模型必填；isDefault=1 时先把其它库的默认标记清掉（保证唯一默认库） */
+    /**
+     * 新建：名称/向量模型必填。默认库不再由用户创建（每人一个、系统经 {@link #defaultId(String)} 懒创建），
+     * body 带 isDefault 一律忽略；问渠品牌标为默认库专属，任何新建都不可使用。
+     */
     public KnowledgeBase create(Map<String, Object> body, String uid) {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setName(str(body.get("name")));
         kb.setDescription(str(body.get("description")));
-        int isDefault = toInt(body.get("isDefault"), 0);
-        kb.setIsDefault(isDefault);
-        // 图标（与智能体同口径）：'wenqu'=问渠品牌标 / emoji 原样存；空=null 默认展示。
-        // 品牌标为默认库专属：非默认库不可用（直接拒绝）；默认库在建库时就写死品牌标
+        kb.setIsDefault(0);
+        // 图标（与智能体同口径）：emoji 原样存；空=null 默认展示。品牌标为默认库专属：直接拒绝
         String icon = iconOf(body.get("icon"));
-        if (isDefault != 1 && ICON_BRAND.equals(icon)) {
+        if (ICON_BRAND.equals(icon)) {
             throw new com.wisesoft.ai.common.BizException("问渠品牌标为默认知识库专属，其它知识库不可使用");
         }
-        kb.setIcon(isDefault == 1 ? ICON_BRAND : icon);
+        kb.setIcon(icon);
         kb.setQueryParams(str(body.get("queryParams")));
         kb.setParseParams(str(body.get("parseParams")));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
@@ -95,9 +107,8 @@ public class KnowledgeBaseService {
         LocalDateTime now = LocalDateTime.now();
         kb.setCreateTime(now);
         kb.setUpdateTime(now);
-        if (kb.getIsDefault() != null && kb.getIsDefault() == 1) clearDefault();
         kbMapper.insert(kb);
-        cachedDefaultId = null;
+        defaultIdByUid.clear();
         return kb;
     }
 
@@ -117,18 +128,16 @@ public class KnowledgeBaseService {
             upd.set(KnowledgeBase::getName, requested);
         }
         if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
-        // 图标：'wenqu'=问渠品牌标 / emoji；空串归一为 null（= 默认展示）。
+        // 图标：emoji 原样存；空串归一为 null（= 默认展示）。
         // 品牌标为默认库专属：默认库恒为 wenqu（改其它值拒绝）；非默认库用 wenqu 也拒绝。
-        // 目标默认状态按「body 带了 isDefault 就用新值」判——「晋升为默认库 + 品牌标」一次提交不被误拒
-        int targetDefault = body.containsKey("isDefault")
-                ? toInt(body.get("isDefault"), 0)
-                : (kb.getIsDefault() == null ? 0 : kb.getIsDefault());
+        // isDefault 不再是可写字段（每人一个、系统懒创建），body 带了也忽略——无「晋升为默认库」路径
+        boolean isDefaultRow = kb.getIsDefault() != null && kb.getIsDefault() == 1;
         if (body.containsKey("icon")) {
             String icon = iconOf(body.get("icon"));
-            if (targetDefault == 1 && !ICON_BRAND.equals(icon)) {
+            if (isDefaultRow && !ICON_BRAND.equals(icon)) {
                 throw new com.wisesoft.ai.common.BizException("默认知识库固定使用问渠品牌标，图标不可修改");
             }
-            if (targetDefault != 1 && ICON_BRAND.equals(icon)) {
+            if (!isDefaultRow && ICON_BRAND.equals(icon)) {
                 throw new com.wisesoft.ai.common.BizException("问渠品牌标为默认知识库专属，其它知识库不可使用");
             }
             upd.set(KnowledgeBase::getIcon, icon);
@@ -144,15 +153,6 @@ public class KnowledgeBaseService {
             // 模型切换后维度以重嵌结果为准，先清掉旧记录
             upd.set(KnowledgeBase::getEmbeddingDimensions, null);
         }
-        if (body.containsKey("isDefault")) {
-            int isDef = toInt(body.get("isDefault"), 0);
-            if (isDef == 1) {
-                clearDefault();
-                // 晋升为默认库：图标随默认库规则固定为问渠品牌标（本分支在 icon 分支之后，set 同列后写生效）
-                upd.set(KnowledgeBase::getIcon, ICON_BRAND);
-            }
-            upd.set(KnowledgeBase::getIsDefault, isDef);
-        }
         // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
         if (body.containsKey("graphEnabled")) {
             Object v = body.get("graphEnabled");
@@ -163,7 +163,7 @@ public class KnowledgeBaseService {
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
         // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本项目已踩过同一坑）
         kbMapper.update(null, upd);
-        cachedDefaultId = null;
+        defaultIdByUid.clear();
         return kbMapper.selectById(id);
     }
 
@@ -183,7 +183,7 @@ public class KnowledgeBaseService {
         // 「setDeleted(1) + updateById」静默无效，库删了还在列表里（与产物删除同一坑）。
         // update_time 由库侧 `on update CURRENT_TIMESTAMP` 随本行 UPDATE 自动刷新。
         kbMapper.deleteById(id);
-        cachedDefaultId = null;
+        defaultIdByUid.clear();
         // 级联清理：从关联智能体（含子智能体）的 knowledgeBaseIds 里摘除本库 ID，避免悬挂引用
         cleanupAgentReferences(id);
         return null;
@@ -241,68 +241,127 @@ public class KnowledgeBaseService {
     // ==================== 检索侧支撑 ====================
 
     /**
-     * 默认库 ID：没有默认库时自动建一个「默认知识库」，保证新建文档始终有归属、检索范围不会因缺库而变空。
-     * （历史 kb_id 为空的文档已由启动迁移一次性归入默认库，此后 kb_id 必填。）
+     * 个人默认知识库 id（get-or-create，懒创建）：每人一个「问渠」（is_default=1 且 created_by=本人），
+     * 未指定归属的上传/导入/移库都落进自己的默认库。自动创建的库<b>不绑定向量模型</b>——
+     * 绑定归使用者（只能用自己登记的供应商），首次使用前在知识库页自行绑定（storeForKb 对空绑定 fail-loud）。
      */
-    public String defaultId() {
-        String cached = cachedDefaultId;
+    public String defaultId(String uid) {
+        String owner = (uid == null || uid.isBlank()) ? "anonymous" : uid.trim();
+        String cached = defaultIdByUid.get(owner);
         if (cached != null) return cached;
         synchronized (this) {
-            if (cachedDefaultId != null) return cachedDefaultId;
+            cached = defaultIdByUid.get(owner);
+            if (cached != null) return cached;
             KnowledgeBase def = kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
                     .eq(KnowledgeBase::getIsDefault, 1)
+                    .eq(KnowledgeBase::getCreatedBy, owner)
                     .eq(KnowledgeBase::getDeleted, 0)
                     .last("LIMIT 1"));
             if (def == null) {
                 def = new KnowledgeBase();
-                def.setName("默认知识库");
-                def.setDescription("未显式指定归属的文档都归入本库（历史数据自动兼容）");
+                def.setName(BUILTIN_NAME);
+                def.setDescription("你的系统默认知识库：未指定归属的文档都归入本库；先绑定你自己的向量模型即可使用。");
                 def.setIsDefault(1);
                 // 默认库恒为问渠品牌标（与新建/编辑的强制口径一致）
                 def.setIcon(ICON_BRAND);
                 def.setDeleted(0);
-                def.setCreatedBy("system");
+                def.setCreatedBy(owner);
                 LocalDateTime now = LocalDateTime.now();
                 def.setCreateTime(now);
                 def.setUpdateTime(now);
                 kbMapper.insert(def);
+                log.info("[KB] 已为用户 {} 懒创建个人默认知识库「问渠」: {}（未绑定向量模型，使用前请先绑定）",
+                        owner, def.getId());
             } else if (def.getId() == null || def.getId().isBlank()) {
-                // 历史行主键为空串：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存走到
-                // PUT /api/ai/kb/（空路径变量 → 404）、「文档管理」路由断链——触达即自愈。
+                // 历史空主键行：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存 404——触达即自愈
                 healEmptyDefaultId(def);
             }
-            cachedDefaultId = def.getId();
+            defaultIdByUid.put(owner, def.getId());
             return def.getId();
         }
     }
 
+    /** 第一个管理员级用户 uid（按创建时间最早；供存量默认库划转） */
+    private String firstAdminUid() {
+        List<String> codes = roleService.adminCodes();
+        if (codes.isEmpty()) return null;
+        List<com.wisesoft.ai.model.User> admins = userMapper.selectList(
+                new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
+                        .in(com.wisesoft.ai.model.User::getRole, codes)
+                        .orderByAsc(com.wisesoft.ai.model.User::getCreateTime));
+        for (com.wisesoft.ai.model.User u : admins) {
+            if (u.getUid() != null && !u.getUid().isBlank()) return u.getUid();
+        }
+        return null;
+    }
+
     /**
-     * 启动即自愈一次：defaultId() 只有上传/检索/移库会触达，而「编辑默认库保存」与
-     * 「知识库卡片 → 文档管理」走 /kb/list + PUT /kb/{id}，永远不经过 defaultId()，
-     * 空主键行会一直把 404 和断链暴露给用户。挂在 ApplicationReadyEvent（晚于 SchemaMigrator，
-     * 表结构就绪），与 defaultId() 里的兜底共用同一份迁移逻辑。
+     * 启动迁移：默认库从「全局一张」过渡为「每人一张」。
+     * <ul>
+     *   <li>多余的 is_default=1 行降级为普通库（历史 clearDefault 已保证唯一，这里兜底）；</li>
+     *   <li>原全局默认库按谁建归谁划转：created_by 是真实用户归他，system/空 → 第一个管理员；</li>
+     *   <li>名称统一为「问渠」、品牌标回填；空主键自愈；无归属历史文档归入该库（kb_id 必填不变量）。</li>
+     * </ul>
+     * 其余用户此后首次触达时由 {@link #defaultId(String)} 懒创建各自的空默认库。
      */
     @EventListener(ApplicationReadyEvent.class)
-    public void healDefaultKbOnStartup() {
+    public void migrateDefaultKbPerUserOnStartup() {
         try {
-            KnowledgeBase def = kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
+            List<KnowledgeBase> defs = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
                     .eq(KnowledgeBase::getIsDefault, 1)
                     .eq(KnowledgeBase::getDeleted, 0)
-                    .last("LIMIT 1"));
-            if (def != null && (def.getId() == null || def.getId().isBlank())) {
-                healEmptyDefaultId(def);
-                cachedDefaultId = null;
+                    .orderByAsc(KnowledgeBase::getCreateTime)
+                    .orderByAsc(KnowledgeBase::getId));
+            for (int i = 1; i < defs.size(); i++) {
+                KnowledgeBase extra = defs.get(i);
+                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getId, extra.getId())
+                        .set(KnowledgeBase::getIsDefault, 0)
+                        .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
+                log.warn("[KB] 默认知识库应每人一个，多余默认行已降级为普通库: {}（{}）", extra.getName(), extra.getId());
             }
-            // 存量默认库图标回填：默认库恒为问渠品牌标（功能上线前的老行 icon 为空，补齐后与新建口径一致）
-            if (def != null && (def.getIcon() == null || def.getIcon().isBlank())) {
+            if (defs.isEmpty()) return;
+            KnowledgeBase def = defs.get(0);
+            if (def.getId() == null || def.getId().isBlank()) {
+                healEmptyDefaultId(def);
+                defaultIdByUid.clear();
+            }
+            String owner = def.getCreatedBy();
+            if (owner == null || owner.isBlank() || "system".equals(owner)) {
+                String admin = firstAdminUid();
+                if (admin != null && !admin.equals(owner)) {
+                    kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                            .eq(KnowledgeBase::getId, def.getId())
+                            .set(KnowledgeBase::getCreatedBy, admin));
+                    def.setCreatedBy(admin);
+                    log.info("[KB] 原全局默认知识库已按谁建归谁划转给管理员 {}: {}（{}）", admin, def.getName(), def.getId());
+                }
+            }
+            if (!BUILTIN_NAME.equals(def.getName())) {
+                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getId, def.getId())
+                        .set(KnowledgeBase::getName, BUILTIN_NAME));
+                log.info("[KB] 默认知识库已更名为「{}」: {}", BUILTIN_NAME, def.getId());
+            }
+            if (def.getIcon() == null || def.getIcon().isBlank()) {
                 kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
                         .eq(KnowledgeBase::getId, def.getId())
                         .set(KnowledgeBase::getIcon, ICON_BRAND));
-                log.info("[KB] 存量默认知识库图标已回填为问渠品牌标");
+                log.info("[KB] 默认知识库图标已回填为问渠品牌标");
             }
+            // 无归属历史文档 → 归入默认库（kb_id 必填不变量；正常已被更早的迁移处理，这里兜底）
+            Long orphans = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>()
+                    .and(w -> w.eq(AiDocument::getKbId, "").or().isNull(AiDocument::getKbId)));
+            if (orphans != null && orphans > 0) {
+                docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .and(w -> w.eq(AiDocument::getKbId, "").or().isNull(AiDocument::getKbId))
+                        .set(AiDocument::getKbId, def.getId()));
+                log.info("[KB] {} 个无归属历史文档已归入默认知识库 {}", orphans, def.getId());
+            }
+            defaultIdByUid.put(def.getCreatedBy(), def.getId());
         } catch (Exception e) {
-            // 启动自愈失败不阻断应用；defaultId() 触达时还有兜底
-            log.warn("[KB] 启动自愈默认库主键失败（触达时重试）: {}", e.getMessage());
+            // 启动迁移失败不阻断应用；defaultId(uid) 触达时还有 get-or-create 兜底
+            log.warn("[KB] 默认知识库每用户化迁移失败（触达时重试）: {}", e.getMessage());
         }
     }
 
@@ -340,14 +399,15 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 把文档移到某个知识库（文档管理页切换归属用）；kbId 空 = 移入默认库（显式写默认库 ID）。
+     * 把文档移到某个知识库（文档管理页切换归属用）；kbId 空 = 移入**当前用户**的默认库（显式写库 ID）。
      *
+     * @param uid 操作者 uid（默认库按人解析）
      * @return false 表示文档不存在
      */
-    public boolean moveDoc(String docId, String kbId) {
+    public boolean moveDoc(String docId, String kbId, String uid) {
         AiDocument doc = docMapper.selectById(docId);
         if (doc == null) return false;
-        String target = kbId == null || kbId.isBlank() ? defaultId() : kbId.trim();
+        String target = kbId == null || kbId.isBlank() ? defaultId(uid) : kbId.trim();
         // 显式 set：避免 NOT_NULL 策略跳过导致移动静默失效
         docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                 .eq(AiDocument::getId, docId)
@@ -394,16 +454,6 @@ public class KnowledgeBaseService {
     }
 
     // ==================== 内部工具 ====================
-
-    private void clearDefault() {
-        List<KnowledgeBase> all = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
-                .eq(KnowledgeBase::getIsDefault, 1).eq(KnowledgeBase::getDeleted, 0));
-        for (KnowledgeBase k : all) {
-            k.setIsDefault(0);
-            k.setUpdateTime(LocalDateTime.now());
-            kbMapper.updateById(k);
-        }
-    }
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);

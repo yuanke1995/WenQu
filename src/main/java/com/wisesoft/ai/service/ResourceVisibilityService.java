@@ -21,18 +21,21 @@ import java.util.*;
  * 权限解析顺序（{@link #resolve}）：
  * <ol>
  *   <li>superadmin → MANAGE（短路）</li>
+ *   <li>管理员级角色（admin_flag=1）→ MANAGE（短路，运维视角：见全部可管全部，与供应商归属同口径）</li>
  *   <li>创建者（created_by == uid）→ MANAGE（短路）</li>
  *   <li>manage_scope 命中 且（read_scope 缺失 或 read 也命中）→ MANAGE</li>
  *   <li>read_scope 命中 → READ；否则 NONE</li>
- *   <li>第 3~4 步结果再套 <b>角色上限</b>（{@link #roleCeiling}）取小</li>
+ *   <li>第 4~5 步结果再套 <b>角色上限</b>（{@link #roleCeiling}）取小</li>
  * </ol>
  * 语义要点：
  * <ul>
  *   <li>{@code access_level=global} → 全员命中；{@code department} 比对用户部门；{@code user} 比对 uid</li>
  *   <li>scope 为 {@code null}（未声明）→ <b>不命中任何人</b>：故「manage_scope 缺失」＝除超管/创建者外无人可管理</li>
- *   <li>share_config 为 <b>空</b>（未配置）→ 视作 global（兼容存量数据），与「显式声明 manage_scope=global」等价</li>
- *   <li>角色上限（RBAC 化，2026-09-26）：管理员级角色（内置 admin/superadmin 或自定义 admin_flag=1）
- *       各资源均 MANAGE 上限；普通角色 KNOWLEDGE_BASE 封顶 READ、AGENT/API_KEY 为 MANAGE
+ *   <li><b>share_config 为空（未配置）＝私有（谁建归谁，2026-10）</b>：仅创建者与管理员级可见可管，
+ *       不再有「未配置=全员共享」。个人默认知识库（isDefault=1）同理是私有库（归属人=本人），
+ *       只多了名称/品牌标锁定与不可删约束，不享任何可见性豁免。</li>
+ *   <li>角色上限（RBAC 化，2026-09-26）：管理员级角色各资源均 MANAGE 上限（已被第 2 步短路覆盖）；
+ *       普通角色 KNOWLEDGE_BASE 封顶 READ、AGENT/API_KEY 为 MANAGE
  *       （个人资产语义：任何已启用角色都能管理自己创建的智能体/Key）</li>
  *   <li><b>刻意比对标实现宽松的一点</b>：未声明 {@code version} 的历史配置在<b>读取</b>时不报错（按内容解析），
  *       但<b>写入</b>（{@link #validateShareConfig}）强制要求 {@code version=2}</li>
@@ -85,12 +88,6 @@ public class ResourceVisibilityService {
         public static final Principal ANONYMOUS = new Principal("anonymous", null, "user");
         public boolean superadmin() { return "superadmin".equals(role); }
     }
-
-    /**
-     * 解析可见性所需的资源共享信息（文档 / 智能体 / API Key 通用载体）。
-     * <p>{@code shareConfig} 为 null/空 ＝ 未配置 ＝ 全局共享；{@code createdBy} 用于「创建者短路」。</p>
-     */
-    public record DocShare(String shareConfig, String createdBy) {}
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -148,15 +145,20 @@ public class ResourceVisibilityService {
         };
     }
 
-    /** 解析用户的<b>有效权限</b>（所有权 + 共享范围 + 角色上限） */
+    /**
+     * 解析用户的<b>有效权限</b>（所有权 + 共享范围 + 角色上限）。
+     * share_config 为空＝私有（谁建归谁）；显式配置按声明的 scope（缺失＝不命中任何人）。
+     */
     public Permission resolve(Principal p, String shareConfigJson, String createdBy, ResourceKind kind) {
         if (p == null) p = Principal.ANONYMOUS;
         if (p.superadmin()) return Permission.MANAGE;
+        // 管理员级角色短路（运维视角，与供应商归属同口径）：非 superadmin 的自定义管理员也全量可见可管
+        if (roleService.isAdminCode(p.role())) return Permission.MANAGE;
 
+        // 未配置 → 私有（谁建归谁）；已配置 → 按声明的 scope（缺失＝不命中任何人）
         ShareConfig cfg = parse(shareConfigJson);
-        // 未配置 → 视作全局共享；已配置 → 按声明的 scope（缺失＝不命中任何人）
-        Scope read = (cfg == null) ? defaultScope() : cfg.readScope;
-        Scope manage = (cfg == null) ? defaultScope() : cfg.manageScope;
+        Scope read = cfg == null ? null : cfg.readScope;
+        Scope manage = cfg == null ? null : cfg.manageScope;
 
         if (createdBy != null && !createdBy.isBlank() && createdBy.equals(p.uid())) {
             return Permission.MANAGE; // 创建者短路（不套角色上限）
@@ -172,6 +174,16 @@ public class ResourceVisibilityService {
         }
         Permission ceiling = roleCeiling(kind, p.role());
         return granted.ordinal() <= ceiling.ordinal() ? granted : ceiling;
+    }
+
+    /**
+     * 文档级可读判定（两级 AND 的文档半边）：文档<b>未配置共享时跟随所属库</b>——
+     * 库门进了文档就可见（谁建归谁语义下，文档分享是显式例外而非默认要求）；
+     * 显式配置了 share_config 的文档按配置独立判定（越权仍由库门兜底）。
+     */
+    public boolean canReadDocFollowKb(Principal p, String docShareConfig, String docCreatedBy) {
+        if (docShareConfig == null || docShareConfig.isBlank()) return true;
+        return canRead(p, docShareConfig, docCreatedBy, ResourceKind.KNOWLEDGE_BASE);
     }
 
     /** 当前用户是否能读取该资源（知识库语义，兼容既有调用） */
@@ -246,27 +258,5 @@ public class ResourceVisibilityService {
         if ("user".equals(rl) && !read.userUids.containsAll(manage.userUids)) {
             throw new BizException("管理范围包含的用户必须都在阅读范围内");
         }
-    }
-
-    /**
-     * 给定候选文档 id → 共享信息映射，返回当前用户【可见】的文档 id 集合（知识库语义，兼容旧调用）。
-     */
-    public Set<String> filterVisibleDocIds(Principal p, Map<String, DocShare> docShares) {
-        return filterVisibleIds(p, docShares, ResourceKind.KNOWLEDGE_BASE);
-    }
-
-    /**
-     * 给定候选资源 id → 共享信息映射，返回当前用户【可见】的 id 集合。
-     * 资源未配置共享（shareConfig 为空）或创建者/超管 → 始终可见。
-     */
-    public Set<String> filterVisibleIds(Principal p, Map<String, DocShare> shares, ResourceKind kind) {
-        if (shares == null || shares.isEmpty()) return Collections.emptySet();
-        Set<String> out = new LinkedHashSet<>();
-        for (Map.Entry<String, DocShare> e : shares.entrySet()) {
-            DocShare ds = e.getValue();
-            if (ds == null) { out.add(e.getKey()); continue; }
-            if (canRead(p, ds.shareConfig(), ds.createdBy(), kind)) out.add(e.getKey());
-        }
-        return out;
     }
 }

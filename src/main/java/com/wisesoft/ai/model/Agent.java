@@ -1,6 +1,7 @@
 package com.wisesoft.ai.model;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -57,7 +58,10 @@ public class Agent {
      */
     private Integer knowledgeDisabled;
 
-    /** 内置标记：1=系统内置（如默认「知识库助手」），禁止删除；0/NULL=普通智能体 */
+    /**
+     * 内置标记：1=系统内置「问渠」智能体——<b>全局唯一</b>（启动时由 AgentService 维护：多余降级、缺失播种），
+     * 所有登录用户可读可用，仅管理员级可配置、不可删除；0/NULL=普通智能体。
+     */
     private Integer isBuiltin;
 
     /** 知识库检索工具：1=开 0=关 NULL=继承 */
@@ -146,8 +150,15 @@ public class Agent {
     /** 创建人（登录用户 uid） */
     private String createdBy;
 
-    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */
+    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有，仅创建者与管理员级可见) */
     private String shareConfig;
+
+    /**
+     * 当前请求者是否可管理（列表接口按登录态回填，仅供前端收起配置/共享/发布/删除入口；
+     * 真正的判权在写路径按 ResourceVisibilityService 再走一遍，此处不做授权依据）。
+     */
+    @TableField(exist = false)
+    private Integer manageable;
 
     /**
      * 本智能体的检索参数覆盖（JSON，键为 retrieval.* / rerank.* 的短名，如

@@ -720,11 +720,11 @@ public class HybridRetrievalService {
 
     /**
      * 可见范围过滤：返回当前用户【不可见】的文档 id 集合。
-     * <p><b>两级判定，与管理接口同口径</b>：文档可见 = 文档自身 share_config 允许 **且** 所属知识库允许
-     * （{@code DocumentController} 就是 {@code doc.canRead && kb.canRead}）。此前只判文档自身，会漏掉一种
-     * 真实越权：知识库设为私有（限定部门/用户），而库里文档的 share_config 为空（上传**不继承**库设置）
-     * ⇒ 文档被判"全局可见"，他人提问时仍能检索到私有库内容。
-     * <p>默认 global（share_config 为空）的库与文档都不受影响 → 既有检索行为不变。
+     * <p><b>两级判定，与管理接口同口径</b>：文档可见 = 所属知识库允许 **且**（文档自身未配置共享
+     * 时跟随库，显式配置时按配置判）——库是文档的归属边界，谁建归谁语义下未配置共享的文档
+     * 不再自带「全局可见」，越权仍由库门兜底（私有库的内容不会因文档空白共享而泄露）。
+     * <p>知识库按 share_config 判（未配置=私有，谁建归谁；个人默认库即归属人可见），
+     * 未归属库的文档（kbId 空）按默认库判定，与其余入口同口径。
      * 兜底：查询异常时返回空集（放行全部），不静默误伤。
      */
     private Set<String> loadNonVisibleDocIds() {
@@ -734,29 +734,26 @@ public class HybridRetrievalService {
             if (docs.isEmpty()) return Set.of();
             ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
                     RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
-            Map<String, ResourceVisibilityService.DocShare> shareByDoc = new LinkedHashMap<>();
-            for (AiDocument d : docs) {
-                shareByDoc.put(String.valueOf(d.getId()),
-                        new ResourceVisibilityService.DocShare(d.getShareConfig(), d.getCreatedBy()));
-            }
-            Set<String> visible = resourceVisibilityService.filterVisibleDocIds(p, shareByDoc);
 
-            // 库级：一次取全量未删除库的共享范围（小表，与上面那次全文档查询同一量级）
-            Map<String, ResourceVisibilityService.DocShare> shareByKb = new LinkedHashMap<>();
+            // 库级：按 share_config 判（未配置=私有；个人默认库即归属人可见）
+            Set<String> visibleKbIds = new LinkedHashSet<>();
             for (com.wisesoft.ai.model.KnowledgeBase kb : knowledgeBaseService.list()) {
-                shareByKb.put(kb.getId(),
-                        new ResourceVisibilityService.DocShare(kb.getShareConfig(), kb.getCreatedBy()));
+                if (resourceVisibilityService.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                    visibleKbIds.add(kb.getId());
+                }
             }
-            Set<String> visibleKbIds = resourceVisibilityService.filterVisibleIds(
-                    p, shareByKb, ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE);
 
             Set<String> nonVisible = new LinkedHashSet<>();
             for (AiDocument d : docs) {
                 String id = String.valueOf(d.getId());
                 String kbId = d.getKbId();
-                // 未归属任何库的文档（kbId 空）只按自身共享范围判定
-                boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
-                if (!visible.contains(id) || !kbVisible) {
+                // 未归属任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
+                boolean kbVisible = kbId == null || kbId.isBlank()
+                        || visibleKbIds.contains(kbId);
+                boolean docVisible = resourceVisibilityService.canReadDocFollowKb(
+                        p, d.getShareConfig(), d.getCreatedBy());
+                if (!docVisible || !kbVisible) {
                     nonVisible.add(id);
                 }
             }

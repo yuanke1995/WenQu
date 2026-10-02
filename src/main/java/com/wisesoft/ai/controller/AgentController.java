@@ -24,10 +24,11 @@ import java.util.Map;
 /**
  * 智能体配置接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
  * <p>
- * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 AGENT：全角色可管理）：
+ * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 AGENT）——谁建归谁：
  * <ul>
- *   <li>创建者 → 可管理自己的智能体（创建者短路）；</li>
- *   <li>他人 → 按智能体的 share_config 共享范围（未配置=全局可见）可见可用；</li>
+ *   <li>创建者 → 可管理自己的智能体（创建者短路）；未配置共享＝私有，仅创建者与管理员级可见；</li>
+ *   <li>他人 → 仅按智能体显式配置的 share_config 共享范围可见可用；</li>
+ *   <li>内置「问渠」是系统默认：所有登录用户可读可用（配置仍只由管理员级维护，普通用户不可改）；</li>
  *   <li>列表/编辑/删除/共享都按上述范围判定，看不见的智能体当不存在（不泄露存在性）。</li>
  * </ul>
  * 刻意保留管理员专属：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选），
@@ -61,17 +62,16 @@ public class AgentController {
                 ResourceVisibilityService.ResourceKind.AGENT);
     }
 
-    @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；普通用户只返回共享范围内可见的")
+    @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；普通用户只返回自己创建的、内置问渠与显式共享给自己的；"
+            + "每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）")
     @GetMapping("/list")
     public ResultJson list() {
-        List<?> agents = agentService.list();
+        List<com.wisesoft.ai.model.Agent> agents = agentService.list();
+        for (com.wisesoft.ai.model.Agent a : agents) {
+            a.setManageable(canManage(a) ? 1 : 0);
+        }
         if (!roleService.isAdminCode(RequestUser.role())) {
-            var p = principal();
-            agents = agents.stream().filter(o -> {
-                com.wisesoft.ai.model.Agent a = (com.wisesoft.ai.model.Agent) o;
-                return visibility.canRead(p, a.getShareConfig(), a.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.AGENT);
-            }).toList();
+            agents = agents.stream().filter(agentService::readable).toList();
         }
         return ResultJson.ok(agents);
     }
@@ -155,7 +155,7 @@ public class AgentController {
         return ResultJson.ok(Map.of("id", id, "isDefault", 1));
     }
 
-    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局共享）；"
+    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落私有：仅自己可见）；"
             + "非空须为 version 2 JSON，且管理范围不得宽于读取范围。共享范围之外的人不可见、不可用、不可管理该智能体")
     @PutMapping("/{id}/share")
     public ResultJson updateShare(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {

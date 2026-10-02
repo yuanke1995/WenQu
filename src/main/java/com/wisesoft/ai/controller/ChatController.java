@@ -223,7 +223,7 @@ public class ChatController {
             } else if ("doc".equals(type)) {
                 var doc = documentMapper.selectById(id);
                 if (doc == null || (!admin
-                        && !visibility.canRead(principal, doc.getShareConfig(), doc.getCreatedBy(), kind))) {
+                        && !visibility.canReadDocFollowKb(principal, doc.getShareConfig(), doc.getCreatedBy()))) {
                     throw new BizException("引用的文档不存在或无权访问");
                 }
                 // 文档所属库同样须可见（与文档列表接口的两级过滤一致）
@@ -236,7 +236,7 @@ public class ChatController {
                 normalized.setType("doc");
                 normalized.setId(doc.getId());
                 normalized.setName(doc.getFileName());
-                normalized.setKbId(doc.getKbId() == null ? kbService.defaultId() : doc.getKbId());
+                normalized.setKbId(doc.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : doc.getKbId());
             } else {
                 throw new BizException("不支持的引用类型：" + m.getType() + "（仅支持 kb / doc）");
             }

@@ -2,9 +2,8 @@
   <!-- 智能体工作台：五个 Tab 对所有人开放。
        技能 Skills 与 MCP 是**个人资产**（每人管自己的，2026-09-26 从「系统设置」迁出）；
        智能体对普通用户开放**自建自管**（后端按 ResourceVisibilityService 做资源级隔离：
-       只能看到/管理自己创建的与共享给自己的）；
-       模型供应商分两级（2026-09-26）：管理员登记的 = 平台级（所有人可见可用，对普通用户只读），
-       普通用户可登记**自己的**网关与 Key = 个人级（仅本人可见可用）。 -->
+       只能看到/管理自己创建的、内置问渠与共享给自己的，未配置共享=私有）；
+       模型供应商谁建归谁（2026-10）：所有人只看到自己登记的网关与 Key，管理员级保留全量运维视角。 -->
   <div class="app-page">
     <a-tabs v-model:activeKey="active" class="hub-tabs" destroy-inactive-tab-pane>
       <a-tab-pane key="providers" tab="模型供应商"><ProvidersPage /></a-tab-pane>

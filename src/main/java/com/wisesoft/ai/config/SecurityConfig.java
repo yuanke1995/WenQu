@@ -58,7 +58,6 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、身份查询（/auth/me）、
      * 对话页智能体下拉（GET /agent/available，只读精简字段）。
      */
-    private static final Pattern KNOWLEDGE_SINGLE_GET = Pattern.compile("/api/ai/knowledge/([^/]+)");
 
     private boolean isPublicUserEndpoint(String method, String path) {
         if (method == null || path == null) return false;
@@ -112,11 +111,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 沙盒工作区浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
         // 只会按自己的 uid 派生 sandboxId，天然探不到别人的容器；开关 tool.sandbox.enabled 关闭时控制器 fail-closed
         if (path.equals("/api/ai/sandbox") || path.startsWith("/api/ai/sandbox/")) return true;
-        // 引用溯源：GET /knowledge/{单个id}（list 是管理端点：按文档列块，排除）
-        if ("GET".equals(method)) {
-            var m = KNOWLEDGE_SINGLE_GET.matcher(path);
-            if (m.matches() && !"list".equals(m.group(1))) return true;
-        }
+        // 知识块（2026-10）：预览/搜索/编辑对「文档可读/可管理」的普通用户开放——资源级判定在
+        // KnowledgeController 内做（文档可读=列块与搜索命中，文档可管=改块删块；全局搜索按可见文档过滤）。
+        // /knowledge/unmatched（无命中问题分析）与 POST /knowledge（手动补块）仍仅管理员。
+        if (path.startsWith("/api/ai/knowledge/") && !path.equals("/api/ai/knowledge/unmatched")) return true;
         // 智能体公开分享（游客通道）：免登录，token 即凭据（/s/{token} 的后端 API）
         if (isShareGuestEndpoint(path)) return true;
         // 用户长期记忆（个人资产）：个人设置页增删改查自己的（归属在 MemoryController 按 uid 过滤）
@@ -137,21 +135,22 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     /**
      * 知识库 / 文档的自建自管端点（普通用户可访问；资源级权限由 Controller 内判定）。
-     * <p>刻意排除：{@code /document/stats}（全库命中统计）、{@code /knowledge/list}（知识块批量列）等
-     * 跨资源的管理视图，仍仅管理员。</p>
+     * <p>刻意排除：{@code /document/stats}（全库命中统计）等跨资源的管理视图，仍仅管理员；
+     * {@code /document/queue/stats} 是全局解析队列计数（无用户数据），供普通用户的文档页展示。</p>
      */
     private static boolean isKbOrDocEndpoint(String method, String path) {
         if (path == null) return false;
         if (path.equals("/api/ai/document/stats")) return false;
+        if (path.equals("/api/ai/document/queue/stats")) return true;
         // 知识库：列表 / 详情 / 新建 / 编辑 / 删除 / 移动文档
         if (path.equals("/api/ai/kb") || path.equals("/api/ai/kb/list")
                 || path.matches("/api/ai/kb/[^/]+") || path.matches("/api/ai/kb/doc/[^/]+")) return true;
-        // 文档：列表 / 上传 / 批量 / 单个的启停用·共享·重解析·补图述·版本·回滚·源文件·删除
+        // 文档：列表 / 上传 / 批量 / 单个的启停用·共享·重解析·补图述·版本·回滚·源文件·自动刷新·删除
         if (path.equals("/api/ai/document") || path.equals("/api/ai/document/list")
                 || path.equals("/api/ai/document/upload") || path.equals("/api/ai/document/upload/batch")
                 || path.equals("/api/ai/document/batch/delete") || path.equals("/api/ai/document/batch/reparse")
                 || path.matches("/api/ai/document/[^/]+")
-                || path.matches("/api/ai/document/[^/]+/(source|versions|status|share|reparse|backfill-descriptions|rollback)")) {
+                || path.matches("/api/ai/document/[^/]+/(source|versions|status|share|reparse|backfill-descriptions|rollback|refresh-config)")) {
             return true;
         }
         return false;

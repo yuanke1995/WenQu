@@ -212,7 +212,7 @@ public class DocumentService {
         // 同名串行：并发上传同一文件名时，避免双方都判定"无可复用"而各建一条文档（本实例内互斥；
         // 跨实例仍靠 tryLockParsing 的 CAS 兜底，最坏情况产生一条重复记录，可手动删除）
         // 目标知识库校验（kb_id 必填：未指定归入默认库）：不存在/已删除拒绝，避免上传进黑洞
-        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId(RequestUser.uid()) : kbId.trim();
         {
             com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(targetKbId);
             if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
@@ -313,7 +313,7 @@ public class DocumentService {
         DocumentParser parser = parsers.stream().filter(p -> p.supports("url")).findFirst()
                 .orElseThrow(() -> new BizException("网页解析器未就绪"));
         // 目标库校验与 upload() 同口径（doUpload 内不再校验）
-        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
+        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId(RequestUser.uid()) : kbId.trim();
         {
             KnowledgeBase kb = kbMapper.selectById(targetKbId);
             if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
@@ -816,10 +816,10 @@ public class DocumentService {
         t.start();
     }
 
-    /** 库 ID → 其绑定向量模型引用（kbId 空=默认库；库不存在返回空串） */
+    /** 库 ID → 其绑定向量模型引用（后台线程调用，无请求态；kbId 空/库不存在/未绑定一律返回空串，由调用方跳过向量迁移） */
     private String kbRefOf(String kbId) {
-        String id = kbId == null || kbId.isBlank() ? kbService.defaultId() : kbId.trim();
-        com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(id);
+        if (kbId == null || kbId.isBlank()) return "";
+        com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(kbId.trim());
         return kb == null || kb.getEmbeddingRef() == null ? "" : kb.getEmbeddingRef();
     }
 

@@ -27,11 +27,11 @@ import java.util.Map;
 /**
  * 知识库接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
  * <p>
- * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 KNOWLEDGE_BASE）：
+ * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 KNOWLEDGE_BASE）——谁建归谁：
  * <ul>
- *   <li>创建者 → 可管理自己的库（新建/编辑/删除/移文档/传文档）；</li>
- *   <li>他人 → 按库的 share_config 共享范围可见；普通用户对别人的库**封顶只读**（看文档、检索引用），不能改；</li>
- *   <li>share_config 未配置 = 全局可见（兼容存量数据）。</li>
+ *   <li>创建者 → 可管理自己的库（新建/编辑/删除/移文档/传文档）；未配置共享＝私有，仅创建者与管理员级可见；</li>
+ *   <li>他人 → 仅按库显式配置的 share_config 共享范围可见；普通用户对别人的库**封顶只读**（看文档、检索引用），不能改；</li>
+ *   <li>个人默认知识库（问渠，每人一张、系统懒创建）是归属人的私有库：仅创建者与管理员级可见可管。</li>
  * </ul>
  * 管理员照旧全量可见可管。检索链路的可见性过滤由既有检索层负责，与本接口口径同源。
  *
@@ -92,9 +92,13 @@ public class KnowledgeBaseController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "知识库列表", description = "含每个库的文档数量；默认库排在最前；普通用户只返回共享范围内可见的库")
+    @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；普通用户只返回自己创建的（含个人默认库）与显式共享给自己的")
     @GetMapping("/list")
     public ResultJson list() {
+        // 进知识库页即确保本人已有个人默认库（问渠）：懒创建只挂在写路径的话，
+        // 新用户在页面上看不到自己的问渠，也就无从绑定向量模型（首次触达即建档）
+        String uid = RequestUser.uid();
+        if (uid != null && !uid.isBlank()) kbService.defaultId(uid);
         List<Map<String, Object>> all = kbService.listWithCounts();
         if (!admin()) {
             var p = principal();
@@ -105,7 +109,7 @@ public class KnowledgeBaseController {
         return ResultJson.ok(all);
     }
 
-    @Operation(summary = "知识库详情", description = "普通用户仅共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
+    @Operation(summary = "知识库详情", description = "普通用户仅自己创建的（含个人默认库）与共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
@@ -117,21 +121,20 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kb);
     }
 
-    @Operation(summary = "新建知识库", description = "body: name(必填)/description/icon(图标：wenqu=问渠品牌标 / emoji 字符，省略=默认库图标；"
-            + "设为默认库时恒为 wenqu)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/isDefault/shareConfig；"
-            + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置；创建人=当前用户（默认库标记仅管理员可设）")
+    @Operation(summary = "新建知识库", description = "body: name(必填)/description/icon(emoji 字符，省略=默认库图标；"
+            + "wenqu 品牌标为个人默认库专属，新建不可用)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/shareConfig；"
+            + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置；创建人=当前用户。"
+            + "默认知识库（问渠）每人一个、系统自动创建，不经此接口")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         if (body.get("name") == null || String.valueOf(body.get("name")).isBlank()) {
             return ResultJson.error("知识库名称不能为空");
         }
-        // isDefault（设默认库）是全局动作：普通用户建库一律不带默认标记
-        if (!admin()) body.put("isDefault", 0);
         return ResultJson.ok(kbService.create(body, RequestUser.uid()));
     }
 
     @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
-            + "icon（wenqu=问渠品牌标 / emoji）与 name 仅默认库不可修改（默认库恒为 wenqu 品牌标，名称/图标改值报错）；"
+            + "icon（wenqu 品牌标为默认库专属）与 name 仅默认库不可修改（默认库恒为 wenqu 品牌标，名称/图标改值报错）；"
             + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者/被授权人/管理员可改")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
@@ -159,13 +162,13 @@ public class KnowledgeBaseController {
         return ResultJson.ok(Map.of("id", id));
     }
 
-    @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回默认库（即 kb_id 置空）；"
+    @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"
             + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权")
     @PutMapping("/doc/{docId}")
     public ResultJson moveDoc(@PathVariable("docId") String docId, @RequestBody Map<String, Object> body) {
         Object kbId = body.get("kbId");
         String toKbId = kbId == null ? null : String.valueOf(kbId);
-        // 记录迁移前归属（含历史文档 kb_id 为空=默认库），移动后按前后两库的向量模型判断是否迁移向量
+        // 记录迁移前归属，移动后按前后两库的向量模型判断是否迁移向量
         com.wisesoft.ai.model.AiDocument before = documentService.getDoc(docId);
         if (before == null) return ResultJson.error("文档不存在");
         String fromKbId = before.getKbId();
@@ -175,12 +178,12 @@ public class KnowledgeBaseController {
                     ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
                 throw new BizException("仅可管理自己上传或被授权管理的文档");
             }
-            // 源库/目标库都要有管理权（kbId 为空=默认库语义，同样按其库配置判定）
+            // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按其库配置判定）
             requireManage(fromKbId == null ? null : kbService.get(fromKbId));
-            String defId = kbService.defaultId();
-            requireManage(toKbId == null ? (defId == null ? null : kbService.get(defId)) : kbService.get(toKbId));
+            String defId = kbService.defaultId(RequestUser.uid());
+            requireManage(toKbId == null ? kbService.get(defId) : kbService.get(toKbId));
         }
-        boolean ok = kbService.moveDoc(docId, toKbId);
+        boolean ok = kbService.moveDoc(docId, toKbId, RequestUser.uid());
         if (ok) {
             documentService.migrateDocAsync(docId, fromKbId, toKbId);
         }

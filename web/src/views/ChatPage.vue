@@ -237,7 +237,7 @@
               <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
               <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词，参考 {{ m.retrieved.refs }} 段资料<template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
+                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="m.retrieved.refs > 0">，参考 {{ m.retrieved.refs }} 段资料</template><template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
                   <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
                   <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
                 </div>

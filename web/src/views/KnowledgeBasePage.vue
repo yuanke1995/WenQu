@@ -111,7 +111,7 @@ import KbIcon from '../components/KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync, ensureAuth } from '../utils/auth'
 
-// 权限：管理员全量；普通用户可自建自管自己的库，别人共享的库只读（后端按共享范围过滤返回）
+// 权限：管理员全量；普通用户可自建自管自己的库，可见=自己的库+默认库+别人显式共享的库（只读），后端按共享范围过滤返回
 const isAdmin = isAdminSync()
 const myUid = ref('')
 

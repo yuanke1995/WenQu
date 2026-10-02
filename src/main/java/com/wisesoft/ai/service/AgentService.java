@@ -27,6 +27,9 @@ import java.util.stream.Collectors;
  * <p>
  * 一个智能体把「模型 / 系统提示词 / 知识库范围 / 工具开关」打包成命名预设，对话页下拉切换；
  * 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 null=继承。
+ * <p>
+ * 内置「问渠」智能体是系统默认：<b>全局唯一</b>（启动时唯一性维护：多余降级、缺失播种），
+ * 所有登录用户可读可用（{@link #readable} 豁免），仅管理员级可配置、不可删除。
  *
  * @author yuanke
  */
@@ -35,18 +38,70 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AgentService {
 
+    /** 内置「问渠」智能体的固定名称（产品身份的一部分，不可修改） */
+    public static final String BUILTIN_NAME = "问渠";
+
     private final AgentMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wisesoft.ai.mapper.WorkflowMapper workflowMapper;
+
+    /**
+     * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
+     * 其余降级为普通智能体（log.warn 留痕）；一个都没有（全新环境）时播种最小配置——
+     * 各维度全部继承全局，无需任何手工建档。
+     */
+    @jakarta.annotation.PostConstruct
+    public void maintainBuiltinAgent() {
+        try {
+            List<Agent> builtins = mapper.selectList(new LambdaQueryWrapper<Agent>()
+                    .eq(Agent::getIsBuiltin, 1)
+                    .orderByDesc(Agent::getIsDefault)
+                    .orderByAsc(Agent::getCreateTime)
+                    .orderByAsc(Agent::getId));
+            if (builtins.size() > 1) {
+                Agent keeper = builtins.get(0);
+                for (int i = 1; i < builtins.size(); i++) {
+                    Agent extra = builtins.get(i);
+                    mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                            .eq(Agent::getId, extra.getId())
+                            .set(Agent::getIsBuiltin, 0)
+                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    log.warn("[AGENT] 内置智能体全局唯一，已将重复行降级为普通智能体: {}（{}）", extra.getName(), extra.getId());
+                }
+                log.info("[AGENT] 内置「问渠」唯一性维护完成: 保留 {}（{}），降级 {} 条", keeper.getName(), keeper.getId(), builtins.size() - 1);
+                return;
+            }
+            if (builtins.size() == 1) return;
+            Agent seed = new Agent();
+            seed.setName(BUILTIN_NAME);
+            seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
+            seed.setIsBuiltin(1);
+            clearDefault();
+            seed.setIsDefault(1);
+            seed.setCreatedBy("system");
+            LocalDateTime now = LocalDateTime.now();
+            seed.setCreateTime(now);
+            seed.setUpdateTime(now);
+            mapper.insert(seed);
+            log.info("[AGENT] 已播种内置「问渠」系统默认智能体: {}（{}）", seed.getId(), seed.getName());
+        } catch (Exception e) {
+            log.warn("[AGENT] 内置「问渠」维护失败（不影响启动，下次启动重试）: {}", e.getMessage());
+        }
+    }
 
     /** 当前请求者（可见性/可管性判定的输入） */
     private Principal principal() {
         return new Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 当前用户是否可读取该智能体（未配置共享＝全局，行为与从前一致） */
-    private boolean readable(Agent a) {
-        return resourceVisibilityService.canRead(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT);
+    /**
+     * 当前用户是否可读取该智能体。归属口径（谁建归谁）：未配置共享＝私有（仅创建者/管理员级）；
+     * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
+     */
+    public boolean readable(Agent a) {
+        if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
+        return resourceVisibilityService.canRead(principal(), a == null ? null : a.getShareConfig(),
+                a == null ? null : a.getCreatedBy(), ResourceKind.AGENT);
     }
 
     /** 当前用户是否可管理该智能体（出现在管理端点前先过这道闸） */
@@ -73,7 +128,7 @@ public class AgentService {
         for (Agent a : list()) {
             // 子智能体不出现在对话页下拉：它只能被主智能体委派调用，不能当作问答角色直接选用
             if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
-            // 共享范围之外的人不应在对话页看到该智能体（未配置共享＝全局，行为不变）
+            // 共享范围之外的人不应在对话页看到该智能体（未配置共享＝私有，谁建归谁；内置「问渠」人人可读）
             if (!readable(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
@@ -142,6 +197,8 @@ public class AgentService {
     /** 新建智能体；isDefault=true 时先清空其它默认 */
     public Agent create(Map<String, Object> body) {
         Agent a = toEntity(body, new Agent());
+        // 内置标记不可经 API 产生（toEntity 本就不映射；这里再兜一道，保证「问渠」全局唯一只能由启动维护路径产生）
+        a.setIsBuiltin(null);
         a.setCreatedBy(RequestUser.uid());
         a.setCreateTime(LocalDateTime.now());
         a.setUpdateTime(LocalDateTime.now());
@@ -254,10 +311,10 @@ public class AgentService {
     }
 
     /**
-     * 写入共享范围（空串 = 清空 → 回落全局共享）。
+     * 写入共享范围（空串 = 清空 → 回落私有：仅自己与管理员级可见）。
      * <p>校验口径与文档一致：必须 {@code version=2}，且管理范围不得宽于读取范围。</p>
      * <p><b>必须用 {@code set(..., null)} 显式置空</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
-     * {@code updateById} 会跳过 null 字段，导致「恢复全员共享」静默不生效。</p>
+     * {@code updateById} 会跳过 null 字段，导致「恢复私有」静默不生效。</p>
      */
     public void updateShareConfig(String id, String shareConfigJson) {
         Agent existing = mapper.selectById(id);
@@ -269,7 +326,7 @@ public class AgentService {
                 .eq(Agent::getId, id)
                 .set(Agent::getShareConfig, normalized)
                 .set(Agent::getUpdateTime, LocalDateTime.now()));
-        log.info("[AGENT] 共享范围更新 id={} scope={}", id, normalized == null ? "全局" : "受限");
+        log.info("[AGENT] 共享范围更新 id={} scope={}", id, normalized == null ? "私有（仅自己）" : "受限共享");
     }
 
     /** 把请求体字段映射到实体（仅覆盖 body 中出现的字段，其余保持原值） */

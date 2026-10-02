@@ -63,13 +63,16 @@ public class DocumentController {
         }
     }
 
-    /** 文档可读：文档自身 + 其所属库都在共享范围内（不可见按不存在处理，不泄露存在性） */
+    /**
+     * 文档可读：所属库可见（个人默认库=归属人私有），且文档显式配置了共享时按配置判
+     * （未配置=跟随库——谁建归谁语义下，文档分享是显式例外）。不可见按不存在处理，不泄露存在性。
+     */
     private void requireDocRead(com.wisesoft.ai.model.AiDocument doc) {
         if (doc == null) throw new BizException("文档不存在");
         if (admin()) return;
         var p = principal();
         var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
-        if (!visibility.canRead(p, doc.getShareConfig(), doc.getCreatedBy(), kind)) {
+        if (!visibility.canReadDocFollowKb(p, doc.getShareConfig(), doc.getCreatedBy())) {
             throw new BizException("文档不存在");
         }
         if (doc.getKbId() != null) {
@@ -83,7 +86,7 @@ public class DocumentController {
     /** 目标库管理权（上传/移动的落点校验；kbId 空=默认库，同样按其库配置判定） */
     private void requireKbManage(String kbId) {
         if (admin()) return;
-        String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId() : kbId;
+        String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId(RequestUser.uid()) : kbId;
         var kb = id == null ? null : kbService.get(id);
         if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
@@ -182,12 +185,12 @@ public class DocumentController {
 
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
             + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
-            + "普通用户仅返回共享范围内可见的库与文档")
+            + "普通用户仅返回自己创建的、默认库与共享范围内的库及其中文档")
     @GetMapping("/list")
     public ResultJson list(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
         List<com.wisesoft.ai.model.AiDocument> docs = documentService.list(kbId);
         if (admin()) return ResultJson.ok(docs);
-        // 普通用户：库可见 + 文档自身可见，双重过滤（库不可见时按空列表处理，不泄露存在性）
+        // 普通用户：库可见（个人默认库=归属人私有）+ 文档显式共享判定（未配置=跟随库），双重过滤（库不可见时按空列表处理，不泄露存在性）
         var p = principal();
         var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         if (kbId != null && !kbId.isBlank()) {
@@ -198,13 +201,15 @@ public class DocumentController {
         }
         var visibleKbIds = new java.util.HashSet<String>();
         for (var kb : kbService.list()) {
-            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) visibleKbIds.add(kb.getId());
+            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                visibleKbIds.add(kb.getId());
+            }
         }
         List<com.wisesoft.ai.model.AiDocument> out = docs.stream()
-                .filter(d -> visibility.canRead(p, d.getShareConfig(), d.getCreatedBy(), kind))
+                .filter(d -> visibility.canReadDocFollowKb(p, d.getShareConfig(), d.getCreatedBy()))
                 // kb_id 为空=默认库语义（与检索侧一致）；连默认库都不存在时保守过滤掉
                 .filter(d -> {
-                    String kid = d.getKbId() == null ? kbService.defaultId() : d.getKbId();
+                    String kid = d.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : d.getKbId();
                     return kid != null && visibleKbIds.contains(kid);
                 })
                 .toList();

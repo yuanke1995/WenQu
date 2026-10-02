@@ -56,7 +56,10 @@
               <span class="ap-group-count">{{ sec.members.length }}</span>
             </div>
             <div class="ap-grid">
-              <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card" @click="openEdit(a)">
+              <!-- 卡片点击直达配置：仅可管理的智能体（普通用户看内置问渠/仅可读共享时点卡片不做任何事，
+                   否则弹出的编辑框保存必被后端拒绝，是"点了报错"的死路） -->
+              <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card"
+                       :class="{ 'ap-card-readonly': !a.manageable }" @click="a.manageable && openEdit(a)">
                 <div class="ap-card-head">
                   <a-checkbox v-if="batchMode && !isBuiltin(a)" class="ap-check" :checked="selected.includes(a.id)"
                               @click.stop @change="toggleSelect(a.id)" />
@@ -64,7 +67,7 @@
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
                   <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
-                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统内置，不可删除">内置</span>
+                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全局唯一，全员可用，仅管理员可配置">内置</span>
                   </span>
                 </div>
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
@@ -78,15 +81,20 @@
                   <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
                 </div>
                 <div class="ap-card-foot">
-                  <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
-                  <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
-                  <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
-                  <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
-                  <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
-                  <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路；内置以卡片右上角「内置」标记区分 -->
-                  <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
-                    <button class="app-link-btn danger" @click.stop>删除</button>
-                  </a-popconfirm>
+                  <!-- 管理入口按后端回填的 manageable 收起：普通用户看内置问渠/仅可读的共享智能体时，
+                       不给"点了报错"的死路（写路径后端还会按共享范围二次判定） -->
+                  <template v-if="a.manageable">
+                    <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
+                    <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
+                    <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
+                    <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
+                    <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
+                    <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路；内置以卡片右上角「内置」标记区分 -->
+                    <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
+                      <button class="app-link-btn danger" @click.stop>删除</button>
+                    </a-popconfirm>
+                  </template>
+                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) ? '系统默认 · 管理员可配置' : '仅可使用' }}</span>
                 </div>
               </article>
             </div>
@@ -382,9 +390,10 @@
             <rect :x="SUB_X" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 - 13" width="26" height="26" rx="6" class="ap-phantom" />
             <text :x="SUB_X + 13" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 + 5" class="ap-phantom-t">!</text>
           </g>
-          <!-- 主智能体列 -->
+          <!-- 主智能体列（点击直达配置；不可管理的节点点了不做任何事） -->
           <g v-for="a in topoData.mains" :key="'m' + a.id" class="ap-node" :class="nodeCls('m' + a.id)"
-             @mouseenter="topoHover = 'm' + a.id" @mouseleave="topoHover = ''" @click="openEdit(a); topoOpen = false">
+             @mouseenter="topoHover = 'm' + a.id" @mouseleave="topoHover = ''"
+             @click="a.manageable ? (openEdit(a), topoOpen = false) : null">
             <rect :x="MAIN_X" :y="topoData.mainPos[String(a.id)]" :width="TOPO.nodeW" :height="TOPO.rowH" rx="8" class="ap-nrect main" />
             <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, MAIN_NAME) }}</text>
             <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 40" class="ap-ndesc">{{ trunc(a.description || '未填写描述', MAIN_LINE) }}</text>
@@ -392,9 +401,10 @@
               {{ subCountOf(a) ? `委派 ${subCountOf(a)} 个子智能体` : '未委派子智能体' }}
             </text>
           </g>
-          <!-- 子智能体列（无人委派 = 灰虚线框） -->
+          <!-- 子智能体列（无人委派 = 灰虚线框；点击同主列，不可管理不响应） -->
           <g v-for="a in topoData.subs" :key="'s' + a.id" class="ap-node" :class="nodeCls('s' + a.id)"
-             @mouseenter="topoHover = 's' + a.id" @mouseleave="topoHover = ''" @click="openEdit(a); topoOpen = false">
+             @mouseenter="topoHover = 's' + a.id" @mouseleave="topoHover = ''"
+             @click="a.manageable ? (openEdit(a), topoOpen = false) : null">
             <rect :x="SUB_X" :y="topoData.subPos[String(a.id)]" :width="TOPO.subW" :height="TOPO.rowH" rx="8"
                   class="ap-nrect sub" :class="{ orphan: !topoData.parents[String(a.id)].length }" />
             <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, SUB_NAME) }}</text>
@@ -785,13 +795,14 @@ const nodeCls = key => (hoverRelated.value && !hoverRelated.value.has(key) ? 'di
 const shareVisible = ref(false)
 const shareTarget = ref({ id: '', shareConfig: '' })
 const saveShareFn = json => updateAgentShare(shareTarget.value.id, json)
-// 卡片上的共享范围标记：仅非全员时显示（全员=默认，不显示以免噪音）
+// 卡片上的共享范围标记：仅显式共享时显示（未配置=私有即默认，不显示以免噪音）
 function scopeLabel (a) {
   if (!a.shareConfig || !String(a.shareConfig).trim()) return ''
   let parsed = null
   try { parsed = JSON.parse(a.shareConfig) } catch (e) { return '' }
   const r = (parsed && parsed.read_scope) || {}
   const lvl = r.access_level || 'global'
+  if (lvl === 'global') return '全员共享'
   if (lvl === 'department') {
     const n = Array.isArray(r.department_ids) ? r.department_ids.length : 0
     return n ? '限 ' + n + ' 个部门' : '部门可见'
@@ -1271,6 +1282,10 @@ onMounted(async () => { })
   display: flex; align-items: center; justify-content: flex-end; gap: 2px;
   border-top: 1px dashed var(--app-border); padding-top: 6px; margin-top: auto;
 }
+/* 不可管理时占位提示（内置问渠=系统默认，共享只读=仅可使用） */
+.ap-readonly-hint { margin-right: auto; font-size: 12px; color: var(--app-text3); }
+/* 不可管理的卡片：无点击态暗示（cursor 保持默认，区别于可点击进入配置的卡片） */
+.ap-card-readonly { cursor: default; }
 
 /* 配置视图：宽屏双栏瀑布式（>1440px 双栏，中屏回落单列居中，小屏吃满）。
    卡片整卡不跨栏（break-inside:avoid），multicol 自动配平两栏高度；

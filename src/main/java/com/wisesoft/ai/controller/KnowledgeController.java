@@ -27,7 +27,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 知识块管理（新增/查询），以及无命中问题查询
+ * 知识块管理（预览/搜索/编辑/删除）以及无命中问题查询。
+ * <p>
+ * 归属口径（2026-10，谁建归谁）：知识块随文档——文档<b>可读</b>（未配置共享跟随所属库）才能列块与
+ * 被搜索命中，文档<b>可管理</b>（创建者/被授权人/管理员级）才能改块删块；无归属文档的块仅管理员级可及。
+ * {@code /knowledge/unmatched}（无命中分析）与 {@code POST /knowledge}（手动补块）仍仅管理员，
+ * 由 SecurityConfig 白名单拦截。
  *
  * @author yuanke
  */
@@ -45,6 +50,47 @@ public class KnowledgeController {
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
     private final KeywordIndexService keywordIndexService;
+    private final com.wisesoft.ai.service.ResourceVisibilityService visibility;
+    private final com.wisesoft.ai.service.KnowledgeBaseService kbService;
+    private final com.wisesoft.ai.service.RoleService roleService;
+
+    private boolean admin() {
+        return roleService.isAdminCode(RequestUser.role());
+    }
+
+    private com.wisesoft.ai.service.ResourceVisibilityService.Principal principal() {
+        return new com.wisesoft.ai.service.ResourceVisibilityService.Principal(
+                RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+    }
+
+    /** 文档可读（列块/搜索命中的门槛）：文档未配置共享时跟随所属库；无归属文档的块仅管理员级 */
+    private void requireDocReadable(AiDocument doc) {
+        if (admin()) return;
+        var kind = com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
+        if (doc == null || !visibility.canReadDocFollowKb(principal(), doc.getShareConfig(), doc.getCreatedBy())) {
+            throw new BizException("无权访问该文档的知识块");
+        }
+        if (doc.getKbId() != null) {
+            var kb = kbService.get(doc.getKbId());
+            if (kb == null || !visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                throw new BizException("无权访问该文档的知识块");
+            }
+        }
+    }
+
+    /** 文档可管理（改块/删块的门槛）：创建者/被授权人/管理员级；无归属文档的块仅管理员级 */
+    private void requireDocManageable(AiDocument doc) {
+        if (admin()) return;
+        if (doc == null || !visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
+                com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            throw new BizException("仅可管理自己上传或被授权管理的文档的知识块");
+        }
+    }
+
+    private AiDocument docOfChunk(Knowledge k) {
+        return (k == null || k.getDocId() == null || k.getDocId().isBlank())
+                ? null : documentMapper.selectById(k.getDocId());
+    }
 
     @Operation(summary = "无命中问题列表", description = "获取最近 30 天内无检索命中的问题列表（按频次降序，最多 50 条），供一键入库补齐知识缺口")
     @GetMapping("/knowledge/unmatched")
@@ -52,13 +98,15 @@ public class KnowledgeController {
         return ResultJson.ok(qaLogService.listUnmatched());
     }
 
-    @Operation(summary = "按文档列知识块", description = "获取指定文档下的所有知识块（含标题、正文、图片），用于知识块预览")
+    @Operation(summary = "按文档列知识块", description = "获取指定文档下的所有知识块（含标题、正文、图片），用于知识块预览；"
+            + "仅文档可读者可用（未配置共享跟随所属库，谁建归谁）")
     @GetMapping("/knowledge/list")
     public ResultJson listByDoc(
             @Parameter(description = "文档 ID") @RequestParam("docId") String docId) {
         if (docId == null || docId.isBlank()) {
             throw new BizException("缺少 docId");
         }
+        requireDocReadable(documentMapper.selectById(docId));
         List<Map<String, Object>> list = knowledgeMapper.selectList(
                         new LambdaQueryWrapper<Knowledge>()
                                 .eq(Knowledge::getDocId, docId)
@@ -89,6 +137,7 @@ public class KnowledgeController {
         if (status == null || (status != 0 && status != 1)) throw new BizException("非法状态（0=生效, 1=停用）");
         Knowledge k = knowledgeMapper.selectById(id);
         if (k == null) throw new BizException(404, "知识块不存在");
+        requireDocManageable(docOfChunk(k));
         if (k.getDocId() != null && !k.getDocId().isBlank()) {
             AiDocument doc = documentMapper.selectById(k.getDocId());
             if (doc != null && doc.getStatus() != null && doc.getStatus() == 2) {
@@ -111,7 +160,8 @@ public class KnowledgeController {
         return ResultJson.ok("操作成功");
     }
 
-    @Operation(summary = "跨文档搜索知识块", description = "按关键词在全部知识块（含已停用，带状态标记）中搜索，管理端排查坏块用；返回最多 50 条")
+    @Operation(summary = "跨文档搜索知识块", description = "按关键词搜索知识块；命中按请求者可见文档过滤（谁建归谁），"
+            + "管理员级全局（含已停用，带状态标记）排查坏块；返回最多 50 条")
     @GetMapping("/knowledge/search")
     public ResultJson searchKnowledge(
             @Parameter(description = "搜索关键词") @RequestParam("keyword") String keyword,
@@ -121,9 +171,12 @@ public class KnowledgeController {
         if (extracted.isEmpty()) extracted.add(keyword.trim());
         final List<String> terms = extracted.size() > 5 ? new ArrayList<>(extracted.subList(0, 5)) : extracted;
 
+        // 普通用户先按放大窗口取候选，再按可见文档过滤后裁回 limit（DB LIMIT 在过滤前，直接 50 会漏）
+        boolean admin = admin();
+        int fetch = admin ? Math.min(Math.max(1, limit), 50) : Math.min(Math.max(1, limit) * 4, 200);
         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge> wrapper =
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge>()
-                        .last("LIMIT " + Math.min(Math.max(1, limit), 50));
+                        .last("LIMIT " + fetch);
         wrapper.and(w -> {
             for (int i = 0; i < terms.size(); i++) {
                 if (i > 0) w.or();
@@ -132,6 +185,29 @@ public class KnowledgeController {
             }
         });
         List<Knowledge> hits = knowledgeMapper.selectList(wrapper);
+        if (!admin) {
+            java.util.Set<String> docIds = new java.util.HashSet<>();
+            for (Knowledge k : hits) {
+                if (k.getDocId() != null && !k.getDocId().isBlank()) docIds.add(k.getDocId());
+            }
+            Map<String, AiDocument> docById = new LinkedHashMap<>();
+            if (!docIds.isEmpty()) {
+                for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                        .in(AiDocument::getId, docIds))) {
+                    docById.put(d.getId(), d);
+                }
+            }
+            hits = hits.stream().filter(k -> {
+                AiDocument doc = k.getDocId() == null ? null : docById.get(k.getDocId());
+                try {
+                    requireDocReadable(doc);
+                    return true;
+                } catch (BizException denied) {
+                    return false;
+                }
+            }).toList();
+            if (hits.size() > limit) hits = hits.subList(0, Math.min(Math.max(1, limit), 50));
+        }
         List<Map<String, Object>> rows = hits.stream().map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", k.getId());
@@ -191,20 +267,26 @@ public class KnowledgeController {
         return ResultJson.ok(Map.of("id", k.getId()), "知识块已创建");
     }
 
-    @Operation(summary = "编辑知识块", description = "修改知识块标题/正文（图片保留），并重新向量化")
+    @Operation(summary = "编辑知识块", description = "修改知识块标题/正文（图片保留），并重新向量化；仅文档可管理者可用")
     @PutMapping("/knowledge/{id}")
     public ResultJson updateKnowledge(
             @Parameter(description = "知识块 ID") @PathVariable("id") String id,
             @Parameter(description = "{\"title\": \"新标题\", \"content\": \"新内容\"}")
             @RequestBody Map<String, String> body) {
+        Knowledge k = knowledgeMapper.selectById(id);
+        if (k == null) throw new BizException(404, "知识块不存在");
+        requireDocManageable(docOfChunk(k));
         documentService.updateKnowledge(id, body.get("title"), body.get("content"));
         return ResultJson.ok("知识块已更新");
     }
 
-    @Operation(summary = "删除知识块", description = "删除知识块（同步移除向量并扣减文档知识块数）")
+    @Operation(summary = "删除知识块", description = "删除知识块（同步移除向量并扣减文档知识块数）；仅文档可管理者可用")
     @DeleteMapping("/knowledge/{id}")
     public ResultJson deleteKnowledge(
             @Parameter(description = "知识块 ID") @PathVariable("id") String id) {
+        Knowledge k = knowledgeMapper.selectById(id);
+        if (k == null) throw new BizException(404, "知识块不存在");
+        requireDocManageable(docOfChunk(k));
         documentService.deleteKnowledge(id);
         return ResultJson.ok("知识块已删除");
     }
