@@ -1523,10 +1523,14 @@ public class RagService {
                 }
             }
             try {
+                java.util.Set<String> mcpNames = new java.util.HashSet<>();
                 for (org.springframework.ai.tool.ToolCallback cb : mcpClientService.toolCallbacks(userId, onlyMcp)) {
                     callbacks.add(cb);
-                    sensitiveTools.add(cb.getToolDefinition().name());
+                    String toolName = cb.getToolDefinition().name();
+                    sensitiveTools.add(toolName);
+                    mcpNames.add(toolName);
                 }
+                st.mcpToolNames = java.util.Set.copyOf(mcpNames);
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
@@ -1661,9 +1665,15 @@ public class RagService {
                         if (webTool) {
                             WebSearchTools.setSink(st);
                         }
+                        // MCP 外部工具：结果注册引用来源（tool.mcpCiteEnabled）——模型依据 MCP 内容
+                        // 作答时正文才有可点溯源的 [N]，否则是悬空角标（引用面板无对应条目）。
+                        boolean mcpTool = st.mcpToolNames.contains(name);
                         try {
                             int[] attempts = {0};
                             String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts);
+                            if (mcpTool) {
+                                result = st.registerMcpCitations(name, result);
+                            }
                             recordToolStatus(st, name, toolInput, "done", result,
                                     System.currentTimeMillis() - begin, attempts[0]);
                             return result;
@@ -2494,6 +2504,10 @@ public class RagService {
         volatile boolean guestMode;
         /** 本轮"有副作用"工具名单（沙盒/MCP，enabledToolCallbacks 装配时回填）：审批模式 ask 时执行前需确认 */
         volatile java.util.Set<String> sensitiveToolNames = java.util.Set.of();
+        /** 本轮接入的 MCP 工具名单（enabledToolCallbacks 装配时回填）：结果注册引用来源用 */
+        volatile java.util.Set<String> mcpToolNames = java.util.Set.of();
+        /** 本轮已注册的 MCP 引用条数（上限 tool.mcpCiteMaxRefs，防引用面板被单轮刷屏） */
+        final java.util.concurrent.atomic.AtomicInteger mcpCiteCount = new java.util.concurrent.atomic.AtomicInteger();
         /** 工具执行审批模式（本轮智能体的 toolApprovalMode；null=auto） */
         volatile String toolApprovalMode;
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
@@ -2602,6 +2616,106 @@ public class RagService {
             List<Integer> imgSeqs = assignToolImages(h);
             toolRefImages.put(ref, imgSeqs);
             return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
+        }
+
+        // ==================== MCP 工具结果：引用注册（origin=MCP） ====================
+
+        /** 结果文本里的 http(s) 链接（后续剔除尾部标点；无法定界的通用 MCP 结果里这是唯一稳定的来源标识） */
+        private static final Pattern MCP_URL_PATTERN = Pattern.compile("https?://\\S+");
+
+        /**
+         * MCP 工具结果注册引用来源：扫描结果文本里的 http(s) URL 逐个注册（origin=MCP，与
+         * TOOL/WEB 共用同一编号空间；归一化 URL 复用 webRefByUrl 去重——联网与 MCP 拿到同一
+         * 网页合并同号）。返回在原结果后追加「引用来源清单」的文本，模型据此在正文标注 [N]；
+         * 无 URL / 超上限时原样返回（纯文本结果不伪造来源，模型强编的 [N] 由终态越界校验剔除）。
+         * 约定：只有结果文本显式给出 URL 的内容才可溯源——这是通用 MCP 工具唯一稳定的来源标识
+         * （如 Context7 文档片段的「Source: https://…」行）。
+         */
+        String registerMcpCitations(String toolName, String result) {
+            if (result == null || result.isBlank()) return result;
+            if (!configService.getBoolean("tool.mcpCiteEnabled")) return result;
+            int perAnswerCap = configService.getInt("tool.mcpCiteMaxRefs", 10);
+            Matcher um = MCP_URL_PATTERN.matcher(result);
+            List<String> footnotes = new ArrayList<>();
+            Set<String> seenRaw = new HashSet<>();
+            int perCall = 0;
+            while (um.find() && perCall < 3) {
+                String url = trimUrlTail(um.group());
+                if (url.length() < 12 || !seenRaw.add(url)) continue;
+                String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(url);
+                String title = mcpTitleNear(result, um.start());
+                String snippet = mcpSnippetAfter(result, um.end());
+                int ref;
+                synchronized (sources) {
+                    Integer existing = webRefByUrl.get(key);
+                    if (existing == null) {
+                        if (mcpCiteCount.incrementAndGet() > perAnswerCap) {
+                            mcpCiteCount.decrementAndGet();
+                            break; // 本轮配额用尽：后续 URL 不再注册
+                        }
+                        ref = sources.size() + 1;
+                        Map<String, Object> src = new LinkedHashMap<>();
+                        src.put("ref", ref);
+                        src.put("origin", "MCP");
+                        src.put("url", url);
+                        src.put("siteName", mcpHostOf(url));
+                        src.put("title", title);
+                        // snippet 即引用自检的证据（citationConsistencyCheck 取 sources[n-1].snippet）
+                        src.put("snippet", snippet);
+                        sources.add(src);
+                        webRefByUrl.put(key, ref);
+                    } else {
+                        ref = existing; // 同一来源（含联网搜索已注册的）复用原编号
+                    }
+                }
+                footnotes.add("[" + ref + "] " + title + "（" + mcpHostOf(url) + "）");
+                perCall++;
+            }
+            if (footnotes.isEmpty()) return result;
+            log.info("[MCP] 工具 {} 注册 {} 条引用来源", toolName, footnotes.size());
+            return result + "\n\n（本结果包含以下可溯源来源，回答中引用其内容时，请在对应句子后标注对应编号："
+                    + String.join("；", footnotes) + "）";
+        }
+
+        /** 剔除 URL 匹配尾部粘连的标点/括号/引号（markdown 链接与句尾标点会粘进 \S+ 匹配） */
+        private static String trimUrlTail(String raw) {
+            String u = raw;
+            while (!u.isEmpty() && "\"',<>)\\]}.;:!?".indexOf(u.charAt(u.length() - 1)) >= 0) {
+                u = u.substring(0, u.length() - 1);
+            }
+            return u;
+        }
+
+        /** 标题取 URL 前方最近的「# …」标题行（Context7 片段的章节标题）；拿不到回落主机名 */
+        private static String mcpTitleNear(String text, int pos) {
+            String before = text.substring(Math.max(0, pos - 300), pos);
+            String[] lines = before.split("\n");
+            for (int i = lines.length - 1; i >= 0; i--) {
+                String line = lines[i].trim();
+                if (line.startsWith("#")) {
+                    String t = line.replaceFirst("^#+\\s*", "").trim();
+                    if (!t.isEmpty()) return t.length() > 80 ? t.substring(0, 80) : t;
+                }
+            }
+            return "";
+        }
+
+        /** 摘要取 URL 之后的一段正文（折叠空白），供引用弹窗与引用自检当证据 */
+        private static String mcpSnippetAfter(String text, int pos) {
+            String rest = text.substring(Math.min(text.length(), pos));
+            rest = rest.replaceAll("\\s+", " ").trim();
+            return rest.length() > 200 ? rest.substring(0, 200) + "…" : rest;
+        }
+
+        /** 主机名（去 www.）；解析失败回落原串前 40 字符 */
+        private static String mcpHostOf(String url) {
+            try {
+                String host = java.net.URI.create(url.trim()).getHost();
+                if (host == null) return url.length() > 40 ? url.substring(0, 40) : url;
+                return host.startsWith("www.") ? host.substring(4) : host;
+            } catch (Exception e) {
+                return url.length() > 40 ? url.substring(0, 40) : url;
+            }
         }
 
         // ==================== 联网搜索：引用注册 / 配额 / 降级（WebSearchTools.WebSearchSink） ====================

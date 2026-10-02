@@ -143,7 +143,8 @@
                   </div>
                 </template>
               </div>
-              <div v-else class="md" :class="{ streaming: m.loading && !m.failed }" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+              <!-- streaming（打字光标）仅在正文已有内容时挂：检索/等待阶段正文为空，光标会孤悬成一块 -->
+<div v-else class="md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message) }}</div>
@@ -246,9 +247,9 @@
                     <span class="rt-tool-tag">精确检索</span>{{ toolSearchQueries(m).join('；') }}
                   </div>
                   <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref"
-                       :title="s.origin === 'WEB' ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
+                       :title="externalOrigin(s) ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
                     <span class="rt-ref-tag">[{{ s.ref }}]</span>
-                    <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span>{{ sourceName(s) }}
+                    <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span><span v-else-if="s.origin === 'MCP'" class="rt-ref-web" title="MCP 工具返回的来源">MCP</span>{{ sourceName(s) }}
                     <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
                   </div>
                 </div>
@@ -1626,9 +1627,11 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
 如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
 
 // 引用来源详情弹窗
-/** 来源条目展示名：联网来源（origin=WEB）用站点名，库内来源用文件名 */
-const sourceName = s => s.origin === 'WEB'
-  ? (s.siteName || '联网来源') + (s.title ? ' §' + s.title : '')
+/** 外部来源（联网/MCP）：有原网页地址，展示站点名+标题，弹窗不给库内原文 */
+const externalOrigin = s => s.origin === 'WEB' || s.origin === 'MCP'
+/** 来源条目展示名：外部来源（origin=WEB/MCP）用站点名，库内来源用文件名 */
+const sourceName = s => externalOrigin(s)
+  ? (s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源')) + (s.title ? ' §' + s.title : '')
   : (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
 const sourceVisible = ref(false)
 const sourceTitle = ref('')
@@ -1641,10 +1644,10 @@ const sourceUrl = ref('')
 const openSource = async s => {
   if (!s) return
   sourceUrl.value = ''
-  // 联网来源没有库内文档可打开：getKnowledgeDetail(knowledgeId) 必然失败，
+  // 外部来源（联网/MCP）没有库内文档可打开：getKnowledgeDetail(knowledgeId) 必然失败，
   // 走这里展示站点/标题/摘要并给出原网页链接（否则用户点角标得到空白弹窗）
-  if (s.origin === 'WEB') {
-    sourceTitle.value = (s.siteName || '联网来源') + (s.title ? ' §' + s.title : '')
+  if (externalOrigin(s)) {
+    sourceTitle.value = (s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源')) + (s.title ? ' §' + s.title : '')
     sourceSnippet.value = s.snippet || '（该来源未提供摘要）'
     sourceImages.value = []
     sourceContent.value = ''
@@ -1710,14 +1713,14 @@ const showRefTip = (el, msgIdx, n) => {
   }
   refTip.value = {
     ref: n,
-    // 联网来源没有 fileName/docId，用站点名；相关度是服务商分，标签也要区分（不是检索融合分）
-    fileName: src.origin === 'WEB'
-      ? (src.siteName || '联网来源')
+    // 外部来源（联网/MCP）没有 fileName/docId，用站点名；MCP 无相关度分，标签区留空
+    fileName: externalOrigin(src)
+      ? (src.siteName || (src.origin === 'MCP' ? 'MCP 来源' : '联网来源'))
       : (src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识')),
     title: src.title || '',
     snippet: src.snippet || '（无原文片段）',
     score: (src.rerankScore != null ? src.rerankScore : src.score),
-    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.rerankScore != null ? '重排相关度' : '检索融合分'),
+    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.origin === 'MCP' ? '' : (src.rerankScore != null ? '重排相关度' : '检索融合分')),
     src
   }
 }
