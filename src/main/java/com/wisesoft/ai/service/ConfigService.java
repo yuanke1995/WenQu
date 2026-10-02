@@ -449,6 +449,7 @@ public class ConfigService {
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
         d.put("workflow.runLogRetentionDays", "30");       // 工作流运行记录保留天数（含 DSL 快照与节点 trace 大字段；超期由「工作流运行记录清理」任务物理删除）
         d.put("workflow.runCleanupIntervalMs", "86400000"); // 工作流运行记录清理间隔（ms，默认每日；≤0 暂停）
+        d.put("workflow.scheduleScanIntervalMs", "30000");  // 工作流定时触发扫描间隔（ms，默认 30s；≤0 暂停「工作流定时触发」任务）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采

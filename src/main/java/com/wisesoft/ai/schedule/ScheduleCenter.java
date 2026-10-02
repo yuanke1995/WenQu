@@ -230,6 +230,14 @@ public class ScheduleCenter {
                     }
                 });
 
+        // 工作流定时触发：扫描到期的启用定时工作流，派发已发布版本运行（间隔 workflow.scheduleScanIntervalMs，默认 30s；≤0 暂停）。
+        // 与定时智能体任务同一范式：先推进 next_run_at 再异步派发，防同轮重复触发；只跑已发布版本，失败自动重试 1 次。
+        register("工作流定时触发", "扫描到期的定时工作流并派发已发布版本运行（定时只跑已发布版本）",
+                "workflow.scheduleScanIntervalMs",
+                () -> configService.getInt("workflow.scheduleScanIntervalMs", 30_000),
+                () -> false,
+                () -> workflowService.tickSchedules());
+
         // P1 Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
         // uk_qalog 唯一键兜底幂等，重复触发不产生重复样本
         register("Trace 线上采样", "线上对话按规则入采样池（差评必采 + 无引用/随机），供标注回流评测集",

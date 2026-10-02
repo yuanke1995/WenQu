@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wisesoft.ai.common.BizException;
 import com.wisesoft.ai.mapper.ApiKeyMapper;
 import com.wisesoft.ai.mapper.ToolApprovalMapper;
@@ -17,16 +18,28 @@ import com.wisesoft.ai.model.WorkflowVersion;
 import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.ToolApproval;
 import com.wisesoft.ai.model.User;
+import com.wisesoft.ai.thread.ThreadPoolManager;
 import com.wisesoft.ai.util.BatchResults;
 import com.wisesoft.ai.util.RequestUser;
+import com.wisesoft.ai.util.SsrfGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -62,6 +75,21 @@ public class WorkflowService {
 
     /** DSL 体积上限（含画布坐标；真实工作流几十 KB 封顶，512KB 已留足冗余） */
     private static final int MAX_DSL_CHARS = 512 * 1024;
+
+    /** 定时触发默认时区（与定时智能体任务同口径） */
+    private static final String DEFAULT_SCHEDULE_ZONE = "Asia/Shanghai";
+    /** 单轮扫描最多触发的定时工作流数（防一次积压打满线程池） */
+    private static final int SCHEDULE_SCAN_LIMIT = 20;
+    /** 定时运行失败自动重试次数（计划：失败重试 1 次） */
+    private static final int SCHEDULE_MAX_RETRY = 1;
+    /** 终态回调出站超时（ms） */
+    private static final int CALLBACK_TIMEOUT_MS = 10_000;
+
+    /** 回调出站客户端（复用一个实例；跟随常规重定向） */
+    private static final HttpClient CALLBACK_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
 
     /**
      * run 级执行线程池（M5 硬超时用）：把图调用从请求线程挪到独立线程，主线程带时限等待。
@@ -109,12 +137,43 @@ public class WorkflowService {
         }
     }
 
-    /** 本人工作流列表（更新时间倒序），附带最近一次运行的状态与时刻（列表页展示，派生信息不落库） */
-    public List<Workflow> listOwn() {
-        List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
-                .eq(Workflow::getUid, RequestUser.uid())
+    /**
+     * 可见的工作流列表：{@code {mine:[...], shared:[...]}}（我创建的 / 共享给我的）。
+     * <p>
+     * 「共享给我的」= 他人创建且显式配置了 share_config、且当前用户命中读取范围的工作流。
+     * 共享范围存在 JSON 列里无法下推到 SQL，故先按「非本人 + 有 share_config」粗筛再逐个判定
+     * （个人资产量级下可接受；判定与执行期 {@link #loadVisible} 完全同口径，不会出现"列表可见却打不开"）。
+     */
+    public Map<String, Object> listVisible() {
+        Principal p = Principal.current();
+        ResourceVisibilityService.Principal vp = vp(p);
+        List<Workflow> mine = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getUid, p.uid())
                 .orderByDesc(Workflow::getUpdateTime));
-        if (rows.isEmpty()) return rows;
+        List<Workflow> candidates = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .ne(Workflow::getUid, p.uid())
+                .isNotNull(Workflow::getShareConfig)
+                .ne(Workflow::getShareConfig, "")
+                .orderByDesc(Workflow::getUpdateTime));
+        List<Workflow> shared = new ArrayList<>();
+        for (Workflow w : candidates) {
+            if (visibility.canRead(vp, w.getShareConfig(), w.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+                shared.add(w);
+            }
+        }
+        fillLastRun(mine);
+        fillLastRun(shared);
+        for (Workflow w : mine) decorate(w, p, true);
+        for (Workflow w : shared) decorate(w, p, false);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("mine", mine);
+        out.put("shared", shared);
+        return out;
+    }
+
+    /** 批量回填最近一次运行状态与时刻（列表页展示；派生信息不落库） */
+    private void fillLastRun(List<Workflow> rows) {
+        if (rows.isEmpty()) return;
         List<String> ids = rows.stream().map(Workflow::getId).toList();
         List<WorkflowRun> recent = runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
                 .in(WorkflowRun::getWorkflowId, ids)
@@ -130,16 +189,52 @@ public class WorkflowService {
                 w.setLastRunId(r.getId());
             }
         }
-        return rows;
     }
 
-    /** 本人的一条工作流：不存在或不是本人的都按不存在处理（不泄露存在性） */
-    public Workflow getOwn(String id) {
+    /** 详情（共享只读者也能加载画布）：附 myPermission/mine，回调密钥本体不外泄 */
+    public Workflow getVisible(String id) {
+        Principal p = Principal.current();
+        Workflow row = loadVisible(id, p);
+        decorate(row, p, p.uid() != null && p.uid().equals(row.getUid()));
+        return row;
+    }
+
+    /** 派生字段填充 + 敏感字段脱敏（回调签名密钥只回"是否已设置"，不回明文） */
+    private void decorate(Workflow w, Principal p, boolean mine) {
+        w.setMine(mine);
+        w.setMyPermission(visibility.canManage(vp(p), w.getShareConfig(), w.getUid(),
+                ResourceVisibilityService.ResourceKind.WORKFLOW) ? "MANAGE" : "READ");
+        w.setCallbackSecretSet(w.getCallbackSecret() != null && !w.getCallbackSecret().isBlank());
+        w.setCallbackSecret(null);
+    }
+
+    private static ResourceVisibilityService.Principal vp(Principal p) {
+        return new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role());
+    }
+
+    /** 取一条工作流并要求管理权（创建者或管理范围命中）；不存在与无权都按 404（不泄露存在性） */
+    public Workflow requireManage(String id) {
+        Principal p = Principal.current();
         Workflow row = workflowMapper.selectById(id);
-        if (row == null || !RequestUser.uid().equals(row.getUid())) {
+        if (row == null) throw new BizException(404, "工作流不存在");
+        if (!visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
+                ResourceVisibilityService.ResourceKind.WORKFLOW)) {
             throw new BizException(404, "工作流不存在");
         }
         return row;
+    }
+
+    /** 取一条工作流并要求读取权（创建者 / 共享读取 / 共享管理）；不存在与无权都按 404 */
+    public Workflow requireRead(String id) {
+        return loadVisible(id, Principal.current());
+    }
+
+    /**
+     * 取一条工作流并要求管理权。保留方法名以兼容既有调用点（更新/删除/发布/下线/回滚）；
+     * 语义已从「仅创建者」放宽为「创建者或共享管理范围命中」——只读共享者仍拿不到管理权。
+     */
+    public Workflow getOwn(String id) {
+        return requireManage(id);
     }
 
     /** 新建：名称必填、DSL 必须通过结构校验（不接受存进去的坏图） */
@@ -485,9 +580,9 @@ public class WorkflowService {
         return Map.of("id", row.getId(), "status", row.getStatus());
     }
 
-    /** 版本历史（新→旧）：版本号/说明/发布者/时间；DSL 大体量，只在详情接口给 */
+    /** 版本历史（新→旧）：版本号/说明/发布者/时间；DSL 大体量，只在详情接口给。共享只读者可见 */
     public List<Map<String, Object>> listVersions(String id) {
-        Workflow row = getOwn(id);
+        Workflow row = requireRead(id);
         List<WorkflowVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<WorkflowVersion>()
                 .eq(WorkflowVersion::getWorkflowId, row.getId())
                 .orderByDesc(WorkflowVersion::getVersion));
@@ -664,9 +759,21 @@ public class WorkflowService {
      * @param inputs 开始节点入参（{{start.key}} 的取值来源）
      */
     public WorkflowRun run(String id, Map<String, Object> inputs) {
-        Workflow row = getOwn(id);
-        return execute(row, row.getDsl(), "manual", RequestUser.uid(), null, null, "draft",
-                inputs, null, null, Principal.current());
+        Principal p = Principal.current();
+        Workflow row = loadVisible(id, p);
+        boolean manage = visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
+                ResourceVisibilityService.ResourceKind.WORKFLOW);
+        if (manage) {
+            // 管理权（创建者/共享管理）：调试运行跑草稿（画布所见即所跑）
+            return execute(row, row.getDsl(), "manual", p.uid(), null, null, "draft",
+                    inputs, null, null, p);
+        }
+        // 只读共享者：只能跑已发布版本——草稿是创建者未定稿的工作副本，不对共享只读者暴露
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException("工作流「" + row.getName() + "」尚未发布：共享只读用户只能运行已发布版本");
+        }
+        return execute(row, row.getPublishedDsl(), "manual", p.uid(), null, row.getPublishedVersion(),
+                "published", inputs, null, null, p);
     }
 
     /**
@@ -1063,25 +1170,270 @@ public class WorkflowService {
         run.setFinishedAt(LocalDateTime.now());
         run.setDurationMs(System.currentTimeMillis() - ctx.t0);
         runMapper.updateById(run);
+        fireCallbackIfConfigured(run);   // 终态回调（配置了才发；异步、失败不影响收口）
         return run;
     }
 
-    /** 某工作流的运行记录（最近 50 条，新→旧）：归属校验后按 started_at 倒序 */
+    /** 某工作流的运行记录（最近 50 条，新→旧）：读取权校验后按 started_at 倒序（共享只读者可见） */
     public List<WorkflowRun> listRuns(String workflowId) {
-        getOwn(workflowId);
+        requireRead(workflowId);
         return runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
                 .eq(WorkflowRun::getWorkflowId, workflowId)
                 .orderByDesc(WorkflowRun::getStartedAt)
                 .last("LIMIT 50"));
     }
 
-    /** 单条运行记录（含完整 trace）：归属两层校验（工作流是本人的 + run 属于该工作流） */
+    /** 单条运行记录（含完整 trace）：读取权校验 + run 归属该工作流（共享只读者可见） */
     public WorkflowRun getRun(String workflowId, String runId) {
-        getOwn(workflowId);
+        requireRead(workflowId);
         WorkflowRun r = runMapper.selectById(runId);
         if (r == null || !workflowId.equals(r.getWorkflowId())) {
             throw new BizException(404, "运行记录不存在");
         }
         return r;
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 第 1 期：共享范围（谁建归谁为默认，共享=显式授权）
+    // --------------------------------------------------------------------------------------------------
+
+    /**
+     * 设置共享范围（仅创建者 / 管理范围命中可改）：写入前走
+     * {@link ResourceVisibilityService#validateShareConfig} 强校验（version=2 且 manage ⊆ read）；
+     * 空串 = 清空共享（回落「谁建归谁」的私有语义）。
+     */
+    public Map<String, Object> share(String id, String shareConfigJson) {
+        Workflow row = requireManage(id);
+        visibility.validateShareConfig(shareConfigJson);
+        String value = shareConfigJson == null || shareConfigJson.isBlank() ? null : shareConfigJson.trim();
+        // share_config 可为 NULL：updateById 的 NOT_NULL 策略会跳过 null 列（清空共享写不进去），
+        // 必须走 LambdaUpdateWrapper 显式 set（与 ScheduledJobService 置空 next_run_at 是同一个坑）
+        workflowMapper.update(null, new LambdaUpdateWrapper<Workflow>()
+                .eq(Workflow::getId, row.getId())
+                .set(Workflow::getShareConfig, value)
+                .set(Workflow::getUpdateTime, LocalDateTime.now()));
+        log.info("[WORKFLOW] 设置共享范围 {}（{}）uid={} 共享={}", row.getName(), row.getId(), row.getUid(),
+                value == null ? "私有" : value);
+        return Map.of("id", row.getId(), "shareConfig", value == null ? "" : value);
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 第 1 期：定时触发（cron 绑定已发布版本）与运行终态回调
+    // --------------------------------------------------------------------------------------------------
+
+    /**
+     * 保存自动化配置（定时 + 回调），仅管理权可改。
+     * <p>
+     * 定时只跑<b>已发布版本</b>——草稿变更不生效（与 API / 智能体触发同口径）；未发布时配置可保存，
+     * 但触发时跳过并告警（让用户先把定时配好、发布后自然生效）。回调地址限 http/https，出站前过
+     * {@link SsrfGuard}（内网地址拒绝，与 http 节点同口径）。
+     *
+     * @param body {scheduleEnabled?, cron?, timezone?, callbackUrl?, callbackSecret?}
+     */
+    public Map<String, Object> saveAutomation(String id, Map<String, Object> body) {
+        Workflow row = requireManage(id);
+        if (body == null) body = Map.of();
+
+        boolean enabled = asBool(body.get("scheduleEnabled"));
+        String cron = asStr(body.get("cron"));
+        String timezone = body.containsKey("timezone") ? asStr(body.get("timezone")) : null;
+        if (enabled && (cron == null || cron.isBlank())) {
+            throw new BizException("启用定时触发前请填写 cron 表达式");
+        }
+        String tz = timezone == null || timezone.isBlank()
+                ? (row.getScheduleTimezone() == null ? DEFAULT_SCHEDULE_ZONE : row.getScheduleTimezone())
+                : timezone.trim();
+        if (cron != null && !cron.isBlank()) ScheduledJobService.validateCron(cron, tz);
+        LocalDateTime next = enabled ? ScheduledJobService.nextRunAt(cron, tz, LocalDateTime.now()) : null;
+
+        boolean setUrl = body.containsKey("callbackUrl");
+        String callbackUrl = setUrl ? asStr(body.get("callbackUrl")) : null;
+        if (setUrl && callbackUrl != null && callbackUrl.isBlank()) callbackUrl = null;
+        if (callbackUrl != null) assertCallbackUrl(callbackUrl);
+        boolean setSecret = body.containsKey("callbackSecret");
+        String secret = setSecret ? asStr(body.get("callbackSecret")) : null;
+        if (setSecret && secret != null && secret.isBlank()) secret = null;
+
+        LambdaUpdateWrapper<Workflow> up = new LambdaUpdateWrapper<Workflow>()
+                .eq(Workflow::getId, row.getId())
+                .set(Workflow::getScheduleEnabled, enabled ? 1 : 0)
+                .set(Workflow::getScheduleCron, cron == null || cron.isBlank() ? null : cron.trim())
+                .set(Workflow::getScheduleTimezone, tz)
+                .set(Workflow::getScheduleNextRunAt, next)
+                .set(Workflow::getUpdateTime, LocalDateTime.now());
+        if (setUrl) up.set(Workflow::getCallbackUrl, callbackUrl);
+        if (setSecret) up.set(Workflow::getCallbackSecret, secret);
+        workflowMapper.update(null, up);
+        log.info("[WORKFLOW] 保存自动化配置 {}（{}）：定时={} cron={} 回调={}", row.getName(), row.getId(),
+                enabled, cron, callbackUrl == null ? "未配置" : callbackUrl);
+        return automationConfig(row.getId());
+    }
+
+    /** 自动化配置（密钥脱敏）：定时开关/cron/时区/下次执行 + 回调地址/是否已设密钥。含回调地址，读取同样要管理权 */
+    public Map<String, Object> automationConfig(String id) {
+        Workflow row = requireManage(id);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", row.getId());
+        m.put("scheduleEnabled", Integer.valueOf(1).equals(row.getScheduleEnabled()));
+        m.put("cron", row.getScheduleCron());
+        m.put("timezone", row.getScheduleTimezone());
+        m.put("nextRunAt", row.getScheduleNextRunAt());
+        m.put("callbackUrl", row.getCallbackUrl());
+        m.put("callbackSecretSet", row.getCallbackSecret() != null && !row.getCallbackSecret().isBlank());
+        m.put("published", "published".equals(row.getStatus()));
+        return m;
+    }
+
+    /**
+     * 定时触发扫描（ScheduleCenter 周期调用）：取到期的启用定时工作流，<b>先推进 next_run_at 再异步派发</b>，
+     * 防同一轮重复触发（与定时智能体任务同一范式）。只跑已发布版本；失败自动重试 1 次。
+     *
+     * @return 本轮派发的数量
+     */
+    public int tickSchedules() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Workflow> due = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getScheduleEnabled, 1)
+                .isNotNull(Workflow::getScheduleNextRunAt)
+                .le(Workflow::getScheduleNextRunAt, now)
+                .orderByAsc(Workflow::getScheduleNextRunAt)
+                .last("LIMIT " + SCHEDULE_SCAN_LIMIT));
+        for (Workflow w : due) {
+            LocalDateTime next = ScheduledJobService.nextRunAt(w.getScheduleCron(), w.getScheduleTimezone(), now);
+            workflowMapper.update(null, new LambdaUpdateWrapper<Workflow>()
+                    .eq(Workflow::getId, w.getId())
+                    .set(Workflow::getScheduleNextRunAt, next));
+            final String wid = w.getId();
+            ThreadPoolManager.execute(() -> runScheduled(wid, 0));
+        }
+        return due.size();
+    }
+
+    /** 手动立即触发一次定时运行（管理权）：同步返回终态 run，便于在界面直接看 trace */
+    public WorkflowRun runScheduleNow(String id) {
+        Workflow row = requireManage(id);
+        WorkflowRun run = runScheduledSync(row.getId());
+        if (run == null) throw new BizException("该工作流尚未发布：定时运行只跑已发布版本");
+        return run;
+    }
+
+    /** 异步派发的定时运行：只跑已发布版本；失败重试 1 次 */
+    private void runScheduled(String workflowId, int attempt) {
+        try {
+            WorkflowRun run = runScheduledSync(workflowId);
+            if (run == null) return;
+            if (attempt < SCHEDULE_MAX_RETRY
+                    && ("failed".equals(run.getStatus()) || "timeout".equals(run.getStatus()))) {
+                log.warn("[WORKFLOW] 定时运行失败将重试一次：workflow={} run={} err={}",
+                        workflowId, run.getId(), run.getError());
+                runScheduled(workflowId, attempt + 1);
+            }
+        } catch (Exception e) {
+            log.warn("[WORKFLOW] 定时运行异常（已跳过本轮）：workflow={} err={}", workflowId, e.getMessage());
+        }
+    }
+
+    /**
+     * 跑一次已发布版本（定时触发）。未发布 / 已删除则跳过并告警（不产生 run 记录）；
+     * 含人工审核节点也跳过（定时无审批交互面，与 API 触发同口径 fail-loud）。
+     * 触发身份 = 工作流创建者（定时任务的身份就是归属人）。
+     */
+    private WorkflowRun runScheduledSync(String workflowId) {
+        Workflow row = workflowMapper.selectById(workflowId);
+        if (row == null) return null;
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            log.warn("[WORKFLOW] 定时触发跳过：{}（{}）未发布（定时只跑已发布版本）", row.getName(), row.getId());
+            return null;
+        }
+        try {
+            assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "定时触发");
+        } catch (BizException e) {
+            log.warn("[WORKFLOW] 定时触发跳过：{}（{}）{}", row.getName(), row.getId(), e.getMessage());
+            return null;
+        }
+        Principal p = Principal.ofUser(row.getUid(), userMapper);
+        return execute(row, row.getPublishedDsl(), "schedule", row.getUid(), null, row.getPublishedVersion(),
+                "published", Map.of(), null, null, p);
+    }
+
+    /** 回调地址校验：http/https + 过 SSRF（内网地址拒绝，与 http 节点同口径） */
+    private static void assertCallbackUrl(String url) {
+        URI uri;
+        try {
+            uri = URI.create(url.trim());
+        } catch (Exception e) {
+            throw new BizException("回调地址不是合法 URL");
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            throw new BizException("回调地址必须以 http:// 或 https:// 开头");
+        }
+        try {
+            SsrfGuard.requirePublicHost(uri);
+        } catch (Exception e) {
+            throw new BizException("回调地址不允许指向内网：" + e.getMessage());
+        }
+    }
+
+    /** 终态回调（仅 success/failed/timeout）：异步 POST，失败只告警、不影响运行收口 */
+    private void fireCallbackIfConfigured(WorkflowRun run) {
+        String status = run.getStatus();
+        if (!"success".equals(status) && !"failed".equals(status) && !"timeout".equals(status)) return;
+        Workflow wf = run.getWorkflowId() == null ? null : workflowMapper.selectById(run.getWorkflowId());
+        if (wf == null || wf.getCallbackUrl() == null || wf.getCallbackUrl().isBlank()) return;
+        final String url = wf.getCallbackUrl().trim();
+        final String secret = wf.getCallbackSecret();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runId", run.getId());
+        payload.put("workflowId", run.getWorkflowId());
+        payload.put("status", status);
+        payload.put("triggerType", run.getTriggerType());
+        payload.put("version", run.getVersion());
+        payload.put("startedAt", run.getStartedAt() == null ? null : run.getStartedAt().toString());
+        payload.put("finishedAt", run.getFinishedAt() == null ? null : run.getFinishedAt().toString());
+        payload.put("durationMs", run.getDurationMs());
+        payload.put("outputs", parseJsonObject(run.getOutputs()));
+        payload.put("error", run.getError());
+        final String body = JSON.toJSONString(payload);
+        ThreadPoolManager.execute(() -> postCallback(url, body, secret, run.getId()));
+    }
+
+    /** 回调出站（HMAC-SHA256 签名头 X-Wenqu-Signature；10s 超时；失败只告警） */
+    private static void postCallback(String url, String body, String secret, String runId) {
+        try {
+            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofMillis(CALLBACK_TIMEOUT_MS))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("X-Wenqu-Event", "workflow.run.finished")
+                    .header("X-Wenqu-Run-Id", runId)
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+            if (secret != null && !secret.isBlank()) {
+                b.header("X-Wenqu-Signature", "sha256=" + hmacSha256Hex(secret, body));
+            }
+            HttpResponse<String> resp = CALLBACK_CLIENT.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() >= 300) {
+                log.warn("[WORKFLOW] 回调返回非 2xx：run={} status={} url={}", runId, resp.statusCode(), url);
+            } else {
+                log.info("[WORKFLOW] 回调成功：run={} url={}", runId, url);
+            }
+        } catch (Exception e) {
+            log.warn("[WORKFLOW] 回调失败（不影响运行）：run={} url={} err={}", runId, url, e.getMessage());
+        }
+    }
+
+    private static String hmacSha256Hex(String secret, String body) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String asStr(Object o) {
+        return o == null ? null : String.valueOf(o).trim();
+    }
+
+    private static boolean asBool(Object o) {
+        if (o == null) return false;
+        if (o instanceof Boolean b) return b;
+        return "true".equalsIgnoreCase(String.valueOf(o)) || "1".equals(String.valueOf(o));
     }
 }

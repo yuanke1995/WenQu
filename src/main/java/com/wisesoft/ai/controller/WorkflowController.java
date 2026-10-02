@@ -34,17 +34,17 @@ public class WorkflowController {
 
     private final WorkflowService workflowService;
 
-    @Operation(summary = "本人工作流列表", description = "按更新时间倒序；M4 前仅返回本人创建的")
+    @Operation(summary = "工作流列表", description = "分栏返回 {mine:[我创建的], shared:[共享给我的]}，各自按更新时间倒序；"
+            + "每条带 myPermission（MANAGE/READ）与 mine，前端据此渲染可编辑/只读")
     @GetMapping("/list")
     public ResultJson list() {
-        List<Workflow> rows = workflowService.listOwn();
-        return ResultJson.ok(rows);
+        return ResultJson.ok(workflowService.listVisible());
     }
 
-    @Operation(summary = "工作流详情", description = "含完整 DSL（画布加载即还原图形）")
+    @Operation(summary = "工作流详情", description = "含完整 DSL（画布加载即还原图形）；共享只读者也可加载（只读）。带 myPermission/mine")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {
-        return ResultJson.ok(workflowService.getOwn(id));
+        return ResultJson.ok(workflowService.getVisible(id));
     }
 
     @Operation(summary = "新建工作流", description = "body: {name, description?, dsl}；DSL 必须通过结构校验（不收坏图）")
@@ -194,6 +194,38 @@ public class WorkflowController {
     @PostMapping("/{id}/run/{runId}/resume")
     public ResultJson resume(@PathVariable("id") String id, @PathVariable("runId") String runId) {
         return ResultJson.ok(workflowService.resumeRun(id, runId));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 第 1 期：共享范围 + 定时触发 + 终态回调
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "设置共享范围", description = "body: {shareConfig}（v2 JSON，空串=清空共享回落私有）。"
+            + "仅创建者 / 管理范围命中可改；写入前强校验 version=2 且 manage ⊆ read。共享只读者可查看画布（只读）与运行已发布版本")
+    @PostMapping("/{id}/share")
+    public ResultJson share(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
+        return ResultJson.ok(workflowService.share(id, body == null ? null : str(body, "shareConfig")));
+    }
+
+    @Operation(summary = "自动化配置（定时 + 回调）", description = "定时 cron（5 段）+ 时区 + 开关 + 回调地址/密钥；"
+            + "定时只跑已发布版本，未发布时触发会被跳过。回调密钥只回是否已设置（不回明文）")
+    @GetMapping("/{id}/automation")
+    public ResultJson automation(@PathVariable("id") String id) {
+        return ResultJson.ok(workflowService.automationConfig(id));
+    }
+
+    @Operation(summary = "保存自动化配置", description = "body: {scheduleEnabled, cron, timezone, callbackUrl, callbackSecret}；"
+            + "仅管理权可改；启用定时需已填 cron；回调地址限 http/https 且不得指向内网")
+    @PutMapping("/{id}/automation")
+    public ResultJson saveAutomation(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
+        return ResultJson.ok(workflowService.saveAutomation(id, body));
+    }
+
+    @Operation(summary = "立即触发定时运行", description = "手动跑一次定时任务（跑已发布版本，trigger=schedule）；"
+            + "同步返回终态 run 便于直接看 trace；未发布时报错")
+    @PostMapping("/{id}/schedule/run-now")
+    public ResultJson runScheduleNow(@PathVariable("id") String id) {
+        return ResultJson.ok(workflowService.runScheduleNow(id));
     }
 
     private static String str(Map<String, Object> body, String key) {

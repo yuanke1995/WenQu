@@ -679,10 +679,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
     `published_version` INT      DEFAULT NULL COMMENT 'M4：当前发布版本号（对应 c_ai_workflow_version.version）',
     `published_at` DATETIME      DEFAULT NULL COMMENT 'M4：最近一次发布时间',
     `published_by` VARCHAR(64)   DEFAULT NULL COMMENT 'M4：最近一次发布者 uid',
+    `schedule_cron` VARCHAR(64)  DEFAULT NULL COMMENT '定时触发 cron（5 段：分 时 日 月 周；NULL=未配置定时）',
+    `schedule_timezone` VARCHAR(64) DEFAULT NULL COMMENT '定时 cron 解释时区（默认 Asia/Shanghai）',
+    `schedule_enabled` TINYINT   NOT NULL DEFAULT 0 COMMENT '定时触发开关（1=启用；只跑已发布版本）',
+    `schedule_next_run_at` DATETIME DEFAULT NULL COMMENT '下次定时执行时刻（扫描器据此触发；未启用为 NULL）',
+    `callback_url` VARCHAR(500)  DEFAULT NULL COMMENT '运行终态回调地址（POST JSON；NULL=不回调）',
+    `callback_secret` VARCHAR(128) DEFAULT NULL COMMENT '回调 HMAC-SHA256 签名密钥（NULL=不签名）',
     `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    KEY `idx_uid_time` (`uid`, `update_time`)
+    KEY `idx_uid_time` (`uid`, `update_time`),
+    KEY `idx_schedule_next` (`schedule_next_run_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流定义（DSL 是唯一真源，画布只是编辑器）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (

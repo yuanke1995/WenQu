@@ -294,6 +294,7 @@ export const batchToggleScheduledJobs = (ids, enabled) =>
   request('/scheduled/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 
 // ---------- 工作流（DSL 唯一真源；画布只是编辑器） ----------
+/** 列表：分栏返回 {mine:[我创建的], shared:[共享给我的]}；每条带 myPermission（MANAGE/READ）与 mine */
 export const listWorkflows = () => request('/workflow/list')
 export const getWorkflow = id => request(`/workflow/${id}`)
 export const createWorkflow = body => request('/workflow', { method: 'POST', body: JSON.stringify(body) })
@@ -328,6 +329,18 @@ export const unpublishWorkflow = id => request(`/workflow/${id}/unpublish`, { me
 export const listWorkflowVersions = id => request(`/workflow/${id}/versions`)
 /** 回滚到指定版本：以该版本 DSL 再发一版（返回 {version, rolledBackTo}） */
 export const rollbackWorkflow = (id, version) => request(`/workflow/${id}/rollback/${version}`, { method: 'POST' })
+// ---------- 第 1 期：共享范围 + 定时触发 + 终态回调 ----------
+/** 设置共享范围：shareConfig 为 v2 JSON（空串=清空回落私有）；仅创建者/管理范围可改 */
+export const shareWorkflow = (id, shareConfig) =>
+  request(`/workflow/${id}/share`, { method: 'POST', body: JSON.stringify({ shareConfig }) })
+/** 自动化配置（定时 + 回调）：{scheduleEnabled, cron, timezone, nextRunAt, callbackUrl, callbackSecretSet, published} */
+export const getWorkflowAutomation = id => request(`/workflow/${id}/automation`)
+/** 保存自动化配置：body {scheduleEnabled, cron, timezone, callbackUrl, callbackSecret} */
+export const saveWorkflowAutomation = (id, body) =>
+  request(`/workflow/${id}/automation`, { method: 'PUT', body: JSON.stringify(body) })
+/** 立即触发一次定时运行（跑已发布版本，同步返回终态 run） */
+export const runWorkflowScheduleNow = id =>
+  request(`/workflow/${id}/schedule/run-now`, { method: 'POST', timeout: 300000 })
 // ---------- 批量操作：逐条执行、部分成功是批量固有语义，返回 {succeeded:[id], failed:[{id,name,error}]} ----------
 export const batchDeleteWorkflows = ids => request('/workflow/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const batchPublishWorkflows = (ids, note = '') => request('/workflow/batch-publish', { method: 'POST', body: JSON.stringify({ ids, note }) })

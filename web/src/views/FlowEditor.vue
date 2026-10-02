@@ -5,10 +5,10 @@
   <div class="wf-editor">
     <div class="wf-toolbar">
       <button class="app-btn ghost small wf-tb-back" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
-      <a-input v-model:value="name" class="wf-name" :maxlength="100" placeholder="工作流名称" @change="dirty = true" />
+      <a-input v-model:value="name" class="wf-name" :maxlength="100" :disabled="readonly" placeholder="工作流名称" @change="dirty = true" />
       <div class="wf-tb-status">
         <span class="wf-dot" :class="dirty ? 'dot-dirty' : 'dot-saved'" />
-        <span class="wf-save-hint">{{ dirty ? '有未保存改动' : '已保存' }}</span>
+        <span class="wf-save-hint">{{ readonly ? '只读（共享查看）' : (dirty ? '有未保存改动' : '已保存') }}</span>
         <span class="wf-tb-sep" />
         <a-tag v-if="publishedVersion != null" color="green" class="wf-ver">已发布 v{{ publishedVersion }}</a-tag>
         <a-tag v-else-if="workflowId" class="wf-ver">草稿</a-tag>
@@ -20,17 +20,20 @@
         <button class="app-btn small" :disabled="busy || !workflowId" @click="openRun">
           <play-circle-outlined /> 运行
         </button>
-        <button class="app-btn small" :disabled="busy" @click="doSave">保存</button>
-        <!-- M4：发布把当前草稿冻结成一个版本（API 触发 / 智能体绑定跑的是已发布版本，草稿继续可改） -->
-        <button class="app-btn primary small" :disabled="busy || !workflowId" @click="doPublish">
-          <cloud-upload-outlined /> {{ publishedVersion != null ? '发布新版本' : '发布' }}
-        </button>
+        <!-- 只读（共享查看）：不出现保存/发布入口——后端也会拒绝，前端不给死路 -->
+        <template v-if="!readonly">
+          <button class="app-btn small" :disabled="busy" @click="doSave">保存</button>
+          <!-- M4：发布把当前草稿冻结成一个版本（API 触发 / 智能体绑定跑的是已发布版本，草稿继续可改） -->
+          <button class="app-btn primary small" :disabled="busy || !workflowId" @click="doPublish">
+            <cloud-upload-outlined /> {{ publishedVersion != null ? '发布新版本' : '发布' }}
+          </button>
+        </template>
       </div>
     </div>
 
     <div class="wf-body">
-      <!-- 左侧节点面板：按用途分组，拖拽到画布或点击添加（瀑布排布） -->
-      <div class="wf-palette">
+      <!-- 左侧节点面板：按用途分组，拖拽到画布或点击添加（瀑布排布）。只读模式整栏隐藏 -->
+      <div v-if="!readonly" class="wf-palette">
         <div class="wf-palette-title">节点</div>
         <template v-for="g in PALETTE_GROUPS" :key="g.title">
           <div class="wf-palette-group">{{ g.title }}</div>
@@ -53,6 +56,7 @@
                  :default-edge-options="EDGE_OPTIONS"
                  :snap-to-grid="true" :snap-grid="[16, 16]"
                  :min-zoom="0.2" :max-zoom="2"
+                 :nodes-draggable="!readonly" :nodes-connectable="!readonly" :edges-updatable="!readonly"
                  @connect="onConnect" @node-click="onNodeClick" @pane-click="closeDrawer"
                  @nodes-change="onNodesChange" @edges-change="onEdgesChange"
                  @node-context-menu="onNodeContextMenu" @edge-context-menu="onEdgeContextMenu"
@@ -328,7 +332,7 @@
                             placeholder="0" addon-before="重试" />
           </div>
           <div class="wf-drawer-actions">
-            <button class="app-btn small" @click="applyConfig">应用到画布</button>
+            <button v-if="!readonly" class="app-btn small" @click="applyConfig">应用到画布</button>
           </div>
         </a-tab-pane>
 
@@ -474,7 +478,9 @@ import {
 } from '../api'
 
 const props = defineProps({
-  workflowId: { type: String, default: '' }   // 空 = 新建
+  workflowId: { type: String, default: '' },  // 空 = 新建
+  /** 只读（共享查看）：隐藏保存/发布/节点面板，禁用拖拽连线——后端同样会拒绝写操作 */
+  readonly: { type: Boolean, default: false }
 })
 const emit = defineEmits(['back', 'saved'])
 
@@ -1048,6 +1054,7 @@ async function doValidate() {
 }
 
 async function doSave() {
+  if (props.readonly) { message.warning('只读工作流不可保存'); return }
   if (!name.value.trim()) { message.warning('请先填写工作流名称'); return }
   busy.value = true
   try {
@@ -1084,6 +1091,7 @@ async function doSave() {
  * 有未保存改动就直接拦下（否则"我发布了但跑的不是我看到的图"）。
  */
 async function doPublish() {
+  if (props.readonly) { message.warning('只读工作流不可发布'); return }
   if (!workflowId.value) { message.warning('请先保存工作流，再发布'); return }
   if (dirty.value) { message.warning('有未保存改动：请先保存，再发布'); return }
   busy.value = true

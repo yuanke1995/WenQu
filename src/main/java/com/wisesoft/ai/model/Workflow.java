@@ -55,8 +55,22 @@ public class Workflow {
     private LocalDateTime publishedAt;
     private String publishedBy;
 
+    // ---- 第 1 期：定时触发与终态回调（自动化配置，仅创建者/管理范围可改） ----
+    /** 定时触发 cron（5 段：分 时 日 月 周；NULL=未配置定时）。只跑已发布版本 */
+    private String scheduleCron;
+    /** 定时 cron 解释时区（NULL=Asia/Shanghai） */
+    private String scheduleTimezone;
+    /** 定时触发开关（1=启用） */
+    private Integer scheduleEnabled;
+    /** 下次定时执行时刻（扫描器据此触发；未启用为 NULL） */
+    private LocalDateTime scheduleNextRunAt;
+    /** 运行终态回调地址（POST JSON；NULL=不回调） */
+    private String callbackUrl;
+    /** 回调 HMAC-SHA256 签名密钥（敏感：出参一律置空，仅以 callbackSecretSet 告知是否已配置） */
+    private String callbackSecret;
+
     /**
-     * 最近一次运行状态（列表页展示用，非列）：由 {@code WorkflowService.listOwn} 批量回填，
+     * 最近一次运行状态（列表页展示用，非列）：由 {@code WorkflowService.listVisible} 批量回填，
      * 不落库——它是一次查询的派生信息，单独建列会与真实运行记录不一致。
      */
     @TableField(exist = false)
@@ -65,6 +79,16 @@ public class Workflow {
     private LocalDateTime lastRunAt;
     @TableField(exist = false)
     private String lastRunId;
+
+    /** 当前登录用户对该工作流的有效权限（MANAGE/READ，非列；列表与详情据此渲染只读/可编辑） */
+    @TableField(exist = false)
+    private String myPermission;
+    /** 是否为当前用户创建（非列）：列表分栏「我创建的 / 共享给我的」 */
+    @TableField(exist = false)
+    private Boolean mine;
+    /** 是否已配置回调签名密钥（非列）：密钥本体不外泄，前端只需知道"已设置" */
+    @TableField(exist = false)
+    private Boolean callbackSecretSet;
 
     private LocalDateTime createTime;
 

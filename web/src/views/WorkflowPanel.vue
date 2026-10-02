@@ -20,7 +20,7 @@
       </button>
       <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起——点「批量管理」进入批量模式
           （卡片出现勾选框）；批量模式内按钮常驻未选禁用；开关放最右：进出模式自身位置不动 -->
-      <div v-if="rows.length" class="batch-group">
+      <div v-if="mine.length" class="batch-group">
         <template v-if="batchMode">
           <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
           <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchPublish">发布</button>
@@ -35,68 +35,88 @@
 
     <div class="app-page-body">
       <a-spin :spinning="loading">
-        <div v-if="!rows.length" class="app-card wf-empty">
+        <div v-if="!hasAny" class="app-card wf-empty">
           <p class="wf-empty-title">还没有工作流</p>
           <p class="head-hint-plain">
             例如「用户提问 → 知识库检索 → LLM 回答 → 按回答长度路由」——纯鼠标搭建，点运行即可调试，不用写任何 JSON
           </p>
         </div>
 
-        <div v-else class="wf-list">
-          <div v-for="r in rows" :key="r.id" class="app-card wf-card">
-            <div class="wf-head">
-              <a-checkbox v-if="batchMode" class="wf-check" :checked="selected.includes(r.id)" @change="toggleSelect(r.id)" />
-              <!-- 状态用「色点 + 文字」：一眼分清发布态，不靠大色块 -->
-              <span class="wf-dot" :class="r.status === 'published' ? 'dot-pub' : 'dot-draft'" />
-              <span class="wf-name">{{ r.name }}</span>
-              <span class="wf-status" :class="r.status === 'published' ? 'st-pub' : 'st-draft'">
-                {{ r.status === 'published' ? (r.publishedVersion != null ? '已发布 v' + r.publishedVersion : '已发布') : '草稿' }}
-              </span>
-              <span class="wf-meta">{{ summary(r.dsl) }}</span>
-              <!-- 最近一次运行：右侧对齐，扫一眼知道"这个工作流现在能不能跑" -->
-              <span class="wf-last">
-                <template v-if="r.lastRunStatus">
-                  <span class="wf-run-dot" :class="'rd-' + r.lastRunStatus" />
-                  <span class="wf-run-txt">{{ runLabel(r.lastRunStatus) }}</span>
-                  <span class="wf-meta">{{ fmtTime(r.lastRunAt) }}</span>
-                </template>
-                <span v-else class="wf-meta">尚未运行</span>
-              </span>
+        <template v-else>
+          <div v-for="sec in sections" :key="sec.key">
+            <!-- 共享给我的分栏头（他人创建、对我可见） -->
+            <div v-if="sec.key === 'shared' && sec.rows.length" class="wf-sec-head">
+              <span class="wf-sec-title">共享给我的</span>
+              <span class="wf-meta">他人创建；只读工作流可查看画布与运行已发布版本，可管理的可直接编辑</span>
             </div>
-            <div v-if="r.description" class="wf-desc">{{ r.description }}</div>
-            <div class="wf-actions">
-              <button class="app-btn ghost small" @click="openEditor(r.id)">
-                <edit-outlined /> 编辑画布
-              </button>
-              <button class="app-btn ghost small" @click="openHistory(r)">
-                <history-outlined /> 运行历史
-              </button>
-              <button class="app-btn ghost small" @click="openVersions(r)">
-                <tags-outlined /> 版本
-              </button>
-              <button class="app-btn ghost small" @click="doExport(r)">
-                <download-outlined /> 导出
-              </button>
-              <!-- 发布/下线：已发布版本被冻结，草稿继续可改 -->
-              <button v-if="r.status === 'published'" class="app-btn ghost small" :disabled="busyId === r.id" @click="doUnpublish(r)">
-                <stop-outlined /> 下线
-              </button>
-              <button v-else class="app-btn small" :disabled="busyId === r.id" @click="doPublish(r)">
-                <cloud-upload-outlined /> 发布
-              </button>
-              <button class="app-btn ghost small wf-del" @click="doDelete(r)">
-                <delete-outlined /> 删除
-              </button>
-              <span class="wf-meta wf-upd">更新于 {{ fmtTime(r.updateTime) }}</span>
+            <div v-if="sec.rows.length" class="wf-list">
+              <div v-for="r in sec.rows" :key="r.id" class="app-card wf-card">
+                <div class="wf-head">
+                  <a-checkbox v-if="batchMode && r.mine" class="wf-check" :checked="selected.includes(r.id)" @change="toggleSelect(r.id)" />
+                  <!-- 状态用「色点 + 文字」：一眼分清发布态，不靠大色块 -->
+                  <span class="wf-dot" :class="r.status === 'published' ? 'dot-pub' : 'dot-draft'" />
+                  <span class="wf-name">{{ r.name }}</span>
+                  <span class="wf-status" :class="r.status === 'published' ? 'st-pub' : 'st-draft'">
+                    {{ r.status === 'published' ? (r.publishedVersion != null ? '已发布 v' + r.publishedVersion : '已发布') : '草稿' }}
+                  </span>
+                  <span v-if="r.scheduleEnabled" class="wf-tag-sched"><clock-circle-outlined /> 定时</span>
+                  <span v-if="r.callbackUrl" class="wf-tag-sched"><api-outlined /> 回调</span>
+                  <span v-if="!r.mine" class="wf-tag-shared">共享</span>
+                  <span class="wf-meta">{{ summary(r.dsl) }}</span>
+                  <!-- 最近一次运行：右侧对齐，扫一眼知道"这个工作流现在能不能跑" -->
+                  <span class="wf-last">
+                    <template v-if="r.lastRunStatus">
+                      <span class="wf-run-dot" :class="'rd-' + r.lastRunStatus" />
+                      <span class="wf-run-txt">{{ runLabel(r.lastRunStatus) }}</span>
+                      <span class="wf-meta">{{ fmtTime(r.lastRunAt) }}</span>
+                    </template>
+                    <span v-else class="wf-meta">尚未运行</span>
+                  </span>
+                </div>
+                <div v-if="r.description" class="wf-desc">{{ r.description }}</div>
+                <div class="wf-actions">
+                  <button class="app-btn ghost small" @click="openEditor(r.id, !canManage(r))">
+                    <edit-outlined /> {{ canManage(r) ? '编辑画布' : '查看画布（只读）' }}
+                  </button>
+                  <button class="app-btn ghost small" @click="openHistory(r)">
+                    <history-outlined /> 运行历史
+                  </button>
+                  <button class="app-btn ghost small" @click="openVersions(r)">
+                    <tags-outlined /> 版本
+                  </button>
+                  <template v-if="canManage(r)">
+                    <button class="app-btn ghost small" @click="openShare(r)">
+                      <team-outlined /> 共享
+                    </button>
+                    <button class="app-btn ghost small" @click="openAutomation(r)">
+                      <clock-circle-outlined /> 定时/回调
+                    </button>
+                    <button class="app-btn ghost small" @click="doExport(r)">
+                      <download-outlined /> 导出
+                    </button>
+                    <!-- 发布/下线：已发布版本被冻结，草稿继续可改 -->
+                    <button v-if="r.status === 'published'" class="app-btn ghost small" :disabled="busyId === r.id" @click="doUnpublish(r)">
+                      <stop-outlined /> 下线
+                    </button>
+                    <button v-else class="app-btn small" :disabled="busyId === r.id" @click="doPublish(r)">
+                      <cloud-upload-outlined /> 发布
+                    </button>
+                    <button class="app-btn ghost small wf-del" @click="doDelete(r)">
+                      <delete-outlined /> 删除
+                    </button>
+                  </template>
+                  <span class="wf-meta wf-upd">更新于 {{ fmtTime(r.updateTime) }}</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </template>
       </a-spin>
     </div>
   </template>
 
-    <!-- 画布编辑器：整页替换列表（返回即回列表并刷新） -->
-    <FlowEditor v-if="editingId !== null" :workflow-id="editingId" @back="closeEditor" @saved="load" />
+    <!-- 画布编辑器：整页替换列表（返回即回列表并刷新）。只读=共享给我且无管理权 -->
+    <FlowEditor v-if="editingId !== null" :workflow-id="editingId" :readonly="editorReadonly" @back="closeEditor" @saved="load" />
 
     <!-- 运行历史页（M4：独立页，含 trace 回放与待审批裁决） -->
     <WorkflowRunHistory v-if="historyId !== null" :workflow-id="historyId" :name="historyName" @back="closeHistory" />
@@ -141,6 +161,56 @@
         </div>
       </a-spin>
     </a-modal>
+
+    <!-- 第 1 期：共享范围（复用统一共享弹窗，v2 share_config，与知识库/智能体同款） -->
+    <ShareScopeModal v-model:open="shareModal" resource-label="工作流" read-verb="查看并运行"
+                     :share-config="shareRow ? shareRow.shareConfig : ''" :save-fn="saveShare" @saved="load" />
+
+    <!-- 第 1 期：定时触发 + 终态回调 -->
+    <a-modal v-model:open="autoModal" :title="`定时与回调${autoRow ? ' · ' + autoRow.name : ''}`"
+             :confirm-loading="autoSaving" ok-text="保存" cancel-text="取消" width="560px" @ok="saveAutomation">
+      <div class="auto-block">
+        <div class="auto-block-title">定时触发</div>
+        <div class="auto-row">
+          <span class="auto-label">启用</span>
+          <a-switch v-model:checked="autoForm.scheduleEnabled" size="small" />
+          <span class="wf-meta">只运行<strong>已发布版本</strong>；草稿变更不生效</span>
+        </div>
+        <div class="auto-row">
+          <span class="auto-label">cron</span>
+          <a-input v-model:value="autoForm.cron" placeholder="分 时 日 月 周，如 0 9 * * 1-5 表示工作日 9 点" allow-clear />
+        </div>
+        <div class="auto-row">
+          <span class="auto-label">时区</span>
+          <a-input v-model:value="autoForm.timezone" placeholder="Asia/Shanghai" allow-clear />
+        </div>
+        <div v-if="autoNextRunAt" class="wf-meta auto-hint">下次执行：{{ fmtTime(autoNextRunAt) }}</div>
+        <div v-else-if="autoForm.scheduleEnabled" class="wf-meta auto-hint">保存后按 cron 计算下次执行时刻</div>
+      </div>
+      <div class="auto-block">
+        <div class="auto-block-title">运行终态回调</div>
+        <div class="auto-row">
+          <span class="auto-label">地址</span>
+          <a-input v-model:value="autoForm.callbackUrl" placeholder="https://your.app/hook（运行成功/失败/超时后 POST JSON）" allow-clear />
+        </div>
+        <div class="auto-row">
+          <span class="auto-label">签名密钥</span>
+          <a-input-password v-model:value="autoForm.callbackSecret"
+                            :placeholder="autoSecretSet ? '已设置（留空保持不变）' : '选填：HMAC-SHA256 签名密钥'" />
+        </div>
+        <div class="wf-meta auto-hint">
+          回调头带 X-Wenqu-Signature: sha256=…（对请求体做 HMAC-SHA256）；地址不得指向内网
+        </div>
+      </div>
+      <template #footer>
+        <button class="app-btn ghost small" :disabled="autoBusy" @click="doRunScheduleNow">
+          <play-circle-outlined /> 立即运行一次
+        </button>
+        <span class="flex-gap"></span>
+        <button class="app-btn ghost small" @click="autoModal = false">取消</button>
+        <button class="app-btn small" :disabled="autoSaving" @click="saveAutomation">保存</button>
+      </template>
+    </a-modal>
   </div>
 </template>
 
@@ -149,20 +219,25 @@ import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
-  StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined
+  StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined,
+  TeamOutlined, ClockCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons-vue'
 import FlowEditor from './FlowEditor.vue'
 import WorkflowRunHistory from './WorkflowRunHistory.vue'
+import ShareScopeModal from './ShareScopeModal.vue'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
   listWorkflowTemplates, createWorkflow, getWorkflow,
-  batchDeleteWorkflows, batchPublishWorkflows, batchUnpublishWorkflows
+  batchDeleteWorkflows, batchPublishWorkflows, batchUnpublishWorkflows,
+  shareWorkflow, getWorkflowAutomation, saveWorkflowAutomation, runWorkflowScheduleNow
 } from '../api'
 
-const rows = ref([])
+const mine = ref([])            // 我创建的
+const shared = ref([])          // 共享给我的（他人创建、对我可读/可管理）
 const loading = ref(false)
 const editingId = ref(null)     // null = 列表；'' = 新建；'id' = 编辑
+const editorReadonly = ref(false)   // 画布只读（共享给我且无管理权）
 const historyId = ref(null)     // 非 null = 运行历史页
 const historyName = ref('')
 const busyId = ref(null)        // 正在执行发布/下线/回滚的工作流 id
@@ -170,6 +245,16 @@ const versionModal = ref(false)
 const versionLoading = ref(false)
 const versionRow = ref(null)
 const versions = ref([])
+
+/** 是否有可展示的工作流 */
+const hasAny = computed(() => mine.value.length + shared.value.length > 0)
+/** 分栏：我创建的 / 共享给我的（空栏不渲染） */
+const sections = computed(() => [
+  { key: 'mine', rows: mine.value },
+  { key: 'shared', rows: shared.value }
+])
+/** 是否可管理（编辑/发布/共享/删除）；共享只读为 false */
+const canManage = r => r.myPermission === 'MANAGE'
 
 // ---- 批量操作：卡片勾选 + 全选 + 批量发布/下线/导出/删除 ----
 const selected = ref([])        // 勾选的工作流 id
@@ -180,14 +265,14 @@ const toggleBatchMode = () => {
   batchMode.value = !batchMode.value
   if (!batchMode.value) selected.value = []
 }
-const allChecked = computed(() => rows.value.length > 0 && selected.value.length === rows.value.length)
-const someChecked = computed(() => selected.value.length > 0 && selected.value.length < rows.value.length)
+const allChecked = computed(() => mine.value.length > 0 && selected.value.length === mine.value.length)
+const someChecked = computed(() => selected.value.length > 0 && selected.value.length < mine.value.length)
 const toggleSelect = id => {
   selected.value = selected.value.includes(id)
     ? selected.value.filter(x => x !== id)
     : [...selected.value, id]
 }
-const toggleAll = () => { selected.value = allChecked.value ? [] : rows.value.map(r => r.id) }
+const toggleAll = () => { selected.value = allChecked.value ? [] : mine.value.map(r => r.id) }
 
 /** 批量结果汇报：全成功走 message；有失败条目逐条弹 Modal 列出原因（不静默吞） */
 const reportBatch = (r, verb) => {
@@ -285,19 +370,22 @@ const load = async () => {
   loading.value = true
   try {
     const r = await listWorkflows()
-    rows.value = (r && r.data) || []
+    const d = (r && r.data) || {}
+    mine.value = d.mine || []
+    shared.value = d.shared || []
     // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
-    const alive = new Set(rows.value.map(x => x.id))
+    const alive = new Set(mine.value.map(x => x.id))
     selected.value = selected.value.filter(id => alive.has(id))
   } catch (e) {
     message.error('工作流加载失败：' + (e.message || '请刷新重试'))
-    rows.value = []
+    mine.value = []
+    shared.value = []
   } finally {
     loading.value = false
   }
 }
 
-const openEditor = id => { editingId.value = id }
+const openEditor = (id, readonly = false) => { editingId.value = id; editorReadonly.value = readonly }
 const closeEditor = () => { editingId.value = null; load() }
 const openHistory = row => { historyId.value = row.id; historyName.value = row.name }
 const closeHistory = () => { historyId.value = null; load() }
@@ -382,6 +470,92 @@ const doRollback = async v => {
       }
     }
   })
+}
+
+// ---- 第 1 期：共享范围 / 定时与回调 ----
+const shareModal = ref(false)
+const shareRow = ref(null)
+const openShare = row => { shareRow.value = row; shareModal.value = true }
+/** 共享弹窗保存回调：json 为 v2 share_config（空串=私有），由后端强校验 manage ⊆ read */
+const saveShare = json => shareWorkflow(shareRow.value.id, json)
+
+const autoModal = ref(false)
+const autoRow = ref(null)
+const autoSaving = ref(false)
+const autoBusy = ref(false)
+const autoSecretSet = ref(false)
+const autoNextRunAt = ref(null)
+const autoForm = ref({ scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '' })
+
+const openAutomation = async row => {
+  autoRow.value = row
+  autoForm.value = { scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '' }
+  autoSecretSet.value = false
+  autoNextRunAt.value = null
+  autoModal.value = true
+  try {
+    const r = await getWorkflowAutomation(row.id)
+    const d = (r && r.data) || {}
+    autoForm.value = {
+      scheduleEnabled: !!d.scheduleEnabled,
+      cron: d.cron || '',
+      timezone: d.timezone || 'Asia/Shanghai',
+      callbackUrl: d.callbackUrl || '',
+      callbackSecret: ''
+    }
+    autoSecretSet.value = !!d.callbackSecretSet
+    autoNextRunAt.value = d.nextRunAt || null
+  } catch (e) {
+    message.error('自动化配置加载失败：' + (e.message || ''))
+  }
+}
+
+const saveAutomation = async () => {
+  if (!autoRow.value) return
+  if (autoForm.value.scheduleEnabled && !String(autoForm.value.cron || '').trim()) {
+    message.warning('启用定时触发前请填写 cron 表达式')
+    return
+  }
+  autoSaving.value = true
+  try {
+    const body = {
+      scheduleEnabled: autoForm.value.scheduleEnabled,
+      cron: autoForm.value.cron,
+      timezone: autoForm.value.timezone,
+      callbackUrl: autoForm.value.callbackUrl
+    }
+    // 密钥留空 = 不修改（placeholder 已提示）；填了才覆盖
+    if (String(autoForm.value.callbackSecret || '').trim()) body.callbackSecret = autoForm.value.callbackSecret
+    const r = await saveWorkflowAutomation(autoRow.value.id, body)
+    if (r && r.success) {
+      message.success('自动化配置已保存')
+      autoModal.value = false
+      await load()
+    } else {
+      message.error((r && r.msg) || '保存失败')
+    }
+  } catch (e) {
+    message.error('保存失败：' + (e.message || ''))
+  } finally {
+    autoSaving.value = false
+  }
+}
+
+/** 立即运行一次（跑已发布版本）：同步返回终态 run，失败也展示原因 */
+const doRunScheduleNow = async () => {
+  if (!autoRow.value) return
+  autoBusy.value = true
+  try {
+    const r = await runWorkflowScheduleNow(autoRow.value.id)
+    const run = (r && r.data) || {}
+    if (run.status === 'success') message.success('定时运行成功（已发布版本）')
+    else message.error('定时运行结束：' + runLabel(run.status) + (run.error ? '：' + run.error : ''))
+    await load()
+  } catch (e) {
+    message.error('触发失败：' + (e.message || ''))
+  } finally {
+    autoBusy.value = false
+  }
 }
 
 /** DSL 摘要：节点/边数量 */
@@ -569,4 +743,21 @@ onMounted(load)
 /* M5 模板库弹窗卡片 */
 .wf-tpl-list { display: flex; flex-direction: column; gap: 10px; }
 .wf-tpl { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
+/* 第 1 期：共享分栏头 + 卡片上的定时/回调/共享小标 */
+.wf-sec-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 0 8px; flex-wrap: wrap; }
+.wf-sec-title { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.wf-tag-sched, .wf-tag-shared {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1;
+  padding: 2px 7px; border-radius: 10px; flex: none;
+}
+.wf-tag-sched { color: var(--app-accent); background: var(--app-accent-weak); }
+.wf-tag-shared { color: var(--app-text2); background: var(--app-bg); border: 1px solid var(--app-border); }
+/* 定时与回调弹窗 */
+.auto-block { margin-bottom: 16px; }
+.auto-block:last-of-type { margin-bottom: 0; }
+.auto-block-title { font-size: 13px; font-weight: 500; color: var(--app-text); margin-bottom: 8px; }
+.auto-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.auto-label { width: 56px; flex: none; font-size: 13px; color: var(--app-text2); }
+.auto-hint { margin-top: 2px; }
+.flex-gap { flex: 1 1 auto; }
 </style>
