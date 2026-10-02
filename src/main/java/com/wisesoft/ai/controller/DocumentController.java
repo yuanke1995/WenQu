@@ -108,12 +108,13 @@ public class DocumentController {
         return String.format("%.0fMB", bytes / (1024.0 * 1024));
     }
 
-    @Operation(summary = "上传文档", description = "上传单个文档（docx/pdf/xlsx），异步解析，返回文档 ID 和解析状态；按用户限频（ratelimit.uploadPerMinute）")
+    @Operation(summary = "上传文档", description = "上传单个文档（docx/pdf/xlsx），异步解析，返回文档 ID 和解析状态；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（引用 {providerId}/{modelId}），对该文档所有图片理解生效；空=跟随知识库")
     @PostMapping("/upload")
     public ResultJson upload(
             @Parameter(description = "文档文件") @RequestParam("file") MultipartFile file,
             @Parameter(description = "文档描述（可选）") @RequestParam(value = "description", required = false) String description,
             @Parameter(description = "目标知识库（可选；空=默认知识库）") @RequestParam(value = "kbId", required = false) String kbId,
+            @Parameter(description = "文档级视觉模型覆盖（可选；空=跟随知识库）") @RequestParam(value = "visionRef", required = false) String visionRef,
             HttpServletRequest httpRequest) throws Exception {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
         checkUploadSize(file);
@@ -121,7 +122,7 @@ public class DocumentController {
             throw new BizException("文档描述过长（最多 500 字）");
         }
         requireKbManage(kbId);   // 往哪个库传，就要对这个库有管理权
-        var doc = documentService.upload(file, description, kbId);
+        var doc = documentService.upload(file, description, kbId, visionRef);
         log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
         return ResultJson.ok(doc, "已提交解析");
@@ -146,12 +147,13 @@ public class DocumentController {
         return ResultJson.ok(doc, "已提交解析");
     }
 
-    @Operation(summary = "批量上传文档", description = "批量上传多个文档，逐个提交异步解析，返回每个文件的上传结果；按用户限频（ratelimit.uploadPerMinute）")
+    @Operation(summary = "批量上传文档", description = "批量上传多个文档，逐个提交异步解析，返回每个文件的上传结果；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（应用到所有文件；空=跟随知识库）")
     @PostMapping("/upload/batch")
     public ResultJson uploadBatch(
             @Parameter(description = "文档文件列表") @RequestParam("file") MultipartFile[] files,
             @Parameter(description = "批量描述（可选，应用到所有文件）") @RequestParam(value = "description", required = false) String description,
             @Parameter(description = "目标知识库（可选；空=默认知识库）") @RequestParam(value = "kbId", required = false) String kbId,
+            @Parameter(description = "文档级视觉模型覆盖（可选，应用到所有文件；空=跟随知识库）") @RequestParam(value = "visionRef", required = false) String visionRef,
             HttpServletRequest httpRequest) {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
         if (description != null && description.length() > 500) {
@@ -164,7 +166,7 @@ public class DocumentController {
             item.put("fileName", file.getOriginalFilename());
             try {
                 checkUploadSize(file);
-                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description, kbId);
+                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description, kbId, visionRef);
                 item.put("docId", doc.getId());
                 item.put("success", true);
                 item.put("msg", "已提交解析");

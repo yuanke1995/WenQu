@@ -103,12 +103,16 @@
           <a-input-number v-model:value="form.p.ocrDpi" :min="72" :max="400" :step="8" style="width:100%" :placeholder="numPh('parse', 'ocrDpi')" />
         </a-form-item>
         <a-form-item label="图片描述模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-          <ModelSelect v-model="form.p.visionRef" type="vision" width="100%" inherit-label="不描述图片" />
+          <ModelSelect v-model="form.p.visionRef" type="vision,ocr" width="100%" inherit-label="不描述图片" />
+        </a-form-item>
+        <a-form-item label="扫描件 OCR 模型" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+          <ModelSelect v-model="form.p.ocrRef" type="ocr" width="100%" inherit-label="跟随图片描述模型" />
         </a-form-item>
       </div>
       <div class="kb-hint" style="margin:4px 0 0">
-        改解析参数后需重新解析文档才会生效（不自动重解析全库）；扫描件/图片型 PDF 的 OCR 依赖「图片描述模型」——
-        <span class="kb-warn">未绑定时该类文档会解析失败</span>（不产出残缺内容）。
+        改解析参数后需重新解析文档才会生效（不自动重解析全库）；扫描件/图片型 PDF 的 OCR 依赖「扫描件 OCR 模型」——
+        <span class="kb-warn">未绑定时回落「图片描述模型」</span>（两者都空则该类文档解析失败，不产出残缺内容）。
+        「图片描述模型」管文档内嵌图片（docx/PDF 里的插图、截图）描述，通用视觉更准；「扫描件 OCR 模型」管逐页识别，建议 OCR 专用（如 PaddleOCR-VL）。
         纯文本文档建议「PDF 解析引擎」留空或用 none（秒级）；版面引擎（MinerU/PP）专为表格/版面还原，CPU 约 10s/页、
         <span class="kb-warn">大文档会明显变慢</span>。
       </div>
@@ -171,7 +175,7 @@ function blank () {
   return {
     name: '', description: '', icon: '', embeddingRef: '', isDefault: false, graphEnabled: false,
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
-    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '' }
+    p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
 }
 
@@ -215,6 +219,7 @@ function hydrateForm (row) {
     f.p[field] = (field === 'structural' || field === 'qaEnabled' || field === 'childEnabled' || field === 'ocrEngine') ? String(v) : Number(v)
   }
   if (p.visionRef) f.p.visionRef = p.visionRef
+  if (p.ocrRef) f.p.ocrRef = p.ocrRef
   return f
 }
 
@@ -234,6 +239,7 @@ function serialize (f) {
     p[key] = String(v)
   }
   if (f.p.visionRef) p.visionRef = f.p.visionRef
+  if (f.p.ocrRef) p.ocrRef = f.p.ocrRef
   return {
     queryParams: Object.keys(q).length ? JSON.stringify(q) : null,
     parseParams: Object.keys(p).length ? JSON.stringify(p) : null

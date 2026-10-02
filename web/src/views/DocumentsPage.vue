@@ -20,7 +20,7 @@
         <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
           <link-outlined /> 网页导入
         </button>
-        <button v-if="canManageCurrentKb" class="app-btn" :disabled="uploading" @click="uploadVisible = true">
+        <button v-if="canManageCurrentKb" class="app-btn" :disabled="uploading" @click="openUpload">
           <upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}
         </button>
       </div>
@@ -54,6 +54,13 @@
         </div>
       </div>
       <a-input v-model:value="uploadDesc" placeholder="文档描述（可选）" style="margin-top:10px" allow-clear />
+      <div style="margin-top:8px">
+        <ModelSelect v-model="uploadVisionRef" type="vision,ocr" width="100%" allow-clear
+                     inherit-label="跟随知识库配置" placeholder="图片理解模型（可选）" />
+        <div style="margin-top:4px;color:var(--app-text3);font-size:12px">
+          {{ uploadVisionHint }}
+        </div>
+      </div>
       <div style="margin-top:8px;color:var(--app-text3);font-size:12px">
         提交后进入解析队列按并发逐个执行；也可以直接把文件拖到列表页上传（不带描述）
       </div>
@@ -392,6 +399,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          getDocumentQueueStats } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
+import ModelSelect from '../components/ModelSelect.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
 import { isAdminSync, ensureAuth } from '../utils/auth'
@@ -608,8 +616,8 @@ async function beforeUpload (fileList) {
   return false   // 拦下 ant Upload 的自动上传，提交由 submitFiles 接管
 }
 
-/** 上传提交共用：文件校验 + 批量提交 + 结果提示，返回是否全部提交成功。desc 为 undefined 表示无描述（拖拽/粘贴直传） */
-async function submitFiles (files, desc) {
+/** 上传提交共用：文件校验 + 批量提交 + 结果提示，返回是否全部提交成功。desc 为 undefined 表示无描述（拖拽/粘贴直传）；visionRef 为 undefined 表示跟随知识库（直传无弹窗，无覆盖入口） */
+async function submitFiles (files, desc, visionRef) {
   const bad = files.find(f => {
     const ext = (f.name.split('.').pop() || '').toLowerCase()
     return !uploadCfg.value.allowedExts.includes(ext) || f.size > uploadCfg.value.maxFileSize
@@ -621,7 +629,7 @@ async function submitFiles (files, desc) {
   uploading.value = true
   uploadPercent.value = 0
   try {
-    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc, route.params.kbId)
+    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc, route.params.kbId, visionRef)
     if (r.success) {
       const failed = (r.data || []).filter(x => !x.success)
       if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
@@ -638,7 +646,29 @@ async function submitFiles (files, desc) {
 // ==================== 上传弹窗（选文件 + 描述一体化） ====================
 const uploadVisible = ref(false)
 const uploadDesc = ref('')
+/**
+ * 文档级视觉模型覆盖（可选）：对该文档所有图片理解生效；空=跟随知识库双槽位配置。
+ * 弹窗打开时默认选上当前库 parse_params.visionRef（所见即所用）；提交时与库配置相同
+ * 视为"跟随"不落覆盖（库级是 visionRef+ocrRef 双槽位，照值提交会把 OCR 槽一并覆盖，
+ * 且库配置后续调整不再对本文档生效）——只有改选了不同模型才是真正的文档级覆盖。
+ */
+const uploadVisionRef = ref('')
+/** 当前库 parse_params.visionRef（库级图片描述模型；parseParams 为 JSON 字符串，未配/解析失败返回 ''） */
+const currentKbVisionRef = computed(() => {
+  const kb = currentKb.value
+  if (!kb || !kb.parseParams) return ''
+  try { return JSON.parse(kb.parseParams).visionRef || '' } catch { return '' }
+})
+/** 提示文案随库配置切换：已配=说明默认选上语义；未配=沿用"留空跟随" */
+const uploadVisionHint = computed(() => currentKbVisionRef.value
+  ? '已默认选上知识库配置的图片理解模型（保持不变=跟随知识库）；改选其他模型则本文档所有图片理解（插图描述、扫描页 OCR）都用它，重新解析沿用'
+  : '留空跟随知识库配置；选定后本文档所有图片理解（插图描述、扫描页 OCR）都用此模型，重新解析沿用')
 const pendingFiles = ref([])
+/** 打开上传弹窗：库已配图片理解模型时默认选上，用户可改选或清空 */
+function openUpload () {
+  uploadVisionRef.value = currentKbVisionRef.value
+  uploadVisible.value = true
+}
 /** 弹窗内选择/拖入文件：只收集不提交（确定时统一提交），校验不过直接拦下 */
 function collectPendingFile (file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase()
@@ -651,10 +681,14 @@ function collectPendingFile (file) {
 }
 async function submitUpload () {
   if (!pendingFiles.value.length) { message.warning('请先选择要上传的文件'); return }
-  const ok = await submitFiles([...pendingFiles.value], uploadDesc.value?.trim() || undefined)
+  const chosen = uploadVisionRef.value?.trim() || ''
+  // 与库级配置相同=跟随知识库（不落文档级快照，库后续调整仍对本文档生效）；不同才是文档级覆盖
+  const visionRef = chosen && chosen !== currentKbVisionRef.value ? chosen : undefined
+  const ok = await submitFiles([...pendingFiles.value], uploadDesc.value?.trim() || undefined, visionRef)
   if (!ok) return   // 失败保留弹窗内容便于重试
   pendingFiles.value = []
   uploadDesc.value = ''
+  uploadVisionRef.value = ''
   uploadVisible.value = false
 }
 const onDrop = e => {

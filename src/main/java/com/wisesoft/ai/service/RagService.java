@@ -664,8 +664,24 @@ public class RagService {
             // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
             final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
                     scheduleKeepalive(emitter, "前置");
-            // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）
-            List<UserImageService.UserImage> userImgs = userImageService.process(userImages, userVisionRef);
+            // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）。
+            //    视觉模型类型守卫：个人默认视觉模型登记为「OCR 专用」时不得用于聊天图片理解——
+            //    OCR 模型（如 PaddleOCR-VL）输出文档解析格式（LOC 坐标标记+版面文本），注入上下文
+            //    会产生乱码回答（2026-10-02 截图乱回答的根因）。fail-loud：登记用户可见降级事件，
+            //    本轮跳过 AI 识别（图片文件照常落盘随消息展示），不静默继续。
+            List<UserImageService.UserImage> userImgs;
+            if (userVisionRef != null && !userVisionRef.isBlank()
+                    && ModelRegistryService.TYPE_OCR.equals(modelRegistryService.referenceType(userVisionRef))) {
+                userImgs = userImageService.process(userImages, null);
+                degradations.add(Map.of("code", "visionModelOcrMismatch", "msg",
+                        "个人默认视觉模型「" + userVisionRef.substring(userVisionRef.indexOf('/') + 1)
+                                + "」是 OCR 专用类型，不能用于图片理解；本轮图片未做 AI 识别，"
+                                + "请在 个人设置 → 视觉模型 改选通用视觉模型"));
+                log.warn("[FAIL-LOUD] 个人默认视觉模型为 OCR 专用类型，跳过图片描述: session={} ref={}",
+                        sessionId, userVisionRef);
+            } else {
+                userImgs = userImageService.process(userImages, userVisionRef);
+            }
             String imgDescText = userImgs.isEmpty() ? "" : userImgs.stream()
                     .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
                     .collect(Collectors.joining("\n"));

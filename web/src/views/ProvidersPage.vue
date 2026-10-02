@@ -380,6 +380,7 @@ const iconUrl = computed({
 const typeOptions = [
   { label: '聊天', value: 'chat' },
   { label: '视觉', value: 'vision' },
+  { label: 'OCR 专用', value: 'ocr' },
   { label: '向量', value: 'embedding' },
   { label: '重排', value: 'rerank' },
   { label: '语音', value: 'audio' },
@@ -390,6 +391,7 @@ const typeOptions = [
 const TYPE_META = {
   chat: { label: '聊天', color: 'blue' },
   vision: { label: '视觉', color: 'geekblue' },
+  ocr: { label: 'OCR', color: 'volcano' },
   embedding: { label: '向量', color: 'purple' },
   rerank: { label: '重排', color: 'cyan' },
   audio: { label: '语音', color: 'orange' },

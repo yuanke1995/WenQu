@@ -656,21 +656,23 @@ export function uploadChatAttachment(file, onProgress) {
   return upload('/chat/attachment', fd, onProgress)
 }
 
-/** 上传文档（onProgress 接收 0-100 百分比） */
-export function uploadDocument(file, description, onProgress, kbId) {
+/** 上传文档（onProgress 接收 0-100 百分比；visionRef 可选=文档级视觉模型覆盖，空=跟随知识库） */
+export function uploadDocument(file, description, onProgress, kbId, visionRef) {
   const fd = new FormData()
   fd.append('file', file)
   if (description) fd.append('description', description)
   if (kbId) fd.append('kbId', kbId)
+  if (visionRef) fd.append('visionRef', visionRef)
   return upload('/document/upload', fd, onProgress)
 }
 
-/** 批量上传（onProgress 接收 0-100 百分比；description 可选，应用到所有文件） */
-export function uploadDocumentsBatch(files, onProgress, description, kbId) {
+/** 批量上传（onProgress 接收 0-100 百分比；description/visionRef 可选，应用到所有文件） */
+export function uploadDocumentsBatch(files, onProgress, description, kbId, visionRef) {
   const fd = new FormData()
   files.forEach(f => fd.append('file', f))
   if (description) fd.append('description', description)
   if (kbId) fd.append('kbId', kbId)
+  if (visionRef) fd.append('visionRef', visionRef)
   return upload('/document/upload/batch', fd, onProgress)
 }
 

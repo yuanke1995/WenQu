@@ -48,11 +48,11 @@ public class VisionService {
 
     /**
      * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）。
-     * 视觉模型取当前线程的解析期引用（{@link #startParseScope}，文档解析按库）；
+     * 视觉模型取当前线程的解析期「图片描述」引用（{@link #startParseScope(String)}，文档内嵌图按库）；
      * 未设置（无库上下文）时不描述图片——全局 vision.model 已退役，没有运行时兜底。
      */
     public String describe(byte[] imageBytes, String ext) {
-        return describe(imageBytes, ext, configService.get("vision.prompt"), PARSE_REF.get());
+        return describe(imageBytes, ext, configService.get("vision.prompt"), DESC_REF.get());
     }
 
     /** 默认描述提示词（供调用方组合带路由覆盖的 describe 重载） */
@@ -95,11 +95,13 @@ public class VisionService {
      * OCR 专用严格通道（扫描件 PDF 用）：与 {@link #describe} 的"失败返回空串降级"不同，
      * 本方法 <b>fail-loud 不降级</b>——
      * <ul>
-     *   <li>总开关关闭 / 当前线程未设置解析期视觉模型 / 引用无效 → 抛 IllegalStateException
+     *   <li>总开关关闭 / 当前线程未设置解析期扫描件 OCR 模型 / 引用无效 → 抛 IllegalStateException
      *       （扫描件没有模型就识别不出内容，解析必须失败并告知原因）；</li>
      *   <li>调用失败（重试后仍异常）→ 抛 IllegalStateException（丢页 = 内容静默残缺，不可接受）；</li>
      *   <li>返回 "" 仅表示模型正常响应但判定页上没有文字（空白页/封面图，合法）。</li>
      * </ul>
+     * 路由：优先「扫描件 OCR 模型」槽位（OCR 专用类型）；未单独配置时回落「图片描述模型」槽位
+     * （跟随语义，与其他知识库解析参数一致——单槽老配置行为不变）。
      */
     public String describeOcr(byte[] imageBytes, String ext, String prompt) {
         if (imageBytes == null || imageBytes.length == 0) return "";
@@ -108,16 +110,19 @@ public class VisionService {
         if (!enabled) {
             throw new IllegalStateException("视觉模型总开关已关闭（vision.enabled=false），扫描件无法 OCR；请在系统设置开启或为该库更换非扫描文档");
         }
-        ModelRegistryService.ModelRoute route = routeFor(PARSE_REF.get());
+        String ocrRef = OCR_REF.get();
+        if (ocrRef == null || ocrRef.isBlank()) ocrRef = DESC_REF.get();
+        ModelRegistryService.ModelRoute route = routeFor(ocrRef);
         if (route == null) {
-            throw new IllegalStateException("所属知识库未绑定图片描述模型（知识库编辑 → 解析参数 → 图片描述模型），扫描件无法 OCR");
+            throw new IllegalStateException("所属知识库未绑定图片理解模型（知识库编辑 → 解析参数 → 图片描述模型/扫描件 OCR 模型），扫描件无法 OCR");
         }
         return callWithCache(imageBytes, ext, prompt, route, true);
     }
 
-    /** 当前线程是否设置了可解析的解析期视觉模型（扫描件 OCR 的前置检查，未就绪直接失败避免白渲染） */
+    /** 扫描件 OCR 前置检查：OCR 槽位（未配置回落图片描述槽位）是否可解析；未就绪直接失败避免白渲染 */
     public boolean parseVisionAvailable() {
-        String ref = PARSE_REF.get();
+        String ref = OCR_REF.get();
+        if (ref == null || ref.isBlank()) ref = DESC_REF.get();
         return ref != null && !ref.isBlank() && modelRegistryService.resolveReference(ref.trim()) != null;
     }
 
@@ -181,19 +186,29 @@ public class VisionService {
     }
 
     /**
-     * 解析期视觉模型引用（线程局部）：文档解析按所属知识库的 visionRef 描述图片，
+     * 解析期视觉模型引用（线程局部，双槽位）：
+     * - {@link #DESC_REF}：图片描述模型（文档内嵌图：docx/PDF 插图截图、图片描述补齐）；
+     * - {@link #OCR_REF}：扫描件 OCR 模型（PDF 视觉引擎逐页识别；未配置回落 DESC_REF）。
      * 解析任务 worker 线程开头 set、finally clear（与 ConfigService.putOverrides 同模式）。
      */
-    private static final ThreadLocal<String> PARSE_REF = new ThreadLocal<>();
+    private static final ThreadLocal<String> DESC_REF = new ThreadLocal<>();
+    private static final ThreadLocal<String> OCR_REF = new ThreadLocal<>();
 
-    /** 设置当前线程的解析期视觉模型引用（知识库 visionRef） */
+    /** 设置当前线程的「图片描述」槽位（单槽：文档内嵌图描述与补齐；不影响 OCR 槽位） */
     public void startParseScope(String ref) {
-        if (ref != null && !ref.isBlank()) PARSE_REF.set(ref.trim());
+        if (ref != null && !ref.isBlank()) DESC_REF.set(ref.trim());
+    }
+
+    /** 设置当前线程双槽位：descRef=图片描述模型、ocrRef=扫描件 OCR 模型（空=清该槽位，OCR 空时回落 desc） */
+    public void startParseScope(String descRef, String ocrRef) {
+        if (descRef != null && !descRef.isBlank()) DESC_REF.set(descRef.trim()); else DESC_REF.remove();
+        if (ocrRef != null && !ocrRef.isBlank()) OCR_REF.set(ocrRef.trim()); else OCR_REF.remove();
     }
 
     /** 清除解析期视觉模型引用（解析任务结束必须调用） */
     public void clearParseScope() {
-        PARSE_REF.remove();
+        DESC_REF.remove();
+        OCR_REF.remove();
     }
 
     private String callOnce(byte[] imageBytes, String ext, String prompt, ModelRegistryService.ModelRoute route) {
@@ -226,7 +241,10 @@ public class VisionService {
     }
 
     /**
-     * 防御性解析：兼容标准 OpenAI choices 与 DashScope 原生 {"text":...} 两种格式
+     * 防御性解析：兼容标准 OpenAI choices 与 DashScope 原生 {"text":...} 两种格式。
+     * 输出规范化：OCR 专用模型（如 PaddleOCR-VL）的原生输出混有版面坐标标记（<|LOC_487|> 等），
+     * 那是给版面还原用的，本系统任何环节都不消费坐标——原样入库只会污染向量与上下文
+     * （图片描述文本会进分块、嵌入和引用），统一剥离。
      */
     private String parseContent(String resp) {
         if (resp == null || resp.isBlank()) return "";
@@ -238,7 +256,7 @@ public class VisionService {
                 JSONObject msg = choices.getJSONObject(0).getJSONObject("message");
                 if (msg != null) {
                     Object content = msg.get("content");
-                    if (content instanceof String s) return s.trim();
+                    if (content instanceof String s) return stripLayoutTokens(s);
                     if (content instanceof JSONArray arr) {
                         StringBuilder sb = new StringBuilder();
                         for (Object o : arr) {
@@ -246,22 +264,30 @@ public class VisionService {
                                 sb.append(part.getString("text"));
                             }
                         }
-                        return sb.toString().trim();
+                        return stripLayoutTokens(sb.toString());
                     }
                 }
             }
             // 2) DashScope 原生：{"text": "..."} 或 {"output":{"text":"..."}}
             String text = root.getString("text");
-            if (text != null && !text.isBlank()) return text.trim();
+            if (text != null && !text.isBlank()) return stripLayoutTokens(text);
             JSONObject output = root.getJSONObject("output");
             if (output != null) {
                 String t = output.getString("text");
-                if (t != null) return t.trim();
+                if (t != null) return stripLayoutTokens(t);
             }
         } catch (Exception e) {
             log.warn("解析图片描述响应失败: {}", e.getMessage());
         }
         return "";
+    }
+
+    /** 剥离 OCR 模型输出里的版面坐标标记（<|LOC_487|> 等，大小写不敏感），并压掉剥离后产生的连续空行 */
+    private static String stripLayoutTokens(String s) {
+        if (s == null || s.indexOf("LOC_") < 0 && s.indexOf("loc_") < 0) return s == null ? "" : s.trim();
+        return s.replaceAll("(?i)<\\|loc_\\d+\\|>", "")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
     }
 
     private String mimeOf(String ext) {

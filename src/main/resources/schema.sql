@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `source_hash`  VARCHAR(64)  DEFAULT NULL COMMENT '源内容指纹(SHA-256 hex；官方内置库手册同步用：指纹不变跳过重建，普通上传为空)',
     `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
     `kb_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID（必填；启动迁移会把历史空值归入默认库）',
+    `vision_ref`   VARCHAR(255) DEFAULT NULL COMMENT '文档级视觉模型覆盖（上传时指定，引用 providerId/modelId；空=跟随知识库。对本文档所有图片理解生效）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',

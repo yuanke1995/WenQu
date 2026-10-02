@@ -91,8 +91,10 @@ public class DocumentService {
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
     private final ResourceVisibilityService resourceVisibilityService;
-    /** 视觉模型服务：解析期按知识库 visionRef 描述图片（线程局部作用域） */
+    /** 视觉模型服务：解析期按知识库 visionRef/ocrRef 双槽位描述图片与扫描页 OCR（线程局部作用域） */
     private final VisionService visionService;
+    /** 模型注册中心：上传时校验文档级视觉模型覆盖引用可解析（fail-loud，不留到解析期静默跳过） */
+    private final ModelRegistryService modelRegistryService;
     /** 向量模型引用路由器（per-KB 绑定模型客户端）：重嵌入前探测新维度用 */
     private final DynamicEmbeddingModel embeddingModel;
     /** docx 解析器：图片描述补齐用（解析时失败/超限的图，按 URL 重新描述） */
@@ -195,12 +197,21 @@ public class DocumentService {
     }
 
     /**
-     * 上传文档：校验格式 → 同名替换 → 源文件落盘 → 建记录(解析中) → 异步解析
+     * 上传文档：校验格式 → 同名替换 → 源文件落盘 → 建记录(解析中) → 异步解析。
+     * visionRef（可选）：文档级视觉模型覆盖——fail-loud 校验引用可解析（引用无效立即拒绝，
+     * 不留到解析期静默跳过图片描述）；空 = 跟随知识库双槽位配置。
      */
-    public AiDocument upload(MultipartFile file, String description, String kbId) throws Exception {
+    public AiDocument upload(MultipartFile file, String description, String kbId, String visionRef) throws Exception {
         String fileName = file.getOriginalFilename();
         if (fileName == null || fileName.isBlank()) {
             throw new BizException("文件名为空");
+        }
+        String docVisionRef = visionRef == null ? "" : visionRef.trim();
+        if (docVisionRef.length() > 255) {
+            throw new BizException("视觉模型引用过长（最多 255 字）");
+        }
+        if (!docVisionRef.isBlank() && modelRegistryService.resolveReference(docVisionRef) == null) {
+            throw new BizException("视觉模型引用无效或已被删除，请重新选择");
         }
         String ext = extOf(fileName);
         DocumentParser parser = parsers.stream()
@@ -225,7 +236,7 @@ public class DocumentService {
         Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
         try {
             synchronized (lock) {
-                return doUpload(file, fileName, ext, description, parser, targetKbId);
+                return doUpload(file, fileName, ext, description, parser, targetKbId, docVisionRef.isBlank() ? null : docVisionRef);
             }
         } finally {
             uploadLocks.remove(fileName, lock);
@@ -234,7 +245,7 @@ public class DocumentService {
 
     /** 上传主体（已按文件名串行）：优先复用同名文档走 diff，否则新建 */
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
-                                DocumentParser parser, String targetKbId) throws Exception {
+                                DocumentParser parser, String targetKbId, String visionRef) throws Exception {
         // 背压：队列排满时**在落盘建记录之前**就拒绝，而不是先收下、再在线程池里丢掉解析任务。
         // 旧实现是后者（队列满→删记录→报"解析队列繁忙"），用户看到的就是"传上去了却解析失败"。
         if (parseQueue.isBackpressured()) {
@@ -245,7 +256,7 @@ public class DocumentService {
         // 无可复用（无同名，或同名均解析中已清理）时走全新上传
         AiDocument reusable = reusableTarget(fileName);
         if (reusable != null) {
-            AiDocument doc = replaceExisting(reusable, file, description, parser);
+            AiDocument doc = replaceExisting(reusable, file, description, parser, visionRef);
             // 同名复用是 upsert 语义：文档身份不变；目标库与现归属不同时移动归属（向量模型不同会异步迁移向量）
             if (targetKbId != null && !targetKbId.equals(doc.getKbId())) {
                 String fromKbId = doc.getKbId();
@@ -267,6 +278,7 @@ public class DocumentService {
         doc.setStatus(2); // 解析中
         doc.setDescription(description);
         doc.setKbId(targetKbId);
+        doc.setVisionRef(visionRef);
         doc.setCreatedBy(RequestUser.uid());
         documentMapper.insert(doc);
         documentMetaCache.invalidate(doc.getId());
@@ -327,7 +339,7 @@ public class DocumentService {
         try {
             synchronized (lock) {
                 AiDocument doc = doUpload(new InMemoryPage(page.bytes(), fileName), fileName, "url",
-                        description, parser, targetKbId);
+                        description, parser, targetKbId, null);
                 // 源 URL 回写（doUpload 不管这个字段；新导入与同名替换两条路都要落）
                 String finalUrl = page.uri().toString();
                 documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
@@ -940,7 +952,7 @@ public class DocumentService {
             // 仅对本次解析生效，finally 清除；解析参数改动只影响之后的解析（历史文档需重解析）。
             final com.wisesoft.ai.model.KnowledgeBase parseKb =
                     doc.getKbId() == null || doc.getKbId().isBlank() ? null : kbMapper.selectById(doc.getKbId());
-            applyParseParams(parseKb);
+            applyParseParams(parseKb, doc);
             updateProgress(docId, 5, "开始解析");
             // 流式解析：直接传源文件 Path（已持久落盘），避免大文件全量读入堆内存
             updateProgress(docId, 10, "解析文档内容(图片较多时较慢)");
@@ -1220,9 +1232,12 @@ public class DocumentService {
 
     /**
      * 应用知识库级解析参数：parse_params JSON 的白名单键（chunk.*）以线程局部覆盖生效，
-     * visionRef 交给 VisionService 的解析期引用（图片描述按库路由）；未配置的键继承全局。
+     * 视觉模型交给 VisionService 的解析期双槽位（图片描述按库路由；扫描件 OCR 可单独指定）；
+     * 未配置的键继承全局。
+     * 文档级覆盖：上传时为本文档指定的视觉模型（doc.visionRef）优先——对该文档**所有**图片理解
+     * （内嵌图描述与扫描页 OCR）生效；留空 = 双槽位各按库配置。
      */
-    private void applyParseParams(com.wisesoft.ai.model.KnowledgeBase kb) {
+    private void applyParseParams(com.wisesoft.ai.model.KnowledgeBase kb, AiDocument doc) {
         if (kb == null) return;
         String raw = kb.getParseParams();
         if (raw != null && !raw.isBlank()) {
@@ -1246,7 +1261,14 @@ public class DocumentService {
             }
         }
         String visionRef = parseVisionRef(kb);
-        if (!visionRef.isBlank()) visionService.startParseScope(visionRef);
+        String ocrRef = parseOcrRef(kb);
+        String docRef = doc == null || doc.getVisionRef() == null ? "" : doc.getVisionRef().trim();
+        if (!docRef.isBlank()) {
+            // 文档级覆盖（上传时指定）：本文档所有图片理解都用它，优先于库级双槽位
+            visionService.startParseScope(docRef, docRef);
+        } else {
+            visionService.startParseScope(visionRef, ocrRef);
+        }
     }
 
     /**
@@ -1261,11 +1283,21 @@ public class DocumentService {
 
     /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
     private String parseVisionRef(com.wisesoft.ai.model.KnowledgeBase kb) {
+        return parseParamRef(kb, "visionRef");
+    }
+
+    /** 知识库 parse_params 里的 ocrRef（扫描件 OCR 模型；空=回落 visionRef，跟随语义） */
+    private String parseOcrRef(com.wisesoft.ai.model.KnowledgeBase kb) {
+        return parseParamRef(kb, "ocrRef");
+    }
+
+    /** parse_params JSON 取引用键（空/解析失败返回 ""） */
+    private String parseParamRef(com.wisesoft.ai.model.KnowledgeBase kb, String key) {
         String raw = kb.getParseParams();
         if (raw == null || raw.isBlank()) return "";
         try {
             com.alibaba.fastjson2.JSONObject p = com.alibaba.fastjson2.JSON.parseObject(raw);
-            Object v = p == null ? null : p.get("visionRef");
+            Object v = p == null ? null : p.get(key);
             return v == null ? "" : String.valueOf(v).trim();
         } catch (Exception e) {
             return "";
@@ -1885,7 +1917,7 @@ public class DocumentService {
      * 文档身份与 knowledgeId 保持稳定（历史引用/评估集不失效），未变块增量复用、只重嵌变更处。
      */
     private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description,
-                                       DocumentParser parser) throws Exception {
+                                       DocumentParser parser, String visionRef) throws Exception {
         String docId = existing.getId();
         int origStatus = existing.getStatus() == null ? 0 : existing.getStatus();
         // 未成功提交时一并回滚解析态字段：fail_reason 下方会置 null、parse_desc 会被改写为
@@ -1905,9 +1937,10 @@ public class DocumentService {
             }
             // 覆盖源文件（同 docId 同路径）；解析期由 runParseTask 按 docId 重新取路径读取
             saveSourceFile(file, docId, existing.getFileName());
-            // 更新元数据并置解析中
+            // 更新元数据并置解析中（visionRef 同步为本次上传的选择：null=清覆盖回跟随知识库）
             existing.setFileSize(file.getSize());
             existing.setDescription(description);
+            existing.setVisionRef(visionRef);
             existing.setStatus(2);
             existing.setFailReason(null);
             documentMapper.updateById(existing);
@@ -2160,12 +2193,14 @@ public class DocumentService {
         if (descBackfillRunning.putIfAbsent(docId, Boolean.TRUE) != null) return; // 防重入
         boolean submitted = ThreadPoolManager.execute(() -> {
             try {
-                // 补描述跑在共享池线程（非解析线程）：同样按所属知识库的 visionRef 设置解析期视觉模型
+                // 补描述跑在共享池线程（非解析线程）：图片描述属"描述"槽位——文档级覆盖优先，其次库级 visionRef
                 AiDocument d = documentMapper.selectById(docId);
                 com.wisesoft.ai.model.KnowledgeBase kb =
                         d == null || d.getKbId() == null || d.getKbId().isBlank()
                                 ? null : kbMapper.selectById(d.getKbId());
-                String vRef = kb == null ? "" : parseVisionRef(kb);
+                String vRef = d != null && d.getVisionRef() != null && !d.getVisionRef().isBlank()
+                        ? d.getVisionRef().trim()
+                        : (kb == null ? "" : parseVisionRef(kb));
                 if (!vRef.isBlank()) visionService.startParseScope(vRef);
                 List<Knowledge> blocks = knowledgeMapper.selectList(
                         new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId)

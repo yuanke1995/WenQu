@@ -65,7 +65,7 @@ import ProviderIcon from './ProviderIcon.vue'
  */
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  /** 类型过滤：chat / vision / embedding / rerank（空=全部） */
+  /** 类型过滤：单值（chat / vision / ocr / embedding / rerank）或逗号分隔多值（如 "vision,ocr"）（空=全部） */
   type: { type: String, default: 'chat' },
   /** 「跟随全局」选项：label 用作未指定时触发器显示的文案（如当前生效模型名），下拉项固定显示「跟随全局」 */
   inheritLabel: { type: String, default: '' },
@@ -109,8 +109,11 @@ async function load(force = false) {
 
 function filter(data) {
   if (!props.type) return data
+  // 支持逗号分隔多类型（如 "vision,ocr"：知识库图片描述模型两者皆可）
+  const set = new Set(props.type.split(',').map(s => s.trim()).filter(Boolean))
+  if (!set.size) return data
   return data
-    .map(g => ({ ...g, models: g.models.filter(m => m.type === props.type) }))
+    .map(g => ({ ...g, models: g.models.filter(m => set.has(m.type)) }))
     .filter(g => g.models.length)
 }
 

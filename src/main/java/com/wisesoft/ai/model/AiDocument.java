@@ -56,6 +56,9 @@ public class AiDocument {
     /** 所属知识库ID（空=归入默认知识库；检索按库过滤，决定该文档能被哪些助手召回） */
     private String kbId;
 
+    /** 文档级视觉模型覆盖（上传时指定，引用 {providerId}/{modelId}；空=跟随知识库配置。对该文档所有图片理解生效） */
+    private String visionRef;
+
     @TableLogic
     private Integer deleted;
 

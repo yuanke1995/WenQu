@@ -54,12 +54,15 @@ public class ModelRegistryService {
 
     public static final String TYPE_CHAT = "chat";
     public static final String TYPE_VISION = "vision";
+    /** OCR 专用（文档解析/扫描件逐页识别，如 PaddleOCR-VL、DeepSeek-OCR）：只产出带版面标记的解析文本，
+     *  不能用于聊天图片理解（输出 LOC 坐标标记+版面文本，注入对话上下文会产生乱码回答） */
+    public static final String TYPE_OCR = "ocr";
     public static final String TYPE_EMBEDDING = "embedding";
     public static final String TYPE_RERANK = "rerank";
     public static final String TYPE_AUDIO = "audio";
     public static final String TYPE_OMNI = "omni";
     public static final String TYPE_OTHER = "other";
-    public static final List<String> TYPES = List.of(TYPE_CHAT, TYPE_VISION, TYPE_EMBEDDING, TYPE_RERANK,
+    public static final List<String> TYPES = List.of(TYPE_CHAT, TYPE_VISION, TYPE_OCR, TYPE_EMBEDDING, TYPE_RERANK,
             TYPE_AUDIO, TYPE_OMNI, TYPE_OTHER);
 
     private final ProviderMapper providerMapper;
@@ -499,7 +502,15 @@ public class ModelRegistryService {
             for (ModelInfo mi : models) {
                 if (!p.getId().equals(mi.getProviderId())) continue;
                 if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
-                if (type != null && !type.isBlank() && !type.equals(mi.getModelType())) continue;
+                // type 支持逗号分隔多类型（如 "vision,ocr"，与前端 ModelSelect 的 type 契约一致）
+                if (type != null && !type.isBlank()) {
+                    java.util.Set<String> wanted = new java.util.HashSet<>();
+                    for (String t : type.split(",")) {
+                        String s = t.trim();
+                        if (!s.isEmpty()) wanted.add(s);
+                    }
+                    if (!wanted.isEmpty() && !wanted.contains(mi.getModelType())) continue;
+                }
                 Map<String, Object> m = new java.util.LinkedHashMap<>();
                 m.put("ref", p.getId() + "/" + mi.getModelId());
                 m.put("modelId", mi.getModelId());
@@ -778,14 +789,15 @@ public class ModelRegistryService {
 
     /**
      * 模型类型名称启发式自动分类（拉取候选的默认值，用户在界面可改）：
-     * rerank/ranker → 重排；embed/bge/gte → 向量；vision/vl/llava → 视觉；
-     * omni → 全模态；asr/tts/whisper/paraformer/cosyvoice/audio 等 → 语音；
+     * rerank/ranker → 重排；embed/bge/gte → 向量；ocr → OCR 专用（先于视觉判定——OCR 模型名里常带 -vl，
+     * 如 PaddleOCR-VL）；vision/vl/llava → 视觉；omni → 全模态；asr/tts/whisper 等 → 语音；
      * dall/moderation/davinci 等 → 其他；其余 → 聊天。
      */
     public static String guessType(String modelId) {
         String m = (modelId == null ? "" : modelId).toLowerCase();
         if (m.contains("rerank") || m.contains("ranker")) return TYPE_RERANK;
         if (m.contains("embed") || m.startsWith("bge-") || m.startsWith("gte-") || m.contains("/embedding")) return TYPE_EMBEDDING;
+        if (m.contains("ocr")) return TYPE_OCR;
         if (m.contains("vision") || m.contains("llava") || m.contains("internvl") || m.contains("qvq")
                 || VL_TOKEN.matcher(m).find()) return TYPE_VISION;
         if (m.contains("omni")) return TYPE_OMNI;

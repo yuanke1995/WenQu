@@ -43,7 +43,7 @@ public class ProviderController {
     @Operation(summary = "可用模型清单", description = "登录即可用（无需管理员）：按归属过滤后，enabled 供应商下 enabled 模型按供应商分组，预先拼好引用串 ref=providerId/modelId；type 过滤（chat/vision/embedding/rerank），不含 baseUrl/apiKey")
     @GetMapping("/available")
     public ResultJson available(
-            @Parameter(description = "模型类型过滤（空=全部）") @RequestParam(value = "type", required = false) String type) {
+            @Parameter(description = "模型类型过滤（空=全部；支持逗号分隔多类型，如 vision,ocr）") @RequestParam(value = "type", required = false) String type) {
         return ResultJson.ok(modelRegistryService.available(type, RequestUser.uid(), RequestUser.role()));
     }
 
@@ -201,7 +201,7 @@ public class ProviderController {
             apiKey = modelRegistryService.decryptedApiKey(providerId);
         }
         String group = switch (modelType == null ? "" : modelType) {
-            case ModelRegistryService.TYPE_VISION -> "vision";
+            case ModelRegistryService.TYPE_VISION, ModelRegistryService.TYPE_OCR -> "vision";
             case ModelRegistryService.TYPE_EMBEDDING -> "embedding";
             case ModelRegistryService.TYPE_RERANK -> "rerank";
             case ModelRegistryService.TYPE_OMNI -> "chat";      // 全模态走 chat completions，可真实探测
