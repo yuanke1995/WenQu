@@ -566,3 +566,9 @@ bash deploy/sandbox-provisioner/run.sh status
 - MaaS 网关模型格式：部分模型返回 DashScope 原生格式（`{"text":...}`）Spring AI 无法解析；需用返回标准 OpenAI 格式的模型（`qwen-plus`、`qwen3.7-flash` 已实测兼容）
 - 切换向量模型必然触发全量重嵌入：耗时与知识块数成正比（万级块可达数十分钟），期间向量检索降级关键词路、语义缓存清空；**避免业务高峰切换**；重嵌入与并发解析撞车可能丢块，任务末尾索引对账会告警，解析空闲时手动补跑一次即可
 - base-url 不含 `/v1`：Spring AI 与 VisionService 都会自动补
+
+## 开源许可
+
+本项目以 [MIT License](LICENSE) 开源。核心依赖均为宽松许可（后端 Spring 生态 Apache-2.0、前端 Vue 生态 MIT / Apache-2.0；`mysql-connector-j` 为 GPLv2 + 通用 FOSS 例外），可放心商用与二次开发。
+
+> **品牌声明**：MIT 许可仅及于代码本身。「问渠」「WenQu」中英文名称与问渠 logo **不在授权范围内**——你可以在 fork 中自由使用、修改代码，但请勿以「问渠 / WenQu」名义分发、对外提供服务或进行宣传。
