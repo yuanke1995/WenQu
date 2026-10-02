@@ -237,7 +237,7 @@
               <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
               <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词，参考 {{ m.retrieved.refs }} 段资料<template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
+                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词，参考 {{ m.retrieved.refs }} 段资料<template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
                   <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
                   <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
                 </div>
@@ -345,7 +345,7 @@
             </div>
           </div>
         </div>
-        <div v-if="!stickToBottom && messages.length" class="jump-latest" @click.stop="scrollForce">↓ 回到底部</div>
+        <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
       </div>
 
       <!-- 输入区：大圆角卡片（文本上、工具行下） -->
@@ -663,7 +663,7 @@
           <div class="rp-label">最近一次检索</div>
           <template v-if="lastRetrieved || lastSources.length">
             <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
-            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
+            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
             <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
             <template v-if="toolSearchQueries(lastAi).length">
               <div class="rp-divider"></div>
@@ -3593,10 +3593,12 @@ onMounted(async () => {
 .msg-time-inline { font-size: 11px; color: var(--app-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
 .msg-tokens { font-size: 11px; color: var(--app-text3); white-space: nowrap; cursor: default; }
 .jump-latest {
-  position: sticky; bottom: 12px; z-index: 5; width: fit-content; margin: 0 auto 4px;
-  background: var(--app-accent); color: #fff; font-size: 12px; padding: 4px 16px;
-  border-radius: 999px; cursor: pointer; user-select: none;
+  position: sticky; bottom: 12px; z-index: 5; width: 28px; height: 28px; line-height: 26px; text-align: center;
+  margin: 0 auto 4px; padding: 0; background: var(--app-panel); color: var(--app-text); font-size: 14px;
+  border: 1px solid var(--app-border); border-radius: 999px; cursor: pointer; user-select: none;
+  box-shadow: var(--app-shadow-sm); transition: border-color .15s, box-shadow .15s;
 }
+.jump-latest:hover { border-color: var(--app-border-strong); box-shadow: var(--app-shadow); }
 
 .input { position: relative; padding: 10px 32px 14px; flex: none; }
 .drop-overlay {
