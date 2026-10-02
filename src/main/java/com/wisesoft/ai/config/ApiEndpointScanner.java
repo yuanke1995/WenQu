@@ -34,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>幂等：按 (method, path) 唯一键 {@code INSERT IGNORE}，新端点自动出现、已登记的不动
  *       （保留管理员改过的名称/模块）；</li>
  *   <li>名称优先取 {@code @Operation#summary}（Swagger 注解），缺失回落「Controller#方法」；</li>
- *   <li>模块取 Controller 类名（去 Controller 后缀），管理员可后续手工归类。</li>
+ *   <li>模块取 Controller 类名（去 Controller 后缀）并按 {@link #MODULE_ZH} 对照汉化，
+ *       管理员可后续手工归类；启动时同步把存量英文模块键归一成中文（仅展示字段，不参与鉴权）。</li>
  * </ul>
  * 登记完成后 {@link RoleService#invalidateApiPatterns()} 失效鉴权缓存。
  * 扫描失败仅告警不阻塞启动（fail-safe：鉴权按库内既有数据执行）。
@@ -48,6 +49,47 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private final RequestMappingHandlerMapping requestMappingHandlerMapping;
     private final ApiEndpointMapper apiEndpointMapper;
     private final RoleService roleService;
+
+    /**
+     * 模块汉化对照：Controller 类名（去 Controller 后缀）→ 中文模块名。
+     * 权限页接口列表/筛选、角色接口权限树全按该字段展示与分组；鉴权只认 (method, path)，改名无副作用。
+     * 未收录的控制器回落英文类名（管理员可在接口页手工改）。
+     */
+    private static final Map<String, String> MODULE_ZH = Map.ofEntries(
+            Map.entry("Agent", "智能体"),
+            Map.entry("ApiEndpoint", "接口管理"),
+            Map.entry("ApiKey", "API 密钥"),
+            Map.entry("Artifact", "产物"),
+            Map.entry("Auth", "登录认证"),
+            Map.entry("Chat", "对话"),
+            Map.entry("Config", "系统配置"),
+            Map.entry("Department", "部门"),
+            Map.entry("DescCache", "图片描述缓存"),
+            Map.entry("Document", "文档"),
+            Map.entry("Evaluation", "检索评估"),
+            Map.entry("Graph", "知识图谱"),
+            Map.entry("KnowledgeBase", "知识库"),
+            Map.entry("Knowledge", "知识块"),
+            Map.entry("Mcp", "MCP 工具"),
+            Map.entry("Memory", "长期记忆"),
+            Map.entry("Menu", "菜单"),
+            Map.entry("Ocr", "解析引擎"),
+            Map.entry("Oidc", "单点登录"),
+            Map.entry("Provider", "模型供应商"),
+            Map.entry("Qa", "问答看板"),
+            Map.entry("RetrievalDebug", "检索调试"),
+            Map.entry("Role", "角色"),
+            Map.entry("Sandbox", "沙盒"),
+            Map.entry("Schedule", "任务调度"),
+            Map.entry("ScheduledJob", "定时任务"),
+            Map.entry("SearchIndex", "搜索索引"),
+            Map.entry("Share", "公开分享"),
+            Map.entry("Skill", "技能"),
+            Map.entry("ToolInventory", "工具清单"),
+            Map.entry("Trace", "执行追踪"),
+            Map.entry("User", "用户"),
+            Map.entry("Workflow", "工作流"),
+            Map.entry("WorkflowApi", "工作流开放接口"));
 
     /**
      * 显式构造而非 {@code @RequiredArgsConstructor}：
@@ -73,6 +115,13 @@ public class ApiEndpointScanner implements ApplicationRunner {
     }
 
     void scan() {
+        // 存量模块名归一：历史上登记的是英文类名键，按对照表改名（管理员已手工归类的值不会命中，保持不动）
+        int renamed = 0;
+        for (Map.Entry<String, String> e : MODULE_ZH.entrySet()) {
+            renamed += apiEndpointMapper.renameModule(e.getKey(), e.getValue());
+        }
+        if (renamed > 0) log.info("[ApiScan] 模块名汉化：{} 个接口的模块改为中文", renamed);
+
         Map<RequestMappingInfo, HandlerMethod> handlerMethods = requestMappingHandlerMapping.getHandlerMethods();
         int added = 0, total = 0;
         // 幂等参照：(method, path) → id
@@ -144,9 +193,10 @@ public class ApiEndpointScanner implements ApplicationRunner {
         }
     }
 
-    /** 模块：Controller 类名去 Controller 后缀（管理员可在接口页手工归类中文模块名） */
+    /** 模块：Controller 类名去 Controller 后缀，按 {@link #MODULE_ZH} 汉化（未收录回落英文键，管理员可在接口页手工归类） */
     private static String resolveModule(HandlerMethod hm) {
         String n = hm.getBeanType().getSimpleName();
-        return n.endsWith("Controller") ? n.substring(0, n.length() - "Controller".length()) : n;
+        String key = n.endsWith("Controller") ? n.substring(0, n.length() - "Controller".length()) : n;
+        return MODULE_ZH.getOrDefault(key, key);
     }
 }
