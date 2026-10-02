@@ -15,6 +15,7 @@
             <KbIcon :kb="kb" :size="22" />
             <span class="kb-name">{{ kb.name }}</span>
             <a-tag v-if="kb.isDefault === 1" color="blue" style="margin-left:auto">默认</a-tag>
+            <a-tag v-if="kb.builtin === 1" color="gold" :style="kb.isDefault === 1 ? '' : 'margin-left:auto'">官方</a-tag>
           </div>
           <p class="kb-card-desc" :title="kb.description || ''">{{ kb.description || '暂无描述' }}</p>
           <div class="kb-card-meta">
@@ -28,7 +29,8 @@
             <span v-if="!kb.queryParams && !kb.parseParams" class="kb-dim">继承全局参数</span>
           </div>
           <div class="kb-card-actions" @click.stop>
-            <template v-if="isAdmin || kb.createdBy === myUid">
+            <!-- 官方内置库内容随版本自动同步（后端拒绝管理操作），编辑/图谱/删除对所有人不渲染 -->
+            <template v-if="(isAdmin || kb.createdBy === myUid) && kb.builtin !== 1">
               <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
               <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
               <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->

@@ -46,12 +46,16 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20"},
             new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30"},
             new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35"},
+            new String[]{"menu-help", "帮助中心", "QuestionCircleOutlined", "/help", "36"},
             new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40"},
             new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50"},
             new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60"},
             new String[]{"menu-permissions", "权限管理", "SafetyOutlined", "/permissions", "70"},
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80"}
     );
+
+    /** 非特权菜单：补登记时即对 user 角色显式绑定（帮助中心是人人该看到的入口，不走「默认不可见 fail-closed」） */
+    private static final List<String> BIND_USER_ON_SEED = List.of("menu-help");
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
@@ -100,6 +104,11 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
+            // 非特权菜单随登记即对 user 角色放行：菜单此前不存在 ⇒ 绑定必不存在，直接补（幂等）
+            if (BIND_USER_ON_SEED.contains(d[0])) {
+                roleMenuMapper.bind("user", d[0]);
+                log.info("[RbacSeed] 非特权菜单 {} 已对 user 角色放行", d[0]);
+            }
         }
         if (menuAdded > 0) {
             seeded = true;

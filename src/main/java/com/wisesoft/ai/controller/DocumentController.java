@@ -85,6 +85,10 @@ public class DocumentController {
     private void requireKbManage(String kbId) {
         String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId(RequestUser.uid()) : kbId;
         var kb = id == null ? null : kbService.get(id);
+        // 官方内置库在权限上本就无人可管（createdBy=system），这里给出专属原因，避免误读成权限配置问题
+        if (kb != null && kb.getBuiltin() != null && kb.getBuiltin() == 1) {
+            throw new BizException("「" + kb.getName() + "」为官方内置知识库，内容由系统随版本同步，不接受上传");
+        }
         if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 com.wisesoft.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             throw new BizException("仅可向自己创建或被授权管理的知识库上传文档");

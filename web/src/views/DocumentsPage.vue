@@ -3,7 +3,7 @@
     <div class="app-page-head">
       <a-breadcrumb>
         <a-breadcrumb-item><a @click="router.push('/knowledge')">知识库</a></a-breadcrumb-item>
-        <a-breadcrumb-item>{{ currentKbName }}</a-breadcrumb-item>
+        <a-breadcrumb-item>{{ currentKbName }}<a-tag v-if="currentKbBuiltin" color="gold" style="margin-left:6px">官方 · 随版本自动同步</a-tag></a-breadcrumb-item>
       </a-breadcrumb>
       <span class="head-stat">{{ summaryText }}</span>
       <!-- 解析队列指示：上传只登记任务，队列逐个执行。让用户看到"在排队"而不是"没反应/丢了" -->
@@ -434,14 +434,20 @@ const router = useRouter()
 // 权限：文档管理对普通用户按"自建自管"开放——自己的库/文档可管理，别人共享的只读
 const isAdmin = isAdminSync()
 const myUid = ref('')
-/** 当前库是否可管理（上传/批量操作的门槛） */
+/** 当前库是否官方内置（内容随版本自动同步，对所有人只读，含管理员） */
+const currentKbBuiltin = computed(() => {
+  const k = kbases.value.find(x => x.id === currentKbId.value)
+  return !!k && k.builtin === 1
+})
+/** 当前库是否可管理（上传/批量操作的门槛；官方内置库对所有人只读） */
 const canManageCurrentKb = computed(() => {
+  if (currentKbBuiltin.value) return false
   if (isAdmin) return true
   const k = kbases.value.find(x => x.id === currentKbId.value)
   return !!k && k.createdBy === myUid.value
 })
-/** 单个文档是否可管理（创建者或管理员；后端还会按共享范围二次判定） */
-const canManageDoc = d => isAdmin || (myUid.value && d.createdBy === myUid.value)
+/** 单个文档是否可管理（创建者或管理员；后端还会按共享范围二次判定；官方内置库的篇目只读） */
+const canManageDoc = d => !currentKbBuiltin.value && (isAdmin || (myUid.value && d.createdBy === myUid.value))
 /** 当前所在知识库（路由参数）：列表/上传都限定在该库 */
 const currentKbId = computed(() => String(route.params.kbId || ''))
 const currentKbName = computed(() => {

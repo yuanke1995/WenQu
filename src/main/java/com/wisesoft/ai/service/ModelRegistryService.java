@@ -520,6 +520,28 @@ public class ModelRegistryService {
         return result;
     }
 
+    /**
+     * 第一个可用的向量模型引用（系统身份用，如官方内置库种子同步）：绕过「个人供应商归属」判权，
+     * 按 sortOrder 取第一个 enabled 供应商下第一个 enabled 的 embedding 模型。
+     * 系统级资源（官方库）挂平台已登记的向量模型与 {@code DynamicEmbeddingModel.forRef} 的系统级解析同口径；
+     * 无任何可用向量模型时返回 null（调用方显式告警，不静默兜底）。
+     */
+    public String firstAvailableEmbeddingRef() {
+        List<Provider> ps = new ArrayList<>(providers);
+        ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
+                .thenComparing(p -> nz(p.getName())));
+        for (Provider p : ps) {
+            if (Integer.valueOf(0).equals(p.getEnabled())) continue;
+            for (ModelInfo mi : models) {
+                if (!p.getId().equals(mi.getProviderId())) continue;
+                if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
+                if (!TYPE_EMBEDDING.equals(mi.getModelType())) continue;
+                return p.getId() + "/" + mi.getModelId();
+            }
+        }
+        return null;
+    }
+
     // ==================== 供应商 / 模型 CRUD ====================
 
     /**

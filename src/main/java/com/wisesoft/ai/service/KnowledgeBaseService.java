@@ -80,6 +80,14 @@ public class KnowledgeBaseService {
         return kbMapper.selectById(id);
     }
 
+    /** 官方内置知识库（ManualSeedService 同步的「问渠使用手册」；未同步返回 null） */
+    public KnowledgeBase builtinKb() {
+        return kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getBuiltin, 1)
+                .eq(KnowledgeBase::getDeleted, 0)
+                .last("LIMIT 1"));
+    }
+
     /**
      * 新建：名称/向量模型必填。默认库不再由用户创建（每人一个、系统经 {@link #defaultId(String)} 懒创建），
      * body 带 isDefault 一律忽略；问渠品牌标为默认库专属，任何新建都不可使用。
@@ -89,6 +97,8 @@ public class KnowledgeBaseService {
         kb.setName(str(body.get("name")));
         kb.setDescription(str(body.get("description")));
         kb.setIsDefault(0);
+        // 官方内置库只能由系统种子创建（ManualSeedService），任何用户创建路径都是普通库
+        kb.setBuiltin(0);
         // 图标（与智能体同口径）：emoji 原样存；空=null 默认展示。品牌标为默认库专属：直接拒绝
         String icon = iconOf(body.get("icon"));
         if (ICON_BRAND.equals(icon)) {
@@ -116,6 +126,11 @@ public class KnowledgeBaseService {
     public KnowledgeBase update(String id, Map<String, Object> body) {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
+        // 官方内置库内容随版本自动同步（ManualSeedService），不接受任何人工编辑（控制器 requireManage 已拦，
+        // 这里再拦一层：防止未来新调用路径绕过控制器直接进服务层）
+        if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
+            throw new com.wisesoft.ai.common.BizException("官方内置知识库「" + kb.getName() + "」不可修改（内容随版本自动同步）");
+        }
         // 只在 body 中出现的字段才写（含显式 null = 清空该维度回退到继承）
         LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getId, id);
         if (body.containsKey("name")) {
@@ -176,6 +191,7 @@ public class KnowledgeBaseService {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null) return "知识库不存在";
         if (kb.getIsDefault() != null && kb.getIsDefault() == 1) return "默认知识库不可删除";
+        if (kb.getBuiltin() != null && kb.getBuiltin() == 1) return "官方内置知识库不可删除（内容随版本自动同步）";
         long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, id));
         if (n > 0) return "该知识库下还有 " + n + " 个文档，请先移出或删除文档";
         // 必须走 deleteById（MyBatis-Plus 的逻辑删除语句）：deleted 是全局 logic-delete-field，
@@ -454,6 +470,8 @@ public class KnowledgeBaseService {
             m.put("embeddingRef", kb.getEmbeddingRef());
             m.put("embeddingDimensions", kb.getEmbeddingDimensions());
             m.put("isDefault", kb.getIsDefault());
+            // 官方内置库标记随列表下发：前端挂「官方」徽标并隐藏编辑/删除入口
+            m.put("builtin", kb.getBuiltin());
             m.put("createdBy", kb.getCreatedBy());
             m.put("shareConfig", kb.getShareConfig());
             m.put("createTime", kb.getCreateTime());

@@ -50,6 +50,9 @@ public class AiDocument {
     /** 网页导入的源 URL（file_type=url 时记录；普通上传为空） */
     private String sourceUrl;
 
+    /** 源内容指纹（SHA-256 hex；官方内置库手册同步用：指纹不变跳过重建，普通上传为空） */
+    private String sourceHash;
+
     /** 所属知识库ID（空=归入默认知识库；检索按库过滤，决定该文档能被哪些助手召回） */
     private String kbId;
 

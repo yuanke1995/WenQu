@@ -74,6 +74,13 @@ public class KnowledgeBase {
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */
     private Integer isDefault;
 
+    /**
+     * 官方内置库：1=系统随版本同步的内置知识库（如问渠使用手册）。
+     * 语义：created_by=system + share_config 全员只读 ⇒ 现有权限模型天然「人人可读、无人可管」；
+     * 服务层 update/delete 再加显式拦截（双保险），内容由 ManualSeedService 按源文件指纹增量重建。
+     */
+    private Integer builtin;
+
     /** 创建人（登录用户 uid；未登录为 anonymous） */
     private String createdBy;
 
