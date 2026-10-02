@@ -2647,7 +2647,7 @@ public class RagService {
                 String url = trimUrlTail(um.group());
                 if (url.length() < 12 || !seenRaw.add(url)) continue;
                 String key = com.wisesoft.ai.service.websearch.WebSearchService.normalizeUrl(url);
-                String title = mcpTitleNear(text, um.start());
+                String title = mcpTitleNear(text, um.start(), um.end(), url);
                 String snippet = mcpSnippetAfter(text, um.end());
                 int ref;
                 synchronized (sources) {
@@ -2690,18 +2690,44 @@ public class RagService {
             return u;
         }
 
-        /** 标题取 URL 前方最近的「# …」标题行（Context7 片段的章节标题）；拿不到回落主机名 */
-        private static String mcpTitleNear(String text, int pos) {
-            String before = text.substring(Math.max(0, pos - 300), pos);
-            String[] lines = before.split("\n");
-            for (int i = lines.length - 1; i >= 0; i--) {
-                String line = lines[i].trim();
+        /**
+         * 标题三级兜底：① URL 前方最近的「# …」标题行（Context7 片段的章节标题）；
+         * ② URL 后首行正文（片段第一句——并非所有片段的 Source: 行前都有邻近标题）；
+         * ③ URL 路径尾段（openai-chat.html → "Openai chat"）。保证每个来源都有名称可显示。
+         */
+        private static String mcpTitleNear(String text, int start, int end, String url) {
+            String before = text.substring(Math.max(0, start - 300), start);
+            for (String raw : before.split("\n")) {
+                String line = raw.trim();
                 if (line.startsWith("#")) {
                     String t = line.replaceFirst("^#+\\s*", "").trim();
-                    if (!t.isEmpty()) return t.length() > 80 ? t.substring(0, 80) : t;
+                    if (!t.isEmpty()) return capMcpTitle(t);
                 }
             }
-            return "";
+            for (String raw : text.substring(Math.min(text.length(), end)).split("\n")) {
+                String line = raw.trim();
+                if (line.isEmpty() || line.startsWith("---") || line.startsWith("![")) continue;
+                return capMcpTitle(line);
+            }
+            return mcpSlugOf(url);
+        }
+
+        /** 标题截 80 字符（回退到词边界），避免截半个词 */
+        private static String capMcpTitle(String t) {
+            if (t.length() <= 80) return t;
+            int cut = t.lastIndexOf(' ', 80);
+            return (cut > 40 ? t.substring(0, cut) : t.substring(0, 80)) + "…";
+        }
+
+        /** URL 路径尾段转可读名：openai-chat.html → "Openai chat" */
+        private static String mcpSlugOf(String url) {
+            String u = url.split("\\?")[0];
+            int slash = u.lastIndexOf('/');
+            String seg = slash >= 0 ? u.substring(slash + 1) : u;
+            int dot = seg.lastIndexOf('.');
+            if (dot > 0) seg = seg.substring(0, dot);
+            seg = seg.replace('-', ' ').replace('_', ' ').trim();
+            return seg.isEmpty() ? "" : Character.toUpperCase(seg.charAt(0)) + seg.substring(1);
         }
 
         /** 摘要取 URL 之后的一段正文（折叠空白），供引用弹窗与引用自检当证据 */
