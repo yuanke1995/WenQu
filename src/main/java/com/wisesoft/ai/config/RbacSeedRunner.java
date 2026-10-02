@@ -19,8 +19,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * RBAC 种子数据（幂等：角色与角色-菜单绑定**仅空表**时灌入，菜单清单按 id **补齐缺失项**；
- * 不覆盖管理员后续的解绑操作）：
+ * RBAC 种子数据（幂等：角色与角色-菜单绑定**仅空表**时灌入，菜单清单按 id **补齐缺失项**、
+ * 退役项连行清理；不覆盖管理员后续的解绑操作）：
  * <ul>
  *   <li>角色表为空 → 预置 superadmin / admin（管理员级）与 user（普通）；</li>
  *   <li>菜单清单 → 按 id **补齐**缺失的内置菜单（新增菜单随版本自动登记）：对话/智能体/知识库/我的产物/
@@ -46,7 +46,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20"},
             new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30"},
             new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35"},
-            new String[]{"menu-help", "帮助中心", "QuestionCircleOutlined", "/help", "36"},
             new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40"},
             new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50"},
             new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60"},
@@ -54,8 +53,11 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80"}
     );
 
-    /** 非特权菜单：补登记时即对 user 角色显式绑定（帮助中心是人人该看到的入口，不走「默认不可见 fail-closed」） */
-    private static final List<String> BIND_USER_ON_SEED = List.of("menu-help");
+    /**
+     * 已退役的内置菜单：入口已迁移（帮助中心 → 前端右下角全局悬浮按钮，见 HelpFab.vue），
+     * 种子清单剔除后存量库需按 id 连行清理（菜单 + 角色绑定），否则老库侧边栏仍会显示。
+     */
+    private static final List<String> RETIRED_MENUS = List.of("menu-help");
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
@@ -89,6 +91,17 @@ public class RbacSeedRunner implements ApplicationRunner {
         // 新菜单默认对普通角色不可见（管理员直通全部菜单），需在「权限管理」里勾选，fail-closed。
         Set<String> existingMenuIds = menuMapper.selectList(null).stream()
                 .map(Menu::getId).collect(Collectors.toSet());
+        // 退役菜单：种子清单里已删除的内置菜单，存量库连行清理（含角色绑定），幂等
+        int menuRetired = 0;
+        for (String mid : RETIRED_MENUS) {
+            if (!existingMenuIds.contains(mid)) continue;
+            roleMenuMapper.unbindByMenu(mid);
+            menuMapper.deleteById(mid);
+            existingMenuIds.remove(mid);
+            menuRetired++;
+            log.info("[RbacSeed] 已退役内置菜单 {}", mid);
+        }
+        if (menuRetired > 0) seeded = true;
         int menuAdded = 0;
         LocalDateTime now = LocalDateTime.now();
         for (String[] d : BUILTIN_MENUS) {
@@ -104,11 +117,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
-            // 非特权菜单随登记即对 user 角色放行：菜单此前不存在 ⇒ 绑定必不存在，直接补（幂等）
-            if (BIND_USER_ON_SEED.contains(d[0])) {
-                roleMenuMapper.bind("user", d[0]);
-                log.info("[RbacSeed] 非特权菜单 {} 已对 user 角色放行", d[0]);
-            }
         }
         if (menuAdded > 0) {
             seeded = true;

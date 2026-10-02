@@ -171,6 +171,8 @@
     <!-- 主内容区 -->
     <div class="main"><router-view /></div>
 
+    <!-- 全局帮助入口：右下角悬浮「?」，任意页面就抽屉读手册（帮助中心整页 /help 上不重复出现） -->
+    <HelpFab />
   </div>
 </template>
 
@@ -190,6 +192,7 @@ import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import BrandMark from '../components/BrandMark.vue'
+import HelpFab from '../components/HelpFab.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 

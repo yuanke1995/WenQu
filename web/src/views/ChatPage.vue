@@ -3850,7 +3850,8 @@ onMounted(async () => {
 /* 右侧状态栏 */
 .right-panel {
   width: 230px; flex: none; border-left: 1px solid var(--app-border); background: var(--app-panel-2);
-  padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+  /* 底部预留：全局帮助 FAB 悬浮在视口右下角，让卡片不被压住 */
+  padding: 12px 10px 56px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
 }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
 .rp-label { font-size: 11px; color: var(--app-text3); margin-bottom: 4px; }
@@ -3995,6 +3996,10 @@ onMounted(async () => {
   .right-panel { position: absolute; right: 12px; top: 56px; bottom: 12px; z-index: 30;
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
+  /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧） */
+  .input { padding-right: 56px; }
+  /* 拖拽高亮框跟随卡片右缘（与 .input 同侧内边距） */
+  .drop-overlay { right: 56px; }
 }
 @media (max-width: 768px) {
   .messages { padding: 12px 12px 8px; }

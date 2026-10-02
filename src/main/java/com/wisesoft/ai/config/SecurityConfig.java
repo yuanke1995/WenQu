@@ -119,6 +119,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isShareGuestEndpoint(path)) return true;
         // 用户长期记忆（个人资产）：个人设置页增删改查自己的（归属在 MemoryController 按 uid 过滤）
         if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) return true;
+        // 帮助中心（官方内置手册，只读）：数据源为全员只读的内置库，且 ManualController 只暴露手册篇目，
+        // 登录即可读——入口是前端右下角全局悬浮按钮，所有角色都要能用
+        if ("GET".equals(method) && (path.equals("/api/ai/manual/documents")
+                || path.matches("/api/ai/manual/documents/[^/]+/content"))) return true;
         // 工作流（个人资产）：M0~M3 仅创建者本人可见可管（WorkflowService 按 uid 归属校验；M4 随发布语义启用共享）
         if (path.equals("/api/ai/workflow") || path.startsWith("/api/ai/workflow/")) return true;
         // 工作流凭据（第 3 期，个人资产）：http 节点以 {{credential:名称}} 引用；值加密落库、出参脱敏，
