@@ -841,8 +841,10 @@ public class RagService {
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 } else {
                     hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
+                    // 重排只在此处做：上方 thinkTerms 分支已重排过，落到这里再排一次是同批文档同 query
+                    // 的重复计费/重复延迟（second rank 结果不变）
+                    hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 }
-                hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
@@ -859,6 +861,8 @@ public class RagService {
                 addDegradation(degradations, degradedCodes, "multiTimeout", "多路检索超时，仅用已完成结果");
             }
             log.info("[RAG] 检索命中 {} 块, query={}", hits.size(), retrievalQuery);
+            // 本轮主链路重排是否实际执行（有任一命中拿到重排分）：已执行时，未重排候选不得再走融合门入场（见填充段分域门）
+            boolean rerankActive = hits.stream().anyMatch(h -> h.rerankScore() != null);
 
             // SubAgent 并行编排（4.3，默认关）：多视角并行检索 + 要点提炼。
             // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
@@ -1051,9 +1055,20 @@ public class RagService {
                 mainHits.add(new HybridRetrievalService.Hit(k.getId(), k.getDocId(), k.getTitle(), k.getContent(),
                         kImgs, 1.0, k.getChunkIndex(), k.getTitlePath(), null));
             }
-            // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束
-            if (subOutcome != null) {
-                for (HybridRetrievalService.Hit h : subOutcome.hits()) {
+            // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束。
+            // 分支检索不重排（只带融合分）：不补重排直接并入，会以「无重排分」身份走 0.25 融合门入场，
+            // 绕过主链路 0.6 重排门（修复前无关块即由此混进上下文与引用来源）——
+            // 与主链路同 query 小批量强制重排（≤6 块低于 minHits 窗口，rank() 会整批跳过，须走 rankForced），
+            // 让子代理块与主链路块同分域、同门槛；重排不可用时原样并入（与主链路「重排不可用」同语义，走融合门）
+            if (subOutcome != null && !subOutcome.hits().isEmpty()) {
+                List<HybridRetrievalService.Hit> subHits = subOutcome.hits();
+                if (rerankService.debugUnavailableReason() == null) {
+                    subHits = rerankService.rankForced(new ArrayList<>(subHits), retrievalQuery);
+                } else {
+                    addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                            "重排不可用，子代理命中按融合分参与填充");
+                }
+                for (HybridRetrievalService.Hit h : subHits) {
                     if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())
                             && (scopeDocIds == null || (h.docId() != null && scopeDocIds.contains(h.docId())))) {
                         mainHits.add(h);
@@ -1109,6 +1124,8 @@ public class RagService {
             // 不分域的后果（修复前实测）：rerank 服务不可用或关闭时，全部融合分低于 0.6 → 上下文被门清空，
             // 检索"看似无结果"。0 = 关闭对应域的门。调值前先看检索调试面板的实际分数分布（两个域分开看）；
             // 跳过不占 docNo/extra 配额（与去冗余同语义）。
+            // 另有单侧约束：重排本轮实际执行过（存在重排分）时，未重排的候选不得借融合门入场（见下方门代码）——
+            // 否则"重排判定无相关资料"会被融合序尾部的词面噪声推翻。
             double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
             double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
             // 单文档块数配额（0=不限制）：docId → 已进上下文的块数
@@ -1134,6 +1151,14 @@ public class RagService {
                         && docBlockCount.merge(hit.docId(), 1, Integer::sum) > maxBlocksPerDoc) {
                     log.debug("[CTX] 单文档配额跳过: docId={} kid={} title={}",
                             hit.docId(), hit.knowledgeId(), hit.title());
+                    continue;
+                }
+                // 重排已实际执行 → 相关性结论以重排分为准：未被重排的候选（超出重排区间的主链路尾部）
+                // 不得改走更低的融合门入场，否则「重排判定无相关资料」会被尾部词面噪声推翻
+                // （修复前无关块即以此侧门混进上下文/引用来源）。重排未执行（关闭/不可用）时维持原融合门语义。
+                if (!mentioned && rerankActive && hit.rerankScore() == null) {
+                    log.debug("[CTX] 重排已执行，未重排块不走融合门跳过: kid={} title={} score={}",
+                            hit.knowledgeId(), hit.title(), hit.score());
                     continue;
                 }
                 double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();

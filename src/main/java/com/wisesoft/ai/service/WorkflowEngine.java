@@ -106,6 +106,7 @@ public class WorkflowEngine {
     private final RagService ragService;
     private final SessionService sessionService;
     private final com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper;
+    private final RerankService rerankService;
 
     public WorkflowEngine(WorkflowValidator validator, ChatClient chatClient,
                           HybridRetrievalService retrievalService, ConfigService configService,
@@ -113,7 +114,8 @@ public class WorkflowEngine {
                           com.wisesoft.ai.mapper.UserMapper userMapper,
                           SandboxService sandboxService, AgentService agentService,
                           RagService ragService, SessionService sessionService,
-                          com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper) {
+                          com.wisesoft.ai.mapper.ToolApprovalMapper toolApprovalMapper,
+                          RerankService rerankService) {
         this.validator = validator;
         this.chatClient = chatClient;
         this.retrievalService = retrievalService;
@@ -125,6 +127,7 @@ public class WorkflowEngine {
         this.ragService = ragService;
         this.sessionService = sessionService;
         this.toolApprovalMapper = toolApprovalMapper;
+        this.rerankService = rerankService;
     }
 
     /**
@@ -496,8 +499,18 @@ public class WorkflowEngine {
             int topK = cfgInt(n, "topK", 5, 1, MAX_TOPK);
             List<Hit> hits = withReplay(ctx, () -> retrievalService.search(query, null, kbIds));
             if (hits == null) hits = List.of();
+            // 补重排（强制窗口）：search() 只出融合分，低分门若直接比较，词面重叠的无关块（融合分 0.6+）
+            // 会盖过真实重排分 ~0.000x 混进节点结果——与 searchKnowledge 工具同源的分域错配问题。
+            // rankForced 不受 minHits 窗口限制；失败回退融合分序，门随之落回融合域（见下）。
+            // 与检索同因：节点线程须重放本轮参数覆盖（rerank.enabled/rerank.model 可为库级/智能体级策略）。
+            final List<Hit> candidates = hits;
+            hits = withReplay(ctx, () -> rerankService.rankForced(candidates, query));
+            boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
             double minScore = resolveMinScore(n, ctx);
-            List<Hit> kept = filterByMinScore(hits, minScore);
+            // 分域取门：重排分走节点低分门（config.minScore，未声明跟随 retrieval.minContextScore）；
+            // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore——两个分值域分布不同，不可共用一个门
+            Double fusionGate = withReplay(ctx, () -> configService.getDouble("retrieval.minFusionScore", 0.25));
+            List<Hit> kept = filterByMinScore(hits, minScore, fusionGate == null ? 0 : fusionGate, rerankActive);
             int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
             StringBuilder text = new StringBuilder();
@@ -600,11 +613,24 @@ public class WorkflowEngine {
 
     /** 低分门：排序分（重排分??融合分，与主链路同口径）低于阈值的块剔除；阈值 ≤0 原样返回（公开纯函数，供用例直接验证） */
     public static List<Hit> filterByMinScore(List<Hit> hits, double minScore) {
-        if (hits == null || hits.isEmpty() || minScore <= 0) return hits;
+        return filterByMinScore(hits, minScore, minScore, false);
+    }
+
+    /**
+     * 低分门（分域双门 + 单侧约束，与主链路上下文填充同款语义）：
+     * 重排分走 rerankGate；未重排（重排关闭/失败回退）的融合分走 fusionGate——两个分值域分布不同，
+     * 一个绝对门不可能同时对两者成立；重排已实际执行时，未重排候选（超出重排区间的尾部）不得借融合门入场。
+     * 两侧阈值都 ≤0 且重排未执行时原样返回（公开纯函数，供用例直接验证）。
+     */
+    public static List<Hit> filterByMinScore(List<Hit> hits, double rerankGate, double fusionGate, boolean rerankActive) {
+        if (hits == null || hits.isEmpty()) return hits;
+        if (rerankGate <= 0 && fusionGate <= 0 && !rerankActive) return hits;
         List<Hit> out = new ArrayList<>(hits.size());
         for (Hit h : hits) {
+            if (rerankActive && h.rerankScore() == null) continue;
             double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
-            if (rankScore >= minScore) out.add(h);
+            double gate = h.rerankScore() != null ? rerankGate : fusionGate;
+            if (gate <= 0 || rankScore >= gate) out.add(h);
         }
         return out;
     }

@@ -179,7 +179,7 @@ public class RerankService {
         if (refOverride != null && !refOverride.isBlank()) {
             ModelRegistryService.ModelRoute r = modelRegistryService.resolveReference(refOverride.trim());
             if (r != null) {
-                return rankWithRoute(candidates, query, r, true);
+                return rankWithRoute(candidates, query, r, true, false);
             }
             log.warn("[Rerank] 个人重排模型引用解析失败，回落全局: {}", refOverride);
         }
@@ -191,11 +191,25 @@ public class RerankService {
         // 防御：query 为空/null 时服务端 400（"query and documents required"）——直接跳过重排回退融合分排序
         if (query == null || query.isBlank()) return candidates;
         if (!checkSupport()) return candidates;
-        return rankWithRoute(candidates, query, route(), false);
+        return rankWithRoute(candidates, query, route(), false, false);
+    }
+
+    /**
+     * 小批量强制重排：绕过 minHits/maxHits 窗口，候选多少都整批送 cross-encoder。
+     * 消费方：子代理命中并入主链路前的补重排（≤6 块，低于 minHits 窗口，rank() 会整批跳过）——
+     * 小批量不补重排就会带着融合分混进主链路，从分域门的低门（minFusionScore）绕过重排门（minContextScore）。
+     * 可用性判断/超时/失败回退行为与 rank() 一致（失败回退融合分序并写全局冷却）。
+     */
+    public List<HybridRetrievalService.Hit> rankForced(List<HybridRetrievalService.Hit> candidates, String query) {
+        if (!enabled() || candidates == null || candidates.isEmpty()) return candidates;
+        if (query == null || query.isBlank()) return candidates;
+        if (!checkSupport()) return candidates;
+        return rankWithRoute(candidates, query, route(), false, true);
     }
 
     private List<HybridRetrievalService.Hit> rankWithRoute(List<HybridRetrievalService.Hit> candidates, String query,
-                                                           ModelRegistryService.ModelRoute r, boolean oneShot) {
+                                                           ModelRegistryService.ModelRoute r, boolean oneShot,
+                                                           boolean bypassWindow) {
         try {
             // 重排区间（rerank.minHits/maxHits，与评估链路同参数）：候选少于 minHits 不值得一次 cross-encoder
             // 推理；多于 maxHits 时**只重排融合分最高的 top maxHits**，其余保持融合分序接在重排结果之后——
@@ -203,7 +217,7 @@ public class RerankService {
             // 连接断裂后 keep-alive 复用半开连接（"重排服务老是挂"的根因）
             int minHits = Math.max(2, configService.getInt("rerank.minHits", 6));
             int maxHits = Math.max(minHits, configService.getInt("rerank.maxHits", 15));
-            if (candidates.size() < minHits) return candidates;
+            if (!bypassWindow && candidates.size() < minHits) return candidates;
             int cut = Math.min(candidates.size(), maxHits);
             List<HybridRetrievalService.Hit> head = new ArrayList<>(candidates.subList(0, cut));
             List<HybridRetrievalService.Hit> tail = candidates.size() > cut
