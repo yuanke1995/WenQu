@@ -150,6 +150,30 @@ public class RagService {
     /** 引用角标 [N]（用于完成阶段校验编号是否超出来源范围，剔除 LLM 编造的无效引用） */
     private static final Pattern CITE_PATTERN = Pattern.compile("\\[(\\d+)]");
 
+    /**
+     * 代码段（``` 围栏块或行内反引号）：其中的 [数字] 是代码字面量（数组下标、字面量标注等），
+     * 不是引用标注——引用越界剔除/重编必须跳过，否则会把 `args[0]` 这类代码改坏。
+     * 未闭合围栏消费到串尾（按代码处理，宁可不剔不可误改）。
+     */
+    private static final Pattern CODE_SEGMENT = Pattern.compile("```.*?(?:```|\\Z)|`[^`\n]*`", Pattern.DOTALL);
+
+    /** 代码段区间列表（[start,end)），供引用标注处理跳过代码字面量 */
+    private static List<int[]> codeRanges(String text) {
+        List<int[]> ranges = new ArrayList<>();
+        if (text == null || text.isEmpty()) return ranges;
+        Matcher m = CODE_SEGMENT.matcher(text);
+        while (m.find()) ranges.add(new int[]{m.start(), m.end()});
+        return ranges;
+    }
+
+    /** 位置是否落在代码段区间内 */
+    private static boolean inCodeSegment(List<int[]> ranges, int pos) {
+        for (int[] r : ranges) {
+            if (pos >= r[0] && pos < r[1]) return true;
+        }
+        return false;
+    }
+
     /** fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示） */
     private void addDegradation(List<Map<String, String>> list, Set<String> codes, String code, String msg) {
         if (!codes.add(code)) return;
@@ -2186,28 +2210,30 @@ public class RagService {
                     if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
                         addDegradation(st.degradations, st.degradedCodes, "noCitation", "回答未标注引用来源");
                     }
-                    // 引用编号越界校验：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）
+                    // 引用编号越界校验：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）。
+                    // 来源为空（maxRef=0）时同样执行——本轮没有任何可溯源来源，正文不允许残留任何 [N]；
+                    // 修复前 sources 为空时整段校验被跳过，模型给 MCP 资料自编的 [1][2] 全部悬空（面板无对应条目可点）。
+                    // 代码段（``` 围栏/行内反引号）跳过：代码里的 [0] 是字面量下标，无差别剔除会改坏代码示例。
                     int maxRef = sources.size();
-                    if (maxRef > 0) {
-                        java.util.regex.Matcher cm = CITE_PATTERN.matcher(answer);
-                        StringBuilder cb = new StringBuilder();
-                        int invalidRefs = 0;
-                        while (cm.find()) {
-                            int n = Integer.parseInt(cm.group(1));
-                            if (n < 1 || n > maxRef) {
-                                invalidRefs++;
-                                cm.appendReplacement(cb, "");
-                            } else {
-                                cm.appendReplacement(cb, java.util.regex.Matcher.quoteReplacement(cm.group()));
-                            }
+                    List<int[]> citeCodeSegs = codeRanges(answer);
+                    java.util.regex.Matcher cm = CITE_PATTERN.matcher(answer);
+                    StringBuilder cb = new StringBuilder();
+                    int invalidRefs = 0;
+                    while (cm.find()) {
+                        int n = Integer.parseInt(cm.group(1));
+                        if (!inCodeSegment(citeCodeSegs, cm.start()) && (n < 1 || n > maxRef)) {
+                            invalidRefs++;
+                            cm.appendReplacement(cb, "");
+                        } else {
+                            cm.appendReplacement(cb, java.util.regex.Matcher.quoteReplacement(cm.group()));
                         }
-                        cm.appendTail(cb);
-                        if (invalidRefs > 0) {
-                            answer = cb.toString();
-                            addDegradation(st.degradations, st.degradedCodes, "invalidCitation",
-                                    "已移除 " + invalidRefs + " 处无效的引用标注（编号超出来源范围）");
-                            log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
-                        }
+                    }
+                    cm.appendTail(cb);
+                    if (invalidRefs > 0) {
+                        answer = cb.toString();
+                        addDegradation(st.degradations, st.degradedCodes, "invalidCitation",
+                                "已移除 " + invalidRefs + " 处无效的引用标注（编号超出来源范围）");
+                        log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
                     }
                     // 图片占位越界校验（与引用越界校验同构）：正文 [图片N] 编号必须落在本轮真实图片
                     // （imgIndex，由主链路上下文填充建立）范围内。工具模式下模型手里没有编号图片
@@ -3537,11 +3563,13 @@ public class RagService {
      */
     private CitationCheckResult citationConsistencyCheck(String answer, List<Map<String, Object>> sources,
                                                          String question, String resolvedModel) {
-        // 1. 收集每个编号首次出现的"前文句子"（重复引用按首次判定）
+        // 1. 收集每个编号首次出现的"前文句子"（重复引用按首次判定；代码段里的 [数字] 是字面量，不参与判定）
+        List<int[]> codeSegs = codeRanges(answer);
         Map<Integer, String> sentenceByRef = new LinkedHashMap<>();
         Matcher m = CITE_PATTERN.matcher(answer);
         while (m.find()) {
             int n = Integer.parseInt(m.group(1));
+            if (inCodeSegment(codeSegs, m.start())) continue;
             if (n < 1 || n > sources.size() || sentenceByRef.containsKey(n)) continue;
             String ctx = imageFilterService.precedingContext(answer, m.start(), 80);
             if (ctx.isBlank()) continue; // 无前文无法界定句子 → 放行
@@ -3601,8 +3629,14 @@ public class RagService {
         Matcher cm = CITE_PATTERN.matcher(answer);
         StringBuffer sb = new StringBuffer();
         while (cm.find()) {
-            Integer nn = renum.get(Integer.parseInt(cm.group(1)));
-            cm.appendReplacement(sb, Matcher.quoteReplacement(nn == null ? "" : "[" + nn + "]"));
+            String rep;
+            if (inCodeSegment(codeSegs, cm.start())) {
+                rep = cm.group(); // 代码字面量原样保留（既不重编也不剔除）
+            } else {
+                Integer nn = renum.get(Integer.parseInt(cm.group(1)));
+                rep = nn == null ? "" : "[" + nn + "]";
+            }
+            cm.appendReplacement(sb, Matcher.quoteReplacement(rep));
         }
         cm.appendTail(sb);
         return new CitationCheckResult(sb.toString(), newSources, dropped, dropped.size());
