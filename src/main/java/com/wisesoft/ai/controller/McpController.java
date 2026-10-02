@@ -66,12 +66,16 @@ public class McpController {
     public ResultJson status(@RequestParam(value = "retryBroken", required = false) Boolean retryBroken,
                              // verifyOnline=true 才对已连接服务做在线校验（远程 listTools，慢）；只拿服务清单的
                              // 消费方（智能体页等）不传，默认只读最近已知状态——否则页面加载被远程 MCP 握手拖住
-                             @RequestParam(value = "verifyOnline", required = false) Boolean verifyOnline) {
+                             @RequestParam(value = "verifyOnline", required = false) Boolean verifyOnline,
+                             // withTools=true：只补工具清单、不翻转连接状态（远程 listTools 但不判生死）。
+                             // 工作流画布的 mcp 节点要列工具供选，纯本地档 tools 恒为空会让下拉选不出工具
+                             @RequestParam(value = "withTools", required = false) Boolean withTools) {
         String uid = RequestUser.uid();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("toolsEnabled", configService.getBoolean("tool.enabled"));
         if (Boolean.TRUE.equals(retryBroken)) mcpClientService.retryBroken(uid);
-        data.put("servers", mcpClientService.serverStatuses(uid, Boolean.TRUE.equals(verifyOnline)));
+        data.put("servers", mcpClientService.serverStatuses(uid, Boolean.TRUE.equals(verifyOnline),
+                Boolean.TRUE.equals(withTools)));
         return ResultJson.ok(data);
     }
 
@@ -200,7 +204,7 @@ public class McpController {
     public ResultJson reload() {
         String uid = RequestUser.uid();
         mcpClientService.reload(uid);
-        return status(null, null); // 重连刚整池重建过，无需再补重连
+        return status(null, null, null); // 重连刚整池重建过，无需再补重连
     }
 
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"")

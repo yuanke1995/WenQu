@@ -188,10 +188,22 @@ public class McpClientService {
      * 曾把在线校验无条件织进本接口，智能体页每次进入都被远程 MCP 的延迟劫持（整页
      * Promise.all 等它，转圈数秒起步）。
      *
+     * <p><b>第三档 {@code verifyOnline=false, withTools=true}</b>（2026-10-02 补）：只补工具清单、
+     * <b>不翻转状态</b>。工作流画布的 mcp 节点要列该服务下的工具供用户选，纯本地档下 {@code tools}
+     * 恒为空 ⇒ 工具下拉永远是空的（画布侧表现为「服务能选、工具选不出来」，节点必然停在必填校验上）；
+     * 而让它走 {@code verifyOnline=true} 又会把打开节点抽屉的代价变成同步远程 IO（正是本方法注释里
+     * 记的那次回归的根因）。这一档取两者中间：对已连接服务发 listTools 拿工具名，但拿到失败也只当
+     * 「本轮没取到工具」——状态显示维持粘性 connected，语义仍由 MCP 管理页的在线校验负责。
+     *
      * @param uid          归属用户
      * @param verifyOnline true=对已连接服务做在线校验（可把"假绿"翻成失败）；false=只报最近已知状态
+     * @param withTools    true=额外对已连接服务取一次工具清单（只补 tools，不改状态）
      */
     public List<Map<String, Object>> serverStatuses(String uid, boolean verifyOnline) {
+        return serverStatuses(uid, verifyOnline, false);
+    }
+
+    public List<Map<String, Object>> serverStatuses(String uid, boolean verifyOnline, boolean withTools) {
         if (uid == null || uid.isBlank()) return List.of();
         UserPool pool = ensureConnections(uid);
 
@@ -214,28 +226,36 @@ public class McpClientService {
         // 改配置/空闲回收重建连接时另走 ensureConnections 重连。
         Map<String, List<Map<String, String>>> toolsOk = new LinkedHashMap<>();
         Map<String, String> flip = new LinkedHashMap<>();
-        if (verifyOnline) {
-            for (UserMcp row : rowsSnap) {
-                String name = row.getName();
-                if (!Integer.valueOf(1).equals(row.getEnabled())) continue;
-                if (!"connected".equals(statesSnap.get(name))) continue;
-                McpSyncClient c = clientsSnap.get(name);
-                if (c == null) {
-                    flip.put(name, "failed:连接已失效");
-                    continue;
+        for (UserMcp row : rowsSnap) {
+            if (!Integer.valueOf(1).equals(row.getEnabled())) continue;
+            if (!"connected".equals(statesSnap.get(row.getName()))) continue;
+            boolean online = verifyOnline;
+            // withTools 档：与在线校验同一段远程 IO，但不把失败翻成 failed（见方法注释第三档）
+            if (!online && !withTools) continue;
+            McpSyncClient c = clientsSnap.get(row.getName());
+            if (c == null) {
+                if (online) flip.put(row.getName(), "failed:连接已失效");
+                continue;
+            }
+            try {
+                List<Map<String, String>> tools = new ArrayList<>();
+                for (McpSchema.Tool t : c.listTools().tools()) {
+                    tools.add(Map.of("name", t.name(), "description", brief(t.description())));
                 }
-                try {
-                    List<Map<String, String>> tools = new ArrayList<>();
-                    for (McpSchema.Tool t : c.listTools().tools()) {
-                        tools.add(Map.of("name", t.name(), "description", brief(t.description())));
-                    }
-                    toolsOk.put(name, tools);
-                } catch (Exception e) {
-                    String msg = e.getMessage() == null ? "连接已断开" : e.getMessage();
-                    flip.put(name, "failed:" + msg);
-                    log.info("[MCP] uid={} server {} 在线校验未通过，状态翻为断开: {}", uid, name, msg);
+                toolsOk.put(row.getName(), tools);
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? "连接已断开" : e.getMessage();
+                if (online) {
+                    flip.put(row.getName(), "failed:" + msg);
+                    log.info("[MCP] uid={} server {} 在线校验未通过，状态翻为断开: {}", uid, row.getName(), msg);
+                } else {
+                    // 只补工具这一档：取不到就当「本轮没取到」，状态维持粘性 connected 不翻转
+                    log.info("[MCP] uid={} server {} 工具清单获取失败（本轮不取，状态维持原样）: {}",
+                            uid, row.getName(), msg);
                 }
             }
+        }
+        if (verifyOnline) {
             // 翻转回写锁内做，且仅当池里仍是刚才校验的那个连接（期间配置重建/重连换了新 client
             // 就不覆盖——新连接的状态归新一轮流程管）
             if (!flip.isEmpty()) {

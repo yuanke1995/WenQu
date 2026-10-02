@@ -439,10 +439,12 @@ export const getToolInventory = () => request('/tools')
  *  verifyOnline=true：对已连接服务做在线校验（远程 listTools，慢）——只有 MCP 管理页要"此刻真实状态"
  *  时才传；只需要服务清单/最近状态的调用方（如智能体页填充下拉）别传，否则页面加载会被远程 MCP
  *  的握手延迟拖住（context7 单请求 1~3.5s+，远端挂起要吃满 60s 超时）。默认后端只读本地已知状态 */
-export const getMcpStatus = (retry, verifyOnline) => {
+export const getMcpStatus = (retry, verifyOnline, withTools) => {
   const qs = []
   if (retry) qs.push('retryBroken=true')
   if (verifyOnline) qs.push('verifyOnline=true')
+  // withTools：只补工具清单不校验状态（工作流画布 mcp 节点要列工具；纯本地档 tools 恒为空）
+  if (withTools) qs.push('withTools=true')
   return request('/mcp/status' + (qs.length ? '?' + qs.join('&') : ''))
 }
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })

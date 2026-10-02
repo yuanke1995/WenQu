@@ -1541,8 +1541,11 @@ async function loadSkillOptions () {
 async function loadMcpServers () {
   if (mcpServers.value.length) return
   try {
-    const r = await getMcpStatus(false, false)
-    mcpServers.value = (r && r.data) || []
+    // withTools=true：只补工具清单、不做在线状态校验——mcp 节点的工具下拉要列该服务下的工具，
+    // 纯本地档 tools 恒为空会让下拉选不出东西（服务能选、工具为空）；又不能走 verifyOnline，
+    // 那是给 MCP 管理页看「此刻真实状态」用的，代价是打开抽屉就同步等远程握手
+    const r = await getMcpStatus(false, false, true)
+    mcpServers.value = (r && r.data && r.data.servers) || []
   } catch (e) { /* 同上 */ }
 }
 

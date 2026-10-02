@@ -962,10 +962,14 @@ public class WorkflowEngine {
             trace.put("status", status);
             trace.put("contentType", contentType);
             trace.put("bodyChars", bodyText.length());
+            // 响应体同样要脱敏（2026-10-02 实测修复）：出站请求头解的是明文，而回显型服务
+            // （httpbin /get、各类调试代理）会把收到的请求头原样写回响应体——不脱敏则凭据明文
+            // 经 body 进 state → end 节点 outputs → 前端/run 记录/trace 全链路可见，
+            // 违反「第 3 期凭据明文不出现在任何 trace/日志/前端返回」的验收口径。
             String stateBody = bodyText.length() > HTTP_BODY_STATE_CHARS
                     ? bodyText.substring(0, HTTP_BODY_STATE_CHARS) + "…（已截断，全长 " + bodyText.length() + " 字符）"
                     : bodyText;
-            return new NodeOut(Map.of("status", status, "body", stateBody, "contentType", contentType),
+            return new NodeOut(Map.of("status", status, "body", secrets.redact(stateBody), "contentType", contentType),
                     null, null, trace);
         };
     }
@@ -1174,6 +1178,15 @@ public class WorkflowEngine {
      * 可见性：只取 {@code ctx.uid} 名下已启用的 server（{@code McpClientService.toolCallbacks(uid, {server})}
      * 内部按归属过滤），非本人/未启用的服务拿不到工具 → fail-loud，不静默降级。
      * 输出 {@code result}（工具返回文本）与 {@code server}/{@code tool} 便于下游与 trace 追溯。
+     * <p>
+     * <b>工具名按裸名匹配（源码取证，2026-10-02 实测）</b>：{@code SyncMcpToolCallback} 有两个名字——
+     * {@code getToolDefinition().name()} 返回<b>带前缀</b>的 {@code prefixedToolName}，前缀由
+     * {@code McpToolUtils.prefixedToolName(clientInfo.name, clientInfo.title, toolName)} 生成，
+     * 吃的是<b>客户端自己声明的 info</b>（我们连接时填的），不是服务名；而 {@code getOriginalToolName()}
+     * 才是 MCP server 报的裸名。用户在画布里按 /status 下拉选到的、库里 {@code c_ai_user_mcp} 记的、
+     * 智能体工具清单展示的都是裸名（context7 实测裸名 {@code resolve-library-id}），所以这里必须按裸名匹配——
+     * 拿带前缀名比对会让每个真实工具都「找不到」，且错误文案把人引向「服务未启用」的错误方向。
+     * 兜底：非 MCP 来源的 ToolCallback 没有 {@code getOriginalToolName}，退回按前缀名匹配。
      */
     private Function<OverAllState, NodeOut> mcpBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -1183,11 +1196,11 @@ public class WorkflowEngine {
             List<org.springframework.ai.tool.ToolCallback> callbacks =
                     withReplay(ctx, () -> mcpClientService.toolCallbacks(ctx.uid, Set.of(server)));
             org.springframework.ai.tool.ToolCallback target = callbacks.stream()
-                    .filter(c -> c.getToolDefinition() != null && tool.equals(c.getToolDefinition().name()))
+                    .filter(c -> tool.equals(originalToolName(c)))
                     .findFirst().orElse(null);
             if (target == null) {
                 throw new BizException("节点「" + n.getId() + "」在 MCP 服务「" + server + "」下找不到工具「" + tool
-                        + "」（服务未启用、连接失败或不属于当前用户）");
+                        + "」（服务未启用、连接失败、不属于当前用户，或该服务没有同名工具）");
             }
             String result;
             try {
@@ -1204,6 +1217,17 @@ public class WorkflowEngine {
             trace.put("result", result);
             return new NodeOut(Map.of("result", result, "server", server, "tool", tool), null, null, trace);
         };
+    }
+
+    /**
+     * 回调的裸工具名（MCP server 报的名字）：{@code SyncMcpToolCallback.getOriginalToolName()}。
+     * 非 MCP 来源的回调没有这个方法，退回 {@code getToolDefinition().name()}（此时无前缀，两条路等价）。
+     */
+    private static String originalToolName(org.springframework.ai.tool.ToolCallback c) {
+        if (c instanceof org.springframework.ai.mcp.SyncMcpToolCallback sync) {
+            return sync.getOriginalToolName();
+        }
+        return c.getToolDefinition() == null ? null : c.getToolDefinition().name();
     }
 
     /** MCP 参数模板：config.args（Map 或 [{key,value}] 列表）逐值渲染 {{node.key}}；键为参数名 */
