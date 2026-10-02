@@ -699,10 +699,12 @@
       </div>
       <!-- 引用来源：有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则） -->
       <div v-if="groupedSources.length" class="rp-card">
-        <div class="rp-label">引用来源 · {{ groupedSources.length }} 个文档</div>
+        <div class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</div>
         <div v-for="g in groupedSources" :key="g.key" class="rp-group">
           <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
-            <file-text-outlined class="rp-src-ic" />
+            <global-outlined v-if="g.icon === 'web'" class="rp-src-ic" />
+            <api-outlined v-else-if="g.icon === 'mcp'" class="rp-src-ic" />
+            <file-text-outlined v-else class="rp-src-ic" />
             <span class="rp-src-name">{{ g.fileName }}</span>
             <span class="rp-count">{{ g.items.length }} 段</span>
             <down-outlined class="rp-arrow" :class="{ open: srcOpenOf(g) }" />
@@ -842,7 +844,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined,
+import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
@@ -1510,16 +1512,23 @@ const lastSources = computed(() => lastAi.value?.sources || [])
 const groupedSources = computed(() => {
   const groups = []
   const byKey = new Map()
+  // 外部来源（联网/MCP）单独成组，名称与知识库文档区分——此前它们没有 fileName/docId，
+  // 全部落进「手动补充的知识」兜底组，名不副实
+  const groupOf = s => {
+    if (s.origin === 'WEB') return { key: '__web', fileName: '联网来源', icon: 'web' }
+    if (s.origin === 'MCP') return { key: '__mcp', fileName: 'MCP 来源', icon: 'mcp' }
+    return {
+      key: s.docId || '__manual_' + (s.fileName || 'x'),
+      fileName: s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识'),
+      icon: 'doc'
+    }
+  }
   for (const s of lastSources.value) {
-    const key = s.docId || ('__manual_' + (s.fileName || 'x'))
-    let g = byKey.get(key)
+    const gi = groupOf(s)
+    let g = byKey.get(gi.key)
     if (!g) {
-      g = {
-        key,
-        fileName: s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识'),
-        items: []
-      }
-      byKey.set(key, g)
+      g = { key: gi.key, fileName: gi.fileName, icon: gi.icon, items: [] }
+      byKey.set(gi.key, g)
       groups.push(g)
     }
     g.items.push(s)
