@@ -35,7 +35,8 @@ public class ConfigSchemaService {
     /** 字段定义（内部用；下发给前端的是原始 JSON，保留 group/key/path/submitKey 等表单属性） */
     public record Field(String key, String panel, String label, String type,
                         Double min, Double max, Double step, Double factor,
-                        int tier, List<String> options, String help, boolean personal) {
+                        int tier, List<String> options, String help, boolean personal,
+                        boolean personalOnly, String modelType) {
     }
 
     private final List<JSONObject> panels;
@@ -105,7 +106,8 @@ public class ConfigSchemaService {
                 Field f = new Field(key, j.getString("panel"), j.getString("label"), j.getString("type"),
                         dbl(j, "min"), dbl(j, "max"), dbl(j, "step"), dbl(j, "factor"),
                         j.getIntValue("tier", 2), List.copyOf(opts), h.get(key),
-                        j.getBooleanValue("personal", false));
+                        j.getBooleanValue("personal", false),
+                        j.getBooleanValue("personalOnly", false), j.getString("modelType"));
                 if (byKey.put(key, f) != null) {
                     throw new IllegalStateException("config-schema.json 字段 backendKey 重复: " + key);
                 }
@@ -143,6 +145,63 @@ public class ConfigSchemaService {
         return f != null && f.personal();
     }
 
+    /**
+     * 字段是否「个人专属」（仅个人设置可配、无系统全局层）。
+     * <p>
+     * 用于模型引用这类「值 = 某个用户登记的私有资产」的字段：全局槽位天然会把归属人的模型
+     * 用成全平台默认（隔离原则：用户级数据不得被全局消费），故这类键：
+     * <ul>
+     *   <li>不出现在管理员设置页（{@link #describe()} 剔除）、管理端保存拒绝；</li>
+     *   <li>{@code ConfigService.get} 跳过全局缓存/默认值层——未装载个人值的线程一律视为未配置。</li>
+     * </ul>
+     */
+    public boolean isPersonalOnly(String key) {
+        Field f = byKey.get(key);
+        return f != null && f.personalOnly();
+    }
+
+    /** 字段类型（switch/number/model/...；未定义返回 null）。个人保存校验按类型分流用 */
+    public String type(String key) {
+        Field f = byKey.get(key);
+        return f == null ? null : f.type();
+    }
+
+    /** 模型类字段声明的模型类型（chat/embedding/rerank/...；非模型字段或未声明返回 null） */
+    public String modelType(String key) {
+        Field f = byKey.get(key);
+        return f == null ? null : f.modelType();
+    }
+
+    /**
+     * 表单 path → backendKey 归一：两者通常相同，但个别字段表单 path 带面板前缀而运行键不带
+     * （如 {@code retrieval.rerank.enabled} → {@code rerank.enabled}）。
+     * 个人设置页提交的是表单 path，个人值必须落成运行键（ConfigService.get / 检索覆盖用的键），
+     * 故保存前统一经此归一；未匹配原样返回（由 isPersonal 白名单判定拒绝）。
+     */
+    public String backendKeyOf(String pathOrKey) {
+        if (pathOrKey == null) return null;
+        if (byKey.containsKey(pathOrKey)) return pathOrKey;
+        for (JSONObject j : rawFields) {
+            if (pathOrKey.equals(j.getString("path"))) {
+                String bk = j.getString("backendKey");
+                if (bk != null && !bk.isBlank()) return bk;
+            }
+        }
+        return pathOrKey;
+    }
+
+    /** backendKey → 表单 path（个人设置页 values/globals 按 path 回显；未知键原样返回） */
+    public String pathOf(String backendKey) {
+        if (backendKey == null) return null;
+        for (JSONObject j : rawFields) {
+            if (backendKey.equals(j.getString("backendKey"))) {
+                String p = j.getString("path");
+                return p == null || p.isBlank() ? backendKey : p;
+            }
+        }
+        return backendKey;
+    }
+
     /** schema 中标记 personal 的字段原始定义（个人设置页渲染用，保留 label/type/min/max/def 等表单属性） */
     public List<JSONObject> personalFields() {
         List<JSONObject> out = new ArrayList<>();
@@ -162,6 +221,23 @@ public class ConfigSchemaService {
         return out;
     }
 
+    /**
+     * 按 backendKey 取字段问号文案（经字段定义的 tips 引用解析）：知识库参数弹窗等
+     * 「非设置页」表单复用同一份文案，避免同一参数两处解释漂移。
+     */
+    public Map<String, String> tipsByKey(Collection<String> backendKeys) {
+        java.util.Set<String> wanted = new java.util.HashSet<>(backendKeys);
+        Map<String, String> out = new LinkedHashMap<>();
+        for (JSONObject j : rawFields) {
+            String key = j.getString("backendKey");
+            if (key == null || !wanted.contains(key)) continue;
+            String tipsKey = j.getString("tips");
+            String text = tipsKey == null ? null : tips.get(tipsKey);
+            if (text != null && !text.isBlank()) out.put(key, text);
+        }
+        return out;
+    }
+
     /** 字段中文说明（落 c_ai_config.remark）；未知键返回 null */
     public String help(String key) {
         return help.get(key);
@@ -175,7 +251,13 @@ public class ConfigSchemaService {
     public Map<String, Object> describe() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("panels", panels);
-        m.put("fields", rawFields);
+        // personalOnly 字段（模型引用这类个人私有资产）不下发给管理端设置页：全局槽位不存在，
+        // 渲染出来只会诱导管理员把个人模型配成"全平台默认"（真正的消费方都不再读全局层）
+        List<JSONObject> adminFields = new ArrayList<>(rawFields.size());
+        for (JSONObject j : rawFields) {
+            if (!j.getBooleanValue("personalOnly", false)) adminFields.add(j);
+        }
+        m.put("fields", adminFields);
         m.put("tips", tips);
         m.put("corePaths", corePaths);
         return m;

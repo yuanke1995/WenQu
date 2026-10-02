@@ -48,6 +48,10 @@ public class KnowledgeBaseController {
     private final ResourceVisibilityService visibility;
     /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
     private final com.wisesoft.ai.service.ConfigService configService;
+    /** 参数问号文案（/param-tips；与系统设置页同一份定义源，防两处解释漂移） */
+    private final com.wisesoft.ai.config.ConfigSchemaService configSchemaService;
+    /** 个人设置值（/param-defaults 对 personal 键取「本人生效值」预填，与检索实际生效口径一致） */
+    private final com.wisesoft.ai.service.UserConfigService userConfigService;
 
     private ResourceVisibilityService.Principal principal() {
         return new ResourceVisibilityService.Principal(
@@ -74,16 +78,46 @@ public class KnowledgeBaseController {
      * 普通用户却看不到"当前全局值是多少"——正是"设置页写的是新建库预填、实际只有管理员能预填"的根因。
      * 这里只回检索/解析参数（不含 gateway 地址与任何密钥），普通用户拿到也只是"知道自己库将按什么默认值跑"。
      */
-    @Operation(summary = "知识库参数默认值", description = "检索/解析参数的当前全局值（新建库模板预填 + 表单占位符展示）")
+    @Operation(summary = "知识库参数默认值", description = "检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
+            + "personal 键返回「本人个人值（未设=全局默认）」，其余返回全局值")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
-        for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, configService.get(k));
+        for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, effectiveDefault(k));
         for (String k : com.wisesoft.ai.service.RagService.AGENT_QUERY_PARAM_KEYS) {
             if (k.endsWith(".baseUrl")) continue;   // 网关地址不外发给普通用户（表单也没有该字段）
-            out.put(k, configService.get(k));
+            out.put(k, effectiveDefault(k));
         }
         return ResultJson.ok(out);
+    }
+
+    /**
+     * 参数对请求者的「生效默认值」：personal 键取本人个人值（未设回落全局）；
+     * personalOnly 键（如重排模型）只有个人层——未设即空，与新库保存后的实际检索行为一致
+     * （预填全局旧值会把个人默认"固化"成库级覆盖，反而覆盖掉用户自己的设置）。
+     */
+    private String effectiveDefault(String key) {
+        if (configSchemaService.isPersonal(key)) {
+            String pv = userConfigService.personalValue(RequestUser.uid(), key);
+            if (pv != null && !pv.isBlank()) return pv;
+        }
+        return configService.get(key);
+    }
+
+    /**
+     * 知识库参数问号文案（**普通用户可读**）：键为 config-schema.json 的 backendKey，
+     * 与系统设置页字段说明同一份定义源（改一处两处同步）。
+     * 说明：普通用户进不了管理端设置页（/config/schema 403），但知识库弹窗的「高级参数」
+     * 需要给小白看人话解释（这是什么 / 什么时候才需要调），故经本端点下发。
+     */
+    @Operation(summary = "知识库参数说明", description = "检索/解析参数的人话解释（弹窗问号 tooltip 数据源；仅文案，不含任何配置值）")
+    @GetMapping("/param-tips")
+    public ResultJson paramTips() {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        keys.addAll(DocumentService.PARSE_PARAM_KEYS);
+        keys.addAll(com.wisesoft.ai.service.RagService.AGENT_QUERY_PARAM_KEYS);
+        keys.remove("rerank.baseUrl");   // 表单没有该字段，无需下发
+        return ResultJson.ok(configSchemaService.tipsByKey(keys));
     }
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；所有人只返回自己创建的（含个人默认库）与显式共享给自己的（数据按 userId 隔离）")

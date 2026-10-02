@@ -84,7 +84,7 @@ public class UserController {
     @Operation(summary = "设置个人偏好", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\",\"memoryEnabled\":true|false}；"
             + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效，视觉模型用于聊天上传图片理解；"
             + "memoryEnabled=用户级长期记忆自动提炼开关（仅关生成，已存记忆仍注入）。"
-            + "重排/向量模型不提供个人默认（重排归知识库检索设置，向量归知识库绑定）")
+            + "重排/记忆向量/图谱兜底/问答对生成等「模型默认」不走本端点，见 /settings（schema personal 字段，模型归登记人）")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
@@ -102,19 +102,22 @@ public class UserController {
         return ResultJson.ok("已保存");
     }
 
-    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好：可个人覆盖的字段定义（config-schema.json 标记 personal）"
-            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。字段键如 chat.temperature / chat.historyRounds / "
-            + "retrieval.relatedCount / chat.userSystemPrompt / chat.deepThinkDefault")
+    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好/模型默认：可个人覆盖的字段定义（config-schema.json 标记 personal）"
+            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。体验类如 chat.temperature / chat.historyRounds / "
+            + "retrieval.relatedCount / chat.userSystemPrompt / chat.deepThinkDefault；模型默认如 rerank.enabled / "
+            + "rerank.model / memory.embeddingRef / graphrag.modelRef / parse.qaModel（模型归登记人，仅个人层可配）")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wisesoft.ai.util.RequestUser.uid()));
     }
 
     @Operation(summary = "保存个人对话偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal）；"
-            + "字段缺省=不修改，空串=清除该项回落系统全局；保存即生效（仅对本人问答生效）")
+            + "字段缺省=不修改，空串=清除该项回落系统全局（模型类字段即清除个人模型）。"
+            + "模型引用须归属本人登记（他人供应商拒用）且类型与字段一致；保存即生效（仅对本人问答/本人资源生效）")
     @PutMapping("/settings")
     public ResultJson saveSettings(@RequestBody Map<String, Object> body) {
-        return ResultJson.ok(userConfigService.save(com.wisesoft.ai.util.RequestUser.uid(), body), "已保存");
+        return ResultJson.ok(userConfigService.save(com.wisesoft.ai.util.RequestUser.uid(),
+                com.wisesoft.ai.util.RequestUser.role(), body), "已保存");
     }
 
     private static String str(Object o) {

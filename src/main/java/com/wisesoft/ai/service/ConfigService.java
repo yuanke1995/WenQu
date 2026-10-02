@@ -28,8 +28,10 @@ import java.util.Set;
  * - 启动时表空则从 yml/env 默认值灌入
  * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
  *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
- *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model 保留为全局默认重排模型
- *   （设置页可配，库级检索设置未单独配置时生效），仅 eval.judgeModel 等系统工具保留全局）
+ *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model / memory.embeddingRef /
+ *   graphrag.modelRef / parse.qaModel 为「个人专属键」（schema personalOnly）：值 = 某用户登记的
+ *   私有模型，只在个人设置维护、按使用身份解析，全局层不参与读取；仅 eval.judgeModel 等
+ *   管理员自用工具保留全局）
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）；embedding / vision / rerank
  *   各组的网关三要素保留为「遗留纯模型名」的回落网关，不再作为运行时默认
@@ -223,8 +225,8 @@ public class ConfigService {
         // 当前向量索引维度（系统记录，非用户可编辑）：按库重嵌入成功后由 putInternal 回写，
         // 供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
         d.put("embedding.dimensions", "");
-        // 用户长期记忆的向量化模型引用（{providerId}/{modelId}；空=语义去重降级精确匹配、语义注入关闭）。
-        // 显式绑定、无兜底：语义去重与语义注入依赖向量空间，模型必须由管理员明示
+        // 用户长期记忆的向量化模型引用（个人专属 personalOnly：按记忆归属用户解析）；
+        // 空=语义去重降级精确匹配、语义注入关闭。隔离原则：值 = 用户登记的私有模型，全局层不参与读取
         d.put("memory.embeddingRef", "");
         // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
         // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
@@ -240,7 +242,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        d.put("rerank.model", "");                         // 重排全局默认模型引用（{providerId}/{modelId}；空=回落 rerank.baseUrl 本地服务）
+        d.put("rerank.model", "");                         // 个人专属（personalOnly）：个人设置默认重排模型引用；空=回落 rerank.baseUrl 本地服务
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         d.put("context.defaultWindowTokens", String.valueOf(properties.getContext().getDefaultWindowTokens()));
         d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
@@ -299,7 +301,7 @@ public class ConfigService {
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
         d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
         d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
-        d.put("parse.qaModel", "");                        // QA 增强：生成问答对的对话模型引用（{providerId}/{modelId}；留空=跳过生成并报配置错误）
+        d.put("parse.qaModel", "");                        // 个人专属（personalOnly）：问答对生成模型引用按库主人个值解析；留空=跳过生成并报配置错误
         d.put("parse.childEnabled", "false");              // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
         d.put("parse.childSize", "400");                   // 父子分块：子块尺寸（字符，超过该长度的块才切子块）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发
@@ -462,7 +464,7 @@ public class ConfigService {
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
-        d.put("graphrag.modelRef", "");                    // P1：GraphRAG 抽取用对话模型引用（必须显式配置才抽取；系统身份不接个人级模型）
+        d.put("graphrag.modelRef", "");                    // 个人专属（personalOnly）：库主个人兜底抽取模型引用；留空且库内未绑定 = 不抽取
         d.put("graphrag.maxTriplesPerChunk", "10");        // P1：单个知识块抽取三元组上限（成本闸）
         d.put("graphrag.batchChunks", "3");                // P1：合并批抽取的块数（3~5 平衡 token 与归属粒度）
         d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）
@@ -582,6 +584,15 @@ public class ConfigService {
         return key != null && defaults().containsKey(key);
     }
 
+    /**
+     * 个人专属键（schema personalOnly：模型引用类，无全局槽位语义）。
+     * 供删除供应商守门等场景区分「可见可改的活跃槽位」与「个人层键」——后者的引用去留
+     * 由各归属用户自己管理，不该以"系统配置槽位"的名义挡住供应商删除（也挡不明白）。
+     */
+    public boolean isPersonalOnly(String key) {
+        return schema.isPersonalOnly(key);
+    }
+
     /** 清除线程局部参数覆盖（评估结束后必须调用） */
     public void clearOverride() {
         OVERRIDE.remove();
@@ -624,6 +635,10 @@ public class ConfigService {
     /**
      * 读取配置（显式覆盖 → 个人覆盖 → 缓存 → 默认值）。
      * 敏感项 RSA 密文在此透明解密（见 {@link #isSensitiveKey}）：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
+     * <p>
+     * <b>个人专属键（schema personalOnly）没有全局层</b>：值引用的是某个用户登记的私有资产
+     * （模型），残留的全局行一旦被无个人覆盖的线程读到，就是"管理员的模型被全平台使用"——
+     * 这里是隔离的最后一道闸：未装载个人覆盖（或未设置）时一律返回空，各消费方按自身口径降级/回落。
      */
     public String get(String key) {
         Map<String, String> ov = OVERRIDE.get();
@@ -633,6 +648,7 @@ public class ConfigService {
             String u = pv.get(key);
             if (u != null && !u.isBlank()) return u;
         }
+        if (schema.isPersonalOnly(key)) return "";
         String v = cache.get(key);
         if (v == null) v = defaults().getOrDefault(key, "");
         return isSensitiveKey(key) ? crypto.decrypt(v) : v;
@@ -743,6 +759,16 @@ public class ConfigService {
         // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
         updates.entrySet().removeIf(kv ->
                 isSensitiveKey(kv.getKey()) && kv.getValue() != null && kv.getValue().startsWith("****"));
+
+        // 个人专属键（模型引用，schema personalOnly）拒绝管理端写入：这类值的归属人是单个用户，
+        // 放进全局槽位就是把"某人的模型"用成全平台默认（隔离原则）。设置页已不下发这些字段，
+        // 这里拦住构造请求；请到「个人设置」配置（模型引用只允许归属于操作者本人）
+        for (String k : updates.keySet()) {
+            if (schema.isPersonalOnly(k)) {
+                throw new IllegalArgumentException("「" + schema.helpOrDefault(k, k)
+                        + "」已调整为个人设置项（模型归属登记人本人），请在「个人设置」中配置");
+            }
+        }
 
         // ---------- schema 驱动校验（类型 / 范围 / 枚举 / 布尔）----------
         // 规则全部来自 classpath:config-schema.json（与下发前端渲染的是同一份定义）。此前按前缀分组

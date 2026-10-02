@@ -39,6 +39,8 @@ public class RetrievalDebugController {
     private final KeywordExtractor keywordExtractor;
     private final KnowledgeMapper knowledgeMapper;
     private final KnowledgeBaseService kbService;
+    private final com.wisesoft.ai.service.ConfigService configService;
+    private final com.wisesoft.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "检索链路调试",
             description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）")
@@ -46,6 +48,17 @@ public class RetrievalDebugController {
     public ResultJson debug(
             @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")
             @RequestBody Map<String, Object> body) {
+        // 个人模型默认（重排等）按测试者身份装载：personalOnly 键全局层不参与读取，不装载的话
+        // 面板里的重排判定与"我自己聊天时实际会走什么"不符（会误报未配置→回落本地服务）
+        configService.putUserOverrides(userConfigService.overrides(com.wisesoft.ai.util.RequestUser.uid()));
+        try {
+            return debugInternal(body);
+        } finally {
+            configService.clearUserOverrides();
+        }
+    }
+
+    private ResultJson debugInternal(Map<String, Object> body) {
         String query = body.get("question") == null ? "" : String.valueOf(body.get("question"));
         if (query.isBlank()) {
             throw new BizException("请输入问题");

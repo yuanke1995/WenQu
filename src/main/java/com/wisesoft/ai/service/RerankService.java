@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 本地部署参考 scripts/win|mac/start_rerank_server.*（sentence-transformers CrossEncoder 服务）。
  *
  * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
- * baseUrl/apiKey，遗留值走全局 rerank.* 配置），设置页保存即生效。
+ * baseUrl/apiKey，遗留值走全局 rerank.* 配置），个人设置/知识库检索设置保存即生效。
  * 未启用/探测失败/调用失败时静默回退为输入顺序（混合检索已按融合分排序）。
  * 探测/失败结果缓存，首次失败记忆禁用（进程内不再重试）；配置变更（网关/模型/超时）自动重建客户端并重置探测。
  *
@@ -294,7 +294,7 @@ public class RerankService {
      */
     public String debugUnavailableReason() {
         if (!enabled()) {
-            return "未启用：设置页「检索设置 → 启用重排」未打开（AI_RERANK_ENABLED）";
+            return "未启用：个人设置（或系统设置的平台默认）「启用重排」未打开，知识库/智能体检索设置也未开启";
         }
         if (!checkSupport()) {
             if (System.currentTimeMillis() - lastFailTs < failCooldownMs()) {

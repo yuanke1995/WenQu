@@ -47,8 +47,10 @@ public class KnowledgeBaseService {
     /** 启动迁移把原全局默认库划转给第一个管理员（谁建归谁）；RoleService 仅依赖 Mapper，无循环依赖 */
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
     private final com.wisesoft.ai.service.RoleService roleService;
-    /** 读全局 graphrag.modelRef（库级抽取模型未绑定时的兜底，保存时校验其对库主可用） */
+    /** 读全局配置（chunk/解析参数等）；GraphRAG 兜底抽取模型已个人化——见 userConfigService */
     private final ConfigService configService;
+    /** 库主个人兜底抽取模型（personalOnly：graphrag.modelRef 按库主 uid 显式解析） */
+    private final UserConfigService userConfigService;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -59,7 +61,8 @@ public class KnowledgeBaseService {
                                 com.wisesoft.ai.service.ModelRegistryService modelRegistryService,
                                 com.wisesoft.ai.mapper.UserMapper userMapper,
                                 com.wisesoft.ai.service.RoleService roleService,
-                                ConfigService configService) {
+                                ConfigService configService,
+                                UserConfigService userConfigService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
@@ -67,6 +70,7 @@ public class KnowledgeBaseService {
         this.userMapper = userMapper;
         this.roleService = roleService;
         this.configService = configService;
+        this.userConfigService = userConfigService;
     }
 
     // ==================== 读写 ====================
@@ -113,7 +117,7 @@ public class KnowledgeBaseService {
         kb.setParseParams(str(body.get("parseParams")));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
-        // GraphRAG 抽取模型（库级，归库主）：空=回落系统设置 graphrag.modelRef
+        // GraphRAG 抽取模型（库级，归库主）：空=回落库主个人设置的兜底抽取模型 graphrag.modelRef
         kb.setGraphModelRef(validateGraphModelRef(str(body.get("graphModelRef"))));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
@@ -121,6 +125,9 @@ public class KnowledgeBaseService {
         // 开关开启时保存即校验抽取模型可用（库级优先、回落全局；对库主不可用一律拦下，
         // 避免"开关开着、解析后抽取永远失败"的静默状态）
         ensureGraphModelUsable(kb.getGraphEnabled(), kb.getGraphModelRef(), uid,
+                com.wisesoft.ai.util.RequestUser.role());
+        // 库级参数里的模型引用归属校验（新建时全部视作"变更"）：防构造请求把重排/视觉引用指到他人供应商
+        validateChangedParamRefs(null, null, kb.getQueryParams(), kb.getParseParams(), uid, uid,
                 com.wisesoft.ai.util.RequestUser.role());
         kb.setCreatedBy(uid);
         kb.setDeleted(0);
@@ -186,7 +193,7 @@ public class KnowledgeBaseService {
             upd.set(KnowledgeBase::getGraphEnabled, on ? 1 : 0);
             resultingGraph = on ? 1 : 0;
         }
-        // GraphRAG 抽取模型（库级绑定，可清除=回落全局）：提交即校验引用有效性/类型/归属
+        // GraphRAG 抽取模型（库级绑定，可清除=回落库主个人兜底）：提交即校验引用有效性/类型/归属
         String resultingGraphRef = kb.getGraphModelRef();
         if (body.containsKey("graphModelRef")) {
             resultingGraphRef = validateGraphModelRef(str(body.get("graphModelRef")));
@@ -198,6 +205,15 @@ public class KnowledgeBaseService {
                 kb.getCreatedBy() == null || kb.getCreatedBy().isBlank()
                         ? com.wisesoft.ai.util.RequestUser.uid() : kb.getCreatedBy(),
                 com.wisesoft.ai.util.RequestUser.role());
+        // 库级参数里的模型引用归属校验（仅校验本次变更的引用；未变更的存量直通）
+        if (body.containsKey("queryParams") || body.containsKey("parseParams")) {
+            String refOwner = kb.getCreatedBy() == null || kb.getCreatedBy().isBlank()
+                    ? com.wisesoft.ai.util.RequestUser.uid() : kb.getCreatedBy();
+            validateChangedParamRefs(kb.getQueryParams(), kb.getParseParams(),
+                    body.containsKey("queryParams") ? str(body.get("queryParams")) : kb.getQueryParams(),
+                    body.containsKey("parseParams") ? str(body.get("parseParams")) : kb.getParseParams(),
+                    refOwner, com.wisesoft.ai.util.RequestUser.uid(), com.wisesoft.ai.util.RequestUser.role());
+        }
         upd.set(KnowledgeBase::getUpdateTime, LocalDateTime.now());
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
         // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本项目已踩过同一坑）
@@ -271,6 +287,41 @@ public class KnowledgeBaseService {
     }
 
     /**
+     * 库级参数（queryParams / parseParams）里模型引用的归属校验：新增/变更的引用必须对
+     * 「库主或当前操作者」可用——防构造请求把重排/视觉引用指到第三方的供应商上（借用他人 Key）。
+     * 两人都属该库的合法配置者（共享管理场景各用各的模型），故任一归属即放行。
+     * 未变更的存量引用放行：历史供应商归属经 2026-09 迁移，用现状值回刷旧库时可能已不满足
+     * 新口径，"改个名字"不应被历史数据卡住（真正防的是"把引用改到别人头上"这个动作）。
+     */
+    private void validateChangedParamRefs(String oldQuery, String oldParse, String newQuery, String newParse,
+                                          String ownerUid, String uid, String role) {
+        checkChangedRef(strJsonAttr(oldQuery, "rerank.model"), strJsonAttr(newQuery, "rerank.model"), ownerUid, uid, role);
+        checkChangedRef(strJsonAttr(oldParse, "visionRef"), strJsonAttr(newParse, "visionRef"), ownerUid, uid, role);
+        checkChangedRef(strJsonAttr(oldParse, "ocrRef"), strJsonAttr(newParse, "ocrRef"), ownerUid, uid, role);
+    }
+
+    private void checkChangedRef(String oldRef, String newRef, String ownerUid, String uid, String role) {
+        if (newRef == null || newRef.isBlank()) return;                          // 清空/未设置：无引用
+        if (newRef.equals(oldRef == null ? "" : oldRef.trim())) return;          // 未变更：存量直通
+        try {
+            modelRegistryService.assertUsable(newRef, ownerUid, "");
+        } catch (com.wisesoft.ai.common.BizException e) {
+            modelRegistryService.assertUsable(newRef, uid, role);                // 操作者自己的模型同样放行
+        }
+    }
+
+    /** 读 JSON 字符串对象的指定属性（解析失败/非对象返回 null——参数 JSON 的合法性由各消费方兜底） */
+    private static String strJsonAttr(String json, String attr) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(json);
+            return o == null ? null : o.getString(attr);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * GraphRAG 抽取模型校验（库级，可空=回落全局）：非空时必须可解析、对库主可用、且为聊天类型。
      * 与 {@link #validateEmbeddingRef} 同口径（谁建库用谁的模型），差别在不强制必填。
      */
@@ -288,17 +339,19 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 开启 GraphRAG 时的抽取模型把关：库级引用优先，空则回落系统设置 graphrag.modelRef。
+     * 开启 GraphRAG 时的抽取模型把关：库级引用优先，空则回落**库主个人设置**的兜底抽取模型
+     * （graphrag.modelRef，personalOnly：按库主 uid 显式解析——抽取异步执行、没有请求线程，
+     * ThreadLocal 个人覆盖拿不到）。
      * 保存时即校验"对库主可用"——抽取是异步任务、没有请求身份，运行时判权只按库主，
      * 非库主可用的模型（他人个人供应商）必然被拒，不能等到抽取时才发现。
      */
     private void ensureGraphModelUsable(int graphEnabled, String kbRef, String uid, String role) {
         if (graphEnabled != 1) return;
         String effective = kbRef == null || kbRef.isBlank()
-                ? String.valueOf(configService.get("graphrag.modelRef")).trim() : kbRef.trim();
+                ? userConfigService.personalValue(uid, "graphrag.modelRef").trim() : kbRef.trim();
         if (effective.isEmpty()) {
             throw new com.wisesoft.ai.common.BizException(
-                    "开启 GraphRAG 需先选择抽取模型（本库未绑定，系统设置也未配置 graphrag.modelRef）");
+                    "开启 GraphRAG 需先选择抽取模型（本库未绑定，个人设置也未配置兜底抽取模型）");
         }
         try {
             modelRegistryService.assertUsable(effective, uid, role);

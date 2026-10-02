@@ -54,15 +54,16 @@
         </div>
       </div>
       <a-input v-model:value="uploadDesc" placeholder="文档描述（可选）" style="margin-top:10px" allow-clear />
-      <div style="margin-top:8px">
-        <ModelSelect v-model="uploadVisionRef" type="vision,ocr" width="100%" allow-clear
-                     inherit-label="跟随知识库配置" placeholder="图片理解模型（可选）" />
-        <div style="margin-top:4px;color:var(--app-text3);font-size:12px">
-          {{ uploadVisionHint }}
-        </div>
+      <!-- 图片理解模型：高级项默认折叠成一行摘要，点「修改」才展开选择器（小白无感，直接上传即可） -->
+      <div class="uv-row">
+        <span class="uv-label">图片理解模型</span>
+        <span v-if="!visionEditing" class="uv-summary" :title="visionSummary">{{ visionSummary }}</span>
+        <button class="app-link-btn uv-toggle" @click="visionEditing = !visionEditing">{{ visionEditing ? '收起' : '修改' }}</button>
       </div>
-      <div style="margin-top:8px;color:var(--app-text3);font-size:12px">
-        提交后进入解析队列按并发逐个执行；也可以直接把文件拖到列表页上传（不带描述）
+      <div v-if="visionEditing" class="uv-edit">
+        <ModelSelect v-model="uploadVisionRef" type="vision,ocr" width="100%" allow-clear
+                     :inherit-label="visionInheritLabel" :placeholder="visionInheritLabel" />
+        <div class="uv-hint">{{ visionHint }}</div>
       </div>
     </a-modal>
 
@@ -396,7 +397,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
-         getDocumentQueueStats } from '../api'
+         getDocumentQueueStats, listAvailableModels } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -648,25 +649,53 @@ const uploadVisible = ref(false)
 const uploadDesc = ref('')
 /**
  * 文档级视觉模型覆盖（可选）：对该文档所有图片理解生效；空=跟随知识库双槽位配置。
- * 弹窗打开时默认选上当前库 parse_params.visionRef（所见即所用）；提交时与库配置相同
- * 视为"跟随"不落覆盖（库级是 visionRef+ocrRef 双槽位，照值提交会把 OCR 槽一并覆盖，
- * 且库配置后续调整不再对本文档生效）——只有改选了不同模型才是真正的文档级覆盖。
+ * 界面默认折叠成一行摘要（「跟随知识库配置」，小白无感）；点「修改」展开选择器后，
+ * 改选出与库 visionRef 不同的模型才是真正的文档级覆盖——库级是 visionRef+ocrRef
+ * 双槽位，照值提交会把 OCR 槽一并覆盖，且库配置后续调整不再对本文档生效。
  */
 const uploadVisionRef = ref('')
+/** 选择器是否展开（高级项默认收起，主流程只剩"拖文件 → 开始上传"） */
+const visionEditing = ref(false)
 /** 当前库 parse_params.visionRef（库级图片描述模型；parseParams 为 JSON 字符串，未配/解析失败返回 ''） */
 const currentKbVisionRef = computed(() => {
   const kb = currentKb.value
   if (!kb || !kb.parseParams) return ''
   try { return JSON.parse(kb.parseParams).visionRef || '' } catch { return '' }
 })
-/** 提示文案随库配置切换：已配=说明默认选上语义；未配=沿用"留空跟随" */
-const uploadVisionHint = computed(() => currentKbVisionRef.value
-  ? '已默认选上知识库配置的图片理解模型（保持不变=跟随知识库）；改选其他模型则本文档所有图片理解（插图描述、扫描页 OCR）都用它，重新解析沿用'
-  : '留空跟随知识库配置；选定后本文档所有图片理解（插图描述、扫描页 OCR）都用此模型，重新解析沿用')
+/** 可用模型 ref → displayName（摘要文案解析用；打开弹窗时懒加载，拉不到只影响展示不影响上传） */
+const visionModelNames = ref({})
+async function loadVisionModelNames () {
+  if (Object.keys(visionModelNames.value).length) return
+  const map = {}
+  try {
+    const groups = await listAvailableModels()
+    for (const g of groups || []) for (const m of (g.models || [])) if (m.ref) map[m.ref] = m.displayName || ''
+  } catch (e) { /* 静默：摘要里退化为不显示/截取模型 id */ }
+  visionModelNames.value = map
+}
+/** 引用 → 展示名（清单里没有时退化为 ref 的模型 id 部分，与 ModelSelect 的兜底一致） */
+const visionRefName = r => visionModelNames.value[r] || (r.includes('/') ? r.slice(r.indexOf('/') + 1) : r)
+/** 折叠摘要：本文档覆盖 > 跟随库（带模型名）> 未配置 */
+const visionSummary = computed(() => {
+  const chosen = (uploadVisionRef.value || '').trim()
+  if (chosen && chosen !== currentKbVisionRef.value) return '本文档指定：' + visionRefName(chosen)
+  const kbRef = currentKbVisionRef.value
+  if (!kbRef) return '未配置'
+  const name = visionModelNames.value[kbRef]
+  return '跟随知识库配置' + (name ? `（${name}）` : '')
+})
+/** 空值选项文案：库已配=跟随；未配=不处理图片（与后端「空=跳过图片描述」语义一致） */
+const visionInheritLabel = computed(() => currentKbVisionRef.value ? '跟随知识库配置' : '不处理图片')
+/** 展开后的单行提示：已配库一笔带过；未配库说明何时需要选模型 */
+const visionHint = computed(() => currentKbVisionRef.value
+  ? '通常无需修改；改选后本文档所有图片理解（插图描述、扫描页文字识别）都用该模型'
+  : '知识库暂未配置图片理解模型；如需让扫描件、图片内容可被检索，可在此指定模型')
 const pendingFiles = ref([])
-/** 打开上传弹窗：库已配图片理解模型时默认选上，用户可改选或清空 */
+/** 打开上传弹窗：视觉模型恢复折叠且不预选（提交非空才落文档级覆盖），摘要所需模型名懒加载 */
 function openUpload () {
-  uploadVisionRef.value = currentKbVisionRef.value
+  uploadVisionRef.value = ''
+  visionEditing.value = false
+  loadVisionModelNames()
   uploadVisible.value = true
 }
 /** 弹窗内选择/拖入文件：只收集不提交（确定时统一提交），校验不过直接拦下 */
@@ -1302,6 +1331,13 @@ const fmtTime = t => {
 .upf-ic { color: var(--app-text3); flex: none; }
 .upf-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--app-text); }
 .upf-size { flex: none; color: var(--app-text3); font-size: 11px; }
+/* 上传弹窗：图片理解模型（默认一行摘要，点「修改」展开选择器） */
+.uv-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.uv-label { flex: none; font-size: 13px; color: var(--app-text2); }
+.uv-summary { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uv-toggle { flex: none; margin-left: auto; }
+.uv-edit { margin-top: 6px; }
+.uv-hint { margin-top: 4px; color: var(--app-text3); font-size: 12px; }
 .head-stat { font-size: 12px; color: var(--app-text3); }
 .batch-bar {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px;

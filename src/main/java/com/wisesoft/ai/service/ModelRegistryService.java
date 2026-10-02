@@ -71,6 +71,8 @@ public class ModelRegistryService {
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
     private final com.wisesoft.ai.mapper.ConfigMapper configMapper;
     private final com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper;
+    /** 个人设置模型引用（c_ai_user_config）——删除供应商守门用 */
+    private final com.wisesoft.ai.mapper.UserConfigMapper userConfigMapper;
     private final ConfigService configService;
     private final ConfigCryptoService crypto;
     private final StringRedisTemplate redisTemplate;
@@ -86,6 +88,7 @@ public class ModelRegistryService {
                                 com.wisesoft.ai.mapper.UserMapper userMapper,
                                 com.wisesoft.ai.mapper.ConfigMapper configMapper,
                                 com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper,
+                                com.wisesoft.ai.mapper.UserConfigMapper userConfigMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
                                 StringRedisTemplate redisTemplate, RedisProperties redisProperties,
                                 com.wisesoft.ai.service.RoleService roleService) {
@@ -95,6 +98,7 @@ public class ModelRegistryService {
         this.userMapper = userMapper;
         this.configMapper = configMapper;
         this.kbMapper = kbMapper;
+        this.userConfigMapper = userConfigMapper;
         this.configService = configService;
         this.crypto = crypto;
         this.redisTemplate = redisTemplate;
@@ -260,7 +264,8 @@ public class ModelRegistryService {
     }
 
     /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
-     *  模型值可被知识库/智能体的检索参数覆盖（线程局部 rerank.model 覆盖经 ConfigService.get 生效）。 */
+     *  值链：知识库/智能体检索参数（线程局部覆盖）＞ 个人设置默认（personalOnly，问答线程装载个人值）
+     *  ＞ 空（回落本地 rerank.baseUrl 服务）——全局层已退役，模型只认归属人。 */
     public ModelRoute rerankRoute() {
         String model = nz(configService.get("rerank.model"));
         ModelRoute r = resolveReference(model);
@@ -611,8 +616,9 @@ public class ModelRegistryService {
     }
 
     /**
-     * 删除供应商（连同其模型登记）。被引用（智能体模型 / 用户默认模型 / 知识库向量 / 系统配置活跃槽位）时拒绝；
-     * 退役配置键（不在 defaults()，设置页不可见）的遗留引用只告警不阻挡。
+     * 删除供应商（连同其模型登记）。被引用（智能体模型 / 用户默认模型 / 知识库向量 / 系统配置活跃槽位 /
+     * 个人设置模型引用）时拒绝；退役与个人专属（personalOnly）配置键的遗留行只告警不阻挡——
+     * 前者界面无处可改，后者的引用归各用户个人设置管理，挡在这里只会形成删不掉又说不清的僵局。
      */
     public void deleteProvider(String id) {
         Provider p = providerMapper.selectById(id);
@@ -624,6 +630,12 @@ public class ModelRegistryService {
                 .or()
                 .likeRight(com.wisesoft.ai.model.User::getDefaultVisionModel, prefix));
         if (userRefs != null && userRefs > 0) refs.add("个人默认模型 ×" + userRefs);
+        // 个人设置（c_ai_user_config）里的模型引用：重排/记忆向量/图谱兜底/问答对生成等 personalOnly 键，
+        // 以及个人覆盖的模型类字段——归属人自己在个人设置里即可改掉，属"可处理"引用，必须挡
+        Long personalRefs = userConfigMapper.selectCount(
+                new LambdaQueryWrapper<com.wisesoft.ai.model.UserConfig>()
+                        .likeRight(com.wisesoft.ai.model.UserConfig::getConfigValue, prefix));
+        if (personalRefs != null && personalRefs > 0) refs.add("个人设置模型引用 ×" + personalRefs);
         Long kbRefs = kbMapper.selectCount(new LambdaQueryWrapper<KnowledgeBase>()
                 .likeRight(KnowledgeBase::getEmbeddingRef, prefix));
         if (kbRefs != null && kbRefs > 0) refs.add("知识库绑定向量模型 ×" + kbRefs);
@@ -632,12 +644,13 @@ public class ModelRegistryService {
                         .likeRight(com.wisesoft.ai.model.Config::getConfigValue, prefix));
         List<String> slotKeys = new ArrayList<>();
         for (com.wisesoft.ai.model.Config c : cfgRefs) {
-            // 只有活跃键（defaults() 定义、设置页可见可改）才阻挡删除；退役键的遗留行对用户
-            // 不可见也不可改，挡删除是死路——只告警，遗留读取方（记忆向量化等）随删除一并失效
-            if (configService.isLiveKey(c.getConfigKey())) {
+            // 只有活跃键（defaults() 定义、设置页可见可改）且非个人专属键才阻挡删除；退役键/个人专属键
+            // 的遗留行对用户不可见也不可改（personalOnly 已由个人层接管），挡删除是死路——只告警
+            if (configService.isLiveKey(c.getConfigKey()) && !configService.isPersonalOnly(c.getConfigKey())) {
                 slotKeys.add(c.getConfigKey());
             } else {
-                log.warn("[Provider] 遗留配置键 {} 引用了供应商 {}，删除后该配置随之失效", c.getConfigKey(), p.getName());
+                log.warn("[Provider] 遗留/个人专属配置键 {} 引用了供应商 {}，删除后该引用随之失效",
+                        c.getConfigKey(), p.getName());
             }
         }
         if (!slotKeys.isEmpty()) {
@@ -824,9 +837,10 @@ public class ModelRegistryService {
      * 存量手填网关配置（embedding / rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记。
      * 幂等：值已是引用或网关信息为空则跳过；同网关（归一化 baseUrl + Key 相同）复用同一供应商。
      * 直接落库，不走 update() 联动（绝不触发全量重嵌入）。
-     * <p>迁移产物去向：rerank.model 为活跃键，改写为引用后由重排路由消费；embedding.model 已退役
-     * （向量模型归知识库 embedding_ref），不再回写配置值——只登记供应商档案与模型，供知识库绑定
-     * 与 {@link #repairKbEmbeddingRefs()} 改写裸名引用。chat / vision 两组无遗留消费方，不迁移。
+     * <p>迁移产物去向：rerank.model 已改为个人专属键（personalOnly，个人设置按归属人解析）——
+     * 全局遗留值不再有消费方，不迁移回写；embedding.model 已退役（向量模型归知识库 embedding_ref），
+     * 不迁移——两者只登记供应商档案与模型，供知识库绑定与 {@link #repairKbEmbeddingRefs()} 改写裸名引用。
+     * chat / vision 两组无遗留消费方，不迁移。
      */
     private void migrateLegacyConfigs() {
         Map<String, String[]> groups = Map.of(
@@ -844,6 +858,9 @@ public class ModelRegistryService {
             try {
                 String group = g.getKey();
                 if (!Boolean.TRUE.equals(enabledByGroup.get(group))) continue;
+                // 个人专属键（rerank.model）不再迁移：全局层不参与读取，回写只会制造
+                // "界面无处可见"的孤儿行（删供应商时还会被守门日志念到）
+                if (configService.isPersonalOnly(group + ".model")) continue;
                 String model = configService.get(group + ".model");
                 if (model == null || model.isBlank() || resolveReference(model) != null) continue;
                 String baseUrl = nz(configService.get(g.getValue()[0]));

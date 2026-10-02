@@ -637,6 +637,22 @@ public class DocumentService {
     }
 
     /**
+     * 文档所属知识库的创建者 uid（问答对生成模型 parse.qaModel 为个人设置项，按库主身份解析；
+     * 解析是异步链路，线程里没有请求身份/个人覆盖，必须显式查库主）。查不到返回 ""（按未配置处理）。
+     */
+    private String kbOwnerOfDoc(String docId) {
+        try {
+            AiDocument doc = documentMapper.selectById(docId);
+            if (doc == null || doc.getKbId() == null || doc.getKbId().isBlank()) return "";
+            com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(doc.getKbId());
+            return kb == null || kb.getCreatedBy() == null ? "" : kb.getCreatedBy();
+        } catch (Exception e) {
+            log.warn("[{}] 库主解析失败（问答对生成模型按未配置处理）: {}", docId, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
      * 单知识块向量化并入库（供手动新增知识块复用；embedding 失败降级返回 false，不阻断入库）
      * 成功后回写 vector_id = knowledgeId（与文档解析链路一致）
      */
@@ -1101,7 +1117,8 @@ public class DocumentService {
                 updateProgress(docId, 95, "生成问答对");
                 try {
                     qaCount = qaIndexService.generateForBlocks(docId, newBlocks, storeOf(docId),
-                            (pct, desc) -> updateProgress(docId, 95 + Math.min(4, pct / 25), desc));
+                            (pct, desc) -> updateProgress(docId, 95 + Math.min(4, pct / 25), desc),
+                            kbOwnerOfDoc(docId));
                 } catch (Exception e) {
                     qaFailed = true;
                     log.warn("[FAIL-LOUD] [{}] QA 生成失败（块已全量可召回，不影响解析结果）: {}", docId, e.getMessage());
@@ -1538,7 +1555,7 @@ public class DocumentService {
             deleteExtrasByKnowledge(List.of(id), k.getDocId());
             VectorStore store = storeOf(k.getDocId());
             if (configService.getBoolean("parse.qaEnabled")) {
-                qaIndexService.generateForBlocks(k.getDocId(), List.of(k), store, null);
+                qaIndexService.generateForBlocks(k.getDocId(), List.of(k), store, null, kbOwnerOfDoc(k.getDocId()));
             }
             if (configService.getBoolean("parse.childEnabled")) {
                 childChunkService.generateForBlocks(k.getDocId(), List.of(k), store, null);
@@ -1759,7 +1776,7 @@ public class DocumentService {
             deleteExtrasByDoc(docId);
             VectorStore store = storeOf(docId);
             if (configService.getBoolean("parse.qaEnabled") && !rebuilt.isEmpty()) {
-                qaIndexService.generateForBlocks(docId, rebuilt, store, null);
+                qaIndexService.generateForBlocks(docId, rebuilt, store, null, kbOwnerOfDoc(docId));
             }
             if (configService.getBoolean("parse.childEnabled") && !rebuilt.isEmpty()) {
                 childChunkService.generateForBlocks(docId, rebuilt, store, null);

@@ -26,7 +26,7 @@
           <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
         </div>
 
-        <!-- 个人默认模型面板（聊天面板同时承载「对话偏好」个人覆盖项，保存按钮统一提交） -->
+        <!-- 个人默认模型面板（聊天面板同时承载「回答偏好」与「模型默认」个人覆盖项，保存按钮统一提交） -->
         <div v-else-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -38,7 +38,7 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
-          <!-- 对话偏好（仅聊天面板）：个人覆盖系统设置的体验类参数，仅对本人问答生效 -->
+          <!-- 回答偏好与模型默认（仅聊天面板）：个人覆盖系统设置的体验参数与模型引用，仅对本人生效 -->
           <template v-if="current === 'chat'">
             <a-divider style="margin:16px 0 12px" />
             <p class="pf-hint">
@@ -46,14 +46,29 @@
               只有被修改过的项才记为你的个人设置，其余继续跟随全局。
             </p>
             <a-spin :spinning="prefLoading">
-              <a-form v-if="prefFields.length" layout="vertical" style="max-width:560px">
-                <SchemaField v-for="f in prefFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
+              <a-form v-if="answerFields.length" layout="vertical" style="max-width:560px">
+                <SchemaField v-for="f in answerFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
               </a-form>
-              <p v-else-if="!prefLoading" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
+              <p v-else-if="!prefLoading && !modelFields.length" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
             </a-spin>
+
+            <!-- 模型默认（重排/记忆向量/图谱兜底/问答对生成）：模型都归登记人，无全局槽位——
+                 只能选自己登记的模型，仅对本人问答与本人资源生效 -->
+            <template v-if="modelFields.length">
+              <a-divider style="margin:16px 0 12px" />
+              <p class="pf-hint">
+                模型默认：重排 / 记忆向量 / 图谱兜底 / 问答对生成等能力所用的模型。模型都归登记人，
+                这里只能选你<strong>自己</strong>登记的模型，且只对你本人的问答与资源生效；未设置时
+                相关能力各自降级或回落（如重排回落到本地服务）。
+              </p>
+              <a-form layout="vertical" style="max-width:560px">
+                <SchemaField v-for="f in modelFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
+              </a-form>
+            </template>
+
             <p v-if="prefPersonalKeys.length" class="pf-sub-hint">
               当前已设个人值：{{ prefPersonalKeys.join('、') }}
-              <button class="app-link-btn" :disabled="saving" @click="clearPrefs">全部恢复跟随系统</button>
+              <button class="app-link-btn" :disabled="saving" @click="clearPrefs">全部清除个人设置</button>
             </p>
           </template>
 
@@ -63,7 +78,8 @@
           </div>
         </div>
 
-        <!-- 向量/重排不提供个人默认：向量空间与知识库索引一一对应、重排归知识库检索设置，均无个人级配置 -->
+        <!-- 向量模型仍无个人默认：向量空间与知识库索引一一对应、归知识库绑定；
+             重排/记忆向量/图谱兜底/问答对生成已改为个人设置项（见聊天面板「模型默认」） -->
 
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
@@ -213,7 +229,7 @@ const save = async () => {
   } finally { saving.value = false }
 }
 
-// ---- 对话偏好：个人覆盖系统全局（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
+// ---- 回答偏好/模型默认：个人覆盖（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
 // 表单预填「生效值」（个人值 > 全局值 > schema 默认值）：用户看到的就是当前生效值；
 // 保存时只提交与预填不同的项（未改动的继续跟随全局，避免把全局值"复制"成个人值）。
 const prefLoading = ref(false)
@@ -222,6 +238,14 @@ const prefTips = ref({})
 const prefForm = ref({})
 const prefInitial = ref({})
 const prefPersonalKeys = ref([])
+
+// 分组渲染：体验类字段归「回答偏好」，模型引用（+重排开关）归「模型默认」
+// 重排开关与模型同组：同一意图（开重排 + 选模型），拆两处会出现"配了模型找不到开关"
+const MODEL_GROUP_EXTRA = new Set(['retrieval.rerank.enabled'])
+const answerFields = computed(() => prefFields.value.filter(
+  f => f.type !== 'model' && !MODEL_GROUP_EXTRA.has(f.path)))
+const modelFields = computed(() => prefFields.value.filter(
+  f => f.type === 'model' || MODEL_GROUP_EXTRA.has(f.path)))
 
 const setByPath = (obj, path, v) => {
   const seg = path.split('.')
@@ -291,7 +315,7 @@ const changedPrefPayload = () => {
   }
   return payload
 }
-/** 全部恢复跟随系统：清空本人所有个人覆盖（后端按空串=删行） */
+/** 全部清除个人设置：清空本人所有个人覆盖（后端按空串=删行；清空后回落全局默认/本地服务） */
 const clearPrefs = async () => {
   const payload = {}
   for (const f of prefFields.value) payload[f.path] = ''
@@ -299,7 +323,7 @@ const clearPrefs = async () => {
   try {
     const r = await saveUserSettings(payload)
     if (r && r.success === false) { message.error(r.msg || '操作失败'); return }
-    message.success('已全部恢复跟随系统')
+    message.success('已全部清除个人设置')
     await loadPrefs()
   } catch (e) { message.error(e.message || '操作失败') }
   finally { saving.value = false }

@@ -113,6 +113,7 @@ public class WorkflowService {
     private final WorkflowValidator validator;
     private final WorkflowEngine engine;
     private final ConfigService configService;
+    private final UserConfigService userConfigService;
     private final ResourceVisibilityService visibility;
     private final WorkflowRunStreamService stream;
     private final NotificationService notificationService;
@@ -931,7 +932,7 @@ public class WorkflowService {
     private WorkflowRunCtx newCtx(String runId, Principal p, Map<String, Object> inputs,
                                   Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
         return new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
-                configService.currentOverrides(), inputs,
+                configService.currentOverrides(), userConfigService.overrides(p.uid()), inputs,
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50),
                 tokenSink, imageSink);
@@ -1063,7 +1064,7 @@ public class WorkflowService {
         String pendingNode = snapshot.get("pendingNode") == null ? "" : String.valueOf(snapshot.get("pendingNode"));
         WorkflowDsl dsl = parseDsl(run.getDslSnapshot());
         WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
-                configService.currentOverrides(),
+                configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50));
@@ -1138,7 +1139,7 @@ public class WorkflowService {
         // 执行不可变：续跑沿用 run 锁定的 DSL 快照（不是当前草稿——改画布不影响这次运行的延续语义）
         WorkflowDsl dsl = parseDsl(run.getDslSnapshot());
         WorkflowRunCtx ctx = new WorkflowRunCtx(runId, RequestUser.uid(), RequestUser.departmentId(), RequestUser.role(),
-                configService.currentOverrides(),
+                configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", 50));

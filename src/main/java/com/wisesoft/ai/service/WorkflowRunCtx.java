@@ -26,6 +26,12 @@ public final class WorkflowRunCtx {
     final String runId;
     /** 触发线程的参数覆盖快照（节点线程内重放；见 ConfigService.currentOverrides 的跨线程口径） */
     final Map<String, String> baseOverrides;
+    /**
+     * 触发者的个人配置覆盖快照（个人设置 → 对话偏好/模型默认；节点线程内重放）。
+     * 模型引用只认归属人（personalOnly 键全局层不参与读取）：工作流检索/重排等节点若不带
+     * 触发者的个人值，就会退化为"未配置"（拿不到本人登记的模型），故与 baseOverrides 同口径显式携带。
+     */
+    final Map<String, String> baseUserOverrides;
     /** 开始节点入参（变量引用 {{start.key}} 的取值来源） */
     final Map<String, Object> inputs;
     /** 各 llm 节点预解析的生效模型引用（nodeId → 引用；run 前统一 fail-fast，不让模型问题拖到节点执行时才炸） */
@@ -90,17 +96,15 @@ public final class WorkflowRunCtx {
     /** 开始时刻（run 总耗时用） */
     final long t0 = System.currentTimeMillis();
 
-    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role,
+                   Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps) {
-        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, null, null);
+        this(runId, uid, departmentId, role, baseOverrides, baseUserOverrides, inputs, defaultTemperature, maxSteps,
+                null, null);
     }
 
-    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
-                   Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink) {
-        this(runId, uid, departmentId, role, baseOverrides, inputs, defaultTemperature, maxSteps, tokenSink, null);
-    }
-
-    WorkflowRunCtx(String runId, String uid, String departmentId, String role, Map<String, String> baseOverrides,
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role,
+                   Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink,
                    Consumer<List<String>> imageSink) {
         this.runId = runId;
@@ -108,6 +112,7 @@ public final class WorkflowRunCtx {
         this.departmentId = departmentId;
         this.role = role;
         this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
+        this.baseUserOverrides = baseUserOverrides == null ? Map.of() : baseUserOverrides;
         this.inputs = inputs == null ? Map.of() : inputs;
         this.defaultTemperature = defaultTemperature;
         this.maxSteps = maxSteps;

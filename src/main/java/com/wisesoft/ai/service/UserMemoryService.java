@@ -51,6 +51,8 @@ public class UserMemoryService {
     private final UserMemoryMapper memoryMapper;
     private final UserMapper userMapper;
     private final ConfigService configService;
+    /** 记忆向量模型归属人个人值解析（personalOnly：按 uid 显式查询，线程无关） */
+    private final UserConfigService userConfigService;
     /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，模型名由调用方 per-request 显式传入） */
     private final ChatModel chatModel;
     /** 向量模型（单文本 embed；语义去重与注入检索用） */
@@ -98,15 +100,20 @@ public class UserMemoryService {
         return configService.getBoolean("memory.useSemanticInject");
     }
 
+    /** 归属人个人设置的记忆向量模型引用（personalOnly：模型归登记人，全局层不参与读取） */
+    private String embeddingRef(String uid) {
+        return userConfigService.personalValue(uid, "memory.embeddingRef");
+    }
+
     /**
      * 单文本向量化（best-effort：失败返回 null，不阻断提取/注入主链路）。
-     * 模型取显式绑定 {@code memory.embeddingRef}（设置页「用户长期记忆 → 向量化模型」）；
-     * <b>无兜底</b>：未绑定或引用无效时返回 null——语义去重降级为精确匹配、语义注入关闭，
+     * 模型取归属人个人设置的 {@code memory.embeddingRef}（模型都归登记人，只有本人的 Key 可用）；
+     * <b>无兜底</b>：未设置或引用无效时返回 null——语义去重降级为精确匹配、语义注入关闭，
      * 记忆的提取/落库/注入主链路不受影响。
+     * 引用由各调用方按 uid 解析一次后传入（提取/去重一批内不变，避免逐条查个人配置）。
      */
-    private float[] embed(String text) {
+    private float[] embed(String ref, String text) {
         if (text == null || text.isBlank()) return null;
-        String ref = configService.get("memory.embeddingRef");
         if (ref == null || ref.isBlank()) return null;
         try {
             return embeddingModel.forRef(ref.trim()).embed(text);
@@ -177,7 +184,7 @@ public class UserMemoryService {
         boolean semantic = useSemanticInject() && recentText != null && !recentText.isBlank();
         if (semantic) {
             try {
-                float[] q = embed(recentText);
+                float[] q = embed(embeddingRef(uid), recentText);
                 if (q != null) list.sort((a, b) -> Double.compare(sim(q, b), sim(q, a)));
                 else semantic = false;
             } catch (Exception e) { semantic = false; }
@@ -276,6 +283,8 @@ public class UserMemoryService {
         // 语义去重：加载该用户全部记忆，lazy 补向量后与本轮提取项比对（存量通常几十~几百条，Java 端余弦足够）
         List<UserMemory> existing = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
         double threshold = dedupThreshold();
+        // 记忆向量模型按本项目唯一归属人解析一次（异步提取线程没有问答流水线的个人覆盖装载）
+        String ref = embeddingRef(uid);
         int saved = 0;
         for (int i = 0; i < arr.size() && saved < 3; i++) {
             JSONObject o = arr.getJSONObject(i);
@@ -292,13 +301,13 @@ public class UserMemoryService {
             for (UserMemory m : existing) { if (content.equals(m.getContent())) { exactDup = true; break; } }
             if (exactDup) continue;
             // 语义去重：向量化后与存量余弦比对，超阈值视为重复
-            float[] vec = embed(content);
+            float[] vec = embed(ref, content);
             if (vec != null) {
                 boolean semanticDup = false;
                 for (UserMemory m : existing) {
                     float[] mv = parseEmbedding(m.getEmbedding());
                     if (mv == null) { // 存量无向量：lazy 补（best-effort，不阻断去重）
-                        mv = embed(m.getContent());
+                        mv = embed(ref, m.getContent());
                         if (mv != null) { m.setEmbedding(serializeEmbedding(mv)); memoryMapper.updateById(m); }
                     }
                     if (mv != null && cosine(vec, mv) >= threshold) { semanticDup = true; break; }
@@ -339,12 +348,13 @@ public class UserMemoryService {
         long existingCnt = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
         if (existingCnt >= maxPerUser()) throw new BizException("记忆已达上限 " + maxPerUser() + " 条，请先清理再添加");
         // 语义去重：与存量比对，超阈值拒绝重复添加（明确告知用户，而非静默吞）
-        float[] vec = embed(c);
+        String ref = embeddingRef(uid);
+        float[] vec = embed(ref, c);
         if (vec != null) {
             List<UserMemory> all = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
             for (UserMemory m : all) {
                 float[] mv = parseEmbedding(m.getEmbedding());
-                if (mv == null) { mv = embed(m.getContent()); if (mv != null) { m.setEmbedding(serializeEmbedding(mv)); memoryMapper.updateById(m); } }
+                if (mv == null) { mv = embed(ref, m.getContent()); if (mv != null) { m.setEmbedding(serializeEmbedding(mv)); memoryMapper.updateById(m); } }
                 if (mv != null && cosine(vec, mv) >= dedupThreshold()) {
                     throw new BizException("已存在高度相似的记忆（相似度过高，未重复添加）");
                 }

@@ -1360,11 +1360,17 @@ public class WorkflowEngine {
         Map<String, String> prev = configService.currentOverrides();
         configService.clearOverride();
         configService.putOverrides(ctx.baseOverrides);
+        // 个人覆盖同口径重放（模型引用只认归属人：不带就会读到"未配置"，重排/检索按个人默认解析不了）
+        Map<String, String> prevUv = configService.currentUserOverrides();
+        configService.clearUserOverrides();
+        configService.putUserOverrides(ctx.baseUserOverrides);
         try {
             return body.get();
         } finally {
             configService.clearOverride();
             configService.putOverrides(prev);
+            configService.clearUserOverrides();
+            configService.putUserOverrides(prevUv);
             if (foreignIdentity) com.wisesoft.ai.util.RequestUser.clear();
         }
     }

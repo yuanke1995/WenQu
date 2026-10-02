@@ -51,8 +51,9 @@ import java.util.stream.Collectors;
  * </ul>
  * <p>
  * 模型口径（2026-10 库级化）：抽取模型<b>归知识库</b>——知识库编辑里绑定（<code>graph_model_ref</code>，
- * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的存量库回落系统设置
- * <code>graphrag.modelRef</code>（判权同样按库主，非库主可用的模型会被拒）。两者皆空 = 不抽取并告警。
+ * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的存量库回落库主在个人设置里的
+ * 兜底抽取模型 <code>graphrag.modelRef</code>（个人专属键，按库主 uid 显式解析，判权同样按库主）。
+ * 两者皆空 = 不抽取并告警。
  * 不接「个人默认聊天模型」的隐式回落：抽取烧 token，模型必须显式选择。
  *
  * @author yuanke
@@ -69,12 +70,15 @@ public class GraphRagService {
     private final AiDocumentMapper docMapper;
     private final ModelRegistryService modelRegistryService;
     private final ConfigService configService;
+    /** 兜底抽取模型按库主个人值解析（personalOnly：异步抽取线程按 uid 显式查询） */
+    private final UserConfigService userConfigService;
     private final ChatClient chatClient;
 
     public GraphRagService(GraphEntityMapper entityMapper, GraphTripleMapper tripleMapper,
                            GraphExtractMapper extractMapper, KnowledgeMapper knowledgeMapper,
                            KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
                            ModelRegistryService modelRegistryService, ConfigService configService,
+                           UserConfigService userConfigService,
                            ChatClient chatClient) {
         this.entityMapper = entityMapper;
         this.tripleMapper = tripleMapper;
@@ -84,6 +88,7 @@ public class GraphRagService {
         this.docMapper = docMapper;
         this.modelRegistryService = modelRegistryService;
         this.configService = configService;
+        this.userConfigService = userConfigService;
         this.chatClient = chatClient;
     }
 
@@ -260,18 +265,18 @@ public class GraphRagService {
      * @return 本次新抽出的三元组条数
      */
     int extractDoc(String docId, String kbId, String uid, String role) {
-        // 抽取模型：库级绑定优先（知识库编辑里选择，归库主），空则回落系统设置 graphrag.modelRef。
-        // 判权主体一律按**库主**：抽取跑在异步线程、没有请求身份，谁建库烧谁的模型——
-        // 这也是先前"uid=null 系统身份"口径下任意引用都会被判权拒绝（抽取静默失败）的修复。
+        // 抽取模型：库级绑定优先（知识库编辑里选择，归库主），空则回落**库主的个人兜底**
+        // graphrag.modelRef（personalOnly 个人设置项：模型归登记人，全局层不参与读取——异步线程
+        // 显式按 uid 查询）。判权主体一律按**库主**：抽取跑在异步线程、没有请求身份，谁建库烧谁的模型。
         KnowledgeBase kb = kbMapper.selectById(kbId);
         String kbRef = kb == null || kb.getGraphModelRef() == null ? "" : kb.getGraphModelRef().trim();
         String principalUid = kb != null && kb.getCreatedBy() != null && !kb.getCreatedBy().isBlank()
                 ? kb.getCreatedBy() : uid;
         String modelRef = kbRef.isEmpty()
-                ? String.valueOf(configService.get("graphrag.modelRef")).trim() : kbRef;
+                ? userConfigService.personalValue(principalUid, "graphrag.modelRef").trim() : kbRef;
         if (modelRef.isEmpty()) {
             throw new BizException("未配置 GraphRAG 抽取模型：请在知识库编辑里选择抽取模型"
-                    + "（或由管理员配置系统设置 → 定时维护 → GraphRAG 的兜底模型），抽取跳过");
+                    + "（或由库主在「个人设置 → 模型默认」配置兜底抽取模型），抽取跳过");
         }
         modelRegistryService.assertUsable(modelRef, principalUid, role);
         List<Knowledge> chunks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()

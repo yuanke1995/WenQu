@@ -271,9 +271,11 @@ export const listManualDocs = () => request('/manual/documents')
 /** 单篇内容（Markdown 原文） */
 export const getManualDocContent = id => request(`/manual/documents/${encodeURIComponent(id)}/content`)
 
-// 知识库参数默认值（检索/解析参数的当前全局值）：新建库模板预填 + 表单占位符展示。
+// 知识库参数默认值（检索/解析参数的当前生效默认值：个人设置 > 系统全局）：新建库模板预填 + 表单占位符展示。
 // 普通用户可读（/config 是管理端点会 403），知识库已对普通用户开放自建。
 export const getKbParamDefaults = () => request('/kb/param-defaults')
+// 知识库参数问号文案（backendKey → 人话解释；普通用户可读，与系统设置页字段说明同一份定义源）
+export const getKbParamTips = () => request('/kb/param-tips')
 
 // 我的产物（模型在回答中生成的可下载文件，按用户归属；url 为可直接下载的签名地址）
 export const listArtifacts = keyword =>

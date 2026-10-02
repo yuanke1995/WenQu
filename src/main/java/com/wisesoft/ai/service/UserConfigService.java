@@ -36,6 +36,8 @@ public class UserConfigService {
     private final UserConfigMapper userConfigMapper;
     private final ConfigSchemaService schema;
     private final ConfigService configService;
+    /** 模型引用判权（个人设置里的模型必须归属本人登记；类型须与字段声明一致） */
+    private final ModelRegistryService modelRegistryService;
 
     /**
      * 读取某用户的个人覆盖（键过滤为 schema 标记 personal 的字段；空值不返回）。
@@ -62,6 +64,10 @@ public class UserConfigService {
     /**
      * 个人设置页数据源：可个人覆盖的字段定义 + 当前个人值 + 系统全局值（界面展示"跟随系统"参照）。
      * 只下发个人字段用到的 tips 文案，避免整包文案过大。
+     * <p>
+     * 键口径：页面以**表单 path** 为键（与 fields[].path、提交键一致）；存储与运行键是
+     * backendKey——个别字段两者不同（rerank.enabled 的表单 path 是 retrieval.rerank.enabled），
+     * 这里统一映射，页面无感。
      */
     public Map<String, Object> describe(String uid) {
         List<JSONObject> fields = schema.personalFields();
@@ -72,10 +78,12 @@ public class UserConfigService {
             String key = f.getString("backendKey");
             String tips = f.getString("tips");
             if (tips != null && !tips.isBlank()) tipsKeys.add(tips);
-            globals.put(key, configService.get(key));
+            globals.put(schema.pathOf(key), configService.get(key));
         }
         if (uid != null && !uid.isBlank()) {
-            values.putAll(overrides(uid));
+            for (Map.Entry<String, String> e : overrides(uid).entrySet()) {
+                values.put(schema.pathOf(e.getKey()), e.getValue());
+            }
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fields", fields);
@@ -86,12 +94,27 @@ public class UserConfigService {
     }
 
     /**
+     * 某键的个人设置值（按归属 uid 显式解析，线程无关；未设置返回 ""）。
+     * <p>
+     * 供解析/抽取等<b>异步链路</b>按库主身份取值——这些线程没有问答流水线的个人覆盖装载
+     * （ThreadLocal 拿不到），模型引用又只认归属人（personalOnly：全局层不参与读取），
+     * 必须显式点名 uid 查询；问答流水线线程内请继续走 ConfigService.get（有覆盖语义）。
+     */
+    public String personalValue(String uid, String key) {
+        if (uid == null || uid.isBlank()) return "";
+        String v = overrides(uid).get(key);
+        return v == null ? "" : v;
+    }
+
+    /**
      * 保存个人覆盖（字段缺省 = 不修改；空串 = 清除该项、回落全局）。
-     * 校验：仅接受 schema 标记 personal 的键（其余拒绝，防越权写配置）+ 类型/范围校验（与设置页同规则）。
+     * 校验：仅接受 schema 标记 personal 的键（其余拒绝，防越权写配置）+ 类型/范围校验（与设置页同规则）；
+     * 模型类字段追加归属校验——引用必须对本人可用（他人登记的个人供应商拒用，与聊天/向量入口同口径），
+     * 且类型须与字段声明的 modelType 一致（重排字段不能填聊天模型），防止存进一个运行时静默失效的引用。
      *
      * @return 保存后的该项个人值（清空为 "" 表示已回落全局）
      */
-    public Map<String, String> save(String uid, Map<String, Object> body) {
+    public Map<String, String> save(String uid, String role, Map<String, Object> body) {
         if (uid == null || uid.isBlank()) throw new com.wisesoft.ai.common.BizException("未登录");
         if (body == null || body.isEmpty()) throw new com.wisesoft.ai.common.BizException("没有要保存的配置项");
         Map<String, String> saved = new LinkedHashMap<>();
@@ -101,13 +124,19 @@ public class UserConfigService {
         for (UserConfig r : rows) existing.put(r.getConfigKey(), r);
 
         for (Map.Entry<String, Object> e : body.entrySet()) {
-            String key = e.getKey();
-            if (!schema.isPersonal(key)) {
-                throw new com.wisesoft.ai.common.BizException("不支持个人设置的配置项：" + key);
+            String rawKey = e.getKey();
+            // 表单 path → 运行键（如 retrieval.rerank.enabled → rerank.enabled）：个人值按运行键存储，
+            // 才能被 ConfigService.get / 检索覆盖读到；存储键同时是后续读取的唯一索引
+            String key = schema.backendKeyOf(rawKey);
+            if (key == null || !schema.isPersonal(key)) {
+                throw new com.wisesoft.ai.common.BizException("不支持个人设置的配置项：" + rawKey);
             }
             String v = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
             String err = schema.validate(key, v);
             if (err != null) throw new com.wisesoft.ai.common.BizException(err);
+            if (!v.isEmpty() && "model".equals(schema.type(key))) {
+                validateModelRef(key, v, uid, role);
+            }
             UserConfig row = existing.get(key);
             if (v.isEmpty()) {
                 // 清空 = 删行 = 回落全局（保留空串行会让"是否设置过"两种状态难区分）
@@ -127,7 +156,39 @@ public class UserConfigService {
             }
             saved.put(key, v);
         }
+
+        // 选了「默认重排模型」却没开「启用重排」= 配了不生效：与知识库弹窗同口径，自动补开个人开关。
+        // 仅在本轮未显式提交开关、且此前没有个人开关行（未明确关过）时补——不覆盖用户的明确选择
+        boolean enabledSubmitted = false;
+        for (String k : body.keySet()) {
+            if ("rerank.enabled".equals(schema.backendKeyOf(k))) { enabledSubmitted = true; break; }
+        }
+        String rerankModel = saved.get("rerank.model");
+        if (rerankModel != null && !rerankModel.isBlank()
+                && !enabledSubmitted && !existing.containsKey("rerank.enabled")) {
+            UserConfig row = new UserConfig();
+            row.setUid(uid);
+            row.setConfigKey("rerank.enabled");
+            row.setConfigValue("true");
+            userConfigMapper.insert(row);
+            saved.put("rerank.enabled", "true");
+            log.info("[UserConfig] 已自动开启个人「启用重排」uid={}（选了重排模型但未显式设置开关）", uid);
+        }
         log.info("[UserConfig] 个人配置已更新 uid={} keys={}", uid, saved.keySet());
         return saved;
+    }
+
+    /** 模型类个人字段的引用校验：可解析 + 对本人可用 + 类型与字段声明一致（类型未登记时放行，与知识库向量口径一致） */
+    private void validateModelRef(String key, String v, String uid, String role) {
+        if (modelRegistryService.resolveReference(v) == null) {
+            throw new com.wisesoft.ai.common.BizException("模型无效或已被删除，请重新选择（" + key + "）");
+        }
+        modelRegistryService.assertUsable(v, uid, role);
+        String expected = schema.modelType(key);
+        String actual = modelRegistryService.referenceType(v);
+        if (expected != null && actual != null && !expected.equals(actual)) {
+            throw new com.wisesoft.ai.common.BizException("「" + key + "」需选择 " + expected
+                    + " 类型的模型（当前所选为 " + actual + " 类型）");
+        }
     }
 }
