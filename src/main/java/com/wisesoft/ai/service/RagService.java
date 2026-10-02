@@ -2620,8 +2620,8 @@ public class RagService {
 
         // ==================== MCP 工具结果：引用注册（origin=MCP） ====================
 
-        /** 结果文本里的 http(s) 链接（后续剔除尾部标点；无法定界的通用 MCP 结果里这是唯一稳定的来源标识） */
-        private static final Pattern MCP_URL_PATTERN = Pattern.compile("https?://\\S+");
+        /** 结果文本里的 http(s) 链接（MCP 结果常是 JSON 转义文本，换行为字面 \n 序列——字符类显式排除反斜杠，防 URL 粘上后续正文） */
+        private static final Pattern MCP_URL_PATTERN = Pattern.compile("https?://[^\\s\"'<>\\\\]+");
 
         /**
          * MCP 工具结果注册引用来源：扫描结果文本里的 http(s) URL 逐个注册（origin=MCP，与
