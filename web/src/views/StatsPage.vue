@@ -59,7 +59,7 @@
         <div class="app-card-title">每日 Token 趋势图</div>
         <div class="trend-legend">
           <span v-for="s in trendSeries" :key="s.model" class="tl-item">
-            <i class="tl-dot" :style="{ background: seriesColor(s.model) }"></i>{{ s.model }}
+            <i class="tl-dot" :style="{ background: seriesColor(s.model) }"></i>{{ s.label || s.model }}
           </span>
         </div>
         <div ref="trendEl" class="chart trend"></div>
@@ -76,7 +76,7 @@
             <div v-for="m in modelRows" :key="m.model" class="legend-row">
               <i class="tl-dot" :style="{ background: seriesColor(m.model) }"></i>
               <div class="legend-main">
-                <div class="legend-name">{{ m.model }}</div>
+                <div class="legend-name">{{ m.label || m.model }}</div>
                 <div class="legend-sub">{{ fmtTokens(m.tokens) }} tokens</div>
               </div>
               <div class="legend-pct">{{ pct(m.tokens) }}%</div>
@@ -359,7 +359,7 @@ const renderCharts = () => {
         axisLabel: { color: text3, fontSize: 11, formatter: v => fmtCompact(v) }
       },
       series: trendSeries.value.map(s => ({
-        name: s.model, type: 'line', smooth: true, showSymbol: false,
+        name: s.label || s.model, type: 'line', smooth: true, showSymbol: false,
         lineStyle: { width: 2, color: seriesColor(s.model) },
         itemStyle: { color: seriesColor(s.model) },
         emphasis: { focus: 'series' },
@@ -390,7 +390,7 @@ const renderCharts = () => {
         label: { show: false }, labelLine: { show: false },
         itemStyle: { borderColor: cssVar('--app-panel') || (theme === 'dark' ? '#22262d' : '#fff'), borderWidth: 2 },
         data: modelRows.value.map(m => ({
-          name: m.model, value: Number(m.tokens) || 0,
+          name: m.label || m.model, value: Number(m.tokens) || 0,
           itemStyle: { color: seriesColor(m.model) }
         }))
       }]

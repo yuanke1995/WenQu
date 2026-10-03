@@ -133,6 +133,7 @@ public class UsageStatsService {
             if (i < MAX_MODELS) {
                 Map<String, Object> line = new LinkedHashMap<>();
                 line.put("model", e.getKey());
+                line.put("label", labelOf(e.getKey()));
                 line.put("values", days.stream().map(d -> e.getValue().getOrDefault(d, 0L)).toList());
                 series.add(line);
             } else {
@@ -142,6 +143,7 @@ public class UsageStatsService {
         if (!other.isEmpty()) {
             Map<String, Object> line = new LinkedHashMap<>();
             line.put("model", OTHER_LABEL);
+            line.put("label", OTHER_LABEL);
             line.put("values", days.stream().map(d -> other.getOrDefault(d, 0L)).toList());
             series.add(line);
         }
@@ -149,11 +151,12 @@ public class UsageStatsService {
         trend.put("days", dayKeys);
         trend.put("series", series);
 
-        // 模型用量占比：与趋势同窗口（近 N 日总量降序；含「其他」与「未知」桶）
+        // 模型用量占比：与趋势同窗口（近 N 日总量降序；含「其他」与「未记录」桶）
         List<Map<String, Object>> models = byModel.entrySet().stream()
                 .map(e -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("model", e.getKey());
+                    m.put("label", labelOf(e.getKey()));
                     m.put("tokens", e.getValue().values().stream().mapToLong(Long::longValue).sum());
                     return m;
                 })
@@ -212,5 +215,14 @@ public class UsageStatsService {
 
     private long num(Object o) {
         return o instanceof Number n ? n.longValue() : 0L;
+    }
+
+    /**
+     * 模型引用的展示名：`providerId/modelId` 取「/」后的模型名（不展示供应商 UUID）；
+     * 遗留纯模型名原样。聚合 key 仍为完整引用——不同供应商的同名模型是不同配置，tokens 分开统计。
+     */
+    private String labelOf(String modelRef) {
+        if (modelRef == null || modelRef.isBlank()) return UNKNOWN_LABEL;
+        return modelRef.contains("/") ? modelRef.substring(modelRef.lastIndexOf('/') + 1) : modelRef;
     }
 }
