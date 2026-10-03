@@ -136,6 +136,13 @@ const cardCells = computed(() => [
   { label: '最长连续天数', value: (cards.value.longestStreakDays || 0) + ' 天' }
 ])
 
+// 模型占比：分母=时间范围内全部模型 token 总量；≥10% 取整数、<10% 保留一位小数（与设计稿一致）
+const pct = tokens => {
+  const total = modelRows.value.reduce((a, m) => a + (Number(m.tokens) || 0), 0)
+  const v = total > 0 ? ((Number(tokens) || 0) / total) * 100 : 0
+  return v >= 10 ? String(Math.round(v)) : v.toFixed(1)
+}
+
 // 中文习惯的大数缩写：亿 / 万（与产品文案一致，不使用 k/M）
 function fmtTokens(n) {
   const v = Number(n) || 0
