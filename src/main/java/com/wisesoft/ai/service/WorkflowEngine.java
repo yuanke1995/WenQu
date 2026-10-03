@@ -1479,7 +1479,8 @@ public class WorkflowEngine {
             }
             modelRegistryService.assertUsable(ref, ctx.uid, ctx.role);
             String type = modelRegistryService.referenceType(ref);
-            if (type != null && !"chat".equals(type)) {
+            // chat 闸门放行 omni（全模态本质是对话模型，可对话只是还带视觉/音频）；纯视觉等其他类型维持拒绝
+            if (type != null && !"chat".equals(type) && !"omni".equals(type)) {
                 throw new BizException("节点「" + n.getId() + "」引用的不是对话模型（" + ref + "，类型 " + type + "）");
             }
             ctx.resolvedModels.put(n.getId(), ref);

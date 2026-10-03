@@ -463,6 +463,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
     `model_id`     VARCHAR(255) NOT NULL COMMENT '模型名（调用 API 时 model 参数原样透传）',
     `display_name` VARCHAR(255) DEFAULT NULL COMMENT '展示名（空=同 model_id）',
     `model_type`   VARCHAR(16)  DEFAULT 'chat' COMMENT '类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 audio=语音 omni=全模态 other=其他',
+    `vision_capable` INT        DEFAULT NULL COMMENT '图片理解能力(可与聊天并存): NULL=按类型与模型名自动判定 1=支持 0=不支持',
     `thinking`     VARCHAR(16)  DEFAULT 'auto' COMMENT '思考能力(仅聊天模型有意义): auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考',
     `context_window` INT        DEFAULT NULL COMMENT '上下文窗口 token（NULL=未声明，回落全局默认窗口；上下文预算=窗口×安全系数−输出限制）',
     `max_output`   INT          DEFAULT NULL COMMENT '最大输出 token（NULL=未声明，回落全局输出限制；作为 max_tokens 随请求下发）',

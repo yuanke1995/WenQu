@@ -48,7 +48,11 @@ public class UserImageService {
         }, new ThreadPoolExecutor.AbortPolicy());
     }
 
-    public record UserImage(String url, String desc) {}
+    /**
+     * 用户图片记录：url=落盘后回显地址（随消息持久化展示）；desc=视觉模型描述（直读链路为空）；
+     * dataUrl=原始 data URL（仅聊天直读链路保留，随消息以 image_url 部件发给聊天模型；描述链路为 null 不占内存）
+     */
+    public record UserImage(String url, String desc, String dataUrl) {}
 
     /**
      * 处理多张图片（data URL），并行保存+描述；返回 URL 与描述（失败项过滤）。
@@ -63,12 +67,26 @@ public class UserImageService {
      * 空 = 全局 vision 配置。processOne/describe 链路透传。
      */
     public List<UserImage> process(List<String> dataUrls, String visionRef) {
+        return processInternal(dataUrls, u -> processOne(u, visionRef, true));
+    }
+
+    /**
+     * 聊天直读链路：只落盘回显 + 保留原始 dataUrl，<b>不调视觉模型生成描述</b>。
+     * 聊天模型自带图片理解（visionCapable）时使用——原图以 image_url 内容部件直发模型，
+     * 省一次视觉调用且不丢图细节；desc 为空使描述注入与检索增强自然跳过（与原降级语义一致）。
+     */
+    public List<UserImage> processDirect(List<String> dataUrls) {
+        return processInternal(dataUrls, u -> processOne(u, null, false));
+    }
+
+    /** 并行处理骨架：队列满/单张异常跳过该项（fail-loud 告警），不影响其余图片与回答主流程 */
+    private List<UserImage> processInternal(List<String> dataUrls, java.util.function.Function<String, UserImage> fn) {
         if (dataUrls == null || dataUrls.isEmpty()) return List.of();
         List<CompletableFuture<UserImage>> futures = dataUrls.stream()
                 .filter(u -> u != null && u.startsWith("data:"))
                 .map(u -> {
                     try {
-                        return CompletableFuture.supplyAsync(() -> processOne(u, visionRef), imageExecutor);
+                        return CompletableFuture.supplyAsync(() -> fn.apply(u), imageExecutor);
                     } catch (RejectedExecutionException e) {
                         log.warn("[FAIL-LOUD] 用户图片处理队列繁忙，跳过 1 张: {}", e.getMessage());
                         return null;
@@ -117,7 +135,7 @@ public class UserImageService {
         }
     }
 
-    private UserImage processOne(String dataUrl, String visionRef) {
+    private UserImage processOne(String dataUrl, String visionRef, boolean describe) {
         try {
             // 解析 data:image/png;base64,xxx
             int comma = dataUrl.indexOf(',');
@@ -136,8 +154,10 @@ public class UserImageService {
             if (bytes.length == 0) return null;
 
             String url = persist(bytes, ext);
+            // 直读链路：只落盘回显 + 保留原始 dataUrl 给聊天模型，不调视觉模型
+            if (!describe) return new UserImage(url, "", dataUrl);
             String desc = visionService.describe(bytes, ext, visionService.defaultPrompt(), visionRef);
-            return new UserImage(url, desc);
+            return new UserImage(url, desc, null);
         } catch (Exception e) {
             // L3 fail-loud：用户上传图片处理失败（描述生成失败会在回答 prompt 显示"无法识别"，此处升级明确告警）
             log.warn("[FAIL-LOUD] 用户图片处理失败: {}", e.getMessage());

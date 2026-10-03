@@ -673,13 +673,21 @@ public class RagService {
             // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
             final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
                     scheduleKeepalive(emitter, "前置");
-            // 0. 用户上传图片：并行保存+视觉描述（用于上下文与检索召回）。
-            //    视觉模型类型守卫：个人默认视觉模型登记为「OCR 专用」时不得用于聊天图片理解——
-            //    OCR 模型（如 PaddleOCR-VL）输出文档解析格式（LOC 坐标标记+版面文本），注入上下文
-            //    会产生乱码回答（2026-10-02 截图乱回答的根因）。fail-loud：登记用户可见降级事件，
-            //    本轮跳过 AI 识别（图片文件照常落盘随消息展示），不静默继续。
+            // 0. 用户上传图片，两条链路：
+            //    ① 聊天模型自带图片理解（visionCapable，「聊天+视觉」一体登记形态）：跳过独立视觉模型，
+            //       原图随消息直发（buildAnswerStream 转 image_url 部件）——省一次视觉调用、不丢图细节；
+            //       此时无需个人视觉模型，OCR 守卫不适用（根本不走描述）。
+            //    ② 纯聊天模型：独立视觉模型描述-注入（原有链路）。视觉模型类型守卫：个人默认视觉模型
+            //       登记为「OCR 专用」时不得用于聊天图片理解——OCR 模型（如 PaddleOCR-VL）输出文档解析
+            //       格式（LOC 坐标标记+版面文本），注入上下文会产生乱码回答（2026-10-02 截图乱回答的根因）。
+            //       fail-loud：登记用户可见降级事件，本轮跳过 AI 识别（图片照常落盘随消息展示），不静默继续。
+            boolean chatSeesImages = modelRegistryService.visionCapableOf(resolvedModel);
             List<UserImageService.UserImage> userImgs;
-            if (userVisionRef != null && !userVisionRef.isBlank()
+            if (chatSeesImages) {
+                userImgs = userImageService.processDirect(userImages);
+                log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型（跳过描述链路）: session={} model={} count={}",
+                        sessionId, resolvedModel, userImgs.size());
+            } else if (userVisionRef != null && !userVisionRef.isBlank()
                     && ModelRegistryService.TYPE_OCR.equals(modelRegistryService.referenceType(userVisionRef))) {
                 userImgs = userImageService.process(userImages, null);
                 degradations.add(Map.of("code", "visionModelOcrMismatch", "msg",
@@ -691,7 +699,8 @@ public class RagService {
             } else {
                 userImgs = userImageService.process(userImages, userVisionRef);
             }
-            String imgDescText = userImgs.isEmpty() ? "" : userImgs.stream()
+            // 直读链路无描述文本（图片内容本体进消息）；描述链路维持原注入格式
+            String imgDescText = chatSeesImages || userImgs.isEmpty() ? "" : userImgs.stream()
                     .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
                     .collect(Collectors.joining("\n"));
 
@@ -2002,6 +2011,26 @@ public class RagService {
         }
     }
 
+    /** data URL（data:image/png;base64,…）→ Spring AI Media（委派链转 data URI image_url）；解析失败返回 null 跳过该图 */
+    private static org.springframework.ai.content.Media mediaOf(String dataUrl) {
+        try {
+            int comma = dataUrl.indexOf(',');
+            if (comma <= 0) return null;
+            String meta = dataUrl.substring(5, comma);
+            String mime = meta.contains(";") ? meta.substring(0, meta.indexOf(';')) : meta;
+            if (!mime.startsWith("image/")) return null;
+            byte[] bytes = java.util.Base64.getDecoder().decode(dataUrl.substring(comma + 1));
+            if (bytes.length == 0) return null;
+            return org.springframework.ai.content.Media.builder()
+                    .mimeType(org.springframework.util.MimeTypeUtils.parseMimeType(mime))
+                    .data(bytes)
+                    .build();
+        } catch (Exception e) {
+            log.warn("[IMAGE] 图片 dataUrl 解析失败，跳过该图: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * 构建并订阅主 LLM 流式回答（H2：未输出任何 token 时中断自动重试，次数 chat.streamRetryCount 可配）。
      * 可变状态与 complete 回调依赖收敛在 AnswerStreamState；重试时重建全新流并丢弃旧缓冲。
@@ -2019,9 +2048,21 @@ public class RagService {
                 instrumentTools(enabledToolCallbacks(agent, st.userId, st), st);
         // 过程叙述规范仅工具模式注入：无工具的纯对话没有"过程"可叙，加了反而诱导模型输出标签
         String sysFinal = toolCallbacks.length == 0 ? system : system + PROCESS_NARRATION_GUIDE;
-        return chatClient.prompt()
-                .system(sysFinal)
-                .user(user)
+        // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记，无描述文本），原图以
+        // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解，跳过独立视觉模型描述（省一次调用、
+        // 不丢图细节）。描述链路的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
+        // Media→data URI 的转换由委派链原生完成（DynamicOpenAiChatModel 原样透传 instructions 给 OpenAiChatModel）
+        java.util.List<org.springframework.ai.content.Media> media = st.userImgs == null ? java.util.List.of()
+                : st.userImgs.stream()
+                        .filter(i -> i.dataUrl() != null && !i.dataUrl().isBlank())
+                        .map(i -> mediaOf(i.dataUrl()))
+                        .filter(java.util.Objects::nonNull)
+                        .toList();
+        var spec = chatClient.prompt().system(sysFinal);
+        spec = media.isEmpty()
+                ? spec.user(user)
+                : spec.user(u -> u.text(user).media(media.toArray(new org.springframework.ai.content.Media[0])));
+        return spec
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
                 // st.model 为本轮解析好的模型（引用或遗留名，供应商路由由 DynamicOpenAiChatModel 按引用完成）
                 .options(OpenAiChatOptions.builder()

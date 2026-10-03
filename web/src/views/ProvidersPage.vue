@@ -66,7 +66,7 @@
         </div>
         <div v-else-if="!loading" class="app-card pv-empty">
           <div class="pv-empty-title">还没有供应商</div>
-          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 本地服务等），登记 API Key 后即可远程拉取模型列表。你自己建的供应商只有你能看到和使用。</div>
+          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 自托管服务等），登记 API Key 后即可远程拉取模型列表。你自己建的供应商只有你能看到和使用。</div>
         </div>
       </a-spin>
     </div>
@@ -76,7 +76,7 @@
              :confirm-loading="saving" :width="560" @ok="save" @cancelled="showEdit = false">
       <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }">
         <a-form-item label="名称" required>
-          <a-input v-model:value="form.name" :maxlength="100" placeholder="如：DeepSeek / 智谱GLM / 本地 Ollama" />
+          <a-input v-model:value="form.name" :maxlength="100" placeholder="如：DeepSeek / 智谱GLM / 自托管 Ollama" />
         </a-form-item>
         <a-form-item label="图标">
           <div class="pv-icon-picker">
@@ -91,10 +91,13 @@
         </a-form-item>
         <a-form-item label="网关地址" required>
           <a-input v-model:value="form.baseUrl" placeholder="如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀可自动识别" />
+          <div v-if="form.icon === 'ollama' || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(form.baseUrl || '')" class="pv-hint">
+            地址由问渠服务器发起访问：localhost 指部署问渠的机器，不是你自己的电脑；Ollama 装在你自己电脑上时，请填它对服务器可达的地址（如 http://192.168.x.x:11434），并让 Ollama 监听 0.0.0.0。
+          </div>
         </a-form-item>
         <a-form-item label="API Key">
           <a-input-password v-model:value="form.apiKey" autocomplete="new-password"
-                            :placeholder="editing ? '未修改时显示掩码，无需重新输入（RSA 加密入库）' : '部分本地服务（Ollama 等）可留空'" />
+                            :placeholder="editing ? '未修改时显示掩码，无需重新输入（RSA 加密入库）' : '部分自托管服务（Ollama 等）可留空'" />
         </a-form-item>
         <a-collapse ghost class="pv-advanced">
           <a-collapse-panel key="adv" header="高级（路径覆盖，一般留空自动识别）">
@@ -144,6 +147,8 @@
           <div v-for="c in filteredCandidates" :key="c.modelId" class="pv-candidate">
             <span class="pv-candidate-name" :title="c.modelId">{{ c.modelId }}</span>
             <a-tag :color="TYPE_META[c.guessedType]?.color" class="pv-type-tag">{{ TYPE_META[c.guessedType]?.label }}</a-tag>
+            <a-tag v-if="c.guessVisionCapable && c.guessedType === 'chat'" color="blue"
+                   title="该模型名识别为「聊天+图片理解」一体，加入后图片理解自动预填为支持" class="pv-type-tag">图</a-tag>
             <a-tag v-if="c.exists" class="pv-type-tag" color="default">已登记</a-tag>
             <button class="app-link-btn" :disabled="c.exists || inModels(c.modelId)" @click="addCandidate(c)">
               {{ c.exists || inModels(c.modelId) ? '已加入' : '添加' }}
@@ -166,6 +171,11 @@
           <template v-else-if="column.key === 'modelType'">
             <a-select v-model:value="record.modelType" size="small" :options="typeOptions" style="width:100px"
                       @change="clearTestState(record)" />
+          </template>
+          <template v-else-if="column.key === 'visionCapable'">
+            <!-- 图片理解三态（自动/支持/不支持）：「聊天+视觉」一体模型标支持后可直接选进视觉槽位，无需重复登记 -->
+            <a-select v-model:value="record.visionCapable" size="small" :options="visionOptions"
+                      style="width:100%" :disabled="!visionApplies(record)" />
           </template>
           <template v-else-if="column.key === 'thinking'">
             <a-select v-model:value="record.thinking" size="small" :options="thinkingOptions"
@@ -350,7 +360,7 @@ const BRAND_PRESETS = {
   siliconflow: { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn' },
   openai:      { name: 'OpenAI',      baseUrl: 'https://api.openai.com' },
   openrouter:  { name: 'OpenRouter',  baseUrl: 'https://openrouter.ai/api/v1' },
-  ollama:      { name: '本地 Ollama',  baseUrl: 'http://localhost:11434' },
+  ollama:      { name: 'Ollama（自托管）', baseUrl: 'http://localhost:11434' },
   gemini:      { name: 'Gemini',      baseUrl: 'https://generativelanguage.googleapis.com',
                  completionsPath: '/v1beta/openai/chat/completions',
                  embeddingsPath: '/v1beta/openai/embeddings' },
@@ -577,6 +587,7 @@ const modelCols = [
   { title: '模型名', key: 'modelId' },
   { title: '展示名', key: 'displayName', width: 120 },
   { title: '类型', key: 'modelType', width: 80 },
+  { title: '图片理解', key: 'visionCapable', width: 84 },
   { title: '思考', key: 'thinking', width: 84 },
   { title: '窗口 / 输出', key: 'ctx', width: 156 },
   { title: '启用', key: 'enabled', width: 44 },
@@ -590,6 +601,16 @@ const thinkingOptions = [
   { label: '可开关', value: 'switchable' },
   { label: '恒思考', value: 'always' }
 ]
+
+// 图片理解能力选项（auto=按类型与模型名自动判定）：「聊天+视觉」一体模型（gpt-4o/gemini/deepseek-vl 等）
+// 标「支持」即可直接选进视觉模型槽位，无需再单独登记一个纯视觉模型
+const visionOptions = [
+  { label: '自动', value: 'auto' },
+  { label: '支持', value: '1' },
+  { label: '不支持', value: '0' }
+]
+/** 图片理解仅对话类类型有意义（向量/重排/OCR/语音没有图片理解可言），其余类型禁选并按自动保存 */
+const visionApplies = record => ['chat', 'vision', 'omni'].includes(record.modelType)
 
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */
 const testStates = ref({})
@@ -691,6 +712,7 @@ const openModels = async p => {
       rowKey: 'db-' + m.id, id: m.id,
       modelId: m.modelId, displayName: m.displayName || '',
       modelType: m.modelType || 'chat', thinking: m.thinking || 'auto',
+      visionCapable: m.visionCapable == null ? 'auto' : String(m.visionCapable),
       contextWindow: m.contextWindow ?? null, maxOutput: m.maxOutput ?? null,
       enabled: m.enabled !== false, isNew: false
     }))
@@ -706,7 +728,8 @@ const onFetch = async () => {
     // 已存供应商：apiKey 传空，由后端用库中真实 Key 解密后拉取
     const r = await fetchProviderModels(modelProvider.value.baseUrl, '', modelProvider.value.id)
     candidates.value = ((r && r.data) || []).map(c => ({
-      modelId: c.modelId, guessedType: c.guessedType || 'chat', exists: !!c.exists
+      modelId: c.modelId, guessedType: c.guessedType || 'chat',
+      guessVisionCapable: !!c.guessVisionCapable, exists: !!c.exists
     }))
     candidateKeyword.value = ''
     if (!candidates.value.length) message.info('网关未返回任何模型')
@@ -722,7 +745,8 @@ const addCandidate = c => {
   if (inModels(c.modelId)) return
   const row = {
     rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '', thinking: 'auto',
-    modelType: c.guessedType, contextWindow: null, maxOutput: null, enabled: true, isNew: true
+    modelType: c.guessedType, visionCapable: c.guessVisionCapable ? '1' : 'auto',
+    contextWindow: null, maxOutput: null, enabled: true, isNew: true
   }
   applyCtxPreset(row)
   models.value.push(row)
@@ -741,7 +765,7 @@ const importAllCandidates = () => {
 const addManualRow = () => {
   models.value.push({
     rowKey: 'new-' + (++rowSeq), modelId: '', displayName: '', thinking: 'auto',
-    modelType: 'chat', contextWindow: null, maxOutput: null, enabled: true, isNew: true
+    modelType: 'chat', visionCapable: 'auto', contextWindow: null, maxOutput: null, enabled: true, isNew: true
   })
 }
 
@@ -758,6 +782,8 @@ const saveModels = async () => {
       displayName: (m.displayName || '').trim() || null,
       modelType: m.modelType || 'chat',
       thinking: m.modelType === 'chat' ? (m.thinking || 'auto') : 'auto',
+      // 非对话类类型归一为自动（禁选态下也可能残留旧值，保存时兜底）
+      visionCapable: visionApplies(m) ? (m.visionCapable || 'auto') : 'auto',
       contextWindow: m.contextWindow || null,
       maxOutput: m.maxOutput || null,
       enabled: m.enabled !== false

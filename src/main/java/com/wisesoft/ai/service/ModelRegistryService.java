@@ -377,6 +377,56 @@ public class ModelRegistryService {
     }
 
     /**
+     * 模型图片理解能力（三态判定）：显式登记（vision_capable=1/0）优先；
+     * 未登记按类型（vision/omni 恒支持）与模型名启发式（{@link #guessVisionCapable}）——
+     * 2024 后「聊天+视觉」一体是主流登记形态，单值 modelType 表达不了，靠能力位补齐。
+     * 仅对话类类型（chat/vision/omni）可具备该能力：向量/重排/OCR 等即使误标也不放行，
+     * 防止误标模型混进视觉下拉。
+     */
+    public boolean visionCapable(ModelInfo mi) {
+        String t = mi.getModelType();
+        if (!TYPE_CHAT.equals(t) && !TYPE_VISION.equals(t) && !TYPE_OMNI.equals(t)) return false;
+        if (mi.getVisionCapable() != null) return mi.getVisionCapable() == 1;
+        return TYPE_VISION.equals(t) || TYPE_OMNI.equals(t) || guessVisionCapable(mi.getModelId());
+    }
+
+    /**
+     * 引用类型匹配（口径放宽）：期望 vision 时，vision/omni 类型或具备图片理解能力
+     * （visionCapable，含自动判定）的模型均通过；其余期望类型维持严格相等——
+     * 向量/重排/OCR 是能力性类型，混用会在运行时静默失效，不能放宽。
+     * 类型未登记（actual=null）照旧放行（遗留手填名兼容，与原口径一致）。
+     */
+    public boolean referenceMatchesType(String value, String expected) {
+        String actual = referenceType(value);
+        if (actual == null || expected == null || expected.equals(actual)) return true;
+        if (!TYPE_VISION.equals(expected)) return false;
+        if (TYPE_OMNI.equals(actual)) return true;
+        ModelRoute r = resolveReference(value);
+        if (r == null) return false;
+        for (ModelInfo mi : models) {
+            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
+                return visionCapable(mi);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 按模型引用判定图片理解能力（聊天直读图片链路的开关依据）：
+     * 引用无法解析（遗留手填名）→ false，维持独立视觉模型描述链路，不赌。
+     */
+    public boolean visionCapableOf(String ref) {
+        ModelRoute r = resolveReference(ref);
+        if (r == null) return false;
+        for (ModelInfo mi : models) {
+            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
+                return visionCapable(mi);
+            }
+        }
+        return false;
+    }
+
+    /**
      * 供应商列表（管理界面；apiKey 脱敏为 ****后4位）。
      * 按归属过滤：仅见自己登记的（数据按 userId 隔离）。每行附 manageable，
      * 供前端决定是否给出编辑、删除、启停、模型登记入口。
@@ -430,6 +480,8 @@ public class ModelRegistryService {
             m.put("modelId", mi.getModelId());
             m.put("displayName", mi.getDisplayName());
             m.put("modelType", mi.getModelType());
+            // 图片理解能力三态原值（null=自动判定）：编辑弹窗需要显式值回显，否则全量同步保存会把 1/0 冲成 NULL
+            m.put("visionCapable", mi.getVisionCapable());
             m.put("thinking", resolveThinking(mi));
             m.put("contextWindow", mi.getContextWindow());
             m.put("maxOutput", mi.getMaxOutput());
@@ -507,14 +559,16 @@ public class ModelRegistryService {
             for (ModelInfo mi : models) {
                 if (!p.getId().equals(mi.getProviderId())) continue;
                 if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
-                // type 支持逗号分隔多类型（如 "vision,ocr"，与前端 ModelSelect 的 type 契约一致）
+                // type 支持逗号分隔多类型（如 "vision,ocr"，与前端 ModelSelect 的 type 契约一致）；
+                // 期望 vision 时放宽口径：具备图片理解能力的模型（visionCapable，可与聊天并存）同样入选
                 if (type != null && !type.isBlank()) {
                     java.util.Set<String> wanted = new java.util.HashSet<>();
                     for (String t : type.split(",")) {
                         String s = t.trim();
                         if (!s.isEmpty()) wanted.add(s);
                     }
-                    if (!wanted.isEmpty() && !wanted.contains(mi.getModelType())) continue;
+                    if (!wanted.isEmpty() && !wanted.contains(mi.getModelType())
+                            && !(wanted.contains(TYPE_VISION) && visionCapable(mi))) continue;
                 }
                 Map<String, Object> m = new java.util.LinkedHashMap<>();
                 m.put("ref", p.getId() + "/" + mi.getModelId());
@@ -522,6 +576,7 @@ public class ModelRegistryService {
                 m.put("displayName", mi.getDisplayName() == null || mi.getDisplayName().isBlank()
                         ? mi.getModelId() : mi.getDisplayName());
                 m.put("type", mi.getModelType());
+                m.put("visionCapable", visionCapable(mi));
                 m.put("thinking", resolveThinking(mi));
                 ms.add(m);
             }
@@ -694,6 +749,8 @@ public class ModelRegistryService {
             mi.setModelId(modelId.trim());
             mi.setDisplayName(str(item.get("displayName")));
             mi.setModelType(type);
+            // 图片理解能力三态：显式 1/0 落库；"auto"/未传 → NULL=按类型与模型名自动判定（读时 visionCapable 解析）
+            mi.setVisionCapable(visionTriState(item.get("visionCapable")));
             String thinking = str(item.get("thinking"));
             mi.setThinking(THINKING_LEVELS.contains(thinking) ? thinking : "auto");
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
@@ -785,8 +842,11 @@ public class ModelRegistryService {
                 String modelId = data.getJSONObject(i).getString("id");
                 if (modelId == null || modelId.isBlank()) continue;
                 Map<String, Object> m = new java.util.LinkedHashMap<>();
+                String guessedType = guessType(modelId);
                 m.put("modelId", modelId);
-                m.put("guessedType", guessType(modelId));
+                m.put("guessedType", guessedType);
+                m.put("guessVisionCapable", TYPE_VISION.equals(guessedType) || TYPE_OMNI.equals(guessedType)
+                        || guessVisionCapable(modelId));
                 m.put("exists", registered.contains(modelId));
                 result.add(m);
             }
@@ -825,6 +885,39 @@ public class ModelRegistryService {
 
     /** 视觉模型名里的 vl 词元（前后非小写字母界定，如 qwen2-vl-72b / 4vl? 避免误伤普通词） */
     private static final Pattern VL_TOKEN = Pattern.compile(".*(^|[^a-z])vl([^a-z]|$).*");
+
+    /**
+     * 「聊天+图片理解」一体模型家族词元（登记/拉取时预填「图片理解=支持」，界面可改）：
+     * GPT-4o/GPT-4.1/GPT-5/o 系、Gemini、Claude 3+、Grok-4、Qwen-VL/QvQ、GLM-4V、
+     * 豆包 vision、DeepSeek-VL、Step、Yi-Vision、InternVL、LLaVA 等。
+     * 仅作预填启发：判定不了的（如网关自定义别名）由用户手动标记。
+     */
+    private static final String[] VISION_CHAT_FAMILIES = {
+            "gpt-4o", "gpt-4.1", "chatgpt-4o", "gpt-4-turbo", "gpt-5", "o1", "o3", "o4",
+            "gemini", "claude-3", "claude-4", "claude-sonnet", "claude-opus", "claude-haiku",
+            "grok-4", "grok-2-vision",
+            "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "qvq",
+            "glm-4v", "glm-4.5v", "glm-4.6v",
+            "doubao-vision", "doubao-1.5-vision", "doubao-1.6-vision",
+            "deepseek-vl", "step-1v", "step-1o", "step-3", "yi-vision", "internvl", "llava"
+    };
+
+    /** 按模型名启发式判定「聊天+图片理解」一体模型（配合 guessType 的类型口径，供能力位自动预填） */
+    public static boolean guessVisionCapable(String modelId) {
+        String m = (modelId == null ? "" : modelId).toLowerCase();
+        for (String f : VISION_CHAT_FAMILIES) {
+            if (m.contains(f)) return true;
+        }
+        return false;
+    }
+
+    /** 图片理解能力入参三态归一：1/true→1，0/false→0；null/"auto"/""→null（按类型与模型名自动判定） */
+    private static Integer visionTriState(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim().toLowerCase();
+        if (s.isEmpty() || "auto".equals(s) || "null".equals(s)) return null;
+        return ("1".equals(s) || "true".equals(s)) ? 1 : 0;
+    }
 
     /** 供应商名猜测时跳过的域名段（常见前缀 + 顶级域） */
     private static final List<String> SKIP_DOMAIN_PARTS =

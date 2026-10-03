@@ -303,7 +303,7 @@ public class OrgService {
         }
     }
 
-    /** 校验个人默认模型引用：存在、对本人可用、且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */
+    /** 校验个人默认模型引用：存在、对本人可用、且登记类型与槽位一致（未登记类型放行——遗留手填名兼容；期望 vision 时放宽——vision/omni 或具备图片理解能力的模型均通过） */
     private void validateDefaultModel(String ref, String expectedType, String label, String uid, String role) {
         if (ref.isEmpty()) return;
         // 归属校验：引用他人登记的个人级供应商一律拒绝（该 Key 属于别人）
@@ -311,8 +311,8 @@ public class OrgService {
         if (modelRegistryService.resolveReference(ref) == null) {
             throw new BizException("默认模型无效或已被删除，请重新选择");
         }
-        String type = modelRegistryService.referenceType(ref);
-        if (type != null && !expectedType.equals(type)) {
+        if (!modelRegistryService.referenceMatchesType(ref, expectedType)) {
+            String type = modelRegistryService.referenceType(ref);
             throw new BizException("个人默认" + label + "模型需为" + label + "类型（当前所选为 " + type + " 类型）");
         }
     }

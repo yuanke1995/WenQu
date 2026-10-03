@@ -162,7 +162,7 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.listModels(id));
     }
 
-    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
+    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态: 1/0/auto), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
     @PutMapping("/{id}/models")
     public ResultJson saveModels(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -173,7 +173,7 @@ public class ProviderController {
         return ResultJson.ok("已保存");
     }
 
-    @Operation(summary = "远程拉取模型列表", description = "GET {baseUrl}/v1/models（Bearer 鉴权）获取网关模型候选，不入库；返回 [{modelId, guessedType(自动分类), exists(已登记)}]。providerId 传入时 apiKey 可用 **** 掩码（用库中真实 Key），但须对该供应商有管理权")
+    @Operation(summary = "远程拉取模型列表", description = "GET {baseUrl}/v1/models（Bearer 鉴权）获取网关模型候选，不入库；返回 [{modelId, guessedType(自动分类), guessVisionCapable(图片理解自动预填), exists(已登记)}]。providerId 传入时 apiKey 可用 **** 掩码（用库中真实 Key），但须对该供应商有管理权")
     @PostMapping("/models/fetch")
     public ResultJson fetchModels(@RequestBody Map<String, Object> body) {
         String providerId = str(body.get("providerId"));

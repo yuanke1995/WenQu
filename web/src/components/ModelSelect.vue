@@ -109,11 +109,13 @@ async function load(force = false) {
 
 function filter(data) {
   if (!props.type) return data
-  // 支持逗号分隔多类型（如 "vision,ocr"：知识库图片描述模型两者皆可）
+  // 支持逗号分隔多类型（如 "vision,ocr"：知识库图片描述模型两者皆可）；
+  // 期望含 vision 时放宽口径：具备图片理解能力的模型（visionCapable，「聊天+视觉」一体登记形态）同样入选
   const set = new Set(props.type.split(',').map(s => s.trim()).filter(Boolean))
   if (!set.size) return data
+  const wantVision = set.has('vision')
   return data
-    .map(g => ({ ...g, models: g.models.filter(m => set.has(m.type)) }))
+    .map(g => ({ ...g, models: g.models.filter(m => set.has(m.type) || (wantVision && m.visionCapable)) }))
     .filter(g => g.models.length)
 }
 

@@ -178,15 +178,15 @@ public class UserConfigService {
         return saved;
     }
 
-    /** 模型类个人字段的引用校验：可解析 + 对本人可用 + 类型与字段声明一致（类型未登记时放行，与知识库向量口径一致） */
+    /** 模型类个人字段的引用校验：可解析 + 对本人可用 + 类型与字段声明一致（未登记类型放行；期望 vision 时放宽——vision/omni 或具备图片理解能力的模型均通过） */
     private void validateModelRef(String key, String v, String uid, String role) {
         if (modelRegistryService.resolveReference(v) == null) {
             throw new com.wisesoft.ai.common.BizException("模型无效或已被删除，请重新选择（" + key + "）");
         }
         modelRegistryService.assertUsable(v, uid, role);
         String expected = schema.modelType(key);
-        String actual = modelRegistryService.referenceType(v);
-        if (expected != null && actual != null && !expected.equals(actual)) {
+        if (expected != null && !modelRegistryService.referenceMatchesType(v, expected)) {
+            String actual = modelRegistryService.referenceType(v);
             throw new com.wisesoft.ai.common.BizException("「" + key + "」需选择 " + expected
                     + " 类型的模型（当前所选为 " + actual + " 类型）");
         }

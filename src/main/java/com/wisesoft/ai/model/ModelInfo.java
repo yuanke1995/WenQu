@@ -35,6 +35,9 @@ public class ModelInfo {
     /** 类型: chat=聊天 vision=视觉 embedding=向量 rerank=重排 audio=语音 omni=全模态 other=其他 */
     private String modelType;
 
+    /** 图片理解能力（三态，可与聊天类型并存）: NULL=按类型与模型名自动判定 1=支持 0=不支持 */
+    private Integer visionCapable;
+
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */
     private String thinking;
 
