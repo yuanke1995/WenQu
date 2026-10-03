@@ -18,11 +18,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
  * 接口管理接口（权限管理页）：RBAC 鉴权数据源的维护。
- * <p>主体由启动期扫描登记（builtin=1）；此处支持手工登记、名称/模块维护与删除。</p>
+ * <p>主体由启动期扫描登记（builtin=1）；此处支持手工登记、名称/模块/菜单归属维护与删除。</p>
  *
  * @author yuanke
  */
@@ -41,25 +42,31 @@ public class ApiEndpointController {
         return s.isEmpty() ? null : s;
     }
 
-    @Operation(summary = "接口列表", description = "module 传模块名过滤（all=全部）；keyword 模糊匹配路径/名称")
+    @SuppressWarnings("unchecked")
+    private static List<String> idList(Map<String, Object> body, String key) {
+        Object v = body == null ? null : body.get(key);
+        return v instanceof List ? (List<String>) v : null;
+    }
+
+    @Operation(summary = "接口列表", description = "module 传模块名过滤（all=全部）；keyword 模糊匹配路径/名称；返回含 menuIds 归属")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "module", required = false) String module,
                            @RequestParam(value = "keyword", required = false) String keyword) {
         return ResultJson.ok(apiEndpointService.list(module, keyword));
     }
 
-    @Operation(summary = "手工登记接口", description = "body: method(GET/POST/PUT/DELETE/PATCH/ALL)/path(以 /api/ 开头)/name/module")
+    @Operation(summary = "手工登记接口", description = "body: method(GET/POST/PUT/DELETE/PATCH/ALL)/path(以 /api/ 开头)/name/module/menuIds(归属菜单多值，可选)")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(apiEndpointService.create(str(body, "method"), str(body, "path"),
-                str(body, "name"), str(body, "module")), "已登记");
+                str(body, "name"), str(body, "module"), idList(body, "menuIds")), "已登记");
     }
 
-    @Operation(summary = "编辑接口", description = "扫描登记的仅可改名称/模块；手工的可全改")
+    @Operation(summary = "编辑接口", description = "扫描登记的仅可改名称/模块/归属；手工的可全改；menuIds 不传=归属不变，传 []=清空")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         apiEndpointService.update(id, str(body, "method"), str(body, "path"),
-                str(body, "name"), str(body, "module"));
+                str(body, "name"), str(body, "module"), idList(body, "menuIds"));
         return ResultJson.ok("已保存");
     }
 

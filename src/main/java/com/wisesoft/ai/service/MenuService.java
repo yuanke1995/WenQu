@@ -2,6 +2,7 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.mapper.MenuApiMapper;
 import com.wisesoft.ai.mapper.MenuMapper;
 import com.wisesoft.ai.mapper.RoleMenuMapper;
 import com.wisesoft.ai.model.Menu;
@@ -33,6 +34,7 @@ public class MenuService {
 
     private final MenuMapper menuMapper;
     private final RoleMenuMapper roleMenuMapper;
+    private final MenuApiMapper menuApiMapper;
     private final RoleService roleService;
 
     // ==================== 下发（/auth/me 热路径） ====================
@@ -160,7 +162,7 @@ public class MenuService {
         log.info("[AUDIT] 编辑菜单 id={} name={}", id, m.getName());
     }
 
-    /** 删除菜单：内置不可删；有子菜单不可删；级联清角色绑定 */
+    /** 删除菜单：内置不可删；有子菜单不可删；级联清角色绑定与接口归属 */
     @Transactional
     public void delete(String id) {
         Menu m = menuMapper.selectById(id);
@@ -172,6 +174,7 @@ public class MenuService {
         }
         menuMapper.deleteById(id);
         roleMenuMapper.unbindByMenu(id);
+        menuApiMapper.unbindByMenu(id);
         log.info("[AUDIT] 删除菜单 id={} name={}", id, m.getName());
     }
 

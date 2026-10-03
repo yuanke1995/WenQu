@@ -743,12 +743,9 @@ export const listRoleOptions = () => request('/role/options')
 export const createRole = body => request('/role', { method: 'POST', body: JSON.stringify(body) })
 export const updateRole = (code, body) => request(`/role/${encodeURIComponent(code)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, { method: 'DELETE' })
-export const getRoleMenus = code => request(`/role/${encodeURIComponent(code)}/menus`)
-export const saveRoleMenus = (code, menuIds) =>
-  request(`/role/${encodeURIComponent(code)}/menus`, { method: 'PUT', body: JSON.stringify({ menuIds }) })
-export const getRoleApis = code => request(`/role/${encodeURIComponent(code)}/apis`)
-export const saveRoleApis = (code, apiIds) =>
-  request(`/role/${encodeURIComponent(code)}/apis`, { method: 'PUT', body: JSON.stringify({ apiIds }) })
+export const getRolePermissions = code => request(`/role/${encodeURIComponent(code)}/permissions`)
+export const saveRolePermissions = (code, menuIds, apiIds) =>
+  request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, apiIds }) })
 
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>

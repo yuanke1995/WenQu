@@ -301,34 +301,30 @@ public class RoleService {
 
     // ==================== 菜单 / 接口绑定 ====================
 
-    /** 绑定菜单 id 集合（全量替换语义；校验角色与菜单存在性） */
+    /**
+     * 保存菜单 + 接口绑定（权限配置页单次提交；两者均为全量替换语义）。
+     * 单事务、单次缓存失效；校验角色与 id 存在性（不存在的 id 静默丢弃）。
+     */
     @Transactional
-    public void saveMenus(String code, List<String> menuIds) {
+    public void savePermissions(String code, List<String> menuIds, List<String> apiIds) {
         requireRole(code);
-        Set<String> valid = menuIdSet();
+        Set<String> validMenus = menuIdSet();
         roleMenuMapper.unbindAllOfRole(code);
         if (menuIds != null) {
             for (String id : menuIds) {
-                if (id != null && valid.contains(id)) roleMenuMapper.bind(code, id);
+                if (id != null && validMenus.contains(id)) roleMenuMapper.bind(code, id);
             }
         }
-        invalidateCaches();
-        log.info("[AUDIT] 保存角色菜单绑定 code={} count={}", code, menuIds == null ? 0 : menuIds.size());
-    }
-
-    /** 绑定接口 id 集合（全量替换语义；校验角色与接口存在性） */
-    @Transactional
-    public void saveApis(String code, List<String> apiIds) {
-        requireRole(code);
-        Set<String> valid = apiIdSet();
+        Set<String> validApis = apiIdSet();
         roleApiMapper.unbindAllOfRole(code);
         if (apiIds != null) {
             for (String id : apiIds) {
-                if (id != null && valid.contains(id)) roleApiMapper.bind(code, id);
+                if (id != null && validApis.contains(id)) roleApiMapper.bind(code, id);
             }
         }
         invalidateCaches();
-        log.info("[AUDIT] 保存角色接口绑定 code={} count={}", code, apiIds == null ? 0 : apiIds.size());
+        log.info("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
+                menuIds == null ? 0 : menuIds.size(), apiIds == null ? 0 : apiIds.size());
     }
 
     private void requireRole(String code) {

@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">权限管理</h3>
-      <span class="head-hint-plain">菜单决定侧边栏可见项，接口绑定决定能否调用</span>
+      <span class="head-hint-plain">接口按菜单归属分组；勾选菜单会一并授权名下接口，未授权的接口调用将返回 403</span>
     </div>
 
     <!-- 页签式 Tab：与「智能体工作台」同一形态。此处只承载导航，内容用下方共用卡片按 tab 渲染；
@@ -98,10 +98,18 @@
                 <span v-else class="rb-none">—</span>
               </template>
             </a-table-column>
-            <a-table-column title="模块" key="module" width="150">
+            <a-table-column title="模块" key="module" width="130">
               <template #default="{ record }">
                 <span v-if="record.module" class="rb-name">{{ record.module }}</span>
                 <span v-else class="rb-none">—</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="所属菜单" key="menus" width="200">
+              <template #default="{ record }">
+                <template v-if="(record.menuIds || []).length">
+                  <span v-for="mid in record.menuIds" :key="mid" class="menu-tag">{{ menuNameOf(mid) }}</span>
+                </template>
+                <span v-else class="rb-none">未归属</span>
               </template>
             </a-table-column>
             <a-table-column title="操作" key="action" width="130">
@@ -147,12 +155,11 @@
                 <span v-else class="rb-none">—</span>
               </template>
             </a-table-column>
-            <a-table-column title="操作" key="action" width="240">
+            <a-table-column title="操作" key="action" width="210">
               <template #default="{ record }">
                 <span class="rb-inline">
                   <button class="app-link-btn" @click="openRoleEdit(record)">编辑</button>
-                  <button class="app-link-btn" @click="openDrawer(record, 'menu')">菜单权限</button>
-                  <button class="app-link-btn" @click="openDrawer(record, 'api')">接口权限</button>
+                  <button class="app-link-btn" @click="openDrawer(record)">权限配置</button>
                   <a-popconfirm v-if="record.builtin !== 1" title="删除后其绑定一并清除，确定？"
                                 ok-text="删除" cancel-text="取消" @confirm="delRole(record.code)">
                     <button class="app-link-btn danger">删除</button>
@@ -235,6 +242,13 @@
         <a-form-item label="模块">
           <a-input v-model:value="apiForm.module" maxlength="50" placeholder="如 智能体（可自定义归类）" />
         </a-form-item>
+        <a-form-item label="所属菜单（可多选）">
+          <a-tree-select v-model:value="apiMenuSelectValue" multiple tree-checkable :tree-check-strictly="true"
+                         :tree-data="menuSelectTree" :field-names="{ label: 'name', value: 'id', children: 'children' }"
+                         allow-clear tree-default-expand-all :max-tag-count="4" style="width:100%"
+                         placeholder="不选择 = 归入「其他接口」分组" />
+          <div class="form-tip">归属决定权限配置页里接口挂在哪个菜单下（可多归属），不影响鉴权。</div>
+        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -267,22 +281,42 @@
       </a-form>
     </a-modal>
 
-    <!-- 角色权限抽屉（菜单 / 接口绑定） -->
-    <a-drawer v-model:open="drawer" :title="drawerTitle" :width="540" destroy-on-close>
+    <!-- 角色权限抽屉（单树：菜单 + 名下接口；勾菜单自动带上接口） -->
+    <a-drawer v-model:open="drawer" :title="drawerTitle" :width="580" destroy-on-close>
       <a-alert v-if="drawerRole && drawerRole.adminFlag === 1" type="info" show-icon style="margin-bottom:12px"
                message="管理员级角色天然拥有全部权限，以下绑定仅对普通角色生效" />
-      <a-tabs v-model:active-key="drawerTab">
-        <a-tab-pane key="menu" tab="菜单权限">
-          <p class="form-tip" style="margin-top:0">勾选该角色在侧边栏可见的菜单。菜单数据在「菜单」页维护。</p>
-          <a-tree v-if="drawer" checkable default-expand-all v-model:checked-keys="checkedMenuIds"
-                  :tree-data="bindMenuTree" :field-names="{ title: 'name', key: 'id', children: 'children' }" />
-        </a-tab-pane>
-        <a-tab-pane key="api" tab="接口权限">
-          <p class="form-tip" style="margin-top:0">勾选该角色可调用的接口（按模块分组）。未勾选的接口该角色调用将返回 403。</p>
-          <a-tree v-if="drawer" checkable default-expand-all v-model:checked-keys="checkedApiKeys"
-                  :tree-data="bindApiTree" />
-        </a-tab-pane>
-      </a-tabs>
+      <a-alert v-if="gapCount > 0" type="warning" show-icon style="margin-bottom:12px"
+               :message="`检测到 ${gapCount} 个接口未授权`"
+               description="已勾选菜单下仍有接口未勾选，该角色调用时会返回 403。">
+        <template #action>
+          <button class="app-btn primary gap-fill-btn" @click="fillAllGaps">一键补齐</button>
+        </template>
+      </a-alert>
+      <p class="form-tip" style="margin-top:0">
+        勾选菜单会连同其名下接口一并勾上（可再单独取消）；接口也可脱离菜单单独勾选。未勾选的接口调用将返回 403。
+      </p>
+      <a-tree v-if="drawer" checkable default-expand-all :selectable="false"
+              :check-strictly="true" :checked-keys="treeCheckedKeys" @check="onTreeCheck"
+              :tree-data="bindTree">
+        <template #title="node">
+          <span v-if="node.kind === 'api'" class="tree-api">
+            <span class="method-pill" :class="'m-' + (node.method || 'ALL').toLowerCase()">{{ node.method }}</span>
+            <code class="rb-path">{{ node.label }}</code>
+            <span v-if="node.shared" class="tree-shared" title="该接口同时归属多个菜单，勾选任一菜单都会带上它">共属</span>
+          </span>
+          <span v-else class="tree-menu">
+            <component v-if="node.kind === 'menu'" :is="iconOf(node.icon)" class="rb-menu-ic" />
+            <span class="rb-name">{{ node.kind === 'group' ? node.groupName : node.menuName }}</span>
+            <span v-if="node.ownedCount" class="tree-count"
+                  :class="{ warn: node.grantedCount < node.ownedCount && (node.kind === 'group' || node.menuChecked) }">
+              {{ node.grantedCount }}/{{ node.ownedCount }} 接口
+              <template v-if="node.kind === 'menu' && node.menuChecked && node.grantedCount < node.ownedCount">
+                ，{{ node.ownedCount - node.grantedCount }} 个未授权
+              </template>
+            </span>
+          </span>
+        </template>
+      </a-tree>
       <template #footer>
         <button class="app-btn" style="margin-right:8px" @click="drawer = false">取消</button>
         <button class="app-btn primary" :disabled="drawerSaving" @click="saveDrawer">
@@ -303,7 +337,7 @@ import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseO
 import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
-         getRoleMenus, saveRoleMenus, getRoleApis, saveRoleApis } from '../api'
+         getRolePermissions, saveRolePermissions } from '../api'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()
@@ -453,18 +487,31 @@ const filteredApis = computed(() => {
 
 const apiModal = ref(false)
 const apiForm = ref(blankApi())
-function blankApi () { return { id: '', method: 'GET', path: '', name: '', module: '', builtin: 0 } }
+function blankApi () { return { id: '', method: 'GET', path: '', name: '', module: '', menuIds: [], builtin: 0 } }
 function openApiCreate () { apiForm.value = blankApi(); apiModal.value = true }
 function openApiEdit (r) {
-  apiForm.value = { id: r.id, method: r.method || 'GET', path: r.path || '', name: r.name || '', module: r.module || '', builtin: r.builtin || 0 }
+  apiForm.value = { id: r.id, method: r.method || 'GET', path: r.path || '', name: r.name || '', module: r.module || '',
+    menuIds: Array.isArray(r.menuIds) ? [...r.menuIds] : [], builtin: r.builtin || 0 }
   apiModal.value = true
 }
+/** 所属菜单选择器数据源（复用菜单树；fieldNames 已映射 label:name/value:id） */
+const menuSelectTree = computed(() => buildTree(menus.value))
+/** 菜单 id → 名称（归属标签展示用；菜单未加载时回落 id） */
+const menuNameOf = id => (menus.value.find(m => m.id === id) || {}).name || id
+/**
+ * 所属菜单选择值：treeCheckStrictly 会强制 labelInValue（值为 {value,label} 对象），
+ * 这里归一成纯 id 数组存取，避免表单与其他逻辑感知 labelInValue。
+ */
+const apiMenuSelectValue = computed({
+  get: () => (apiForm.value.menuIds || []).map(id => ({ value: id, label: menuNameOf(id) })),
+  set: v => { apiForm.value.menuIds = (v || []).map(x => (x && typeof x === 'object' ? x.value : x)) }
+})
 async function saveApi () {
   const f = apiForm.value
   if (!String(f.path || '').trim()) { message.warning('请填写接口路径'); return }
   saving.value = true
   try {
-    const body = { method: f.method, path: f.path, name: f.name, module: f.module }
+    const body = { method: f.method, path: f.path, name: f.name, module: f.module, menuIds: f.menuIds || [] }
     const r = f.id ? await updateApi(f.id, body) : await createApi(body)
     if (r.success) { message.success('已保存'); apiModal.value = false; await refresh('apis') }
     else message.error(r.msg || '保存失败')
@@ -519,50 +566,203 @@ async function delRole (code) {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// ==================== 权限抽屉（菜单/接口绑定） ====================
+// ==================== 权限抽屉（单树：菜单 + 名下接口，勾选联动） ====================
 const drawer = ref(false)
-const drawerTab = ref('menu')
 const drawerRole = ref(null)
 const drawerSaving = ref(false)
-const checkedMenuIds = ref([])
-const checkedApiKeys = ref([])
 const drawerTitle = computed(() => drawerRole.value ? `角色权限 · ${drawerRole.value.name}` : '角色权限')
 
-/** 绑定用菜单树：全量（含隐藏——隐藏菜单仍可作为权限归属） */
-const bindMenuTree = computed(() => buildTree(menus.value))
-/** 绑定用接口树：按模块分组；叶子 key = 接口 id */
-const bindApiTree = computed(() => {
-  const groups = new Map()
-  for (const a of apis.value) {
-    const mod = a.module || '未归类'
-    if (!groups.has(mod)) groups.set(mod, [])
-    groups.get(mod).push(a)
-  }
-  return [...groups.keys()].sort().map(mod => ({
-    key: 'mod:' + mod,
-    title: `${mod}（${groups.get(mod).length}）`,
-    selectable: false,
-    children: groups.get(mod)
-      .sort((x, y) => (x.path || '').localeCompare(y.path || ''))
-      .map(a => ({ key: a.id, title: `${a.method} ${a.path}${a.name ? ' · ' + a.name : ''}` }))
-  }))
+/** 源状态（树的勾选由两者派生；同一接口多归属多实例天然同步） */
+const checkedMenuIds = ref([])
+const checkedApiIds = ref([])
+const checkedMenuSet = computed(() => new Set(checkedMenuIds.value))
+const checkedApiSet = computed(() => new Set(checkedApiIds.value))
+
+/** 未归属任何现存菜单的接口（挂「其他接口」伪分组） */
+const ungroupedApis = computed(() => {
+  const menuIdSet = new Set(menus.value.map(m => m.id))
+  return apis.value.filter(a => !(a.menuIds || []).some(mid => menuIdSet.has(mid)))
 })
 
-async function openDrawer (role, type) {
+/** 菜单 id → 直属子菜单 id 列表 */
+const menuChildrenMap = computed(() => {
+  const map = new Map()
+  for (const m of menus.value) {
+    const pid = m.parentId || ''
+    if (!map.has(pid)) map.set(pid, [])
+    map.get(pid).push(m.id)
+  }
+  return map
+})
+
+/** 菜单子树（含自身）id 集合 */
+function menuSubtreeIds (menuId) {
+  const out = new Set([menuId])
+  const stack = [menuId]
+  while (stack.length) {
+    const cur = stack.pop()
+    for (const child of (menuChildrenMap.value.get(cur) || [])) {
+      if (!out.has(child)) { out.add(child); stack.push(child) }
+    }
+  }
+  return out
+}
+
+/** 给定菜单集合名下（直接归属）的全部接口 id */
+function apiIdsOfMenus (menuIds) {
+  const set = new Set(menuIds)
+  const out = []
+  for (const a of apis.value) {
+    if ((a.menuIds || []).some(mid => set.has(mid))) out.push(a.id)
+  }
+  return out
+}
+
+const UNGROUPED_KEY = '__ungrouped__'
+const apiLeafKey = (groupId, apiId) => `api:${groupId}:${apiId}`
+const byPath = (x, y) => (x.path || '').localeCompare(y.path || '')
+
+/** 权限树：菜单树 + 各菜单名下接口叶子（多归属多实例）+ 其他接口分组；节点内容由 #title 插槽渲染 */
+const bindTree = computed(() => {
+  const menuIdSet = new Set(menus.value.map(m => m.id))
+  const byMenu = new Map()
+  for (const a of apis.value) {
+    for (const mid of (a.menuIds || []).filter(id => menuIdSet.has(id))) {
+      if (!byMenu.has(mid)) byMenu.set(mid, [])
+      byMenu.get(mid).push(a)
+    }
+  }
+  const leafNode = (groupId, a) => ({
+    key: apiLeafKey(groupId, a.id),
+    kind: 'api',
+    apiId: a.id,
+    method: a.method,
+    label: `${a.path}${a.name ? ' · ' + a.name : ''}`,
+    shared: (a.menuIds || []).filter(id => menuIdSet.has(id)).length > 1
+  })
+  const menuNode = m => {
+    const owned = (byMenu.get(m.id) || []).slice().sort(byPath)
+    return {
+      key: m.id,
+      kind: 'menu',
+      menuName: m.name,
+      icon: m.icon,
+      ownedCount: owned.length,
+      grantedCount: owned.filter(a => checkedApiSet.value.has(a.id)).length,
+      menuChecked: checkedMenuSet.value.has(m.id),
+      children: [
+        ...((m.children || []).map(menuNode)),
+        ...owned.map(a => leafNode(m.id, a))
+      ]
+    }
+  }
+  const roots = buildTree(menus.value).map(menuNode)
+  const rest = ungroupedApis.value.slice().sort(byPath)
+  if (rest.length) {
+    roots.push({
+      key: UNGROUPED_KEY,
+      kind: 'group',
+      groupName: '其他接口',
+      ownedCount: rest.length,
+      grantedCount: rest.filter(a => checkedApiSet.value.has(a.id)).length,
+      children: rest.map(a => leafNode(UNGROUPED_KEY, a))
+    })
+  }
+  return roots
+})
+
+/** 受控勾选 keys：由源状态派生（接口在所有归属分支同步勾选；其他接口全选时组节点勾选） */
+const treeCheckedKeys = computed(() => {
+  const keys = [...checkedMenuIds.value]
+  const menuIdSet = new Set(menus.value.map(m => m.id))
+  for (const a of apis.value) {
+    if (!checkedApiSet.value.has(a.id)) continue
+    const owners = (a.menuIds || []).filter(mid => menuIdSet.has(mid))
+    if (owners.length) { for (const mid of owners) keys.push(apiLeafKey(mid, a.id)) }
+    else keys.push(apiLeafKey(UNGROUPED_KEY, a.id))
+  }
+  const rest = ungroupedApis.value
+  if (rest.length && rest.every(a => checkedApiSet.value.has(a.id))) keys.push(UNGROUPED_KEY)
+  return keys
+})
+
+/** 勾选联动：勾菜单 → 带全子树菜单与名下接口；取消 → 接口仍属其它已勾菜单则保留；接口/组节点独立增删 */
+function onTreeCheck (_keys, e) {
+  const on = !!e?.checked
+  const node = e?.node || {}
+  if (node.kind === 'api') {
+    const id = node.apiId
+    if (on) { if (!checkedApiSet.value.has(id)) checkedApiIds.value = [...checkedApiIds.value, id] }
+    else checkedApiIds.value = checkedApiIds.value.filter(x => x !== id)
+    return
+  }
+  if (node.kind === 'group') {
+    const ids = ungroupedApis.value.map(a => a.id)
+    const set = new Set(ids)
+    checkedApiIds.value = on
+      ? [...new Set([...checkedApiIds.value, ...ids])]
+      : checkedApiIds.value.filter(x => !set.has(x))
+    return
+  }
+  const menuId = node.key
+  const subtree = menuSubtreeIds(menuId)
+  if (on) {
+    checkedMenuIds.value = [...new Set([...checkedMenuIds.value, ...subtree])]
+    const add = apiIdsOfMenus(subtree).filter(id => !checkedApiSet.value.has(id))
+    if (add.length) checkedApiIds.value = [...checkedApiIds.value, ...add]
+  } else {
+    const remain = checkedMenuIds.value.filter(id => !subtree.has(id))
+    checkedMenuIds.value = remain
+    const remainSet = new Set(remain)
+    const scope = new Set(apiIdsOfMenus(subtree))
+    const keep = new Set()
+    for (const a of apis.value) {
+      if (!scope.has(a.id)) continue
+      if ((a.menuIds || []).some(mid => remainSet.has(mid))) keep.add(a.id)
+    }
+    checkedApiIds.value = checkedApiIds.value.filter(id => !scope.has(id) || keep.has(id))
+  }
+}
+
+/** 存量缺口：已勾选菜单（含子树）名下有接口未勾选（“菜单配了但接口没配”的 403 隐患） */
+const gapCount = computed(() => {
+  const scope = new Set()
+  for (const mid of checkedMenuIds.value) {
+    for (const id of apiIdsOfMenus(menuSubtreeIds(mid))) scope.add(id)
+  }
+  let n = 0
+  for (const id of scope) if (!checkedApiSet.value.has(id)) n++
+  return n
+})
+
+/** 一键补齐：与勾选联动同语义，把已勾选菜单子树下的菜单与接口全部勾上 */
+function fillAllGaps () {
+  const addMenus = new Set(checkedMenuIds.value)
+  for (const mid of checkedMenuIds.value) {
+    for (const id of menuSubtreeIds(mid)) addMenus.add(id)
+  }
+  const addApis = new Set(checkedApiIds.value)
+  for (const id of apiIdsOfMenus(addMenus)) addApis.add(id)
+  checkedMenuIds.value = [...addMenus]
+  checkedApiIds.value = [...addApis]
+}
+
+async function openDrawer (role) {
   drawerRole.value = role
-  drawerTab.value = type
   drawer.value = true
   // 先清空再回显（抽屉 destroy-on-close，直接加载）
   checkedMenuIds.value = []
-  checkedApiKeys.value = []
+  checkedApiIds.value = []
   try {
-    // 抽屉的菜单树/接口树直接吃 menus、apis：从角色页签直接打开时，这两个页签的数据可能还没加载过
+    // 树的菜单/归属数据直接吃 menus、apis：从角色页签直接打开时，这两个页签的数据可能还没加载过
     await Promise.all([ensureData('menus'), ensureData('apis')])
-    const [m, a] = await Promise.all([getRoleMenus(role.code), getRoleApis(role.code)])
-    checkedMenuIds.value = (m && m.data) || []
-    // 只回显仍存在的接口绑定（接口被删后库里可能残留旧 id）
-    const valid = new Set(apis.value.map(x => x.id))
-    checkedApiKeys.value = (((a && a.data) || []).filter(id => valid.has(id)))
+    const r = await getRolePermissions(role.code)
+    const d = (r && r.data) || {}
+    // 只回显仍存在的绑定（菜单/接口被删后库里可能残留旧 id）
+    const validMenus = new Set(menus.value.map(m => m.id))
+    const validApis = new Set(apis.value.map(a => a.id))
+    checkedMenuIds.value = ((d.menuIds) || []).filter(id => validMenus.has(id))
+    checkedApiIds.value = ((d.apiIds) || []).filter(id => validApis.has(id))
   } catch (e) { message.error(e.message || '加载角色权限失败') }
 }
 
@@ -571,11 +771,9 @@ async function saveDrawer () {
   if (!role) return
   drawerSaving.value = true
   try {
-    // 接口树勾选里可能混入分组父节点（key 形如 mod:xxx），只取真实接口 id
-    const apiIds = checkedApiKeys.value.filter(k => !String(k).startsWith('mod:'))
-    const [m, a] = await Promise.all([saveRoleMenus(role.code, checkedMenuIds.value), saveRoleApis(role.code, apiIds)])
-    if (m.success && a.success) { message.success('权限已保存'); drawer.value = false }
-    else message.error(m.msg || a.msg || '保存失败')
+    const r = await saveRolePermissions(role.code, checkedMenuIds.value, checkedApiIds.value)
+    if (r.success) { message.success('权限已保存'); drawer.value = false }
+    else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { drawerSaving.value = false }
 }
@@ -635,8 +833,10 @@ const scheduleIdle = window.requestIdleCallback
   : cb => setTimeout(cb, 300)
 
 // 页签即数据入口：URL 直达 ?tab=apis 时只拉接口；其余页签稍后空闲补拉
+// 接口页签额外预取菜单：表格「所属菜单」列需要菜单名
 watch(tab, t => {
   ensureData(t)
+  if (t === 'apis') ensureData('menus')
   scheduleIdle(() => TABS.filter(x => x !== t).forEach(prefetch))
 }, { immediate: true })
 </script>
@@ -682,6 +882,17 @@ watch(tab, t => {
 .method-pill.m-delete { color: #c0392b; background: #fdebea; }
 .method-pill.m-patch { color: #7c3aed; background: #f1eafd; }
 .method-pill.m-all { color: var(--app-text2); background: var(--app-panel-2); }
+
+/* 接口表「所属菜单」标签 */
+.menu-tag { display: inline-flex; align-items: center; font-size: 11px; line-height: 18px; padding: 0 8px; margin: 1px 4px 1px 0; border-radius: 999px; background: var(--app-accent-weak); color: var(--app-text2); }
+
+/* 权限树节点 */
+.tree-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.tree-count { font-size: 11px; color: var(--app-text3); }
+.tree-count.warn { color: #9a6700; background: #fff3d6; padding: 0 6px; border-radius: 999px; }
+.tree-api { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.tree-shared { flex: none; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; color: var(--app-text3); border: 1px solid var(--app-border); }
+.gap-fill-btn { flex: none; }
 
 .app-pill.builtin { color: var(--app-accent); background: var(--app-accent-weak); }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }

@@ -1,11 +1,13 @@
 package com.wisesoft.ai.model;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * AI 接口表（RBAC 鉴权数据源）。
@@ -41,4 +43,10 @@ public class ApiEndpoint {
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
+
+    // ===== 非表字段（权限页聚合回填；归属关系存 c_ai_menu_api，多归属、不参与鉴权） =====
+
+    /** 归属菜单 id 列表（列表/编辑回显用） */
+    @TableField(exist = false)
+    private List<String> menuIds;
 }

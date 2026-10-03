@@ -1,5 +1,6 @@
 package com.wisesoft.ai.config;
 
+import com.wisesoft.ai.mapper.MenuApiMapper;
 import com.wisesoft.ai.mapper.MenuMapper;
 import com.wisesoft.ai.mapper.RoleMapper;
 import com.wisesoft.ai.mapper.RoleMenuMapper;
@@ -66,6 +67,7 @@ public class RbacSeedRunner implements ApplicationRunner {
     private final RoleMapper roleMapper;
     private final MenuMapper menuMapper;
     private final RoleMenuMapper roleMenuMapper;
+    private final MenuApiMapper menuApiMapper;
     private final RoleService roleService;
 
     @Override
@@ -91,11 +93,12 @@ public class RbacSeedRunner implements ApplicationRunner {
         // 新菜单默认对普通角色不可见（管理员直通全部菜单），需在「权限管理」里勾选，fail-closed。
         Set<String> existingMenuIds = menuMapper.selectList(null).stream()
                 .map(Menu::getId).collect(Collectors.toSet());
-        // 退役菜单：种子清单里已删除的内置菜单，存量库连行清理（含角色绑定），幂等
+        // 退役菜单：种子清单里已删除的内置菜单，存量库连行清理（含角色绑定与接口归属），幂等
         int menuRetired = 0;
         for (String mid : RETIRED_MENUS) {
             if (!existingMenuIds.contains(mid)) continue;
             roleMenuMapper.unbindByMenu(mid);
+            menuApiMapper.unbindByMenu(mid);
             menuMapper.deleteById(mid);
             existingMenuIds.remove(mid);
             menuRetired++;

@@ -91,37 +91,18 @@ public class RoleController {
         return ResultJson.ok("已删除");
     }
 
-    @Operation(summary = "角色的菜单绑定", description = "返回该角色绑定的菜单 id 列表")
-    @GetMapping("/{code}/menus")
-    public ResultJson menus(@PathVariable("code") String code) {
+    @Operation(summary = "角色的权限绑定", description = "返回该角色绑定的菜单与接口 id：{menuIds, apiIds}（权限配置页单树回显）")
+    @GetMapping("/{code}/permissions")
+    public ResultJson permissions(@PathVariable("code") String code) {
         Role r = roleService.get(code);
         if (r == null) return ResultJson.error("角色不存在");
-        return ResultJson.ok(roleService.menuIdsOf(code));
+        return ResultJson.ok(Map.of("menuIds", roleService.menuIdsOf(code), "apiIds", roleService.apiIdsOf(code)));
     }
 
-    @Operation(summary = "保存角色的菜单绑定", description = "body: {menuIds:[...]} 全量替换；管理员级角色无需绑定（天然全量）")
-    @PutMapping("/{code}/menus")
-    public ResultJson saveMenus(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
-        roleService.saveMenus(code, idList(body, "menuIds"));
-        return ResultJson.ok("菜单权限已保存");
-    }
-
-    @Operation(summary = "角色的接口绑定", description = "返回该角色绑定的接口 id 列表")
-    @GetMapping("/{code}/apis")
-    public ResultJson apis(@PathVariable("code") String code) {
-        Role r = roleService.get(code);
-        if (r == null) return ResultJson.error("角色不存在");
-        return ResultJson.ok(roleApiIds(code));
-    }
-
-    private List<String> roleApiIds(String code) {
-        return roleService.apiIdsOf(code);
-    }
-
-    @Operation(summary = "保存角色的接口绑定", description = "body: {apiIds:[...]} 全量替换；管理员级角色无需绑定（天然放行）")
-    @PutMapping("/{code}/apis")
-    public ResultJson saveApis(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
-        roleService.saveApis(code, idList(body, "apiIds"));
-        return ResultJson.ok("接口权限已保存");
+    @Operation(summary = "保存角色的权限绑定", description = "body: {menuIds:[...], apiIds:[...]} 全量替换；管理员级角色无需绑定（天然全量）")
+    @PutMapping("/{code}/permissions")
+    public ResultJson savePermissions(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
+        roleService.savePermissions(code, idList(body, "menuIds"), idList(body, "apiIds"));
+        return ResultJson.ok("权限已保存");
     }
 }

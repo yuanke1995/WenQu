@@ -583,6 +583,13 @@ CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
     PRIMARY KEY (`role_code`, `api_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定';
 
+CREATE TABLE IF NOT EXISTS `c_ai_menu_api` (
+    `menu_id` VARCHAR(50) NOT NULL COMMENT '菜单ID（c_ai_menu.id）',
+    `api_id`  VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
+    PRIMARY KEY (`menu_id`, `api_id`),
+    KEY `idx_api` (`api_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='菜单-接口归属（多归属；仅分组/展示与勾选联动，不参与鉴权）';
+
 -- ============================================
 -- 2026-09-26: 产物交付（present_artifacts）落库
 -- 模型在回答中生成的文件产物（md/txt/csv/json/html）按**用户**归属持久化，
