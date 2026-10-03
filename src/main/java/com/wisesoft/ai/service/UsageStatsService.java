@@ -39,7 +39,8 @@ public class UsageStatsService {
     /** 趋势图/占比里单独成线的最大模型数，超出者合并为「其他」 */
     private static final int MAX_MODELS = 6;
     private static final String OTHER_LABEL = "其他";
-    private static final String UNKNOWN_LABEL = "未知";
+    /** 模型字段上线前的存量消息无模型记录，聚合时归入该桶（非异常数据） */
+    private static final String UNKNOWN_LABEL = "未记录";
     /** 热力图窗口：近 365 天（含今天） */
     private static final int HEATMAP_DAYS = 365;
 

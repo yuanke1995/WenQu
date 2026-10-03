@@ -24,7 +24,7 @@
         </div>
         <div class="heat-scroll">
           <div class="heat-inner">
-            <div class="heat-grid" :style="heatGridStyle">
+            <div class="heat-grid" :style="{ gridTemplateColumns: heatColTemplate }">
               <template v-for="(col, ci) in heatData.columns" :key="'c' + ci">
                 <template v-for="(cell, ri) in col" :key="ci + '-' + ri">
                   <div v-if="cell" class="heat-cell" :class="'hl' + heatData.levelOf(cell)" :title="cellTitle(cell)"></div>
@@ -32,7 +32,7 @@
                 </template>
               </template>
             </div>
-            <div class="heat-months" :style="heatGridStyle">
+            <div class="heat-months" :style="{ gridTemplateColumns: heatColTemplate }">
               <template v-for="(m, i) in heatMonths" :key="'m' + i">
                 <div class="heat-month" :style="{ gridColumnStart: m.col }">{{ m.label }}</div>
               </template>
@@ -65,7 +65,9 @@
 
       <!-- ==================== 模型用量（环形图） ==================== -->
       <div class="app-card">
-        <div class="app-card-title">模型用量</div>
+        <div class="app-card-title">模型用量
+          <span v-if="hasUnrecorded" class="card-sub">「未记录」为模型字段上线前的历史消息；新回答起按实际模型统计</span>
+        </div>
         <div v-if="modelRows.length" class="donut-flex">
           <div ref="pieEl" class="chart donut"></div>
           <div class="legend-list">
@@ -106,6 +108,7 @@ const heatmap = ref([])        // [{ date, tokens }] 稀疏日清单（近 365 �
 const trendDays = ref([])      // ['yyyy-MM-dd', ...]
 const trendSeries = ref([])    // [{ model, values[] }]
 const modelRows = ref([])      // [{ model, tokens }]（近 N 日）
+const hasUnrecorded = computed(() => modelRows.value.some(m => m.model === '未记录'))
 
 const load = async () => {
   loading.value = true
@@ -248,11 +251,8 @@ function cellTitle(cell) {
   return `${md(cell.date)}：${fmtTokens(cell.value)} tokens`
 }
 
-const heatGridStyle = computed(() => ({
-  gridTemplateRows: 'repeat(7, 11px)',
-  gridAutoColumns: '11px',
-  gridAutoFlow: 'column'
-}))
+// 列模板：列数与热力图一致，每列 minmax(9px, 1fr) 随容器伸缩（宽屏铺满卡片，不再挤成一小条）
+const heatColTemplate = computed(() => `repeat(${heatData.value.columns.length}, minmax(9px, 1fr))`)
 // 月份标签：某列的周日跨入新月份时标注（网格下沿，与截图一致）
 const heatMonths = computed(() => {
   const out = []
@@ -284,7 +284,7 @@ const PALETTES = {
 }
 const MUTED = { light: '#b3bac3', dark: '#5f6570' }
 const seriesColor = model => {
-  if (model === '其他' || model === '未知') return themeState.value === 'dark' ? MUTED.dark : MUTED.light
+  if (model === '其他' || model === '未记录') return themeState.value === 'dark' ? MUTED.dark : MUTED.light
   const i = namedIndex(model)
   const pal = PALETTES[themeState.value === 'dark' ? 'dark' : 'light']
   return pal[i % pal.length]
@@ -292,7 +292,7 @@ const seriesColor = model => {
 const namedIndex = model => {
   let i = 0
   for (const s of trendSeries.value) {
-    if (s.model === '其他' || s.model === '未知') continue
+    if (s.model === '其他' || s.model === '未记录') continue
     if (s.model === model) return i
     i++
   }
@@ -406,10 +406,13 @@ onBeforeUnmount(() => {
 
 /* ==================== 热力图 ==================== */
 .heat-scroll { overflow-x: auto; padding: 4px 2px; }
-.heat-inner { display: inline-block; min-width: 100%; }
-.heat-grid { display: grid; gap: 3px; }
+/* 宽屏铺满（上限 1200px 防格子过大），窄屏横向滚动 */
+.heat-inner { min-width: 100%; max-width: 1200px; }
+.heat-grid { display: grid; grid-auto-flow: column; gap: 4px; }
 .heat-cell {
-  width: 11px; height: 11px; border-radius: 2.5px;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 2.5px;
   background: var(--app-panel-2);
   outline: 1px solid rgba(0, 0, 0, .04);
   outline-offset: -1px;
@@ -423,7 +426,7 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .hl2 { background: #28528d; }
 :global(html[data-theme='dark']) .hl3 { background: #3a72c0; }
 :global(html[data-theme='dark']) .hl4 { background: #5c98e9; }
-.heat-months { display: grid; gap: 3px; margin-top: 6px; min-height: 16px; }
+.heat-months { display: grid; gap: 4px; margin-top: 8px; min-height: 16px; }
 .heat-month { font-size: 11px; color: var(--app-text3); white-space: nowrap; }
 .heat-legend {
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
@@ -440,6 +443,7 @@ onBeforeUnmount(() => {
 
 /* ==================== 趋势图 / 环形图 ==================== */
 .trend-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 2px 0 4px; }
+.card-sub { font-size: 11px; color: var(--app-text3); font-weight: 400; margin-left: 10px; }
 .tl-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); }
 .tl-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
 .chart { width: 100%; }
