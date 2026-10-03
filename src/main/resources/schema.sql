@@ -468,7 +468,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
     `thinking`     VARCHAR(16)  DEFAULT 'auto' COMMENT '思考能力(仅聊天模型有意义): auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考',
     `reasoning_levels` VARCHAR(64) DEFAULT NULL COMMENT '该模型支持的思考强度档位(逗号分隔: low,medium,high,xhigh,max；空=不支持强度调节，仅开关思考)',
     `default_reasoning_level` VARCHAR(16) DEFAULT NULL COMMENT '默认思考强度档位(须在本模型 reasoning_levels 内；空=不指定，由请求层/网关默认决定)',
-    `context_window` INT        DEFAULT NULL COMMENT '上下文窗口上限 token（NULL=未声明，回落全局默认窗口；即用户可选区间的最大值/默认值；上下文预算=窗口×安全系数−输出限制）',
+    `context_window` INT        DEFAULT NULL COMMENT '上下文窗口上限 token（对话类模型必填，无全局兜底；即用户可选区间的最大值/默认值；上下文预算=窗口×安全系数−输出限制）',
     `context_window_min` INT    DEFAULT NULL COMMENT '上下文窗口下限 token（NULL=不可调；与 context_window 构成用户在聊天页可选区间 [min,max]，默认取 max）',
     `max_output`   INT          DEFAULT NULL COMMENT '最大输出 token（NULL=未声明，回落全局输出限制；作为 max_tokens 随请求下发）',
     `enabled`      INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',

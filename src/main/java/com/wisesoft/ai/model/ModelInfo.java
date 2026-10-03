@@ -50,7 +50,7 @@ public class ModelInfo {
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */
     private String thinking;
 
-    /** 上下文窗口上限 token（NULL=未声明，回落全局「默认窗口」；即用户可选区间的最大值/默认值；上下文预算 = 窗口×安全系数−输出限制） */
+    /** 上下文窗口上限 token（对话类模型必填，无全局兜底；即用户可选区间的最大值/默认值；上下文预算 = 窗口×安全系数−输出限制） */
     private Integer contextWindow;
 
     /** 上下文窗口下限 token（NULL=不可调；与 contextWindow 构成聊天页用户可选区间 [min,max]，默认取 max） */

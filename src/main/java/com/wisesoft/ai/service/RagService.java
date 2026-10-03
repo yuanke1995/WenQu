@@ -3613,36 +3613,41 @@ public class RagService {
         return scoped;
     }
 
-    /** 上下文预算解析结果：窗口/输出限制各自来自「用户所选/模型行声明/全局默认」，供触顶提示与 max_tokens 下发区分来源 */
+    /** 上下文预算解析结果：窗口来自「用户所选/模型行声明」，输出限制来自「模型行声明/全局默认」，供触顶提示与 max_tokens 下发区分来源 */
     private record CtxBudget(int window, int maxOutput, int budget,
                              String windowSource, boolean outputFromModel) {}
 
     private CtxBudget resolveContextBudget(String resolvedModel, Integer requestedWindow,
                                            List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        int defaultWindow = configService.getInt("context.defaultWindowTokens");
         double safetyFactor = configService.getDouble("context.safetyFactor");
         int configMaxOutput = configService.getInt("context.maxOutputTokens");
         int costCap = configService.getInt("context.costCapTokens");
 
-        // 窗口/最大输出是模型固有属性：模型行声明了就用模型行（模型管理页维护），未声明回落全局默认
+        // 窗口/最大输出是模型固有属性：模型行声明了就用模型行（模型管理页维护）。
+        // 窗口没有全局兜底：未声明的对话类模型预算无法计算，fail-loud 提醒声明（登记时已强制必填，此处只拦存量/绕过登记的行）
         ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
         Integer declaredWindow = mi == null ? null : mi.getContextWindow();
         Integer declaredMin = mi == null ? null : mi.getContextWindowMin();
         Integer declaredOutput = mi == null ? null : mi.getMaxOutput();
         boolean windowFromModel = declaredWindow != null && declaredWindow > 0;
         boolean outputFromModel = declaredOutput != null && declaredOutput > 0;
-        int window = windowFromModel ? declaredWindow : defaultWindow;
-        // 窗口来源三态：用户在聊天面板所选档位 > 模型声明 > 全局默认。区间可调 = 模型登记了
-        // 「最小窗口~窗口」且 min<max（min==max 等价于不可调）；请求值越界收敛进区间，模型不可调时忽略
-        String windowSource = windowFromModel ? "模型声明窗口" : "全局默认窗口";
-        boolean adjustable = windowFromModel && declaredMin != null && declaredMin > 0 && declaredMin < declaredWindow;
-        if (requestedWindow != null && requestedWindow > 0) {
-            if (adjustable) {
-                window = Math.max(declaredMin, Math.min(declaredWindow, requestedWindow));
-                windowSource = "用户所选窗口";
-            }
-        }
         int maxOutput = outputFromModel ? declaredOutput : configMaxOutput;
+        if (!windowFromModel) {
+            addDegradation(degradations, degradedCodes, "ctxWindowUndeclared",
+                    "该模型未声明上下文窗口，检索资料将无法填入；请在模型管理页为 " + resolvedModel + " 声明窗口");
+            log.warn("[CTX] 模型 {} 未声明上下文窗口，检索预算托底 1000", resolvedModel);
+            return new CtxBudget(0, maxOutput, 1000, "未声明", outputFromModel);
+        }
+
+        int window = declaredWindow;
+        // 窗口来源两态：用户在聊天面板所选档位 > 模型声明。区间可调 = 模型登记了
+        // 「最小窗口~窗口」且 min<max（min==max 等价于不可调）；请求值越界收敛进区间，模型不可调时忽略
+        String windowSource = "模型声明窗口";
+        boolean adjustable = declaredMin != null && declaredMin > 0 && declaredMin < declaredWindow;
+        if (requestedWindow != null && requestedWindow > 0 && adjustable) {
+            window = Math.max(declaredMin, Math.min(declaredWindow, requestedWindow));
+            windowSource = "用户所选窗口";
+        }
 
         int windowBudget = (int) (window * Math.max(0.1, Math.min(1, safetyFactor)));
         int budget = windowBudget - maxOutput;

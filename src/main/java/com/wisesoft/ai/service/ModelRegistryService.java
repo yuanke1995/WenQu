@@ -982,6 +982,13 @@ public class ModelRegistryService {
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
             mi.setContextWindowMin(intOrNull(item.get("contextWindowMin")));
             mi.setMaxOutput(intOrNull(item.get("maxOutput")));
+            // 窗口无全局兜底：对话类模型（chat/vision/omni 参与问答检索预算）必须声明窗口——
+            // 不强制的话运行时该模型检索预算被托底 1000（fail-loud 降级），登记时就拦住
+            if (mi.getContextWindow() == null
+                    && (TYPE_CHAT.equals(type) || TYPE_VISION.equals(type) || TYPE_OMNI.equals(type))) {
+                throw new IllegalArgumentException("模型 " + modelId.trim() + " 未声明上下文窗口（对话类模型必填，"
+                        + "检索预算 = 窗口×安全系数−输出）；向量/重排/OCR/语音等能力型类型可留空");
+            }
             // 窗口区间一致性：下限不大于上限——否则聊天页档位列表区间倒挂，运行时 clamp 也无从谈起
             //（intOrNull 已把 0/负值归一为 null=未声明，非空即保证 ≥1）
             if (mi.getContextWindowMin() != null && mi.getContextWindow() != null

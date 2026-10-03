@@ -255,12 +255,12 @@
             <div class="pm-field">
               <div class="pm-label">
                 上下文窗口
-                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。留空用全局默认。">
+                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。对话类模型必填（无全局兜底，未声明时检索资料无法填入）。">
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.contextWindow" :min="1" :step="1024"
-                              placeholder="如 131072" style="width:100%" />
+                              placeholder="对话类必填，如 131072" style="width:100%" />
               <div class="pm-presets">
                 <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindow = q">{{ fmtK(q) }}</button>
               </div>
@@ -293,7 +293,8 @@
             </div>
           </div>
           <div class="pm-hint">
-            留空用全局默认。上下文预算 = 窗口 × 安全系数 − 最大输出，检索资料按预算填入。
+            窗口：对话类模型必填（向量/重排/OCR/语音等能力型可留空）；最小窗口留空=聊天页不可调档；最大输出留空用全局「输出限制」。
+            上下文预算 = 窗口 × 安全系数 − 最大输出，检索资料按预算填入。
             <span v-if="budgetConflict" class="pm-hint-bad">当前「最大输出」已不小于窗口，检索资料将无法填入。</span>
           </div>
 
@@ -892,6 +893,11 @@ const applyModelEdit = () => {
     message.warning(`模型 ${modelId} 已在本供应商登记`)
     return
   }
+  // 窗口无全局兜底：对话类模型必须声明窗口（后端保存同样强制），能力型类型才可留空
+  if (['chat', 'vision', 'omni'].includes(f.modelType) && f.contextWindow == null) {
+    message.warning('对话类模型必须声明上下文窗口（检索预算 = 窗口×安全系数−最大输出）')
+    return
+  }
   if (f.contextWindow != null && f.maxOutput != null && f.maxOutput >= f.contextWindow) {
     message.warning('最大输出必须小于上下文窗口，否则该模型下检索资料无法填入')
     return
@@ -938,7 +944,7 @@ const capsOf = r => {
   return out
 }
 const ctxText = r => {
-  if (r.contextWindow == null && r.contextWindowMin == null && r.maxOutput == null) return '全局默认'
+  if (r.contextWindow == null && r.contextWindowMin == null && r.maxOutput == null) return '未声明'
   const win = r.contextWindowMin != null && r.contextWindow != null
     ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}`
     : (r.contextWindow ? fmtK(r.contextWindow) : '默认')
@@ -948,7 +954,7 @@ const ctxTitle = r => {
   const win = r.contextWindowMin != null && r.contextWindow != null
     ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}（可调）`
     : String(r.contextWindow ?? '默认')
-  return `上下文窗口 ${win} / 最大输出 ${r.maxOutput ?? '默认'} token（窗口留空用全局默认；最小窗口留空=聊天页不可调档）`
+  return `上下文窗口 ${win} / 最大输出 ${r.maxOutput ?? '默认'} token（窗口对话类必填；最小窗口留空=聊天页不可调档）`
 }
 
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */

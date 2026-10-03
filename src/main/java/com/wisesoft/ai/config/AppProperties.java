@@ -198,13 +198,11 @@ public class AppProperties {
     /**
      * 上下文与长度控制（价值驱动填充）：
      * 预算 = min(模型窗口 × 安全系数 − 预留输出, 成本软上限)；块按相关度降序累积填充，历史按预算裁剪。
-     * 窗口/最大输出按模型声明（c_ai_model.context_window / max_output，模型管理页维护），
-     * 未声明的模型回落这里的全局默认值。
+     * 窗口/最大输出按模型声明（c_ai_model.context_window / max_output，模型管理页维护）；
+     * 窗口没有全局兜底——对话类模型登记时强制声明，未声明的存量行运行时 fail-loud 降级提醒。
      */
     @Data
     public static class Context {
-        /** 未声明窗口的模型使用的默认窗口（token） */
-        private int defaultWindowTokens = 32768;
         /** 窗口安全系数（0~1，预留余量防超窗） */
         private double safetyFactor = 0.7;
         /** 成本软上限（token，0=不限制）：即使模型窗口很大，单次请求输入也不超过此值，防止账单失控 */
