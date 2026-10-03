@@ -309,8 +309,9 @@ public class ConfigService {
         d.put("parse.childSize", "400");                   // 父子分块：子块尺寸（字符，超过该长度的块才切子块）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发
         // 问答行为参数
-        d.put("chat.remainTokenFloor", "800");             // 上下文填充保留下限
-        d.put("chat.truncateFallbackChars", "200");        // 超预算截断兜底字符数
+        // chat.remainTokenFloor / chat.truncateFallbackChars 已退役（2026-10）：上下文装配的工程细节
+        // 不再暴露给设置页（用户容易误解为压缩参数，误调会在预算耗尽后强塞知识块）——
+        // 固定为 RagService 常量 REMAIN_TOKEN_FLOOR=800 / TRUNCATE_FALLBACK_CHARS=200。存量库旧行成孤儿数据
         // chat.historyRounds 已退役：历史不再按轮数截断，改为预算驱动全量带入 + 滚动压缩
         // （context.historyCompress / context.compressRatio 控制；辅助调用内部仍用固定 2 轮短历史）
         // chat.userSystemPrompt（附加指令）已退役：见上方 chat.systemPrompt 注释

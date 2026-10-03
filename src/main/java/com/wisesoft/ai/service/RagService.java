@@ -207,6 +207,13 @@ public class RagService {
     /** 引用摘要截断长度 */
     private static final int SNIPPET_LEN = 80;
 
+    /** 知识块填充的预算保留下限（token）：固定部分（system+问题）吃满预算时，至少留这点空间给首块资料。
+     *  原设置页参数 chat.remainTokenFloor 已退役——装配工程细节易被误解为压缩参数，固定为常量（压缩与其无关） */
+    private static final int REMAIN_TOKEN_FLOOR = 800;
+
+    /** 首块资料超预算硬截断时至少保留的字符数（原 chat.truncateFallbackChars，随设置页一并退役为常量） */
+    private static final int TRUNCATE_FALLBACK_CHARS = 200;
+
     /** <related> 下一步建议条数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
     private String relatedPromptLine() {
         int n = Math.max(1, configService.getInt("retrieval.relatedCount", 3));
@@ -1089,9 +1096,11 @@ public class RagService {
                         + "但最终回答必须以下方参考资料为准：\n").append(thinkingInject);
             }
 
-            // 5. 价值驱动填充：预算已在上方解析；减去 system/问题固定部分后，按相关度累积填充知识块
+            // 5. 价值驱动填充：预算已在上方解析；减去 system/问题固定部分后，按相关度累积填充知识块。
+            // 保留下限是装配工程细节（平台常量，不进设置页）：保证固定部分吃满预算时至少还有一小段空间
+            // 给首块资料（截断兜底），与历史压缩无关——压缩由 assembleHistory 按 budget×compressRatio 触发
             int fixedTokens = TokenCounter.estimate(system.toString()) + TokenCounter.estimate(userQuestion.toString());
-            int remainTokens = Math.max(configService.getInt("chat.remainTokenFloor", 800), budget - fixedTokens);
+            int remainTokens = Math.max(REMAIN_TOKEN_FLOOR, budget - fixedTokens);
 
             Map<Integer, String> imgIndex = new LinkedHashMap<>();
             // 全局图片编号 → 描述（图片相关性校验用：LLM 输出标记后逐图比对）
@@ -1324,7 +1333,7 @@ public class RagService {
                     // M5 fail-loud：首块超预算被硬截断（高相关块信息可能丢失），不再只记 debug
                     addDegradation(degradations, degradedCodes, "contextTruncated",
                             "资料内容较长，仅截取部分，细节可能缺失");
-                    text = truncateChars(text, Math.max(configService.getInt("chat.truncateFallbackChars", 200), remainTokens - usedTokens));
+                    text = truncateChars(text, Math.max(TRUNCATE_FALLBACK_CHARS, remainTokens - usedTokens));
                     tokens = TokenCounter.estimate(text);
                 }
 
