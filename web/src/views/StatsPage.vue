@@ -6,7 +6,8 @@
       <button class="app-btn ghost" style="margin-left:auto" :disabled="loading" @click="load">刷新</button>
     </div>
 
-    <div class="app-page-body">
+    <!-- 一屏布局：统计卡 / Token 活动 / 图表行三行，图表行吃掉剩余高度（页面本身不滚动） -->
+    <div class="app-page-body stats-body">
       <!-- ==================== 统计卡（全时段口径） ==================== -->
       <div class="app-card stat-cards">
         <div v-for="c in cardCells" :key="c.label" class="stat-cell">
@@ -16,7 +17,7 @@
       </div>
 
       <!-- ==================== Token 活动（近一年热力图） ==================== -->
-      <div class="app-card">
+      <div class="app-card heat-card">
         <div class="app-card-title">
           Token 活动
           <a-segmented v-model:value="heatMode" size="small" style="margin-left:auto"
@@ -34,56 +35,60 @@
                 </template>
               </template>
             </div>
-            <div class="heat-months" :style="{ gridTemplateColumns: heatColTemplate }">
-              <template v-for="(m, i) in heatMonths" :key="'m' + i">
-                <div class="heat-month" :style="{ gridColumnStart: m.col }">{{ m.label }}</div>
-              </template>
-            </div>
-          </div>
-        </div>
-        <div class="heat-legend">
-          <span>少</span>
-          <i v-for="l in 5" :key="l" class="heat-cell" :class="'hl' + (l - 1)"></i>
-          <span>多</span>
-        </div>
-      </div>
-
-      <!-- ==================== 时间范围切换 ==================== -->
-      <div class="range-row">
-        <span class="range-label">时间范围</span>
-        <a-segmented v-model:value="range" :options="[{ value: 7, label: '近 7 日' }, { value: 30, label: '近 30 日' }]" @change="load" />
-      </div>
-
-      <!-- ==================== 每日 Token 趋势图 ==================== -->
-      <div class="app-card">
-        <div class="app-card-title">每日 Token 趋势图</div>
-        <div class="trend-legend">
-          <span v-for="s in trendSeries" :key="s.model" class="tl-item">
-            <i class="tl-dot" :style="{ background: seriesColor(s.model) }"></i>{{ s.label || s.model }}
-          </span>
-        </div>
-        <div ref="trendEl" class="chart trend"></div>
-      </div>
-
-      <!-- ==================== 模型用量（环形图） ==================== -->
-      <div class="app-card">
-        <div class="app-card-title">模型用量
-          <span v-if="hasUnrecorded" class="card-sub">「未记录」为模型字段上线前的历史消息；新回答起按实际模型统计</span>
-        </div>
-        <div v-if="modelRows.length" class="donut-flex">
-          <div ref="pieEl" class="chart donut"></div>
-          <div class="legend-list">
-            <div v-for="m in modelRows" :key="m.model" class="legend-row">
-              <i class="tl-dot" :style="{ background: seriesColor(m.model) }"></i>
-              <div class="legend-main">
-                <div class="legend-name">{{ m.label || m.model }}</div>
-                <div class="legend-sub">{{ fmtTokens(m.tokens) }} tokens</div>
+            <!-- 月份标签与「少→多」图例同行：省一行高度（一屏布局的高度预算） -->
+            <div class="heat-foot">
+              <div class="heat-months" :style="{ gridTemplateColumns: heatColTemplate }">
+                <template v-for="(m, i) in heatMonths" :key="'m' + i">
+                  <div class="heat-month" :style="{ gridColumnStart: m.col }">{{ m.label }}</div>
+                </template>
               </div>
-              <div class="legend-pct">{{ pct(m.tokens) }}%</div>
+              <div class="heat-legend">
+                <span>少</span>
+                <i v-for="l in 5" :key="l" class="heat-cell" :class="'hl' + (l - 1)"></i>
+                <span>多</span>
+              </div>
             </div>
           </div>
         </div>
-        <a-empty v-else description="该时间范围内暂无用量数据" />
+      </div>
+
+      <!-- ==================== 趋势图 + 模型用量 ==================== -->
+      <div class="charts-row">
+        <!-- 每日 Token 趋势图 -->
+        <div class="app-card chart-card">
+          <div class="app-card-title">
+            每日 Token 趋势图
+            <a-segmented v-model:value="range" size="small" style="margin-left:auto"
+                         :options="[{ value: 7, label: '近 7 日' }, { value: 30, label: '近 30 日' }]" @change="load" />
+          </div>
+          <div class="trend-legend">
+            <span v-for="s in trendSeries" :key="s.model" class="tl-item">
+              <i class="tl-dot" :style="{ background: seriesColor(s.model) }"></i>{{ s.label || s.model }}
+            </span>
+          </div>
+          <div ref="trendEl" class="chart trend"></div>
+        </div>
+
+        <!-- 模型用量（环形图） -->
+        <div class="app-card chart-card">
+          <div class="app-card-title">模型用量
+            <span v-if="hasUnrecorded" class="card-sub">「未记录」为模型字段上线前的历史消息；新回答起按实际模型统计</span>
+          </div>
+          <div v-if="modelRows.length" class="donut-flex">
+            <div ref="pieEl" class="chart donut"></div>
+            <div class="legend-list">
+              <div v-for="m in modelRows" :key="m.model" class="legend-row">
+                <i class="tl-dot" :style="{ background: seriesColor(m.model) }"></i>
+                <div class="legend-main">
+                  <div class="legend-name">{{ m.label || m.model }}</div>
+                  <div class="legend-sub">{{ fmtTokens(m.tokens) }} tokens</div>
+                </div>
+                <div class="legend-pct">{{ pct(m.tokens) }}%</div>
+              </div>
+            </div>
+          </div>
+          <a-empty v-else description="该时间范围内暂无用量数据" />
+        </div>
       </div>
     </div>
 
@@ -401,12 +406,22 @@ const renderCharts = () => {
 const onResize = () => { trendChart?.resize(); pieChart?.resize() }
 watch(themeState, () => { renderCharts() })
 
+// 一屏布局下图表高度由容器剩余空间决定（不再是固定 px）：容器尺寸变化必须重算画布，
+// 否则窗口缩放/侧栏折叠后 ECharts 仍按旧尺寸绘制（留白或裁切）
+let ro = null
 onMounted(() => {
   load()
   window.addEventListener('resize', onResize)
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(() => onResize())
+    if (trendEl.value) ro.observe(trendEl.value)
+    if (pieEl.value) ro.observe(pieEl.value)
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  ro?.disconnect()
+  ro = null
   trendChart?.dispose()
   pieChart?.dispose()
   trendChart = pieChart = null
@@ -414,34 +429,61 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* ==================== 一屏布局 ====================
+   三行：统计卡 / Token 活动 / 图表行。图表行吃掉剩余高度（1fr），
+   各卡片内部用 min-height:0 + flex 让图表填满而不撑破容器——
+   常规屏幕下页面不出现滚动条；窗口过矮时（图表行触底 240px）才回落到滚动。 */
+.stats-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto minmax(240px, 1fr);
+  gap: 12px;
+  padding: 12px 16px;
+}
+.charts-row {
+  display: grid;
+  /* 模型用量列给足宽度（≥420px，宽屏最多 46%）：环形图 + 图例都要摆得开 */
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 46%);
+  gap: 12px;
+  min-height: 0;
+}
+/* 窄屏（≤1100px）两图上下排：此时内容必然高于一屏，body 回落为滚动 */
+@media (max-width: 1100px) {
+  .charts-row { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 1fr) minmax(260px, 1fr); }
+}
+.chart-card { display: flex; flex-direction: column; min-height: 0; padding: 12px 14px; }
+
 /* ==================== 统计卡 ==================== */
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  padding: 18px 8px;
+  padding: 12px 8px;
 }
 .stat-cell {
   text-align: center;
-  padding: 4px 12px;
+  padding: 2px 12px;
   border-right: 1px solid var(--app-border);
 }
 .stat-cell:last-child { border-right: none; }
-.stat-num { font-size: 22px; font-weight: 500; line-height: 1.3; color: var(--app-text); }
-.stat-label { font-size: 12px; color: var(--app-text3); margin-top: 4px; }
+.stat-num { font-size: 20px; font-weight: 500; line-height: 1.25; color: var(--app-text); }
+.stat-label { font-size: 12px; color: var(--app-text3); margin-top: 2px; }
 @media (max-width: 768px) {
   .stat-cell { border-right: none; border-bottom: 1px dashed var(--app-border); padding: 8px 0; }
   .stat-cell:last-child { border-bottom: none; }
 }
 
 /* ==================== 热力图 ==================== */
-.heat-scroll { overflow-x: auto; padding: 4px 2px; }
-/* 宽屏铺满（上限 1200px 防格子过大），窄屏横向滚动 */
+/* 纵向不滚动（高度由卡片预算决定）；窄于最小列宽时才允许横向滚动 */
+.heat-card { padding: 12px 14px; }
+.heat-card .app-card-title { margin-bottom: 6px; }
+.heat-scroll { overflow-x: auto; overflow-y: hidden; padding: 2px; }
+/* 宽屏铺满（上限 1200px 防格子过大撑爆一屏），窄屏横向滚动 */
 .heat-inner { min-width: 100%; max-width: 1200px; }
 .heat-grid {
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(7, auto); /* 列流必须显式行数：否则全部格子塞进第 1 列 */
-  gap: 4px;
+  gap: 3px;
 }
 .heat-cell {
   width: 100%;
@@ -461,7 +503,9 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .hl2 { background: #28528d; }
 :global(html[data-theme='dark']) .hl3 { background: #3a72c0; }
 :global(html[data-theme='dark']) .hl4 { background: #5c98e9; }
-.heat-months { display: grid; gap: 4px; margin-top: 8px; min-height: 16px; }
+/* 月份行与「少→多」图例同一行（省一行高度） */
+.heat-foot { display: flex; align-items: flex-end; gap: 14px; margin-top: 5px; }
+.heat-months { display: grid; gap: 3px; flex: 1; min-height: 14px; }
 .heat-month { font-size: 11px; color: var(--app-text3); white-space: nowrap; }
 /* 热力图悬浮提示：teleport 到 body，深色浮层跟随鼠标上方居中；两行=日期 / tokens·轮次 */
 .heat-tip {
@@ -478,31 +522,25 @@ onBeforeUnmount(() => {
 .heat-tip-l1 { font-size: 11px; line-height: 1.4; color: rgba(255, 255, 255, .72); }
 .heat-tip-l2 { font-size: 12px; line-height: 1.4; font-weight: 600; }
 .heat-legend {
-  display: flex; align-items: center; gap: 4px; justify-content: flex-end;
-  margin-top: 8px; font-size: 11px; color: var(--app-text3);
+  display: flex; align-items: center; gap: 4px; flex: none;
+  font-size: 11px; color: var(--app-text3);
 }
 .heat-legend .heat-cell { width: 10px; height: 10px; }
 
-/* ==================== 时间范围 ==================== */
-.range-row {
-  display: flex; align-items: center; gap: 12px;
-  margin: 16px 0 4px;
-}
-.range-label { font-size: 13px; color: var(--app-text2); }
-
 /* ==================== 趋势图 / 环形图 ==================== */
-.trend-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 2px 0 4px; }
+/* 图表高度由容器决定（一屏布局）：flex:1 + min-height:0 才能被压缩而不是撑破卡片 */
+.trend-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 2px; flex: none; }
 .card-sub { font-size: 11px; color: var(--app-text3); font-weight: 400; margin-left: 10px; }
 .tl-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); }
 .tl-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
 .chart { width: 100%; }
-.chart.trend { height: 320px; }
-.chart.donut { height: 260px; flex: none; width: 300px; }
-.donut-flex { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
-.legend-list { flex: 1; min-width: 260px; }
+.chart.trend { flex: 1; min-height: 160px; }
+.donut-flex { display: flex; align-items: stretch; gap: 16px; flex: 1; min-height: 0; }
+.chart.donut { flex: 1 1 45%; min-width: 150px; height: auto; min-height: 150px; }
+.legend-list { flex: 1 1 55%; min-width: 150px; overflow-y: auto; }
 .legend-row {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 2px; border-bottom: 1px solid var(--app-border);
+  padding: 7px 2px; border-bottom: 1px solid var(--app-border);
 }
 .legend-row:last-child { border-bottom: none; }
 .legend-main { flex: 1; min-width: 0; }
