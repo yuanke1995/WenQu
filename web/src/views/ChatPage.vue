@@ -606,10 +606,12 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
-              <!-- 深度思考设置：胶囊触发器 + 弹出面板卡（标题/描述 + 思考强度行展开选档 + 底部提示），
-                   替代原 antd 下拉；选项口径不变（关闭思考 / 该模型支持档位 / 恒思考锁定） -->
-              <a-popover v-if="thinkCap.visible" v-model:open="thinkPanelOpen" trigger="click"
-                         placement="topRight" :arrow="false" overlay-class-name="think-pop">
+              <!-- 深度思考设置面板卡：悬浮模型名称即在其右侧弹出（对齐参考交互），随悬浮开合；
+                   「思考强度」行点开展开档位列表，点档位即时保存（按模型 localStorage 记忆）且不打断悬浮。
+                   选项口径不变（关闭思考 / 该模型支持档位 / 恒思考锁定）；模型不支持思考时不挂面板 -->
+              <a-popover v-if="thinkCap.visible" v-model:open="thinkPanelOpen" trigger="hover"
+                         placement="right" :arrow="false" overlay-class-name="think-pop"
+                         :mouse-enter-delay="0.25" :mouse-leave-delay="0.15">
                 <template #content>
                   <div class="thinkp">
                     <div class="thinkp-head">
@@ -626,7 +628,7 @@
                       </button>
                       <div v-if="thinkLevelsOpen && !thinkCap.locked" class="thinkp-levels">
                         <button v-for="opt in thinkLevelOptions" :key="opt.value" class="thinkp-opt" type="button"
-                                :class="{ active: opt.value === currentThinkLevel }" @click="pickThinkLevel(opt.value)">
+                                :class="{ active: opt.value === currentThinkLevel }" @click="setThinkLevel(opt.value)">
                           <span>{{ opt.label }}</span>
                           <check-outlined v-if="opt.value === currentThinkLevel" class="thinkp-opt-check" />
                         </button>
@@ -635,13 +637,13 @@
                     <div class="thinkp-foot">{{ thinkCap.locked ? '该模型始终深度思考，强度由管理员在模型库登记。' : '强度越高，思考越深入，回答耗时相应增加。' }}</div>
                   </div>
                 </template>
-                <button class="think-pill" type="button" :class="{ on: deepThinkOn, open: thinkPanelOpen }"
-                        :disabled="loading">
-                  <bulb-outlined class="think-pill-ic" />
-                  <span class="think-pill-text">{{ currentThinkLabel }}</span>
-                </button>
+                <span class="think-hover-host">
+                  <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+                               :placeholder="effectiveModelLabel || '选择模型'"
+                               :width="190" :disabled="loading" />
+                </span>
               </a-popover>
-              <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+              <ModelSelect v-else v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
                            :width="190" :disabled="loading" />
             </div>
@@ -1353,26 +1355,17 @@ const setThinkLevel = v => {
     localStorage.setItem('ai_think_level', JSON.stringify(levelMap.value))
   } catch (e) { /* 存储不可用忽略 */ }
 }
-// ==================== 思考设置面板卡（胶囊触发器 + 弹出面板，替代原等级下拉） ====================
+// ==================== 思考设置面板卡（悬浮模型名称弹出，替代原等级下拉） ====================
 const thinkPanelOpen = ref(false)
 /** 「思考强度」行的档位子列表展开态：面板每次关闭后复位为收起 */
 const thinkLevelsOpen = ref(false)
 watch(thinkPanelOpen, v => { if (!v) thinkLevelsOpen.value = false })
-/** 触发器胶囊文案：沿用等级选项的 label（关闭思考 / 思考·高 / 开启思考 / 恒思考·极致） */
-const currentThinkLabel = computed(() =>
-  thinkLevelOptions.value.find(o => o.value === currentThinkLevel.value)?.label || '深度思考')
 /** 面板「思考强度」行的当前值：未开启 / 已开启（无档位）/ 具体档位名 */
 const thinkStrengthText = computed(() => {
   if (!deepThinkOn.value) return '未开启'
   const v = currentThinkLevel.value
   return (v === THINK_LEVEL_ON) ? '已开启' : levelLabel(v)
 })
-/** 面板内选档：复用原下拉的写入逻辑，选完收起整个面板 */
-const pickThinkLevel = v => {
-  if (thinkCap.value.locked) return
-  setThinkLevel(v)
-  thinkPanelOpen.value = false
-}
 /** 本轮下发给后端的思考强度档位（关思考/未选具体档位 → 空串，后端回落模型登记默认档位） */
 const reasoningLevelParam = computed(() => {
   if (!deepThinkOn.value) return ''
@@ -3848,19 +3841,9 @@ onMounted(async () => {
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-/* ==================== 深度思考设置（胶囊触发器 + 弹出面板卡，参考模型详情面板形态） ==================== */
-/* 触发器胶囊：与模型/智能体胶囊同构的幽灵形态；思考开启时整颗提为主题色（同 toolbar-btn-on 口径） */
-.think-pill {
-  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
-  border-radius: 999px; border: none; background: transparent; cursor: pointer;
-  color: var(--app-text3); font-size: 13px; transition: background .15s, color .15s;
-}
-.think-pill:hover, .think-pill.open { background: var(--app-panel-2); color: var(--app-text); }
-.think-pill.on { color: var(--app-accent); }
-.think-pill.on:hover, .think-pill.on.open { background: var(--app-accent-weak); }
-.think-pill:disabled { cursor: not-allowed; opacity: .55; }
-.think-pill-ic { font-size: 13px; }
-.think-pill-text { white-space: nowrap; }
+/* ==================== 深度思考设置（悬浮模型名称弹出面板卡，参考模型详情面板形态） ==================== */
+/* 悬浮宿主：包住模型胶囊的内联容器，popover 悬浮触发挂在其上，不改变胶囊本身的布局 */
+.think-hover-host { display: inline-flex; align-items: center; min-width: 0; }
 /* 面板卡：标题/描述 + 「思考强度」标签值行（点开展开档位列表）+ 底部提示 */
 .thinkp { width: 264px; }
 .thinkp-title { font-size: 14px; font-weight: 600; color: var(--app-text); }
