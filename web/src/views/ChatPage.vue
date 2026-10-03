@@ -3989,7 +3989,8 @@ onMounted(async () => {
 .ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
 
 /* 上下文容量圆环（输入框右下、模型选择器左侧）：与右栏模型行共用同一张容量卡，>80% 警告 / >95% 危险 */
-.ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; cursor: default; }
+.ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; border-radius: 50%; cursor: default; transition: background .15s; }
+.ctx-ring:hover { background: var(--app-panel-2); }
 .ctx-ring-bg { stroke: var(--app-border); }
 .ctx-ring-val { stroke: var(--app-accent); transition: stroke-dasharray .25s; }
 .ctx-ring.warn .ctx-ring-val { stroke: var(--app-warn); }
