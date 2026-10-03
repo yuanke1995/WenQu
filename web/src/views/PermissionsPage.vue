@@ -295,9 +295,13 @@
       <p class="form-tip" style="margin-top:0">
         勾选菜单会连同其名下接口一并勾上（可再单独取消）；接口也可脱离菜单单独勾选。未勾选的接口调用将返回 403。
       </p>
-      <a-tree v-if="drawer" checkable default-expand-all :selectable="false"
+      <a-input v-model:value="drawerKeyword" allow-clear size="small" class="drawer-search"
+               placeholder="搜索菜单名称 / 接口路径">
+        <template #prefix><search-outlined class="rb-search-ic" /></template>
+      </a-input>
+      <a-tree v-if="drawer && drawerTree.length" checkable default-expand-all :selectable="false"
               :check-strictly="true" :checked-keys="treeCheckedKeys" @check="onTreeCheck"
-              :tree-data="bindTree">
+              :tree-data="drawerTree">
         <template #title="node">
           <span v-if="node.kind === 'api'" class="tree-api">
             <span class="method-pill" :class="'m-' + (node.method || 'ALL').toLowerCase()">{{ node.method }}</span>
@@ -317,6 +321,9 @@
           </span>
         </template>
       </a-tree>
+      <div v-else-if="drawer" class="drawer-empty">
+        {{ drawerKeyword ? '没有匹配的菜单或接口' : '暂无可配置的菜单或接口' }}
+      </div>
       <template #footer>
         <button class="app-btn" style="margin-right:8px" @click="drawer = false">取消</button>
         <button class="app-btn primary" :disabled="drawerSaving" @click="saveDrawer">
@@ -686,6 +693,26 @@ const treeCheckedKeys = computed(() => {
   return keys
 })
 
+/** 抽屉内搜索：命中菜单名保留整条分支；命中接口路径/名称保留其父链与叶子；
+    仅影响展示，勾选状态与保存仍以源状态为准 */
+const drawerKeyword = ref('')
+const drawerTree = computed(() => {
+  const k = drawerKeyword.value.trim().toLowerCase()
+  if (!k) return bindTree.value
+  const hit = s => String(s || '').toLowerCase().includes(k)
+  const prune = node => {
+    if (node.kind === 'api') return hit(node.label) ? node : null
+    if (hit(node.kind === 'group' ? node.groupName : node.menuName)) return node
+    const children = (node.children || []).map(prune).filter(Boolean)
+    if (!children.length) return null
+    // 分支未命中被剪枝后，「x/y 接口」按可见子集重算，避免计数与警示失真
+    const leaves = children.filter(c => c.kind === 'api')
+    return { ...node, children, ownedCount: leaves.length,
+             grantedCount: leaves.filter(c => checkedApiSet.value.has(c.apiId)).length }
+  }
+  return bindTree.value.map(prune).filter(Boolean)
+})
+
 /** 勾选联动：勾菜单 → 带全子树菜单与名下接口；取消 → 接口仍属其它已勾菜单则保留；接口/组节点独立增删 */
 function onTreeCheck (_keys, e) {
   const on = !!e?.checked
@@ -753,6 +780,7 @@ async function openDrawer (role) {
   // 先清空再回显（抽屉 destroy-on-close，直接加载）
   checkedMenuIds.value = []
   checkedApiIds.value = []
+  drawerKeyword.value = ''
   try {
     // 树的菜单/归属数据直接吃 menus、apis：从角色页签直接打开时，这两个页签的数据可能还没加载过
     await Promise.all([ensureData('menus'), ensureData('apis')])
@@ -893,6 +921,8 @@ watch(tab, t => {
 .tree-api { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .tree-shared { flex: none; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; color: var(--app-text3); border: 1px solid var(--app-border); }
 .gap-fill-btn { flex: none; }
+.drawer-search { margin-bottom: 10px; }
+.drawer-empty { padding: 24px 0; text-align: center; font-size: 12px; color: var(--app-text3); }
 
 .app-pill.builtin { color: var(--app-accent); background: var(--app-accent-weak); }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
