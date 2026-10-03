@@ -555,7 +555,7 @@ public class RagService {
                          boolean guestMode, boolean regenerate, String replaceMessageId,
                          List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
         long startTime = System.currentTimeMillis();
-        // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
+        // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
         // 本轮生效模型（会话覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用；
         // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
@@ -567,8 +567,6 @@ public class RagService {
             completeEmitter(emitter);
             return;
         }
-        final String userVisionRef = prefUser == null || prefUser.getDefaultVisionModel() == null
-                ? "" : prefUser.getDefaultVisionModel();
         // 本轮回答的全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）。
         // 声明在智能体解析之前：会话锁定的智能体若已不可用，需要就地登记提示而不是静默改用全局配置
         List<Map<String, String>> degradations = new ArrayList<>();
@@ -660,36 +658,33 @@ public class RagService {
             // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
             final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
                     scheduleKeepalive(emitter, "前置");
-            // 0. 用户上传图片，两条链路：
-            //    ① 聊天模型自带图片理解（visionCapable，「聊天+视觉」一体登记形态）：跳过独立视觉模型，
-            //       原图随消息直发（buildAnswerStream 转 image_url 部件）——省一次视觉调用、不丢图细节；
-            //       此时无需个人视觉模型，OCR 守卫不适用（根本不走描述）。
-            //    ② 纯聊天模型：独立视觉模型描述-注入（原有链路）。视觉模型类型守卫：个人默认视觉模型
-            //       登记为「OCR 专用」时不得用于聊天图片理解——OCR 模型（如 PaddleOCR-VL）输出文档解析
-            //       格式（LOC 坐标标记+版面文本），注入上下文会产生乱码回答（2026-10-02 截图乱回答的根因）。
-            //       fail-loud：登记用户可见降级事件，本轮跳过 AI 识别（图片照常落盘随消息展示），不静默继续。
+            // 0. 用户上传图片，两条链路（图片理解只看当前聊天模型的能力位——个人默认视觉模型已下线）：
+            //    ① 聊天模型自带图片理解（visionCapable，「聊天+视觉」一体登记形态）：原图随消息直发
+            //       （buildAnswerStream 转 image_url 部件）——省一次视觉调用、不丢图细节；
+            //    ② 模型不支持读图：图片仅落盘随消息展示，fail-loud 登记可见降级（不静默忽略），
+            //       并在问题里注入诚实说明——让模型知道自己看不见图，不猜测内容、必要时建议换模型。
+            //       不把原图直发文本模型：BYOM 网关可能 400/静默丢图，模型更可能对着看不见的图编内容。
+            //       能力判定错了的兜底在模型登记处：把「图片理解」改为支持即走直读，无需任何个人配置。
             boolean chatSeesImages = modelRegistryService.visionCapableOf(resolvedModel);
             List<UserImageService.UserImage> userImgs;
+            String imgNote;
             if (chatSeesImages) {
                 userImgs = userImageService.processDirect(userImages);
-                log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型（跳过描述链路）: session={} model={} count={}",
+                imgNote = "";
+                log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型: session={} model={} count={}",
                         sessionId, resolvedModel, userImgs.size());
-            } else if (userVisionRef != null && !userVisionRef.isBlank()
-                    && ModelRegistryService.TYPE_OCR.equals(modelRegistryService.referenceType(userVisionRef))) {
-                userImgs = userImageService.process(userImages, null);
-                degradations.add(Map.of("code", "visionModelOcrMismatch", "msg",
-                        "个人默认视觉模型「" + userVisionRef.substring(userVisionRef.indexOf('/') + 1)
-                                + "」是 OCR 专用类型，不能用于图片理解；本轮图片未做 AI 识别，"
-                                + "请在 个人设置 → 视觉模型 改选通用视觉模型"));
-                log.warn("[FAIL-LOUD] 个人默认视觉模型为 OCR 专用类型，跳过图片描述: session={} ref={}",
-                        sessionId, userVisionRef);
             } else {
-                userImgs = userImageService.process(userImages, userVisionRef);
+                userImgs = userImageService.processDisplay(userImages);
+                imgNote = userImgs.isEmpty() ? "" : "\n\n用户上传了 " + userImgs.size()
+                        + " 张图片，但当前模型不支持图片理解，图片内容对你不可见。"
+                        + "请勿猜测图片内容；若图片对回答关键，可建议用户更换支持图片理解的模型后重试。";
+                addDegradation(degradations, degradedCodes, "chatModelNoVision",
+                        "当前模型「" + resolvedModel.substring(resolvedModel.indexOf('/') + 1)
+                                + "」不支持图片理解，本轮 " + userImgs.size()
+                                + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
+                log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
+                        sessionId, resolvedModel, userImgs.size());
             }
-            // 直读链路无描述文本（图片内容本体进消息）；描述链路维持原注入格式
-            String imgDescText = chatSeesImages || userImgs.isEmpty() ? "" : userImgs.stream()
-                    .map(i -> "- " + (i.desc().isBlank() ? "（图片内容无法识别）" : i.desc()))
-                    .collect(Collectors.joining("\n"));
 
             // 0.1 用户上传附件（文档类）：解析为纯文本注入本轮上下文。
             //     单附件解析失败以可读错误说明占位、其余照常（不拖垮整轮）；元信息（名称/体积）随消息持久化供气泡回显
@@ -730,7 +725,7 @@ public class RagService {
                 // 该分支不检索，但用户手动 @ 的文档仍按「手动指定优先」取块前置
                 // （方法注释里承诺已久的语义，此前只有注释没有实现）
                 String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
-                runNoKnowledgeChat(sessionId, question, userId, userImgs, imgDescText, attachmentText, userSkillText,
+                runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId);
                 return;
@@ -750,15 +745,6 @@ public class RagService {
                 retrievalQuery = rewriteQueryForRetrieval(question, rewriteHistory, resolvedModel,
                         degradations, degradedCodes);
             }
-            // 图片描述参与检索：识别界面时描述含组件名，能显著提升召回
-            if (!userImgs.isEmpty()) {
-                String descJoin = userImgs.stream().map(UserImageService.UserImage::desc)
-                        .filter(d -> !d.isBlank()).collect(Collectors.joining(" "));
-                if (!descJoin.isBlank()) {
-                    retrievalQuery = question + " " + descJoin;
-                }
-            }
-
             // 日志记录用（final 副本，lambda 中引用需要 effectively final）
             final String queryForLog = retrievalQuery;
 
@@ -834,7 +820,7 @@ public class RagService {
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
             if (useDeepThink) {
-                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, attachmentText, emitter, resolvedModel, thinkLevel);
+                DeepThinkResult dr = runDeepThinking(sessionId, question, imgNote, attachmentText, emitter, resolvedModel, thinkLevel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
                 if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
@@ -1041,10 +1027,11 @@ public class RagService {
                 system.append("\n\n对话历史：\n").append(historyText);
             }
 
-            // 用户上传图片描述拼入问题（主 LLM 结合图片内容回答）
+            // 图片说明拼入问题（仅"模型不支持读图"时有值：诚实说明图片不可见，防模型瞎猜；
+            // 直读时无文本，图片本体以 image_url 部件随消息下发）
             StringBuilder userQuestion = new StringBuilder(question);
-            if (!imgDescText.isBlank()) {
-                userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            if (!imgNote.isBlank()) {
+                userQuestion.append(imgNote);
             }
             // 用户上传附件文本拼入问题（主 LLM 结合附件内容回答）
             if (!attachmentText.isBlank()) {
@@ -2067,9 +2054,9 @@ public class RagService {
         }
         // 过程叙述规范仅工具模式注入：无工具的纯对话没有"过程"可叙，加了反而诱导模型输出标签
         String sysFinal = toolCallbacks.length == 0 ? system : system + PROCESS_NARRATION_GUIDE;
-        // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记，无描述文本），原图以
-        // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解，跳过独立视觉模型描述（省一次调用、
-        // 不丢图细节）。描述链路的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
+        // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记），原图以
+        // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解（省一次调用、不丢图细节）。
+        // 仅展示链路（模型不支持读图）的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
         // Media→data URI 的转换由委派链原生完成（DynamicOpenAiChatModel 原样透传 instructions 给 OpenAiChatModel）
         java.util.List<org.springframework.ai.content.Media> media = st.userImgs == null ? java.util.List.of()
                 : st.userImgs.stream()
@@ -3995,7 +3982,7 @@ public class RagService {
      * 失败/超时/未提取到计划 → 返回 ok=false + 已收集思考增量（调用方用思考词元增强降级检索）
      * 思考长度护栏（maxThinkingChars）：超限中断思考流但保留已收集内容继续走计划提取，不整段丢弃
      */
-    private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText,
+    private DeepThinkResult runDeepThinking(String sessionId, String question, String imgNote,
                                             String attachmentText,
                                             SseEmitter emitter, String resolvedModel, String reasoningLevel) {
         String thinkingMode = configService.get("deepReasoning.thinkingMode");
@@ -4011,10 +3998,10 @@ public class RagService {
         if (!historyText.isEmpty()) {
             system.append("\n\n对话历史：\n").append(historyText);
         }
-        // user = 原始问题 + 图片描述（若有）
+        // user = 原始问题 + 图片说明（仅"模型不支持读图"时有值）
         StringBuilder user = new StringBuilder(question);
-        if (imgDescText != null && !imgDescText.isBlank()) {
-            user.append("\n\n用户上传了图片，图片内容描述如下（仅用于辅助思考，不用输出图片标记）：\n").append(imgDescText);
+        if (imgNote != null && !imgNote.isBlank()) {
+            user.append(imgNote);
         }
         // 附件内容随思考上下文（附件是回答素材，思考阶段就应看到）
         if (attachmentText != null && !attachmentText.isBlank()) {
@@ -4613,12 +4600,12 @@ public class RagService {
     /**
      * 「不使用知识库」分支（智能体 knowledgeDisabled=1）：纯角色对话，不跑改写/深度思考/检索/子代理编排。
      * 与闲聊分支的差异：① 多轮历史照常注入；② 用户手动 @ 的文档仍取块前置（手动指定优先于智能体配置）；
-     * ③ 图片提问时图片描述随问题发给模型（多模态理解，不参与检索）。
+     * ③ 图片按能力位处理：模型支持读图时原图随消息直发（media 部件），不支持时注入不可见说明（不参与检索）。
      * 复用主回答流：sources/retrieved 均空 → 前端检索状态行与引用区天然不渲染。
      */
     private void runNoKnowledgeChat(String sessionId, String question, String userId,
                                     List<UserImageService.UserImage> userImgs,
-                                    String imgDescText, String attachmentText, String userSkillText,
+                                    String imgNote, String attachmentText, String userSkillText,
                                     String mentionText, String historyRefText,
                                     java.util.concurrent.ScheduledFuture<?> preHeartbeat,
                                     SseEmitter emitter, long startTime,
@@ -4656,10 +4643,10 @@ public class RagService {
                 system.append("\n\n对话历史：\n").append(historyText);
             }
 
-            // 拼装用户消息：问题 + 图片描述（本轮无知识库，无参考资料段）+ 附件内容
+            // 拼装用户消息：问题 + 图片说明（仅"模型不支持读图"时有值）+ 附件内容
             StringBuilder userQuestion = new StringBuilder(question);
-            if (imgDescText != null && !imgDescText.isBlank()) {
-                userQuestion.append("\n\n用户上传了图片，图片内容描述如下（请结合图片内容回答问题）：\n").append(imgDescText);
+            if (imgNote != null && !imgNote.isBlank()) {
+                userQuestion.append(imgNote);
             }
             if (attachmentText != null && !attachmentText.isBlank()) {
                 userQuestion.append("\n\n用户上传了附件，内容如下（请结合附件内容回答问题）：\n").append(attachmentText);

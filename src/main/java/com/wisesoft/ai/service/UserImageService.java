@@ -21,8 +21,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 用户上传图片处理：data URL 保存到本地 + 视觉模型生成描述（并行）
- * 描述用于：① 拼入回答上下文（主 LLM 结合图片内容） ② 参与检索召回（结合知识库）
+ * 用户上传图片处理：data URL 保存到本地（并行），图片是否进模型只看当前聊天模型的能力位——
+ * 支持读图走 {@link #processDirect}（原图直发），不支持走 {@link #processDisplay}（仅落盘展示 +
+ * 可见降级，诚实说明注入见 RagService）。独立视觉模型描述链路已随「个人默认视觉模型」下线。
  *
  * @author yuanke
  */
@@ -31,14 +32,12 @@ import java.util.concurrent.TimeUnit;
 public class UserImageService {
 
     private final AppProperties properties;
-    private final VisionService visionService;
     private final ExecutorService imageExecutor;
 
-    public UserImageService(AppProperties properties, VisionService visionService, ConfigService configService) {
+    public UserImageService(AppProperties properties, ConfigService configService) {
         this.properties = properties;
-        this.visionService = visionService;
-        // 用户图片并发处理（本地视觉模型资源有限；vision.userImageConcurrency 可调，默认 2）。
-        // 有界队列（20）+ 满即拒绝：避免大图洪峰让视觉任务无限积压（解码/落盘/180s 视觉调用逐张占资源）
+        // 用户图片并发处理（解码/落盘很快，并发上限留小防大图洪峰；vision.userImageConcurrency 可调，默认 2）。
+        // 有界队列（20）+ 满即拒绝：避免大图洪峰无限积压
         int concurrency = Math.max(1, configService.getInt("vision.userImageConcurrency", 2));
         this.imageExecutor = new ThreadPoolExecutor(concurrency, concurrency, 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(20), r -> {
@@ -49,34 +48,25 @@ public class UserImageService {
     }
 
     /**
-     * 用户图片记录：url=落盘后回显地址（随消息持久化展示）；desc=视觉模型描述（直读链路为空）；
-     * dataUrl=原始 data URL（仅聊天直读链路保留，随消息以 image_url 部件发给聊天模型；描述链路为 null 不占内存）
+     * 用户图片记录：url=落盘后回显地址（随消息持久化展示）；
+     * dataUrl=原始 data URL（仅直读链路保留，随消息以 image_url 部件发给聊天模型；仅展示链路为 null 不占内存）
      */
-    public record UserImage(String url, String desc, String dataUrl) {}
+    public record UserImage(String url, String dataUrl) {}
 
     /**
-     * 处理多张图片（data URL），并行保存+描述；返回 URL 与描述（失败项过滤）。
-     * 单张处理失败/队列满被拒：跳过该项并告警（fail-loud），不影响其余图片与回答主流程。
-     */
-    public List<UserImage> process(List<String> dataUrls) {
-        return process(dataUrls, null);
-    }
-
-    /**
-     * 带个人视觉模型覆盖：visionRef 非空时图片描述走该引用（聊天用户的个人默认视觉模型），
-     * 空 = 全局 vision 配置。processOne/describe 链路透传。
-     */
-    public List<UserImage> process(List<String> dataUrls, String visionRef) {
-        return processInternal(dataUrls, u -> processOne(u, visionRef, true));
-    }
-
-    /**
-     * 聊天直读链路：只落盘回显 + 保留原始 dataUrl，<b>不调视觉模型生成描述</b>。
-     * 聊天模型自带图片理解（visionCapable）时使用——原图以 image_url 内容部件直发模型，
-     * 省一次视觉调用且不丢图细节；desc 为空使描述注入与检索增强自然跳过（与原降级语义一致）。
+     * 聊天直读链路：落盘回显 + 保留原始 dataUrl。聊天模型自带图片理解（visionCapable）时使用——
+     * 原图以 image_url 内容部件直发模型，不丢图细节。
      */
     public List<UserImage> processDirect(List<String> dataUrls) {
-        return processInternal(dataUrls, u -> processOne(u, null, false));
+        return processInternal(dataUrls, u -> processOne(u, true));
+    }
+
+    /**
+     * 仅展示链路：只落盘回显，dataUrl 为 null（图片不进模型）。聊天模型不支持图片理解时使用——
+     * 图片对模型不可见，本轮登记可见降级并在问题里注入诚实说明（见 RagService），不静默忽略。
+     */
+    public List<UserImage> processDisplay(List<String> dataUrls) {
+        return processInternal(dataUrls, u -> processOne(u, false));
     }
 
     /** 并行处理骨架：队列满/单张异常跳过该项（fail-loud 告警），不影响其余图片与回答主流程 */
@@ -135,7 +125,7 @@ public class UserImageService {
         }
     }
 
-    private UserImage processOne(String dataUrl, String visionRef, boolean describe) {
+    private UserImage processOne(String dataUrl, boolean keepDataUrl) {
         try {
             // 解析 data:image/png;base64,xxx
             int comma = dataUrl.indexOf(',');
@@ -154,12 +144,9 @@ public class UserImageService {
             if (bytes.length == 0) return null;
 
             String url = persist(bytes, ext);
-            // 直读链路：只落盘回显 + 保留原始 dataUrl 给聊天模型，不调视觉模型
-            if (!describe) return new UserImage(url, "", dataUrl);
-            String desc = visionService.describe(bytes, ext, visionService.defaultPrompt(), visionRef);
-            return new UserImage(url, desc, null);
+            return new UserImage(url, keepDataUrl ? dataUrl : null);
         } catch (Exception e) {
-            // L3 fail-loud：用户上传图片处理失败（描述生成失败会在回答 prompt 显示"无法识别"，此处升级明确告警）
+            // L3 fail-loud：用户上传图片处理失败（落盘失败则图片既不展示也不进模型，升级明确告警）
             log.warn("[FAIL-LOUD] 用户图片处理失败: {}", e.getMessage());
             return null;
         }

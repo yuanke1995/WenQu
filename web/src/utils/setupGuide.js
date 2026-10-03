@@ -6,8 +6,8 @@
 //        （失效引用视为未设置——挂了不存在模型的引用，引导不该消失）
 //     ③ 添加向量模型：存在 type=embedding 的模型（建知识库硬依赖）
 //   【进阶层】配置了效果更好、不配置自动回落默认方案的可选增强（弱化建议，可跳过）：
-//     视觉模型（/user/preference.defaultVisionModel）、重排模型（含生效开关）、
-//     兜底抽取模型（后两者取 /user/settings 个人值，键与 config-schema.json 同源）
+//     重排模型（含生效开关）、兜底抽取模型（取 /user/settings 个人值，键与 config-schema.json 同源）
+//     （视觉模型建议项已随「个人默认视觉模型」下线——聊天图片理解只看模型能力位，无需配置）
 // 失败静默保留旧状态；首次未加载成功时 loaded=false，消费方据此不显示任何引导
 // （宁可不引导，不误报——绝不能给已配好的存量用户弹出假引导）。
 import { computed, reactive } from 'vue'
@@ -20,7 +20,6 @@ export const setupGuide = reactive({
   chatModels: [],         // [{ ref, displayName, providerName }]
   embeddingCount: 0,
   defaultModel: '',       // /user/preference 的 defaultModel 原始引用
-  defaultVisionModel: '', // /user/preference 的 defaultVisionModel（进阶层：视觉模型）
   // ---- 进阶层（/user/settings）：拉取失败时 settingsLoaded=false，建议整体不显示（不拖垮必配层） ----
   settingsLoaded: false,
   settingValues: {},      // 本人个人值（path → 字符串）
@@ -50,7 +49,6 @@ function effectiveSwitch(path) {
   const d = setupGuide.settingDefs[path]
   return d === true || String(d) === 'true'
 }
-export const advVisionReady = computed(() => notEmpty(setupGuide.defaultVisionModel))
 // 重排：模型非空且生效开关为开（schema 默认关——只配模型不开开关不会生效，不能算已配置）
 export const advRerankReady = computed(() =>
   effectiveSwitch('retrieval.rerank.enabled') && notEmpty(setupGuide.settingValues['retrieval.rerank.model']))
@@ -61,8 +59,7 @@ export const advGraphReady = computed(() => notEmpty(setupGuide.settingValues['g
 // 进阶未配置数：侧栏入口弱化态「N 项可选」；settings 未加载成功返回 0（宁可不引导，不误报）
 export const advPendingCount = computed(() => {
   if (!setupGuide.settingsLoaded) return 0
-  return (advVisionReady.value ? 0 : 1)
-    + (rerankDeclined.value || advRerankReady.value ? 0 : 1)
+  return (rerankDeclined.value || advRerankReady.value ? 0 : 1)
     + (advGraphReady.value ? 0 : 1)
 })
 
@@ -88,7 +85,6 @@ async function fetchOnce() {
     setupGuide.chatModels = chatModels
     setupGuide.embeddingCount = embeddingCount
     setupGuide.defaultModel = (prefRes && prefRes.data && prefRes.data.defaultModel) || ''
-    setupGuide.defaultVisionModel = (prefRes && prefRes.data && prefRes.data.defaultVisionModel) || ''
     const d = settingsRes && settingsRes.data
     if (d && typeof d === 'object') {
       const defs = {}

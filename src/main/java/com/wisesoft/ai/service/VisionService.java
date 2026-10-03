@@ -55,25 +55,13 @@ public class VisionService {
         return describe(imageBytes, ext, configService.get("vision.prompt"), DESC_REF.get());
     }
 
-    /** 默认描述提示词（供调用方组合带路由覆盖的 describe 重载） */
-    public String defaultPrompt() {
-        return configService.get("vision.prompt");
-    }
-
     /**
-     * 生成图片文字描述（自定义提示词，如 OCR）；任何失败返回 ""（降级，不中断主流程）
+     * 带引用的图片描述（内部）：ref 非空时解析该引用为视觉网关（解析期的知识库 visionRef）；
+     * 空/解析失败 → 跳过描述（全局 vision.model 已退役，无运行时兜底）。
      * 先查内容寻址缓存（同图+同模型+同提示词直接复用上次结果，避免重解析重复调 VLM）；
      * 未命中调 VLM，成功写缓存。失败自动重试 retryCount 次（Ollama 偶发 500/超时）
      */
-    public String describe(byte[] imageBytes, String ext, String prompt) {
-        return describe(imageBytes, ext, prompt, null);
-    }
-
-    /**
-     * 带路由覆盖的图片描述：refOverride 非空时解析该引用为视觉网关（聊天上传图片的个人默认模型、
-     * 文档解析的知识库 visionRef）；空/解析失败 → 跳过描述（全局 vision.model 已退役，无运行时兜底）。
-     */
-    public String describe(byte[] imageBytes, String ext, String prompt, String refOverride) {
+    private String describe(byte[] imageBytes, String ext, String prompt, String ref) {
         if (imageBytes == null || imageBytes.length == 0) return "";
         // vision.enabled 配置化（设置页可改，保存即生效；未配置时默认开启）
         String cfgEnabled = configService.get("vision.enabled");
@@ -82,10 +70,10 @@ public class VisionService {
             log.debug("视觉模型已关闭（vision.enabled=false），跳过图片描述");
             return "";
         }
-        ModelRegistryService.ModelRoute route = routeFor(refOverride);
+        ModelRegistryService.ModelRoute route = routeFor(ref);
         if (route == null) {
             log.info("[Vision] 未指定视觉模型（{}），跳过图片描述（本图不参与向量召回，解析继续）",
-                    refOverride == null || refOverride.isBlank() ? "未绑定/未设置个人默认" : "引用无效");
+                    ref == null || ref.isBlank() ? "未绑定（无库上下文）" : "引用无效");
             return "";
         }
         return callWithCache(imageBytes, ext, prompt, route, false);

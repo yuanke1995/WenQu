@@ -159,14 +159,13 @@ public class OrgService {
     // ==================== 个人偏好（个人设置） ====================
 
     /**
-     * 个人偏好读取：个人默认模型（chat/vision，引用，空=未设默认）+ 可用聊天模型清单。
-     * 个人默认重排已退役（重排模型归知识库检索设置）。
+     * 个人偏好读取：个人默认聊天模型（引用，空=未设默认）+ 可用聊天模型清单。
+     * 个人默认重排/视觉模型已退役（重排归知识库检索设置；聊天图片理解只看模型能力位）。
      */
     public java.util.Map<String, Object> getPreference(String uid, String role) {
         User u = userMapper.selectById(uid);
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("defaultModel", u == null ? null : u.getDefaultModel());
-        m.put("defaultVisionModel", u == null ? null : u.getDefaultVisionModel());
         // 用户级长期记忆开关（null=历史行缺省，视为开）：个人设置「长期记忆」页开关数据源
         m.put("memoryEnabled", u == null || !Integer.valueOf(0).equals(u.getMemoryEnabled()));
         m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT, uid, role));
@@ -177,9 +176,10 @@ public class OrgService {
      * 设置个人偏好（多槽位，字段缺省(null)=不修改，空串=清除）：
      * 个人默认模型校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
      * memoryEnabled=用户级长期记忆自动提炼开关（Boolean，null=不修改）。
-     * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排个人默认已退役（归知识库检索设置）。
+     * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排/视觉个人默认已退役
+     * （重排归知识库检索设置；聊天图片理解只看模型能力位，见 RagService）。
      */
-    public void setPreference(String uid, String chatRef, String visionRef, Boolean memoryEnabled) {
+    public void setPreference(String uid, String chatRef, Boolean memoryEnabled) {
         User u = userMapper.selectById(uid);
         if (u == null) throw new BizException("用户不存在");
         String role = u.getRole();
@@ -188,18 +188,12 @@ public class OrgService {
             validateDefaultModel(v, ModelRegistryService.TYPE_CHAT, "聊天", uid, role);
             u.setDefaultModel(v.isEmpty() ? null : v);
         }
-        if (visionRef != null) {
-            String v = visionRef.trim();
-            validateDefaultModel(v, ModelRegistryService.TYPE_VISION, "视觉", uid, role);
-            u.setDefaultVisionModel(v.isEmpty() ? null : v);
-        }
         if (memoryEnabled != null) {
             u.setMemoryEnabled(Boolean.TRUE.equals(memoryEnabled) ? 1 : 0);
         }
         userMapper.updateById(u);
-        log.info("[AUDIT] 个人偏好已更新 uid={} chat={} vision={} memoryEnabled={}", uid,
+        log.info("[AUDIT] 个人偏好已更新 uid={} chat={} memoryEnabled={}", uid,
                 chatRef == null ? "(未改)" : chatRef.isBlank() ? "(清空)" : chatRef,
-                visionRef == null ? "(未改)" : visionRef.isBlank() ? "(清空)" : visionRef,
                 memoryEnabled == null ? "(未改)" : memoryEnabled);
     }
 

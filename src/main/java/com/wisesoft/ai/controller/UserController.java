@@ -83,15 +83,14 @@ public class UserController {
                 com.wisesoft.ai.util.RequestUser.role()));
     }
 
-    @Operation(summary = "设置个人偏好", description = "{\"defaultModel\":\"引用\",\"defaultVisionModel\":\"引用\",\"memoryEnabled\":true|false}；"
-            + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效，视觉模型用于聊天上传图片理解；"
+    @Operation(summary = "设置个人偏好", description = "{\"defaultModel\":\"引用\",\"memoryEnabled\":true|false}；"
+            + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效。"
             + "memoryEnabled=用户级长期记忆自动提炼开关（仅关生成，已存记忆仍注入）。"
             + "重排/记忆向量/图谱兜底/问答对生成等「模型默认」不走本端点，见 /settings（schema personal 字段，模型归登记人）")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
                 body.containsKey("defaultModel") ? str(body.get("defaultModel")) : null,
-                body.containsKey("defaultVisionModel") ? str(body.get("defaultVisionModel")) : null,
                 body.containsKey("memoryEnabled") ? bool(body.get("memoryEnabled")) : null);
         return ResultJson.ok("已保存");
     }

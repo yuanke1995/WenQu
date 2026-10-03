@@ -577,7 +577,7 @@ const NO_RESET = ['embedding', 'maintenance', 'apiKey', 'debug']
 // 分组顶部说明（与旧版文案一致）
 const PANEL_ALERTS = {
   chat: [{ type: 'info', msg: '问答模型支持跨厂商热切换：修改网关地址/API Key/模型名保存即生效免重启，API Key 以 RSA 加密入库。' }],
-  vision: [{ type: 'info', msg: '视觉模型用于文档图片与用户图片的描述识别；关闭后图片仅展示、内容不进检索与引用。' }],
+  vision: [{ type: 'info', msg: '视觉模型用于文档解析的图片描述与扫描件 OCR（按知识库绑定）；关闭后解析跳过图片描述、扫描件无法识别。对话中上传图片的理解取决于所选聊天模型，不在此配置。' }],
   chunk: [{ type: 'info', msg: '上传大小上限保存即生效；分块/图片上限只对重新解析/新上传文档生效，超限按保护策略截断入库。' }],
   embedding: [{ type: 'warning', msg: '向量模型热切换说明：不同模型的向量数学上不可迁移。保存时会先探测新配置并校验维度，通过后自动重建索引并后台全量重嵌入。重嵌入期间向量检索自动降级关键词路，服务不中断。' }],
   retrieval: [

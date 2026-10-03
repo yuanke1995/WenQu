@@ -78,7 +78,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { setUserPreference } from '../api.js'
 import { isAdminSync, menuHasPath } from '../utils/auth.js'
-import { advGraphReady, advRerankReady, advVisionReady, chatReady, defaultReady, embeddingReady,
+import { advGraphReady, advRerankReady, chatReady, defaultReady, embeddingReady,
          refreshSetupGuide, rerankDeclined, setupGuide } from '../utils/setupGuide.js'
 import ModelSelect from './ModelSelect.vue'
 
@@ -102,10 +102,8 @@ const goNewProvider = () => {
   router.push('/agents?tab=providers&action=new-provider')
 }
 
-// 进阶建议项（跳个人设置对应面板：视觉模型独立面板；重排/兜底在「聊天模型与偏好」的模型默认区）
+// 进阶建议项（跳个人设置对应面板：重排/兜底在「聊天模型与偏好」的模型默认区）
 const advItems = computed(() => [
-  { key: 'vision', done: advVisionReady.value, panel: 'vision',
-    title: '视觉模型', desc: '对话中上传的图片可被理解（留空仅展示图片）' },
   { key: 'rerank', done: advRerankReady.value, panel: 'chat', hidden: rerankDeclined.value,
     title: '重排模型', desc: '检索结果按相关性精排，回答更准（需同时开启重排开关）' },
   { key: 'graph', done: advGraphReady.value, panel: 'chat',
@@ -116,7 +114,7 @@ const goProfile = panel => {
   router.push({ path: '/profile', query: { panel } })
 }
 
-// ② 选完即存：setUserPreference 为部分更新（缺省字段不动），不会误清视觉默认等其他偏好
+// ② 选完即存：setUserPreference 为部分更新（缺省字段不动），不会误清其他偏好字段
 const picking = ref(false)
 const onPickDefault = async v => {
   picking.value = true

@@ -60,14 +60,13 @@
           </div>
         </div>
 
-        <!-- 个人默认模型面板（聊天面板同时承载「回答偏好」与「模型默认」个人覆盖项，保存按钮统一提交） -->
-        <div v-else-if="current === 'chat' || current === 'vision'" class="app-card pf-card">
+        <!-- 个人默认模型面板（同时承载「回答偏好」与「模型默认」个人覆盖项，保存按钮统一提交） -->
+        <div v-else-if="current === 'chat'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
           <div class="pf-row">
-            <!-- :key 按面板重挂载：聊天/视觉各用自己的实例，避免共享实例残留上一面板的列表与内部状态；
-                 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
-            <ModelSelect :key="current" v-model="pref[panelMeta.field]" :type="current"
+            <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
+            <ModelSelect v-model="pref[panelMeta.field]" type="chat"
                          inherit-label="不设默认" :width="360" :disabled="loading" />
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
@@ -204,7 +203,6 @@ const route = useRoute()
 const navs = [
   { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '聊天模型与偏好' },
-  { key: 'vision', label: '视觉模型' },
   { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
 ]
@@ -217,20 +215,15 @@ const PANELS = {
   chat: {
     field: 'defaultModel', title: '聊天模型与偏好',
     hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用；下方「回答偏好」可按需覆盖系统全局值。',
-    tail: '清空（选「不设默认」）后每次对话需手动选择模型。'
-  },
-  vision: {
-    field: 'defaultVisionModel', title: '视觉模型',
-    hint: '对话中上传图片的理解走此模型；留空则不识别图片内容（仅展示）。须选「视觉」类型（通用视觉模型）；「OCR 专用」类型只用于文档解析，不能用于图片理解。',
-    tail: '文档入库时的图片描述使用知识库绑定的视觉模型（知识库 → 编辑 → 解析参数）。'
+    tail: '清空（选「不设默认」）后每次对话需手动选择模型。对话中上传的图片能否被理解取决于所选模型（支持读图的模型原图直发）；文档入库的图片描述使用知识库绑定的视觉模型。'
   }
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
 
-// 个人默认（全量保存：任一面板保存都提交当前值；向量/重排无个人默认，归知识库绑定/检索设置）
+// 个人默认（保存提交当前值；向量/重排/视觉无个人默认，归知识库绑定/检索设置/模型能力位）
 const loading = ref(false)
 const saving = ref(false)
-const pref = ref({ defaultModel: '', defaultVisionModel: '' })
+const pref = ref({ defaultModel: '' })
 
 const load = async () => {
   loading.value = true
@@ -238,8 +231,7 @@ const load = async () => {
     const r = await getUserPreference()
     const d = (r && r.data) || {}
     pref.value = {
-      defaultModel: d.defaultModel || '',
-      defaultVisionModel: d.defaultVisionModel || ''
+      defaultModel: d.defaultModel || ''
     }
     // 用户级记忆开关（后端口径：null 视为开）
     memAutoEnabled.value = d.memoryEnabled !== false
