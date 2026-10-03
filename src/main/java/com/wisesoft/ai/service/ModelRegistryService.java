@@ -562,46 +562,134 @@ public class ModelRegistryService {
     /** 恒思考模型的名称特征（DeepSeek-R1 / QwQ / OpenAI o 系 / 带 thinking 字样） */
     private static final List<String> ALWAYS_THINK_TOKENS = List.of("r1", "qwq", "thinking");
     private static final List<String> ALWAYS_THINK_PREFIXES = List.of("o1", "o3", "o4");
-    /** 可开关思考模型的名称特征（qwen3 / glm-4+ / doubao-seed / deepseek-v3 / claude / gemini 等） */
-    private static final List<String> SWITCHABLE_THINK_TOKENS =
-            List.of("qwen3", "glm-4", "glm-5", "doubao-seed", "deepseek-v3", "claude", "gemini", "hybrid");
+    /**
+     * 可开关思考模型的名称特征（2026 国产主力全量，按各家官方「思考模式」文档补齐）：
+     * Qwen3.x/3.5/3.6/3.7/3.8、GLM-4.5+/5.x、Doubao-Seed 2.x、DeepSeek V3/V4（默认开思考）、
+     * Kimi/Moonshot、MiniMax M2/M3、混元 Hunyuan、讯飞星火 Spark、Hunyuan-Large 等。
+     * 旧名单只认 deepseek-v3，V4 已是主力 → 漏判成"不支持思考"，用户连思考都开不了。
+     */
+    private static final List<String> SWITCHABLE_THINK_TOKENS = List.of(
+            "qwen3", "qwq", "qwen-vl",
+            "glm-4", "glm-5", "glm-4v", "glm-5v",
+            "doubao-seed", "doubao-1", "seed-2",
+            "deepseek-v3", "deepseek-v4", "deepseek-flash", "deepseek-chat",
+            "kimi", "moonshot",
+            "minimax", "abab",
+            "claude", "gemini", "grok-2-vision", "grok-4", "hybrid",
+            // OpenAI 思考系（gpt-5 走 reasoning_effort，o1/o3/o4 已被 ALWAYS 前缀覆盖）
+            "gpt-5", "gpt-oss",
+            // 下列各家支持思考开关/强度但**方言未实证**（reasoningDialectOf 返回 NONE）：
+            // 仍标为可开关，让用户能开思考（开关走各自网关的默认语义），
+            // 强度档位在界面上不给（登记了也会被 fail-loud 提示"网关不支持强度调节"，不假装生效）
+            "hunyuan", "混元", "spark", "xinghuo", "星火", "ernie", "文心", "step-", "stepfun");
+
+
 
     // ==================== 思考强度档位（厂商方言映射） ====================
-    // 各网关表达强度的方式完全不同，没有一个字段能通用，故按厂商方言映射，
-    // 不做「透传一个 reasoning_effort 就完事」——那样只对 OpenAI 系生效，其他家静默忽略。
+    // 2026 年调研（各厂商官方文档实证）：国产主力几乎全部支持 OpenAI 兼容的 reasoning_effort，
+    // 差异只在「档位取值的收敛规则」与「是否需要额外的开关字段」。
 
-    /** 思考强度档位（按推理预算由弱到强，与主流网关的 low/medium/high/xhigh 对齐，max 为各家上限档） */
+    /** 思考强度档位（按推理预算由弱到强；max 为各家上限档） */
     public static final List<String> REASONING_LEVEL_LIST = List.of("low", "medium", "high", "xhigh", "max");
     public static final List<String> REASONING_LEVELS = REASONING_LEVEL_LIST;
 
-    /** 档位 → 思考预算 token（Qwen/GLM/豆包等「预算型」网关）：强度靠 token 预算表达，max 取两档中的较大值 */
+    /** 档位 → 思考预算 token（Claude 等「只给 token 预算」的门网关） */
     private static final Map<String, Integer> LEVEL_TOKEN_BUDGET = Map.of(
             "low", 1024, "medium", 4096, "high", 16384, "xhigh", 32768, "max", 65536);
-
-    /** 档位 → OpenAI reasoning_effort 取值（xhigh/max 官方无对应，收敛到 high 不静默丢档） */
-    private static final Map<String, String> LEVEL_OPENAI_EFFORT =
-            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "high", "max", "high");
 
     /** 档位 → Anthropic thinking.budget_tokens（Claude 预算型，量级比 Qwen 系大） */
     private static final Map<String, Integer> LEVEL_CLAUDE_BUDGET = Map.of(
             "low", 2048, "medium", 8192, "high", 24576, "xhigh", 49152, "max", 98304);
 
     /**
-     * 按模型族判定思考强度的方言（决定 extraBody 走哪种字段）：
-     * OPENAI=reasoning_effort（o 系 / gpt-5）｜ANTHROPIC=thinking.budget_tokens（claude）
-     * ｜QWEN=enable_thinking+thinking_budget｜NONE=无强度语义（只透传思考开关）。
+     * 档位 → reasoning_effort 的收敛表（每家只认自己那几个值，多传的会被静默忽略或报错）。
+     * <p>依据各厂商 2026 官方文档的映射表：
+     * <ul>
+     *   <li>OpenAI o 系 / gpt-5：low/medium/high（官方无 xhigh/max）</li>
+     *   <li>DeepSeek V4：low/high/max，medium→high、xhigh→high</li>
+     *   <li>GLM-5.2+：max(默认)/xhigh/high/medium/low/minimal/none，low/medium→high、xhigh→max</li>
+     *   <li>豆包 Seed：none/minimal/low/medium/high/xhigh/max（官方七档，与本表同序）</li>
+     *   <li>MiniMax M3.x：low/medium/high/xhigh/max（本表同序）</li>
+     *   <li>Qwen3.5+：none/low/medium/high/max，xhigh→max</li>
+     *   <li>Kimi K3 / K2 Code：max（恒思考档）或 low/high/max</li>
+     * </ul>
      */
-    public enum ReasoningDialect { OPENAI, ANTHROPIC, QWEN, NONE }
+    private static final Map<String, String> EFFORT_FULL =
+            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "xhigh", "max", "max");
+    private static final Map<String, String> EFFORT_OPENAI =
+            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "high", "max", "high");
+    private static final Map<String, String> EFFORT_DEEPSEEK =
+            Map.of("low", "low", "medium", "high", "high", "high", "xhigh", "high", "max", "max");
+    private static final Map<String, String> EFFORT_GLM =
+            Map.of("low", "high", "medium", "high", "high", "high", "xhigh", "max", "max", "max");
+    private static final Map<String, String> EFFORT_QWEN =
+            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "max", "max", "max");
+    private static final Map<String, String> EFFORT_MINIMAX =
+            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "xhigh", "max", "max");
 
-    /** 按模型名判定思考强度方言（显式登记档位的前提是网关真能表达强度，NONE 时不静默丢弃用户登记） */
+    /**
+     * 按模型族判定思考强度的方言（决定 extraBody 走哪种字段）：
+     * <ul>
+     *   <li>ANTHROPIC = thinking.type + budget_tokens（Claude 走 token 预算，无 effort 概念）</li>
+     *   <li>QWEN_BUDGET = enable_thinking + thinking_budget（Qwen 除 effort 外另支持预算，双保险下发）</li>
+     *   <li>EFFORT_* = 各家 reasoning_effort（OpenAI / DeepSeek / GLM / 豆包 / MiniMax / Kimi / 混元 / 讯飞 星火）</li>
+     *   <li>NONE = 网关无强度语义，只透传思考开关，不假装生效</li>
+     * </ul>
+     */
+    public enum ReasoningDialect {
+        /** reasoning_effort：OpenAI 通用档位（xhigh/max 收敛 high） */
+        OPENAI,
+        /** reasoning_effort + thinking.type（DeepSeek V4：medium/xhigh→high） */
+        DEEPSEEK,
+        /** reasoning_effort + thinking.type（GLM-5+：low/medium→high，xhigh→max） */
+        GLM,
+        /** reasoning_effort + thinking.type（豆包 Seed：官方七档，本表同序） */
+        DOUBAO,
+        /** reasoning_effort + thinking.type（Kimi：恒思考 max 档） */
+        KIMI,
+        /** reasoning_effort + thinking.type（MiniMax M3.x：五档同序，不可关思考） */
+        MINIMAX,
+        /** enable_thinking + reasoning_effort + thinking_budget（Qwen3.5+：xhigh→max） */
+        QWEN,
+        /** thinking.type + budget_tokens（Claude） */
+        ANTHROPIC,
+        /** 网关无强度语义 */
+        NONE
+    }
+
+    /**
+     * 按模型名判定思考强度方言。
+     * <p>归类依据 2026 年各家官方文档的思考模式说明；未识别的国产模型走 EFFORT_OPENAI 的
+     * 收敛表（推理强度是行业通用约定，多数 OpenAI 兼容网关认 reasoning_effort），
+     * 识别为不支持思考能力时（向量/重排等非对话类型）由调用方先行短路。
+     */
     public static ReasoningDialect reasoningDialectOf(String modelId) {
         String m = modelId == null ? "" : modelId.toLowerCase();
         if (m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4") || m.contains("gpt-5")) {
             return ReasoningDialect.OPENAI;
         }
         if (m.contains("claude")) return ReasoningDialect.ANTHROPIC;
+        if (m.contains("deepseek")) return ReasoningDialect.DEEPSEEK;
+        if (m.contains("glm")) return ReasoningDialect.GLM;
+        if (m.contains("doubao") || m.contains("seed")) return ReasoningDialect.DOUBAO;
+        if (m.contains("kimi") || m.contains("moonshot")) return ReasoningDialect.KIMI;
+        if (m.contains("minimax") || m.contains("abab")) return ReasoningDialect.MINIMAX;
         if (m.contains("qwen") || m.contains("qwq")) return ReasoningDialect.QWEN;
         return ReasoningDialect.NONE;
+    }
+
+    /** 该方言的 reasoning_effort 收敛表（NONE/ANTHROPIC 无 effort 概念，返回 null） */
+    private static Map<String, String> effortTable(ReasoningDialect d) {
+        return switch (d) {
+            case OPENAI -> EFFORT_OPENAI;
+            case DEEPSEEK -> EFFORT_DEEPSEEK;
+            case GLM -> EFFORT_GLM;
+            case DOUBAO -> EFFORT_FULL;
+            case KIMI -> EFFORT_FULL;
+            case MINIMAX -> EFFORT_MINIMAX;
+            case QWEN -> EFFORT_QWEN;
+            case ANTHROPIC, NONE -> null;
+        };
     }
 
     /**
@@ -610,8 +698,8 @@ public class ModelRegistryService {
      *   <li>level 空 / 引用无效 / 模型无档位登记 → 空 Map（不强指定，由网关默认决定）</li>
      *   <li>方言 NONE（该网关无强度语义）→ 空 Map，且调用方应登记 fail-loud 提示，
      *       因为用户明确登记了档位却无处下发，属配置与网关不匹配，不能装作生效</li>
-     *   <li>其余 → 该方言的强度字段；同时保留 enable_thinking/thinking 开关字段语义
-     *       （OpenAI 靠字段本身开启、Qwen 系需 enable_thinking=true）</li>
+     *   <li>其余 → 该方言的强度字段；effort 型方言同时带 thinking.type=enabled
+     *       （DeepSeek/GLM/豆包/Kimi/MiniMax/Qwen 的开关字段，缺省会走网关默认值）</li>
      * </ul>
      */
     public Map<String, Object> reasoningExtraBody(String ref, String level, boolean thinkingOn) {
@@ -622,10 +710,8 @@ public class ModelRegistryService {
         if (!REASONING_LEVEL_LIST.contains(lv)) return Map.of();
         if (!reasoningLevelsOf(mi).contains(lv)) return Map.of();
         Map<String, Object> body = new java.util.LinkedHashMap<>();
-        switch (reasoningDialectOf(mi.getModelId())) {
-            case OPENAI -> {
-                if (thinkingOn) body.put("reasoning_effort", LEVEL_OPENAI_EFFORT.getOrDefault(lv, "high"));
-            }
+        ReasoningDialect dialect = reasoningDialectOf(mi.getModelId());
+        switch (dialect) {
             case ANTHROPIC -> {
                 // Claude 思考必须显式开并给预算；预算不可为 0，否则网关按「不思考」处理
                 body.put("thinking", Map.of("type", "enabled",
@@ -634,11 +720,23 @@ public class ModelRegistryService {
             case QWEN -> {
                 if (thinkingOn) {
                     body.put("enable_thinking", true);
+                    body.put("reasoning_effort", EFFORT_QWEN.getOrDefault(lv, "high"));
+                    // thinking_budget 与 effort 同时下发：部分网关只认其中之一
                     body.put("thinking_budget", LEVEL_TOKEN_BUDGET.getOrDefault(lv, 16384));
                 }
             }
             case NONE -> {
                 return Map.of();
+            }
+            default -> {
+                Map<String, String> table = effortTable(dialect);
+                if (thinkingOn && table != null) {
+                    body.put("reasoning_effort", table.getOrDefault(lv, "high"));
+                    // 这些网关的思考开关字段（与 effort 独立，传 enabled 更稳）
+                    if (dialect != ReasoningDialect.OPENAI) {
+                        body.put("thinking", Map.of("type", "enabled"));
+                    }
+                }
             }
         }
         return body;

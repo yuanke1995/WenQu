@@ -604,14 +604,14 @@
                   </div>
                 </template>
               </a-dropdown>
-              <a-tooltip v-if="thinkCap.visible"
-                         :title="thinkCap.locked ? '该模型始终深度思考' : (deepThinkOn ? '深度思考：已开启' : '深度思考：已关闭')">
-                <button class="app-icon-btn" :class="{ 'toolbar-btn-on': deepThinkOn }"
-                        :style="thinkCap.locked ? 'opacity:.55;cursor:default' : ''"
-                        :disabled="thinkCap.locked" @click="toggleDeepThink"><bulb-outlined /></button>
-              </a-tooltip>
             </div>
             <div class="toolbar-right">
+              <a-tooltip v-if="thinkCap.visible"
+                         :title="thinkCap.locked ? '该模型始终深度思考，强度由管理员在模型库登记' : '思考等级（只列出该模型支持的档位）'">
+                <a-select :value="currentThinkLevel" size="small" class="think-level-select"
+                          :options="thinkLevelOptions" :disabled="loading || thinkCap.locked"
+                          @change="setThinkLevel" />
+              </a-tooltip>
               <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
                            :width="190" :disabled="loading" />
@@ -1251,20 +1251,85 @@ const deepThinkDefaults = (() => {
   } catch (e) { return {} }
 })()
 const deepThinkMap = ref({ ...deepThinkDefaults })
-/** 个人设置 → 对话偏好 的「深度思考默认开启」（跨设备生效的服务端默认；null=未设置，回落浏览器本地默认） */
-const serverDeepThinkDefault = ref(null)
+/** 本轮是否思考：模型恒思考强制开；否则按模型记忆（等级下拉的「关闭思考」写 0，选档位/开启写 1） */
 const deepThinkOn = computed(() => {
   if (thinkCap.value.locked) return true
   const explicit = deepThinkMap.value[effectiveModel.value]
   if (explicit !== undefined) return explicit === 1
-  if (serverDeepThinkDefault.value !== null) return serverDeepThinkDefault.value
   return deepThinkMap.value.__default === true
 })
-const toggleDeepThink = () => {
-  if (loading.value || thinkCap.value.locked || !thinkCap.value.visible) return
-  deepThinkMap.value = { ...deepThinkMap.value, [effectiveModel.value]: deepThinkOn.value ? 0 : 1 }
-  try { localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value)) } catch (e) { /* 存储不可用忽略 */ }
+
+// ==================== 思考等级（低/中/高/超高/极致，按模型支持档位给选项） ====================
+/** 档位展示名与顺序（与后端 REASONING_LEVEL_LIST 同序，弱→强） */
+const REASONING_LEVELS = [
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '超高' },
+  { value: 'max', label: '极致' }
+]
+/** 生效模型登记的「支持档位」：模型没登记强度时为空数组（只支持思考开关） */
+const modelReasoningLevels = computed(() => {
+  const raw = modelIndex.value[effectiveModel.value]?.reasoningLevels
+  return Array.isArray(raw) ? raw : []
+})
+/** ON=开启思考（不带强度：模型未登记档位时用），off=关闭思考；其余为具体档位 */
+const THINK_LEVEL_ON = '__on__'
+/** 思考等级下拉的可选项：恒思考锁定为开；可开关模型给「关闭思考」+ 其支持档位；
+ *  未登记档位时给「开启思考 / 关闭思考」两项（强度不可选但思考可开，不留死角）。 */
+const thinkLevelOptions = computed(() => {
+  if (thinkCap.value.locked) {
+    const lv = modelReasoningLevels.value[0]
+    return [{ value: lv || THINK_LEVEL_ON, label: '恒思考 · ' + levelLabel(lv) }]
+  }
+  const opts = [{ value: 'off', label: '关闭思考' }]
+  if (modelReasoningLevels.value.length) {
+    for (const lv of REASONING_LEVELS) {
+      if (modelReasoningLevels.value.includes(lv.value)) opts.push({ value: lv.value, label: '思考 · ' + lv.label })
+    }
+  } else {
+    // 模型未登记强度档位：只给开关，强度交网关默认
+    opts.unshift({ value: THINK_LEVEL_ON, label: '开启思考' })
+  }
+  return opts
+})
+const levelLabel = v => REASONING_LEVELS.find(x => x.value === v)?.label || '默认强度'
+/** 当前选中：off=不思考；档位/ON=思考；模型恒思考时恒为开（其首个支持档位） */
+const currentThinkLevel = computed(() => {
+  if (thinkCap.value.locked) return modelReasoningLevels.value[0] || THINK_LEVEL_ON
+  if (!deepThinkOn.value) return 'off'
+  const explicit = levelMap.value[effectiveModel.value]
+  if (explicit && thinkLevelOptions.value.some(o => o.value === explicit)) return explicit
+  const modelDefault = modelIndex.value[effectiveModel.value]?.defaultReasoningLevel
+  if (modelDefault && modelReasoningLevels.value.includes(modelDefault)) return modelDefault
+  return modelReasoningLevels.value[0] || THINK_LEVEL_ON
+})
+/** 按模型记忆的等级选择（与深度思考开关同一套 per-model 记忆风格） */
+const levelMap = ref(readLevels())
+function readLevels() {
+  try {
+    const raw = localStorage.getItem('ai_think_level')
+    const parsed = raw ? JSON.parse(raw) : {}
+    return (parsed && typeof parsed === 'object') ? parsed : {}
+  } catch (e) { return {} }
 }
+const setThinkLevel = v => {
+  if (loading.value || thinkCap.value.locked) return
+  const on = v !== 'off'
+  // 等级与开关联动记忆：选档位/开启=开思考，选关闭=关思考
+  deepThinkMap.value = { ...deepThinkMap.value, [effectiveModel.value]: on ? 1 : 0 }
+  levelMap.value = { ...levelMap.value, [effectiveModel.value]: v }
+  try {
+    localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value))
+    localStorage.setItem('ai_think_level', JSON.stringify(levelMap.value))
+  } catch (e) { /* 存储不可用忽略 */ }
+}
+/** 本轮下发给后端的思考强度档位（关思考/未选具体档位 → 空串，后端回落模型登记默认档位） */
+const reasoningLevelParam = computed(() => {
+  if (!deepThinkOn.value) return ''
+  const v = currentThinkLevel.value
+  return (v && v !== 'off' && v !== THINK_LEVEL_ON) ? v : ''
+})
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 
 // ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
@@ -2754,6 +2819,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   sendQuestion(sid, question, imgs, {
     signal: abort.signal,
     deepThink,
+    // 思考强度档位（低/中/高/超高/极致）：空串=不指定，后端回落模型登记的默认档位
+    reasoningLevel: reasoningLevelParam.value,
     attachments,
     skills,
     mentions,
@@ -3297,11 +3364,6 @@ onMounted(async () => {
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
   }).catch(() => {})
-  // 深度思考默认（个人设置 → 对话偏好）：显式设置过才覆盖浏览器本地默认（未设置=null 走本地）
-  getUserSettings().then(r => {
-    const v = r && r.data && r.data.values ? r.data.values['chat.deepThinkDefault'] : undefined
-    if (v === 'true' || v === 'false') serverDeepThinkDefault.value = v === 'true'
-  }).catch(() => {})
   loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
 })
 </script>
@@ -3737,6 +3799,12 @@ onMounted(async () => {
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+/* 思考等级下拉（与模型选择器同排的胶囊形态，仅模型登记了支持档位时出现） */
+.think-level-select { width: 108px; }
+.think-level-select :deep(.ant-select-selector) {
+  height: 28px !important; border-radius: 999px !important;
+  padding: 0 22px 0 10px !important; font-size: 13px;
+}
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
 .model-name {
   margin-left: auto; font-size: 11px; color: var(--app-text3); margin-right: 8px; user-select: none;

@@ -92,7 +92,7 @@ function upload(path, formData, onProgress) {
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess,
-    deepThink = false, signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = ''
+    deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -129,6 +129,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     headers: authHeaders(),
     body: JSON.stringify({
       sessionId, question, images, deepThink,
+      // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
+      reasoningLevel: reasoningLevel || '',
       agentId: agentId || '', model: model || '',
       // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
       regenerate: regenerate || undefined,

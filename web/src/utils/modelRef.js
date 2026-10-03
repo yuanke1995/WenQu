@@ -14,7 +14,16 @@ export async function loadModelIndex(force = false) {
     const index = {}
     for (const g of groups || []) {
       for (const m of g.models || []) {
-        index[m.ref] = { displayName: m.displayName, providerName: g.name, icon: g.icon, type: m.type, thinking: m.thinking }
+        index[m.ref] = {
+          displayName: m.displayName,
+          providerName: g.name,
+          icon: g.icon,
+          type: m.type,
+          thinking: m.thinking,
+          // 思考强度：支持档位数组 + 模型默认档位（聊天页等级选择据此给可选项）
+          reasoningLevels: Array.isArray(m.reasoningLevels) ? m.reasoningLevels : [],
+          defaultReasoningLevel: m.defaultReasoningLevel || ''
+        }
       }
     }
     cache = { ts: Date.now(), index }

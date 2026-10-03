@@ -182,7 +182,8 @@ public class ChatController {
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
-                false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs);
+                false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs,
+                request.getReasoningLevel());
         return emitter;
     }
 

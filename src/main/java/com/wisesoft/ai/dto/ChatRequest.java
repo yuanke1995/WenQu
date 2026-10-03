@@ -102,6 +102,11 @@ public class ChatRequest {
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")
     private boolean deepThink;
 
+    @Schema(description = "本轮思考强度档位：low/medium/high/xhigh/max；须为生效模型在模型库登记的「支持档位」之一"
+            + "（前端只在模型支持的档位里给出可选项）。空=用模型登记的默认档位。非法值一律忽略并回退默认档位，"
+            + "不静默改写用户选择。")
+    private String reasoningLevel;
+
     @Schema(description = "智能体 ID；\"auto\"=自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选，失败回落默认智能体）；"
             + "其他非空值=该轮问答按该智能体的提示词/工具/知识库范围执行；空=继承全局配置")
     private String agentId;

@@ -206,36 +206,6 @@ public class RagService {
     /** 引用摘要截断长度 */
     private static final int SNIPPET_LEN = 80;
 
-    /**
-     * 深度思考自动路由（autoRoute 开启时）：短问直接答；长问（≥25 字）或含多条件/对比/递进词的复杂问题自动开思考。
-     * 保守启发式——只对明显复杂的问题路由，避免常见"如何/怎么"类问题全量思考导致成本与延迟翻倍。
-     */
-    /** 自动路由阈值（设置页 deepReasoning.autoRoute* 可配）：短于下限不思考，达到上限或命中触发词才思考 */
-    private boolean shouldAutoDeepThink(String question) {
-        if (question == null) return false;
-        String q = question.trim();
-        int minChars = Math.max(1, configService.getInt("deepReasoning.autoRouteMinChars", 8));
-        int longChars = Math.max(minChars, configService.getInt("deepReasoning.autoRouteLongChars", 25));
-        if (q.length() < minChars) return false;
-        if (q.length() >= longChars) return true;
-        for (String w : autoRouteKeywords()) {
-            if (q.contains(w)) return true;
-        }
-        return false;
-    }
-
-    /** 自动路由触发词（逗号分隔，deepReasoning.autoRouteKeywords 可配；留空=只按长度判断） */
-    private String[] autoRouteKeywords() {
-        String cfg = configService.get("deepReasoning.autoRouteKeywords");
-        if (cfg == null || cfg.isBlank()) return new String[0];
-        List<String> words = new ArrayList<>();
-        for (String w : cfg.split("[,，]")) {
-            String t = w.trim();
-            if (!t.isEmpty()) words.add(t);
-        }
-        return words.toArray(new String[0]);
-    }
-
     /** <related> 追问推荐数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
     private String relatedPromptLine() {
         int n = Math.max(1, configService.getInt("retrieval.relatedCount", 3));
@@ -516,11 +486,25 @@ public class RagService {
                      String agentId, String modelOverride, String userId, SseEmitter emitter,
                      boolean guestMode, boolean regenerate, String replaceMessageId,
                      List<ChatRequest.HistoryRef> historyRefs) {
-        // 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考（autoRoute 默认关）
-        if (!deepThink && configService.getBoolean("deepReasoning.autoRoute")) {
-            deepThink = shouldAutoDeepThink(question);
-        }
-        // lambda 引用需 effectively final：自动路由改写后用局部副本传递
+        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
+                historyRefs, null);
+    }
+
+    /**
+     * @param reasoningLevel 本轮思考强度档位（low/medium/high/xhigh/max）：用户在本轮显式选的档位。
+     *                      优先级高于模型登记的默认档位；非法/不在模型支持档位内 → 回落模型默认档位
+     *                      （前端只给支持档位，后端仍做归一，避免手改请求下发越级档位）。
+     *                      null/空=沿用模型登记的默认档位。
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate, String replaceMessageId,
+                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
+        // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
+        // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
         final boolean useDeepThink = deepThink;
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
@@ -543,7 +527,7 @@ public class RagService {
                 try {
                     runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
                             agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                            historyRefs);
+                            historyRefs, reasoningLevel);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -569,7 +553,7 @@ public class RagService {
                          List<ChatRequest.Mention> mentions, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
                          boolean guestMode, boolean regenerate, String replaceMessageId,
-                         List<ChatRequest.HistoryRef> historyRefs) {
+                         List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）+ 个人默认视觉模型（本轮图片理解用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -637,6 +621,9 @@ public class RagService {
         } else {
             useDeepThink = deepThink;
         }
+        // 本轮思考强度档位归一：用户本轮显式选的档位优先；不在模型支持档位内（含前端被绕过、
+        // 手改请求下发越级档位）→ 回落模型登记的默认档位，不静默改写成用户选的值。
+        final String thinkLevel = resolveReasoningLevel(resolvedModel, reasoningLevel);
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
         final boolean knowledgeOff = agent != null && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
@@ -658,7 +645,7 @@ public class RagService {
             if (knowledgeOff) {
                 planSteps.add("生成回答");
             } else {
-                if (useDeepThink && configService.getBoolean("deepReasoning.enabled")) {
+                if (useDeepThink) {
                     planSteps.add("深度思考");
                 }
                 planSteps.add("检索知识库");
@@ -846,8 +833,8 @@ public class RagService {
             String thinkingInject = "";
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
-            if (useDeepThink && configService.getBoolean("deepReasoning.enabled")) {
-                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, attachmentText, emitter, resolvedModel);
+            if (useDeepThink) {
+                DeepThinkResult dr = runDeepThinking(sessionId, question, imgDescText, attachmentText, emitter, resolvedModel, thinkLevel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
                 if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
@@ -1404,6 +1391,7 @@ public class RagService {
             st.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
+            st.reasoningLevel = thinkLevel; // 本轮思考强度档位（请求级优先，null=只有开关无强度）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
@@ -2011,6 +1999,22 @@ public class RagService {
         }
     }
 
+    /**
+     * 本轮思考强度档位归一：用户显式选的（reqLevel，须落在模型支持档位内）优先，
+     * 否则用模型登记的默认档位。返回值 null = 本轮不指定强度（只有思考开关，无强度语义）。
+     */
+    private String resolveReasoningLevel(String model, String reqLevel) {
+        String lv = reqLevel == null ? null : reqLevel.trim().toLowerCase();
+        if (lv != null && !lv.isBlank() && modelRegistryService.reasoningLevelsOf(model).contains(lv)) {
+            return lv;
+        }
+        if (lv != null && !lv.isBlank()) {
+            // 越级/非法档位：回落模型默认，并留可查日志（不静默按用户选的值下发）
+            log.warn("[REASONING] 思考强度档位 {} 不在模型 {} 的支持档位内，回落其默认档位", lv, model);
+        }
+        return modelRegistryService.defaultReasoningLevelOf(model);
+    }
+
     /** 模型展示名（降级事件文案用）：有登记取展示名，否则回退模型 id，引用无效回退原串 */
     private String modelDisplayName(String ref) {
         ModelInfo mi = modelRegistryService.modelInfoOf(ref);
@@ -2079,28 +2083,37 @@ public class RagService {
                 : spec.user(u -> u.text(user).media(media.toArray(new org.springframework.ai.content.Media[0])));
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(st.model)
-                .temperature(configService.getDouble("chat.temperature"))
                 .maxTokens(st.effectiveMaxOutput > 0 ? st.effectiveMaxOutput
                         : configService.getInt("context.maxOutputTokens"));
-        // 思考强度档位（模型行登记「支持强度」+「默认强度」）：按厂商方言映射成各自字段下发
-        // （OpenAI reasoning_effort / Claude thinking.budget_tokens / Qwen thinking_budget），
-        // 不做单字段裸透传——那只对 OpenAI 系生效。恒思考模型（always）本轮一定开着思考，
-        // 可开关模型按 st.deepThink；登记了档位但网关无语义 → fail-loud 提示，不假装生效。
-        String thinkLevel = modelRegistryService.defaultReasoningLevelOf(st.model);
-        if (thinkLevel != null) {
-            boolean thinkingOn = st.deepThink
-                    || ModelRegistryService.THINK_ALWAYS.equals(modelRegistryService.referenceThinking(st.model));
-            Map<String, Object> thinkBody = modelRegistryService.reasoningExtraBody(st.model, thinkLevel, thinkingOn);
+        // 思考强度档位：本轮请求级（用户在聊天页选的）优先，其次模型登记的默认档位；
+        // 按厂商方言映射成各自字段下发（OpenAI/DeepSeek/GLM/豆包/Kimi/MiniMax reasoning_effort、
+        // Claude thinking.budget_tokens、Qwen thinking_budget），不做单字段裸透传——那只对
+        // OpenAI 系生效。恒思考模型（always）本轮一定开着思考，可开关模型按 st.deepThink；
+        // 登记了档位但网关无语义 → fail-loud 提示。
+        String thinkLevel = st.reasoningLevel != null
+                ? st.reasoningLevel : modelRegistryService.defaultReasoningLevelOf(st.model);
+        boolean thinkingOn = st.deepThink
+                || ModelRegistryService.THINK_ALWAYS.equals(modelRegistryService.referenceThinking(st.model));
+        if (thinkLevel != null && thinkingOn) {
+            Map<String, Object> thinkBody = modelRegistryService.reasoningExtraBody(st.model, thinkLevel, true);
             if (!thinkBody.isEmpty()) {
                 optionsBuilder.extraBody(thinkBody);
                 log.info("[REASONING] 思考强度档位已下发: model={} level={} body={}", st.model, thinkLevel, thinkBody.keySet());
-            } else if (thinkingOn) {
+            } else {
                 log.warn("[FAIL-LOUD] 模型登记了思考强度档位但网关无强度方言，未下发: model={} level={}",
                         st.model, thinkLevel);
                 addDegradation(st.degradations, st.degradedCodes, "reasoningLevelUnsupported",
                         "模型「" + modelDisplayName(st.model) + "」登记了默认思考强度（" + thinkLevel
                                 + "），但该网关不支持强度调节（已按仅思考开关处理）");
             }
+        }
+        // 思考模式下不发 temperature：主流网关（DeepSeek/GLM/豆包/Claude/Qwen 官方文档均明确）
+        // 在思考开启时忽略 temperature/top_p/presence_penalty/frequency_penalty——既不报错也不生效，
+        // 属于"设了却静默失效"。此时不如下发，省一次无效参数并避免误解为"温度已按配置生效"。
+        if (thinkingOn) {
+            log.debug("[REASONING] 思考模式生效，本轮不下发 temperature（网关会静默忽略）: model={}", st.model);
+        } else {
+            optionsBuilder.temperature(configService.getDouble("chat.temperature"));
         }
         return spec
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
@@ -2609,6 +2622,8 @@ public class RagService {
         volatile String model;
         /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
         volatile boolean deepThink;
+        /** 本轮思考强度档位（请求级优先，null=只有思考开关、无强度语义）；生成流按此下发厂商方言字段 */
+        volatile String reasoningLevel;
         /** 游客分享会话（公开链接）：工具白名单收窄为知识检索+内置项，沙盒/产物/MCP/技能不暴露 */
         volatile boolean guestMode;
         /** 本轮"有副作用"工具名单（沙盒/MCP，enabledToolCallbacks 装配时回填）：审批模式 ask 时执行前需确认 */
@@ -3972,7 +3987,7 @@ public class RagService {
      */
     private DeepThinkResult runDeepThinking(String sessionId, String question, String imgDescText,
                                             String attachmentText,
-                                            SseEmitter emitter, String resolvedModel) {
+                                            SseEmitter emitter, String resolvedModel, String reasoningLevel) {
         String thinkingMode = configService.get("deepReasoning.thinkingMode");
         boolean enableThinking = configService.getBoolean("deepReasoning.enableThinking");
         boolean multiRetrieval = configService.getBoolean("deepReasoning.multiRetrieval");
@@ -3997,8 +4012,14 @@ public class RagService {
         }
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(resolvedModel)
-                .temperature(configService.getDouble("chat.temperature"));
+                .model(resolvedModel);
+        // 思考模式下不发 temperature：主流网关在 thinking 开启时忽略 temperature/top_p 等采样参数
+        // （DeepSeek/GLM/豆包/Claude/Qwen 官方文档均明确）——不报错也不生效，属静默失效。
+        // 仅 thinkingMode=model（网关原生思考）适用；prompt 模式是提示词引导、思考走 content，
+        // 采样参数照常生效。
+        if (!("model".equals(thinkingMode) && enableThinking)) {
+            optionsBuilder.temperature(configService.getDouble("chat.temperature"));
+        }
         // qwen 思考模式 max_tokens 会导致空输出：默认不设，仅显式配置 >0 时才设
         if (maxThinkingTokens > 0) {
             optionsBuilder.maxTokens(maxThinkingTokens);
@@ -4007,11 +4028,12 @@ public class RagService {
         if ("model".equals(thinkingMode) && enableThinking) {
             optionsBuilder.extraBody(Map.of("enable_thinking", true));
         }
-        // 思考强度档位（模型行登记的默认强度，thinkingMode=model 且开着思考时才下发）：
+        // 思考强度档位（本轮请求级，null 时回落模型登记默认档位；thinkingMode=model 且开着思考时才下发）：
         // 按厂商方言映射成 reasoning_effort / thinking.budget_tokens / thinking_budget。
         // 与上面 enable_thinking 合并（extraBody 单次设置，后者覆盖前者——故在此合并成一个 map）。
         if ("model".equals(thinkingMode) && enableThinking) {
-            String thinkLevel = modelRegistryService.defaultReasoningLevelOf(resolvedModel);
+            String thinkLevel = reasoningLevel != null
+                    ? reasoningLevel : modelRegistryService.defaultReasoningLevelOf(resolvedModel);
             if (thinkLevel != null) {
                 Map<String, Object> body = new LinkedHashMap<>();
                 body.put("enable_thinking", true);
