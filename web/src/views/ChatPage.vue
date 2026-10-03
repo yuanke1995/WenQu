@@ -611,6 +611,15 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
+              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡 -->
+              <span v-if="ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
+                    @mouseenter="showCtxCap($event.currentTarget, 'top')" @mouseleave="hideCtxCap()">
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                  <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
+                  <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
+                          stroke-linecap="round" :stroke-dasharray="ctxRingDash" transform="rotate(-90 10 10)" />
+                </svg>
+              </span>
               <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
                    档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
                    对其它模型则先记住、选中该模型时生效 -->
@@ -907,11 +916,13 @@
       </div>
     </Teleport>
 
-    <!-- 上下文容量卡：悬浮右栏模型行弹出（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
+    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环（上方弹出）/ 右栏模型行（侧弹）均唤起（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
          数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
     <Teleport to="body">
       <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
-           :style="{ top: ctxCapPos.top + 'px', left: ctxCapPos.left + 'px' }"
+           :style="{ top: ctxCapPos.top == null ? 'auto' : ctxCapPos.top + 'px',
+                     bottom: ctxCapPos.bottom == null ? 'auto' : ctxCapPos.bottom + 'px',
+                     left: ctxCapPos.left + 'px' }"
            @mouseenter="onCtxCapEnter" @mouseleave="onCtxCapLeave">
         <div class="ctxcap">
           <div class="ctxcap-head">
@@ -1903,7 +1914,7 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
-// ==================== 上下文容量面板（右栏模型行悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
+// ==================== 上下文容量面板（工具栏圆环/右栏模型行悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
 /** 分类展示名与配色（与后端 ctxParts 的键一一对应；占比条按此顺序堆叠） */
 const CTX_PART_META = [
   { key: 'messages', label: '消息', color: '#1677ff' },
@@ -1922,17 +1933,24 @@ const ctxCapPos = ref({ top: 0, left: 0 })
 const ctxCapEl = ref(null)
 let ctxCapTimer = null
 let ctxCapHovered = false
-const showCtxCap = el => {
+const showCtxCap = (el, placement = 'side') => {
   clearTimeout(ctxCapTimer)
   ctxCapTimer = setTimeout(() => {
     if (!el) return
     const rect = el.getBoundingClientRect()
-    // 面板放不下时翻到行左侧；顶部与行顶对齐（与深度思考面板同一套定位约定）
     const w = 300
-    const left = rect.right + 10 + w <= window.innerWidth - 8
-      ? rect.right + 10
-      : Math.max(8, rect.left - 10 - w)
-    ctxCapPos.value = { top: Math.min(rect.top - 6, window.innerHeight - 360), left }
+    let pos
+    if (placement === 'top' && rect.top >= 360) {
+      // 底部工具栏圆环：卡悬在圆环上方、右沿与圆环右沿对齐；上方放不下退回侧弹
+      pos = { top: null, bottom: window.innerHeight - rect.top + 10, left: Math.max(8, rect.right - 268) }
+    } else {
+      // 面板放不下时翻到行左侧；顶部与行顶对齐（与深度思考面板同一套定位约定）
+      const left = rect.right + 10 + w <= window.innerWidth - 8
+        ? rect.right + 10
+        : Math.max(8, rect.left - 10 - w)
+      pos = { top: Math.min(rect.top - 6, window.innerHeight - 360), bottom: null, left }
+    }
+    ctxCapPos.value = pos
     ctxCapOpen.value = true
   }, 150)
 }
@@ -1963,6 +1981,13 @@ const ctxCapData = computed(() => {
     cached, cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
   }
 })
+// 工具栏容量圆环：r=7.5 周长固定，按 pct 撑 stroke-dasharray；告警档位与右栏占用条一致
+const CTX_RING_C = 2 * Math.PI * 7.5
+const ctxRingDash = computed(() => {
+  const p = Math.min(100, Math.max(0, ctxCapData.value.pct))
+  return `${(p / 100 * CTX_RING_C).toFixed(2)} ${CTX_RING_C.toFixed(2)}`
+})
+const ctxRingLevel = computed(() => ctxCapData.value.pct >= 95 ? 'danger' : ctxCapData.value.pct >= 80 ? 'warn' : '')
 
 // ==================== 右栏：运行控制 / 本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
 // panelAi = 最后一轮 AI 消息（含进行中）——供「运行控制」卡（停止/重试本轮）定位重发目标，
@@ -3943,6 +3968,13 @@ onMounted(async () => {
 .ctxcap-empty { margin-top: 6px; font-size: 12px; color: var(--app-text3); }
 .ctxcap-foot { display: flex; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
 .ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
+
+/* 上下文容量圆环（输入框右下、模型选择器左侧）：与右栏模型行共用同一张容量卡，>80% 警告 / >95% 危险 */
+.ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; cursor: default; }
+.ctx-ring-bg { stroke: var(--app-border); }
+.ctx-ring-val { stroke: var(--app-accent); transition: stroke-dasharray .25s; }
+.ctx-ring.warn .ctx-ring-val { stroke: var(--app-warn); }
+.ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
 
 .retrieval-merged { margin-top: 8px; width: 100%; }
 .retrieval-line { font-size: 12px; color: var(--app-text3); user-select: none; cursor: pointer; }
