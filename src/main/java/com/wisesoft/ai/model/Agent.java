@@ -37,7 +37,7 @@ public class Agent {
     private String description;
 
 
-    /** 系统提示词覆盖（空=继承全局 chat.systemPrompt） */
+    /** 系统提示词（提示词归智能体管；空=使用内置默认提示词） */
     private String systemPrompt;
 
     /** 知识库范围：all 或 文档 ID 逗号分隔（空=all，即继承全局全部文档） */

@@ -216,7 +216,7 @@ public class SubAgentOrchestrator {
          */
         final Map<String, String> baseOverrides;
         /** 创建上下文时父线程的个人配置覆盖快照（个人设置 → 对话偏好）：与 baseOverrides 同理，
-         *  分支线程内需重放（分支的要点提炼读 chat.temperature 等 personal 字段）。 */
+         *  分支线程内需重放（分支的要点提炼读 chat.temperature 等配置）。 */
         final Map<String, String> baseUserOverrides;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,

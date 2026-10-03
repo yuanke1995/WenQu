@@ -163,8 +163,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
 
 -- ============================================
 -- 2026-10-02: 个人配置覆盖（个人设置 → 对话偏好）
--- 键限定为 config-schema.json 中标记 personal 的字段（温度/多轮记忆轮数/相关追问条数/
--- 个人附加指令/深度思考默认）：个人值覆盖系统全局值（个人设置页保存），仅对该用户本人的
+-- 键限定为 config-schema.json 中标记 personal 的字段（如相关建议条数）：个人值覆盖系统全局值
+-- （个人设置页保存），仅对该用户本人的
 -- 问答生效；清空 = 删除本行 = 回落全局。存储与全局配置同构（配置键 + 值），加参数只改 schema。
 -- ============================================
 
@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_answer_cache` (
     `answer`      MEDIUMTEXT    NOT NULL COMMENT '完整回答 (含 [N] 引用与 [图片N] 标记)',
     `sources`     TEXT          DEFAULT NULL COMMENT '引用来源 (JSON)',
     `images`      TEXT          DEFAULT NULL COMMENT '关联图片 URL (JSON 数组)',
-    `related`     TEXT          DEFAULT NULL COMMENT '相关追问 (JSON 数组)',
+    `related`     TEXT          DEFAULT NULL COMMENT '相关建议（回答末尾 <related> 下一步建议，JSON 数组）',
     `message_id`  VARCHAR(50)   DEFAULT NULL COMMENT '关联消息ID (反馈用)',
     `hit_count`   INT           DEFAULT 0 COMMENT '命中次数',
     `create_time` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

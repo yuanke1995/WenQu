@@ -26,7 +26,7 @@ import java.util.Set;
  * 模型配置服务：DB（c_ai_config）存储 + 内存缓存
  * <p>
  * - 启动时表空则从 yml/env 默认值灌入
- * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
+ * - 可编辑白名单：vision.prompt / 检索与解析参数等（保存即生效；
  *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
  *   知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认；问答对生成（parse.qaModel
  *   已退役）与 GraphRAG 抽取（graphrag.modelRef 已退役）均回落库主个人默认聊天模型；
@@ -209,8 +209,13 @@ public class ConfigService {
         // chat.model 已退役（全局兜底移除）：不再注入默认值，存量库中的旧行成为孤儿数据（无读取方）。
         // chat.baseUrl / chat.apiKey / chat.completionsPath 同步退役：聊天网关统一来自「模型供应商」表
         // （模型引用 → 供应商网关），DynamicOpenAiChatModel 对解析不出的引用 fail-loud，无全局兜底
+        // 回答温度已下线设置页/个人偏好（知识库问答固定低温度更稳，暴露给最终用户徒增困惑）：
+        // 降级为隐藏参数——仅 DB 可调（与 tool.mcpCiteMaxRefs 同一口径），无设置页字段、无个人层
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
-        d.put("chat.systemPrompt", properties.getSystemPrompt());
+        // chat.systemPrompt / chat.userSystemPrompt 已退役（2026-10）：角色提示词归智能体管
+        // （c_ai_agent.system_prompt，问渠内置智能体已自带），未绑定智能体的会话回落内置默认
+        // （AppProperties.systemPrompt，yml/env 可覆盖）；附加指令不再提供平台/个人层，存量库中的
+        // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
@@ -308,9 +313,7 @@ public class ConfigService {
         d.put("chat.truncateFallbackChars", "200");        // 超预算截断兜底字符数
         // chat.historyRounds 已退役：历史不再按轮数截断，改为预算驱动全量带入 + 滚动压缩
         // （context.historyCompress / context.compressRatio 控制；辅助调用内部仍用固定 2 轮短历史）
-        // 个人附加指令（个人设置 → 对话偏好，personal）：追加在系统提示词之后的个人要求；
-        // 全局值为平台层附加指令（可留空），个人值按个人覆盖机制生效
-        d.put("chat.userSystemPrompt", "");
+        // chat.userSystemPrompt（附加指令）已退役：见上方 chat.systemPrompt 注释
         // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）

@@ -132,7 +132,7 @@ public class ConfigController {
     }
 
     /** 向量模型全量重嵌入已退役：向量模型归各知识库绑定，重嵌入随知识库编辑/切换向量模型按库触发 */
-    @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（chat.temperature、chat.systemPrompt、vision.prompt、检索/解析参数等），保存即生效无需重启；*.apiKey 以 RSA 加密入库。业务模型已归属使用者：知识库绑定向量/解析视觉/检索重排模型，聊天模型走会话覆盖>个人默认")
+    @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（vision.prompt、检索/解析参数等），保存即生效无需重启；*.apiKey 以 RSA 加密入库。业务模型已归属使用者：知识库绑定向量/解析视觉/检索重排模型，聊天模型走会话覆盖>个人默认")
     @PutMapping
     public ResultJson updateConfig(
             @Parameter(description = "{\"chat\": {\"model\": \"..\", \"temperature\": \"0.3\"}, \"vision\": {\"model\": \"..\", \"prompt\": \"..\"}}")

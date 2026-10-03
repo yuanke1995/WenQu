@@ -48,7 +48,7 @@ public class RetrievalDebugController {
     public ResultJson debug(
             @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")
             @RequestBody Map<String, Object> body) {
-        // 个人体验参数（温度/附加指令等）按测试者身份装载：不装载的话面板判定与
+        // 个人体验参数（相关建议条数等）按测试者身份装载：不装载的话面板判定与
         // "我自己聊天时实际会走什么"不符（重排已归知识库/智能体检索设置，按其覆盖判定）
         configService.putUserOverrides(userConfigService.overrides(com.wisesoft.ai.util.RequestUser.uid()));
         try {

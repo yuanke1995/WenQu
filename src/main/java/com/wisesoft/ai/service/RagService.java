@@ -207,13 +207,14 @@ public class RagService {
     /** 引用摘要截断长度 */
     private static final int SNIPPET_LEN = 80;
 
-    /** <related> 追问推荐数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
+    /** <related> 下一步建议条数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
     private String relatedPromptLine() {
         int n = Math.max(1, configService.getInt("retrieval.relatedCount", 3));
-        StringBuilder ex = new StringBuilder("问题1");
-        for (int i = 2; i <= n; i++) ex.append("|问题").append(i);
+        StringBuilder ex = new StringBuilder("建议1");
+        for (int i = 2; i <= n; i++) ex.append("|建议").append(i);
         return "\n回答末尾用 <related>" + ex + "</related> 输出 " + n
-                + " 个用户可能追问的相关问题（用 | 分隔），如无合适问题可不输出。";
+                + " 条下一步建议（用 | 分隔）：结合本轮回答与用户目标给出，可以是想确认清楚的追问、值得深入的方向、"
+                + "也可以是马上能执行的操作，几条建议的类型不要雷同；每条要具体、可直接点选，如无合适建议可不输出。";
     }
 
     /**
@@ -547,7 +548,7 @@ public class RagService {
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
                 boolean identity = loadIdentity(userId);
                 // 个人配置覆盖（个人设置 → 对话偏好）：随身份一次性载入，本轮内 configService.get 对
-                // personal 字段优先读个人值（温度/多轮记忆轮数/相关追问条数/个人附加指令）。
+                // personal 字段优先读个人值（相关建议条数等）。
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
                 try {
@@ -3411,17 +3412,11 @@ public class RagService {
         }
     }
 
-    /** 系统提示词：智能体显式填写则用智能体提示词，否则继承全局（空时回落代码默认值）；
-     *  末尾追加「个人附加指令」（个人设置 → 对话偏好；全局值为平台附加指令，个人值按个人覆盖生效） */
+    /** 系统提示词：智能体显式填写则用智能体提示词（提示词归智能体管，平台已不设全局 System Prompt 配置项），
+     *  否则使用内置默认（AppProperties.systemPrompt，yml/env 可覆盖） */
     private String resolveSystemPrompt(Agent agent) {
-        String p = (agent != null && agent.getSystemPrompt() != null && !agent.getSystemPrompt().isBlank())
-                ? agent.getSystemPrompt() : configService.get("chat.systemPrompt");
-        String base = (p == null || p.isBlank()) ? properties.getSystemPrompt() : p;
-        String extra = configService.get("chat.userSystemPrompt");
-        if (extra != null && !extra.isBlank()) {
-            base = base + "\n\n【用户个人附加要求】\n" + extra.trim();
-        }
-        return base;
+        boolean hasOwn = agent != null && agent.getSystemPrompt() != null && !agent.getSystemPrompt().isBlank();
+        return hasOwn ? agent.getSystemPrompt() : properties.getSystemPrompt();
     }
 
     /** 工具开关三态解析：智能体显式设了 1/0 则强制覆盖，否则继承全局开关 */

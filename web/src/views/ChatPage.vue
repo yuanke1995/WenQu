@@ -309,7 +309,7 @@
                 已从 {{ m.subagentRoute.candidates }} 个候选择手中筛选：本问题无需咨询任何助手，直接作答
               </div>
               <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
-                <span class="related-label">猜你想问：</span>
+                <span class="related-label">接下来可以：</span>
                 <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
               </div>
             </div>

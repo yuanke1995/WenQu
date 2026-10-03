@@ -118,8 +118,7 @@ public class UserController {
     }
 
     @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好：可个人覆盖的字段定义（config-schema.json 标记 personal）"
-            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。体验类如 chat.temperature / "
-            + "retrieval.relatedCount / chat.userSystemPrompt。无模型类个人字段：问答对生成与 GraphRAG 抽取"
+            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。无模型类个人字段：问答对生成与 GraphRAG 抽取"
             + "均回落个人默认聊天模型（defaultModel）；重排已归知识库检索设置绑定")
     @GetMapping("/settings")
     public ResultJson getSettings() {

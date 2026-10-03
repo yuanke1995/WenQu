@@ -98,7 +98,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isProviderSelfEndpoint(method, path)) return true;
         // 个人偏好（本人默认模型 + 记忆开关）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
-        // 个人对话偏好（温度/多轮记忆轮数/相关追问条数/个人附加指令/深度思考默认）：
+        // 个人对话偏好（相关建议条数等，schema personal 字段）：
         // 只读写本人的 c_ai_user_config（uid 取登录态），键限定为 schema 标记 personal 的字段
         if (path.equals("/api/ai/user/settings")) return true;
         // 自助修改昵称（PUT /user/profile，仅本人：uid 取登录态，Controller 内只动本人 username 列）
