@@ -65,4 +65,12 @@ public class ScheduleAdminService {
         out.put("size", s);
         return out;
     }
+
+    /**
+     * 清空全部执行日志（立即生效，不等保留期清理任务）。高频任务数天即可累积上万行，
+     * 界面提供一键清空；返回删除行数供提示。
+     */
+    public long clearRuns() {
+        return scheduleRunLogMapper.delete(null);
+    }
 }

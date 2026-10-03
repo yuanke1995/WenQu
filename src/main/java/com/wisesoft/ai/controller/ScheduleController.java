@@ -6,6 +6,7 @@ import com.wisesoft.ai.service.ScheduleAdminService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -59,5 +60,11 @@ public class ScheduleController {
                            @RequestParam(value = "page", defaultValue = "1") int page,
                            @RequestParam(value = "size", defaultValue = "20") int size) {
         return ResultJson.ok(scheduleAdminService.listRuns(taskName, success, page, size));
+    }
+
+    @Operation(summary = "清空执行日志", description = "物理删除全部执行日志（不等保留期清理任务），返回删除行数")
+    @DeleteMapping("/runs")
+    public ResultJson clearRuns() {
+        return ResultJson.ok(scheduleAdminService.clearRuns());
     }
 }

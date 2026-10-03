@@ -436,6 +436,7 @@
                       </button>
                     </a-tooltip>
                     <span class="key-dim">保留 {{ runLogRetentionDays }} 天</span>
+                    <button class="app-link-btn danger" :disabled="runLogLoading" @click="confirmClearRunLogs">清空</button>
                   </div>
                   <a-table :data-source="runLogRows" size="small" row-key="id" :pagination="false"
                            :loading="runLogLoading" :scroll="{ x: 820 }">
@@ -528,7 +529,7 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine
          probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
          getMcpAuditLogs, getMcpAuditSummary,
-         getScheduleTasks, triggerScheduleTask, getScheduleRuns,
+         getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
          getToolInventory } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
@@ -1069,6 +1070,24 @@ const loadRunLogs = async (resetPage = false) => {
   finally { runLogLoading.value = false }
 }
 const onRunLogPage = p => { runLogPage.value = p; loadRunLogs(false) }
+
+/** 清空全部执行日志：确认后立即删除（不等保留期清理任务），成功后回到第一页重查 */
+const confirmClearRunLogs = () => {
+  Modal.confirm({
+    title: '清空全部执行日志？',
+    content: '物理删除 c_ai_schedule_run 全部行，立即生效且不可恢复；保留期内的日志也会一并删除。',
+    okText: '清空', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await clearScheduleRuns()
+        if (r.success) {
+          message.success(`已清空 ${r.data ?? 0} 条执行日志`)
+          loadRunLogs(true)
+        } else message.error(r.msg || '清空失败')
+      } catch (e) { message.error(e.message || '清空失败') }
+    }
+  })
+}
 
 /** 执行日志的保留天数（上方表单 schedule.runLogRetentionDays，随配置加载回显） */
 const runLogRetentionDays = computed(() => {
