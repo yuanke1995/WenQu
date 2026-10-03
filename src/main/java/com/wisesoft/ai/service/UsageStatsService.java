@@ -80,6 +80,7 @@ public class UsageStatsService {
         long peakDay = 0;
         for (Map<String, Object> row : daily) {
             long t = num(row.get("t"));
+            long c = num(row.get("c"));
             totalTokens += t;
             peakDay = Math.max(peakDay, t);
             LocalDate d = LocalDate.parse(String.valueOf(row.get("d")));
@@ -87,6 +88,7 @@ public class UsageStatsService {
                 Map<String, Object> cell = new LinkedHashMap<>();
                 cell.put("date", String.valueOf(row.get("d")));
                 cell.put("tokens", t);
+                cell.put("count", c);
                 heatmap.add(cell);
             }
         }

@@ -28,7 +28,8 @@
                  @mouseover="onCellOver" @mouseleave="hideTip">
               <template v-for="(col, ci) in heatData.columns" :key="'c' + ci">
                 <template v-for="(cell, ri) in col" :key="ci + '-' + ri">
-                  <div v-if="cell" class="heat-cell" :class="'hl' + heatData.levelOf(cell)" :data-tip="cellTitle(cell)"></div>
+                  <div v-if="cell" class="heat-cell" :class="'hl' + heatData.levelOf(cell)"
+                       :data-l1="cellTip(cell).l1" :data-l2="cellTip(cell).l2"></div>
                   <div v-else class="heat-cell empty"></div>
                 </template>
               </template>
@@ -88,7 +89,10 @@
 
     <!-- 热力图悬浮提示（单实例浮层：事件委托驱动，随鼠标即时显示；原生 title 有约 1s 延迟且样式不可控） -->
     <Teleport to="body">
-      <div v-if="tip.show" class="heat-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">{{ tip.text }}</div>
+      <div v-if="tip.show" class="heat-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">
+        <div class="heat-tip-l1">{{ tip.l1 }}</div>
+        <div class="heat-tip-l2">{{ tip.l2 }}</div>
+      </div>
     </Teleport>
   </div>
 </template>
@@ -177,12 +181,12 @@ function fmtDuration(sec) {
 }
 
 // ==================== Token 活动热力图 ====================
-// 一次派生：列（周×7 天的格子矩阵）+ 档位函数。三种视图共用日数据：
-//   每日=按当日 tokens 分档；每周=一格一周（周三行），按周合计分档；累计=按截至当日的累计量分档。
+// 一次派生：列（周×7 天的格子矩阵）+ 档位函数。三种视图共用日数据（tokens + 轮次）：
+//   每日=按当日分档；每周=每列按周合计整列同色；累计=每列按「截至该周末」的周累计整列同色。
 // 档位均按非零值四分位划档（GitHub 口径）。
 const dailyMap = computed(() => {
   const m = new Map()
-  for (const c of heatmap.value) m.set(c.date, Number(c.tokens) || 0)
+  for (const c of heatmap.value) m.set(c.date, { t: Number(c.tokens) || 0, c: Number(c.count) || 0 })
   return m
 })
 
@@ -196,51 +200,54 @@ const heatData = computed(() => {
   const weeks = Math.ceil((365 + today.getDay() + 1) / 7)
   const dayOf = (w, i) => { const d = new Date(saturday); d.setDate(d.getDate() - w * 7 - (6 - i)); return d }
 
-  // 累计视图：升序累计
-  const sorted = [...m.keys()].sort()
-  const cumMap = new Map()
-  let acc = 0
-  for (const d of sorted) { acc += m.get(d) || 0; cumMap.set(d, acc) }
-
-  // 每周合计（旧→新，与列序一致）
-  const weekSums = []
+  // 每周聚合（旧→新，与列序一致）：tokens / 轮次 / 周结束日（未到的周末以今天截断）
+  const weekAgg = []
   for (let w = weeks - 1; w >= 0; w--) {
-    let sum = 0
-    for (let i = 0; i < 7; i++) sum += m.get(fmt(dayOf(w, i))) || 0
-    weekSums.push(sum)
+    let t = 0, c = 0
+    for (let i = 0; i < 7; i++) {
+      const rec = m.get(fmt(dayOf(w, i)))
+      if (rec) { t += rec.t; c += rec.c }
+    }
+    const endD = dayOf(w, 6)
+    weekAgg.push({ t, c, end: fmt(endD > today ? today : endD) })
   }
+  // 累计视图（按周）：截至各周末的累计 tokens / 轮次（前缀和=日累计在周末的取值）
+  const weekCum = []
+  let ct = 0, cc = 0
+  for (const a of weekAgg) { ct += a.t; cc += a.c; weekCum.push({ t: ct, c: cc, end: a.end }) }
 
   const levelOfVal = heatMode.value === 'weekly'
-    ? leveler(weekSums)
+    ? leveler(weekAgg.map(a => a.t))
     : heatMode.value === 'total'
-      ? leveler(sorted.map(d => cumMap.get(d)))
-      : leveler(sorted.map(d => m.get(d) || 0))
+      ? leveler(weekCum.map(x => x.t))
+      : leveler(sortedDates(m).map(d => m.get(d).t))
 
   const columns = []
   for (let w = weeks - 1; w >= 0; w--) {
     const col = []
-    const weekSum = weekSums[weeks - 1 - w]
-    const weekStart = fmt(dayOf(w, 0))
+    const wi = weeks - 1 - w
     for (let i = 0; i < 7; i++) {
       const d = dayOf(w, i)
       if (d > today) { col.push(null); continue }
       const key = fmt(d)
       if (heatMode.value === 'weekly') {
         // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）
-        col.push({ date: key, value: weekSum, weekSum, weekStart })
+        col.push({ date: key, value: weekAgg[wi].t, count: weekAgg[wi].c, weekEnd: weekAgg[wi].end })
       } else if (heatMode.value === 'total') {
-        col.push({ date: key, value: cumMap.get(key) || 0 })
+        col.push({ date: key, value: weekCum[wi].t, count: weekCum[wi].c, weekEnd: weekCum[wi].end })
       } else {
-        col.push({ date: key, value: m.get(key) || 0 })
+        const rec = m.get(key) || { t: 0, c: 0 }
+        col.push({ date: key, value: rec.t, count: rec.c })
       }
     }
     columns.push(col)
   }
-  const levelOf = cell => levelOfVal(
-    heatMode.value === 'weekly' ? cell.weekSum : cell.value
-  )
-  return { columns, levelOf }
+  return { columns, levelOf: cell => levelOfVal(cell.value) }
 })
+
+function sortedDates(m) {
+  return [...m.keys()].sort()
+}
 
 // 值 → 0..4 档：按非零值四分位划档（GitHub 口径）
 function leveler(values) {
@@ -251,20 +258,25 @@ function leveler(values) {
   return v => (v <= 0 ? 0 : v <= t1 ? 1 : v <= t2 ? 2 : v <= t3 ? 3 : 4)
 }
 
-function cellTitle(cell) {
-  const md = d => { const p = d.split('-'); return `${+p[1]}月${+p[2]}日` }
-  if (heatMode.value === 'weekly') return `${md(cell.weekStart)} 起一周：${fmtTokens(cell.weekSum)} tokens`
-  if (heatMode.value === 'total') return `${md(cell.date)} 累计：${fmtTokens(cell.value)} tokens`
-  return `${md(cell.date)}：${fmtTokens(cell.value)} tokens`
+// 悬浮两行文案（对照参考稿）：完整日期 + tokens · 轮次；每周/累计带周口径后缀
+function cellTip(cell) {
+  const full = d => { const p = d.split('-'); return `${p[0]}年${+p[1]}月${+p[2]}日` }
+  if (heatMode.value === 'weekly') {
+    return { l1: `${full(cell.weekEnd)} 当周`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
+  }
+  if (heatMode.value === 'total') {
+    return { l1: `截至 ${full(cell.weekEnd)} 当周累计`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
+  }
+  return { l1: full(cell.date), l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
 }
 
 // ==================== 热力图悬浮提示（事件委托 + 单实例浮层） ====================
-const tip = ref({ show: false, text: '', x: 0, y: 0 })
+const tip = ref({ show: false, l1: '', l2: '', x: 0, y: 0 })
 const onCellOver = e => {
   const el = e.target.closest('.heat-cell')
-  if (!el || el.classList.contains('empty') || !el.dataset.tip) { tip.value.show = false; return }
+  if (!el || el.classList.contains('empty') || !el.dataset.l2) { tip.value.show = false; return }
   // 鼠标在格间移动时 mouseover 持续触发：跟随鼠标上方居中显示
-  tip.value = { show: true, text: el.dataset.tip, x: e.clientX, y: e.clientY }
+  tip.value = { show: true, l1: el.dataset.l1, l2: el.dataset.l2, x: e.clientX, y: e.clientY }
 }
 const hideTip = () => { tip.value.show = false }
 
@@ -451,20 +463,20 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .hl4 { background: #5c98e9; }
 .heat-months { display: grid; gap: 4px; margin-top: 8px; min-height: 16px; }
 .heat-month { font-size: 11px; color: var(--app-text3); white-space: nowrap; }
-/* 热力图悬浮提示：teleport 到 body，深色浮层跟随鼠标上方居中 */
+/* 热力图悬浮提示：teleport 到 body，深色浮层跟随鼠标上方居中；两行=日期 / tokens·轮次 */
 .heat-tip {
   position: fixed;
   transform: translate(-50%, calc(-100% - 8px));
   background: rgba(28, 32, 38, .92);
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
-  padding: 7px 10px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
   white-space: nowrap;
   pointer-events: none;
   z-index: 1080;
 }
+.heat-tip-l1 { font-size: 11px; line-height: 1.4; color: rgba(255, 255, 255, .72); }
+.heat-tip-l2 { font-size: 12px; line-height: 1.4; font-weight: 600; }
 .heat-legend {
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   margin-top: 8px; font-size: 11px; color: var(--app-text3);

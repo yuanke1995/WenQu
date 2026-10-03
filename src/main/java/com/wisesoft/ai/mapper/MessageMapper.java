@@ -50,9 +50,10 @@ public interface MessageMapper extends BaseMapper<Message> {
     // tokens 为 JSON 字符串，总额取 $.total（缺失/非法 JSON 行被 JSON_VALID 与 CAST NULL 自然剔除）。
     // 自定义 SQL 不经 @TableLogic 改写，逻辑删除必须显式过滤（会话与消息两侧都要）。
 
-    /** 每日 token 总量（role=assistant 且带合法 tokens；since 为 null 则不限时间，全量日清单供峰值/热力图共用） */
+    /** 每日 token 总量与回答轮数（role=assistant 且带合法 tokens；since 为 null 则不限时间，全量日清单供峰值/热力图共用） */
     @Select("<script>SELECT DATE_FORMAT(m.create_time, '%Y-%m-%d') AS d, "
-            + "SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(m.tokens, '$.total')) AS UNSIGNED)) AS t "
+            + "SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(m.tokens, '$.total')) AS UNSIGNED)) AS t, "
+            + "COUNT(*) AS c "
             + "FROM c_ai_message m JOIN c_ai_session s ON m.session_id = s.id "
             + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
             + "AND m.role = 'assistant' AND m.tokens IS NOT NULL AND JSON_VALID(m.tokens) "
