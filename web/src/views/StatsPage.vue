@@ -219,14 +219,15 @@ const heatData = computed(() => {
   const columns = []
   for (let w = weeks - 1; w >= 0; w--) {
     const col = []
+    const weekSum = weekSums[weeks - 1 - w]
+    const weekStart = fmt(dayOf(w, 0))
     for (let i = 0; i < 7; i++) {
       const d = dayOf(w, i)
       if (d > today) { col.push(null); continue }
       const key = fmt(d)
       if (heatMode.value === 'weekly') {
-        col.push(i === 3
-          ? { date: key, weekSum: weekSums[weeks - 1 - w], weekStart: fmt(dayOf(w, 0)) }
-          : null)
+        // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）
+        col.push({ date: key, value: weekSum, weekSum, weekStart })
       } else if (heatMode.value === 'total') {
         col.push({ date: key, value: cumMap.get(key) || 0 })
       } else {
