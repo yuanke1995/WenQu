@@ -20,9 +20,10 @@ const authHeaders = extra => {
 }
 
 /**
- * 通用 JSON 请求：超时控制 + 401/业务失败统一抛出 Error(message)
+ * 通用 JSON 请求：超时控制 + 401/业务失败统一抛出 Error(message)（附 status 供调用方分流）
+ * silentForbidden: 403 时不派发全局 app:forbidden（归属类拒绝由调用方静默处理的场景）
  */
-async function request(path, { method = 'GET', body, timeout = 30000 } = {}) {
+async function request(path, { method = 'GET', body, timeout = 30000, silentForbidden = false } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
   try {
@@ -36,8 +37,10 @@ async function request(path, { method = 'GET', body, timeout = 30000 } = {}) {
     try { data = await res.json() } catch (e) { /* 非 JSON 响应 */ }
     if (!res.ok) {
       if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
-      if (res.status === 403) window.dispatchEvent(new CustomEvent('app:forbidden', { detail: data?.msg }))
-      throw new Error(data?.msg || `请求失败(${res.status})`)
+      if (res.status === 403 && !silentForbidden) window.dispatchEvent(new CustomEvent('app:forbidden', { detail: data?.msg }))
+      const err = new Error(data?.msg || `请求失败(${res.status})`)
+      err.status = res.status
+      throw err
     }
     if (data && data.success === false) throw new Error(data.msg || '请求失败')
     return data
@@ -209,7 +212,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
 export const newSession = () => request('/session/new', { method: 'POST' })
 
 /** 获取会话历史 */
-export const getHistory = sid => request(`/session/${sid}`)
+export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
 
 /** 清除会话（Redis 缓存） */
 export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE' })

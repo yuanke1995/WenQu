@@ -77,9 +77,10 @@ window.addEventListener('app:unauthorized', () => {
   }
 })
 
-// 403 统一处理（管理端点被拒：非管理员或管理员口令无效）
-window.addEventListener('app:forbidden', () => {
-  message.error('无管理员权限，请先完成管理员验证')
+// 403 统一处理：优先展示后端具体原因（资源归属如「无权访问该会话」、角色未授权、仅管理员等各有文案）；
+// 未携带具体原因时回落到管理员验证提示（兜底旧端点）
+window.addEventListener('app:forbidden', e => {
+  message.error(e?.detail || '无管理员权限，请先完成管理员验证')
 })
 
 // 首屏先确认身份/角色再挂载（避免 App 渲染后才异步拉取导致的"角色已就绪但视图未刷新"时序问题）。

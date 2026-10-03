@@ -54,7 +54,8 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 普通用户问答端点白名单判断：白名单内无需管理员；其余（文档/配置/评估/看板/索引/知识管理等）默认需管理员。
      * <p>
      * 白名单 = 问答链路的最小闭环：
-     * chat、会话（列表/新建/历史/删除/置顶收藏/重命名/批量/组删除撤销）、反馈提交、
+     * chat、会话（列表/新建/历史/删除/置顶收藏/重命名/批量/组删除撤销）、聊天附件上传（按 uid 隔离落盘）、
+     * 反馈提交、站内通知（铃铛：列表/未读数/已读，按 uid 过滤）、
      * 引用溯源（GET 单个知识块详情）、公开运行时配置（GET /config/public）、身份查询（/auth/me）、
      * 对话页智能体下拉（GET /agent/available，只读精简字段）。
      */
@@ -70,6 +71,8 @@ public class SecurityConfig implements WebMvcConfigurer {
             return true;
         }
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
+        // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatController 内处理）
+        if ("POST".equals(method) && path.equals("/api/ai/chat/attachment")) return true;
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
@@ -111,6 +114,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/artifact") || path.startsWith("/api/ai/artifact/")) return true;
         // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        // 站内通知（铃铛，个人资产）：列表/未读数/标记已读——接收人一律取登录 uid（NotificationController 内过滤），
+        // 每人只看得到并只操作得了自己的通知，所有角色可用
+        if (path.equals("/api/ai/notification") || path.startsWith("/api/ai/notification/")) return true;
         // 沙盒工作区浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
         // 只会按自己的 uid 派生 sandboxId，天然探不到别人的容器；开关 tool.sandbox.enabled 关闭时控制器 fail-closed
         if (path.equals("/api/ai/sandbox") || path.startsWith("/api/ai/sandbox/")) return true;

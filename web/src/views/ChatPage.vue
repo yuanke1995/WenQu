@@ -1505,7 +1505,7 @@ const debugEntryVisible = ref(false)
 // 排障显示开关（chat.retrievalDebugEnabled，设置页「检索调试入口」）：
 // 统一控制回答气泡上的「由 X 回答」归属徽标、「已派遣 X」路由提示、引用分值（右栏来源列表分数 + 角标悬浮卡分数）。
 // 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
-// /config 是管理端点，普通用户调它 403 并触发全局「无管理员权限」误报，故不复用。
+// /config 是管理端点，普通用户调它 403 并触发全局 403 提示（角色未授权），故不复用。
 const debugDisplayVisible = ref(false)
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
@@ -1900,13 +1900,16 @@ onUnmounted(() => {
 })
 
 // ==================== 会话 ====================
+// 失效会话回退防重入：回退链路（autoPick 选中的会话）再失败时不级联触发
+let sessionRecovering = false
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上
   router.replace({ path: '/chat', query: { sid } }).catch(() => {})
   try {
-    const r = await getHistory(sid)
+    // 403（会话归属拒绝）由本函数静默回退处理，不触发全局提示
+    const r = await getHistory(sid, { silentForbidden: true })
     // 快速连续切换时晚到的历史响应不覆盖当前视图
     if (r.success && Array.isArray(r.data) && currentSessionId.value === sid) {
       const list = r.data
@@ -1965,6 +1968,22 @@ const switchSession = async sid => {
     }
   } catch (e) {
     if (currentSessionId.value === sid) messages.value = []
+    // 非本人/已删除的会话（403/404）：静默清掉地址栏 sid，回退到自己的最近会话或新建
+    // （autoPick 与首屏落地同一逻辑）；先刷新列表，避免用陈旧列表再选中已失效会话
+    if (!sessionRecovering && (e?.status === 403 || e?.status === 404)
+        && String(route.query.sid || '') === String(sid)) {
+      sessionRecovering = true
+      currentSessionId.value = null
+      router.replace({ path: '/chat' }).catch(() => {})
+      try {
+        await loadSessions()
+        await autoPick()
+      } catch (err) {
+        /* 回退失败则停在空白会话，不再打扰 */
+      } finally {
+        sessionRecovering = false
+      }
+    }
   }
 }
 
@@ -3251,7 +3270,7 @@ onMounted(async () => {
   }
   focusInput()
   // 检索调试入口是管理员调参（chat.retrievalDebugEnabled，配置里标 debug）：只有管理员才拉 /config
-  // ——/config 是管理端点，普通用户调它会 403，触发全局「无管理员权限，请先完成管理员验证」的误报
+  // ——/config 是管理端点，普通用户调它会 403，触发全局 403 提示（角色未授权），故只对管理员读
   if (isAdminSync()) {
     getConfig().then(r => {
       if (!r.success) return
