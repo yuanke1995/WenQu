@@ -254,9 +254,10 @@
               <div class="ap-cap-l">
                 <div class="ap-cap-name">工具执行确认</div>
                 <div class="ap-cap-desc">
-                  针对「沙盒执行」与「MCP 外部工具」这两类有副作用的工具：自动执行=模型直接调用；
+                  针对「沙盒执行」「MCP 外部工具」及「联网搜索」（系统设置开启其「纳入执行审批」后纳入）这几类
+                  有副作用的工具：自动执行=模型直接调用；
                   执行前确认=每次调用先暂停等你批准（拒绝/超时后模型会收到未执行提示继续回答）；
-                  禁用=不给模型这两类工具。游客分享会话本就不暴露它们。
+                  禁用=不给模型沙盒与 MCP 工具（联网搜索启停由自身开关决定，不受禁用影响）。游客分享会话本就不暴露它们。
                 </div>
               </div>
               <a-select v-model:value="form.toolApprovalMode" size="small" style="width:120px" :options="approvalOptions" />
