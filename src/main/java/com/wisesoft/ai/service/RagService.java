@@ -2095,10 +2095,20 @@ public class RagService {
         boolean thinkingOn = st.deepThink
                 || ModelRegistryService.THINK_ALWAYS.equals(modelRegistryService.referenceThinking(st.model));
         if (thinkLevel != null && thinkingOn) {
+            // reasoning_effort 必须走原生 setter：放进 extraBody 会被序列化两次
+            // （ChatCompletionRequest 同时有原生 reasoningEffort 组件与 extraBody），
+            // 网关按重复字段拒绝——DeepSeek 返回 422 "duplicate field reasoning_effort"（实测）。
+            String effort = modelRegistryService.reasoningEffortValue(st.model, thinkLevel, true);
+            if (effort != null) {
+                optionsBuilder.reasoningEffort(effort);
+            }
             Map<String, Object> thinkBody = modelRegistryService.reasoningExtraBody(st.model, thinkLevel, true);
             if (!thinkBody.isEmpty()) {
                 optionsBuilder.extraBody(thinkBody);
-                log.info("[REASONING] 思考强度档位已下发: model={} level={} body={}", st.model, thinkLevel, thinkBody.keySet());
+            }
+            if (effort != null || !thinkBody.isEmpty()) {
+                log.info("[REASONING] 思考强度已下发: model={} level={} effort={} extra={}",
+                        st.model, thinkLevel, effort, thinkBody.keySet());
             } else {
                 log.warn("[FAIL-LOUD] 模型登记了思考强度档位但网关无强度方言，未下发: model={} level={}",
                         st.model, thinkLevel);
@@ -4035,12 +4045,17 @@ public class RagService {
             String thinkLevel = reasoningLevel != null
                     ? reasoningLevel : modelRegistryService.defaultReasoningLevelOf(resolvedModel);
             if (thinkLevel != null) {
+                // reasoning_effort 走原生 setter（extraBody 会导致同名字段序列化两次 → 网关 422）
+                String effort = modelRegistryService.reasoningEffortValue(resolvedModel, thinkLevel, true);
+                if (effort != null) {
+                    optionsBuilder.reasoningEffort(effort);
+                }
                 Map<String, Object> body = new LinkedHashMap<>();
                 body.put("enable_thinking", true);
                 body.putAll(modelRegistryService.reasoningExtraBody(resolvedModel, thinkLevel, true));
                 optionsBuilder.extraBody(body);
-                log.info("[REASONING] 深度思考强度档位已下发: model={} level={} body={}",
-                        resolvedModel, thinkLevel, body.keySet());
+                log.info("[REASONING] 深度思考强度已下发: model={} level={} effort={} extra={}",
+                        resolvedModel, thinkLevel, effort, body.keySet());
             }
         }
 

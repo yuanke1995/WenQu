@@ -702,6 +702,21 @@ public class ModelRegistryService {
      *       （DeepSeek/GLM/豆包/Kimi/MiniMax/Qwen 的开关字段，缺省会走网关默认值）</li>
      * </ul>
      */
+    /**
+     * 思考强度的请求体增量（方言映射结果）：调用方合入 extraBody。
+     * <p><b>不含 reasoning_effort</b>：该字段由 {@link #reasoningEffortValue} 单独返回，
+     * 走 OpenAiChatOptions 的原生 setter。原因是 ChatCompletionRequest 同时有原生
+     * {@code reasoningEffort} 组件与 {@code extraBody}，若把同名键放进 extraBody，
+     * Spring AI 会把它写进两处，序列化出<重复字段>——DeepSeek 直接返回
+     * 422 "duplicate field reasoning_effort"（实测抓包确认）。
+     * <ul>
+     *   <li>level 空 / 引用无效 / 模型无档位登记 → 空 Map（不强指定，由网关默认决定）</li>
+     *   <li>方言 NONE（该网关无强度语义）→ 空 Map，且调用方应登记 fail-loud 提示，
+     *       因为用户明确登记了档位却无处下发，属配置与网关不匹配，不能装作生效</li>
+     *   <li>其余 → 该方言的开关/预算字段（Claude budget、Qwen thinking_budget、
+     *       DeepSeek/GLM/豆包等 thinking.type）</li>
+     * </ul>
+     */
     public Map<String, Object> reasoningExtraBody(String ref, String level, boolean thinkingOn) {
         if (level == null || level.isBlank()) return Map.of();
         ModelInfo mi = modelInfoOf(ref);
@@ -720,8 +735,7 @@ public class ModelRegistryService {
             case QWEN -> {
                 if (thinkingOn) {
                     body.put("enable_thinking", true);
-                    body.put("reasoning_effort", EFFORT_QWEN.getOrDefault(lv, "high"));
-                    // thinking_budget 与 effort 同时下发：部分网关只认其中之一
+                    // thinking_budget 与原生 reasoning_effort 互补：部分网关只认其中之一
                     body.put("thinking_budget", LEVEL_TOKEN_BUDGET.getOrDefault(lv, 16384));
                 }
             }
@@ -729,18 +743,32 @@ public class ModelRegistryService {
                 return Map.of();
             }
             default -> {
-                Map<String, String> table = effortTable(dialect);
-                if (thinkingOn && table != null) {
-                    body.put("reasoning_effort", table.getOrDefault(lv, "high"));
-                    // 这些网关的思考开关字段（与 effort 独立，传 enabled 更稳）
-                    if (dialect != ReasoningDialect.OPENAI) {
-                        body.put("thinking", Map.of("type", "enabled"));
-                    }
+                // 这些网关的思考开关字段（与 effort 独立，传 enabled 更稳）
+                if (thinkingOn && dialect != ReasoningDialect.OPENAI) {
+                    body.put("thinking", Map.of("type", "enabled"));
                 }
             }
         }
         return body;
     }
+
+    /**
+     * 思考强度的 {@code reasoning_effort} 取值（已按厂商收敛表映射）：供调用方走
+     * OpenAiChatOptions 的<b>原生</b> setter 下发——不能经 extraBody（同名键会重复序列化）。
+     * <p>返回 null 表示该方言不用 effort（Claude 走 token 预算、网关无强度语义），
+     * 调用方此时不应设置该字段。
+     */
+    public String reasoningEffortValue(String ref, String level, boolean thinkingOn) {
+        if (!thinkingOn || level == null || level.isBlank()) return null;
+        ModelInfo mi = modelInfoOf(ref);
+        if (mi == null) return null;
+        String lv = level.trim().toLowerCase();
+        if (!REASONING_LEVEL_LIST.contains(lv)) return null;
+        if (!reasoningLevelsOf(mi).contains(lv)) return null;
+        Map<String, String> table = effortTable(reasoningDialectOf(mi.getModelId()));
+        return table == null ? null : table.getOrDefault(lv, "high");
+    }
+
 
     /**
      * 按模型名启发式判定思考能力（仅 thinking=auto 档兜底；管理员在模型库可显式覆盖）：
