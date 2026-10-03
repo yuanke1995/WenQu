@@ -2,7 +2,9 @@ package com.wisesoft.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wisesoft.ai.common.BizException;
+import com.wisesoft.ai.config.AppProperties;
 import com.wisesoft.ai.mapper.DepartmentMapper;
 import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.Department;
@@ -10,8 +12,14 @@ import com.wisesoft.ai.model.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 组织管理：部门与用户的增删改查（供「成员管理」页与「共享范围」选择器使用）。
@@ -33,6 +41,10 @@ public class OrgService {
     private final AuthService authService;
     private final ModelRegistryService modelRegistryService;
     private final RoleService roleService;
+    private final AppProperties properties;
+
+    /** 上传头像 URL 前缀（与 ImageWebConfig 资源映射、前端渲染口径一致） */
+    private static final String AVATAR_URL_PREFIX = "/ai/images/avatar/";
 
     // ==================== 部门 ====================
 
@@ -192,18 +204,103 @@ public class OrgService {
     }
 
     /**
-     * 本人修改昵称（username 仅作展示昵称；登录只认 uid，uid 不可改）。
-     * 只动 username 一列（LambdaUpdateWrapper 窄更新，避免整实体回写与他人并发改其它列互相覆盖）。
+     * 本人修改个人资料：username/avatar 各自缺省(null)=不修改；avatar 空串=清除头像（回落昵称首字）。
+     * 昵称校验唯一性；头像写入走 setAvatar（含旧上传图清理、取值合法性校验）。
      */
-    public void updateOwnProfile(String uid, String username) {
+    public void updateOwnProfile(String uid, String username, String avatar) {
         if (uid == null || uid.isBlank()) throw new BizException("未登录");
-        String name = normalizeName(username, "昵称");
         if (userMapper.selectById(uid) == null) throw new BizException("用户不存在");
-        ensureUsernameUnique(name, uid);
-        userMapper.update(null, new LambdaUpdateWrapper<User>()
-                .eq(User::getUid, uid)
-                .set(User::getUsername, name));
-        log.info("[AUDIT] 用户修改昵称 uid={} username={}", uid, name);
+        if (username != null) {
+            String name = normalizeName(username, "昵称");
+            ensureUsernameUnique(name, uid);
+            userMapper.update(null, new LambdaUpdateWrapper<User>()
+                    .eq(User::getUid, uid).set(User::getUsername, name));
+            log.info("[AUDIT] 用户修改昵称 uid={} username={}", uid, name);
+        }
+        if (avatar != null) {
+            setAvatar(uid, avatar);
+        }
+    }
+
+    /**
+     * 设置头像（本人）：avatar 语义——null=不修改；""=清除（回落昵称首字）；
+     * 以 /ai/images/avatar/ 开头=上传图片 URL；其余=emoji 字符（原样存库，前端渲染为表情块）。
+     * 旧头像是上传图片且被替换/清除时删除磁盘文件，避免孤儿文件累积。
+     */
+    public String setAvatar(String uid, String avatar) {
+        User u = userMapper.selectById(uid);
+        if (u == null) throw new BizException("用户不存在");
+        if (avatar == null) return u.getAvatar(); // 不修改
+        String next = avatar.trim().isEmpty() ? null : resolveAvatarValue(avatar.trim());
+        String prev = u.getAvatar();
+        if (prev != null && prev.startsWith(AVATAR_URL_PREFIX) && !prev.equals(next)) {
+            deleteAvatarFile(prev);
+        }
+        // 非 Lambda 的 UpdateWrapper.set(String,Object) 含 null → 清空（null）能真正落库，
+        // 而 LambdaUpdateWrapper.set(SFunction,..) 会按 NOT_NULL 策略跳过 null 导致清空失效
+        userMapper.update(null, new UpdateWrapper<User>()
+                .eq("uid", uid).set("avatar", (Object) next));
+        log.info("[AUDIT] 用户头像已更新 uid={} avatar={}", uid, next == null ? "(清空)" : next);
+        return next;
+    }
+
+    /** 校验头像取值合法：上传 URL 必须是我们生成的 /ai/images/avatar/ 路径（防任意 URL / 路径穿越）；emoji 原样存 */
+    private String resolveAvatarValue(String a) {
+        if (a.startsWith("/")) {
+            if (!a.matches("^/ai/images/avatar/[A-Za-z0-9._-]+\\.(?i)(png|jpe?g|gif|webp)$")) {
+                throw new BizException("头像图片地址无效");
+            }
+            return a;
+        }
+        if (a.length() > 64) throw new BizException("头像内容过长");
+        return a;
+    }
+
+    /** 上传头像图片（本人）：校验类型/大小/魔数 → 落盘 images/avatar/ → 写入用户头像（含旧文件清理），返回访问 URL */
+    public String uploadAvatar(String uid, MultipartFile file) {
+        if (uid == null || uid.isBlank()) throw new BizException("未登录");
+        if (file == null || file.isEmpty()) throw new BizException("请选择图片");
+        if (file.getSize() > 2L * 1024 * 1024) throw new BizException("头像图片不能超过 2MB");
+        String ext = switch (file.getContentType() == null ? "" : file.getContentType()) {
+            case "image/png" -> "png";
+            case "image/jpeg" -> "jpg";
+            case "image/gif" -> "gif";
+            case "image/webp" -> "webp";
+            default -> "";
+        };
+        if (ext.isEmpty()) throw new BizException("仅支持 PNG/JPEG/GIF/WebP 图片");
+        byte[] bytes = readUploadBytes(file);
+        if (!isImageBytes(bytes)) throw new BizException("文件不是有效图片");
+        Path dir = Paths.get(properties.getImages().getDir(), "images", "avatar");
+        try { Files.createDirectories(dir); } catch (IOException e) { throw new BizException("头像存储目录创建失败"); }
+        String name = UUID.randomUUID().toString().replace("-", "") + "." + ext;
+        try { Files.write(dir.resolve(name), bytes); } catch (IOException e) { throw new BizException("头像保存失败"); }
+        return setAvatar(uid, AVATAR_URL_PREFIX + name);
+    }
+
+    private byte[] readUploadBytes(MultipartFile f) {
+        try { return f.getBytes(); } catch (IOException e) { throw new BizException("读取上传文件失败"); }
+    }
+
+    /** 魔数校验：仅接受常见图片格式（防把非图片当图片存） */
+    private boolean isImageBytes(byte[] b) {
+        if (b == null || b.length < 12) return false;
+        if (b[0] == (byte) 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return true; // PNG
+        if (b[0] == (byte) 0xFF && b[1] == 0xD8 && b[2] == 0xFF) return true;                  // JPEG
+        if (b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x38) return true;        // GIF
+        if (b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46
+                && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50) return true; // WEBP
+        return false;
+    }
+
+    /** 按存储 URL 删除头像文件（URL 形如 /ai/images/avatar/{name}）；失败仅告警不阻断 */
+    private void deleteAvatarFile(String url) {
+        try {
+            String name = url.substring(AVATAR_URL_PREFIX.length());
+            Files.deleteIfExists(Paths.get(properties.getImages().getDir(), "images", "avatar", name));
+        } catch (Exception e) {
+            log.warn("[WARN] 删除旧头像文件失败: {} ({})", url, e.getMessage());
+        }
     }
 
     /** 校验个人默认模型引用：存在、对本人可用、且登记类型与槽位一致（未登记类型的引用放行——遗留手填名兼容） */

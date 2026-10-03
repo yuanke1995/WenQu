@@ -421,6 +421,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录。唯一索引：一个 sub 只能绑一个账号，防冒用）',
+    `avatar`       VARCHAR(512) DEFAULT NULL COMMENT '用户头像：空=昵称首字；emoji=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),

@@ -14,16 +14,50 @@
         <!-- 个人资料（自助：仅昵称，登录账号不可改） -->
         <div v-if="current === 'profile'" class="app-card pf-card">
           <h2 class="app-card-title">个人资料</h2>
-          <p class="pf-hint">
-            昵称显示在侧边栏与成员列表，仅作展示、不用于登录。
-            登录账号不可修改。
+          <p class="pf-hint pf-hint-top">
+            昵称与头像显示在侧边栏和成员列表中，仅作展示、不用于登录；登录账号不可修改。
           </p>
-          <div class="pf-row">
-            <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear style="width:320px"
-                     placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
-            <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
+
+          <!-- 头像：上传图片（≤2MB）或选一个 emoji；留空=回落昵称首字。改动后侧栏/成员列表立即同步 -->
+          <div class="pf-avatar-block">
+            <div class="pf-avatar-frame">
+              <UserAvatar :avatar="avatarPreview" :name="nickForm.username" :size="72" />
+            </div>
+            <div class="pf-avatar-side">
+              <div class="pf-op-row">
+                <label class="app-btn pf-upload" :class="{ busy: avatarSaving }">
+                  {{ avatarSaving ? '处理中…' : '上传图片' }}
+                  <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
+                         :disabled="avatarSaving" @change="onAvatarFile" />
+                </label>
+                <button class="app-btn ghost" :disabled="!avatarPreview || avatarSaving" @click="clearAvatar">清除头像</button>
+              </div>
+              <p class="pf-sub-hint">支持 PNG / JPEG / GIF / WebP，单张不超过 2MB，上传后立即生效。</p>
+            </div>
           </div>
-          <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
+
+          <!-- 图标与上传互斥（后设覆盖前设）；两者都为空时显示昵称首字 -->
+          <div class="pf-field">
+            <div class="pf-field-head">
+              <span class="pf-label">或选择一个图标</span>
+              <span class="pf-sub-hint">点选即生效；留空则显示昵称首字</span>
+            </div>
+            <div class="pf-emoji-pick">
+              <button v-for="e in AVATAR_EMOJIS" :key="e" class="pf-emoji-opt" type="button"
+                      :class="{ on: avatarPreview === e }" :disabled="avatarSaving"
+                      :aria-label="'使用图标 ' + e" @click="pickEmoji(e)">{{ e }}</button>
+            </div>
+          </div>
+
+          <div class="pf-field">
+            <div class="pf-field-head"><span class="pf-label">昵称</span></div>
+            <div class="pf-row">
+              <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear style="width:280px"
+                       placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
+              <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
+            </div>
+            <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
+          </div>
         </div>
 
         <!-- 个人默认模型面板（聊天面板同时承载「回答偏好」与「模型默认」个人覆盖项，保存按钮统一提交） -->
@@ -157,11 +191,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
-import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile,
+import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          getUserSettings, saveUserSettings,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -376,6 +411,47 @@ const saveNickname = async () => {
   finally { nickSaving.value = false }
 }
 
+// ---- 个人资料：头像（emoji 选择 / 图片上传 / 清除；与昵称同源 updateMyProfile，改动后同步身份缓存） ----
+const avatarPreview = ref('')
+const avatarSaving = ref(false)
+// emoji 可选集（比智能体图标集更生活化，便于个人辨识）
+const AVATAR_EMOJIS = ['🤖', '🧠', '💡', '📚', '⚖️', '📊', '✍️', '🔍', '🛠️', '💬',
+  '🎯', '🧭', '📝', '🌐', '⚡', '🌟', '🍀', '🔥', '🌈', '🐱',
+  '🐶', '🦊', '🐼', '🌸', '⚓', '🎨', '🚀', '💎', '☕', '🍎']
+const pickEmoji = async (e) => {
+  if (avatarSaving.value) return
+  avatarSaving.value = true
+  try {
+    const r = await updateMyProfile(nickForm.value.username, e)
+    if (r && r.success !== false) { avatarPreview.value = e; await ensureAuth(true); message.success('头像已更新') }
+    else message.error(r?.msg || '保存失败')
+  } catch (err) { message.error(err.message || '保存失败') }
+  finally { avatarSaving.value = false }
+}
+const onAvatarFile = async (ev) => {
+  const file = ev.target.files && ev.target.files[0]
+  ev.target.value = '' // 允许重复选同一文件
+  if (!file) return
+  avatarSaving.value = true
+  try {
+    const r = await uploadAvatarApi(file)
+    const url = r && r.data && r.data.url
+    if (url) { avatarPreview.value = url; await ensureAuth(true); message.success('头像已上传') }
+    else message.error('上传失败')
+  } catch (err) { message.error(err.message || '上传失败') }
+  finally { avatarSaving.value = false }
+}
+const clearAvatar = async () => {
+  if (avatarSaving.value) return
+  avatarSaving.value = true
+  try {
+    const r = await updateMyProfile(nickForm.value.username, '')
+    if (r && r.success !== false) { avatarPreview.value = ''; await ensureAuth(true); message.success('已清除头像') }
+    else message.error(r?.msg || '操作失败')
+  } catch (err) { message.error(err.message || '操作失败') }
+  finally { avatarSaving.value = false }
+}
+
 // ---- 长期记忆：用户级自动提炼开关（仅关生成，不关注入） ----
 const memAutoEnabled = ref(true)
 const memAutoSaving = ref(false)
@@ -446,7 +522,7 @@ onMounted(() => {
   load()
   loadMemories()
   loadPrefs()
-  ensureAuth().then(me => { nickForm.value.username = me.username || '' })
+  ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
 })
 </script>
 
@@ -462,9 +538,49 @@ onMounted(() => {
 .pf-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 .pf-card { max-width: 640px; padding: 18px 20px; }
 .pf-hint { font-size: 12px; color: var(--app-text2); margin: 0 0 12px; }
+.pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
 .pf-row { display: flex; align-items: center; gap: 10px; }
 .pf-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
+
+/* 头像区：左预览 + 右侧「按钮行 / 说明行」两行，不再把按钮和长说明挤成一条横带 */
+.pf-avatar-block { display: flex; align-items: flex-start; gap: 18px; }
+/* 描边环：上传的图片（多为白底照片）在白卡片上也有边界；用 shadow 不占布局尺寸 */
+.pf-avatar-frame {
+  flex: none; display: inline-flex; border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--app-border), 0 1px 2px rgba(0, 0, 0, .05);
+}
+.pf-avatar-side { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.pf-op-row { display: flex; align-items: center; gap: 8px; }
+.pf-avatar-side .pf-sub-hint { margin: 0; }
+.pf-upload { cursor: pointer; min-width: 86px; justify-content: center; }
+.pf-upload.busy { opacity: .65; pointer-events: none; }
+/* ghost 按钮 disabled 时全局样式不降透明度，这里补上，避免「清除头像」看着仍可点 */
+.pf-avatar-side .app-btn.ghost:disabled { opacity: .45; color: var(--app-text3); }
+
+/* 分区：图标区 / 昵称区各自成块，用分隔线分层级（原先三块平铺无区分） */
+.pf-field { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--app-border); }
+.pf-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.pf-label { font-size: 12px; font-weight: 500; color: var(--app-text); }
+.pf-field-head .pf-sub-hint { margin: 0; }
+
+/* 图标集：15 列定宽网格（30 个正好两行、不留残行）；去掉逐格边框与白底，只靠 hover / 选中环表达状态 */
+.pf-emoji-pick { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 6px; }
+.pf-emoji-opt {
+  aspect-ratio: 1 / 1; min-width: 0; padding: 0; font-size: 18px; line-height: 1;
+  border: none; border-radius: 9px; background: transparent; cursor: pointer; color: inherit;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, box-shadow .15s, transform .12s;
+}
+.pf-emoji-opt:hover { background: var(--app-accent-weak); }
+.pf-emoji-opt:active { transform: scale(.92); }
+.pf-emoji-opt.on { background: var(--app-accent-weak); box-shadow: inset 0 0 0 1.5px var(--app-accent); }
+.pf-emoji-opt:disabled { cursor: not-allowed; opacity: .5; }
+.pf-emoji-opt.on:disabled { opacity: 1; }
+/* 窄屏（扣掉左侧导航后内容区收窄）降到 10 列，30 个仍是整行 */
+@media (max-width: 860px) {
+  .pf-emoji-pick { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+}
 /* 长期记忆列表 */
 .mem-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--app-border); }
 .mem-item:last-child { border-bottom: none; }

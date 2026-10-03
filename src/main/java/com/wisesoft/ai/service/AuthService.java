@@ -198,6 +198,7 @@ public class AuthService {
         if (u != null) {
             m.put("uid", u.getUid());
             m.put("username", u.getUsername());
+            m.put("avatar", u.getAvatar());
             m.put("role", u.getRole() == null ? "user" : u.getRole());
             m.put("departmentId", u.getDepartmentId());
         }

@@ -946,9 +946,19 @@ export const setUserPreference = payload =>
     method: 'PUT',
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
-// 自助修改昵称（仅本人；uid 不可改）
-export const updateMyProfile = username =>
-  request('/user/profile', { method: 'PUT', body: JSON.stringify({ username }) })
+// 自助修改个人资料（仅本人；uid 不可改）：username/avatar 各自缺省=不修改，avatar 空串=清除头像
+export const updateMyProfile = (username, avatar) => {
+  const body = { username }
+  if (avatar !== undefined) body.avatar = avatar
+  return request('/user/profile', { method: 'PUT', body: JSON.stringify(body) })
+}
+// 上传头像（multipart；仅本人）：返回 { url }（/ai/images/avatar/...）
+// 走 upload()（XHR）而非 request()：request() 强制 Content-Type: application/json 会破坏 multipart 解析
+export const uploadAvatarApi = file => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload('/user/avatar', fd)
+}
 
 // ---- 个人对话偏好（个人设置 → 对话偏好；键为 config-schema.json 标记 personal 的字段） ----
 /** 读取：{fields, tips, values（本人个人值）, globals（系统全局值，界面「跟随系统」参照）} */

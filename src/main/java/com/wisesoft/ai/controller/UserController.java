@@ -6,7 +6,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 
@@ -94,18 +96,31 @@ public class UserController {
         return ResultJson.ok("已保存");
     }
 
-    @Operation(summary = "修改我的昵称", description = "{\"username\":\"新昵称\"}；仅本人（uid 取登录态，不可改 uid）；"
-            + "昵称即显示名称，仅作展示（登录只认 uid），需全库唯一")
+    @Operation(summary = "修改我的资料", description = "{\"username\":\"新昵称\",\"avatar\":\"emoji 或上传图片 URL 或空串清除\"}；"
+            + "仅本人（uid 取登录态，不可改 uid）；字段缺省(null)=不修改，avatar 空串=清除头像回落昵称首字。"
+            + "头像图片地址须为本人上传返回的 /ai/images/avatar/ 路径（防止存入任意 URL）")
     @PutMapping("/profile")
     public ResultJson updateOwnProfile(@RequestBody Map<String, Object> body) {
-        orgService.updateOwnProfile(com.wisesoft.ai.util.RequestUser.uid(), str(body.get("username")));
+        orgService.updateOwnProfile(com.wisesoft.ai.util.RequestUser.uid(),
+                body.containsKey("username") ? str(body.get("username")) : null,
+                body.containsKey("avatar") ? str(body.get("avatar")) : null);
         return ResultJson.ok("已保存");
+    }
+
+    @Operation(summary = "上传我的头像", description = "multipart file（PNG/JPEG/GIF/WebP，≤2MB）；仅本人。"
+            + "服务端校验图片类型与魔数、落盘到 images/avatar/、写入用户头像（自动清理旧上传图），返回 {url}（/ai/images/avatar/...）。"
+            + "该 URL 是公开可访问的头像图（不可猜 UUID），可直接在 <img> 中加载，无需携带令牌")
+    @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResultJson uploadAvatar(
+            @Parameter(description = "头像图片") @RequestParam("file") MultipartFile file) {
+        String url = orgService.uploadAvatar(com.wisesoft.ai.util.RequestUser.uid(), file);
+        return ResultJson.ok(java.util.Map.of("url", url));
     }
 
     @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好/模型默认：可个人覆盖的字段定义（config-schema.json 标记 personal）"
             + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。体验类如 chat.temperature / chat.historyRounds / "
             + "retrieval.relatedCount / chat.userSystemPrompt / chat.deepThinkDefault；模型默认如 rerank.enabled / "
-            + "rerank.model / memory.embeddingRef / graphrag.modelRef / parse.qaModel（模型归登记人，仅个人层可配）")
+            + "rerank.model / graphrag.modelRef / parse.qaModel（模型归登记人，仅个人层可配）")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wisesoft.ai.util.RequestUser.uid()));

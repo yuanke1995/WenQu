@@ -52,6 +52,7 @@ export async function ensureAuth (force = false) {
     cached = {
       user: info.user || 'anonymous',
       username: info.username || '',
+      avatar: info.avatar || '',
       role: info.role || 'user',
       admin: Boolean(info.admin),
       menus: Array.isArray(info.menus) ? info.menus : []

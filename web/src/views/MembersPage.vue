@@ -39,7 +39,7 @@
             <a-table-column title="成员" key="member">
               <template #default="{ record }">
                 <div class="mem-user">
-                  <span class="mem-avatar">{{ initial(record) }}</span>
+                  <UserAvatar :avatar="record.avatar" :name="record.username" :size="26" />
                   <div class="mem-user-txt">
                     <span class="mem-name">{{ record.username || '（未命名）' }}</span>
                     <code class="mem-uid">{{ record.uid }}</code>
@@ -204,6 +204,7 @@ import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/ico
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
          listRoleOptions } from '../api'
+import UserAvatar from '../components/UserAvatar.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()
@@ -279,7 +280,6 @@ const filteredDepts = computed(() => {
 
 const roleName = code => (roles.value.find(r => r.code === code) || {}).name
 const roleLabel = r => roleName(r) || ({ superadmin: '超级管理员', admin: '管理员', user: '成员' }[r] || r)
-const initial = r => String(r.username || r.uid || '?').trim().charAt(0).toUpperCase() || '?'
 const deptName = id => (departments.value.find(d => d.id === id) || {}).name || '—'
 const deptUserCount = id => users.value.filter(u => u.departmentId === id).length
 

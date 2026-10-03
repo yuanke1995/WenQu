@@ -135,7 +135,7 @@
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
-            <span class="avatar">{{ (userName || '游')[0] }}</span>
+            <UserAvatar :avatar="authUser.avatar" :name="userName" :size="22" />
             <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
           </button>
         </a-tooltip>
@@ -217,6 +217,7 @@ import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refres
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
@@ -737,11 +738,6 @@ onUnmounted(() => clearInterval(notifTimer))
   transition: background .15s;
 }
 .foot-user:hover { background: var(--app-accent-weak); }
-.avatar {
-  width: 22px; height: 22px; border-radius: 50%; flex: none;
-  background: var(--app-accent-weak); color: var(--app-accent);
-  font-size: 11px; display: inline-flex; align-items: center; justify-content: center;
-}
 .user-name { font-size: 12px; color: var(--app-text2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 

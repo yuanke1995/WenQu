@@ -41,6 +41,9 @@ public class ImageWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new ImageAuthInterceptor(imageUrlSigner))
-                .addPathPatterns("/images/**", "/artifacts/**");
+                .addPathPatterns("/images/**", "/artifacts/**")
+                // 用户头像是公开展示图（不可猜 UUID，等同聊天图片的暴露级别），从图片鉴权拦截中排除：
+                // 开启 AI_IMAGES_AUTH_ENABLED 时 <img> 不带签名也能加载，避免头像 401
+                .excludePathPatterns("/images/avatar/**");
     }
 }

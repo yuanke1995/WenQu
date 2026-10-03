@@ -62,6 +62,10 @@ public class User {
      *  保存绑定关系；本工程有 SchemaMigrator 自动加列，故直接用列承载，不再制造假用户行。</p> */
     private String oidcSub;
 
+    /** 用户头像：空=昵称首字；emoji 字符=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）。
+     *  清空（回落昵称首字）需将列置 null，故更新走 LambdaUpdateWrapper 字符串 set，绕过 MP 默认 NOT_NULL 跳过 null 的策略 */
+    private String avatar;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 
