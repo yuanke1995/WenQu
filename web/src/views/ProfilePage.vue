@@ -152,8 +152,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
@@ -164,6 +164,7 @@ import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 const navs = [
   { key: 'profile', label: '个人资料' },
@@ -172,7 +173,10 @@ const navs = [
   { key: 'memory', label: '长期记忆' },
   { key: 'security', label: '账号安全' }
 ]
-const current = ref('profile')
+// ?panel= 深链（配置引导建议项「去配置」直达对应面板）；未知值回落个人资料
+const PANEL_KEYS = navs.map(n => n.key)
+const current = ref(PANEL_KEYS.includes(route.query.panel) ? route.query.panel : 'profile')
+watch(() => route.query.panel, v => { if (PANEL_KEYS.includes(v)) current.value = v })
 
 const PANELS = {
   chat: {

@@ -11,13 +11,17 @@
         </button>
       </div>
 
-      <!-- 新手配置引导入口（logo 与导航之间）：未完成最小可用配置时常驻（含向量模型项），
-           完成后 pendingCount=0 自动消失，对已配好的存量用户零打扰；点击打开引导抽屉 -->
-      <button v-if="guideVisible" class="nav-item guide-entry" @click="guideOpen = true" title="配置引导">
+      <!-- 配置引导入口（logo 与导航之间）三态：
+           必配未完成=琥珀「配置引导·还差 N 项」+ 折叠圆点（待办感）；
+           必配完成但进阶项有缺=弱化「进阶配置 · N 项可选」（建议感，感知但不催办）；
+           全部完成=消失，对已配好的存量用户零打扰 -->
+      <button v-if="guideVisible" class="nav-item guide-entry" :class="{ adv: guideAdvOnly }"
+              @click="guideOpen = true" :title="guideEntryTitle">
         <compass-outlined />
-        <span v-if="!collapsed" class="guide-entry-text">配置引导</span>
-        <span v-if="!collapsed" class="guide-count">还差 {{ pendingCount }} 项</span>
-        <i class="nav-dot"></i>
+        <span v-if="!collapsed" class="guide-entry-text">{{ guideAdvOnly ? '进阶配置' : '配置引导' }}</span>
+        <span v-if="!collapsed && !guideAdvOnly" class="guide-count">还差 {{ pendingCount }} 项</span>
+        <span v-else-if="!collapsed" class="guide-count muted">{{ advPendingCount }} 项可选</span>
+        <i v-if="pendingCount > 0" class="nav-dot"></i>
       </button>
 
       <nav class="side-nav">
@@ -207,7 +211,8 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
          notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
-import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
+import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
+         advPendingCount } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
@@ -431,8 +436,14 @@ const goProfile = () => router.push('/profile')
 // ==================== 新手配置引导（侧栏入口 + 菜单 tag + 抽屉） ====================
 // 状态口径见 utils/setupGuide.js：入口/抽屉=任一项未完成；/chat tag=①②任一未完成；
 // /knowledge tag=③未完成。loaded=false（首次对账未成功）一律不显示，避免给存量用户误报。
+// 两层清单：必配（pendingCount，琥珀待办）与进阶（advPendingCount，「配置了效果更好」弱化建议）。
 const guideOpen = ref(false)
-const guideVisible = computed(() => setupGuide.loaded && pendingCount.value > 0)
+const guideVisible = computed(() =>
+  setupGuide.loaded && (pendingCount.value > 0 || advPendingCount.value > 0))
+// 必配全部完成后入口切弱化形态：不再琥珀计数、无折叠圆点，避免"永远有待办"的催办感
+const guideAdvOnly = computed(() => pendingCount.value === 0 && advPendingCount.value > 0)
+const guideEntryTitle = computed(() =>
+  guideAdvOnly.value ? '进阶配置 — 配置后效果更好（可选）' : '配置引导')
 // 聊天侧缺失项文案（tooltip 用）
 const chatPendingText = computed(() => {
   const parts = []
@@ -605,6 +616,10 @@ onUnmounted(() => clearInterval(notifTimer))
   flex: none; font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
   color: var(--app-warn-text); background: var(--app-warn-weak);
 }
+/* 进阶弱化态：融入导航（无弱底）、计数角标灰化——感知得到但不催办 */
+.guide-entry.adv { background: transparent; }
+.guide-entry.adv:hover { background: var(--app-accent-weak); }
+.guide-count.muted { color: var(--app-text3); background: var(--app-panel-2); }
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
 /* 分组头可点折叠：全宽按钮化，箭头指示状态（展开=向下），右侧淡显条数 */
