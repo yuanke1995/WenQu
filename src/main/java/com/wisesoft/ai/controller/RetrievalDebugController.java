@@ -48,8 +48,8 @@ public class RetrievalDebugController {
     public ResultJson debug(
             @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")
             @RequestBody Map<String, Object> body) {
-        // 个人模型默认（问答对生成等）按测试者身份装载：personalOnly 键全局层不参与读取，
-        // 不装载的话面板判定与"我自己聊天时实际会走什么"不符（重排已归知识库/智能体检索设置，按其覆盖判定）
+        // 个人体验参数（温度/附加指令等）按测试者身份装载：不装载的话面板判定与
+        // "我自己聊天时实际会走什么"不符（重排已归知识库/智能体检索设置，按其覆盖判定）
         configService.putUserOverrides(userConfigService.overrides(com.wisesoft.ai.util.RequestUser.uid()));
         try {
             return debugInternal(body);

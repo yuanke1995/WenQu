@@ -5,8 +5,10 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wisesoft.ai.mapper.KnowledgeQaMapper;
+import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeQa;
+import com.wisesoft.ai.model.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -47,9 +49,9 @@ public class QaIndexService {
 
     private final KnowledgeQaMapper qaMapper;
     private final ConfigService configService;
-    /** 问答对生成模型（parse.qaModel）按库主个人设置显式解析（personalOnly：模型归登记人） */
-    private final UserConfigService userConfigService;
-    /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，生成用模型来自库主个人设置 parse.qaModel） */
+    /** 库主个人默认聊天模型（User.defaultModel）：问答对生成不再单独配置，直接跟随之 */
+    private final UserMapper userMapper;
+    /** 对话模型（DynamicOpenAiChatModel；无全局兜底模型，生成用模型来自库主个人默认聊天模型） */
     private final ChatModel chatModel;
 
     /** 送入 LLM 的块正文上限（超出截断：QA 是问法增强，不需要全文） */
@@ -62,20 +64,21 @@ public class QaIndexService {
      * 逐块 LLM 生成 → 落库 → 攒批向量化。单块 LLM 失败跳过继续；向量化失败抛出
      * 并补偿删除本次落库行（与解析链路"失败不残留"口径一致），由调用方计入终态描述。
      *
-     * @param ownerUid 知识库创建者 uid——问答对生成模型是个人设置项（模型归登记人），解析是
-     *                 异步任务没有请求身份，必须按库主显式解析，否则拿不到本人登记的模型
+     * @param ownerUid 知识库创建者 uid——问答对生成跟随库主的个人默认聊天模型（User.defaultModel），
+     *                 解析是异步任务没有请求身份，必须按库主显式查询，否则拿不到本人登记的模型
      * @return 成功生成的问答对条数
      */
     public int generateForBlocks(String docId, List<Knowledge> blocks, VectorStore store,
                                  java.util.function.BiConsumer<Integer, String> progress, String ownerUid) {
-        // 生成用模型：parse.qaModel 个人设置项（按库主 uid 显式解析；全局层不参与读取——
-        // 避免把某个用户登记的模型用成全平台解析默认）。DynamicOpenAiChatModel 的模型名必须
+        // 生成用模型：跟随库主的个人默认聊天模型 User.defaultModel（解析跑在异步线程、没有请求
+        // 身份，按库主 uid 显式查询——谁建库烧谁的模型）。DynamicOpenAiChatModel 的模型名必须
         // per-request 显式提供，裸调请求体会被网关 400 拒绝。
         // 未配置属功能性误配（qaEnabled 已开却没给模型），抛出走调用方既有 best-effort 可见性通道（日志/终态描述），不静默吞
-        String model = userConfigService.personalValue(ownerUid, "parse.qaModel");
-        if (model == null || model.isBlank()) {
-            throw new IllegalStateException("未配置问答对生成模型：请知识库主在「个人设置 → 模型默认」选择"
-                    + "问答对生成模型（本人登记的聊天模型；chat.model 全局兜底已退役）");
+        User owner = ownerUid == null || ownerUid.isBlank() ? null : userMapper.selectById(ownerUid);
+        String model = owner == null || owner.getDefaultModel() == null ? "" : owner.getDefaultModel().trim();
+        if (model.isEmpty()) {
+            throw new IllegalStateException("未配置问答对生成模型：问答对生成跟随知识库主的个人默认聊天模型，"
+                    + "请其在「个人设置 → 聊天模型与偏好」设置默认聊天模型，QA 生成跳过");
         }
         int perChunk = Math.max(1, Math.min(5, configService.getInt("parse.qaPerChunk", 2)));
         int total = 0;

@@ -28,11 +28,10 @@ import java.util.Set;
  * - 启动时表空则从 yml/env 默认值灌入
  * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
  *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
- *   知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认；parse.qaModel 为
- *   「个人专属键」（schema personalOnly）：值 = 某用户登记的私有模型，只在个人设置维护、
- *   按使用身份解析，全局层不参与读取（rerank.model 亦 personalOnly，但已归知识库/智能体
- *   检索设置绑定、个人设置不再配置）；仅 eval.judgeModel 等
- *   管理员自用工具保留全局）（graphrag.modelRef 亦已退役：抽取回落库主默认聊天模型）
+ *   知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认；问答对生成（parse.qaModel
+ *   已退役）与 GraphRAG 抽取（graphrag.modelRef 已退役）均回落库主个人默认聊天模型；
+ *   仅 eval.judgeModel 等
+ *   管理员自用工具保留全局）
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）；embedding / vision / rerank
  *   各组的网关三要素保留为「遗留纯模型名」的回落网关，不再作为运行时默认
@@ -300,7 +299,7 @@ public class ConfigService {
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
         d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
         d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
-        d.put("parse.qaModel", "");                        // 个人专属（personalOnly）：问答对生成模型引用按库主人个值解析；留空=跳过生成并报配置错误
+        // parse.qaModel 已退役：问答对生成回落库主个人默认聊天模型（User.defaultModel，QaIndexService 显式查询）
         d.put("parse.childEnabled", "false");              // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
         d.put("parse.childSize", "400");                   // 父子分块：子块尺寸（字符，超过该长度的块才切子块）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发

@@ -86,7 +86,8 @@ public class UserController {
     @Operation(summary = "设置个人偏好", description = "{\"defaultModel\":\"引用\",\"memoryEnabled\":true|false}；"
             + "字段缺省(null)=不修改，空串=清除；个人默认聊天模型在会话未手动切换时生效。"
             + "memoryEnabled=用户级长期记忆自动提炼开关（仅关生成，已存记忆仍注入）。"
-            + "重排/记忆向量/图谱兜底/问答对生成等「模型默认」不走本端点，见 /settings（schema personal 字段，模型归登记人）")
+            + "重排/记忆向量等「模型默认」不走本端点：重排归知识库检索设置绑定；问答对生成与 GraphRAG 抽取"
+            + "已回落个人默认聊天模型（本端点的 defaultModel），无需单独配置")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         orgService.setPreference(com.wisesoft.ai.util.RequestUser.uid(),
@@ -116,11 +117,10 @@ public class UserController {
         return ResultJson.ok(java.util.Map.of("url", url));
     }
 
-    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好/模型默认：可个人覆盖的字段定义（config-schema.json 标记 personal）"
+    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好：可个人覆盖的字段定义（config-schema.json 标记 personal）"
             + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。体验类如 chat.temperature / chat.historyRounds / "
-            + "retrieval.relatedCount / chat.userSystemPrompt；模型默认如 parse.qaModel"
-            + "（模型归登记人，仅个人层可配；重排已归知识库检索设置绑定、graphrag.modelRef 已退役"
-            + "——抽取回落库主默认聊天模型，无个人层）")
+            + "retrieval.relatedCount / chat.userSystemPrompt。无模型类个人字段：问答对生成与 GraphRAG 抽取"
+            + "均回落个人默认聊天模型（defaultModel）；重排已归知识库检索设置绑定")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wisesoft.ai.util.RequestUser.uid()));

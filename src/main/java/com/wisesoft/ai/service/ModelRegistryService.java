@@ -898,8 +898,8 @@ public class ModelRegistryService {
         Long userRefs = userMapper.selectCount(new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
                 .likeRight(com.wisesoft.ai.model.User::getDefaultModel, prefix));
         if (userRefs != null && userRefs > 0) refs.add("个人默认模型 ×" + userRefs);
-        // 个人设置（c_ai_user_config）里的模型引用：问答对生成等 personalOnly 键，
-        // 以及个人覆盖的模型类字段——归属人自己在个人设置里即可改掉，属"可处理"引用，必须挡
+        // 个人设置（c_ai_user_config）里的模型引用：历史个人覆盖的模型类字段（问答对生成/重排等
+        // personalOnly 键的存量行）——归属人自己在个人设置里即可改掉，属"可处理"引用，必须挡
         Long personalRefs = userConfigMapper.selectCount(
                 new LambdaQueryWrapper<com.wisesoft.ai.model.UserConfig>()
                         .likeRight(com.wisesoft.ai.model.UserConfig::getConfigValue, prefix));

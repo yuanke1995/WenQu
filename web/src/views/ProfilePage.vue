@@ -60,7 +60,7 @@
           </div>
         </div>
 
-        <!-- 个人默认模型面板（同时承载「回答偏好」与「模型默认」个人覆盖项，保存按钮统一提交） -->
+        <!-- 个人默认模型面板（承载「回答偏好」个人覆盖项，保存按钮统一提交） -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -71,7 +71,7 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
-          <!-- 回答偏好与模型默认（仅聊天面板）：个人覆盖系统设置的体验参数与模型引用，仅对本人生效 -->
+          <!-- 回答偏好（仅聊天面板）：个人覆盖系统设置的体验参数，仅对本人生效 -->
           <template v-if="current === 'chat'">
             <a-divider style="margin:16px 0 12px" />
             <p class="pf-hint">
@@ -82,23 +82,8 @@
               <a-form v-if="answerFields.length" layout="vertical" style="max-width:560px">
                 <SchemaField v-for="f in answerFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
               </a-form>
-              <p v-else-if="!prefLoading && !modelFields.length" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
+              <p v-else-if="!prefLoading" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
             </a-spin>
-
-            <!-- 模型默认（问答对生成）：模型都归登记人，无全局槽位——
-                 只能选自己登记的模型，仅对本人问答与本人资源生效 -->
-            <template v-if="modelFields.length">
-              <a-divider style="margin:16px 0 12px" />
-              <p class="pf-hint">
-                模型默认：问答对生成等能力所用的模型。模型都归登记人，
-                这里只能选你<strong>自己</strong>登记的模型，且只对你本人的问答与资源生效；未设置时
-                相关能力各自降级或回落。重排模型不在此配置——归各知识库的检索设置绑定；
-                GraphRAG 抽取已回落库主的默认聊天模型，同样无需在此配置。
-              </p>
-              <a-form layout="vertical" style="max-width:560px">
-                <SchemaField v-for="f in modelFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
-              </a-form>
-            </template>
 
             <p v-if="prefPersonalKeys.length" class="pf-sub-hint">
               当前已设个人值：{{ prefPersonalKeys.join('、') }}
@@ -112,9 +97,9 @@
           </div>
         </div>
 
-        <!-- 向量模型仍无个人默认：向量空间与知识库索引一一对应、归知识库绑定；
-             重排（开关+模型）同归知识库/智能体检索设置绑定；问答对生成为个人设置项（见聊天面板「模型默认」）；
-             GraphRAG 兜底抽取已退役（回落库主默认聊天模型） -->
+        <!-- 模型能力均无个人层槽位：向量空间与知识库索引一一对应、归知识库绑定；
+             重排（开关+模型）同归知识库/智能体检索设置绑定；
+             问答对生成与 GraphRAG 抽取均已回落库主默认聊天模型（上方「个人默认聊天模型」） -->
 
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
@@ -216,7 +201,7 @@ watch(() => route.query.panel, v => { if (PANEL_KEYS.includes(v)) current.value 
 const PANELS = {
   chat: {
     field: 'defaultModel', title: '聊天模型与偏好',
-    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用；下方「回答偏好」可按需覆盖系统全局值。',
+    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用；知识库问答对生成、GraphRAG 抽取也跟随此默认。下方「回答偏好」可按需覆盖系统全局值。',
     tail: '清空（选「不设默认」）后每次对话需手动选择模型。对话中上传的图片能否被理解取决于所选模型（支持读图的模型原图直发）；文档入库的图片描述使用知识库绑定的视觉模型。'
   }
 }
@@ -264,7 +249,7 @@ const save = async () => {
   } finally { saving.value = false }
 }
 
-// ---- 回答偏好/模型默认：个人覆盖（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
+// ---- 回答偏好：个人覆盖（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
 // 表单预填「生效值」（个人值 > 全局值 > schema 默认值）：用户看到的就是当前生效值；
 // 保存时只提交与预填不同的项（未改动的继续跟随全局，避免把全局值"复制"成个人值）。
 const prefLoading = ref(false)
@@ -274,9 +259,7 @@ const prefForm = ref({})
 const prefInitial = ref({})
 const prefPersonalKeys = ref([])
 
-// 分组渲染：体验类字段归「回答偏好」，模型引用归「模型默认」
 const answerFields = computed(() => prefFields.value.filter(f => f.type !== 'model'))
-const modelFields = computed(() => prefFields.value.filter(f => f.type === 'model'))
 
 const setByPath = (obj, path, v) => {
   const seg = path.split('.')

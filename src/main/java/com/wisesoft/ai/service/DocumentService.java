@@ -637,8 +637,8 @@ public class DocumentService {
     }
 
     /**
-     * 文档所属知识库的创建者 uid（问答对生成模型 parse.qaModel 为个人设置项，按库主身份解析；
-     * 解析是异步链路，线程里没有请求身份/个人覆盖，必须显式查库主）。查不到返回 ""（按未配置处理）。
+     * 文档所属知识库的创建者 uid（问答对生成模型回落库主个人默认聊天模型 User.defaultModel，
+     * 按库主身份解析；解析是异步链路，线程里没有请求身份/个人覆盖，必须显式查库主）。查不到返回 ""（按未配置处理）。
      */
     private String kbOwnerOfDoc(String docId) {
         try {
@@ -647,7 +647,7 @@ public class DocumentService {
             com.wisesoft.ai.model.KnowledgeBase kb = kbMapper.selectById(doc.getKbId());
             return kb == null || kb.getCreatedBy() == null ? "" : kb.getCreatedBy();
         } catch (Exception e) {
-            log.warn("[{}] 库主解析失败（问答对生成模型按未配置处理）: {}", docId, e.getMessage());
+            log.warn("[{}] 库主解析失败（问答对生成按未配置处理）: {}", docId, e.getMessage());
             return "";
         }
     }

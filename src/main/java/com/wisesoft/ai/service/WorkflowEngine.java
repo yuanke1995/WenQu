@@ -1360,7 +1360,7 @@ public class WorkflowEngine {
         Map<String, String> prev = configService.currentOverrides();
         configService.clearOverride();
         configService.putOverrides(ctx.baseOverrides);
-        // 个人覆盖同口径重放（模型引用只认归属人：不带就会读到"未配置"，问答对生成等个人默认解析不了；
+        // 个人覆盖同口径重放（体验参数归属人：不带就会读到全局值，温度/附加指令等个人覆盖会失真；
         // 重排归知识库/智能体检索设置，随 baseOverrides 的库级/智能体级覆盖生效）
         Map<String, String> prevUv = configService.currentUserOverrides();
         configService.clearUserOverrides();
