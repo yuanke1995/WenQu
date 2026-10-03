@@ -38,6 +38,15 @@ public class ModelInfo {
     /** 图片理解能力（三态，可与聊天类型并存）: NULL=按类型与模型名自动判定 1=支持 0=不支持 */
     private Integer visionCapable;
 
+    /** 工具调用能力（三态，仅对话类类型有意义）: NULL=按类型与模型名自动判定 1=支持 0=不支持（不支持时不得下发 tools，否则网关 400） */
+    private Integer toolCapable;
+
+    /** 该模型支持的思考强度档位（逗号分隔 low,medium,high,xhigh,max；空=只支持思考开关，不支持强度调节） */
+    private String reasoningLevels;
+
+    /** 默认思考强度档位（须在本模型 reasoningLevels 内；空=不指定，由请求层/网关默认决定） */
+    private String defaultReasoningLevel;
+
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */
     private String thinking;
 

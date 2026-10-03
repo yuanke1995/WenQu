@@ -2011,6 +2011,13 @@ public class RagService {
         }
     }
 
+    /** 模型展示名（降级事件文案用）：有登记取展示名，否则回退模型 id，引用无效回退原串 */
+    private String modelDisplayName(String ref) {
+        ModelInfo mi = modelRegistryService.modelInfoOf(ref);
+        if (mi == null) return ref == null ? "" : ref;
+        return (mi.getDisplayName() == null || mi.getDisplayName().isBlank()) ? mi.getModelId() : mi.getDisplayName();
+    }
+
     /** data URL（data:image/png;base64,…）→ Spring AI Media（委派链转 data URI image_url）；解析失败返回 null 跳过该图 */
     private static org.springframework.ai.content.Media mediaOf(String dataUrl) {
         try {
@@ -2046,6 +2053,14 @@ public class RagService {
         startRunHeartbeat(st);
         org.springframework.ai.tool.ToolCallback[] toolCallbacks =
                 instrumentTools(enabledToolCallbacks(agent, st.userId, st), st);
+        // 模型不支持 Function Calling 时不下发 tools：部分网关收到 tools 字段直接 400（fail-loud，不静默）。
+        // 登记为用户可见降级事件——工具是智能体配置带来的，用不了要让人知道原因。
+        if (toolCallbacks.length > 0 && !modelRegistryService.toolCapableOf(st.model)) {
+            log.warn("[FAIL-LOUD] 当前模型不支持 Function Calling，本轮不下发工具: model={}", st.model);
+            addDegradation(st.degradations, st.degradedCodes, "modelToolUnsupported",
+                    "当前模型「" + modelDisplayName(st.model) + "」不支持工具调用（Function Calling），本轮未启用工具");
+            toolCallbacks = new org.springframework.ai.tool.ToolCallback[0];
+        }
         // 过程叙述规范仅工具模式注入：无工具的纯对话没有"过程"可叙，加了反而诱导模型输出标签
         String sysFinal = toolCallbacks.length == 0 ? system : system + PROCESS_NARRATION_GUIDE;
         // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记，无描述文本），原图以
@@ -2062,15 +2077,35 @@ public class RagService {
         spec = media.isEmpty()
                 ? spec.user(user)
                 : spec.user(u -> u.text(user).media(media.toArray(new org.springframework.ai.content.Media[0])));
+        OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
+                .model(st.model)
+                .temperature(configService.getDouble("chat.temperature"))
+                .maxTokens(st.effectiveMaxOutput > 0 ? st.effectiveMaxOutput
+                        : configService.getInt("context.maxOutputTokens"));
+        // 思考强度档位（模型行登记「支持强度」+「默认强度」）：按厂商方言映射成各自字段下发
+        // （OpenAI reasoning_effort / Claude thinking.budget_tokens / Qwen thinking_budget），
+        // 不做单字段裸透传——那只对 OpenAI 系生效。恒思考模型（always）本轮一定开着思考，
+        // 可开关模型按 st.deepThink；登记了档位但网关无语义 → fail-loud 提示，不假装生效。
+        String thinkLevel = modelRegistryService.defaultReasoningLevelOf(st.model);
+        if (thinkLevel != null) {
+            boolean thinkingOn = st.deepThink
+                    || ModelRegistryService.THINK_ALWAYS.equals(modelRegistryService.referenceThinking(st.model));
+            Map<String, Object> thinkBody = modelRegistryService.reasoningExtraBody(st.model, thinkLevel, thinkingOn);
+            if (!thinkBody.isEmpty()) {
+                optionsBuilder.extraBody(thinkBody);
+                log.info("[REASONING] 思考强度档位已下发: model={} level={} body={}", st.model, thinkLevel, thinkBody.keySet());
+            } else if (thinkingOn) {
+                log.warn("[FAIL-LOUD] 模型登记了思考强度档位但网关无强度方言，未下发: model={} level={}",
+                        st.model, thinkLevel);
+                addDegradation(st.degradations, st.degradedCodes, "reasoningLevelUnsupported",
+                        "模型「" + modelDisplayName(st.model) + "」登记了默认思考强度（" + thinkLevel
+                                + "），但该网关不支持强度调节（已按仅思考开关处理）");
+            }
+        }
         return spec
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
                 // st.model 为本轮解析好的模型（引用或遗留名，供应商路由由 DynamicOpenAiChatModel 按引用完成）
-                .options(OpenAiChatOptions.builder()
-                        .model(st.model)
-                        .temperature(configService.getDouble("chat.temperature"))
-                        .maxTokens(st.effectiveMaxOutput > 0 ? st.effectiveMaxOutput
-                                : configService.getInt("context.maxOutputTokens"))
-                        .build())
+                .options(optionsBuilder.build())
                 // 工具调用（Function Calling）：默认关闭（tool.* 配置）；总开关+各子工具开关均开启时，
                 // 模型可在回答中主动调用工具（精确检索知识库、交付文件产物），补充主链路未召回的上下文。
                 // 传空数组等价未配置工具，不影响现有行为（零侵入）。
@@ -3971,6 +4006,20 @@ public class RagService {
         // thinkingMode=model：extraBody 透传 enable_thinking，思考从 reasoning_content 提取
         if ("model".equals(thinkingMode) && enableThinking) {
             optionsBuilder.extraBody(Map.of("enable_thinking", true));
+        }
+        // 思考强度档位（模型行登记的默认强度，thinkingMode=model 且开着思考时才下发）：
+        // 按厂商方言映射成 reasoning_effort / thinking.budget_tokens / thinking_budget。
+        // 与上面 enable_thinking 合并（extraBody 单次设置，后者覆盖前者——故在此合并成一个 map）。
+        if ("model".equals(thinkingMode) && enableThinking) {
+            String thinkLevel = modelRegistryService.defaultReasoningLevelOf(resolvedModel);
+            if (thinkLevel != null) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("enable_thinking", true);
+                body.putAll(modelRegistryService.reasoningExtraBody(resolvedModel, thinkLevel, true));
+                optionsBuilder.extraBody(body);
+                log.info("[REASONING] 深度思考强度档位已下发: model={} level={} body={}",
+                        resolvedModel, thinkLevel, body.keySet());
+            }
         }
 
         StringBuilder thinking = new StringBuilder();

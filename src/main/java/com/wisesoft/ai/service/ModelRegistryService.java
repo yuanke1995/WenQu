@@ -391,6 +391,59 @@ public class ModelRegistryService {
     }
 
     /**
+     * 工具调用（Function Calling）能力判定（三态）：显式登记优先；未登记按类型
+     * （chat/omni 主流模型普遍支持 → 默认可用，向量/重排/视觉/OCR 无工具语义 → 不放行）。
+     * <p>不支持和未知走同一条保守路径：本轮不下发 tools（部分网关收到 tools 会直接 400），
+     * 并向用户登记可见提示，不静默降级。
+     */
+    public boolean toolCapable(ModelInfo mi) {
+        String t = mi.getModelType();
+        if (!TYPE_CHAT.equals(t) && !TYPE_OMNI.equals(t)) return false;
+        if (mi.getToolCapable() != null) return mi.getToolCapable() == 1;
+        return true;
+    }
+
+    /** 按模型引用判定工具调用能力（引用无法解析→false：宁可不下发 tools，也不让网关 400） */
+    public boolean toolCapableOf(String ref) {
+        ModelInfo mi = modelInfoOf(ref);
+        return mi != null && toolCapable(mi);
+    }
+
+    /**
+     * 思考强度档位集合（该模型登记支持的强度，逗号分隔解析）。
+     * 合法值 {@link #REASONING_LEVEL_LIST}；未登记/非法值一律视为空=只支持思考开关。
+     */
+    public List<String> reasoningLevelsOf(ModelInfo mi) {
+        if (mi == null || mi.getReasoningLevels() == null || mi.getReasoningLevels().isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(4);
+        for (String s : mi.getReasoningLevels().split(",")) {
+            String v = s.trim().toLowerCase();
+            if (REASONING_LEVEL_LIST.contains(v) && !out.contains(v)) out.add(v);
+        }
+        return out;
+    }
+
+    /** 按模型引用取支持档位（引用无法解析→空） */
+    public List<String> reasoningLevelsOf(String ref) {
+        return reasoningLevelsOf(modelInfoOf(ref));
+    }
+
+    /**
+     * 思考强度默认值：模型登记的默认档位（须在其支持档位内，否则忽略——防止手改库配出自相矛盾的档位）；
+     * 未登记 → 请求层不强指定，由网关默认决定（返回 null）。
+     */
+    public String defaultReasoningLevelOf(String ref) {
+        ModelInfo mi = modelInfoOf(ref);
+        if (mi == null) return null;
+        String v = mi.getDefaultReasoningLevel();
+        if (v == null || v.isBlank()) return null;
+        v = v.trim().toLowerCase();
+        return reasoningLevelsOf(mi).contains(v) ? v : null;
+    }
+
+    /**
      * 引用类型匹配（口径放宽）：期望 vision 时，vision/omni 类型或具备图片理解能力
      * （visionCapable，含自动判定）的模型均通过；其余期望类型维持严格相等——
      * 向量/重排/OCR 是能力性类型，混用会在运行时静默失效，不能放宽。
@@ -482,7 +535,12 @@ public class ModelRegistryService {
             m.put("modelType", mi.getModelType());
             // 图片理解能力三态原值（null=自动判定）：编辑弹窗需要显式值回显，否则全量同步保存会把 1/0 冲成 NULL
             m.put("visionCapable", mi.getVisionCapable());
+            // 工具调用能力三态原值（同上，编辑弹窗回显用）
+            m.put("toolCapable", mi.getToolCapable());
             m.put("thinking", resolveThinking(mi));
+            // 思考强度：支持档位数组 + 默认档位（编辑弹窗回显；无档位=只支持思考开关）
+            m.put("reasoningLevels", reasoningLevelsOf(mi));
+            m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
             m.put("contextWindow", mi.getContextWindow());
             m.put("maxOutput", mi.getMaxOutput());
             m.put("enabled", !Integer.valueOf(0).equals(mi.getEnabled()));
@@ -507,6 +565,84 @@ public class ModelRegistryService {
     /** 可开关思考模型的名称特征（qwen3 / glm-4+ / doubao-seed / deepseek-v3 / claude / gemini 等） */
     private static final List<String> SWITCHABLE_THINK_TOKENS =
             List.of("qwen3", "glm-4", "glm-5", "doubao-seed", "deepseek-v3", "claude", "gemini", "hybrid");
+
+    // ==================== 思考强度档位（厂商方言映射） ====================
+    // 各网关表达强度的方式完全不同，没有一个字段能通用，故按厂商方言映射，
+    // 不做「透传一个 reasoning_effort 就完事」——那样只对 OpenAI 系生效，其他家静默忽略。
+
+    /** 思考强度档位（按推理预算由弱到强，与主流网关的 low/medium/high/xhigh 对齐，max 为各家上限档） */
+    public static final List<String> REASONING_LEVEL_LIST = List.of("low", "medium", "high", "xhigh", "max");
+    public static final List<String> REASONING_LEVELS = REASONING_LEVEL_LIST;
+
+    /** 档位 → 思考预算 token（Qwen/GLM/豆包等「预算型」网关）：强度靠 token 预算表达，max 取两档中的较大值 */
+    private static final Map<String, Integer> LEVEL_TOKEN_BUDGET = Map.of(
+            "low", 1024, "medium", 4096, "high", 16384, "xhigh", 32768, "max", 65536);
+
+    /** 档位 → OpenAI reasoning_effort 取值（xhigh/max 官方无对应，收敛到 high 不静默丢档） */
+    private static final Map<String, String> LEVEL_OPENAI_EFFORT =
+            Map.of("low", "low", "medium", "medium", "high", "high", "xhigh", "high", "max", "high");
+
+    /** 档位 → Anthropic thinking.budget_tokens（Claude 预算型，量级比 Qwen 系大） */
+    private static final Map<String, Integer> LEVEL_CLAUDE_BUDGET = Map.of(
+            "low", 2048, "medium", 8192, "high", 24576, "xhigh", 49152, "max", 98304);
+
+    /**
+     * 按模型族判定思考强度的方言（决定 extraBody 走哪种字段）：
+     * OPENAI=reasoning_effort（o 系 / gpt-5）｜ANTHROPIC=thinking.budget_tokens（claude）
+     * ｜QWEN=enable_thinking+thinking_budget｜NONE=无强度语义（只透传思考开关）。
+     */
+    public enum ReasoningDialect { OPENAI, ANTHROPIC, QWEN, NONE }
+
+    /** 按模型名判定思考强度方言（显式登记档位的前提是网关真能表达强度，NONE 时不静默丢弃用户登记） */
+    public static ReasoningDialect reasoningDialectOf(String modelId) {
+        String m = modelId == null ? "" : modelId.toLowerCase();
+        if (m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4") || m.contains("gpt-5")) {
+            return ReasoningDialect.OPENAI;
+        }
+        if (m.contains("claude")) return ReasoningDialect.ANTHROPIC;
+        if (m.contains("qwen") || m.contains("qwq")) return ReasoningDialect.QWEN;
+        return ReasoningDialect.NONE;
+    }
+
+    /**
+     * 思考强度的请求体增量（方言映射结果）：调用方合入 extraBody。
+     * <ul>
+     *   <li>level 空 / 引用无效 / 模型无档位登记 → 空 Map（不强指定，由网关默认决定）</li>
+     *   <li>方言 NONE（该网关无强度语义）→ 空 Map，且调用方应登记 fail-loud 提示，
+     *       因为用户明确登记了档位却无处下发，属配置与网关不匹配，不能装作生效</li>
+     *   <li>其余 → 该方言的强度字段；同时保留 enable_thinking/thinking 开关字段语义
+     *       （OpenAI 靠字段本身开启、Qwen 系需 enable_thinking=true）</li>
+     * </ul>
+     */
+    public Map<String, Object> reasoningExtraBody(String ref, String level, boolean thinkingOn) {
+        if (level == null || level.isBlank()) return Map.of();
+        ModelInfo mi = modelInfoOf(ref);
+        if (mi == null) return Map.of();
+        String lv = level.trim().toLowerCase();
+        if (!REASONING_LEVEL_LIST.contains(lv)) return Map.of();
+        if (!reasoningLevelsOf(mi).contains(lv)) return Map.of();
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        switch (reasoningDialectOf(mi.getModelId())) {
+            case OPENAI -> {
+                if (thinkingOn) body.put("reasoning_effort", LEVEL_OPENAI_EFFORT.getOrDefault(lv, "high"));
+            }
+            case ANTHROPIC -> {
+                // Claude 思考必须显式开并给预算；预算不可为 0，否则网关按「不思考」处理
+                body.put("thinking", Map.of("type", "enabled",
+                        "budget_tokens", LEVEL_CLAUDE_BUDGET.getOrDefault(lv, 24576)));
+            }
+            case QWEN -> {
+                if (thinkingOn) {
+                    body.put("enable_thinking", true);
+                    body.put("thinking_budget", LEVEL_TOKEN_BUDGET.getOrDefault(lv, 16384));
+                }
+            }
+            case NONE -> {
+                return Map.of();
+            }
+        }
+        return body;
+    }
 
     /**
      * 按模型名启发式判定思考能力（仅 thinking=auto 档兜底；管理员在模型库可显式覆盖）：
@@ -577,6 +713,9 @@ public class ModelRegistryService {
                         ? mi.getModelId() : mi.getDisplayName());
                 m.put("type", mi.getModelType());
                 m.put("visionCapable", visionCapable(mi));
+                m.put("toolCapable", toolCapable(mi));
+                m.put("reasoningLevels", reasoningLevelsOf(mi));
+                m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
                 m.put("thinking", resolveThinking(mi));
                 ms.add(m);
             }
@@ -751,8 +890,21 @@ public class ModelRegistryService {
             mi.setModelType(type);
             // 图片理解能力三态：显式 1/0 落库；"auto"/未传 → NULL=按类型与模型名自动判定（读时 visionCapable 解析）
             mi.setVisionCapable(visionTriState(item.get("visionCapable")));
+            // 工具调用能力三态：同上（读时 toolCapable 解析）
+            mi.setToolCapable(visionTriState(item.get("toolCapable")));
             String thinking = str(item.get("thinking"));
             mi.setThinking(THINKING_LEVELS.contains(thinking) ? thinking : "auto");
+            // 思考强度档位：支持档位（逗号分隔，非法值过滤）+ 默认档位
+            mi.setReasoningLevels(normalizeReasoningLevels(item.get("reasoningLevels")));
+            String defLevel = str(item.get("defaultReasoningLevel"));
+            defLevel = defLevel == null ? null : defLevel.trim().toLowerCase();
+            // 默认档位必须在支持档位内，否则显式拒绝（存出自相矛盾的配置，运行时无法判断该听谁的）
+            if (defLevel != null && !defLevel.isBlank() && !reasoningLevelsOf(mi).contains(defLevel)) {
+                throw new IllegalArgumentException("模型 " + modelId.trim() + " 的默认思考强度（" + defLevel
+                        + "）不在其支持档位内（" + (mi.getReasoningLevels() == null ? "未登记任何档位" : mi.getReasoningLevels())
+                        + "），请先勾选该档位或留空由网关默认决定");
+            }
+            mi.setDefaultReasoningLevel(defLevel == null || defLevel.isBlank() ? null : defLevel);
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
             mi.setMaxOutput(intOrNull(item.get("maxOutput")));
             // 跨字段一致性（预算 = 窗口×安全系数−输出限制）：两个都声明时输出不能吃光预算——
@@ -917,6 +1069,26 @@ public class ModelRegistryService {
         String s = String.valueOf(v).trim().toLowerCase();
         if (s.isEmpty() || "auto".equals(s) || "null".equals(s)) return null;
         return ("1".equals(s) || "true".equals(s)) ? 1 : 0;
+    }
+
+    /**
+     * 支持档位入参归一：接受逗号分隔字符串或数组，按合法档位去重并<b>按强度由弱到强排序</b>后回写规范串；
+     * 非法档位静默丢弃（前端多选已限定合法值，这里防手改请求/脏数据），全空 → null（=只支持思考开关）。
+     */
+    private static String normalizeReasoningLevels(Object v) {
+        List<String> raw = new ArrayList<>();
+        if (v instanceof java.util.Collection<?> c) {
+            for (Object o : c) if (o != null) raw.add(String.valueOf(o));
+        } else if (v != null) {
+            for (String s : String.valueOf(v).split(",")) if (!s.isBlank()) raw.add(s);
+        }
+        List<String> out = new ArrayList<>(5);
+        for (String lv : REASONING_LEVEL_LIST) { // 遍历合法档位天然有序
+            for (String s : raw) {
+                if (lv.equals(s.trim().toLowerCase()) && !out.contains(lv)) out.add(lv);
+            }
+        }
+        return out.isEmpty() ? null : String.join(",", out);
     }
 
     /** 供应商名猜测时跳过的域名段（常见前缀 + 顶级域） */

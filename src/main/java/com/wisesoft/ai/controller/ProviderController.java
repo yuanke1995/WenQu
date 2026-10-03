@@ -162,7 +162,7 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.listModels(id));
     }
 
-    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态: 1/0/auto), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
+    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态 1/0/auto), toolCapable(工具调用三态 1/0/auto), thinking(auto/none/switchable/always), reasoningLevels(思考强度档位数组), defaultReasoningLevel(默认强度，须在档位内), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
     @PutMapping("/{id}/models")
     public ResultJson saveModels(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
