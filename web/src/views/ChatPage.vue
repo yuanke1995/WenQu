@@ -612,7 +612,7 @@
             </div>
             <div class="toolbar-right">
               <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示 -->
-              <span v-if="lastTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
+              <span v-if="ctxTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
                     @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()">
                 <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
                   <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
@@ -1912,6 +1912,20 @@ const srcOpenOf = g => (srcOpen[g.key] !== undefined ? srcOpen[g.key] : true)
 const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
+// 流式中的 prompt 侧用量（后端 usage 事件预下发的估算，onUsage 挂在 msg.tokensPreview）：
+// 只看最新一轮 AI 消息——该轮生成中且估算已到才返回；否则为 null（回落 lastTokens，
+// 与旧口径一致：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
+const liveTokensPreview = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m.role !== 'ai') continue
+    if (m.loading && m.tokensPreview) return m.tokensPreview
+    break
+  }
+  return null
+})
+// 容量圆环/明细卡数据源：流式估算优先（生成一开始就亮），无估算回落已完成轮的实测 tokens
+const ctxTokens = computed(() => liveTokensPreview.value || lastTokens.value)
 
 // ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
 /** 分类展示名与配色（与后端 ctxParts 的键一一对应；占比条按此顺序堆叠） */
@@ -1959,9 +1973,10 @@ const hideCtxCap = () => {
 }
 const onCtxCapEnter = () => { ctxCapHovered = true; clearTimeout(ctxCapTimer) }
 const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
-/** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮真实 prompt（无则估算） */
+/** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮真实 prompt（无则估算）；
+ *  数据源走 ctxTokens（流式期间=usage 预下发的估算，完成后=done 的实测 tokens），生成一开始即点亮 */
 const ctxCapData = computed(() => {
-  const t = lastTokens.value
+  const t = ctxTokens.value
   const info = modelIndex.value[effectiveModel.value]
   const window_ = (t && t.window) || info?.contextWindow || 0
   const used = t ? (Number(t.prompt) || Number(t.context) || 0) : 0
@@ -3227,6 +3242,14 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       try {
         const arr = typeof p === 'string' ? JSON.parse(p) : p
         if (Array.isArray(arr) && arr.length) msg.plan = arr
+      } catch (e) { /* 忽略 */ }
+    },
+    onUsage: payload => {
+      // 用量预下发（usage 事件，生成一开始就到）：prompt 侧估算先行点亮容量圆环/明细卡；
+      // done 下发的实测 tokens 仍是终值（落库/累计/输出侧都只认它），此处只挂流式中的估算视图
+      try {
+        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (j && typeof j === 'object') msg.tokensPreview = j
       } catch (e) { /* 忽略 */ }
     },
     onRetrieved: payload => {

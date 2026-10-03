@@ -91,7 +91,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess, onUsage,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
     contextWindow = null
   } = opts
@@ -175,6 +175,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               if (d.type === 'token') { onToken(d.content) }
               else if (d.type === 'stage') { onStage && onStage(d.content) }
               else if (d.type === 'plan') { onPlan && onPlan(d.content) } // content 为本轮执行计划步骤名数组 ["理解问题","检索知识库",…]
+              else if (d.type === 'usage') { onUsage && onUsage(d.content) } // content 为 {context,budget,hits,prompt,window,windowSource,parts}：生成开始时的 prompt 侧用量估算（done 的 tokens 为实测终值）
               else if (d.type === 'retrieved') { onRetrieved && onRetrieved(d.content) }
               else if (d.type === 'thinking') { onThinking && onThinking(d.content) }
               else if (d.type === 'thinking_done') { onThinkingDone && onThinkingDone(d.content) }

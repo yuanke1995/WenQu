@@ -713,12 +713,16 @@ public class RagService {
                 imgNote = userImgs.isEmpty() ? "" : "\n\n用户上传了 " + userImgs.size()
                         + " 张图片，但当前模型不支持图片理解，图片内容对你不可见。"
                         + "请勿猜测图片内容；若图片对回答关键，可建议用户更换支持图片理解的模型后重试。";
-                addDegradation(degradations, degradedCodes, "chatModelNoVision",
-                        "当前模型「" + resolvedModel.substring(resolvedModel.indexOf('/') + 1)
-                                + "」不支持图片理解，本轮 " + userImgs.size()
-                                + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
-                log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
-                        sessionId, resolvedModel, userImgs.size());
+                // 降级只在真有图片被排除时登记：0 张图片≠降级——模型不支持视觉但本轮没传图，
+                // 没有任何内容「仅作展示」，不该对用户弹「本轮 0 张图片仅作展示」的提示（也不刷 WARN 日志）
+                if (!userImgs.isEmpty()) {
+                    addDegradation(degradations, degradedCodes, "chatModelNoVision",
+                            "当前模型「" + resolvedModel.substring(resolvedModel.indexOf('/') + 1)
+                                    + "」不支持图片理解，本轮 " + userImgs.size()
+                                    + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
+                    log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
+                            sessionId, resolvedModel, userImgs.size());
+                }
             }
 
             // 0.1 用户上传附件（文档类）：解析为纯文本注入本轮上下文。
@@ -2133,6 +2137,22 @@ public class RagService {
         if (!PROCESS_NARRATION_GUIDE.isEmpty() && toolCallbacks.length > 0) {
             st.ctxParts.merge("other", TokenCounter.estimate(PROCESS_NARRATION_GUIDE), Integer::sum);
         }
+        // 用量预下发（usage 事件）：prompt 侧用量此刻已齐（ctxParts 已含工具 schema），生成一开始就推给前端
+        // 点亮容量圆环/明细卡——不再等 done 才出现；done 仍以网关实测值下发并覆盖为最终版（输出/缓存/校准只在那里有）。
+        // 估算口径与容量面板分类同源：各段 TokenCounter 估算直和（未按实测校准，校准在 done 完成）。
+        int promptEstimate = 0;
+        for (Integer v : st.ctxParts.values()) {
+            promptEstimate += v == null ? 0 : v;
+        }
+        Map<String, Object> usageEarly = new LinkedHashMap<>();
+        usageEarly.put("context", st.contextTokens);
+        usageEarly.put("budget", st.budgetTokens);
+        usageEarly.put("hits", st.contextHits);
+        usageEarly.put("prompt", promptEstimate);
+        usageEarly.put("window", st.windowTokens);
+        usageEarly.put("windowSource", st.windowSource);
+        usageEarly.put("parts", st.ctxParts);
+        sendSseEvent(emitter, "usage", JSON.toJSONString(usageEarly), st.sessionId);
         // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记），原图以
         // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解（省一次调用、不丢图细节）。
         // 仅展示链路（模型不支持读图）的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
