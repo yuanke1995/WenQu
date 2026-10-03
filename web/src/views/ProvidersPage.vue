@@ -268,12 +268,12 @@
             <div class="pm-field">
               <div class="pm-label">
                 最大输出 Token
-                <a-tooltip title="单次回复最多生成的 token 数，必须小于上下文预算，否则该模型下检索资料无法填入。留空用全局默认。">
+                <a-tooltip title="单次回复最多生成的 token 数（作为 max_tokens 随请求下发），必须小于上下文预算，否则该模型下检索资料无法填入。留空=不主动限制（按厂商默认）。">
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.maxOutput" :min="1" :step="1024"
-                              placeholder="如 8192" style="width:100%" />
+                              placeholder="留空=不限制（按厂商默认）" style="width:100%" />
               <div class="pm-presets">
                 <button v-for="q in outputPresets" :key="q" class="app-link-btn" @click="editForm.maxOutput = q">{{ fmtK(q) }}</button>
               </div>
@@ -293,7 +293,7 @@
             </div>
           </div>
           <div class="pm-hint">
-            窗口：对话类模型必填（向量/重排/OCR/语音等能力型可留空）；最小窗口留空=聊天页不可调档；最大输出留空用全局「输出限制」。
+            窗口：对话类模型必填（向量/重排/OCR/语音等能力型可留空）；最小窗口留空=聊天页不可调档；最大输出留空=不主动限制（按厂商默认）。
             上下文预算 = 窗口 × 安全系数 − 最大输出，检索资料按预算填入。
             <span v-if="budgetConflict" class="pm-hint-bad">当前「最大输出」已不小于窗口，检索资料将无法填入。</span>
           </div>

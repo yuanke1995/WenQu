@@ -52,6 +52,13 @@ public class ModelRegistryService {
     /** 供应商/模型变更广播 channel（多实例同步：任意实例变更 → 其他实例重载缓存） */
     public static final String PROVIDER_CHANNEL = "ai:provider:changed";
 
+    /**
+     * 上下文预算安全系数（平台固定策略，不再作为设置页配置项）：
+     * 预算 = 窗口 × 0.7 − 最大输出。窗口/最大输出都按模型在「模型管理」声明（对话类窗口必填），
+     * 系数全局统一——按模型各自配置只会让容量口径更乱，没有按模型差异化的需求。
+     */
+    public static final double CONTEXT_SAFETY_FACTOR = 0.7;
+
     public static final String TYPE_CHAT = "chat";
     public static final String TYPE_VISION = "vision";
     /** OCR 专用（文档解析/扫描件逐页识别，如 PaddleOCR-VL、DeepSeek-OCR）：只产出带版面标记的解析文本，
@@ -997,9 +1004,9 @@ public class ModelRegistryService {
                         + "）不能大于上下文窗口上限（" + mi.getContextWindow() + "）");
             }
             // 跨字段一致性（预算 = 窗口×安全系数−输出限制）：两个都声明时输出不能吃光预算——
-            // 否则该模型下上下文预算被运行时托底成 1000，检索资料塞不进。安全系数沿用全局配置。
+            // 否则该模型下上下文预算被运行时托底成 1000，检索资料塞不进。安全系数为平台固定策略。
             if (mi.getContextWindow() != null && mi.getMaxOutput() != null) {
-                double safety = Math.max(0.1, Math.min(1, configService.getDouble("context.safetyFactor")));
+                double safety = CONTEXT_SAFETY_FACTOR;
                 long windowBudget = (long) (mi.getContextWindow() * safety);
                 if (mi.getMaxOutput() >= windowBudget) {
                     throw new IllegalArgumentException("模型 " + modelId.trim() + " 的最大输出（" + mi.getMaxOutput()

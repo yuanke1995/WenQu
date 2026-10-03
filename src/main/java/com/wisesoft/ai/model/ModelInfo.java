@@ -56,7 +56,7 @@ public class ModelInfo {
     /** 上下文窗口下限 token（NULL=不可调；与 contextWindow 构成聊天页用户可选区间 [min,max]，默认取 max） */
     private Integer contextWindowMin;
 
-    /** 最大输出 token（NULL=未声明，回落全局「输出限制」；作为 max_tokens 随请求下发） */
+    /** 最大输出 token（NULL=未声明，不下发 max_tokens 交由厂商默认；作为 max_tokens 随请求下发，同时从窗口预算中预留） */
     private Integer maxOutput;
 
     /** 启用: 1=启用 0=停用 */

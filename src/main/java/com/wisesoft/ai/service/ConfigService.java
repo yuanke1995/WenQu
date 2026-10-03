@@ -245,9 +245,9 @@ public class ConfigService {
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
         d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl 本地服务
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
-        d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
-        d.put("context.costCapTokens", String.valueOf(properties.getContext().getCostCapTokens()));
-        d.put("context.maxOutputTokens", String.valueOf(properties.getContext().getMaxOutputTokens()));
+        // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
+        // 窗口与最大输出按模型在「模型管理」声明（对话类窗口必填），安全系数固定为
+        // ModelRegistryService.CONTEXT_SAFETY_FACTOR，成本软上限移除。存量库中的旧行成为孤儿数据（无读取方）。
         d.put("context.historyCompress", String.valueOf(properties.getContext().isHistoryCompress()));
         d.put("context.compressRatio", String.valueOf(properties.getContext().getCompressRatio()));
         d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));

@@ -197,18 +197,13 @@ public class AppProperties {
 
     /**
      * 上下文与长度控制（价值驱动填充）：
-     * 预算 = min(模型窗口 × 安全系数 − 预留输出, 成本软上限)；块按相关度降序累积填充，历史按预算裁剪。
+     * 预算 = 模型窗口 × 安全系数 − 最大输出；块按相关度降序累积填充，历史按预算裁剪。
      * 窗口/最大输出按模型声明（c_ai_model.context_window / max_output，模型管理页维护）；
      * 窗口没有全局兜底——对话类模型登记时强制声明，未声明的存量行运行时 fail-loud 降级提醒。
+     * 安全系数为平台固定策略（ModelRegistryService.CONTEXT_SAFETY_FACTOR），不再作为配置项。
      */
     @Data
     public static class Context {
-        /** 窗口安全系数（0~1，预留余量防超窗） */
-        private double safetyFactor = 0.7;
-        /** 成本软上限（token，0=不限制）：即使模型窗口很大，单次请求输入也不超过此值，防止账单失控 */
-        private int costCapTokens = 8000;
-        /** 输出限制 maxTokens（同时从窗口预算中预留）；2000 时带表格/引用的正常回答易触顶截断（实测 1888），默认 4096 */
-        private int maxOutputTokens = 4096;
         /** 历史压缩开关：开启后全部历史始终在场（近期原样 + 更早滚动摘要），不再按轮数/字符截断 */
         private boolean historyCompress = true;
         /** 压缩触发比例：摘要+原样历史估算超过 检索预算×该比例 时滚动压缩（0.1~0.9） */

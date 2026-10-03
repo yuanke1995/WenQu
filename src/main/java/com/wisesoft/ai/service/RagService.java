@@ -1422,9 +1422,8 @@ public class RagService {
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
             st.contextHits = docNo - 1;
-            // 生效最大输出（模型行声明优先）：max_tokens 下发与终态触顶判定共用，来源决定触顶提示的引导入口
+            // 生效最大输出（模型管理中该模型声明的值）：max_tokens 下发与终态触顶判定共用
             st.effectiveMaxOutput = ctxBudget.maxOutput();
-            st.outputFromModel = ctxBudget.outputFromModel();
             st.windowTokens = ctxBudget.window();
             st.windowSource = ctxBudget.windowSource();
             st.historyCompressedTurns = historyCompressedTurns;
@@ -2139,9 +2138,11 @@ public class RagService {
                 ? spec.user(user)
                 : spec.user(u -> u.text(user).media(media.toArray(new org.springframework.ai.content.Media[0])));
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(st.model)
-                .maxTokens(st.effectiveMaxOutput > 0 ? st.effectiveMaxOutput
-                        : configService.getInt("context.maxOutputTokens"));
+                .model(st.model);
+        // 最大输出：以模型管理中该模型声明的「最大输出」为准；未声明不下发 max_tokens（交由厂商默认，无全局兜底值）
+        if (st.effectiveMaxOutput > 0) {
+            optionsBuilder.maxTokens(st.effectiveMaxOutput);
+        }
         // 思考强度档位：本轮请求级（用户在聊天页选的）优先，其次模型登记的默认档位；
         // 按厂商方言映射成各自字段下发（OpenAI/DeepSeek/GLM/豆包/Kimi/MiniMax reasoning_effort、
         // Claude thinking.budget_tokens、Qwen thinking_budget），不做单字段裸透传——那只对
@@ -2533,12 +2534,11 @@ public class RagService {
                     // 输出触顶 fail-loud：网关真实 completion_tokens 达到输出上限 ⇒ 大概率被
                     // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
                     // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
-                    // 上限与 max_tokens 下发同源（模型行声明优先），提示按来源引导对应入口。
-                    int maxOutput = st.effectiveMaxOutput > 0 ? st.effectiveMaxOutput : configService.getInt("context.maxOutputTokens");
-                    if (realOutput && outputTokens >= maxOutput) {
+                    // 上限与 max_tokens 下发同源（模型管理中该模型声明的最大输出）；未声明输出上限时无从判定，跳过。
+                    int maxOutput = st.effectiveMaxOutput;
+                    if (maxOutput > 0 && realOutput && outputTokens >= maxOutput) {
                         addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
-                                "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在"
-                                        + (st.outputFromModel ? "模型管理中调大该模型的最大输出" : "设置页调大「输出限制 token」"));
+                                "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
                     }
                     int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
                     // noHit 事后判定（基于本轮最终引用）：主链路检索 0 填充但工具检索（智能体知识检索工具等）
@@ -2726,10 +2726,8 @@ public class RagService {
         volatile int contextTokens;
         volatile int budgetTokens;
         volatile int contextHits;
-        /** 生效最大输出 token（模型行声明优先，回落全局「输出限制」）：max_tokens 下发与终态触顶判定共用 */
+        /** 生效最大输出 token（模型管理中该模型声明的最大输出；0=未声明，不下发 max_tokens）：max_tokens 下发与终态触顶判定共用 */
         volatile int effectiveMaxOutput;
-        /** 最大输出是否来自模型行声明（决定触顶提示引导去模型管理还是设置页） */
-        volatile boolean outputFromModel;
         /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
         volatile int realPromptTokens;
         volatile int realOutputTokens;
@@ -3684,30 +3682,25 @@ public class RagService {
         return scoped;
     }
 
-    /** 上下文预算解析结果：窗口来自「用户所选/模型行声明」，输出限制来自「模型行声明/全局默认」，供触顶提示与 max_tokens 下发区分来源 */
-    private record CtxBudget(int window, int maxOutput, int budget,
-                             String windowSource, boolean outputFromModel) {}
+    /** 上下文预算解析结果：窗口与最大输出均来自「用户所选/模型行声明」（模型管理页维护），供触顶提示与 max_tokens 下发区分来源 */
+    private record CtxBudget(int window, int maxOutput, int budget, String windowSource) {}
 
     private CtxBudget resolveContextBudget(String resolvedModel, Integer requestedWindow,
                                            List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        double safetyFactor = configService.getDouble("context.safetyFactor");
-        int configMaxOutput = configService.getInt("context.maxOutputTokens");
-        int costCap = configService.getInt("context.costCapTokens");
-
         // 窗口/最大输出是模型固有属性：模型行声明了就用模型行（模型管理页维护）。
-        // 窗口没有全局兜底：未声明的对话类模型预算无法计算，fail-loud 提醒声明（登记时已强制必填，此处只拦存量/绕过登记的行）
+        // 安全系数为平台固定策略（ModelRegistryService.CONTEXT_SAFETY_FACTOR），不再作为设置页配置项。
         ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
         Integer declaredWindow = mi == null ? null : mi.getContextWindow();
         Integer declaredMin = mi == null ? null : mi.getContextWindowMin();
         Integer declaredOutput = mi == null ? null : mi.getMaxOutput();
         boolean windowFromModel = declaredWindow != null && declaredWindow > 0;
-        boolean outputFromModel = declaredOutput != null && declaredOutput > 0;
-        int maxOutput = outputFromModel ? declaredOutput : configMaxOutput;
+        // 最大输出未声明 = 不主动限制（不下发 max_tokens，交由厂商默认）；预算公式按 0 处理
+        int maxOutput = declaredOutput != null && declaredOutput > 0 ? declaredOutput : 0;
         if (!windowFromModel) {
             addDegradation(degradations, degradedCodes, "ctxWindowUndeclared",
                     "该模型未声明上下文窗口，检索资料将无法填入；请在模型管理页为 " + resolvedModel + " 声明窗口");
             log.warn("[CTX] 模型 {} 未声明上下文窗口，检索预算托底 1000", resolvedModel);
-            return new CtxBudget(0, maxOutput, 1000, "未声明", outputFromModel);
+            return new CtxBudget(0, maxOutput, 1000, "未声明");
         }
 
         int window = declaredWindow;
@@ -3720,34 +3713,28 @@ public class RagService {
             windowSource = "用户所选窗口";
         }
 
-        int windowBudget = (int) (window * Math.max(0.1, Math.min(1, safetyFactor)));
+        int windowBudget = (int) (window * ModelRegistryService.CONTEXT_SAFETY_FACTOR);
         int budget = windowBudget - maxOutput;
-        if (costCap > 0 && budget > costCap) {
-            budget = costCap;
-        }
-        // fail-loud：输出限制 ≥ 模型窗口预算时预算算出负数，被下面的 1000 托底——不能静默，
-        // 否则用户只看到「预算 1.0k」却不知道是输出限制把检索资料的预算吃光了。按声明来源给出对应的修复入口。
-        if (budget <= 0) {
+        // fail-loud：模型声明的最大输出 ≥ 模型窗口预算时预算算出负数，被下面的 1000 托底——不能静默，
+        // 否则用户只看到「预算 1.0k」却不知道是最大输出把检索资料的预算吃光了。修复入口在模型管理。
+        if (maxOutput > 0 && budget <= 0) {
             boolean fromUser = "用户所选窗口".equals(windowSource);
             addDegradation(degradations, degradedCodes, "contextBudgetFloored",
-                    (outputFromModel ? "该模型声明的最大输出 " : "输出限制 token（") + maxOutput
-                            + (outputFromModel ? "）" : "")
-                            + " 不小于" + windowSource + "预算（" + windowSource + " " + window
-                            + " × 安全系数 " + safetyFactor + " = " + windowBudget + "），"
+                    "该模型声明的最大输出 " + maxOutput + " 不小于" + windowSource + "预算（" + windowSource + " " + window
+                            + " × 安全系数 " + ModelRegistryService.CONTEXT_SAFETY_FACTOR + " = " + windowBudget + "），"
                             + "上下文预算被托底为 1000，检索资料将无法填入；请在"
-                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大"
-                                       : outputFromModel ? "模型管理中调小该模型的最大输出" : "设置页调小「输出限制 token」"));
+                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大" : "模型管理中调小该模型的最大输出"));
             log.warn("[CTX] 最大输出 {} ≥ 窗口预算 {}（窗口 {}，来源={}），上下文预算托底 1000",
                     maxOutput, windowBudget, window, windowSource);
         }
-        return new CtxBudget(window, maxOutput, Math.max(budget, 1000), windowSource, outputFromModel);
+        return new CtxBudget(window, maxOutput, Math.max(budget, 1000), windowSource);
     }
 
-    /** 生效最大输出 token：模型行声明优先，未声明回落全局「输出限制」（无知识库分支的 max_tokens 下发与触顶判定共用） */
+    /** 生效最大输出 token：以模型行声明为准（模型管理页维护）；未声明返回 0 = 不下发 max_tokens，交由厂商默认（无知识库分支的 max_tokens 下发与触顶判定共用） */
     private int effectiveMaxOutputOf(String resolvedModel) {
         ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
         Integer declared = mi == null ? null : mi.getMaxOutput();
-        return declared != null && declared > 0 ? declared : configService.getInt("context.maxOutputTokens");
+        return declared != null && declared > 0 ? declared : 0;
     }
 
     /**
@@ -5022,10 +5009,8 @@ public class RagService {
             st.contextTokens = 0;
             st.budgetTokens = 0;
             st.contextHits = 0;
-            // 生效最大输出（模型行声明优先）：buildAnswerStream 的 max_tokens 与触顶判定共用
+            // 生效最大输出（模型管理中该模型声明的值）：buildAnswerStream 的 max_tokens 与触顶判定共用
             st.effectiveMaxOutput = effectiveMaxOutputOf(resolvedModel);
-            ModelInfo stMi = modelRegistryService.modelInfoOf(resolvedModel);
-            st.outputFromModel = stMi != null && stMi.getMaxOutput() != null && stMi.getMaxOutput() > 0;
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
             emitter.onCompletion(() -> st.disposeSafe());
