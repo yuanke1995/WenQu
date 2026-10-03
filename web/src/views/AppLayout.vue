@@ -11,19 +11,6 @@
         </button>
       </div>
 
-      <!-- 配置引导入口（logo 与导航之间）三态：
-           必配未完成=琥珀「配置引导·还差 N 项」+ 折叠圆点（待办感）；
-           必配完成但进阶项有缺=弱化「进阶配置 · N 项可选」（建议感，感知但不催办）；
-           全部完成=消失，对已配好的存量用户零打扰 -->
-      <button v-if="guideVisible" class="nav-item guide-entry" :class="{ adv: guideAdvOnly }"
-              @click="guideOpen = true" :title="guideEntryTitle">
-        <compass-outlined />
-        <span v-if="!collapsed" class="guide-entry-text">{{ guideAdvOnly ? '进阶配置' : '配置引导' }}</span>
-        <span v-if="!collapsed && !guideAdvOnly" class="guide-count">还差 {{ pendingCount }} 项</span>
-        <span v-else-if="!collapsed" class="guide-count muted">{{ advPendingCount }} 项可选</span>
-        <i v-if="pendingCount > 0" class="nav-dot"></i>
-      </button>
-
       <nav class="side-nav">
         <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="newChat" title="新建对话">
           <plus-outlined />
@@ -37,6 +24,20 @@
           <span v-if="!collapsed">{{ m.name }}</span>
           <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
           <i v-if="menuPending(m)" class="nav-dot"></i>
+        </button>
+
+        <!-- 配置引导入口（导航组末尾——辅助层功能不占 logo 下的黄金位，必配的醒目性
+             由菜单「待配置」tag 与对话页欢迎卡承担）：
+             必配未完成=琥珀「配置引导·还差 N 项」+ 折叠圆点（待办感）；
+             必配完成但进阶项有缺=弱化链接「进阶配置 · N 项可选」（感知但不催办）；
+             全部完成=消失，对已配好的存量用户零打扰 -->
+        <button v-if="guideVisible" class="nav-item guide-entry" :class="{ adv: guideAdvOnly }"
+                @click="guideOpen = true" :title="guideEntryTitle">
+          <compass-outlined />
+          <span v-if="!collapsed" class="guide-entry-text">{{ guideAdvOnly ? '进阶配置' : '配置引导' }}</span>
+          <span v-if="!collapsed && !guideAdvOnly" class="guide-count">还差 {{ pendingCount }} 项</span>
+          <span v-else-if="!collapsed" class="guide-count muted">{{ advPendingCount }} 项可选</span>
+          <i v-if="pendingCount > 0" class="nav-dot"></i>
         </button>
       </nav>
 
@@ -609,16 +610,16 @@ onUnmounted(() => clearInterval(notifTimer))
 }
 .side.collapsed .nav-dot { display: block; }
 @media (max-width: 768px) { .side .nav-dot { display: block; } }
-/* 侧栏引导入口（logo 与导航之间）：主色弱底区别于普通导航项，计数角标琥珀色 */
-.guide-entry { background: var(--app-accent-weak); margin-bottom: 6px; }
+/* 侧栏引导入口（导航组末尾）：与上方导航留分组间距；必配态主色弱底 + 琥珀计数角标 */
+.guide-entry { margin-top: 10px; background: var(--app-accent-weak); }
 .guide-entry-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .guide-count {
   flex: none; font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
   color: var(--app-warn-text); background: var(--app-warn-weak);
 }
-/* 进阶弱化态：融入导航（无弱底）、计数角标灰化——感知得到但不催办 */
-.guide-entry.adv { background: transparent; }
-.guide-entry.adv:hover { background: var(--app-accent-weak); }
+/* 进阶弱化态：链接式（无弱底、灰字），hover 才提亮——感知得到但不催办 */
+.guide-entry.adv { background: transparent; color: var(--app-text3); }
+.guide-entry.adv:hover { background: var(--app-accent-weak); color: var(--app-text2); }
 .guide-count.muted { color: var(--app-text3); background: var(--app-panel-2); }
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
