@@ -611,8 +611,8 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
-              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡 -->
-              <span v-if="ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
+              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示 -->
+              <span v-if="lastTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
                     @mouseenter="showCtxCap($event.currentTarget, 'top')" @mouseleave="hideCtxCap()">
                 <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
                   <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
