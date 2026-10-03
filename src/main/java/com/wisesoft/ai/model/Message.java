@@ -61,6 +61,9 @@ public class Message {
     /** Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)，随助手消息落库供历史回看 */
     private String tokens;
 
+    /** 本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，存量行为 NULL 归入未知） */
+    private String model;
+
     /** 附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体，气泡回显) */
     private String attachments;
 

@@ -769,6 +769,9 @@ export const getAnalytics = () => request('/analytics/summary')
 /** 差评样本列表（反馈回流：问题/回答摘要/反馈说明/引用块） */
 export const getBadCases = () => request('/analytics/badcases')
 
+// ---------- 使用统计（个人用量；统计卡全时段，range 只影响趋势/模型占比） ----------
+export const getUsageStats = range => request(`/stats/usage?range=${range === 7 ? 7 : 30}`)
+
 // ==================== 用户长期记忆（个人设置页管理；提取与注入在后端自动完成） ====================
 /** 我的记忆列表（按更新时间倒序；含来源与被注入次数） */
 export const listMyMemories = () => request('/memory')

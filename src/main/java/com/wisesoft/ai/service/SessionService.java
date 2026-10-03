@@ -619,10 +619,22 @@ public class SessionService {
                                 String thinking, String retrieved, String artifacts, String toolCalls,
                                 String attachments, String tokens, String timeline, String processText,
                                 String agentId, String agentName) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, null);
+    }
+
+    /**
+     * 追加消息（含生效模型）：model 为本轮生效模型引用（助手消息专用，随 tokens 同时落库）。
+     * 用途：使用统计按模型分组聚合（每日趋势/模型用量占比）；存量行 model 为 NULL 归入「未知」。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText,
+                                String agentId, String agentName, String model) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName);
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -633,7 +645,7 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText, agentId, agentName);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -702,6 +714,9 @@ public class SessionService {
                 redisMsg.put("agentId", agentId);   // 智能体归属（降级缓存同样带：补写 MySQL 后归属不丢）
                 redisMsg.put("agentName", agentName == null ? "" : agentName);
             }
+            if (model != null && !model.isBlank()) {
+                redisMsg.put("model", model);       // 生效模型（与 tokens 同口径随降级缓存携带）
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -721,7 +736,7 @@ public class SessionService {
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
-                                 String processText, String agentId, String agentName) {
+                                 String processText, String agentId, String agentName, String model) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -752,6 +767,7 @@ public class SessionService {
             msg.setToolCalls(toolCalls);
             msg.setAttachments(attachments);
             msg.setTokens(tokens);
+            msg.setModel(model);
             msg.setTimeline(timeline);
             msg.setProcessText(processText);
             msg.setAgentId(agentId);

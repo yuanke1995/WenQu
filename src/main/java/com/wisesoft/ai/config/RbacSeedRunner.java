@@ -47,6 +47,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20"},
             new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30"},
             new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35"},
+            new String[]{"menu-stats", "使用统计", "PieChartOutlined", "/stats", "38"},
             new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40"},
             new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50"},
             new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60"},
@@ -62,7 +63,7 @@ public class RbacSeedRunner implements ApplicationRunner {
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
-            List.of("menu-chat", "menu-agents", "menu-knowledge", "menu-artifacts");
+            List.of("menu-chat", "menu-agents", "menu-knowledge", "menu-artifacts", "menu-stats");
 
     private final RoleMapper roleMapper;
     private final MenuMapper menuMapper;
@@ -120,6 +121,13 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
+            // 存量库升级：使用统计是个人资产类页面（与「我的产物」同类），首次登记时为 user 角色补一次绑定，
+            // 普通用户开箱可见；仅在本菜单插入这一次执行，此后管理员在权限页的解绑不会被回置
+            if ("menu-stats".equals(d[0])
+                    && !roleMenuMapper.menuIdsOfRole("user").contains("menu-stats")) {
+                roleMenuMapper.bind("user", "menu-stats");
+                roleService.invalidateCaches();
+            }
         }
         if (menuAdded > 0) {
             seeded = true;

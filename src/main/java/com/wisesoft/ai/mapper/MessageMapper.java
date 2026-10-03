@@ -45,4 +45,45 @@ public interface MessageMapper extends BaseMapper<Message> {
     /** 物理删除逻辑删除标记且创建时间早于截止时间的消息（过期数据清理；物理清除即"撤销删除"窗口终点，幂等） */
     @Delete("DELETE FROM c_ai_message WHERE deleted = 1 AND create_time < #{cutoff}")
     int purgeDeletedOlderThan(@Param("cutoff") LocalDateTime cutoff);
+
+    // ==================== 使用统计聚合（按用户，经会话表过滤归属） ====================
+    // tokens 为 JSON 字符串，总额取 $.total（缺失/非法 JSON 行被 JSON_VALID 与 CAST NULL 自然剔除）。
+    // 自定义 SQL 不经 @TableLogic 改写，逻辑删除必须显式过滤（会话与消息两侧都要）。
+
+    /** 每日 token 总量（role=assistant 且带合法 tokens；since 为 null 则不限时间，全量日清单供峰值/热力图共用） */
+    @Select("<script>SELECT DATE_FORMAT(m.create_time, '%Y-%m-%d') AS d, "
+            + "SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(m.tokens, '$.total')) AS UNSIGNED)) AS t "
+            + "FROM c_ai_message m JOIN c_ai_session s ON m.session_id = s.id "
+            + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
+            + "AND m.role = 'assistant' AND m.tokens IS NOT NULL AND JSON_VALID(m.tokens) "
+            + "<if test='since != null'>AND m.create_time &gt;= #{since}</if> "
+            + "GROUP BY d ORDER BY d</script>")
+    java.util.List<java.util.Map<String, Object>> statDailyTokens(@Param("userId") String userId,
+                                                                  @Param("since") LocalDateTime since);
+
+    /** 每日×模型 token 总量（趋势图与模型用量占比共用；model 为 NULL 的存量行原样返回，展示层归入「未知」） */
+    @Select("SELECT DATE_FORMAT(m.create_time, '%Y-%m-%d') AS d, m.model AS model, "
+            + "SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(m.tokens, '$.total')) AS UNSIGNED)) AS t "
+            + "FROM c_ai_message m JOIN c_ai_session s ON m.session_id = s.id "
+            + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
+            + "AND m.role = 'assistant' AND m.tokens IS NOT NULL AND JSON_VALID(m.tokens) "
+            + "AND m.create_time >= #{since} "
+            + "GROUP BY d, model ORDER BY d")
+    java.util.List<java.util.Map<String, Object>> statModelDaily(@Param("userId") String userId,
+                                                                 @Param("since") LocalDateTime since);
+
+    /** 有回答消息的活跃日期清单（全量，行数≤活跃天数，连续天数计算的原始数据） */
+    @Select("SELECT DISTINCT DATE_FORMAT(m.create_time, '%Y-%m-%d') AS d "
+            + "FROM c_ai_message m JOIN c_ai_session s ON m.session_id = s.id "
+            + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
+            + "AND m.role = 'assistant' ORDER BY d")
+    java.util.List<String> statActiveDates(@Param("userId") String userId);
+
+    /** 最长单会话时长（秒）：会话内首末消息时间差的最大值（跨天挂着的会话按真实跨度计） */
+    @Select("SELECT COALESCE(MAX(t.span), 0) FROM ("
+            + "SELECT TIMESTAMPDIFF(SECOND, MIN(m.create_time), MAX(m.create_time)) AS span "
+            + "FROM c_ai_message m JOIN c_ai_session s ON m.session_id = s.id "
+            + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
+            + "GROUP BY m.session_id) t")
+    Long statLongestSessionSeconds(@Param("userId") String userId);
 }

@@ -15,6 +15,7 @@ import Members from './views/MembersPage.vue'
 import Permissions from './views/PermissionsPage.vue'
 import Profile from './views/ProfilePage.vue'
 import Artifacts from './views/ArtifactsPage.vue'
+import Stats from './views/StatsPage.vue'
 import Help from './views/HelpPage.vue'
 import OidcCallback from './views/OidcCallbackPage.vue'
 import ShareChat from './views/ShareChatPage.vue'
@@ -45,6 +46,8 @@ const router = createRouter({
     // 文档管理并入知识库（卡片点进）；旧入口重定向
     { path: '/documents', redirect: '/knowledge' },
     { path: '/artifacts', component: AppLayout, children: [{ path: '', component: Artifacts }], meta: { title: '我的产物' } },
+    // 使用统计：个人 Token 用量（所有登录用户，数据按会话归属隔离）
+    { path: '/stats', component: AppLayout, children: [{ path: '', component: Stats }], meta: { title: '使用统计' } },
     // 帮助中心：官方内置手册（问渠使用手册）只读视图，所有登录用户可见
     { path: '/help', component: AppLayout, children: [{ path: '', component: Help }], meta: { title: '帮助中心' } },
     { path: '/members', component: AppLayout, children: [{ path: '', component: Members }], meta: { requiresAdmin: true, title: '成员管理' } },

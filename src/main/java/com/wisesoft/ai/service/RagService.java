@@ -2569,7 +2569,8 @@ public class RagService {
                     if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
                         sessionService.deleteMessage(st.replaceMessageId);
                     }
-                    // 12 参重载（含 tokens）：助手消息把用量 JSON 随行落库（历史回看/会话累计的数据源）
+                    // 16 参重载（含 tokens/model）：助手消息把用量 JSON 与生效模型随行落库
+                    // （历史回看/会话累计 + 使用统计按模型分组的数据源）
                     String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
                             finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                             sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
@@ -2580,7 +2581,8 @@ public class RagService {
                             // （onComplete 阶段抛异常无处路由），表现为「助手消息不落库 + done 永不
                             // 下发 + 前端永远转圈」，且日志只有一行 onErrorDropped 极难定位。
                             agent == null ? null : agent.getId(),
-                            agent == null ? null : agent.getName());
+                            agent == null ? null : agent.getName(),
+                            st.model);
 
                     // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
