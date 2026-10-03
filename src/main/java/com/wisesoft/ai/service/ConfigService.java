@@ -248,8 +248,8 @@ public class ConfigService {
         d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
         d.put("context.costCapTokens", String.valueOf(properties.getContext().getCostCapTokens()));
         d.put("context.maxOutputTokens", String.valueOf(properties.getContext().getMaxOutputTokens()));
-        d.put("context.historyMaxTokens", String.valueOf(properties.getContext().getHistoryMaxTokens()));
-        d.put("context.historyPerMsgChars", String.valueOf(properties.getContext().getHistoryPerMsgChars()));
+        d.put("context.historyCompress", String.valueOf(properties.getContext().isHistoryCompress()));
+        d.put("context.compressRatio", String.valueOf(properties.getContext().getCompressRatio()));
         d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
         d.put("context.maxBlocksPerDoc", "3");             // 单文档块数配额（0=不限制；@ 引用块豁免）
@@ -306,7 +306,8 @@ public class ConfigService {
         // 问答行为参数
         d.put("chat.remainTokenFloor", "800");             // 上下文填充保留下限
         d.put("chat.truncateFallbackChars", "200");        // 超预算截断兜底字符数
-        d.put("chat.historyRounds", "5");                  // 多轮记忆注入轮数
+        // chat.historyRounds 已退役：历史不再按轮数截断，改为预算驱动全量带入 + 滚动压缩
+        // （context.historyCompress / context.compressRatio 控制；辅助调用内部仍用固定 2 轮短历史）
         // 个人附加指令（个人设置 → 对话偏好，personal）：追加在系统提示词之后的个人要求；
         // 全局值为平台层附加指令（可留空），个人值按个人覆盖机制生效
         d.put("chat.userSystemPrompt", "");

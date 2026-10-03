@@ -244,6 +244,11 @@
                 <span v-for="(d, di) in m.degradations" :key="di" class="degradation-item">{{ d.msg }}</span>
               </div>
               <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
+              <!-- 历史压缩提示（信息条，蓝色区别于黄色警告）：完整记录仍在会话里，往前翻可见 -->
+              <div v-if="m.role === 'ai' && m.tokens && m.tokens.historyCompressed > 0" class="ctx-compress-bar">
+                <compress-outlined style="margin-right:6px" />
+                已把 {{ m.tokens.historyCompressed }} 轮早期对话压缩为摘要（完整记录仍可在会话中回看）
+              </div>
               <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
                   <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="m.retrieved.refs > 0">，参考 {{ m.retrieved.refs }} 段资料</template><template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
@@ -643,7 +648,9 @@
           <robot-outlined v-else class="rp-agent-ic" />
           <span>{{ currentAgentName }}</span>
         </div>
-        <div class="rp-row rp-agent-row">
+        <!-- 悬浮本行看「上下文容量」明细（用量/窗口 + 分类占比 + 缓存命中率） -->
+        <div class="rp-row rp-agent-row rp-model-row"
+             @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()">
           <span>模型</span>
           <span class="rp-val" :title="effectiveModel">
             <ProviderIcon :icon="effectiveModelIcon" :name="effectiveModelProvider" :size="14" style="margin-right:4px" />
@@ -899,6 +906,41 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- 上下文容量卡：悬浮右栏模型行弹出（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
+         数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
+    <Teleport to="body">
+      <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
+           :style="{ top: ctxCapPos.top + 'px', left: ctxCapPos.left + 'px' }"
+           @mouseenter="onCtxCapEnter" @mouseleave="onCtxCapLeave">
+        <div class="ctxcap">
+          <div class="ctxcap-head">
+            <div class="ctxcap-title">上下文容量</div>
+            <div v-if="ctxCapData.window > 0" class="ctxcap-num">
+              {{ fmtWindow(ctxCapData.used) }}/{{ fmtWindow(ctxCapData.window) }}（{{ ctxCapData.pct }}%）
+            </div>
+          </div>
+          <template v-if="ctxCapData.window > 0">
+            <div class="ctxcap-bar">
+              <span v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-seg"
+                    :style="{ width: ctxCapData.pctOf(r) + '%', background: r.color }"
+                    :title="r.label + ' ' + ctxCapData.pctOf(r).toFixed(1) + '%'"></span>
+            </div>
+            <div v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-row">
+              <span class="ctxcap-dot" :style="{ background: r.color }"></span>
+              <span class="ctxcap-row-label">{{ r.label }}</span>
+              <span class="ctxcap-row-val">{{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
+            </div>
+            <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">发送问题后显示分类占用</div>
+            <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
+              <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
+            </div>
+            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 用量为本轮真实 prompt token（网关未回传时按估算）</div>
+          </template>
+          <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在模型管理中声明</div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -910,6 +952,7 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
+         CompressOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
@@ -1858,6 +1901,67 @@ const srcOpenOf = g => (srcOpen[g.key] !== undefined ? srcOpen[g.key] : true)
 const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
+
+// ==================== 上下文容量面板（右栏模型行悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
+/** 分类展示名与配色（与后端 ctxParts 的键一一对应；占比条按此顺序堆叠） */
+const CTX_PART_META = [
+  { key: 'messages', label: '消息', color: '#1677ff' },
+  { key: 'summary', label: '早期摘要', color: '#13c2c2' },
+  { key: 'chunks', label: '知识块', color: '#52c41a' },
+  { key: 'system', label: '系统提示词', color: '#722ed1' },
+  { key: 'toolSchema', label: '系统工具', color: '#fa8c16' },
+  { key: 'mcpSchema', label: 'MCP 工具', color: '#eb2f96' },
+  { key: 'skill', label: '技能', color: '#a0d911' },
+  { key: 'memory', label: '记忆', color: '#2f54eb' },
+  { key: 'input', label: '输入', color: '#8c8c8c' },
+  { key: 'other', label: '其他', color: '#bfbfbf' }
+]
+const ctxCapOpen = ref(false)
+const ctxCapPos = ref({ top: 0, left: 0 })
+const ctxCapEl = ref(null)
+let ctxCapTimer = null
+let ctxCapHovered = false
+const showCtxCap = el => {
+  clearTimeout(ctxCapTimer)
+  ctxCapTimer = setTimeout(() => {
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    // 面板放不下时翻到行左侧；顶部与行顶对齐（与深度思考面板同一套定位约定）
+    const w = 300
+    const left = rect.right + 10 + w <= window.innerWidth - 8
+      ? rect.right + 10
+      : Math.max(8, rect.left - 10 - w)
+    ctxCapPos.value = { top: Math.min(rect.top - 6, window.innerHeight - 360), left }
+    ctxCapOpen.value = true
+  }, 150)
+}
+const hideCtxCap = () => {
+  clearTimeout(ctxCapTimer)
+  ctxCapTimer = setTimeout(() => { if (!ctxCapHovered) ctxCapOpen.value = false }, 200)
+}
+const onCtxCapEnter = () => { ctxCapHovered = true; clearTimeout(ctxCapTimer) }
+const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
+/** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮真实 prompt（无则估算） */
+const ctxCapData = computed(() => {
+  const t = lastTokens.value
+  const info = modelIndex.value[effectiveModel.value]
+  const window_ = (t && t.window) || info?.contextWindow || 0
+  const used = t ? (Number(t.prompt) || Number(t.context) || 0) : 0
+  const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
+  const rows = parts
+    ? CTX_PART_META.filter(m => Number(parts[m.key]) > 0)
+        .map(m => ({ ...m, tokens: Number(parts[m.key]) }))
+    : []
+  const sum = rows.reduce((a, r) => a + r.tokens, 0)
+  const pct = window_ > 0 ? Math.min(100, Math.round(used / window_ * 1000) / 10) : 0
+  const cached = t && Number(t.cached) > 0 ? Number(t.cached) : 0
+  return {
+    window: window_, used, pct, rows, sum,
+    // 分类占比以分类之和为分母（校准后与 prompt 一致；无 parts 时退化为空列表）
+    pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0,
+    cached, cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
+  }
+})
 
 // ==================== 右栏：运行控制 / 本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
 // panelAi = 最后一轮 AI 消息（含进行中）——供「运行控制」卡（停止/重试本轮）定位重发目标，
@@ -3811,6 +3915,33 @@ onMounted(async () => {
   font-size: 12px; line-height: 1.6; display: flex; flex-wrap: wrap; gap: 4px 12px;
 }
 .degradation-item { display: inline-block; }
+
+/* 历史压缩信息条（蓝色，区别于黄色警告）：说明早期对话已并入摘要，完整记录仍在会话中 */
+.ctx-compress-bar {
+  margin-top: 8px; padding: 6px 10px; border-radius: 6px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); color: var(--app-accent);
+  font-size: 12px; line-height: 1.6; display: flex; align-items: center;
+}
+
+/* 上下文容量卡（悬浮右栏模型行）：与深度思考面板同一套 fixed 定位约定 */
+.ctxcap-float { position: fixed; z-index: 1060; }
+.ctxcap {
+  width: 268px; padding: 12px 14px; border-radius: 12px;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
+}
+.ctxcap-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.ctxcap-title { font-size: 13px; font-weight: 600; }
+.ctxcap-num { font-size: 12px; color: var(--app-text3); }
+.ctxcap-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--app-accent-weak); }
+.ctxcap-seg { display: block; height: 100%; }
+.ctxcap-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.ctxcap-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.ctxcap-row-label { color: var(--app-text2); }
+.ctxcap-row-val { margin-left: auto; color: var(--app-text3); }
+.ctxcap-empty { margin-top: 6px; font-size: 12px; color: var(--app-text3); }
+.ctxcap-foot { display: flex; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
+.ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
 
 .retrieval-merged { margin-top: 8px; width: 100%; }
 .retrieval-line { font-size: 12px; color: var(--app-text3); user-select: none; cursor: pointer; }

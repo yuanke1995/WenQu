@@ -471,6 +471,42 @@ public class SessionService {
     }
 
     /**
+     * 按 sequence 升序取摘要覆盖点之后的会话消息（历史压缩用）：
+     * 只取 sequence &gt; afterSeq 的消息（更早的已被摘要吸收），最多 limit 条。
+     * 返回 null 表示读取失败（调用方 fail-loud），空列表表示无新消息。
+     */
+    public List<Map<String, Object>> getHistoryAfter(String sessionId, long afterSeq, int limit) {
+        try {
+            LambdaQueryWrapper<Message> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Message::getSessionId, sessionId)
+                    .gt(Message::getSequence, afterSeq)
+                    .orderByAsc(Message::getSequence)
+                    .last("LIMIT " + Math.max(1, limit));
+            List<Message> messages = messageMapper.selectList(wrapper);
+            return messages.stream().map(this::toMessageMap).collect(Collectors.toList());
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] MySQL 按序号读取会话历史失败 (session={}): {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 写回滚动历史摘要（历史压缩）：摘要文本 + 已覆盖的最大消息 sequence。
+     * 用 UpdateWrapper 只改这两列，避免整行覆盖（并发轮次里其它列可能刚被更新）。
+     */
+    public void updateHistorySummary(String sessionId, String summary, long untilSeq) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        try {
+            sessionMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .set(Session::getHistorySummary, summary)
+                    .set(Session::getSummaryUntilSeq, untilSeq));
+        } catch (Exception e) {
+            log.warn("[CTX] 历史摘要写回失败 (session={}): {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
      * 直读最近 N 轮对话：ORDER BY sequence DESC LIMIT rounds*2 后反转，
      * 避免全量读取该会话所有消息（每次问答该路径被调 2~3 次，会话越长差异越大）
      */
@@ -946,6 +982,7 @@ public class SessionService {
         map.put("role", m.getRole());
         map.put("content", m.getContent());
         map.put("messageId", m.getId()); // 与 SSE done 事件字段名一致，供前端反馈/导出等操作
+        map.put("sequence", m.getSequence()); // 消息序号（历史压缩的摘要覆盖点推进用）
         map.put("createTime", m.getCreateTime()); // 气泡下方时间展示
         // 智能体归属（随消息落库的当轮快照）：历史回显「这条是谁答的」；无值表示本轮未使用智能体
         if (m.getAgentId() != null && !m.getAgentId().isBlank()) {

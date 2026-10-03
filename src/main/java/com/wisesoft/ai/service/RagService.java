@@ -8,6 +8,7 @@ import com.wisesoft.ai.model.Agent;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeBase;
 import com.wisesoft.ai.model.ModelInfo;
+import com.wisesoft.ai.model.Session;
 import com.wisesoft.ai.model.WorkflowRun;
 import com.wisesoft.ai.service.websearch.WebSearchResult;
 import com.wisesoft.ai.service.websearch.WebSearchTools;
@@ -311,6 +312,13 @@ public class RagService {
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "rewrite");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** 历史压缩专用线程池：与改写池分开（同轮可能先压缩再改写，共用会互相排队拉长首字时延） */
+    private final ExecutorService compressExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "history-compress");
         t.setDaemon(true);
         return t;
     });
@@ -957,7 +965,8 @@ public class RagService {
             }
 
             // 2. System 提示：角色段（DB 可编辑，保存即生效；空则用代码默认值兜底）+ 规则段（代码固定，与解析器耦合）
-            //    + 对话历史（单条截断 + token 上限 + 图片标记剥离）
+            //    + 对话历史（预算驱动全量带入：近期原样 + 更早轮次滚动摘要，见 assembleHistory）
+            int historyCompressedTurns = 0;   // 本轮压缩进摘要的轮数（done 下发，前端提示「已压缩 N 轮」）
             String rolePart = resolveSystemPrompt(agent);
             StringBuilder system = new StringBuilder(rolePart)
                     .append("\n\n【规则】\n")
@@ -975,12 +984,15 @@ public class RagService {
                     .append("\n若本轮提供了联网搜索资料，它与知识库资料同等对待：引用时同样在句末用 [N] 标注，"
                             + "并只能使用工具实际返回的编号；搜索未覆盖的内容如实说明未找到依据，不得凭常识补写。")
                     .append(relatedPromptLine());
+            // 容量计量分段标记：按 StringBuilder 位置切出各段，供容量面板分类展示（系统提示词/记忆/技能/其他）
+            int partRoleEnd = system.length();
             // 用户长期记忆（跨会话个性化）：注入本人记忆 + 累加使用度；游客分享会话不注入
             // （发布者的个人记忆不外泄给匿名访客）；空记忆/未开启零影响
             if (!guestMode) {
                 String memoryText = userMemoryService.injectText(userId, question);
                 if (memoryText != null) system.append("\n\n").append(memoryText);
             }
+            int partMemoryEnd = system.length();
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
             // 清单为空的段落不追加（没装技能时对提示词零影响）；注入的是本用户自己的技能。
             if (skillOn(agent)) {
@@ -1030,20 +1042,26 @@ public class RagService {
             if (!userSkillText.isBlank()) {
                 system.append(userSkillText);
             }
+            int partSkillEnd = system.length();
             // SubAgent 并行检索要点：作为补充资料段（不占 [N] 引用编号空间，仅辅助生成）
             if (subOutcome != null && !subOutcome.digestText().isBlank()) {
                 system.append("\n\n【并行检索要点】\n").append(subOutcome.digestText());
                 stageMs.put("subagent", subOutcome.elapsedMs());
             }
-            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, configService.getInt("chat.historyRounds", 5));
-            if (recentHistory == null) {
-                // M6 fail-loud：历史读取失败 → 本次对话无历史注入
-                addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-                recentHistory = List.of();
-            }
-            String historyText = buildHistoryText(recentHistory);
-            if (!historyText.isEmpty()) {
-                system.append("\n\n对话历史：\n").append(historyText);
+            int partOtherEnd = system.length();
+
+            // 3. 预算先行：历史装配与知识块填充共用同一预算（历史按压缩阈值占一部分，其余留给检索资料）
+            CtxBudget ctxBudget = resolveContextBudget(resolvedModel, requestedContextWindow, degradations, degradedCodes);
+            int budget = ctxBudget.budget();
+
+            // 4. 对话历史：预算驱动全量带入——近期原样 + 更早轮次滚动摘要（替代旧的「按轮数 + 单条截断」）
+            HistoryBundle historyBundle = assembleHistory(sessionId, resolvedModel, budget, degradations, degradedCodes);
+            historyCompressedTurns = historyBundle.compressedTurns();
+            String historySummaryBlock = summaryBlock(historyBundle.summaryText());
+            if (!historySummaryBlock.isEmpty() || !historyBundle.recentText().isEmpty()) {
+                system.append("\n\n对话历史：\n");
+                if (!historySummaryBlock.isEmpty()) system.append(historySummaryBlock);
+                system.append(historyBundle.recentText());
             }
 
             // 图片说明拼入问题（仅"模型不支持读图"时有值：诚实说明图片不可见，防模型瞎猜；
@@ -1070,9 +1088,7 @@ public class RagService {
                         + "但最终回答必须以下方参考资料为准：\n").append(thinkingInject);
             }
 
-            // 3. 价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)；减去 system/问题固定部分后，按相关度累积填充知识块
-            CtxBudget ctxBudget = resolveContextBudget(resolvedModel, requestedContextWindow, degradations, degradedCodes);
-            int budget = ctxBudget.budget();
+            // 5. 价值驱动填充：预算已在上方解析；减去 system/问题固定部分后，按相关度累积填充知识块
             int fixedTokens = TokenCounter.estimate(system.toString()) + TokenCounter.estimate(userQuestion.toString());
             int remainTokens = Math.max(configService.getInt("chat.remainTokenFloor", 800), budget - fixedTokens);
 
@@ -1409,6 +1425,25 @@ public class RagService {
             // 生效最大输出（模型行声明优先）：max_tokens 下发与终态触顶判定共用，来源决定触顶提示的引导入口
             st.effectiveMaxOutput = ctxBudget.maxOutput();
             st.outputFromModel = ctxBudget.outputFromModel();
+            st.windowTokens = ctxBudget.window();
+            st.windowSource = ctxBudget.windowSource();
+            st.historyCompressedTurns = historyCompressedTurns;
+            // 容量分类用量（估算，done 时按网关真实 prompt_tokens 等比校准）：
+            // 按 system 组装时的分段标记切出各段，避免为计量再跑一遍拼接
+            Map<String, Integer> parts = new LinkedHashMap<>();
+            String sysAll = system.toString();
+            parts.put("system", TokenCounter.estimate(sysAll.substring(0, Math.min(partRoleEnd, sysAll.length()))));
+            parts.put("memory", TokenCounter.estimate(sysAll.substring(Math.min(partRoleEnd, sysAll.length()),
+                    Math.min(partMemoryEnd, sysAll.length()))));
+            parts.put("skill", TokenCounter.estimate(sysAll.substring(Math.min(partMemoryEnd, sysAll.length()),
+                    Math.min(partSkillEnd, sysAll.length()))));
+            parts.put("other", TokenCounter.estimate(sysAll.substring(Math.min(partSkillEnd, sysAll.length()),
+                    Math.min(partOtherEnd, sysAll.length()))));
+            parts.put("summary", historyBundle.summaryTokens());
+            parts.put("messages", historyBundle.recentTokens());
+            parts.put("chunks", usedTokens);
+            parts.put("input", TokenCounter.estimate(userQuestion.toString()));
+            st.ctxParts = parts;
             // 编排视图：回填分支最终状态（subOutcome.branches 来自编排完成后的 ctx.branches，含各分支命中数）
             if (subOutcome != null && !subOutcome.branches().isEmpty()) {
                 st.subagentBranches = subOutcome.branches();
@@ -2073,6 +2108,22 @@ public class RagService {
         }
         // 过程叙述规范仅工具模式注入：无工具的纯对话没有"过程"可叙，加了反而诱导模型输出标签
         String sysFinal = toolCallbacks.length == 0 ? system : system + PROCESS_NARRATION_GUIDE;
+        // 工具 schema 计量（走请求的 tools 字段，不进 system）：按「名称+描述+入参 schema」估算，
+        // 内置工具与 MCP 工具分桶——MCP server 动辄几十个工具，是容量面板里最容易被忽略的一块
+        int toolSchemaTokens = 0;
+        int mcpSchemaTokens = 0;
+        for (org.springframework.ai.tool.ToolCallback cb : toolCallbacks) {
+            org.springframework.ai.tool.definition.ToolDefinition def = cb.getToolDefinition();
+            if (def == null) continue;
+            int t = TokenCounter.estimate(def.name() + " " + def.description() + " " + def.inputSchema());
+            toolSchemaTokens += t;
+            if (st.mcpToolNames.contains(def.name())) mcpSchemaTokens += t;
+        }
+        st.ctxParts.put("toolSchema", toolSchemaTokens - mcpSchemaTokens);
+        st.ctxParts.put("mcpSchema", mcpSchemaTokens);
+        if (!PROCESS_NARRATION_GUIDE.isEmpty() && toolCallbacks.length > 0) {
+            st.ctxParts.merge("other", TokenCounter.estimate(PROCESS_NARRATION_GUIDE), Integer::sum);
+        }
         // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记），原图以
         // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解（省一次调用、不丢图细节）。
         // 仅展示链路（模型不支持读图）的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
@@ -2160,6 +2211,9 @@ public class RagService {
                         if (completion != null && completion > 0) st.realOutputTokens = completion;
                         Integer prompt = usage.getPromptTokens();
                         if (prompt != null && prompt > 0) st.realPromptTokens = prompt;
+                        // 缓存命中 token（prompt 缓存）：网关方言不一，尽力从 nativeUsage 里挖；
+                        // 挖不到保持 0，容量面板隐藏「缓存命中率」行（不显示假数据）
+                        st.cachedPromptTokens = extractCachedTokens(usage);
                     }
                     Object output = resp.getResult() == null ? null : resp.getResult().getOutput();
                     String delta = (output instanceof org.springframework.ai.chat.messages.AssistantMessage am
@@ -2501,6 +2555,14 @@ public class RagService {
                     tokens.put("prompt", promptTokens);
                     tokens.put("outputIsReal", realOutput);
                     tokens.put("total", promptTokens + outputTokens);
+                    // 容量面板数据：生效窗口/来源 + 分类用量（按网关真实 prompt 等比校准）+ 缓存命中
+                    tokens.put("window", st.windowTokens);
+                    tokens.put("windowSource", st.windowSource);
+                    tokens.put("cached", st.cachedPromptTokens);
+                    tokens.put("parts", calibrateParts(st.ctxParts, promptTokens, st.realPromptTokens > 0));
+                    if (st.historyCompressedTurns > 0) {
+                        tokens.put("historyCompressed", st.historyCompressedTurns);
+                    }
                     // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
                     // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案
                     if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
@@ -2671,6 +2733,15 @@ public class RagService {
         /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
         volatile int realPromptTokens;
         volatile int realOutputTokens;
+        /** 缓存命中的 prompt token（网关 prompt_tokens_details.cached_tokens；0=网关未回传，面板隐藏该行） */
+        volatile int cachedPromptTokens;
+        /** 本轮生效窗口 token 与来源（用户所选档位/模型声明/未声明），容量面板展示「已用 X / 窗口 Y」 */
+        volatile int windowTokens;
+        volatile String windowSource = "";
+        /** 容量分类用量（消息/早期摘要/知识块/系统提示词/系统工具/MCP 工具/技能/其他）：估算后按真实 prompt 等比校准 */
+        volatile Map<String, Integer> ctxParts = new LinkedHashMap<>();
+        /** 本轮压缩进摘要的历史轮数（0=未压缩）；done 下发供前端提示「已压缩 N 轮」 */
+        volatile int historyCompressedTurns;
         /** 编排视图：各子代理分支的最终状态（主链路编排完成后回填，随 done 下发并持久化） */
         volatile java.util.List<Map<String, Object>> subagentBranches = List.of();
         /** 按需委派的路由结果（{candidates,picked,names}；未启用路由时为 null），随 done 下发并持久化 */
@@ -3766,12 +3837,13 @@ public class RagService {
     }
 
     /**
-     * 构建注入主回答的对话历史：单条截断 + 剥离 [图片N] 标记 + token 总上限
+     * 构建注入「辅助调用」的对话历史（多轮改写/自动派遣等短上下文场景）：
+     * 单条截断 + 剥离 [图片N] 标记 + token 总上限。主回答走 {@link #assembleHistory}（预算驱动全量带入）。
      */
     private String buildHistoryText(List<Map<String, Object>> history) {
         if (history == null || history.isEmpty()) return "";
-        int perMsgChars = configService.getInt("context.historyPerMsgChars");
-        int maxTokens = configService.getInt("context.historyMaxTokens");
+        int perMsgChars = 200;
+        int maxTokens = 1200;
         StringBuilder sb = new StringBuilder();
         int total = 0;
         for (Map<String, Object> msg : history) {
@@ -3791,6 +3863,237 @@ public class RagService {
             total += tokens;
         }
         return sb.toString();
+    }
+
+    // ==================== 对话历史：预算驱动全量带入 + 滚动压缩 ====================
+
+    /** 历史装配结果：注入 prompt 的两段文本 + 分类用量（容量面板） + 本轮压缩轮数 */
+    private record HistoryBundle(String summaryText, String recentText,
+                                 int summaryTokens, int recentTokens, int compressedTurns) {}
+
+    /** 历史扫描上限（条）：单会话未压缩积压的读取上限，超出部分下一轮压缩自愈 */
+    private static final int HISTORY_SCAN_LIMIT = 200;
+    /** 至少保留原样的消息条数（2 轮）：保证最近一问一答逐字在场，压缩不吞掉刚说的话 */
+    private static final int HISTORY_MIN_KEEP = 4;
+
+    /**
+     * 预算驱动装配对话历史（替代旧的「按轮数 + 单条截断」）：近期轮次原样注入、更早轮次滚动压缩进会话摘要，
+     * 全部历史信息始终在场（近期原样 + 远期摘要）。
+     * <p>
+     * 压缩触发线 = 检索预算 × context.compressRatio。不在整窗打满时才压：压缩调用自身要花输入 token 与数秒时延，
+     * 提前压才能给当轮回答留出空间，且之后每轮摊销、不会每轮都触发。
+     * 压缩关闭或调用失败 → 回落「按预算装近期、更早丢弃」（失败时强制可见降级提示，不静默丢历史）。
+     */
+    private HistoryBundle assembleHistory(String sessionId, String resolvedModel, int budget,
+                                          List<Map<String, String>> degradations, Set<String> degradedCodes) {
+        Session session = sessionService.sessionById(sessionId);
+        String summary = (session == null || session.getHistorySummary() == null) ? "" : session.getHistorySummary();
+        long untilSeq = (session == null || session.getSummaryUntilSeq() == null) ? 0L : session.getSummaryUntilSeq();
+        List<Map<String, Object>> backlog = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_SCAN_LIMIT);
+        if (backlog == null) {
+            // M6 fail-loud：历史读取失败 → 本次对话无历史注入
+            addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
+            return new HistoryBundle("", "", 0, 0, 0);
+        }
+        boolean compressOn = configService.getBoolean("context.historyCompress");
+        double ratio = Math.max(0.1, Math.min(0.9, configService.getDouble("context.compressRatio")));
+        int threshold = Math.max(1000, (int) (budget * ratio));
+        int summaryTokens = TokenCounter.estimate(summary);
+        int compressedTurns = 0;
+
+        if (compressOn && backlog.size() > HISTORY_MIN_KEEP) {
+            int totalTokens = summaryTokens;
+            for (Map<String, Object> m : backlog) totalTokens += TokenCounter.estimate(historyLine(m));
+            if (totalTokens > threshold) {
+                // 近期原样保留到「阈值 − 摘要」装不下为止，更早的（连同旧摘要）滚动并入新摘要
+                int keepFrom = fitFromNewest(backlog, Math.max(200, threshold - summaryTokens));
+                if (keepFrom > 0) {
+                    List<Map<String, Object>> older = backlog.subList(0, keepFrom);
+                    try {
+                        String merged = summarizeHistory(resolvedModel, summary, historyText(older));
+                        if (merged != null && !merged.isBlank()) {
+                            long newUntil = seqOf(older.get(older.size() - 1));
+                            sessionService.updateHistorySummary(sessionId, merged, newUntil);
+                            summary = merged;
+                            summaryTokens = TokenCounter.estimate(summary);
+                            backlog = backlog.subList(keepFrom, backlog.size());
+                            compressedTurns = Math.max(1, older.size() / 2);
+                            log.info("[CTX] 历史压缩完成: {} 条并入摘要（until={}，摘要 {} token，保留近期 {} 条）",
+                                    older.size(), newUntil, summaryTokens, backlog.size());
+                        }
+                    } catch (Exception e) {
+                        // 压缩失败不能静默：用户会看到「早期对话消失」却不知原因。绕过检索调试开关直接上报。
+                        degradations.add(Map.of("code", "historyCompressFailed", "level", "warn",
+                                "msg", "早期对话压缩失败，本轮仅带入近期历史（下轮自动重试）"));
+                        log.warn("[CTX] 历史压缩失败，回落「按预算装近期」: {}", e.getMessage());
+                    }
+                }
+            }
+        }
+        // 近期原样：从最新往回装到「阈值 − 摘要」为止（压缩关闭/失败时即「按预算装近期、更早丢弃」）
+        int recentBudget = Math.max(200, threshold - summaryTokens);
+        int from = fitFromNewest(backlog, recentBudget);
+        String recentText = historyText(backlog.subList(from, backlog.size()));
+        return new HistoryBundle(summary, recentText, summaryTokens, TokenCounter.estimate(recentText), compressedTurns);
+    }
+
+    /** 一条历史消息的注入文本（role: content，剥离 [图片N] 标记；全文注入，不再按字符硬截断） */
+    private String historyLine(Map<String, Object> msg) {
+        String role = String.valueOf(msg.getOrDefault("role", ""));
+        String content = stripImageMarks(String.valueOf(msg.getOrDefault("content", ""))).trim();
+        if (content.isEmpty()) return "";
+        return role + ": " + content + "\n";
+    }
+
+    private String historyText(List<Map<String, Object>> msgs) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> m : msgs) sb.append(historyLine(m));
+        return sb.toString();
+    }
+
+    /** 从最新往回挑选能装进预算的消息，返回起始下标；至少保留最新一条（单条超预算时不再往前扩） */
+    private int fitFromNewest(List<Map<String, Object>> msgs, int budgetTokens) {
+        int total = 0;
+        int from = msgs.size();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            int t = TokenCounter.estimate(historyLine(msgs.get(i)));
+            if (total > 0 && total + t > budgetTokens) break;
+            total += t;
+            from = i;
+        }
+        return from;
+    }
+
+    /** 消息的 sequence（压缩覆盖点推进用）；缺失时回落 0（不推进，下轮重试） */
+    private long seqOf(Map<String, Object> msg) {
+        Object seq = msg.get("sequence");
+        if (seq instanceof Number n) return n.longValue();
+        try {
+            return seq == null ? 0L : Long.parseLong(String.valueOf(seq));
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * 从网关 usage 里尽力提取「prompt 缓存命中 token」。方言与承载类型都不统一，按三条路依次尝试：
+     * ① Spring AI 的强类型 native usage（OpenAiApi.Usage 记录）→ {@code promptTokensDetails().cachedTokens()}；
+     * ② native usage 本身是 Map（部分网关）→ {@code prompt_tokens_details.cached_tokens} / 顶层 {@code cached_tokens}；
+     * ③ DeepSeek 方言的 {@code prompt_cache_hit_tokens}（未被 Spring AI 建模时会丢失，挖不到就作罢）。
+     * 全部取不到返回 0——容量面板隐藏「缓存命中率」行，不显示假数据。
+     */
+    private int extractCachedTokens(org.springframework.ai.chat.metadata.Usage usage) {
+        Object native_ = null;
+        try {
+            native_ = usage.getNativeUsage();
+        } catch (Exception ignored) {
+            return 0;
+        }
+        if (native_ == null) return 0;
+        try {
+            // ① 强类型记录：promptTokensDetails.cachedTokens（反射免硬编码，兼容不同 Spring AI 版本）
+            Object details = invokeNoArg(native_, "promptTokensDetails");
+            Integer typed = intOf(invokeNoArg(details, "cachedTokens"));
+            if (typed != null && typed > 0) return typed;
+            // ②/③ 方言字段：native 自带或转成 Map 后查找
+            Map<String, Object> map = native_ instanceof Map<?, ?> m
+                    ? com.alibaba.fastjson2.JSON.parseObject(com.alibaba.fastjson2.JSON.toJSONString(m))
+                    : null;
+            if (map != null) {
+                for (String k : new String[]{"cached_tokens", "prompt_cache_hit_tokens"}) {
+                    Integer v = intOf(map.get(k));
+                    if (v != null && v > 0) return v;
+                }
+                Object d = map.get("prompt_tokens_details");
+                if (d instanceof Map<?, ?> dm) {
+                    Integer v = intOf(dm.get("cached_tokens"));
+                    if (v != null && v > 0) return v;
+                }
+            }
+            return 0;
+        } catch (Exception e) {
+            return 0; // 缓存命中率是展示增强，非正确性依赖：解析失败不告警
+        }
+    }
+
+    /** 反射调用无参方法，失败返回 null（方言/版本差异下静默降级） */
+    private Object invokeNoArg(Object target, String method) {
+        if (target == null) return null;
+        try {
+            return target.getClass().getMethod(method).invoke(target);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Integer intOf(Object v) {
+        if (v instanceof Number n) return n.intValue();
+        try {
+            return v == null ? null : Integer.parseInt(String.valueOf(v));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 分类用量按网关真实 prompt token 等比校准：估算器（TokenCounter 启发式）与真实 tokenizer 有偏差，
+     * 直接用估算值会让「分类之和 ≠ 网关报的 prompt_tokens」，面板看起来自相矛盾。
+     * 有真实值时整体等比缩放（保持各分类相对比例），无真实值时原样返回估算。
+     */
+    private Map<String, Integer> calibrateParts(Map<String, Integer> parts, int promptTokens, boolean hasReal) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        if (parts == null || parts.isEmpty()) return out;
+        long sum = 0;
+        for (Integer v : parts.values()) sum += (v == null ? 0 : v);
+        if (!hasReal || sum <= 0 || promptTokens <= 0) {
+            for (Map.Entry<String, Integer> e : parts.entrySet()) out.put(e.getKey(), e.getValue());
+            return out;
+        }
+        double k = promptTokens / (double) sum;
+        long acc = 0;
+        Map.Entry<String, Integer> last = null;
+        for (Map.Entry<String, Integer> e : parts.entrySet()) {
+            int v = (int) Math.round(e.getValue() * k);
+            out.put(e.getKey(), v);
+            acc += v;
+            last = e;
+        }
+        // 舍入误差归到最后一个分类，保证分类之和严格等于网关 prompt_tokens
+        if (last != null) out.put(last.getKey(), (int) (last.getValue() + (promptTokens - acc)));
+        return out;
+    }
+
+    /** 早期摘要注入段（与近期原样历史拼进 system 的「对话历史」段） */
+    private String summaryBlock(String summary) {
+        return (summary == null || summary.isBlank()) ? ""
+                : "【早期对话摘要】（更早轮次已压缩，完整记录可在会话中回看）\n" + summary.trim() + "\n";
+    }
+
+    /**
+     * 滚动历史摘要：把「已有摘要 + 本轮要压缩的更早轮次」合并成新摘要（用本轮生效模型，关思考、限输出）。
+     * 摘要与会话绑定、与模型无关（切换模型可复用）；超时/失败抛异常由调用方回落。
+     */
+    private String summarizeHistory(String resolvedModel, String oldSummary, String olderText) throws Exception {
+        String prompt = "你是对话历史压缩器。把下面的对话记录压缩成简洁要点摘要，供后续回答继续参考：\n"
+                + "1. 保留：用户的目标与诉求、已达成的结论与决定、出现的关键实体（人名/产品名/编号/数值/时间）、尚未解决的问题。\n"
+                + "2. 丢弃：寒暄、重复表述、已被后续对话推翻的中间过程。\n"
+                + "3. 用第三人称陈述（\"用户询问了…\"\"助手回答了…\"），按时间顺序条目化。\n"
+                + "4. 只输出摘要正文，不要解释、不要加标题。\n\n"
+                + (oldSummary == null || oldSummary.isBlank() ? "" : "【已有摘要（更早的历史）】\n" + oldSummary + "\n\n")
+                + "【本次要并入的对话】\n" + olderText;
+        long timeoutMs = configService.getLong("context.compressTimeoutMs", 20000L);
+        java.util.concurrent.Future<String> f = compressExecutor.submit(() ->
+                chatClient.prompt()
+                        .system("你是对话历史压缩器，只输出要点摘要。")
+                        .user(prompt)
+                        .options(OpenAiChatOptions.builder()
+                                .model(resolvedModel)
+                                .temperature(0.2)
+                                .maxTokens(1024)
+                                .build())
+                        .call()
+                        .content());
+        return f.get(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -4574,8 +4877,9 @@ public class RagService {
                                                     Set<String> degradedCodes) {
         Map<String, Object> inputs = new LinkedHashMap<>();
         inputs.put("question", question == null ? "" : question);
-        List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId,
-                configService.getInt("chat.historyRounds", 5));
+        // 工作流 inputs 的短历史用固定 5 轮（代码常量，非用户设置）：工作流节点自带上下文语义，
+        // 不做预算驱动全量带入，避免把主链路的压缩策略耦合进工作流
+        List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId, 5);
         if (recent == null) {
             addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
             recent = List.of();
@@ -4665,8 +4969,8 @@ public class RagService {
             if (userSkillText != null && !userSkillText.isBlank()) {
                 system.append(userSkillText);
             }
-            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId,
-                    configService.getInt("chat.historyRounds", 5));
+            // chatflow 主回答：沿用固定 5 轮短历史（代码常量，非用户设置）；预算驱动全量带入只在 runChat 主链路生效
+            List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, 5);
             if (recentHistory == null) {
                 addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
                 recentHistory = List.of();

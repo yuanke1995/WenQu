@@ -209,10 +209,10 @@ public class AppProperties {
         private int costCapTokens = 8000;
         /** 输出限制 maxTokens（同时从窗口预算中预留）；2000 时带表格/引用的正常回答易触顶截断（实测 1888），默认 4096 */
         private int maxOutputTokens = 4096;
-        /** 注入对话历史的 token 上限（超出按"保留用户问题优先"裁剪） */
-        private int historyMaxTokens = 1200;
-        /** 单条历史消息截断字符数 */
-        private int historyPerMsgChars = 200;
+        /** 历史压缩开关：开启后全部历史始终在场（近期原样 + 更早滚动摘要），不再按轮数/字符截断 */
+        private boolean historyCompress = true;
+        /** 压缩触发比例：摘要+原样历史估算超过 检索预算×该比例 时滚动压缩（0.1~0.9） */
+        private double compressRatio = 0.5;
         /** 知识块命中片段窗口（字符，命中关键词前后各取 N 字；0=整块塞入） */
         private int snippetWindowChars = 150;
         /** 上下文填充的最大块数（兜底上限，防候选极多时预算失控） */

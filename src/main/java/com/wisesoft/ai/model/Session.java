@@ -51,4 +51,10 @@ public class Session {
 
     /** 绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称） */
     private String agentName;
+
+    /** 滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过） */
+    private String historySummary;
+
+    /** 摘要已覆盖的最大消息 sequence（该序号及更早的原样历史已被摘要吸收，压缩时增量合并） */
+    private Long summaryUntilSeq;
 }
