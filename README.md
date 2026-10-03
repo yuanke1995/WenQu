@@ -201,7 +201,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 用 jieba 中文分词 + 相关度打分（搜索模式细粒度词元 + 长词 2-gram/4-gram 子词元），服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析/编辑/删除增量同步
 - **查询改写**：LLM 将问题改写为检索关键词（默认开启）；多轮对话上下文改写（追问「那删除呢？」自动补全），改写结果入库可评估
 - **知识块关联检索**：解析时识别块内交叉引用（7 类模式）建块间引用边；检索命中 A 时 **1-hop 扩散**带出关联块 + **结构上下文扩展**沿章节路径带出父章节摘要；扩散块走独立配额，引用来源带方向标注
-- **上下文工程**：`预算 = 模型窗口 × 安全系数(0.7) − 最大输出`（窗口/最大输出按模型在模型管理中声明，对话类窗口必填）；价值驱动填充（按相关度累积）、块内命中片段截取（±150 字窗口，截掉的图片占位自动补齐）、信息增益去冗余、关联扩散块独立配额、历史裁剪；token 按中英文分语言估算
+- **上下文工程**：`预算 = 模型窗口 × 安全系数(0.7) − 最大输出`（窗口/最大输出按模型在模型管理中声明，对话类窗口必填）；价值驱动填充（按相关度累积）、块内命中片段截取（±150 字窗口，截掉的图片占位自动补齐）、信息增益去冗余、关联扩散块独立配额、历史裁剪；token 计数用 tiktoken（jtokkit cl100k BPE）
 - **分块增强**：**父子分块**（超长块切子块做检索索引，命中子块返回父块完整正文）、**问答对增强**（解析时对每块生成 QA 并按问法向量化，对标 FastGPT 问答对模式，重嵌入不重调 LLM）
 - **语义缓存**：相似问题（embedding 余弦 ≥ 阈值，默认 0.96）直接复用历史回答；知识库任何变动整体失效；维度护栏防跨模型向量空间误命中
 
@@ -475,7 +475,7 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 │   │                                #   DynamicEmbeddingModel/ModelRegistryService/OidcService/ConfigCryptoService/ScheduleCenter）
 │   ├── sandbox/                     # 沙盒客户端：provisioner 连接/执行/文件读写/路径校验
 │   ├── parser/                      # DocumentParser 接口 + Docx/Pdf(扫描件 OCR)/Excel/Text 解析器
-│   ├── util/                        # TokenCounter(分语言 token 估算) / ImageCompressor / RequestUser(登录态 ThreadLocal)
+│   ├── util/                        # TokenCounter(jtokkit BPE token 计数) / ImageCompressor / RequestUser(登录态 ThreadLocal)
 │   └── model/ + mapper/ + dto/      # 30+ 实体 + Mapper + DTO
 ├── config/
 │   └── application-local.yml        # 本地开发私有配置（含密钥/数据目录，.gitignore 忽略；不打进构建产物）

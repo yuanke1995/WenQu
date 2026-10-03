@@ -232,7 +232,7 @@
           </a-table-column>
           <a-table-column title="Token" key="tokens" width="64" align="right">
             <template #default="{ record }">
-              <span class="kb-tok" :title="'估算值（与后端同口径）：标题+正文'">{{ estimateTokens((record.title || '') + (record.content || '')) }}</span>
+              <span class="kb-tok" :title="'估算值（前端量级参考）：标题+正文'">{{ estimateTokens((record.title || '') + (record.content || '')) }}</span>
             </template>
           </a-table-column>
           <a-table-column title="内容摘要" key="snippet">

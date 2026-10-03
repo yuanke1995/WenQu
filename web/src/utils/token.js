@@ -1,7 +1,7 @@
 /**
- * Token 估算（与后端 TokenCounter 同口径，避免前后端显示两套数字）
- * 后端规则：CJK 1 token/字、英文 1.3 token/词、其它字符 0.3 token/字符，最后整体 +10% 余量。
- * 仅用于展示量级（块大小、文档体积），不作为计费依据。
+ * Token 估算（仅前端展示量级：块大小、文档体积），不作为计费/预算依据。
+ * 后端上下文预算已用 jtokkit(cl100k BPE) 精确计数（TokenCounter），与本启发式数字略有出入——
+ * 展示层不引入 2MB 词表包，保持轻量启发式即可。
  */
 export function estimateTokens (text) {
   const s = text || ''

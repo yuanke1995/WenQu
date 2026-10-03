@@ -131,6 +131,12 @@
             <artifactId>jieba-analysis</artifactId>
             <version>1.0.2</version>
         </dependency>
+        <!-- tiktoken Java 实现（BPE 精确 token 计数，上下文预算/用量估算用；纯 Java 零传递依赖） -->
+        <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+            <version>1.1.0</version>
+        </dependency>
         <!-- HTML 解析（网页 URL 导入知识库：正文提取与结构化分块） -->
         <dependency>
             <groupId>org.jsoup</groupId>
