@@ -163,8 +163,6 @@ public class AppProperties {
      */
     @Data
     public static class DeepReasoning {
-        /** 总开关（前端开关关闭时不进本流程） */
-        private boolean enabled = true;
         /** 思考模式：model=extraBody 透传 enable_thinking 从 reasoning_content 提取；prompt=提示词引导输出到 content */
         private String thinkingMode = "model";
         /** 是否透传 enable_thinking=true（thinkingMode=model 时生效） */
@@ -195,8 +193,6 @@ public class AppProperties {
         private boolean injectKeywords = true;
         /** 思考关键词增强的词元数上限 */
         private int injectKeywordsMax = 5;
-        /** 自动路由：未手动开启深度思考时，按问题特征（长度/多条件/对比）自动判断是否需要思考 */
-        private boolean autoRoute = false;
     }
 
     /**

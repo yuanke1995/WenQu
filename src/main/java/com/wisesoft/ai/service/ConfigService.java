@@ -259,7 +259,6 @@ public class ConfigService {
         d.put("context.dedupPathThreshold", "0.28");       // 同章节路径下重叠阈值
         d.put("context.adjacentMergeEnabled", "true");     // 相邻块合并（同文档 chunk 连续命中拼接进上下文）
         d.put("context.adjacentMergeMaxChunks", "3");      // 单次相邻合并的块数上限
-        d.put("deepReasoning.enabled", String.valueOf(properties.getDeepReasoning().isEnabled()));
         d.put("deepReasoning.thinkingMode", properties.getDeepReasoning().getThinkingMode());
         d.put("deepReasoning.enableThinking", String.valueOf(properties.getDeepReasoning().isEnableThinking()));
         d.put("deepReasoning.prompt", properties.getDeepReasoning().getPrompt());
@@ -273,7 +272,6 @@ public class ConfigService {
         d.put("deepReasoning.injectThinkingMaxChars", String.valueOf(properties.getDeepReasoning().getInjectThinkingMaxChars()));
         d.put("deepReasoning.injectKeywords", String.valueOf(properties.getDeepReasoning().isInjectKeywords()));
         d.put("deepReasoning.injectKeywordsMax", String.valueOf(properties.getDeepReasoning().getInjectKeywordsMax()));
-        d.put("deepReasoning.autoRoute", String.valueOf(properties.getDeepReasoning().isAutoRoute()));
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.minContextScore", "0.6");         // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
@@ -314,7 +312,6 @@ public class ConfigService {
         // 全局值为平台层附加指令（可留空），个人值按个人覆盖机制生效
         d.put("chat.userSystemPrompt", "");
         // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
-        d.put("chat.deepThinkDefault", "false");
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
@@ -361,9 +358,6 @@ public class ConfigService {
         d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
         d.put("imageFilter.preContextChars", String.valueOf(properties.getImages().getImageFilter().getPreContextChars()));
         // 原先写死在消费方代码里的行为参数（直读 configService，保存即生效）
-        d.put("deepReasoning.autoRouteMinChars", "8");
-        d.put("deepReasoning.autoRouteLongChars", "25");
-        d.put("deepReasoning.autoRouteKeywords", "如果,当,对比,区别,以及,同时,多个,分别,为什么");
         d.put("chat.maxImagesPerMessage", "9");
         d.put("chat.maxImageMb", "10");
         // 聊天附件：上传换 fileId 落盘，超保留期由 ScheduleCenter 清理（0=不清理）

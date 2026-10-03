@@ -56,15 +56,6 @@
       ]
     },
     {
-      "key": "deepReasoning",
-      "title": "深度思考设置",
-      "sections": [
-        "思考模式与引导",
-        "检索计划 · 多路与超时",
-        "思考增强 · 护栏与路由"
-      ]
-    },
-    {
       "key": "tool",
       "title": "工具调用（Function Calling）",
       "sections": [
@@ -214,21 +205,6 @@
       "def": "",
       "rows": 3,
       "ph": "追加在系统提示词之后的附加要求，如回答语言、篇幅与格式偏好（个人可覆盖）",
-      "personal": true,
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.deepThinkDefault",
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "deepThinkDefault",
-      "path": "chat.deepThinkDefault",
-      "label": "深度思考默认开启",
-      "type": "switch",
-      "tips": "deepThinkDefault",
-      "def": false,
-      "note": "对话页深度思考开关的初始状态：未按模型单独设置过时按此值（支持开关的模型）；对话页手动切换仍按模型记忆",
       "personal": true,
       "tier": 2
     },
@@ -1511,35 +1487,6 @@
       "note": "同章节路径的相邻切片重复率更高，用更低阈值判断冗余",
       "vif": "context.dedupEnabled",
       "tier": 3
-    },
-    {
-      "backendKey": "deepReasoning.enabled",
-      "panel": "deepReasoning",
-      "section": 0,
-      "group": "deepReasoning",
-      "key": "enabled",
-      "path": "deepReasoning.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "tips": "drEnabled",
-      "def": true,
-      "core": true,
-      "tier": 2
-    },
-    {
-      "backendKey": "deepReasoning.autoRoute",
-      "panel": "deepReasoning",
-      "section": 2,
-      "group": "deepReasoning",
-      "key": "autoRoute",
-      "path": "deepReasoning.autoRoute",
-      "label": "自动路由",
-      "type": "switch",
-      "tips": "drAutoRoute",
-      "def": false,
-      "note": "未手动开启时，长问/多条件/对比类问题自动启用深度思考",
-      "core": true,
-      "tier": 2
     },
     {
       "backendKey": "tool.enabled",
@@ -3324,7 +3271,6 @@
     "dedupEnabled": "信息增益去冗余：跳过与已选块语义重复的候选块（同一操作被切成多个知识块时，只保留最高相关的一块进上下文）。防止重复内容浪费预算、以及多块表述不一致导致模型自相矛盾。关闭后所有命中块按原顺序填充。",
     "dedupThreshold": "候选块与任一已选块的词元重叠比例（Jaccard）达到此值即判定为冗余跳过。越高越宽松（剔除越少）；越低剪得越狠但可能误伤信息有增量的相关块。",
     "dedupPathThreshold": "候选块与已选块处于同一章节路径（titlePath 互为前缀/相等）时使用的重叠阈值。同章节的相邻切片几乎总讲同一内容，此阈值通常设得比普通阈值更低（更容易剪）。",
-    "drEnabled": "深度思考总开关。关闭后即使前端开启\"深度思考\"开关也走普通回答流程（前端开关独立控制）。",
     "drMode": "思考模式：model=通过 extraBody 透传 enable_thinking=true，从模型 reasoning_content 提取思维链（qwen3 系原生支持）；prompt=用提示词引导模型把思考输出到正文 content（兼容不支持思考参数的模型/网关）。",
     "drEnableThinking": "thinkingMode=model 时是否透传 enable_thinking=true。若网关静默忽略或返回异常，可关闭此项并切到 prompt 模式。",
     "drPrompt": "思考阶段的引导提示词：要求模型先深度分析不直接作答，并在末尾输出 <search> 检索计划（精化 query | 子问题1 | 子问题2）。改坏可能导致检索计划提取失败（自动降级普通检索）。",
@@ -3338,7 +3284,6 @@
     "drInjectThinkingChars": "思考链注入回答的最大字符数。越长信息越全但占用生成预算；过短可能丢失关键推理。",
     "drInjectKeywords": "从思考全文提取关键词元补充到检索 query（多路检索多一条增强路；深度思考失败时也用它增强降级检索，思考不白费）。提升\"思考中提到的实体/限定词\"的召回。",
     "drInjectKeywordsMax": "思考关键词增强最多取多少个词元。越多召回越宽但可能引入噪声。",
-    "drAutoRoute": "未手动开启深度思考时，按问题特征自动判断：达到「字数上限」的长问，或命中「触发词」的问题自动启用深度思考；低于「字数下限」的问题一律不思考。保守启发式，避免常见问题全量思考导致成本翻倍。",
     "historyRounds": "问答时注入对话历史的轮数（多轮记忆）。调大更连贯但占上下文预算；0=不注入历史。",
     "remainTokenFloor": "上下文预算保留下限（token）：扣除系统提示与问题后至少保留的量，低于则不再填充知识块。",
     "truncateFallbackChars": "知识块超出预算时的截断兜底字符数（至少保留的字数）。",
@@ -3406,14 +3351,10 @@
     "imageFilterEnabled": "图片相关性校验开关。开启后按图片标记前文的关键词判断该图是否与问题相关，过滤掉无关配图；关闭则回答里只要命中图片就一并带出。",
     "imageFilterMinHits": "图片相关性校验的关键词命中数阈值：前文命中数 ≥ 该值才视为相关。调高更严格（可能误杀配图），调低更宽松。默认 1。",
     "imageFilterPreContextChars": "校验取图片标记之前多少字符作为判断前文。过短可能漏掉关键词，过长可能引入无关词。默认 100。",
-    "drAutoRouteMinChars": "自动路由的问题字数下限：低于该字数的问题不触发深度思考（短问直接答）。默认 8。",
-    "drAutoRouteLongChars": "自动路由的问题字数上限：达到该字数即触发深度思考。默认 25。",
-    "drAutoRouteKeywords": "自动路由触发词（逗号分隔）：问句含任一触发词即触发深度思考，用于拦截多条件/对比/递进类中等长度问题。留空表示只按长度判断。",
     "maxImagesPerMessage": "单条消息最多携带的图片张数。超限直接拒绝，防止 base64 大载荷压垮解码与视觉处理。默认 9。",
     "maxImageMb": "单张图片的体积上限（MB，按原图计；base64 编码后约为 4/3 倍）。超限拒绝发送。默认 10。",
     "relatedCount": "回答末尾 <related> 相关追问的推荐条数，提示词里的示例会与该数量保持一致。默认 3。",
     "userSystemPrompt": "追加在系统提示词之后的补充要求：系统提示词（或所选智能体的提示词）原文保留，本段以「用户个人附加要求」标记接在其后。适合放回答语言、篇幅、格式与口吻偏好；引用标注、配图、追问等平台硬性规则无法通过这里改写。个人可覆盖：在「个人设置 → 对话偏好」中填写自己的内容，仅对本人问答生效。",
-    "deepThinkDefault": "对话页「深度思考」开关的初始状态：对支持开关的模型，用户未在对话页手动设置过时按此值（支持的模型三态：不支持/可开关/恒思考，仅『可开关』受影响）；对话页的手动切换按模型单独记忆、不回写这里。个人可覆盖：在「个人设置 → 对话偏好」中设置自己的默认。",
     "embedBatchSize": "向量化分批大小（每批嵌入的知识块条数）。需与 embedding 上游接口的单次请求上限匹配，调大可提速但可能被限流。默认 10。",
     "ocrDpi": "PDF 扫描页 OCR 渲染 DPI：越高小字越清晰、识别率越好，但内存与耗时随之增加。默认 200。",
     "rlWindowSeconds": "限流固定窗口的长度（秒）：窗口内按「次/分钟」配置的额度计数，窗口越长突发容纳越多。默认 60。",
@@ -3524,7 +3465,6 @@
     "chat.temperature": "回答温度(0~2)",
     "chat.systemPrompt": "AI助手系统提示词（角色与回答风格）",
     "chat.userSystemPrompt": "附加指令（追加在系统提示词之后；平台层值可留空，个人可在个人设置中覆盖）",
-    "chat.deepThinkDefault": "深度思考默认开启（对话页开关的初始状态；个人可覆盖）",
     "chat.pipelineThreads": "问答流水线线程数(保存即生效)",
     "chat.streamRetryCount": "主 LLM 流式中断自动重试次数(未输出token时,0=关闭)",
     "chat.sseTimeoutMs": "问答 SSE 超时(毫秒,默认300000)",
@@ -3558,8 +3498,6 @@
     "context.dedupThreshold": "上下文：去冗余词元重叠阈值(0~1，默认0.45，越高越宽松)",
     "context.dedupPathThreshold": "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)",
     "chat.citationCheckEnabled": "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）",
-    "deepReasoning.enabled": "深度思考：总开关",
-    "deepReasoning.autoRoute": "深度思考：自动路由（未手动开启时按问题长度/多条件/对比自动判断）",
     "rerank.enabled": "重排：是否启用（平台默认值，个人设置可覆盖；需可用的重排服务）",
     "rerank.model": "重排：默认重排模型引用（个人设置项，模型归登记人；各库检索设置未单独配置时生效；清空=回落本地 rerank.baseUrl 服务）",
     "retrieval.vecThreshold": "检索：向量相似度下限(0~1，评估对比后可应用)",

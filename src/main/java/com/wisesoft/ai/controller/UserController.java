@@ -119,7 +119,7 @@ public class UserController {
 
     @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好/模型默认：可个人覆盖的字段定义（config-schema.json 标记 personal）"
             + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。体验类如 chat.temperature / chat.historyRounds / "
-            + "retrieval.relatedCount / chat.userSystemPrompt / chat.deepThinkDefault；模型默认如 rerank.enabled / "
+            + "retrieval.relatedCount / chat.userSystemPrompt；模型默认如 rerank.enabled / "
             + "rerank.model / graphrag.modelRef / parse.qaModel（模型归登记人，仅个人层可配）")
     @GetMapping("/settings")
     public ResultJson getSettings() {
