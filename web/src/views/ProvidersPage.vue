@@ -745,11 +745,12 @@ const savingModels = ref(false)
 let rowSeq = 0
 
 // 表格只做速览：模型名（含展示名副行）/ 类型 / 能力 / 窗口输出，配置进「编辑模型配置」弹窗
+// 窗口列宽度按最宽区间值（如 293K~977K / 375K）预留，窄了会折行
 const modelCols = [
   { title: '模型名', key: 'modelId' },
-  { title: '类型', key: 'modelType', width: 108 },
-  { title: '能力', key: 'caps', width: 136 },
-  { title: '窗口 / 输出', key: 'ctx', width: 104 },
+  { title: '类型', key: 'modelType', width: 100 },
+  { title: '能力', key: 'caps', width: 130 },
+  { title: '窗口 / 输出', key: 'ctx', width: 158 },
   { title: '启用', key: 'enabled', width: 56 },
   { title: '操作', key: 'action', width: 172 }
 ]
@@ -1238,7 +1239,7 @@ onMounted(async () => {
 .pm-mid { min-width: 0; }
 .pm-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-display { font-size: 12px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pm-ctx { font-size: 12px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
+.pm-ctx { font-size: 12px; color: var(--app-text2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ==================== 模型配置表单弹窗（对齐 ZCode：全宽字段 + ? 提示 + 高级折叠） ==================== */
 .pm-form { padding-top: 2px; }
