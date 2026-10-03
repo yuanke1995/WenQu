@@ -179,7 +179,7 @@ ai-app:
 
 logging:
   level:
-    com.wisesoft.ai: ${LOG_LEVEL_APP:info}
+    com.wenqu.ai: ${LOG_LEVEL_APP:info}
     org.springframework.ai: ${LOG_LEVEL_SPRING_AI:info}
 
 # 可观测性：健康检查

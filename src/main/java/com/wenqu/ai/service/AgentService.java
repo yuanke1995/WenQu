@@ -1,0 +1,448 @@
+package com.wenqu.ai.service;
+
+import com.wenqu.ai.util.RequestUser;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.mapper.AgentMapper;
+import com.wenqu.ai.model.Agent;
+import com.wenqu.ai.service.ResourceVisibilityService.Principal;
+import com.wenqu.ai.service.ResourceVisibilityService.ResourceKind;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * 智能体配置服务（P3：4.1 Agent 配置——模型/知识库/工具/提示词）。
+ * <p>
+ * 一个智能体把「模型 / 系统提示词 / 知识库范围 / 工具开关」打包成命名预设，对话页下拉切换；
+ * 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 null=继承。
+ * <p>
+ * 内置「问渠」智能体是系统默认：<b>全局唯一</b>（启动时唯一性维护：多余降级、缺失播种），
+ * 所有登录用户可读可用（{@link #readable} 豁免），仅管理员级可配置、不可删除。
+ *
+ * @author yuanke
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AgentService {
+
+    /** 内置「问渠」智能体的固定名称（产品身份的一部分，不可修改） */
+    public static final String BUILTIN_NAME = "问渠";
+
+    private final AgentMapper mapper;
+    private final ResourceVisibilityService resourceVisibilityService;
+    private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
+
+    /**
+     * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
+     * 其余降级为普通智能体（log.warn 留痕）；一个都没有（全新环境）时播种最小配置——
+     * 各维度全部继承全局，无需任何手工建档。
+     */
+    @jakarta.annotation.PostConstruct
+    public void maintainBuiltinAgent() {
+        try {
+            List<Agent> builtins = mapper.selectList(new LambdaQueryWrapper<Agent>()
+                    .eq(Agent::getIsBuiltin, 1)
+                    .orderByDesc(Agent::getIsDefault)
+                    .orderByAsc(Agent::getCreateTime)
+                    .orderByAsc(Agent::getId));
+            if (builtins.size() > 1) {
+                Agent keeper = builtins.get(0);
+                for (int i = 1; i < builtins.size(); i++) {
+                    Agent extra = builtins.get(i);
+                    mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                            .eq(Agent::getId, extra.getId())
+                            .set(Agent::getIsBuiltin, 0)
+                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    log.warn("[AGENT] 内置智能体全局唯一，已将重复行降级为普通智能体: {}（{}）", extra.getName(), extra.getId());
+                }
+                log.info("[AGENT] 内置「问渠」唯一性维护完成: 保留 {}（{}），降级 {} 条", keeper.getName(), keeper.getId(), builtins.size() - 1);
+                return;
+            }
+            if (builtins.size() == 1) return;
+            Agent seed = new Agent();
+            seed.setName(BUILTIN_NAME);
+            seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
+            seed.setIsBuiltin(1);
+            clearDefault();
+            seed.setIsDefault(1);
+            seed.setCreatedBy("system");
+            LocalDateTime now = LocalDateTime.now();
+            seed.setCreateTime(now);
+            seed.setUpdateTime(now);
+            mapper.insert(seed);
+            log.info("[AGENT] 已播种内置「问渠」系统默认智能体: {}（{}）", seed.getId(), seed.getName());
+        } catch (Exception e) {
+            log.warn("[AGENT] 内置「问渠」维护失败（不影响启动，下次启动重试）: {}", e.getMessage());
+        }
+    }
+
+    /** 当前请求者（可见性/可管性判定的输入） */
+    private Principal principal() {
+        return new Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+    }
+
+    /**
+     * 当前用户是否可读取该智能体。归属口径（谁建归谁）：未配置共享＝私有（仅创建者/管理员级）；
+     * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
+     */
+    public boolean readable(Agent a) {
+        if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
+        return resourceVisibilityService.canRead(principal(), a == null ? null : a.getShareConfig(),
+                a == null ? null : a.getCreatedBy(), ResourceKind.AGENT);
+    }
+
+    /** 当前用户是否可管理该智能体（出现在管理端点前先过这道闸） */
+    private void ensureManageable(Agent a) {
+        if (!resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT)) {
+            throw new BizException(403, "无权管理该智能体（不在其共享管理范围内）");
+        }
+    }
+
+    /** 列表（默认智能体在前，其余按创建时间倒序） */
+    public List<Agent> list() {
+        return mapper.selectList(new LambdaQueryWrapper<Agent>()
+                .orderByDesc(Agent::getIsDefault)
+                .orderByDesc(Agent::getCreateTime));
+    }
+
+    /**
+     * 对话页下拉用（普通用户可读）：只暴露「选择智能体」所需的最小字段。
+     * <p>不返回 systemPrompt / knowledgeScope / 工具开关——那些是管理配置，
+     * 不应经由只读接口外泄；对话页只需要 id 与展示名。</p>
+     */
+    public List<Map<String, Object>> available() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Agent a : list()) {
+            // 子智能体不出现在对话页下拉：它只能被主智能体委派调用，不能当作问答角色直接选用
+            if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
+            // 共享范围之外的人不应在对话页看到该智能体（未配置共享＝私有，谁建归谁；内置「问渠」人人可读）
+            if (!readable(a)) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", a.getId());
+            m.put("name", a.getName());
+            m.put("description", a.getDescription());
+            m.put("isDefault", a.getIsDefault() == null ? 0 : a.getIsDefault());
+            // 头像展示字段：icon（wenqu=品牌标 / emoji）与内置标记（内置「问渠」未配图标时前端也按品牌标兜底）
+            m.put("icon", a.getIcon());
+            m.put("isBuiltin", Integer.valueOf(1).equals(a.getIsBuiltin()) ? 1 : 0);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 自动派遣候选（agentId="auto" 时用）：可见的主智能体实体列表（isSubagent≠1 + 可读性过滤）。
+     * 与 {@link #available()} 同口径，但返回实体供派遣路由读取名称/描述。
+     */
+    public List<Agent> dispatchCandidates() {
+        List<Agent> out = new ArrayList<>();
+        for (Agent a : list()) {
+            if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
+            if (!readable(a)) continue;
+            out.add(a);
+        }
+        return out;
+    }
+
+    /**
+     * 可委派的子智能体（供主智能体配置页勾选）。
+     * 只返回子智能体（is_subagent=1），且是最小字段——配置页只需要 id 与展示名。
+     */
+    public List<Map<String, Object>> subAgents() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<Agent> subs = mapper.selectList(new LambdaQueryWrapper<Agent>()
+                .eq(Agent::getIsSubagent, 1)
+                .orderByDesc(Agent::getCreateTime));
+        for (Agent a : subs) {
+            if (!readable(a)) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", a.getId());
+            m.put("name", a.getName());
+            m.put("description", a.getDescription());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 按 ID 取（不存在返回 null，调用方据此降级为全局配置）。
+     * <p>额外做可读校验：共享范围之外的人即使拿到 id，也不能把该智能体套用到自己的问答上——
+     * 一律按「不存在」处理，直接回落全局配置（避免用 id 绕过可见性拿到别人的提示词/知识库范围）。</p>
+     */
+    public Agent get(String id) {
+        if (!StringUtils.hasText(id)) return null;
+        Agent a = mapper.selectById(id);
+        return (a != null && readable(a)) ? a : null;
+    }
+
+    /** 默认智能体（无则返回 null） */
+    public Agent defaultAgent() {
+        return mapper.selectOne(new LambdaQueryWrapper<Agent>()
+                .eq(Agent::getIsDefault, 1).last("LIMIT 1"));
+    }
+
+    /** 新建智能体；isDefault=true 时先清空其它默认 */
+    public Agent create(Map<String, Object> body) {
+        Agent a = toEntity(body, new Agent());
+        // 内置标记不可经 API 产生（toEntity 本就不映射；这里再兜一道，保证「问渠」全局唯一只能由启动维护路径产生）
+        a.setIsBuiltin(null);
+        a.setCreatedBy(RequestUser.uid());
+        a.setCreateTime(LocalDateTime.now());
+        a.setUpdateTime(LocalDateTime.now());
+        // 子智能体不参与「默认」：它只能被主智能体委派调用，不能作为对话页预选角色
+        boolean isSub = Integer.valueOf(1).equals(a.getIsSubagent());
+        if (!isSub && (Boolean.TRUE.equals(a.getIsDefault()) || Integer.valueOf(1).equals(a.getIsDefault()))) {
+            clearDefault();
+            a.setIsDefault(1);
+        } else {
+            a.setIsDefault(0);
+        }
+        mapper.insert(a);
+        log.info("[AGENT] 新建智能体 {}（{}）", a.getId(), a.getName());
+        return a;
+    }
+
+    /** 更新智能体；isDefault 变化时同步处理唯一默认 */
+    public Agent update(String id, Map<String, Object> body) {
+        Agent existing = mapper.selectById(id);
+        if (existing == null) throw new BizException(404, "智能体不存在");
+        ensureManageable(existing);
+        // 内置智能体（「问渠」）的名称是产品身份的一部分：请求体里出现 name 且与现值不一致时直接拒绝（fail-loud，
+        // 不做静默忽略——静默会让用户以为改成功了，刷新后名称"自己变回去"更困惑）
+        if (body != null && body.containsKey("name") && Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+            String requested = body.get("name") == null ? null : String.valueOf(body.get("name")).trim();
+            if (!existing.getName().equals(requested)) {
+                throw new BizException("内置智能体「" + existing.getName() + "」的名称不可修改");
+            }
+        }
+        Agent a = toEntity(body, existing);
+        a.setUpdateTime(LocalDateTime.now());
+        if (Integer.valueOf(1).equals(a.getIsDefault())) {
+            clearDefault();
+            a.setIsDefault(1);
+        }
+        updateColumns(id, body, a);
+        log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
+        return a;
+    }
+
+    /**
+     * 显式 set body 中出现过的字段（**含 null**），只更新这些列。
+     * <p><b>不能用 {@code updateById}</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，会跳过 null 列，
+     * 于是「清空描述」「把能力改回跟随全局（tool*=null / *范围=null）」「知识库范围改回全部文档」
+     * 这类操作都会静默不生效——与 {@link #updateShareConfig} 同因，故一律用显式 set。</p>
+     */
+    private void updateColumns(String id, Map<String, Object> body, Agent a) {
+        Map<String, Object> b = body == null ? java.util.Collections.emptyMap() : body;
+        LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, id);
+        if (b.containsKey("name")) uw.set(Agent::getName, a.getName());
+        // 图标（wenqu=问渠品牌标 / emoji；空 → null = 默认展示）
+        if (b.containsKey("icon")) uw.set(Agent::getIcon, a.getIcon());
+        if (b.containsKey("description")) uw.set(Agent::getDescription, a.getDescription());
+        if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
+        if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
+        if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
+        if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
+        if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
+        if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
+        if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
+        if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
+        if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
+        if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
+        // 工具执行审批三态（auto/ask/off；null=auto）
+        if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
+        // 单轮工具步数上限（null=继承全局）
+        if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
+        if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
+        if (b.containsKey("mcps")) uw.set(Agent::getMcps, a.getMcps());
+        if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
+        if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
+        if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
+        if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
+        // M4：绑定的工作流（chatflow）；空串/null = 解绑（显式置空，NOT_NULL 策略下 updateById 不管）
+        if (b.containsKey("workflowId")) uw.set(Agent::getWorkflowId, a.getWorkflowId());
+        // 检索参数覆盖（可清空：null = 全部继承全局设置）
+        if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
+        uw.set(Agent::getUpdateTime, a.getUpdateTime());
+        mapper.update(null, uw);
+    }
+
+    /** 删除智能体（内置标记的禁止删除） */
+    public void delete(String id) {
+        Agent existing = mapper.selectById(id);
+        if (existing != null) {
+            ensureManageable(existing);
+            if (Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+                throw new BizException("内置智能体不可删除（如需调整请编辑其配置）");
+            }
+        }
+        mapper.deleteById(id);
+        log.info("[AGENT] 删除智能体 {}", id);
+    }
+
+    /** 设为默认（其余清零） */
+    public void setDefault(String id) {
+        Agent target = mapper.selectById(id);
+        if (target == null) throw new BizException(404, "智能体不存在");
+        ensureManageable(target);
+        if (Integer.valueOf(1).equals(target.getIsSubagent())) {
+            throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
+        }
+        clearDefault();
+        Agent a = new Agent();
+        a.setId(id);
+        a.setIsDefault(1);
+        a.setUpdateTime(LocalDateTime.now());
+        mapper.updateById(a);
+        log.info("[AGENT] 设默认智能体 {}", id);
+    }
+
+    /**
+     * 写入共享范围（空串 = 清空 → 回落私有：仅自己与管理员级可见）。
+     * <p>校验口径与文档一致：必须 {@code version=2}，且管理范围不得宽于读取范围。</p>
+     * <p><b>必须用 {@code set(..., null)} 显式置空</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
+     * {@code updateById} 会跳过 null 字段，导致「恢复私有」静默不生效。</p>
+     */
+    public void updateShareConfig(String id, String shareConfigJson) {
+        Agent existing = mapper.selectById(id);
+        if (existing == null) throw new BizException(404, "智能体不存在");
+        ensureManageable(existing);
+        resourceVisibilityService.validateShareConfig(shareConfigJson);
+        String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
+        mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                .eq(Agent::getId, id)
+                .set(Agent::getShareConfig, normalized)
+                .set(Agent::getUpdateTime, LocalDateTime.now()));
+        log.info("[AGENT] 共享范围更新 id={} scope={}", id, normalized == null ? "私有（仅自己）" : "受限共享");
+    }
+
+    /** 把请求体字段映射到实体（仅覆盖 body 中出现的字段，其余保持原值） */
+    private Agent toEntity(Map<String, Object> body, Agent a) {
+        if (body == null) return a;
+        if (body.containsKey("name")) {
+            String name = body.get("name") == null ? null : String.valueOf(body.get("name")).trim();
+            if (!StringUtils.hasText(name)) throw new com.wenqu.ai.common.BizException("智能体名称不能为空");
+            if (name.length() > 200) name = name.substring(0, 200);
+            a.setName(name);
+        }
+        if (body.containsKey("description")) a.setDescription(asText(body.get("description"), 500));
+        // 图标：'wenqu'=问渠品牌标 / emoji 字符；空串归一为 null（= 默认展示，前端按内置标记兜底品牌标）。
+        // 品牌标为内置「问渠」专属：非内置智能体（含新建）不可使用，直接拒绝（fail-loud）
+        if (body.containsKey("icon")) {
+            String icon = asText(body.get("icon"), 32);
+            if ("wenqu".equals(icon) && !Integer.valueOf(1).equals(a.getIsBuiltin())) {
+                throw new com.wenqu.ai.common.BizException("问渠品牌标为内置「问渠」专属，其它智能体不可使用");
+            }
+            a.setIcon(icon);
+        }
+        if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
+        if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
+        if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));
+        // 「不使用知识库」：纯角色智能体（法律顾问/写作助手等）——1=跳过检索链路；null 视为 0
+        if (body.containsKey("knowledgeDisabled")) a.setKnowledgeDisabled(toTri(body.get("knowledgeDisabled")));
+        if (body.containsKey("toolKnowledge")) a.setToolKnowledge(toTri(body.get("toolKnowledge")));
+        if (body.containsKey("toolBuiltin")) a.setToolBuiltin(toTri(body.get("toolBuiltin")));
+        if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));
+        if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
+        if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
+        if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
+        // 工具执行审批三态（auto/ask/off；null 归一为 auto）
+        if (body.containsKey("toolApprovalMode")) {
+            String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
+            a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
+        }
+        // 单轮工具步数上限（null=继承全局；0=不限制；负数归一 null）
+        if (body.containsKey("maxToolSteps")) {
+            Integer steps = toTri(body.get("maxToolSteps"));
+            a.setMaxToolSteps(steps != null && steps < 0 ? null : steps);
+        }
+        // 具体项范围（技能 / MCP Server / 内置工具）：null=跟随全局、空串=不使用、逗号串=仅这些
+        if (body.containsKey("skills")) a.setSkills(toScopeText(body.get("skills"), 1000));
+        if (body.containsKey("mcps")) a.setMcps(toScopeText(body.get("mcps"), 1000));
+        if (body.containsKey("builtinTools")) a.setBuiltinTools(toScopeText(body.get("builtinTools"), 500));
+        if (body.containsKey("isSubagent")) a.setIsSubagent(toTri(body.get("isSubagent")));
+        // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
+        if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
+        if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
+        // M4：绑定工作流（chatflow）——非空时校验「存在 + 对当前用户可读 + 已发布」，
+        // 未发布直接拒绝：绑定后对话才报错不如配置时就说清楚（fail-loud，不做运行时静默回退）
+        if (body.containsKey("workflowId")) a.setWorkflowId(assertBindableWorkflow(body.get("workflowId")));
+        if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
+        return a;
+    }
+
+    /** 可绑定的工作流 id：空/null = 解绑；非空必须是存在、可读且已发布的工作流 */
+    private String assertBindableWorkflow(Object v) {
+        String id = asText(v, 50);
+        if (id == null) return null;
+        var wf = workflowMapper.selectById(id);
+        if (wf == null) throw new BizException("工作流不存在：" + id);
+        if (!resourceVisibilityService.canRead(principal(), wf.getShareConfig(), wf.getUid(), ResourceKind.WORKFLOW)) {
+            throw new BizException(403, "无权绑定该工作流（不在其共享范围内）");
+        }
+        if (!"published".equals(wf.getStatus())) {
+            throw new BizException("工作流「" + wf.getName() + "」尚未发布：请先在画布发布，再绑定到智能体");
+        }
+        return id;
+    }
+
+    private void clearDefault() {
+        List<Agent> all = mapper.selectList(new LambdaQueryWrapper<Agent>().eq(Agent::getIsDefault, 1));
+        for (Agent a : all) {
+            a.setIsDefault(0);
+            mapper.updateById(a);
+        }
+    }
+
+    /** 文本字段：null/空返回 null；超长截断（空字符串也视为未设置→null，避免存空串干扰"继承"判定） */
+    private String asText(Object v, int max) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /**
+     * 「具体项范围」字段解析（与主流智能体平台资源选择语义一致）：
+     * null → null（跟随全局）；空串 → ""（显式一个都不用）；"a,b" → 归一化后的 "a,b"。
+     * <p>与 asText 的关键区别：**保留空串语义**——空串表示"显式不使用"，
+     * 若像 asText 那样归一成 null 就变成"跟随全局"，两者含义正好相反。</p>
+     */
+    private String toScopeText(Object v, int max) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return "";
+        String joined = Arrays.stream(s.split(","))
+                .map(String::trim)
+                .filter(x -> !x.isEmpty())
+                .distinct()
+                .collect(Collectors.joining(","));
+        if (joined.isEmpty()) return "";
+        return joined.length() > max ? joined.substring(0, max) : joined;
+    }
+
+    /** 三态解析：true/1 → 1，false/0 → 0，null/其它 → null（继承） */
+    private Integer toTri(Object v) {
+        if (v == null) return null;
+        if (v instanceof Boolean b) return b ? 1 : 0;
+        if (v instanceof Number n) return n.intValue() == 0 ? 0 : 1;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        if ("1".equals(s) || "true".equalsIgnoreCase(s)) return 1;
+        if ("0".equals(s) || "false".equalsIgnoreCase(s)) return 0;
+        return null;
+    }
+}

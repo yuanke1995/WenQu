@@ -19,7 +19,7 @@ const fs = require('fs')
 const path = require('path')
 
 const ROOT = path.resolve(__dirname, '..')
-const javaPath = ROOT + '/src/main/java/com/wisesoft/ai/service/ConfigService.java'
+const javaPath = ROOT + '/src/main/java/com/wenqu/ai/service/ConfigService.java'
 const schemaPath = ROOT + '/src/main/resources/config-schema.json'
 
 const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'))

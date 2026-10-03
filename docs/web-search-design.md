@@ -115,7 +115,7 @@ public record WebSearchResult(
 
 ### 3.3 HTTP 客户端
 
-现状：`com.wisesoft.ai` 包内**无任何显式 HTTP 客户端**（无 `WebClient`/`RestTemplate`/`java.net.http` 调用），外部 HTTP 全由 Spring AI / MCP 库内部完成。pom 有 `spring-boot-starter-web`（自带 `RestClient`/`RestTemplateBuilder`）。
+现状：`com.wenqu.ai` 包内**无任何显式 HTTP 客户端**（无 `WebClient`/`RestTemplate`/`java.net.http` 调用），外部 HTTP 全由 Spring AI / MCP 库内部完成。pom 有 `spring-boot-starter-web`（自带 `RestClient`/`RestTemplateBuilder`）。
 
 方案：**`RestClient.builder().build()`**，独立设置连接/读取超时（默认 8s，对齐 `retrieval.searchTimeoutMs`），复用现有 `jsoup` 只做 HTML 剥标签（摘要清洗），不新增依赖。
 

@@ -10,7 +10,7 @@ ALTER TABLE `c_ai_document`  ADD COLUMN `created_by`       VARCHAR(64)  DEFAULT 
 ALTER TABLE `c_ai_agent`     ADD COLUMN `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid）';
 
 -- ========== 2) 管理员账号 admin / admin@2026 ==========
--- 哈希由 com.wisesoft.ai.util.AuthCrypto（PBKDF2WithHmacSHA256 / 120000 轮 / 16 字节盐）生成，已自校验通过
+-- 哈希由 com.wenqu.ai.util.AuthCrypto（PBKDF2WithHmacSHA256 / 120000 轮 / 16 字节盐）生成，已自校验通过
 INSERT INTO `c_ai_user` (`uid`, `username`, `role`, `status`, `password_hash`, `login_fail_count`)
 VALUES ('admin', 'admin', 'superadmin', 1,
         'pbkdf2$120000$hyXgs2nNAlTjBqqiei2Z2g$MWqzWkXruSmYjO90vRwtJ3mZTAoENM0umk6lM59m3I8', 0)

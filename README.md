@@ -463,7 +463,7 @@ spring:
 
 ```
 WenQu/                               # 项目根（git 仓库名 WenQu；本地目录名可自定义）
-├── pom.xml                          # 后端 Maven 项目（com.wisesoft:wenqu，产物 target/wenqu.jar）
+├── pom.xml                          # 后端 Maven 项目（com.wenqu:wenqu，产物 target/wenqu.jar）
 ├── src/main/java/.../ai/
 │   ├── WenQuApplication.java        # 入口
 │   ├── config/                      # SecurityConfig(Token+RBAC) / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler 等
