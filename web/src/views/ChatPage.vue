@@ -613,7 +613,7 @@
             <div class="toolbar-right">
               <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示 -->
               <span v-if="lastTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
-                    @mouseenter="showCtxCap($event.currentTarget, 'top')" @mouseleave="hideCtxCap()">
+                    @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()">
                 <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
                   <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
                   <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
@@ -657,9 +657,8 @@
           <robot-outlined v-else class="rp-agent-ic" />
           <span>{{ currentAgentName }}</span>
         </div>
-        <!-- 悬浮本行看「上下文容量」明细（用量/窗口 + 分类占比 + 缓存命中率） -->
-        <div class="rp-row rp-agent-row rp-model-row"
-             @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()">
+        <!-- 右栏模型行仅展示；上下文容量明细入口统一在输入框工具栏的容量圆环（悬浮弹出） -->
+        <div class="rp-row rp-agent-row rp-model-row">
           <span>模型</span>
           <span class="rp-val" :title="effectiveModel">
             <ProviderIcon :icon="effectiveModelIcon" :name="effectiveModelProvider" :size="14" style="margin-right:4px" />
@@ -916,7 +915,7 @@
       </div>
     </Teleport>
 
-    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环（上方弹出）/ 右栏模型行（侧弹）均唤起（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
+    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
          数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
     <Teleport to="body">
       <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
@@ -1914,7 +1913,7 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 
-// ==================== 上下文容量面板（工具栏圆环/右栏模型行悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
+// ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
 /** 分类展示名与配色（与后端 ctxParts 的键一一对应；占比条按此顺序堆叠） */
 const CTX_PART_META = [
   { key: 'messages', label: '消息', color: '#1677ff' },
@@ -1933,18 +1932,18 @@ const ctxCapPos = ref({ top: 0, left: 0 })
 const ctxCapEl = ref(null)
 let ctxCapTimer = null
 let ctxCapHovered = false
-const showCtxCap = (el, placement = 'side') => {
+const showCtxCap = el => {
   clearTimeout(ctxCapTimer)
   ctxCapTimer = setTimeout(() => {
     if (!el) return
     const rect = el.getBoundingClientRect()
     const w = 300
     let pos
-    if (placement === 'top' && rect.top >= 360) {
-      // 底部工具栏圆环：卡悬在圆环上方、右沿与圆环右沿对齐；上方放不下退回侧弹
+    if (rect.top >= 360) {
+      // 底部工具栏圆环：卡悬在圆环上方、右沿与圆环右沿对齐
       pos = { top: null, bottom: window.innerHeight - rect.top + 10, left: Math.max(8, rect.right - 268) }
     } else {
-      // 面板放不下时翻到行左侧；顶部与行顶对齐（与深度思考面板同一套定位约定）
+      // 上方放不下（矮视口）：退回行侧弹出，顶部与行顶对齐
       const left = rect.right + 10 + w <= window.innerWidth - 8
         ? rect.right + 10
         : Math.max(8, rect.left - 10 - w)
