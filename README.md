@@ -387,7 +387,6 @@ ai-app:
   ratelimit:                               # 接口限流（Redis 固定窗口）
     enabled: ${AI_RATELIMIT_ENABLED:true}
   context:                                 # 上下文与长度控制（设置页可调）
-    model-windows: "qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768"
     cost-cap-tokens: 8000
     max-output-tokens: 2000
     max-context-hits: 8

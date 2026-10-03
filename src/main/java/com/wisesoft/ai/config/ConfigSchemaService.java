@@ -146,7 +146,7 @@ public class ConfigSchemaService {
     }
 
     /**
-     * 字段是否「个人专属」（仅个人设置可配、无系统全局层）。
+     * 字段是否「无全局槽位」（仅个人层或资源级可配，不存在系统全局值）。
      * <p>
      * 用于模型引用这类「值 = 某个用户登记的私有资产」的字段：全局槽位天然会把归属人的模型
      * 用成全平台默认（隔离原则：用户级数据不得被全局消费），故这类键：
@@ -154,6 +154,9 @@ public class ConfigSchemaService {
      *   <li>不出现在管理员设置页（{@link #describe()} 剔除）、管理端保存拒绝；</li>
      *   <li>{@code ConfigService.get} 跳过全局缓存/默认值层——未装载个人值的线程一律视为未配置。</li>
      * </ul>
+     * 消费面随字段而异：parse.qaModel 在个人设置配置；rerank.model 归
+     * 知识库/智能体检索设置绑定（重排项已从个人设置下线）；graphrag.modelRef 已退役——
+     * GraphRAG 抽取回落库主默认聊天模型，不再单独配置。
      */
     public boolean isPersonalOnly(String key) {
         Field f = byKey.get(key);

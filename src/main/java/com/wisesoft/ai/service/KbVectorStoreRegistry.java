@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 知识库向量存储注册中心：按知识库路由 VectorStore（per-KB 向量模型绑定的核心）。
  * <p>
- * 每个库必须绑定自己的向量模型（启动迁移会把遗留裸模型名改写为供应商引用）：懒创建独立
+ * 每个库必须绑定自己的向量模型（必须是可解析的供应商引用）：懒创建独立
  * RedisVectorStore——独立索引 {@code ai-doc-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
  * 独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）。
  * 全局共享索引 ai-doc-index 已退役（spring.ai.vectorstore.type=none 不再装配全局向量库 bean）。
@@ -45,7 +45,7 @@ public class KbVectorStoreRegistry {
 
     /**
      * 按知识库路由向量库：每个库都按自己的绑定模型路由独立索引。
-     * kbId 空 → fail-loud：文档归属在启动迁移后必填，走到这里说明上游传了空库，
+     * kbId 空 → fail-loud：文档归属必填，走到这里说明上游传了空库，
      * 悄悄落到「某个默认库」会写错索引（默认库已每用户化，此处也无从解析归属）。
      */
     public VectorStore storeForKb(String kbId) {
@@ -57,7 +57,7 @@ public class KbVectorStoreRegistry {
         if (custom != null) return custom;
         KnowledgeBase kb = kbService.get(effective);
         if (kb == null || kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
-            // 启动迁移会把历史空绑定回填；走到这里说明向量模型不可用，fail-loud 暴露而不是悄悄写错索引
+            // 历史空绑定不再自动回填；走到这里说明向量模型未绑定，fail-loud 暴露而不是悄悄写错索引
             throw new IllegalStateException("知识库 " + effective + " 未绑定向量模型，无法路由向量库（请在知识库管理中绑定）");
         }
         return byKb.computeIfAbsent(effective, id -> build(kb));

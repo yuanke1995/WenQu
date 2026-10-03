@@ -183,7 +183,7 @@ public class ChatController {
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
                 false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs,
-                request.getReasoningLevel());
+                request.getReasoningLevel(), request.getContextWindow());
         return emitter;
     }
 

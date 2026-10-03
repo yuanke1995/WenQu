@@ -28,10 +28,11 @@ import java.util.Set;
  * - 启动时表空则从 yml/env 默认值灌入
  * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
  *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
- *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model /
- *   graphrag.modelRef / parse.qaModel 为「个人专属键」（schema personalOnly）：值 = 某用户登记的
- *   私有模型，只在个人设置维护、按使用身份解析，全局层不参与读取；仅 eval.judgeModel 等
- *   管理员自用工具保留全局）
+ *   知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认；parse.qaModel 为
+ *   「个人专属键」（schema personalOnly）：值 = 某用户登记的私有模型，只在个人设置维护、
+ *   按使用身份解析，全局层不参与读取（rerank.model 亦 personalOnly，但已归知识库/智能体
+ *   检索设置绑定、个人设置不再配置）；仅 eval.judgeModel 等
+ *   管理员自用工具保留全局）（graphrag.modelRef 亦已退役：抽取回落库主默认聊天模型）
  * - chat.baseUrl / chat.apiKey / chat.completionsPath 支持跨厂商热切换（DynamicOpenAiChatModel
  *   每次请求校验配置指纹、变化即重建，配合 Redis 广播多实例同步生效）；embedding / vision / rerank
  *   各组的网关三要素保留为「遗留纯模型名」的回落网关，不再作为运行时默认
@@ -221,7 +222,7 @@ public class ConfigService {
         d.put("vision.descCacheVersion", "1");                 // 图片描述缓存版本（bump 后全量重新描述）
         d.put("vision.descCacheTtlDays", "180");               // 图片描述缓存有效期(天，0=不过期)
         // embedding.baseUrl/apiKey/embeddingsPath 退役：向量网关统一来自「模型供应商」表（kb.embedding_ref
-        // 引用 → 供应商网关），存量遗留网关信息由 ModelRegistryService 启动迁移读取（修复裸名引用）后不再有读取方
+        // 引用 → 供应商网关），遗留网关信息已无任何读取方
         // 当前向量索引维度（系统记录，非用户可编辑）：按库重嵌入成功后由 putInternal 回写，
         // 供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
         d.put("embedding.dimensions", "");
@@ -243,7 +244,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        d.put("rerank.model", "");                         // 个人专属（personalOnly）：个人设置默认重排模型引用；空=回落 rerank.baseUrl 本地服务
+        d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl 本地服务
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         d.put("context.defaultWindowTokens", String.valueOf(properties.getContext().getDefaultWindowTokens()));
         d.put("context.safetyFactor", String.valueOf(properties.getContext().getSafetyFactor()));
@@ -459,7 +460,8 @@ public class ConfigService {
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
-        d.put("graphrag.modelRef", "");                    // 个人专属（personalOnly）：库主个人兜底抽取模型引用；留空且库内未绑定 = 不抽取
+        // graphrag.modelRef 已退役（2026-10）：GraphRAG 抽取回落库主个人默认聊天模型（User.defaultModel），
+        // 不再单独配置——存量个人键行成为孤儿数据（无读取方）。
         d.put("graphrag.maxTriplesPerChunk", "10");        // P1：单个知识块抽取三元组上限（成本闸）
         d.put("graphrag.batchChunks", "3");                // P1：合并批抽取的块数（3~5 平衡 token 与归属粒度）
         d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）

@@ -128,8 +128,8 @@
         <button class="app-btn" :disabled="fetching" @click="onFetch">
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
         </button>
-        <button class="app-btn" @click="addManualRow">手动添加</button>
-        <span class="pv-hint" style="margin-left:auto">类型可改；窗口/输出按模型名自动预填（请核对官方值），留空用全局默认；保存后生效</span>
+        <button class="app-btn" @click="openModelAdd">添加模型</button>
+        <span class="pv-hint" style="margin-left:auto">拉取/添加后自动分类并预填，点「编辑」细调每个模型；保存后生效</span>
       </div>
 
       <!-- 拉取候选：搜索 + 按行添加（类型在下方表格可改，无需勾选） -->
@@ -158,40 +158,25 @@
         </div>
       </div>
 
-      <!-- 已登记模型 -->
+      <!-- 已登记模型：表格只做速览（展示名/能力/窗口输出只读汇总），配置统一进「编辑模型配置」弹窗 -->
       <a-table :columns="modelCols" :data-source="models" row-key="rowKey" size="small" :pagination="false">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'modelId'">
-            <a-input v-model:value="record.modelId" size="small" placeholder="模型名（调用 API 原样透传）"
-                     :disabled="!record.isNew" style="min-width:150px" @change="onModelIdChange(record)" />
-          </template>
-          <template v-else-if="column.key === 'displayName'">
-            <a-input v-model:value="record.displayName" size="small" placeholder="同模型名" />
+            <div class="pm-mid">
+              <div class="pm-name" :title="record.modelId">{{ record.modelId || '（未填写模型名）' }}</div>
+              <div v-if="record.displayName" class="pm-display">{{ record.displayName }}</div>
+            </div>
           </template>
           <template v-else-if="column.key === 'modelType'">
-            <a-select v-model:value="record.modelType" size="small" :options="typeOptions" style="width:100px"
-                      @change="clearTestState(record)" />
+            <a-tag :color="TYPE_META[record.modelType]?.color" class="pv-type-tag">{{ TYPE_META[record.modelType]?.label }}</a-tag>
+            <a-tag v-if="record.isNew" color="default" class="pv-type-tag">待保存</a-tag>
           </template>
-          <template v-else-if="column.key === 'visionCapable'">
-            <!-- 图片理解三态（自动/支持/不支持）：「聊天+视觉」一体模型标支持后可直接选进视觉槽位，无需重复登记 -->
-            <a-select v-model:value="record.visionCapable" size="small" :options="visionOptions"
-                      style="width:100%" :disabled="!visionApplies(record)" />
-          </template>
-          <template v-else-if="column.key === 'thinking'">
-            <a-select v-model:value="record.thinking" size="small" :options="thinkingOptions"
-                      style="width:100%" :disabled="record.modelType !== 'chat'" />
+          <template v-else-if="column.key === 'caps'">
+            <a-tag v-for="c in capsOf(record)" :key="c" color="blue" class="pv-type-tag">{{ c }}</a-tag>
+            <span v-if="!capsOf(record).length" class="pv-hint">—</span>
           </template>
           <template v-else-if="column.key === 'ctx'">
-            <!-- 上下文窗口/最大输出（模型固有属性声明，NULL=用全局默认）：上下文预算 = 窗口×安全系数−最大输出 -->
-            <a-tooltip title="上下文窗口 / 最大输出 token（留空用全局默认值）。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出">
-              <div class="pv-ctx-pair">
-                <a-input-number v-model:value="record.contextWindow" size="small" :min="1" :step="1000"
-                                placeholder="窗口" class="pv-ctx-num" />
-                <span class="pv-ctx-slash">/</span>
-                <a-input-number v-model:value="record.maxOutput" size="small" :min="1" :step="512"
-                                placeholder="输出" class="pv-ctx-num" />
-              </div>
-            </a-tooltip>
+            <span class="pm-ctx" :title="ctxTitle(record)">{{ ctxText(record) }}</span>
           </template>
           <template v-else-if="column.key === 'enabled'">
             <a-switch v-model:checked="record.enabled" size="small" />
@@ -223,72 +208,176 @@
       </div>
     </a-modal>
 
-    <!-- 单模型高级配置：能力位 + 思考强度 + token 档位（表格只做速览与基础项，改这里） -->
-    <a-modal v-model:open="editOpen" title="编辑模型" :width="560" :mask-closable="false" @ok="applyModelEdit">
+    <!-- 添加/编辑模型配置：全宽表单 + ? 悬浮说明 + 高级配置折叠 + 重置表单（对齐 ZCode 的模型配置交互） -->
+    <a-modal v-model:open="editOpen" :title="editIsNew ? '添加模型' : '编辑模型配置'" :width="600" :mask-closable="false">
+      <template #footer>
+        <div class="pm-footer">
+          <button class="app-link-btn" type="button" @click="resetEditForm">重置表单</button>
+          <div class="pm-footer-actions">
+            <button class="app-btn" type="button" @click="editOpen = false">取消</button>
+            <button class="app-btn primary" type="button" @click="applyModelEdit">确定</button>
+          </div>
+        </div>
+      </template>
       <template v-if="editForm">
-        <div class="pv-edit-name">{{ editForm.modelId || '（未命名模型）' }}</div>
-
-        <div class="pv-edit-section">能力</div>
-        <div class="pv-edit-row">
-          <span class="pv-edit-label">工具调用</span>
-          <a-select v-model:value="editForm.toolCapable" size="small" :options="capOptions" style="width:132px" />
-          <span class="pv-edit-hint">不支持时本轮不下发 Function Calling（部分网关收到 tools 会直接 400）</span>
-        </div>
-        <div class="pv-edit-row">
-          <span class="pv-edit-label">图片输入</span>
-          <a-select v-model:value="editForm.visionCapable" size="small" :options="capOptions" style="width:132px" />
-          <span class="pv-edit-hint">支持时该模型也会出现在视觉模型选择器里，并可让聊天直接读图</span>
-        </div>
-        <div class="pv-edit-row">
-          <span class="pv-edit-label">思考模式</span>
-          <a-select v-model:value="editForm.thinking" size="small" :options="thinkingOptions" style="width:132px" />
-          <span class="pv-edit-hint">思考强度在下方单独配置</span>
-        </div>
-
-        <div class="pv-edit-section">思考强度</div>
-        <div class="pv-edit-row">
-          <span class="pv-edit-label">默认强度</span>
-          <a-select v-model:value="editForm.defaultReasoningLevel" size="small" style="width:180px"
-                    :placeholder="'自动（用请求层默认值）'" allow-clear
-                    :options="defaultLevelOptions" />
-        </div>
-        <div class="pv-edit-row pv-edit-row-top">
-          <span class="pv-edit-label">支持档位</span>
-          <div class="pv-level-grid">
-            <a-checkbox v-for="lv in reasoningLevelOptions" :key="lv.value" :checked="editLevels.includes(lv.value)"
-                        @change="e => toggleEditLevel(lv.value, e.target.checked)">
-              {{ lv.label }}
-            </a-checkbox>
+        <div class="pm-form">
+          <div class="pm-field">
+            <div class="pm-label">
+              模型 ID
+              <a-tooltip title="调用网关 API 时原样透传的模型名，须与服务商文档一致（如 deepseek-chat）。登记后不可改名——各处绑定按「供应商/模型名」寻址，改名等于换模型。">
+                <question-circle-outlined class="pm-q" />
+              </a-tooltip>
+            </div>
+            <a-input v-model:value="editForm.modelId" :disabled="editIdLocked"
+                     placeholder="调用 API 原样透传，如 deepseek-chat" @change="onEditModelIdChange" />
           </div>
-        </div>
-        <div class="pv-edit-hint pv-edit-hint-block">
-          勾选该模型真实支持的强度档位；留空表示只支持思考开关、不支持强度调节。默认强度须在勾选档位内。
-          运行时按厂商方言映射下发（OpenAI reasoning_effort / Claude thinking.budget_tokens / Qwen thinking_budget）。
-        </div>
-
-        <div class="pv-edit-section">Token</div>
-        <div class="pv-edit-row pv-edit-row-top">
-          <div class="pv-edit-token">
-            <span class="pv-edit-label">输入</span>
-            <a-input-number v-model:value="editForm.contextWindow" size="small" :min="1" :step="1024"
-                            placeholder="窗口" style="width:150px" />
-            <div class="pv-quick">
-              <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindow = q">{{ fmtK(q) }}</button>
+          <div class="pm-grid">
+            <div class="pm-field">
+              <div class="pm-label">
+                展示名
+                <a-tooltip title="模型选择器里展示的名称，留空直接用模型 ID。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input v-model:value="editForm.displayName" placeholder="留空同模型 ID" />
+            </div>
+            <div class="pm-field">
+              <div class="pm-label">
+                模型类型
+                <a-tooltip title="决定模型出现在哪些选择器与调用方式：聊天 / 视觉 / OCR 专用 / 向量 / 重排 / 语音 / 全模态。OCR 专用只产出解析文本，不能用于聊天图片理解。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-select v-model:value="editForm.modelType" :options="typeOptions" />
             </div>
           </div>
-        </div>
-        <div class="pv-edit-row pv-edit-row-top">
-          <div class="pv-edit-token">
-            <span class="pv-edit-label">输出</span>
-            <a-input-number v-model:value="editForm.maxOutput" size="small" :min="1" :step="1024"
-                            placeholder="输出" style="width:150px" />
-            <div class="pv-quick">
-              <button v-for="q in outputPresets" :key="q" class="app-link-btn" @click="editForm.maxOutput = q">{{ fmtK(q) }}</button>
+          <div class="pm-grid">
+            <div class="pm-field">
+              <div class="pm-label">
+                上下文窗口
+                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。留空用全局默认。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input-number v-model:value="editForm.contextWindow" :min="1" :step="1024"
+                              placeholder="如 131072" style="width:100%" />
+              <div class="pm-presets">
+                <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindow = q">{{ fmtK(q) }}</button>
+              </div>
+            </div>
+            <div class="pm-field">
+              <div class="pm-label">
+                最大输出 Token
+                <a-tooltip title="单次回复最多生成的 token 数，必须小于上下文预算，否则该模型下检索资料无法填入。留空用全局默认。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input-number v-model:value="editForm.maxOutput" :min="1" :step="1024"
+                              placeholder="如 8192" style="width:100%" />
+              <div class="pm-presets">
+                <button v-for="q in outputPresets" :key="q" class="app-link-btn" @click="editForm.maxOutput = q">{{ fmtK(q) }}</button>
+              </div>
+            </div>
+            <div class="pm-field">
+              <div class="pm-label">
+                最小窗口
+                <a-tooltip title="聊天页模型面板可选的窗口档位下界：用户可在 最小窗口~上下文窗口 间调档，默认用窗口上限。留空=该模型窗口不可调。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input-number v-model:value="editForm.contextWindowMin" :min="1" :step="1024"
+                              placeholder="留空=不可调" style="width:100%" />
+              <div class="pm-presets">
+                <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindowMin = q">{{ fmtK(q) }}</button>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="pv-edit-hint pv-edit-hint-block">
-          留空用全局默认。上下文预算 = 窗口×安全系数−输出，输出必须小于预算，否则该模型下检索资料无法填入。
+          <div class="pm-hint">
+            留空用全局默认。上下文预算 = 窗口 × 安全系数 − 最大输出，检索资料按预算填入。
+            <span v-if="budgetConflict" class="pm-hint-bad">当前「最大输出」已不小于窗口，检索资料将无法填入。</span>
+          </div>
+
+          <!-- 高级配置：能力位 + 思考（仅对话类模型；向量/重排/OCR/语音是能力型类型，无对话能力可配）。默认展开：能力项是登记模型最常核对的信息 -->
+          <a-collapse ghost class="pm-advanced" :default-active-key="['adv']">
+            <a-collapse-panel key="adv" header="高级配置">
+              <template v-if="editCapApplies">
+                <div class="pm-field">
+                  <div class="pm-label">
+                    图片输入
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>设置模型能否接收图片输入（多模态）：</div>
+                        <div>· 支持：可被选为视觉模型，聊天中可直接读图</div>
+                        <div>· 自动：按模型类型与名称智能判定</div>
+                        <div>· 不支持：明确禁用，即使模型名带 VL 也不放行</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <a-segmented v-model:value="editForm.visionCapable" :options="triOptions" size="small" />
+                </div>
+                <div v-if="editToolApplies" class="pm-field">
+                  <div class="pm-label">
+                    工具调用
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>是否支持 Function Calling（工具调用）：</div>
+                        <div>· 支持：正常下发工具</div>
+                        <div>· 自动：按类型判定（聊天 / 全模态默认支持）</div>
+                        <div>· 不支持：对话时不下发 tools——部分网关收到 tools 会直接报 400</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <a-segmented v-model:value="editForm.toolCapable" :options="triOptions" size="small" />
+                </div>
+                <div v-if="editChatOnly" class="pm-field">
+                  <div class="pm-label">
+                    思考模式
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>思考能力的开关形态：</div>
+                        <div>· 自动：按模型名判定</div>
+                        <div>· 不支持：聊天页不出现深度思考入口</div>
+                        <div>· 可开关：用户可开 / 关思考</div>
+                        <div>· 恒思考：始终思考，无法关闭</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <a-segmented v-model:value="editForm.thinking" :options="thinkingOptions" size="small" />
+                </div>
+                <div class="pm-field">
+                  <div class="pm-label">
+                    思考强度档位
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>勾选该模型真实支持的强度档位（由弱到强），留空 = 只支持思考开关、不支持强度调节。</div>
+                        <div>运行时按厂商方言自动映射下发（OpenAI reasoning_effort / Claude thinking.budget_tokens / Qwen thinking_budget），无需手填参数。</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <div class="pm-chips">
+                    <a-checkable-tag v-for="lv in reasoningLevelOptions" :key="lv.value"
+                                     :checked="editLevels.includes(lv.value)"
+                                     @change="c => toggleEditLevel(lv.value, c)">{{ lv.label }}</a-checkable-tag>
+                  </div>
+                </div>
+                <div class="pm-field">
+                  <div class="pm-label">
+                    默认思考强度
+                    <a-tooltip title="开启深度思考时默认使用的档位，须在已勾选档位内；留空由网关默认决定。">
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <a-select v-model:value="editForm.defaultReasoningLevel" style="width:220px" allow-clear
+                            placeholder="自动（由网关默认决定）" :options="defaultLevelOptions" />
+                </div>
+              </template>
+              <div v-else class="pm-hint">向量 / 重排 / OCR / 语音是能力型类型，无需配置对话能力。</div>
+            </a-collapse-panel>
+          </a-collapse>
         </div>
       </template>
     </a-modal>
@@ -299,7 +388,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { authUser } from '../utils/auth'
@@ -654,15 +743,14 @@ const fetching = ref(false)
 const savingModels = ref(false)
 let rowSeq = 0
 
+// 表格只做速览：模型名（含展示名副行）/ 类型 / 能力 / 窗口输出，配置进「编辑模型配置」弹窗
 const modelCols = [
   { title: '模型名', key: 'modelId' },
-  { title: '展示名', key: 'displayName', width: 120 },
-  { title: '类型', key: 'modelType', width: 80 },
-  { title: '图片理解', key: 'visionCapable', width: 84 },
-  { title: '思考', key: 'thinking', width: 84 },
-  { title: '窗口 / 输出', key: 'ctx', width: 156 },
-  { title: '启用', key: 'enabled', width: 44 },
-  { title: '操作', key: 'action', width: 178 }
+  { title: '类型', key: 'modelType', width: 108 },
+  { title: '能力', key: 'caps', width: 136 },
+  { title: '窗口 / 输出', key: 'ctx', width: 104 },
+  { title: '启用', key: 'enabled', width: 56 },
+  { title: '操作', key: 'action', width: 172 }
 ]
 
 // 思考能力选项（auto=按模型名判定）；仅对聊天模型有意义，其他类型存了也不生效
@@ -673,26 +761,23 @@ const thinkingOptions = [
   { label: '恒思考', value: 'always' }
 ]
 
-// 图片理解能力选项（auto=按类型与模型名自动判定）：「聊天+视觉」一体模型（gpt-4o/gemini/deepseek-vl 等）
-// 标「支持」即可直接选进视觉模型槽位，无需再单独登记一个纯视觉模型
-const visionOptions = [
-  { label: '自动', value: 'auto' },
-  { label: '支持', value: '1' },
-  { label: '不支持', value: '0' }
-]
 /** 图片理解仅对话类类型有意义（向量/重排/OCR/语音没有图片理解可言），其余类型禁选并按自动保存 */
 const visionApplies = record => ['chat', 'vision', 'omni'].includes(record.modelType)
 
-// ==================== 单模型高级配置弹窗 ====================
+// ==================== 模型配置表单（添加/编辑共用弹窗） ====================
 const editOpen = ref(false)
+/** 是否新增模式（编辑已有行时模型 ID 锁定：各处绑定按「供应商/模型名」寻址，改名等于换模型） */
+const editIsNew = ref(false)
+const editIdLocked = ref(false)
 /** 编辑中的行副本（改完写回原行，不直接动表格数据，取消即放弃） */
 const editForm = ref(null)
-const editRowKey = ref('')
+/** 编辑目标行（重置表单 / 写回定位用；新增模式为空） */
+const editSourceKey = ref('')
 /** 编辑副本的档位集合（勾选项，与 record.reasoningLevels 数组同步） */
 const editLevels = ref([])
 
-/** 能力位三态选项（工具调用/图片输入共用） */
-const capOptions = [
+/** 能力三态选项（图片输入/工具调用共用）：auto=按类型与模型名自动判定 */
+const triOptions = [
   { label: '自动', value: 'auto' },
   { label: '支持', value: '1' },
   { label: '不支持', value: '0' }
@@ -716,24 +801,73 @@ const inputPresets = [32768, 65536, 131072, 262144]
 const outputPresets = [8192, 16384, 32768, 65536]
 const fmtK = n => (n % 1024 === 0 ? `${n / 1024}K` : `${Math.round(n / 1024)}K`)
 
-const openModelEdit = record => {
-  editForm.value = {
-    modelId: record.modelId,
-    modelType: record.modelType,
-    toolCapable: record.toolCapable || 'auto',
-    visionCapable: record.visionCapable || 'auto',
-    thinking: record.thinking || 'auto',
-    defaultReasoningLevel: record.defaultReasoningLevel || undefined,
-    contextWindow: record.contextWindow ?? null,
-    maxOutput: record.maxOutput ?? null
-  }
-  editLevels.value = Array.isArray(record.reasoningLevels) ? [...record.reasoningLevels] : []
-  editRowKey.value = record.rowKey
+/** 类型门控（与后端 saveModels 的归一口径一致）：图片/档位=对话类，工具=聊天/全模态，思考模式=聊天 */
+const editCapApplies = computed(() => visionApplies(editForm.value || {}))
+const editToolApplies = computed(() => ['chat', 'omni'].includes(editForm.value?.modelType))
+const editChatOnly = computed(() => editForm.value?.modelType === 'chat')
+/** 输出 ≥ 窗口时预算必不够用（精确校验带安全系数，由后端保存时把关，这里提示明显错误） */
+const budgetConflict = computed(() => {
+  const f = editForm.value
+  return !!f && f.contextWindow != null && f.maxOutput != null && f.maxOutput >= f.contextWindow
+})
+
+const blankEditForm = () => ({
+  modelId: '', displayName: '', modelType: 'chat',
+  visionCapable: 'auto', toolCapable: 'auto', thinking: 'auto',
+  defaultReasoningLevel: undefined, contextWindow: null, contextWindowMin: null, maxOutput: null
+})
+
+const openModelAdd = () => {
+  editIsNew.value = true
+  editIdLocked.value = false
+  editSourceKey.value = ''
+  editForm.value = blankEditForm()
+  editLevels.value = []
   editOpen.value = true
 }
 
+const openModelEdit = record => {
+  editIsNew.value = false
+  editIdLocked.value = !record.isNew   // 未保存的新行仍可改模型名
+  editSourceKey.value = record.rowKey
+  editForm.value = {
+    modelId: record.modelId,
+    displayName: record.displayName || '',
+    modelType: record.modelType || 'chat',
+    visionCapable: record.visionCapable || 'auto',
+    toolCapable: record.toolCapable || 'auto',
+    thinking: record.thinking || 'auto',   // 登记原值（auto 保持自动，不写死解析结果）
+    defaultReasoningLevel: record.defaultReasoningLevel || undefined,
+    contextWindow: record.contextWindow ?? null,
+    contextWindowMin: record.contextWindowMin ?? null,
+    maxOutput: record.maxOutput ?? null
+  }
+  editLevels.value = Array.isArray(record.reasoningLevels) ? [...record.reasoningLevels] : []
+  editOpen.value = true
+}
+
+/** 重置表单：编辑回到该行打开时的值，新增清空 */
+const resetEditForm = () => {
+  if (!editIsNew.value) {
+    const src = models.value.find(m => m.rowKey === editSourceKey.value)
+    if (src) { openModelEdit(src); return }
+  }
+  editForm.value = blankEditForm()
+  editLevels.value = []
+}
+
+/** 新增时按模型家族预填窗口/输出（两项都已填就不覆盖） */
+const onEditModelIdChange = () => {
+  const f = editForm.value
+  if (editIsNew.value && f && f.contextWindow == null && f.maxOutput == null && f.contextWindowMin == null) {
+    const g = guessCtx(f.modelId)
+    if (g) Object.assign(f, g)
+  }
+}
+
 const toggleEditLevel = (lv, checked) => {
-  const next = checked
+  const on = typeof checked === 'boolean' ? checked : !editLevels.value.includes(lv)
+  const next = on
       ? [...editLevels.value, lv].sort(
           (a, b) => reasoningLevelOptions.findIndex(x => x.value === a) - reasoningLevelOptions.findIndex(x => x.value === b))
       : editLevels.value.filter(x => x !== lv)
@@ -744,18 +878,77 @@ const toggleEditLevel = (lv, checked) => {
   }
 }
 
+/** 确定：校验后写回待保存列表（新增则插入一行「待保存」），统一由「保存（N 个启用）」入库 */
 const applyModelEdit = () => {
-  const target = models.value.find(m => m.rowKey === editRowKey.value)
-  if (target && editForm.value) {
-    target.toolCapable = editForm.value.toolCapable
-    target.visionCapable = editForm.value.visionCapable
-    target.thinking = editForm.value.thinking
-    target.contextWindow = editForm.value.contextWindow
-    target.maxOutput = editForm.value.maxOutput
-    target.reasoningLevels = [...editLevels.value]
-    target.defaultReasoningLevel = editForm.value.defaultReasoningLevel || null
+  const f = editForm.value
+  if (!f) return
+  const modelId = (f.modelId || '').trim()
+  if (!modelId) {
+    message.warning('请填写模型 ID')
+    return
+  }
+  const dup = models.value.find(m => m.modelId === modelId && m.rowKey !== (editIsNew.value ? '' : editSourceKey.value))
+  if (dup) {
+    message.warning(`模型 ${modelId} 已在本供应商登记`)
+    return
+  }
+  if (f.contextWindow != null && f.maxOutput != null && f.maxOutput >= f.contextWindow) {
+    message.warning('最大输出必须小于上下文窗口，否则该模型下检索资料无法填入')
+    return
+  }
+  const cap = visionApplies(f)
+  const norm = {
+    modelId,
+    displayName: (f.displayName || '').trim(),
+    modelType: f.modelType || 'chat',
+    // 类型不适用时归一为自动（与保存时的归一口径一致，避免禁选态残留旧值）
+    visionCapable: cap ? (f.visionCapable || 'auto') : 'auto',
+    toolCapable: ['chat', 'omni'].includes(f.modelType) ? (f.toolCapable || 'auto') : 'auto',
+    thinking: f.modelType === 'chat' ? (f.thinking || 'auto') : 'auto',
+    reasoningLevels: cap ? [...editLevels.value] : [],
+    defaultReasoningLevel: cap ? (f.defaultReasoningLevel || null) : null,
+    contextWindow: f.contextWindow ?? null,
+    contextWindowMin: f.contextWindowMin ?? null,
+    maxOutput: f.maxOutput ?? null
+  }
+  if (editIsNew.value) {
+    models.value.push({
+      rowKey: 'new-' + (++rowSeq), id: undefined, isNew: true, enabled: true,
+      thinkingResolved: undefined, visionResolved: false, ...norm
+    })
+  } else {
+    const target = models.value.find(m => m.rowKey === editSourceKey.value)
+    if (!target) return
+    if (target.modelType !== norm.modelType) clearTestState(target)  // 类型影响探测口径，旧结果作废
+    Object.assign(target, norm)
   }
   editOpen.value = false
+}
+
+// ==================== 表格速览（只读汇总） ====================
+/** 能力标签：对话类模型展示图片/思考速览（已登记行用后端解析结果，新行只显示显式标记） */
+const capsOf = r => {
+  if (!visionApplies(r)) return []
+  const out = []
+  if (r.visionResolved || r.visionCapable === '1') out.push('图片')
+  const t = r.isNew ? r.thinking : (r.thinkingResolved || r.thinking)
+  if (t && t !== 'none' && t !== 'auto') {
+    out.push(r.reasoningLevels?.length ? `思考·${r.reasoningLevels.length}档` : '思考')
+  }
+  return out
+}
+const ctxText = r => {
+  if (r.contextWindow == null && r.contextWindowMin == null && r.maxOutput == null) return '全局默认'
+  const win = r.contextWindowMin != null && r.contextWindow != null
+    ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}`
+    : (r.contextWindow ? fmtK(r.contextWindow) : '默认')
+  return `${win} / ${r.maxOutput ? fmtK(r.maxOutput) : '默认'}`
+}
+const ctxTitle = r => {
+  const win = r.contextWindowMin != null && r.contextWindow != null
+    ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}（可调）`
+    : String(r.contextWindow ?? '默认')
+  return `上下文窗口 ${win} / 最大输出 ${r.maxOutput ?? '默认'} token（窗口留空用全局默认；最小窗口留空=聊天页不可调档）`
 }
 
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */
@@ -765,19 +958,19 @@ const testState = record => testStates.value[record.rowKey] || { loading: false,
 // 常见模型家族的窗口/输出预填建议：纯表单便利（官方数值随版本会变，保存前请核对），运行时不读它，
 // 留空/清空即回落全局默认——避免重蹈旧「模型窗口映射」写死数值过时变化石的覆辙
 const MODEL_PRESET_HINTS = [
-  { kw: 'deepseek', window: 65536, output: 8192 },
-  { kw: 'qwen', window: 131072, output: 8192 },
-  { kw: 'glm', window: 131072, output: 8192 },
-  { kw: 'gpt', window: 128000, output: 16384 },
-  { kw: 'claude', window: 200000, output: 8192 },
-  { kw: 'gemini', window: 1048576, output: 65536 },
-  { kw: 'kimi', window: 131072, output: 8192 },
-  { kw: 'moonshot', window: 131072, output: 8192 }
+  { kw: 'deepseek', window: 131072, min: 32768, output: 8192 },
+  { kw: 'qwen', window: 131072, min: 32768, output: 8192 },
+  { kw: 'glm', window: 131072, min: 32768, output: 8192 },
+  { kw: 'gpt', window: 128000, min: 32768, output: 16384 },
+  { kw: 'claude', window: 200000, min: 65536, output: 8192 },
+  { kw: 'gemini', window: 1048576, min: 131072, output: 65536 },
+  { kw: 'kimi', window: 131072, min: 32768, output: 8192 },
+  { kw: 'moonshot', window: 131072, min: 32768, output: 8192 }
 ]
 const guessCtx = modelId => {
   const id = (modelId || '').toLowerCase()
   const hit = MODEL_PRESET_HINTS.find(p => id.includes(p.kw))
-  return hit ? { contextWindow: hit.window, maxOutput: hit.output } : null
+  return hit ? { contextWindow: hit.window, contextWindowMin: hit.min, maxOutput: hit.output } : null
 }
 
 /** 新增行填写模型名后按家族预填窗口/输出（两项任一已填/手改过就不覆盖） */
@@ -785,11 +978,6 @@ const applyCtxPreset = record => {
   if (!record.isNew || record.contextWindow != null || record.maxOutput != null) return
   const g = guessCtx(record.modelId)
   if (g) Object.assign(record, g)
-}
-
-const onModelIdChange = record => {
-  clearTestState(record)
-  applyCtxPreset(record)
 }
 
 /** 模型名/类型改动后旧测试结果失效，清除 */
@@ -857,12 +1045,16 @@ const openModels = async p => {
     models.value = ((r && r.data) || []).map(m => ({
       rowKey: 'db-' + m.id, id: m.id,
       modelId: m.modelId, displayName: m.displayName || '',
-      modelType: m.modelType || 'chat', thinking: m.thinking || 'auto',
+      modelType: m.modelType || 'chat',
+      thinking: m.thinkingRaw || 'auto',            // 登记原值（编辑回填用，避免 auto 被解析结果写死）
+      thinkingResolved: m.thinking || 'auto',       // 解析结果（auto 已按模型名判定，速览标签用）
       visionCapable: m.visionCapable == null ? 'auto' : String(m.visionCapable),
+      visionResolved: !!m.visionResolved,           // 图片能力解析结果（速览标签用）
       toolCapable: m.toolCapable == null ? 'auto' : String(m.toolCapable),
       reasoningLevels: Array.isArray(m.reasoningLevels) ? [...m.reasoningLevels] : [],
       defaultReasoningLevel: m.defaultReasoningLevel || null,
-      contextWindow: m.contextWindow ?? null, maxOutput: m.maxOutput ?? null,
+      contextWindow: m.contextWindow ?? null, contextWindowMin: m.contextWindowMin ?? null,
+      maxOutput: m.maxOutput ?? null,
       enabled: m.enabled !== false, isNew: false
     }))
   } catch (e) {
@@ -896,7 +1088,7 @@ const addCandidate = c => {
     rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '', thinking: 'auto',
     modelType: c.guessedType, visionCapable: c.guessVisionCapable ? '1' : 'auto',
     toolCapable: 'auto', reasoningLevels: [], defaultReasoningLevel: null,
-    contextWindow: null, maxOutput: null, enabled: true, isNew: true
+    contextWindow: null, contextWindowMin: null, maxOutput: null, enabled: true, isNew: true
   }
   applyCtxPreset(row)
   models.value.push(row)
@@ -910,15 +1102,6 @@ const importAllCandidates = () => {
     added++
   }
   message.success(added ? `已加入 ${added} 个待保存模型` : '没有可导入的新模型')
-}
-
-const addManualRow = () => {
-  models.value.push({
-    rowKey: 'new-' + (++rowSeq), modelId: '', displayName: '', thinking: 'auto',
-    modelType: 'chat', visionCapable: 'auto', toolCapable: 'auto',
-    reasoningLevels: [], defaultReasoningLevel: null,
-    contextWindow: null, maxOutput: null, enabled: true, isNew: true
-  })
 }
 
 const removeRow = async record => {
@@ -941,6 +1124,7 @@ const saveModels = async () => {
       reasoningLevels: visionApplies(m) ? (m.reasoningLevels || []) : [],
       defaultReasoningLevel: visionApplies(m) ? (m.defaultReasoningLevel || null) : null,
       contextWindow: m.contextWindow || null,
+      contextWindowMin: m.contextWindowMin || null,
       maxOutput: m.maxOutput || null,
       enabled: m.enabled !== false
     }))
@@ -982,10 +1166,6 @@ onMounted(async () => {
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
 .batch-del { color: var(--app-danger); }
 .pv-check { flex: none; }
-/* 窗口/输出双数字输入：等宽小输入框夹一个斜杠分隔符 */
-.pv-ctx-pair { display: flex; align-items: center; gap: 4px; }
-.pv-ctx-num { flex: 1; min-width: 0; }
-.pv-ctx-slash { color: var(--app-text3); flex: none; }
 /* 内边距/滚动由 .app-page-body 提供（与智能体/技能/MCP 同一套骨架），此处只放网格与卡片细节 */
 .pv-grid {
   display: grid;
@@ -1048,30 +1228,39 @@ onMounted(async () => {
 .pv-models-footer { margin-top: 12px; display: flex; align-items: center; gap: 10px; }
 .app-btn.primary { background: var(--app-accent); color: #fff; }
 
-/* ==================== 单模型高级配置弹窗 ==================== */
-.pv-edit-name {
-  font-size: 15px; font-weight: 600; color: var(--app-text);
-  padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid var(--app-border);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* ==================== 模型管理表格速览列 ==================== */
+.pm-mid { min-width: 0; }
+.pm-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-display { font-size: 12px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-ctx { font-size: 12px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
+
+/* ==================== 模型配置表单弹窗（对齐 ZCode：全宽字段 + ? 提示 + 高级折叠） ==================== */
+.pm-form { padding-top: 2px; }
+.pm-field { margin-bottom: 14px; }
+.pm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.pm-label {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 13px; color: var(--app-text2); margin-bottom: 6px;
 }
-.pv-edit-section {
-  font-size: 12px; color: var(--app-text3); margin: 16px 0 8px;
-  padding-bottom: 6px; border-bottom: 1px solid var(--app-border);
+.pm-q { color: var(--app-text3); font-size: 13px; cursor: help; }
+.pm-presets { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pm-presets .app-link-btn {
+  padding: 1px 8px; border: 1px solid var(--app-border); border-radius: 6px; font-size: 12px;
 }
-.pv-edit-section:first-of-type { margin-top: 10px; }
-.pv-edit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-/* 多行内容（档位网格/token 组）顶部对齐，避免标签被拉高居中 */
-.pv-edit-row-top { align-items: flex-start; }
-.pv-edit-label { width: 60px; flex: none; font-size: 13px; color: var(--app-text2); }
-.pv-edit-hint { font-size: 12px; color: var(--app-text3); line-height: 1.5; }
-.pv-edit-hint-block { margin: -2px 0 12px 70px; }
-.pv-level-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; flex: 1;
+.pm-presets .app-link-btn:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.pm-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
+.pm-hint-bad { color: var(--app-danger); }
+.pm-advanced { margin: 2px 0 0; }
+.pm-advanced :deep(.ant-collapse-header) { padding: 8px 0; font-size: 13px; color: var(--app-text2); }
+.pm-advanced :deep(.ant-collapse-content-box) { padding: 4px 0 0 !important; }
+.pm-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pm-chips :deep(.ant-tag-checkable) {
+  margin: 0; padding: 1px 10px; font-size: 12px; line-height: 20px;
+  border: 1px solid var(--app-border); border-radius: 6px; color: var(--app-text3);
 }
-.pv-edit-token { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pv-quick { display: flex; align-items: center; gap: 8px; }
-.pv-quick .app-link-btn {
-  padding: 2px 8px; border: 1px solid var(--app-border); border-radius: 6px; font-size: 12px;
+.pm-chips :deep(.ant-tag-checkable-checked) {
+  border-color: var(--app-accent); color: var(--app-accent); background: #e6f4ff;
 }
-.pv-quick .app-link-btn:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.pm-footer { display: flex; align-items: center; }
+.pm-footer-actions { margin-left: auto; display: flex; gap: 8px; }
 </style>

@@ -51,22 +51,8 @@
       </div>
     </div>
 
-    <!-- 「配置了效果更好」（仅抽屉 scope=all 显示）：可选增强，配了体验更好、不配自动回落默认方案。
-         弱化建议形态：徽标灰、无琥珀待办感；「去配置」直达个人设置对应面板（?panel= 深链） -->
-    <template v-if="scope === 'all' && setupGuide.settingsLoaded">
-      <div class="sg-adv-head">
-        <span class="sg-adv-title">配置了效果更好</span>
-        <span class="sg-adv-tip">可选 · 不配置会自动回落默认方案，不影响使用</span>
-      </div>
-      <div v-for="a in advItems" :key="a.key" class="sg-item sg-adv" :class="{ done: a.done }">
-        <span class="sg-badge" :class="{ ok: a.done }">{{ a.done ? '✓' : '+' }}</span>
-        <div class="sg-main">
-          <div class="sg-title">{{ a.title }}</div>
-          <div class="sg-desc">{{ a.desc }}</div>
-        </div>
-        <button v-if="!a.done" class="app-link-btn sg-adv-go" @click="goProfile(a.panel)">去配置</button>
-      </div>
-    </template>
+    <!-- 「配置了效果更好」进阶建议区已整体下线：视觉/重排/兜底抽取建议项均已退役
+         （重排归知识库检索设置绑定；抽取回落库主默认聊天模型）——必配层配完引导即消失 -->
 
     <div class="sg-note">模型供应商与模型按成员各自配置（谁建归谁），仅本人可用；配置随时可在「个人设置」修改。</div>
   </div>
@@ -78,8 +64,8 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { setUserPreference } from '../api.js'
 import { isAdminSync, menuHasPath } from '../utils/auth.js'
-import { advGraphReady, advRerankReady, chatReady, defaultReady, embeddingReady,
-         refreshSetupGuide, rerankDeclined, setupGuide } from '../utils/setupGuide.js'
+import { chatReady, defaultReady, embeddingReady,
+         refreshSetupGuide, setupGuide } from '../utils/setupGuide.js'
 import ModelSelect from './ModelSelect.vue'
 
 /**
@@ -100,18 +86,6 @@ const canManage = computed(() => Boolean(isAdminSync() || menuHasPath('/agents')
 const goNewProvider = () => {
   emit('close')
   router.push('/agents?tab=providers&action=new-provider')
-}
-
-// 进阶建议项（跳个人设置对应面板：重排/兜底在「聊天模型与偏好」的模型默认区）
-const advItems = computed(() => [
-  { key: 'rerank', done: advRerankReady.value, panel: 'chat', hidden: rerankDeclined.value,
-    title: '重排模型', desc: '检索结果按相关性精排，回答更准（需同时开启重排开关）' },
-  { key: 'graph', done: advGraphReady.value, panel: 'chat',
-    title: '兜底抽取模型', desc: '知识库 GraphRAG 未单独绑定抽取模型时的兜底（不配则不抽取）' }
-].filter(a => !a.hidden))
-const goProfile = panel => {
-  emit('close')
-  router.push({ path: '/profile', query: { panel } })
 }
 
 // ② 选完即存：setUserPreference 为部分更新（缺省字段不动），不会误清其他偏好字段
@@ -167,10 +141,4 @@ watch(() => setupGuide.chatModels.length, () => { if (msRef.value) msRef.value.r
 }
 /* 卡片形态（对话页欢迎区）：弱边框浅底，宽度与示例问题栅格对齐 */
 .sg-card { gap: 0; padding: 6px 14px 12px; border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-panel-2); text-align: left; max-width: 560px; }
-/* 「配置了效果更好」区：与必配区用虚线分隔，徽标灰化弱化待办感，去配置链接靠行尾 */
-.sg-adv-head { display: flex; align-items: baseline; gap: 8px; margin: 10px 4px 0; padding-top: 10px; border-top: 1px dashed var(--app-border); }
-.sg-adv-title { font-size: 12px; font-weight: 600; color: var(--app-text2); flex: none; }
-.sg-adv-tip { font-size: 11px; color: var(--app-text3); min-width: 0; }
-.sg-adv .sg-badge { color: var(--app-text3); background: var(--app-panel-2); border-color: transparent; }
-.sg-adv-go { flex: none; align-self: center; }
 </style>

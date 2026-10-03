@@ -66,7 +66,7 @@ public class UserConfigService {
      * 只下发个人字段用到的 tips 文案，避免整包文案过大。
      * <p>
      * 键口径：页面以**表单 path** 为键（与 fields[].path、提交键一致）；存储与运行键是
-     * backendKey——个别字段两者不同（rerank.enabled 的表单 path 是 retrieval.rerank.enabled），
+     * backendKey——个别字段两者不同（如 upload.maxFileSize 的表单 path 是 upload.maxFileSizeMB），
      * 这里统一映射，页面无感。
      */
     public Map<String, Object> describe(String uid) {
@@ -125,7 +125,7 @@ public class UserConfigService {
 
         for (Map.Entry<String, Object> e : body.entrySet()) {
             String rawKey = e.getKey();
-            // 表单 path → 运行键（如 retrieval.rerank.enabled → rerank.enabled）：个人值按运行键存储，
+            // 表单 path → 运行键（如 upload.maxFileSizeMB → upload.maxFileSize）：个人值按运行键存储，
             // 才能被 ConfigService.get / 检索覆盖读到；存储键同时是后续读取的唯一索引
             String key = schema.backendKeyOf(rawKey);
             if (key == null || !schema.isPersonal(key)) {
@@ -157,23 +157,6 @@ public class UserConfigService {
             saved.put(key, v);
         }
 
-        // 选了「默认重排模型」却没开「启用重排」= 配了不生效：与知识库弹窗同口径，自动补开个人开关。
-        // 仅在本轮未显式提交开关、且此前没有个人开关行（未明确关过）时补——不覆盖用户的明确选择
-        boolean enabledSubmitted = false;
-        for (String k : body.keySet()) {
-            if ("rerank.enabled".equals(schema.backendKeyOf(k))) { enabledSubmitted = true; break; }
-        }
-        String rerankModel = saved.get("rerank.model");
-        if (rerankModel != null && !rerankModel.isBlank()
-                && !enabledSubmitted && !existing.containsKey("rerank.enabled")) {
-            UserConfig row = new UserConfig();
-            row.setUid(uid);
-            row.setConfigKey("rerank.enabled");
-            row.setConfigValue("true");
-            userConfigMapper.insert(row);
-            saved.put("rerank.enabled", "true");
-            log.info("[UserConfig] 已自动开启个人「启用重排」uid={}（选了重排模型但未显式设置开关）", uid);
-        }
         log.info("[UserConfig] 个人配置已更新 uid={} keys={}", uid, saved.keySet());
         return saved;
     }

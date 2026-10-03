@@ -14,6 +14,7 @@
     show-search
     option-filter-prop="label"
     @change="onChange"
+    @dropdown-visible-change="v => emit('open-change', v)"
   >
     <template #suffixIcon>
       <loading-outlined v-if="loading" spin class="ms-caret" />
@@ -26,11 +27,15 @@
          含供应商 UUID 的引用串；补一个隐藏选项让触发器只显示模型 id 部分 -->
     <a-select-option v-if="orphanRef" :value="orphanRef" :label="orphanLabel" class="ms-orphan" />
     <a-select-opt-group v-for="g in groups" :key="g.providerId" :label="g.name">
+      <!-- 行悬浮事件挂 option 上：rc-select 会把 option 的额外事件铺到行根元素（含行内边距区），
+           统一转成 option-hover(ref, 行元素) 透传，父层据此按悬浮行弹 per-item 面板（聊天页深度思考） -->
       <a-select-option
         v-for="m in g.models"
         :key="m.ref"
         :value="m.ref"
         :label="m.displayName"
+        @mouseenter="emitOptionHover(m.ref, $event)"
+        @mouseleave="emitOptionHover('', $event)"
       />
     </a-select-opt-group>
     <!-- 下拉行自绘（品牌图标+名称，图标按 value 反查 groups）；触发器只显示 label 纯文本 -->
@@ -62,6 +67,7 @@ import ProviderIcon from './ProviderIcon.vue'
  * 值为模型引用串 `{providerId}/{modelId}`（后端 DynamicOpenAiChatModel 据此路由到对应供应商网关）。
  * inheritLabel 传入时在首位加「跟随全局」空值选项（'' = 继承，如智能体的「跟随全局模型」）。
  * pill=true 时渲染成对话工具栏用的紧凑胶囊（与智能体胶囊同构），默认为设置页的常规选框。
+ * 事件：option-hover(ref, rowEl) 下拉模型行悬浮/离开（ref=''=离开）、open-change(open) 下拉开合。
  */
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -80,7 +86,7 @@ const props = defineProps({
   /** 空数据时是否提示管理员去「模型供应商」页登记（非管理员界面可不提示） */
   adminTipVisible: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:modelValue', 'change'])
+const emit = defineEmits(['update:modelValue', 'change', 'option-hover', 'open-change'])
 
 const groups = ref([])
 const loading = ref(false)
@@ -123,6 +129,12 @@ function onChange(v) {
   // 清空时 antd 返回 undefined，统一归一为 ''（=未指定/继承）
   emit('update:modelValue', v || '')
   emit('change', v || '')
+}
+
+/** 下拉行悬浮透传：value=模型引用、''=离开行；rowEl 为行根元素（同步捕获，供父层定位弹层）。
+ *  未监听时是 no-op，不影响其它页面的既有用法 */
+function emitOptionHover(value, e) {
+  emit('option-hover', value, e && e.currentTarget ? e.currentTarget : null)
 }
 
 // 引用失配检测：值解析不到任何选项时为真（ref = providerId/modelId，providerId 不含斜杠，

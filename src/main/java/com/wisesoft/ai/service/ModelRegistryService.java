@@ -35,8 +35,8 @@ import java.util.regex.Pattern;
  * 所有存模型的位置（agent.model / 用户偏好 / 会话覆盖 / KB 绑定等）统一用 {@code {providerId}/{modelId}}
  * 引用格式；解析时按第一段 providerId 查本表得到网关（baseUrl/apiKey/路径），第二段起为原样模型名
  * （兼容 OpenRouter 等模型名自带斜杠的网关）。<b>无兜底</b>：引用解析不出（providerId 不存在或非引用
- * 格式）一律返回 null，由调用方 fail-loud 引导配置——全局 chat.* 与 embedding.* 网关兜底已移除；存量
- * 知识库的遗留裸模型名由 {@link #repairKbEmbeddingRefs()} 启动迁移一次性改写为供应商引用。
+ * 格式）一律返回 null，由调用方 fail-loud 引导配置——全局 chat.* 与 embedding.* 网关兜底已移除，
+ * 知识库必须绑定可解析的供应商引用，遗留裸模型名需在知识库管理中重新绑定。
  * <p>
  * <h3>路由与缓存</h3>
  * {@link #chatRoute} / {@link #embeddingRoute} / {@link #visionRoute} / {@link #rerankRoute} 返回
@@ -77,8 +77,6 @@ public class ModelRegistryService {
     private final ConfigCryptoService crypto;
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
-    /** 角色判定（RBAC）：管理员级可管理全部供应商；仅依赖 Mapper，无循环依赖 */
-    private final com.wisesoft.ai.service.RoleService roleService;
 
     private volatile List<Provider> providers = List.of();
     private volatile List<ModelInfo> models = List.of();
@@ -90,8 +88,7 @@ public class ModelRegistryService {
                                 com.wisesoft.ai.mapper.KnowledgeBaseMapper kbMapper,
                                 com.wisesoft.ai.mapper.UserConfigMapper userConfigMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
-                                StringRedisTemplate redisTemplate, RedisProperties redisProperties,
-                                com.wisesoft.ai.service.RoleService roleService) {
+                                StringRedisTemplate redisTemplate, RedisProperties redisProperties) {
         this.providerMapper = providerMapper;
         this.modelMapper = modelMapper;
         this.agentMapper = agentMapper;
@@ -103,70 +100,15 @@ public class ModelRegistryService {
         this.crypto = crypto;
         this.redisTemplate = redisTemplate;
         this.redisProperties = redisProperties;
-        this.roleService = roleService;
     }
 
     @PostConstruct
     public void init() {
         reload();
-        migrateLegacyConfigs();
-        repairKbEmbeddingRefs();
-        backfillOwnerUid();
         startRedisSync();
         log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型", providers.size(), models.size());
     }
 
-    /**
-     * 存量无主供应商归属回填（启动迁移，幂等）：归属已改为「谁建归谁」，不再有 owner_uid 为空的
-     * 平台共享供应商。历史平台级行去向：created_by 是真实用户 → 归创建人；系统迁移生成的
-     * （created_by=system/空）→ 归第一个管理员；查不到管理员则保持无主（仅管理员级可见可用，下次启动重试）。
-     */
-    private void backfillOwnerUid() {
-        try {
-            List<Provider> orphans = new ArrayList<>();
-            for (Provider p : providers) {
-                if (p.getOwnerUid() == null || p.getOwnerUid().isBlank()) orphans.add(p);
-            }
-            if (orphans.isEmpty()) return;
-            String fallbackAdmin = firstAdminUid();
-            int backfilled = 0;
-            for (Provider p : orphans) {
-                String creator = p.getCreatedBy();
-                if (creator != null && !creator.isBlank() && !"system".equals(creator)) {
-                    p.setOwnerUid(creator);
-                } else if (fallbackAdmin != null) {
-                    p.setOwnerUid(fallbackAdmin);
-                } else {
-                    log.warn("[Provider] 供应商 {}（{}）无归属且找不到管理员可认领，保持无主（仅管理员级可见）",
-                            p.getName(), p.getId());
-                    continue;
-                }
-                providerMapper.updateById(p);
-                backfilled++;
-                log.info("[Provider] 存量无主供应商已回填归属: {} → {}", p.getName(), p.getOwnerUid());
-            }
-            if (backfilled > 0) {
-                reload();
-                log.info("[Provider] 供应商归属回填完成: {} 个（原平台共享，现谁建归谁）", backfilled);
-            }
-        } catch (Exception e) {
-            log.warn("[Provider] 供应商归属回填失败（不影响启动，下次启动重试）: {}", e.getMessage());
-        }
-    }
-
-    /** 第一个管理员级用户 uid（按创建时间最早；供无主存量行认领） */
-    private String firstAdminUid() {
-        List<String> codes = roleService.adminCodes();
-        if (codes.isEmpty()) return null;
-        List<com.wisesoft.ai.model.User> admins = userMapper.selectList(
-                new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
-                        .in(com.wisesoft.ai.model.User::getRole, codes)
-                        .orderByAsc(com.wisesoft.ai.model.User::getCreateTime));
-        for (com.wisesoft.ai.model.User u : admins) {
-            if (u.getUid() != null && !u.getUid().isBlank()) return u.getUid();
-        }
-        return null;
-    }
 
     /** 全量重读供应商与模型库（本地变更 / Redis 订阅通知时调用） */
     public void reload() {
@@ -538,10 +480,14 @@ public class ModelRegistryService {
             // 工具调用能力三态原值（同上，编辑弹窗回显用）
             m.put("toolCapable", mi.getToolCapable());
             m.put("thinking", resolveThinking(mi));
+            // 管理列表速览：图片能力解析结果（auto 已按类型/模型名判定）；思考登记原值（编辑回填须用原值，避免 auto 被解析结果写死）
+            m.put("visionResolved", visionCapable(mi));
+            m.put("thinkingRaw", mi.getThinking());
             // 思考强度：支持档位数组 + 默认档位（编辑弹窗回显；无档位=只支持思考开关）
             m.put("reasoningLevels", reasoningLevelsOf(mi));
             m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
             m.put("contextWindow", mi.getContextWindow());
+            m.put("contextWindowMin", mi.getContextWindowMin());
             m.put("maxOutput", mi.getMaxOutput());
             m.put("enabled", !Integer.valueOf(0).equals(mi.getEnabled()));
             m.put("remark", mi.getRemark());
@@ -843,6 +789,10 @@ public class ModelRegistryService {
                 m.put("reasoningLevels", reasoningLevelsOf(mi));
                 m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
                 m.put("thinking", resolveThinking(mi));
+                // 上下文窗口（null=未登记用全局默认）：聊天页模型悬浮面板展示/调整该模型的窗口容量；
+                // contextWindowMin 声明可选下限（null=不可调，面板行保持只读）
+                m.put("contextWindow", mi.getContextWindow());
+                m.put("contextWindowMin", mi.getContextWindowMin());
                 ms.add(m);
             }
             if (ms.isEmpty()) continue;
@@ -948,7 +898,7 @@ public class ModelRegistryService {
         Long userRefs = userMapper.selectCount(new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
                 .likeRight(com.wisesoft.ai.model.User::getDefaultModel, prefix));
         if (userRefs != null && userRefs > 0) refs.add("个人默认模型 ×" + userRefs);
-        // 个人设置（c_ai_user_config）里的模型引用：重排/记忆向量/图谱兜底/问答对生成等 personalOnly 键，
+        // 个人设置（c_ai_user_config）里的模型引用：问答对生成等 personalOnly 键，
         // 以及个人覆盖的模型类字段——归属人自己在个人设置里即可改掉，属"可处理"引用，必须挡
         Long personalRefs = userConfigMapper.selectCount(
                 new LambdaQueryWrapper<com.wisesoft.ai.model.UserConfig>()
@@ -1030,7 +980,15 @@ public class ModelRegistryService {
             }
             mi.setDefaultReasoningLevel(defLevel == null || defLevel.isBlank() ? null : defLevel);
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
+            mi.setContextWindowMin(intOrNull(item.get("contextWindowMin")));
             mi.setMaxOutput(intOrNull(item.get("maxOutput")));
+            // 窗口区间一致性：下限不大于上限——否则聊天页档位列表区间倒挂，运行时 clamp 也无从谈起
+            //（intOrNull 已把 0/负值归一为 null=未声明，非空即保证 ≥1）
+            if (mi.getContextWindowMin() != null && mi.getContextWindow() != null
+                    && mi.getContextWindowMin() > mi.getContextWindow()) {
+                throw new IllegalArgumentException("模型 " + modelId.trim() + " 的最小窗口（" + mi.getContextWindowMin()
+                        + "）不能大于上下文窗口上限（" + mi.getContextWindow() + "）");
+            }
             // 跨字段一致性（预算 = 窗口×安全系数−输出限制）：两个都声明时输出不能吃光预算——
             // 否则该模型下上下文预算被运行时托底成 1000，检索资料塞不进。安全系数沿用全局配置。
             if (mi.getContextWindow() != null && mi.getMaxOutput() != null) {
@@ -1213,228 +1171,6 @@ public class ModelRegistryService {
             }
         }
         return out.isEmpty() ? null : String.join(",", out);
-    }
-
-    /** 供应商名猜测时跳过的域名段（常见前缀 + 顶级域） */
-    private static final List<String> SKIP_DOMAIN_PARTS =
-            List.of("api", "open", "aip", "ark", "gateway", "chat", "console", "dashscope",
-                    "com", "cn", "net", "org", "ai", "cloud", "co");
-
-    // ==================== 存量配置迁移 ====================
-
-    /**
-     * 存量手填网关配置（embedding / rerank 的 baseUrl+apiKey+模型名）迁移为内置供应商 + 模型登记。
-     * 幂等：值已是引用或网关信息为空则跳过；同网关（归一化 baseUrl + Key 相同）复用同一供应商。
-     * 直接落库，不走 update() 联动（绝不触发全量重嵌入）。
-     * <p>迁移产物去向：rerank.model 已改为个人专属键（personalOnly，个人设置按归属人解析）——
-     * 全局遗留值不再有消费方，不迁移回写；embedding.model 已退役（向量模型归知识库 embedding_ref），
-     * 不迁移——两者只登记供应商档案与模型，供知识库绑定与 {@link #repairKbEmbeddingRefs()} 改写裸名引用。
-     * chat / vision 两组无遗留消费方，不迁移。
-     */
-    private void migrateLegacyConfigs() {
-        Map<String, String[]> groups = Map.of(
-                "embedding", new String[]{"embedding.baseUrl", "embedding.apiKey", "embedding.embeddingsPath"},
-                "rerank", new String[]{"rerank.baseUrl", null, null});
-        Map<String, String> typeByGroup = Map.of(
-                "embedding", TYPE_EMBEDDING, "rerank", TYPE_RERANK);
-        // 未启用的功能不迁移（yml 兜底默认值也非空，避免为从未用过的本地 rerank 建供应商）；
-        // 之后启用时走遗留解析（rerank.* 原值未动，行为不变）
-        Map<String, Boolean> enabledByGroup = Map.of(
-                "embedding", true,
-                "rerank", configService.getBoolean("rerank.enabled"));
-        int migrated = 0;
-        for (Map.Entry<String, String[]> g : groups.entrySet()) {
-            try {
-                String group = g.getKey();
-                if (!Boolean.TRUE.equals(enabledByGroup.get(group))) continue;
-                // 个人专属键（rerank.model）不再迁移：全局层不参与读取，回写只会制造
-                // "界面无处可见"的孤儿行（删供应商时还会被守门日志念到）
-                if (configService.isPersonalOnly(group + ".model")) continue;
-                String model = configService.get(group + ".model");
-                if (model == null || model.isBlank() || resolveReference(model) != null) continue;
-                String baseUrl = nz(configService.get(g.getValue()[0]));
-                if (baseUrl.isBlank()) continue;
-                String apiKey = g.getValue()[1] == null ? "" : nz(configService.get(g.getValue()[1]));
-                String path = g.getValue()[2] == null ? "" : nz(configService.get(g.getValue()[2]));
-                Provider p = findOrMergeProvider(baseUrl, apiKey, path, group);
-                upsertModel(p.getId(), model.trim(), typeByGroup.get(group));
-                // 仅活跃键回写引用（rerank.model）；embedding.model 等退役键不再制造孤儿行
-                if (configService.isLiveKey(group + ".model")) {
-                    configService.putInternal(group + ".model", p.getId() + "/" + model.trim());
-                }
-                reload();
-                migrated++;
-                log.info("[Provider] 存量 {} 模型已迁移: {} → {}/{}", group, model, p.getName(), model.trim());
-            } catch (Exception e) {
-                log.warn("[Provider] {} 组存量迁移失败（保持原配置，不影响启动）: {}", g.getKey(), e.getMessage());
-            }
-        }
-        if (migrated > 0) {
-            log.info("[Provider] 存量模型配置迁移完成: {} 组改写为供应商引用", migrated);
-        }
-    }
-
-    /**
-     * 知识库遗留裸模型名引用修复（启动迁移）：向量模型兜底已移除，{@code kb.embedding_ref} 必须是
-     * {@code {providerId}/{modelId}} 引用。历史值两类：
-     * <ul>
-     *   <li>裸模型名（无斜杠）→ 按遗留 embedding.* 网关（c_ai_config 存量行）findOrMergeProvider
-     *       建档并改写为引用——与 migrateLegacyConfigs 的同网关合并逻辑幂等复用；</li>     *   <li>引用但供应商已删 → 无法自动修复，log.error 暴露（使用时 fail-loud 引导重绑）。</li>
-     * </ul>
-     * 空绑定不自动选型，log.warn 提示手动绑定（storeForKb 对空绑定本就 fail-loud）。
-     */
-    private void repairKbEmbeddingRefs() {
-        try {
-            List<com.wisesoft.ai.model.KnowledgeBase> kbs = kbMapper.selectList(
-                    new LambdaQueryWrapper<>());
-            int repaired = 0;
-            for (com.wisesoft.ai.model.KnowledgeBase kb : kbs) {
-                String ref = nz(kb.getEmbeddingRef());
-                if (ref.isEmpty()) {
-                    log.warn("[Provider] 知识库 {}（{}）未绑定向量模型，检索/解析将不可用——请在知识库管理中绑定", kb.getId(), kb.getName());
-                    continue;
-                }
-                if (resolveReference(ref) != null) continue;
-                if (ref.contains("/")) {
-                    log.error("[Provider] 知识库 {}（{}）绑定的向量模型引用 {} 供应商已不存在，请重新绑定", kb.getId(), kb.getName(), ref);
-                    continue;
-                }
-                String baseUrl = nz(configService.get("embedding.baseUrl"));
-                if (baseUrl.isEmpty()) {
-                    log.error("[Provider] 知识库 {}（{}）遗留裸模型名 {} 无法修复（无遗留网关信息），请重新绑定向量模型",
-                            kb.getId(), kb.getName(), ref);
-                    continue;
-                }
-                String apiKey = nz(configService.get("embedding.apiKey"));
-                String path = nz(configService.get("embedding.embeddingsPath"));
-                Provider p = findOrMergeProvider(baseUrl, apiKey, path, "embedding");
-                upsertModel(p.getId(), ref, TYPE_EMBEDDING);
-                kb.setEmbeddingRef(p.getId() + "/" + ref);
-                kbMapper.updateById(kb);
-                reload();
-                repaired++;
-                log.info("[Provider] 知识库 {} 遗留向量模型已改写为引用: {} → {}/{}", kb.getId(), ref, p.getId(), ref);
-            }
-            if (repaired > 0) {
-                log.info("[Provider] 知识库遗留向量模型引用修复完成: {} 个库", repaired);
-            }
-        } catch (Exception e) {
-            log.warn("[Provider] 知识库向量引用修复失败（不影响启动，使用时报错可人工重绑）: {}", e.getMessage());
-        }
-    }
-
-    /** 按归一化 baseUrl + Key（明文比对）找同网关供应商，无则创建（名称/图标按域名猜测）；
-     *  合并已有供应商时补齐该组对应的路径（如同网关的 embedding 组带 embeddingsPath） */
-    private Provider findOrMergeProvider(String baseUrl, String apiKey, String path, String group) {
-        String url = baseUrl.trim();
-        while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
-        boolean embeddingGroup = "embedding".equals(group);
-        for (Provider p : providers) {
-            String pu = p.getBaseUrl() == null ? "" : p.getBaseUrl().trim();
-            while (pu.endsWith("/")) pu = pu.substring(0, pu.length() - 1);
-            if (!pu.equalsIgnoreCase(url)) continue;
-            String pk = crypto.decrypt(p.getApiKey());
-            if ((apiKey == null || apiKey.isBlank()) ? (pk == null || pk.isBlank()) : apiKey.equals(pk)) {
-                // 同网关合并：当前组路径非空且供应商上缺失时补齐（chat 先迁移时 embedding 的 /v4/embeddings 不丢）
-                if (embeddingGroup && !path.isBlank() && (p.getEmbeddingsPath() == null || p.getEmbeddingsPath().isBlank())) {
-                    p.setEmbeddingsPath(path);
-                    providerMapper.updateById(p);
-                    reload();
-                } else if (!embeddingGroup && !path.isBlank()
-                        && (p.getCompletionsPath() == null || p.getCompletionsPath().isBlank())) {
-                    p.setCompletionsPath(path);
-                    providerMapper.updateById(p);
-                    reload();
-                }
-                return p;
-            }
-        }
-        Provider p = new Provider();
-        p.setId(UUID.randomUUID().toString());
-        p.setName(guessProviderName(url));
-        p.setIcon(guessProviderIcon(url));
-        p.setBaseUrl(url);
-        p.setApiKey(apiKey == null || apiKey.isBlank() ? "" : crypto.encrypt(apiKey));
-        if (embeddingGroup) p.setEmbeddingsPath(path);
-        else p.setCompletionsPath(path);
-        p.setApiType("openai");
-        p.setEnabled(1);
-        p.setRemark("由系统设置自动迁移生成");
-        p.setSortOrder(0);
-        p.setCreatedBy("system");
-        providerMapper.insert(p);
-        reload();
-        log.info("[Provider] 存量配置迁移创建供应商: {}（{}）", p.getName(), url);
-        return p;
-    }
-
-    private void upsertModel(String providerId, String modelId, String type) {
-        ModelInfo exist = modelMapper.selectOne(new LambdaQueryWrapper<ModelInfo>()
-                .eq(ModelInfo::getProviderId, providerId).eq(ModelInfo::getModelId, modelId));
-        if (exist != null) {
-            exist.setModelType(type);
-            exist.setEnabled(1);
-            modelMapper.updateById(exist);
-            return;
-        }
-        ModelInfo mi = new ModelInfo();
-        mi.setId(UUID.randomUUID().toString());
-        mi.setProviderId(providerId);
-        mi.setModelId(modelId);
-        mi.setModelType(type);
-        mi.setEnabled(1);
-        modelMapper.insert(mi);
-    }
-
-    /** 网关域名 → 供应商名（如 api.deepseek.com → DeepSeek；localhost → 本地网关） */
-    static String guessProviderName(String baseUrl) {
-        String host = hostOf(baseUrl);
-        if (host == null) return "未知网关";
-        if (host.equals("localhost") || host.equals("127.0.0.1") || host.startsWith("192.168.") || host.startsWith("10.")) {
-            return "本地网关";
-        }
-        // 取主域段：跳过常见前缀与顶级域（api.deepseek.com → DeepSeek；open.bigmodel.cn → Bigmodel）
-        for (String part : host.split("\\.")) {
-            if (!SKIP_DOMAIN_PARTS.contains(part)) {
-                return part.substring(0, 1).toUpperCase() + part.substring(1);
-            }
-        }
-        return host;
-    }
-
-    /** 网关域名 → 内置图标 key（识别不出用 custom，前端字母头像兜底） */
-    static String guessProviderIcon(String baseUrl) {
-        String host = hostOf(baseUrl);
-        if (host == null) return "custom";
-        if (host.contains("deepseek")) return "deepseek";
-        if (host.contains("bigmodel") || host.contains("zhipu")) return "zhipu";
-        if (host.contains("dashscope") || host.contains("aliyun")) return "qwen";
-        if (host.contains("moonshot")) return "moonshot";
-        if (host.contains("volces") || host.contains("volcengine")) return "doubao";
-        if (host.contains("hunyuan") || host.contains("tencent")) return "hunyuan";
-        if (host.contains("baidubce") || host.contains("baidu")) return "qianfan";
-        if (host.contains("minimax")) return "minimax";
-        if (host.contains("siliconflow")) return "siliconflow";
-        if (host.contains("openai")) return "openai";
-        if (host.contains("anthropic")) return "anthropic";
-        if (host.contains("googleapis") || host.contains("gemini")) return "gemini";
-        if (host.contains("openrouter")) return "openrouter";
-        if (host.equals("localhost") || host.equals("127.0.0.1") || host.startsWith("192.168.") || host.startsWith("10.")) {
-            return "ollama";
-        }
-        return "custom";
-    }
-
-    private static String hostOf(String baseUrl) {
-        if (baseUrl == null) return null;
-        String u = baseUrl.trim();
-        int s = u.indexOf("://");
-        if (s >= 0) u = u.substring(s + 3);
-        int slash = u.indexOf('/');
-        if (slash >= 0) u = u.substring(0, slash);
-        int colon = u.indexOf(':');
-        if (colon >= 0) u = u.substring(0, colon);
-        return u.isBlank() ? null : u.toLowerCase();
     }
 
     // ==================== 工具 ====================

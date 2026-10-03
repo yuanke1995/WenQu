@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * <p>
  * 定位（对齐成熟知识库产品的模型）：
  * <ul>
- *   <li><b>文档容器</b>：文档必归属于某个知识库（{@code c_ai_document.kb_id}，历史空值由启动迁移归入默认库）。</li>
+ *   <li><b>文档容器</b>：文档必归属于某个知识库（{@code c_ai_document.kb_id} 必填）。</li>
  *   <li><b>检索作用域</b>：检索按知识库过滤，不同库之间互不干扰（法律库与手册库各自召回）。</li>
  *   <li><b>参数归属</b>：检索参数（{@code queryParams}）存在库上，而非全局——
  *       不同资料性质可配不同策略（法律库提高阈值保精度、手册库放宽阈值保召回）；
@@ -58,7 +58,7 @@ public class KnowledgeBase {
     private String parseParams;
 
     /** 本库绑定向量模型（引用 providerId/modelId；必填且必须可解析——向量空间与索引一一对应，
-     * 无任何运行时兜底，遗留裸模型名由启动迁移改写为供应商引用）。
+     * 无任何运行时兜底，必须是可解析的供应商引用）。
      * 向量一致性约束是"单库"级：同库所有块必须同一向量模型，换模型触发本库重嵌入。 */
     private String embeddingRef;
 
@@ -67,12 +67,12 @@ public class KnowledgeBase {
 
     /**
      * GraphRAG 开关（库级，默认关）：1=解析后抽实体关系三元组、检索时一跳图扩展。
-     * 开启后由本库绑定的 graphModelRef 抽取（未绑定则回落系统设置的 graphrag.modelRef，仍为空则 fail-loud）。
+     * 开启后由本库绑定的 graphModelRef 抽取（未绑定则回落库主个人默认聊天模型，仍为空则 fail-loud）。
      */
     private Integer graphEnabled;
 
     /** GraphRAG 抽取模型（引用 providerId/modelId；归库主——判权按库主可用，谁建库烧谁的模型）。
-     * 空=回落系统设置 graphrag.modelRef（判权仍按库主，非库主可用的模型会被拒）。 */
+     * 空=回落库主的个人默认聊天模型 User.defaultModel（判权仍按库主，非库主可用的模型会被拒）。 */
     private String graphModelRef;
 
     /** 是否默认库：1=默认（新建文档默认归属、未指定库时的兜底） */

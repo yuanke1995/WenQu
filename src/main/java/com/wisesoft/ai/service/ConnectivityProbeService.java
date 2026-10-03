@@ -130,7 +130,7 @@ public class ConnectivityProbeService {
     private Map<String, Object> rerankProbe(String baseUrl, String apiKey, String model, long start) {
         String base = value(baseUrl, "rerank.baseUrl");
         if (base.isBlank()) return fail(start, "服务地址为空");
-        // 仅按显式传入的模型名探测（rerank.model 已改为个人专属键：值随个人设置/知识库检索设置变化，探测不读全局）
+        // 仅按显式传入的模型名探测（rerank.model 归知识库/智能体检索设置绑定：值随库/智能体配置变化，探测不读全局）
         String mdl = model == null || model.isBlank() ? "" : model.trim();
         if (mdl.isBlank()) return fail(start, "模型名为空");
         // 与 RerankService 一致：版本段尾缀（…/v1、…/v4）自动移入重排路径（本地地址保持 /v1/rerank）

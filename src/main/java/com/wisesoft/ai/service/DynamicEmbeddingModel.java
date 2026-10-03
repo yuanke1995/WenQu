@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
  * 用户长期记忆向量化共用）。
  * <p>
  * - <b>无兜底</b>：引用为空 / 非引用 / 供应商不存在 → 抛出，由调用方 fail-loud 引导绑定
- *   （全局 embedding.* 网关与遗留裸模型名回落已移除；存量裸名由 ModelRegistryService 启动迁移改写为引用）
+ *   （全局 embedding.* 网关与遗留裸模型名回落已移除，须使用可解析的供应商引用）
  * - 按路由指纹缓存底层客户端；供应商网关/密钥变更（Redis 广播 reload）后指纹变化 → 自动重建
  * - 路径归一化复用 {@link DynamicOpenAiChatModel#normalize}（智谱 /v4/embeddings、千帆 /v2/embeddings 等）
  * - <b>重要</b>：向量模型切换 ≠ 仅换模型名——新旧模型向量空间不兼容（维度/语义均不同，数学上不可迁移），

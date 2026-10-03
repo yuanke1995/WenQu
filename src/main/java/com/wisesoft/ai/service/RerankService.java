@@ -18,8 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 社区模型仅能经 /api/embed 近似且部分环境 embedding 被禁用，因此本项目只支持 OpenAI 兼容协议。
  * 本地部署参考 scripts/win|mac/start_rerank_server.*（sentence-transformers CrossEncoder 服务）。
  *
- * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
- * baseUrl/apiKey，遗留值走全局 rerank.* 配置），个人设置/知识库检索设置保存即生效。
+     * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
+     * baseUrl/apiKey，遗留值走全局 rerank.* 配置），知识库/智能体检索设置保存即生效。
  * 未启用/探测失败/调用失败时静默回退为输入顺序（混合检索已按融合分排序）。
  * 探测/失败结果缓存，首次失败记忆禁用（进程内不再重试）；配置变更（网关/模型/超时）自动重建客户端并重置探测。
  *
@@ -167,31 +167,11 @@ public class RerankService {
      * 重排候选（传入按融合分排序的候选，返回重排后的顺序）；未启用/不支持/失败时原样返回
      */
     public List<HybridRetrievalService.Hit> rank(List<HybridRetrievalService.Hit> candidates, String query) {
-        return rank(candidates, query, null);
-    }
-
-    /**
-     * 带个人重排模型覆盖：refOverride 非空时按该引用解析网关+模型（聊天用户的个人默认重排模型），
-     * 解析失败回落全局路径；每次独立构建 client，不写全局探测/冷却状态（个人调用失败仅回退排序）。
-     */
-    public List<HybridRetrievalService.Hit> rank(List<HybridRetrievalService.Hit> candidates, String query,
-                                                 String refOverride) {
-        if (refOverride != null && !refOverride.isBlank()) {
-            ModelRegistryService.ModelRoute r = modelRegistryService.resolveReference(refOverride.trim());
-            if (r != null) {
-                return rankWithRoute(candidates, query, r, true, false);
-            }
-            log.warn("[Rerank] 个人重排模型引用解析失败，回落全局: {}", refOverride);
-        }
-        return rankGlobal(candidates, query);
-    }
-
-    private List<HybridRetrievalService.Hit> rankGlobal(List<HybridRetrievalService.Hit> candidates, String query) {
         if (!enabled() || candidates == null || candidates.size() < 2) return candidates;
         // 防御：query 为空/null 时服务端 400（"query and documents required"）——直接跳过重排回退融合分排序
         if (query == null || query.isBlank()) return candidates;
         if (!checkSupport()) return candidates;
-        return rankWithRoute(candidates, query, route(), false, false);
+        return rankWithRoute(candidates, query, route(), false);
     }
 
     /**
@@ -204,11 +184,11 @@ public class RerankService {
         if (!enabled() || candidates == null || candidates.isEmpty()) return candidates;
         if (query == null || query.isBlank()) return candidates;
         if (!checkSupport()) return candidates;
-        return rankWithRoute(candidates, query, route(), false, true);
+        return rankWithRoute(candidates, query, route(), true);
     }
 
     private List<HybridRetrievalService.Hit> rankWithRoute(List<HybridRetrievalService.Hit> candidates, String query,
-                                                           ModelRegistryService.ModelRoute r, boolean oneShot,
+                                                           ModelRegistryService.ModelRoute r,
                                                            boolean bypassWindow) {
         try {
             // 重排区间（rerank.minHits/maxHits，与评估链路同参数）：候选少于 minHits 不值得一次 cross-encoder
@@ -229,7 +209,7 @@ public class RerankService {
                                     ? "【上下文】" + h.titlePath() + "\n\n" : "")
                             + h.content())
                     .toList();
-            List<Double> scores = oneShot ? rankByOpenAiRerank(query, docs, r) : rankByOpenAiRerank(query, docs);
+            List<Double> scores = rankByOpenAiRerank(query, docs);
             if (scores == null || scores.size() != docs.size()) return candidates;
 
             // 重排分回填到每条候选（原先只用于排序即丢弃，引用来源无法透出真实相关度）；
@@ -248,44 +228,13 @@ public class RerankService {
             }
             return ranked;
         } catch (Exception e) {
-            if (oneShot) {
-                // 个人模型调用失败仅本次回退，不写全局冷却状态
-                log.warn("[Rerank] 个人重排模型调用失败，回退融合分排序: {}", e.getMessage());
-            } else {
-                // 失败记录：冷却期内不重试（避免每个请求都撞一次），冷却结束后自动恢复探测
-                rerankSupported = false;
-                lastFailTs = System.currentTimeMillis();
-                log.warn("[Rerank] 服务调用失败，回退融合分排序（{}s 后自动重试）: {}",
-                        failCooldownMs() / 1000, e.getMessage());
-            }
+            // 失败记录：冷却期内不重试（避免每个请求都撞一次），冷却结束后自动恢复探测
+            rerankSupported = false;
+            lastFailTs = System.currentTimeMillis();
+            log.warn("[Rerank] 服务调用失败，回退融合分排序（{}s 后自动重试）: {}",
+                    failCooldownMs() / 1000, e.getMessage());
             return candidates;
         }
-    }
-
-    /** 一次性客户端 + 按路由发 /v1/rerank（个人重排模型路径；不触碰全局 client/探测状态） */
-    private List<Double> rankByOpenAiRerank(String query, List<String> docs,
-                                            ModelRegistryService.ModelRoute r) throws Exception {
-        if (docs == null || docs.isEmpty()) return null;
-        String[] np = DynamicOpenAiChatModel.normalize(r.baseUrl(), "", "/v1/rerank", "/rerank");
-        int t = timeoutMillis();
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(2000);
-        factory.setReadTimeout(t);
-        RestClient oneShot = RestClient.builder().baseUrl(np[0]).requestFactory(factory).build();
-        Map<String, Object> body = new HashMap<>();
-        String mdl = r.modelId() == null || r.modelId().isBlank() ? "BAAI/bge-reranker-v2-m3" : r.modelId();
-        body.put("model", mdl);
-        body.put("query", query == null ? "" : query);
-        body.put("documents", docs);
-        body.put("top_n", docs.size());
-        String resp = oneShot.post()
-                .uri(np[1])
-                .header("Authorization", "Bearer " + (r.apiKey() == null ? "" : r.apiKey()))
-                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-        return parseScores(resp, docs.size());
     }
 
     /**
@@ -294,7 +243,7 @@ public class RerankService {
      */
     public String debugUnavailableReason() {
         if (!enabled()) {
-            return "未启用：个人设置（或系统设置的平台默认）「启用重排」未打开，知识库/智能体检索设置也未开启";
+            return "未启用：系统设置的平台默认「启用重排」未打开，知识库/智能体检索设置也未开启";
         }
         if (!checkSupport()) {
             if (System.currentTimeMillis() - lastFailTs < failCooldownMs()) {

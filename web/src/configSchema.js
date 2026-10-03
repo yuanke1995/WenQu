@@ -80,7 +80,7 @@ export function buildDefaultForm () {
   return form
 }
 
-/** 读取 form 内嵌套路径，如 readForm(form, 'retrieval.rerank.enabled') */
+/** 读取 form 内嵌套路径，如 readForm(form, 'retrieval.vectorWeight') */
 export function readForm (obj, path) {
   return path.split('.').reduce((a, k) => (a == null ? a : a[k]), obj)
 }

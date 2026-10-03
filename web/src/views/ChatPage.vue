@@ -606,46 +606,13 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
-              <!-- 深度思考设置面板卡：悬浮模型名称即在其右侧弹出（对齐参考交互），随悬浮开合；
-                   「思考强度」行点开展开档位列表，点档位即时保存（按模型 localStorage 记忆）且不打断悬浮。
-                   选项口径不变（关闭思考 / 该模型支持档位 / 恒思考锁定）；模型不支持思考时不挂面板 -->
-              <a-popover v-if="thinkCap.visible" v-model:open="thinkPanelOpen" trigger="hover"
-                         placement="right" :arrow="false" overlay-class-name="think-pop"
-                         :mouse-enter-delay="0.25" :mouse-leave-delay="0.15">
-                <template #content>
-                  <div class="thinkp">
-                    <div class="thinkp-head">
-                      <div class="thinkp-title">深度思考</div>
-                      <div class="thinkp-desc">回答前先逐步推理，适合数学、代码等复杂问题；关闭后响应更快。</div>
-                    </div>
-                    <div class="thinkp-row-wrap">
-                      <button class="thinkp-row" type="button"
-                              :class="{ expandable: !thinkCap.locked }"
-                              @click="!thinkCap.locked && (thinkLevelsOpen = !thinkLevelsOpen)">
-                        <span class="thinkp-row-label">思考强度</span>
-                        <span class="thinkp-row-val">{{ thinkStrengthText }}</span>
-                        <down-outlined v-if="!thinkCap.locked" class="thinkp-caret" :class="{ open: thinkLevelsOpen }" />
-                      </button>
-                      <div v-if="thinkLevelsOpen && !thinkCap.locked" class="thinkp-levels">
-                        <button v-for="opt in thinkLevelOptions" :key="opt.value" class="thinkp-opt" type="button"
-                                :class="{ active: opt.value === currentThinkLevel }" @click="setThinkLevel(opt.value)">
-                          <span>{{ opt.label }}</span>
-                          <check-outlined v-if="opt.value === currentThinkLevel" class="thinkp-opt-check" />
-                        </button>
-                      </div>
-                    </div>
-                    <div class="thinkp-foot">{{ thinkCap.locked ? '该模型始终深度思考，强度由管理员在模型库登记。' : '强度越高，思考越深入，回答耗时相应增加。' }}</div>
-                  </div>
-                </template>
-                <span class="think-hover-host">
-                  <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
-                               :placeholder="effectiveModelLabel || '选择模型'"
-                               :width="190" :disabled="loading" />
-                </span>
-              </a-popover>
-              <ModelSelect v-else v-model="currentOverrideModel" type="chat" pill allow-clear
+              <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
+                   档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
+                   对其它模型则先记住、选中该模型时生效 -->
+              <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
-                           :width="190" :disabled="loading" />
+                           :width="190" :disabled="loading"
+                           @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
             <button v-if="loading" class="send-btn stop" title="停止生成" @click="stop"><pause-circle-outlined /></button>
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
@@ -876,6 +843,62 @@
       <span v-if="previewList.length > 1" class="lightbox-count">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
       <span class="lightbox-tip">滚轮缩放 · 拖动平移 · 双击重置 · ESC 关闭</span>
     </div>
+
+    <!-- 深度思考面板卡：悬浮模型下拉行时在该行右侧弹出（Teleport 到 body + fixed 定位，随悬浮行开合）。
+         展示该模型自己的设置：上下文窗口（登记了「最小~最大」区间时可点选档位，默认最大）+ 思考强度
+         （档位点选即时写入按模型 localStorage 记忆，生效模型下一轮发送立即生效）；模型不支持思考时只展示窗口信息 -->
+    <Teleport to="body">
+      <div v-if="thinkPanelVisible" ref="thinkPanelEl" class="think-float"
+           :style="{ top: thinkPanelPos.top + 'px', left: thinkPanelPos.left + 'px' }"
+           @mouseenter="onThinkPanelEnter" @mouseleave="onThinkPanelLeave"
+           @mousedown.stop.prevent>
+        <div class="thinkp">
+          <div class="thinkp-head">
+            <div class="thinkp-title">深度思考</div>
+            <div class="thinkp-model">{{ thinkPanelModelLabel }}</div>
+          </div>
+          <div v-if="thinkPanelCaps.visible" class="thinkp-desc">回答前先逐步推理，适合数学、代码等复杂问题；关闭后响应更快。</div>
+          <div v-if="thinkPanelCtxText || thinkPanelCaps.visible" class="thinkp-row-wrap">
+            <button v-if="thinkPanelCtxText" class="thinkp-row" type="button"
+                    :class="{ expandable: !!thinkPanelCtxRange }"
+                    :title="thinkPanelCtxRange
+                      ? '上下文窗口档位（默认最大，点选调整）。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出'
+                      : '模型登记的上下文窗口。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出'"
+                    @click="thinkPanelCtxRange && (thinkCtxOpen = !thinkCtxOpen)">
+              <span class="thinkp-row-label">上下文窗口</span>
+              <span class="thinkp-row-val">{{ thinkPanelCtxText }}</span>
+              <down-outlined v-if="thinkPanelCtxRange" class="thinkp-caret" :class="{ open: thinkCtxOpen }" />
+            </button>
+            <div v-if="thinkCtxOpen && thinkPanelCtxRange" class="thinkp-levels">
+              <button v-for="opt in thinkPanelCtxOptions" :key="opt.value" class="thinkp-opt" type="button"
+                      :class="{ active: opt.value === thinkPanelCurrentCtx }"
+                      @click="setCtxWindow(opt.value, thinkHoverModel)">
+                <span>{{ opt.label }}</span>
+                <check-outlined v-if="opt.value === thinkPanelCurrentCtx" class="thinkp-opt-check" />
+              </button>
+            </div>
+            <template v-if="thinkPanelCaps.visible">
+              <button class="thinkp-row" type="button"
+                      :class="{ expandable: !thinkPanelCaps.locked }"
+                      @click="!thinkPanelCaps.locked && (thinkLevelsOpen = !thinkLevelsOpen)">
+                <span class="thinkp-row-label">思考强度</span>
+                <span class="thinkp-row-val">{{ thinkPanelStrengthText }}</span>
+                <down-outlined v-if="!thinkPanelCaps.locked" class="thinkp-caret" :class="{ open: thinkLevelsOpen }" />
+              </button>
+              <div v-if="thinkLevelsOpen && !thinkPanelCaps.locked" class="thinkp-levels">
+                <button v-for="opt in thinkPanelLevelOptions" :key="opt.value" class="thinkp-opt" type="button"
+                        :class="{ active: opt.value === thinkPanelCurrentLevel }"
+                        @click="setThinkLevel(opt.value, thinkHoverModel)">
+                  <span>{{ opt.label }}</span>
+                  <check-outlined v-if="opt.value === thinkPanelCurrentLevel" class="thinkp-opt-check" />
+                </button>
+              </div>
+            </template>
+          </div>
+          <div class="thinkp-foot">{{ thinkPanelFoot }}</div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1263,7 +1286,7 @@ const toolSearchQueries = m => {
 
 const text = ref('')
 const textareaRef = ref(null)
-/** 深度思考按生效模型的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
+/** 深度思考按模型库登记的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
  *  模型不在模型库（遗留裸名）按可开关处理。开关记忆按模型分开存（ai_deep_think: {ref:0|1}，
  *  旧版单个 '1'/'0' 迁移为所有模型的初始默认）。 */
 const THINK_CAPS = {
@@ -1271,8 +1294,12 @@ const THINK_CAPS = {
   switchable: { visible: true, locked: false, on: null }, // on=null → 读按模型记忆
   always: { visible: true, locked: true, on: true }
 }
-const effectiveThinking = computed(() => modelIndex.value[effectiveModel.value]?.thinking || 'switchable')
-const thinkCap = computed(() => THINK_CAPS[effectiveThinking.value] || THINK_CAPS.switchable)
+/** 按模型引用取思考能力 / 支持档位（悬浮面板与发送链路共用同一套口径） */
+const thinkCapsOf = ref => THINK_CAPS[modelIndex.value[ref]?.thinking || 'switchable'] || THINK_CAPS.switchable
+const reasoningLevelsOf = ref => {
+  const raw = modelIndex.value[ref]?.reasoningLevels
+  return Array.isArray(raw) ? raw : []
+}
 const deepThinkDefaults = (() => {
   try {
     const raw = localStorage.getItem('ai_deep_think')
@@ -1282,13 +1309,15 @@ const deepThinkDefaults = (() => {
   } catch (e) { return {} }
 })()
 const deepThinkMap = ref({ ...deepThinkDefaults })
-/** 本轮是否思考：模型恒思考强制开；否则按模型记忆（等级下拉的「关闭思考」写 0，选档位/开启写 1） */
-const deepThinkOn = computed(() => {
-  if (thinkCap.value.locked) return true
-  const explicit = deepThinkMap.value[effectiveModel.value]
+/** 某模型本轮是否思考：恒思考强制开；否则按模型记忆（等级下拉的「关闭思考」写 0，选档位/开启写 1） */
+const deepOnOf = ref => {
+  if (thinkCapsOf(ref).locked) return true
+  const explicit = deepThinkMap.value[ref]
   if (explicit !== undefined) return explicit === 1
   return deepThinkMap.value.__default === true
-})
+}
+/** 生效模型本轮是否思考（状态栏展示 + 发送链路取值） */
+const deepThinkOn = computed(() => deepOnOf(effectiveModel.value))
 
 // ==================== 思考等级（低/中/高/超高/极致，按模型支持档位给选项） ====================
 /** 档位展示名与顺序（与后端 REASONING_LEVEL_LIST 同序，弱→强） */
@@ -1299,42 +1328,37 @@ const REASONING_LEVELS = [
   { value: 'xhigh', label: '超高' },
   { value: 'max', label: '极致' }
 ]
-/** 生效模型登记的「支持档位」：模型没登记强度时为空数组（只支持思考开关） */
-const modelReasoningLevels = computed(() => {
-  const raw = modelIndex.value[effectiveModel.value]?.reasoningLevels
-  return Array.isArray(raw) ? raw : []
-})
 /** ON=开启思考（不带强度：模型未登记档位时用），off=关闭思考；其余为具体档位 */
 const THINK_LEVEL_ON = '__on__'
-/** 思考等级下拉的可选项：恒思考锁定为开；可开关模型给「关闭思考」+ 其支持档位；
+const levelLabel = v => REASONING_LEVELS.find(x => x.value === v)?.label || '默认强度'
+/** 等级下拉可选项：恒思考锁定为开；可开关模型给「关闭思考」+ 其支持档位；
  *  未登记档位时给「开启思考 / 关闭思考」两项（强度不可选但思考可开，不留死角）。 */
-const thinkLevelOptions = computed(() => {
-  if (thinkCap.value.locked) {
-    const lv = modelReasoningLevels.value[0]
-    return [{ value: lv || THINK_LEVEL_ON, label: '恒思考 · ' + levelLabel(lv) }]
-  }
+const levelOptionsOf = ref => {
+  const caps = thinkCapsOf(ref)
+  const levels = reasoningLevelsOf(ref)
+  if (caps.locked) return [{ value: levels[0] || THINK_LEVEL_ON, label: '恒思考 · ' + levelLabel(levels[0]) }]
   const opts = [{ value: 'off', label: '关闭思考' }]
-  if (modelReasoningLevels.value.length) {
+  if (levels.length) {
     for (const lv of REASONING_LEVELS) {
-      if (modelReasoningLevels.value.includes(lv.value)) opts.push({ value: lv.value, label: '思考 · ' + lv.label })
+      if (levels.includes(lv.value)) opts.push({ value: lv.value, label: '思考 · ' + lv.label })
     }
   } else {
     // 模型未登记强度档位：只给开关，强度交网关默认
     opts.unshift({ value: THINK_LEVEL_ON, label: '开启思考' })
   }
   return opts
-})
-const levelLabel = v => REASONING_LEVELS.find(x => x.value === v)?.label || '默认强度'
-/** 当前选中：off=不思考；档位/ON=思考；模型恒思考时恒为开（其首个支持档位） */
-const currentThinkLevel = computed(() => {
-  if (thinkCap.value.locked) return modelReasoningLevels.value[0] || THINK_LEVEL_ON
-  if (!deepThinkOn.value) return 'off'
-  const explicit = levelMap.value[effectiveModel.value]
-  if (explicit && thinkLevelOptions.value.some(o => o.value === explicit)) return explicit
-  const modelDefault = modelIndex.value[effectiveModel.value]?.defaultReasoningLevel
-  if (modelDefault && modelReasoningLevels.value.includes(modelDefault)) return modelDefault
-  return modelReasoningLevels.value[0] || THINK_LEVEL_ON
-})
+}
+/** 某模型当前选中：off=不思考；档位/ON=思考；恒思考模型恒为开（其首个支持档位） */
+const currentLevelOf = ref => {
+  const levels = reasoningLevelsOf(ref)
+  if (thinkCapsOf(ref).locked) return levels[0] || THINK_LEVEL_ON
+  if (!deepOnOf(ref)) return 'off'
+  const explicit = levelMap.value[ref]
+  if (explicit && levelOptionsOf(ref).some(o => o.value === explicit)) return explicit
+  const modelDefault = modelIndex.value[ref]?.defaultReasoningLevel
+  if (modelDefault && levels.includes(modelDefault)) return modelDefault
+  return levels[0] || THINK_LEVEL_ON
+}
 /** 按模型记忆的等级选择（与深度思考开关同一套 per-model 记忆风格） */
 const levelMap = ref(readLevels())
 function readLevels() {
@@ -1344,34 +1368,203 @@ function readLevels() {
     return (parsed && typeof parsed === 'object') ? parsed : {}
   } catch (e) { return {} }
 }
-const setThinkLevel = v => {
-  if (loading.value || thinkCap.value.locked) return
+/** 写入某模型的思考强度（面板点档位按悬浮模型写；不传=生效模型）：
+ *  等级与开关联动记忆，选档位/开启=开思考、选关闭=关思考，落 localStorage 立即生效 */
+const setThinkLevel = (v, modelRef) => {
+  const target = modelRef || effectiveModel.value
+  if (loading.value || thinkCapsOf(target).locked) return
   const on = v !== 'off'
-  // 等级与开关联动记忆：选档位/开启=开思考，选关闭=关思考
-  deepThinkMap.value = { ...deepThinkMap.value, [effectiveModel.value]: on ? 1 : 0 }
-  levelMap.value = { ...levelMap.value, [effectiveModel.value]: v }
+  deepThinkMap.value = { ...deepThinkMap.value, [target]: on ? 1 : 0 }
+  levelMap.value = { ...levelMap.value, [target]: v }
   try {
     localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value))
     localStorage.setItem('ai_think_level', JSON.stringify(levelMap.value))
   } catch (e) { /* 存储不可用忽略 */ }
 }
-// ==================== 思考设置面板卡（悬浮模型名称弹出，替代原等级下拉） ====================
-const thinkPanelOpen = ref(false)
-/** 「思考强度」行的档位子列表展开态：面板每次关闭后复位为收起 */
-const thinkLevelsOpen = ref(false)
-watch(thinkPanelOpen, v => { if (!v) thinkLevelsOpen.value = false })
-/** 面板「思考强度」行的当前值：未开启 / 已开启（无档位）/ 具体档位名 */
-const thinkStrengthText = computed(() => {
-  if (!deepThinkOn.value) return '未开启'
-  const v = currentThinkLevel.value
-  return (v === THINK_LEVEL_ON) ? '已开启' : levelLabel(v)
-})
-/** 本轮下发给后端的思考强度档位（关思考/未选具体档位 → 空串，后端回落模型登记默认档位） */
+/** 生效模型的当前档位 / 本轮下发给后端的思考强度（空串=不指定，后端回落模型登记默认档位） */
+const currentThinkLevel = computed(() => currentLevelOf(effectiveModel.value))
 const reasoningLevelParam = computed(() => {
   if (!deepThinkOn.value) return ''
   const v = currentThinkLevel.value
   return (v && v !== 'off' && v !== THINK_LEVEL_ON) ? v : ''
 })
+
+// ==================== 深度思考面板（悬浮模型下拉行弹出：展示该模型自己的设置，改完即存即生效） ====================
+const thinkHoverModel = ref('')          // 当前悬浮的模型引用（''=无，面板隐藏）
+const thinkPanelPos = ref({ top: 0, left: 0 })
+const thinkPanelEl = ref(null)
+/** 「思考强度」行的档位子列表展开态：面板隐藏或换模型后复位为收起 */
+const thinkLevelsOpen = ref(false)
+const thinkPanelVisible = computed(() => !!thinkHoverModel.value)
+const thinkPanelModelLabel = computed(() => {
+  const info = modelIndex.value[thinkHoverModel.value]
+  return info ? info.displayName : thinkHoverModel.value
+})
+const thinkPanelCaps = computed(() => thinkCapsOf(thinkHoverModel.value))
+const thinkPanelLevelOptions = computed(() => levelOptionsOf(thinkHoverModel.value))
+const thinkPanelCurrentLevel = computed(() => currentLevelOf(thinkHoverModel.value))
+const thinkPanelStrengthText = computed(() => {
+  if (!deepOnOf(thinkHoverModel.value)) return '未开启'
+  const v = thinkPanelCurrentLevel.value
+  return (v === THINK_LEVEL_ON) ? '已开启' : levelLabel(v)
+})
+/** 面板底部提示：不支持思考的模型给一句说明，避免「为什么没有强度行」的疑惑 */
+const thinkPanelFoot = computed(() => {
+  if (!thinkPanelCaps.value.visible) return '该模型不支持深度思考。'
+  return thinkPanelCaps.value.locked
+    ? '该模型始终深度思考，强度由管理员在模型库登记。'
+    : '强度越高，思考越深入，回答耗时相应增加。'
+})
+// ==================== 上下文窗口档位（模型登记 [最小窗口~窗口] 区间时面板可点选，默认=上限） ====================
+/** 可选档位边界（token）：2 的幂序列；区间两端始终入选，落在区间内的幂点全给 */
+const CTX_WINDOW_STEPS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608]
+/** K/M 口径窗口格式化：按整除自动选进制——2 的幂登记值走 1024 进制（131072→128K、1048576→1M），
+ *  十进制登记值走 1000 进制（100000→100K、200000→200K），两边都不整除才落 1024 一位小数 */
+const fmtWindow = n => {
+  if (!n || n <= 0) return ''
+  for (const base of [1048576, 1000000]) {
+    if (n >= base) {
+      const m = n / base
+      if (m % 1 === 0) return m + 'M'
+      if (m < 10 && (m * 10) % 1 === 0) return m.toFixed(1) + 'M'
+    }
+  }
+  if (n >= 1024) {
+    // 两种进制都整除时（如 128000）优先 1000 进制——官方口径是 128K 而非 125K
+    if (n % 1000 === 0) return n / 1000 + 'K'
+    if (n % 1024 === 0) return n / 1024 + 'K'
+    const k = n / 1024
+    return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + 'K'
+  }
+  return String(n)
+}
+/** 某模型的窗口可调区间：null=不可调（未登记窗口/下限，或 min≥max）——面板窗口行保持只读 */
+const ctxRangeOf = ref => {
+  const info = modelIndex.value[ref]
+  if (!info) return null
+  const max = info.contextWindow
+  const min = info.contextWindowMin
+  if (!max || max <= 0 || !min || min <= 0 || min >= max) return null
+  return { min, max }
+}
+/** 档位选项：区间内的 2 的幂点 + 两端（下限不在幂上时补头，上限同理补尾） */
+const ctxWindowOptionsOf = ref => {
+  const range = ctxRangeOf(ref)
+  if (!range) return []
+  const mids = CTX_WINDOW_STEPS.filter(v => v > range.min && v < range.max)
+  return [range.min, ...mids, range.max].map(v => ({ value: v, label: fmtWindow(v) }))
+}
+/** 按模型记忆的窗口档位选择（与思考强度同一套 per-model localStorage 记忆风格；未记忆=上限） */
+const ctxWindowMap = ref((() => {
+  try {
+    const raw = localStorage.getItem('ai_ctx_window')
+    const parsed = raw ? JSON.parse(raw) : {}
+    return (parsed && typeof parsed === 'object') ? parsed : {}
+  } catch (e) { return {} }
+})())
+/** 某模型当前生效窗口：记忆值落在区间内用记忆值，否则默认给最大 */
+const effectiveCtxWindowOf = ref => {
+  const range = ctxRangeOf(ref)
+  if (!range) return null
+  const v = ctxWindowMap.value[ref]
+  return (v >= range.min && v <= range.max) ? v : range.max
+}
+/** 面板点选窗口档位：写按模型 localStorage 记忆，下一轮发送立即生效 */
+const setCtxWindow = (v, modelRef) => {
+  const target = modelRef || effectiveModel.value
+  if (loading.value || !ctxRangeOf(target)) return
+  ctxWindowMap.value = { ...ctxWindowMap.value, [target]: v }
+  try {
+    localStorage.setItem('ai_ctx_window', JSON.stringify(ctxWindowMap.value))
+  } catch (e) { /* 存储不可用忽略 */ }
+}
+/** 本轮下发后端的窗口档位（token）：可调模型始终显式下发（含默认上限）；不可调/未登记=null，后端走原逻辑 */
+const contextWindowParam = computed(() => {
+  const range = ctxRangeOf(effectiveModel.value)
+  return range ? effectiveCtxWindowOf(effectiveModel.value) : null
+})
+/** 「上下文窗口」行的档位子列表展开态：面板隐藏或换模型后复位为收起（与思考强度行同款） */
+const thinkCtxOpen = ref(false)
+const thinkPanelCtxRange = computed(() => ctxRangeOf(thinkHoverModel.value))
+const thinkPanelCtxOptions = computed(() => ctxWindowOptionsOf(thinkHoverModel.value))
+const thinkPanelCurrentCtx = computed(() => effectiveCtxWindowOf(thinkHoverModel.value))
+/** 窗口行展示值（K/M 口径）：可调模型显示当前生效档位（未选=最大），不可调显示登记窗口；未登记整行隐藏 */
+const thinkPanelCtxText = computed(() => {
+  const info = modelIndex.value[thinkHoverModel.value]
+  if (!info) return ''
+  return fmtWindow(effectiveCtxWindowOf(thinkHoverModel.value) || info.contextWindow)
+})
+
+const THINK_PANEL_W = 296      // .thinkp 264 + 面板卡左右内边距 32
+const THINK_PANEL_GAP = 10
+const THINK_EDGE = 8
+const THINK_ENTER_DELAY = 120  // 扫过多行不闪面板
+const THINK_LEAVE_DELAY = 200  // 留出移入面板的时间
+let thinkEnterTimer = null
+let thinkLeaveTimer = null
+let thinkPanelHovered = false
+let thinkPanelRect = null              // 最近一次悬浮行的位置（面板随内容伸缩后仍按它对齐）
+const clearThinkTimers = () => {
+  clearTimeout(thinkEnterTimer); clearTimeout(thinkLeaveTimer)
+  thinkEnterTimer = thinkLeaveTimer = null
+}
+const hideThinkPanel = () => {
+  clearThinkTimers()
+  thinkHoverModel.value = ''
+  thinkLevelsOpen.value = false
+  thinkCtxOpen.value = false
+  thinkPanelHovered = false
+  thinkPanelRect = null
+}
+/** 按悬浮行位置 + 面板实际高度重新收口：面板首选与行顶部对齐，放不下则整体上移。
+ *  展开档位列表、换模型后内容高度都会变，须重算（否则面板伸出屏幕底部，思考列表显示不全） */
+const repositionThinkPanel = () => {
+  const el = thinkPanelEl.value
+  if (!el || !thinkPanelRect) return
+  const maxTop = window.innerHeight - THINK_EDGE - el.offsetHeight
+  const top = Math.max(THINK_EDGE, Math.min(thinkPanelRect.top - 6, maxTop))
+  if (top !== thinkPanelPos.value.top) thinkPanelPos.value = { ...thinkPanelPos.value, top }
+}
+watch([thinkHoverModel, thinkLevelsOpen, thinkCtxOpen], () => nextTick(repositionThinkPanel))
+/** 悬浮下拉模型行（ModelSelect 透传）：先记下行位置，稍候弹出该模型的设置面板；ref 为空=离开行 */
+const onModelOptionHover = (modelRef, rowEl) => {
+  if (!modelRef) { scheduleThinkHide(); return }
+  const rect = rowEl ? rowEl.getBoundingClientRect() : null
+  thinkPanelRect = rect
+  clearTimeout(thinkLeaveTimer); thinkLeaveTimer = null
+  clearTimeout(thinkEnterTimer)
+  thinkEnterTimer = setTimeout(() => {
+    thinkEnterTimer = null
+    if (thinkHoverModel.value !== modelRef) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
+    thinkHoverModel.value = modelRef
+    if (rect) {
+      // 右侧放不下时翻到行左侧；top 先按行顶对齐，渲染后 repositionThinkPanel 按实际高度收口
+      const maxLeft = window.innerWidth - THINK_EDGE - THINK_PANEL_W
+      const left = rect.right + THINK_PANEL_GAP <= maxLeft
+        ? rect.right + THINK_PANEL_GAP
+        : Math.max(THINK_EDGE, rect.left - THINK_PANEL_GAP - THINK_PANEL_W)
+      thinkPanelPos.value = { top: Math.max(THINK_EDGE, rect.top - 6), left }
+    }
+  }, THINK_ENTER_DELAY)
+}
+const scheduleThinkHide = () => {
+  clearTimeout(thinkEnterTimer); thinkEnterTimer = null
+  if (thinkLeaveTimer || !thinkHoverModel.value) return
+  thinkLeaveTimer = setTimeout(() => {
+    thinkLeaveTimer = null
+    if (!thinkPanelHovered) hideThinkPanel()
+  }, THINK_LEAVE_DELAY)
+}
+const onThinkPanelEnter = () => { thinkPanelHovered = true; clearTimeout(thinkLeaveTimer); thinkLeaveTimer = null }
+const onThinkPanelLeave = () => { thinkPanelHovered = false; scheduleThinkHide() }
+/** 下拉开合联动：开着时取消挂起的收起；关闭即收面板——但点面板里的档位会触发「点击外部」把下拉收起，
+ *  此时指针仍在面板上（thinkPanelHovered=true）不收，保持连续调档 */
+const onModelSelectOpenChange = open => {
+  if (open) { clearTimeout(thinkLeaveTimer); thinkLeaveTimer = null }
+  else scheduleThinkHide()
+}
+watch(() => loading.value, v => { if (v) hideThinkPanel() })
+onUnmounted(clearThinkTimers)
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 
 // ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
@@ -2863,6 +3056,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     deepThink,
     // 思考强度档位（低/中/高/超高/极致）：空串=不指定，后端回落模型登记的默认档位
     reasoningLevel: reasoningLevelParam.value,
+    // 上下文窗口档位（token）：仅模型登记了「最小~最大」区间时下发（null=后端用登记上限/全局默认）
+    contextWindow: contextWindowParam.value,
     attachments,
     skills,
     mentions,
@@ -3841,9 +4036,22 @@ onMounted(async () => {
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-/* ==================== 深度思考设置（悬浮模型名称弹出面板卡，参考模型详情面板形态） ==================== */
-/* 悬浮宿主：包住模型胶囊的内联容器，popover 悬浮触发挂在其上，不改变胶囊本身的布局 */
-.think-hover-host { display: inline-flex; align-items: center; min-width: 0; }
+/* ==================== 深度思考设置（悬浮下拉模型行弹出面板卡，参考模型详情面板形态） ====================
+   面板 Teleport 到 body 以 fixed 定位：位置按悬浮的模型行实时给定（thinkPanelPos），
+   z-index 1060 高于 antd 下拉（1050），叠在下拉上方且不被裁剪 */
+.think-float {
+  position: fixed; z-index: 1060; padding: 14px 16px;
+  max-height: calc(100vh - 16px); overflow-y: auto;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 14px;
+  box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
+}
+/* 面板头部的模型名胶囊：明确这份设置属于哪个模型（按模型分别记忆） */
+.thinkp-model {
+  margin-top: 6px; width: fit-content; max-width: 100%;
+  padding: 2px 10px; border-radius: 999px; background: var(--app-panel-2);
+  font-size: 12px; color: var(--app-text2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 面板卡：标题/描述 + 「思考强度」标签值行（点开展开档位列表）+ 底部提示 */
 .thinkp { width: 264px; }
 .thinkp-title { font-size: 14px; font-weight: 600; color: var(--app-text); }
@@ -4189,9 +4397,4 @@ onMounted(async () => {
   .bubble { max-width: 100%; }
   .right-panel { width: calc(100% - 24px); right: 12px; }
 }
-</style>
-
-<!-- 思考设置弹出面板容器：popover 内容 teleport 到 body，容器样式需全局（内边距/圆角卡片化） -->
-<style>
-.think-pop .ant-popover-inner { padding: 14px 16px; border-radius: 14px; }
 </style>

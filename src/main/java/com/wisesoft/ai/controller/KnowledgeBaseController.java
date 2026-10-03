@@ -93,8 +93,9 @@ public class KnowledgeBaseController {
 
     /**
      * 参数对请求者的「生效默认值」：personal 键取本人个人值（未设回落全局）；
-     * personalOnly 键（如重排模型）只有个人层——未设即空，与新库保存后的实际检索行为一致
-     * （预填全局旧值会把个人默认"固化"成库级覆盖，反而覆盖掉用户自己的设置）。
+     * personalOnly 键（如问答对生成模型；重排模型已归库级绑定）只有个人层——未设即空，
+     * 与新库保存后的实际检索行为一致（预填全局旧值会把个人默认"固化"成库级覆盖，
+     * 反而覆盖掉用户自己的设置）。
      */
     private String effectiveDefault(String key) {
         if (configSchemaService.isPersonal(key)) {

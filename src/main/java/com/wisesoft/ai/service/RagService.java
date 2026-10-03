@@ -503,6 +503,24 @@ public class RagService {
                      String agentId, String modelOverride, String userId, SseEmitter emitter,
                      boolean guestMode, boolean regenerate, String replaceMessageId,
                      List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
+        // 程序化调用（定时任务/工作流/MCP/分享页）没有用户窗口档位概念：窗口一律走模型登记上限/全局默认
+        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
+                historyRefs, reasoningLevel, null);
+    }
+
+    /**
+     * @param requestedContextWindow 本轮上下文窗口 token（聊天页档位所选）：仅当生效模型登记了
+     *                               「最小窗口~窗口」区间时生效，越界值收敛到区间内；null 或模型未登记区间
+     *                               = 用模型登记窗口（默认上限），行为与未传一致。
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate, String replaceMessageId,
+                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
+                     Integer requestedContextWindow) {
         // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
         // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
         final boolean useDeepThink = deepThink;
@@ -525,9 +543,9 @@ public class RagService {
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
                 try {
-                    runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
-                            agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                            historyRefs, reasoningLevel);
+                runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
+                        agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
+                        historyRefs, reasoningLevel, requestedContextWindow);
                 } finally {
                     if (identity) com.wisesoft.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -553,7 +571,8 @@ public class RagService {
                          List<ChatRequest.Mention> mentions, boolean deepThink,
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
                          boolean guestMode, boolean regenerate, String replaceMessageId,
-                         List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
+                         List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
+                         Integer requestedContextWindow) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wisesoft.ai.model.User prefUser = loadPrefUser(userId);
@@ -1052,7 +1071,7 @@ public class RagService {
             }
 
             // 3. 价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)；减去 system/问题固定部分后，按相关度累积填充知识块
-            CtxBudget ctxBudget = resolveContextBudget(resolvedModel, degradations, degradedCodes);
+            CtxBudget ctxBudget = resolveContextBudget(resolvedModel, requestedContextWindow, degradations, degradedCodes);
             int budget = ctxBudget.budget();
             int fixedTokens = TokenCounter.estimate(system.toString()) + TokenCounter.estimate(userQuestion.toString());
             int remainTokens = Math.max(configService.getInt("chat.remainTokenFloor", 800), budget - fixedTokens);
@@ -3138,11 +3157,6 @@ public class RagService {
         return related;
     }
 
-    /**
-     * 计算上下文预算（token）：min(模型窗口 × 安全系数 − 预留输出, 成本软上限)
-     * 模型窗口按本轮生效模型（resolvedModel）子串匹配 model-windows 映射，未匹配用默认窗口
-     * 参数走 ConfigService（DB 设置页保存即生效，yml 兜底）
-     */
     // ---- 智能体（4.1）覆盖解析辅助 ----
 
     /**
@@ -3599,11 +3613,12 @@ public class RagService {
         return scoped;
     }
 
-    /** 上下文预算解析结果：窗口/输出限制各自来自「模型行声明」或「全局默认」，供触顶提示与 max_tokens 下发区分来源 */
+    /** 上下文预算解析结果：窗口/输出限制各自来自「用户所选/模型行声明/全局默认」，供触顶提示与 max_tokens 下发区分来源 */
     private record CtxBudget(int window, int maxOutput, int budget,
-                             boolean windowFromModel, boolean outputFromModel) {}
+                             String windowSource, boolean outputFromModel) {}
 
-    private CtxBudget resolveContextBudget(String resolvedModel, List<Map<String, String>> degradations, Set<String> degradedCodes) {
+    private CtxBudget resolveContextBudget(String resolvedModel, Integer requestedWindow,
+                                           List<Map<String, String>> degradations, Set<String> degradedCodes) {
         int defaultWindow = configService.getInt("context.defaultWindowTokens");
         double safetyFactor = configService.getDouble("context.safetyFactor");
         int configMaxOutput = configService.getInt("context.maxOutputTokens");
@@ -3612,10 +3627,21 @@ public class RagService {
         // 窗口/最大输出是模型固有属性：模型行声明了就用模型行（模型管理页维护），未声明回落全局默认
         ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
         Integer declaredWindow = mi == null ? null : mi.getContextWindow();
+        Integer declaredMin = mi == null ? null : mi.getContextWindowMin();
         Integer declaredOutput = mi == null ? null : mi.getMaxOutput();
         boolean windowFromModel = declaredWindow != null && declaredWindow > 0;
         boolean outputFromModel = declaredOutput != null && declaredOutput > 0;
         int window = windowFromModel ? declaredWindow : defaultWindow;
+        // 窗口来源三态：用户在聊天面板所选档位 > 模型声明 > 全局默认。区间可调 = 模型登记了
+        // 「最小窗口~窗口」且 min<max（min==max 等价于不可调）；请求值越界收敛进区间，模型不可调时忽略
+        String windowSource = windowFromModel ? "模型声明窗口" : "全局默认窗口";
+        boolean adjustable = windowFromModel && declaredMin != null && declaredMin > 0 && declaredMin < declaredWindow;
+        if (requestedWindow != null && requestedWindow > 0) {
+            if (adjustable) {
+                window = Math.max(declaredMin, Math.min(declaredWindow, requestedWindow));
+                windowSource = "用户所选窗口";
+            }
+        }
         int maxOutput = outputFromModel ? declaredOutput : configMaxOutput;
 
         int windowBudget = (int) (window * Math.max(0.1, Math.min(1, safetyFactor)));
@@ -3626,17 +3652,19 @@ public class RagService {
         // fail-loud：输出限制 ≥ 模型窗口预算时预算算出负数，被下面的 1000 托底——不能静默，
         // 否则用户只看到「预算 1.0k」却不知道是输出限制把检索资料的预算吃光了。按声明来源给出对应的修复入口。
         if (budget <= 0) {
+            boolean fromUser = "用户所选窗口".equals(windowSource);
             addDegradation(degradations, degradedCodes, "contextBudgetFloored",
                     (outputFromModel ? "该模型声明的最大输出 " : "输出限制 token（") + maxOutput
                             + (outputFromModel ? "）" : "")
-                            + " 不小于模型窗口预算（" + (windowFromModel ? "模型声明窗口 " : "全局默认窗口 ")
-                            + window + " × 安全系数 " + safetyFactor + " = " + windowBudget + "），"
+                            + " 不小于" + windowSource + "预算（" + windowSource + " " + window
+                            + " × 安全系数 " + safetyFactor + " = " + windowBudget + "），"
                             + "上下文预算被托底为 1000，检索资料将无法填入；请在"
-                            + (outputFromModel ? "模型管理中调小该模型的最大输出" : "设置页调小「输出限制 token」"));
-            log.warn("[CTX] 最大输出 {} ≥ 窗口预算 {}（窗口 {}，模型声明={}），上下文预算托底 1000",
-                    maxOutput, windowBudget, window, windowFromModel);
+                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大"
+                                       : outputFromModel ? "模型管理中调小该模型的最大输出" : "设置页调小「输出限制 token」"));
+            log.warn("[CTX] 最大输出 {} ≥ 窗口预算 {}（窗口 {}，来源={}），上下文预算托底 1000",
+                    maxOutput, windowBudget, window, windowSource);
         }
-        return new CtxBudget(window, maxOutput, Math.max(budget, 1000), windowFromModel, outputFromModel);
+        return new CtxBudget(window, maxOutput, Math.max(budget, 1000), windowSource, outputFromModel);
     }
 
     /** 生效最大输出 token：模型行声明优先，未声明回落全局「输出限制」（无知识库分支的 max_tokens 下发与触顶判定共用） */

@@ -85,14 +85,15 @@
               <p v-else-if="!prefLoading && !modelFields.length" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
             </a-spin>
 
-            <!-- 模型默认（重排/记忆向量/图谱兜底/问答对生成）：模型都归登记人，无全局槽位——
+            <!-- 模型默认（问答对生成）：模型都归登记人，无全局槽位——
                  只能选自己登记的模型，仅对本人问答与本人资源生效 -->
             <template v-if="modelFields.length">
               <a-divider style="margin:16px 0 12px" />
               <p class="pf-hint">
-                模型默认：重排 / 记忆向量 / 图谱兜底 / 问答对生成等能力所用的模型。模型都归登记人，
+                模型默认：问答对生成等能力所用的模型。模型都归登记人，
                 这里只能选你<strong>自己</strong>登记的模型，且只对你本人的问答与资源生效；未设置时
-                相关能力各自降级或回落（如重排回落到本地服务）。
+                相关能力各自降级或回落。重排模型不在此配置——归各知识库的检索设置绑定；
+                GraphRAG 抽取已回落库主的默认聊天模型，同样无需在此配置。
               </p>
               <a-form layout="vertical" style="max-width:560px">
                 <SchemaField v-for="f in modelFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
@@ -112,7 +113,8 @@
         </div>
 
         <!-- 向量模型仍无个人默认：向量空间与知识库索引一一对应、归知识库绑定；
-             重排/记忆向量/图谱兜底/问答对生成已改为个人设置项（见聊天面板「模型默认」） -->
+             重排（开关+模型）同归知识库/智能体检索设置绑定；问答对生成为个人设置项（见聊天面板「模型默认」）；
+             GraphRAG 兜底抽取已退役（回落库主默认聊天模型） -->
 
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
@@ -272,13 +274,9 @@ const prefForm = ref({})
 const prefInitial = ref({})
 const prefPersonalKeys = ref([])
 
-// 分组渲染：体验类字段归「回答偏好」，模型引用（+重排开关）归「模型默认」
-// 重排开关与模型同组：同一意图（开重排 + 选模型），拆两处会出现"配了模型找不到开关"
-const MODEL_GROUP_EXTRA = new Set(['retrieval.rerank.enabled'])
-const answerFields = computed(() => prefFields.value.filter(
-  f => f.type !== 'model' && !MODEL_GROUP_EXTRA.has(f.path)))
-const modelFields = computed(() => prefFields.value.filter(
-  f => f.type === 'model' || MODEL_GROUP_EXTRA.has(f.path)))
+// 分组渲染：体验类字段归「回答偏好」，模型引用归「模型默认」
+const answerFields = computed(() => prefFields.value.filter(f => f.type !== 'model'))
+const modelFields = computed(() => prefFields.value.filter(f => f.type === 'model'))
 
 const setByPath = (obj, path, v) => {
   const seg = path.split('.')

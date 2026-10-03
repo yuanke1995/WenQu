@@ -149,10 +149,10 @@
         </div>
       </a-form-item>
       <a-form-item v-if="form.graphEnabled" label="图谱抽取模型" class="kb-item-wrap-label">
-        <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随个人兜底模型" />
+        <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随库主默认聊天模型" />
         <div class="kb-hint" style="margin-top:4px">
           本库抽三元组用的聊天模型（归你所有：谁建库用谁的模型，抽取消耗的 token 记在所选模型上）。
-          留空回落你个人设置里的兜底抽取模型；两者都没有 = 不抽取（开启时会被拦下）。
+          留空回落库主在个人设置里选的默认聊天模型；两者都没有 = 不抽取（开启时会被拦下）。
         </div>
       </a-form-item>
     </a-form>
@@ -384,7 +384,7 @@ const prefillFromGlobal = async () => {
   const rerankEnabled = flatVal('rerank.enabled')
   q.rerankEnabled = rerankEnabled === '' ? null : rerankEnabled
   const rerankRef = flatVal('rerank.model')
-  q.rerankModel = rerankRef && modelRefInfo(rerankRef) ? rerankRef : ''   // 列表外引用不预填（留空=继承默认：个人 > 本地服务）
+  q.rerankModel = rerankRef && modelRefInfo(rerankRef) ? rerankRef : ''   // 列表外引用不预填（留空=继承：本地 rerank 服务）
 }
 
 // 打开时装载：编辑库→回填该库覆盖值；新建→先清空模板再按全局值预填

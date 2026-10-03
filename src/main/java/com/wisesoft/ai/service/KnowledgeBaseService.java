@@ -44,13 +44,10 @@ public class KnowledgeBaseService {
     private final AiDocumentMapper docMapper;
     private final AgentMapper agentMapper;
     private final com.wisesoft.ai.service.ModelRegistryService modelRegistryService;
-    /** 启动迁移把原全局默认库划转给第一个管理员（谁建归谁）；RoleService 仅依赖 Mapper，无循环依赖 */
+    /** 归属人查询（谁建归谁，原全局默认库已划转给第一个管理员）；仅依赖 Mapper，无循环依赖 */
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
-    private final com.wisesoft.ai.service.RoleService roleService;
-    /** 读全局配置（chunk/解析参数等）；GraphRAG 兜底抽取模型已个人化——见 userConfigService */
+    /** 读全局配置（chunk/解析参数等）；GraphRAG 抽取模型回落库主个人默认聊天模型——见 userMapper */
     private final ConfigService configService;
-    /** 库主个人兜底抽取模型（personalOnly：graphrag.modelRef 按库主 uid 显式解析） */
-    private final UserConfigService userConfigService;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -60,17 +57,13 @@ public class KnowledgeBaseService {
                                 AgentMapper agentMapper,
                                 com.wisesoft.ai.service.ModelRegistryService modelRegistryService,
                                 com.wisesoft.ai.mapper.UserMapper userMapper,
-                                com.wisesoft.ai.service.RoleService roleService,
-                                ConfigService configService,
-                                UserConfigService userConfigService) {
+                                ConfigService configService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
         this.userMapper = userMapper;
-        this.roleService = roleService;
         this.configService = configService;
-        this.userConfigService = userConfigService;
     }
 
     // ==================== 读写 ====================
@@ -117,7 +110,7 @@ public class KnowledgeBaseService {
         kb.setParseParams(str(body.get("parseParams")));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
-        // GraphRAG 抽取模型（库级，归库主）：空=回落库主个人设置的兜底抽取模型 graphrag.modelRef
+        // GraphRAG 抽取模型（库级，归库主）：空=回落库主个人默认聊天模型 User.defaultModel
         kb.setGraphModelRef(validateGraphModelRef(str(body.get("graphModelRef"))));
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
@@ -260,7 +253,7 @@ public class KnowledgeBaseService {
 
     /**
      * 校验并归一化本库绑定向量模型引用：**必填且必须为可解析的供应商引用**——向量空间与索引一一对应，
-     * 没有任何运行时兜底（全局 embedding.* 网关与遗留裸模型名回落已移除；存量裸名由启动迁移改写为引用）。
+     * 没有任何运行时兜底（全局 embedding.* 网关与遗留裸模型名回落已移除，须使用可解析的供应商引用）。
      * <p>
      * 归属校验：引用必须对「绑定人」可用（仅该用户自己登记的供应商；管理员级另可见全部）——
      * 否则会出现「张三的知识库挂在李四的 Key 上」。
@@ -339,19 +332,21 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 开启 GraphRAG 时的抽取模型把关：库级引用优先，空则回落**库主个人设置**的兜底抽取模型
-     * （graphrag.modelRef，personalOnly：按库主 uid 显式解析——抽取异步执行、没有请求线程，
-     * ThreadLocal 个人覆盖拿不到）。
+     * 开启 GraphRAG 时的抽取模型把关：库级引用优先，空则回落**库主个人默认聊天模型**
+     * （User.defaultModel——uid 由调用方传库主：抽取异步执行、没有请求线程，运行时判权只认库主）。
      * 保存时即校验"对库主可用"——抽取是异步任务、没有请求身份，运行时判权只按库主，
      * 非库主可用的模型（他人个人供应商）必然被拒，不能等到抽取时才发现。
      */
     private void ensureGraphModelUsable(int graphEnabled, String kbRef, String uid, String role) {
         if (graphEnabled != 1) return;
-        String effective = kbRef == null || kbRef.isBlank()
-                ? userConfigService.personalValue(uid, "graphrag.modelRef").trim() : kbRef.trim();
+        String effective = kbRef == null || kbRef.isBlank() ? "" : kbRef.trim();
+        if (effective.isEmpty()) {
+            com.wisesoft.ai.model.User owner = userMapper.selectById(uid);
+            effective = owner == null || owner.getDefaultModel() == null ? "" : owner.getDefaultModel().trim();
+        }
         if (effective.isEmpty()) {
             throw new com.wisesoft.ai.common.BizException(
-                    "开启 GraphRAG 需先选择抽取模型（本库未绑定，个人设置也未配置兜底抽取模型）");
+                    "开启 GraphRAG 需先选择抽取模型（本库未绑定，库主也未设置个人默认聊天模型）");
         }
         try {
             modelRegistryService.assertUsable(effective, uid, role);
@@ -417,100 +412,6 @@ public class KnowledgeBaseService {
         }
     }
 
-    /** 第一个管理员级用户 uid（按创建时间最早；供存量默认库划转） */
-    private String firstAdminUid() {
-        List<String> codes = roleService.adminCodes();
-        if (codes.isEmpty()) return null;
-        List<com.wisesoft.ai.model.User> admins = userMapper.selectList(
-                new LambdaQueryWrapper<com.wisesoft.ai.model.User>()
-                        .in(com.wisesoft.ai.model.User::getRole, codes)
-                        .orderByAsc(com.wisesoft.ai.model.User::getCreateTime));
-        for (com.wisesoft.ai.model.User u : admins) {
-            if (u.getUid() != null && !u.getUid().isBlank()) return u.getUid();
-        }
-        return null;
-    }
-
-    /**
-     * 启动迁移：默认库「每人一张」校准（按归属人分组）。
-     * <ul>
-     *   <li>同一归属人出现多张默认库时保留最早一张，其余降级为普通库。注意分组口径是归属人——
-     *       不能全局只留一张：否则每次重启都会把其他用户已懒创建的个人默认库误降级（2026-10-02 修复）；</li>
-     *   <li>遗留全局默认库（created_by 为 system/空）按谁建归谁划转：归第一个管理员；</li>
-     *   <li>名称统一为「问渠」、品牌标回填；空主键自愈；无归属历史文档归入该库（kb_id 必填不变量）。</li>
-     * </ul>
-     * 其余用户此后首次触达时由 {@link #defaultId(String)} 懒创建各自的空默认库。
-     */
-    @EventListener(ApplicationReadyEvent.class)
-    public void migrateDefaultKbPerUserOnStartup() {
-        try {
-            List<KnowledgeBase> defs = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
-                    .eq(KnowledgeBase::getIsDefault, 1)
-                    .eq(KnowledgeBase::getDeleted, 0)
-                    .orderByAsc(KnowledgeBase::getCreateTime)
-                    .orderByAsc(KnowledgeBase::getId));
-            // 每个归属人只保留最早一张；created_by 为 system/空 的遗留全局默认库视作同一组（组主 = "__legacy__"）
-            Map<String, KnowledgeBase> keptByOwner = new LinkedHashMap<>();
-            List<KnowledgeBase> demoted = new ArrayList<>();
-            for (KnowledgeBase d : defs) {
-                String owner = (d.getCreatedBy() == null || d.getCreatedBy().isBlank()
-                        || "system".equals(d.getCreatedBy())) ? "__legacy__" : d.getCreatedBy();
-                if (keptByOwner.putIfAbsent(owner, d) != null) demoted.add(d);
-            }
-            for (KnowledgeBase extra : demoted) {
-                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                        .eq(KnowledgeBase::getId, extra.getId())
-                        .set(KnowledgeBase::getIsDefault, 0)
-                        .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
-                log.warn("[KB] 默认知识库每人一张，同归属人的多余默认行已降级为普通库: {}（{}）", extra.getName(), extra.getId());
-            }
-            KnowledgeBase def = keptByOwner.remove("__legacy__");
-            if (def == null && !keptByOwner.isEmpty()) {
-                def = keptByOwner.values().iterator().next();
-            }
-            if (def == null) return;
-            if (def.getId() == null || def.getId().isBlank()) {
-                healEmptyDefaultId(def);
-                defaultIdByUid.clear();
-            }
-            String owner = def.getCreatedBy();
-            if (owner == null || owner.isBlank() || "system".equals(owner)) {
-                String admin = firstAdminUid();
-                if (admin != null && !admin.equals(owner)) {
-                    kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                            .eq(KnowledgeBase::getId, def.getId())
-                            .set(KnowledgeBase::getCreatedBy, admin));
-                    def.setCreatedBy(admin);
-                    log.info("[KB] 原全局默认知识库已按谁建归谁划转给管理员 {}: {}（{}）", admin, def.getName(), def.getId());
-                }
-            }
-            if (!BUILTIN_NAME.equals(def.getName())) {
-                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                        .eq(KnowledgeBase::getId, def.getId())
-                        .set(KnowledgeBase::getName, BUILTIN_NAME));
-                log.info("[KB] 默认知识库已更名为「{}」: {}", BUILTIN_NAME, def.getId());
-            }
-            if (def.getIcon() == null || def.getIcon().isBlank()) {
-                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                        .eq(KnowledgeBase::getId, def.getId())
-                        .set(KnowledgeBase::getIcon, ICON_BRAND));
-                log.info("[KB] 默认知识库图标已回填为问渠品牌标");
-            }
-            // 无归属历史文档 → 归入默认库（kb_id 必填不变量；正常已被更早的迁移处理，这里兜底）
-            Long orphans = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>()
-                    .and(w -> w.eq(AiDocument::getKbId, "").or().isNull(AiDocument::getKbId)));
-            if (orphans != null && orphans > 0) {
-                docMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                        .and(w -> w.eq(AiDocument::getKbId, "").or().isNull(AiDocument::getKbId))
-                        .set(AiDocument::getKbId, def.getId()));
-                log.info("[KB] {} 个无归属历史文档已归入默认知识库 {}", orphans, def.getId());
-            }
-            defaultIdByUid.put(def.getCreatedBy(), def.getId());
-        } catch (Exception e) {
-            // 启动迁移失败不阻断应用；defaultId(uid) 触达时还有 get-or-create 兜底
-            log.warn("[KB] 默认知识库每用户化迁移失败（触达时重试）: {}", e.getMessage());
-        }
-    }
 
     /** 空主键默认库自愈本体：换新 id（兼容 '' 与 NULL）+ 迁移 kb_id 空值的历史文档引用。 */
     private synchronized void healEmptyDefaultId(KnowledgeBase def) {
@@ -530,7 +431,7 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 库 ID 集合 → 文档 ID 集合（检索按库过滤用）。文档 kb_id 必填（历史空值已由启动迁移归库）。
+     * 库 ID 集合 → 文档 ID 集合（检索按库过滤用）。文档 kb_id 必填。
      *
      * @return 文档 ID 集合；入参为空返回空集合
      */

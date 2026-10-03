@@ -9,12 +9,14 @@ import com.wisesoft.ai.mapper.GraphExtractMapper;
 import com.wisesoft.ai.mapper.GraphTripleMapper;
 import com.wisesoft.ai.mapper.KnowledgeBaseMapper;
 import com.wisesoft.ai.mapper.KnowledgeMapper;
+import com.wisesoft.ai.mapper.UserMapper;
 import com.wisesoft.ai.model.AiDocument;
 import com.wisesoft.ai.model.GraphEntity;
 import com.wisesoft.ai.model.GraphExtract;
 import com.wisesoft.ai.model.GraphTriple;
 import com.wisesoft.ai.model.Knowledge;
 import com.wisesoft.ai.model.KnowledgeBase;
+import com.wisesoft.ai.model.User;
 import com.wisesoft.ai.thread.ThreadPoolManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -51,10 +53,9 @@ import java.util.stream.Collectors;
  * </ul>
  * <p>
  * 模型口径（2026-10 库级化）：抽取模型<b>归知识库</b>——知识库编辑里绑定（<code>graph_model_ref</code>，
- * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的存量库回落库主在个人设置里的
- * 兜底抽取模型 <code>graphrag.modelRef</code>（个人专属键，按库主 uid 显式解析，判权同样按库主）。
- * 两者皆空 = 不抽取并告警。
- * 不接「个人默认聊天模型」的隐式回落：抽取烧 token，模型必须显式选择。
+ * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的回落<b>库主的个人默认聊天模型</b>
+ * （<code>User.defaultModel</code>，按库主 uid 显式查询——它是配置引导的必配项②，配好即有）。
+ * 两者皆空 = 不抽取并告警（fail-loud，不静默用别的模型烧 token）。
  *
  * @author yuanke
  */
@@ -70,15 +71,15 @@ public class GraphRagService {
     private final AiDocumentMapper docMapper;
     private final ModelRegistryService modelRegistryService;
     private final ConfigService configService;
-    /** 兜底抽取模型按库主个人值解析（personalOnly：异步抽取线程按 uid 显式查询） */
-    private final UserConfigService userConfigService;
+    /** 回落抽取模型读库主的个人默认聊天模型（异步抽取线程没有请求身份，按库主 uid 显式查询） */
+    private final UserMapper userMapper;
     private final ChatClient chatClient;
 
     public GraphRagService(GraphEntityMapper entityMapper, GraphTripleMapper tripleMapper,
                            GraphExtractMapper extractMapper, KnowledgeMapper knowledgeMapper,
                            KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
                            ModelRegistryService modelRegistryService, ConfigService configService,
-                           UserConfigService userConfigService,
+                           UserMapper userMapper,
                            ChatClient chatClient) {
         this.entityMapper = entityMapper;
         this.tripleMapper = tripleMapper;
@@ -88,7 +89,7 @@ public class GraphRagService {
         this.docMapper = docMapper;
         this.modelRegistryService = modelRegistryService;
         this.configService = configService;
-        this.userConfigService = userConfigService;
+        this.userMapper = userMapper;
         this.chatClient = chatClient;
     }
 
@@ -265,19 +266,25 @@ public class GraphRagService {
      * @return 本次新抽出的三元组条数
      */
     int extractDoc(String docId, String kbId, String uid, String role) {
-        // 抽取模型：库级绑定优先（知识库编辑里选择，归库主），空则回落**库主的个人兜底**
-        // graphrag.modelRef（personalOnly 个人设置项：模型归登记人，全局层不参与读取——异步线程
-        // 显式按 uid 查询）。判权主体一律按**库主**：抽取跑在异步线程、没有请求身份，谁建库烧谁的模型。
+        // 抽取模型：库级绑定优先（知识库编辑里选择，归库主），空则回落**库主的个人默认聊天模型**
+        // User.defaultModel（配置引导必配项②：异步抽取线程没有请求身份，按库主 uid 显式查询）。
+        // 判权主体一律按**库主**：抽取跑在异步线程、没有请求身份，谁建库烧谁的模型。
         KnowledgeBase kb = kbMapper.selectById(kbId);
         String kbRef = kb == null || kb.getGraphModelRef() == null ? "" : kb.getGraphModelRef().trim();
         String principalUid = kb != null && kb.getCreatedBy() != null && !kb.getCreatedBy().isBlank()
                 ? kb.getCreatedBy() : uid;
-        String modelRef = kbRef.isEmpty()
-                ? userConfigService.personalValue(principalUid, "graphrag.modelRef").trim() : kbRef;
+        String modelRef = kbRef;
+        String modelSource = "库级绑定";
+        if (modelRef.isEmpty()) {
+            User owner = userMapper.selectById(principalUid);
+            modelRef = owner == null || owner.getDefaultModel() == null ? "" : owner.getDefaultModel().trim();
+            modelSource = "库主默认聊天模型";
+        }
         if (modelRef.isEmpty()) {
             throw new BizException("未配置 GraphRAG 抽取模型：请在知识库编辑里选择抽取模型"
-                    + "（或由库主在「个人设置 → 模型默认」配置兜底抽取模型），抽取跳过");
+                    + "（或由库主在个人设置里设置默认聊天模型），抽取跳过");
         }
+        log.info("[GRAPH] 抽取模型 kb={} model={} 来源={}", kbId, modelRef, modelSource);
         modelRegistryService.assertUsable(modelRef, principalUid, role);
         List<Knowledge> chunks = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
                 .eq(Knowledge::getDocId, docId).orderByAsc(Knowledge::getChunkIndex));

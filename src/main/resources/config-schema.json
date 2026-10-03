@@ -1240,8 +1240,7 @@
       "type": "switch",
       "tips": "rerankEnabled",
       "def": false,
-      "personal": true,
-      "note": "平台默认值，个人可在「个人设置 → 模型默认」覆盖；被个人覆盖或知识库/智能体单独设置时以其为准",
+      "note": "平台默认值；知识库/智能体检索设置单独配置时以其为准（重排归知识库绑定，无个人层）",
       "tier": 2
     },
     {
@@ -1257,9 +1256,8 @@
       "allowClear": true,
       "tips": "rerankModel",
       "def": "",
-      "personal": true,
       "personalOnly": true,
-      "note": "个人设置项（模型归登记人）：你的库检索设置未单独配置重排模型时生效；清空=回落本地 rerank.baseUrl 服务",
+      "note": "重排模型归知识库/智能体检索设置绑定（模型归登记人）；未绑定时回落本地 rerank.baseUrl 服务",
       "tier": 2
     },
     {
@@ -3020,24 +3018,6 @@
       "tier": 2
     },
     {
-      "backendKey": "graphrag.modelRef",
-      "panel": "maintenance",
-      "section": 8,
-      "group": "graphrag",
-      "key": "modelRef",
-      "path": "graphrag.modelRef",
-      "label": "兜底抽取模型",
-      "type": "model",
-      "def": "",
-      "tier": 2,
-      "width": 420,
-      "note": "个人设置项（模型归登记人）：你本人的知识库在「知识库编辑 → GraphRAG」未单独绑定抽取模型时回退用它（判权按库主）；留空且库内未绑定 = 不抽取",
-      "modelType": "chat",
-      "personal": true,
-      "personalOnly": true,
-      "allowClear": true
-    },
-    {
       "backendKey": "graphrag.batchChunks",
       "panel": "maintenance",
       "section": 8,
@@ -3605,7 +3585,6 @@
     "workflow.maxConcurrentRuns": "工作流异步运行并发上限（改后需重启）",
     "workflow.runQueueCapacity": "工作流异步运行排队容量（队列满即拒绝；改后需重启）",
     "mcp.server.enabled": "MCP 服务端点（对外提供）",
-    "graphrag.modelRef": "GraphRAG 兜底抽取模型（个人设置项，模型归登记人）：库内未绑定抽取模型时按库主个人值回退",
     "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
     "graphrag.maxTriplesPerChunk": "GraphRAG：每块最多抽几条关系（成本闸，超出的丢弃）",
     "graphrag.expandTopK": "GraphRAG：检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减"

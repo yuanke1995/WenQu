@@ -139,8 +139,6 @@ ai-app:
   # 行为参数（开关/提示词/并发/超时/重试/缓存）统一在系统设置页维护（c_ai_config）
   # 上下文与长度控制（价值驱动填充：预算 = min(窗口×系数−输出, 成本上限)，块按相关度累积）
   context:
-    # 模型窗口映射（子串匹配当前 chat.model，未匹配用 default-window-tokens）
-    model-windows: ${AI_CONTEXT_MODEL_WINDOWS:qwen-plus=131072,qwen3=131072,qwen-max=32768,deepseek=65536,default=32768}
     default-window-tokens: 32768
     safety-factor: 0.7
     # 成本软上限（token，0=不限制）：大窗口模型也防账单失控

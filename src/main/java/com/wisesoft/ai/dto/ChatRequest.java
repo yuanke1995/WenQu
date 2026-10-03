@@ -107,6 +107,10 @@ public class ChatRequest {
             + "不静默改写用户选择。")
     private String reasoningLevel;
 
+    @Schema(description = "本轮上下文窗口 token（用户在聊天页模型面板所选档位）。仅当生效模型登记了「最小窗口~窗口」"
+            + "区间时生效，越界值收敛到区间内；模型未登记区间或本值为空 = 用模型登记窗口（默认上限）。")
+    private Integer contextWindow;
+
     @Schema(description = "智能体 ID；\"auto\"=自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选，失败回落默认智能体）；"
             + "其他非空值=该轮问答按该智能体的提示词/工具/知识库范围执行；空=继承全局配置")
     private String agentId;
