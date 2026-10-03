@@ -1568,9 +1568,13 @@ public class RagService {
                 }
             }
         }
+        // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
+        // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。
+        // 联网搜索不受 off 管辖：启停由自身开关决定，纳入审批（webSearch.requireApproval）后仅 ask 会拦截。
+        boolean approvalOff = agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
         // 沙盒工具（隔离执行环境）：tool.sandbox.enabled 控制；暂无智能体级三态覆盖（toolSandbox 列未加，
         // 见 SandboxTools 类注释）——沙盒本身按会话隔离，工具一旦启用对所有会话可用
-        if (toolOn(agent, "tool.sandbox.enabled", null)) {
+        if (!approvalOff && toolOn(agent, "tool.sandbox.enabled", null)) {
             for (org.springframework.ai.tool.ToolCallback cb :
                     org.springframework.ai.support.ToolCallbacks.from(sandboxTools)) {
                 callbacks.add(cb);
@@ -1578,7 +1582,7 @@ public class RagService {
             }
         }
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
-        if (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1) {
+        if (!approvalOff && (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1)) {
             // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
             Set<String> mcpRefs = agent == null ? null : scopeOf(agent.getMcps());
             RefScope mcpScope = resolveRefs(mcpRefs, userId);
@@ -2245,6 +2249,9 @@ public class RagService {
                         // 缓存命中 token（prompt 缓存）：网关方言不一，尽力从 nativeUsage 里挖；
                         // 挖不到保持 0，容量面板隐藏「缓存命中率」行（不显示假数据）
                         st.cachedPromptTokens = extractCachedTokens(usage);
+                        // 工具调用循环逐轮捕获（native 原始口径求和，见 roundUsages 字段注释）；
+                        // 上面的单值字段保留作 native 缺失网关的单轮兜底
+                        captureRoundUsage(resp.getMetadata() == null ? null : resp.getMetadata().getId(), usage, st);
                     }
                     Object output = resp.getResult() == null ? null : resp.getResult().getOutput();
                     String delta = (output instanceof org.springframework.ai.chat.messages.AssistantMessage am
@@ -2557,20 +2564,37 @@ public class RagService {
                     // 完成时只补落助手消息（含引用来源/思考/产物/工具调用/用量），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
                     // Token 用量（1.9）：持久化前先算好（随消息存 JSON，刷新/历史会话仍可回看「本次用量/会话累计」）。
-                    // 输出优先用网关真实 usage（部分兼容网关末块 metadata.usage 携带），拿不到回落本地估算；
-                    // 真实值不额外加估算的 10% 余量（估算才需余量防超窗，实报应如实）。
-                    boolean realOutput = st.realOutputTokens > 0;
-                    int outputTokens = realOutput ? st.realOutputTokens : TokenCounter.estimate(answer);
+                    // 工具调用循环逐轮求和（native 原始口径）=全部请求轮次总量，与供应商账单同口径；
+                    // 最终轮（prompt 最大：工具结果逐轮入上下文）的输出用于触顶判定、其 prompt 用于
+                    // ctxParts 校准（分类拆的是最终上下文而非各轮总和）。无逐轮数据时回落旧单值字段，
+                    // 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
+                    long sumPrompt = 0, sumOutput = 0, sumCached = 0, finalPrompt = 0, finalRoundOutput = 0;
+                    for (long[] r : st.roundUsages.values()) {
+                        sumPrompt += r[0];
+                        sumOutput += r[1];
+                        sumCached += r[2];
+                        if (r[0] > finalPrompt) {
+                            finalPrompt = r[0];
+                            finalRoundOutput = r[1];
+                        }
+                    }
+                    boolean hasRounds = !st.roundUsages.isEmpty();
+                    boolean realOutput = hasRounds ? sumOutput > 0 : st.realOutputTokens > 0;
+                    int outputTokens = realOutput ? (int) (hasRounds ? sumOutput : st.realOutputTokens)
+                            : TokenCounter.estimate(answer);
                     // 输出触顶 fail-loud：网关真实 completion_tokens 达到输出上限 ⇒ 大概率被
                     // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
                     // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
                     // 上限与 max_tokens 下发同源（模型管理中该模型声明的最大输出）；未声明输出上限时无从判定，跳过。
+                    // 多轮时只看生成最终回答那一轮的输出（各轮工具调用参数的输出不参与触顶判定）
                     int maxOutput = st.effectiveMaxOutput;
-                    if (maxOutput > 0 && realOutput && outputTokens >= maxOutput) {
+                    int answerRoundOutput = hasRounds ? (int) finalRoundOutput : outputTokens;
+                    if (maxOutput > 0 && realOutput && answerRoundOutput >= maxOutput) {
                         addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
                                 "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
                     }
-                    int promptTokens = st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens;
+                    int promptTokens = hasRounds ? (int) sumPrompt
+                            : (st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens);
                     // noHit 事后判定（基于本轮最终引用）：主链路检索 0 填充但工具检索（智能体知识检索工具等）
                     // 注册了来源时不算"未检索到"——生成前判定拿不到工具后续注册的引用，会出现在回答带着
                     // [N] 引用的同时提示"未检索到相关资料"的自相矛盾。最终（sources 含工具注册项）仍为空才提示。
@@ -2588,8 +2612,9 @@ public class RagService {
                     // 容量面板数据：生效窗口/来源 + 分类用量（按网关真实 prompt 等比校准）+ 缓存命中
                     tokens.put("window", st.windowTokens);
                     tokens.put("windowSource", st.windowSource);
-                    tokens.put("cached", st.cachedPromptTokens);
-                    tokens.put("parts", calibrateParts(st.ctxParts, promptTokens, st.realPromptTokens > 0));
+                    tokens.put("cached", hasRounds ? (int) sumCached : st.cachedPromptTokens);
+                    tokens.put("parts", calibrateParts(st.ctxParts,
+                            hasRounds ? (int) finalPrompt : promptTokens, hasRounds || st.realPromptTokens > 0));
                     if (st.historyCompressedTurns > 0) {
                         tokens.put("historyCompressed", st.historyCompressedTurns);
                     }
@@ -2765,6 +2790,17 @@ public class RagService {
         volatile int realOutputTokens;
         /** 缓存命中的 prompt token（网关 prompt_tokens_details.cached_tokens；0=网关未回传，面板隐藏该行） */
         volatile int cachedPromptTokens;
+        /**
+         * 工具调用循环的逐轮 usage（native 原始口径）：key=响应 id（无 id 网关用匿名序号），
+         * value=[prompt, output, cached]。一次问答内模型可多轮调用工具，Spring AI 每轮独立
+         * 请求网关并各自返回 usage；其跨轮累加链（previousChatResponse）在「usage 位于工具
+         * 触发块之后的独立末块」时断裂（本项目未开启 stream_options.include_usage，部分网关
+         * 不支持该参数），单值覆盖只能留下某一轮。native usage 恒为当轮原始值不受累加污染，
+         * 逐轮求和=全部轮次总量（与供应商账单同口径）；最终轮=prompt 最大的轮（工具结果
+         * 逐轮入上下文，prompt 严格递增）。
+         */
+        final java.util.concurrent.ConcurrentHashMap<String, long[]> roundUsages = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.concurrent.atomic.AtomicInteger anonUsageSeq = new java.util.concurrent.atomic.AtomicInteger();
         /** 本轮生效窗口 token 与来源（用户所选档位/模型声明/未声明），容量面板展示「已用 X / 窗口 Y」 */
         volatile int windowTokens;
         volatile String windowSource = "";
@@ -3995,6 +4031,43 @@ public class RagService {
      * ③ DeepSeek 方言的 {@code prompt_cache_hit_tokens}（未被 Spring AI 建模时会丢失，挖不到就作罢）。
      * 全部取不到返回 0——容量面板隐藏「缓存命中率」行，不显示假数据。
      */
+    /**
+     * 工具调用循环的逐轮 usage 捕获（native 原始口径，按响应 id 去重合并）。
+     * <p>
+     * 背景：一次问答内模型多轮调用工具时，Spring AI 每轮独立请求网关，每轮的 usage 出现在
+     * 该轮流末（finish 块或其后的独立 usage 末块）。Spring AI 的跨轮累加经 previousChatResponse
+     * 链衔接，但链在「工具触发块本身不带 usage」处断裂——未开启 stream_options.include_usage
+     * 时（本项目未开启，部分兼容网关不支持该参数），工具触发块只带 EmptyUsage，下一轮无从
+     * 累加上一轮；且嵌套 Flux 的发射顺序使最后到达的是第 1 轮的末块，单值覆盖恰好记下第 1 轮
+     * （实测 DeepSeek 8 轮工具循环只记 12,478，官网同小时实耗 55,629）。
+     * native usage 恒为当轮原始值（累加产物 DefaultUsage 不带 native），逐轮求和即全轮总量。
+     */
+    private void captureRoundUsage(String respId, org.springframework.ai.chat.metadata.Usage usage,
+                                   AnswerStreamState st) {
+        Integer prompt = usage.getPromptTokens();
+        Integer completion = usage.getCompletionTokens();
+        long p = prompt == null ? 0 : prompt;
+        long c = completion == null ? 0 : completion;
+        if (p <= 0 && c <= 0) {
+            return;
+        }
+        if (usage.getNativeUsage() == null) {
+            return;
+        }
+        long cached = extractCachedTokens(usage);
+        // 无响应 id（NO_ID/空）的网关无法跨轮去重：每份 usage 记为独立一轮。常规网关每轮
+        // usage 只出现一次（finish 块或独立末块二选一，不会两处都带），逐份求和即正确
+        String key = (respId == null || respId.isBlank() || "NO_ID".equals(respId))
+                ? "#anon-" + st.anonUsageSeq.incrementAndGet() : respId;
+        // 同一响应 id 理论上只该出现一份 usage；防御性按各字段最大值合并（同轮重复上报不重复计）
+        st.roundUsages.merge(key, new long[]{p, c, cached}, (oldV, newV) -> {
+            oldV[0] = Math.max(oldV[0], newV[0]);
+            oldV[1] = Math.max(oldV[1], newV[1]);
+            oldV[2] = Math.max(oldV[2], newV[2]);
+            return oldV;
+        });
+    }
+
     private int extractCachedTokens(org.springframework.ai.chat.metadata.Usage usage) {
         Object native_ = null;
         try {
