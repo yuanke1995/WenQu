@@ -36,18 +36,27 @@
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
-          <h2>有什么可以帮你？</h2>
-          <p>智能体与知识库问答，支持图片提问与深度思考</p>
-          <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析） -->
-          <div class="welcome-samples">
-            <button v-for="q in SAMPLE_QUESTIONS" :key="q.text" class="ws-card" type="button" @click="ask(q.text)">
-              <span class="ws-ic">{{ q.icon }}</span>
-              <span class="ws-text">
-                <span class="ws-label">{{ q.label }}</span>
-                <span class="ws-q">{{ q.text }}</span>
-              </span>
-            </button>
-          </div>
+          <!-- 引导卡：聊天模型/默认模型未就绪时替代示例问题（loaded 门控——首次对账未成功前维持现状，
+               宁可晚一拍引导，不给已配好的存量用户闪一帧假引导）。无模型时点示例只会弹拦截 toast，是死路 -->
+          <template v-if="setupGuide.loaded && !chatDone">
+            <h2>欢迎使用问渠</h2>
+            <p>完成下面的配置即可开始对话</p>
+            <div class="welcome-guide"><SetupGuide scope="chat" variant="card" /></div>
+          </template>
+          <template v-else>
+            <h2>有什么可以帮你？</h2>
+            <p>智能体与知识库问答，支持图片提问与深度思考</p>
+            <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析） -->
+            <div class="welcome-samples">
+              <button v-for="q in SAMPLE_QUESTIONS" :key="q.text" class="ws-card" type="button" @click="ask(q.text)">
+                <span class="ws-ic">{{ q.icon }}</span>
+                <span class="ws-text">
+                  <span class="ws-label">{{ q.label }}</span>
+                  <span class="ws-q">{{ q.text }}</span>
+                </span>
+              </button>
+            </div>
+          </template>
         </div>
 
         <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
@@ -860,10 +869,12 @@ import { sessionStore, loadSessions, chatStreams, markSessionActive } from './st
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
+import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 import ModelSelect from '../components/ModelSelect.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
+import SetupGuide from '../components/SetupGuide.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -3256,6 +3267,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('paste', onGlobalPaste)
   await loadSessions()
+  refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
   loadAgents()       // 智能体下拉候选（不阻塞首屏）
   loadSkills()       // 技能菜单候选（输入框「+」菜单，不阻塞首屏）
   const sid = route.query.sid
@@ -3362,6 +3374,8 @@ onMounted(async () => {
 
 /* 空态示例问题卡片：2×2 网格，点击即发 */
 .welcome-samples { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 560px; margin: 0 auto; text-align: left; }
+/* 欢迎区引导卡容器：与示例问题栅格同宽，卡片自身在 SetupGuide.vue 定义 */
+.welcome-guide { max-width: 560px; margin: 18px auto 0; }
 .ws-card {
   display: flex; align-items: flex-start; gap: 9px; text-align: left;
   border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-panel);

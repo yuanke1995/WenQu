@@ -216,16 +216,21 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { authUser } from '../utils/auth'
+import { refreshSetupGuide } from '../utils/setupGuide'
 import {
   listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
   batchDeleteProviders, batchSetProvidersEnabled
 } from '../api'
+
+const route = useRoute()
+const router = useRouter()
 
 const list = ref([])
 const loading = ref(false)
@@ -455,11 +460,20 @@ const save = async () => {
   saving.value = true
   try {
     const body = { ...form.value }
-    if (editing.value) await updateProvider(editing.value.id, body)
-    else await createProvider(body)
+    let r
+    if (editing.value) r = await updateProvider(editing.value.id, body)
+    else r = await createProvider(body)
     message.success(editing.value ? '已保存' : '已创建')
     showEdit.value = false
     await load()
+    refreshSetupGuide(true)
+    // 新建供应商一气呵成：接口返回 Provider 实体（r.data.id）时自动打开其「管理模型」弹窗，
+    // 「新建 → 拉取模型 → 保存」不断链，减少小白找入口的断点
+    const newId = !editing.value && r && r.data && r.data.id
+    if (newId) {
+      const created = list.value.find(p => p.id === newId)
+      if (created) openModels(created)
+    }
   } catch (e) {
     message.error(e.message || '保存失败')
   } finally {
@@ -482,6 +496,7 @@ const onDelete = async p => {
     await deleteProvider(p.id)
     message.success('已删除')
     await load()
+    refreshSetupGuide(true)  // 删掉模型后引导清单/tag 需要回升（对账）
   } catch (e) {
     // 仍被引用时后端会给出具体引用位置
     message.warning(e.message || '删除失败')
@@ -753,6 +768,7 @@ const saveModels = async () => {
     message.success('模型已保存')
     showModels.value = false
     await load()
+    refreshSetupGuide(true)  // 登记模型后立即对账引导状态（返回对话页 tag/清单即时正确）
   } catch (e) {
     message.error(e.message || '保存失败')
   } finally {
@@ -760,7 +776,22 @@ const saveModels = async () => {
   }
 }
 
-onMounted(load)
+/** 深链处理：/agents?tab=providers&action=new-provider（配置引导清单「去添加」的跳转目标）。
+ *  无任何供应商 → 直接弹「新建供应商」；已有 → 打开第一个还没登记聊天模型的供应商的「管理模型」，
+ *  全都登记过则兜底 openCreate()。处理完 replace 清掉 action：本页在 a-tabs
+ *  destroy-inactive-tab-pane 下切 Tab 会重挂载，不清参数会反复自动弹窗。 */
+const handleSetupAction = () => {
+  if (route.query.action !== 'new-provider') return
+  router.replace({ path: '/agents', query: { tab: 'providers' } })
+  const target = list.value.find(p => !(p.typeCounts && p.typeCounts.chat))
+  if (target) openModels(target)
+  else openCreate()
+}
+
+onMounted(async () => {
+  await load()
+  handleSetupAction()
+})
 </script>
 
 <style scoped>

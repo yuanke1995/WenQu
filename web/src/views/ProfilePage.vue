@@ -156,6 +156,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
+import { refreshSetupGuide } from '../utils/setupGuide'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile,
          getUserSettings, saveUserSettings,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
@@ -223,6 +224,7 @@ const save = async () => {
     message.success('已保存')
     await load()
     if (current.value === 'chat') await loadPrefs()
+    refreshSetupGuide(true)  // 个人设置改了默认模型 → 引导 tag/卡片立即对账
   } catch (e) {
     message.error(e.message || '保存失败')
     await load() // 回落服务端状态，避免本地与服务端不一致

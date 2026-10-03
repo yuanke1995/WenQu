@@ -11,16 +11,28 @@
         </button>
       </div>
 
+      <!-- 新手配置引导入口（logo 与导航之间）：未完成最小可用配置时常驻（含向量模型项），
+           完成后 pendingCount=0 自动消失，对已配好的存量用户零打扰；点击打开引导抽屉 -->
+      <button v-if="guideVisible" class="nav-item guide-entry" @click="guideOpen = true" title="配置引导">
+        <compass-outlined />
+        <span v-if="!collapsed" class="guide-entry-text">配置引导</span>
+        <span v-if="!collapsed" class="guide-count">还差 {{ pendingCount }} 项</span>
+        <i class="nav-dot"></i>
+      </button>
+
       <nav class="side-nav">
         <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="newChat" title="新建对话">
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
         </button>
-        <!-- 导航由 /auth/me 下发的菜单树渲染（RBAC：按角色绑定下发，权限管理页维护） -->
+        <!-- 导航由 /auth/me 下发的菜单树渲染（RBAC：按角色绑定下发，权限管理页维护）；
+             待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
         <button v-for="m in navMenus" :key="m.id" class="nav-item"
-                :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="m.name">
+                :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="menuTitle(m)">
           <component :is="iconOf(m.icon)" />
           <span v-if="!collapsed">{{ m.name }}</span>
+          <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
+          <i v-if="menuPending(m)" class="nav-dot"></i>
         </button>
       </nav>
 
@@ -168,6 +180,11 @@
       </div>
     </aside>
 
+    <!-- 配置引导抽屉：常驻入口点开，清单含向量模型项（scope=all）；跳转前由组件 emit close 关闭 -->
+    <a-drawer v-model:open="guideOpen" placement="left" :width="400" title="配置引导">
+      <SetupGuide scope="all" variant="plain" @close="guideOpen = false" />
+    </a-drawer>
+
     <!-- 主内容区 -->
     <div class="main"><router-view /></div>
 
@@ -177,11 +194,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined,
+         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CompassOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined,
@@ -190,9 +207,11 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
          notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
+import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
+import SetupGuide from '../components/SetupGuide.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -409,6 +428,28 @@ const doBatchDelete = async ids => {
 // 个人设置：独立页（默认模型三类 + 修改密码）
 const goProfile = () => router.push('/profile')
 
+// ==================== 新手配置引导（侧栏入口 + 菜单 tag + 抽屉） ====================
+// 状态口径见 utils/setupGuide.js：入口/抽屉=任一项未完成；/chat tag=①②任一未完成；
+// /knowledge tag=③未完成。loaded=false（首次对账未成功）一律不显示，避免给存量用户误报。
+const guideOpen = ref(false)
+const guideVisible = computed(() => setupGuide.loaded && pendingCount.value > 0)
+// 聊天侧缺失项文案（tooltip 用）
+const chatPendingText = computed(() => {
+  const parts = []
+  if (!chatReady.value) parts.push('添加聊天模型')
+  if (!defaultReady.value) parts.push('设置默认聊天模型')
+  return parts.join('、')
+})
+const menuPending = m =>
+  (m.path === '/chat' && !chatDone.value) || (m.path === '/knowledge' && !embeddingReady.value)
+const menuTitle = m => {
+  if (m.path === '/chat' && !chatDone.value) return `${m.name} — 还差：${chatPendingText.value}`
+  if (m.path === '/knowledge' && !embeddingReady.value) return `${m.name} — 还差：添加向量模型（建知识库需要）`
+  return m.name
+}
+// 导航回来 TTL 对账（15s 内不重复请求；配置动作后的 force 对账在 Providers/Profile 页内做）
+watch(() => route.path, () => { refreshSetupGuide() })
+
 // 退出登录：令牌无状态，清本地令牌并回登录页
 const doLogout = async () => {
   try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
@@ -499,6 +540,7 @@ onMounted(async () => {
   navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
   loadSessions()
   refreshUnread()
+  refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
   notifTimer = setInterval(refreshUnread, 30_000)
 })
 onUnmounted(() => clearInterval(notifTimer))
@@ -536,9 +578,33 @@ onUnmounted(() => clearInterval(notifTimer))
   display: flex; align-items: center; gap: 9px; border: none; background: transparent;
   padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--app-text2);
   cursor: pointer; text-align: left; white-space: nowrap; transition: background .15s, color .15s;
+  position: relative; /* 折叠态/窄屏的待配置圆点绝对定位于行内右上角 */
 }
 .nav-item:hover { background: var(--app-accent-weak); color: var(--app-text); }
 .nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+
+/* ==================== 新手配置引导：菜单 tag + 折叠圆点 + 侧栏入口 ==================== */
+/* 展开态行尾琥珀 pill（复用 .app-pill 形态，配色走主题变量以兼容暗色） */
+.nav-item .app-pill.nav-pending {
+  margin-left: auto; flex: none;
+  font-size: 10px; padding: 2.5px 7px;
+  color: var(--app-warn-text); background: var(--app-warn-weak);
+}
+/* 折叠态/窄屏（≤768 纯 CSS 收成图标条）：span 文本被隐藏，用 <i> 圆点提示待配置（span 会被隐藏规则吞掉） */
+.nav-dot {
+  display: none; position: absolute; top: 6px; right: 9px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--app-warn); flex: none;
+}
+.side.collapsed .nav-dot { display: block; }
+@media (max-width: 768px) { .side .nav-dot { display: block; } }
+/* 侧栏引导入口（logo 与导航之间）：主色弱底区别于普通导航项，计数角标琥珀色 */
+.guide-entry { background: var(--app-accent-weak); margin-bottom: 6px; }
+.guide-entry-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.guide-count {
+  flex: none; font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  color: var(--app-warn-text); background: var(--app-warn-weak);
+}
 
 .side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
 /* 分组头可点折叠：全宽按钮化，箭头指示状态（展开=向下），右侧淡显条数 */
