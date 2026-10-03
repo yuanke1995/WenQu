@@ -606,12 +606,41 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
-              <a-tooltip v-if="thinkCap.visible"
-                         :title="thinkCap.locked ? '该模型始终深度思考，强度由管理员在模型库登记' : '思考等级（只列出该模型支持的档位）'">
-                <a-select :value="currentThinkLevel" size="small" class="think-level-select"
-                          :options="thinkLevelOptions" :disabled="loading || thinkCap.locked"
-                          @change="setThinkLevel" />
-              </a-tooltip>
+              <!-- 深度思考设置：胶囊触发器 + 弹出面板卡（标题/描述 + 思考强度行展开选档 + 底部提示），
+                   替代原 antd 下拉；选项口径不变（关闭思考 / 该模型支持档位 / 恒思考锁定） -->
+              <a-popover v-if="thinkCap.visible" v-model:open="thinkPanelOpen" trigger="click"
+                         placement="topRight" :arrow="false" overlay-class-name="think-pop">
+                <template #content>
+                  <div class="thinkp">
+                    <div class="thinkp-head">
+                      <div class="thinkp-title">深度思考</div>
+                      <div class="thinkp-desc">回答前先逐步推理，适合数学、代码等复杂问题；关闭后响应更快。</div>
+                    </div>
+                    <div class="thinkp-row-wrap">
+                      <button class="thinkp-row" type="button"
+                              :class="{ expandable: !thinkCap.locked }"
+                              @click="!thinkCap.locked && (thinkLevelsOpen = !thinkLevelsOpen)">
+                        <span class="thinkp-row-label">思考强度</span>
+                        <span class="thinkp-row-val">{{ thinkStrengthText }}</span>
+                        <down-outlined v-if="!thinkCap.locked" class="thinkp-caret" :class="{ open: thinkLevelsOpen }" />
+                      </button>
+                      <div v-if="thinkLevelsOpen && !thinkCap.locked" class="thinkp-levels">
+                        <button v-for="opt in thinkLevelOptions" :key="opt.value" class="thinkp-opt" type="button"
+                                :class="{ active: opt.value === currentThinkLevel }" @click="pickThinkLevel(opt.value)">
+                          <span>{{ opt.label }}</span>
+                          <check-outlined v-if="opt.value === currentThinkLevel" class="thinkp-opt-check" />
+                        </button>
+                      </div>
+                    </div>
+                    <div class="thinkp-foot">{{ thinkCap.locked ? '该模型始终深度思考，强度由管理员在模型库登记。' : '强度越高，思考越深入，回答耗时相应增加。' }}</div>
+                  </div>
+                </template>
+                <button class="think-pill" type="button" :class="{ on: deepThinkOn, open: thinkPanelOpen }"
+                        :disabled="loading">
+                  <bulb-outlined class="think-pill-ic" />
+                  <span class="think-pill-text">{{ currentThinkLabel }}</span>
+                </button>
+              </a-popover>
               <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
                            :width="190" :disabled="loading" />
@@ -1323,6 +1352,26 @@ const setThinkLevel = v => {
     localStorage.setItem('ai_deep_think', JSON.stringify(deepThinkMap.value))
     localStorage.setItem('ai_think_level', JSON.stringify(levelMap.value))
   } catch (e) { /* 存储不可用忽略 */ }
+}
+// ==================== 思考设置面板卡（胶囊触发器 + 弹出面板，替代原等级下拉） ====================
+const thinkPanelOpen = ref(false)
+/** 「思考强度」行的档位子列表展开态：面板每次关闭后复位为收起 */
+const thinkLevelsOpen = ref(false)
+watch(thinkPanelOpen, v => { if (!v) thinkLevelsOpen.value = false })
+/** 触发器胶囊文案：沿用等级选项的 label（关闭思考 / 思考·高 / 开启思考 / 恒思考·极致） */
+const currentThinkLabel = computed(() =>
+  thinkLevelOptions.value.find(o => o.value === currentThinkLevel.value)?.label || '深度思考')
+/** 面板「思考强度」行的当前值：未开启 / 已开启（无档位）/ 具体档位名 */
+const thinkStrengthText = computed(() => {
+  if (!deepThinkOn.value) return '未开启'
+  const v = currentThinkLevel.value
+  return (v === THINK_LEVEL_ON) ? '已开启' : levelLabel(v)
+})
+/** 面板内选档：复用原下拉的写入逻辑，选完收起整个面板 */
+const pickThinkLevel = v => {
+  if (thinkCap.value.locked) return
+  setThinkLevel(v)
+  thinkPanelOpen.value = false
 }
 /** 本轮下发给后端的思考强度档位（关思考/未选具体档位 → 空串，后端回落模型登记默认档位） */
 const reasoningLevelParam = computed(() => {
@@ -3799,12 +3848,43 @@ onMounted(async () => {
 .input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-/* 思考等级下拉（与模型选择器同排的胶囊形态，仅模型登记了支持档位时出现） */
-.think-level-select { width: 108px; }
-.think-level-select :deep(.ant-select-selector) {
-  height: 28px !important; border-radius: 999px !important;
-  padding: 0 22px 0 10px !important; font-size: 13px;
+/* ==================== 深度思考设置（胶囊触发器 + 弹出面板卡，参考模型详情面板形态） ==================== */
+/* 触发器胶囊：与模型/智能体胶囊同构的幽灵形态；思考开启时整颗提为主题色（同 toolbar-btn-on 口径） */
+.think-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+  border-radius: 999px; border: none; background: transparent; cursor: pointer;
+  color: var(--app-text3); font-size: 13px; transition: background .15s, color .15s;
 }
+.think-pill:hover, .think-pill.open { background: var(--app-panel-2); color: var(--app-text); }
+.think-pill.on { color: var(--app-accent); }
+.think-pill.on:hover, .think-pill.on.open { background: var(--app-accent-weak); }
+.think-pill:disabled { cursor: not-allowed; opacity: .55; }
+.think-pill-ic { font-size: 13px; }
+.think-pill-text { white-space: nowrap; }
+/* 面板卡：标题/描述 + 「思考强度」标签值行（点开展开档位列表）+ 底部提示 */
+.thinkp { width: 264px; }
+.thinkp-title { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.thinkp-desc { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--app-text3); }
+.thinkp-row-wrap { margin-top: 12px; border-top: 1px solid var(--app-border); }
+.thinkp-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 0;
+  border: none; background: transparent; font-size: 13px; text-align: left;
+}
+.thinkp-row.expandable { cursor: pointer; }
+.thinkp-row-label { color: var(--app-text); }
+.thinkp-row-val { margin-left: auto; color: var(--app-text3); }
+.thinkp-caret { font-size: 11px; color: var(--app-text3); transition: transform .2s; }
+.thinkp-caret.open { transform: rotate(180deg); }
+.thinkp-levels { display: flex; flex-direction: column; gap: 2px; padding-bottom: 10px; }
+.thinkp-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
+  font-size: 13px; color: var(--app-text); text-align: left; cursor: pointer;
+}
+.thinkp-opt:hover { background: var(--app-panel-2); }
+.thinkp-opt.active { color: var(--app-accent); font-weight: 500; }
+.thinkp-opt-check { font-size: 12px; }
+.thinkp-foot { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--app-border); font-size: 12px; line-height: 1.6; color: var(--app-text3); }
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
 .model-name {
   margin-left: auto; font-size: 11px; color: var(--app-text3); margin-right: 8px; user-select: none;
@@ -4126,4 +4206,9 @@ onMounted(async () => {
   .bubble { max-width: 100%; }
   .right-panel { width: calc(100% - 24px); right: 12px; }
 }
+</style>
+
+<!-- 思考设置弹出面板容器：popover 内容 teleport 到 body，容器样式需全局（内边距/圆角卡片化） -->
+<style>
+.think-pop .ant-popover-inner { padding: 14px 16px; border-radius: 14px; }
 </style>
