@@ -18,6 +18,9 @@ import reactor.core.publisher.Flux;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.wisesoft.ai.util.UsageAccumulator;
+import com.wisesoft.ai.util.UsageAttr;
+
 /**
  * 动态 OpenAI 兼容 ChatModel（多供应商路由）：模型引用感知的客户端路由器。
  * <p>
@@ -42,6 +45,8 @@ public class DynamicOpenAiChatModel implements ChatModel {
 
     private final ModelRegistryService registry;
     private final Environment environment;
+    /** 用量台账：所有推理调用在路由出口统一记账（供应商账单与个人统计的唯一数据源） */
+    private final UsageLedgerService usageLedger;
     /** 容器存在则复用（与自动配置构建的 ChatModel 行为一致），缺失时用 builder 内部默认值 */
     private final RetryTemplate retryTemplate;
     private final ObservationRegistry observationRegistry;
@@ -50,10 +55,12 @@ public class DynamicOpenAiChatModel implements ChatModel {
     private final Map<String, OpenAiChatModel> delegates = new ConcurrentHashMap<>();
 
     public DynamicOpenAiChatModel(ModelRegistryService registry, Environment environment,
+                                  UsageLedgerService usageLedger,
                                   ObjectProvider<RetryTemplate> retryTemplate,
                                   ObjectProvider<ObservationRegistry> observationRegistry) {
         this.registry = registry;
         this.environment = environment;
+        this.usageLedger = usageLedger;
         this.retryTemplate = retryTemplate.getIfAvailable();
         this.observationRegistry = observationRegistry.getIfAvailable();
     }
@@ -61,14 +68,52 @@ public class DynamicOpenAiChatModel implements ChatModel {
     @Override
     public ChatResponse call(Prompt prompt) {
         ModelRegistryService.ModelRoute route = requireRoute(prompt);
-        return current(route).call(rewriteModel(prompt, route));
+        ChatResponse resp = current(route).call(rewriteModel(prompt, route));
+        // 记账必须在路由出口做：这里是全平台 LLM 请求的唯一必经点，任何新增调用方
+        // （工作流节点、工具、未来的×××）都不可能绕过，天然不会因为漏改而丢账
+        try {
+            usageLedger.recordCall(UsageAttr.current(), modelOf(prompt),
+                    resp.getMetadata() == null ? null : resp.getMetadata().getUsage());
+        } catch (Exception e) {
+            log.warn("[UsageLedger] 非流式用量记账异常（不影响本次调用）: {}", e.getMessage());
+        }
+        return resp;
     }
 
-    /** 必须覆写：接口 default 实现抛 UnsupportedOperationException（不支持流式） */
+    /**
+     * 必须覆写：接口 default 实现抛 UnsupportedOperationException（不支持流式）。
+     * <p>
+     * 逐轮累加 usage 后于链路终止（含取消/报错）时统一记一行：工具调用循环里每一轮都是
+     * 一次真实请求，网关也按轮计费，账必须累加而不是只记某一轮。
+     */
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
         ModelRegistryService.ModelRoute route = requireRoute(prompt);
-        return current(route).stream(rewriteModel(prompt, route));
+        String modelRef = modelOf(prompt);
+        Prompt rewritten = rewriteModel(prompt, route);
+        OpenAiChatModel delegate = current(route);
+        return Flux.defer(() -> {
+            // 每订阅一个累加器：多次订阅互不串账
+            UsageAccumulator acc = new UsageAccumulator();
+            UsageAttr.Attr[] holder = new UsageAttr.Attr[1];
+            return delegate.stream(rewritten)
+                    .doOnEach(signal -> {
+                        // 归属只能从上 ContextView 取（ThreadLocal 在 netty 线程不可见）
+                        if (holder[0] == null) holder[0] = UsageAttr.resolve(signal.getContextView());
+                        if (!signal.isOnNext()) return;
+                        ChatResponse r = signal.get();
+                        if (r == null || r.getMetadata() == null) return;
+                        acc.accept(r.getMetadata().getId(), r.getMetadata().getUsage());
+                    })
+                    .doFinally(sig -> {
+                        try {
+                            UsageAttr.Attr attr = holder[0] != null ? holder[0] : UsageAttr.current();
+                            usageLedger.recordStream(attr, modelRef, acc);
+                        } catch (Exception e) {
+                            log.warn("[UsageLedger] 流式用量记账异常（不影响本次调用）: {}", e.getMessage());
+                        }
+                    });
+        });
     }
 
     @Override

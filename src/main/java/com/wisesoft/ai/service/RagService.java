@@ -2238,6 +2238,11 @@ public class RagService {
                 // 在末块 metadata.usage 里给出 completion_tokens；拿不到则回落 TokenCounter 估算）。
                 // 用 map 抽出 content 字符串，下游 doOnNext 逻辑（related 缓冲/剥离/发送）完全不变。
                 .chatResponse()
+                // 用量归属：这笔问答的推理开销记在谁头上。模型层拿不到业务身份，靠 Reactor Context
+                // 向上游透传（ThreadLocal 在 netty 事件循环线程不可见），由 DynamicOpenAiChatModel
+                // 在路由出口写台账。工具调用循环的每一轮同属本次问答，走同一份归属。
+                .contextWrite(ctx -> com.wisesoft.ai.util.UsageAttr.put(ctx,
+                        com.wisesoft.ai.util.UsageAttr.of(st.userId, st.sessionId, null, "chat")))
                 .map(resp -> {
                     org.springframework.ai.chat.metadata.Usage usage = resp.getMetadata() == null
                             ? null : resp.getMetadata().getUsage();
@@ -2249,9 +2254,9 @@ public class RagService {
                         // 缓存命中 token（prompt 缓存）：网关方言不一，尽力从 nativeUsage 里挖；
                         // 挖不到保持 0，容量面板隐藏「缓存命中率」行（不显示假数据）
                         st.cachedPromptTokens = extractCachedTokens(usage);
-                        // 工具调用循环逐轮捕获（native 原始口径求和，见 roundUsages 字段注释）；
+                        // 工具调用循环逐轮累加（native 原始口径，见 UsageAccumulator 注释）；
                         // 上面的单值字段保留作 native 缺失网关的单轮兜底
-                        captureRoundUsage(resp.getMetadata() == null ? null : resp.getMetadata().getId(), usage, st);
+                        st.roundUsage.accept(resp.getMetadata() == null ? null : resp.getMetadata().getId(), usage);
                     }
                     Object output = resp.getResult() == null ? null : resp.getResult().getOutput();
                     String delta = (output instanceof org.springframework.ai.chat.messages.AssistantMessage am
@@ -2568,17 +2573,11 @@ public class RagService {
                     // 最终轮（prompt 最大：工具结果逐轮入上下文）的输出用于触顶判定、其 prompt 用于
                     // ctxParts 校准（分类拆的是最终上下文而非各轮总和）。无逐轮数据时回落旧单值字段，
                     // 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
-                    long sumPrompt = 0, sumOutput = 0, sumCached = 0, finalPrompt = 0, finalRoundOutput = 0;
-                    for (long[] r : st.roundUsages.values()) {
-                        sumPrompt += r[0];
-                        sumOutput += r[1];
-                        sumCached += r[2];
-                        if (r[0] > finalPrompt) {
-                            finalPrompt = r[0];
-                            finalRoundOutput = r[1];
-                        }
-                    }
-                    boolean hasRounds = !st.roundUsages.isEmpty();
+                    long sumPrompt = st.roundUsage.promptTotal(), sumOutput = st.roundUsage.completionTotal();
+                    long sumCached = st.roundUsage.cachedTotal();
+                    long finalPrompt = st.roundUsage.finalRoundPrompt();
+                    long finalRoundOutput = st.roundUsage.finalRoundCompletion();
+                    boolean hasRounds = !st.roundUsage.isEmpty();
                     boolean realOutput = hasRounds ? sumOutput > 0 : st.realOutputTokens > 0;
                     int outputTokens = realOutput ? (int) (hasRounds ? sumOutput : st.realOutputTokens)
                             : TokenCounter.estimate(answer);
@@ -2791,16 +2790,11 @@ public class RagService {
         /** 缓存命中的 prompt token（网关 prompt_tokens_details.cached_tokens；0=网关未回传，面板隐藏该行） */
         volatile int cachedPromptTokens;
         /**
-         * 工具调用循环的逐轮 usage（native 原始口径）：key=响应 id（无 id 网关用匿名序号），
-         * value=[prompt, output, cached]。一次问答内模型可多轮调用工具，Spring AI 每轮独立
-         * 请求网关并各自返回 usage；其跨轮累加链（previousChatResponse）在「usage 位于工具
-         * 触发块之后的独立末块」时断裂（本项目未开启 stream_options.include_usage，部分网关
-         * 不支持该参数），单值覆盖只能留下某一轮。native usage 恒为当轮原始值不受累加污染，
-         * 逐轮求和=全部轮次总量（与供应商账单同口径）；最终轮=prompt 最大的轮（工具结果
-         * 逐轮入上下文，prompt 严格递增）。
+         * 生成链路的逐轮用量累加器（工具调用循环每轮一次真实请求，累加后才是本次问答实耗）。
+         * 与台账（DynamicOpenAiChatModel 出口记账）共用 {@link com.wisesoft.ai.util.UsageAccumulator}
+         * 的口径，保证「回答气泡上的本次用量」与「个人统计/账单」同源。
          */
-        final java.util.concurrent.ConcurrentHashMap<String, long[]> roundUsages = new java.util.concurrent.ConcurrentHashMap<>();
-        final java.util.concurrent.atomic.AtomicInteger anonUsageSeq = new java.util.concurrent.atomic.AtomicInteger();
+        final com.wisesoft.ai.util.UsageAccumulator roundUsage = new com.wisesoft.ai.util.UsageAccumulator();
         /** 本轮生效窗口 token 与来源（用户所选档位/模型声明/未声明），容量面板展示「已用 X / 窗口 Y」 */
         volatile int windowTokens;
         volatile String windowSource = "";
@@ -4025,100 +4019,12 @@ public class RagService {
     }
 
     /**
-     * 从网关 usage 里尽力提取「prompt 缓存命中 token」。方言与承载类型都不统一，按三条路依次尝试：
-     * ① Spring AI 的强类型 native usage（OpenAiApi.Usage 记录）→ {@code promptTokensDetails().cachedTokens()}；
-     * ② native usage 本身是 Map（部分网关）→ {@code prompt_tokens_details.cached_tokens} / 顶层 {@code cached_tokens}；
-     * ③ DeepSeek 方言的 {@code prompt_cache_hit_tokens}（未被 Spring AI 建模时会丢失，挖不到就作罢）。
-     * 全部取不到返回 0——容量面板隐藏「缓存命中率」行，不显示假数据。
+     * 缓存命中 token 查阅（①强类型 native usage ②Map 方言字段③DeepSeek prompt_cache_hit_tokens）。
+     * 实现统一放在 UsageAccumulator：台账与回答气泡共用一套方言解析，口径不会漂移；
+     * 全部取不到返回 0——容量面板/台账的缓存列隐藏，不显示假数据。
      */
-    /**
-     * 工具调用循环的逐轮 usage 捕获（native 原始口径，按响应 id 去重合并）。
-     * <p>
-     * 背景：一次问答内模型多轮调用工具时，Spring AI 每轮独立请求网关，每轮的 usage 出现在
-     * 该轮流末（finish 块或其后的独立 usage 末块）。Spring AI 的跨轮累加经 previousChatResponse
-     * 链衔接，但链在「工具触发块本身不带 usage」处断裂——未开启 stream_options.include_usage
-     * 时（本项目未开启，部分兼容网关不支持该参数），工具触发块只带 EmptyUsage，下一轮无从
-     * 累加上一轮；且嵌套 Flux 的发射顺序使最后到达的是第 1 轮的末块，单值覆盖恰好记下第 1 轮
-     * （实测 DeepSeek 8 轮工具循环只记 12,478，官网同小时实耗 55,629）。
-     * native usage 恒为当轮原始值（累加产物 DefaultUsage 不带 native），逐轮求和即全轮总量。
-     */
-    private void captureRoundUsage(String respId, org.springframework.ai.chat.metadata.Usage usage,
-                                   AnswerStreamState st) {
-        Integer prompt = usage.getPromptTokens();
-        Integer completion = usage.getCompletionTokens();
-        long p = prompt == null ? 0 : prompt;
-        long c = completion == null ? 0 : completion;
-        if (p <= 0 && c <= 0) {
-            return;
-        }
-        if (usage.getNativeUsage() == null) {
-            return;
-        }
-        long cached = extractCachedTokens(usage);
-        // 无响应 id（NO_ID/空）的网关无法跨轮去重：每份 usage 记为独立一轮。常规网关每轮
-        // usage 只出现一次（finish 块或独立末块二选一，不会两处都带），逐份求和即正确
-        String key = (respId == null || respId.isBlank() || "NO_ID".equals(respId))
-                ? "#anon-" + st.anonUsageSeq.incrementAndGet() : respId;
-        // 同一响应 id 理论上只该出现一份 usage；防御性按各字段最大值合并（同轮重复上报不重复计）
-        st.roundUsages.merge(key, new long[]{p, c, cached}, (oldV, newV) -> {
-            oldV[0] = Math.max(oldV[0], newV[0]);
-            oldV[1] = Math.max(oldV[1], newV[1]);
-            oldV[2] = Math.max(oldV[2], newV[2]);
-            return oldV;
-        });
-    }
-
     private int extractCachedTokens(org.springframework.ai.chat.metadata.Usage usage) {
-        Object native_ = null;
-        try {
-            native_ = usage.getNativeUsage();
-        } catch (Exception ignored) {
-            return 0;
-        }
-        if (native_ == null) return 0;
-        try {
-            // ① 强类型记录：promptTokensDetails.cachedTokens（反射免硬编码，兼容不同 Spring AI 版本）
-            Object details = invokeNoArg(native_, "promptTokensDetails");
-            Integer typed = intOf(invokeNoArg(details, "cachedTokens"));
-            if (typed != null && typed > 0) return typed;
-            // ②/③ 方言字段：native 自带或转成 Map 后查找
-            Map<String, Object> map = native_ instanceof Map<?, ?> m
-                    ? com.alibaba.fastjson2.JSON.parseObject(com.alibaba.fastjson2.JSON.toJSONString(m))
-                    : null;
-            if (map != null) {
-                for (String k : new String[]{"cached_tokens", "prompt_cache_hit_tokens"}) {
-                    Integer v = intOf(map.get(k));
-                    if (v != null && v > 0) return v;
-                }
-                Object d = map.get("prompt_tokens_details");
-                if (d instanceof Map<?, ?> dm) {
-                    Integer v = intOf(dm.get("cached_tokens"));
-                    if (v != null && v > 0) return v;
-                }
-            }
-            return 0;
-        } catch (Exception e) {
-            return 0; // 缓存命中率是展示增强，非正确性依赖：解析失败不告警
-        }
-    }
-
-    /** 反射调用无参方法，失败返回 null（方言/版本差异下静默降级） */
-    private Object invokeNoArg(Object target, String method) {
-        if (target == null) return null;
-        try {
-            return target.getClass().getMethod(method).invoke(target);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private Integer intOf(Object v) {
-        if (v instanceof Number n) return n.intValue();
-        try {
-            return v == null ? null : Integer.parseInt(String.valueOf(v));
-        } catch (Exception e) {
-            return null;
-        }
+        return (int) com.wisesoft.ai.util.UsageAccumulator.cachedTokensOf(usage);
     }
 
     /**

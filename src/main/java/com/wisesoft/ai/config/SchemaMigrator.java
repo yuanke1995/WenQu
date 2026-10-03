@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Component
+@Order(100)   // 先于依赖新表的启动任务（如 UsageBackfillRunner(200)）：先补齐结构再补数据
 public class SchemaMigrator implements ApplicationRunner {
 
     private static final Pattern CREATE_TABLE = Pattern.compile(
@@ -75,9 +77,13 @@ public class SchemaMigrator implements ApplicationRunner {
             String table = e.getKey();
             List<String> existingCols = queryColumns(table);
             if (existingCols == null) {
-                // 表不存在（新库由 schema.sql 创建）或 information_schema 查询失败：原样跳过但必须告警，
-                // 否则会出现"启动期看似无事、运行时才报 Unknown column"的静默失效。
-                log.warn("[SchemaMigrator] 跳过表 {} 的列补齐：查询现列失败（表不存在或 information_schema 不可读），该表新增列未自动补齐", table);
+                // 整表缺失（schema.sql 新增表的存量库）：先按原始语句建表（CREATE TABLE IF NOT EXISTS 幂等），
+                // 再走常规补列/补索引流程。建表失败才告警跳过——否则新增表在存量库永远不生效。
+                log.info("[SchemaMigrator] 检测到新表 {}，执行建表", table);
+                existingCols = createTable(table, e.getValue().ddl()) ? queryColumns(table) : null;
+            }
+            if (existingCols == null) {
+                log.warn("[SchemaMigrator] 跳过表 {} 的列补齐：查询现列失败（表创建失败或 information_schema 不可读）", table);
                 continue;
             }
             for (Map.Entry<String, String> col : e.getValue().columns().entrySet()) {
@@ -127,6 +133,22 @@ public class SchemaMigrator implements ApplicationRunner {
         }
     }
 
+    /** 整表缺失时建表（schema.sql 原始语句，幂等）；成功返回 true */
+    private boolean createTable(String table, String ddl) {
+        if (ddl == null || ddl.isBlank()) {
+            log.warn("[SchemaMigrator] 表 {} 缺少建表语句，无法自动创建", table);
+            return false;
+        }
+        try {
+            jdbcTemplate.execute(ddl);
+            log.info("[SchemaMigrator] 自动建表完成: {}", table);
+            return true;
+        } catch (Exception ex) {
+            log.warn("[SchemaMigrator] 建表失败 {}: {}", table, ex.getMessage());
+            return false;
+        }
+    }
+
     private boolean addColumn(String table, String column, String definition) {
         try {
             jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
@@ -153,7 +175,10 @@ public class SchemaMigrator implements ApplicationRunner {
         }
     }
 
-    /** 解析 schema.sql 的 CREATE TABLE 块（classpath 读取，兼容 jar 部署） */
+    /**
+     * 解析 schema.sql 的 CREATE TABLE 块（classpath 读取，兼容 jar 部署）。
+     * 同时保留原始建表语句：新增表（存量库整表缺失）需先建表，之后才能继续补列/补索引。
+     */
     Map<String, TableDef> parseSchema() {
         Map<String, TableDef> tables = new LinkedHashMap<>();
         String content = readSchemaFile();
@@ -178,7 +203,7 @@ public class SchemaMigrator implements ApplicationRunner {
                     cols.put(cm.group(1), cm.group(2).trim());
                 }
             }
-            tables.put(table, new TableDef(cols, indexes));
+            tables.put(table, new TableDef(cols, indexes, mt.group()));
         }
         return tables;
     }
@@ -197,8 +222,8 @@ public class SchemaMigrator implements ApplicationRunner {
         }
     }
 
-    /** 建表定义：列（列名→定义）+ 索引（PRIMARY KEY 不参与自动补齐） */
-    record TableDef(Map<String, String> columns, List<IndexDef> indexes) {
+    /** 建表定义：列（列名→定义）+ 索引（PRIMARY KEY 不参与自动补齐）+ 原始建表语句（整表缺失时执行） */
+    record TableDef(Map<String, String> columns, List<IndexDef> indexes, String ddl) {
     }
 
     /** 索引定义：名称 + 列表达式（原样透传，含 DESC 等修饰）+ 是否唯一 */

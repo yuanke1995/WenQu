@@ -72,16 +72,28 @@ public class AgentDispatchService {
                     + "\n4. 追问要结合最近对话理解归属。"
                     + "\n\n只输出一个 JSON 对象：{\"id\":\"智能体id\"}；若没有任何智能体匹配则输出 {}。不要输出任何解释文字。";
             int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
+            // 用量归属：路由调用跑在专属线程池（无请求上下文），把 Dispatch 线程上的用户身份
+            // 显式带进去，这笔开销才落在提问者的台账上（路由出口按 UsageAttr 记账）
+            String uid = com.wisesoft.ai.util.RequestUser.uid();
             String out = java.util.concurrent.CompletableFuture
-                    .supplyAsync(() -> chatClient.prompt()
-                            .user(prompt)
-                            .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                                    .model(resolvedModel)
-                                    .temperature(0.0)
-                                    .internalToolExecutionEnabled(false)
-                                    .build())
-                            .call()
-                            .content(), DISPATCH_EXECUTOR)
+                    .supplyAsync(() -> {
+                        com.wisesoft.ai.util.UsageAttr.hold(com.wisesoft.ai.util.UsageAttr.of(
+                                com.wisesoft.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : uid,
+                                null, null, "dispatch"));
+                        try {
+                            return chatClient.prompt()
+                                    .user(prompt)
+                                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                            .model(resolvedModel)
+                                            .temperature(0.0)
+                                            .internalToolExecutionEnabled(false)
+                                            .build())
+                                    .call()
+                                    .content();
+                        } finally {
+                            com.wisesoft.ai.util.UsageAttr.clear();
+                        }
+                    }, DISPATCH_EXECUTOR)
                     .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             Agent picked = parseDispatchResult(out, candidates);
             if (picked == null) {

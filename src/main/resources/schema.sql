@@ -883,3 +883,21 @@ CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     KEY `idx_nt_uid_time` (`uid`, `create_time`),
     KEY `idx_nt_uid_unread` (`uid`, `read_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
+    `id`                VARCHAR(50)  NOT NULL COMMENT '流水ID（UUID）',
+    `uid`               VARCHAR(64)  DEFAULT NULL COMMENT '归属用户（NULL=无用户上下文的系统调用：索引/评测/探测等）',
+    `session_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的会话（可空）',
+    `message_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的回答消息（可空：调用先于消息落库或无归属回答）',
+    `model`             VARCHAR(190) DEFAULT NULL COMMENT '模型引用 providerId/modelId（迁移前遗留名原样）',
+    `kind`              VARCHAR(32)  NOT NULL DEFAULT 'chat' COMMENT '调用用途: chat=问答主链路 dispatch=智能体分派 subagent=子代理 memory=记忆提取 workflow=工作流节点 graphrag=图谱 index=索引 probe=探测 eval=评测 other',
+    `prompt_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径）',
+    `completion_tokens` BIGINT       NOT NULL DEFAULT 0 COMMENT '输出 token（含思考过程与工具调用参数生成）',
+    `cached_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '命中 prompt 缓存的输入 token',
+    `total_tokens`      BIGINT       NOT NULL DEFAULT 0 COMMENT 'prompt+completion，与供应商计费总量同口径',
+    `create_time`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发生时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_ul_uid_time` (`uid`, `create_time`),
+    KEY `idx_ul_time` (`create_time`),
+    KEY `idx_ul_model_time` (`model`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推理用量台账：所有经多供应商路由的 LLM 调用在唯一出口统一记账（个人统计/对账的唯一数据源）';

@@ -1,6 +1,7 @@
 package com.wisesoft.ai.service;
 
 import com.wisesoft.ai.mapper.MessageMapper;
+import com.wisesoft.ai.mapper.UsageLogMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,16 +18,21 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 /**
- * 使用统计（个人用量）：以助手消息的 tokens JSON（$.total）与 model 字段为数据源，
+ * 使用统计（个人用量）：以推理用量台账 <b>c_ai_usage_log</b> 为唯一数据源，
  * 按登录用户聚合出统计卡（累计/峰值 Token、最长聊天时长、连续天数）、Token 活动热力图、
  * 每日×模型趋势与模型用量占比。
+ * <p>
+ * 数据源在变动：此前直接读助手消息的 tokens JSON，只覆盖主链路最后那一轮用量，与供应商
+ * 账单差数倍（工具调用循环每轮都是真实请求，记忆提取/智能体分派等旁路调用同样烧 token）。
+ * 现在所有推理请求在 {@link DynamicOpenAiChatModel} 出口统一记账，这里只读台账——
+ * 于是「页面看到的数字 = 供应商账单里属于你的部分」。
  * <p>
  * 设计口径：
  * <ul>
  *   <li>统计卡为<b>全时段</b>口径；时间范围（近7日/近30日）只影响趋势图与模型用量；</li>
- *   <li>峰值 = 单日 token 总量的历史最大值；连续天数按「有助手回答的日期」计；</li>
+ *   <li>峰值 = 单日 token 总量的历史最大值；连续天数按「当天有用量」计；</li>
  *   <li>热力图返回近 365 天的稀疏日清单（无 token 的日期不返回），每日/每周/累计三种视图由前端派生；</li>
- *   <li>存量消息 model 为 NULL（模型字段上线前），趋势/占比中归入「未知」。</li>
+ *   <li>台账无模型（模型字段上线前回补的历史行）归入「未记录」桶。</li>
  * </ul>
  *
  * @author yuanke
@@ -45,8 +51,9 @@ public class UsageStatsService {
     private static final int HEATMAP_DAYS = 365;
 
     private final MessageMapper messageMapper;
+    private final UsageLogMapper usageLogMapper;
 
-    /** 空结果（未登录匿名身份无可归属的个人用量，不展示匿名兼容池的数据） */
+    /** 空结果（未登录匿名身份无可归属的个人用量，不展示匿名兼容池数据） */
     public static Map<String, Object> empty() {
         Map<String, Object> cards = new LinkedHashMap<>();
         cards.put("totalTokens", 0L);
@@ -73,7 +80,7 @@ public class UsageStatsService {
         LocalDate today = LocalDate.now();
 
         // ---- 全量日清单：一次扫描派生 累计/峰值/热力图 三个指标 ----
-        List<Map<String, Object>> daily = messageMapper.statDailyTokens(userId, null);
+        List<Map<String, Object>> daily = usageLogMapper.statDailyTokens(userId, null);
         LocalDate heatStart = today.minusDays(HEATMAP_DAYS - 1L);
         List<Map<String, Object>> heatmap = new ArrayList<>();
         long totalTokens = 0;
@@ -93,8 +100,8 @@ public class UsageStatsService {
             }
         }
 
-        // ---- 连续天数（活跃日 = 当日有助手回答） ----
-        Set<LocalDate> activeDays = messageMapper.statActiveDates(userId).stream()
+        // ---- 连续天数（活跃日 = 当天有推理用量） ----
+        Set<LocalDate> activeDays = usageLogMapper.statActiveDates(userId).stream()
                 .map(LocalDate::parse)
                 .collect(Collectors.toCollection(TreeSet::new));
         int longestStreak = longestStreak(activeDays);
@@ -102,7 +109,7 @@ public class UsageStatsService {
 
         // ---- 时间范围窗口：每日×模型 → 趋势序列 + 模型占比 ----
         List<Map<String, Object>> modelDaily =
-                messageMapper.statModelDaily(userId, today.minusDays(r - 1L).atStartOfDay());
+                usageLogMapper.statModelDaily(userId, today.minusDays(r - 1L).atStartOfDay());
         List<LocalDate> days = new ArrayList<>();
         for (int i = r - 1; i >= 0; i--) days.add(today.minusDays(i));
         List<String> dayKeys = days.stream().map(LocalDate::toString).toList();
@@ -178,13 +185,6 @@ public class UsageStatsService {
         out.put("trend", trend);
         out.put("models", models);
         return out;
-    }
-
-    /** 是否还有「具名模型」名额未用完（决定当前模型是合并进其他还是单独成线） */
-    private boolean hasNamedModelLeft(List<Map.Entry<String, Map<LocalDate, Long>>> sorted,
-                                      List<Map<String, Object>> series) {
-        return sorted.stream().anyMatch(s -> !OTHER_LABEL.equals(s.getKey())
-                && series.stream().noneMatch(l -> s.getKey().equals(l.get("model"))));
     }
 
     /** 最长连续天数：排序后相邻日期差 1 天即延续 */

@@ -274,9 +274,17 @@ public class UserMemoryService {
                 + "不要提取一次性的任务内容、临时问题和回答正文。"
                 + "只输出 JSON 数组，格式：[{\"content\":\"一句独立可读的事实\",\"category\":\"fact|instruction|project\"}]，最多 3 条；没有值得记的就输出 []。不要输出任何其他内容。";
         String user = "用户：" + question + "\n\n助手：" + answer;
-        String out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user)),
+        // 用量归属：异步提取线程没有请求上下文（RequestUser 不可见），显式携带 uid——
+        // 这笔推理是该用户这次问答的成本，必须进他的台账（路由出口按 UsageAttr 记账）
+        com.wisesoft.ai.util.UsageAttr.hold(com.wisesoft.ai.util.UsageAttr.of(uid, sessionId, null, "memory"));
+        String out;
+        try {
+            out = chatModel.call(new Prompt(List.of(new SystemMessage(sys), new UserMessage(user)),
                         OpenAiChatOptions.builder().model(model).build()))
                 .getResult().getOutput().getText();
+        } finally {
+            com.wisesoft.ai.util.UsageAttr.clear();
+        }
         String json = out == null ? "" : out.trim().replaceAll("^```(json)?\\s*|\\s*```$", "");
         JSONArray arr = JSON.parseArray(json);
         if (arr == null || arr.isEmpty()) return;

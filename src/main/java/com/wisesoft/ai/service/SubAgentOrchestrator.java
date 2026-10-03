@@ -94,16 +94,28 @@ public class SubAgentOrchestrator {
                     + "\n只输出一个 JSON 数组，元素为对象 {\"id\":\"助手id\",\"reason\":\"挑选理由（15字内，说明它职责与问题的关联）\"}；"
                     + "若都不相关则输出 []。不要输出任何解释文字。";
             int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
+            // 用量归属：路由调用跑在专属线程池（无请求上下文），把调用线程上的用户身份显式带进去，
+            // 这笔开销才落在提问者的台账上（模型路由出口按 UsageAttr 记账）
+            String billingUid = com.wisesoft.ai.util.RequestUser.uid();
             String out = java.util.concurrent.CompletableFuture
-                    .supplyAsync(() -> chatClient.prompt()
-                            .user(prompt)
-                            .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                                    .model(resolvedModel)
-                                    .temperature(0.0)
-                                    .internalToolExecutionEnabled(false)
-                                    .build())
-                            .call()
-                            .content(), ROUTE_EXECUTOR)
+                    .supplyAsync(() -> {
+                        com.wisesoft.ai.util.UsageAttr.hold(com.wisesoft.ai.util.UsageAttr.of(
+                                com.wisesoft.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
+                                null, null, "subagent"));
+                        try {
+                            return chatClient.prompt()
+                                    .user(prompt)
+                                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                            .model(resolvedModel)
+                                            .temperature(0.0)
+                                            .internalToolExecutionEnabled(false)
+                                            .build())
+                                    .call()
+                                    .content();
+                        } finally {
+                            com.wisesoft.ai.util.UsageAttr.clear();
+                        }
+                    }, ROUTE_EXECUTOR)
                     .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             return parseRouteResult(out, candidates);
         } catch (Exception e) {
