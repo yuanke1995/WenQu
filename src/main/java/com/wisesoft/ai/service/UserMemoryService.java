@@ -51,8 +51,6 @@ public class UserMemoryService {
     private final UserMemoryMapper memoryMapper;
     private final UserMapper userMapper;
     private final ConfigService configService;
-    /** 记忆向量模型归属人个人值解析（personalOnly：按 uid 显式查询，线程无关） */
-    private final UserConfigService userConfigService;
     /** 对话模型（DynamicOpenAiChatModel；迁移后无全局兜底模型，模型名由调用方 per-request 显式传入） */
     private final ChatModel chatModel;
     /** 向量模型（单文本 embed；语义去重与注入检索用） */
@@ -100,17 +98,21 @@ public class UserMemoryService {
         return configService.getBoolean("memory.useSemanticInject");
     }
 
-    /** 归属人个人设置的记忆向量模型引用（personalOnly：模型归登记人，全局层不参与读取） */
-    private String embeddingRef(String uid) {
-        return userConfigService.personalValue(uid, "memory.embeddingRef");
+    /**
+     * 记忆向量模型引用（平台内置，单一来源）：取全局 {@code memory.platformEmbeddingRef}，
+     * 由管理员统一托管（用平台自己的 Key）——与 WorkBuddy 等托管平台"平台自带向量化"对齐，
+     * 用户无需配置即可获得语义记忆。空 → 返回 ""（调用方 embed 判空降级为精确匹配去重 / 关闭语义注入）。
+     */
+    private String embeddingRef() {
+        String platform = configService.get("memory.platformEmbeddingRef");
+        return platform == null ? "" : platform;
     }
 
     /**
      * 单文本向量化（best-effort：失败返回 null，不阻断提取/注入主链路）。
-     * 模型取归属人个人设置的 {@code memory.embeddingRef}（模型都归登记人，只有本人的 Key 可用）；
-     * <b>无兜底</b>：未设置或引用无效时返回 null——语义去重降级为精确匹配、语义注入关闭，
+     * 模型来自 {@link #embeddingRef}（平台内置 memory.platformEmbeddingRef，管理员统一托管，平台 Key）；
+     * <b>空</b>时返回 null——语义去重降级为精确匹配、语义注入关闭，
      * 记忆的提取/落库/注入主链路不受影响。
-     * 引用由各调用方按 uid 解析一次后传入（提取/去重一批内不变，避免逐条查个人配置）。
      */
     private float[] embed(String ref, String text) {
         if (text == null || text.isBlank()) return null;
@@ -184,7 +186,7 @@ public class UserMemoryService {
         boolean semantic = useSemanticInject() && recentText != null && !recentText.isBlank();
         if (semantic) {
             try {
-                float[] q = embed(embeddingRef(uid), recentText);
+                float[] q = embed(embeddingRef(), recentText);
                 if (q != null) list.sort((a, b) -> Double.compare(sim(q, b), sim(q, a)));
                 else semantic = false;
             } catch (Exception e) { semantic = false; }
@@ -284,7 +286,7 @@ public class UserMemoryService {
         List<UserMemory> existing = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
         double threshold = dedupThreshold();
         // 记忆向量模型按本项目唯一归属人解析一次（异步提取线程没有问答流水线的个人覆盖装载）
-        String ref = embeddingRef(uid);
+        String ref = embeddingRef();
         int saved = 0;
         for (int i = 0; i < arr.size() && saved < 3; i++) {
             JSONObject o = arr.getJSONObject(i);
@@ -348,7 +350,7 @@ public class UserMemoryService {
         long existingCnt = memoryMapper.selectCount(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
         if (existingCnt >= maxPerUser()) throw new BizException("记忆已达上限 " + maxPerUser() + " 条，请先清理再添加");
         // 语义去重：与存量比对，超阈值拒绝重复添加（明确告知用户，而非静默吞）
-        String ref = embeddingRef(uid);
+        String ref = embeddingRef();
         float[] vec = embed(ref, c);
         if (vec != null) {
             List<UserMemory> all = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));

@@ -7,7 +7,7 @@
 //     ③ 添加向量模型：存在 type=embedding 的模型（建知识库硬依赖）
 //   【进阶层】配置了效果更好、不配置自动回落默认方案的可选增强（弱化建议，可跳过）：
 //     视觉模型（/user/preference.defaultVisionModel）、重排模型（含生效开关）、
-//     记忆向量化模型、兜底抽取模型（后三者取 /user/settings 个人值，键与 config-schema.json 同源）
+//     兜底抽取模型（后两者取 /user/settings 个人值，键与 config-schema.json 同源）
 // 失败静默保留旧状态；首次未加载成功时 loaded=false，消费方据此不显示任何引导
 // （宁可不引导，不误报——绝不能给已配好的存量用户弹出假引导）。
 import { computed, reactive } from 'vue'
@@ -57,14 +57,12 @@ export const advRerankReady = computed(() =>
 // 用户显式关闭重排（个人值='false'）→ 尊重选择，不再建议重排模型
 export const rerankDeclined = computed(() =>
   String(setupGuide.settingValues['retrieval.rerank.enabled'] ?? '') === 'false')
-export const advMemoryReady = computed(() => notEmpty(setupGuide.settingValues['memory.embeddingRef']))
 export const advGraphReady = computed(() => notEmpty(setupGuide.settingValues['graphrag.modelRef']))
 // 进阶未配置数：侧栏入口弱化态「N 项可选」；settings 未加载成功返回 0（宁可不引导，不误报）
 export const advPendingCount = computed(() => {
   if (!setupGuide.settingsLoaded) return 0
   return (advVisionReady.value ? 0 : 1)
     + (rerankDeclined.value || advRerankReady.value ? 0 : 1)
-    + (advMemoryReady.value ? 0 : 1)
     + (advGraphReady.value ? 0 : 1)
 })
 

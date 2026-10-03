@@ -1801,21 +1801,19 @@
       "tier": 1
     },
     {
-      "backendKey": "memory.embeddingRef",
+      "backendKey": "memory.platformEmbeddingRef",
       "panel": "memory",
       "section": 0,
       "group": "memory",
-      "key": "embeddingRef",
-      "path": "memory.embeddingRef",
-      "label": "记忆向量化模型",
+      "key": "platformEmbeddingRef",
+      "path": "memory.platformEmbeddingRef",
+      "label": "平台内置向量化模型",
       "type": "model",
       "modelType": "embedding",
       "allowClear": true,
       "width": 420,
       "def": "",
-      "personal": true,
-      "personalOnly": true,
-      "note": "个人设置项（模型归登记人）：仅用于你本人记忆的语义去重与语义注入；留空则去重降级为精确匹配、语义注入关闭（记忆提取/落库不受影响）",
+      "note": "平台运营方统一托管的向量化模型（用平台自己的 Key）。全体用户的长期记忆语义去重与语义注入统一使用此模型——用户无需自备或配置向量化模型即可获得语义记忆。须为管理员本人登记、且类型为 embedding 的模型引用（providerId/modelId）；留空表示不提供向量化（记忆去重降级为精确匹配、语义注入关闭）。",
       "tier": 1
     },
     {

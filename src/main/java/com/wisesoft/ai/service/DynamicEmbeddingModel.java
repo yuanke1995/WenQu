@@ -50,7 +50,7 @@ public class DynamicEmbeddingModel {
     /**
      * 按引用解析的向量模型：引用格式 {@code providerId/modelId} → 供应商网关。
      * 引用无效（空/非引用/供应商不存在）抛 IllegalArgumentException——调用方应先经 KB 保存校验
-     * 或显式配置（如 memory.embeddingRef），运行时触达即配置缺失。
+     * 或显式配置（如 memory.platformEmbeddingRef），运行时触达即配置缺失。
      */
     public EmbeddingModel forRef(String ref) {
         String v = ref == null ? "" : ref.trim();

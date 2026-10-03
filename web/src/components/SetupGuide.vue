@@ -7,7 +7,7 @@
       <span class="sg-badge" :class="{ ok: chatReady }">{{ chatReady ? '✓' : '1' }}</span>
       <div class="sg-main">
         <div class="sg-title">添加聊天模型</div>
-        <div class="sg-desc">新建供应商（如 DeepSeek、通义、本地 Ollama）并登记至少一个「聊天」模型</div>
+        <div class="sg-desc">新建供应商（如 DeepSeek、通义、自托管 Ollama）并登记至少一个「聊天」模型</div>
         <div class="sg-action">
           <span v-if="chatReady" class="sg-done-text">已登记 {{ setupGuide.chatModels.length }} 个聊天模型</span>
           <template v-else>
@@ -78,7 +78,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { setUserPreference } from '../api.js'
 import { isAdminSync, menuHasPath } from '../utils/auth.js'
-import { advGraphReady, advMemoryReady, advRerankReady, advVisionReady, chatReady, defaultReady, embeddingReady,
+import { advGraphReady, advRerankReady, advVisionReady, chatReady, defaultReady, embeddingReady,
          refreshSetupGuide, rerankDeclined, setupGuide } from '../utils/setupGuide.js'
 import ModelSelect from './ModelSelect.vue'
 
@@ -102,14 +102,12 @@ const goNewProvider = () => {
   router.push('/agents?tab=providers&action=new-provider')
 }
 
-// 进阶建议项（跳个人设置对应面板：视觉模型独立面板；重排/记忆/兜底都在「聊天模型与偏好」的模型默认区）
+// 进阶建议项（跳个人设置对应面板：视觉模型独立面板；重排/兜底在「聊天模型与偏好」的模型默认区）
 const advItems = computed(() => [
   { key: 'vision', done: advVisionReady.value, panel: 'vision',
     title: '视觉模型', desc: '对话中上传的图片可被理解（留空仅展示图片）' },
   { key: 'rerank', done: advRerankReady.value, panel: 'chat', hidden: rerankDeclined.value,
     title: '重排模型', desc: '检索结果按相关性精排，回答更准（需同时开启重排开关）' },
-  { key: 'memory', done: advMemoryReady.value, panel: 'chat',
-    title: '记忆向量化模型', desc: '长期记忆支持语义去重与语义注入（留空降级为精确匹配）' },
   { key: 'graph', done: advGraphReady.value, panel: 'chat',
     title: '兜底抽取模型', desc: '知识库 GraphRAG 未单独绑定抽取模型时的兜底（不配则不抽取）' }
 ].filter(a => !a.hidden))

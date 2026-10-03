@@ -28,7 +28,7 @@ import java.util.Set;
  * - 启动时表空则从 yml/env 默认值灌入
  * - 可编辑白名单：chat.temperature / vision.prompt / 检索与解析参数等（保存即生效；
  *   chat.model / embedding.model / vision.model 已退役——业务模型归属到使用者：
- *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model / memory.embeddingRef /
+ *   知识库绑定向量/解析视觉，聊天走会话覆盖>个人默认；rerank.model /
  *   graphrag.modelRef / parse.qaModel 为「个人专属键」（schema personalOnly）：值 = 某用户登记的
  *   私有模型，只在个人设置维护、按使用身份解析，全局层不参与读取；仅 eval.judgeModel 等
  *   管理员自用工具保留全局）
@@ -225,9 +225,10 @@ public class ConfigService {
         // 当前向量索引维度（系统记录，非用户可编辑）：按库重嵌入成功后由 putInternal 回写，
         // 供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
         d.put("embedding.dimensions", "");
-        // 用户长期记忆的向量化模型引用（个人专属 personalOnly：按记忆归属用户解析）；
-        // 空=语义去重降级精确匹配、语义注入关闭。隔离原则：值 = 用户登记的私有模型，全局层不参与读取
-        d.put("memory.embeddingRef", "");
+        // 平台内置向量化模型（全局、管理员可编辑、非 personalOnly）：运营方登记一个 embedding 模型引用，
+        // 作为全体用户记忆语义能力的统一来源——用户零配置即可获得语义记忆。留空=不提供向量化
+        // （记忆去重降级为精确匹配、语义注入关闭）。记忆向量化已不再暴露为个人设置项
+        d.put("memory.platformEmbeddingRef", "");
         // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
         // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
         d.put("chunk.maxSize", String.valueOf(properties.getChunk().getMaxSize()));

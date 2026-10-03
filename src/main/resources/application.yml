@@ -55,7 +55,7 @@ spring:
       moderation: false
     # 模型网关一律来自「模型供应商」表（c_ai_provider，API Key RSA 加密入库）：
     # 聊天 = 会话覆盖/个人默认的模型引用，视觉 = 知识库 parse_params.visionRef，向量 = kb.embedding_ref，
-    # 记忆向量化 = memory.embeddingRef。这里不再存任何网关/密钥兜底值——解析不出的引用一律 fail-loud。
+    # 记忆向量化 = memory.platformEmbeddingRef（平台内置，管理员统一托管）。这里不再存任何网关/密钥兜底值——解析不出的引用一律 fail-loud。
     # 关闭全局 RedisVectorStore 自动装配（per-KB 独立索引由 KbVectorStoreRegistry 管理）
     vectorstore:
       type: none
