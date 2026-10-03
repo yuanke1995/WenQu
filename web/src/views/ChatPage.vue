@@ -91,10 +91,10 @@
               </div>
               <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
                 <div class="think-head" @click="m.thinkOpen = !m.thinkOpen">
-                  <down-outlined class="think-arrow" />
                   <span class="think-title">深度思考</span>
                   <a-spin v-if="m.thinkLoading" size="small" style="margin-left:6px" />
                   <span v-else class="think-badge">已完成</span>
+                  <caret-right-outlined class="tl-caret" :class="{ open: m.thinkOpen }" />
                 </div>
                 <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
               </div>
@@ -105,7 +105,7 @@
                   <div v-else-if="seg.kind === 'process'" class="tl-process-block">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
                       <span class="tl-process-title">执行过程</span>
-                      <span class="tl-caret" :class="{ open: procOpen(m, seg) }">▶</span>
+                      <span class="tl-caret" :class="{ open: procOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
@@ -117,7 +117,7 @@
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span>执行了 {{ seg.tools.length }} 个操作</span>
                       <span class="tool-dur">· {{ groupDur(seg) }}</span>
-                      <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }">▶</span>
+                      <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
                     <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
@@ -131,7 +131,7 @@
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                           <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                          <span class="tl-caret" :class="{ open: t._open }">▶</span>
+                          <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                         </button>
                         <div v-if="t._open" class="tl-card-body">
                           <template v-if="t.args">
@@ -186,7 +186,7 @@
                   <check-outlined v-else class="tool-ic tool-ic-ok" />
                   <span>执行了 {{ toolCallsView(m.toolCalls).length }} 个操作</span>
                   <span class="tool-dur">· {{ fallbackDur(m) }}</span>
-                  <span class="tl-caret" :class="{ open: m._fbOpen }">▶</span>
+                  <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
                 </button>
                 <div v-if="m._fbOpen" class="tl-group-body">
                   <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
@@ -200,7 +200,7 @@
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                       <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                      <span class="tl-caret" :class="{ open: t._open }">▶</span>
+                      <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                     </button>
                     <div v-if="t._open" class="tl-card-body">
                       <template v-if="t.args">
@@ -253,7 +253,7 @@
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
                   <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="m.retrieved.refs > 0">，参考 {{ m.retrieved.refs }} 段资料</template><template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
                   <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
-                  <down-outlined class="rt-arrow" :class="{ open: m.rtOpen }" />
+                  <caret-right-outlined class="tl-caret" :class="{ open: m.rtOpen }" />
                 </div>
                 <div v-if="m.rtOpen" class="retrieval-detail">
                   <div v-if="m.retrieved?.terms?.length" class="rt-terms">检索词：{{ (m.retrieved.terms || []).join('、') }}</div>
@@ -279,7 +279,7 @@
                   <span class="subagent-sum">
                     <span v-if="subagentCard(m).routeNote" class="sa-route-note">{{ subagentCard(m).routeNote }}</span>
                     {{ subagentCard(m).done }}/{{ subagentCard(m).total }} 完成
-                    <down-outlined class="rt-arrow" :class="{ open: m.saOpen }" />
+                    <caret-right-outlined class="tl-caret" :class="{ open: m.saOpen }" />
                   </span>
                 </div>
                 <div v-if="m.saOpen" class="subagent-list">
@@ -729,7 +729,7 @@
             <file-text-outlined v-else class="rp-src-ic" />
             <span class="rp-src-name">{{ g.fileName }}</span>
             <span class="rp-count">{{ g.items.length }} 段</span>
-            <down-outlined class="rp-arrow" :class="{ open: srcOpenOf(g) }" />
+            <caret-right-outlined class="tl-caret" :class="{ open: srcOpenOf(g) }" />
           </div>
           <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
             <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
@@ -959,7 +959,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { LoadingOutlined, DownOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
+import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
          CompressOutlined,
@@ -3851,8 +3851,6 @@ onMounted(async () => {
 .think-panel { margin: 4px 0 8px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; }
 .think-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
 .think-head:hover { background: var(--app-panel-2); }
-.think-arrow { font-size: 10px; transition: transform .2s; }
-.think-panel.open .think-arrow { transform: rotate(180deg); }
 .think-title { font-weight: 500; color: var(--app-text2); }
 .think-badge { font-size: 11px; color: var(--app-text3); }
 .think-body { padding: 0 10px 8px; border-top: 1px dashed var(--app-border); color: var(--app-text2); font-size: 12px; line-height: 1.7; max-height: 300px; overflow-y: auto; }
@@ -3869,9 +3867,6 @@ onMounted(async () => {
 .tl-process-block { margin: 2px 0; }
 .tl-process-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
 .tl-process-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
-/* 折叠三角悬浮才亮：静态标题保持干净，hover 时提示可点 */
-.tl-process-head .tl-caret { opacity: 0; transition: opacity .15s; }
-.tl-process-head:hover .tl-caret { opacity: 1; }
 .tl-process-title { font-weight: 500; color: var(--app-text2); }
 .tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
 .tl-group { margin: 3px 0; }
@@ -3882,7 +3877,9 @@ onMounted(async () => {
   cursor: pointer; user-select: none;
 }
 .tl-group-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
-.tl-caret { font-size: 10px; color: var(--app-text3); transition: transform .15s; line-height: 1; }
+/* 折叠三角唯一样式（CaretRightOutlined）：10px 灰、行尾、展开旋转 90°（▶→▼）；
+ * 深度思考头/执行过程/工具组条/工具卡片/检索行/子智能体头/引用来源组共用，不再各写一套 */
+.tl-caret { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .15s; line-height: 1; }
 .tl-caret.open { transform: rotate(90deg); }
 .tl-group-body {
   margin: 6px 0 2px 12px; padding-left: 10px; border-left: 2px solid var(--app-border);
@@ -3976,10 +3973,8 @@ onMounted(async () => {
 .ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
 
 .retrieval-merged { margin-top: 8px; width: 100%; }
-.retrieval-line { font-size: 12px; color: var(--app-text3); user-select: none; cursor: pointer; }
+.retrieval-line { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--app-text3); user-select: none; cursor: pointer; }
 .retrieval-line:hover { color: var(--app-accent); }
-.rt-arrow { font-size: 10px; margin-left: 2px; transition: transform .15s; }
-.rt-arrow.open { transform: rotate(180deg); }
 .retrieval-detail {
   font-size: 12px; color: var(--app-text2); background: var(--app-panel-2); border: 1px solid var(--app-border);
   border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px; line-height: 1.6;
@@ -4417,14 +4412,12 @@ onMounted(async () => {
 .rp-group { margin-bottom: 2px; }
 .rp-group-head { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
 .rp-count { margin-left: auto; flex: none; font-size: 11px; color: var(--app-text3); }
-.rp-arrow { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1); }
-.rp-arrow.open { transform: rotate(180deg); }
 .rp-group-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s cubic-bezier(0.16, 1, 0.3, 1); }
 .rp-group-body.open { grid-template-rows: 1fr; }
 /* 网格行高动画的两个必要条件：唯一子容器 + min-height:0（否则子项按内容撑开，收不到 0 高） */
 .rp-group-body-in { min-height: 0; overflow: hidden; }
 .rp-src-sub { padding: 3px 0 3px 20px; font-size: 11.5px; color: var(--app-text2); }
-@media (prefers-reduced-motion: reduce) { .rp-group-body, .rp-arrow { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rp-group-body, .tl-caret { transition: none; } }
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
