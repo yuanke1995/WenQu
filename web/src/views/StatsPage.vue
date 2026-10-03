@@ -24,10 +24,11 @@
         </div>
         <div class="heat-scroll">
           <div class="heat-inner">
-            <div class="heat-grid" :style="{ gridTemplateColumns: heatColTemplate }">
+            <div class="heat-grid" :style="{ gridTemplateColumns: heatColTemplate }"
+                 @mouseover="onCellOver" @mouseleave="hideTip">
               <template v-for="(col, ci) in heatData.columns" :key="'c' + ci">
                 <template v-for="(cell, ri) in col" :key="ci + '-' + ri">
-                  <div v-if="cell" class="heat-cell" :class="'hl' + heatData.levelOf(cell)" :title="cellTitle(cell)"></div>
+                  <div v-if="cell" class="heat-cell" :class="'hl' + heatData.levelOf(cell)" :data-tip="cellTitle(cell)"></div>
                   <div v-else class="heat-cell empty"></div>
                 </template>
               </template>
@@ -84,6 +85,11 @@
         <a-empty v-else description="该时间范围内暂无用量数据" />
       </div>
     </div>
+
+    <!-- 热力图悬浮提示（单实例浮层：事件委托驱动，随鼠标即时显示；原生 title 有约 1s 延迟且样式不可控） -->
+    <Teleport to="body">
+      <div v-if="tip.show" class="heat-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">{{ tip.text }}</div>
+    </Teleport>
   </div>
 </template>
 
@@ -251,6 +257,16 @@ function cellTitle(cell) {
   return `${md(cell.date)}：${fmtTokens(cell.value)} tokens`
 }
 
+// ==================== 热力图悬浮提示（事件委托 + 单实例浮层） ====================
+const tip = ref({ show: false, text: '', x: 0, y: 0 })
+const onCellOver = e => {
+  const el = e.target.closest('.heat-cell')
+  if (!el || el.classList.contains('empty') || !el.dataset.tip) { tip.value.show = false; return }
+  // 鼠标在格间移动时 mouseover 持续触发：跟随鼠标上方居中显示
+  tip.value = { show: true, text: el.dataset.tip, x: e.clientX, y: e.clientY }
+}
+const hideTip = () => { tip.value.show = false }
+
 // 列模板：列数与热力图一致，每列 minmax(9px, 1fr) 随容器伸缩（宽屏铺满卡片，不再挤成一小条）
 const heatColTemplate = computed(() => `repeat(${heatData.value.columns.length}, minmax(9px, 1fr))`)
 // 月份标签：某列的周日跨入新月份时标注（网格下沿，与截图一致）
@@ -408,10 +424,16 @@ onBeforeUnmount(() => {
 .heat-scroll { overflow-x: auto; padding: 4px 2px; }
 /* 宽屏铺满（上限 1200px 防格子过大），窄屏横向滚动 */
 .heat-inner { min-width: 100%; max-width: 1200px; }
-.heat-grid { display: grid; grid-auto-flow: column; gap: 4px; }
+.heat-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, auto); /* 列流必须显式行数：否则全部格子塞进第 1 列 */
+  gap: 4px;
+}
 .heat-cell {
   width: 100%;
   aspect-ratio: 1;
+  align-self: start; /* 阻止默认 stretch 覆盖 aspect-ratio 高度（空内容格会塌成 0 高） */
   border-radius: 2.5px;
   background: var(--app-panel-2);
   outline: 1px solid rgba(0, 0, 0, .04);
@@ -428,6 +450,20 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .hl4 { background: #5c98e9; }
 .heat-months { display: grid; gap: 4px; margin-top: 8px; min-height: 16px; }
 .heat-month { font-size: 11px; color: var(--app-text3); white-space: nowrap; }
+/* 热力图悬浮提示：teleport 到 body，深色浮层跟随鼠标上方居中 */
+.heat-tip {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 8px));
+  background: rgba(28, 32, 38, .92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1080;
+}
 .heat-legend {
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   margin-top: 8px; font-size: 11px; color: var(--app-text3);
