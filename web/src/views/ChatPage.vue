@@ -1606,7 +1606,6 @@ const onModelSelectOpenChange = open => {
   if (open) { clearTimeout(thinkLeaveTimer); thinkLeaveTimer = null }
   else scheduleThinkHide()
 }
-watch(() => loading.value, v => { if (v) hideThinkPanel() })
 onUnmounted(clearThinkTimers)
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 
@@ -1751,6 +1750,8 @@ const currentSessionId = ref(null)
 // 现在只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
 // 同一会话内仍互斥（输入/重新生成/停止都作用于当前会话），守卫写法不用动。
 const loading = computed(() => chatStreams.has(currentSessionId.value))
+// 开始回答即收起悬浮思考面板（loading 声明后才能 watch，getter 在 watch 调用时同步执行）
+watch(() => loading.value, v => { if (v) hideThinkPanel() })
 const messages = ref([])
 const box = ref(null)
 const stickToBottom = ref(true)
