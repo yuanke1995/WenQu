@@ -3520,9 +3520,13 @@ onMounted(async () => {
 .rt-arrow.open { transform: rotate(180deg); }
 .retrieval-detail {
   font-size: 12px; color: var(--app-text2); background: var(--app-panel-2); border: 1px solid var(--app-border);
-  border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px;
+  border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px; line-height: 1.6;
 }
 .rt-terms { margin-bottom: 6px; }
+/* 末行不留尾部外边距：右侧信息卡的小字同样只给 margin-top（.rp-terms），
+   卡片内末行若带 margin-bottom，多出的间距会落在 padding 内侧，
+   把单行文字顶得偏上（上 13px / 下 19px）、卡片下沿多出等量空白 */
+.retrieval-detail > :last-child { margin-bottom: 0; }
 .rt-tool-terms { color: var(--app-accent); }
 .rt-tool-tag {
   display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
