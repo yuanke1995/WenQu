@@ -3,12 +3,17 @@
            :width="640" :confirm-loading="saving"
            @update:open="v => emit('update:open', v)" @ok="save">
     <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }">
-      <a-form-item label="名称" required>
-        <a-input v-model:value="form.name" placeholder="如：操作手册库" />
+      <!-- 官方内置库：仅检索/解析参数可维护（后端白名单同口径），其余由版本同步维护 -->
+      <div v-if="isBuiltin" class="kb-hint" style="margin:0 0 10px">
+        官方内置库：文档内容随版本自动同步，名称 / 图标 / 描述与向量绑定不可修改；
+        <b>可维护下面的检索与解析参数</b>（典型用途：绑定重排模型——不绑则引用不做语义筛选）。
+      </div>
+      <a-form-item label="名称" :required="!isBuiltin">
+        <a-input v-model:value="form.name" :disabled="isBuiltin" placeholder="如：操作手册库" />
       </a-form-item>
       <a-form-item label="图标">
-        <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改 -->
-        <div v-if="iconLocked" class="kb-icon-locked">
+        <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改；官方内置库图标同样随版本固定 -->
+        <div v-if="iconLocked || isBuiltin" class="kb-icon-locked">
           <KbIcon :kb="{ icon: 'wenqu', isDefault: 1 }" :size="26" />
           <span class="kb-hint">{{ iconLockHint }}</span>
         </div>
@@ -25,11 +30,11 @@
         </template>
       </a-form-item>
       <a-form-item label="描述">
-        <a-input v-model:value="form.description" placeholder="这个库放什么资料" />
+        <a-input v-model:value="form.description" :disabled="isBuiltin" placeholder="这个库放什么资料" />
       </a-form-item>
-      <a-form-item label="向量模型" required>
+      <a-form-item label="向量模型" :required="!isBuiltin">
         <ModelSelect v-model="form.embeddingRef" type="embedding"
-                     :width="320" :admin-tip-visible="true" />
+                     :width="320" :admin-tip-visible="true" :disabled="isBuiltin" />
         <div class="kb-hint">必选：本库文档按此模型向量化与检索（不同模型的向量空间不兼容，无法跨模型混用）；换模型会自动按库重嵌入，期间该库检索降级关键词路。</div>
       </a-form-item>
 
@@ -273,6 +278,9 @@ function serialize (f) {
 
 const form = ref(blank())
 
+// 官方内置库（builtin=1）：文档内容随版本自动同步，弹窗只开放检索/解析参数——
+// 后端 KnowledgeBaseService.update 对内置库同样是这两个字段的白名单，前后端口径一致
+const isBuiltin = computed(() => props.kb?.builtin === 1)
 // 默认库图标锁定：恒为问渠品牌标（编辑中的默认库，或本次勾选了「设为默认库」）
 const iconLocked = computed(() => props.kb?.isDefault === 1 || form.value.isDefault)
 const iconLockHint = computed(() => props.kb?.isDefault === 1
@@ -391,7 +399,8 @@ const prefillFromGlobal = async () => {
 watch(() => props.open, open => {
   if (!open) return
   form.value = props.kb ? hydrateForm(props.kb) : blank()
-  advActive.value = []   // 每次打开高级参数都收起（默认继承全局，不需要看）
+  // 每次打开高级参数都收起（默认继承全局，不需要看）；官方内置库例外——它进来就是为了调检索参数
+  advActive.value = isBuiltin.value ? ['q'] : []
   loadParamTips().catch(() => {})   // 问号文案加载失败不阻塞（只是少个问号）
   if (props.kb) {
     loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
@@ -401,17 +410,31 @@ watch(() => props.open, open => {
 })
 
 const save = async () => {
-  if (!form.value.name || !form.value.name.trim()) {
-    message.warning('请填写知识库名称')
-    return
-  }
-  if (!form.value.embeddingRef) {
-    message.warning('请选择向量模型（必选：向量空间与库一一对应）')
-    return
+  // 官方内置库：名称/向量模型由版本同步维护，这里不校验也不提交（后端白名单同样只收检索/解析参数）
+  if (!isBuiltin.value) {
+    if (!form.value.name || !form.value.name.trim()) {
+      message.warning('请填写知识库名称')
+      return
+    }
+    if (!form.value.embeddingRef) {
+      message.warning('请选择向量模型（必选：向量空间与库一一对应）')
+      return
+    }
   }
   saving.value = true
   try {
     const { queryParams, parseParams } = serialize(form.value)
+    if (isBuiltin.value) {
+      const savedBuiltin = await updateKnowledgeBase(props.kb.id, { queryParams, parseParams })
+      if (savedBuiltin && savedBuiltin.success === false) {
+        message.error(savedBuiltin.msg || '保存失败')
+        return
+      }
+      message.success('已保存')
+      emit('update:open', false)
+      emit('saved', props.kb.id)
+      return
+    }
     const body = {
       name: form.value.name.trim(),
       description: form.value.description || null,

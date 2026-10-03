@@ -7,6 +7,7 @@ import com.wisesoft.ai.service.AuthService;
 import com.wisesoft.ai.service.DocumentService;
 import com.wisesoft.ai.service.KnowledgeBaseService;
 import com.wisesoft.ai.service.ResourceVisibilityService;
+import com.wisesoft.ai.service.RoleService;
 import com.wisesoft.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -46,6 +47,8 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseService kbService;
     private final DocumentService documentService;
     private final ResourceVisibilityService visibility;
+    /** 管理员级判定（含自定义 admin_flag=1 角色）：官方内置库的管理放行走它 */
+    private final RoleService roleService;
     /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
     private final com.wisesoft.ai.service.ConfigService configService;
     /** 参数问号文案（/param-tips；与系统设置页同一份定义源，防两处解释漂移） */
@@ -60,7 +63,18 @@ public class KnowledgeBaseController {
 
     /** 校验"能管理该库"（数据按 userId 隔离：创建者或共享 manage 命中），否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
     private void requireManage(KnowledgeBase kb) {
-        if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
+        if (kb == null) throw new BizException("仅可管理自己创建或被授权管理的知识库");
+        // 官方内置库（builtin=1）：createdBy=system + 共享全员只读 ⇒ 任何人都拿不到 MANAGE（管理员级也不例外，
+        // 见 ResourceVisibilityService.resolve：共享只授 READ）。但它同样需要维护检索/解析参数（如绑定重排模型
+        // ——不绑则引用门退化到融合门 0.25，不相关块会进引用面板），故对管理员级单独放行；
+        // 能改哪些字段由服务层白名单兜住（KnowledgeBaseService.update），内容/删除仍不可动。
+        if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
+            if (!roleService.isAdminCode(com.wisesoft.ai.util.RequestUser.role())) {
+                throw new BizException("官方内置知识库仅管理员可维护检索/解析设置（文档内容随版本自动同步）");
+            }
+            return;
+        }
+        if (!visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             throw new BizException("仅可管理自己创建或被授权管理的知识库");
         }

@@ -48,6 +48,8 @@ public class KnowledgeBaseService {
     private final com.wisesoft.ai.mapper.UserMapper userMapper;
     /** 读全局配置（chunk/解析参数等）；GraphRAG 抽取模型回落库主个人默认聊天模型——见 userMapper */
     private final ConfigService configService;
+    /** 管理员级判定（含自定义 admin_flag=1 角色）：官方内置库的检索/解析参数维护放行走它 */
+    private final RoleService roleService;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -57,13 +59,14 @@ public class KnowledgeBaseService {
                                 AgentMapper agentMapper,
                                 com.wisesoft.ai.service.ModelRegistryService modelRegistryService,
                                 com.wisesoft.ai.mapper.UserMapper userMapper,
-                                ConfigService configService) {
+                                ConfigService configService, RoleService roleService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
         this.userMapper = userMapper;
         this.configService = configService;
+        this.roleService = roleService;
     }
 
     // ==================== 读写 ====================
@@ -136,10 +139,24 @@ public class KnowledgeBaseService {
     public KnowledgeBase update(String id, Map<String, Object> body) {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
-        // 官方内置库内容随版本自动同步（ManualSeedService），不接受任何人工编辑（控制器 requireManage 已拦，
-        // 这里再拦一层：防止未来新调用路径绕过控制器直接进服务层）
-        if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
-            throw new com.wisesoft.ai.common.BizException("官方内置知识库「" + kb.getName() + "」不可修改（内容随版本自动同步）");
+        // 官方内置库（builtin=1）：文档内容随版本自动同步（ManualSeedService），名称/图标/共享范围/向量绑定
+        // 等不接受人工编辑（控制器 requireManage 已拦，这里再兜一层防未来新调用路径绕过控制器）。
+        // 例外：**检索/解析参数是纯运行时配置，版本同步完全不碰**（同步只按指纹重建篇目、按需维护 embedding_ref），
+        // 而官方库同样必须能绑重排模型——不绑就拿不到重排分，引用门从重排门 0.6 退化到融合门 0.25，
+        // 词面重叠的无关块会进引用面板。故对管理员级开放这两个字段，其余一律 fail-loud 拒绝（不静默忽略）。
+        boolean builtin = kb.getBuiltin() != null && kb.getBuiltin() == 1;
+        if (builtin) {
+            if (!roleService.isAdminCode(com.wisesoft.ai.util.RequestUser.role())) {
+                throw new com.wisesoft.ai.common.BizException("官方内置知识库「" + kb.getName()
+                        + "」仅管理员可维护检索/解析设置（内容随版本自动同步）");
+            }
+            for (String k : body.keySet()) {
+                if (!"queryParams".equals(k) && !"parseParams".equals(k)) {
+                    throw new com.wisesoft.ai.common.BizException("官方内置知识库「" + kb.getName()
+                            + "」仅可修改检索/解析设置，不接受字段：" + k
+                            + "（名称/图标/共享范围与文档内容随版本自动同步）");
+                }
+            }
         }
         // 只在 body 中出现的字段才写（含显式 null = 清空该维度回退到继承）
         LambdaUpdateWrapper<KnowledgeBase> upd = new LambdaUpdateWrapper<KnowledgeBase>().eq(KnowledgeBase::getId, id);

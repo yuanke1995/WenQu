@@ -29,12 +29,15 @@
             <span v-if="!kb.queryParams && !kb.parseParams" class="kb-dim">继承全局参数</span>
           </div>
           <div class="kb-card-actions" @click.stop>
-            <!-- 官方内置库内容随版本自动同步（后端拒绝管理操作），编辑/图谱/删除对所有人不渲染 -->
-            <template v-if="(isAdmin || kb.createdBy === myUid) && kb.builtin !== 1">
+            <!-- 官方内置库：文档内容随版本自动同步（后端拒绝改内容与删除），但检索/解析参数是运行时配置、
+                 同步不碰——管理员可编辑这两项（典型用途：给官方库绑定重排模型）。非管理员仍无任何管理入口 -->
+            <template v-if="isAdmin || (kb.createdBy === myUid && kb.builtin !== 1)">
               <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
-              <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
-              <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
-              <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
+              <template v-if="kb.builtin !== 1">
+                <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
+                <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
+                <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
+              </template>
             </template>
             <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
           </div>
