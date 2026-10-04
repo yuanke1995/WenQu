@@ -44,6 +44,7 @@ public class AgentService {
     private final AgentMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
+    private final RoleService roleService;
 
     /**
      * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
@@ -104,9 +105,27 @@ public class AgentService {
                 a == null ? null : a.getCreatedBy(), ResourceKind.AGENT);
     }
 
+    /**
+     * 当前用户是否可管理该智能体（可配置/设默认/改共享/删除；不可删除者由调用方按 isBuiltin 再拦）。
+     * <p><b>与 {@link #readable} 的内置豁免对称</b>：内置「问渠」全员可读，<b>管理员级可配置</b>。
+     * 此前 {@code ensureManageable} 只走通用判定，而 {@link ResourceVisibilityService#resolve}
+     * 在「数据按 userId 隔离」之后<b>不再有任何角色的全量短路</b>（含 superadmin），
+     * 且新环境播种的内置行 {@code created_by='system'} 永不等于任何登录 uid、
+     * {@code share_config} 为空 → 判定恒为 NONE。结果新环境第一个注册的管理员
+     * 反而改不了自己的内置智能体（存量库靠 created_by 恰好等于管理员 uid 的创建者短路侥幸正常）。
+     * 故可管理判定在此收口，与 {@link #readable} 的产品语义对齐。</p>
+     */
+    public boolean manageable(Agent a) {
+        if (a == null) return false;
+        if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
+            return roleService.isAdminCode(RequestUser.role());
+        }
+        return resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT);
+    }
+
     /** 当前用户是否可管理该智能体（出现在管理端点前先过这道闸） */
     private void ensureManageable(Agent a) {
-        if (!resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT)) {
+        if (!manageable(a)) {
             throw new BizException(403, "无权管理该智能体（不在其共享管理范围内）");
         }
     }

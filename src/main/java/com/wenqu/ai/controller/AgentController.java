@@ -28,7 +28,7 @@ import java.util.Map;
  * <ul>
  *   <li>创建者 → 可管理自己的智能体（创建者短路）；未配置共享＝私有，仅创建者可见；</li>
  *   <li>他人 → 仅按智能体显式配置的 share_config 共享范围可见可用；</li>
- *   <li>内置「问渠」是系统默认：所有登录用户可读可用（归属 admin，仅其可配置，普通用户不可改）；</li>
+ *   <li>内置「问渠」是系统默认：所有登录用户可读可用，<b>管理员级可配置</b>（不再依赖 created_by 恰好是管理员 uid）；</li>
  *   <li>列表/编辑/删除/共享都按上述范围判定，看不见的智能体当不存在（不泄露存在性）。</li>
  * </ul>
  * 刻意保留管理员专属：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选），
@@ -43,21 +43,17 @@ import java.util.Map;
 public class AgentController {
 
     private final AgentService agentService;
-    private final ResourceVisibilityService visibility;
     private final com.wenqu.ai.service.AgentShareService agentShareService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
 
-    /** 当前登录态的权限主体 */
-    private ResourceVisibilityService.Principal principal() {
-        return new ResourceVisibilityService.Principal(
-                RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
-    }
-
-    /** 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中，无角色直通） */
+    /**
+     * 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中；内置「问渠」为管理员级可配置）。
+     * <p>统一委托 {@link AgentService#manageable}，与写路径 {@code ensureManageable} 同一入口——此处此前自带一份
+     * 判定，与服务层口径不一致：内置行在服务层被 {@link ResourceVisibilityService} 判 NONE，列表的
+     * {@code manageable} 字段却按另一套算，前端据此把管理员本可编辑的内置行收起了编辑入口。</p>
+     */
     private boolean canManage(com.wenqu.ai.model.Agent a) {
-        if (a == null) return false;
-        return visibility.canManage(principal(), a.getShareConfig(), a.getCreatedBy(),
-                ResourceVisibilityService.ResourceKind.AGENT);
+        return agentService.manageable(a);
     }
 
     @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；所有人只返回自己创建的、内置问渠与显式共享给自己的"
