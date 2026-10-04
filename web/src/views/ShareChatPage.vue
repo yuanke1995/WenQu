@@ -192,4 +192,28 @@ function stop () {
 .sc-md :deep(table) { border-collapse: collapse; font-size: 13px; }
 .sc-md :deep(th), .sc-md :deep(td) { border: 1px solid var(--app-border); padding: 4px 8px; }
 .sc-md :deep(ul), .sc-md :deep(ol) { padding-left: 20px; margin: 6px 0; }
+
+/* ==================== 移动端窄屏（h5）====================
+   分享链接大量在微信/手机浏览器里打开，这页不走 AppLayout、此前零窄屏适配。
+   结构本身是 max-width + flex，天然不破版，这里只补三件事：
+   高度交给 --app-vh（键盘）、内边距收窄、触控热区。 */
+@media (max-width: 768px) {
+  /* 100vh 在 iOS 键盘弹起时不变 → 输入框被盖。用 --app-vh（视觉视口高，已扣键盘）；
+     宽屏不写该变量 → 回落 100vh，与改动前一致 */
+  .sc-page { height: 100vh; height: var(--app-vh, 100vh); }
+  .sc-head { padding: calc(10px + var(--sat, 0px)) 12px 10px; gap: 10px; }
+  .sc-avatar { width: 34px; height: 34px; font-size: 17px; border-radius: 8px; }
+  .sc-desc { max-width: 100%; }
+  .sc-list { padding: 12px 12px 8px; overscroll-behavior-y: contain; }
+  .sc-row { margin-bottom: 10px; }
+  /* 气泡 78% 在窄屏上偏窄，行长变短反而更易读，但留 88% 更省纵向空间 */
+  .sc-bubble { max-width: 88%; padding: 9px 12px; }
+  /* 底部输入区：留出 Home Indicator + 键盘高度 */
+  .sc-input-wrap { padding: 8px 10px calc(8px + var(--sab, 0px)); }
+  .sc-input { gap: 6px; }
+  /* 触控热区：40px 尚可，但输入框内的文字 14px 在 iOS 聚焦会触发自动缩放，必须 16px */
+  .sc-textarea { font-size: 16px; padding: 8px 10px; }
+  .sc-send { width: 44px; height: 44px; }
+  .sc-foot { padding: 0 2px; }
+}
 </style>

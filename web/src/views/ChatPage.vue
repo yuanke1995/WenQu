@@ -164,8 +164,11 @@
               <!-- streaming（打字光标）仅在正文已有内容时挂：检索/等待阶段正文为空，光标会孤悬成一块 -->
 <div v-else class="md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }" :data-msg-index="i" v-html="renderMd(m.content, m.images, MD_RICH)"></div>
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
-              <div v-if="m.errorCard" class="msg-error-card">
-                <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message) }}</div>
+              <div v-if="m.errorCard" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
+                <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
+                <div v-if="m.errorCard.kind === 'interrupted'" class="mec-net-tip">
+                  已生成的部分已保存。重新生成会重跑本轮并重新计费；若你刚切后台回来，这通常是系统挂起了连接。
+                </div>
                 <div class="mec-actions">
                   <button class="app-btn ghost small" @click="regenerate(i)"><redo-outlined /> 重新生成</button>
                 </div>
@@ -443,8 +446,8 @@
           <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
-              <input ref="mentionSearchRef" v-model="mentionQuery" class="mention-search"
-                     placeholder="搜索知识库或文档…" @keydown.esc="closeMentionPanel" />
+              <span class="mention-head-tag">@</span>
+              <span class="mention-head-word" :class="{ dim: !mentionQuery }">{{ mentionQuery || '输入以筛选知识库或文档' }}</span>
               <button class="app-icon-btn" title="关闭" @click="closeMentionPanel"><close-outlined /></button>
             </div>
             <div class="mention-tabs">
@@ -458,8 +461,8 @@
             <div class="mention-list">
               <div v-if="mentionLoading" class="mention-empty">加载中…</div>
               <template v-else-if="mentionTab === 'kb'">
-                <div v-for="k in mentionKbFiltered" :key="k.id" class="mention-item"
-                     :class="{ on: isMentioned('kb', k.id) }" @click="toggleMention('kb', k)">
+                <div v-for="(k, ki) in mentionKbFiltered" :key="k.id" class="mention-item"
+                     :class="{ on: isMentioned('kb', k.id), kb: mentionHi === ki }" @click="toggleMention('kb', k)">
                   <span class="mention-ava"><database-outlined /></span>
                   <div class="mention-text">
                     <span class="mention-name">{{ k.name }}</span>
@@ -472,8 +475,8 @@
                 </div>
               </template>
               <template v-else>
-                <div v-for="d in mentionDocFiltered" :key="d.id" class="mention-item"
-                     :class="{ on: isMentioned('doc', d.id) }" @click="toggleMention('doc', d)">
+                <div v-for="(d, di) in mentionDocFiltered" :key="d.id" class="mention-item"
+                     :class="{ on: isMentioned('doc', d.id), kb: mentionHi === di }" @click="toggleMention('doc', d)">
                   <span class="mention-ava"><file-text-outlined /></span>
                   <div class="mention-text">
                     <span class="mention-name">{{ d.fileName }}</span>
@@ -493,12 +496,13 @@
           <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
           <div v-if="slashOpen" class="mention-panel">
             <div class="mention-head">
-              <input ref="slashSearchRef" v-model="slashQuery" class="mention-search"
-                     placeholder="搜索快捷命令…" @keydown.esc="closeSlashPanel" />
+              <span class="mention-head-tag">/</span>
+              <span class="mention-head-word" :class="{ dim: !slashQuery }">{{ slashQuery || '输入以筛选快捷命令' }}</span>
               <button class="app-icon-btn" title="关闭" @click="closeSlashPanel"><close-outlined /></button>
             </div>
             <div class="mention-list">
-              <div v-for="c in slashFiltered" :key="c.key" class="mention-item" @click="runSlashCommand(c)">
+              <div v-for="(c, ci) in slashFiltered" :key="c.key" class="mention-item"
+                   :class="{ kb: slashHi === ci }" @click="runSlashCommand(c)">
                 <span class="mention-ava"><component :is="c.icon" /></span>
                 <div class="mention-text">
                   <span class="mention-name">{{ c.name }}</span>
@@ -513,8 +517,8 @@
           <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
           <div v-if="histOpen" class="mention-panel">
             <div class="mention-head">
-              <input ref="histSearchRef" v-model="histQuery" class="mention-search"
-                     placeholder="搜索本会话历史问答…" @keydown.esc="closeHistPanel" />
+              <span class="mention-head-tag">#</span>
+              <span class="mention-head-word" :class="{ dim: !histQuery }">{{ histQuery || '输入以筛选历史问答' }}</span>
               <button class="app-icon-btn" title="关闭" @click="closeHistPanel"><close-outlined /></button>
             </div>
             <div class="mention-list">
@@ -642,15 +646,26 @@
               </a-dropdown>
             </div>
             <div class="toolbar-right">
-              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示 -->
+              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
+                   触屏无 hover，额外挂 click/@keydown（role/tabindex 只在触屏下加，避免改变宽屏的无障碍语义与 Tab 序） -->
               <span v-if="ctxTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
-                    @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()">
+                    :role="isCoarse ? 'button' : null" :tabindex="isCoarse ? 0 : null"
+                    @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()"
+                    @click="isCoarse && showCtxCap($event.currentTarget)"
+                    @keydown.enter="isCoarse && showCtxCap($event.currentTarget)">
                 <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
                   <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
                   <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
                           stroke-linecap="round" :stroke-dasharray="ctxRingDash" transform="rotate(-90 10 10)" />
                 </svg>
               </span>
+              <!-- 深度思考设置入口：宽屏挂在模型下拉行上（悬浮哪行弹哪行，见下方 ModelSelect 的 option-hover）；
+                   触屏无 hover，改由这个常驻按钮点开底部 sheet —— 用 @media (hover:hover) 限定只宽屏渲染 -->
+              <button v-if="isCoarse" class="think-entry" :class="{ on: deepThinkOn }" type="button"
+                      title="深度思考设置" @click="toggleThinkSheet">
+                <thunderbolt-outlined />
+                <span class="think-entry-txt">{{ deepThinkOn ? '思考·开' : '思考' }}</span>
+              </button>
               <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
                    档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
                    对其它模型则先记住、选中该模型时生效 -->
@@ -1017,6 +1032,7 @@ import ProviderIcon from '../components/ProviderIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
+import { isNarrow, isCoarse } from '../h5/mobile'
 
 const route = useRoute()
 const router = useRouter()
@@ -1496,13 +1512,34 @@ const reasoningLevelParam = computed(() => {
   return (v && v !== 'off' && v !== THINK_LEVEL_ON) ? v : ''
 })
 
-// ==================== 深度思考面板（悬浮模型下拉行弹出：展示该模型自己的设置，改完即存即生效） ====================
-const thinkHoverModel = ref('')          // 当前悬浮的模型引用（''=无，面板隐藏）
+// ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
+// 面板内 20 处逻辑（档位/上下文/能力判断）全部经 thinkHoverModel 取「当前模型」。
+// 把它做成读写 computed 而非裸 ref：宽屏返回真实悬浮值，触屏返回生效模型 ——
+// 20 处消费点一行都不用改，也不会漏掉某一处。
+const thinkHoverRef = ref('')            // 宽屏：当前悬浮的模型引用（''=无，面板隐藏）
 const thinkPanelPos = ref({ top: 0, left: 0 })
 const thinkPanelEl = ref(null)
 /** 「思考强度」行的档位子列表展开态：面板隐藏或换模型后复位为收起 */
 const thinkLevelsOpen = ref(false)
-const thinkPanelVisible = computed(() => !!thinkHoverModel.value)
+// 触屏（hover:none）没有「悬浮模型行」这回事，设置面板不可达 —— 由工具条常驻入口
+// （.think-entry，仅粗指针渲染）点开底部 sheet。内容复用同一面板，模型取当前生效模型。
+const mThinkOpen = ref(false)
+const thinkHoverModel = computed({
+  get: () => (isCoarse.value ? effectiveModel.value : thinkHoverRef.value),
+  // 写入只发生在宽屏的 hover 逻辑里；触屏下若被 scheduleThinkHide 清空，改为关掉 sheet
+  set: v => { if (isCoarse.value) mThinkOpen.value = false; else thinkHoverRef.value = v }
+})
+const thinkPanelVisible = computed(() => (isCoarse.value ? mThinkOpen.value : !!thinkHoverRef.value))
+const toggleThinkSheet = () => {
+  mThinkOpen.value = !mThinkOpen.value
+  if (!mThinkOpen.value) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
+}
+// 触屏下点面板外关闭：面板自身有 @mousedown.stop.prevent，这里挂 document 只收面板外的点击
+const onDocPointerDown = e => {
+  if (!mThinkOpen.value) return
+  if (thinkPanelEl.value && thinkPanelEl.value.contains(e.target)) return
+  mThinkOpen.value = false
+}
 const thinkPanelModelLabel = computed(() => {
   const info = modelIndex.value[thinkHoverModel.value]
   return info ? info.displayName : thinkHoverModel.value
@@ -1632,7 +1669,9 @@ const repositionThinkPanel = () => {
   const top = Math.max(THINK_EDGE, Math.min(thinkPanelRect.top - 6, maxTop))
   if (top !== thinkPanelPos.value.top) thinkPanelPos.value = { ...thinkPanelPos.value, top }
 }
-watch([thinkHoverModel, thinkLevelsOpen, thinkCtxOpen], () => nextTick(repositionThinkPanel))
+// 监听 thinkHoverRef（裸值）而非 thinkHoverModel（computed）：后者在触屏下等于 effectiveModel，
+// 生效模型一变就会触发一次无意义的重定位（触屏面板位置由 CSS 接管，不参与 JS 定位）
+watch([thinkHoverRef, thinkLevelsOpen, thinkCtxOpen], () => nextTick(repositionThinkPanel))
 /** 悬浮下拉模型行（ModelSelect 透传）：先记下行位置，稍候弹出该模型的设置面板；ref 为空=离开行 */
 const onModelOptionHover = (modelRef, rowEl) => {
   if (!modelRef) { scheduleThinkHide(); return }
@@ -1642,8 +1681,8 @@ const onModelOptionHover = (modelRef, rowEl) => {
   clearTimeout(thinkEnterTimer)
   thinkEnterTimer = setTimeout(() => {
     thinkEnterTimer = null
-    if (thinkHoverModel.value !== modelRef) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
-    thinkHoverModel.value = modelRef
+    if (thinkHoverRef.value !== modelRef) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
+    thinkHoverRef.value = modelRef
     if (rect) {
       // 右侧放不下时翻到行左侧；top 先按行顶对齐，渲染后 repositionThinkPanel 按实际高度收口
       const maxLeft = window.innerWidth - THINK_EDGE - THINK_PANEL_W
@@ -1656,7 +1695,7 @@ const onModelOptionHover = (modelRef, rowEl) => {
 }
 const scheduleThinkHide = () => {
   clearTimeout(thinkEnterTimer); thinkEnterTimer = null
-  if (thinkLeaveTimer || !thinkHoverModel.value) return
+  if (thinkLeaveTimer || !thinkHoverRef.value) return
   thinkLeaveTimer = setTimeout(() => {
     thinkLeaveTimer = null
     if (!thinkPanelHovered) hideThinkPanel()
@@ -1899,12 +1938,17 @@ function toggleSubagents (m) {
 }
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
-// 状态栏开合（持久化）；窄屏（≤1200，面板为浮层）默认收起——否则浮层默认盖住消息，
-// 用户需要时点「状态」按钮展开
-const panelOpen = ref(localStorage.getItem('app_panel') !== '0' && window.innerWidth > 1200)
+// ⚠️ panelStored 的初值必须**逐字保留**原表达式里的 `window.innerWidth > 1200`：
+//   769~1200px 的桌面窗口下右栏是浮层（≤1200 媒体查询），初值必须为收起；
+//   若简化为 !isNarrow（阈值 768），1000px 宽的桌面窗口会变成默认展开 —— 那是 PC 行为变更。
+//   同理 isNarrow 只是把 ≤768 的窄屏从「占位列」切换为「浮层」，宽屏语义完全不变。
+const panelStored = ref(localStorage.getItem('app_panel') !== '0' && window.innerWidth > 1200)
+const panelOpen = computed(() => !isNarrow.value && panelStored.value)
+const mPanelOpen = ref(false)
 const togglePanel = () => {
-  panelOpen.value = !panelOpen.value
-  localStorage.setItem('app_panel', panelOpen.value ? '1' : '0')
+  if (isNarrow.value) { mPanelOpen.value = !mPanelOpen.value; return }
+  panelStored.value = !panelStored.value
+  localStorage.setItem('app_panel', panelStored.value ? '1' : '0')
 }
 // ==================== 模型切换：会话级覆盖 > 智能体 > 个人默认 > 全局 ====================
 const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
@@ -2451,11 +2495,22 @@ const onGlobalKeydown = e => {
 }
 const onGlobalPaste = e => onPasteImages(e)
 // 窗口高度变化会改变「一屏」的量：重算留白（跟随中的会话顺手回到落点）
-const onWindowResize = () => { updateTailSpacer(); if (stickToBottom.value) scroll() }
+const onWindowResize = () => {
+  updateTailSpacer()
+  if (stickToBottom.value) scroll()
+  // 窄屏键盘弹起/收起改变了可用高度：antd Textarea 内部靠 ResizeObserver 自测，
+  // 但 iOS Safari 在键盘动画期间该观察可能不触发（overflow 计算在键盘态下不稳定），
+  // 表现为输入框塌成一行 —— 主动调一次 resize() 补测。宽屏不做（无键盘态，省一次布局）
+  if (isNarrow.value) nextTick(() => { if (textareaRef.value) textareaRef.value.resize() })
+}
+// 转屏：iOS Safari 从横屏转竖屏时不保证触发 resize 到正确值，单独补一次
+const onOrientationChange = () => { setTimeout(onWindowResize, 120) }
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('paste', onGlobalPaste)
   window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener('orientationchange', onOrientationChange)
+  document.removeEventListener('pointerdown', onDocPointerDown)
   clearTimeout(escArmTimer)
 })
 
@@ -3579,8 +3634,14 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       }
     },
     onWarn: w => { msg.warnMsg = w; liveScroll() },
-    onError: e => {
-      if (autoRetry > 0 && !gotToken) {
+    onError: (e, kind) => {
+      // 自动重试收紧到「连接压根没建起来」这一种：原条件 `!gotToken` 不区分网络错误与
+      // 服务端 5xx/限流 —— 移动端网络抖动频繁，用户会看到「消息发出去，卡 2.5 秒，
+      // 自己又跑了一遍」，而服务端其实已受理（可能已扣费）。判定用 navigator.onLine
+      // 优先（移动端可靠维护），再退回 fetch 的典型网络错误特征。
+      const netDown = (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        /Failed to fetch|NetworkError|ERR_INTERNET|ERR_NETWORK|network ?error/i.test(String(e))
+      if (autoRetry > 0 && !gotToken && netDown) {
         msg.retrying = true
         liveScroll()
         setTimeout(() => {
@@ -3601,18 +3662,28 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.loading = false
       msg.retrying = false
       msg.failed = true
-      msg.errorCard = { message: String(e), at: Date.now() }
+      msg.errorCard = { message: String(e), kind: kind || '', at: Date.now() }
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
-      message.error(e)
-      // 同上：已上翻看历史的会话原地停留（错误卡与「重新生成」在回答末尾，toast + 回到底部按钮足够引导）
+      // 中断类（断线/切后台冻结/连接被掐断）不弹 toast：这类几乎都是移动网络状态问题，
+      // toast 会盖住用户真正要点的「重新生成」按钮，而错误卡已经把话说清楚了。
+      // 业务错误仍弹 —— 那是需要立即知道的服务端异常。
+      if (kind !== 'interrupted') message.error(e)
+      // 同上：已上翻看历史的会话原地停留（错误卡与「重新生成」在回答末尾，回到底部按钮足够引导）
       liveScroll()
     }
   })
 }
 
 /** 错误分类文案（原始异常收进「异常详情」折叠；映射常见失败原因给出可行动提示） */
-const errorBrief = raw => {
+/** 错误分类文案。kind 由 api.js 给出（'interrupted'=断线/超时/连接被掐断），优先于按文本猜测：
+ *  中断类在后端已把半程回答按截断态落库，文案要告诉用户「内容没丢」并说明重新生成会重新计费。 */
+const errorBrief = (raw, kind) => {
   const s = String(raw || '')
+  if (kind === 'interrupted') {
+    if (/timeout|timed?\s*out|长时间未收到响应/i.test(s)) return '响应超时：连接已中断'
+    if (/提前关闭/.test(s)) return '连接已断开：回答未正常结束'
+    return '连接已中断：回答未正常结束'
+  }
   if (/AbortError|aborted?/i.test(s)) return '生成已停止'
   if (/timeout|timed?\s*out/i.test(s)) return '请求超时：模型服务响应过慢或网络不稳定，可重试'
   if (/Failed to fetch|NetworkError|network/i.test(s)) return '网络连接失败：请检查网络或代理设置'
@@ -3976,6 +4047,10 @@ onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('paste', onGlobalPaste)
   window.addEventListener('resize', onWindowResize)
+  window.addEventListener('orientationchange', onOrientationChange)
+  // 触屏深度思考 sheet 的「点外部关闭」。用 pointerdown 而非 click：touch 设备上
+  // click 在 touchend 之后才派发，面板内的 @mousedown.stop.prevent 拦不住它
+  document.addEventListener('pointerdown', onDocPointerDown)
   await loadSessions()
   refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
   loadAgents()       // 智能体下拉候选（不阻塞首屏）
@@ -4099,6 +4174,10 @@ onMounted(async () => {
 }
 .mec-head { font-size: 13px; color: var(--app-danger-text); font-weight: 500; display: flex; align-items: center; gap: 6px; }
 .mec-ic { font-size: 13px; }
+/* 中断（断线/切后台冻结）不是服务端故障：用警告色而非危险色，避免用户误以为回答作废 */
+.msg-error-card.net { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
+.msg-error-card.net .mec-head { color: var(--app-warn-text); }
+.mec-net-tip { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--app-text2); }
 .mec-actions { margin-top: 7px; display: flex; gap: 8px; }
 .mec-detail { margin-top: 7px; }
 .mec-detail summary { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
@@ -4844,25 +4923,91 @@ onMounted(async () => {
 .ref-card-btn:hover { text-decoration: underline; }
 
 /* ==================== 响应式：窄屏适配 ====================
-   此前固定内边距 + 固定 230px 右栏，窄窗口下消息区被挤成细条。 */
+   ≤1200：状态栏由占位列改浮层（消息是主内容，需要时点「状态」按钮展开）。
+   ≤768：手机窄屏 —— 收内边距（32px 在 375px 屏上占 17% 宽）、放大触控热区、
+        键盘避让、把 hover 浮层改底部 sheet。 */
 @media (max-width: 1200px) {
   /* 状态栏让位给消息区（消息是主内容；需要时用户可点「状态」按钮，面板改浮层由按钮控制） */
   .right-panel { position: absolute; right: 12px; top: 56px; bottom: 12px; z-index: 30;
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
-  /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧） */
+  /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
+     下面 768 块用 padding 简写重置了这一条 —— 窄屏下 FAB 已在窄屏隐藏（见 app.css），
+     不需要再让位 */
   .input { padding-right: 56px; }
   /* 拖拽高亮框跟随卡片右缘（与 .input 同侧内边距） */
   .drop-overlay { right: 56px; }
 }
 @media (max-width: 768px) {
-  .messages { padding: 12px 12px 8px; }
-  .chat-head { padding: 8px 12px; gap: 8px; }
-  .chat-title { max-width: 50%; }
+  /* 内边距从 32px 收到 10px，与 .chat-head 的横向节奏一致 */
+  .messages { padding: 10px 10px 6px; overscroll-behavior-y: contain; }
+  /* padding 用简写：同时重置 1200 块的 padding-right:56px（窄屏 FAB 已隐藏） */
+  .input { padding: 8px 10px calc(10px + var(--sab, 0px)); }
+  .chat-head { padding: 6px 10px; padding-top: calc(6px + var(--sat, 0px)); gap: 6px; }
+  .chat-title { max-width: 42%; }
   .head-tip { display: none; }
   .welcome { padding: 40px 12px 24px; }
   .welcome-samples { grid-template-columns: 1fr; max-width: 100%; }
   .bubble { max-width: 100%; }
-  .right-panel { width: calc(100% - 24px); right: 12px; }
+  /* 触摸热区：antd 的 28~32px 控件在手指上偏小 */
+  .send-btn { width: 34px; height: 34px; }
+  .input-toolbar .ant-btn, .input-toolbar .app-icon-btn { min-width: 34px; min-height: 34px; }
+  /* 右栏浮层在窄屏近乎全屏：改成真正的底部 sheet 形态（圆角在上、留出底部安全区）。
+     用 left/right 归零 + bottom:0 覆盖 1200 块给的 right:12px/top:56px 定位 */
+  .right-panel.as-sheet {
+    top: auto; left: 0; right: 0; bottom: 0; width: auto;
+    max-height: 76dvh; border-radius: 16px 16px 0 0;
+    padding-bottom: var(--sab, 0px);
+    animation: sheet-up .22s cubic-bezier(.16, 1, .3, 1);
+  }
+  /* @ 引用 / 斜杠命令 / 历史引用三个面板共用 .mention-panel。
+     原为 bottom:calc(100% + 8px) 向上弹 —— 键盘弹起后输入框上方空间常小于面板高（≈380px），
+     会直接溢出屏幕。窄屏一律改底部 sheet（面板本身无 fixed 后代，用 fixed 安全） */
+  .mention-panel {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+    max-height: 72dvh; border-radius: 16px 16px 0 0;
+    padding-bottom: calc(var(--sab, 0px) + var(--kb, 0px));
+    animation: sheet-up .22s cubic-bezier(.16, 1, .3, 1);
+  }
+  .mention-list { max-height: 42dvh; }  /* 原 264px 固定值：矮屏不够用，改视口比例 */
+  .mention-item { padding: 10px 8px; }   /* 触控热区 */
+  .mention-foot { display: none; }       /* 窄屏省一条说明文字，省 30px 高度 */
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+}
+
+/* ==================== 触屏（hover:none）专属 ====================
+   判据用「能否 hover」而非宽度：iPad 窄屏分屏 <768px 但有鼠标 hover，桌面窗口缩到
+   375px 仍 hover:hover —— 只有这条媒体查询能准确区分「手指操作」与「鼠标操作」。 */
+@media (hover: none) {
+  /* 引用角标悬浮卡：hover 专属，触屏永不可达。角标本身可点（openPreview → openSource），
+     所以直接物理隐藏，少一层交互 */
+  .ref-card { display: none; }
+  /* 深度思考面板 / 容量卡：桌面是 fixed 贴边浮层（靠 JS getBoundingClientRect 定位），
+     触屏改底部 sheet —— 贴边浮层在窄屏会盖住输入区，且其 JS 定位分支仍按宽屏算 */
+  .think-float, .ctxcap-float {
+    top: auto !important; left: 0 !important; bottom: 0 !important;
+    width: auto; max-width: none; max-height: 62dvh; overflow-y: auto;
+    border-radius: 16px 16px 0 0; z-index: 1060;
+    padding-bottom: var(--sab, 0px);
+    animation: sheet-up .22s cubic-bezier(.16, 1, .3, 1);
+  }
+  /* 灯箱提示文案：滚轮缩放/拖动平移/双击重置/ESC 全是桌面操作，触屏只支持点空白关闭 */
+  .lightbox-tip { display: none; }
+  /* 触屏热区下限 34px（触控设计规范建议 44px，但工具条空间有限，34 是可点与不挤的折中） */
+  .ctx-ring { min-width: 34px; min-height: 34px; }
+  .think-entry {
+    display: inline-flex; align-items: center; gap: 4px;
+    min-height: 34px; padding: 0 10px; cursor: pointer;
+    border: 1px solid var(--app-border); border-radius: 999px;
+    background: var(--app-panel); color: var(--app-text2); font-size: 12px;
+    touch-action: manipulation;
+  }
+  .think-entry.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+}
+/* 宽屏不渲染深度思考的常驻入口（那里挂在模型下拉行的 hover 上） */
+@media (hover: hover) { .think-entry { display: none; } }
+/* 无障碍：系统开启「减少动态效果」时不播 sheet 上滑 */
+@media (prefers-reduced-motion: reduce) {
+  .right-panel.as-sheet, .mention-panel, .think-float, .ctxcap-float { animation: none; }
 }
 </style>

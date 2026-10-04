@@ -152,3 +152,35 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
 
 /* .hljs 自带 padding 与（部分主题的）背景：与 .md pre 的 padding/背景重复，统一去掉 */
 .md pre code.hljs { padding: 0; background: transparent; }
+
+/* ==================== 窄屏（≤768px）：表格横滚 + 媒体尺寸收敛 ====================
+   .md 正文是 v-html 渲染的裸 HTML，不走 antd 组件，因此 app.css 里
+   `.ant-table-content{overflow-x:auto}` 那条兜底**管不到这里的表格**。 */
+@media (max-width: 768px) {
+  /* 表格：width:100% + th{white-space:nowrap} 在 375px 下必然横向溢出。
+     改 display:block 后表格自身成为滚动容器；border-collapse 会因此失效，
+     故下面显式补回单元格边框（.md th/td 的边框声明不依赖 table 的 display，仍生效，
+     这里只兜住 table 自身的边框合并行为） */
+  .md table {
+    display: block; overflow-x: auto; white-space: nowrap;
+    max-width: 100%; border-collapse: collapse;
+  }
+  .md table th, .md table td { border: 1px solid var(--app-border); }
+  /* 图片/预览：原 320px 固定高在 56dvh 以下的屏会顶掉大半个可视区 */
+  .md img { max-height: 46dvh; }
+  .md .md-preview-frame { height: 52dvh; }
+  .md pre { max-height: 50dvh; }
+  .md h2 { font-size: var(--app-fs-lg); }
+  .md ul, .md ol { padding-left: 18px; }
+}
+
+/* ==================== 触屏（hover:none）：hover-only 元素常显 ====================
+   判据用「能否 hover」而非宽度 —— iPad 窄屏分屏 <768px 但有鼠标，桌面缩窗到 375px 也能 hover。 */
+@media (hover: none) {
+  /* 代码复制按钮：.md pre:hover 才显（opacity:0 起），触屏永不可见 = 复制功能失效 */
+  .md pre .code-copy { opacity: 1; }
+  /* 触控热区：桌面 22px 的按钮在手指上点不准 */
+  .md .code-copy, .md .md-act { min-width: 30px; min-height: 30px; }
+  /* 链接下划线：触屏无 hover，靠 :hover 才显的反馈要给常驻版 */
+  .md a { text-decoration: underline; text-underline-offset: 2px; }
+}

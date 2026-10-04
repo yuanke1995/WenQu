@@ -118,4 +118,19 @@ onMounted(async () => {
   font-size: 12px; color: var(--app-text3);
 }
 .sh-brand { margin-left: auto; color: var(--app-accent); text-decoration: none; }
+
+/* ==================== 移动端窄屏（h5）====================
+   只读会话分享页（/shared/:token），分享链接常在手机/微信里打开。
+   布局是 max-width 居中栏，天然不破版；这里只收内边距、放大触控热区、让开安全区。 */
+@media (max-width: 768px) {
+  .sh-page { padding: calc(16px + var(--sat, 0px)) 12px 0; }
+  .sh-head { margin-bottom: 14px; }
+  .sh-title { font-size: 17px; }
+  .sh-list { gap: 12px; }
+  .sh-bubble { max-width: 92%; }
+  .sh-bubble.ai { padding: 10px 12px; }
+  /* 页脚链接是主要交互，44px 触摸热区 */
+  .sh-foot { margin: 20px 0 16px; padding-top: 12px; }
+  .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }
+}
 </style>

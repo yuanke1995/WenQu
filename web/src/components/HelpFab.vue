@@ -20,13 +20,20 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import HelpCenter from './HelpCenter.vue'
 
 const route = useRoute()
 const open = ref(false)
+
+// 窄屏帮助入口在移动顶栏（src/h5/MobileTopBar.vue）——那里 FAB 会压住对话页输入框。
+// 用全局事件而非 props：HelpFab 是常驻组件、抽屉开合状态在它内部，
+// 为传一个开关而把状态提到 AppLayout 反而多一层耦合。
+const onOpenHelp = () => { open.value = true }
+onMounted(() => window.addEventListener('app:open-help', onOpenHelp))
+onUnmounted(() => window.removeEventListener('app:open-help', onOpenHelp))
 </script>
 
 <style scoped>
@@ -46,4 +53,12 @@ const open = ref(false)
 .help-drawer-title { display: flex; flex-direction: column; gap: 1px; padding-right: 12px; }
 .help-drawer-name { font-size: 14px; font-weight: 500; }
 .help-drawer-hint { font-size: 11px; font-weight: 400; color: var(--app-text3); }
+
+/* 窄屏隐藏：fixed 右下角的 FAB 会压住对话页输入框的发送键一侧。
+   帮助入口改到移动顶栏（src/h5/MobileTopBar.vue 通过 app:open-help 事件打开同一个抽屉）。
+   注意这里用 max-width 而非 hover —— 判据是「有没有别的地方提供该入口」，
+   而非「能不能 hover」，两者在此恰好一致。 */
+@media (max-width: 768px) {
+  .help-fab { display: none; }
+}
 </style>

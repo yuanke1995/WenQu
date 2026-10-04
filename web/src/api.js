@@ -100,14 +100,26 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const inner = new AbortController()
   let idleTimedOut = false
   let idleTimer = null
+  // 页面隐藏（切后台/切标签）时暂停看门狗。iOS Safari 切后台 30s+ 会冻结 JS 定时器，
+  // 回前台时 setTimeout 立即到期 → 误判「长时间未收到响应」而报错。
+  // 正确处理是**冻结期间不计超时**（隐藏时停表、回前台重新给满），
+  // 而不是放宽 idleTimeoutMs —— 放宽会让真正的服务端卡死迟迟不报。
+  let idlePaused = false
   const armIdle = () => {
     clearTimeout(idleTimer)
+    if (idlePaused) return          // 隐藏期间不重置计时：冻结时长不该算进超时
     idleTimer = setTimeout(() => {
       idleTimedOut = true
       inner.abort()
     }, idleTimeoutMs)
   }
   const stopIdle = () => clearTimeout(idleTimer)
+  // 隐藏时收表，回前台补满整段
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') { idlePaused = true; stopIdle() }
+    else if (idlePaused) { idlePaused = false; if (!ended) armIdle() }
+  }
+  document.addEventListener('visibilitychange', onVisibility)
   if (signal) {
     if (signal.aborted) inner.abort()
     else signal.addEventListener('abort', () => inner.abort())
@@ -117,11 +129,20 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   // 直到按消息状态做增量操作（重新生成的版本序列）出现重复计数。所有终态路径统一走这里。
   let ended = false
   let donePayload = null
-  const end = err => {
+  // kind 区分失败性质，供 UI 决定文案与「重试」语义：
+  //   'interrupted' —— 断线/读失败/连接被掐断/idle 超时。**后端已把半程回答按截断态落库**
+  //                    （RagService.persistPartialAnswer，尾部带「⏹ 中断」标记），
+  //                    所以「重试」= 重新生成本轮，后端会软删那条截态回答并挂进同一版本组。
+  //   'aborted'     —— 用户主动停止（signal abort），属正常结束。
+  //   其他/未传      —— 业务错误（4xx/5xx、模型报错等）。
+  // ⚠️ 刻意**不做**自动重连：后端 SseEmitter 是一次性单向通道，无事件序号、无 resume 端点，
+  //    重连只能重发整个 POST /chat → 后端视为一轮全新问答 → 重复落库 + 重复计费。
+  const end = (err, kind) => {
     if (ended) return
     ended = true
     stopIdle()
-    if (err) onError(err)
+    document.removeEventListener('visibilitychange', onVisibility)
+    if (err) onError(err, kind)
     else onDone(donePayload)
   }
 
@@ -164,7 +185,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       reader.read().then(({ done, value }) => {
         // 流关闭但从未收到 done/error 事件：连接被中间层/服务端提前掐断，
         // 按失败上报（fail-loud），不能假装正常结束把半截回答留在屏上
-        if (done) { end(donePayload !== null ? undefined : '连接被提前关闭，回答未正常结束，请重试'); return }
+        if (done) { end(donePayload !== null ? undefined : '连接被提前关闭，回答未正常结束，请重试', 'interrupted'); return }
         armIdle() // 收到数据（任意字节）即视为存活
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -202,17 +223,17 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
         read()
       }).catch(e => {
         // 空闲看门狗超时按"可重试错误"上报；用户主动停止（signal abort）按正常结束处理
-        if (idleTimedOut) end('长时间未收到响应，连接已中断，请重试')
+        if (idleTimedOut) end('长时间未收到响应，连接已中断，请重试', 'interrupted')
         else if (e.name === 'AbortError') end()
-        else end('读取失败: ' + e.message)
+        else end('读取失败: ' + e.message, 'interrupted')
       })
     }
     read()
   }).catch(e => {
     // 同一道闸门收尾：用户主动停止按正常结束（onDone 无载荷 → 前端收尾为「已停止生成」），
     // 空闲超时与其它错误按可重试错误上报。此前这里不走 end()，与内层 reader 的收尾可能各调一次回调
-    if (e.name === 'AbortError') end(idleTimedOut ? '长时间未收到响应，连接已中断，请重试' : undefined)
-    else end('请求失败: ' + e.message)
+    if (e.name === 'AbortError') end(idleTimedOut ? '长时间未收到响应，连接已中断，请重试' : undefined, idleTimedOut ? 'interrupted' : undefined)
+    else end('请求失败: ' + e.message, 'interrupted')
   })
 }
 
@@ -606,10 +627,22 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
   const controller = new AbortController()
   let idleTimer = null
   let idleTimedOut = false
+  // 与主链路同因：iOS Safari 切后台会冻结定时器，回前台 setTimeout 立即到期 → 误报超时。
+  // 隐藏时停表、回前台补满，而不是放宽阈值
+  let idlePaused = false
   const armIdle = () => {
     clearTimeout(idleTimer)
+    if (idlePaused) return
     idleTimer = setTimeout(() => { idleTimedOut = true; controller.abort() }, idleTimeoutMs)
   }
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') { idlePaused = true; clearTimeout(idleTimer) }
+    else if (idlePaused) { idlePaused = false; armIdle() }
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+  // 统一收尾：摘监听 + 停表。分享链路有 5 个出口（HTTP 失败 / error 事件 / done 事件 /
+  // 流读尽 / 读失败），逐个出口清监听必然漏（漏一个就是每次对话泄漏一个监听器）
+  const settle = () => { clearTimeout(idleTimer); document.removeEventListener('visibilitychange', onVisibility) }
   if (signal) {
     if (signal.aborted) controller.abort()
     else signal.addEventListener('abort', () => controller.abort())
@@ -621,6 +654,7 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
     signal: controller.signal
   }).then(res => {
     if (!res.ok || !res.body) {
+      settle()
       res.json().then(d => onError(d?.msg || '请求失败: ' + res.status)).catch(() => onError('请求失败: ' + res.status))
       return
     }
@@ -637,11 +671,11 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
       if (data.type === 'token') onToken && onToken(data.content || '')
       else if (data.type === 'stage') onStage && onStage(data.content || '')
       else if (data.type === 'warn') onWarn && onWarn(data.content || '')
-      else if (data.type === 'error') onError(data.content || '回答失败')
-      else if (data.type === 'done') onDone(data)
+      else if (data.type === 'error') { settle(); onError(data.content || '回答失败') }
+      else if (data.type === 'done') { settle(); onDone(data) }
     }
     const pump = () => reader.read().then(({ done, value }) => {
-      if (done) { clearTimeout(idleTimer); return }
+      if (done) { settle(); return }
       buf += decoder.decode(value, { stream: true })
       armIdle() // 收到数据（任意字节，含 :keepalive 注释行）即视为存活——与主链路看门狗同语义，否则整轮心跳对分享链路无效
       let idx
@@ -653,11 +687,11 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
     })
     armIdle()
     pump().catch(e => {
-      clearTimeout(idleTimer)
+      settle()
       onError(idleTimedOut ? '回答超时，请重试' : (e.message || '连接中断'))
     })
   }).catch(e => {
-    clearTimeout(idleTimer)
+    settle()
     if (e.name === 'AbortError') onError('已停止生成')
     else onError(e.message || '网络错误')
   })

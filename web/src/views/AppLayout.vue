@@ -1,7 +1,12 @@
 <template>
-  <div class="app-root">
-    <!-- 左侧边栏：logo / 导航 / 最近会话 / 底部用户区（可折叠为图标条） -->
-    <aside class="side" :class="{ collapsed }">
+  <div class="app-root" :class="{ 'is-narrow': isNarrow }">
+    <!-- 左侧边栏：logo / 导航 / 最近会话 / 底部用户区（可折叠为图标条）
+         窄屏下由 CSS 整体变为左侧抽屉（position:fixed + translateX），**不改 DOM 结构**——
+         会话搜索防抖、分组折叠、批量模式、游标分页、置顶/重命名/删除约 200 行逻辑若另建
+         抽屉组件就得复制或抽 composable，两份实现必然漂移。
+         collapsed 是 PC 的持久化偏好（用户在桌面折叠过侧栏后窄屏会全是小圆点），窄屏用
+         `collapsed && !isNarrow` 挡掉。 -->
+    <aside class="side" :class="{ collapsed: collapsed && !isNarrow, open: sideOpen }">
       <div class="side-logo">
         <BrandMark :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
@@ -190,8 +195,19 @@
       <SetupGuide scope="all" variant="plain" @close="guideOpen = false" />
     </a-drawer>
 
-    <!-- 主内容区 -->
-    <div class="main"><router-view /></div>
+    <!-- 抽屉遮罩：窄屏点它关闭侧栏。放在 aside 之后（z-index 更低），保证点击穿透到遮罩而非抽屉 -->
+    <div v-if="isNarrow && sideOpen" class="side-mask" @click="sideOpen = false"></div>
+
+    <!-- 主内容区：窄屏顶部插入移动顶栏（抽屉入口 / 会话标题 / 搜索 / 新建 / 帮助） -->
+    <div class="main">
+      <MobileTopBar v-if="isNarrow" @toggle-side="sideOpen = !sideOpen" @search="sideOpen = true" @new-chat="newChat" />
+      <div class="main-body">
+        <DesktopOnlyGuard v-if="isNarrow" :path="route.path">
+          <router-view />
+        </DesktopOnlyGuard>
+        <router-view v-else />
+      </div>
+    </div>
 
     <!-- 全局帮助入口：右下角悬浮「?」，任意页面就抽屉读手册（帮助中心整页 /help 上不重复出现） -->
     <HelpFab />
@@ -215,8 +231,11 @@ import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
+import { isNarrow } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
+import MobileTopBar from '../h5/MobileTopBar.vue'
+import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import { exportSessionMarkdown } from './exportMd'
@@ -307,11 +326,28 @@ const groupTotal = (label, loaded) => sessionStore.counts[COUNT_KEYS[label]] ?? 
 // 「查看更多 (N)」的 N：全量 - 已加载可展示数（两者同口径：仅统计有消息的会话）
 const sessRemaining = computed(() => Math.max(0, (sessionStore.total || 0) - visibleSessionList.value.length))
 const isActive = p => route.path === p
+// 窄屏抽屉开合。不落 localStorage：抽屉是「当前这一秒的临时状态」，
+// 刷新后默认关着才是符合预期的（记住它会让下次进来莫名其妙开着一个遮罩）
+const sideOpen = ref(false)
+
+// 路由变化即关抽屉：窄屏下选完会话就该看到对话内容，而不是隔着一层遮罩。
+// 转宽屏也必须关——遮罩是 fixed 的，留着会把整个宽屏盖住
+watch(() => route.fullPath, () => { if (isNarrow.value) sideOpen.value = false })
+watch(isNarrow, v => { if (!v) sideOpen.value = false })
+
+// 导航跳转。**仅窄屏**在 /chat 内切换会话时用 replace：
+// 手机返回键是主导航，若每次切换会话都 push，A→B→C 连点三次后要按 3 次返回才能离开对话页。
+// 宽屏保持 push —— 桌面有侧栏点选，用户几乎不用返回键，且 push 保留了「从别的页进对话」
+// 与「对话内换会话」在历史里的可区分性，改了反而是行为变更。
+const goChat = to => {
+  const done = (isNarrow.value && route.path === '/chat') ? router.replace(to) : router.push(to)
+  done.catch(() => {})
+}
 const newChat = () => {
   sessionStore.newChatTick++
-  router.push('/chat').catch(() => {})
+  goChat('/chat')
 }
-const openSession = sid => router.push({ path: '/chat', query: { sid } })
+const openSession = sid => goChat({ path: '/chat', query: { sid } })
 
 // 整会话导出 Markdown（无需先打开会话）
 const exportSessionMd = s => {
@@ -610,14 +646,14 @@ onUnmounted(() => clearInterval(notifTimer))
   font-size: 10px; padding: 2.5px 7px;
   color: var(--app-warn-text); background: var(--app-warn-weak);
 }
-/* 折叠态/窄屏（≤768 纯 CSS 收成图标条）：span 文本被隐藏，用 <i> 圆点提示待配置（span 会被隐藏规则吞掉） */
+/* 折叠态：span 文本被隐藏，用 <i> 圆点提示待配置（span 会被隐藏规则吞掉）。
+   窄屏抽屉是展开形态（宽度够放文字与计数），不需要圆点，故只在 .collapsed 下生效 */
 .nav-dot {
   display: none; position: absolute; top: 6px; right: 9px;
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--app-warn); flex: none;
 }
 .side.collapsed .nav-dot { display: block; }
-@media (max-width: 768px) { .side .nav-dot { display: block; } }
 /* 侧栏引导入口（导航组末尾）：与上方导航留分组间距；必配态主色弱底 + 琥珀计数角标 */
 .guide-entry { margin-top: 10px; background: var(--app-accent-weak); }
 .guide-entry-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -748,29 +784,47 @@ onUnmounted(() => clearInterval(notifTimer))
 .user-name { font-size: 12px; color: var(--app-text2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
-.main { flex: 1; min-width: 0; height: 100%; }
+/* .main 恒为纵向 flex 容器，.main-body 吃掉剩余高度。
+   看似多包一层，但这一层是必需的：窄屏要在 .main 顶部插入 MobileTopBar，
+   若让页面直接做 .main 的子节点，就得给每个页面都加「跳过顶栏」的偏移。
+   关键是 .main-body 必须**在宽屏也有高度**（flex:1 + min-height:0）——
+   各页面靠 height:100% 逐级继承（.app-root → .main → 页面），一旦这层塌成 auto，
+   页面高度就断链、内容会被压扁。 */
+.main { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; }
+.main-body { flex: 1; min-height: 0; }
 
 /* ==================== 响应式：窄屏适配 ====================
-   此前全站零媒体查询——侧栏固定 200px + 消息区固定内边距，窗口收窄即挤坏。
-   ≤768：侧栏强制收为图标条（与折叠态同款视觉，JS 的 collapsed 状态不动，纯 CSS 覆盖）；
+   ≤768：左侧栏整体变左侧抽屉（.side 变 fixed + translateX 滑出），主内容区顶部插入
+        MobileTopBar。DOM 结构与 PC 完全一致，靠 CSS 与 :class 切换。
    ≤1024：会话操作图标常显（触屏无 hover）。 */
 @media (max-width: 1024px) {
   .sess-op { opacity: 1; }
 }
 @media (max-width: 768px) {
-  .side { width: 56px; padding: 10px 4px; }
-  .side .side-logo svg { display: none; }
-  .side .side-logo { justify-content: center; padding: 2px 0 12px; }
-  .side .fold { margin-left: 0; }
-  .side .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
-  .side .nav-item > span { display: none; }
-  .side .side-label, .side .sess-search-wrap, .side .sess-title, .side .sess-op,
-  .side .sess-del, .side .sess-export, .side .sess-pin-flag, .side .sess-empty, .side .user-name { display: none; }
-  .side .side-sessions { align-items: center; }
-  .side .sess-item { justify-content: center; padding: 6px 0; width: 100%; }
-  .side .sess-dot { display: block; }
-  .side .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
-  .side .side-foot .app-icon-btn { margin-left: 0 !important; }
+  /* 抽屉：脱离文档流（fixed），所以 .app-root 保持 flex-direction: row 无需改。
+     min(84vw, 320px)：窄屏留出右侧一条可点区域关抽屉，宽屏不超常规抽屉宽度。 */
+  .side {
+    position: fixed; inset: 0 auto 0 0; z-index: 40;
+    width: min(84vw, 320px); height: 100dvh;
+    padding-top: var(--sat, 0px);
+    padding-bottom: var(--sab, 0px);
+    border-right: none; box-shadow: var(--app-shadow-lg);
+    /* 用 transform 而非 left：left 动画会每帧触发布局，transform 走合成层 */
+    transform: translateX(-100%);
+    transition: transform .24s cubic-bezier(.16, 1, .3, 1);
+  }
+  .side.open { transform: none; }
+  /* 抽屉内的安全区补偿：底部 .side-foot 贴底区需要额外留白，否则退出按钮压住 Home Indicator */
+  .side .side-foot { padding-bottom: calc(8px + var(--sab, 0px)); }
+  .side-mask {
+    position: fixed; inset: 0; z-index: 39;
+    background: rgba(0, 0, 0, .38);
+    animation: side-fade .2s ease;
+  }
+  @keyframes side-fade { from { opacity: 0; } to { opacity: 1; } }
+  /* .main / .main-body 的纵向 flex 结构在**宽屏样式里已声明**（见上），此处不重复 ——
+     窄屏只是多了一个顶栏，结构不变。绝不能把它只写在窄屏块里：
+     那样宽屏下 .main-body 无高度，各页面的 height:100% 继承链会断在这里。 */
 }
 </style>
 

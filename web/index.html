@@ -2,7 +2,22 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- viewport-fit=cover 是 env(safe-area-inset-*) 生效的前提：没有它四个安全区值恒为 0
+       （刘海屏顶部、底部 Home Indicator 区域会被内容压住）。保持可缩放，不加 user-scalable=no -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <!-- 主题色两份（与 app.css --app-bg 同步）：PWA 独立窗口与 iOS 状态栏底色取这个值 -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f8fa">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14161a">
+  <!-- 可加到主屏：iOS 不认 SVG 图标，必须给 apple-touch-icon（180×180 PNG，scripts/gen-icons.mjs 生成）。
+       刻意不引 Service Worker：/s/:token 与 /shared/:token 是免登录分享、token 在 URL 里，
+       SW 缓存这些页面等于把别人的对话内容落到设备磁盘。详见 docs 里的取舍说明 -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- black-translucent：内容延伸到状态栏下方，与 app.css 的 --sat 补偿成对存在。
+       去掉这一行而保留 --sat 会让顶栏多出一段空白，反之则顶栏被状态栏盖住 -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="问渠 WenQu —— AI 智能体工作台。答案，自有源头。">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>问渠 · AI 智能体工作台</title>

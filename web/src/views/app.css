@@ -53,6 +53,14 @@
      antd 组件自带字体 token 不受影响；此栈兜底所有普通文本与表单控件继承。 */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   color-scheme: light;
+  /* ---- 安全区（刘海屏 / Home Indicator）----
+     依赖 index.html 的 viewport-fit=cover，否则四项恒为 0。
+     统一收成变量而非各处直写 env()：横屏时左右两侧也有值（刘海在横屏边），
+     消费方按需取用即可，不必各自判断方向。 */
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
 }
 
 /* 暗色主题：只换 token 值，组件样式零改动。
@@ -201,4 +209,24 @@ input:focus-visible, textarea:focus-visible { outline: none; }
   .ant-table-wrapper .ant-table-content { overflow-x: auto; }
   /* 页头「标题 + 按钮组」折行（按钮多的页面如文档/知识库） */
   .app-page-head { flex-wrap: wrap; row-gap: 8px; }
+
+  /* ---- 触屏输入控件防 iOS 自动缩放 ----
+     iOS Safari 对 font-size < 16px 的输入框，聚焦时会自动 zoom-in 放大整页，
+     且**不会自动恢复**（用户要双击才能复位）。这是 iOS 的硬规则，只能用 16px 破解。
+     !important 是必要妥协：要压过 scoped 样式选择器与 antd 自身的 specificity。 */
+  input, textarea, select,
+  .ant-input, .ant-input-affix-wrapper,
+  .ant-select-selection-item, .ant-select-selection-placeholder,
+  .ant-select-selection-search-input {
+    font-size: 16px !important;
+  }
+  /* 触摸热区：26px 的图标钮在手指上点不准，粗指针下一律放大到 34px。
+     放大了要配 touch-action，否则双击缩放/选中会抢走首次点击 */
+  .app-icon-btn { width: 34px; height: 34px; }
+  .app-btn, .ant-btn { min-height: 34px; touch-action: manipulation; }
+  .app-link-btn, .ant-select-selection-item { touch-action: manipulation; }
+  /* 顶部 toast 让开刘海 */
+  .ant-message { top: calc(var(--sat) + 8px); }
+  /* 贴底弹层（抽屉、弹窗）的底部按钮别被 Home Indicator 压住 */
+  .ant-drawer-content-wrapper, .ant-modal-wrap { padding-bottom: var(--sab); }
 }

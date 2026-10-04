@@ -61,8 +61,11 @@ html, body { margin: 0; overflow-x: hidden; }
 ::-webkit-scrollbar-thumb:hover { background: var(--app-text3); }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 * { scrollbar-width: thin; scrollbar-color: var(--app-scrollbar) transparent; }
-/* 工作台：无内边距满屏，由内部布局自己管理 */
-.content-app { padding:0;background:var(--app-bg, #f7f8fa);color:var(--app-text);height:100vh;overflow:hidden }
+/* 工作台：无内边距满屏，由内部布局自己管理。
+   高度优先取 --app-vh（src/h5/keyboard.js 仅在窄屏写入 = visualViewport.height，
+   已扣掉软键盘）。宽屏该变量不存在 → 回落 100vh，与改动前**逐字一致**，
+   桌面端行为零变化（不回落 100dvh：老浏览器不认 dvh 会整条声明失效）。 */
+.content-app { padding:0;background:var(--app-bg, #f7f8fa);color:var(--app-text);height:100vh;height:var(--app-vh, 100vh);overflow:hidden }
 /* 登录页：无内边距，卡片自身居中 */
 .content-login { padding:0;background:var(--app-bg, #f7f8fa) }
 /* 文档流独立页（meta.pageFlow，如只读分享页）：与工作台同底色/文字色，但**不锁高、不裁溢出**——

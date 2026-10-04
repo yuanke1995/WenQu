@@ -312,3 +312,15 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
   display: none !important;
 }
 </style>
+
+<!-- ==================== 窄屏（≤768px）====================
+     触屏的深度思考设置不走「悬浮模型行」，改由聊天页工具条常驻入口点开底部 sheet
+     （见 ChatPage 的 .think-entry），因此**不需要**给 option 加点击事件。 -->
+<style>
+@media (max-width: 768px) {
+  /* 72vw 在 375px 屏上只有 270px，供应商分组标题与模型名会被截断 —— 窄屏放开到接近全屏 */
+  .ms-dropdown { max-width: calc(100vw - 16px) !important; }
+  /* 触控热区：30px 的行在手指上偏小 */
+  .ms-dropdown .ant-select-item-option { min-height: 40px !important; line-height: 24px !important; }
+}
+</style>

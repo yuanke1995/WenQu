@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- maskable 图标：与 favicon.svg 同源，但内容缩到 80% 居中。
+       原因：系统按 maskable 裁圆/裁异形时会切掉四周，直接复用普通图标会让三道波线
+       的两端被切掉；满幅背景 + 内容内缩是 maskable 的标准做法（规范要求内容落在
+       中间 80% 的安全区内）。-->
+  <defs>
+    <linearGradient id="wq-brand-g" x1="14" y1="4" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5E93F5"/>
+      <stop offset="1" stop-color="#2A5FE0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" fill="url(#wq-brand-g)"/>
+  <g transform="translate(6.4 6.4) scale(0.8)">
+    <rect x="3" y="3" width="58" height="58" rx="17" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width="2"/>
+    <circle cx="46" cy="16.5" r="3.6" fill="#fff"/>
+    <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+    <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+    <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+  </g>
+</svg>

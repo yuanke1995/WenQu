@@ -10,6 +10,10 @@ import App from './App.vue'
 import router from './router'
 import { ensureAuth, isLoggedIn, clearAuth } from './utils/auth'
 import { initTheme } from './utils/theme'
+// 移动端地基（src/h5/）：装 visualViewport 监听（写 --kb / --app-vh 到 :root）。
+// 必须在此处（组件树之外）安装——它监听的是 window 事件，与任何组件无关，
+// 且要在首次渲染前就位，否则首帧会拿到过期的视口高度。
+import { installKeyboardInset } from './h5/keyboard'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -45,6 +49,9 @@ patchEdgeMinimizeBug()
 // 主题初始化：index.html 内联脚本已定好 DOM 上的 data-theme（防闪），
 // 这里把它同步进响应式状态（antd ConfigProvider 需要感知亮/暗切换）。
 initTheme()
+
+// 软键盘视口变量：宽屏全程不启用（--kb 恒为 0、--app-vh 不写），PC 行为零变化
+installKeyboardInset()
 
 const app = createApp(App)
 
