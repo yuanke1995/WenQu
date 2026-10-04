@@ -121,8 +121,11 @@
         </div>
 
         <!-- 长期记忆（跨会话个性化） -->
-        <div v-else-if="current === 'memory'" class="app-card pf-card">
-          <h2 class="app-card-title">我的长期记忆</h2>
+        <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
+          <h2 class="app-card-title">
+            我的长期记忆
+            <span v-if="memories.length" class="mem-count">{{ memories.length }} 条</span>
+          </h2>
           <p class="pf-hint">
             开启时，系统会在每轮问答后自动提炼值得长期记住的信息（偏好、项目背景、明确要求记住的事），
             并在你之后的对话中自动带上。这里可以查看、修改、删除——删掉的就永远不会再被提起。
@@ -135,31 +138,44 @@
             </div>
             <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
           </div>
-          <div class="pf-row" style="margin-bottom:12px">
-            <a-input v-model:value="memDraft" :maxlength="500" allow-clear style="flex:1"
+          <div class="mem-add-row">
+            <a-input v-model:value="memDraft" :maxlength="500" allow-clear class="mem-add-input"
                      placeholder="手动添加一条记忆，如：我负责 XX 系统的运维" @pressEnter="addMemory" />
+            <a-select v-model:value="memDraftCat" class="mem-add-cat" :options="CAT_OPTIONS" />
             <button class="app-btn" :disabled="memSaving || !memDraft.trim()" @click="addMemory">添加</button>
           </div>
           <a-spin :spinning="memLoading">
-            <div v-if="!memories.length" class="pf-sub-hint" style="padding:12px 0">
-              还没有记忆。多聊几轮，或手动添加一条。
+            <div v-if="!memories.length" class="mem-empty">
+              <div class="mem-empty-ico">💡</div>
+              <p class="mem-empty-title">还没有记忆</p>
+              <p class="pf-sub-hint">多聊几轮让系统自动提炼，或在上方手动添加一条。</p>
             </div>
-            <div v-for="m in memories" :key="m.id" class="mem-item">
-              <template v-if="memEditing === m.id">
-                <a-input v-model:value="memEditDraft" :maxlength="500" size="small" @pressEnter="saveMemEdit(m)" />
-                <button class="app-link-btn" :disabled="memSaving" @click="saveMemEdit(m)">保存</button>
-                <button class="app-link-btn" @click="memEditing = ''">取消</button>
-              </template>
-              <template v-else>
-                <span class="mem-content" :title="m.content">{{ m.content }}</span>
-                <span class="mem-tag" :class="'mem-' + m.category">{{ categoryLabel(m.category) }}</span>
-                <span v-if="m.source === 'auto'" class="mem-tag mem-src" :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
-                <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
-                <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
-                <a-popconfirm title="删除后不会再被提起，确定？" @confirm="removeMemory(m)">
-                  <button class="app-link-btn danger">删除</button>
-                </a-popconfirm>
-              </template>
+            <div v-else class="mem-list">
+              <div v-for="m in memories" :key="m.id" class="mem-item">
+                <!-- 编辑态：文本域独占卡片，计数与按钮同排（antd show-count 渲染在文本域下方，会与按钮行重叠） -->
+                <template v-if="memEditing === m.id">
+                  <a-textarea v-model:value="memEditDraft" :maxlength="500"
+                              :auto-size="{ minRows: 2, maxRows: 8 }" />
+                  <div class="mem-edit-foot">
+                    <span class="mem-edit-count">{{ memEditDraft.length }} / 500</span>
+                    <button class="app-btn ghost" :disabled="memSaving" @click="memEditing = ''">取消</button>
+                    <button class="app-btn" :disabled="memSaving || !memEditDraft.trim()" @click="saveMemEdit(m)">保存</button>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="mem-content">{{ m.content }}</div>
+                  <div class="mem-foot">
+                    <span class="mem-tag" :class="'mem-cat-' + (m.category || 'fact')">{{ categoryLabel(m.category) }}</span>
+                    <span v-if="m.source === 'auto'" class="mem-tag mem-src"
+                          :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
+                    <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
+                    <span class="mem-acts">
+                      <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
+                      <button class="app-link-btn danger" @click="confirmRemoveMemory(m)">删除</button>
+                    </span>
+                  </div>
+                </template>
+              </div>
             </div>
           </a-spin>
           <p class="pf-sub-hint">
@@ -174,7 +190,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
@@ -451,6 +467,9 @@ const memEditing = ref('')
 const memEditDraft = ref('')
 const CATEGORY_LABELS = { fact: '事实', instruction: '约定', project: '项目' }
 const categoryLabel = c => CATEGORY_LABELS[c] || '事实'
+// 手动添加可选分类（后端 addManual 本就支持 category，此前前端没暴露）
+const CAT_OPTIONS = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))
+const memDraftCat = ref('fact')
 
 const loadMemories = async () => {
   memLoading.value = true
@@ -465,7 +484,7 @@ const addMemory = async () => {
   if (!c) return
   memSaving.value = true
   try {
-    const r = await addMyMemory(c)
+    const r = await addMyMemory(c, memDraftCat.value)
     if (r && r.success !== false) { memDraft.value = ''; await loadMemories() }
     else message.error(r?.msg || '添加失败')
   } catch (e) { message.error(e.message || '添加失败') }
@@ -482,6 +501,15 @@ const saveMemEdit = async m => {
     else message.error(r?.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { memSaving.value = false }
+}
+/** 删除确认：Modal.confirm（a-popconfirm 点击浮层在 iab 内嵌页不弹，全站统一用 Modal） */
+const confirmRemoveMemory = m => {
+  Modal.confirm({
+    title: '删除这条记忆？',
+    content: '「' + m.content.slice(0, 40) + (m.content.length > 40 ? '…' : '') + '」删除后不会再被提起。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: () => removeMemory(m)
+  })
 }
 const removeMemory = async m => {
   try {
@@ -554,13 +582,34 @@ onMounted(() => {
 @media (max-width: 860px) {
   .pf-emoji-pick { grid-template-columns: repeat(10, minmax(0, 1fr)); }
 }
-/* 长期记忆列表 */
-.mem-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--app-border); }
-.mem-item:last-child { border-bottom: none; }
-.mem-content { flex: 1; min-width: 0; font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mem-tag { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
-.mem-src { background: var(--app-panel-2); color: var(--app-text3); }
+/* 长期记忆：卡片比其他面板略宽（长句记忆要完整换行展示，640 略挤） */
+.mem-card { max-width: 720px; }
+/* 标题旁条数胶囊 */
+.mem-count { font-size: 11px; font-weight: 400; line-height: 1; color: var(--app-text3); background: var(--app-panel-2); padding: 3px 8px; border-radius: 999px; }
+/* 手动添加行：输入 + 分类 + 按钮；窄屏允许换行不挤压 */
+.mem-add-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.mem-add-input { flex: 1; min-width: 200px; }
+.mem-add-cat { width: 92px; flex: none; }
+/* 记忆列表：每条一张软卡片，内容完整换行（不再单行截断省略） */
+.mem-list { display: flex; flex-direction: column; gap: 8px; }
+.mem-item { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; }
+.mem-content { font-size: 13px; line-height: 1.65; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+/* 元信息行：分类/来源/使用度靠左，编辑删除靠右——独立一行，任何宽度都不变形 */
+.mem-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.mem-tag { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; white-space: nowrap; background: var(--app-panel-2); color: var(--app-text3); }
+.mem-cat-project { background: var(--app-accent-weak); color: var(--app-accent); }
+.mem-cat-instruction { background: #faf3e6; color: #a3691b; }
+.mem-src { background: transparent; border: 1px solid var(--app-border); padding: 2px 6px; }
 .mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
+.mem-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* 编辑态：文本域 + 底部按钮行（计数靠左、按钮靠右，互不重叠） */
+.mem-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.mem-edit-count { margin-right: auto; font-size: 11px; color: var(--app-text3); }
+/* 空态 */
+.mem-empty { text-align: center; padding: 26px 0 18px; }
+.mem-empty-ico { font-size: 26px; line-height: 1; }
+.mem-empty-title { font-size: 13px; color: var(--app-text2); margin: 8px 0 2px; }
+.mem-empty .pf-sub-hint { margin: 0; }
 /* 自动提炼开关行：左说明右开关，与手动添加行之间留分隔 */
 .mem-auto-row { padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); }
 .mem-auto-text { flex: 1; min-width: 0; }
