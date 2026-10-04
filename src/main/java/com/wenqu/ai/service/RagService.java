@@ -261,6 +261,9 @@ public class RagService {
     private static final Pattern IMG_NUM_DIGITS_PATTERN = Pattern.compile("\\d+");
     /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换为 IMG_NUMBER_PATTERN 形态） */
     private static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
+    /** 中断兜底落库时追加在正文尾部的截断标记：刷新/历史可见的 fail-loud 提示。
+     *  落在时间线区间之外，前端 restore 后由尾段兜底渲染成独立的引用块 */
+    private static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
 
     private final ChatClient chatClient;
     private final SessionService sessionService;
@@ -2023,6 +2026,116 @@ public class RagService {
         return v instanceof Number n ? n.intValue() : 0;
     }
 
+    /**
+     * 中断兜底落库：客户端停止/断开/超时把生成流掐断（disposeSafe）时，把已流出的半程正文按截断态落库。
+     * 此前只有完整走完 doOnComplete 才落库，中断轮在历史里只剩问题——刷新/重进会话后「已生成的部分」
+     * 全部蒸发。与正常完成路径共用 answerPersistGate 幂等闸（CAS 先到先得，谁先落库谁赢）。
+     * 只落「已下发给前端」的内容（fullResponse 与 token 事件同源；尾部扣留的标签前缀缓冲不参与）；
+     * 引用自检/图片过滤/记忆提取/QA 日志均不再执行（那是完整轮的收尾语义），正文尾部追加截断标记，
+     * 时间线仍按原始半程长度夹取（标记落在区间之外，前端 restore 后由尾段兜底渲染）。
+     */
+    private void persistPartialAnswer(AnswerStreamState st) {
+        try {
+            String answer = st.fullResponse.toString();
+            List<Map<String, Object>> sources = st.sources;
+            List<String> finalImgs = new ArrayList<>(st.imgIndex.values());
+            String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
+            // retrieved 状态行 refs 对齐 + 编排视图随持久化（与 doOnComplete 同款小步：来源可能被工具续编）
+            String finalRetrievedJson = st.retrievedJson;
+            try {
+                Map<String, Object> rj = JSON.parseObject(st.retrievedJson);
+                if (rj != null) {
+                    Integer oldRefs = rj.get("refs") instanceof Number n ? n.intValue() : null;
+                    if (oldRefs == null || oldRefs != sources.size()) {
+                        rj.put("refs", sources.size());
+                    }
+                    if (!st.subagentBranches.isEmpty()) {
+                        rj.put("branches", st.subagentBranches);
+                    }
+                    if (st.subagentRoute != null) {
+                        rj.put("route", st.subagentRoute);
+                    }
+                    finalRetrievedJson = JSON.toJSONString(rj);
+                }
+            } catch (Exception ignored) {
+            }
+            List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
+            List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
+            String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
+            // 时间线按原始半程正文夹取；截断标记追加在快照之后（区间之外，前端尾段兜底渲染）
+            List<Map<String, Object>> timelineSnapshot =
+                    buildTimelineSnapshot(st, answer, toolCallSnapshot.size(), sessionArtifacts.size());
+            String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
+            String processText = st.processResponse.toString();
+            Map<String, Object> tokens = buildUsageSnapshot(st, answer);
+            // 重新生成被中断：同样软删被替换的旧回答——用户已看到新版在气泡里替代旧版，历史保持同观感
+            if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
+                sessionService.deleteMessage(st.replaceMessageId);
+            }
+            sessionService.appendMessage(st.sessionId, "assistant", answer + TRUNCATION_SUFFIX,
+                    finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
+                    sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
+                    toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
+                    processText.isEmpty() ? null : processText,
+                    st.agentId, st.agentName, st.model);
+            // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
+            artifactService.unregisterEmitter(st.sessionId);
+            log.info("[SSE] 中断兜底：半程回答已按截断态落库 (session={}, chars={})", st.sessionId, answer.length());
+        } catch (Exception e) {
+            // 兜底失败只记日志：管道已断无处下发错误，回退为现状「中断即丢失」
+            log.warn("[SSE] 中断兜底落库失败 (session={}): {}", st.sessionId, e.getMessage());
+        }
+    }
+
+    /**
+     * Token 用量快照（done 下发与落库共用）：工具调用循环逐轮求和（native 原始口径）=全部请求轮次总量，
+     * 与供应商账单同口径；最终轮（prompt 最大：工具结果逐轮入上下文）的输出用于触顶判定、其 prompt 用于
+     * ctxParts 校准（分类拆的是最终上下文而非各轮总和）。无逐轮数据时回落旧单值字段，
+     * 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
+     * 中断兜底路径复用同一口径：逐轮实测（若有）如实反映已耗用量，无则按半程正文估算。
+     */
+    private Map<String, Object> buildUsageSnapshot(AnswerStreamState st, String answer) {
+        long sumPrompt = st.roundUsage.promptTotal(), sumOutput = st.roundUsage.completionTotal();
+        long sumCached = st.roundUsage.cachedTotal();
+        long finalPrompt = st.roundUsage.finalRoundPrompt();
+        long finalRoundOutput = st.roundUsage.finalRoundCompletion();
+        boolean hasRounds = !st.roundUsage.isEmpty();
+        boolean realOutput = hasRounds ? sumOutput > 0 : st.realOutputTokens > 0;
+        int outputTokens = realOutput ? (int) (hasRounds ? sumOutput : st.realOutputTokens)
+                : TokenCounter.estimate(answer);
+        // 输出触顶 fail-loud：网关真实 completion_tokens 达到输出上限 ⇒ 大概率被
+        // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
+        // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
+        // 上限与 max_tokens 下发同源（模型管理中该模型声明的最大输出）；未声明输出上限时无从判定，跳过。
+        // 多轮时只看生成最终回答那一轮的输出（各轮工具调用参数的输出不参与触顶判定）
+        int maxOutput = st.effectiveMaxOutput;
+        int answerRoundOutput = hasRounds ? (int) finalRoundOutput : outputTokens;
+        if (maxOutput > 0 && realOutput && answerRoundOutput >= maxOutput) {
+            addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
+                    "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
+        }
+        int promptTokens = hasRounds ? (int) sumPrompt
+                : (st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens);
+        Map<String, Object> tokens = new LinkedHashMap<>();
+        tokens.put("context", st.contextTokens);
+        tokens.put("budget", st.budgetTokens);
+        tokens.put("hits", st.contextHits);
+        tokens.put("output", outputTokens);
+        tokens.put("prompt", promptTokens);
+        tokens.put("outputIsReal", realOutput);
+        tokens.put("total", promptTokens + outputTokens);
+        // 容量面板数据：生效窗口/来源 + 分类用量（按网关真实 prompt 等比校准）+ 缓存命中
+        tokens.put("window", st.windowTokens);
+        tokens.put("windowSource", st.windowSource);
+        tokens.put("cached", hasRounds ? (int) sumCached : st.cachedPromptTokens);
+        tokens.put("parts", calibrateParts(st.ctxParts,
+                hasRounds ? (int) finalPrompt : promptTokens, hasRounds || st.realPromptTokens > 0));
+        if (st.historyCompressedTurns > 0) {
+            tokens.put("historyCompressed", st.historyCompressedTurns);
+        }
+        return tokens;
+    }
+
     /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts) {
@@ -2129,6 +2242,9 @@ public class RagService {
      */
     private Disposable buildAnswerStream(String system, String user, AnswerStreamState st, Agent agent) {
         SseEmitter emitter = st.emitter;
+        // 智能体归属快照：随助手消息落库（完成路径直接用闭包 agent，中断兜底路径取这里的快照）
+        st.agentId = agent == null ? null : agent.getId();
+        st.agentName = agent == null ? null : agent.getName();
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
         // 产物生成时刻监听：把产物卡片按生成顺序插进本轮时间线（刷新后仍在原位，不再堆到气泡底部）
@@ -2591,74 +2707,39 @@ public class RagService {
                     // 记录对话历史：用户消息已在本轮开始时即时落库（runChat 0.3，regenerate 重发不重复），
                     // 完成时只补落助手消息（含引用来源/思考/产物/工具调用/用量），拿到消息ID供前端反馈
                     String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
-                    // Token 用量（1.9）：持久化前先算好（随消息存 JSON，刷新/历史会话仍可回看「本次用量/会话累计」）。
-                    // 工具调用循环逐轮求和（native 原始口径）=全部请求轮次总量，与供应商账单同口径；
-                    // 最终轮（prompt 最大：工具结果逐轮入上下文）的输出用于触顶判定、其 prompt 用于
-                    // ctxParts 校准（分类拆的是最终上下文而非各轮总和）。无逐轮数据时回落旧单值字段，
-                    // 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
-                    long sumPrompt = st.roundUsage.promptTotal(), sumOutput = st.roundUsage.completionTotal();
-                    long sumCached = st.roundUsage.cachedTotal();
-                    long finalPrompt = st.roundUsage.finalRoundPrompt();
-                    long finalRoundOutput = st.roundUsage.finalRoundCompletion();
-                    boolean hasRounds = !st.roundUsage.isEmpty();
-                    boolean realOutput = hasRounds ? sumOutput > 0 : st.realOutputTokens > 0;
-                    int outputTokens = realOutput ? (int) (hasRounds ? sumOutput : st.realOutputTokens)
-                            : TokenCounter.estimate(answer);
-                    // 输出触顶 fail-loud：网关真实 completion_tokens 达到输出上限 ⇒ 大概率被
-                    // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
-                    // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
-                    // 上限与 max_tokens 下发同源（模型管理中该模型声明的最大输出）；未声明输出上限时无从判定，跳过。
-                    // 多轮时只看生成最终回答那一轮的输出（各轮工具调用参数的输出不参与触顶判定）
-                    int maxOutput = st.effectiveMaxOutput;
-                    int answerRoundOutput = hasRounds ? (int) finalRoundOutput : outputTokens;
-                    if (maxOutput > 0 && realOutput && answerRoundOutput >= maxOutput) {
-                        addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
-                                "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
-                    }
-                    int promptTokens = hasRounds ? (int) sumPrompt
-                            : (st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens);
                     // noHit 事后判定（基于本轮最终引用）：主链路检索 0 填充但工具检索（智能体知识检索工具等）
                     // 注册了来源时不算"未检索到"——生成前判定拿不到工具后续注册的引用，会出现在回答带着
                     // [N] 引用的同时提示"未检索到相关资料"的自相矛盾。最终（sources 含工具注册项）仍为空才提示。
                     if (sources.isEmpty()) {
                         addDegradation(st.degradations, st.degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
                     }
-                    Map<String, Object> tokens = new LinkedHashMap<>();
-                    tokens.put("context", st.contextTokens);
-                    tokens.put("budget", st.budgetTokens);
-                    tokens.put("hits", st.contextHits);
-                    tokens.put("output", outputTokens);
-                    tokens.put("prompt", promptTokens);
-                    tokens.put("outputIsReal", realOutput);
-                    tokens.put("total", promptTokens + outputTokens);
-                    // 容量面板数据：生效窗口/来源 + 分类用量（按网关真实 prompt 等比校准）+ 缓存命中
-                    tokens.put("window", st.windowTokens);
-                    tokens.put("windowSource", st.windowSource);
-                    tokens.put("cached", hasRounds ? (int) sumCached : st.cachedPromptTokens);
-                    tokens.put("parts", calibrateParts(st.ctxParts,
-                            hasRounds ? (int) finalPrompt : promptTokens, hasRounds || st.realPromptTokens > 0));
-                    if (st.historyCompressedTurns > 0) {
-                        tokens.put("historyCompressed", st.historyCompressedTurns);
+                    // Token 用量快照（done 下发与落库共用；中断兜底路径同口径，见 buildUsageSnapshot）
+                    Map<String, Object> tokens = buildUsageSnapshot(st, answer);
+                    // 落库幂等闸：与中断兜底（disposeSafe → persistPartialAnswer）CAS 先到先得——
+                    // SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条。CAS 失败说明
+                    // 截断版已入库，此处放弃落库（messageId 为空，done 照常下发，反馈按钮退化为不可用）
+                    String messageId = null;
+                    if (st.answerPersistGate.compareAndSet(false, true)) {
+                        // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
+                        // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案
+                        if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
+                            sessionService.deleteMessage(st.replaceMessageId);
+                        }
+                        // 16 参重载（含 tokens/model）：助手消息把用量 JSON 与生效模型随行落库
+                        // （历史回看/会话累计 + 使用统计按模型分组的数据源）
+                        messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
+                                finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
+                                sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
+                                toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
+                                processText.isEmpty() ? null : processText,
+                                // 未使用智能体的问答 agent 为 null（会话未绑定/走全局配置）：必须判空——
+                                // 此前直接 agent.getId() 在 onComplete 回调里抛 NPE，被 reactor 丢弃
+                                // （onComplete 阶段抛异常无处路由），表现为「助手消息不落库 + done 永不
+                                // 下发 + 前端永远转圈」，且日志只有一行 onErrorDropped 极难定位。
+                                agent == null ? null : agent.getId(),
+                                agent == null ? null : agent.getName(),
+                                st.model);
                     }
-                    // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
-                    // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案
-                    if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
-                        sessionService.deleteMessage(st.replaceMessageId);
-                    }
-                    // 16 参重载（含 tokens/model）：助手消息把用量 JSON 与生效模型随行落库
-                    // （历史回看/会话累计 + 使用统计按模型分组的数据源）
-                    String messageId = sessionService.appendMessage(st.sessionId, "assistant", answer,
-                            finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
-                            sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
-                            toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
-                            processText.isEmpty() ? null : processText,
-                            // 未使用智能体的问答 agent 为 null（会话未绑定/走全局配置）：必须判空——
-                            // 此前直接 agent.getId() 在 onComplete 回调里抛 NPE，被 reactor 丢弃
-                            // （onComplete 阶段抛异常无处路由），表现为「助手消息不落库 + done 永不
-                            // 下发 + 前端永远转圈」，且日志只有一行 onErrorDropped 极难定位。
-                            agent == null ? null : agent.getId(),
-                            agent == null ? null : agent.getName(),
-                            st.model);
 
                     // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
@@ -2831,6 +2912,12 @@ public class RagService {
         volatile Map<String, Object> subagentRoute = null;
         /** 重新生成时被替换的旧回答消息 ID：落库前软删旧行（历史只留最新一版；null=普通问答） */
         volatile String replaceMessageId;
+        /** 助手消息落库幂等闸：正常完成（doOnComplete）与中断兜底（disposeSafe → persistPartialAnswer）
+         *  两条路径 CAS 先到先得——SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条 */
+        final java.util.concurrent.atomic.AtomicBoolean answerPersistGate = new java.util.concurrent.atomic.AtomicBoolean(false);
+        /** 本轮智能体归属快照（buildAnswerStream 回填）：中断兜底落库时 appendMessage 需要，彼时已拿不到闭包里的 agent */
+        volatile String agentId;
+        volatile String agentName;
 
         AnswerStreamState(String sessionId, String question, String userId, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
@@ -2859,6 +2946,14 @@ public class RagService {
             if (hb != null) hb.cancel(false);
             Disposable d = disposableRef.get();
             if (d != null) d.dispose();
+            // 中断兜底：已流出半程正文则按截断态落库，刷新/重进会话后已生成的部分仍在历史里
+            // （此前只有完整完成才落库，中断轮在历史里只剩问题）。与正常完成路径共用幂等闸
+            // （CAS 先到先得）；一个 token 都没流出时不落库，历史只留问题（同现状）。
+            // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
+            // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
+            if (fullResponse.length() > 0 && answerPersistGate.compareAndSet(false, true)) {
+                persistPartialAnswer(this);
+            }
         }
 
         /**

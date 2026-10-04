@@ -2412,8 +2412,9 @@ const switchSession = async sid => {
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
           return msg
         })
-      // 该会话正在流式回答：把 live 消息接回视图尾部。本轮完成前后端不落库助手消息，
-      // getHistory 里没有这条；用户消息在轮开始时已即时落库，顺序正好衔接
+      // 该会话正在流式回答：把 live 消息接回视图尾部。流式中的这轮前后端不落库助手消息，
+      // getHistory 里没有这条；用户消息在轮开始时已即时落库，顺序正好衔接。
+      // （已被中断的轮次后端会把半程回答按截断态兜底落库——那类轮不再有 live 消息，走上面列表正常回显）
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
       messages.value = list
