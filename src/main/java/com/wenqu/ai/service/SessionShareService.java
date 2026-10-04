@@ -111,6 +111,11 @@ public class SessionShareService {
     /**
      * 公开消息列表：裁剪到"可对外"的字段——正文 + 角色的时间；助手消息带回引用来源的
      * 文档名/章节/相关度（不带 snippet 与知识块 id）。
+     * <p>
+     * 外发来源必须带 origin：分享页靠 {@code origin === 'WEB'} 区分联网/库内来源，
+     * 联网来源天然没有 fileName（那是库内文档名），裁掉 origin 会被当成库内来源
+     * 渲染成"来源文档不可用"。siteName/url 一并带上：前者是联网来源的展示名，
+     * 后者供页面给出原网页入口（两者都是公开信息，不含库内容）。
      */
     public List<Map<String, Object>> publicHistory(String sessionId) {
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
@@ -132,7 +137,10 @@ public class SessionShareService {
                     if (!(o instanceof Map<?, ?> s)) continue;
                     Map<String, Object> r = new LinkedHashMap<>();
                     r.put("ref", s.get("ref"));
+                    r.put("origin", s.get("origin"));
                     r.put("fileName", s.get("fileName"));
+                    r.put("siteName", s.get("siteName"));
+                    r.put("url", s.get("url"));
                     r.put("title", s.get("title"));
                     r.put("score", s.get("rerankScore") != null ? s.get("rerankScore") : s.get("score"));
                     slim.add(r);

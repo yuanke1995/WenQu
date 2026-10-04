@@ -25,11 +25,14 @@
             <div class="sh-src-t">引用来源</div>
             <div v-for="(s, si) in m.sources" :key="si" class="sh-src-item">
               <span class="sh-src-ref">[{{ s.ref }}]</span>
-              <!-- 联网来源（origin=WEB）：无库内文档名，显示站点名（网页本就公开，不含库内容） -->
+              <!-- 外部来源（origin=WEB/MCP，与对话页 externalOrigin 同口径）：没有库内文档名，
+                   显示站点名——网页本就公开，不含库内容；MCP 无站点名，给「MCP 来源」 -->
               <span class="sh-src-name">
-                <template v-if="s.origin === 'WEB'">{{ s.siteName || '联网来源' }}<template v-if="s.title"> § {{ s.title }}</template></template>
+                <template v-if="external(s)">{{ s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源') }}<template v-if="s.title"> § {{ s.title }}</template></template>
                 <template v-else>{{ s.fileName || '来源文档不可用' }}<template v-if="s.title"> § {{ s.title }}</template></template>
               </span>
+              <!-- 原网页入口：只有外部来源有地址，库内知识块全文不外发故不给链接 -->
+              <a v-if="external(s) && s.url" class="sh-src-link" :href="s.url" target="_blank" rel="noopener">打开原网页</a>
             </div>
           </div>
         </div>
@@ -54,6 +57,10 @@ const listEl = ref(null)
 const loading = ref(true)
 const error = ref('')
 const info = ref({ title: '', messages: [], sharedAt: null })
+
+/** 外部来源（联网 WEB / MCP）：没有库内文档名，展示名用站点名——与对话页 externalOrigin 同口径。
+ *  漏判会让联网来源落进「来源文档不可用」分支（fileName 对它们本就为空）。 */
+const external = s => s?.origin === 'WEB' || s?.origin === 'MCP'
 
 const fmtTime = ts => {
   if (!ts) return ''
@@ -108,9 +115,11 @@ onMounted(async () => {
 }
 .sh-src { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
 .sh-src-t { font-size: 11px; color: var(--app-text3); margin-bottom: 6px; }
-.sh-src-item { display: flex; gap: 6px; font-size: 12px; color: var(--app-text2); padding: 2px 0; }
+.sh-src-item { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--app-text2); padding: 2px 0; }
 .sh-src-ref { flex: none; color: var(--app-accent); }
 .sh-src-name { min-width: 0; word-break: break-word; }
+.sh-src-link { flex: none; color: var(--app-accent); text-decoration: none; font-size: 12px; }
+.sh-src-link:hover { text-decoration: underline; }
 .sh-foot {
   width: 100%; max-width: 820px; margin: 28px 0 20px; padding-top: 14px;
   border-top: 1px solid var(--app-border);
