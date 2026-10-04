@@ -9,9 +9,12 @@ import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.mapper.MessageMapper;
+import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.AiDocument;
 import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.model.Message;
+import com.wenqu.ai.model.User;
+import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -86,6 +89,7 @@ public class RetrievalEvaluationService {
     private final MessageMapper messageMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
+    private final UserMapper userMapper;
     private final AppProperties properties;
     private final ChatClient chatClient;
 
@@ -99,8 +103,8 @@ public class RetrievalEvaluationService {
     public RetrievalEvaluationService(HybridRetrievalService retrievalService, ConfigService configService,
                                       KeywordExtractor keywordExtractor, RerankService rerankService,
                                       MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
-                                      AiDocumentMapper documentMapper, AppProperties properties,
-                                      ChatClient chatClient) {
+                                      AiDocumentMapper documentMapper, UserMapper userMapper,
+                                      AppProperties properties, ChatClient chatClient) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -108,6 +112,7 @@ public class RetrievalEvaluationService {
         this.messageMapper = messageMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.documentMapper = documentMapper;
+        this.userMapper = userMapper;
         this.properties = properties;
         this.chatClient = chatClient;
     }
@@ -291,7 +296,30 @@ public class RetrievalEvaluationService {
      * mode=normal 单路检索；mode=multi 多路（确定性拆子问题）合并，模拟深度思考检索阶段。
      */
     public EvalResult run(List<EvalCase> cases, List<EvalParams> groups, List<Integer> kList) {
+        // 默认按调用者身份执行：HTTP 触发时即当前登录用户，检索可见性与生产问答同源
+        return run(cases, groups, kList, RequestUser.uid());
+    }
+
+    /**
+     * asUid：评测执行身份。检索层按该用户可读范围过滤文档（loadNonVisibleDocIds 读 RequestUser），
+     * 评测线程池不继承请求线程的 ThreadLocal，必须显式装载到每个执行线程（finally 清理）。
+     * 此前评测线程身份恒为 anonymous：私有库整库被可见性过滤剔除，recall 恒 0 —— 工装缺陷，非检索质量问题。
+     */
+    public EvalResult run(List<EvalCase> cases, List<EvalParams> groups, List<Integer> kList, String asUid) {
         long start = System.currentTimeMillis();
+        final String evalUid = (asUid == null || asUid.isBlank()) ? RequestUser.ANONYMOUS : asUid;
+        final String evalDept;
+        final String evalRole;
+        if (RequestUser.ANONYMOUS.equals(evalUid)) {
+            log.warn("[Eval] 评测身份为匿名：可见范围只含公开/内置库，私有库语料的期望块将全部被过滤（recall 恒 0）。"
+                    + "HTTP 触发时自动取当前登录用户；定时体检无登录态，需另行指定评测身份");
+            evalDept = null;
+            evalRole = "user";
+        } else {
+            User u = userMapper.selectById(evalUid);
+            evalDept = u == null ? null : u.getDepartmentId();
+            evalRole = (u == null || u.getRole() == null || u.getRole().isBlank()) ? "user" : u.getRole();
+        }
         List<Integer> ks = kList == null || kList.isEmpty() ? List.of(5, 10, 20) : kList.stream().distinct().sorted().toList();
         List<EvalParams> gs = groups == null || groups.isEmpty()
                 ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null))
@@ -314,10 +342,12 @@ public class RetrievalEvaluationService {
         for (EvalParams g : gs) {
             futures.add(evalPool.submit(() -> {
                 try {
+                    RequestUser.set(evalUid, evalDept, evalRole); // 评测身份落执行线程（ThreadLocal 不跨线程传递）
                     configService.putOverrides(g.toOverrides());
                     return runGroup(g, liveCases, ks, deprecatedIds, violations);
                 } finally {
                     configService.clearOverride();
+                    RequestUser.clear();
                 }
             }));
         }
