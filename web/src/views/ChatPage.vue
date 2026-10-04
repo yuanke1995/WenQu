@@ -109,7 +109,7 @@
               </div>
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineView(m)" :key="si">
-                  <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images)"></div>
+                  <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images, MD_RICH)"></div>
                   <!-- 过程独白段：区间指向 m.processText（与正文分流），「深度思考」标题行常驻、内容可折叠 -->
                   <div v-else-if="seg.kind === 'process'" class="tl-process-block">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
@@ -162,7 +162,7 @@
                 </template>
               </div>
               <!-- streaming（打字光标）仅在正文已有内容时挂：检索/等待阶段正文为空，光标会孤悬成一块 -->
-<div v-else class="md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }" :data-msg-index="i" v-html="renderMd(m.content, m.images)"></div>
+<div v-else class="md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }" :data-msg-index="i" v-html="renderMd(m.content, m.images, MD_RICH)"></div>
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message) }}</div>
@@ -790,7 +790,7 @@
              wrap-class-name="source-modal" :keyboard="!previewUrl" :mask-closable="!previewUrl">
       <a-spin v-if="sourceLoading" style="display:block;margin:40px auto" />
       <div v-else class="md src-content" @click="openPreview"
-           v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages)"></div>
+           v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages, MD_RICH)"></div>
       <a v-if="sourceUrl" class="src-origin-link" :href="sourceUrl" target="_blank" rel="noopener">打开原网页</a>
     </a-modal>
 
@@ -1006,7 +1006,7 @@ import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback 
          listAvailableSkills, getUserPreference, getUserSettings, approveToolCall, addEvalCase,
          listKnowledgeBases, listDocuments, uploadChatAttachment,
          getSessionShare, enableSessionShare, disableSessionShare } from '../api'
-import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent } from '../utils/markdown'
+import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
@@ -2088,6 +2088,9 @@ const retryPanelRound = () => {
   const idx = messages.value.indexOf(m)
   if (idx >= 0) regenerate(idx)
 }
+// 回答富渲染开关：问答页是唯一有会话上下文的消费方，故显式开「在沙盒中运行」按钮
+// （后端 scope=(sessionId,uid)；其它页面默认不开——没有会话，按钮点了必然失败）
+const MD_RICH = { runnable: true }
 // 本会话产物：汇总所有轮次的 artifact（历史恢复的消息同样带 artifacts），最新一轮在前
 const sessionArtifacts = computed(() => {
   const out = []
@@ -2317,11 +2320,14 @@ const locateSource = s => {
   }
 }
 
-// 消息内容点击：代码复制 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
+// 消息内容点击：代码复制 / 代码块运行与预览 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
 const openPreview = e => {
   const t = e.target
   const copyBtn = t && t.closest ? t.closest('.code-copy') : null
   if (copyBtn) { copyCode(copyBtn); return }
+  // 富渲染按钮（沙盒运行 / 内联预览）：紧跟复制按钮判定，命中即消费
+  const mdAct = t && t.closest ? t.closest('.md-act') : null
+  if (mdAct && handleMdAction(mdAct, { sessionId: currentSessionId.value })) return
   if (t && t.classList && t.classList.contains('ref-sup')) {
     const mdEl = t.closest('.md')
     const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
@@ -3064,6 +3070,14 @@ watch(messages, () => {
   if (!searchOpen.value || !searchQuery.value.trim()) return
   searchPos.value = 0 // 换会话后从头开始，避免停在上一个会话的偏移上
   nextTick(() => { paintSearchHighlight(); scrollToMatch() })
+})
+// Mermaid 图表：渲染层只吐占位容器，绘图是异步且懒加载依赖，必须在 DOM 落地后补（v-html 之后）。
+// **只在非流式态补图**：流式期间 ```mermaid 围栏是半截代码，画必然失败，每个 token 重试一次纯属浪费；
+// 停流后 loading 转 false，本 watch 再触发一次把完整图表画出来。
+watch([messages, loading], async () => {
+  if (loading.value) return
+  await nextTick()
+  if (box.value) enhanceDiagrams(box.value).catch(() => { /* 绘图失败已在容器内就地提示，不外抛 */ })
 })
 // Ctrl/⌘+F 打开会话内查找（在聊天页拦下浏览器原生查找，与主流产品一致）；Esc 关闭
 const onSearchHotkey = e => {

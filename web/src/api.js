@@ -822,7 +822,7 @@ export const checkKeywordEngine = () => request('/config/keyword/check')
 
 /**
  * 通用连通性探测（设置页各地址旁的「测试连接」按钮）。
- * 用表单里尚未保存的值真实探测，实现"先测后存"；group=chat|vision|embedding|rerank|keyword。
+ * 用表单里尚未保存的值真实探测，实现"先测后存"；group=chat|vision|embedding|rerank|keyword|sandbox。
  * 返回 { available, latencyMs, detail }。
  */
 export const probeConnectivity = payload =>
@@ -1005,6 +1005,9 @@ export const sandboxDownload = async (sessionId, path, filename) => {
   a.remove()
   URL.revokeObjectURL(url)
 }
+/** 回答内代码块「在沙盒中运行」：与 execute 工具同一条物理通道；语言白名单/超时上限由后端把关 */
+export const sandboxRun = (sessionId, language, code) =>
+  request('/sandbox/run', { method: 'POST', timeout: 90000, body: JSON.stringify({ sessionId, language, code }) })
 
 // ---------- P1 GraphRAG（知识图谱；管理员） ----------
 export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POST' })

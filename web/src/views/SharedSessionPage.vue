@@ -44,12 +44,13 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { getSharedSession } from '../api'
-import { renderMd } from '../utils/markdown'
+import { renderMd, enhanceDiagrams } from '../utils/markdown'
 
 const route = useRoute()
+const listEl = ref(null)
 const loading = ref(true)
 const error = ref('')
 const info = ref({ title: '', messages: [], sharedAt: null })
@@ -71,6 +72,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // Mermaid：渲染层只吐占位容器，数据到位后补图（分享页无会话，故不开沙盒运行按钮）
+  await nextTick()
+  if (listEl.value) enhanceDiagrams(listEl.value).catch(() => {})
 })
 </script>
 

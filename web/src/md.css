@@ -21,6 +21,99 @@
 .md li.ul-item.d1 { margin-left: 16px; list-style-type: circle; }
 .md li.ul-item.d2 { margin-left: 32px; list-style-type: square; }
 .md hr { border: none; border-top: 1px solid var(--app-border); margin: 10px 0; }
+
+/* ==================== 富渲染：代码块外框 / Mermaid / 内联预览 / 沙盒运行 ==================== */
+/* 渲染产物类：.md-code（围栏外框，承载运行/预览按钮）+ .md-code-head/.md-code-slot（标题栏与结果槽）
+   + .md-diagram（Mermaid 容器）+ .md-preview-frame（产物预览 iframe）+ .md-run*（沙盒运行输出） */
+
+/* 代码块外框：.md pre 的定位上下文从 pre 上移到外框，按钮才能贴在整块右上而不压首行 */
+.md .md-code { position: relative; margin: 8px 0; }
+.md .md-code > pre { margin: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.md .md-code-head {
+  display: flex; align-items: center; gap: 4px;
+  height: 28px; padding: 0 6px 0 10px;
+  background: var(--app-code-bg);
+  border: 1px solid var(--app-border); border-bottom: none;
+  border-radius: var(--app-radius-sm) var(--app-radius-sm) 0 0;
+}
+.md .md-code-lang {
+  font-size: var(--app-fs-sm); color: var(--app-text2);
+  text-transform: lowercase; letter-spacing: .3px; user-select: none;
+}
+.md .md-code-head .md-act { margin-left: auto; }
+.md .md-code-head .md-act + .md-act { margin-left: 0; }
+/* 无语言标注的围栏不显示标题栏（渲染层加 .md-bare，避开 :has() 的兼容面） */
+.md .md-code.md-bare > pre { border-radius: var(--app-radius-sm); }
+
+/* 运行 / 预览按钮（结构由 renderMd 后处理生成，事件走页面级委托） */
+.md .md-act {
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--app-text2);
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  cursor: pointer; transition: color .15s, border-color .15s;
+}
+.md .md-act:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-border); }
+.md .md-act:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 结果槽：预览/运行产物挂在这里，与代码块同宽 */
+.md .md-code-slot:empty { display: none; }
+.md .md-code-slot {
+  border: 1px solid var(--app-border); border-top: none;
+  border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
+  background: var(--app-panel-2);
+}
+.md .md-preview-bar {
+  display: flex; justify-content: flex-end; padding: 4px 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+.md .md-preview-bar a { font-size: var(--app-fs-sm); color: var(--app-text2); text-decoration: none; }
+.md .md-preview-bar a:hover { color: var(--app-accent); }
+.md .md-preview-frame {
+  display: block; width: 100%; height: 320px;
+  border: none; background: #fff; border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
+}
+
+/* 沙盒运行输出 */
+.md .md-run { padding: 6px 0; }
+.md .md-run-head {
+  padding: 0 12px 6px; font-size: var(--app-fs-sm); color: var(--app-text2);
+}
+.md .md-run-head.ok { color: var(--app-ok); }
+.md .md-run-head.err { color: var(--app-danger); }
+.md .md-run-out {
+  margin: 0; padding: 8px 12px; max-height: 300px; overflow: auto;
+  background: var(--app-code-bg); color: var(--app-text);
+  font-size: var(--app-fs-sm); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+  border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
+}
+
+/* Mermaid 图表容器：图形本身居中自适应宽度，源码默认收起 */
+.md .md-diagram {
+  margin: 10px 0; padding: 10px;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
+  background: var(--app-panel-2);
+}
+.md .md-diagram[data-state="loading"] { color: var(--app-text2); font-size: var(--app-fs-sm); padding: 18px; text-align: center; }
+/* 渲染层的源码 pre 只是「给绘图读的载体」，绘图成功后被移进 details 折叠区；
+   加载中先藏起来，避免用户看到一份裸源码再看到图（闪一下）。
+   只藏「还没进 details 的那份」（:scope > ），进了 details 的正是用户要展开看的源码，不能藏 */
+.md .md-diagram > .md-diagram-src-code { display: none; }
+.md .md-diagram[data-state="err"] { border-color: var(--app-border-strong); }
+.md .md-diagram-err {
+  color: var(--app-danger); font-size: var(--app-fs-sm);
+  padding: 4px 2px 8px; word-break: break-word;
+}
+.md .md-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.md .md-diagram-src { margin-top: 8px; }
+.md .md-diagram-src > summary {
+  cursor: pointer; font-size: var(--app-fs-sm); color: var(--app-text2);
+  list-style: revert;
+}
+.md .md-diagram-src > summary:hover { color: var(--app-accent); }
+.md .md-diagram-src > pre { margin: 6px 0 0; max-height: 260px; }
+
 /* 代码块复制按钮（render 动态创建，页面级委托点击） */
 .md .code-copy {
   position: absolute; top: 8px; right: 8px; z-index: 1;
