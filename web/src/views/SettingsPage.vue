@@ -968,15 +968,26 @@ const loadToolInventory = async () => {
 const familySaving = ref('')
 const toggleFamily = async (g, val) => {
   if (!g.globalKey || g.globalKey === 'tool.enabled') return
+  // PUT /config 的请求体是**分组结构**（{"tool": {"builtin.enabled": "true"}}），后端按
+  // "分组名 + '.' + 键" 拼回完整配置键再校验收录。直接发扁平键 {"tool.builtin.enabled":"true"}
+  // 会让 Jackson 把字符串 "true" 当 Map 解析 → HttpMessageNotReadableException → 500 兜底文案。
+  // 故分组与键一律取 schema 字段定义（与 buildPayload / 调度暂停同一口径），不手工拆键名。
+  const field = FIELDS.find(x => x.backendKey === g.globalKey)
+  if (!field) {
+    message.error(`配置定义中找不到 ${g.globalKey}，无法切换`)
+    loadToolInventory()
+    return
+  }
   familySaving.value = g.family
   try {
-    const r = await saveConfig({ [g.globalKey]: String(val) })
-    if (r.success) {
+    const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(val) } })
+    const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
+    if (r.success && n > 0) {
       message.success(`${g.familyLabel}已${val ? '启用' : '停用'}，立即生效`)
-      writeForm(form.value, g.globalKey, val)
+      writeForm(form.value, field.path || (field.group + '.' + field.key), val)
       initialPayload.value = buildPayload()
     } else {
-      message.error(r.msg || '保存失败')
+      message.error(r.msg || '保存失败（后端未识别该配置键）')
     }
   } catch (e) {
     message.error(e.message || '保存失败')
