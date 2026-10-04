@@ -279,7 +279,7 @@ public class RagService {
     private final ConfigService configService;
     private final ImageFilterService imageFilterService;
     private final KeywordExtractor keywordExtractor;
-    /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认关闭） */
+    /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认开启） */
     private final KnowledgeRetrievalTool knowledgeRetrievalTool;
     /** 产物交付服务（会话 emitter 注册表 + 文件落盘 + SSE 下发） */
     private final ArtifactService artifactService;
@@ -293,7 +293,7 @@ public class RagService {
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
     private final PresentArtifactTool presentArtifactTool;
-    /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认关） */
+    /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认开） */
     private final BuiltinTools builtinTools;
     /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
     private final WebSearchTools webSearchTools;
@@ -2455,7 +2455,7 @@ public class RagService {
                 // 模型配置界面：per-request 动态覆盖模型名与温度（保存即生效）；maxTokens 限制输出长度（防失控长文/成本）
                 // st.model 为本轮解析好的模型（引用或遗留名，供应商路由由 DynamicOpenAiChatModel 按引用完成）
                 .options(optionsBuilder.build())
-                // 工具调用（Function Calling）：默认关闭（tool.* 配置）；总开关+各子工具开关均开启时，
+                // 工具调用（Function Calling）：默认开启（tool.* 配置）；总开关+各子工具开关均开启时，
                 // 模型可在回答中主动调用工具（精确检索知识库、交付文件产物），补充主链路未召回的上下文。
                 // 传空数组等价未配置工具，不影响现有行为（零侵入）。
                 // instrumentTools 包装：工具执行前后发 tool_status SSE 并记录过程（状态展示）。

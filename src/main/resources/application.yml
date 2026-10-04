@@ -91,8 +91,11 @@ ai-app:
     keyword-weight: 0.4
     title-bonus: 0.1
     # 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；本地部署 scripts/win|mac/start_rerank_server.*）
+    # 默认开：重排是引用质量的根基（融合分排序会把词面重叠的无关块放进上下文）。
+    # 未绑定重排模型或服务不可用时不会阻塞问答——按融合分排序并 fail-loud 标记 rerankUnavailable，
+    # 且失败有 60s 冷却，不会反复打未启动的服务。设 AI_RERANK_ENABLED=false 可显式关掉。
     rerank:
-      enabled: ${AI_RERANK_ENABLED:false}
+      enabled: ${AI_RERANK_ENABLED:true}
       base-url: ${AI_RERANK_BASE_URL:http://localhost:7997}
       model: ${AI_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
       timeout-ms: 5000

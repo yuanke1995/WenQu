@@ -314,10 +314,10 @@ public class ConfigService {
         d.put("parse.ocrGateConcurrency", "1");            // 版面引擎并发闸：自托管单实例服务一次只吃一份，默认守住 1
         d.put("parse.ocrMinText", "20");                   // PDF 文本少于该长度判定扫描件触发 OCR
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
-        d.put("parse.qaEnabled", "false");                 // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
+        d.put("parse.qaEnabled", "true");                  // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
         d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
         // parse.qaModel 已退役：问答对生成回落库主个人默认聊天模型（User.defaultModel，QaIndexService 显式查询）
-        d.put("parse.childEnabled", "false");              // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
+        d.put("parse.childEnabled", "true");               // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
         d.put("parse.childSize", "400");                   // 父子分块：子块尺寸（字符，超过该长度的块才切子块）
         d.put("vision.userImageConcurrency", "2");         // 用户上传图片识别并发
         // 问答行为参数
@@ -362,7 +362,7 @@ public class ConfigService {
         // 注：chunk.maxSize / chunk.headingDepth 已在上方按 properties 播种（保证 yml/env 覆盖生效），此处不得再写死覆盖
         d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
         d.put("images.quality", "0.9");                // JPEG 压缩质量
-        d.put("images.authEnabled", "false");          // 图片签名鉴权开关
+        d.put("images.authEnabled", "true");               // 图片签名鉴权开关（默认开：签名 URL 防盗链，关掉等于图片裸奔）
         d.put("images.authExpireSeconds", "3600");     // 签名 URL 有效期(秒)
         d.put("vision.timeoutMillis", "30000");        // 视觉模型读取超时(ms，RestClient 构建期读取，需重启生效)
         d.put("vision.retryCount", "1");               // 单图失败重试次数
@@ -390,11 +390,11 @@ public class ConfigService {
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
         // 工具调用（Function Calling）总开关与知识库精确检索工具
-        d.put("tool.enabled", "false");                    // 工具调用总开关（默认关，开启后模型可调用工具）
-        d.put("tool.knowledgeRetrieval.enabled", "false"); // 知识库精确检索工具开关（需总开关开启）
+        d.put("tool.enabled", "true");                     // 工具调用总开关（默认开：算术/时间等无副作用能力不该要用户先开箱）
+        d.put("tool.knowledgeRetrieval.enabled", "true");  // 知识库精确检索工具开关（需总开关开启）
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
-        d.put("tool.artifact.enabled", "false");           // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
-        d.put("tool.builtin.enabled", "false");            // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
+        d.put("tool.artifact.enabled", "true");            // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
+        d.put("tool.builtin.enabled", "true");             // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
         d.put("tool.mcpCiteEnabled", "true");              // MCP 工具结果注册引用来源（结果文本带 http(s) URL 才注册；默认开）
         d.put("tool.mcpCiteMaxRefs", "10");                // MCP 引用注册单轮上限（隐藏参数，DB 可调；无设置页字段）
         // ---------- 联网搜索（工具 webSearch；结果注册进引用体系，与知识库来源同 [N] 编号）----------
