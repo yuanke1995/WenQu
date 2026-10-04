@@ -2788,6 +2788,9 @@ public class RagService {
                     donePayload.put("processText", processText);
                     // Token 消耗可视化（1.9）：用量已在持久化前算好（tokens），此处随 done 下发给当轮展示
                     donePayload.put("tokens", tokens);
+                    // 本轮生效模型引用（与落库同源）：前端把 live 气泡的模型校正为后端权威解析值
+                    // （请求未带覆盖时后端回落个人默认，前端本地只知道空覆盖），供「模型已切换」比对
+                    donePayload.put("model", st.model);
                     // 智能体归属与会话锁定状态（以库中绑定为准，而非本轮局部变量：绑库失败时不应误导前端）。
                     // agentLocked=true 是前端「本会话已绑定、切换智能体=新会话」的依据；
                     // agentId 为空串表示已绑定为"不使用智能体"（与未绑定的 NULL 区分），此时不下发 id/name。

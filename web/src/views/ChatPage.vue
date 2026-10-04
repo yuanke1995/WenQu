@@ -60,6 +60,15 @@
         </div>
 
         <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
+          <!-- 模型切换记录：本轮回答与前一条回答模型不同时才出现（发消息产生新回答的那一刻，切换选择器本身不产生记录） -->
+          <div v-if="modelSwitchInfo(m, i)" class="model-switch-divider">
+            <span class="msd-line"></span>
+            <span class="msd-text">
+              <swap-outlined class="msd-ic" />
+              <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
+            </span>
+            <span class="msd-line"></span>
+          </div>
           <div class="msg-block" :class="m.role">
             <div class="bubble" :class="m.role">
               <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
@@ -969,7 +978,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CompressOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, getUserSettings, approveToolCall, addEvalCase,
@@ -1738,6 +1747,23 @@ const showAgentTag = (m, i) => {
   }
   return true
 }
+/** 模型引用 → 展示名（模型库友好名优先，查不到回退原始引用 provider/model） */
+const modelLabelOf = ref => modelIndex.value[ref]?.displayName || ref
+/**
+ * 「模型已切换」分隔记录：本轮回答与上一条助手消息的落库模型不同时，在本条回答上方挂一条居中分隔。
+ * 只在发消息产生新回答时出现（切换选择器本身不产生任何记录）；两侧都有模型引用才比对——
+ * 旧消息/工作流轮没有 model，无法判定是否切换，不渲染。返回 {fromLabel,toLabel} 或 null。
+ */
+const modelSwitchInfo = (m, i) => {
+  if (m.role !== 'ai' || !m.model) return null
+  for (let k = i - 1; k >= 0; k--) {
+    const prev = messages.value[k]
+    if (prev.role !== 'ai') continue
+    if (!prev.model || prev.model === m.model) return null
+    return { fromLabel: modelLabelOf(prev.model), toLabel: modelLabelOf(m.model) }
+  }
+  return null
+}
 /** 底部「管理智能体」：跳到独立的一级页面 */
 const goManageAgents = () => {
   agentPickerOpen.value = false
@@ -2416,6 +2442,8 @@ const switchSession = async sid => {
             // 回答归属（随消息落库的当轮智能体快照）：历史回显「这条是谁答的」，旧消息无此字段则为空
             agentId: typeof m.agentId === 'string' ? m.agentId : '',
             agentName: typeof m.agentName === 'string' ? m.agentName : '',
+            // 本轮生效模型引用（随助手消息落库）：「模型已切换」分隔记录的比对数据源，旧消息无此字段则为空
+            model: typeof m.model === 'string' ? m.model : '',
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
             // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
             subagents: (() => {
@@ -3191,7 +3219,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
   // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null }
+  // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
+  // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: model || userDefaultModel.value }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -3415,6 +3445,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           }
         }
         if (p.agentName) msg.agentName = p.agentName
+        // 生效模型以后端权威解析为准（请求未带覆盖时后端回落个人默认，前端预填值在此校正）
+        if (typeof p.model === 'string' && p.model) msg.model = p.model
         if (p.thinking) msg.thinking = p.thinking
         msg.thinkLoading = false
         if (typeof p.finalContent === 'string' && p.finalContent !== '') {
@@ -3518,7 +3550,8 @@ const snapshotVersion = m => ({
   processText: m.processText || '',
   degradations: m.degradations || [],
   retrieved: m.retrieved || null,
-  doneTime: m.doneTime || null
+  doneTime: m.doneTime || null,
+  model: m.model || ''
 })
 const applyVersion = (m, v) => {
   m.content = v.content
@@ -3534,6 +3567,8 @@ const applyVersion = (m, v) => {
   m.degradations = v.degradations
   m.retrieved = v.retrieved
   m.doneTime = v.doneTime
+  // 模型随版本走：切回旧版本时分隔记录按那一版当时用的模型比对，不串到最新一轮的模型
+  m.model = v.model || ''
 }
 const switchVersion = (mi, delta) => {
   const m = messages.value[mi]
@@ -3879,7 +3914,7 @@ onMounted(async () => {
   background: rgba(0, 0, 0, .03); border-radius: 6px; padding: 7px 9px; max-height: 160px; overflow: auto;
 }
 
-.row { display: flex; margin-bottom: 20px; justify-content: center; }
+.row { display: flex; flex-wrap: wrap; margin-bottom: 20px; justify-content: center; }
 .msg-block { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: min(94%, 860px); width: 100%; }
 .msg-block.user { align-items: flex-end; }
 .msg-block.ai { align-items: flex-start; }
@@ -4309,6 +4344,15 @@ onMounted(async () => {
   border: 1px solid var(--app-border); border-radius: 999px; padding: 2px 10px;
 }
 .agent-tag-ic { font-size: 12px; opacity: .8; }
+/* 模型切换记录（— ⇄ 模型已切换 A → B —）：居中分隔条独占一行，弱化呈现；flex-basis:100%
+   配合 .row 的 flex-wrap 把气泡挤到下一行 */
+.model-switch-divider {
+  flex-basis: 100%; display: flex; align-items: center; gap: 10px;
+  margin: 2px 0 10px; color: var(--app-text3);
+}
+.model-switch-divider .msd-line { flex: 1; border-top: 1px solid var(--app-border); }
+.model-switch-divider .msd-text { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+.model-switch-divider .msd-ic { font-size: 12px; opacity: .75; }
 
 /* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
 .agent-menu {

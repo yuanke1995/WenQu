@@ -1046,6 +1046,10 @@ public class SessionService {
                 // tokens 解析失败忽略
             }
         }
+        // 本轮生效模型引用（助手消息落库）：前端「模型已切换」分隔记录按相邻助手消息的模型比对渲染
+        if (m.getModel() != null && !m.getModel().isBlank()) {
+            map.put("model", m.getModel());
+        }
         if (m.getTimeline() != null && !m.getTimeline().isBlank()) {
             try {
                 map.put("timeline", JSON.parseArray(m.getTimeline(), Map.class)); // 回答时间线（历史回显交错顺序）
