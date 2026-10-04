@@ -168,12 +168,17 @@
             </div>
           </template>
           <template v-else-if="column.key === 'modelType'">
-            <a-tag :color="TYPE_META[record.modelType]?.color" class="pv-type-tag">{{ TYPE_META[record.modelType]?.label }}</a-tag>
-            <a-tag v-if="record.isNew" color="default" class="pv-type-tag">待保存</a-tag>
+            <!-- 多个 tag 用 flex 容器承载：a-tag 是 inline-block，裸放单元格内换行会因 line-height < 高度而上下压叠 -->
+            <div class="pv-tags">
+              <a-tag :color="TYPE_META[record.modelType]?.color" class="pv-type-tag">{{ TYPE_META[record.modelType]?.label }}</a-tag>
+              <a-tag v-if="record.isNew" color="default" class="pv-type-tag">待保存</a-tag>
+            </div>
           </template>
           <template v-else-if="column.key === 'caps'">
-            <a-tag v-for="c in capsOf(record)" :key="c" color="blue" class="pv-type-tag">{{ c }}</a-tag>
-            <span v-if="!capsOf(record).length" class="pv-hint">—</span>
+            <div class="pv-tags">
+              <a-tag v-for="c in capsOf(record)" :key="c" color="blue" class="pv-type-tag">{{ c }}</a-tag>
+              <span v-if="!capsOf(record).length" class="pv-hint">—</span>
+            </div>
           </template>
           <template v-else-if="column.key === 'ctx'">
             <span class="pm-ctx" :title="ctxTitle(record)">{{ ctxText(record) }}</span>
@@ -748,7 +753,7 @@ let rowSeq = 0
 // 窗口列宽度按最宽区间值（如 293K~977K / 375K）预留，窄了会折行
 const modelCols = [
   { title: '模型名', key: 'modelId' },
-  { title: '类型', key: 'modelType', width: 100 },
+  { title: '类型', key: 'modelType', width: 112 },
   { title: '能力', key: 'caps', width: 130 },
   { title: '窗口 / 输出', key: 'ctx', width: 158 },
   { title: '启用', key: 'enabled', width: 56 },
@@ -1190,7 +1195,9 @@ onMounted(async () => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pv-models { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
-.pv-type-tag { font-size: 11px; line-height: 18px; }
+.pv-type-tag { font-size: 11px; line-height: 20px; margin-inline-end: 0; }
+/* 单元格内一组 tag：flex 换行 + gap，纵向不压叠（原先 inline-block 换行会重叠） */
+.pv-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .pv-none { color: var(--app-text3, var(--app-text3)); font-size: 12px; }
 .pv-remark { margin-top: 6px; font-size: 12px; color: var(--app-text3, var(--app-text3)); }
 .pv-actions { margin-top: 10px; display: flex; gap: 4px; }
