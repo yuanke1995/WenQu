@@ -15,23 +15,32 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * RBAC 种子数据（幂等：角色与角色-菜单绑定**仅空表**时灌入，菜单清单按 id **补齐缺失项**、
- * 退役项连行清理；不覆盖管理员后续的解绑操作）：
+ * RBAC 种子数据（幂等：角色表**仅空表**时灌入，菜单清单按 id **补齐缺失项**、退役项连行清理；
+ * user 角色基础菜单**按项补齐**）：
  * <ul>
  *   <li>角色表为空 → 预置 superadmin / admin（管理员级）与 user（普通）；</li>
  *   <li>菜单清单 → 按 id **补齐**缺失的内置菜单（新增菜单随版本自动登记）：对话/智能体/知识库/我的产物/
  *       成员管理/数据看板/检索评估/权限管理/系统设置；已存在的行不动；</li>
- *   <li>角色-菜单绑定为空 → user 角色绑对话/智能体/知识库（与历史「侧边栏对所有人开放三项」一致）；
+ *   <li>user 角色基础菜单 → <b>按项补齐</b>对话/智能体/知识库/我的产物/使用统计；
  *       admin/superadmin 为管理员级，无需绑定即见全部。</li>
  * </ul>
+ * <p><b>基础菜单为何不是「全空才灌」</b>（2026-10-04 修）：c_ai_role_menu 是纯关系表，
+ * 「漏绑」与「管理员主动解绑」在数据上无法区分，若沿用全空守卫，存量库只要存在任意一条绑定
+ * （最典型：本类曾为 menu-stats 单开一条补绑分支）就永远补不上剩余项——
+ * 现象是新部署/升级环境的普通用户侧边栏<b>缺「智能体」入口</b>，而管理员级走
+ * {@code allowed=null} 全量可见故完全不显现。故改为按项补齐。</p>
+ * <p>该改动的代价（已知取舍，非 bug）：管理员手动解绑基础菜单后，重启会被重新绑回。
+ * 两种错的代价不对等——漏绑使功能对所有人不可用，回置只是每次重启重做一次。
+ * 需永久隐藏某菜单请用菜单自身的 {@code visible=0} 或停用该角色，不依赖这张关系表。</p>
  * 刻意不用 schema.sql 灌种子：spring.sql.init 每次启动都执行，INSERT IGNORE 语义会把
- * 管理员在权限页解绑的项重新绑回去；「仅空表」才符合种子语义。接口清单不在此种子——
- * 由 {@link ApiEndpointScanner} 每次启动扫描登记（@Order 靠后，保证先有角色/菜单再有接口）。
+ * 管理员在权限页的调整覆盖回去。接口清单不在此种子——由 {@link ApiEndpointScanner}
+ * 每次启动扫描登记（@Order 靠后，保证先有角色/菜单再有接口）。
  *
  * @author yuanke
  */
@@ -121,23 +130,23 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
-            // 存量库升级：使用统计是个人资产类页面（与「我的产物」同类），首次登记时为 user 角色补一次绑定，
-            // 普通用户开箱可见；仅在本菜单插入这一次执行，此后管理员在权限页的解绑不会被回置
-            if ("menu-stats".equals(d[0])
-                    && !roleMenuMapper.menuIdsOfRole("user").contains("menu-stats")) {
-                roleMenuMapper.bind("user", "menu-stats");
-                roleService.invalidateCaches();
-            }
+            // 存量库升级：使用统计是个人资产类页面（与「我的产物」同类），随 USER_MENUS
+            // 一并按项补绑（原为此处一条独立分支，只服务 menu-stats 一项，是同一个
+            // 「全空才灌」缺陷的两次犯——它的副作用正是让存量库先有了一条绑定，
+            // 使下方基础菜单补齐永远空跑）。
         }
         if (menuAdded > 0) {
             seeded = true;
             log.info("[RbacSeed] 已补齐 {} 个内置菜单（共 {} 个）", menuAdded, BUILTIN_MENUS.size());
         }
-        if (roleMenuMapper.menuIdsOfRole("user").isEmpty()) {
-            // user 角色基础菜单：与历史侧边栏行为一致（对话/智能体/知识库对所有人开放）
-            for (String mid : USER_MENUS) roleMenuMapper.bind("user", mid);
+        // user 角色基础菜单：按项补齐（此前是「全空才灌」，见方法注释）。
+        // 已绑定的项不重复写，故对管理员的既有绑定零影响。
+        Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
+        List<String> userMenuAdded = USER_MENUS.stream().filter(userMenuIds::add).collect(Collectors.toList());
+        if (!userMenuAdded.isEmpty()) {
+            for (String mid : userMenuAdded) roleMenuMapper.bind("user", mid);
             roleService.invalidateCaches();
-            log.info("[RbacSeed] 已为 user 角色绑定基础菜单 {}", USER_MENUS);
+            log.info("[RbacSeed] 已为 user 角色补绑基础菜单 {}", userMenuAdded);
         }
         if (seeded) roleService.invalidateCaches();
     }
