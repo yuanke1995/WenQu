@@ -451,10 +451,10 @@
               <button class="app-icon-btn" title="关闭" @click="closeMentionPanel"><close-outlined /></button>
             </div>
             <div class="mention-tabs">
-              <button class="mention-tab" :class="{ on: mentionTab === 'kb' }" @click="mentionTab = 'kb'">
+              <button class="mention-tab" :class="{ on: mentionTab === 'kb' }" @click="switchMentionTab('kb')">
                 <database-outlined /> 知识库 {{ mentionKbs.length }}
               </button>
-              <button class="mention-tab" :class="{ on: mentionTab === 'doc' }" @click="mentionTab = 'doc'">
+              <button class="mention-tab" :class="{ on: mentionTab === 'doc' }" @click="switchMentionTab('doc')">
                 <file-text-outlined /> 文档 {{ mentionDocs.length }}
               </button>
             </div>
@@ -462,7 +462,7 @@
               <div v-if="mentionLoading" class="mention-empty">加载中…</div>
               <template v-else-if="mentionTab === 'kb'">
                 <div v-for="(k, ki) in mentionKbFiltered" :key="k.id" class="mention-item"
-                     :class="{ on: isMentioned('kb', k.id), kb: mentionHi === ki }" @click="toggleMention('kb', k)">
+                     :class="{ on: isMentioned('kb', k.id), hi: mentionHi === ki }" @click="pickMentionByClick('kb', k)">
                   <span class="mention-ava"><database-outlined /></span>
                   <div class="mention-text">
                     <span class="mention-name">{{ k.name }}</span>
@@ -476,7 +476,7 @@
               </template>
               <template v-else>
                 <div v-for="(d, di) in mentionDocFiltered" :key="d.id" class="mention-item"
-                     :class="{ on: isMentioned('doc', d.id), kb: mentionHi === di }" @click="toggleMention('doc', d)">
+                     :class="{ on: isMentioned('doc', d.id), hi: mentionHi === di }" @click="pickMentionByClick('doc', d)">
                   <span class="mention-ava"><file-text-outlined /></span>
                   <div class="mention-text">
                     <span class="mention-name">{{ d.fileName }}</span>
@@ -490,7 +490,7 @@
               </template>
             </div>
             <div class="mention-foot">
-              @ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文
+              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文
             </div>
           </div>
           <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
@@ -502,7 +502,7 @@
             </div>
             <div class="mention-list">
               <div v-for="(c, ci) in slashFiltered" :key="c.key" class="mention-item"
-                   :class="{ kb: slashHi === ci }" @click="runSlashCommand(c)">
+                   :class="{ hi: slashHi === ci }" @click="runSlashCommand(c)">
                 <span class="mention-ava"><component :is="c.icon" /></span>
                 <div class="mention-text">
                   <span class="mention-name">{{ c.name }}</span>
@@ -512,7 +512,7 @@
               </div>
               <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
             </div>
-            <div class="mention-foot">/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行</div>
+            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行</div>
           </div>
           <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
           <div v-if="histOpen" class="mention-panel">
@@ -522,8 +522,8 @@
               <button class="app-icon-btn" title="关闭" @click="closeHistPanel"><close-outlined /></button>
             </div>
             <div class="mention-list">
-              <div v-for="m in histCandidates" :key="m.messageId" class="mention-item"
-                   :class="{ on: isHistPicked(m.messageId) }" @click="toggleHistoryRef(m)">
+              <div v-for="(m, hi2) in histCandidates" :key="m.messageId" class="mention-item"
+                   :class="{ on: isHistPicked(m.messageId), hi: histHi === hi2 }" @click="pickHistoryRefByClick(m)">
                 <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
                   {{ m.role === 'user' ? '问' : '答' }}
                 </span>
@@ -537,11 +537,11 @@
                 {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
               </div>
             </div>
-            <div class="mention-foot"># 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
+            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
           </div>
           <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
-                      @keydown="onInputKeydown" />
+                      @keydown="onInputKeydown" @input="syncPanelQuery" @click="syncPanelQuery" />
           <div class="input-toolbar">
             <div class="toolbar-left">
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
@@ -600,13 +600,13 @@
               </a-dropdown>
               <a-tooltip title="快捷命令（输入 / 唤起）：常用问法模板与会话操作">
                 <button class="app-icon-btn" :class="{ 'toolbar-btn-on': slashOpen }"
-                        :disabled="loading" @click="slashOpen ? closeSlashPanel() : openSlashPanel()">
+                        :disabled="loading" @click="slashOpen ? closeSlashPanel() : openPanelByButton('/')">
                   <thunderbolt-outlined />
                 </button>
               </a-tooltip>
               <a-tooltip title="引用历史问答（输入 # 唤起）：把本会话早前的问答指定为本轮上下文">
                 <button class="app-icon-btn" :class="{ 'toolbar-btn-on': histOpen || pendingHistoryRefs.length }"
-                        :disabled="loading" @click="histOpen ? closeHistPanel() : openHistPanel()">
+                        :disabled="loading" @click="histOpen ? closeHistPanel() : openPanelByButton('#')">
                   <history-outlined />
                 </button>
               </a-tooltip>
@@ -2828,7 +2828,9 @@ const removePendingFile = i => pendingFiles.value.splice(i, 1)
 
 // ==================== @ 引用（本轮显式指定知识库/文档） ====================
 // 语义：kb=本轮检索收窄到该库；doc=该文档内容块强制前置进上下文（不经检索、不受相关性门/去冗余约束）。
-// 交互：输入框敲 @ 唤起候选面板（面板内搜索 + Tab 切库/文档 + 多选），选中项以 chip 显示在输入框上方。
+// 交互：输入框敲 @ 唤起候选面板（面板不抢焦点，筛选词实时取「@ 到光标」之间的正文 + ↑↓ 选 + Enter 确认 + 多选），
+//       选中项以 chip 显示在输入框上方。引用字符 @ 本身照常留在输入框里（用户可任意位置输入 @），
+//       确认后会把「@ + 筛选词」这一段从正文里摘掉，不留残渣。
 // 引用只对当轮生效（与会话级智能体绑定不同）：不落库、不跨轮继承，重新生成时随内存消息重发。
 const mentionOpen = ref(false)
 const mentionTab = ref('kb')
@@ -2837,7 +2839,7 @@ const mentionLoading = ref(false)
 const mentionKbs = ref([])
 const mentionDocs = ref([])
 const pendingMentions = ref([])
-const mentionSearchRef = ref(null)
+const mentionHi = ref(0)
 const MAX_MENTIONS = 10
 
 const isMentioned = (type, id) => pendingMentions.value.some(m => m.type === type && m.id === id)
@@ -2859,14 +2861,21 @@ const toggleMention = (type, item) => {
   })
 }
 const removeMention = i => pendingMentions.value.splice(i, 1)
+/** 切库/文档：候选集换了，高亮下标要收敛回合法范围（否则 kb 第 20 条切到 doc 只有 3 条时按 Enter 会选空） */
+const switchMentionTab = t => {
+  mentionTab.value = t
+  const n = t === 'kb' ? mentionKbFiltered.value.length : mentionDocFiltered.value.length
+  if (mentionHi.value >= n) mentionHi.value = 0
+}
 
 const openMentionPanel = () => {
   mentionOpen.value = true
   mentionQuery.value = ''
-  nextTick(() => mentionSearchRef.value?.focus?.())
+  mentionHi.value = 0
+  if (panelTriggerCh !== '@') { panelTriggerPos = -1; panelTriggerCh = '' }
   if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
 }
-const closeMentionPanel = () => { mentionOpen.value = false }
+const closeMentionPanel = () => closeAllPanels()
 
 /** 候选懒加载（首次打开面板时拉取）：库按共享范围过滤（/kb/list 已做），文档同理（/document/list 已做） */
 const loadMentionCandidates = async () => {
@@ -2899,8 +2908,8 @@ const mentionDocStatus = d => {
 }
 
 const mentionMatch = (text, q) => !q || String(text || '').toLowerCase().includes(q.toLowerCase())
-// 归一化：剥掉开头的 @（唤起键有时会连带落进搜索框，不能让候选被 "@" 过滤成空）
-const mentionQueryNorm = computed(() => mentionQuery.value.replace(/^@+/, '').trim())
+// mentionQuery 现在直接来自输入框正文（「@ 到光标」之间），不再有唤起键混进搜索框的问题
+const mentionQueryNorm = computed(() => mentionQuery.value.trim())
 const mentionKbFiltered = computed(() =>
   mentionKbs.value.filter(k => mentionMatch(k.name, mentionQueryNorm.value) || mentionMatch(k.desc, mentionQueryNorm.value)))
 const mentionDocFiltered = computed(() =>
@@ -2914,17 +2923,149 @@ const onDocClickForMention = e => {
   if (!mentionOpen.value && !slashOpen.value && !histOpen.value) return
   const el = e.target
   if (el && el.closest && (el.closest('.mention-panel') || el.closest('.input-box'))) return
-  mentionOpen.value = false
-  slashOpen.value = false
-  histOpen.value = false
+  closeAllPanels()
 }
 onMounted(() => document.addEventListener('click', onDocClickForMention))
 onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
 
+// ==================== 三个唤起面板的共用输入通道 ====================
+// 起因：原来三个面板各自带一个搜索框，敲 @ 时 preventDefault 吞掉字符 + nextTick 把焦点抢进搜索框。
+// 后果是「@ 打不进输入框」，用户无法在任意位置输入该符号（a@b.com、@某人 全部被吞）。
+// 现在反过来：**输入框是唯一输入源**——字符正常落下、焦点全程留在输入框，
+// 面板只做「展示 + 键盘导航」，筛选词实时取「触发字符到光标」之间的正文（syncPanelQuery）。
+// 确认后用 stripTriggerToken 把「触发字符 + 筛选词」这一段从正文里摘掉，不留残渣。
+
+/** 触发字符在正文里的位置与字符本身（keydown 时记录：字符尚未进 DOM，插入后下标即为 pos） */
+let panelTriggerPos = -1
+let panelTriggerCh = ''
+
+const panelAnyOpen = () => mentionOpen.value || slashOpen.value || histOpen.value
+const closeAllPanels = () => {
+  mentionOpen.value = false
+  slashOpen.value = false
+  histOpen.value = false
+  panelTriggerPos = -1
+  panelTriggerCh = ''
+}
+/** 当前打开面板的候选总数与高亮下标读写（三面板结构一致，抽出来避免各写一遍 if/else） */
+const panelListSize = () => {
+  if (mentionOpen.value) return mentionTab.value === 'kb' ? mentionKbFiltered.value.length : mentionDocFiltered.value.length
+  if (slashOpen.value) return slashFiltered.value.length
+  if (histOpen.value) return histCandidates.value.length
+  return 0
+}
+const getPanelHi = () => (mentionOpen.value ? mentionHi : slashOpen.value ? slashHi : histOpen.value)
+const setPanelHi = v => {
+  if (mentionOpen.value) mentionHi.value = v
+  else if (slashOpen.value) slashHi.value = v
+  else if (histOpen.value) histHi.value = v
+}
+const movePanelHi = dir => {
+  const n = panelListSize()
+  if (!n) return
+  setPanelHi((getPanelHi().value + dir + n) % n)   // 循环滚动
+}
+/** Enter 确认高亮项：@ 引用（加 chip）/ / 命令（插入模板或执行）/ # 历史引用（加 chip）。返回是否消费了本次回车 */
+const confirmPanelHi = () => {
+  const i = getPanelHi().value
+  if (mentionOpen.value) {
+    const item = mentionTab.value === 'kb' ? mentionKbFiltered.value[i] : mentionDocFiltered.value[i]
+    if (!item) return false
+    stripTriggerToken()
+    toggleMention(mentionTab.value, item)
+    closeAllPanels()
+    return true
+  }
+  if (slashOpen.value) {
+    const c = slashFiltered.value[i]
+    if (!c) return false
+    // 不能先 stripTriggerToken：它会把 panelTriggerPos 清成 -1，runSlashCommand 就退回"追加到末尾"，
+    // 在句中唤起时会跳到全文末尾。/ 面板由 runSlashCommand 自己负责处理触发片段（tpl 就地替换、act 摘除）。
+    runSlashCommand(c)
+    return true
+  }
+  if (histOpen.value) {
+    const m = histCandidates.value[i]
+    if (!m) return false
+    stripTriggerToken()
+    toggleHistoryRef(m)
+    closeAllPanels()
+    return true
+  }
+  return false
+}
+/** 摘掉「触发字符 + 其后已输入的筛选词」：引用已由 chip 承载，正文里不该残留这段触发文本。
+ *  光标随后落回摘除处，用户可继续在原位打字。 */
+const stripTriggerToken = () => {
+  if (panelTriggerPos < 0) return
+  const from = panelTriggerPos
+  const el = rawTextarea()
+  const caret = el && typeof el.selectionStart === 'number' ? el.selectionStart : text.value.length
+  const to = Math.max(caret, from + 1)
+  text.value = text.value.slice(0, from) + text.value.slice(to)
+  nextTick(() => {
+    const ta = rawTextarea()
+    if (!ta) return
+    ta.focus?.()
+    ta.setSelectionRange(from, from)
+  })
+  panelTriggerPos = -1
+  panelTriggerCh = ''
+}
+
+/** a-textarea 的 ref 是组件实例，取内部原生 textarea（光标位置只能从原生元素读） */
+const rawTextarea = () => textareaRef.value?.resizableTextArea?.textArea || textareaRef.value?.$el || null
+
+/** 输入框内容/光标变化时同步筛选词与高亮：
+ *  - 光标在触发字符之前 → 用户把触发符删了或移开了，收起面板
+ *  - 触发字符被改成别的字符 → 同上
+ *  - 筛选词里出现空白 → 这个"词"已经结束（@知识库 后面又打了字），收起面板
+ *  高亮重置到第一条：候选集变了，原下标已无意义。 */
+const syncPanelQuery = () => {
+  if (!panelAnyOpen() || panelTriggerPos < 0) return
+  const el = rawTextarea()
+  if (!el) return
+  const caret = typeof el.selectionStart === 'number' ? el.selectionStart : 0
+  if (caret <= panelTriggerPos || text.value[panelTriggerPos] !== panelTriggerCh) {
+    closeAllPanels()
+    return
+  }
+  const q = text.value.slice(panelTriggerPos + 1, caret)
+  if (/\s/.test(q)) { closeAllPanels(); return }
+  if (mentionOpen.value) mentionQuery.value = q
+  else if (slashOpen.value) slashQuery.value = q
+  else if (histOpen.value) histQuery.value = q
+  setPanelHi(0)
+}
+
+// 鼠标点候选：与 Enter 确认同一条路径（先摘掉触发片段再加 chip），避免两条路行为不一致
+const pickMentionByClick = (type, item) => {
+  stripTriggerToken()
+  toggleMention(type, item)
+  closeAllPanels()
+}
+
+/** 工具栏按钮唤起：在光标处补一个触发字符，等价于用户手敲 —— 筛选通道只有输入框一条，
+ *  不然按钮开的面板没有筛选入口（原先靠面板自带搜索框，那正是「@ 打不进来」的根因）。 */
+const openPanelByButton = ch => {
+  const el = rawTextarea()
+  const pos = el && typeof el.selectionStart === 'number' ? el.selectionStart : text.value.length
+  text.value = text.value.slice(0, pos) + ch + text.value.slice(pos)
+  panelTriggerPos = pos
+  panelTriggerCh = ch
+  nextTick(() => {
+    const ta = rawTextarea()
+    ta?.focus?.()
+    ta?.setSelectionRange(pos + 1, pos + 1)
+  })
+  if (ch === '#') openHistPanel()
+  else openSlashPanel()
+}
+
 // ==================== / 快捷命令面板（模板插入 + 会话操作） ====================
 const slashOpen = ref(false)
 const slashQuery = ref('')
-const slashSearchRef = ref(null)
+const slashHi = ref(0)
 // kind: tpl=插入问法框架到输入框（可再编辑）；act=会话级操作，立即执行
 // 模板贴合本系统场景：资料类问法配合 @ 文档/知识库使用，检索类问法用于优化提问
 const slashCommands = [
@@ -2952,11 +3093,12 @@ const openSlashPanel = () => {
   mentionOpen.value = false
   slashOpen.value = true
   slashQuery.value = ''
-  nextTick(() => slashSearchRef.value?.focus?.())
+  slashHi.value = 0
+  if (panelTriggerCh !== '/') { panelTriggerPos = -1; panelTriggerCh = '' }
 }
-const closeSlashPanel = () => { slashOpen.value = false }
-// 归一化：剥掉开头的 /（唤起键有时会连带落进搜索框，不能让候选被 "/" 过滤成空）
-const slashQueryNorm = computed(() => slashQuery.value.replace(/^\/+/, '').trim())
+const closeSlashPanel = () => closeAllPanels()
+// slashQuery 直接来自输入框正文（「/ 到光标」之间），不再需要剥唤起键
+const slashQueryNorm = computed(() => slashQuery.value.trim())
 const slashFiltered = computed(() => {
   const q = slashQueryNorm.value.toLowerCase()
   if (!q) return slashCommands
@@ -2965,6 +3107,26 @@ const slashFiltered = computed(() => {
 const runSlashCommand = c => {
   slashOpen.value = false
   if (c.kind === 'tpl') {
+    // 模板替换掉「/ + 筛选词」这段触发文本（而不是追加到末尾），否则会留下 "/总结\n请总结…" 的残渣。
+    // 未由键盘唤起（工具栏按钮点开）时 panelTriggerPos 为 -1，退回原有的追加行为。
+    if (panelTriggerPos >= 0) {
+      const from = panelTriggerPos
+      const el0 = rawTextarea()
+      const caret = el0 && typeof el0.selectionStart === 'number' ? el0.selectionStart : text.value.length
+      const to = Math.max(caret, from + 1)
+      text.value = text.value.slice(0, from) + c.tpl + text.value.slice(to)
+      panelTriggerPos = -1
+      panelTriggerCh = ''
+      nextTick(() => {
+        const ta = textareaRef.value
+        if (!ta) return
+        ta.focus?.()
+        const el = ta.resizableTextArea?.textArea
+        const at = from + c.tpl.length
+        if (el) el.setSelectionRange(at, at)
+      })
+      return
+    }
     // 追加而非替换：输入框已有内容时不吞掉用户已打的字；光标落到末尾方便接着补内容
     text.value = (text.value ? text.value.replace(/\s+$/, '') + '\n' : '') + c.tpl
     nextTick(() => {
@@ -2975,6 +3137,9 @@ const runSlashCommand = c => {
       if (el) el.setSelectionRange(el.value.length, el.value.length)
     })
   } else {
+    // act（立即执行的动作）不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
+    stripTriggerToken()
+    closeAllPanels()
     c.run?.()
   }
 }
@@ -2983,14 +3148,14 @@ const runSlashCommand = c => {
 const MAX_HISTORY_REFS = 10
 const histOpen = ref(false)
 const histQuery = ref('')
-const histSearchRef = ref(null)
+const histHi = ref(0)
 const pendingHistoryRefs = ref([])
 // 候选池：当前会话已落库的消息（有 messageId=服务端已确认、非流式中、正文非空）。
 // 历史回放的消息自带 messageId（getHistory 下发），当场发的消息在 done 事件回填后也可引用
 const histPool = computed(() => messages.value.filter(m =>
   m.messageId && !m.loading && m.content && String(m.content).trim()
     && (m.role === 'user' || m.role === 'ai' || m.role === 'assistant')))
-const histQueryNorm = computed(() => histQuery.value.replace(/^#+/, '').trim())
+const histQueryNorm = computed(() => histQuery.value.trim())
 const histCandidates = computed(() => {
   const q = histQueryNorm.value.toLowerCase()
   const pool = histPool.value.filter(m => !q || String(m.content).toLowerCase().includes(q))
@@ -3012,14 +3177,19 @@ const toggleHistoryRef = m => {
   pendingHistoryRefs.value.push({ messageId: m.messageId, role: m.role, digest: histItemDigest(m) })
 }
 const removeHistoryRef = i => pendingHistoryRefs.value.splice(i, 1)
+const pickHistoryRefByClick = m => {
+  stripTriggerToken()
+  toggleHistoryRef(m)
+  closeAllPanels()
+}
 const openHistPanel = () => {
   slashOpen.value = false
   mentionOpen.value = false
   histOpen.value = true
   histQuery.value = ''
-  nextTick(() => histSearchRef.value?.focus?.())
+  histHi.value = 0
 }
-const closeHistPanel = () => { histOpen.value = false }
+const closeHistPanel = () => closeAllPanels()
 
 // ==================== 会话内查找（Ctrl/⌘+F） ====================
 // 匹配范围 = 每条消息的正文（用户问题 + 助手回答）。工具输出与思考过程不参与——那些是过程信息，
@@ -3241,6 +3411,7 @@ const send = () => {
     return
   }
   text.value = ''
+  closeAllPanels()   // 正文清空后触发字符已失效，显式收起（不依赖 input 回调的副作用）
   pendingImages.value = []
   pendingFiles.value = []
   pickedSkills.value = []
@@ -3256,46 +3427,45 @@ const send = () => {
 }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）一律放行
+  // 面板打开时由输入框接管导航：↑↓ 移动高亮、Enter 确认、Esc 关闭
+  if (mentionOpen.value || slashOpen.value || histOpen.value) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      movePanelHi(e.key === 'ArrowDown' ? 1 : -1)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeAllPanels()
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // 有高亮候选才由 Enter 确认；没有候选（筛空了）时 Enter 仍走发送，避免"打不中就发不出去"
+      if (confirmPanelHi()) { e.preventDefault(); return }
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
-    if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）不发送
     e.preventDefault()
     send()
     return
   }
-  // @ / 唤起引用候选面板：仅在「行首 / 空格后」触发（此时 @ 的语义就是引用唤起），
-  // 并拦下默认输入——否则这个 @ 会随后的输入事件落到刚聚焦的面板搜索框里，
-  // 把候选按 "@" 过滤成空（实测踩到：面板打开却显示"没有匹配的文档"）。
-  // 句中/词中的 @（邮箱 a@b.com、@某人）不拦截，照常输入。
-  if (e.key === '@' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
+  // @ / # 唤起候选面板：**不拦下字符**——它是普通文本，用户要在任意位置都能打出来。
+  // 唤起后焦点留在输入框，筛选词由 syncPanelQuery 从「触发字符到光标」之间的正文实时取。
+  // 触发位置仍限「行首 / 空白后」，避免邮箱 a@b.com、URL 里的 / 误开面板。
+  if ((e.key === '@' || e.key === '#' || e.key === '/') && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const ta = e.target
     const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
     const before = text.value.slice(0, pos)
-    if (!before || /\s$/.test(before)) {
-      e.preventDefault()
-      openMentionPanel()
+    if (!before || /[\s（(【[]$/.test(before)) {
+      // 记录触发字符即将落在的位置（keydown 时字符还没进 DOM，插入后下标即 pos）
+      panelTriggerPos = pos
+      panelTriggerCh = e.key
+      if (e.key === '@') openMentionPanel()
+      else if (e.key === '#') openHistPanel()
+      else openSlashPanel()
     }
     return
-  }
-  // / 唤起快捷命令面板：同 @ 的「行首 / 空格后」口径（句中的 / 如 URL path 不拦截）
-  if (e.key === '/' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
-    const ta = e.target
-    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
-    const before = text.value.slice(0, pos)
-    if (!before || /\s$/.test(before)) {
-      e.preventDefault()
-      openSlashPanel()
-    }
-    return
-  }
-  // # 唤起历史引用面板：同 @ 的「行首 / 空格后」口径
-  if (e.key === '#' && !e.isComposing && !e.ctrlKey && !e.metaKey) {
-    const ta = e.target
-    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
-    const before = text.value.slice(0, pos)
-    if (!before || /\s$/.test(before)) {
-      e.preventDefault()
-      openHistPanel()
-    }
   }
 }
 
@@ -4522,11 +4692,16 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 4px;
   padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--app-border);
 }
-.mention-search {
-  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-  font-size: 13px; color: var(--app-text); padding: 4px 0;
+/* 触发符 + 实时筛选词的只读回显（输入源是输入框，这里只做状态展示，不能再是可编辑框） */
+.mention-head-tag {
+  flex: none; font-size: 13px; font-weight: 600; color: var(--app-accent);
+  background: var(--app-accent-weak); border-radius: 4px; padding: 0 5px; line-height: 18px;
 }
-.mention-search::placeholder { color: var(--app-text3); }
+.mention-head-word {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--app-text);
+  padding: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mention-head-word.dim { color: var(--app-text3); }
 .mention-tabs { display: flex; gap: 4px; padding: 8px 10px 2px; }
 .mention-tab {
   display: inline-flex; align-items: center; gap: 4px; border: none; cursor: pointer;
@@ -4539,6 +4714,8 @@ onMounted(async () => {
 .mention-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
 .mention-item:hover { background: var(--app-panel-2); }
 .mention-item.on { background: var(--app-accent-weak); }
+/* 键盘 ↑↓ 所在项：面板不再抢焦点，高亮是用户「现在按 Enter 会选中谁」的唯一视觉线索 */
+.mention-item.hi { background: var(--app-panel-2); box-shadow: inset 0 0 0 1px var(--app-accent-border, var(--app-accent)); }
 .mention-ava {
   width: 24px; height: 24px; border-radius: 6px; flex: none; font-size: 13px;
   background: var(--app-panel-2); color: var(--app-text2);
