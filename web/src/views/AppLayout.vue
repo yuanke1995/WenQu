@@ -135,7 +135,7 @@
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
-            <UserAvatar :avatar="authUser.avatar" :name="userName" :size="22" />
+            <UserAvatar :avatar="userAvatar" :name="userName" :size="22" />
             <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
           </button>
         </a-tooltip>
@@ -229,6 +229,12 @@ const isAdmin = ref(isAdminSync())
 const userName = computed(() => {
   const i = authUser.value
   return ((i && (i.username || i.user)) || '')
+})
+// 头像同理做空安全：身份就绪前 authUser 可能为 null（守卫时序已被 router.js 收口，
+// 此处防御模板直读 .avatar 抛 Cannot read properties of null）
+const userAvatar = computed(() => {
+  const i = authUser.value
+  return (i && i.avatar) || ''
 })
 
 // 侧边栏菜单：/auth/me 下发的菜单树（顶级渲染为导航项；子级预留，当前侧边栏一层平铺）

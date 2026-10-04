@@ -66,9 +66,12 @@ const router = createRouter({
 router.beforeEach(async to => {
   if (to.path === '/login' || to.meta.public) return true
   if (!isLoggedIn()) return { path: '/login', replace: true }
-  if (!to.meta.requiresAdmin) return true
-  // 未拉取过身份则先向 /auth/me 确认（同时下发菜单树）
+  // 未拉取过身份则先向 /auth/me 确认（同时下发菜单树）。必须先于任何登录页放行：
+  // 布局层（侧栏头像/昵称）直接读 authUser，而「全新浏览器首次登录」时 main.js 启动阶段
+  // 还没有令牌、不会预拉身份，登录后首次进入布局页会在渲染期读到 null 而报错。
+  // 缓存命中时此处瞬时返回，仅首次登录真正发一次 /auth/me。
   await ensureAuth()
+  if (!to.meta.requiresAdmin) return true
   if (isAdminSync() || menuHasPath(to.path)) return true
   message.warning('暂无该功能的访问权限（可联系管理员在权限管理中为角色授权）')
   return { path: '/chat', replace: true }
