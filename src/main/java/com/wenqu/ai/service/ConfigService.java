@@ -771,11 +771,19 @@ public class ConfigService {
         }
         // 切换到 meilisearch：保存前强制探测服务可用性，不可用则阻止保存（避免切到不可用的空索引）。
         // 这是"服务可达性"而不是"取值合法性"，故留在代码里而不进 schema。
+        // 探测必须用**本次提交的值**（updates 里的新地址/新 Key），不能用 checkAvailable() 读已保存的旧值：
+        // 「改地址 + 切引擎」常在同一次保存里完成（地址与 Key 只有选中 meilisearch 后才可见，用户是
+        // 填好地址后一起保存的），拿旧值探测等于用上一次的服务地址去验这一次的新地址——首次配置
+        // 必然被误判为不可用而拒绝保存，用户陷入死锁。updates 未带的键才回落已保存配置。
         String engine = updates.get("keyword.engine");
-        if (engine != null && "meilisearch".equalsIgnoreCase(engine.trim()) && !keywordIndexService.checkAvailable()) {
-            String reason = keywordIndexService.debugUnavailableReason();
-            throw new IllegalArgumentException("Meilisearch 服务不可用（" + (reason == null ? "探测失败" : reason)
-                    + "），请先启动 Meilisearch（docker compose 或本地）再切换");
+        if (engine != null && "meilisearch".equalsIgnoreCase(engine.trim())) {
+            boolean ok = keywordIndexService.checkAvailable(updates.get("keyword.baseUrl"), updates.get("keyword.apiKey"));
+            if (!ok) {
+                String url = updates.getOrDefault("keyword.baseUrl", keywordIndexService.debugUnavailableReason());
+                throw new IllegalArgumentException("Meilisearch 服务不可用（"
+                        + (url == null || url.isBlank() ? "探测失败" : "地址 " + url + " 探测失败")
+                        + "），请先启动 Meilisearch（docker compose 或本地）再切换");
+            }
         }
 
         // 视觉网关地址校验已移除：vision.baseUrl 不在可编辑白名单、也无运行时读取点

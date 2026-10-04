@@ -263,6 +263,58 @@ public class KeywordIndexService {
         return ok;
     }
 
+    /**
+     * 按「即将保存的值」强制探测（设置页切换引擎时用），<b>不读也不改已保存配置</b>。
+     * <p>
+     * 为什么不能用 {@link #checkAvailable()}：它探测的是**库里的旧地址/旧 Key**。而设置页的
+     * 「引擎服务地址 / 引擎 Key」只有选中 meilisearch 后才可见（schema 的 vif 联动），用户正在
+     * 配的正是这两个值——用旧值探测等于「拿上一次的地址去验这一次的新地址」，首次配置必然失败，
+     * 失败后前端又把引擎静默改回 mysql，字段随之消失，用户永远配不成（死锁）。
+     * <p>
+     * 这里用传入值构造一次性探针：{@code baseUrl} 为空才回落已保存配置，{@code apiKey} 为空
+     * 或仍是 {@code ****} 掩码（前端未修改时原样回传）同样回落已保存配置——与保存流程的
+     * 掩码回写保护同一口径。
+     *
+     * @param baseUrl 表单当前服务地址（空/空白则用已保存值）
+     * @param apiKey  表单当前 master key（空或 **** 掩码则用已保存值）
+     * @return 服务是否可用（在线且密钥被接受）
+     */
+    public boolean checkAvailable(String baseUrl, String apiKey) {
+        String url = baseUrl == null || baseUrl.isBlank() ? baseUrl() : baseUrl.trim();
+        String key = apiKey == null || apiKey.isBlank() || apiKey.startsWith("****") ? apiKey() : apiKey.trim();
+        if (url.isBlank()) {
+            log.info("[Keyword] 强制探测（表单值）结果: false（服务地址为空）");
+            return false;
+        }
+        try {
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofMillis(2000))
+                    .build();
+            JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+            factory.setReadTimeout(Duration.ofMillis(timeoutMillis()));
+            RestClient.Builder builder = RestClient.builder().baseUrl(url).requestFactory(factory);
+            if (!key.isBlank()) {
+                builder.defaultHeader("Authorization", "Bearer " + key);
+            }
+            // 与 checkSupport 同口径：探 /indexes（受保护端点）而非公开的 /health，
+            // 否则「服务端设了 master key、客户端没配对」会探成可用，实际调用全 401
+            String resp = builder.build().get().uri("/indexes").retrieve().body(String.class);
+            boolean ok = resp != null;
+            log.info("[Keyword] 强制探测（表单值 地址={} Key={}）结果: {}", url, maskSecret(key), ok);
+            return ok;
+        } catch (Exception e) {
+            log.warn("[Keyword] 强制探测（表单值 地址={}）失败: {} {}", url, e.getMessage(), rootMessage(e));
+            return false;
+        }
+    }
+
+    /** 沿异常链取根因消息（Spring 包装异常时 getMessage 常只有状态码，真实原因在 cause 里） */
+    private static String rootMessage(Throwable e) {
+        Throwable t = e;
+        while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        return t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+    }
+
     /** 不可用原因（可用时返回 null），供检索调试与运维接口展示 */
     public String debugUnavailableReason() {
         if (!enabled()) return "未启用（keyword.engine=" + engine() + "）";

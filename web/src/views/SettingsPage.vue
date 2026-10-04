@@ -65,7 +65,7 @@
                   <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
                        技能与 MCP 的内容已迁到「智能体」页的个人 Tab，这里只剩技能的两个上下文预算参数 -->
                   <template v-else-if="blk.type === 'field'">
-                    <SchemaField :field="blk.field" :form="form" :tips="TIPS" @change="onFieldChange">
+                    <SchemaField :field="blk.field" :form="form" :tips="TIPS">
                       <template v-if="probeKey(blk.field)" #extra>
                         <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
                           {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
@@ -525,7 +525,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { getConfig, getConfigSchema, saveConfig, resetConfig, checkKeywordEngine,
+import { getConfig, getConfigSchema, saveConfig, resetConfig,
          probeConnectivity,
          listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
          getMcpAuditLogs, getMcpAuditSummary,
@@ -775,26 +775,13 @@ watch(
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }
 )
-
 // ==================== 枚举变更校验 ====================
-const onFieldChange = (field, v) => {
-  if (field.group === 'keyword' && field.key === 'engine') onKeywordEngineChange(v)
-}
-const onKeywordEngineChange = async val => {
-  if (val !== 'meilisearch') return
-  try {
-    const r = await checkKeywordEngine()
-    if (r.success && r.data?.available) {
-      message.success('Meilisearch 服务正常。保存后请执行全量重建（/api/ai/search-index/reindex）再提问')
-    } else {
-      form.value.keyword.engine = 'mysql'
-      message.error('Meilisearch 不可用：请先启动服务，或检查服务地址')
-    }
-  } catch (e) {
-    form.value.keyword.engine = 'mysql'
-    message.error('Meilisearch 校验失败：' + (e.message || '服务不可用'))
-  }
-}
+// 刻意**没有**「切换到 meilisearch 就探测、不通就静默改回 mysql」的联动（历史上有过，已移除）：
+// 服务地址/Key 只有选中 meilisearch 后才可见（schema 的 vif），用户正要在这两个字段里填值，
+// 而探测必须走网络——此刻表单里往往还是默认值/空值，探测必然失败；一旦据此回改引擎，
+// 字段又立刻消失，用户永远配不成（死锁），且失败原因被静默吞掉。
+// 可达性校验改由保存时的后端执行（ConfigService.update 用**本次提交的值**探测，失败带原因报错），
+// 「测试连接」按钮则走 /config/probe，同样用表单当前值——先测后存，不必先保存。
 
 // ==================== 重嵌入状态 ====================
 // ==================== API Key 管理（6.5） ====================
