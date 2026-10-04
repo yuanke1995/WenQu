@@ -214,12 +214,20 @@ public class ModelRegistryService {
 
     /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
      *  值链：知识库/智能体检索参数（线程局部覆盖）＞ 个人设置默认（personalOnly，问答线程装载个人值）
-     *  ＞ 空（回落本地 rerank.baseUrl 服务）——全局层已退役，模型只认归属人。 */
+     *  ＞ **平台默认 rerank.platformRef**（管理员登记，非 personalOnly，全平台兜底）
+     *  ＞ 空（回落本地 rerank.baseUrl 服务）。
+     *  平台层是 2026-10-04 补的：重排模型历来只认归属人（库级或个人），任何一处没配就等于没有重排，
+     *  相关分门随之从重排门（0.6）退化到融合门（0.25），词面重叠的无关块会进上下文与引用面板
+     *  （实测 222 条带引用消息仅 9 条拿到重排分）。平台层让"没重排"从默认态变成异常态。 */
     public ModelRoute rerankRoute() {
         String model = nz(configService.get("rerank.model"));
         ModelRoute r = resolveReference(model);
         if (r != null) return r;
-        return new ModelRoute(null, nz(configService.get("rerank.baseUrl")), null, null, null, model, model);
+        String platform = nz(configService.get("rerank.platformRef"));
+        ModelRoute pr = resolveReference(platform);
+        if (pr != null) return pr;
+        String fallbackModel = model == null || model.isBlank() ? platform : model;
+        return new ModelRoute(null, nz(configService.get("rerank.baseUrl")), null, null, null, fallbackModel, fallbackModel);
     }
 
     /**

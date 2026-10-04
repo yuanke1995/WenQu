@@ -193,8 +193,10 @@ public class RagService {
         if (!hits.isEmpty()) {
             String reason = rerankService.debugUnavailableReason();
             if (reason != null) {
+                // 文案说清后果而不只是机制：「按融合分排序」用户看不懂，
+                // 真正影响是引用没过语义筛选，弱相关块会混进上下文与引用面板
                 addDegradation(degradations, degradedCodes, "rerankUnavailable",
-                        "重排不可用（" + reason + "），按融合分排序");
+                        "重排不可用（" + reason + "）：本轮按融合分排序，引用未做语义筛选，相关性可能偏低");
             } else {
                 hits = rerankService.rank(hits, query);
             }
@@ -934,6 +936,12 @@ public class RagService {
             log.info("[RAG] 检索命中 {} 块, query={}", hits.size(), retrievalQuery);
             // 本轮主链路重排是否实际执行（有任一命中拿到重排分）：已执行时，未重排候选不得再走融合门入场（见填充段分域门）
             boolean rerankActive = hits.stream().anyMatch(h -> h.rerankScore() != null);
+            // 兜住最后一处静默：重排"看起来可用"（探测通过、调用也发了）却没给出任何重排分——
+            // 此时门同样退化到融合门，与不可用后果一致，必须同样告知（不能只在 debugUnavailableReason 有值时才提示）
+            if (!rerankActive && !hits.isEmpty()) {
+                addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                        "重排本轮未返回相关性分数：上下文与引用按融合分筛选，相关性可能偏低");
+            }
 
             // SubAgent 并行编排（4.3，默认关）：多视角并行检索 + 要点提炼。
             // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
@@ -1741,7 +1749,21 @@ public class RagService {
                         // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
                         boolean kbTool = "searchKnowledge".equals(name);
                         if (kbTool) {
-                            KnowledgeRetrievalTool.setSourceRegistrar(st::registerToolSource);
+                            // 注册器带 degrade 通道：工具链路（重排不可用等）可写回本轮 degradations，
+                            // 与主链路 addDegradation 同一份列表、同一展示位
+                            KnowledgeRetrievalTool.setSourceRegistrar(
+                                    new KnowledgeRetrievalTool.SourceRegistrar() {
+                                        @Override
+                                        public KnowledgeRetrievalTool.SourceRegistrar.Registration register(
+                                                HybridRetrievalService.Hit h, String snippet) {
+                                            return st.registerToolSource(h, snippet);
+                                        }
+
+                                        @Override
+                                        public void degrade(String code, String msg) {
+                                            addDegradation(st.degradations, st.degradedCodes, code, msg);
+                                        }
+                                    });
                             KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
                         }
                         // 联网搜索工具：注入本轮落点（配额扣减 + 引用注册 + 降级提示）。

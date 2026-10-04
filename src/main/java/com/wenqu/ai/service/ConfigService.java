@@ -249,6 +249,10 @@ public class ConfigService {
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
         d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl 本地服务
+        // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
+        // 仍为空才回落 rerank.baseUrl。与 rerank.model 分开成键，是为了不动 personalOnly 的归属语义
+        // （模型引用只认归属人），又让"一个库都没绑 = 全平台没重排"这个默认态有解。
+        d.put("rerank.platformRef", "");
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
         // 窗口与最大输出按模型在「模型管理」声明（对话类窗口必填），安全系数固定为

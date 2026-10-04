@@ -245,6 +245,15 @@ public class RerankService {
         if (!enabled()) {
             return "未启用：系统设置的平台默认「启用重排」未打开，知识库/智能体检索设置也未开启";
         }
+        // 未绑定重排模型（库/智能体覆盖、平台默认都为空）→ 路由回落本地 rerank.baseUrl。
+        // 此时探测多半失败，但根因是"没配模型"而不是"服务没起"——旧文案一律指到启动本地 reranker，
+        // 会把管理员引去维护一个本可不必存在的服务（云端重排明明可用）。先按未绑定给明确指引。
+        if (route().providerId() == null) {
+            String base = configService.get("rerank.baseUrl");
+            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，当前回落本地重排服务 "
+                    + (base == null || base.isBlank() ? "（rerank.baseUrl 未配置）" : base)
+                    + "；请在系统设置的检索面板登记「平台默认重排模型」，或在知识库检索设置里单独绑定";
+        }
         if (!checkSupport()) {
             if (System.currentTimeMillis() - lastFailTs < failCooldownMs()) {
                 return "重排服务调用失败，冷却中（" + failCooldownMs() / 1000 + "s 后自动重试）";

@@ -39,6 +39,13 @@ public class KnowledgeRetrievalTool {
          */
         Registration register(Hit hit, String snippet);
 
+        /**
+         * 登记一条本轮可见降级（与 RagService.addDegradation 同口径、同一份 degradations 列表）。
+         * 工具链路自己拿不到 AnswerStreamState，由注册器桥接——典型用途：重排不可用时明确告知
+         * 「本轮引用未做语义筛选」，而不是让用户对着一堆弱相关引用以为是检索本来就这样。
+         */
+        void degrade(String code, String msg);
+
         /** 注册结果 */
         record Registration(int ref, java.util.List<Integer> imageSeqs) {}
     }
@@ -145,6 +152,15 @@ public class KnowledgeRetrievalTool {
         // 模型按清单在正文真实位置引用编号 → 前端 images[N-1] 映射出真实截图；
         // 非注册模式（无流上下文，如直接调用）：保持旧【片段N】格式
         SourceRegistrar registrar = REGISTRAR.get();
+        // 重排没执行 = 引用门退化到融合门（0.25）：词面重叠的弱相关块会注册进引用面板。
+        // 此前工具链路对此完全静默（主链路 rerankIfNeeded 有提示，但只在主链路有命中时才登记），
+        // 用户看到一堆与问题不相关的引用却没有任何说明。这里按同一口径登记可见降级。
+        if (!rerankActive && registrar != null) {
+            String reason = rerankService.debugUnavailableReason();
+            registrar.degrade("rerankUnavailable",
+                    "重排不可用（" + (reason == null ? "本轮未返回重排分" : reason)
+                            + "）：本轮引用未做语义筛选，相关性可能偏低");
+        }
         StringBuilder sb = new StringBuilder();
         int count = 0;
         for (Hit h : hits) {
