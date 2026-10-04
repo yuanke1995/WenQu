@@ -3,6 +3,8 @@ FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
 # 先拉依赖缓存层
 COPY pom.xml .
+# 依赖下载走阿里云 Maven 镜像（国内构建提速）；海外构建可删本行与 deploy/maven-settings.xml
+COPY deploy/maven-settings.xml /root/.m2/settings.xml
 RUN mvn -B dependency:go-offline
 COPY src ./src
 RUN mvn -B clean package -DskipTests

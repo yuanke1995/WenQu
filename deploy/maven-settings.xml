@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  构建期 Maven 用户级配置（Dockerfile 会 COPY 到 /root/.m2/settings.xml）：
+  依赖统一走阿里云公共镜像，国内（腾讯云/阿里云等）构建提速显著——
+  首次构建 dependency:go-offline 需下载约 270MB 依赖，直连 Maven Central 实测仅 40~300kB/s。
+  海外构建、或想直连 Maven Central 时：删除本文件与 Dockerfile 中对应的 COPY 行即可。
+-->
+<settings>
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <name>Aliyun Public</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
