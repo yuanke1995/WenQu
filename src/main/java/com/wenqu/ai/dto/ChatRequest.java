@@ -124,4 +124,8 @@ public class ChatRequest {
     @Schema(description = "重新生成时被替换的旧回答消息 ID：落库前软删该条，历史里只留最新一版"
             + "（不传则新回答会与旧回答并存，刷新后同一问题出现两条答案）")
     private String replaceMessageId;
+
+    @Schema(description = "编辑重发：被编辑的用户消息 ID（须属于当前会话）。服务端把该消息及其后的旧分支"
+            + "整体软删留档（可切换回看），编辑后的内容作为新分支重新生成")
+    private String editMessageId;
 }

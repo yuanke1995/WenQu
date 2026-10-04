@@ -79,6 +79,20 @@ public class Message {
     /** 消息序号 (会话内递增) */
     private Integer sequence;
 
+    /**
+     * 分支版本组键（编辑重发/重新生成）：同一位置的各版本代表消息共用一个组。
+     * 代表消息 = 编辑分支的新用户消息 / 重新生成分支的新旧回答；组内按 sequence 排序即版本序列，
+     * 其中 deleted=0 的是当前激活版本。NULL=不属于任何版本组。
+     */
+    private String variantGroup;
+
+    /**
+     * 该版本被替换时刻的可见尾部消息 ID 快照（JSON 数组，含本条）。
+     * 切回该版本时按快照精确恢复整条分支（嵌套子分支也一并还原）；
+     * sessionRetentionDays 物理清理后快照失效，切换接口返回「已过保留期」。
+     */
+    private String variantTail;
+
     private LocalDateTime createTime;
 
     @TableLogic

@@ -46,6 +46,18 @@ public interface MessageMapper extends BaseMapper<Message> {
     @Delete("DELETE FROM c_ai_message WHERE deleted = 1 AND create_time < #{cutoff}")
     int purgeDeletedOlderThan(@Param("cutoff") LocalDateTime cutoff);
 
+    /**
+     * 会话内带版本组标记的全部消息（**含已软删**，自定义 SQL 不经 @TableLogic 改写）：
+     * 分支切换/历史回填按组聚合版本序列用。只取轻量列，行数=编辑/重新生成过的代表数，量级很小。
+     */
+    @Select("SELECT id, sequence, role, variant_group, variant_tail, deleted FROM c_ai_message "
+            + "WHERE session_id = #{sessionId} AND variant_group IS NOT NULL ORDER BY sequence ASC")
+    java.util.List<Message> selectVariantMessages(@Param("sessionId") String sessionId);
+
+    /** 写分支版本组键与尾部快照（**含软删行**：被替换的旧版本代表已软删或即将软删，须经此精确改行） */
+    @Update("UPDATE c_ai_message SET variant_group = #{group}, variant_tail = #{tail} WHERE id = #{id}")
+    int updateVariantById(@Param("id") String id, @Param("group") String group, @Param("tail") String tail);
+
     // ==================== 使用统计聚合（按用户，经会话表过滤归属） ====================
     // tokens 为 JSON 字符串，总额取 $.total（缺失/非法 JSON 行被 JSON_VALID 与 CAST NULL 自然剔除）。
     // 自定义 SQL 不经 @TableLogic 改写，逻辑删除必须显式过滤（会话与消息两侧都要）。

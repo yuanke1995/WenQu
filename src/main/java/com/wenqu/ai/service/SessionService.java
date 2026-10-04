@@ -907,8 +907,210 @@ public class SessionService {
                 .last("LIMIT 1"));
     }
 
-    public int deleteRound(String sessionId, String assistantMessageId) {
-        Message assistant = messageMapper.selectById(assistantMessageId);
+    // ==================== 消息编辑重发 / 分支（复用软删机制同源路由） ====================
+    // 模型：线性存储 + 版本组。每个版本的代表消息（编辑分支=新用户消息；重新生成分支=新回答）
+    // 挂 variantGroup 组键，同组代表按 sequence 排序即版本序列，deleted=0 的是当前激活版本。
+    // 被替换时把当时的可见尾部消息 ID 快照进 variant_tail——切回时按快照精确恢复整条分支
+    // （嵌套子分支一并还原）。软删行在撤销窗口内可恢复，sessionRetentionDays 到期物理清理，
+    // 清理后切换恢复 0 条=「已过保留期」，与按组删除/撤销同一兜底。
+
+    /** 设置消息的分支版本组标记（appendMessage 不为此扩参：新代表落库返回 ID 后补挂组） */
+    public void setMessageVariant(String messageId, String group) {
+        if (messageId == null || messageId.isBlank() || group == null || group.isBlank()) return;
+        try {
+            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                    .eq(Message::getId, messageId)
+                    .set(Message::getVariantGroup, group));
+        } catch (Exception e) {
+            // 标记写不进去只影响「刷新后还能不能看到这版切换器」，不阻断本轮落库，留痕即可
+            log.warn("[BRANCH] 版本组标记写入失败 (messageId={}): {}", messageId, e.getMessage());
+        }
+    }
+
+    /**
+     * 编辑重发的分支手术（控制器同步段调用，先于本轮问答执行，fail-loud）：
+     * 被编辑的用户消息及其后的整段可见分支软删让位（旧分支整体留档），并留下版本组键与尾部快照；
+     * 返回的组键贯穿本轮挂到新用户消息上，与旧消息构成可切换的版本序列。
+     *
+     * @return 版本组键（新用户消息落库后 setMessageVariant 用）
+     */
+    public String prepareEditBranch(String sessionId, String editMessageId) {
+        Message target = messageMapper.selectById(editMessageId);
+        if (target == null || !sessionId.equals(target.getSessionId())) {
+            throw new com.wenqu.ai.common.BizException(404, "被编辑的消息不存在或不属于当前会话");
+        }
+        if (!"user".equals(target.getRole())) {
+            throw new com.wenqu.ai.common.BizException(400, "只能编辑用户消息");
+        }
+        String group = target.getVariantGroup() == null || target.getVariantGroup().isBlank()
+                ? UUID.randomUUID().toString().replace("-", "") : target.getVariantGroup();
+        List<String> tailIds = visibleTailIds(sessionId, target.getSequence());
+        // 快照写在软删前：软删行的更新走自定义 SQL（@TableLogic 会把逻辑删 update 的 WHERE 过滤掉已删行）
+        messageMapper.updateVariantById(editMessageId, group, JSON.toJSONString(tailIds));
+        softDeleteIds(tailIds);
+        syncCountBestEffort(sessionId);
+        clearSession(sessionId);
+        return group;
+    }
+
+    /**
+     * 重新生成的分支手术（回答落库闸内调用，替代原先的裸 deleteMessage）：
+     * 旧回答软删让位并登记组键/尾部快照；新回答落库后 setMessageVariant 挂同一组，
+     * 重新生成的多版本由此跨刷新留存。旧口径语义保持：旧消息缺失/已删只记日志不阻断新回答落库。
+     *
+     * @return 版本组键（null=旧消息不可定位，仅跳过分组，行为与旧版「软删失败留两条答案」一致）
+     */
+    public String beginAnswerReplace(String oldMessageId) {
+        Message old = messageMapper.selectById(oldMessageId);
+        if (old == null) {
+            log.warn("[FAIL-LOUD] 旧回答消息软删失败（历史将保留两条答案）: id={} - 消息不存在", oldMessageId);
+            return null;
+        }
+        String group = old.getVariantGroup() == null || old.getVariantGroup().isBlank()
+                ? UUID.randomUUID().toString().replace("-", "") : old.getVariantGroup();
+        List<String> tailIds = visibleTailIds(old.getSessionId(), old.getSequence());
+        messageMapper.updateVariantById(oldMessageId, group, JSON.toJSONString(tailIds));
+        softDeleteIds(tailIds);
+        clearSession(old.getSessionId());
+        return group;
+    }
+
+    /**
+     * 分支切换：当前激活版本整体软删（留尾部快照），按目标版本的快照恢复旧分支。
+     *
+     * @param messageId 当前可见的版本代表消息 ID（编辑分支=用户消息；重新生成分支=回答消息）
+     * @param delta     版本序列偏移（±1；越界=0 条，前端按 variantIndex/variantCount 禁用箭头）
+     * @return 恢复的消息条数（0=已是边界版本）
+     */
+    public int switchVariant(String sessionId, String messageId, int delta) {
+        if (delta == 0) return 0;
+        Message active = messageMapper.selectById(messageId);
+        if (active == null || !sessionId.equals(active.getSessionId())) {
+            throw new com.wenqu.ai.common.BizException(404, "消息不存在或不属于当前会话");
+        }
+        String group = active.getVariantGroup();
+        if (group == null || group.isBlank()) {
+            throw new com.wenqu.ai.common.BizException(400, "该消息没有可切换的历史版本");
+        }
+        // 组内代表按序号升序即版本序列（含已软删的历史版本）
+        List<Message> reps = messageMapper.selectVariantMessages(sessionId).stream()
+                .filter(m -> group.equals(m.getVariantGroup()))
+                .toList();
+        int idx = -1;
+        for (int i = 0; i < reps.size(); i++) {
+            if (messageId.equals(reps.get(i).getId())) { idx = i; break; }
+        }
+        if (idx < 0) {
+            throw new com.wenqu.ai.common.BizException(404, "版本定位失败，请刷新后重试");
+        }
+        int ti = idx + delta;
+        if (ti < 0 || ti >= reps.size()) return 0;
+        Message target = reps.get(ti);
+        List<String> restoreIds = parseTailIds(target.getVariantTail());
+        // 恢复成员必须完整在库（未被 retention 物理清理）：缺任何一个都按「已过保留期」拒绝，
+        // 不做部分恢复——半新半旧的拼接分支比切换失败更糟
+        if (restoreIds.isEmpty()
+                || !messageMapper.selectExistingIdsIncludingDeleted(restoreIds).containsAll(restoreIds)) {
+            throw new com.wenqu.ai.common.BizException(410, "旧版本已过保留期，无法切换");
+        }
+        // 顺序敏感：先快照当前激活分支（此刻可见集合还干净），再恢复目标分支，最后按快照软删当前分支。
+        // 软删按 ID 精确操作与序号无关，恢复进来的旧分支行不会被误删
+        List<String> activeTailIds = visibleTailIds(sessionId, active.getSequence());
+        messageMapper.updateVariantById(active.getId(), group, JSON.toJSONString(activeTailIds));
+        int restored = 0;
+        for (String id : restoreIds) {
+            restored += messageMapper.restoreById(id);
+        }
+        if (restored == 0) {
+            throw new com.wenqu.ai.common.BizException(410, "旧版本已过保留期，无法切换");
+        }
+        softDeleteIds(activeTailIds);
+        syncCountBestEffort(sessionId);
+        clearSession(sessionId);
+        return restored;
+    }
+
+    /**
+     * 历史回填分支版本信息：对带版本组的可见消息补 variantCount（组内版本总数）与
+     * variantIndex（按序号排位的当前版本序号，1 起）——前端 ‹ n/N › 切换器的数据源。
+     * 一次轻量查询（仅带组标记的行），无分组消息的存量会话零开销。
+     */
+    public void attachVariantInfo(String sessionId, List<Map<String, Object>> history) {
+        if (history == null || history.isEmpty()
+                || sessionId == null || sessionId.isBlank()) return;
+        try {
+            List<Message> variants = messageMapper.selectVariantMessages(sessionId);
+            if (variants.isEmpty()) return;
+            Map<String, List<Message>> byGroup = new LinkedHashMap<>();
+            for (Message m : variants) {
+                if (m.getVariantGroup() != null && !m.getVariantGroup().isBlank()) {
+                    byGroup.computeIfAbsent(m.getVariantGroup(), k -> new ArrayList<>()).add(m);
+                }
+            }
+            for (Map<String, Object> msg : history) {
+                Object mid = msg.get("messageId");
+                if (mid == null) continue;
+                for (Map.Entry<String, List<Message>> e : byGroup.entrySet()) {
+                    List<Message> reps = e.getValue();
+                    for (int i = 0; i < reps.size(); i++) {
+                        if (String.valueOf(mid).equals(reps.get(i).getId())) {
+                            msg.put("variantGroup", e.getKey());
+                            msg.put("variantCount", reps.size());
+                            msg.put("variantIndex", i + 1);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[BRANCH] 历史版本信息回填失败 (session={}): {}", sessionId, e.getMessage());
+        }
+    }
+
+    /** 会话内 seq &gt;= fromSeq 的可见消息 ID（升序）——分支尾部快照的取数口径 */
+    private List<String> visibleTailIds(String sessionId, int fromSeq) {
+        return messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                        .eq(Message::getSessionId, sessionId)
+                        .ge(Message::getSequence, fromSeq)
+                        .orderByAsc(Message::getSequence))
+                .stream().map(Message::getId).toList();
+    }
+
+    /** 按 ID 精确软删一批消息；删不齐留痕（历史可能出现两条并存的回答，与旧口径一致不阻断） */
+    private void softDeleteIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        int n = messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                .in(Message::getId, ids)
+                .set(Message::getDeleted, 1));
+        if (n < ids.size()) {
+            log.warn("[FAIL-LOUD] 分支软删不完整 ({}/{}): 历史可能出现并存分支", n, ids.size());
+        }
+    }
+
+    /** 会话消息计数同步（best-effort，仅侧栏展示口径）：取物理最大序号，分支恢复/让位后不缩水 */
+    private void syncCountBestEffort(String sessionId) {
+        try {
+            Session upd = new Session();
+            upd.setId(sessionId);
+            upd.setMessageCount(messageMapper.maxSequencePhysical(sessionId));
+            sessionMapper.updateById(upd);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 尾部快照 JSON → 消息 ID 列表（脏数据按空处理，切换接口据此报「已过保留期」） */
+    private List<String> parseTailIds(String tailJson) {
+        if (tailJson == null || tailJson.isBlank()) return List.of();
+        try {
+            List<String> ids = JSON.parseArray(tailJson, String.class);
+            return ids == null ? List.of()
+                    : ids.stream().filter(s -> s != null && !s.isBlank()).toList();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    public int deleteRound(String sessionId, String assistantMessageId) {        Message assistant = messageMapper.selectById(assistantMessageId);
         if (assistant == null || !sessionId.equals(assistant.getSessionId())) return 0;
         List<String> ids = new ArrayList<>();
         ids.add(assistant.getId());

@@ -223,12 +223,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `agent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮生效的智能体（取自会话级绑定的当轮快照；NULL=未使用智能体）',
     `agent_name`  VARCHAR(100) DEFAULT NULL COMMENT '本轮智能体名称快照（智能体改名/删除后历史消息仍可展示原名称）',
+    `variant_group` VARCHAR(64) DEFAULT NULL COMMENT '分支版本组键（编辑重发/重新生成的同一位置各版本共用一个组；NULL=不属于任何版本组）',
+    `variant_tail` TEXT         DEFAULT NULL COMMENT '该版本被替换时刻的可见尾部消息ID快照（JSON数组，含本条），切回分支时按此恢复；sessionRetentionDays 物理清理后恢复返回 0',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `deleted`     INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     PRIMARY KEY (`id`),
     KEY `idx_session_id` (`session_id`, `sequence`),
-    KEY `idx_deleted_create` (`deleted`, `create_time`)
+    KEY `idx_deleted_create` (`deleted`, `create_time`),
+    KEY `idx_variant_group` (`variant_group`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI消息表';
 
 -- ============================================

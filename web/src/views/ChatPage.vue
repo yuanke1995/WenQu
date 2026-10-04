@@ -326,12 +326,13 @@
               <button class="app-btn ghost" :disabled="loading" @click="regenerate(i)"><reload-outlined /> 重试</button>
             </div>
             <div v-if="m.role === 'ai' && !m.loading && (m.messageId || m.time)" class="fb-row">
-              <!-- 重新生成的多版本切换器（版本只保留在当前会话内：刷新后为最后一版） -->
-              <div v-if="m.versions && m.versions.length > 1" class="ver-switch"
-                   title="这一题有多个重新生成的版本，可来回切换（仅当前会话内保留，刷新后为最后一版）">
-                <button class="ver-btn" :disabled="(m.vIndex || 0) === 0" @click="switchVersion(i, -1)">‹</button>
-                <span class="ver-idx">{{ (m.vIndex || 0) + 1 }}/{{ m.versions.length }}</span>
-                <button class="ver-btn" :disabled="(m.vIndex || 0) >= m.versions.length - 1" @click="switchVersion(i, 1)">›</button>
+              <!-- 重新生成的多版本切换器：本会话内用内存版本（versions）即时切换；
+                   刷新后/编辑重发用持久分支（variantCount）走后端切换，旧版本按保留期留存 -->
+              <div v-if="(m.versions && m.versions.length > 1) || m.variantCount > 1" class="ver-switch"
+                   title="这一回答有多个版本，可来回切换（旧版本按保留期清理）">
+                <button class="ver-btn" :disabled="!canSwitchPrev(m)" @click="switchBranch(i, -1)">‹</button>
+                <span class="ver-idx">{{ verLabel(m) }}</span>
+                <button class="ver-btn" :disabled="!canSwitchNext(m)" @click="switchBranch(i, 1)">›</button>
               </div>
               <template v-if="m.messageId">
                 <a-tooltip title="复制"><button class="app-icon-btn" @click="copyAnswer(i)"><copy-outlined /></button></a-tooltip>
@@ -358,13 +359,32 @@
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
             <div v-if="m.role === 'user'" class="msg-edit-row">
+              <!-- 编辑重发的分支切换器：这一问有多个版本（历史编辑留下的旧分支）可来回切 -->
+              <div v-if="m.variantCount > 1" class="ver-switch"
+                   title="这个问题编辑过多个版本，可来回切换（旧版本按保留期清理）">
+                <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click="switchBranch(i, -1)">‹</button>
+                <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
+                <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click="switchBranch(i, 1)">›</button>
+              </div>
               <a-tooltip title="复制问题" placement="top">
                 <copy-outlined class="app-icon-btn" @click="copyUserMessage(m)" />
               </a-tooltip>
-              <a-tooltip title="编辑此问题重新发送" placement="top">
+              <a-tooltip title="编辑此问题，从这一轮重新生成" placement="top">
                 <edit-outlined class="app-icon-btn" @click="editMessage(i)" />
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
+            </div>
+            <!-- 就地编辑框：确认后从这一轮整段重新生成，旧分支软删留档可切回 -->
+            <div v-if="m.role === 'user' && editingIdx === i" class="msg-inline-edit">
+              <textarea :ref="setEditingRef" v-model="editingText" class="msg-inline-edit-input" rows="3"
+                        @keydown.enter.exact.prevent="confirmEdit" @keydown.esc.prevent="cancelEdit" />
+              <div class="msg-inline-edit-actions">
+                <span class="msg-inline-edit-hint">发送后将从这一轮重新生成，旧回答保留为可切换的版本</span>
+                <button class="app-btn ghost small" @click="cancelEdit">取消</button>
+                <button class="app-btn small" :disabled="editingBusy || !editingText.trim()" @click="confirmEdit">
+                  <send-outlined /> 重新生成
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -980,9 +1000,9 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CompressOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined } from '@ant-design/icons-vue'
+         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, SendOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
-         getKnowledgeDetail, debugRetrieval, deleteMessageGroup, getConfig, getRuntimeConfig, listAvailableAgents,
+         getKnowledgeDetail, debugRetrieval, deleteMessageGroup, switchMessageVariant, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, getUserSettings, approveToolCall, addEvalCase,
          listKnowledgeBases, listDocuments, uploadChatAttachment,
          getSessionShare, enableSessionShare, disableSessionShare } from '../api'
@@ -1137,8 +1157,20 @@ const extendTimelineProcess = (m, from, to) => {
 
 // 过程独白折叠态：键用段起点 from（流式期间 to 随增量增长、from 稳定；timelineView 每帧重算，
 // 段对象本身不保状态，与工具卡 _open 存在 toolCalls 对象上同理，这里挂在消息上）。
-// 未点击过时默认折叠（时间线保持紧凑，点标题才展开看思考过程）。
-const procOpen = (m, seg) => !!(m && m._procOpen && m._procOpen[seg.from] === true)
+// 用户点过就认点过的（true/false 写死在 _procOpen 上）；没点过时：流式期间自动展开「正在长的那一段」
+// （过程按 token 增量下发，展开才看得见它逐字长出，而不是等闭合标签到达整块蹦出），本轮结束自动收起
+// ——与深度思考面板同款（thinkOpen 流式期 true、thinking_done 置 false），历史消息恒折叠。
+const procOpen = (m, seg) => {
+  const marked = m && m._procOpen ? m._procOpen[seg.from] : undefined
+  if (marked === true) return true
+  if (marked === false) return false
+  if (!m || !m.loading) return false
+  const tl = Array.isArray(m.timeline) ? m.timeline : []
+  for (let i = tl.length - 1; i >= 0; i--) {
+    if (tl[i] && tl[i].kind === 'process') return (Number(tl[i].from) || 0) === (Number(seg.from) || 0)
+  }
+  return false
+}
 const toggleProc = (m, seg) => {
   if (!m._procOpen) m._procOpen = {}
   m._procOpen[seg.from] = !procOpen(m, seg)
@@ -2453,6 +2485,9 @@ const switchSession = async sid => {
             agentName: typeof m.agentName === 'string' ? m.agentName : '',
             // 本轮生效模型引用（随助手消息落库）：「模型已切换」分隔记录的比对数据源，旧消息无此字段则为空
             model: typeof m.model === 'string' ? m.model : '',
+            // 分支版本（编辑重发/重新生成的持久化多版本）：‹ n/N › 切换器的数据源，无版本的消息为 null
+            variantCount: m.variantCount || null,
+            variantIndex: m.variantIndex || null,
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
             // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
             subagents: (() => {
@@ -3137,9 +3172,11 @@ const send = () => {
   pendingHistoryRefs.value = []
   const deep = deepThinkOn.value
   // attachData 留在内存消息上：重新生成/自动重试时可原样重发（历史回放无数据，行为与图片 data: 口径一致）
-  messages.value.push({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
-                        skills, mentions, historyRefs, deepThink: deep, time: Date.now() })
-  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions, null, historyRefs)
+  const userMsg = reactive({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
+                        skills, mentions, historyRefs, deepThink: deep, time: Date.now(), messageId: null })
+  messages.value.push(userMsg)
+  // userMsg 传入流式：done 回填本轮用户消息的落库 ID（userMessageId），编辑重发/分支切换从此可用
+  streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions, null, historyRefs, '', userMsg)
 }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
@@ -3219,7 +3256,8 @@ async function resolveApproval (m, approved) {
 }
 
 const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
-                      attachments = [], skills = [], mentions = [], prev = null, historyRefs = []) => {
+                      attachments = [], skills = [], mentions = [], prev = null, historyRefs = [],
+                      editMessageId = '', editUserMsg = null) => {
   // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
@@ -3253,7 +3291,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 长回答越流越卡。done/停止等终态路径 flushNow() 保底：最终态完整、不丢已流出内容。
   let flushTimer = null
   let flushedLen = 0
-  const flushNow = () => {
+  const flushNow = (keepScroll = true) => {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
     if (full.length > flushedLen) {
       extendTimelineText(msg, flushedLen, full.length)
@@ -3261,12 +3299,14 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     }
     if (msg.content !== full) msg.content = full
     // 正文增长必须在这里推进视角：token 不走 liveScroll（只进缓冲、由这里批量落屏），
-    // 少这一下长回答就只跟到最后一个 stage 事件，新内容滚出屏幕看不见
-    liveScroll()
+    // 少这一下长回答就只跟到最后一个 stage 事件，新内容滚出屏幕看不见。
+    // keepScroll=false：调用方（过程独白增量）随后自己会补 liveScroll，避免同一次落屏量两遍 DOM
+    if (keepScroll) liveScroll()
   }
   const flushSoon = () => {
     if (flushTimer) return
-    flushTimer = setTimeout(flushNow, 120)
+    // 包一层：flushNow 现带 keepScroll 形参，避免把定时器回调的实参当成它
+    flushTimer = setTimeout(() => flushNow(), 120)
   }
   sendQuestion(sid, question, imgs, {
     signal: abort.signal,
@@ -3285,6 +3325,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 被替换的旧回答消息 ID（仅重新生成时非空：自动重试的那一轮还没落库，messageId 为 null）；
     // 后端据此在落库前软删旧行，历史里只留最新一版
     replaceMessageId: replacedMessageId,
+    // 编辑重发：被编辑的用户消息 ID（后端软删其旧分支留档，编辑内容作为新分支重新生成）
+    editMessageId,
     agentId,
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
     model,
@@ -3303,7 +3345,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     onToken: t => { gotToken = true; full += t; flushSoon(); msg.stage = ''; msg.thinkLoading = false },
     onProcess: t => {
-      // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）
+      // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）。
+      // 后端按 token 增量下发，这里逐条追加即成流式。先 flushNow 落屏节流中的正文：正文 token 走
+      // 120ms 节流而过程事件即时到达，不先刷正文，过程段会被记在尚未落屏的正文之前——实时视图里
+      // 灰字块跳到正文上方（done 用落库版时间线校正后又会跳回去，一来一回正是「块突然出现又移位」）
+      flushNow(false)
       const prevLen = (msg.processText || '').length
       msg.processText = (msg.processText || '') + t
       extendTimelineProcess(msg, prevLen, msg.processText.length)
@@ -3452,6 +3498,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         related = Array.isArray(p.related) ? p.related : []
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
+        // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
+        // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
+        if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
         // 会话级绑定：首问后本会话即锁定智能体（agentLocked 由后端下发，含"绑定为不使用智能体"）。
         // 本地镜像先于会话列表刷新生效，输入区立刻切到锁定态（切换=新会话）
@@ -3599,6 +3648,15 @@ const switchVersion = (mi, delta) => {
   m.vIndex = ni
   applyVersion(m, m.versions[ni])
 }
+// 切换器双数据源的边界判定/文案：内存 versions（本会话重新生成）优先，其次持久 variant（历史恢复/编辑重发）
+const verLocal = m => Array.isArray(m.versions) && m.versions.length > 1
+const canSwitchPrev = m => verLocal(m) ? (m.vIndex || 0) > 0 : (m.variantIndex || 1) > 1
+const canSwitchNext = m => verLocal(m)
+  ? (m.vIndex || 0) < m.versions.length - 1
+  : (m.variantIndex || 1) < (m.variantCount || 1)
+const verLabel = m => verLocal(m)
+  ? `${(m.vIndex || 0) + 1}/${m.versions.length}`
+  : `${m.variantIndex || 1}/${m.variantCount || 1}`
 
 const regenerate = mi => {
   if (loading.value) return
@@ -3756,15 +3814,91 @@ const debugStages = computed(() => {
   ]
 })
 
-// 编辑问题重新发送
+// ==================== 消息编辑重发（从该轮重新生成，旧分支可回看切换） ====================
+// 就地编辑：点「编辑」在该气泡下展开编辑框，确认后从这一轮整段重新生成——
+// 被编辑消息及其后的旧分支由后端软删留档（variant_group/variant_tail），可随时切回。
+// 编辑重发与直接回填输入框（旧行为，发起新一轮）是两个入口：这里走 editMessageId 分支链路。
+const editingIdx = ref(null)
+const editingText = ref('')
+const editingBusy = ref(false)
+const editingRef = ref(null)
+// v-for 内的模板 ref 走函数式（ref 属性在循环里会聚集成数组，取值麻烦）
+const setEditingRef = el => { editingRef.value = el }
+
 const editMessage = mi => {
+  if (loading.value || editingBusy.value) return
   const m = messages.value[mi]
   if (!m || m.role !== 'user') return
-  text.value = m.content
-  const localImgs = (m.images || []).filter(u => u.startsWith('data:'))
-  if (localImgs.length) pendingImages.value = [...pendingImages.value, ...localImgs.map(u => ({ dataUrl: u }))]
-  nextTick(() => textareaRef.value?.focus())
-  message.info('已回填到输入框，修改后按 Enter 发送')
+  if (!m.messageId) { message.warning('该消息尚未落库（流式回答中），请稍后再编辑'); return }
+  // 已有编辑框在别处打开：切换目标
+  editingIdx.value = mi
+  editingText.value = m.content
+  nextTick(() => editingRef.value?.focus())
+}
+const cancelEdit = () => { editingIdx.value = null; editingText.value = '' }
+
+const confirmEdit = () => {
+  const mi = editingIdx.value
+  if (mi == null || editingBusy.value) return
+  const old = messages.value[mi]
+  const txt = editingText.value.trim()
+  if (!old || old.role !== 'user') { cancelEdit(); return }
+  if (!txt) { message.warning('内容不能为空'); return }
+  if (txt === old.content) { cancelEdit(); return }  // 内容没变=原样重发，没有分支语义，直接收起
+  if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
+  const editMessageId = old.messageId
+  if (!editMessageId) { message.warning('该消息尚未落库，暂不能编辑重发'); return }
+  cancelEdit()
+  // 本地视图截断到该轮之前：旧分支整体交给后端软删留档，本地不再渲染（切回走分支切换接口+重拉历史）
+  const imgs = (old.images || []).filter(u => u.startsWith('data:'))
+  const atts = Array.isArray(old.attachData) ? old.attachData : []
+  const skills = Array.isArray(old.skills) ? old.skills : []
+  const mentions = Array.isArray(old.mentions) ? old.mentions : []
+  const historyRefs = Array.isArray(old.historyRefs) ? old.historyRefs : []
+  const deep = !!old.deepThink
+  messages.value = messages.value.slice(0, mi)
+  // 新分支的用户消息：继承原消息的图片/附件/引用与档位；版本计数 +1（旧值缺省=首次编辑即 2 版）
+  const verN = (old.variantCount || 1) + 1
+  const nu = reactive({
+    role: 'user', content: txt,
+    images: Array.isArray(old.images) ? [...old.images] : [],
+    attachments: Array.isArray(old.attachments) ? old.attachments : [],
+    attachData: atts, skills, mentions, historyRefs, deepThink: deep,
+    time: Date.now(), messageId: null,
+    variantCount: verN, variantIndex: verN
+  })
+  messages.value.push(nu)
+  streamAnswer(txt, imgs, null, false, 1, deep, atts, skills, mentions, null, historyRefs, editMessageId, nu)
+}
+
+// ==================== 分支版本切换（持久化多版本：编辑重发 + 重新生成刷新后仍可切） ====================
+// 两种数据源统一到一个切换器：
+// - m.versions（本会话内存里的重新生成版本）：纯本地切换，零请求；
+// - m.variantCount/variantIndex（后端持久分支，编辑重发或刷新后的历史恢复）：调切换接口让后端
+//   「当前分支软删留档、目标分支按快照恢复」，随后重拉会话历史刷新整个视图（分支尾部整段变化）。
+const variantSwitching = ref(false)
+const switchBranch = async (mi, delta) => {
+  const m = messages.value[mi]
+  if (!m || variantSwitching.value) return
+  // 本轮正在回答时不允许切分支：流式那轮的父消息可能正被切走的分支持有，落库会错挂
+  if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
+  // 本地内存版本优先（重新生成的即时多版本）
+  if (Array.isArray(m.versions) && m.versions.length > 1) { switchVersion(mi, delta); return }
+  if (!m.messageId || !m.variantCount) return
+  variantSwitching.value = true
+  try {
+    const r = await switchMessageVariant(m.messageId, delta)
+    if (r.success !== false) {
+      // 重拉历史：切回的分支整段尾部都在后端恢复，本地 splice 造不出版本视图
+      await switchSession(currentSessionId.value)
+    } else {
+      message.warning(r.msg || '切换失败')
+    }
+  } catch (e) {
+    message.warning(e?.message || '切换失败')
+  } finally {
+    variantSwitching.value = false
+  }
 }
 
 const stop = () => {
@@ -4217,6 +4351,21 @@ onMounted(async () => {
   opacity: 0; transition: opacity .15s;
 }
 .msg-block:hover .msg-edit-row { opacity: 1; }
+/* 就地编辑框：悬浮在用户气泡下方（与 msg-edit-row 同一挂点层），编辑期间覆盖式展示 */
+.msg-inline-edit {
+  position: absolute; top: calc(100% + 26px); left: 0; right: 0; z-index: 3;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  padding: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .1);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.msg-inline-edit-input {
+  width: 100%; resize: vertical; min-height: 64px; max-height: 240px;
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px;
+  background: var(--app-panel-2); color: var(--app-text); font: inherit; line-height: 1.6; outline: none;
+}
+.msg-inline-edit-input:focus { border-color: var(--app-accent); }
+.msg-inline-edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.msg-inline-edit-hint { margin-right: auto; font-size: 11px; color: var(--app-text3); }
 .msg-time-inline { font-size: 11px; color: var(--app-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
 .msg-tokens { font-size: 11px; color: var(--app-text3); white-space: nowrap; cursor: default; }
 .jump-latest {

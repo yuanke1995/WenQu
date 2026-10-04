@@ -175,6 +175,17 @@ public class ChatController {
         // # 历史引用校验（同上，同步段 fail-loud）：messageId 必须属于当前会话，内容由服务端查库回填
         List<ChatRequest.HistoryRef> historyRefs = validateHistoryRefs(sessionId, request.getHistoryRefs());
 
+        // 编辑重发（消息分支）：被编辑的用户消息在此校验并完成分支手术（旧分支软删留档+快照，同步段 fail-loud，
+        // 异常以明确的 4xx 语义返回而不是流中报错）；返回的组键贯穿本轮，新用户消息落库后挂同一组
+        String editVariantGroup = null;
+        if (request.getEditMessageId() != null && !request.getEditMessageId().isBlank()) {
+            String editId = request.getEditMessageId().trim();
+            if (!editId.matches("[0-9a-fA-F]{32}")) {
+                throw new BizException("被编辑消息标识无效");
+            }
+            editVariantGroup = sessionService.prepareEditBranch(sessionId, editId);
+        }
+
         // 超时配置化（chat.sseTimeoutMs，默认 5 分钟）；超时由 RagService.onTimeout 先发 warn 再 dispose（fail-loud）
         long sseTimeout = configService.getLong("chat.sseTimeoutMs");
         if (sseTimeout <= 0) sseTimeout = 300000L;
@@ -183,7 +194,7 @@ public class ChatController {
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
                 false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs,
-                request.getReasoningLevel(), request.getContextWindow());
+                request.getReasoningLevel(), request.getContextWindow(), editVariantGroup);
         return emitter;
     }
 
@@ -351,6 +362,8 @@ public class ChatController {
             HttpServletRequest httpRequest) {
         sessionService.assertOwned(sessionId, RequestUser.uid());
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
+        // 分支版本信息回填（编辑重发/重新生成的 ‹ n/N › 切换数据源）：带组标记的消息补 variantCount/variantIndex
+        sessionService.attachVariantInfo(sessionId, history);
         // 历史图片存的是原始 URL，响应时动态签名（避免签名过期导致恢复会话图片 401）
         // 同步带回各回答消息的既有评价（fb）：前端"有/没帮助单选锁定"依赖此状态，刷新后不丢
         List<String> msgIds = history.stream()
@@ -499,6 +512,35 @@ public class ChatController {
         int deleted = sessionService.deleteRound(assistant.getSessionId(), assistantMessageId);
         if (deleted == 0) throw new BizException(404, "消息不存在或已删除");
         return ResultJson.ok("已删除该轮对话");
+    }
+
+    @Operation(summary = "切换消息分支版本", description = "编辑重发/重新生成的多版本切换：messageId 为当前可见版本的"
+            + "代表消息 ID（编辑分支=用户消息；重新生成分支=回答），delta=±1 沿版本序列偏移。当前分支整体软删留档、"
+            + "目标版本按快照恢复；旧版本数据已被保留期清理时返回 410")
+    @PostMapping("/message-group/switch")
+    public ResultJson switchMessageVariant(
+            @Parameter(description = "{\"messageId\": \"当前版本的消息 ID\", \"delta\": -1 或 1}")
+            @RequestBody Map<String, Object> body) {
+        String messageId = body.get("messageId") == null ? "" : String.valueOf(body.get("messageId")).trim();
+        if (messageId.isEmpty()) throw new BizException("缺少 messageId");
+        int delta;
+        Object d = body.get("delta");
+        if (d instanceof Number n) {
+            delta = n.intValue();
+        } else {
+            try {
+                delta = Integer.parseInt(String.valueOf(d));
+            } catch (Exception e) {
+                throw new BizException("delta 必须是 -1 或 1");
+            }
+        }
+        if (delta != -1 && delta != 1) throw new BizException("delta 必须是 -1 或 1");
+        // 目标可能是已软删的历史版本代表，先忽略删除标记定位，会话归属照常严格校验
+        com.wenqu.ai.model.Message m = messageMapper.selectByIdIgnoreDeleted(messageId);
+        if (m == null) throw new BizException(404, "消息不存在");
+        sessionService.assertOwned(m.getSessionId(), RequestUser.uid());
+        int restored = sessionService.switchVariant(m.getSessionId(), messageId, delta);
+        return ResultJson.ok(Map.of("restored", restored), restored > 0 ? "已切换版本" : "已是该版本");
     }
 
     @Operation(summary = "撤销删除一轮对话", description = "恢复最近一次按组删除的对话（回答 + 同组用户问题），撤销期内有效")

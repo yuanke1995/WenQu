@@ -93,7 +93,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
     onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess, onUsage,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null
+    contextWindow = null, editMessageId = ''
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -139,6 +139,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       regenerate: regenerate || undefined,
       // 重新生成时被替换的旧回答消息 ID：新回答落库前先软删它，历史里只留最新一版
       replaceMessageId: replaceMessageId || undefined,
+      // 编辑重发：被编辑的用户消息 ID。后端把该消息起的旧分支软删留档（可切换回看），编辑内容作为新分支重新生成
+      editMessageId: editMessageId || undefined,
       // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       skills: Array.isArray(skills) && skills.length ? skills : undefined,
@@ -842,6 +844,11 @@ export const resetConfig = groups =>
 /** 删除一轮对话（按对话组：回答 ID + 其前面的用户问题一起软删除） */
 export const deleteMessageGroup = assistantMessageId =>
   request(`/message-group/${assistantMessageId}`, { method: 'DELETE' })
+
+// 切换消息分支版本（编辑重发/重新生成的历史版本回看）：messageId=当前可见版本的消息 ID，delta=-1|1
+// 后端把当前分支软删留档、按快照恢复目标版本；返回 {restored}，前端随后重拉会话历史刷新视图
+export const switchMessageVariant = (messageId, delta) =>
+  request('/message-group/switch', { method: 'POST', body: JSON.stringify({ messageId, delta }) })
 
 /** 撤销删除一轮对话（撤销期内恢复软删消息） */
 export const undoDeleteMessageGroup = assistantMessageId =>

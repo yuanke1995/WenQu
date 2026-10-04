@@ -543,6 +543,22 @@ public class RagService {
                      boolean guestMode, boolean regenerate, String replaceMessageId,
                      List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
                      Integer requestedContextWindow) {
+        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
+                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
+                historyRefs, reasoningLevel, requestedContextWindow, null);
+    }
+
+    /**
+     * @param editVariantGroup 编辑重发：被编辑消息所在分支的版本组键（控制器同步段 prepareEditBranch 产出）。
+     *                         新用户消息落库后挂同一组，与被替换的旧分支构成可切换的版本序列；null=普通问答
+     */
+    public void chat(String sessionId, String question, List<String> userImages,
+                     List<ChatRequest.Attachment> attachments, List<String> skills,
+                     List<ChatRequest.Mention> mentions, boolean deepThink,
+                     String agentId, String modelOverride, String userId, SseEmitter emitter,
+                     boolean guestMode, boolean regenerate, String replaceMessageId,
+                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
+                     Integer requestedContextWindow, String editVariantGroup) {
         // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
         // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
         final boolean useDeepThink = deepThink;
@@ -567,7 +583,7 @@ public class RagService {
                 try {
                 runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
                         agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                        historyRefs, reasoningLevel, requestedContextWindow);
+                        historyRefs, reasoningLevel, requestedContextWindow, editVariantGroup);
                 } finally {
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -594,7 +610,7 @@ public class RagService {
                          String agentId, String modelOverride, String userId, SseEmitter emitter,
                          boolean guestMode, boolean regenerate, String replaceMessageId,
                          List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
-                         Integer requestedContextWindow) {
+                         Integer requestedContextWindow, String editVariantGroup) {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
@@ -628,7 +644,7 @@ public class RagService {
                         "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
             }
             runWorkflowChat(sessionId, question, userId, emitter, startTime, degradations, degradedCodes,
-                    agent, guestMode, regenerate, replaceMessageId);
+                    agent, guestMode, regenerate, replaceMessageId, editVariantGroup);
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
@@ -776,12 +792,18 @@ public class RagService {
             //     且后续轮次 getRecentHistory 能取到本轮问题——上一轮回答尚未完成/失败时上下文照样延续。
             //     重新生成/自动重试（regenerate=true）不重复落库：该问题已随上一轮请求入库。
             //     落库失败内部已降级 Redis（mysqlPending 补写机制），不阻断本轮回答。
+            //     ID 随 done 下发（userMessageId）：编辑重发后前端要拿真实消息 ID 挂切换器/再编辑。
+            String userMessageId = null;
             if (!regenerate) {
                 List<String> earlyImgUrls = userImgs.stream().map(UserImageService.UserImage::url).toList();
-                sessionService.appendMessage(sessionId, "user", question,
+                userMessageId = sessionService.appendMessage(sessionId, "user", question,
                         earlyImgUrls.isEmpty() ? null : earlyImgUrls, null,
                         null, null, null, null,
                         attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta));
+                // 编辑重发：新用户消息挂上被替换旧分支的版本组键（appendMessage 不为此扩参，落库返回后补挂）
+                if (userMessageId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
+                    sessionService.setMessageVariant(userMessageId, editVariantGroup);
+                }
             }
 
             // # 历史引用文本（两条生成分支共用）：用户从本会话历史显式挑选的问答，前置进本轮上下文
@@ -797,7 +819,8 @@ public class RagService {
                 String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
-                        degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId);
+                        degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
+                        userMessageId);
                 return;
             }
 
@@ -1478,6 +1501,7 @@ public class RagService {
             st.reasoningLevel = thinkLevel; // 本轮思考强度档位（请求级优先，null=只有开关无强度）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
+            st.userMessageId = userMessageId; // 本轮用户消息 ID（编辑重发后前端挂切换器/再编辑用）
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
@@ -2111,16 +2135,21 @@ public class RagService {
             String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
             String processText = st.processResponse.toString();
             Map<String, Object> tokens = buildUsageSnapshot(st, answer);
-            // 重新生成被中断：同样软删被替换的旧回答——用户已看到新版在气泡里替代旧版，历史保持同观感
+            // 重新生成被中断：同样软删被替换的旧回答并登记分支版本组——用户已看到新版在气泡里替代旧版，
+            // 历史保持同观感（半程截断版同样挂组，多版本口径一致）
+            String replaceGroup = null;
             if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
-                sessionService.deleteMessage(st.replaceMessageId);
+                replaceGroup = sessionService.beginAnswerReplace(st.replaceMessageId);
             }
-            sessionService.appendMessage(st.sessionId, "assistant", answer + TRUNCATION_SUFFIX,
+            String partialMessageId = sessionService.appendMessage(st.sessionId, "assistant", answer + TRUNCATION_SUFFIX,
                     finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                     sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
                     toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
                     processText.isEmpty() ? null : processText,
                     st.agentId, st.agentName, st.model);
+            if (replaceGroup != null && partialMessageId != null) {
+                sessionService.setMessageVariant(partialMessageId, replaceGroup);
+            }
             // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
             artifactService.unregisterEmitter(st.sessionId);
             log.info("[SSE] 中断兜底：半程回答已按截断态落库 (session={}, chars={})", st.sessionId, answer.length());
@@ -2471,12 +2500,25 @@ public class RagService {
                 .doOnNext(token -> {
                     st.emitBuf.append(token);
                     String bufStr = st.emitBuf.toString();
+                    // 未闭合的 <process> 开口：开口后的内容走增量通道（过程独白按 token 流式下发，不再等
+                    // </process> 到达才整块蹦出）。开口前的内容（head）照旧走下面的完整块/正文剥离流程；
+                    // 开口后的正文（openBody）只扣留「可能是 </process> 真前缀」的尾巴，其余立即下发；
+                    // 缓冲收敛为「开口标签 + 尾巴」，下一 token 从同一开口位置继续追加。
+                    int openIdx = bufStr.lastIndexOf("<process>");
+                    boolean openProcess = openIdx >= 0 && bufStr.indexOf("</process>", openIdx) < 0;
+                    String head = openProcess ? bufStr.substring(0, openIdx) : bufStr;
+                    String openBody = openProcess ? bufStr.substring(openIdx + "<process>".length()) : null;
                     // 存在未完整闭合的 related/process 块（开始/闭合标签被跨 token 切分也覆盖）：继续缓冲不下发
-                    boolean unclosedRelated = containsUnclosedRelated(bufStr);
-                    boolean unclosedProcess = containsUnclosedProcess(bufStr);
+                    // （process 的未闭合开口已切到 openBody 增量通道，head 里只剩半截开始标签这类残留）
+                    boolean unclosedRelated = containsUnclosedRelated(head);
+                    boolean unclosedProcess = containsUnclosedProcess(head);
                     if (unclosedRelated || unclosedProcess) {
                         if (bufStr.length() > 3000) {
                             st.emitBuf.setLength(0);
+                            // 缓冲整体倾倒，未闭合开口的增量态一并归零（其内容已随本次倾倒归入过程通道）
+                            st.processOpen = false;
+                            st.openProcessChars = 0;
+                            st.processMalformedNoted = false;
                             if (unclosedProcess && !unclosedRelated && bufStr.contains("<process>")) {
                                 // 未闭合 <process>（模型漏写闭合标签）：开口前是正文走 token，
                                 // 其后剥标签整体归入过程通道（fail-loud 标记）——按原文发正文会把独白漏给用户
@@ -2510,17 +2552,41 @@ public class RagService {
                     }
                     // 提取完整 process 块 → 过程通道（不进正文）：实时 SSE process 事件 + 时间线过程段
                     StringBuilder procBuf = new StringBuilder();
-                    java.util.regex.Matcher pm = processPattern.matcher(bufStr);
+                    java.util.regex.Matcher pm = processPattern.matcher(head);
                     // 每个块内容剥前导空白：模型写 "<process>\n内容\n</process>"，标签后的换行是格式噪声，
                     // 不剥则灰字块顶部空一行且随消息落库（多个块同批拼接时中间也会出空白行）
                     while (pm.find()) procBuf.append(pm.group(1).stripLeading());
-                    String clean = bufStr.replaceAll("<process>[\\s\\S]*?</process>", "");
+                    String clean = head.replaceAll("<process>[\\s\\S]*?</process>", "");
                     // 剥离完整 related 块，收集推荐内容
                     java.util.regex.Matcher rm = relatedPattern.matcher(clean);
                     while (rm.find()) {
                         st.relatedBlock.append(rm.group(1)).append("\n");
                     }
                     clean = clean.replaceAll("<related>[\\s\\S]*?</related>", "");
+                    // 未闭合开口的增量：扣留可能是 </process> 真前缀的尾巴，其余立即下发。首块剥前导空白
+                    // （模型写 "<process>\n内容"，不剥则灰字块顶部空一行），其后原样追加（段内换行属模型内容）
+                    String emitProc = "";
+                    String heldProc = "";
+                    if (openBody != null) {
+                        int keepProc = processEndPrefixSuffixLen(openBody);
+                        heldProc = openBody.substring(openBody.length() - keepProc);
+                        emitProc = openBody.substring(0, openBody.length() - keepProc);
+                        if (!st.processOpen) {
+                            emitProc = emitProc.stripLeading();
+                            st.processOpen = !emitProc.isEmpty(); // 剥完仍空（当前只到换行）：下个增量继续剥
+                        }
+                        st.openProcessChars += emitProc.length();
+                        if (st.openProcessChars > 3000 && !st.processMalformedNoted) {
+                            st.processMalformedNoted = true;
+                            addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                                    "模型输出格式异常（process 标签长时间未闭合），已按过程叙述继续呈现");
+                        }
+                    } else {
+                        // 开口已闭合（或本批无开口）：增量态归零，下一个开口重新按首块处理
+                        st.processOpen = false;
+                        st.openProcessChars = 0;
+                        st.processMalformedNoted = false;
+                    }
                     // 尾部只扣留「可能是标签真前缀」的后缀（通常 0 字符），其余立即下发——
                     // 此前固定扣 19 字符：正文 token 滞后下发而 tool_status/process 事件即时下发，
                     // 旁路事件越过未下发正文 ⇒ 前端实时时间线错序断词（「提|示文件已存在」被劈开）
@@ -2529,6 +2595,8 @@ public class RagService {
                     String sendPart = clean.substring(0, clean.length() - keep);
                     String tailKeep = clean.substring(clean.length() - keep);
                     st.emitBuf.append(tailKeep);
+                    // 开口标签与扣留尾巴留在缓冲：下一 token 仍从此开口位置续（增量态因此可跨 token 延续）
+                    if (openBody != null) st.emitBuf.append("<process>").append(heldProc);
                     if (!sendPart.isEmpty()) {
                         st.fullResponse.append(sendPart);
                         // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）
@@ -2539,6 +2607,10 @@ public class RagService {
                     // 过程事件在正文之后下发（同缓冲内先到的正文先行，保持流式顺序）
                     if (procBuf.length() > 0) {
                         routeProcessText(st, procBuf.toString());
+                    }
+                    // 未闭合开口的增量紧随其后（到达顺序即真实顺序，前端按序续写过程段）
+                    if (!emitProc.isEmpty()) {
+                        routeProcessText(st, emitProc);
                     }
                 })
                 .doOnError(error -> {
@@ -2562,6 +2634,10 @@ public class RagService {
                         st.timelineAnchor.set(0);
                         st.processResponse.setLength(0);
                         st.processAnchor.set(0);
+                        // 未闭合开口的增量态同属本轮缓冲：一并归零（否则重试后首块不再剥前导空白）
+                        st.processOpen = false;
+                        st.openProcessChars = 0;
+                        st.processMalformedNoted = false;
                         st.disposableRef.set(buildAnswerStream(system, user, st, agent));
                         return;
                     }
@@ -2624,7 +2700,11 @@ public class RagService {
                             st.fullResponse.append(rest);
                             sendSseEvent(emitter, "token", rest, st.sessionId);
                         }
-                        // 正文下发后再路由过程独白（流式顺序：先到的正文先行）
+                        // 正文下发后再路由过程独白（流式顺序：先到的正文先行）。
+                        // 尾部可能压着半截 </process>（输出触顶截断在闭合标签之前）：剥掉，
+                        // 免得 "</pro" 这类残片当成过程内容落屏/落库
+                        int ptLt = procTail.lastIndexOf("<");
+                        if (ptLt >= 0 && isProcessEndStart(procTail.substring(ptLt))) procTail.setLength(ptLt);
                         if (procTail.length() > 0) {
                             routeProcessText(st, procTail.toString());
                         }
@@ -2792,9 +2872,11 @@ public class RagService {
                     String messageId = null;
                     if (st.answerPersistGate.compareAndSet(false, true)) {
                         // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
-                        // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案
+                        // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案。
+                        // 旧回答软删时登记分支版本组（组键挂到新回答），多版本可跨刷新切换
+                        String replaceGroup = null;
                         if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
-                            sessionService.deleteMessage(st.replaceMessageId);
+                            replaceGroup = sessionService.beginAnswerReplace(st.replaceMessageId);
                         }
                         // 16 参重载（含 tokens/model）：助手消息把用量 JSON 与生效模型随行落库
                         // （历史回看/会话累计 + 使用统计按模型分组的数据源）
@@ -2810,6 +2892,10 @@ public class RagService {
                                 agent == null ? null : agent.getId(),
                                 agent == null ? null : agent.getName(),
                                 st.model);
+                        // 新回答挂上被替换旧回答的版本组键：组内版本序列即 ‹ n/N › 切换数据源
+                        if (replaceGroup != null && messageId != null) {
+                            sessionService.setMessageVariant(messageId, replaceGroup);
+                        }
                     }
 
                     // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
@@ -2825,6 +2911,11 @@ public class RagService {
                     donePayload.put("sources", imageUrlSigner.signSourceImages(sources));
                     donePayload.put("related", related);
                     donePayload.put("messageId", messageId);
+                    // 本轮用户消息 ID（regenerate 时为 null，沿用上一轮请求已入库的消息）：
+                    // 编辑重发后前端给新用户消息挂分支切换器、支持再次编辑
+                    if (st.userMessageId != null && !st.userMessageId.isBlank()) {
+                        donePayload.put("userMessageId", st.userMessageId);
+                    }
                     donePayload.put("finalContent", answer);
                     // 必须与前面的 image 事件一致地动态签名：前端 onDone 会用 finalImages 覆盖流式期间已签名的
                     // images，若此处下发原始 URL，回答完成瞬间图片立即 401（"图片链接无效或已过期"），
@@ -2919,6 +3010,11 @@ public class RagService {
         final StringBuilder processResponse = new StringBuilder();
         /** 过程时间线锚点：下一个过程段的起点（已记入时间线的过程独白长度），工具/产物插入时先成段 */
         final java.util.concurrent.atomic.AtomicInteger processAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
+        /** 未闭合 &lt;process&gt; 开口的增量下发状态：processOpen=本开口已下发过首块（首块剥前导空白，
+         *  其后原样追加）；openProcessChars=本开口已下发字符数（长时间不闭合时 fail-loud 提示一次） */
+        volatile boolean processOpen;
+        volatile int openProcessChars;
+        volatile boolean processMalformedNoted;
         /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
         volatile Map<String, String> docFileNames;
         /** 工具来源引用编号 → 该来源图片的全局图片编号清单（重复注册同一块时原样返回，供工具文本重复附清单） */
@@ -2992,6 +3088,9 @@ public class RagService {
         volatile Map<String, Object> subagentRoute = null;
         /** 重新生成时被替换的旧回答消息 ID：落库前软删旧行（历史只留最新一版；null=普通问答） */
         volatile String replaceMessageId;
+        /** 本轮用户消息 ID（0.3 段即时落库返回；regenerate 时为 null——沿用上一轮请求已入库的消息）。
+         *  随 done 下发：编辑重发后前端用它给新用户消息挂分支切换器、支持再次编辑 */
+        volatile String userMessageId;
         /** 助手消息落库幂等闸：正常完成（doOnComplete）与中断兜底（disposeSafe → persistPartialAnswer）
          *  两条路径 CAS 先到先得——SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条 */
         final java.util.concurrent.atomic.AtomicBoolean answerPersistGate = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -3381,6 +3480,21 @@ public class RagService {
         for (int i = start; i < s.length(); i++) {
             String tail = s.substring(i);
             if (isTagPrefix(tail)) return s.length() - i; // 最小 i = 最长后缀，一次扣足
+        }
+        return 0;
+    }
+
+    /**
+     * 未闭合 process 块增量下发的尾部扣留长度：块内只可能出现 &lt;/process&gt; 一个标签，
+     * 因此只扣「可能是它真前缀」的后缀（≤9 字符），其余内容立即下发——过程独白据此与正文一样
+     * 按 token 流式长出，而不是等闭合标签到达整块蹦出。
+     */
+    private static int processEndPrefixSuffixLen(String s) {
+        if (s.isEmpty()) return 0;
+        int start = Math.max(0, s.length() - 9);
+        for (int i = start; i < s.length(); i++) {
+            String tail = s.substring(i);
+            if (tail.length() < "</process>".length() && "</process>".startsWith(tail)) return s.length() - i;
         }
         return 0;
     }
@@ -4982,13 +5096,18 @@ public class RagService {
     private void runWorkflowChat(String sessionId, String question, String userId, SseEmitter emitter,
                                  long startTime, List<Map<String, String>> degradations,
                                  Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate,
-                                 String replaceMessageId) {
+                                 String replaceMessageId, String editVariantGroup) {
         sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
         java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
         try {
+            String workflowUserMsgId = null;
             if (!regenerate) {
-                sessionService.appendMessage(sessionId, "user", question, null, null, null, null, null, null, null);
+                workflowUserMsgId = sessionService.appendMessage(sessionId, "user", question, null, null, null, null, null, null, null);
+                // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与主链路同口径）
+                if (workflowUserMsgId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
+                    sessionService.setMessageVariant(workflowUserMsgId, editVariantGroup);
+                }
             }
             Map<String, Object> inputs = buildWorkflowInputs(sessionId, question, degradations, degradedCodes);
             StringBuilder streamed = new StringBuilder();
@@ -5020,14 +5139,18 @@ public class RagService {
             }
             String answer = workflowAnswerOf(run);
             Map<String, Object> tokens = workflowTokensOf(run);
-            // 重新生成：先软删被替换的旧回答（与主链路口径一致，避免历史出现两条答案）
+            // 重新生成：先软删被替换的旧回答并登记分支版本组（与主链路口径一致，多版本可切换）
+            String replaceGroup = null;
             if (replaceMessageId != null && !replaceMessageId.isBlank()) {
-                sessionService.deleteMessage(replaceMessageId);
+                replaceGroup = sessionService.beginAnswerReplace(replaceMessageId);
             }
             String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
                     workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
                     null, JSON.toJSONString(tokens), null, null,
                     agent.getId(), agent.getName());
+            if (replaceGroup != null && messageId != null) {
+                sessionService.setMessageVariant(messageId, replaceGroup);
+            }
             qaLogService.logAsync(sessionId, question, answer, List.of(), false,
                     System.currentTimeMillis() - startTime, question, null, false,
                     messageId, agent.getId());
@@ -5035,6 +5158,10 @@ public class RagService {
             donePayload.put("sources", List.of());
             donePayload.put("related", List.of());
             donePayload.put("messageId", messageId);
+            // 本轮用户消息 ID（编辑重发后前端给新用户消息挂分支切换器；regenerate 时为 null 不下发）
+            if (workflowUserMsgId != null && !workflowUserMsgId.isBlank()) {
+                donePayload.put("userMessageId", workflowUserMsgId);
+            }
             donePayload.put("finalContent", answer);
             // 与主链路一致地动态签名（前端 onDone 用 finalImages 覆盖流式期间已签名的 images；
             // 落库存的是原始 URL，此处仅对下发副本签名）
@@ -5166,7 +5293,8 @@ public class RagService {
                                     SseEmitter emitter, long startTime,
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
-                                    String resolvedModel, boolean guestMode, String replaceMessageId) {
+                                    String resolvedModel, boolean guestMode, String replaceMessageId,
+                                    String userMessageId) {
         try {
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答；
             // 例外：用户 @ 了文档（mentionText 非空）时有参考资料，引用规则按主链路口径放开
@@ -5234,6 +5362,7 @@ public class RagService {
             st.model = resolvedModel;
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
+            st.userMessageId = userMessageId; // 本轮用户消息 ID（随 done 下发，编辑重发后前端挂切换器）
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
