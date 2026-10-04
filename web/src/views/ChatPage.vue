@@ -2,7 +2,9 @@
   <div class="chat2">
     <!-- 中间：标题栏 + 消息流 + 输入区 -->
     <div class="chat-col">
-      <div class="chat-head">
+      <!-- PC 标题栏：窄屏隐藏（与移动顶栏形成双顶栏，图里很明显），
+           其中的会话查找/分享/状态三个动作改由下面的 MobileChatHead 以图标提供 -->
+      <div v-if="!isNarrow" class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
@@ -16,6 +18,8 @@
           <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
         </div>
       </div>
+      <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
+      <MobileChatHead v-if="isNarrow" @search="openSearch" @share="openShare" @panel="togglePanel" />
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
       <div v-if="searchOpen" class="chat-search">
@@ -46,8 +50,10 @@
           <template v-else>
             <h2>有什么可以帮你？</h2>
             <p>智能体与知识库问答，支持图片提问与深度思考</p>
-            <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析） -->
-            <div class="welcome-samples">
+            <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析）
+                 宽屏用 2×2 网格；窄屏换横滑卡片（src/h5/MobileSampleCards.vue）——
+                 网格在 375px 上会把 4 张卡竖排占满一屏、字压到 11px -->
+            <div v-if="!isNarrow" class="welcome-samples">
               <button v-for="q in SAMPLE_QUESTIONS" :key="q.text" class="ws-card" type="button" @click="ask(q.text)">
                 <span class="ws-ic">{{ q.icon }}</span>
                 <span class="ws-text">
@@ -56,6 +62,7 @@
                 </span>
               </button>
             </div>
+            <MobileSampleCards v-else :questions="SAMPLE_QUESTIONS" @ask="ask" />
           </template>
         </div>
 
@@ -539,20 +546,29 @@
             </div>
             <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
           </div>
-          <a-textarea ref="textareaRef" v-model:value="text" placeholder="问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）"
+          <a-textarea ref="textareaRef" v-model:value="text"
+                      :placeholder="isNarrow
+                        ? '问点什么？（@ 引用资料 · / 快捷命令）'
+                        : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @keydown="onInputKeydown" @input="syncPanelQuery" @click="syncPanelQuery" />
-          <div class="input-toolbar">
+          <!-- 工具条。窄屏加 as-mobile 类拿「flex-wrap:nowrap」约束 —— 否则模型名一变长
+               （deepseek-flash），整条换行会把「思考」按钮压成竖排两字（图里的实际症状）。
+               类切换而非两套模板：内部内容两种形态完全相同，不复制。
+               刻意不套包装组件：曾用 <component :is> + 具名 slot 包裹，结果内容全被丢弃 -->
+          <div :class="isNarrow ? 'input-toolbar as-mobile' : 'input-toolbar'">
             <div class="toolbar-left">
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
-                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, locked: agentLocked }"
+                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, locked: agentLocked, 'as-icon': isNarrow }"
                         :title="agentLocked
                           ? `本会话已绑定「${currentAgentName}」，切换智能体会开启新会话`
                           : '选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）'">
                   <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
-                  <span class="agent-pill-name">{{ currentAgentName }}</span>
+                  <!-- 窄屏只留头像：智能体名（如「自动派遣」）+ 模型名会把工具条撑破，
+                       完整名称由 title 与下拉面板承载 -->
+                  <span v-if="!isNarrow" class="agent-pill-name">{{ currentAgentName }}</span>
                   <lock-outlined v-if="agentLocked" class="agent-pill-lock" />
-                  <down-outlined class="agent-pill-caret" />
+                  <down-outlined v-if="!isNarrow" class="agent-pill-caret" />
                 </button>
                 <template #overlay>
                   <div class="agent-menu">
@@ -673,6 +689,7 @@
                    对其它模型则先记住、选中该模型时生效 -->
               <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
+                           :compact="isNarrow"
                            :width="190" :disabled="loading"
                            @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
@@ -1042,6 +1059,9 @@ import BrandMark from '../components/BrandMark.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import { isNarrow, isCoarse } from '../h5/mobile'
+// 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
+import MobileChatHead from '../h5/MobileChatHead.vue'
+import MobileSampleCards from '../h5/MobileSampleCards.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -4494,8 +4514,8 @@ onMounted(async () => {
 
 /* 上下文容量卡（悬浮右栏模型行）：与深度思考面板同一套 fixed 定位约定 */
 .ctxcap-float { position: fixed; z-index: 1060; }
-/* 窄屏 sheet 的关闭口（仅窄屏渲染，见模板）：右上角 34×34 触控热区 */
-.rp-sheet-close {
+  /* 窄屏 sheet 的关闭口（仅窄屏渲染，见模板）：右上角 34×34 触控热区 */
+  .rp-sheet-close {
   position: absolute; top: 6px; right: 8px; z-index: 2;
   width: 34px; height: 34px; border: none; background: transparent; cursor: pointer;
   color: var(--app-text3); font-size: 14px; touch-action: manipulation;
@@ -5179,6 +5199,24 @@ onMounted(async () => {
   .mention-item { padding: 10px 8px; }   /* 触控热区 */
   .mention-foot { display: none; }       /* 窄屏省一条说明文字，省 30px 高度 */
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+
+  /* ---- 工具条窄屏形态：整条不换行 ----
+     症状（真机 375px）：模型名 deepseek-flash 把「思考」按钮压成竖排两字。
+     成因：.input-toolbar 是 flex 但**没设 nowrap**，子项宽度总和超过容器时浏览器换行，
+     而按钮内的文字被压窄后按字符断行。
+     修法：给 .input-toolbar 加 as-mobile 类并设 flex-wrap:nowrap（见 768 块）。
+     这里只补 PC 态没有的收窄项：智能体胶囊只留头像、模型 compact。 */
+  .input-toolbar.as-mobile { flex-wrap: nowrap; gap: 2px; }
+  .input-toolbar.as-mobile .toolbar-left,
+  .input-toolbar.as-mobile .toolbar-right { min-width: 0; }
+  .input-toolbar.as-mobile .toolbar-right { margin-left: auto; }
+  /* 智能体胶囊窄屏只留头像：固定 34×34 圆形，触控热区达标且不占横向空间 */
+  .agent-pill.as-icon { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; }
+  .agent-pill.as-icon .agent-pill-lock { display: none; }  /* 锁标记在窄屏无空间表达，靠下拉里的文案 */
+  /* 思考按钮不折行：nowrap 是必须的，否则「思考」两字会被压成上下两行 */
+  .think-entry-txt { white-space: nowrap; }
+  /* 发送键在窄屏略缩，给工具条腾出宽度（仍 34px，触控达标） */
+  .input-toolbar.as-mobile .send-btn { flex: none; }
 }
 
 /* ==================== 触屏（hover:none）专属 ====================

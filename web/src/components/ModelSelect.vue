@@ -2,12 +2,13 @@
   <a-select
     ref="rootRef"
     :value="modelValue || undefined"
-    :style="{ width: pill ? pillWidth + 'px' : (typeof width === 'string' ? width : (width || 320) + 'px') }"
+    :style="{ width: compact ? '104px' : (pill ? pillWidth + 'px' : (typeof width === 'string' ? width : (width || 320) + 'px')) }"
     :placeholder="placeholder || '选择模型'"
     :disabled="disabled"
     :loading="loading"
     :allow-clear="allowClear"
-    :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue }"
+    :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue, 'ms-compact': compact }"
+    
     popup-class-name="ms-dropdown"
     :dropdown-match-select-width="false"
     option-label-prop="label"
@@ -18,7 +19,7 @@
   >
     <template #suffixIcon>
       <loading-outlined v-if="loading" spin class="ms-caret" />
-      <down-outlined v-else class="ms-caret" />
+      <down-outlined v-else-if="!compact" class="ms-caret" />
     </template>
     <a-select-option v-if="inheritLabel && !pill" value="" :label="inheritLabel">
       <span class="ms-inherit">{{ inheritLabel }}</span>
@@ -82,6 +83,12 @@ const props = defineProps({
   placeholder: { type: String, default: '' },
   /** 宽度：数字=像素；字符串原样使用（如 "100%" 适配表单栅格） */
   width: { type: [Number, String], default: 320 },
+  /** 紧凑形态（窄屏工具条）：固定窄宽 + 省略号 + 不显示下拉箭头。
+   *  窄屏工具条的横向空间被「智能体 / 思考 / 模型」三方分掉，模型名不收敛会把整条挤到换行
+   *  （实测 deepseek-flash 会把「思考」按钮压成竖排两字）。
+   *  下拉面板仍是全宽列表、名称完整，不影响选择。
+   *  不用「纯图标」形态：vc-select 没有 #label 插槽（那是 Form 的），无法在触发器里注入图标。 */
+  compact: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   /** 空数据时是否提示管理员去「模型供应商」页登记（非管理员界面可不提示） */
   adminTipVisible: { type: Boolean, default: false },
@@ -259,6 +266,12 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
   color: var(--app-text3);
 }
 /* 已指定模型时文字用前景色，「跟随：…」保持灰 */
+/* 紧凑形态：模型名超宽即省略，不换行、不撑破工具条。
+   padding-right 归零是因为下面已隐藏箭头（compact 时不渲染 suffixIcon）。 */
+.ms-compact :deep(.ant-select-selector) { padding-right: 8px !important; }
+.ms-compact :deep(.ant-select-selection-item) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ms-pill.ms-has-value :deep(.ant-select-selection-item) {
   color: var(--app-text);
 }

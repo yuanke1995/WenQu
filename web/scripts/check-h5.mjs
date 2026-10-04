@@ -88,6 +88,31 @@ const check = (ok, label, detail = '') => {
     '窄屏 sheet 有显式关闭按钮（覆盖式浮层必须能关）')
 }
 
+// ---- ⑨ 窄屏 UI 重构：PC 区块必须真的被条件隐藏，不能只是「加了新组件」 ----
+// 本轮真机暴露：顶栏下多出一条 PC 的 .chat-head（双顶栏）、工具条被模型名撑到换行。
+// 两者都属「新组件加了但 PC 区块没下线」。断言三处形态切换都到位。
+{
+  const c = stripComments(read('src/views/ChatPage.vue'))
+  // 双顶栏：.chat-head 窄屏必须不渲染
+  check(/<div v-if="!isNarrow" class="chat-head">/.test(c), '窄屏隐藏 PC 的 .chat-head（避免双顶栏）')
+  check(/<MobileChatHead v-if="isNarrow"/.test(c), '窄屏渲染 MobileChatHead 动作行')
+  // 欢迎卡：网格与横滑卡片二选一，不能同时渲染
+  check(/<div v-if="!isNarrow" class="welcome-samples">/.test(c), '宽屏用网格示例卡')
+  check(/<MobileSampleCards v-else/.test(c), '窄屏用横滑示例卡')
+  // 工具条：窄屏必须拿到 nowrap 约束。
+  // 用「class 切换」而非包装组件：曾用 <component :is> + 具名 slot 包装，
+  // 结果内容全被丢弃（渲染成空的 mib-left/mib-right）—— 具名槽卡位置，漏接就丢内容。
+  // 现在只加 as-mobile 类，DOM 结构两种形态完全一致。
+  check(/:class="isNarrow \? 'input-toolbar as-mobile' : 'input-toolbar'"/.test(c),
+    '工具条用 as-mobile 类切换（不套包装组件）')
+  check(/MobileInputBar/.test(c) === false, '未引入 MobileInputBar 包装组件（曾导致工具条内容被丢弃）')
+  check(/:compact="isNarrow"/.test(c), '模型选择器窄屏用 compact（省略号、不换行）')
+  // 智能体胶囊窄屏只留头像
+  check(/v-if="!isNarrow" class="agent-pill-name"/.test(c), '智能体名称窄屏隐藏（只留头像）')
+  // placeholder：键盘快捷键提示对触屏无意义且占 3 行
+  check(/:placeholder="isNarrow/.test(c), 'placeholder 窄屏换短版（去掉 Enter/Shift+Enter 提示）')
+}
+
 // ---- ④ mobile.js 顶层执行：matchMedia 缺失必须降级，不能白屏 ----
 {
   const m = stripComments(read('src/h5/mobile.js'))
