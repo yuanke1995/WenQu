@@ -1,5 +1,6 @@
 package com.wenqu.ai.parser.ocr;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.JSON;
@@ -61,7 +62,7 @@ public class PPStructureV3OcrEngine implements OcrEngine {
     }
 
     private Duration timeout() {
-        return Duration.ofMillis(configService.getInt("parse.ocrTimeoutMs", 600000));
+        return Duration.ofMillis(configService.getInt("parse.ocrTimeoutMs", ConfigDefaults.PARSE_OCR_TIMEOUT_MS));
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -194,8 +195,8 @@ public class RerankService {
             // 推理；多于 maxHits 时**只重排融合分最高的 top maxHits**，其余保持融合分序接在重排结果之后——
             // 此前区间参数在生产链路无消费方，主检索 118 块全量发给本地服务，CPU 推理约 10s 撞客户端读超时，
             // 连接断裂后 keep-alive 复用半开连接（"重排服务老是挂"的根因）
-            int minHits = Math.max(2, configService.getInt("rerank.minHits", 6));
-            int maxHits = Math.max(minHits, configService.getInt("rerank.maxHits", 15));
+            int minHits = Math.max(2, configService.getInt("rerank.minHits", ConfigDefaults.RERANK_MIN_HITS));
+            int maxHits = Math.max(minHits, configService.getInt("rerank.maxHits", ConfigDefaults.RERANK_MAX_HITS));
             if (!bypassWindow && candidates.size() < minHits) return candidates;
             int cut = Math.min(candidates.size(), maxHits);
             List<HybridRetrievalService.Hit> head = new ArrayList<>(candidates.subList(0, cut));

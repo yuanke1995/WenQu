@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.util.RequestUser;
 
 import com.alibaba.fastjson2.JSON;
@@ -766,8 +767,8 @@ public class DocumentService {
 
         // 3. 按新模型全量重嵌本库
         VectorStore target = kbVectorStores.storeForKb(kbId);
-        int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
-        int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
+        int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
+        int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", ConfigDefaults.PARSE_EMBED_RETRY_COUNT));
         int done = 0;
         int failed = 0;
         for (int i = 0; i < rows.size(); i += batchSize) {
@@ -1083,8 +1084,8 @@ public class DocumentService {
 
             // 写入向量库（embedding 接口单次请求有条数上限，需分批；M10：每批失败自动重试 embedRetry 次）
             if (!aiDocs.isEmpty()) {
-                int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", 10));
-                int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", 1));
+                int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
+                int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", ConfigDefaults.PARSE_EMBED_RETRY_COUNT));
                 int totalBatch = (aiDocs.size() + batchSize - 1) / batchSize;
                 int batchNo = 0;
                 for (int i = 0; i < aiDocs.size(); i += batchSize) {

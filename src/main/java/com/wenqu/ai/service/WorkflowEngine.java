@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
@@ -528,7 +529,7 @@ public class WorkflowEngine {
             double minScore = resolveMinScore(n, ctx);
             // 分域取门：重排分走节点低分门（config.minScore，未声明跟随 retrieval.minContextScore）；
             // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore——两个分值域分布不同，不可共用一个门
-            Double fusionGate = withReplay(ctx, () -> configService.getDouble("retrieval.minFusionScore", 0.25));
+            Double fusionGate = withReplay(ctx, () -> configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));
             List<Hit> kept = filterByMinScore(hits, minScore, fusionGate == null ? 0 : fusionGate, rerankActive);
             int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
@@ -626,7 +627,7 @@ public class WorkflowEngine {
     private double resolveMinScore(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         Object v = n.getConfig() == null ? null : n.getConfig().get("minScore");
         if (v instanceof Number num) return Math.max(0, num.doubleValue());
-        Double g = withReplay(ctx, () -> configService.getDouble("retrieval.minContextScore", 0.6));
+        Double g = withReplay(ctx, () -> configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));
         return g == null ? 0 : Math.max(0, g);
     }
 

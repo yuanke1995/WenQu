@@ -1,5 +1,6 @@
 package com.wenqu.ai.sandbox;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -404,7 +405,7 @@ public class ProvisionerSandboxProvider {
 
     /** 空闲回收任务的执行间隔（毫秒，≤0 = 暂停）。 */
     public int cleanupIntervalMs() {
-        return configService.getInt("sandbox.cleanupIntervalMs", 600000);
+        return configService.getInt("sandbox.cleanupIntervalMs", ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS);
     }
 
     /** 应用停止时回收本实例持有的沙盒（对应参考实现的 _shutdown_component 补偿链）。 */

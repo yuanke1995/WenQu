@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -438,8 +439,8 @@ public class RetrievalEvaluationService {
         }
         // 重排：命中数在 (minHits, maxHits] 且开启才触发（评估默认不开启，避免共享 rerank 状态干扰生产）
         boolean rerankOn = configService.getBoolean("rerank.enabled");
-        if (rerankOn && merged.size() > configService.getInt("rerank.minHits", 6)
-                && merged.size() <= configService.getInt("rerank.maxHits", 15)) {
+        if (rerankOn && merged.size() > configService.getInt("rerank.minHits", ConfigDefaults.RERANK_MIN_HITS)
+                && merged.size() <= configService.getInt("rerank.maxHits", ConfigDefaults.RERANK_MAX_HITS)) {
             try {
                 merged = rerankService.rank(merged, question);
             } catch (Exception e) {

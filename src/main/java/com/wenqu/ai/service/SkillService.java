@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.SkillDisabledMapper;
@@ -169,7 +170,7 @@ public class SkillService {
         if (disabled) return "错误：技能「" + hit.name() + "」已被停用。";
         String raw = readRaw(uid, hit);
         if (raw == null) return "错误：技能内容读取失败：技能记录不存在";
-        int max = Math.max(500, configService.getInt("skill.maxFileChars", 20000));
+        int max = Math.max(500, configService.getInt("skill.maxFileChars", ConfigDefaults.SKILL_MAX_FILE_CHARS));
         if (raw.length() > max) {
             return raw.substring(0, max) + "\n\n…（技能内容过长已截断，仅返回前 " + max + " 字符）";
         }
@@ -447,7 +448,7 @@ public class SkillService {
             if (resp.statusCode() != 200) throw new BizException("下载失败：HTTP " + resp.statusCode());
             byte[] body = resp.body();
             // 上限按字符配置换算成字节（中文 UTF-8 最多 3~4 字节/字符）
-            int maxBytes = Math.max(10000, configService.getInt("skill.maxFileChars", 20000)) * 4;
+            int maxBytes = Math.max(10000, configService.getInt("skill.maxFileChars", ConfigDefaults.SKILL_MAX_FILE_CHARS)) * 4;
             if (body.length > maxBytes) {
                 throw new BizException("技能文件过大（" + body.length + " 字节，上限 " + maxBytes + "）");
             }

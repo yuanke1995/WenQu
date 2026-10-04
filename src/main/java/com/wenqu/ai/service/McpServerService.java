@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.McpCallLogMapper;
@@ -305,7 +306,7 @@ public class McpServerService {
                     return toolError("sessionId 无效或不属于该 Key");
                 }
             }
-            long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", 180_000));
+            long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", ConfigDefaults.MCP_SERVER_TIMEOUT_MS));
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 // 非游客模式：身份与网页问答完全一致（智能体、个人技能、个人 MCP、工具开关等按本人配置）
@@ -459,7 +460,7 @@ public class McpServerService {
                 return toolError("sessionId 无效或不属于该端点");
             }
         }
-        long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", 180_000));
+        long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", ConfigDefaults.MCP_SERVER_TIMEOUT_MS));
         CollectingSseEmitter sink = new CollectingSseEmitter();
         try {
             // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载

@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.common.ParseFatalException;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.ParseTaskMapper;
@@ -94,7 +95,7 @@ public class ParseQueueService {
         this.documentService = documentService;
         this.aiDocumentMapper = aiDocumentMapper;
         this.notificationService = notificationService;
-        this.embedGate = new Gate(Math.max(1, configService.getInt("parse.embedConcurrency", 2)));
+        this.embedGate = new Gate(Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY)));
     }
 
     // ==================== 入队 ====================
@@ -320,7 +321,7 @@ public class ParseQueueService {
     }
 
     private void syncEmbedGate() {
-        int want = Math.max(1, configService.getInt("parse.embedConcurrency", 2));
+        int want = Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY));
         int have = embedGate.availablePermits();
         if (want > have) embedGate.release(want - have);
         else if (want < have) embedGate.reduce(want - have);

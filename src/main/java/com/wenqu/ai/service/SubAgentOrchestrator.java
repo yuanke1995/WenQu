@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
@@ -93,7 +94,7 @@ public class SubAgentOrchestrator {
                     + "\n\n请判断回答该问题需要咨询上述哪些助手，只选职责确实相关的（宁缺毋滥）。"
                     + "\n只输出一个 JSON 数组，元素为对象 {\"id\":\"助手id\",\"reason\":\"挑选理由（15字内，说明它职责与问题的关联）\"}；"
                     + "若都不相关则输出 []。不要输出任何解释文字。";
-            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
+            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));
             // 用量归属：路由调用跑在专属线程池（无请求上下文），把调用线程上的用户身份显式带进去，
             // 这笔开销才落在提问者的台账上（模型路由出口按 UsageAttr 记账）
             String billingUid = com.wenqu.ai.util.RequestUser.uid();

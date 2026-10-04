@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.mapper.ArtifactMapper;
@@ -239,7 +240,7 @@ public class ArtifactService {
     /** 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。url 已按需签名；expireTime 按当前全局保留天数动态算出。 */
     public List<Map<String, Object>> list(String uid, String keyword) {
         if (uid == null || uid.isBlank()) return List.of();
-        int retentionDays = configService.getInt("artifact.retentionDays", 90);
+        int retentionDays = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
         LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
                 .eq(Artifact::getUid, uid)
                 .eq(Artifact::getDeleted, 0)

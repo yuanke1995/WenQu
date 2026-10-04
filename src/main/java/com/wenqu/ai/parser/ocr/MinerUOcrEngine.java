@@ -1,5 +1,6 @@
 package com.wenqu.ai.parser.ocr;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.parser.DocumentParser;
@@ -114,7 +115,7 @@ public class MinerUOcrEngine implements OcrEngine {
                 || configService.get("parse.ocrMineruBackend").isBlank()
                 ? "pipeline" : configService.get("parse.ocrMineruBackend").trim();
         long perPageMs = "pipeline".equals(backend) ? EstimatedProgress.PER_PAGE_MS : EstimatedProgress.PER_PAGE_MS * 3;
-        long floorTimeoutMs = configService.getInt("parse.ocrTimeoutMs", 600000);
+        long floorTimeoutMs = configService.getInt("parse.ocrTimeoutMs", ConfigDefaults.PARSE_OCR_TIMEOUT_MS);
 
         int total;
         try (org.apache.pdfbox.pdmodel.PDDocument d = org.apache.pdfbox.Loader.loadPDF(pdf.toFile())) {

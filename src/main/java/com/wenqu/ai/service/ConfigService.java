@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.ConfigMapper;
 import com.wenqu.ai.model.Config;
 import lombok.extern.slf4j.Slf4j;
@@ -243,7 +244,7 @@ public class ConfigService {
         d.put("chunk.overlap", String.valueOf(properties.getChunk().getOverlap()));
         d.put("chunk.structural", String.valueOf(properties.getChunk().isStructural()));
         d.put("chunk.structuralRatio", String.valueOf(properties.getChunk().getStructuralRatio()));
-        d.put("parse.embedRetryCount", "1");                 // M10：向量化批次失败自动重试次数
+        d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // M10：向量化批次失败自动重试次数
         d.put("upload.maxFileSize", String.valueOf(200L * 1024 * 1024));  // 业务上传上限（字节），默认 200MB
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
@@ -280,10 +281,12 @@ public class ConfigService {
         d.put("deepReasoning.injectThinkingMaxChars", String.valueOf(properties.getDeepReasoning().getInjectThinkingMaxChars()));
         d.put("deepReasoning.injectKeywords", String.valueOf(properties.getDeepReasoning().isInjectKeywords()));
         d.put("deepReasoning.injectKeywordsMax", String.valueOf(properties.getDeepReasoning().getInjectKeywordsMax()));
+        // 读点共用默认值的 key：defaults() 与读点 fallback 共用 ConfigDefaults 常量（改默认值只改常量一处）
+
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
-        d.put("retrieval.minContextScore", "0.6");         // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
-        d.put("retrieval.minFusionScore", "0.5");          // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55、无关块 83%<0.5，旧 0.25 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
+        d.put("retrieval.minContextScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));  // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
+        d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
         d.put("retrieval.queryRewriteEnabled", "true");    // 多轮查询改写：检索前用对话模型做指代消解（仅多轮触发，失败按原句检索）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
@@ -302,7 +305,7 @@ public class ConfigService {
         d.put("parse.taskLeaseSeconds", "0");              // 任务租约时长(秒)；0=按 taskTimeoutMs+300 自动算
         d.put("parse.retryMaxAttempts", "3");              // 解析失败最大尝试次数（超过转终态 dead，不再退避）
         d.put("parse.retryBackoffSeconds", "5");           // 解析失败退避基数(秒)：第 n 次等 base×2^(n-1)（封顶 300s）
-        d.put("parse.embedConcurrency", "2");              // 向量化并发闸（多文档并行解析时防打爆 embedding 服务）
+        d.put("parse.embedConcurrency", String.valueOf(ConfigDefaults.PARSE_EMBED_CONCURRENCY));              // 向量化并发闸（多文档并行解析时防打爆 embedding 服务）
         d.put("parse.ocrGateConcurrency", "1");            // 版面引擎并发闸：自托管单实例服务一次只吃一份，默认守住 1
         d.put("parse.ocrMinText", "20");                   // PDF 文本少于该长度判定扫描件触发 OCR
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
@@ -338,7 +341,7 @@ public class ConfigService {
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
-        d.put("artifact.retentionDays", "90");                 // 产物保留天数（0=不清理）
+        d.put("artifact.retentionDays", String.valueOf(ConfigDefaults.ARTIFACT_RETENTION_DAYS));                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
         d.put("schedule.runLogRetentionDays", "7");            // 定时任务执行日志保留天数（超期物理删除）
         d.put("schedule.runLogCleanupIntervalMs", "86400000"); // 任务执行日志清理间隔(ms，≤0=暂停)
@@ -372,13 +375,13 @@ public class ConfigService {
         d.put("chat.uploadRetentionHours", "24");
         d.put("chat.uploadCleanupIntervalMs", "3600000");
         d.put("retrieval.relatedCount", "3");
-        d.put("parse.embedBatchSize", "10");
+        d.put("parse.embedBatchSize", String.valueOf(ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
         d.put("parse.ocrDpi", "200");
         d.put("parse.ocrEngine", "none");      // PDF 深度解析引擎：none=文本抽取+扫描件视觉兜底（默认）/ vision=整份逐页视觉OCR / pp_structure_v3 / mineru=外部版面解析服务（失败 fail-loud 不回落）
         d.put("parse.ocrPpUri", "http://localhost:8080");       // PP-StructureV3 服务地址（健康检查 GET {uri}/health）
         d.put("parse.ocrMineruUri", "http://localhost:30011");  // MinerU 服务地址（宿主端口 30011：30001 与 IDEA 内置服务冲突；容器内仍是 30001）
         d.put("parse.ocrMineruBackend", "pipeline"); // MinerU 解析后端：pipeline=CPU 稳（默认）/ hybrid-auto-engine=本地 VLM 高精度（需算力）
-        d.put("parse.ocrTimeoutMs", "600000"); // 版面引擎单次调用超时(ms)：大 PDF 版面解析慢，默认 10 分钟
+        d.put("parse.ocrTimeoutMs", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS)); // 版面引擎单次调用超时(ms)：大 PDF 版面解析慢，默认 10 分钟
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
         // 工具调用（Function Calling）总开关与知识库精确检索工具
@@ -402,7 +405,7 @@ public class ConfigService {
         d.put("webSearch.requireApproval", "false");      // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖；false=自动执行
         // 技能的内容与启停已在个人表 c_ai_user_skill / c_ai_skill_disabled（谁装谁管），此处只剩两项预算参数
         d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
-        d.put("skill.maxFileChars", "20000");              // 单技能全文读取上限
+        d.put("skill.maxFileChars", String.valueOf(ConfigDefaults.SKILL_MAX_FILE_CHARS));              // 单技能全文读取上限
         // 远程安装来源白名单（逗号分隔的精确 host，子域要单列；留空=关闭远程安装）：技能正文入库不执行，
         // 但"允许从哪儿拉"必须是平台可控的边界（GitHub 走 raw 链接，故含 raw.githubusercontent.com）
         d.put("skill.remoteAllowedHosts", "github.com,raw.githubusercontent.com,modelscope.cn,www.modelscope.cn");
@@ -444,7 +447,7 @@ public class ConfigService {
         d.put("sandbox.keepaliveIntervalSeconds", "30");          // keepalive 间隔（秒，≤0 关闭）
         d.put("sandbox.deleteTimeoutSeconds", "120");             // 删除沙盒的超时（秒）
         d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
-        d.put("sandbox.cleanupIntervalMs", "600000");             // 空闲回收扫描间隔（ms，≤0=暂停）
+        d.put("sandbox.cleanupIntervalMs", String.valueOf(ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS));             // 空闲回收扫描间隔（ms，≤0=暂停）
         d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
@@ -454,7 +457,7 @@ public class ConfigService {
         d.put("agent.digestMaxChars", "1500");             // 要点段总字符预算（超限截断；supervisor 模式作为压缩目标）
         d.put("agent.aggregateMarkFailed", "true");        // 失败分支在要点段显式占位（让主模型知道该视角无资料）
         d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
-        d.put("workflow.maxSteps", "50");                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
+        d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
         d.put("workflow.runLogRetentionDays", "30");       // 工作流运行记录保留天数（含 DSL 快照与节点 trace 大字段；超期由「工作流运行记录清理」任务物理删除）
@@ -463,7 +466,7 @@ public class ConfigService {
         d.put("notification.retentionDays", "30");          // 站内通知保留天数（超期由「站内通知清理」任务物理删除，不区分已读未读）
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）
-        d.put("workflow.runQueueCapacity", "50");          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
+        d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
@@ -479,12 +482,12 @@ public class ConfigService {
         d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
         d.put("agent.dispatchNarrowScope", "false");       // 委派收窄检索范围：挑出子集后主检索收窄到主智能体库∪选中助手库（默认关——路由判错会漏召回）
-        d.put("agent.routeTimeoutMs", "8000");             // 路由判定超时（超时回退全部候选）
+        d.put("agent.routeTimeoutMs", String.valueOf(ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）
         // MCP **服务端**（对外提供端点）：把已发布的智能体暴露给 Claude/Cursor 等外部客户端
         d.put("mcp.server.enabled", "false");      // MCP 端点总开关（默认关：不主动对外暴露能力）
-        d.put("mcp.server.timeoutMs", "180000");   // 单次工具调用等待问答完成的超时（ms）
+        d.put("mcp.server.timeoutMs", String.valueOf(ConfigDefaults.MCP_SERVER_TIMEOUT_MS));   // 单次工具调用等待问答完成的超时（ms）
         d.put("mcp.server.allowedOrigins", "");    // 允许的 Origin 列表（逗号分隔；空=仅允许回环地址）
         return d;
     }
@@ -658,12 +661,28 @@ public class ConfigService {
         return isSensitiveKey(key) ? crypto.decrypt(v) : v;
     }
 
-    public double getDouble(String key) {
+    /**
+     * 无参 typed getter 的兜底链：缓存/DB 值缺失或解析失败 → 回退 {@code defaults()} 的权威默认值
+     * → 仍失败返回中性值。此前各方法散落着魔法兜底（getDouble 兜 0.3 恰是 temperature 的默认、
+     * getInt 兜 0 会把 chunk.maxImages 的解析失败变成"不限制"），统一改为跟随声明默认，
+     * 仅 defaults() 也未注册该 key 时落到中性值。
+     */
+    private <T> T getOrDefaultParsed(String key, java.util.function.Function<String, T> parser, T neutral) {
         try {
-            return Double.parseDouble(get(key));
-        } catch (Exception e) {
-            return 0.3;
+            return parser.apply(get(key).trim());
+        } catch (Exception ignored) {
+            // 值缺失/非数字 → 走下方权威默认
         }
+        String seed = defaults().get(key);
+        try {
+            return seed == null ? neutral : parser.apply(seed.trim());
+        } catch (Exception e) {
+            return neutral;
+        }
+    }
+
+    public double getDouble(String key) {
+        return getOrDefaultParsed(key, Double::parseDouble, 0.0);
     }
 
     public double getDouble(String key, double def) {
@@ -677,11 +696,7 @@ public class ConfigService {
     }
 
     public int getInt(String key) {
-        try {
-            return Integer.parseInt(get(key).trim());
-        } catch (Exception e) {
-            return 0;
-        }
+        return getOrDefaultParsed(key, Integer::parseInt, 0);
     }
 
     public int getInt(String key, int def) {
@@ -695,11 +710,7 @@ public class ConfigService {
     }
 
     public long getLong(String key) {
-        try {
-            return Long.parseLong(get(key).trim());
-        } catch (Exception e) {
-            return 0L;
-        }
+        return getOrDefaultParsed(key, Long::parseLong, 0L);
     }
 
     public long getLong(String key, long def) {
@@ -713,11 +724,7 @@ public class ConfigService {
     }
 
     public boolean getBoolean(String key) {
-        try {
-            return Boolean.parseBoolean(get(key).trim());
-        } catch (Exception e) {
-            return false;
-        }
+        return getOrDefaultParsed(key, Boolean::parseBoolean, false);
     }
 
     /** 保存可编辑项（白名单校验）→ 写 DB + 刷新缓存 */

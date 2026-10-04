@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
@@ -818,7 +819,7 @@ public class WorkflowService {
         synchronized (this) {
             if (dispatchPool == null) {
                 int concurrency = Math.max(1, configService.getInt("workflow.maxConcurrentRuns", 4));
-                int capacity = Math.max(1, configService.getInt("workflow.runQueueCapacity", 50));
+                int capacity = Math.max(1, configService.getInt("workflow.runQueueCapacity", ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));
                 dispatchPool = new java.util.concurrent.ThreadPoolExecutor(concurrency, concurrency,
                         60L, java.util.concurrent.TimeUnit.SECONDS,
                         new java.util.concurrent.LinkedBlockingQueue<>(capacity),
@@ -851,7 +852,7 @@ public class WorkflowService {
             });
         } catch (java.util.concurrent.RejectedExecutionException e) {
             run.setStatus("failed");
-            run.setError("运行队列已满（workflow.runQueueCapacity=" + configService.getInt("workflow.runQueueCapacity", 50)
+            run.setError("运行队列已满（workflow.runQueueCapacity=" + configService.getInt("workflow.runQueueCapacity", ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY)
                     + "），请稍后重试");
             run.setFinishedAt(LocalDateTime.now());
             run.setDurationMs(0L);
@@ -934,7 +935,7 @@ public class WorkflowService {
         return new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
                 configService.currentOverrides(), userConfigService.overrides(p.uid()), inputs,
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", 50),
+                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
                 tokenSink, imageSink);
     }
 
@@ -1067,7 +1068,7 @@ public class WorkflowService {
                 configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", 50));
+                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
         ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
         Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
@@ -1142,7 +1143,7 @@ public class WorkflowService {
                 configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", 50));
+                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
         ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整
         for (Map.Entry<String, Object> e : outputs.entrySet()) {

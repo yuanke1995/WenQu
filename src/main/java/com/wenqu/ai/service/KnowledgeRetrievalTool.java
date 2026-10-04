@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.HybridRetrievalService.Hit;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -129,12 +130,12 @@ public class KnowledgeRetrievalTool {
         // 失败时回退融合分序（rerankScore=null，走下方融合门），与主链路降级语义一致。
         hits = rerankService.rankForced(hits, query.trim());
         // 最低相关分门（分域双门，与主链路上下文填充同款语义）：重排分走 retrieval.minContextScore（0.6），
-        // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.25）——两个分值域分布不同，一个绝对门
+        // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.5）——两个分值域分布不同，一个绝对门
         // 不可能同时对两者成立；重排本轮实际执行过时，未重排候选不得借融合门入场（单侧约束）。
         // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板。0=关闭对应域的门。
         boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
-        double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
-        double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
+        double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+        double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
         if (hits != null && (minRerankGate > 0 || minFusionGate > 0)) {
             hits = hits.stream().filter(h -> {
                 if (rerankActive && h.rerankScore() == null) return false;
@@ -152,7 +153,7 @@ public class KnowledgeRetrievalTool {
         // 模型按清单在正文真实位置引用编号 → 前端 images[N-1] 映射出真实截图；
         // 非注册模式（无流上下文，如直接调用）：保持旧【片段N】格式
         SourceRegistrar registrar = REGISTRAR.get();
-        // 重排没执行 = 引用门退化到融合门（0.25）：词面重叠的弱相关块会注册进引用面板。
+        // 重排没执行 = 引用门退化到融合分门（minFusionScore，默认 0.5）：词面重叠的弱相关块更容易注册进引用面板。
         // 此前工具链路对此完全静默（主链路 rerankIfNeeded 有提示，但只在主链路有命中时才登记），
         // 用户看到一堆与问题不相关的引用却没有任何说明。这里按同一口径登记可见降级。
         if (!rerankActive && registrar != null) {

@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.wenqu.ai.config.AppProperties;
@@ -1147,8 +1148,8 @@ public class RagService {
                         kImgs, 1.0, k.getChunkIndex(), k.getTitlePath(), null));
             }
             // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束。
-            // 分支检索不重排（只带融合分）：不补重排直接并入，会以「无重排分」身份走 0.25 融合门入场，
-            // 绕过主链路 0.6 重排门（修复前无关块即由此混进上下文与引用来源）——
+            // 分支检索不重排（只带融合分）：不补重排直接并入，会以「无重排分」身份走融合门（minFusionScore，
+            // 默认 0.5）入场，绕过主链路 0.6 重排门（修复前无关块即由此混进上下文与引用来源）——
             // 与主链路同 query 小批量强制重排（≤6 块低于 minHits 窗口，rank() 会整批跳过，须走 rankForced），
             // 让子代理块与主链路块同分域、同门槛；重排不可用时原样并入（与主链路「重排不可用」同语义，走融合门）
             if (subOutcome != null && !subOutcome.hits().isEmpty()) {
@@ -1210,15 +1211,15 @@ public class RagService {
             // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）——<b>分域双门</b>：排序分有两个来源域，
             // 数值分布完全不同，一个绝对门不可能同时对两者成立：
             //   ① rerank 分（0~1 相关性分，重排开启且命中数在重排区间时）→ 门 = retrieval.minContextScore（默认 0.6）；
-            //   ② 加权融合分（vectorWeight×vecNorm + keywordWeight×hitRate，向量单命中常态 0.1~0.4）
-            //      → 门 = retrieval.minFusionScore（默认 0.25，拦跨域词面弱相关块、不误杀单路命中）。
+            //   ② 加权融合分（vectorWeight×vecNorm + keywordWeight×hitRate；评测基线：期望块中位 0.745、无关块中位 0.469）
+            //      → 门 = retrieval.minFusionScore（默认 0.5，拦跨域词面弱相关块；0.25 旧值对无关块拦截率不足 18%）。
             // 不分域的后果（修复前实测）：rerank 服务不可用或关闭时，全部融合分低于 0.6 → 上下文被门清空，
             // 检索"看似无结果"。0 = 关闭对应域的门。调值前先看检索调试面板的实际分数分布（两个域分开看）；
             // 跳过不占 docNo/extra 配额（与去冗余同语义）。
             // 另有单侧约束：重排本轮实际执行过（存在重排分）时，未重排的候选不得借融合门入场（见下方门代码）——
             // 否则"重排判定无相关资料"会被融合序尾部的词面噪声推翻。
-            double minRerankGate = configService.getDouble("retrieval.minContextScore", 0.6);
-            double minFusionGate = configService.getDouble("retrieval.minFusionScore", 0.25);
+            double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+            double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
             // 单文档块数配额（0=不限制）：docId → 已进上下文的块数
             int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
             Map<String, Integer> docBlockCount = new HashMap<>();

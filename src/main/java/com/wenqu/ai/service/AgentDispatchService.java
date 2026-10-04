@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Agent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -71,7 +72,7 @@ public class AgentDispatchService {
                     + "\n3. 通用问题（常识问答、写作、建议、跨领域话题）不属于任何智能体的专业域：输出 {}，交给默认助手。宁缺勿滥，不要为了派而派。"
                     + "\n4. 追问要结合最近对话理解归属。"
                     + "\n\n只输出一个 JSON 对象：{\"id\":\"智能体id\"}；若没有任何智能体匹配则输出 {}。不要输出任何解释文字。";
-            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", 8000));
+            int timeoutMs = Math.max(1000, configService.getInt("agent.routeTimeoutMs", ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));
             // 用量归属：路由调用跑在专属线程池（无请求上下文），把 Dispatch 线程上的用户身份
             // 显式带进去，这笔开销才落在提问者的台账上（路由出口按 UsageAttr 记账）
             String uid = com.wenqu.ai.util.RequestUser.uid();

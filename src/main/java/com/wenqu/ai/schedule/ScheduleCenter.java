@@ -1,5 +1,6 @@
 package com.wenqu.ai.schedule;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.config.ConfigSchemaService;
 import com.wenqu.ai.model.ScheduleRunLog;
@@ -170,7 +171,7 @@ public class ScheduleCenter {
                 () -> configService.getInt("artifact.cleanupIntervalMs", 86_400_000),
                 () -> false,
                 () -> {
-                    int days = configService.getInt("artifact.retentionDays", 90);
+                    int days = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
                     int cleaned = artifactService.cleanupExpired(days);
                     if (cleaned > 0) {
                         log.info("[ARTIFACT] 超期产物已清理 {} 件（保留 {} 天）", cleaned, days);
@@ -207,7 +208,7 @@ public class ScheduleCenter {
         // provider 不可达/未配置 token 时 releaseIdle 内部按失败计数并摘除缓存条目，不会拖垮节拍线程。
         register("沙盒空闲回收", "回收空闲超过 sandbox.idleReleaseMinutes 的会话沙盒容器（0=不回收）",
                 "sandbox.cleanupIntervalMs",
-                () -> configService.getInt("sandbox.cleanupIntervalMs", 600_000),
+                () -> configService.getInt("sandbox.cleanupIntervalMs", ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS),
                 () -> false,
                 () -> sandboxService.releaseIdle());
 
