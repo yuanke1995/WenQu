@@ -188,8 +188,8 @@ function fmtDuration(sec) {
 // ==================== Token 活动热力图 ====================
 // 一次派生：列（周×7 天的格子矩阵）+ 档位函数。三种视图共用日数据（tokens + 轮次）：
 //   每日=按当日分档；每周=每列按周合计整列同色；累计=每列按「截至该周末」的周累计整列同色。
-// 档位均按非零值四分位划档（GitHub 口径）。末列收在最近一个完整周（上周六）：
-// 进行中的本周不预生成（周初会出现只装着「今天+未来占位」的悬空列），当天数据看下方每日趋势图。
+// 档位均按非零值四分位划档（GitHub 口径）。末列=进行中的本周（周日开头）：今天的格子当天上墙，
+// 本周未到的日子渲染成半透明占位（有格无悬浮，读作「还没到」，不会误读成预生成的数据块）。
 const dailyMap = computed(() => {
   const m = new Map()
   for (const c of heatmap.value) m.set(c.date, { t: Number(c.tokens) || 0, c: Number(c.count) || 0 })
@@ -200,13 +200,13 @@ const heatData = computed(() => {
   const m = dailyMap.value
   const today = new Date()
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  // 末列 = 最近一个完整周（周日开头、周六收尾，GitHub 口径）；向前铺满近 365 天
+  // 末列 = 进行中的本周（周日开头、周六收尾，GitHub 口径）；向前固定铺 53 列，历史覆盖 ≥365 天
   const saturday = new Date(today)
-  saturday.setDate(saturday.getDate() + (6 - today.getDay()) - 7)
-  const weeks = Math.ceil((365 + today.getDay() + 1) / 7) - 1
+  saturday.setDate(saturday.getDate() + (6 - today.getDay()))
+  const weeks = 1 + Math.ceil((364 - today.getDay()) / 7)
   const dayOf = (w, i) => { const d = new Date(saturday); d.setDate(d.getDate() - w * 7 - (6 - i)); return d }
 
-  // 每周聚合（旧→新，与列序一致）：tokens / 轮次 / 周结束日（列均为已完成的整周，必在过去）
+  // 每周聚合（旧→新，与列序一致）：tokens / 轮次 / 周结束日（末列为进行中的本周，以今天截断并标 partial）
   const weekAgg = []
   for (let w = weeks - 1; w >= 0; w--) {
     let t = 0, c = 0
@@ -214,7 +214,8 @@ const heatData = computed(() => {
       const rec = m.get(fmt(dayOf(w, i)))
       if (rec) { t += rec.t; c += rec.c }
     }
-    weekAgg.push({ t, c, end: fmt(dayOf(w, 6)) })
+    const endD = dayOf(w, 6)
+    weekAgg.push({ t, c, end: fmt(endD > today ? today : endD), partial: endD > today })
   }
   // 累计视图（按周）：截至各周末的累计 tokens / 轮次（前缀和=日累计在周末的取值）
   const weekCum = []
@@ -228,24 +229,29 @@ const heatData = computed(() => {
       : leveler(sortedDates(m).map(d => m.get(d).t))
 
   const columns = []
+  const colEnds = [] // 各列周六（列尾）日期：月份标签按它跨月判定；末列周六可能是未来日子（每日视图下格子为 null，不能读格子对象）
   for (let w = weeks - 1; w >= 0; w--) {
     const col = []
     const wi = weeks - 1 - w
     for (let i = 0; i < 7; i++) {
-      const key = fmt(dayOf(w, i))
+      const d = dayOf(w, i)
+      const key = fmt(d)
       if (heatMode.value === 'weekly') {
-        // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）
-        col.push({ date: key, value: weekAgg[wi].t, count: weekAgg[wi].c, weekEnd: weekAgg[wi].end })
+        // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）；进行中的本周整列同色、按截至今天聚合
+        col.push({ date: key, value: weekAgg[wi].t, count: weekAgg[wi].c, weekEnd: weekAgg[wi].end, partial: weekAgg[wi].partial })
       } else if (heatMode.value === 'total') {
-        col.push({ date: key, value: weekCum[wi].t, count: weekCum[wi].c, weekEnd: weekCum[wi].end })
+        col.push({ date: key, value: weekCum[wi].t, count: weekCum[wi].c, weekEnd: weekAgg[wi].end, partial: weekAgg[wi].partial })
+      } else if (d > today) {
+        col.push(null) // 本周未到的日子：半透明占位（无数据无悬浮），列高保持 7 格
       } else {
         const rec = m.get(key) || { t: 0, c: 0 }
         col.push({ date: key, value: rec.t, count: rec.c })
       }
     }
     columns.push(col)
+    colEnds.push(fmt(dayOf(w, 6)))
   }
-  return { columns, levelOf: cell => levelOfVal(cell.value) }
+  return { columns, colEnds, levelOf: cell => levelOfVal(cell.value) }
 })
 
 function sortedDates(m) {
@@ -265,10 +271,10 @@ function leveler(values) {
 function cellTip(cell) {
   const full = d => { const p = d.split('-'); return `${p[0]}年${+p[1]}月${+p[2]}日` }
   if (heatMode.value === 'weekly') {
-    return { l1: `${full(cell.weekEnd)} 当周`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
+    return { l1: `${full(cell.weekEnd)} 当周${cell.partial ? '（进行中）' : ''}`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
   }
   if (heatMode.value === 'total') {
-    return { l1: `截至 ${full(cell.weekEnd)} 当周累计`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
+    return { l1: `截至 ${full(cell.weekEnd)} 当周累计${cell.partial ? '（进行中）' : ''}`, l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
   }
   return { l1: full(cell.date), l2: `${fmtTokens(cell.value)} tokens · ${cell.count} 轮消息` }
 }
@@ -291,7 +297,7 @@ const heatMonths = computed(() => {
   let prevMonth = -1
   heatData.value.columns.forEach((col, ci) => {
     // 用列尾（周六）跨月判定：新月份首次出现的列打标（10月标在含 10-1 的那列）
-    const d = new Date(col[6].date)
+    const d = new Date(heatData.value.colEnds[ci])
     if (d.getMonth() !== prevMonth) {
       prevMonth = d.getMonth()
       out.push({ col: ci + 1, label: `${d.getMonth() + 1}月` })
@@ -489,7 +495,8 @@ onBeforeUnmount(() => {
   outline: 1px solid rgba(0, 0, 0, .04);
   outline-offset: -1px;
 }
-.heat-cell.empty { background: transparent; outline: none; }
+/* 未来占位格：与零值格同结构但明显更淡——读作「还没到」，不与无活动的日子混淆 */
+.heat-cell.empty { opacity: .4; }
 .hl1 { background: #c9ddf8; }
 .hl2 { background: #93bdf1; }
 .hl3 { background: #5c98e9; }
