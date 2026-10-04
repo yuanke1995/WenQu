@@ -21,9 +21,15 @@ import { themeState } from './utils/theme'
 dayjs.locale('zh-cn')
 
 const route = useRoute()
-// 工作台自带侧边栏与滚动区域、登录页为独立全屏卡片：两者都不需要外层内边距
+// 外层容器分两种形态：
+//   content-app  —— 工作台（AppLayout 及其子页）满屏无内边距，高度锁一屏、滚动交给内部布局；
+//                   另含 /s/:token 与 OIDC 回调——它们自带 height:100vh + 内部滚动容器，本就不吃外层滚动。
+//   content-flow —— 内容按文档流自然增高的独立页（meta.pageFlow，如只读分享页）：不能锁高，
+//                   否则超出一屏的部分被 overflow:hidden 裁掉且滚不动。
+//   content-login—— 登录页：独立全屏卡片，由卡片自身居中。
 const isLogin = computed(() => route.path === '/login')
-const contentClass = computed(() => (isLogin.value ? 'content-login' : 'content-app'))
+const isFlow = computed(() => route.meta?.pageFlow === true)
+const contentClass = computed(() => (isLogin.value ? 'content-login' : (isFlow.value ? 'content-flow' : 'content-app')))
 
 // antd 组件主题与 --app-* token 对齐：亮/暗算法切换 + 品牌主色/圆角/字号对齐。
 // 值必须是字面量（antd 的 token 不认 CSS 变量）——改 --app-accent 时这里同步改。
@@ -59,4 +65,7 @@ html, body { margin: 0; overflow-x: hidden; }
 .content-app { padding:0;background:var(--app-bg, #f7f8fa);color:var(--app-text);height:100vh;overflow:hidden }
 /* 登录页：无内边距，卡片自身居中 */
 .content-login { padding:0;background:var(--app-bg, #f7f8fa) }
+/* 文档流独立页（meta.pageFlow，如只读分享页）：与工作台同底色/文字色，但**不锁高、不裁溢出**——
+   高度留给内容，滚动由文档本身承担。锁定会让超出一屏的内容既看不见也滚不动。 */
+.content-flow { padding:0;background:var(--app-bg, #f7f8fa);color:var(--app-text) }
 </style>
