@@ -719,15 +719,19 @@ const probeStates = ref({
   keyword: { loading: false, result: null },
   ocrMineru: { loading: false, result: null },
   ocrPp: { loading: false, result: null },
-  sandbox: { loading: false, result: null }
+  sandbox: { loading: false, result: null },
+  webSearch: { loading: false, result: null }
 })
-const probeLabels = { keyword: '关键词引擎', ocrMineru: 'MinerU 服务', ocrPp: 'PP-StructureV3 服务', sandbox: '沙盒 provisioner' }
+const probeLabels = { keyword: '关键词引擎', ocrMineru: 'MinerU 服务', ocrPp: 'PP-StructureV3 服务', sandbox: '沙盒 provisioner', webSearch: '联网搜索' }
 const PROBE_BY_KEY = {
   'keyword.baseUrl': 'keyword',
   'parse.ocrMineruUri': 'ocrMineru',
   'parse.ocrPpUri': 'ocrPp',
   // 令牌一起送：后端 sandbox 探测第二步要用它校验 /api/sandboxes，掩码值会回退已保存配置
-  'sandbox.provisionerUrl': 'sandbox'
+  'sandbox.provisionerUrl': 'sandbox',
+  // 联网搜索：按服务商分派真实协议（SearXNG 走 /search?format=json，Tavily/Bocha 走 POST 搜索端点），
+  // 挂在 baseUrl 上；provider 本身没有地址、也没有可探测的端点，故不单独挂按钮
+  'webSearch.baseUrl': 'webSearch'
 }
 const probeKey = f => PROBE_BY_KEY[f.group + '.' + f.key] || ''
 
@@ -744,6 +748,8 @@ const doProbe = async group => {
     Object.assign(payload, { baseUrl: f.parse?.ocrPpUri })
   } else if (group === 'sandbox') {
     Object.assign(payload, { baseUrl: f.sandbox?.provisionerUrl, apiKey: f.sandbox?.token })
+  } else if (group === 'webSearch') {
+    Object.assign(payload, { baseUrl: f.webSearch?.baseUrl, apiKey: f.webSearch?.apiKey })
   }
   s.loading = true
   s.result = null
@@ -762,7 +768,9 @@ const doProbe = async group => {
 watch(
   () => [form.value.keyword?.baseUrl, form.value.keyword?.apiKey,
          form.value.parse?.ocrMineruUri, form.value.parse?.ocrPpUri,
-         form.value.sandbox?.provisionerUrl, form.value.sandbox?.token],
+         form.value.sandbox?.provisionerUrl, form.value.sandbox?.token,
+         // 联网搜索：地址、Key、以及**服务商**（换服务商等于换一套协议与端点，旧结论不再成立）
+         form.value.webSearch?.baseUrl, form.value.webSearch?.apiKey, form.value.webSearch?.provider],
   () => {
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }

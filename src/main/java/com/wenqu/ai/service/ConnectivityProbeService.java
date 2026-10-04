@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +36,10 @@ import java.util.Map;
  *   <li>audio：GET {baseUrl}/v1/models 验证网关可达与 Key 有效（ASR/TTS 端点协议各家不一，不做最小调用）；</li>
  *   <li>keyword：GET {baseUrl}/health 探活 + GET {baseUrl}/indexes（带 master key）验证密钥是否被接受。</li>
  *   <li>sandbox：GET {baseUrl}/health 探活 + 带令牌 GET {baseUrl}/api/sandboxes 验证令牌被接受。</li>
+ *   <li>webSearch：按 {@code webSearch.provider} 分派各家真实协议打一次最小搜索
+ *       （generic=SearXNG 走 GET /search?format=json、tavily/bocha 走 POST 搜索端点），
+ *       而非只探根路径——SearXNG 未在 settings.yml 开启 json 格式时 /search 会返 403，
+ *       只探根路径会把「装好了但不可用」误判成可用。</li>
  * </ul>
  *
  * <p>安全：仅供管理员端点调用；出站地址仅允许 http/https，且统一 2s 连接 / 5s 读超时（探测需快速反馈）。
@@ -53,10 +60,18 @@ public class ConnectivityProbeService {
     /** 失败详情最大长度（防止网关返回整页 HTML 撑爆响应） */
     private static final int DETAIL_MAX = 300;
 
+    // ---- 联网搜索探测 ----
+    /** 探测用固定 innocuous 词 + limit=1，把真实调用成本压到最低（仍是一次真实搜索，故能验出格式/鉴权问题） */
+    private static final String PROBE_QUERY = "wenqu connectivity probe";
+    /** 与 TavilySearchProvider.DEFAULT_URL 一致；表单未填地址时回落（与运行时同款默认） */
+    private static final String DEFAULT_TAVILY_URL = "https://api.tavily.com/search";
+    /** 与 BochaSearchProvider.DEFAULT_URL 一致 */
+    private static final String DEFAULT_BOCHA_URL = "https://api.bochaai.com/v1/web-search";
+
     /**
      * 执行探测。
      *
-     * @param group   chat / vision / embedding / rerank / keyword
+     * @param group   chat / vision / embedding / rerank / audio / keyword / ocrmineru / ocrpp / sandbox / webSearch
      * @param baseUrl 表单当前值（空则回退已保存配置）
      * @param apiKey  表单当前值（空或 **** 掩码则回退已保存配置，与保存流程约定一致）
      * @param model   表单当前值（空则回退已保存配置）
@@ -77,6 +92,7 @@ public class ConnectivityProbeService {
                 case "ocrmineru" -> ocrMineruProbe(baseUrl, start);
                 case "ocrpp" -> ocrPpProbe(baseUrl, start);
                 case "sandbox" -> sandboxProbe(baseUrl, apiKey, start);
+                case "websearch" -> webSearchProbe(baseUrl, apiKey, start);
                 default -> fail(start, "不支持的探测类型：" + group);
             };
         } catch (Exception e) {
@@ -260,6 +276,130 @@ public class ConnectivityProbeService {
             sb.append("在管沙盒 ").append(tracked).append(" 个");
         }
         return sb.length() > 1 ? sb.append("）").toString() : "";
+    }
+
+    /**
+     * 联网搜索探测：按 {@code webSearch.provider} 打一次**真实的最小搜索**，而不只探根路径。
+     *
+     * <p>为什么必须真打一次搜索：SearXNG（generic）只有在实例 settings.yml 的 formats 里开启
+     * {@code json} 才能返回 JSON，否则 {@code /search?format=json} 直接 403（见
+     * {@code GenericSearchProvider} 的类注释）。若只探根路径/健康端点，会把「实例活着但
+     * JSON 格式没开＝实际不可用」误判成可用——而这正是自建部署最常见的踩坑。
+     *
+     * <p>provider 从已保存配置读（表单里没有这个字段，切换服务商时先测后存仍以当前选择的服务商为准）。
+     * 探测词用固定的 innocuous 词（"wenqu probe"），limit=1，把真实成本压到最低；
+     * provider 抛出的 401/403/余额不足等原样透出，便于与服务商对账。
+     */
+    private Map<String, Object> webSearchProbe(String baseUrl, String apiKey, long start) {
+        String provider = nvl(configService.get("webSearch.provider"));
+        if (provider.isBlank()) provider = "tavily";   // 与 schema 的 def 一致
+        String base = value(baseUrl, "webSearch.baseUrl");
+        String key = secret(apiKey, "webSearch.apiKey");
+
+        return switch (provider.toLowerCase()) {
+            case "generic" -> genericSearchProbe(base, key, start);
+            // Tavily / Bocha 均为 POST 搜索端点 + Bearer 鉴权，但响应结构不同（results vs data.webPages.value），故分开写
+            case "tavily" -> postSearchProbe(base.isBlank() ? DEFAULT_TAVILY_URL : base, key,
+                    Map.of("query", PROBE_QUERY, "max_results", 1, "search_depth", "basic"), start, "Tavily", false);
+            case "bocha" -> postSearchProbe(base.isBlank() ? DEFAULT_BOCHA_URL : base, key,
+                    Map.of("query", PROBE_QUERY, "count", 1, "summary", true, "freshness", "noLimit"), start, "Bocha", true);
+            default -> fail(start, "未知的联网搜索服务商：" + provider
+                    + "（支持 tavily / bocha / generic）");
+        };
+    }
+
+    /**
+     * SearXNG（generic）探测：{@code GET {base}/search?q=...&format=json&limit=1}。
+     *
+     * <p>成功判据是「解析出 results 数组」，而不是 HTTP 200——SearXNG 在 formats 未开 json 时
+     * 会以 200 返回 HTML 错误页（另一侧还有 403 的情形），只看状态码仍会误判。
+     */
+    private Map<String, Object> genericSearchProbe(String base, String key, long start) {
+        if (base.isBlank()) {
+            return fail(start, "服务地址为空（自建 SearXNG 无公共默认地址，webSearch.baseUrl 必填）");
+        }
+        String root = stripTrailingSlash(base);
+        String url = root + "/search?q=" + URLEncoder.encode(PROBE_QUERY, StandardCharsets.UTF_8)
+                + "&format=json&limit=1";
+        if (!isHttpUrl(root)) return fail(start, "地址不合法（仅支持 http/https）：" + root);
+
+        String body;
+        try {
+            RestClient client = RestClient.builder().requestFactory(factory()).build();
+            RestClient.RequestHeadersSpec<?> spec = client.get().uri(url);
+            // SearXNG 通常无鉴权；非空时仍按 Bearer 带上，兼容前面挂了网关的场景（与运行时一致）
+            if (!key.isBlank()) spec = spec.header("Authorization", "Bearer " + key);
+            body = spec.retrieve().toEntity(String.class).getBody();
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            // 403 是 SearXNG 的标志性错误：json 格式没在 settings.yml 里开
+            String hint = status == 403
+                    ? "（SearXNG 需在实例 settings.yml 的 formats 里加入 json，否则 /search?format=json 返 403）"
+                    : status == 401 ? "（地址前面挂了网关且要求鉴权，请填服务 Key）" : "";
+            return fail(start, cut("HTTP " + status + hint + "：" + safe(e.getResponseBodyAsString())));
+        } catch (Exception e) {
+            return fail(start, cut("搜索服务 " + root + " 请求失败：" + rootMessage(e)));
+        }
+
+        com.alibaba.fastjson2.JSONObject obj;
+        try {
+            obj = JSONObject.parseObject(body);
+        } catch (Exception e) {
+            // 非 JSON：多半是 formats 未开 json 而返回了 HTML 错误页
+            return fail(start, "响应不是 JSON（SearXNG 需在 settings.yml 的 formats 里加入 json）：" + cut(safe(body)));
+        }
+        if (obj == null || obj.getJSONArray("results") == null) {
+            return fail(start, "响应 JSON 缺少 results 字段，确认这是 SearXNG 实例：" + cut(safe(body)));
+        }
+        int n = obj.getJSONArray("results").size();
+        return ok(start, "可用（HTTP 200，SearXNG 返回 " + n + " 条结果；formats 已开 json）");
+    }
+
+    /**
+     * Tavily / Bocha 探测：POST 一次最小搜索载荷。
+     * <p>成功判据按各家真实响应结构取结果条数（与运行时 provider 的解析口径一致）：
+     * Tavily 是 {@code results}，Bocha 嵌套在 {@code data.webPages.value}——两者不同，
+     * 统一按 results 判会把「Bocha 完全正常」误报成失败。
+     */
+    private Map<String, Object> postSearchProbe(String url, String key, Object body,
+                                                long start, String label, boolean bochaShape) {
+        if (!isHttpUrl(url)) return fail(start, "地址不合法（仅支持 http/https）：" + url);
+        if (key.isBlank()) {
+            return fail(start, "服务 Key 为空（" + label + " 按 Bearer 鉴权，缺 Key 必然 401）");
+        }
+        String resp;
+        try {
+            RestClient client = RestClient.builder().requestFactory(factory()).build();
+            resp = client.post().uri(url).contentType(MediaType.APPLICATION_JSON)
+                    .header("Authorization", "Bearer " + key)
+                    .body(body).retrieve().toEntity(String.class).getBody();
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            String hint = status == 401 || status == 403 ? "（服务 Key 无效或无权限）"
+                    : status == 402 ? "（账户余额不足）"
+                    : status == 429 ? "（触发限流，稍后重试）" : "";
+            return fail(start, cut("HTTP " + status + hint + "：" + safe(e.getResponseBodyAsString())));
+        } catch (Exception e) {
+            return fail(start, cut(label + " " + url + " 请求失败：" + rootMessage(e)));
+        }
+        try {
+            com.alibaba.fastjson2.JSONObject obj = JSONObject.parseObject(resp);
+            JSONArray arr = bochaShape ? bochaResults(obj) : (obj == null ? null : obj.getJSONArray("results"));
+            if (arr != null) {
+                return ok(start, "可用（HTTP 200，" + label + " 返回 " + arr.size() + " 条结果）");
+            }
+            return fail(start, "响应缺少结果数组（Bocha 应在 data.webPages.value），确认地址指向 " + label
+                    + " 搜索端点：" + cut(safe(resp)));
+        } catch (Exception e) {
+            return fail(start, "响应不是 JSON（确认地址指向 " + label + " 搜索端点）：" + cut(safe(resp)));
+        }
+    }
+
+    /** Bocha 的结果数组在 data.webPages.value（三层嵌套，与 BochaSearchProvider 解析口径一致） */
+    private static JSONArray bochaResults(JSONObject obj) {
+        if (obj == null || obj.getJSONObject("data") == null) return null;
+        if (obj.getJSONObject("data").getJSONObject("webPages") == null) return null;
+        return obj.getJSONObject("data").getJSONObject("webPages").getJSONArray("value");
     }
 
     /**
