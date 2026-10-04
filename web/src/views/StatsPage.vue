@@ -188,7 +188,8 @@ function fmtDuration(sec) {
 // ==================== Token 活动热力图 ====================
 // 一次派生：列（周×7 天的格子矩阵）+ 档位函数。三种视图共用日数据（tokens + 轮次）：
 //   每日=按当日分档；每周=每列按周合计整列同色；累计=每列按「截至该周末」的周累计整列同色。
-// 档位均按非零值四分位划档（GitHub 口径）。
+// 档位均按非零值四分位划档（GitHub 口径）。末列收在最近一个完整周（上周六）：
+// 进行中的本周不预生成（周初会出现只装着「今天+未来占位」的悬空列），当天数据看下方每日趋势图。
 const dailyMap = computed(() => {
   const m = new Map()
   for (const c of heatmap.value) m.set(c.date, { t: Number(c.tokens) || 0, c: Number(c.count) || 0 })
@@ -199,13 +200,13 @@ const heatData = computed(() => {
   const m = dailyMap.value
   const today = new Date()
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  // 末列 = 本周（周日开头，GitHub 口径）；向前铺满近 365 天
+  // 末列 = 最近一个完整周（周日开头、周六收尾，GitHub 口径）；向前铺满近 365 天
   const saturday = new Date(today)
-  saturday.setDate(saturday.getDate() + (6 - today.getDay()))
-  const weeks = Math.ceil((365 + today.getDay() + 1) / 7)
+  saturday.setDate(saturday.getDate() + (6 - today.getDay()) - 7)
+  const weeks = Math.ceil((365 + today.getDay() + 1) / 7) - 1
   const dayOf = (w, i) => { const d = new Date(saturday); d.setDate(d.getDate() - w * 7 - (6 - i)); return d }
 
-  // 每周聚合（旧→新，与列序一致）：tokens / 轮次 / 周结束日（未到的周末以今天截断）
+  // 每周聚合（旧→新，与列序一致）：tokens / 轮次 / 周结束日（列均为已完成的整周，必在过去）
   const weekAgg = []
   for (let w = weeks - 1; w >= 0; w--) {
     let t = 0, c = 0
@@ -213,8 +214,7 @@ const heatData = computed(() => {
       const rec = m.get(fmt(dayOf(w, i)))
       if (rec) { t += rec.t; c += rec.c }
     }
-    const endD = dayOf(w, 6)
-    weekAgg.push({ t, c, end: fmt(endD > today ? today : endD) })
+    weekAgg.push({ t, c, end: fmt(dayOf(w, 6)) })
   }
   // 累计视图（按周）：截至各周末的累计 tokens / 轮次（前缀和=日累计在周末的取值）
   const weekCum = []
@@ -232,9 +232,7 @@ const heatData = computed(() => {
     const col = []
     const wi = weeks - 1 - w
     for (let i = 0; i < 7; i++) {
-      const d = dayOf(w, i)
-      if (d > today) { col.push(null); continue }
-      const key = fmt(d)
+      const key = fmt(dayOf(w, i))
       if (heatMode.value === 'weekly') {
         // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）
         col.push({ date: key, value: weekAgg[wi].t, count: weekAgg[wi].c, weekEnd: weekAgg[wi].end })
@@ -292,11 +290,8 @@ const heatMonths = computed(() => {
   const out = []
   let prevMonth = -1
   heatData.value.columns.forEach((col, ci) => {
-    // 列首（行 0）= 该列周日；列首若是未来日期（末列），回退到列内最后一个真实日期再补齐
-    const last = col.map((c, i) => ({ c, i })).filter(x => x.c !== null).pop()
-    if (!last) return
-    const d = new Date(last.c.date)
-    d.setDate(d.getDate() - last.i)
+    // 用列尾（周六）跨月判定：新月份首次出现的列打标（10月标在含 10-1 的那列）
+    const d = new Date(col[6].date)
     if (d.getMonth() !== prevMonth) {
       prevMonth = d.getMonth()
       out.push({ col: ci + 1, label: `${d.getMonth() + 1}月` })
