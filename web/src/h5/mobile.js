@@ -21,20 +21,26 @@ const NARROW = '(max-width: 768px)'
 const COARSE = '(pointer: coarse)'
 const NO_HOVER = '(hover: none)'
 
-const mqNarrow = window.matchMedia(NARROW)
-const mqCoarse = window.matchMedia(COARSE)
-const mqNoHover = window.matchMedia(NO_HOVER)
+// 本模块在 main.js 里是**顶层 import**，顶层代码立即执行 —— 若这里抛错，整个应用白屏。
+// 故 matchMedia / maxTouchPoints 全部降级兜底：缺失时按「最保守的 PC 分支」取值
+//（非窄屏、精确指针），宁可窄屏退回 PC 布局，也不能让页面打不开。
+const mq = q => {
+  try { return window.matchMedia ? window.matchMedia(q) : null } catch (e) { return null }
+}
+const mqNarrow = mq(NARROW)
+const mqCoarse = mq(COARSE)
+const mqNoHover = mq(NO_HOVER)
 
 // 初值同步求值（不在 onMounted 后再改）：挂载首帧就能拿到正确形态，避免闪跳
-export const isNarrow = ref(mqNarrow.matches)
+export const isNarrow = ref(mqNarrow ? mqNarrow.matches : false)
 // 两者任一成立即视为「非精确指针」：触屏设备无 hover，鼠标设备指针精确；
 // 某些触屏笔记本两者都有（如 Surface），此时以 coarse 为准更贴合实际交互
-export const isCoarse = ref(mqCoarse.matches || mqNoHover.matches)
-export const isTouch = ref(navigator.maxTouchPoints > 0)
+export const isCoarse = ref(Boolean((mqCoarse && mqCoarse.matches) || (mqNoHover && mqNoHover.matches)))
+export const isTouch = ref(Boolean((navigator.maxTouchPoints || 0) > 0))
 
-function bind (mq, r) {
-  if (!mq.addEventListener) return
-  mq.addEventListener('change', e => { r.value = e.matches })
+function bind (m, r) {
+  if (!m || !m.addEventListener) return
+  m.addEventListener('change', e => { r.value = e.matches })
 }
 bind(mqNarrow, isNarrow)
 bind(mqCoarse, isCoarse)

@@ -1,8 +1,8 @@
 <template>
-  <!-- 窄屏下非白名单页面的引导卡。
-       刻意**保留 URL**（不 redirect）：用户可收藏/分享这条链接，转屏回大屏立刻正常；
-       也不提供「仍然留在此页」——破版的半吊子体验比看不到更糟，用户会以为是 bug。 -->
-  <div class="dg-wrap">
+  <!-- 窄屏页面守卫：非白名单页面渲染引导卡，**且不渲染 slot**（否则被拦的页面
+       仍然挂在 DOM 里、只是被盖住，滚动与点击都会穿透到下面的真实内容）。
+       白名单页面则把 slot 原样透出——守卫退化为纯粹的 v-if。 -->
+  <div v-if="!allowed" class="dg-wrap">
     <div class="dg-card">
       <desktop-outlined class="dg-ic" />
       <div class="dg-title">该页面建议用电脑访问</div>
@@ -10,6 +10,7 @@
       <button class="app-btn" @click="goChat">返回对话</button>
     </div>
   </div>
+  <slot v-else />
 </template>
 
 <script setup>

@@ -1,0 +1,209 @@
+// 真浏览器窄屏验证：playwright-core 驱动系统 Edge（Chromium 内核），375×667 视口 + 触屏语义。
+// 验的是「用户能不能用」而不是「代码在不在」——H5 第一版有过 4 个静态校验全绿、真机却坏的 bug
+// （守卫 slot 没绑、调的 antd 方法不存在、mPanelOpen 没绑模板、sheet 无关闭口），故必须有这一层。
+//
+// 前置：先构建产物到 web/dist
+//   npx vite build --outDir web/dist --emptyOutDir
+// 依赖：playwright-core（不装进项目，临时用）：
+//   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
+//   NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-browser.cjs
+// 无 playwright-core 时会给出提示并跳过（exit 0），不阻塞其它校验。
+//
+'use strict'
+// 真浏览器窄屏验证：用 playwright-core 驱动系统 Edge（Chromium 内核），
+// 在 375×667（iPhone SE 尺寸）视口下打开构建产物，验证移动端适配的实际行为。
+//
+// 验的是**用户能不能用**，不是「代码在不在」：
+//   - 侧栏是否真的变抽屉（隐藏到屏外 + 可点开）
+//   - 顶栏是否存在、按钮是否够大（触控热区 ≥34px）
+//   - 触摸热区尺寸
+//   - 管理页是否给引导卡、对话页是否放行（真渲染，不是查源码）
+//   - 横向是否溢出（375px 下出现横向滚动 = 破版）
+//   - 点「状态」右栏是否真能打开（这条曾因模板没绑 mPanelOpen 而永远打不开）
+let chromium
+try { ({ chromium } = require('playwright-core')) } catch (e) {
+  console.log('SKIP  未安装 playwright-core，跳过真浏览器验证')
+  console.log('      安装：cd /tmp/wq-verify && npm i playwright-core')
+  console.log('      运行：npx vite build --outDir dist --emptyOutDir')
+  console.log('            NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-browser.cjs')
+  process.exit(0)
+}
+const path = require('path')
+const fs = require('fs')
+
+const EDGE = process.env.WQ_BROWSER || '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+const exists = p => { try { return require('fs').existsSync(p) } catch (e) { return false } }
+if (!exists(EDGE)) { console.log('SKIP  未找到浏览器：' + EDGE + '（可用 WQ_BROWSER 指定）'); process.exit(0) }
+const DIST_DIR = '/Users/yuki/IdeaProjects/wenqu/web/dist'
+const ORIGIN = 'http://h5.local'
+const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json',
+  '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' }
+// SPA 回退：文件不存在就回 index.html（等价生产 nginx try_files）
+function serveStatic (page) {
+  return page.route('**/*', route => {
+    const u = new URL(route.request().url())
+    // mock 管理员身份：路由守卫的 requiresAdmin 依赖 /auth/me 的结果，
+    // 不 mock 时 ensureAuth 失败会把 ai_role 覆写成 user → /settings 被弹回 /chat
+    if (u.pathname === '/api/ai/auth/me') {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ success: true, data: { user: 'admin', username: '管理员', role: 'superadmin', admin: true, menus: [] } }) })
+    }
+    if (u.host !== 'h5.local') return route.abort()      // 其余外部请求掐断
+    let p = decodeURIComponent(u.pathname)
+    let f = path.join(DIST_DIR, p)
+    if (p === '/' || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST_DIR, 'index.html')
+    try {
+      const buf = fs.readFileSync(f)
+      route.fulfill({ status: 200, body: buf,
+        headers: { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' } })
+    } catch (e) { route.abort() }
+  })
+}
+
+let bad = 0
+const check = (ok, label, detail = '') => {
+  if (!ok) bad++
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? '  →  ' + detail : ''}`)
+}
+
+;(async () => {
+  const browser = await chromium.launch({ executablePath: EDGE, headless: true })
+  // iPhone SE：375×667，deviceScaleFactor 2，isMobile + hasTouch 开启触屏语义
+  const ctx = await browser.newContext({
+    viewport: { width: 375, height: 667 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true
+  })
+  const page = await ctx.newPage()
+  await serveStatic(page)
+  await serveStatic(page)
+  const errors = []
+  page.on('pageerror', e => errors.push(String(e.message)))
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
+
+  // ---- 登录页（未登录会被路由守卫弹到 /login，正好先看它）----
+  await page.goto(ORIGIN + '/login', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(600)
+
+  const h1 = await page.evaluate(() => {
+    const w = document.querySelector('.login-wrap')
+    const c = document.querySelector('.login-card')
+    const inputs = [...document.querySelectorAll('.login-card input')]
+    return {
+      wrapH: w ? Math.round(w.getBoundingClientRect().height) : 0,
+      cardW: c ? Math.round(c.getBoundingClientRect().width) : 0,
+      docScrollW: document.documentElement.scrollWidth,
+      docClientW: document.documentElement.clientWidth,
+      inputCount: inputs.length,
+      inputH: inputs[0] ? Math.round(inputs[0].getBoundingClientRect().height) : 0,
+      inputFont: inputs[0] ? getComputedStyle(inputs[0]).fontSize : ''
+    }
+  })
+  check(h1.wrapH > 0 && h1.wrapH <= 700, '登录页在 375px 下有高度且不超视口', `wrapH=${h1.wrapH}`)
+  check(h1.cardW > 0 && h1.cardW <= 375, '登录卡片不溢出 375px', `cardW=${h1.cardW}`)
+  check(h1.docScrollW <= h1.docClientW + 1, '登录页无横向溢出', `scrollW=${h1.docScrollW} clientW=${h1.docClientW}`)
+  // iOS 聚焦自动缩放：字号 <16px 会被放大且不自动复位
+  check(parseFloat(h1.inputFont) >= 16, '登录输入框字号 ≥16px（否则 iOS 聚焦会 zoom-in 不复位）', `font=${h1.inputFont}`)
+  check(h1.inputH >= 38, '登录输入框高度 ≥38px（触控热区）', `h=${h1.inputH}`)
+
+  // ---- 注入令牌让守卫放行，直接进 /chat 看对话页 ----
+  // 用假令牌即可：路由守卫只查本地是否存在，真实鉴权在 /auth/me 与接口层
+  await page.evaluate(() => { localStorage.setItem('ai_token', 'mock-token-for-verify') })
+  await page.goto(ORIGIN + '/chat', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+
+  const chat = await page.evaluate(() => {
+    const side = document.querySelector('.side')
+    const topbar = document.querySelector('.m-topbar')
+    const sideCs = side ? getComputedStyle(side) : null
+    const r = side ? side.getBoundingClientRect() : null
+    const btns = topbar ? [...topbar.querySelectorAll('.m-tb-btn')] : []
+    return {
+      hasSide: !!side,
+      sidePos: sideCs ? sideCs.position : '',
+      sideRight: r ? Math.round(r.right) : null,
+      sideW: r ? Math.round(r.width) : null,
+      hasTopbar: !!topbar,
+      topbarH: topbar ? Math.round(topbar.getBoundingClientRect().height) : 0,
+      btnCount: btns.length,
+      minBtn: btns.length ? Math.min(...btns.map(b => Math.round(b.getBoundingClientRect().height))) : 0,
+      docScrollW: document.documentElement.scrollWidth,
+      docClientW: document.documentElement.clientWidth
+    }
+  })
+  check(chat.hasSide && chat.sidePos === 'fixed', '侧栏窄屏为 fixed（抽屉形态）', `position=${chat.sidePos}`)
+  check(chat.hasSide && chat.sideRight <= 0, '侧栏默认滑出屏外（translateX(-100%) 生效）', `right=${chat.sideRight}`)
+  check(chat.sideW > 200 && chat.sideW <= 375, '抽屉宽度合理（min(84vw,320px)）', `w=${chat.sideW}`)
+  check(chat.hasTopbar, '移动顶栏已渲染')
+  check(chat.topbarH >= 44, '顶栏高度 ≥44px', `h=${chat.topbarH}`)
+  check(chat.btnCount >= 3, '顶栏按钮齐全（菜单/搜索/新建/帮助）', `count=${chat.btnCount}`)
+  check(chat.minBtn >= 34, '顶栏按钮触控热区 ≥34px', `minH=${chat.minBtn}`)
+  check(chat.docScrollW <= chat.docClientW + 1, '对话页无横向溢出', `scrollW=${chat.docScrollW} clientW=${chat.docClientW}`)
+
+  // ---- 遮罩与开抽屉 ----
+  await page.evaluate(() => {
+    const b = document.querySelector('.m-tb-btn')
+    if (b) b.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  await page.waitForTimeout(500)
+  const opened = await page.evaluate(() => {
+    const side = document.querySelector('.side')
+    const mask = document.querySelector('.side-mask')
+    const r = side ? side.getBoundingClientRect() : null
+    return { right: r ? Math.round(r.right) : null, hasMask: !!mask }
+  })
+  check(opened.right > 0, '点汉堡按钮后抽屉滑入', `right=${opened.right}`)
+  check(opened.hasMask, '抽屉打开时有遮罩（可点关闭）')
+
+  // ---- 宽屏回归：1280 下不应有顶栏、侧栏应常驻 ----
+  const wide = await ctx.newPage()
+  await serveStatic(wide)
+  await serveStatic(wide)
+  await wide.setViewportSize({ width: 1280, height: 800 })
+  await wide.goto(ORIGIN + '/chat', { waitUntil: 'networkidle' })
+  await wide.waitForTimeout(700)
+  const w = await wide.evaluate(() => {
+    const side = document.querySelector('.side')
+    const topbar = document.querySelector('.m-topbar')
+    const r = side ? side.getBoundingClientRect() : null
+    return {
+      hasTopbar: !!topbar,
+      sidePos: side ? getComputedStyle(side).position : '',
+      sideLeft: r ? Math.round(r.left) : null,
+      sideW: r ? Math.round(r.width) : null
+    }
+  })
+  check(!w.hasTopbar, '宽屏不渲染移动顶栏')
+  check(w.sidePos !== 'fixed', '宽屏侧栏非 fixed（回归 PC 布局）', `position=${w.sidePos}`)
+  check(w.sideLeft === 0 && w.sideW >= 190, '宽屏侧栏常驻 200px', `left=${w.sideLeft} w=${w.sideW}`)
+
+  // ---- 引导卡：非白名单页面窄屏应给引导卡，且真实页面**未渲染** ----
+  // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat
+  // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat
+  await page.goto(ORIGIN + '/settings', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(800)
+  const guard = await page.evaluate(() => {
+    const card = document.querySelector('.dg-card')
+    // 关键：引导卡出现时，被拦页面的真实 DOM 不该存在（否则滚动/点击会穿透）
+    const mainBody = document.querySelector('.main-body')
+    return {
+      hasCard: !!card,
+      title: card ? (card.querySelector('.dg-title') || {}).textContent : '',
+      mainChildCount: mainBody ? mainBody.children.length : -1,
+      mainTextLen: mainBody ? mainBody.innerText.trim().length : -1
+    }
+  })
+  check(guard.hasCard, '窄屏访问 /settings 显示引导卡')
+  check(/电脑/.test(guard.title), '引导卡文案正确', guard.title)
+  check(guard.mainTextLen > 0 && guard.mainTextLen < 80, '被拦页面的真实内容未渲染（不穿透）', `textLen=${guard.mainTextLen}`)
+
+  // ---- JS 运行时错误汇总 ----
+  const real = errors.filter(e => !/mock-token-for-verify|401|Failed to load resource/i.test(e))
+  check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))
+
+  await browser.close()
+  console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
+  process.exit(bad ? 1 : 0)
+})().catch(e => { console.error('验证脚本异常：', e.message); process.exit(2) })

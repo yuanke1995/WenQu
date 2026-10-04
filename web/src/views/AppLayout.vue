@@ -49,7 +49,7 @@
       <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）；右端内嵌批量管理入口 -->
       <div v-if="!collapsed" class="sess-search-wrap">
         <search-outlined class="sess-search-ic" />
-        <input v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
+        <input ref="searchInputRef" v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
       </div>
       <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于当前搜索结果 -->
@@ -200,7 +200,7 @@
 
     <!-- 主内容区：窄屏顶部插入移动顶栏（抽屉入口 / 会话标题 / 搜索 / 新建 / 帮助） -->
     <div class="main">
-      <MobileTopBar v-if="isNarrow" @toggle-side="sideOpen = !sideOpen" @search="sideOpen = true" @new-chat="newChat" />
+      <MobileTopBar v-if="isNarrow" @toggle-side="sideOpen = !sideOpen" @search="openSideSearch" @new-chat="newChat" />
       <div class="main-body">
         <DesktopOnlyGuard v-if="isNarrow" :path="route.path">
           <router-view />
@@ -334,6 +334,15 @@ const sideOpen = ref(false)
 // 转宽屏也必须关——遮罩是 fixed 的，留着会把整个宽屏盖住
 watch(() => route.fullPath, () => { if (isNarrow.value) sideOpen.value = false })
 watch(isNarrow, v => { if (!v) sideOpen.value = false })
+
+// 顶栏「搜索」按钮：打开抽屉并聚焦搜索框。只开抽屉的话用户的意图（找会话）没有一步到位，
+// 还得再点一次输入框。抽屉是 transform 动画，等它到位再聚焦，否则聚焦动作发生在
+// 元素还在屏外时会被浏览器忽略
+const searchInputRef = ref(null)
+const openSideSearch = () => {
+  sideOpen.value = true
+  setTimeout(() => searchInputRef.value && searchInputRef.value.focus(), 260)
+}
 
 // 导航跳转。**仅窄屏**在 /chat 内切换会话时用 replace：
 // 手机返回键是主导航，若每次切换会话都 push，A→B→C 连点三次后要按 3 次返回才能离开对话页。

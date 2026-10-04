@@ -660,7 +660,9 @@
                 </svg>
               </span>
               <!-- 深度思考设置入口：宽屏挂在模型下拉行上（悬浮哪行弹哪行，见下方 ModelSelect 的 option-hover）；
-                   触屏无 hover，改由这个常驻按钮点开底部 sheet —— 用 @media (hover:hover) 限定只宽屏渲染 -->
+                   触屏无 hover，改由这个常驻按钮点开底部 sheet。
+                   显示与否只由 v-if="isCoarse" 决定，CSS 侧不另设 @media(hover:hover) 规则——
+                   两者判据不同源会在「coarse 且 hover:hover」的设备上把入口藏没。 -->
               <button v-if="isCoarse" class="think-entry" :class="{ on: deepThinkOn }" type="button"
                       title="深度思考设置" @click="toggleThinkSheet">
                 <thunderbolt-outlined />
@@ -686,8 +688,15 @@
       </div>
     </div>
 
-    <!-- 右侧状态栏（可收起）：运行控制 / 当前智能体 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示） -->
-    <aside v-if="panelOpen" class="right-panel">
+    <!-- 右侧状态栏（可收起）：运行控制 / 当前智能体 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示）
+         宽窄两态共用这一份 DOM：宽屏由 panelOpen 控制（占位列），窄屏由 mPanelOpen 控制
+         （浮层/底部 sheet，默认收起）。两态只靠 .as-sheet 类 + CSS 媒体查询区分。 -->
+    <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow }">
+      <!-- 窄屏下本栏是覆盖式 sheet，必须给一个显式关闭口：宽屏它是常驻列不需要关，
+           窄屏开起来后若只能靠顶栏按钮来回切，用户会觉得「关不掉」。仅窄屏渲染。 -->
+      <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
+        <close-outlined />
+      </button>
       <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
       <div class="rp-scope-row">
         <span class="rp-scope">
@@ -1674,6 +1683,10 @@ const repositionThinkPanel = () => {
 watch([thinkHoverRef, thinkLevelsOpen, thinkCtxOpen], () => nextTick(repositionThinkPanel))
 /** 悬浮下拉模型行（ModelSelect 透传）：先记下行位置，稍候弹出该模型的设置面板；ref 为空=离开行 */
 const onModelOptionHover = (modelRef, rowEl) => {
+  // 触屏没有 hover：模型下拉行的 per-item 设置面板不可达，改由工具条常驻入口
+  // （.think-entry，点开底部 sheet）承担。此处必须早退，否则触屏点开下拉时
+  // hover 通路与常驻入口同时生效，两套状态会打架（面板既被 hover 打开又被 sheet 关闭）
+  if (isCoarse.value) return
   if (!modelRef) { scheduleThinkHide(); return }
   const rect = rowEl ? rowEl.getBoundingClientRect() : null
   thinkPanelRect = rect
@@ -2495,13 +2508,21 @@ const onGlobalKeydown = e => {
 }
 const onGlobalPaste = e => onPasteImages(e)
 // 窗口高度变化会改变「一屏」的量：重算留白（跟随中的会话顺手回到落点）
+// 重测输入框：antd Textarea 内部靠 ResizeObserver 自测高度，但 iOS Safari 在键盘
+// 动画期间该观察可能不触发（overflow 计算在键盘态下不稳定），表现为输入框塌成一行。
+// 注意调用路径：antd 的 Textarea 只 expose 了 focus/blur/resizableTextArea，**没有 resize()**，
+// 直接调 textareaRef.value.resize() 会抛 TypeError。真正的重测入口在其内部实例上：
+//   textareaRef.value.resizableTextArea.instance.resize()（与本文件既有的
+//   textareaRef.value.resizableTextArea.textArea 取法同一层级）。
+// 加 ?. 兜底：万一 antd 换版本改了结构，宁可不重测也不要抛错打断交互。
+const retestTextarea = () => {
+  const rt = textareaRef.value && textareaRef.value.resizableTextArea
+  if (rt && rt.instance && typeof rt.instance.resize === 'function') rt.instance.resize()
+}
 const onWindowResize = () => {
   updateTailSpacer()
   if (stickToBottom.value) scroll()
-  // 窄屏键盘弹起/收起改变了可用高度：antd Textarea 内部靠 ResizeObserver 自测，
-  // 但 iOS Safari 在键盘动画期间该观察可能不触发（overflow 计算在键盘态下不稳定），
-  // 表现为输入框塌成一行 —— 主动调一次 resize() 补测。宽屏不做（无键盘态，省一次布局）
-  if (isNarrow.value) nextTick(() => { if (textareaRef.value) textareaRef.value.resize() })
+  if (isNarrow.value) nextTick(retestTextarea)
 }
 // 转屏：iOS Safari 从横屏转竖屏时不保证触发 resize 到正确值，单独补一次
 const onOrientationChange = () => { setTimeout(onWindowResize, 120) }
@@ -4473,6 +4494,14 @@ onMounted(async () => {
 
 /* 上下文容量卡（悬浮右栏模型行）：与深度思考面板同一套 fixed 定位约定 */
 .ctxcap-float { position: fixed; z-index: 1060; }
+/* 窄屏 sheet 的关闭口（仅窄屏渲染，见模板）：右上角 34×34 触控热区 */
+.rp-sheet-close {
+  position: absolute; top: 6px; right: 8px; z-index: 2;
+  width: 34px; height: 34px; border: none; background: transparent; cursor: pointer;
+  color: var(--app-text3); font-size: 14px; touch-action: manipulation;
+  display: flex; align-items: center; justify-content: center; border-radius: 8px;
+}
+.rp-sheet-close:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 .ctxcap {
   width: 268px; padding: 12px 14px; border-radius: 12px;
   background: var(--app-panel); border: 1px solid var(--app-border);
@@ -5181,8 +5210,11 @@ onMounted(async () => {
   }
   .think-entry.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 }
-/* 宽屏不渲染深度思考的常驻入口（那里挂在模型下拉行的 hover 上） */
-@media (hover: hover) { .think-entry { display: none; } }
+/* 宽度不作为 .think-entry 的显示条件 —— 显示与否只由 v-if="isCoarse" 决定。
+   此前这里写了 @media (hover:hover){ display:none }，与 v-if 判据不同源：
+   在 Surface 之类「(pointer:coarse) 与 (hover:hover) 同时成立」的设备上，
+   按钮会被渲染出来又被这条 CSS 藏掉，而 hover 通路已被 onModelOptionHover
+   的 isCoarse 早退堵死 —— 深度思考入口彻底消失。判据必须只有 isCoarse 一个。 */
 /* 无障碍：系统开启「减少动态效果」时不播 sheet 上滑 */
 @media (prefers-reduced-motion: reduce) {
   .right-panel.as-sheet, .mention-panel, .think-float, .ctxcap-float { animation: none; }

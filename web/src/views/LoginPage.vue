@@ -326,5 +326,17 @@ html[data-theme='dark'] .login-title::after {
      再给底部留出键盘高度，滚动时卡片始终可达 */
   .login-pane { padding: 16px 14px; align-items: flex-start; }
   .login-card { margin: auto 0 0; padding: 22px 18px 18px; }
+  /* 主题切换圆点：宽屏锚在页面右上角（right:61px 呼应内容框位置），
+     窄屏下这个距离是按宽屏调的，会飘到不合适的位置 —— 收到常规边距并让出刘海 */
+  .hero-dot { top: calc(8px + var(--sat, 0px)); right: 8px; }
+  /* 底部波纹：桌面 200px 高在窄屏占比过大，收到 96px */
+  .hero-waves { height: 96px; }
+  /* 表单控件：antd 默认 32px 高在手指上偏小；输入框字号 13px 也会触发 iOS 聚焦自动缩放
+     （app.css 的全局 16px 规则管得到，这里补的是尺寸与间距） */
+  .login-card :deep(.ant-input), .login-card :deep(.ant-input-password),
+  .login-card :deep(.ant-input-affix-wrapper) { min-height: 40px; }
+  .login-btn { min-height: 42px; }
+  /* 表单项间距略收，让首屏在 iPhone SE 这类小屏上不出现滚动条 */
+  .login-card :deep(.ant-form-item) { margin-bottom: 14px; }
 }
 </style>
