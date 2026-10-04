@@ -2012,11 +2012,25 @@ public class RagService {
     private void flushTimelineProcess(AnswerStreamState st, int pos) {
         int from = st.processAnchor.get();
         if (pos <= from) return;
-        Map<String, Object> seg = new LinkedHashMap<>();
-        seg.put("kind", "process");
-        seg.put("from", from);
-        seg.put("to", pos);
-        st.timeline.add(seg);
+        synchronized (st.timeline) {
+            // 连续追加合并进末段：过程独白是按 token 增量下发的（routeProcessText 每条都调本方法），
+            // 无条件新建段会把一段独白切成上百个 1~2 字的过程段，done 落库后前端每个碎片各渲染一个
+            // 「执行过程」折叠头。末段仍是过程段且正好接在锚点上（其间没插工具/产物段）时延伸它。
+            // 工具/产物打断时末段已是 tool/artifact 段，此处自然另起新段，交错顺序如实保留。
+            if (!st.timeline.isEmpty()) {
+                Map<String, Object> last = st.timeline.get(st.timeline.size() - 1);
+                if (last != null && "process".equals(last.get("kind")) && toInt(last.get("to")) == from) {
+                    last.put("to", pos);
+                    st.processAnchor.set(pos);
+                    return;
+                }
+            }
+            Map<String, Object> seg = new LinkedHashMap<>();
+            seg.put("kind", "process");
+            seg.put("from", from);
+            seg.put("to", pos);
+            st.timeline.add(seg);
+        }
         st.processAnchor.set(pos);
     }
 

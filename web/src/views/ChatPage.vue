@@ -1197,7 +1197,10 @@ const pushTimelineArtifact = (m, index) => {
 }
 
 /** 用后端落库/下发的段数组重建时间线：文本段直接用区间，工具段与产物段按下标取回对象。
- *  下标取不到（数据缺失）就跳过该段，不造数。 */
+ *  下标取不到（数据缺失）就跳过该段，不造数。
+ *  相邻过程段合并：过程独白按 token 增量成段，早期落库数据里一段独白被切成上百个碎片段，
+ *  逐个渲染就是几十个「执行过程」折叠头。相邻（上一段 to === 本段 from）合并成一段是无损的——
+ *  processText 区间本就连贯；中间夹着工具/文本段则不合并，交错顺序如实保留。 */
 const restoreTimeline = (m, segs) => {
   const out = []
   for (const s of segs || []) {
@@ -1205,7 +1208,11 @@ const restoreTimeline = (m, segs) => {
     if (s.kind === 'text') {
       out.push({ kind: 'text', from: Number(s.from) || 0, to: Number(s.to) || 0 })
     } else if (s.kind === 'process') {
-      out.push({ kind: 'process', from: Number(s.from) || 0, to: Number(s.to) || 0 })
+      const from = Number(s.from) || 0
+      const to = Number(s.to) || 0
+      const last = out[out.length - 1]
+      if (last && last.kind === 'process' && last.to === from) last.to = to
+      else out.push({ kind: 'process', from, to })
     } else if (s.kind === 'tool') {
       const t = (m.toolCalls || [])[Number(s.i) || 0]
       if (t) out.push({ kind: 'tool', i: Number(s.i) || 0, tool: t })
