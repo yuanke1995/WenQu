@@ -628,7 +628,11 @@
                            :width="190" :disabled="loading"
                            @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
-            <button v-if="loading" class="send-btn stop" title="停止生成" @click="stop"><pause-circle-outlined /></button>
+            <!-- 两段式停止：生成中第一次 Esc 只「上膛」（按钮切成 esc 键帽，2s 内不按回落），再按一次才停；点击仍是立即停 -->
+            <button v-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
+              <span v-if="escArmed" class="esc-cap">esc</span>
+              <pause-circle-outlined v-else />
+            </button>
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
           </div>
         </div>
@@ -2336,15 +2340,35 @@ watch(previewUrl, v => {
   else window.removeEventListener('keydown', onKeydown)
 })
 
-// 全局快捷键：ESC 停止生成 / 清空输入；粘贴发图
+// 全局快捷键：ESC 两段式停止（防误触：清输入的 Esc 不会误杀生成中的回答）/ 清空输入；粘贴发图
+/** 生成中按第一次 Esc 只上膛——按钮切 esc 键帽，2s 内再按才真正停止，超时自动回落 */
+const escArmed = ref(false)
+let escArmTimer = null
+const armEsc = () => {
+  escArmed.value = true
+  clearTimeout(escArmTimer)
+  escArmTimer = setTimeout(() => { escArmed.value = false }, 2000)
+}
+const disarmEsc = () => {
+  escArmed.value = false
+  clearTimeout(escArmTimer)
+}
+const stopNow = () => { disarmEsc(); stop() }
+watch(loading, v => { if (!v) disarmEsc() })
 const onGlobalKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return
   if (previewUrl.value && ['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
   if (e.key === 'Escape') {
-    if (loading.value) { stop(); return }
-    if (document.activeElement === textareaRef.value) {
+    if (loading.value) {
+      if (escArmed.value) stopNow()
+      else armEsc()
+      return
+    }
+    // a-textarea 的 ref 是组件实例而非原生元素：activeElement 比对必须先取其根元素，等值/包含两种形态都兼容
+    const taEl = textareaRef.value?.$el ?? textareaRef.value
+    if (taEl && (document.activeElement === taEl || taEl.contains?.(document.activeElement))) {
       if (text.value) text.value = ''
-      else textareaRef.value?.blur()
+      else document.activeElement?.blur?.()
     }
   }
 }
@@ -2352,6 +2376,7 @@ const onGlobalPaste = e => onPasteImages(e)
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('paste', onGlobalPaste)
+  clearTimeout(escArmTimer)
 })
 
 // ==================== 会话 ====================
@@ -4414,7 +4439,14 @@ onMounted(async () => {
 }
 .send-btn:hover:not(:disabled) { background: var(--app-accent-hover); }
 .send-btn:disabled { background: var(--app-accent-disabled); cursor: not-allowed; }
-.send-btn.stop { background: var(--app-danger); }
+/* 停止态：弱化危险色（浅红底+危险色内容，与 app-pill.err/右栏停止按钮同一视觉语言），不做实心红圆 */
+.send-btn.stop {
+  background: var(--app-danger-weak); color: var(--app-danger-text);
+  border: 1px solid var(--app-danger-border);
+}
+.send-btn.stop:hover:not(:disabled) { background: var(--app-danger-border); }
+/* 上膛态：按钮内嵌 esc 字样（生成中第一次 Esc 后出现，再按一次才停止），无键帽描边 */
+.send-btn .esc-cap { font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: .5px; }
 
 /* 右侧状态栏 */
 .right-panel {
