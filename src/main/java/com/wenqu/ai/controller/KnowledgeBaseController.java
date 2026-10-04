@@ -93,7 +93,8 @@ public class KnowledgeBaseController {
      * 这里只回检索/解析参数（不含 gateway 地址与任何密钥），普通用户拿到也只是"知道自己库将按什么默认值跑"。
      */
     @Operation(summary = "知识库参数默认值", description = "检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
-            + "personal 键返回「本人个人值（未设=全局默认）」，其余返回全局值")
+            + "personal/personalOnly 键返回「本人个人值（未设即空，personalOnly 无全局层）」，其余返回全局值；"
+            + "rerank.platformRef 为平台兜底层（不在库级可覆盖白名单），原样返回供前端点名默认模型")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
@@ -102,17 +103,23 @@ public class KnowledgeBaseController {
             if (k.endsWith(".baseUrl")) continue;   // 网关地址不外发给普通用户（表单也没有该字段）
             out.put(k, effectiveDefault(k));
         }
+        // 平台默认重排模型：库级覆盖与个人设置都没绑重排模型时的兜底层（ModelRegistryService.rerankRoute
+        // 值链的第三跳）。不在 AGENT_QUERY_PARAM_KEYS（那是有意收窄的库级可覆盖白名单），单独补发——
+        // 前端「重排模型」槽位空值时据此点名"默认用的哪个模型"，否则用户无从得知重排到底会不会跑、用谁的模型。
+        // 仅模型引用串，不含网关地址与密钥，同 rerank.model 的外发口径。
+        out.put("rerank.platformRef", configService.get("rerank.platformRef"));
         return ResultJson.ok(out);
     }
 
     /**
      * 参数对请求者的「生效默认值」：personal 键取本人个人值（未设回落全局）；
-     * personalOnly 键（重排模型已归库级绑定）只有个人层——未设即空，
-     * 与新库保存后的实际检索行为一致（预填全局旧值会把个人默认"固化"成库级覆盖，
-     * 反而覆盖掉用户自己的设置）。
+     * personalOnly 键（重排模型已归库级绑定，个人设置入口已下线）同样取本人个人值——
+     * 未设即空（personalOnly 无全局层，{@link ConfigService#get} 对其恒返回空，回落分支只为类型统一）。
+     * 存量个人值（入口下线前写入的）与检索链路的个人层同源，预填/展示与其一致：
+     * 预填全局旧值会把个人默认"固化"成库级覆盖，反而覆盖掉用户自己的设置。
      */
     private String effectiveDefault(String key) {
-        if (configSchemaService.isPersonal(key)) {
+        if (configSchemaService.isPersonal(key) || configSchemaService.isPersonalOnly(key)) {
             String pv = userConfigService.personalValue(RequestUser.uid(), key);
             if (pv != null && !pv.isBlank()) return pv;
         }

@@ -71,7 +71,7 @@
               <a-select v-model:value="form.q.rerankEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('rerank', 'enabled')" allow-clear />
             </a-form-item>
             <a-form-item label="重排模型" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" />
+              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" :placeholder="rerankPh" />
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:2px 0 0">新建库按你当前生效的默认值预填（保存即固化）；清空某项 = 该库该项跟随默认（个人设置 → 系统全局，改默认后自动生效）。</div>
@@ -352,6 +352,26 @@ const valPh = (group, key) => {
   return v === '' ? '继承默认' : `继承默认（${v}）`
 }
 
+// 重排模型槽位的占位点名：库未绑模型时实际生效的默认层 = 个人设置（rerank.model）→ 平台默认
+// （rerank.platformRef）→ 本地 rerank 服务（前端不可知，不展示），口径同 ModelRegistryService.rerankRoute。
+// 仅在重排生效（库覆盖或默认开）时点名，与数字项「默认 0.8」同口径——否则"跟随默认"背后
+// 到底有没有模型、用谁的模型，用户只能靠猜。模型名优先取可选列表的展示名；平台层模型可能
+// 不在本人可选列表（登记人是管理员），退回引用串的模型段（去供应商 UUID 前缀，同 ModelSelect 失配兜底）。
+const rerankIndex = ref({})
+const rerankEnabledEffective = computed(() => {
+  const v = form.value.q.rerankEnabled
+  return v === 'true' || v === 'false' ? v === 'true' : flatVal('rerank.enabled') === 'true'
+})
+const rerankPh = computed(() => {
+  if (!rerankEnabledEffective.value) return ''
+  const dref = flatVal('rerank.model') || flatVal('rerank.platformRef')
+  if (!dref) return ''
+  const info = rerankIndex.value[dref]
+  if (info && info.displayName) return `默认 ${info.displayName}`
+  const i = dref.indexOf('/')
+  return `默认 ${i === -1 ? dref : dref.slice(i + 1)}`
+})
+
 /**
  * 新建：以你当前的**生效默认值**为模板预填解析与检索参数（个人设置 > 系统全局；保存即固化到本库；
  * 之后改默认设置不会回溯影响已建库——要跟随就清空对应项后保存，空值即"不写覆盖"）。
@@ -402,6 +422,8 @@ watch(() => props.open, open => {
   // 每次打开高级参数都收起（默认继承全局，不需要看）；官方内置库例外——它进来就是为了调检索参数
   advActive.value = isBuiltin.value ? ['q'] : []
   loadParamTips().catch(() => {})   // 问号文案加载失败不阻塞（只是少个问号）
+  // 重排模型占位点名需要模型索引解析展示名（编辑模式此前不装；模块级 10s 缓存，新建模式重复调用无额外请求）
+  loadModelIndex().then(i => { rerankIndex.value = i || {} }).catch(() => {})
   if (props.kb) {
     loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
   } else {
