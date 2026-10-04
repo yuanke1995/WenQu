@@ -4383,9 +4383,12 @@ onMounted(async () => {
 }
 .agent-tag-ic { font-size: 12px; opacity: .8; }
 /* 模型切换记录（— ⇄ 模型已切换 A → B —）：居中分隔条独占一行，弱化呈现；flex-basis:100%
-   配合 .row 的 flex-wrap 把气泡挤到下一行 */
+   配合 .row 的 flex-wrap 把气泡挤到下一行。
+   左右内缩到正文列宽（.msg-block 的 min(94%,860px)）：分隔条盒子仍占满一行，
+   靠 padding 收窄可见部分，否则分隔线横贯整个消息区、比正文宽出一倍 */
 .model-switch-divider {
   flex-basis: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 0 calc((100% - min(94%, 860px)) / 2);
   margin: 2px 0 10px; color: var(--app-text3);
 }
 .model-switch-divider .msd-line { flex: 1; border-top: 1px solid var(--app-border); }
