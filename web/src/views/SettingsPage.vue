@@ -714,17 +714,20 @@ const onResetGroup = key => {
 
 // ==================== 测试连接（先测后存） ====================
 // 模型网关的连通性测试已随 baseUrl/API Key 迁至「模型供应商」页（先测后存）；
-// 这里保留关键词引擎探测。
+// 这里保留关键词引擎、沙盒 provisioner 等服务地址的探测。
 const probeStates = ref({
   keyword: { loading: false, result: null },
   ocrMineru: { loading: false, result: null },
-  ocrPp: { loading: false, result: null }
+  ocrPp: { loading: false, result: null },
+  sandbox: { loading: false, result: null }
 })
-const probeLabels = { keyword: '关键词引擎', ocrMineru: 'MinerU 服务', ocrPp: 'PP-StructureV3 服务' }
+const probeLabels = { keyword: '关键词引擎', ocrMineru: 'MinerU 服务', ocrPp: 'PP-StructureV3 服务', sandbox: '沙盒 provisioner' }
 const PROBE_BY_KEY = {
   'keyword.baseUrl': 'keyword',
   'parse.ocrMineruUri': 'ocrMineru',
-  'parse.ocrPpUri': 'ocrPp'
+  'parse.ocrPpUri': 'ocrPp',
+  // 令牌一起送：后端 sandbox 探测第二步要用它校验 /api/sandboxes，掩码值会回退已保存配置
+  'sandbox.provisionerUrl': 'sandbox'
 }
 const probeKey = f => PROBE_BY_KEY[f.group + '.' + f.key] || ''
 
@@ -739,6 +742,8 @@ const doProbe = async group => {
     Object.assign(payload, { baseUrl: f.parse?.ocrMineruUri })
   } else if (group === 'ocrPp') {
     Object.assign(payload, { baseUrl: f.parse?.ocrPpUri })
+  } else if (group === 'sandbox') {
+    Object.assign(payload, { baseUrl: f.sandbox?.provisionerUrl, apiKey: f.sandbox?.token })
   }
   s.loading = true
   s.result = null
@@ -756,7 +761,8 @@ const doProbe = async group => {
 // 被探测项改动后清空旧探测结果
 watch(
   () => [form.value.keyword?.baseUrl, form.value.keyword?.apiKey,
-         form.value.parse?.ocrMineruUri, form.value.parse?.ocrPpUri],
+         form.value.parse?.ocrMineruUri, form.value.parse?.ocrPpUri,
+         form.value.sandbox?.provisionerUrl, form.value.sandbox?.token],
   () => {
     for (const k of Object.keys(probeStates.value)) probeStates.value[k].result = null
   }

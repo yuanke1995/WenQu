@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.alibaba.fastjson2.JSONObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -31,6 +32,7 @@ import java.util.Map;
  *       云端 rerank 网关必需——GET /models 不带 Key 会被判 401）；</li>
  *   <li>audio：GET {baseUrl}/v1/models 验证网关可达与 Key 有效（ASR/TTS 端点协议各家不一，不做最小调用）；</li>
  *   <li>keyword：GET {baseUrl}/health 探活 + GET {baseUrl}/indexes（带 master key）验证密钥是否被接受。</li>
+ *   <li>sandbox：GET {baseUrl}/health 探活 + 带令牌 GET {baseUrl}/api/sandboxes 验证令牌被接受。</li>
  * </ul>
  *
  * <p>安全：仅供管理员端点调用；出站地址仅允许 http/https，且统一 2s 连接 / 5s 读超时（探测需快速反馈）。
@@ -74,6 +76,7 @@ public class ConnectivityProbeService {
                 case "keyword" -> keywordProbe(baseUrl, apiKey, start);
                 case "ocrmineru" -> ocrMineruProbe(baseUrl, start);
                 case "ocrpp" -> ocrPpProbe(baseUrl, start);
+                case "sandbox" -> sandboxProbe(baseUrl, apiKey, start);
                 default -> fail(start, "不支持的探测类型：" + group);
             };
         } catch (Exception e) {
@@ -191,6 +194,72 @@ public class ConnectivityProbeService {
         if (base.isBlank()) return fail(start, "服务地址为空");
         String root = stripTrailingSlash(base);
         return get(root + "/health", null, start, "PP-StructureV3 " + root);
+    }
+
+    /**
+     * 沙盒 provisioner 探测：先 GET /health 探活，再带令牌 GET /api/sandboxes 校验令牌。
+     * <p>两步是必要的：provisioner 的 /health <b>不带鉴权</b>（{@code @app.get("/health")} 无 auth 依赖），
+     * 令牌错时它照样 200——只探活会把「地址对、令牌错」误判成可用。/api/sandboxes 才有
+     * {@code require_provisioner_auth}，401/403 才是令牌问题。
+     * <p>只读端点：list 不创建/不删除任何沙盒，与设置页其他探测一样无副作用。
+     */
+    private Map<String, Object> sandboxProbe(String baseUrl, String apiKey, long start) {
+        String base = value(baseUrl, "sandbox.provisionerUrl");
+        if (base.isBlank()) return fail(start, "服务地址为空");
+        String root = stripTrailingSlash(base);
+        if (!isHttpUrl(root)) return fail(start, "地址不合法（仅支持 http/https）：" + root);
+
+        String healthBody;
+        try {
+            RestClient client = RestClient.builder().requestFactory(factory()).build();
+            healthBody = client.get().uri(root + "/health").retrieve().toEntity(String.class).getBody();
+        } catch (RestClientResponseException e) {
+            return fail(start, cut("/health 返回 HTTP " + e.getStatusCode().value() + "："
+                    + safe(e.getResponseBodyAsString())));
+        } catch (Exception e) {
+            return fail(start, cut("provisioner " + root + " 请求失败：" + rootMessage(e)));
+        }
+        // 200 但不是 provisioner 的 health（同端口跑了别的服务）：校验关键字段再往下走
+        String flavor = provisionerFlavor(healthBody);
+        if (flavor == null) {
+            return fail(start, "服务在线但不是沙盒 provisioner（/health 响应缺少 status 字段）：" + cut(safe(healthBody)));
+        }
+
+        String token = secret(apiKey, "sandbox.token");
+        if (token.isBlank()) {
+            return fail(start, "服务在线" + flavor + "，但未配置访问令牌（沙盒要求 ≥32 字符，与 provisioner 侧一致）");
+        }
+        Map<String, Object> authed = get(root + "/api/sandboxes", token, start, "provisioner 令牌校验");
+        if (!Boolean.TRUE.equals(authed.get("available"))) {
+            return fail(start, "服务在线" + flavor + "，但令牌校验失败（确认与 provisioner 侧一致）：" + authed.get("detail"));
+        }
+        return ok(start, "可用（服务在线" + flavor + "，令牌有效）");
+    }
+
+    /**
+     * 从 /health 响应体提取后端形态（docker/local）与在管沙盒数，供探测结果回显。
+     *
+     * @return 形如「（后端 docker，在管沙盒 2 个）」的片段；不是 provisioner 的响应返回 null
+     */
+    private static String provisionerFlavor(String body) {
+        if (body == null || !body.contains("\"status\"")) return null;
+        String backend = "";
+        String tracked = "";
+        try {
+            JSONObject h = JSONObject.parseObject(body);
+            if (h == null || h.getString("status") == null) return null;
+            backend = h.getString("backend");
+            tracked = h.getString("tracked_sandboxes");
+        } catch (Exception e) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder("（");
+        if (backend != null && !backend.isBlank()) sb.append("后端 ").append(backend);
+        if (tracked != null && !tracked.isBlank()) {
+            if (sb.length() > 1) sb.append("，");
+            sb.append("在管沙盒 ").append(tracked).append(" 个");
+        }
+        return sb.length() > 1 ? sb.append("）").toString() : "";
     }
 
     /**

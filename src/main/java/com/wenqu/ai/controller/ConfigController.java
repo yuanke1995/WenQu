@@ -118,14 +118,14 @@ public class ConfigController {
      * 用表单里<b>尚未保存</b>的值真实探测，实现"先测后存"；不落库、不触发重嵌入/索引重建。
      */
     @Operation(summary = "测试连通", description = "用传入的（未保存）配置真实探测模型网关或服务是否可达。"
-            + "group=chat|vision|embedding|rerank|keyword；返回 {available, latencyMs, detail}")
+            + "group=chat|vision|embedding|rerank|keyword|sandbox；返回 {available, latencyMs, detail}")
     @PostMapping("/probe")
     public ResultJson probe(
             @Parameter(description = "{\"group\":\"chat\",\"baseUrl\":\"..\",\"apiKey\":\"..\",\"model\":\"..\",\"path\":\"..\"}")
             @RequestBody Map<String, String> body) {
         String group = body.get("group");
         if (group == null || group.isBlank()) {
-            return ResultJson.error(400, "缺少 group（chat/vision/embedding/rerank/keyword）");
+            return ResultJson.error(400, "缺少 group（chat/vision/embedding/rerank/keyword/sandbox）");
         }
         return ResultJson.ok(connectivityProbeService.probe(group, body.get("baseUrl"),
                 body.get("apiKey"), body.get("model"), body.get("path")));
