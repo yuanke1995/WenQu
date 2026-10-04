@@ -1,12 +1,43 @@
 # SearXNG 本地实例配置（问渠联网搜索 generic 服务商专用）
 #
-# 最小化配置：基于官方默认值（use_default_settings: true）只覆盖三处——
-# 1. secret_key：实例密钥，随机生成，必须设置否则起不来
+# 最小化配置：基于官方默认值（use_default_settings: true）覆盖四处——
+# 1. secret_key：实例密钥，必须设置否则起不来
 # 2. limiter=false：本地单用户实例必须关。SearXNG 自带的防爬限流会把「无浏览器
 #    指纹的程序化 JSON 请求」当机器人拦掉（429/403），这正是问渠的调用形态
 # 3. search.formats 显式含 json：不加的话 /search?format=json 直接 403
 #    （SearXNG 默认只开 html，这是"通了但返回 403"的头号原因）
-use_default_settings: true
+# 4. engines：只保留境内可达引擎（见下方说明），并放宽出站超时
+#
+# ── 为什么换成境内引擎组合 ──────────────────────────────────────
+# 实例部署在境内云主机上，默认引擎里的 brave / duckduckgo / google cse /
+# wikipedia / wikidata 全部出不去。症状是 /search?format=json 返 HTTP 200 但
+# results 为空，unresponsive_engines 里挂着一串 "timeout"：
+#
+#   en.wikipedia.org  -> 2001::1        （与 www.google.com 同址，物理上不可能）
+#   duckduckgo.com    -> 2a03:2880:...  （face:b00c 是 Facebook 网段）
+#
+# 即 DNS 应答被污染返回伪造地址，连接阶段静默丢包直到超时。IPv4 强制
+# （curl -4）同样超时，说明不是 IPv6 独有问题，而是整机没有墙外出口。
+# 这类故障在 settings.yml 里改任何参数都治不了，只能换引擎。
+#
+# 选型依据（keep_only 按引擎 name 匹配，官方 settings_loader 只认 name）：
+#   bing  -> base_url 覆盖为 cn.bing.com，官方注释即为此场景
+#   baidu / sogou / quark -> 引擎可用性稳定，补足中文结果
+#   不保留 360search：默认 timeout 20.0，一个引擎就能拖垮整次查询
+#
+# 想要墙外结果（google / ddg / wikipedia）只能给 outgoing 段配 proxies，
+# 届时把 keep_only 相应放开：
+#   outgoing:
+#     proxies:
+#       all://:
+#         - http://user:pass@proxy-host:port
+use_default_settings:
+  engines:
+    keep_only:
+      - bing
+      - baidu
+      - sogou
+      - quark
 
 server:
   secret_key: "d0ebe9f7219447d27d78bf45c010f5312cc8f68adee2be0233fabaf11756dde5"
@@ -17,3 +48,21 @@ search:
   formats:
     - html
     - json
+
+# 默认 3.0s 对境内引擎偏紧（sogou/quark 首字节常在 2s 上下），调到 6.0s
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0
+
+# 上面 keep_only 里的引擎在官方默认配置中均为 disabled: true，
+# keep_only 只做筛除不做启用，必须在此逐个显式打开
+engines:
+  - name: bing
+    disabled: false
+    base_url: https://cn.bing.com
+  - name: baidu
+    disabled: false
+  - name: sogou
+    disabled: false
+  - name: quark
+    disabled: false
