@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Component
-@Order(100)   // 先于依赖新表的启动任务（如 UsageBackfillRunner(200)）：先补齐结构再补数据
+@Order(100)   // 先于依赖新表的启动任务：先补齐结构再补数据
 public class SchemaMigrator implements ApplicationRunner {
 
     private static final Pattern CREATE_TABLE = Pattern.compile(

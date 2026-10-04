@@ -39,8 +39,4 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     @Select("SELECT DISTINCT DATE_FORMAT(create_time, '%Y-%m-%d') AS d FROM c_ai_usage_log "
             + "WHERE uid = #{uid} ORDER BY d")
     List<String> statActiveDates(@Param("uid") String uid);
-
-    /** 台账是否已包含历史回补数据（回补幂等守卫：回补行必带 message_id） */
-    @Select("SELECT COUNT(*) FROM c_ai_usage_log WHERE message_id IS NOT NULL")
-    int countBackfilled();
 }
