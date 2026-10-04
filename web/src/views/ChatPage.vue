@@ -368,6 +368,8 @@
             </div>
           </div>
         </div>
+        <!-- 尾随留白：本轮问题下方补足一屏，使贴底落点=问题置顶（回答长过一屏后归零，恢复正常贴底跟尾） -->
+        <div v-if="tailSpacer > 0" class="tail-spacer" :style="{ height: tailSpacer + 'px' }" aria-hidden="true"></div>
         <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
       </div>
 
@@ -1796,6 +1798,10 @@ const messages = ref([])
 const box = ref(null)
 const stickToBottom = ref(true)
 const AUTO_SCROLL_MARGIN = 80
+// 尾随留白高度（px）：把本轮问题下方补足到一屏，使「贴底」的落点正好是问题置顶。
+// 于是「问题拉到最上」与「回答时跟到底部」不再互斥：回答还不足一屏时它长在留白里、
+// 问题钉在顶部不动（新内容始终看得见）；长过一屏后留白归零，贴底就自然变成跟着最新内容走。
+const tailSpacer = ref(0)
 const onMessagesScroll = () => {
   const el = box.value
   if (!el) return
@@ -2399,9 +2405,12 @@ const onGlobalKeydown = e => {
   }
 }
 const onGlobalPaste = e => onPasteImages(e)
+// 窗口高度变化会改变「一屏」的量：重算留白（跟随中的会话顺手回到落点）
+const onWindowResize = () => { updateTailSpacer(); if (stickToBottom.value) scroll() }
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('paste', onGlobalPaste)
+  window.removeEventListener('resize', onWindowResize)
   clearTimeout(escArmTimer)
 })
 
@@ -2471,7 +2480,9 @@ const switchSession = async sid => {
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
       messages.value = list
-      scrollForce()
+      // 先按新列表重算尾随留白、等它落屏再贴底：落点是本轮问题置顶
+      //（列表短于一屏时留白为 0，落点即内容底）
+      nextTick(() => { updateTailSpacer(); scrollForce() })
     } else if (currentSessionId.value === sid) {
       messages.value = []
     }
@@ -3225,13 +3236,16 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
-  const liveScroll = () => { if (viewing()) scroll() }
+  // 流式期间：先按新高度重算留白、等它落屏，再贴底——留白让贴底落点停在本轮问题置顶处，
+  // 回答长过一屏后留白归零，贴底就自然变成跟着最新内容走（用户上翻仍会解除跟随）
+  const liveScroll = () => { if (viewing()) nextTick(() => { updateTailSpacer(); scroll() }) }
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
   // 首条消息发出即把会话抬进侧栏列表（列表隐藏空会话，等 onDone 才刷新的话长回答期间不可见）
   if (isFirstMessage) markSessionActive(sid, question)
-  if (viewing()) scrollForce()
+  // 本轮视角归位：留白补足并落屏后贴底，问题正好落在视口最上（与空会话首问同一落点）
+  if (viewing()) nextTick(() => { updateTailSpacer(); scrollForce() })
   let full = ''
   let gotToken = false
   // 流式渲染节流：token 只进缓冲 full，每 120ms 批量刷一次 msg.content 与时间线文本区间——
@@ -3246,6 +3260,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       flushedLen = full.length
     }
     if (msg.content !== full) msg.content = full
+    // 正文增长必须在这里推进视角：token 不走 liveScroll（只进缓冲、由这里批量落屏），
+    // 少这一下长回答就只跟到最后一个 stage 事件，新内容滚出屏幕看不见
+    liveScroll()
   }
   const flushSoon = () => {
     if (flushTimer) return
@@ -3480,7 +3497,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.degradations = degradations
       // 记录仍指向本轮才清（防止误删同会话新一轮的记录）
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
-      if (viewing()) scrollForce()
+      // 收尾同样走 liveScroll：跟随中的会话落到最新，用户已上翻看历史的会话原地不动——
+      // 答案写完不该把读者的位置抢走
+      liveScroll()
       if (isFirstMessage) loadSessions()
       // 重新生成：把刚完成的这一版追加进版本序列并切到它（气泡底部出现 ‹ n/N › 切换器）。
       // 自动重试（prev 非空）不追加：那是同一版本的重试，不是新版本——否则失败重试一次就多出一版
@@ -3515,7 +3534,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.errorCard = { message: String(e), at: Date.now() }
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       message.error(e)
-      if (viewing()) scrollForce()
+      // 同上：已上翻看历史的会话原地停留（错误卡与「重新生成」在回答末尾，toast + 回到底部按钮足够引导）
+      liveScroll()
     }
   })
 }
@@ -3779,10 +3799,28 @@ const scrollForce = () => nextTick(() => {
     stickToBottom.value = true
   }
 })
+// 尾随留白：问题顶到内容底的距离补到一屏（含容器上内边距），贴底落点即问题置顶。
+// 量的是「问题顶→内容底」，与留白自身无关，故可在留白生效时重复计算而不自激。
+const updateTailSpacer = () => {
+  const el = box.value
+  if (!el) return
+  const users = el.querySelectorAll('.row.user')
+  const q = users[users.length - 1]
+  if (!q) { tailSpacer.value = 0; return }
+  const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0
+  const qTop = q.getBoundingClientRect().top - el.getBoundingClientRect().top
+  // 减的是 DOM 上留白的实际高度（不是 ref：ref 会先于渲染领先一两拍，那样量出的内容底偏小，
+  // 留白算大、贴底就一点点越过落点，且渲染越重越明显）
+  const sp = el.querySelector('.tail-spacer')
+  const spH = sp ? sp.getBoundingClientRect().height : 0
+  const tail = (el.scrollHeight - spH) - (el.scrollTop + qTop)
+  tailSpacer.value = Math.max(0, Math.round(el.clientHeight - padTop - tail))
+}
 
 onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('paste', onGlobalPaste)
+  window.addEventListener('resize', onWindowResize)
   await loadSessions()
   refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
   loadAgents()       // 智能体下拉候选（不阻塞首屏）
