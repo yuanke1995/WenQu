@@ -142,8 +142,8 @@ public class KnowledgeBaseService {
         // 官方内置库（builtin=1）：文档内容随版本自动同步（ManualSeedService），名称/图标/共享范围/向量绑定
         // 等不接受人工编辑（控制器 requireManage 已拦，这里再兜一层防未来新调用路径绕过控制器）。
         // 例外：**检索/解析参数是纯运行时配置，版本同步完全不碰**（同步只按指纹重建篇目、按需维护 embedding_ref），
-        // 而官方库同样必须能绑重排模型——不绑就拿不到重排分，引用门从重排门 0.6 退化到融合门 0.25，
-        // 词面重叠的无关块会进引用面板。故对管理员级开放这两个字段，其余一律 fail-loud 拒绝（不静默忽略）。
+        // 而官方库同样必须能绑重排模型——不绑就拿不到重排分，引用门从重排门 0.6 退化到融合分门
+        // （minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板。故对管理员级开放这两个字段，其余一律 fail-loud 拒绝（不静默忽略）。
         boolean builtin = kb.getBuiltin() != null && kb.getBuiltin() == 1;
         if (builtin) {
             if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {

@@ -6,7 +6,7 @@
       <!-- 官方内置库：仅检索/解析参数可维护（后端白名单同口径），其余由版本同步维护 -->
       <div v-if="isBuiltin" class="kb-hint" style="margin:0 0 10px">
         官方内置库：文档内容随版本自动同步，名称 / 图标 / 描述与向量绑定不可修改；
-        <b>可维护下面的检索与解析参数</b>（典型用途：绑定重排模型——不绑则引用不做语义筛选）。
+        <b>可维护下面的检索与解析参数</b>（典型用途：绑定重排模型——不绑则没有精排，相关分门从重排门退化到融合分门，词面重叠的弱相关块更容易混进引用）。
       </div>
       <a-form-item label="名称" :required="!isBuiltin">
         <a-input v-model:value="form.name" :disabled="isBuiltin" placeholder="如：操作手册库" />
@@ -74,7 +74,7 @@
               <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" :placeholder="rerankPh" />
             </a-form-item>
           </div>
-          <div class="kb-hint" style="margin:2px 0 0">新建库按你当前生效的默认值预填（保存即固化）；清空某项 = 该库该项跟随默认（个人设置 → 系统全局，改默认后自动生效）。</div>
+          <div class="kb-hint" style="margin:2px 0 0">新建库按你当前生效的默认值预填（保存即固化）；清空某项 = 该库该项跟随系统全局默认（管理员在「系统设置」修改，改后自动生效）。</div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
           <template #header>
@@ -373,9 +373,9 @@ const rerankPh = computed(() => {
 })
 
 /**
- * 新建：以你当前的**生效默认值**为模板预填解析与检索参数（个人设置 > 系统全局；保存即固化到本库；
+ * 新建：以你当前的**生效默认值**为模板预填解析与检索参数（生效顺序：遗留个人值 > 系统全局；保存即固化到本库；
  * 之后改默认设置不会回溯影响已建库——要跟随就清空对应项后保存，空值即"不写覆盖"）。
- * 任一字段留空 = 该库该项跟随默认（个人设置 → 系统全局）。
+ * 任一字段留空 = 该库该项跟随系统全局默认（管理员在「系统设置」修改）。
  */
 const prefillFromGlobal = async () => {
   // 模型索引一并加载：rerank 引用要先验可解析（停用/他人供应商不在可选列表）再预填，

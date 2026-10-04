@@ -217,8 +217,8 @@ public class ModelRegistryService {
      *  ＞ **平台默认 rerank.platformRef**（管理员登记，非 personalOnly，全平台兜底）
      *  ＞ 空（回落本地 rerank.baseUrl 服务）。
      *  平台层是 2026-10-04 补的：重排模型历来只认归属人（库级或个人），任何一处没配就等于没有重排，
-     *  相关分门随之从重排门（0.6）退化到融合门（0.25），词面重叠的无关块会进上下文与引用面板
-     *  （实测 222 条带引用消息仅 9 条拿到重排分）。平台层让"没重排"从默认态变成异常态。 */
+     *  相关分门随之从重排门（0.6）退化到融合分门（minFusionScore，默认 0.5），词面重叠的无关块更容易
+     *  进上下文与引用面板（实测 222 条带引用消息仅 9 条拿到重排分）。平台层让"没重排"从默认态变成异常态。 */
     public ModelRoute rerankRoute() {
         String model = nz(configService.get("rerank.model"));
         ModelRoute r = resolveReference(model);

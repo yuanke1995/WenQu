@@ -66,7 +66,8 @@ public class KnowledgeBaseController {
         if (kb == null) throw new BizException("仅可管理自己创建或被授权管理的知识库");
         // 官方内置库（builtin=1）：createdBy=system + 共享全员只读 ⇒ 任何人都拿不到 MANAGE（管理员级也不例外，
         // 见 ResourceVisibilityService.resolve：共享只授 READ）。但它同样需要维护检索/解析参数（如绑定重排模型
-        // ——不绑则引用门退化到融合门 0.25，不相关块会进引用面板），故对管理员级单独放行；
+        // ——不绑则引用门退化到融合分门（minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板），
+        // 故对管理员级单独放行；
         // 能改哪些字段由服务层白名单兜住（KnowledgeBaseService.update），内容/删除仍不可动。
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
             if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {
