@@ -2649,6 +2649,9 @@ public class RagService {
                     // 来源 snippet 打包给 LLM 判"是否支撑"，不支撑的剔除标记、来源同步裁剪并重编 ref。
                     // 一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
                     if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
+                        // 用量归属：自检跑在流收尾回调线程上，ThreadLocal 身份已不可见——hold 显式带上
+                        com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
+                                st.userId, st.sessionId, null, "citecheck"));
                         try {
                             long citeT0 = System.currentTimeMillis();
                             CitationCheckResult ccr = citationConsistencyCheck(answer, sources, st.question, st.model);
@@ -2664,6 +2667,8 @@ public class RagService {
                         } catch (Exception e) {
                             // fail-loud：自检失败保持原回答（校验是增强，不是必选防线）
                             log.warn("[FAIL-LOUD] 引用一致性自检失败（保持原回答）: {}", e.getMessage());
+                        } finally {
+                            com.wenqu.ai.util.UsageAttr.clear();
                         }
                         st.stageMs.put("citation", System.currentTimeMillis() - st.startTime);
                     }
@@ -4071,7 +4076,7 @@ public class RagService {
                 if (keepFrom > 0) {
                     List<Map<String, Object>> older = backlog.subList(0, keepFrom);
                     try {
-                        String merged = summarizeHistory(resolvedModel, summary, historyText(older));
+                        String merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older));
                         if (merged != null && !merged.isBlank()) {
                             long newUntil = seqOf(older.get(older.size() - 1));
                             sessionService.updateHistorySummary(sessionId, merged, newUntil);
@@ -4182,8 +4187,10 @@ public class RagService {
     /**
      * 滚动历史摘要：把「已有摘要 + 本轮要压缩的更早轮次」合并成新摘要（用本轮生效模型，关思考、限输出）。
      * 摘要与会话绑定、与模型无关（切换模型可复用）；超时/失败抛异常由调用方回落。
+     * 用量归属：压缩跑在专属线程池上，ThreadLocal/请求上下文都不可见——入口线程先取 uid，
+     * 池内 hold 显式带上（台账按 UsageAttr 记账），finally 清理防线程复用污染。
      */
-    private String summarizeHistory(String resolvedModel, String oldSummary, String olderText) throws Exception {
+    private String summarizeHistory(String sessionId, String resolvedModel, String oldSummary, String olderText) throws Exception {
         String prompt = "你是对话历史压缩器。把下面的对话记录压缩成简洁要点摘要，供后续回答继续参考：\n"
                 + "1. 保留：用户的目标与诉求、已达成的结论与决定、出现的关键实体（人名/产品名/编号/数值/时间）、尚未解决的问题。\n"
                 + "2. 丢弃：寒暄、重复表述、已被后续对话推翻的中间过程。\n"
@@ -4192,8 +4199,13 @@ public class RagService {
                 + (oldSummary == null || oldSummary.isBlank() ? "" : "【已有摘要（更早的历史）】\n" + oldSummary + "\n\n")
                 + "【本次要并入的对话】\n" + olderText;
         long timeoutMs = configService.getLong("context.compressTimeoutMs", 20000L);
-        java.util.concurrent.Future<String> f = compressExecutor.submit(() ->
-                chatClient.prompt()
+        String billingUid = com.wenqu.ai.util.RequestUser.uid();
+        java.util.concurrent.Future<String> f = compressExecutor.submit(() -> {
+            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
+                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
+                    sessionId, null, "compress"));
+            try {
+                return chatClient.prompt()
                         .system("你是对话历史压缩器，只输出要点摘要。")
                         .user(prompt)
                         .options(OpenAiChatOptions.builder()
@@ -4202,7 +4214,11 @@ public class RagService {
                                 .maxTokens(1024)
                                 .build())
                         .call()
-                        .content());
+                        .content();
+            } finally {
+                com.wenqu.ai.util.UsageAttr.clear();
+            }
+        });
         return f.get(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
@@ -4493,6 +4509,9 @@ public class RagService {
         }
 
         StringBuilder thinking = new StringBuilder();
+        // 用量归属：思考流是独立订阅，doFinally 落在网关 I/O 线程上，ThreadLocal 不可见——
+        // 入口线程先取 uid，用 Reactor Context 带上（护栏截断/断连取消时，中断估算同样按此归属）
+        String billingUid = com.wenqu.ai.util.RequestUser.uid();
         try {
             chatClient.prompt()
                     .system(system.toString())
@@ -4514,6 +4533,10 @@ public class RagService {
                             }
                         }
                     })
+                    .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
+                            com.wenqu.ai.util.UsageAttr.of(
+                                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
+                                    sessionId, null, "think")))
                     .blockLast(Duration.ofMillis(Math.max(1000, timeoutMillis)));
 
             return finishDeepThinking(thinking.toString(), question, sessionId, emitter, true);
@@ -4777,8 +4800,14 @@ public class RagService {
                 + "【对话历史】\n" + historyText + "\n【当前问题】\n" + question;
         try {
             long timeoutMs = configService.getLong("retrieval.rewriteTimeoutMs", 8000L);
-            java.util.concurrent.Future<String> f = rewriteExecutor.submit(() ->
-                    chatClient.prompt()
+            // 用量归属：改写跑在专属线程池上，请求上下文不可见——入口线程先取 uid，池内 hold 显式带上
+            String billingUid = com.wenqu.ai.util.RequestUser.uid();
+            java.util.concurrent.Future<String> f = rewriteExecutor.submit(() -> {
+                com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
+                        com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
+                        null, null, "rewrite"));
+                try {
+                    return chatClient.prompt()
                             .system("你是检索查询改写器，只输出改写后的查询文本。")
                             .user(prompt)
                             .options(OpenAiChatOptions.builder()
@@ -4787,7 +4816,11 @@ public class RagService {
                                     .maxTokens(200)
                                     .build())
                             .call()
-                            .content());
+                            .content();
+                } finally {
+                    com.wenqu.ai.util.UsageAttr.clear();
+                }
+            });
             String rewritten = f.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (rewritten == null || rewritten.isBlank()) {
                 addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写返回空，按原句检索");

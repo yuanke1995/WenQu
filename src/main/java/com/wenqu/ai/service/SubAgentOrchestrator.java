@@ -231,9 +231,13 @@ public class SubAgentOrchestrator {
         /** 创建上下文时父线程的个人配置覆盖快照（个人设置 → 对话偏好）：与 baseOverrides 同理，
          *  分支线程内需重放（分支的要点提炼读 chat.temperature 等配置）。 */
         final Map<String, String> baseUserOverrides;
+        /** 创建上下文时父线程（问答流水线）捕获的用量归属 uid（null=无用户上下文）：分支线程的
+         *  ThreadLocal 不可见，要点提炼/supervisor 聚合等辅助调用的记账归属从这里取。 */
+        final String billingUid;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
-               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides) {
+               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
+               String billingUid) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
@@ -243,6 +247,7 @@ public class SubAgentOrchestrator {
             this.resolvedModel = resolvedModel;
             this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
             this.baseUserOverrides = baseUserOverrides == null ? Map.of() : baseUserOverrides;
+            this.billingUid = billingUid;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -324,8 +329,11 @@ public class SubAgentOrchestrator {
                 ? Math.min(subAgents.size(), 4)
                 : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
+        // 归属 uid 只在入口线程（问答流水线）可见，RunCtx 带进分支线程供辅助调用记账
+        String entryUid = com.wenqu.ai.util.RequestUser.uid();
         RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel,
-                configService.currentOverrides(), configService.currentUserOverrides());
+                configService.currentOverrides(), configService.currentUserOverrides(),
+                com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(entryUid) ? null : entryUid);
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
@@ -393,7 +401,7 @@ public class SubAgentOrchestrator {
         int budget = Math.max(200, configService.getInt("agent.digestMaxChars", 1500));
         if ("supervisor".equals(configService.get("agent.aggregateMode"))
                 && (parts.size() > 1 || joined.length() > budget)) {
-            String sup = superviseAggregate(joined, ctx.question, resolvedModel, budget);
+            String sup = superviseAggregate(joined, ctx.question, resolvedModel, budget, ctx.billingUid);
             if (sup != null) return sup;
             // superviseAggregate 内部已留 warn；此处回退 concat，继续走预算截断
         }
@@ -409,7 +417,8 @@ public class SubAgentOrchestrator {
      * supervisor 二次聚合：把各分支要点合并为一份清单（去重、排序、标注冲突、压缩进预算）。
      * 失败返回 null（调用方回退 concat 直拼，不影响问答主链路）。
      */
-    private String superviseAggregate(String joined, String question, String resolvedModel, int budget) {
+    private String superviseAggregate(String joined, String question, String resolvedModel, int budget,
+                                      String billingUid) {
         try {
             String prompt = "你是检索监督者（supervisor），负责汇总多个并行检索视角的要点。用户问题：" + question
                     + "\n\n各视角要点（【】内为来源角色/视角）：\n" + joined
@@ -421,15 +430,22 @@ public class SubAgentOrchestrator {
                     + "5. 全文控制在 " + budget + " 字以内。\n"
                     + "只输出要点清单本身，不要任何解释。";
             // 与 digest() 同一约束：chatClient 挂了 ToolCall Advisor，必须显式设 options 并关工具执行
-            String out = chatClient.prompt()
-                    .user(prompt)
-                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                            .model(resolvedModel)
-                            .temperature(configService.getDouble("chat.temperature"))
-                            .internalToolExecutionEnabled(false)
-                            .build())
-                    .call()
-                    .content();
+            // 用量归属：与 digest() 同理，并行线程池上 ThreadLocal 不可见——hold 显式带上
+            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(billingUid, null, null, "subagent"));
+            String out;
+            try {
+                out = chatClient.prompt()
+                        .user(prompt)
+                        .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                .model(resolvedModel)
+                                .temperature(configService.getDouble("chat.temperature"))
+                                .internalToolExecutionEnabled(false)
+                                .build())
+                        .call()
+                        .content();
+            } finally {
+                com.wenqu.ai.util.UsageAttr.clear();
+            }
             if (out == null || out.isBlank()) {
                 log.warn("[SUBAGENT] supervisor 聚合返回空（回退直拼）");
                 return null;
@@ -570,7 +586,8 @@ public class SubAgentOrchestrator {
             // 本分支的要点提炼结果（编排视图展示"这个角色查到了什么"；汇总文本仍并入 system 供主模型参考）
             String branchDigest = "";
             if (configService.getBoolean("agent.digestEnabled") && !fresh.isEmpty()) {
-                String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt(), ctx.resolvedModel);
+                String digest = digest(subQuery, fresh, sub == null ? null : sub.getSystemPrompt(),
+                        ctx.resolvedModel, ctx.billingUid);
                 if (digest != null && !digest.isBlank()) {
                     branchDigest = digest.strip();
                     synchronized (ctx) {
@@ -635,7 +652,8 @@ public class SubAgentOrchestrator {
      * 用 LLM 把命中片段提炼成要点（非流式、短输出）：让汇总进上下文的资料更精炼，
      * 而不是把每个子代理的原始片段都塞进主链路。失败返回 null（不影响主流程）。
      */
-    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits, String rolePrompt, String resolvedModel) {
+    private String digest(String subQuery, List<HybridRetrievalService.Hit> hits, String rolePrompt,
+                          String resolvedModel, String billingUid) {
         try {
             StringBuilder sb = new StringBuilder();
             for (HybridRetrievalService.Hit h : hits) {
@@ -650,15 +668,22 @@ public class SubAgentOrchestrator {
             // 必须设 options：chatClient 上注册了 ToolCall Advisor，裸调用会抛
             // "ToolCall Advisor requires ToolCallingChatOptions to be set"（要点提炼曾长期静默失败）。
             // 提炼要点是纯文本任务，显式关闭工具执行——避免子分支误触发工具调用、也省掉工具相关开销。
-            String out = chatClient.prompt()
-                    .user(prompt)
-                    .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                            .model(resolvedModel)
-                            .temperature(configService.getDouble("chat.temperature"))
-                            .internalToolExecutionEnabled(false)
-                            .build())
-                    .call()
-                    .content();
+            // 用量归属：分支跑在框架并行线程池上，ThreadLocal 不可见——hold 显式带上，finally 清理。
+            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(billingUid, null, null, "subagent"));
+            String out;
+            try {
+                out = chatClient.prompt()
+                        .user(prompt)
+                        .options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                .model(resolvedModel)
+                                .temperature(configService.getDouble("chat.temperature"))
+                                .internalToolExecutionEnabled(false)
+                                .build())
+                        .call()
+                        .content();
+            } finally {
+                com.wenqu.ai.util.UsageAttr.clear();
+            }
             return out == null ? null : out.replaceAll("[\\r\\n]+", " ").trim();
         } catch (Exception e) {
             // fail-loud：提炼失败用户侧表现为"卡片无要点"，必须留 warn 线索（debug 级别等于静默）

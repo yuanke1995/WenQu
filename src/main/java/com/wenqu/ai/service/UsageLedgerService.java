@@ -43,7 +43,7 @@ public class UsageLedgerService {
         long prompt = usage.getPromptTokens() == null ? 0 : usage.getPromptTokens();
         long completion = usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens();
         if (prompt <= 0 && completion <= 0) return;
-        record(attr, modelRef, prompt, completion, UsageAccumulator.cachedTokensOf(usage));
+        record(attr, modelRef, prompt, completion, UsageAccumulator.cachedTokensOf(usage), false);
     }
 
     /**
@@ -52,10 +52,22 @@ public class UsageLedgerService {
      */
     public void recordStream(UsageAttr.Attr attr, String modelRef, UsageAccumulator acc) {
         if (acc == null || acc.isEmpty()) return;
-        record(attr, modelRef, acc.promptTotal(), acc.completionTotal(), acc.cachedTotal());
+        record(attr, modelRef, acc.promptTotal(), acc.completionTotal(), acc.cachedTotal(), false);
     }
 
-    private void record(UsageAttr.Attr attr, String modelRef, long prompt, long completion, long cached) {
+    /**
+     * 中断兜底估算记账：流被取消（ESC 停止/客户端断开/护栏截断）时网关 usage 只随流末块下发、
+     * 永远收不到，但这笔钱供应商已按已下发内容照单计费——不记就是台账与账单的整轮缺口。
+     * 按实际下发的 prompt 文本与已收到的输出估算入账，estimated=1 标记非网关真实值
+     * （估算用 cl100k 词表，与各国产分词器存在分词器级偏差，方向偏保守）。
+     */
+    public void recordEstimated(UsageAttr.Attr attr, String modelRef, long prompt, long completion) {
+        if (prompt <= 0 && completion <= 0) return;
+        record(attr, modelRef, prompt, completion, 0, true);
+    }
+
+    private void record(UsageAttr.Attr attr, String modelRef, long prompt, long completion, long cached,
+                        boolean estimated) {
         String uid = attr == null ? null : attr.uid();
         if (uid == null || uid.isBlank()) {
             // RequestUser 兜底：同步路径（MVC 线程）通常可见，异步池/工具线程不可见时不强行归属
@@ -75,6 +87,7 @@ public class UsageLedgerService {
         row.setCompletionTokens(completion);
         row.setCachedTokens(cached);
         row.setTotalTokens(prompt + completion);
+        row.setEstimated(estimated);
         try {
             usageLogMapper.insert(row);
         } catch (Exception e) {

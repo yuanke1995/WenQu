@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -9,15 +10,18 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.env.Environment;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.wenqu.ai.util.TokenCounter;
 import com.wenqu.ai.util.UsageAccumulator;
 import com.wenqu.ai.util.UsageAttr;
 
@@ -96,19 +100,36 @@ public class DynamicOpenAiChatModel implements ChatModel {
             // 每订阅一个累加器：多次订阅互不串账
             UsageAccumulator acc = new UsageAccumulator();
             UsageAttr.Attr[] holder = new UsageAttr.Attr[1];
+            // 已收到的输出文本（取消时的中断估算用）
+            StringBuilder received = new StringBuilder();
             return delegate.stream(rewritten)
                     .doOnEach(signal -> {
                         // 归属只能从上 ContextView 取（ThreadLocal 在 netty 线程不可见）
                         if (holder[0] == null) holder[0] = UsageAttr.resolve(signal.getContextView());
                         if (!signal.isOnNext()) return;
                         ChatResponse r = signal.get();
-                        if (r == null || r.getMetadata() == null) return;
+                        if (r == null) return;
+                        if (r.getResult() != null && r.getResult().getOutput() != null
+                                && r.getResult().getOutput().getText() != null) {
+                            received.append(r.getResult().getOutput().getText());
+                        }
+                        if (r.getMetadata() == null) return;
                         acc.accept(r.getMetadata().getId(), r.getMetadata().getUsage());
                     })
                     .doFinally(sig -> {
                         try {
                             UsageAttr.Attr attr = holder[0] != null ? holder[0] : UsageAttr.current();
-                            usageLedger.recordStream(attr, modelRef, acc);
+                            // 中断兜底：usage 只随流末块下发，取消（ESC 停止/断开/护栏截断）后永远收不到，
+                            // 但已下发内容供应商照单计费——漏记就是台账与账单的整轮缺口（实测单轮可达 1.6 万 token）。
+                            // 只要收到过输出块（请求确实被网关处理）就按实际下发内容估算入账；usage 已到达
+                            // （acc 非空）仍以网关真实值入账。报错路径不估算：网关 5xx 通常不计费。
+                            if (acc.isEmpty() && sig == SignalType.CANCEL && !received.isEmpty()) {
+                                usageLedger.recordEstimated(attr, modelRef,
+                                        TokenCounter.estimate(requestText(rewritten)),
+                                        TokenCounter.estimate(received.toString()));
+                            } else {
+                                usageLedger.recordStream(attr, modelRef, acc);
+                            }
                         } catch (Exception e) {
                             log.warn("[UsageLedger] 流式用量记账异常（不影响本次调用）: {}", e.getMessage());
                         }
@@ -137,6 +158,34 @@ public class DynamicOpenAiChatModel implements ChatModel {
     /** 请求模型名（options.model，可能为引用/遗留名/null） */
     private static String modelOf(Prompt prompt) {
         return prompt.getOptions() instanceof OpenAiChatOptions o ? o.getModel() : null;
+    }
+
+    /**
+     * 中断轮的输入侧估算文本：全部消息正文 + options 里随请求下发的工具/MCP schema——
+     * 供应商按「实际收到的东西」计费，schema 不在消息里但同样占 prompt token，必须计入。
+     * chat template 开销不在其中（估算略保守）；仅用于 usage 未达时的估算入账，非精确口径。
+     */
+    private static String requestText(Prompt prompt) {
+        StringBuilder sb = new StringBuilder();
+        for (Message m : prompt.getInstructions()) {
+            if (m.getText() != null) {
+                sb.append(m.getText()).append('\n');
+            }
+        }
+        if (prompt.getOptions() instanceof OpenAiChatOptions o && o.getToolCallbacks() != null) {
+            for (ToolCallback cb : o.getToolCallbacks()) {
+                try {
+                    var def = cb.getToolDefinition();
+                    if (def != null) {
+                        sb.append(def.name()).append('\n').append(def.description())
+                                .append('\n').append(def.inputSchema()).append('\n');
+                    }
+                } catch (Exception ignored) {
+                    // 单个工具定义取不到就跳过（估算容错，不影响记账主流程）
+                }
+            }
+        }
+        return sb.toString();
     }
 
     /** 引用 → 裸模型名：引用前缀（providerId/）不透传给网关；遗留名原样 */

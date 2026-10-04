@@ -38,7 +38,7 @@ public class UsageLog {
     /** 模型引用 providerId/modelId（迁移前遗留名原样） */
     private String model;
 
-    /** 调用用途：chat / dispatch / subagent / memory / workflow / graphrag / index / probe / eval / other */
+    /** 调用用途：chat / dispatch / subagent / memory / compress / rewrite / citecheck / think / workflow / graphrag / index / probe / eval / other */
     private String kind;
 
     /** 输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径） */
@@ -52,6 +52,9 @@ public class UsageLog {
 
     /** prompt + completion，与供应商计费总量同口径 */
     private Long totalTokens;
+
+    /** 1=估算值（流被取消且网关 usage 末块未达，按下发内容估算）；0/null=网关真实 usage */
+    private Boolean estimated;
 
     private LocalDateTime createTime;
 }
