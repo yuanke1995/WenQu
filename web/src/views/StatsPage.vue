@@ -94,7 +94,7 @@
 
     <!-- 热力图悬浮提示（单实例浮层：事件委托驱动，随鼠标即时显示；原生 title 有约 1s 延迟且样式不可控） -->
     <Teleport to="body">
-      <div v-if="tip.show" class="heat-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">
+      <div v-if="tip.show" ref="tipEl" class="heat-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">
         <div class="heat-tip-l1">{{ tip.l1 }}</div>
         <div class="heat-tip-l2">{{ tip.l2 }}</div>
       </div>
@@ -279,11 +279,23 @@ function cellTip(cell) {
 
 // ==================== 热力图悬浮提示（事件委托 + 单实例浮层） ====================
 const tip = ref({ show: false, l1: '', l2: '', x: 0, y: 0 })
+const tipEl = ref(null)
 const onCellOver = e => {
   const el = e.target.closest('.heat-cell')
   if (!el || el.classList.contains('empty') || !el.dataset.l2) { tip.value.show = false; return }
   // 鼠标在格间移动时 mouseover 持续触发：跟随鼠标上方居中显示
   tip.value = { show: true, l1: el.dataset.l1, l2: el.dataset.l2, x: e.clientX, y: e.clientY }
+  nextTick(clampTip)
+}
+// 浮层以鼠标为锚水平居中、向上偏移，靠边悬停会探出视口：渲染后实测尺寸，把落点收回窗口内
+const clampTip = () => {
+  const node = tipEl.value
+  if (!node) return
+  const w = node.offsetWidth, h = node.offsetHeight, margin = 8
+  const x = Math.min(Math.max(tip.value.x, w / 2 + margin), window.innerWidth - w / 2 - margin)
+  const y = Math.min(Math.max(tip.value.y, h + 2 * margin), window.innerHeight - margin)
+  tip.value.x = Math.round(x)
+  tip.value.y = Math.round(y)
 }
 const hideTip = () => { tip.value.show = false }
 
