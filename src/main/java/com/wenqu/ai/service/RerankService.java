@@ -45,7 +45,6 @@ public class RerankService {
     public RerankService(ConfigService configService, ModelRegistryService modelRegistryService) {
         this.configService = configService;
         this.modelRegistryService = modelRegistryService;
-        log.info("[Rerank] 配置经供应商注册中心解析（rerank.model 引用→供应商网关；遗留→rerank.*），保存即生效");
     }
 
     /** 动态读配置（保存即生效） */
@@ -250,7 +249,7 @@ public class RerankService {
         // 会把管理员引去维护一个本可不必存在的服务（云端重排明明可用）。先按未绑定给明确指引。
         if (route().providerId() == null) {
             String base = configService.get("rerank.baseUrl");
-            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，当前回落本地重排服务 "
+            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，当前回落平台内置重排服务 "
                     + (base == null || base.isBlank() ? "（rerank.baseUrl 未配置）" : base)
                     + "；请在系统设置的检索面板登记「平台默认重排模型」，或在知识库检索设置里单独绑定";
         }
@@ -265,8 +264,8 @@ public class RerankService {
                 return "重排服务探测失败（/v1/models 无响应），请检查重排模型 " + r.displayName()
                         + " 的供应商网关 " + r.baseUrl() + " 连通性与 API Key";
             }
-            return "重排服务探测失败（/v1/models 无响应），请确认本地 reranker 已启动"
-                    + "（scripts/mac/start_rerank_server.sh 或 scripts/win/start_rerank_server.bat）";
+            return "重排服务探测失败（/v1/models 无响应），请确认平台内置重排服务已在部署机启动"
+                    + "（部署机 scripts/mac/start_rerank_server.sh 或 scripts/win/start_rerank_server.bat）";
         }
         return null;
     }
