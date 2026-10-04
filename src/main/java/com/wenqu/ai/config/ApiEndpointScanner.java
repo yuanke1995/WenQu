@@ -98,6 +98,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Skill", "技能"),
             Map.entry("ToolInventory", "工具清单"),
             Map.entry("Trace", "执行追踪"),
+            Map.entry("UsageStats", "使用统计"),
             Map.entry("User", "用户"),
             Map.entry("Workflow", "工作流"),
             Map.entry("WorkflowApi", "工作流开放接口"));
@@ -136,6 +137,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Skill", List.of("menu-agents")),
             Map.entry("ToolInventory", List.of("menu-settings")),
             Map.entry("Trace", List.of("menu-dashboard")),
+            Map.entry("UsageStats", List.of("menu-stats")),
             Map.entry("User", List.of("menu-members")),
             Map.entry("Workflow", List.of("menu-agents")));
 
