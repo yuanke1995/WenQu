@@ -61,6 +61,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
       # 可选：聊天网关的遗留回落密钥（仅在设置页未登记任何模型供应商时生效；正道是登记供应商）
       AI_CHAT_KEY: ${AI_CHAT_KEY:-}
+      # 登录令牌签名密钥（≥32 位随机串）：留空则每次启动随机生成，重启后已发令牌全部失效；
+      # 多副本部署必须各副本一致。建议在 .env 中写死（模板见 .env.example）
+      AI_JWT_SECRET: ${AI_JWT_SECRET:-}
+      # 容器时区：智能体/工作流定时任务按此时区求值（不设则默认 UTC，与北京时间差 8 小时）
+      TZ: ${TZ:-Asia/Shanghai}
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
       DB_HOST: ${DB_HOST:-mysql}
       DB_PORT: ${DB_PORT:-3306}
