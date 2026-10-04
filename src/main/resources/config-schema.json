@@ -1059,6 +1059,26 @@
       "tier": 2
     },
     {
+      "backendKey": "retrieval.reflectiveRetrieval",
+      "panel": "retrieval",
+      "section": 1,
+      "group": "retrieval",
+      "key": "reflectiveRetrieval",
+      "path": "retrieval.reflectiveRetrieval",
+      "label": "检索-反思循环",
+      "type": "select",
+      "tips": "reflectiveRetrieval",
+      "def": "off",
+      "width": 340,
+      "options": [
+        { "value": "off", "label": "off（关闭：一次性检索管线）" },
+        { "value": "high", "label": "high（深度思考高档及以上自动开启）" },
+        { "value": "always", "label": "always（全部知识问答轮次开启）" }
+      ],
+      "note": "Agentic RAG · 自主多轮检索：模型自评首轮检索证据是否充分，不足时自主调用知识检索工具换关键词/换角度再检索，证据足够才作答（Deep Research 形态）；检索次数仍受「单轮工具步数上限」约束",
+      "tier": 3
+    },
+    {
       "backendKey": "retrieval.vecThreshold",
       "panel": "retrieval",
       "section": 1,
@@ -3113,6 +3133,7 @@
     "descCacheVersion": "图片描述缓存版本号：用于强制让旧描述失效。把版本号 +1 后重新解析文档，会忽略历史缓存、对全部图片重新调用视觉模型描述（换视觉模型或提示词后应 +1）。",
     "descCacheTtlDays": "图片描述缓存的有效期（天，0=永不过期）。同一张图片（按内容哈希）在该期限内复用已生成的描述，避免重复识别；到期后重新描述。",
     "vecThreshold": "向量相似度归一化基准：低于该分的向量命中归一化为 0 分，也是向量检索的相似度下限。调高更严格（召回更少但更相关）。",
+    "reflectiveRetrieval": "检索-反思循环（Agentic RAG · 自主多轮检索）：开启后模型回答前先自评首轮检索证据是否充分，不足时自主调用知识检索工具换关键词/换角度再检索，证据足够才作答——从「搜一次答一次」跃迁到 Deep Research 形态。high=深度思考强度高档（含以上）的轮次自动启用；always=所有知识问答轮次启用。检索次数仍受「单轮工具步数上限」约束；生效依赖工具总开关开启且模型支持 Function Calling，不满足时本轮自动降级并在回答上方提示。",
     "minContextScore": "上下文/引用的最低相关分门槛（重排分门）：仅对重排分（0~1 相关性分域）生效，重排分低于该值的块不进上下文、也不出现在引用列表。分域双门口径：重排本轮实际执行过时排序分为重排分（走本门槛），且超出重排区间的未重排尾部候选不借融合门入场；未启用重排或重排未执行（候选不足重排区间）时排序分为加权融合分，走「融合分门 minFusionScore」。若发现正常资料被拦（回答称知识库无相关内容），调低到 0.45~0.5，或设 0 关闭。跳过的块不占上下文名额，检索调试里仍可见原始召回。",
     "vectorTopK": "向量检索最多取回的候选块数：用户说法与手册用词不一致时，调大能让语义相近但用词不同的块也进入候选（再经融合/重排决定最终入选）。调大更全但更慢。",
     "keywordLimit": "关键词检索最多返回的知识块数（引擎为 mysql 时即 SQL LIMIT，meilisearch 时为索引查询 limit）。调高召回更全但更慢、融合分计算更重。",

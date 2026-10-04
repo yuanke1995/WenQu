@@ -292,6 +292,11 @@ public class ConfigService {
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
         d.put("retrieval.multiConsensusBonus", "0.03");    // 深度思考多路检索的共识加分（被≥2个子查询命中的块；0=关；评测实测 0.03 最优）
+        // 检索-反思循环（Agentic RAG · 自主多轮检索）：off/high/always。默认 off 非默认全量——
+        // 循环轮次多出工具往返与自评开销，由显式开启者承担；high=深度思考高档及以上增强，always=独立开关。
+        // 键取 retrieval 前缀（与 multiConsensusBonus 同属"检索策略"旋钮）：设置页挂在检索面板，
+        // 「恢复本组默认」按前缀重置，前缀与面板一致才能被一起重置
+        d.put("retrieval.reflectiveRetrieval", "off");
         // 重排行为参数
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());

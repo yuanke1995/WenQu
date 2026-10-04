@@ -671,6 +671,31 @@ public class RagService {
         final Set<String> scopeDocIds = mentionScope != null && !mentionScope.docIds().isEmpty()
                 ? new LinkedHashSet<>(mentionScope.docIds())
                 : resolveScopeDocIds(agent);
+        // Agentic RAG「检索-反思」循环模式判定：开启后本轮强制暴露知识检索工具，并在生成提示词
+        // 注入「证据充分性自评」循环规则——模型判断首轮检索证据不足时自主换关键词/换角度再检索
+        // （次数仍由 agent.maxToolSteps 兜底），证据足够才作答。
+        // 前置不满足 fail-loud（登记降级并本轮关闭，不注入指挥模型调不存在工具的提示词）：
+        // 工具总开关未开 / 模型不支持 Function Calling。
+        final boolean reflectiveRetrieval;
+        {
+            boolean reflectOn = !knowledgeOff && reflectiveRetrievalOn(useDeepThink, thinkLevel);
+            if (reflectOn && !configService.getBoolean("tool.enabled")) {
+                addDegradation(degradations, degradedCodes, "reflectiveDegraded",
+                        "检索-反思循环需要工具总开关（tool.enabled）开启，本轮未生效");
+                reflectOn = false;
+            }
+            if (reflectOn && !modelRegistryService.toolCapableOf(resolvedModel)) {
+                addDegradation(degradations, degradedCodes, "reflectiveDegraded",
+                        "当前模型「" + modelDisplayName(resolvedModel)
+                                + "」不支持工具调用（Function Calling），检索-反思循环本轮未生效");
+                reflectOn = false;
+            }
+            reflectiveRetrieval = reflectOn;
+            if (reflectOn) {
+                log.info("[AGENTIC-RAG] 检索-反思循环已启用: session={} model={} deepThink={} level={}",
+                        sessionId, resolvedModel, useDeepThink, thinkLevel);
+            }
+        }
         // 分段耗时（排障用：记的是「距开始的累计毫秒」，差值即为该阶段耗时），随问答日志落库
         final Map<String, Long> stageMs = new LinkedHashMap<>();
         // 深度思考全文（供 done 事件/持久化；lambda 中引用需 effectively final，用数组容器）
@@ -1006,7 +1031,18 @@ public class RagService {
                     .append("\n参考资料中包含表格时（以 | 分隔的 Markdown 表格），若回答涉及表格内容，请用同样的 Markdown 表格格式呈现，不要改写成一长串用竖线连起来的文字。")
                     // 联网来源与知识库来源同一套编号：不区分对待，否则"来自联网"会成为不标注的借口
                     .append("\n若本轮提供了联网搜索资料，它与知识库资料同等对待：引用时同样在句末用 [N] 标注，"
-                            + "并只能使用工具实际返回的编号；搜索未覆盖的内容如实说明未找到依据，不得凭常识补写。")
+                            + "并只能使用工具实际返回的编号；搜索未覆盖的内容如实说明未找到依据，不得凭常识补写。");
+            // 检索-反思循环（Agentic RAG）：首轮检索结果之外授权模型自主多轮检索——工具已强制暴露
+            // （enabledToolCallbacks），这里只补「何时该再检索、何时该停」的判定规则
+            if (reflectiveRetrieval) {
+                system.append("\n\n【检索-反思循环】以上参考资料是首轮检索结果，回答前请先自评证据充分性："
+                        + "存在关键缺口（结论/数值/步骤缺失、资料之间矛盾），或问题涉及资料未覆盖的"
+                        + "具体功能/字段/步骤/报错时，调用 searchKnowledge 工具补充检索——换关键词"
+                        + "（同义说法、具体字段名、报错原文）或换角度（拆出的子问题）再试；"
+                        + "证据足够后立即作答、不再检索；多轮检索仍无收获时如实说明知识库缺少该部分依据，"
+                        + "不得凭常识编造。每次检索结果会附「证据充分性自评」提示，按其指引决定再检索还是作答。");
+            }
+            system
                     .append(relatedPromptLine());
             // 容量计量分段标记：按 StringBuilder 位置切出各段，供容量面板分类展示（系统提示词/记忆/技能/其他）
             int partRoleEnd = system.length();
@@ -1444,6 +1480,7 @@ public class RagService {
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
+            st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
             st.budgetTokens = budget;
@@ -1521,7 +1558,9 @@ public class RagService {
         // （计算器/时间等无副作用项）。沙盒/产物/MCP/技能执行都是身份敏感能力：产物归属发布者、
         // 沙盒按 uid 派生容器、MCP/技能是个人资产，一律不对匿名访客暴露。
         if (st.guestMode) {
-            if (toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
+            // 检索-反思循环（reflectiveRetrieval）轮次强制暴露知识检索工具：该模式本身就是
+            // "模型自主多轮检索"的显式开启，不再要求 tool.knowledgeRetrieval.enabled 子开关
+            if (st.reflectiveRetrieval || toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
                 callbacks.addAll(java.util.Arrays.asList(
                         org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
             }
@@ -1537,7 +1576,8 @@ public class RagService {
             log.info("[TOOL] 游客分享会话受限模式：启用 {} 个工具（知识检索/内置）", callbacks.size());
             return callbacks;
         }
-        if (toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
+        // 同上：检索-反思循环轮次强制暴露（游客分支与常规分支同一语义）
+        if (st.reflectiveRetrieval || toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
         }
@@ -1769,6 +1809,8 @@ public class RagService {
                                         }
                                     });
                             KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
+                            // 检索-反思循环轮次：工具结果尾部附「证据充分性自评」约束（按轮注入，finally 清理）
+                            KnowledgeRetrievalTool.setReflective(st.reflectiveRetrieval);
                         }
                         // 联网搜索工具：注入本轮落点（配额扣减 + 引用注册 + 降级提示）。
                         // 工具对象是全局单例，落点必须按轮注入并即时清理，否则跨会话串号。
@@ -1796,6 +1838,7 @@ public class RagService {
                             if (kbTool) {
                                 KnowledgeRetrievalTool.clearSourceRegistrar();
                                 KnowledgeRetrievalTool.clearKbScope();
+                                KnowledgeRetrievalTool.clearReflective();
                             }
                             if (webTool) {
                                 WebSearchTools.clearSink();
@@ -2207,6 +2250,29 @@ public class RagService {
             log.warn("[REASONING] 思考强度档位 {} 不在模型 {} 的支持档位内，回落其默认档位", lv, model);
         }
         return modelRegistryService.defaultReasoningLevelOf(model);
+    }
+
+    /**
+     * 检索-反思循环模式判定（Agentic RAG · 自主多轮检索；retrieval.reflectiveRetrieval：
+     * off/high/always，默认 off——非默认全量：循环轮次多出一次到多次工具往返与自评开销，
+     * 延迟/token 成本由显式开启者承担）：
+     * off = 一次性管线（现状）；high = 深度思考高档档的增强（本轮深度思考开启且思考强度 ≥ high）；
+     * always = 独立开关（知识管线轮次全部启用，与是否深度思考无关）。
+     * 键值缺失/非法一律按 off 处理。
+     */
+    private boolean reflectiveRetrievalOn(boolean deepThink, String thinkLevel) {
+        String mode = configService.get("retrieval.reflectiveRetrieval");
+        if (mode == null || mode.isBlank()) return false;
+        switch (mode.trim().toLowerCase()) {
+            case "always":
+                return true;
+            case "high":
+                if (!deepThink || thinkLevel == null) return false;
+                List<String> levels = ModelRegistryService.REASONING_LEVEL_LIST;
+                return levels.indexOf(thinkLevel) >= levels.indexOf("high");
+            default:
+                return false;
+        }
     }
 
     /** 模型展示名（降级事件文案用）：有登记取展示名，否则回退模型 id，引用无效回退原串 */
@@ -2883,6 +2949,12 @@ public class RagService {
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
         volatile int maxToolSteps;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
+        /**
+         * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露
+         * 知识检索工具（enabledToolCallbacks 两分支 ||），工具结果尾部附「证据充分性自评」约束
+         * （KnowledgeRetrievalTool.setReflective 按轮注入）。knowledgeOff / 工作流驱动轮恒为 false。
+         */
+        volatile boolean reflectiveRetrieval;
         /** 整轮流级心跳句柄（buildAnswerStream 启动、终态路径停止）：覆盖工具执行与最终回答首 token 两段静默区 */
         volatile java.util.concurrent.ScheduledFuture<?> heartbeat;
         /**

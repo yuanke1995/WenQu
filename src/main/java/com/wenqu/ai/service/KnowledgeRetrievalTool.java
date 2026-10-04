@@ -13,7 +13,8 @@ import java.util.List;
  * <p>
  * 让 LLM 在主链路已注入 RAG 上下文之外，仍能按需主动调用一次"精确检索知识库"，
  * 用于：1) 主链路未召回但模型判断需要补充的信息；2) 用户追问时针对特定主题的二次检索。
- * 默认关闭（ConfigService 的 tool.knowledgeRetrieval.enabled），开启后模型方可调用。
+ * 暴露条件（其一）：tool.knowledgeRetrieval.enabled 开启；或本轮命中检索-反思循环模式
+ * （retrieval.reflectiveRetrieval，RagService 按轮强制暴露并注入充分性自评约束）。
  * <p>
  * 返回内容经裁剪，避免工具结果膨胀挤占上下文预算；命中内容与主链路 RAG 召回天然互补。
  *
@@ -64,6 +65,14 @@ public class KnowledgeRetrievalTool {
 
     private static final ThreadLocal<KbScope> KB_SCOPE = new ThreadLocal<>();
 
+    /**
+     * 检索-反思循环开关（Agentic RAG，按轮注入用完即清）：开启时工具结果尾部附「证据充分性自评」约束，
+     * 引导模型判断证据是否足够、不足则换关键词/换角度再检索，足够才作答——把「搜一次答一次」
+     * 升级为自主多轮检索（Deep Research 形态）。只在 retrieval.reflectiveRetrieval 命中的轮次置位，
+     * 普通轮次工具行为不变（模型仍可按需调用，但结果不带自评约束，避免诱导过度检索）。
+     */
+    private static final ThreadLocal<Boolean> REFLECTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     public static void setSourceRegistrar(SourceRegistrar r) {
         REGISTRAR.set(r);
     }
@@ -78,6 +87,14 @@ public class KnowledgeRetrievalTool {
 
     public static void clearKbScope() {
         KB_SCOPE.remove();
+    }
+
+    public static void setReflective(boolean reflective) {
+        REFLECTIVE.set(reflective);
+    }
+
+    public static void clearReflective() {
+        REFLECTIVE.remove();
     }
 
     private final HybridRetrievalService hybridRetrievalService;
@@ -197,6 +214,15 @@ public class KnowledgeRetrievalTool {
             sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]；"
                     + "若要在回答中插入截图，只能使用上列「本段相关截图」中给出的 [图片N] 编号，"
                     + "没有列出的编号一律不要输出——不存在对应的图片）");
+        }
+        // 检索-反思循环轮次：结果尾部附充分性自评约束——模型据此决定「再检索」还是「作答」，
+        // 而不是拿到首轮结果就匆忙下笔。只约束措辞不改行为：上限仍由 agent.maxToolSteps 兜底
+        if (registrar != null && REFLECTIVE.get()) {
+            sb.append("\n\n【证据充分性自评】回答前请先判断以上证据是否足以完整回答当前问题："
+                    + "仍有关键缺口（结论/数值/步骤缺失，或资料之间矛盾）→ 换关键词或换角度"
+                    + "（同义说法、具体字段名、报错原文、拆出的子问题）再次调用本工具；"
+                    + "已足够 → 立即基于现有证据作答，不要为了检索而检索；"
+                    + "多轮检索后仍无新收获 → 如实告知用户知识库中缺少该部分依据，不得凭常识编造。");
         }
         return sb.toString().trim();
     }
