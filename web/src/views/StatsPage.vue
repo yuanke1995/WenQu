@@ -188,8 +188,8 @@ function fmtDuration(sec) {
 // ==================== Token 活动热力图 ====================
 // 一次派生：列（周×7 天的格子矩阵）+ 档位函数。三种视图共用日数据（tokens + 轮次）：
 //   每日=按当日分档；每周=每列按周合计整列同色；累计=每列按「截至该周末」的周累计整列同色。
-// 档位均按非零值四分位划档（GitHub 口径）。末列=进行中的本周（周日开头）：今天的格子当天上墙，
-// 本周未到的日子渲染成半透明占位（有格无悬浮，读作「还没到」，不会误读成预生成的数据块）。
+// 档位均按非零值四分位划档（GitHub 口径）。末列=进行中的本周（周日开头），未来日子按零值格
+// 预生成（与无活动的日子同款灰、悬浮照常）——整列结构始终完整，今天的格子当天上墙。
 const dailyMap = computed(() => {
   const m = new Map()
   for (const c of heatmap.value) m.set(c.date, { t: Number(c.tokens) || 0, c: Number(c.count) || 0 })
@@ -229,21 +229,19 @@ const heatData = computed(() => {
       : leveler(sortedDates(m).map(d => m.get(d).t))
 
   const columns = []
-  const colEnds = [] // 各列周六（列尾）日期：月份标签按它跨月判定；末列周六可能是未来日子（每日视图下格子为 null，不能读格子对象）
+  const colEnds = [] // 各列周六（列尾）日期：月份标签按它跨月判定（不依赖格子对象，列数学改动时更稳）
   for (let w = weeks - 1; w >= 0; w--) {
     const col = []
     const wi = weeks - 1 - w
     for (let i = 0; i < 7; i++) {
-      const d = dayOf(w, i)
-      const key = fmt(d)
+      const key = fmt(dayOf(w, i))
       if (heatMode.value === 'weekly') {
         // 每周一列：7 格按该周合计整列同色（保持网格结构，聚合粒度一眼可辨）；进行中的本周整列同色、按截至今天聚合
         col.push({ date: key, value: weekAgg[wi].t, count: weekAgg[wi].c, weekEnd: weekAgg[wi].end, partial: weekAgg[wi].partial })
       } else if (heatMode.value === 'total') {
         col.push({ date: key, value: weekCum[wi].t, count: weekCum[wi].c, weekEnd: weekAgg[wi].end, partial: weekAgg[wi].partial })
-      } else if (d > today) {
-        col.push(null) // 本周未到的日子：半透明占位（无数据无悬浮），列高保持 7 格
       } else {
+        // 每日：未来日子按零值格预生成（同款灰、悬浮照常），不做任何特殊占位
         const rec = m.get(key) || { t: 0, c: 0 }
         col.push({ date: key, value: rec.t, count: rec.c })
       }
@@ -495,8 +493,7 @@ onBeforeUnmount(() => {
   outline: 1px solid rgba(0, 0, 0, .04);
   outline-offset: -1px;
 }
-/* 未来占位格：与零值格同结构但明显更淡——读作「还没到」，不与无活动的日子混淆 */
-.heat-cell.empty { opacity: .4; }
+/* .heat-cell.empty 仅为格子缺数据的兜底（正常情况下不会出现），无专门样式=同零值格 */
 .hl1 { background: #c9ddf8; }
 .hl2 { background: #93bdf1; }
 .hl3 { background: #5c98e9; }
