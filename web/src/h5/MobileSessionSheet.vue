@@ -50,6 +50,7 @@
         <button class="ss-menu-btn" type="button" @click="doPin"><pushpin-outlined />{{ menuFor.isPinned === 1 ? '取消置顶' : '置顶' }}</button>
         <button class="ss-menu-btn" type="button" @click="doFav"><star-outlined />{{ menuFor.isFavorite === 1 ? '取消收藏' : '收藏' }}</button>
         <button class="ss-menu-btn" type="button" @click="startRename"><edit-outlined />重命名</button>
+        <button class="ss-menu-btn" type="button" @click="doExport"><download-outlined />导出 Markdown</button>
         <button class="ss-menu-btn danger" type="button" @click="doDelete"><delete-outlined />删除</button>
       </div>
       <div v-if="renaming" class="ss-rename">
@@ -65,10 +66,11 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi } from '../api'
+import { exportSessionMarkdown } from '../views/exportMd'
 
 // 引擎实例（provide 自移动壳）：删除会话复用其 handleDeleteSession（含当前会话被删后的落点）
 const engine = inject('wqChat')
@@ -139,7 +141,14 @@ const doPin = async () => {
 const doFav = async () => {
   try { await favoriteSession(menuFor.value.id, menuFor.value.isFavorite !== 1); await loadSessions(); emit('changed') } catch (e) { message.error(e.message || '操作失败') }
 }
-const startRename = () => { renaming.value = true }
+/** 导出 Markdown（与 PC 侧栏会话菜单同口径；无需先打开会话）。
+ *  这里只给「下载」一条路：存/复制双通道的主场在「状态与来源」sheet（已打开的会话），
+ *  列表这个入口属于顺手补充，再套一层二选一反而比直接下载更绕。 */
+const doExport = () => {
+  const s = menuFor.value
+  if (s) exportSessionMarkdown(s.id, s.title || 'AI对话')
+  menuFor.value = null
+}
 const confirmRename = async () => {
   const t = renameText.value.trim()
   if (!t) { message.warning('名称不能为空'); return }

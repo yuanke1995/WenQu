@@ -1110,6 +1110,8 @@ import { loadSessions } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
+import { copyText } from '../utils/clipboard'
+import { useSessionShare } from './shareSession'
 import ModelSelect from '../components/ModelSelect.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
@@ -1122,6 +1124,7 @@ import MobileSampleCards from '../h5/MobileSampleCards.vue'
 
 // 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
+import { useChatSearch } from '../chat/useChatSearch'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
@@ -1975,110 +1978,17 @@ const openHistPanel = () => {
 }
 const closeHistPanel = () => closeAllPanels()
 // ==================== 会话内查找（Ctrl/⌘+F） ====================
-// 匹配范围 = 每条消息的正文（用户问题 + 助手回答）。工具输出与思考过程不参与——那些是过程信息，
-// 把它们算进结果只会让"找那句话"更难。
-// 高亮走 CSS Custom Highlight API：正文是 v-html 渲染的，往里插 <mark> 会与重渲染/缓存打架；
-// 浏览器不支持该 API 时降级为"只定位不标黄"，功能仍可用（不静默失效，见 paintSearchHighlight）。
-const searchOpen = ref(false)
-const searchQuery = ref('')
-const searchPos = ref(0)
-const searchInputRef = ref(null)
-const matchedIdxs = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return []
-  const out = []
-  messages.value.forEach((m, i) => {
-    if ((m.content || '').toLowerCase().includes(q)) out.push(i)
-  })
-  return out
-})
-const clearSearchHighlight = () => {
-  try {
-    window.CSS?.highlights?.delete('chat-search')
-    window.CSS?.highlights?.delete('chat-search-current')
-  } catch (e) { /* 不支持该 API 时忽略 */ }
-}
-/** 显示用的序号：切会话/改关键词后匹配数可能变小，这里夹住上界（否则出现 4 / 2 这种读数） */
-const searchPosShown = computed(() => {
-  const n = matchedIdxs.value.length
-  return n ? Math.min(searchPos.value, n - 1) + 1 : 0
-})
-/** 逐处命中建 Range，并按所属消息分成「全部命中」与「当前这条消息里的命中」两组——
- *  当前项用更醒目的颜色，否则用户不知道该看哪一处。
- *  跳过代码块/工具输出区（代码里命中会亮成一片，且与"找那句话"语义不符）。 */
-const collectSearchRanges = (q, currentMsgIdx) => {
-  const all = [], cur = []
-  const root = box.value
-  if (!root || !q) return { all, cur }
-  const lower = q.toLowerCase()
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => {
-      const p = n.parentElement
-      if (!p || p.closest('pre, code, .code-copy, .tl-io, script, style')) return NodeFilter.FILTER_REJECT
-      return NodeFilter.FILTER_ACCEPT
-    }
-  })
-  while (walker.nextNode()) {
-    const node = walker.currentNode
-    const rowIdx = node.parentElement?.closest('[data-row-index]')?.dataset.rowIndex
-    const target = (currentMsgIdx != null && rowIdx === String(currentMsgIdx)) ? cur : null
-    const low = (node.nodeValue || '').toLowerCase()
-    let from = 0
-    for (;;) {
-      const at = low.indexOf(lower, from)
-      if (at < 0) break
-      const r = document.createRange()
-      r.setStart(node, at)
-      r.setEnd(node, at + q.length)
-      all.push(r)
-      if (target) target.push(r)
-      from = at + q.length
-    }
-  }
-  return { all, cur }
-}
-const paintSearchHighlight = () => {
-  clearSearchHighlight()
-  const q = searchQuery.value.trim()
-  if (!q) return
-  if (!window.CSS?.highlights || typeof window.Highlight !== 'function') return // 不支持：只定位不标黄
-  try {
-    const list = matchedIdxs.value
-    const curMsgIdx = list.length ? list[Math.min(searchPos.value, list.length - 1)] : null
-    const { all, cur } = collectSearchRanges(q, curMsgIdx)
-    if (all.length) CSS.highlights.set('chat-search', new Highlight(...all))
-    if (cur.length) CSS.highlights.set('chat-search-current', new Highlight(...cur))
-  } catch (e) { /* Range 失效（渲染中）忽略，下次输入重算 */ }
-}
-const scrollToMatch = () => {
-  const list = matchedIdxs.value
-  if (!list.length) return
-  const mi = list[Math.min(searchPos.value, list.length - 1)]
-  box.value?.querySelector(`[data-row-index="${mi}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-}
-const gotoMatch = delta => {
-  const list = matchedIdxs.value
-  if (!list.length) return
-  searchPos.value = (searchPos.value + delta + list.length) % list.length
-  paintSearchHighlight() // 当前项变了：重绘（当前项用更醒目的颜色）
-  scrollToMatch()
-}
-const openSearch = () => {
-  if (!messages.value.length) { message.info('当前会话还没有消息'); return }
-  searchOpen.value = true
-  nextTick(() => searchInputRef.value?.focus?.())
-}
-const closeSearch = () => {
-  searchOpen.value = false
-  searchQuery.value = ''
-  searchPos.value = 0
-  clearSearchHighlight()
-}
-// 关键词变化 → 回到第一个匹配并重绘高亮（消息渲染是异步的，等一帧再画）
-watch(searchQuery, () => {
-  searchPos.value = 0
-  if (!searchOpen.value) return
-  nextTick(() => { paintSearchHighlight(); scrollToMatch() })
+// 逻辑主体在 src/chat/useChatSearch.js：移动壳顶栏的查找入口用同一份。
+// 两端靠消息行的 [data-row-index] 契约对齐（PC 内联模板与 MobileMsgRow 均已带），
+// 高亮本体共用全局 app.css 的 ::highlight(chat-search) —— Custom Highlight API 不改 DOM，
+// 正文是 v-html 渲染的，插 <mark> 会与重渲染/渲染缓存互相打架。
+// messages / currentSessionId 用 getter 传入：它们来自下方引擎解构（const 声明在本调用点之后）。
+const {
+  searchOpen, searchQuery, searchPos, searchInputRef, matchedIdxs, searchPosShown,
+  openSearch, closeSearch, gotoMatch, paintHighlight: paintSearchHighlight, scrollToMatch
+} = useChatSearch({
+  boxRef: box,
+  messages: () => messages.value
 })
 // Ctrl/⌘+F 打开会话内查找（在聊天页拦下浏览器原生查找，与主流产品一致）；Esc 关闭
 const onSearchHotkey = e => {
@@ -2095,61 +2005,25 @@ onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
 // ==================== 会话分享（只读链接） ====================
 // 分享的是"这段对话"：链接持有者可看不可续聊。链接展示的是会话**最新内容**（后端按 token 实时读，
 // 不是快照）——所以弹窗里必须讲清楚，否则用户后续聊到敏感内容时不会意识到分享页也跟着变了。
+// 状态机落到 src/views/shareSession.js：移动「状态与来源」sheet 用同一份（同一会话只有一条分享、
+// 换链接会使旧链接失效，两端必须同口径），这里只留 PC 的显示态与预览动作。
 const shareVisible = ref(false)
-const shareLoading = ref(false)
-const shareInfo = ref({ enabled: false, token: '', visitCount: 0 })
-const shareUrl = computed(() => (shareInfo.value.token ? `${location.origin}/shared/${shareInfo.value.token}` : ''))
+const {
+  loading: shareLoading, info: shareInfo, url: shareUrl,
+  load: loadShare, enable: enableShare, disable: stopShare, copyLink: copyShareLink
+} = useSessionShare({ sessionId: () => currentSessionId.value })
 
 const openShare = async () => {
   if (!messages.value.length) { message.info('当前会话还没有内容可分享'); return }
   shareVisible.value = true
-  shareLoading.value = true
-  try {
-    const r = await getSessionShare(currentSessionId.value)
-    shareInfo.value = r?.data || { enabled: false, token: '', visitCount: 0 }
-  } catch (e) {
-    message.error('读取分享状态失败：' + (e.message || ''))
-  } finally {
-    shareLoading.value = false
-  }
+  await loadShare()
 }
-/** 生成或换新链接（后端对已开启的分享再次开启会换 token，旧链接立即失效） */
-const doEnableShare = async (regenerate = false) => {
-  shareLoading.value = true
-  try {
-    const r = await enableSessionShare(currentSessionId.value)
-    shareInfo.value = { ...(r?.data || {}), enabled: true, visitCount: 0 }
-    message.success(regenerate ? '已换新链接，旧链接立即失效' : '分享链接已生成')
-  } catch (e) {
-    message.error('生成失败：' + (e.message || ''))
-  } finally {
-    shareLoading.value = false
-  }
-}
-const regenerateShareLink = () => doEnableShare(true)
-const doDisableShare = async () => {
-  shareLoading.value = true
-  try {
-    await disableSessionShare(currentSessionId.value)
-    shareInfo.value = { enabled: false, token: '', visitCount: 0 }
-    message.success('已停止分享，链接立即失效')
-  } catch (e) {
-    message.error('停止失败：' + (e.message || ''))
-  } finally {
-    shareLoading.value = false
-  }
-}
-const copyShareLink = async () => {
-  const url = shareUrl.value
-  if (!url) return
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url)
-    else fallbackCopyText(url)
-    message.success('链接已复制')
-  } catch (e) {
-    fallbackCopyText(url)
-  }
-}
+/** 生成或换新链接（后端对已开启的分享再次开启会换 token，旧链接立即失效）。
+ *  刻意包一层而非直接指过去：模板 @click 会把 MouseEvent 当第一个实参传进来，
+ *  形参取 regenerate 时「生成」会被当成「换新」（!!event === true）。 */
+const doEnableShare = () => enableShare(false)
+const regenerateShareLink = () => enableShare(true)
+const doDisableShare = () => stopShare()
 const openSharedPage = () => { if (shareUrl.value) window.open(shareUrl.value, '_blank', 'noopener') }
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
@@ -2197,33 +2071,13 @@ const onInputKeydown = e => {
 const copyAnswer = async mi => {
   const m = messages.value[mi]
   if (!m || !m.content) { message.warning('该回答无可复制内容'); return }
-  const txt = m.content.trim()
-  if (navigator.clipboard?.writeText) {
-    try { await navigator.clipboard.writeText(txt); message.success('已复制到剪贴板') }
-    catch (e) { fallbackCopyText(txt) }
-  } else fallbackCopyText(txt)
+  await copyText(m.content.trim())
 }
 /** 复制用户的问题（长会话里把问题转走/复问用；此前只有回答能复制） */
 const copyUserMessage = m => {
   const txt = (m?.content || '').trim()
   if (!txt) { message.warning('该消息无可复制内容'); return }
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(txt).then(() => message.success('已复制')).catch(() => fallbackCopyText(txt))
-  } else fallbackCopyText(txt)
-}
-const fallbackCopyText = txt => {
-  try {    const ta = document.createElement('textarea')
-    ta.value = txt
-    ta.setAttribute('readonly', '')
-    ta.style.position = 'absolute'
-    ta.style.left = '-9999px'
-    document.body.appendChild(ta)
-    ta.focus(); ta.select(); ta.setSelectionRange(0, txt.length)
-    const ok = document.execCommand('copy')
-    ta.remove()
-    if (ok) message.success('已复制到剪贴板')
-    else message.error('复制失败，请手动复制')
-  } catch (err) { message.error('复制失败，请手动复制') }
+  copyText(txt, '已复制')
 }
 
 // 删除本轮对话（回答 + 同组问题一起软删除）；导出 Markdown（该轮问答）

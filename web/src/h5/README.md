@@ -9,9 +9,16 @@
 ```
 src/chat/useChatEngine.js   聊天引擎（会话/流式/选择器/附件/引用）—— PC 与移动共用
 src/chat/projections.js     消息投影与格式化纯函数（时间线/工具卡/来源分组/文案）—— 共用
+src/chat/useChatSearch.js   会话内查找（Range + CSS Custom Highlight API）—— 共用
+src/views/shareSession.js   会话分享的状态机与链接拼装 —— 共用
+src/views/exportMd.js       Markdown 导出（拼装 / 落盘分开，给移动端留第二条出口）—— 共用
+src/utils/clipboard.js      复制文本（clipboard API + execCommand 双路径）—— 共用
 src/views/ChatPage.vue      PC 壳（三栏工作台，保留既有窄屏补丁给「鼠标用户拖窄窗口」）
 src/h5/MobileChatPage.vue   移动壳（/m/chat，独立布局，不经 AppLayout）
 ```
+
+共用单元的进入门槛：只有「两端行为必须一致」的逻辑才抽（消息查找的行契约、分享的换链失效语义、
+剪贴板的兼容路径）。纯呈现差异不要抽 —— 那会把两端都拖住。
 
 引擎经 `useChatEngine(hooks)` 单实例化，移动壳再把实例 `provide('wqChat')` 给 sheet 族
 （`MobileMsgRow` / `MobileSessionSheet` / `MobileModelSheet` / `MobileAttachSheet` / `MobileRefSheet`）。
@@ -39,9 +46,23 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 | 引用来源 | 右栏常驻列 | 顶栏标题/状态 sheet + 角标点按进来源 sheet |
 | 消息操作 | hover 出操作行 | 点气泡选中 / 最新一条常显 |
 | 会话管理 | 侧栏常驻 | 底部 sheet（搜索/分组/置顶/重命名/删除） |
-| 新问题置顶 | 尾随留白（桌面语义） | 不做；贴底跟随 + 回到底部浮钮 |
-| 会话内查找 | Ctrl/⌘+F | 不做（无键盘；浏览器原生查找可用） |
-| 分享/导出/评测/调试 | 页头与「更多」菜单 | 未做（见「待补」） |
+| 新问题置顶 | 尾随留白（桌面语义） | 用户消息出现即送上容器顶（不加留白，见下） |
+| 会话内查找 | Ctrl/⌘+F 热键 | 顶栏按钮 → 消息流上方查找条 |
+| 会话分享（只读链接） | 页头动作区的 `a-modal` | 「状态与来源」sheet 内展开（同一份 shareSession.js） |
+| 导出 Markdown | 页头「更多」菜单 / 侧栏菜单 | 「状态与来源」sheet：保存文件 + 复制全文双通道；会话列表菜单：下载（同 PC 口径） |
+| 评测 / 检索调试 / 删除本轮 | 「更多」菜单 | 未做（管理向，见「待补」） |
+
+### 三处「既然要做，怎么做得不像桌面版」
+
+- **新问题置顶**：PC 是靠尾随留白把"贴底"这个动作的落点抬到问题顶部（`updateTailSpacer`）。
+  移动端刻意不搬：一屏只放得下 1-2 条，留白常常要近一屏，用户上翻回看时会在内容尾拖一大块空白，
+  观感像"消息丢了"；那套算法还要求每次重渲染都 `getBoundingClientRect` 反推一次，手机上更容易掉帧。
+  等价做法是用户消息出现的那一刻直接 `scrollIntoView({ block:'start' })`，并顺势把 `stickToBottom`
+  置 true（发新问题即宣告要看这一轮）。行本身带 `scroll-margin-top: 8px`，不会压在上边框上。
+- **会话内查找**：只是入口不同。Range 遍历、命中分组、CSS Custom Highlight 全是同一份
+  `useChatSearch.js`——两端消息行都带 `data-row-index`，高亮还共用全局 `app.css` 的 `::highlight(chat-search)`。
+- **导出**：`<a download>` 在微信内置浏览器里基本不落盘，在 iOS Safari 上也不是总能能用。所以
+  「复制全文」不是降级方案，而是这条路上必须有的一条出口——两个按钮都显式给出，不静默切换。
 
 ## 键盘与安全区
 
@@ -80,7 +101,11 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 
 ## 待补（v1 有意留白，按需再做）
 
-- 会话分享（生成只读链接）与「导出 Markdown」未进移动壳；
 - 检索调试 / 加入评测集 / 删除本轮等管理向操作未进移动壳；
+- 单轮导出（挑某一条回答导出 .md）未进移动壳——整会话导出已在「状态与来源」sheet，
+  单轮的入口是"点气泡选中后给条操作"，目前还不够自明，先不做；
+- 分享链接在阅读侧**刻意不做**移动专属页：`/shared/{token}` 复用 PC 那张 `SharedSessionPage.vue`
+  （自带 @media ≤768px 适配，且 `meta.pageFlow` 已绕开 AppLayout 的 100vh 溢出陷阱）。
+  另起 `/m/shared/{token}` 等于要求分享时先猜对方设备在哪一端——做不到，也没收益。
 - 多智能体胶囊：移动壳用「模型与思考」sheet 承载模型/思考/窗口，未做智能体切换入口
   （引擎已有 `pickAgent`，接一个 sheet 即可）。

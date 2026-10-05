@@ -63,33 +63,35 @@ const sourceLine = (s, i) => s.origin === 'WEB'
   ? `${i}. [${s.title || s.siteName || '联网来源'}](${s.url || ''})${s.siteName ? ' · ' + s.siteName : ''}`
   : `${i}. ${s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')}${s.title ? ' §' + s.title : ''}`
 
-/** 导出该轮问答为 .md（question 为配对的提问消息，可为 null；图片尽量 base64 内嵌） */
-export const exportAnswerMd = async ({ answer, question, title }) => {
-  if (!answer || !answer.content) { message.warning('该回答无可导出内容'); return }
+/** 落盘为 .md。移动端不一定吃得下这条路（见 h5/MobileRefSheet.vue 的导出双通道），故单独露出 */
+export const saveMd = built => { if (built) downloadMd(built.md, built.fileName) }
+
+/** 拼装该轮问答的 Markdown：返回 { md, fileName }，无可导出内容返回 null */
+export const buildAnswerMd = async ({ answer, question, title }) => {
+  if (!answer || !answer.content) { message.warning('该回答无可导出内容'); return null }
   const imgs = Array.isArray(answer.images) ? answer.images : []
-  const hide = imgs.length ? message.loading('正在导出（含图片抓取转码）…', 0) : null
-  try {
-    const parts = [`# ${title || 'AI回答'}\n`]
-    if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
-    const body = await embedMdImages(answer.content.trim(), imgs)
-    parts.push('## 回答\n' + body + '\n')
-    if (answer.sources && answer.sources.length) {
-      parts.push('## 引用来源\n' + answer.sources.map((s, si) => sourceLine(s, si + 1)).join('\n') + '\n')
-    }
-    downloadMd(parts.join('\n'), safeFileName(title) + '.md')
-  } finally {
-    if (hide) hide()
+  const parts = [`# ${title || 'AI回答'}\n`]
+  if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
+  const body = await embedMdImages(answer.content.trim(), imgs)
+  parts.push('## 回答\n' + body + '\n')
+  if (answer.sources && answer.sources.length) {
+    parts.push('## 引用来源\n' + answer.sources.map((s, si) => sourceLine(s, si + 1)).join('\n') + '\n')
   }
+  return { md: parts.join('\n'), fileName: safeFileName(title) + '.md' }
 }
 
-/** 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图）→ 引用来源）；无需先打开会话 */
-export const exportSessionMarkdown = async (sid, title) => {
-  if (!sid) return
-  const hide = message.loading('正在导出整个会话（含图片抓取转码）…', 0)
-  try {
-    const r = await getHistory(sid)
-    if (!r.success) { message.error(r.msg || '获取会话历史失败'); return }
-    const list = r.data || []
+/** 导出该轮问答为 .md（question 为配对的提问消息，可为 null；图片尽量 base64 内嵌） */
+export const exportAnswerMd = async opts => {
+  const built = await buildAnswerMd(opts)
+  if (built) downloadMd(built.md, built.fileName)
+}
+
+/** 拼装整个会话的 Markdown：返回 { md, fileName }，无可导出内容返回 null（含图片抓取转码，可能较慢） */
+export const buildSessionMd = async (sid, title) => {
+  if (!sid) return null
+  const r = await getHistory(sid)
+  if (!r.success) { message.error(r.msg || '获取会话历史失败'); return null }
+  const list = r.data || []
     const rows = list.filter(m => m && ((m.content && m.content.trim()) || (Array.isArray(m.images) && m.images.length)))
     const now = new Date()
     const roundCount = rows.filter(m => m.role !== 'user').length
@@ -122,8 +124,17 @@ export const exportSessionMarkdown = async (sid, title) => {
         if (t) parts.push(`> ${t}`, '')
       }
     }
-    if (parts.length <= 3) { message.warning('会话为空，无可导出内容'); return }
-    downloadMd(parts.join('\n'), safeFileName(title) + '.md')
+    if (parts.length <= 3) { message.warning('会话为空，无可导出内容'); return null }
+    return { md: parts.join('\n'), fileName: safeFileName(title) + '.md' }
+}
+
+/** 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图）→ 引用来源）；无需先打开会话 */
+export const exportSessionMarkdown = async (sid, title) => {
+  if (!sid) return
+  const hide = message.loading('正在导出整个会话（含图片抓取转码）…', 0)
+  try {
+    const built = await buildSessionMd(sid, title)
+    if (built) downloadMd(built.md, built.fileName)
   } catch (e) {
     message.error(e.message || '导出失败')
   } finally {

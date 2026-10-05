@@ -13,10 +13,29 @@
         <span class="m-bar-t">{{ currentSessionTitle }}</span>
         <caret-down-outlined class="m-bar-caret" />
       </button>
+      <button class="m-bar-btn" type="button" title="在本会话中查找" @click="openSearch">
+        <search-outlined />
+      </button>
       <button class="m-bar-btn" type="button" title="新建对话" @click="createNewSession()">
         <plus-outlined />
       </button>
     </header>
+
+    <!-- 会话内查找：移动壳没有 Ctrl+F，入口在顶栏。行作为 flex:none 插在消息流之上——
+         不用 fixed 是刻意的：keyboard.js 已把容器高写成 --app-vh（已扣软键盘），
+         键盘弹起时容器自然收缩，查找条不会被盖住也不会悬浮错位。 -->
+    <div v-if="searchOpen" class="m-find">
+      <search-outlined class="mf-ic" />
+      <input ref="searchInputRef" v-model="searchQuery" class="mf-input" type="search"
+             placeholder="在本会话中查找…" enterkeyhint="search"
+             @keydown.enter.prevent="gotoMatch(1)" />
+      <span class="mf-count">
+        {{ searchQuery.trim() ? (matchedIdxs.length ? searchPosShown + ' / ' + matchedIdxs.length : '无匹配') : '' }}
+      </span>
+      <button class="mf-btn" type="button" title="上一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(-1)"><up-outlined /></button>
+      <button class="mf-btn" type="button" title="下一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(1)"><down-outlined /></button>
+      <button class="mf-btn" type="button" title="关闭查找" @click="closeSearch"><close-outlined /></button>
+    </div>
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
       <!-- 空态：品牌 + 示例问题（点即发） -->
@@ -161,9 +180,10 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
-  ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined
+  ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined
 } from '@ant-design/icons-vue'
 import { useChatEngine } from '../chat/useChatEngine'
+import { useChatSearch } from '../chat/useChatSearch'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, resolveImg, enhanceDiagrams } from '../utils/markdown'
 import { preferMobileShell } from './mobile'
@@ -271,8 +291,45 @@ const onSelectSession = async sid => {
 }
 const onNewChat = async () => { sessionsOpen.value = false; await createNewSession() }
 
+// ==================== 会话内查找 ====================
+// 与 PC 的 Ctrl/⌘+F 是同一份实现（src/chat/useChatSearch.js）：行契约统一为 [data-row-index]
+// （MobileMsgRow 已带），高亮共用全局 app.css 的 ::highlight(chat-search)。
+// 差异只在入口——手机没有组合键，顶栏给一个按钮。
+const {
+  searchOpen, searchQuery, searchPos, searchInputRef, matchedIdxs, searchPosShown,
+  openSearch, closeSearch, gotoMatch
+} = useChatSearch({
+  boxRef: box,
+  messages: () => messages.value
+})
+
+// ==================== 新问题置顶（移动等价实现） ====================
+// 桌面版靠「尾随留白」把贴底落点抬到最后一条问题的顶部（ChatPage.vue 的 updateTailSpacer）。
+// 移动端刻意不做留白：一屏只放得下 1-2 条，补足往往需要近一屏的空白，用户上翻回看历史时
+// 会在内容尾拖着一大块空白，观感像"消息丢了"；且那套算法每次重渲染都要 getBoundingClientRect
+// 反推一次，手机上更容易掉帧。
+// 等价做法：用户消息出现的那一刻直接把它送到容器顶端 —— 效果一致，且不依赖测量。
+let lastPinnedIdx = -1
+const pinLatestQuestion = async () => {
+  const list = messages.value
+  const idx = list.length - 1
+  const m = list[idx]
+  if (!m || m.role !== 'user' || idx === lastPinnedIdx) return
+  lastPinnedIdx = idx
+  await nextTick()
+  box.value?.querySelector(`[data-row-index="${idx}"]`)?.scrollIntoView({ block: 'start' })
+  // 发新问题即宣告"我要看这一轮"：答案流出后继续跟随（否则上翻过的用户会看不到半截回答）
+  stickToBottom.value = true
+}
+watch(() => messages.value.length, pinLatestQuestion)
+
 // 切走会话/清空选中：操作行回到「最新一条可见」的默认态，滚动恢复跟随
-watch(currentSessionId, () => { activeIdx.value = null; stickToBottom.value = true })
+watch(currentSessionId, () => {
+  activeIdx.value = null
+  stickToBottom.value = true
+  lastPinnedIdx = -1
+  searchPos.value = 0   // 换会话后查找从头开始，避免停在上一个会话的偏移上
+})
 
 // 来源详情（移动端用 sheet 展示，替代 PC 的弹窗）
 const src = reactive({ visible: false, title: '', snippet: '', content: '', images: [], url: '', loading: false })
@@ -413,6 +470,27 @@ onUnmounted(() => {
 }
 .m-bar-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
 .m-bar-caret { font-size: 11px; color: var(--app-text3); }
+
+/* ---- 会话内查找条 ---- */
+.m-find {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; background: var(--app-panel); border-bottom: 1px solid var(--app-border);
+}
+.mf-ic { color: var(--app-text3); flex: none; font-size: 13px; }
+.mf-input {
+  flex: 1; min-width: 0; min-height: 36px; box-sizing: border-box;
+  border: 1px solid var(--app-border); border-radius: 9px; background: var(--app-panel-2);
+  color: var(--app-text); font-size: 16px; padding: 0 10px; outline: none;
+}
+.mf-input:focus { border-color: var(--app-accent-border); }
+.mf-count { flex: none; font-size: 12px; color: var(--app-text3); min-width: 40px; text-align: right; }
+.mf-btn {
+  width: 34px; height: 34px; flex: none; border: none; border-radius: 9px; background: transparent;
+  color: var(--app-text2); font-size: 12px; display: inline-flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+}
+.mf-btn:disabled { color: var(--app-text3); opacity: .5; }
+.mf-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 
 /* ---- 消息流 ---- */
 .m-list {

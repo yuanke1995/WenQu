@@ -2,7 +2,11 @@
   <!-- 移动壳的消息行：与 PC 版同源的数据（引擎的 messages 数组），不同的呈现——
        流程/正文按时间线交错渲染、工具卡与过程独白可折叠；操作行不靠 hover（触屏没有 hover）：
        点一下气泡把它「选中」，选中态或最新一条才显示操作行。 -->
-  <div class="mrow" :class="[m.role === 'user' ? 'is-user' : 'is-ai', { active }]">
+  <!-- data-row-index 是会话内查找与「新问题置顶」共用的行契约：
+       定位按它算出来，不做 "第 N 个子节点" 这种易碎假设；PC 版消息行带同一个属性，
+       所以 src/chat/useChatSearch.js 两份壳体共用一套 Range/Highlight 逻辑。 -->
+  <div class="mrow" :class="[m.role === 'user' ? 'is-user' : 'is-ai', { active }]"
+       :data-row-index="index" :data-role="m.role === 'user' ? 'user' : 'ai'">
     <div class="mrow-inner" @click="onRowTap">
       <!-- ==================== 用户消息 ==================== -->
       <template v-if="m.role === 'user'">
@@ -320,7 +324,9 @@ const onMdClick = e => {
 </script>
 
 <style scoped>
-.mrow { display: flex; margin-bottom: 12px; }
+/* 顶到容器上沿时留一点呼吸：新问题置顶与查找跳转都走 scrollIntoView({block:'start'})，
+   没有 scroll-margin 会让气泡齐刷刷压在顶部边框上（桌面版靠尾随留白天然有这个间隙）。 */
+.mrow { display: flex; margin-bottom: 12px; scroll-margin-top: 8px; }
 .mrow.is-user { justify-content: flex-end; }
 .mrow-inner { max-width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .mrow.is-ai .mrow-inner { width: 100%; }
