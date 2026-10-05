@@ -9,8 +9,10 @@ import com.wenqu.ai.dto.SessionInfo;
 import com.wenqu.ai.dto.SessionPage;
 import com.wenqu.ai.mapper.MessageMapper;
 import com.wenqu.ai.mapper.SessionMapper;
+import com.wenqu.ai.mapper.SessionShareMapper;
 import com.wenqu.ai.model.Message;
 import com.wenqu.ai.model.Session;
+import com.wenqu.ai.model.SessionShare;
 import com.wenqu.ai.thread.ThreadPoolManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +60,7 @@ public class SessionService {
     private final ObjectMapper objectMapper;
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
+    private final SessionShareMapper sessionShareMapper;
     private final TransactionTemplate transactionTemplate;
 
     /**
@@ -260,6 +263,7 @@ public class SessionService {
         boolean hasMore = rows.size() > pageSize;
         if (hasMore) rows = rows.subList(0, pageSize);
         rows.forEach(s -> items.add(toInfo(s)));
+        markShared(items);
 
         SessionPage page = new SessionPage();
         page.setItems(items);
@@ -289,6 +293,30 @@ public class SessionService {
                                     + esc + "%'"));
         }
         return wrapper;
+    }
+
+    /**
+     * 给列表项打「正在对外分享」标记（侧栏行内小图标用）。
+     *
+     * <p>一次 {@code in} 查询覆盖整页，不逐行查——列表是首屏必走的路径，逐行打会变成 N+1。
+     * 直连 {@link SessionShareMapper} 而非注入 {@code SessionShareService}：后者依赖本类，
+     * 反向注入会构成循环依赖。查询失败按"无标记"处理：标记是辅助信息，不该让整个列表打不开。
+     */
+    private void markShared(List<SessionInfo> items) {
+        if (items == null || items.isEmpty()) return;
+        try {
+            Set<String> active = sessionShareMapper.selectList(
+                            new LambdaQueryWrapper<SessionShare>()
+                                    .in(SessionShare::getSessionId,
+                                            items.stream().map(SessionInfo::getId).toList())
+                                    .eq(SessionShare::getEnabled, 1))
+                    .stream().map(SessionShare::getSessionId).collect(Collectors.toSet());
+            for (SessionInfo info : items) {
+                info.setShared(active.contains(info.getId()));
+            }
+        } catch (Exception e) {
+            log.warn("会话列表分享标记查询失败（降级为无标记）: {}", e.getMessage());
+        }
     }
 
     /** 实体 → 列表项 DTO（含会话级智能体绑定：NULL=未绑定不发字段） */
@@ -392,6 +420,17 @@ public class SessionService {
      */
     public void deleteSession(String userId, String sessionId) {
         assertOwned(sessionId, userId);
+        // 停用对外分享：分享表与会话表之间没有外键级联，不主动停就会留下一条 enabled=1 的
+        // 悬空记录——token 仍有效、列表标"生效中"，访客打开却是空页（消息已随会话软删）。
+        // best-effort：清理失败只记日志，不能让"删除会话"这个用户主意图失败。
+        try {
+            sessionShareMapper.update(null, new LambdaUpdateWrapper<SessionShare>()
+                    .eq(SessionShare::getSessionId, sessionId)
+                    .eq(SessionShare::getEnabled, 1)
+                    .set(SessionShare::getEnabled, 0));
+        } catch (Exception e) {
+            log.warn("删除会话时停用分享失败 session={}: {}", sessionId, e.getMessage());
+        }
         try {
             sessionMapper.deleteById(sessionId);
             // 同步软删除该会话下的所有消息

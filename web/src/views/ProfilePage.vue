@@ -182,6 +182,64 @@
             记忆只属于你自己，只注入你本人的对话（公开分享页不会携带）；已达上限时自动提取会暂停，删掉几条即可恢复。
           </p>
         </div>
+
+        <!-- 分享管理（会话只读分享）：链接发出后就散在各处，这里是统一的回看与停用入口。
+             会话内分享面板管"这一条"，这里管"全部"——单条面板无法回答"我一共发出过哪些"。 -->
+        <div v-else-if="current === 'shares'" class="app-card pf-card shm-card">
+          <h2 class="app-card-title">
+            分享管理
+            <span v-if="shareOnCount" class="mem-count">{{ shareOnCount }} 条生效中</span>
+          </h2>
+          <p class="pf-hint">
+            会话分享生成的是<strong>只读链接</strong>：拿到链接的人可以查看这段对话，不能继续提问。
+            链接展示的是会话<strong>最新内容而非快照</strong>——分享后继续在这段对话里聊到敏感内容，链接页也会跟着变。
+          </p>
+          <a-spin :spinning="shareLoading">
+            <div v-if="!shares.length" class="mem-empty">
+              <div class="mem-empty-ico">🔗</div>
+              <p class="mem-empty-title">还没有分享过任何会话</p>
+              <p class="pf-sub-hint">在对话页顶栏点「分享这段对话」即可生成只读链接。</p>
+            </div>
+            <div v-else class="shm-list">
+              <div v-for="s in shares" :key="s.sessionId" class="shm-item"
+                   :class="{ off: !s.enabled, focus: focusSid === s.sessionId }">
+                <div class="shm-main">
+                  <div class="shm-title">
+                    {{ s.title }}
+                    <span v-if="s.orphaned" class="shm-tag warn">会话已删除</span>
+                    <span v-else-if="s.enabled" class="shm-tag on">生效中</span>
+                    <span v-else class="shm-tag">已停止</span>
+                  </div>
+                  <div class="shm-meta">
+                    分享于 {{ fmtTime(s.createTime) }}
+                    <template v-if="s.visitCount">
+                      · 已被访问 {{ s.visitCount }} 次<template v-if="s.lastVisitAt">，最近 {{ fmtTime(s.lastVisitAt) }}</template>
+                    </template>
+                    <template v-else> · 尚未被访问</template>
+                  </div>
+                  <!-- 已停止的链接不再展示地址栏：给一个打不开的链接不如明确说"已停止" -->
+                  <div v-if="s.enabled" class="shm-link">
+                    <span class="shm-url">{{ shareUrlOf(s.token) }}</span>
+                  </div>
+                  <div v-if="s.orphaned" class="shm-note">这条链接已打不开（会话已删除），停用后记录仅留档。</div>
+                </div>
+                <div class="shm-acts">
+                  <template v-if="s.enabled">
+                    <button class="app-link-btn" @click="copyShare(s)">复制链接</button>
+                    <a class="app-link-btn" :href="shareUrlOf(s.token)" target="_blank" rel="noopener">预览</a>
+                    <button class="app-link-btn" @click="regenShare(s)">换新链接</button>
+                    <button class="app-link-btn" @click="goSharedSession(s)">查看会话</button>
+                    <button class="app-link-btn danger" @click="stopShare(s)">停止分享</button>
+                  </template>
+                  <template v-else>
+                    <span class="shm-off-note">已停止</span>
+                    <button v-if="!s.orphaned" class="app-link-btn" @click="restartShare(s)">重新开启</button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </a-spin>
+        </div>
       </section>
     </div>
   </div>
@@ -193,9 +251,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
+import { copyText } from '../utils/clipboard'
+import { shareUrlOf } from './shareSession'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          getUserSettings, saveUserSettings,
-         listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory } from '../api'
+         listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory,
+         listMySessionShares, stopShareBySession, enableSessionShare } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -207,6 +268,7 @@ const navs = [
   { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '聊天模型与偏好' },
   { key: 'memory', label: '长期记忆' },
+  { key: 'shares', label: '分享管理' },
   { key: 'security', label: '账号安全' }
 ]
 // ?panel= 深链（配置引导建议项「去配置」直达对应面板）；未知值回落个人资料
@@ -519,11 +581,96 @@ const removeMemory = async m => {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
+// ---- 分享管理（会话只读链接的统一回看与停用） ----
+// 与会话内分享面板（views/shareSession.js）的关系：那边管"这一条"，这里管"全部"。
+// 链接拼装复用 shareUrlOf —— 协议只有一处定义，两边各拼一次迟早漂移。
+const shares = ref([])
+const shareLoading = ref(false)
+const shareBusy = ref('')
+// 深链定位：侧栏点分享标记进来时高亮并滚到对应那一条（?sid=）
+const focusSid = ref('')
+
+const shareOnCount = computed(() => shares.value.filter(s => s.enabled).length)
+
+const fmtTime = v => {
+  if (!v) return ''
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+const loadShares = async () => {
+  shareLoading.value = true
+  try {
+    const r = await listMySessionShares()
+    shares.value = (r && r.data) || []
+    // 深链定位的行滚进视野：从侧栏标记点进来时直接看到"就是这条"
+    if (focusSid.value) {
+      await new Promise(resolve => setTimeout(resolve, 60))
+      const el = document.querySelector('.shm-item.focus')
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' })
+    }
+  } catch (e) { message.error(e.message || '分享列表加载失败') }
+  finally { shareLoading.value = false }
+}
+
+const copyShare = s => copyText(shareUrlOf(s.token), '链接已复制')
+const goSharedSession = s => router.push({ path: '/chat', query: { sid: s.sessionId } })
+
+const stopShare = s => {
+  Modal.confirm({
+    title: '停止分享这条链接？',
+    content: '停止后所有已发出的链接立即失效，拿到链接的人会看到"链接已失效"。可以随时重新开启，但会生成新链接。',
+    okText: '停止分享', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await stopShareBySession(s.sessionId)
+        if (r && r.success !== false) { message.success('已停止分享'); await loadShares() }
+        else message.error(r?.msg || '停止失败')
+      } catch (e) { message.error(e.message || '停止失败') }
+    }
+  })
+}
+
+/** 换新链接 / 重新开启：同一个后端动作（换新 token 使旧链接立即失效），文案按当前状态区分 */
+const regenShare = s => {
+  Modal.confirm({
+    title: '换一个新链接？',
+    content: '此前发出的所有链接会立即失效，新链接需重新分发。',
+    okText: '换新链接', cancelText: '取消',
+    onOk: () => restartShare(s, '已生成新链接，旧链接立即失效')
+  })
+}
+const restartShare = async (s, okMsg = '已重新开启分享') => {
+  if (shareBusy.value) return
+  shareBusy.value = s.sessionId
+  try {
+    const r = await enableSessionShare(s.sessionId)
+    if (r && r.success !== false) {
+      message.success(okMsg)
+      await loadShares()
+      focusSid.value = s.sessionId
+    } else message.error(r?.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { shareBusy.value = '' }
+}
+
+// 面板切换时才拉列表：其余面板不碰这个接口（个人设置是常驻页，每次进都拉会白跑一次）
+watch(current, v => {
+  if (v === 'shares') {
+    focusSid.value = route.query.sid || ''
+    loadShares()
+  }
+})
+
 onMounted(() => {
   load()
   loadMemories()
   loadPrefs()
   ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
+  // 直接以 ?panel=shares 深链进入（侧栏入口）时，watch(current) 不会触发——初始化归位前手动拉一次
+  if (current.value === 'shares') loadShares()
 })
 </script>
 
@@ -599,6 +746,44 @@ onMounted(() => {
 .mem-tag { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; white-space: nowrap; background: var(--app-panel-2); color: var(--app-text3); }
 .mem-cat-project { background: var(--app-accent-weak); color: var(--app-accent); }
 .mem-cat-instruction { background: #faf3e6; color: #a3691b; }
+
+/* ---- 分享管理 ---- */
+.shm-card { max-width: 760px; }
+.shm-list { display: flex; flex-direction: column; gap: 8px; }
+.shm-item {
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px;
+  display: flex; align-items: flex-start; gap: 12px;
+}
+/* 已停止：整条压暗，让"生效中"的几条在长列表里一眼可辨（这是本页要回答的首要问题） */
+.shm-item.off { opacity: .68; }
+/* 深链定位：从侧栏分享标记点进来时短暂标一下"就是这条" */
+.shm-item.focus { border-color: var(--app-accent); background: var(--app-accent-weak); }
+.shm-main { flex: 1; min-width: 0; }
+.shm-title {
+  font-size: 13px; color: var(--app-text); font-weight: 500;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.shm-tag {
+  font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 4px;
+  background: var(--app-panel-2); color: var(--app-text3); font-weight: 400; white-space: nowrap;
+}
+.shm-tag.on { background: #e8f5ee; color: #1a7f4b; }
+.shm-tag.warn { background: #fdeceb; color: #b0322f; }
+.shm-meta { font-size: 11px; color: var(--app-text3); margin-top: 4px; }
+.shm-link { margin-top: 6px; }
+/* 链接单行截断：URL 很长，全量换行会把这一行撑得很高 */
+.shm-url {
+  display: block; font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 11px;
+  color: var(--app-text3); background: var(--app-bg); border: 1px solid var(--app-border);
+  border-radius: 4px; padding: 4px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shm-note { font-size: 11px; color: var(--app-text3); margin-top: 6px; }
+.shm-acts {
+  flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: flex-end; max-width: 320px;
+}
+.shm-off-note { font-size: 11px; color: var(--app-text3); }
 .mem-src { background: transparent; border: 1px solid var(--app-border); padding: 2px 6px; }
 .mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
 .mem-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

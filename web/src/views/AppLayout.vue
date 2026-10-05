@@ -85,6 +85,11 @@
                 <check-outlined v-if="batchSel.has(s.id)" />
               </span>
               <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
+              <!-- 分享中：只标 enabled=1（链接还开着）。已停止的不标——否则每次停止分享后
+                   这个图标就永久留在列表里变成噪音。关闭入口在会话内分享面板 / 个人设置→分享管理 -->
+              <a-tooltip v-if="s.shared" title="这段对话正在对外分享（只读链接生效中）">
+                <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage" />
+              </a-tooltip>
               <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
                 <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
               </span>
@@ -100,6 +105,9 @@
                     <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
                     <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
                     <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
+                    <!-- 分享状态不能从会话列表就地判断（是否生效/访问量都在分享记录上），
+                         这里只做跳转，管理动作集中在分享管理面板，避免两处各自维护一套开关语义 -->
+                    <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享设置</a-menu-item>
                     <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
@@ -137,6 +145,16 @@
       </a-modal>
 
       <div class="side-foot">
+        <!-- 分享管理：分享出去的链接会散在各处（微信、邮件、别人转发），侧栏行内标记只答"还在开着吗"，
+             这里答"我一共发出过哪些、被访问过几次"。仅在存在生效中的分享时出现，
+             停止最后一条后自动消失——常驻一个永远空的入口只会稀释侧栏。 -->
+        <a-tooltip v-if="activeShareCount > 0" title="分享管理（个人设置）" placement="right">
+          <button class="foot-share" @click="openShareManage()">
+            <share-alt-outlined />
+            <span v-if="!collapsed" class="foot-share-text">分享管理</span>
+            <span v-if="!collapsed" class="app-pill foot-share-count">{{ activeShareCount }}</span>
+          </button>
+        </a-tooltip>
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
@@ -225,7 +243,7 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CompassOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
-         CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined,
+         CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
          RightOutlined, BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
@@ -278,6 +296,11 @@ const toggleFold = () => {
 }
 
 const visibleSessionList = computed(visibleSessions)
+
+// 生效中的分享条数（侧栏底部入口的显示条件 + 计数）。
+// 只数当前已加载的列表项：列表是游标分页，首屏之外的会话本来就不在侧栏可见，
+// 这个数字的语义是"你能看见的这些里有几条在对外"，不是全库统计（那是分享管理页的职责）。
+const activeShareCount = computed(() => sessionStore.list.filter(s => s.shared).length)
 
 // 会话时间字段稳健解析：ISO 字符串为主（Spring 默认序列化），兼容时间戳/数组/对象形态
 const sessTime = v => {
@@ -399,6 +422,7 @@ const sessionMenu = (s, key) => {
   if (key === 'rename') renameSession(s)
   else if (key === 'favorite') toggleFavorite(s)
   else if (key === 'export') exportSessionMd(s)
+  else if (key === 'share-manage') openShareManage(s.id)
   else if (key === 'batch') enterBatchMode()
   else if (key === 'delete') confirmDelete(s)
 }
@@ -489,6 +513,11 @@ const doBatchDelete = async ids => {
 
 // 个人设置：独立页（默认模型三类 + 修改密码）
 const goProfile = () => router.push('/profile')
+
+// 分享管理（个人设置内的面板）：链接发出去后散在各处，这里是统一的回看/停用入口。
+// 带 sid 定位到具体那一条，便于从侧栏分享标记直接跳到"就是这条"。
+const openShareManage = sid =>
+  router.push({ path: '/profile', query: sid ? { panel: 'shares', sid } : { panel: 'shares' } })
 
 // ==================== 新手配置引导（侧栏入口 + 菜单 tag + 抽屉） ====================
 // 状态口径见 utils/setupGuide.js：入口/抽屉=任一项未完成；/chat tag=①②任一未完成；
@@ -663,6 +692,8 @@ onUnmounted(() => { clearInterval(notifTimer); window.removeEventListener('focus
    横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
 .side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
+/* 折叠态：分享入口只留图标，按侧边栏中轴对齐（与导航图标一致） */
+.side.collapsed .foot-share { flex-basis: auto; justify-content: center; padding: 6px 0; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
 .fold { margin-left: auto; }
@@ -790,6 +821,9 @@ onUnmounted(() => { clearInterval(notifTimer); window.removeEventListener('focus
 .sess-op:hover { color: var(--app-accent); }
 .sess-op.on { opacity: 1; color: var(--app-accent); }
 .sess-pin-flag { color: var(--app-accent); font-size: 10px; flex: none; margin-right: 3px; }
+/* 分享标记：与置顶/收藏同级常显（不是 hover 才出现的操作按钮）——它是"这段对话正在对外"
+   的状态告知，藏起来就失去了感知意义。琥珀色区别于置顶的强调色，避免两者混淆 */
+.sess-share-flag { color: var(--app-warn); font-size: 10px; flex: none; margin-right: 3px; cursor: pointer; }
 .sess-fav-flag { color: var(--app-warn); font-size: 10px; margin-right: 3px; }
 .sess-title.fav { color: var(--app-text); }
 .sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
@@ -811,7 +845,20 @@ onUnmounted(() => { clearInterval(notifTimer); window.removeEventListener('focus
 .side-foot {
   display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
   border-top: 1px solid var(--app-border);
+  /* 分享管理入口走 flex-wrap 换行独占一行：与下方"头像+图标"横排区隔开，
+     避免把通知/主题/退出三个常驻图标挤窄 */
+  flex-wrap: wrap;
 }
+.foot-share {
+  flex-basis: 100%; order: -1;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; margin-bottom: 4px; border-radius: 8px;
+  border: 1px solid var(--app-border); background: var(--app-panel);
+  color: var(--app-text2); font-size: 12px; cursor: pointer; text-align: left;
+}
+.foot-share:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.foot-share-text { flex: 1; min-width: 0; }
+.foot-share-count { flex: none; }
 /* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
 .foot-user {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;

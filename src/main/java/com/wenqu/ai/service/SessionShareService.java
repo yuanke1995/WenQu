@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.SessionShareMapper;
+import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,52 @@ public class SessionShareService {
     private final SessionShareMapper sessionShareMapper;
     private final SessionService sessionService;
 
+    /**
+     * 列出我分享过的全部会话（分享管理页数据源）。
+     *
+     * <p><b>为什么按 created_by 而不是 join 会话表</b>：会话可以被改名、也可以被删除。
+     * join 现查的话，改名后列表跟着变（还算合理），但会话一删这条分享记录就整条消失——
+     * 用户看到的不是"这条链接已经失效"，而是"我好像没分享过"，恰好在最需要知道的时候失去感知。
+     * 所以按 created_by 枚举本��人的分享记录，标题取快照（缺失时回落到当前会话标题）。
+     *
+     * <p><b>悬空检测</b>：{@code orphaned=true} 表示会话已不存在。这类的 enabled 会被
+     * {@link #disable} 收敛成 0——列表页据此强制显示"已停止"，避免用户看到一个
+     * 实际已打不开（getHistory 过滤 deleted 后为空页）的链接还标着生效中。
+     */
+    public List<Map<String, Object>> listMine(String uid) {
+        if (uid == null || uid.isBlank()) return List.of();
+        List<SessionShare> rows = sessionShareMapper.selectList(new LambdaQueryWrapper<SessionShare>()
+                .eq(SessionShare::getCreatedBy, uid)
+                .orderByDesc(SessionShare::getUpdateTime)
+                .orderByDesc(SessionShare::getCreateTime));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (SessionShare s : rows) {
+            Session live = null;
+            try {
+                live = sessionService.sessionById(s.getSessionId());
+            } catch (Exception e) {
+                log.warn("[SHARE] 列表取会话失败 session={} - {}", s.getSessionId(), e.getMessage());
+            }
+            boolean orphaned = live == null;
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("sessionId", s.getSessionId());
+            String title = live != null && live.getTitle() != null ? live.getTitle() : null;
+            if (title == null || title.isBlank()) title = s.getTitleSnapshot();
+            one.put("title", (title == null || title.isBlank()) ? "（无标题会话）" : title);
+            one.put("token", s.getToken());
+            // 悬空记录一律按已停用呈现：链接实际已打不开，报"生效中"是误导
+            boolean on = !orphaned && s.getEnabled() != null && s.getEnabled() == 1;
+            one.put("enabled", on);
+            one.put("orphaned", orphaned);
+            one.put("visitCount", s.getVisitCount() == null ? 0 : s.getVisitCount());
+            one.put("lastVisitAt", s.getLastVisitAt());
+            one.put("createTime", s.getCreateTime());
+            one.put("updateTime", s.getUpdateTime());
+            out.add(one);
+        }
+        return out;
+    }
+
     /** 分享记录（未分享返回 null） */
     public SessionShare get(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
@@ -50,12 +97,21 @@ public class SessionShareService {
     public SessionShare enable(String sessionId, String uid) {
         SessionShare exist = get(sessionId);
         String token = newToken();
+        // 标题快照：会话改名/删除后列表页仍能认出"分享过的是哪一段"
+        String snap = null;
+        try {
+            var sess = sessionService.sessionById(sessionId);
+            snap = (sess == null || sess.getTitle() == null) ? null : sess.getTitle();
+        } catch (Exception e) {
+            log.warn("[SHARE] 取标题快照失败 session={} - {}", sessionId, e.getMessage());
+        }
         if (exist == null) {
             SessionShare s = new SessionShare();
             s.setSessionId(sessionId);
             s.setToken(token);
             s.setEnabled(1);
             s.setCreatedBy(uid);
+            s.setTitleSnapshot(snap);
             s.setVisitCount(0);
             sessionShareMapper.insert(s);
             log.info("[SHARE] 会话分享已开启 session={} by={}", sessionId, uid);
@@ -66,11 +122,13 @@ public class SessionShareService {
                 .set(SessionShare::getToken, token)
                 .set(SessionShare::getEnabled, 1)
                 .set(SessionShare::getCreatedBy, uid)
+                .set(SessionShare::getTitleSnapshot, snap)
                 .set(SessionShare::getVisitCount, 0)
                 .set(SessionShare::getLastVisitAt, null));
         exist.setToken(token);
         exist.setEnabled(1);
         exist.setCreatedBy(uid);
+        exist.setTitleSnapshot(snap);
         exist.setVisitCount(0);
         log.info("[SHARE] 会话分享已重新开启（换新 token，旧链接失效）session={} by={}", sessionId, uid);
         return exist;
@@ -88,8 +146,30 @@ public class SessionShareService {
     }
 
     /**
-     * 公开解析：token 有效且 enabled=1 才返回（否则 null——调用方按 404 处理，不泄露存在性），
-     * 顺带累计访问量（best-effort：统计失败不影响访问）。
+     * 强制停用（会话被删除时调用，best-effort）。
+     *
+     * <p>会话软删除不会级联到分享表，不处理的话这条记录会以 enabled=1 永远悬着：
+     * token 仍在、列表页还会标"生效中"，而访客打开的是一个空页（消息已被 deleted 过滤）。
+     * 这里不抛异常——会话删除是用户的主意图，分享记录清理失败只该记日志不该让删除失败。
+     */
+    public void disableQuietly(String sessionId) {
+        try {
+            sessionShareMapper.update(null, new LambdaUpdateWrapper<SessionShare>()
+                    .eq(SessionShare::getSessionId, sessionId)
+                    .eq(SessionShare::getEnabled, 1)
+                    .set(SessionShare::getEnabled, 0));
+        } catch (Exception e) {
+            log.warn("[SHARE] 随会话删除停用分享失败 session={} - {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
+     * 公开解析：token 有效、enabled=1 **且会话仍在**才返回（否则 null——调用方按 404 处理，
+     * 不泄露存在性），顺带累计访问量（best-effort：统计失败不影响访问）。
+     *
+     * <p>会话存活性是第二道闸：{@code deleteSession} 已会联动停用，但那是 best-effort，
+     * 且存量脏数据（本次上线前删掉的会话）不会自己好。少一次会话查询换"绝不把空页当有效分享
+     * 链接发出去"——访客拿到空白页却没报错，只会以为链接坏了再去问分享者。
      */
     public SessionShare resolvePublic(String token) {
         if (token == null || token.isBlank()) return null;
@@ -97,6 +177,19 @@ public class SessionShareService {
                 .eq(SessionShare::getToken, token)
                 .last("LIMIT 1"));
         if (s == null || s.getEnabled() == null || s.getEnabled() != 1) return null;
+        boolean sessionAlive;
+        try {
+            sessionAlive = sessionService.sessionById(s.getSessionId()) != null;
+        } catch (Exception e) {
+            // 取不到不等于没有：宁可放过一次空页，也不要在库抖动时把有效链接判死
+            log.warn("[SHARE] 会话存活性核查失败，按有效处理 token={} - {}", token, e.getMessage());
+            sessionAlive = true;
+        }
+        if (!sessionAlive) {
+            log.info("[SHARE] 分享对应会话已删除，就地停用 session={}", s.getSessionId());
+            disableQuietly(s.getSessionId());
+            return null;
+        }
         try {
             sessionShareMapper.update(null, new LambdaUpdateWrapper<SessionShare>()
                     .eq(SessionShare::getId, s.getId())

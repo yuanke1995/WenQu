@@ -26,6 +26,8 @@ public class SessionInfo {
     private Integer isPinned;
     @Schema(description = "是否收藏: 0=否,1=是")
     private Integer isFavorite;
+    @Schema(description = "是否正在对外分享（只读链接生效中）：true=列表行展示分享标记")
+    private Boolean shared;
     @Schema(description = "会话级绑定的智能体ID（未绑定不发字段；空串=已决定不绑定智能体）")
     private String agentId;
     @Schema(description = "绑定时的智能体名称快照")

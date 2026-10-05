@@ -486,6 +486,42 @@ public class ChatController {
         return ResultJson.ok(m);
     }
 
+    /**
+     * 我分享过的会话列表（个人设置 → 分享管理）。
+     *
+     * <p>与 {@code /session/{id}/share} 的区别是那是"逐个会话单查"，这里枚举全部——
+     * 分享出去的链接一旦发出就散在各处，用户需要一个能回看"哪些还在开着、被访问过几次"的入口。
+     *
+     * <p>返回项含 {@code orphaned}：会话已被删除时仍列出该行（enabled 强制呈现为 false），
+     * 否则用户会以为"没分享过"，而实际是链接散出去了但自己已经无从关闭。
+     */
+    @Operation(summary = "我的会话分享列表", description = "枚举当前用户分享过的全部会话，含状态、访问量与悬空标记")
+    @GetMapping("/session-shares")
+    public ResultJson listMySessionShares() {
+        return ResultJson.ok(sessionShareService.listMine(RequestUser.uid()));
+    }
+
+    /**
+     * 按会话停用分享（分享管理页用）。
+     *
+     * <p>刻意不复用 {@code /session/{id}/share} 的 DELETE：那个端点先 assertOwned，
+     * 会话已删除时直接 404，而这恰恰是分享管理页最需要能操作的场景（悬空行只能停、不能再开）。
+     * 这里按 created_by 鉴权——分享记录本身就是归属凭据。
+     */
+    @Operation(summary = "按会话停用分享", description = "分享管理页停用；会话已删除的悬空记录同样可停")
+    @DeleteMapping("/session-shares/{sessionId}")
+    public ResultJson stopShareBySession(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        String uid = RequestUser.uid();
+        var share = sessionShareService.get(sessionId);
+        // 先查后改：不存在或非本人分享都按 404（不泄露他人会话是否存在分享记录）
+        if (share == null || !uid.equals(share.getCreatedBy())) {
+            throw new BizException(404, "分享记录不存在");
+        }
+        sessionShareService.disable(sessionId);
+        return ResultJson.ok("已停止分享");
+    }
+
     @Operation(summary = "查询会话分享状态", description = "返回 {enabled, token, visitCount, lastVisitAt}；未分享返回 enabled=false。仅会话所有者可查")
     @GetMapping("/session/{sessionId}/share")
     public ResultJson getSessionShare(

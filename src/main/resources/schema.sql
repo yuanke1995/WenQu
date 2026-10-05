@@ -865,6 +865,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_share` (
     `session_id`    VARCHAR(50)  NOT NULL COMMENT '被分享的会话ID',
     `token`         VARCHAR(64)  NOT NULL COMMENT '公开访问令牌（链接即凭据，重新开启会换新 token 使旧链接失效）',
     `enabled`       INT          NOT NULL DEFAULT 1 COMMENT '1=链接可访问 0=已停止',
+    `title_snapshot` VARCHAR(200) DEFAULT NULL COMMENT '分享时刻的会话标题快照（会话改名/删除后仍能认出分享过哪一段）',
     `created_by`    VARCHAR(64)  DEFAULT NULL COMMENT '发起分享的 uid（仅会话所有者可分享）',
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '首次分享时间',
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

@@ -256,6 +256,10 @@ export const enableSessionShare = sid => request(`/session/${sid}/share`, { meth
 export const disableSessionShare = sid => request(`/session/${sid}/share`, { method: 'DELETE' })
 /** 公开只读页（免登录）：按 token 取会话标题与消息 */
 export const getSharedSession = token => request(`/share/session/${encodeURIComponent(token)}`)
+/** 我分享过的全部会话（分享管理页）：含 enabled/orphaned/visitCount/lastVisitAt */
+export const listMySessionShares = () => request('/session-shares')
+/** 按会话停用分享（分享管理页用；会话已删除的悬空记录同样可停，故不走 /session/{id}/share） */
+export const stopShareBySession = sid => request(`/session-shares/${encodeURIComponent(sid)}`, { method: 'DELETE' })
 
 /**
  * 列出会话（游标分页）：首页不传 cursor；后续页传上一页返回的 nextCursor。

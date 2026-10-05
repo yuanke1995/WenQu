@@ -35,6 +35,15 @@ public class SessionShare {
     /** 启用: 1=链接可访问, 0=已停止 */
     private Integer enabled;
 
+    /**
+     * 会话标题快照（分享时刻）
+     * <p>
+     * 会话本身可以被改名或删除，列表页不能只靠 join 现查——会话删掉后行会整条消失，
+     * 用户反而"看不出这里曾经分享过东西"。落一份标题快照，让已删除的会话仍能以
+     * "(会话已删除)" 的形态被看见并停用。
+     */
+    private String titleSnapshot;
+
     /** 发起分享的 uid（仅会话所有者可分享） */
     private String createdBy;
 
