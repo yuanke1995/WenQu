@@ -119,7 +119,7 @@
     <FlowEditor v-if="editingId !== null" :workflow-id="editingId" :readonly="editorReadonly" @back="closeEditor" @saved="load" />
 
     <!-- 运行历史页（M4：独立页，含 trace 回放与待审批裁决） -->
-    <WorkflowRunHistory v-if="historyId !== null" :workflow-id="historyId" :name="historyName" @back="closeHistory" />
+    <WorkflowRunHistory v-if="historyId !== null" :workflow-id="historyId" :name="historyName" :initial-run-id="initialRunId" @back="closeHistory" />
 
     <!-- 版本历史（发布历史 + 回滚） -->
     <a-modal v-model:open="versionModal" :title="`版本历史${versionRow ? ' · ' + versionRow.name : ''}`" :footer="null" width="620px">
@@ -215,7 +215,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
@@ -240,6 +241,8 @@ const editingId = ref(null)     // null = 列表；'' = 新建；'id' = 编辑
 const editorReadonly = ref(false)   // 画布只读（共享给我且无管理权）
 const historyId = ref(null)     // 非 null = 运行历史页
 const historyName = ref('')
+const initialRunId = ref(null)  // 通知深链：打开运行历史后自动选中并定位到该 run（审批用）
+const route = useRoute()
 const busyId = ref(null)        // 正在执行发布/下线/回滚的工作流 id
 const versionModal = ref(false)
 const versionLoading = ref(false)
@@ -376,6 +379,8 @@ const load = async () => {
     // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(mine.value.map(x => x.id))
     selected.value = selected.value.filter(id => alive.has(id))
+    // 通知深链：?wf=&run= 直达某工作流的运行历史并定位到指定 run（工作流待审核通知用）
+    maybeDeepLink()
   } catch (e) {
     message.error('工作流加载失败：' + (e.message || '请刷新重试'))
     mine.value = []
@@ -385,10 +390,22 @@ const load = async () => {
   }
 }
 
+/** 通知深链：route.query.wf/run 命中本地工作流时，打开运行历史并定位到指定 run */
+const maybeDeepLink = () => {
+  const wf = route.query.wf
+  const run = route.query.run
+  if (!wf) return
+  const found = [...mine.value, ...shared.value].find(x => x.id === wf)
+  if (found) {
+    openHistory(found)
+    if (run) initialRunId.value = String(run)
+  }
+}
+
 const openEditor = (id, readonly = false) => { editingId.value = id; editorReadonly.value = readonly }
 const closeEditor = () => { editingId.value = null; load() }
 const openHistory = row => { historyId.value = row.id; historyName.value = row.name }
-const closeHistory = () => { historyId.value = null; load() }
+const closeHistory = () => { historyId.value = null; initialRunId.value = null; load() }
 
 const doDelete = row => {
   Modal.confirm({
@@ -700,6 +717,8 @@ const runColor = s => ({ queued: 'default', running: 'processing', success: 'gre
 const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 
 onMounted(load)
+// 通知深链：停留在工作流 Tab 时再次点击不同通知 → 重新定位 run
+watch(() => [route.query.wf, route.query.run], () => { if (mine.value.length || shared.value.length) maybeDeepLink() })
 </script>
 
 <style scoped>

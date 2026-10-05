@@ -470,6 +470,7 @@ public class ConfigService {
         d.put("workflow.scheduleScanIntervalMs", "30000");  // 工作流定时触发扫描间隔（ms，默认 30s；≤0 暂停「工作流定时触发」任务）
         d.put("notification.retentionDays", "30");          // 站内通知保留天数（超期由「站内通知清理」任务物理删除，不区分已读未读）
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
+        d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）
         d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）

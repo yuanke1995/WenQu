@@ -1063,7 +1063,22 @@ export const graphSearchEntity = (kbId, q) => request(`/graph/${kbId}/search?q=$
 export const graphChunk = (kbId, chunkId) => request(`/graph/${kbId}/chunk/${chunkId}`)
 
 // ---------- 站内通知（铃铛；解析/工作流/网页源刷新等异步事件的用户可感知面） ----------
-export const notificationList = (limit = 50) => request(`/notification/list?limit=${limit}`)
+// list 支持筛选/游标分页：{limit, type, unreadOnly, cursor}；返回 {items,nextCursor,hasMore,total,unreadCount}
+export const notificationList = ({ limit = 50, type, unreadOnly, cursor = 0 } = {}) => {
+  const q = new URLSearchParams()
+  q.set('limit', String(limit))
+  if (type) q.set('type', type)
+  if (unreadOnly) q.set('unreadOnly', 'true')
+  if (cursor) q.set('cursor', String(cursor))
+  return request(`/notification/list?${q.toString()}`)
+}
 export const notificationUnreadCount = () => request('/notification/unread-count')
+export const notificationCounts = () => request('/notification/counts')
 export const notificationMarkRead = ids => request('/notification/read', { method: 'POST', body: JSON.stringify({ ids }) })
 export const notificationMarkAllRead = () => request('/notification/read-all', { method: 'POST' })
+export const notificationDelete = ids => request('/notification/delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const notificationClear = scope => request('/notification/clear', { method: 'POST', body: JSON.stringify({ scope }) })
+export const notificationPreferences = () => request('/notification/preferences')
+export const notificationSavePreferences = mutedTypes => request('/notification/preferences', { method: 'PUT', body: JSON.stringify({ mutedTypes }) })
+// 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
+export const getToolApproval = id => request(`/chat/tool-approval/${id}`)

@@ -315,6 +315,14 @@ public class ChatController {
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
 
+    @Operation(summary = "工具审批记录（恢复）", description = "按审批 ID 取本人的审批记录（tool.approval 通知点击后重建审批卡用）；" +
+            "不存在/非本人返回 null。内存态可能已失效（进程重启/超时），此时记录状态为终态，卡片提示已处理。")
+    @GetMapping("/tool-approval/{approvalId}")
+    public ResultJson getToolApproval(
+            @Parameter(description = "审批请求 ID") @PathVariable("approvalId") String approvalId) {
+        return ResultJson.ok(ragService.getApproval(approvalId, com.wenqu.ai.util.RequestUser.uid()));
+    }
+
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
             + "首页不传 cursor，后续页传上一页返回的 nextCursor；keyword 按标题或消息内容模糊搜索（分页同样生效）。"
             + "返回 items / nextCursor / hasMore / groupCounts（置顶/今天/7天内/更早分组总数，仅统计有消息的会话） / total")

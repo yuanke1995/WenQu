@@ -242,7 +242,7 @@ public class ParseQueueService {
                 notificationService.create(doc.getCreatedBy(), Notification.TYPE_PARSE_FAILED,
                         "文档「" + doc.getFileName() + "」解析失败",
                         error + "（重试已达上限或为不可重试错误；可在文档管理中重新解析）",
-                        "kb", doc.getKbId());
+                        "kb", doc.getKbId(), "doc:" + docId, null);
                 maybeAlertBatchFailure(doc);
             }
         } catch (Exception e) {
@@ -273,7 +273,7 @@ public class ParseQueueService {
                     "近 " + (BATCH_ALERT_WINDOW_MS / 60_000) + " 分钟内有 " + BATCH_ALERT_THRESHOLD
                             + " 个以上文档解析终态失败（最近一次：文档「" + doc.getFileName()
                             + "」），疑似解析/向量化服务异常，请检查解析服务状态。",
-                    "kb", kbId);
+                    "kb", kbId, "batch:" + kbId, null);
             log.warn("[PARSE-QUEUE] 批量失败告警 kb={}（窗口内失败达 {} 个）", kbId, BATCH_ALERT_THRESHOLD);
         } catch (Exception e) {
             log.warn("[PARSE-QUEUE] 批量失败告警组装失败（不影响收口）doc={}: {}", doc.getId(), e.getMessage());

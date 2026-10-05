@@ -150,7 +150,10 @@
             <div class="notif-panel">
               <div class="notif-head">
                 <span class="notif-title">通知</span>
-                <button v-if="unreadCount > 0" class="notif-readall" @click="markAllRead">全部已读</button>
+                <div class="notif-head-actions">
+                  <button v-if="unreadCount > 0" class="notif-readall" @click="markAllRead">全部已读</button>
+                  <button class="notif-readall" @click="goNotifCenter">查看全部</button>
+                </div>
               </div>
               <a-spin v-if="notifLoading" size="small" style="display:block;margin:24px auto" />
               <div v-else-if="!notifItems.length" class="notif-empty">暂无通知</div>
@@ -588,7 +591,7 @@ const refreshUnread = async () => {
 const loadNotifs = async () => {
   notifLoading.value = true
   try {
-    const res = await notificationList(50)
+    const res = await notificationList({ limit: 50 })
     notifItems.value = res?.data?.items || []
     unreadCount.value = res?.data?.unreadCount || 0
   } catch (e) { message.error(e.message || '通知加载失败') }
@@ -602,19 +605,28 @@ const markAllRead = async () => {
     unreadCount.value = 0
   } catch (e) { message.error(e.message || '操作失败') }
 }
-// 点击通知：先本地置已读（乐观更新，失败回滚），再按 ref 跳转
+// 点击通知：先本地置已读（乐观更新，失败回滚），再按 ref 跳转（审批类带二级目标直达可裁决位置）
 const openNotif = async n => {
   if (!n.readFlag) {
     n.readFlag = 1
     unreadCount.value = Math.max(0, unreadCount.value - 1)
     notificationMarkRead([n.id]).catch(() => { n.readFlag = 0; refreshUnread() })
   }
-  if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
+  if (n.type === 'workflow.approval' && n.refId && n.refSub) {
+    router.push({ path: '/agents', query: { tab: 'workflow', wf: n.refId, run: n.refSub } })
+  } else if (n.type === 'tool.approval' && n.refId && n.refSub) {
+    goChat({ path: '/chat', query: { sid: n.refId, approval: n.refSub } })
+  } else if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
   else if (n.refType === 'workflow' && n.refId) router.push({ path: '/agents', query: { tab: 'workflow' } })
   else if (n.refType === 'session' && n.refId) goChat({ path: '/chat', query: { sid: n.refId } })
   notifOpen.value = false
 }
 
+// 铃铛 → 通知中心页
+const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications') }
+
+// 切回页面/窗口聚焦立即刷新未读数（登录态失效由全局拦截器接管，这里只静默刷新）
+const onVisible = () => { if (document.visibilityState === 'visible') refreshUnread() }
 onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
@@ -623,8 +635,10 @@ onMounted(async () => {
   refreshUnread()
   refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
   notifTimer = setInterval(refreshUnread, 30_000)
+  window.addEventListener('focus', refreshUnread)
+  document.addEventListener('visibilitychange', onVisible)
 })
-onUnmounted(() => clearInterval(notifTimer))
+onUnmounted(() => { clearInterval(notifTimer); window.removeEventListener('focus', refreshUnread); document.removeEventListener('visibilitychange', onVisible) })
 </script>
 
 <style scoped>
@@ -862,6 +876,9 @@ onUnmounted(() => clearInterval(notifTimer))
 .notif-popover .notif-title { font-weight: 600; font-size: 13px; color: var(--app-text); }
 .notif-popover .notif-readall { border: none; background: none; color: var(--app-accent); cursor: pointer; font-size: 12px; padding: 0; }
 .notif-popover .notif-readall:hover { color: var(--app-accent-hover); }
+.notif-popover .notif-head-actions { display: flex; align-items: center; gap: 12px; }
+.notif-popover .notif-head-actions .notif-readall + .notif-readall { position: relative; }
+.notif-popover .notif-head-actions .notif-readall + .notif-readall::before { content: ''; position: absolute; left: -6px; top: 2px; bottom: 2px; width: 1px; background: var(--app-border); }
 .notif-popover .notif-empty { padding: 30px 0; text-align: center; color: var(--app-text3); font-size: 12px; }
 .notif-popover .notif-list { max-height: 380px; overflow-y: auto; scrollbar-width: thin; }
 .notif-popover .notif-item { display: flex; gap: 10px; align-items: flex-start; width: 100%; border: none; background: none; text-align: left; padding: 10px 8px; border-radius: 8px; cursor: pointer; }

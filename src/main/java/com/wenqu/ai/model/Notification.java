@@ -38,8 +38,17 @@ public class Notification {
     /** 跳转目标类型: kb / workflow（空=不可跳转） */
     private String refType;
 
-    /** 跳转目标 ID（kbId / workflowId） */
+    /** 跳转目标 ID（kbId / workflowId / sessionId） */
     private String refId;
+
+    /** 二级跳转目标（工作流审批=runId；工具审批=approvalId） */
+    private String refSub;
+
+    /** 同类事件合并计数（同 dedupKey 未读期内重复发生 +1 而非新增行） */
+    private Integer hitCount;
+
+    /** 去重键（uid+type+dedupKey 未读期内合并；null=不合并） */
+    private String dedupKey;
 
     /** 0=未读 1=已读（read 是 MySQL 保留字，Java 字段名避开） */
     private Integer readFlag;

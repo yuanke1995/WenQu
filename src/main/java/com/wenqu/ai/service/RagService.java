@@ -1797,7 +1797,7 @@ public class RagService {
                             notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
                                     "工具执行待确认：" + name,
                                     "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
-                                    "session", st.sessionId);
+                                    "session", st.sessionId, "tool:" + approvalId, approvalId);
                             try {
                                 Map<String, Object> req = new LinkedHashMap<>();
                                 req.put("approvalId", approvalId);
@@ -4957,6 +4957,22 @@ public class RagService {
      * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对，内存态与 DB 双重校验）；
      * 内存态丢失（进程重启/已超时）时仍可更新 DB 审计记录（幂等），但无法唤醒已死的工具线程。
      */
+    /**
+     * 从通知恢复审批卡：按 id 取审批记录（仅本人可查；不存在/非本人/已失效返回 null）。
+     * 用于用户点开 tool.approval 通知后，在会话内重建审批卡——刷新丢失的 SSE 卡据此补回。
+     */
+    public com.wenqu.ai.model.ToolApproval getApproval(String approvalId, String uid) {
+        if (approvalId == null || approvalId.isBlank()) return null;
+        try {
+            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(approvalId);
+            if (rec == null || rec.getUserId() == null || !rec.getUserId().equals(uid)) return null;
+            return rec;
+        } catch (Exception e) {
+            log.warn("[TOOL] 恢复审批查询失败 approvalId={}: {}", approvalId, e.getMessage());
+            return null;
+        }
+    }
+
     public boolean resolveApproval(String approvalId, boolean approved, String uid) {
         if (approvalId == null || approvalId.isBlank()) return false;
         String status = approved ? "APPROVED" : "REJECTED";

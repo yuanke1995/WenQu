@@ -306,7 +306,7 @@ public class ScheduledJobService {
             notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_FAILED,
                     "定时任务「" + job.getName() + "」执行失败",
                     run.getError() == null ? "执行异常，详情见执行历史。" : run.getError(),
-                    sid == null ? null : "session", sid);
+                    sid == null ? null : "session", sid, "job:" + job.getId(), null);
         }
     }
 

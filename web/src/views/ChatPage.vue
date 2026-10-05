@@ -37,6 +37,21 @@
         <button class="app-icon-btn" title="关闭查找" @click="closeSearch"><close-outlined /></button>
       </div>
 
+      <!-- 工具审批恢复横幅：点开 tool.approval 通知直达会话时，按 approvalId 重建审批卡
+           （刷新丢失的 SSE 卡据此补回；内存态可能已失效，此时 status 为终态并提示） -->
+      <div v-if="recoveryApproval" class="approval-recovery">
+        <div class="ar-title"><exclamation-circle-outlined /> 工具审批待处理：{{ recoveryApproval.toolName }}</div>
+        <pre v-if="recoveryApproval.requestArgs" class="ar-args">{{ recoveryApproval.requestArgs }}</pre>
+        <div class="ar-foot">
+          <span class="ar-status" :class="recoveryStatusClass">{{ recoveryStatusText }}</span>
+          <template v-if="recoveryApproval.status === 'PENDING'">
+            <button class="app-btn small" :disabled="recoveryBusy" @click="resolveRecovery(true)">批准执行</button>
+            <button class="app-btn ghost small" :disabled="recoveryBusy" @click="resolveRecovery(false)">拒绝</button>
+          </template>
+          <button class="app-btn ghost small" @click="dismissRecovery">关闭</button>
+        </div>
+      </div>
+
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
@@ -1094,7 +1109,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
@@ -1104,7 +1119,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 import { getKnowledgeDetail, debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
-         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
+         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
+         getToolApproval, approveToolCall } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
 import { loadSessions } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
@@ -1133,6 +1149,41 @@ import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, 
          THINK_LEVEL_ON, levelLabel, stopTick } from '../chat/projections'
 
 const router = useRouter()
+const route = useRoute()
+
+// ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
+const recoveryApproval = ref(null)
+const recoveryBusy = ref(false)
+const recoveryStatusText = computed(() => {
+  const s = recoveryApproval.value?.status
+  return { PENDING: '待处理', APPROVED: '已批准', REJECTED: '已拒绝', TIMEOUT: '已超时' }[s] || (s || '未知')
+})
+const recoveryStatusClass = computed(() => {
+  const s = recoveryApproval.value?.status
+  return s === 'PENDING' ? 'ar-pending' : (s === 'APPROVED' ? 'ar-ok' : 'ar-err')
+})
+const loadRecovery = async () => {
+  const id = route.query.approval
+  if (!id) { recoveryApproval.value = null; return }
+  try {
+    const r = await getToolApproval(id)
+    recoveryApproval.value = r?.data || null
+    if (!recoveryApproval.value) message.info('该审批请求不存在或已失效（可能已超时）')
+  } catch (e) { recoveryApproval.value = null; message.error('恢复审批失败：' + (e.message || '')) }
+}
+const resolveRecovery = async approved => {
+  if (!recoveryApproval.value) return
+  recoveryBusy.value = true
+  try {
+    await approveToolCall(recoveryApproval.value.id, approved)
+    message.success(approved ? '已批准' : '已拒绝')
+    await loadRecovery()   // 刷新状态：内存态可能已失效，DB 终态即准
+  } catch (e) { message.error('审批失败：' + (e.message || '')) }
+  finally { recoveryBusy.value = false }
+}
+const dismissRecovery = () => { recoveryApproval.value = null }
+onMounted(loadRecovery)
+watch(() => route.query.approval, loadRecovery)
 
 const textareaRef = ref(null)
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
@@ -3259,6 +3310,16 @@ onMounted(async () => {
 .approval-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
 .approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .approval-hint { font-size: 12px; color: var(--app-text3); }
+
+/* 工具审批恢复横幅（通知 → 会话，重建刷新丢失的 SSE 审批卡） */
+.approval-recovery { margin: 10px 0 0; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 720px; }
+.ar-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
+.ar-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; }
+.ar-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ar-status { font-size: 12px; margin-right: auto; }
+.ar-status.ar-pending { color: var(--app-warn-text); }
+.ar-status.ar-ok { color: var(--app-ok); }
+.ar-status.ar-err { color: var(--app-danger); }
 
 /* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */
 .ref-card {

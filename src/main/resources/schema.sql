@@ -896,13 +896,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     `title`       VARCHAR(200)  NOT NULL COMMENT '一句话标题（列表主文本）',
     `content`     VARCHAR(1000) DEFAULT NULL COMMENT '详情（块数/失败原因等，落库前截断）',
     `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流 session=会话（/chat?sid=）',
-    `ref_id`      VARCHAR(50)   DEFAULT NULL COMMENT '跳转目标 ID（kbId / workflowId；空=不可跳转）',
+    `ref_id`      VARCHAR(50)   DEFAULT NULL COMMENT '跳转目标 ID（kbId / workflowId / sessionId；空=不可跳转）',
+    `ref_sub`     VARCHAR(64)   DEFAULT NULL COMMENT '二级跳转目标: 工作流审批=runId 工具审批=approvalId（前端据此直达可裁决位置）',
+    `hit_count`   INT           NOT NULL DEFAULT 1 COMMENT '同类事件合并计数（同 dedup_key 未读期内重复发生 → +1 而非新增行；列表可显示「×N」）',
+    `dedup_key`   VARCHAR(64)   DEFAULT NULL COMMENT '去重键（uid+type+dedup_key 未读期内合并；如 wf:<workflowId>/doc:<docId>/tool:<approvalId>）',
     `read_flag`   INT           NOT NULL DEFAULT 0 COMMENT '0=未读 1=已读（read 是 MySQL 保留字，列名带 _flag 后缀）',
     `read_time`   DATETIME      DEFAULT NULL COMMENT '已读时刻',
     `create_time` DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '产生时刻',
     PRIMARY KEY (`id`),
     KEY `idx_nt_uid_time` (`uid`, `create_time`),
-    KEY `idx_nt_uid_unread` (`uid`, `read_flag`)
+    KEY `idx_nt_uid_unread` (`uid`, `read_flag`),
+    KEY `idx_nt_uid_dedup` (`uid`, `dedup_key`, `read_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (

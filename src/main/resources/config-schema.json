@@ -2852,6 +2852,23 @@
       "presets": [ [3600000, "1 小时"], [43200000, "12 小时"], [86400000, "1 天"]]
     },
     {
+      "backendKey": "notification.dedupWindow",
+      "panel": "maintenance",
+      "section": 12,
+      "group": "notification",
+      "key": "dedupWindow",
+      "path": "notification.dedupWindow",
+      "label": "同类通知合并窗口(分钟)",
+      "type": "number",
+      "def": 1440,
+      "min": 0,
+      "max": 10080,
+      "step": 60,
+      "width": 240,
+      "note": "同一目标在窗口内重复发生的同类通知合并为一条（hitCount 累加），避免刷屏；0=关闭合并（逐条保留）",
+      "tier": 3
+    },
+    {
       "backendKey": "mcp.server.enabled",
       "panel": "mcp",
       "section": 0,

@@ -1329,14 +1329,14 @@ public class WorkflowService {
             notificationService.create(run.getTriggeredBy(), Notification.TYPE_WORKFLOW_APPROVAL,
                     "工作流「" + workflowName(run.getWorkflowId()) + "」运行挂起待审核",
                     "运行已在人工审核节点暂停，前往工作流画布查看并裁决。",
-                    "workflow", run.getWorkflowId());
+                    "workflow", run.getWorkflowId(), "approve:" + run.getId(), run.getId());
         } else if (("failed".equals(status) || "timeout".equals(status))
                 && !"manual".equals(run.getTriggerType())) {
             String type = "timeout".equals(status) ? Notification.TYPE_WORKFLOW_TIMEOUT : Notification.TYPE_WORKFLOW_FAILED;
             notificationService.create(run.getTriggeredBy(), type,
                     "工作流「" + workflowName(run.getWorkflowId()) + "」运行" + ("timeout".equals(status) ? "超时" : "失败"),
                     (run.getError() == null || run.getError().isBlank()) ? null : run.getError(),
-                    "workflow", run.getWorkflowId());
+                    "workflow", run.getWorkflowId(), "wf:" + run.getWorkflowId(), null);
         }
     }
 

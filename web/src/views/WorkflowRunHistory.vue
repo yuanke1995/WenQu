@@ -99,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import {
@@ -109,7 +109,8 @@ import {
 
 const props = defineProps({
   workflowId: { type: String, required: true },
-  name: { type: String, default: '' }
+  name: { type: String, default: '' },
+  initialRunId: { type: String, default: null }
 })
 defineEmits(['back'])
 
@@ -125,6 +126,11 @@ const load = async () => {
   try {
     const r = await listWorkflowRuns(props.workflowId)
     runs.value = (r && r.data) || []
+    // 通知深链：initialRunId 命中时自动展开该 run（工作流待审核通知直达裁决位置）
+    if (props.initialRunId) {
+      const target = runs.value.find(x => x.id === props.initialRunId)
+      if (target) await openDetail(target)
+    }
   } catch (e) {
     message.error('运行历史加载失败：' + (e.message || ''))
   } finally {
@@ -275,6 +281,13 @@ const pretty = s => {
 }
 
 onMounted(load)
+// 通知深链：父组件再次传入不同 run 时重新定位
+watch(() => props.initialRunId, async id => {
+  if (id && runs.value.length) {
+    const t = runs.value.find(x => x.id === id)
+    if (t) await openDetail(t)
+  }
+})
 </script>
 
 <style scoped>

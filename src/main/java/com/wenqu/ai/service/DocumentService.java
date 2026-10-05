@@ -390,7 +390,7 @@ public class DocumentService {
                 notificationService.create(doc.getCreatedBy(), Notification.TYPE_WEB_REFRESH_FAILED,
                         "网页源「" + doc.getFileName() + "」自动刷新失败",
                         "源地址 " + doc.getSourceUrl() + "：下次刷新时间已顺延；可在文档管理中手动重试。",
-                        "kb", doc.getKbId());
+                        "kb", doc.getKbId(), "web:" + doc.getId(), null);
                 // 失败也推进 next_refresh_at（按 cron 或兜底 1 天），避免立刻重试打爆源站
                 documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                         .eq(AiDocument::getId, doc.getId())
