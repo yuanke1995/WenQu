@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath } from './utils/auth'
+import { preferMobileShell } from './h5/mobile'
 
 // 视图全部懒加载：每个页面（连带其专属依赖，如 Stats/知识库的 echarts、
 // FlowEditor 的 vue-flow）各自成 chunk，首次导航才下载——手机首屏不再下载全站。
@@ -19,6 +20,9 @@ const routes = [
   // 绕开 .content-app 的 height:100vh + overflow:hidden，否则超出一屏的部分既滚不动也不显示。
   { path: '/shared/:token', component: page(() => import('./views/SharedSessionPage.vue')), meta: { title: '对话分享', public: true, pageFlow: true } },
   { path: '/chat', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ChatPage.vue')) }] },
+  // 移动原生壳（M2）：不经 AppLayout 工作台外壳，独立布局；手机访问 /chat 由守卫重定向到这里。
+  // 与管理页的 DesktopOnlyGuard 白名单无关（那套只管 AppLayout 子路由）。
+  { path: '/m/chat', component: page(() => import('./h5/MobileChatPage.vue')), meta: { title: '对话' } },
   { path: '/profile', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ProfilePage.vue')) }], meta: { title: '个人设置' } },
   // 智能体工作台不再要求管理员：技能 Skills 与 MCP 是个人资产，所有人都要能进来管自己的；
   // 其中的「模型供应商 / 智能体」Tab 在页内按管理员身份显隐（见 AgentsHubPage）
@@ -58,6 +62,11 @@ router.beforeEach(async to => {
   // 还没有令牌、不会预拉身份，登录后首次进入布局页会在渲染期读到 null 而报错。
   // 缓存命中时此处瞬时返回，仅首次登录真正发一次 /auth/me。
   await ensureAuth()
+  // 设备形态重定向（登录态之后）：手机（触屏且宽 ≤1024）把 /chat 交给移动原生壳 /m/chat，
+  // 查询串（?sid=）原样透传；桌面与「鼠标用户拖窄窗口」preferMobileShell 恒 false，行为零变化。
+  // 反向同判：在 /m/chat 上放大窗口/接上鼠标后回到 PC 布局。
+  if (to.path === '/chat' && preferMobileShell()) return { path: '/m/chat', query: to.query, replace: true }
+  if (to.path === '/m/chat' && !preferMobileShell()) return { path: '/chat', query: to.query, replace: true }
   if (!to.meta.requiresAdmin) return true
   if (isAdminSync() || menuHasPath(to.path)) return true
   message.warning('暂无该功能的访问权限（可联系管理员在权限管理中为角色授权）')

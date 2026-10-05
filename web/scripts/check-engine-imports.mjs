@@ -22,11 +22,15 @@ const m = proj.match(/export \{([\s\S]*?)\n\}/)
 if (!m) { console.error('FAIL  projections.js 未找到 export { ... } 块'); process.exit(1) }
 const names = m[1].split(/[,\n]/).map(s => s.trim()).filter(s => s && !s.startsWith('//'))
 
-// 消费方清单：引擎 + 两套壳（PC ChatPage / 移动壳）。文件不存在即跳过（渐进落地）。
+// 消费方清单：引擎 + 两套壳（PC ChatPage / 移动壳与它的子组件）。文件不存在即跳过（渐进落地）。
 const CONSUMERS = [
   ['chat/useChatEngine.js', /from\s*'\.\/projections'/],
   ['views/ChatPage.vue', /from\s*'\.\.\/chat\/projections'/],
-  ['h5/MobileChatPage.vue', /from\s*'\.\.\/chat\/projections'/]
+  ['h5/MobileChatPage.vue', /from\s*'\.\.\/chat\/projections'/],
+  ['h5/MobileMsgRow.vue', /from\s*'\.\.\/chat\/projections'/],
+  ['h5/MobileModelSheet.vue', /from\s*'\.\.\/chat\/projections'/],
+  ['h5/MobileAttachSheet.vue', /from\s*'\.\.\/chat\/projections'/],
+  ['h5/MobileRefSheet.vue', /from\s*'\.\.\/chat\/projections'/]
 ]
 
 let bad = 0
@@ -56,4 +60,35 @@ for (const [rel, fromRe] of CONSUMERS) {
   else console.log(`PASS  ${rel} 的 projections 引用完整`)
 }
 if (bad) { console.log('\n修复：把缺失名字补进对应文件的 from \'.../projections\' import'); process.exit(1) }
+
+// ==================== 第二类漏接：从引擎 inject 解构了不存在的名字 ====================
+// 移动壳的 sheet 族经 provide/inject 取引擎单例，然后解构出自己要的字段：
+// 解构名若不在 useChatEngine 的 return 里，值是 undefined，模板一渲染就报
+// 「$setup.xxx is not a function/undefined」——只在真浏览器点开那个 sheet 才暴露。
+// 判据：h5/*.vue 里 `const { ... } = engine` 的每个名字必须出现在引擎 return 块中。
+const engPath = path.join(W, 'chat/useChatEngine.js')
+if (fs.existsSync(engPath)) {
+  const eng = fs.readFileSync(engPath, 'utf8')
+  // 取**最后一个** return { ... }（文件里还有 11 个函数内部的 return {，用首个会抓错块）
+  const idx = eng.lastIndexOf('return {')
+  const tail = idx >= 0 ? eng.slice(idx) : ''
+  const end = tail.indexOf('\n  }')
+  if (idx < 0 || end < 0) { console.log('FAIL  useChatEngine 未找到 return 块'); process.exit(1) }
+  const keys = new Set(tail.slice('return {'.length, end).split(/[,\n]/).map(s => s.trim()).filter(s => s && !s.startsWith('//')))
+  const dir = path.join(W, 'h5')
+  let bad2 = 0
+  for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.vue'))) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8')
+    if (!/inject\(['"]wqChat['"]\)/.test(src)) continue
+    const re = /const\s*\{([^}]*)\}\s*=\s*engine\b/g
+    const missing = []
+    let mm
+    while ((mm = re.exec(src))) {
+      mm[1].split(/[,\n]/).forEach(s => { const t = s.trim(); if (t && !keys.has(t)) missing.push(t) })
+    }
+    if (missing.length) { bad2++; console.log(`FAIL  h5/${f} 从引擎解构了不存在的名字：${missing.join(', ')}`) }
+    else console.log(`PASS  h5/${f} 的引擎解构完整`)
+  }
+  if (bad2) { console.log('\n修复：改用引擎已有字段，或把该状态补进 useChatEngine 的 return'); process.exit(1) }
+}
 console.log('\n全部通过')

@@ -69,12 +69,11 @@ const check = (ok, label, detail = '') => {
 
 ;(async () => {
   const browser = await chromium.launch({ executablePath: EDGE, headless: true })
-  // iPhone SE：375×667，deviceScaleFactor 2，isMobile + hasTouch 开启触屏语义
+  // 375×667 但**不开触屏语义**：模拟「鼠标用户把桌面窗口拖窄」——这条路径必须留在 PC 布局
+  //（路由守卫按 preferMobileShell=触屏判据分流，触屏 375 会进 /m/chat，见 check-mshell.cjs）。
   const ctx = await browser.newContext({
     viewport: { width: 375, height: 667 },
-    deviceScaleFactor: 2,
-    isMobile: true,
-    hasTouch: true
+    deviceScaleFactor: 2
   })
   const page = await ctx.newPage()
   await serveStatic(page)

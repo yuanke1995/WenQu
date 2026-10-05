@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "check": "node scripts/verify-sfc.mjs && node scripts/check-guard.mjs && node scripts/check-h5.mjs && node scripts/check-engine-imports.mjs",
     "check:browser": "node scripts/check-browser.cjs",
-    "gen:icons": "node scripts/gen-icons.mjs"
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "check:mshell": "node scripts/check-mshell.cjs"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",

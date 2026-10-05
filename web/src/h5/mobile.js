@@ -45,3 +45,11 @@ function bind (m, r) {
 bind(mqNarrow, isNarrow)
 bind(mqCoarse, isCoarse)
 bind(mqNoHover, isCoarse)
+
+// ==================== 移动壳（/m/chat）的设备判据 ====================
+// 与「布局形态」（isNarrow，宽度 ≤768）分开：手机上把 /chat 交给移动原生壳，
+// 判据是**触屏**（isCoarse）且宽度 ≤1024——覆盖手机竖屏/横屏（横屏约 900px）与平板竖屏；
+// 桌面（含把窗口拖窄的鼠标用户）isCoarse 恒 false，永远留在 PC 布局（其窄屏行为由既有补丁承担）。
+// 为什么不用 isNarrow：手机横屏宽于 768 就不是「窄屏」了，但依然是触屏，仍该进移动壳。
+const MOBILE_SHELL_MAX_W = 1024
+export const preferMobileShell = () => isCoarse.value && (window.innerWidth || 0) <= MOBILE_SHELL_MAX_W
