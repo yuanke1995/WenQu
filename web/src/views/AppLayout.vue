@@ -581,15 +581,16 @@ const notifTime = v => {
 const refreshUnread = async () => {
   try {
     const res = await notificationUnreadCount()
-    unreadCount.value = res?.count || 0
+    // request() 返回的是响应信封 {success,code,msg,data}，业务体在 data 里（与 store.js 取值口径一致）
+    unreadCount.value = res?.data?.count || 0
   } catch { /* 下一轮再试 */ }
 }
 const loadNotifs = async () => {
   notifLoading.value = true
   try {
     const res = await notificationList(50)
-    notifItems.value = res?.items || []
-    unreadCount.value = res?.unreadCount || 0
+    notifItems.value = res?.data?.items || []
+    unreadCount.value = res?.data?.unreadCount || 0
   } catch (e) { message.error(e.message || '通知加载失败') }
   finally { notifLoading.value = false }
 }
