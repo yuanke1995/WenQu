@@ -597,6 +597,12 @@ export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })
 export const batchDeleteAgents = ids =>
   request('/agent/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const setAgentDefault = id => request(`/agent/${id}/default`, { method: 'POST' })
+// 配置版本管理：每次保存落一版快照（人设/知识范围/工具集等调优字段），可查 diff、一键回滚
+/** 版本列表（新→旧）：每版 {version,reason,operator,createTime,config,changes:[{field,label,from,to}],current,identical} */
+export const listAgentVersions = id => request(`/agent/${id}/versions`)
+/** 回滚到历史版本（把该版配置重新应用并落一版新快照，历史不被改写） */
+export const rollbackAgent = (id, version) =>
+  request(`/agent/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) })
 
 // ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落私有：仅自己） ====================
 export const updateAgentShare = (id, shareConfig) =>

@@ -112,7 +112,8 @@
         "文档解析队列（并发 / 排队 / 重试）",
         "任务执行日志（ScheduleCenter 运行历史）",
         "工作流运行治理（步数 / 超时 / 记录清理）",
-        "站内通知（铃铛，异步事件可感知面）"
+        "站内通知（铃铛，异步事件可感知面）",
+        "智能体配置版本（快照保留份数）"
       ]
     },
     {
@@ -3074,6 +3075,24 @@
       "width": 140,
       "note": "每个 OCR 引擎同时处理的图片数；多线解析时必须同步放开此闸门",
       "tier": 3
+    },
+    {
+      "backendKey": "agent.versionKeep",
+      "panel": "maintenance",
+      "section": 13,
+      "group": "agent",
+      "key": "versionKeep",
+      "path": "agent.versionKeep",
+      "label": "保留份数",
+      "type": "number",
+      "tips": "agentVersionKeep",
+      "def": 20,
+      "min": 1,
+      "max": 200,
+      "step": 1,
+      "width": 200,
+      "note": "每次保存落一版配置快照（人设/知识范围/工具集），超出按最早先删；回滚=把历史版本再存一版",
+      "tier": 3
     }
   ],
   "tips": {
@@ -3273,7 +3292,8 @@
     "webSearchTimeoutMs": "单次搜索请求的超时时间。超时按失败处理并给出降级提示，不会阻塞整轮回答。",
     "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。",
     "notificationRetention": "站内通知（解析完成/失败、工作流失败/超时/待审核、网页源刷新失败）的保留天数：超期物理删除，不区分已读未读。通知指向的运行记录与解析任务本身也有各自的保留期，通知活得比它们久没有回溯价值。",
-    "notificationCleanupInterval": "站内通知清理任务的运行间隔（毫秒，默认每日）。≤0 = 暂停清理任务（通知会持续累积，不建议）。"
+    "notificationCleanupInterval": "站内通知清理任务的运行间隔（毫秒，默认每日）。≤0 = 暂停清理任务（通知会持续累积，不建议）。",
+    "agentVersionKeep": "智能体每次保存都会留下一份配置快照，可查看与上一版的字段级差异、一键回滚。本项控制每个智能体保留多少份（按时间从早往晚删）；回滚本身也会生成一条新版本记录。"
   },
   "corePaths": [
     "vision.enabled",

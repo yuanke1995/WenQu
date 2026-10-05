@@ -107,6 +107,31 @@ public class AgentController {
         return ResultJson.ok(Map.of("id", id));
     }
 
+    @Operation(summary = "配置版本列表", description = "每次保存落一版（人设/知识范围/工具集等调优字段快照），新→旧返回；"
+            + "每版带 config（配置对象）、changes（与上一版的字段级差异 [{field,label,from,to}]）、"
+            + "current（是否最新版记录）、identical（内容是否与当前配置一致）；仅可管理者可见")
+    @GetMapping("/{id}/versions")
+    public ResultJson versions(@PathVariable("id") String id) {
+        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        return ResultJson.ok(agentService.listVersions(id));
+    }
+
+    @Operation(summary = "回滚配置到历史版本", description = "body: {version}——把该历史版本的调优字段重新应用，并落一版新快照（reason 记「回滚自 vX」）；"
+            + "历史版本本身不被改写，回滚动作可再次回滚；仅可管理者可操作")
+    @PostMapping("/{id}/rollback")
+    public ResultJson rollback(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        Object v = body == null ? null : body.get("version");
+        if (v == null) return ResultJson.error("请指定要回滚的版本号");
+        int target;
+        try {
+            target = Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return ResultJson.error("版本号不合法：" + v);
+        }
+        return ResultJson.ok(agentService.rollback(id, target));
+    }
+
     // --------------------------------------------------------------------------------------------------
     // 批量操作：逐条执行、部分成功是批量的固有语义——失败条目逐条带原因（结构收口在 BatchResults）
     // --------------------------------------------------------------------------------------------------

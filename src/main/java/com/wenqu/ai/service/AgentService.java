@@ -2,11 +2,16 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.util.RequestUser;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
+import com.alibaba.fastjson2.JSONWriter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.AgentMapper;
+import com.wenqu.ai.mapper.AgentVersionMapper;
 import com.wenqu.ai.model.Agent;
+import com.wenqu.ai.model.AgentVersion;
 import com.wenqu.ai.service.ResourceVisibilityService.Principal;
 import com.wenqu.ai.service.ResourceVisibilityService.ResourceKind;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +22,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,9 +65,48 @@ public class AgentService {
             + "5. 默认使用简体中文，专业术语首次出现时给出全称。";
 
     private final AgentMapper mapper;
+    private final AgentVersionMapper versionMapper;
+    private final ConfigService configService;
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final RoleService roleService;
+
+    /**
+     * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
+     * <p>刻意不含 {@code isDefault}（全局下拉预选，非调优）、{@code shareConfig}（可见性，走独立接口）、
+     * {@code isBuiltin}（系统标记）——这些不是"改砸了要回滚"的对象，回滚也不该顺带改动它们。
+     * 新增可调优字段时记得在此登记（否则该字段的改动不进快照、也无法回滚）。</p>
+     */
+    private static final Map<String, String> VERSION_FIELDS;
+    static {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("name", "名称");
+        m.put("icon", "图标");
+        m.put("description", "描述");
+        m.put("systemPrompt", "系统提示词");
+        m.put("knowledgeScope", "文档范围");
+        m.put("knowledgeBaseIds", "关联知识库");
+        m.put("knowledgeDisabled", "不使用知识库");
+        m.put("toolKnowledge", "知识库检索");
+        m.put("toolBuiltin", "内置工具");
+        m.put("toolSkill", "技能 Skills");
+        m.put("toolArtifact", "产物交付");
+        m.put("toolMcp", "MCP 外部工具");
+        m.put("toolWebsearch", "联网搜索");
+        m.put("toolApprovalMode", "工具审批模式");
+        m.put("maxToolSteps", "工具步数上限");
+        m.put("skills", "技能范围");
+        m.put("mcps", "MCP 范围");
+        m.put("builtinTools", "内置工具范围");
+        m.put("isSubagent", "用途（主/子智能体）");
+        m.put("subAgentIds", "可委派的子智能体");
+        m.put("queryParams", "检索参数覆盖");
+        m.put("workflowId", "绑定工作流");
+        VERSION_FIELDS = Collections.unmodifiableMap(m);
+    }
+
+    /** 配置快照保留份数兜底（实际取 agent.versionKeep，设置页可调）；超出按版本号最小先删 */
+    private static final int VERSION_KEEP_DEFAULT = 20;
 
     /**
      * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
@@ -248,6 +293,7 @@ public class AgentService {
             a.setIsDefault(0);
         }
         mapper.insert(a);
+        snapshot(a, "创建");
         log.info("[AGENT] 新建智能体 {}（{}）", a.getId(), a.getName());
         return a;
     }
@@ -265,13 +311,21 @@ public class AgentService {
                 throw new BizException("内置智能体「" + existing.getName() + "」的名称不可修改");
             }
         }
+        // 改动前的快照串先算好：toEntity 会就地改写 existing（合并 body 字段），之后就拿不到原值了
+        String beforeJson = snapshotJson(existing);
         Agent a = toEntity(body, existing);
         a.setUpdateTime(LocalDateTime.now());
         if (Integer.valueOf(1).equals(a.getIsDefault())) {
             clearDefault();
             a.setIsDefault(1);
         }
+        // 存量智能体（版本表还空着）首次保存：先把改动前的状态补成 v1，这样本次改动本身也能一键回滚
+        // （否则首版即当前态，改砸了没有"上一版"可退）
+        if (versionCount(id) == 0) {
+            recordVersion(id, beforeJson, "初始");
+        }
         updateColumns(id, body, a);
+        snapshot(a, "保存");
         log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
         return a;
     }
@@ -327,6 +381,9 @@ public class AgentService {
             }
         }
         mapper.deleteById(id);
+        // 版本快照随智能体一并清理（无独立价值，留着只是孤儿数据）
+        versionMapper.delete(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, id));
         log.info("[AGENT] 删除智能体 {}", id);
     }
 
@@ -401,9 +458,11 @@ public class AgentService {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
             a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
         }
-        // 单轮工具步数上限（null=继承全局；0=不限制；负数归一 null）
+        // 单轮工具步数上限（NULL=继承全局；0=不限制；N=上限。负数归一 null）
+        // 注意：不能用 toTri——它是三态解析器（任何非零数字都归一成 1），会把 15 存成 1，
+        // 等于把"上限 15 步"变成"只准 1 步"，用工具的智能体直接被卡死
         if (body.containsKey("maxToolSteps")) {
-            Integer steps = toTri(body.get("maxToolSteps"));
+            Integer steps = toIntOrNull(body.get("maxToolSteps"));
             a.setMaxToolSteps(steps != null && steps < 0 ? null : steps);
         }
         // 具体项范围（技能 / MCP Server / 内置工具）：null=跟随全局、空串=不使用、逗号串=仅这些
@@ -444,6 +503,213 @@ public class AgentService {
         }
     }
 
+    // ==================================================================================================
+    // 配置版本管理：每次保存落一版（快照 = VERSION_FIELDS 白名单），可查看字段级 diff、一键回滚。
+    // 口径对齐工作流版本：回滚 = 把历史配置"再存一版"（历史不被改写，回滚动作本身也可再回滚）。
+    // ==================================================================================================
+
+    /**
+     * 版本列表（新→旧）：每版带 config（配置对象）、changes（与上一版的字段级差异）、
+     * current（是否最新版记录）、identical（内容是否与当前配置一致，回滚过去等于没变）。
+     */
+    public List<Map<String, Object>> listVersions(String id) {
+        Agent agent = mapper.selectById(id);
+        if (agent == null) throw new BizException(404, "智能体不存在");
+        List<AgentVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, id)
+                .orderByDesc(AgentVersion::getVersion));
+        Map<String, Object> currentCfg = configOf(agent);
+        int latest = rows.isEmpty() ? 0 : rows.get(0).getVersion();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            AgentVersion v = rows.get(i);
+            Map<String, Object> cfg = parseConfig(v.getConfig());
+            Map<String, Object> prev = i + 1 < rows.size() ? parseConfig(rows.get(i + 1).getConfig()) : null;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("version", v.getVersion());
+            m.put("reason", v.getReason());
+            m.put("operator", v.getOperator());
+            m.put("createTime", v.getCreateTime() == null ? null : v.getCreateTime().toString());
+            m.put("config", cfg);
+            m.put("changes", diffConfig(prev, cfg));
+            // 「当前版本」= 最新一条版本记录（配置只经 create/update/rollback 写入，每次写入都落版，
+            // 故最新版即当前配置）。**不能按"内容与现状一致"判**：回滚到 v1 后 v1 与新版内容相同，
+            // 会把两版同时标成「当前」。
+            m.put("current", v.getVersion() == latest);
+            // 内容与现状一致（回滚过去等于没变）——前端据此收敛"回滚到此版本"按钮，避免点了没反应
+            m.put("identical", diffConfig(cfg, currentCfg).isEmpty());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 回滚到指定历史版本：把该版配置重新应用并落一版新快照（reason 记「回滚自 vX」），返回新版本号 */
+    public Map<String, Object> rollback(String id, int targetVersion) {
+        Agent agent = mapper.selectById(id);
+        if (agent == null) throw new BizException(404, "智能体不存在");
+        ensureManageable(agent);
+        AgentVersion target = versionMapper.selectOne(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, id)
+                .eq(AgentVersion::getVersion, targetVersion));
+        if (target == null) throw new BizException(404, "版本 v" + targetVersion + " 不存在");
+        applyConfig(id, parseConfig(target.getConfig()));
+        Agent updated = mapper.selectById(id);
+        // 版本记录 best-effort：配置已应用，快照写失败不应把回滚报成失败（否则用户以为没回滚、实际已回滚）
+        recordVersion(id, snapshotJson(updated), "回滚自 v" + targetVersion);
+        log.info("[AGENT] 回滚智能体 {}（{}）至 v{} → 新版本 uid={}", id, updated.getName(), targetVersion, RequestUser.uid());
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("id", id);
+        r.put("appliedVersion", targetVersion);
+        r.put("agent", updated);
+        return r;
+    }
+
+    /** 落一版快照（best-effort：版本记录失败不影响本次保存本身） */
+    private void snapshot(Agent a, String reason) {
+        recordVersion(a.getId(), snapshotJson(a), reason);
+    }
+
+    /** 落一版快照（best-effort）：快照属审计辅助，任何失败只告警，不拖垮调用方的主流程 */
+    private void recordVersion(String agentId, String json, String reason) {
+        try {
+            insertVersion(agentId, json, reason);
+        } catch (Exception e) {
+            log.warn("[AGENT] 版本快照写入失败（不影响主流程）id={} reason={}: {}", agentId, reason, e.getMessage());
+        }
+    }
+
+    /** 插入版本行：内容与最新一版相同则跳过（避免重复保存刷版本）；插入后按保留份数裁剪 */
+    private void insertVersion(String agentId, String json, String reason) {
+        AgentVersion latest = latestVersion(agentId);
+        if (latest != null && json != null && json.equals(latest.getConfig())) return;
+        AgentVersion row = new AgentVersion();
+        row.setAgentId(agentId);
+        row.setVersion(latest == null ? 1 : latest.getVersion() + 1);
+        row.setConfig(json);
+        row.setOperator(RequestUser.uid());
+        row.setReason(reason);
+        row.setCreateTime(LocalDateTime.now());
+        versionMapper.insert(row);
+        trimVersions(agentId);
+    }
+
+    private AgentVersion latestVersion(String agentId) {
+        return versionMapper.selectOne(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, agentId)
+                .orderByDesc(AgentVersion::getVersion)
+                .last("LIMIT 1"));
+    }
+
+    private int versionCount(String agentId) {
+        Long n = versionMapper.selectCount(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, agentId));
+        return n == null ? 0 : n.intValue();
+    }
+
+    /** 只保留最近 N 份（N 可配：agent.versionKeep，隐藏参数） */
+    private void trimVersions(String agentId) {
+        int keep = Math.max(1, configService.getInt("agent.versionKeep", VERSION_KEEP_DEFAULT));
+        List<AgentVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<AgentVersion>()
+                .eq(AgentVersion::getAgentId, agentId)
+                .orderByDesc(AgentVersion::getVersion));
+        for (int i = keep; i < rows.size(); i++) {
+            versionMapper.deleteById(rows.get(i).getId());
+        }
+    }
+
+    /** 智能体行 → 快照串（只取白名单字段；显式写出 null，否则"改回空"这一变更在 diff 里看不见） */
+    private String snapshotJson(Agent a) {
+        JSONObject all = (JSONObject) JSON.toJSON(a);
+        JSONObject o = new JSONObject();
+        for (String f : VERSION_FIELDS.keySet()) o.put(f, all.get(f));
+        return o.toJSONString(JSONWriter.Feature.WriteMapNullValue);
+    }
+
+    /** 智能体行 → 快照对象（与 snapshotJson 同源，供列表比对当前态） */
+    private Map<String, Object> configOf(Agent a) {
+        return parseConfig(snapshotJson(a));
+    }
+
+    private Map<String, Object> parseConfig(String json) {
+        if (json == null || json.isBlank()) return new LinkedHashMap<>();
+        try {
+            JSONObject o = JSON.parseObject(json);
+            return new LinkedHashMap<>(o);
+        } catch (Exception e) {
+            log.warn("[AGENT] 版本快照解析失败: {}", e.getMessage());
+            return new LinkedHashMap<>();
+        }
+    }
+
+    /** 字段级 diff：逐字段比较（按 VERSION_FIELDS 顺序），返回 [{field,label,from,to}]，空 = 无差异 */
+    private List<Map<String, Object>> diffConfig(Map<String, Object> from, Map<String, Object> to) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, String> e : VERSION_FIELDS.entrySet()) {
+            String f = e.getKey();
+            String a = norm(from == null ? null : from.get(f));
+            String b = norm(to == null ? null : to.get(f));
+            if (a.equals(b)) continue;
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("field", f);
+            c.put("label", e.getValue());
+            c.put("from", a);
+            c.put("to", b);
+            out.add(c);
+        }
+        return out;
+    }
+
+    private static String norm(Object v) {
+        return v == null ? "" : String.valueOf(v);
+    }
+
+    /** 把快照配置写回智能体行：逐列显式 set（含 null——回滚到"未设置"是合法目标，NOT_NULL 策略会漏掉） */
+    private void applyConfig(String agentId, Map<String, Object> cfg) {
+        LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, agentId);
+        String name = raw(cfg.get("name"));
+        // 名称是 NOT NULL 且内置智能体名称不可变：快照里缺名称时保留现值，不写入 null
+        if (StringUtils.hasText(name)) uw.set(Agent::getName, name);
+        uw.set(Agent::getIcon, raw(cfg.get("icon")));
+        uw.set(Agent::getDescription, raw(cfg.get("description")));
+        uw.set(Agent::getSystemPrompt, raw(cfg.get("systemPrompt")));
+        uw.set(Agent::getKnowledgeScope, raw(cfg.get("knowledgeScope")));
+        uw.set(Agent::getKnowledgeBaseIds, raw(cfg.get("knowledgeBaseIds")));
+        uw.set(Agent::getKnowledgeDisabled, asInt(cfg.get("knowledgeDisabled")));
+        uw.set(Agent::getToolKnowledge, asInt(cfg.get("toolKnowledge")));
+        uw.set(Agent::getToolBuiltin, asInt(cfg.get("toolBuiltin")));
+        uw.set(Agent::getToolSkill, asInt(cfg.get("toolSkill")));
+        uw.set(Agent::getToolArtifact, asInt(cfg.get("toolArtifact")));
+        uw.set(Agent::getToolMcp, asInt(cfg.get("toolMcp")));
+        uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
+        uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
+        uw.set(Agent::getMaxToolSteps, asInt(cfg.get("maxToolSteps")));
+        uw.set(Agent::getSkills, raw(cfg.get("skills")));
+        uw.set(Agent::getMcps, raw(cfg.get("mcps")));
+        uw.set(Agent::getBuiltinTools, raw(cfg.get("builtinTools")));
+        uw.set(Agent::getIsSubagent, asInt(cfg.get("isSubagent")));
+        uw.set(Agent::getSubAgentIds, raw(cfg.get("subAgentIds")));
+        uw.set(Agent::getQueryParams, raw(cfg.get("queryParams")));
+        uw.set(Agent::getWorkflowId, raw(cfg.get("workflowId")));
+        uw.set(Agent::getUpdateTime, LocalDateTime.now());
+        mapper.update(null, uw);
+    }
+
+    private static String raw(Object v) {
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private static Integer asInt(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.intValue();
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** 文本字段：null/空返回 null；超长截断（空字符串也视为未设置→null，避免存空串干扰"继承"判定） */
     private String asText(Object v, int max) {
         if (v == null) return null;
@@ -481,5 +747,18 @@ public class AgentService {
         if ("1".equals(s) || "true".equalsIgnoreCase(s)) return 1;
         if ("0".equals(s) || "false".equalsIgnoreCase(s)) return 0;
         return null;
+    }
+
+    /** 整数字段解析（保留任意值，不做 0/1 归一）：null/空/非法 → null */
+    private Integer toIntOrNull(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.intValue();
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

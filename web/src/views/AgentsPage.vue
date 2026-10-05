@@ -112,6 +112,10 @@
         <!-- 页头标题即生效摘要（纯文本）：「名称·范围·能力」随表单实时变化 -->
         <h1 class="app-page-title ap-head-summary"><span>{{ form.name || '未命名智能体' }}</span><span class="ap-sum-tail">·{{ summaryScope }}·</span><span class="ap-sum-tail" :class="{ 'is-accent': capsTouched }">{{ summaryCaps }}</span></h1>
         <div class="ap-head-r">
+          <!-- 历史版本：仅已存在的智能体有（新建尚未落版）；查看每次保存的快照与 diff，可一键回滚 -->
+          <button v-if="editingId" class="app-btn ghost small" @click="openVersions">
+            <history-outlined style="margin-right:4px" />历史版本
+          </button>
           <button class="app-btn ghost small" @click="closeEdit">取消</button>
           <button class="app-btn small" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
         </div>
@@ -319,6 +323,48 @@
     <ShareScopeModal v-model:open="shareVisible" resource-label="智能体" read-verb="使用"
                      :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="reload" />
 
+    <!-- 配置历史版本：每次保存落一版快照（人设/知识范围/工具集等调优字段），可查字段级 diff、一键回滚 -->
+    <a-drawer v-model:open="verOpen" title="配置历史版本" :width="'min(680px, 94vw)'" destroy-on-close>
+      <p class="ap-block-hint" style="margin-top:0">
+        每次保存都会留下一份配置快照。回滚会把历史版本的配置重新应用（并生成一条新的版本记录）——
+        历史版本本身不会被改写，回滚动作也可以再回滚。
+      </p>
+      <a-spin :spinning="verLoading">
+        <div v-if="verList.length" class="ap-ver-list">
+          <div v-for="v in verList" :key="v.version" class="ap-ver-item" :class="{ cur: v.current }">
+            <div class="ap-ver-head" @click="toggleVer(v.version)">
+              <span class="ap-ver-no">v{{ v.version }}</span>
+              <span v-if="v.current" class="ap-ver-cur">当前</span>
+              <span class="ap-ver-reason">{{ v.reason || '保存' }}</span>
+              <span class="ap-ver-changes">{{ (v.changes || []).length ? `${v.changes.length} 项变更` : '无变更' }}</span>
+              <span class="ap-ver-time">{{ fmtTime(v.createTime) }}</span>
+              <down-outlined class="ap-ver-caret" :class="{ open: verExpanded.includes(v.version) }" />
+            </div>
+            <div v-if="verExpanded.includes(v.version)" class="ap-ver-body">
+              <div v-if="!(v.changes || []).length" class="ap-ver-empty">与上一版相比没有字段变化。</div>
+              <table v-else class="ap-ver-diff">
+                <tbody>
+                  <tr v-for="c in v.changes" :key="c.field">
+                    <td class="ap-ver-lbl">{{ c.label }}</td>
+                    <td class="ap-ver-old" :title="c.from">{{ clip(c.from) || '（空）' }}</td>
+                    <td class="ap-ver-arrow">→</td>
+                    <td class="ap-ver-new" :title="c.to">{{ clip(c.to) || '（空）' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="!v.identical" class="ap-ver-act">
+                <button class="app-btn ghost small" :disabled="verRolling === v.version" @click="doRollback(v)">
+                  {{ verRolling === v.version ? '回滚中…' : `回滚到此版本` }}
+                </button>
+              </div>
+              <div v-else class="ap-ver-act ap-ver-same">内容与当前配置一致，无需回滚</div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="!verLoading" class="ap-ver-none">暂无历史版本：保存一次配置后即产生第一条版本记录。</div>
+      </a-spin>
+    </a-drawer>
+
     <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入） -->
     <a-modal v-model:open="pubVisible" title="公开发布" :width="560" :footer="null">
       <div class="pub-form">
@@ -429,11 +475,12 @@ import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
-  SafetyOutlined, PartitionOutlined, GlobalOutlined
+  SafetyOutlined, PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
-         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent } from '../api'
+         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
+         listAgentVersions, rollbackAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -1084,6 +1131,83 @@ const openEdit = a => {
 }
 const closeEdit = () => { editing.value = false }
 
+// ==================== 配置历史版本（每次保存落一版快照，可查 diff、一键回滚） ====================
+const verOpen = ref(false)
+const verLoading = ref(false)
+const verList = ref([])
+// 展开的版本号集合（默认展开最新一版，正是"最近一次改了什么"）
+const verExpanded = ref([])
+const verRolling = ref(null)
+
+const openVersions = async () => {
+  verOpen.value = true
+  await loadVersions()
+}
+
+const loadVersions = async () => {
+  if (!editingId.value) return
+  verLoading.value = true
+  try {
+    const r = await listAgentVersions(editingId.value)
+    if (r.success) {
+      verList.value = r.data || []
+      verExpanded.value = verList.value.length ? [verList.value[0].version] : []
+    } else {
+      verList.value = []
+      message.error(r.msg || '版本列表加载失败')
+    }
+  } catch (e) {
+    verList.value = []
+    message.error(e.message || '版本列表加载失败')
+  } finally {
+    verLoading.value = false
+  }
+}
+
+const toggleVer = version => {
+  verExpanded.value = verExpanded.value.includes(version)
+    ? verExpanded.value.filter(v => v !== version)
+    : [...verExpanded.value, version]
+}
+
+/** diff 值预览：长文本（提示词/描述）压成单行短串，完整值走 title 悬浮 */
+const clip = s => {
+  const t = String(s ?? '')
+  return t.length > 80 ? t.slice(0, 80) + '…' : t
+}
+
+const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '')
+
+const doRollback = v => {
+  Modal.confirm({
+    title: `回滚到 v${v.version}`,
+    content: `将把 v${v.version} 的配置（名称/提示词/知识库范围/工具集等）重新应用到当前智能体，`
+      + '并生成一条新的版本记录。历史版本不会被改写，本次回滚也可以再回滚。',
+    okText: '确认回滚',
+    cancelText: '取消',
+    onOk: async () => {
+      verRolling.value = v.version
+      try {
+        const r = await rollbackAgent(editingId.value, v.version)
+        if (r.success) {
+          message.success(`已回滚到 v${v.version}`)
+          // 回滚改的是后端配置：把列表与表单都刷成回滚后的状态，避免表单里残留旧值被下次「保存」又写回去
+          await reload()
+          const a = agents.value.find(x => x.id === editingId.value)
+          if (a) openEdit(a)
+          await loadVersions()
+        } else {
+          message.error(r.msg || '回滚失败')
+        }
+      } catch (e) {
+        message.error(e.message || '回滚失败')
+      } finally {
+        verRolling.value = null
+      }
+    }
+  })
+}
+
 /** 三态转换：'' → null（跟随全局）；'1' → 1；'0' → 0 */
 const tri = v => (v === '' || v == null ? null : Number(v))
 
@@ -1390,4 +1514,30 @@ onMounted(async () => { })
 .ap-nname { font-size: 13px; font-weight: 600; fill: var(--app-text, var(--app-text)); }
 .ap-ndesc { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }
 .ap-nmeta { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }
+
+/* ==================== 配置历史版本抽屉 ==================== */
+.ap-ver-list { display: flex; flex-direction: column; gap: 8px; }
+.ap-ver-item { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.ap-ver-item.cur { border-color: var(--app-accent); }
+.ap-ver-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; user-select: none; }
+.ap-ver-head:hover { background: var(--app-hover, #fafafa); }
+.ap-ver-no { font-weight: 600; font-size: 13px; color: var(--app-text); flex: none; }
+.ap-ver-cur { font-size: 11px; color: var(--app-accent); border: 1px solid var(--app-accent);
+  border-radius: 4px; padding: 0 5px; flex: none; }
+.ap-ver-reason { font-size: 12px; color: var(--app-text2); flex: none; }
+.ap-ver-changes { font-size: 12px; color: var(--app-text3); }
+.ap-ver-time { font-size: 12px; color: var(--app-text3); margin-left: auto; flex: none; }
+.ap-ver-caret { color: var(--app-text3); transition: transform .2s; }
+.ap-ver-caret.open { transform: rotate(180deg); }
+.ap-ver-body { padding: 0 12px 12px; border-top: 1px dashed var(--app-border); }
+.ap-ver-empty { font-size: 12px; color: var(--app-text3); padding: 10px 0 0; }
+.ap-ver-diff { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
+.ap-ver-diff td { font-size: 12px; padding: 5px 6px; vertical-align: top; word-break: break-all; }
+.ap-ver-lbl { width: 26%; color: var(--app-text2); }
+.ap-ver-old { width: 34%; color: var(--app-text3); text-decoration: line-through; }
+.ap-ver-arrow { width: 16px; text-align: center; color: var(--app-text3); }
+.ap-ver-new { width: 34%; color: var(--app-text); }
+.ap-ver-act { margin-top: 10px; }
+.ap-ver-same { font-size: 12px; color: var(--app-text3); }
+.ap-ver-none { font-size: 12px; color: var(--app-text3); padding: 16px 0; }
 </style>

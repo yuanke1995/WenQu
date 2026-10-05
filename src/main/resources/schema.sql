@@ -395,6 +395,24 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 智能体配置表';
 
 -- ============================================
+-- 2026-10-05: 智能体配置版本快照——每次保存落一版（人设/知识范围/工具集调优字段），
+-- 回滚 = 把历史版本配置再存一版（历史不改写、可审计，对齐工作流版本口径）。
+-- 最新版本恒等于当前配置；保留份数 agent.versionKeep（默认 20），超出按版本号最小先删。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_agent_version` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '版本记录ID（UUID）',
+    `agent_id`    VARCHAR(50)  NOT NULL COMMENT '智能体ID',
+    `version`     INT          NOT NULL COMMENT '版本号（同一智能体内递增，从 1 起）',
+    `config`      TEXT         NOT NULL COMMENT '配置快照(JSON：人设/知识范围/工具集等调优字段白名单)',
+    `operator`    VARCHAR(64)  DEFAULT NULL COMMENT '产生该版本的操作人 uid',
+    `reason`      VARCHAR(100) DEFAULT NULL COMMENT '来源说明：创建 / 保存 / 回滚自 vX',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '快照时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_agent_version` (`agent_id`, `version`),
+    KEY `idx_agent_version_time` (`agent_id`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体配置版本快照（保存即落一版，回滚=再存一版）';
+
+-- ============================================
 -- 2026-09-16: 多用户协作（用户 + 部门 + 共享范围）
 -- c_ai_user 存画像/归属与登录凭据（密码哈希加盐存储）；鉴权由本服务本地登录（JWT）完成。
 -- 用户由管理员在「成员管理」建档；未登录请求归属 anonymous（与会话兼容池同理）。

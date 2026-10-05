@@ -180,7 +180,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path == null) return false;
         return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
                 || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share")
-                || path.matches("/api/ai/agent/[^/]+/publish");
+                || path.matches("/api/ai/agent/[^/]+/publish")
+                || path.matches("/api/ai/agent/[^/]+/(versions|rollback)");
     }
 
     /**
