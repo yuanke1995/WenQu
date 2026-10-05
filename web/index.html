@@ -9,8 +9,9 @@
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f8fa">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14161a">
   <!-- 可加到主屏：iOS 不认 SVG 图标，必须给 apple-touch-icon（180×180 PNG，scripts/gen-icons.mjs 生成）。
-       刻意不引 Service Worker：/s/:token 与 /shared/:token 是免登录分享、token 在 URL 里，
-       SW 缓存这些页面等于把别人的对话内容落到设备磁盘。详见 docs 里的取舍说明 -->
+       Service Worker（public/sw.js）只缓存带内容 hash 的 /assets/*；/s/:token 与 /shared/:token
+       这类免登录分享（token 在 URL 里）与 /api/** 明确排除，分享内容不会落到设备磁盘。
+       注册只在生产构建（main.js 按 import.meta.env.PROD 判断；dev 不注册以免干扰热更新） -->
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">

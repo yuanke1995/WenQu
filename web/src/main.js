@@ -55,6 +55,18 @@ initTheme()
 // 软键盘视口变量：宽屏全程不启用（--kb 恒为 0、--app-vh 不写），PC 行为零变化
 installKeyboardInset()
 
+// ==================== PWA：Service Worker 注册（仅生产构建） ====================
+// 只缓存 /assets/*（带内容 hash 的构建产物），分享页与 API 明确排除——策略见 public/sw.js 头注释。
+// dev 不注册：vite 的资源 URL 不带 hash，SW 会缓存开发期模块、干扰热更新（改代码不生效的经典坑）。
+// 注册失败只记日志：无 SW 时功能完全可用（只是少了安装能力与二次访问的资源缓存）。
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(e => {
+      console.warn('[pwa] Service Worker 注册失败（不影响使用）', e)
+    })
+  })
+}
+
 const app = createApp(App)
 
 // ==================== 全局错误边界（防白屏） ====================

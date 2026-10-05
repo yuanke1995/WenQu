@@ -1,8 +1,29 @@
 <template>
   <!-- 模型与思考设置 sheet：把 PC「模型下拉 + 悬浮深度思考面板」两处能力合成一块。
        引擎状态经 provide/inject 取（useChatEngine 必须单实例，不能各 sheet 各调一次）。 -->
-  <BottomSheet :open="open" title="模型与思考" :subtitle="effectiveModelLabel || '未指定模型'" max-height="80dvh" @close="$emit('close')">
+  <BottomSheet :open="open" title="智能体与模型" :subtitle="currentAgentName" max-height="80dvh" @close="$emit('close')">
     <div class="ms">
+      <!-- ---- 智能体 ---- -->
+      <div class="ms-section-title">智能体</div>
+      <div v-if="agentLocked" class="ms-note">本会话已绑定智能体，切换会开启新会话（人设/知识库/工具集随智能体变）</div>
+      <button class="ms-row" :class="{ on: currentAgentId === AUTO_AGENT }" type="button" @click="pickAgentRow(AUTO_AGENT)">
+        <span class="ms-ico-fallback">自</span>
+        <span class="ms-name">自动派遣</span>
+        <span class="ms-sub">按名称与描述挑最合适的</span>
+        <check-outlined v-if="currentAgentId === AUTO_AGENT" class="ms-check" />
+      </button>
+      <button v-if="!hasDefaultAgent" class="ms-row" :class="{ on: !currentAgentId }" type="button" @click="pickAgentRow('')">
+        <span class="ms-ico-fallback">默</span>
+        <span class="ms-name">默认（全局配置）</span>
+        <check-outlined v-if="!currentAgentId" class="ms-check" />
+      </button>
+      <button v-for="a in agentList" :key="a.id" class="ms-row agent" :class="{ on: currentAgentId === a.id }" type="button" @click="pickAgentRow(a.id)">
+        <AgentAvatar :agent="a" :size="20" />
+        <span class="ms-name">{{ a.name }}</span>
+        <span v-if="a.description" class="ms-sub">{{ a.description }}</span>
+        <check-outlined v-if="currentAgentId === a.id" class="ms-check" />
+      </button>
+
       <!-- ---- 模型选择 ---- -->
       <div class="ms-section-title">模型</div>
       <div v-if="loadingModels" class="ms-note">加载中…</div>
@@ -68,18 +89,24 @@ import { message } from 'ant-design-vue'
 import { CheckOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
+import AgentAvatar from '../components/AgentAvatar.vue'
 import { listAvailableModels } from '../api'
 import { THINK_LEVEL_ON } from '../chat/projections'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
 const engine = inject('wqChat')
 const {
   currentOverrideModel, userDefaultModel, effectiveModel, effectiveModelLabel, loading,
   thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, setThinkLevel, modelLabelOf,
-  ctxWindowOptionsOf, effectiveCtxWindowOf
+  ctxWindowOptionsOf, effectiveCtxWindowOf,
+  agentList, AUTO_AGENT, currentAgentId, currentAgentName, hasDefaultAgent, agentLocked, pickAgent
 } = engine
+
+// 智能体切换：已绑定会话由引擎按「切换 = 开启新会话」处理并给出提示（与 PC 下拉同一路径）。
+// 未锁定时选完即关 sheet（用户接下来多半要打字）；锁定时不关——引擎刚开了新会话，让提示可读。
+const pickAgentRow = id => { pickAgent(id); if (!agentLocked.value) emit('close') }
 
 // 模型下拉数据（与 ModelSelect 同源 /provider/available）：10s 模块级缓存，避免每次开 sheet 都打接口。
 // 过滤口径必须带 type=chat（与 PC 的 ModelSelect 一致）：不过滤会把 OCR/向量/重排模型也列成可聊模型。
@@ -142,6 +169,9 @@ const setWindow = v => engine.setCtxWindow(v)
 .ms-name { font-size: 14px; }
 .ms-sub { font-size: 12px; color: var(--app-text3); margin-left: auto; }
 .ms-check { color: var(--app-accent); flex: none; margin-left: 6px; }
+/* 智能体行：名字限一行（长名截断），描述占余量、右对齐单行省略——否则长名会把描述挤成多行 */
+.ms-row.agent .ms-name { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-row.agent .ms-sub { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-switch {
   margin-left: auto; flex: none; width: 42px; height: 24px; border-radius: 999px;
   background: var(--app-border-strong); position: relative; transition: background .18s;
