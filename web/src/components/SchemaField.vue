@@ -33,10 +33,13 @@
            直接填 86400000 这类裸毫秒数没人读得懂，旁边挂换算提示也只是少算一次——
            根治办法是让输入框本身就带单位，选「天」填 7 即 604800000 -->
       <template v-if="msUnits.length">
-        <a-input-number v-model:value="msAmount" :min="msAmountMin" :max="msAmountMax"
-                        :precision="msUnit === 1 ? 0 : 2" :step="1" style="width: 130px" />
-        <a-select v-model:value="msUnit" :options="msUnits" style="width: 92px; margin-left: 8px" />
-        <span v-if="msUnit !== 1 && value != null" class="num-hint">= {{ value }} ms</span>
+        <!-- flex 垂直居中：antd 的 input-number 与 select 各自 inline-block 按基线排，会差半个像素行 -->
+        <span class="ms-row">
+          <a-input-number v-model:value="msAmount" :min="msAmountMin" :max="msAmountMax"
+                          :step="1" style="width: 130px" />
+          <a-select v-model:value="msUnit" :options="msUnits" style="width: 92px; margin-left: 8px" />
+          <span v-if="msUnit !== 1 && value != null" class="num-hint">= {{ value }} ms</span>
+        </span>
       </template>
       <a-input-number v-else v-model:value="value" :min="field.min" :max="field.max" :step="field.step"
                       :style="{ width: (field.width || 200) + 'px' }" />
@@ -185,6 +188,10 @@ const onSelectChange = v => emit('change', props.field, v)
   margin-right: 6px;
 }
 .num-presets { flex: none; }
+.ms-row {
+  display: inline-flex;
+  align-items: center;
+}
 .num-hint {
   font-size: 12px;
   color: var(--app-text3);
