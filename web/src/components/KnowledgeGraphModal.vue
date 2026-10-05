@@ -231,14 +231,18 @@ function renderFromData(data, focus) {
   const idToName = new Map()
   nodes.forEach(n => { nameToId.set(n.name, n.id); idToName.set(n.id, n.name) })
   const maxDegree = Math.max(1, ...nodes.map(n => n.degree || 1))
-  // echarts graph 的 links 按 name 引用节点
-  const chartNodes = nodes.map(n => ({
-    name: n.name,
-    id: String(n.id),
-    symbolSize: focus && focus.id === n.id ? 46 : Math.min(44, 12 + Math.round(((n.degree || 1) / maxDegree) * 28)),
-    label: { show: true, fontSize: 10 },
-    itemStyle: focus && focus.id === n.id ? { color: '#e6a23c' } : undefined
-  }))
+  // 节点**不能带 id 字段**：echarts graph 在节点有 id 时以 id 作为 links 的匹配键，
+  // 下面按 name 引用的连线会被整体静默丢弃（表现为「只有点没有线」，实测踩过）。
+  // 实体 id 的映射走 nameToId（点击换 id 查详情），不进 echarts。
+  const chartNodes = nodes.map(n => {
+    const item = {
+      name: n.name,
+      symbolSize: focus && focus.id === n.id ? 46 : Math.min(44, 12 + Math.round(((n.degree || 1) / maxDegree) * 28)),
+      label: { show: true, fontSize: 10 }
+    }
+    if (focus && focus.id === n.id) item.itemStyle = { color: '#e6a23c' }
+    return item
+  })
   const chartLinks = edges.map(e => {
     const s = idToName.get(e.source)
     const t = idToName.get(e.target)
