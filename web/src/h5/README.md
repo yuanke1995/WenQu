@@ -47,7 +47,13 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 
 `keyboard.js`（main.js 顶层安装）把 visualViewport 写成 `--app-vh` / `--kb`：
 - 移动壳满高容器用 `--app-vh`（已扣键盘），键盘弹起时**容器收缩**而非 fixed 定位被盖住；
+- 去重同时看 `--kb` 与 `vv.height`：浏览器全屏/地址栏收放不改键盘占用但改可视高度，
+  只按键盘去重会让 `--app-vh` 停在旧值（全屏后输入区悬空不贴底）；
 - 底部 sheet / 输入区的底部内边距用 `max(0px, var(--sab) - var(--kb))`：键盘开着时不再叠加安全区。
+
+安全区变量（`--sat` 等）默认恒为 0，只在 `display-mode: standalone / fullscreen`（PWA 真正贴边）才取
+`env(safe-area-inset-*)`：夸克等 Chromium 内核浏览器在普通标签页会把屏幕切洞 inset 泄漏给页面
+（浏览器 UI 已避开刘海/手势条，页面再补一次就多出留白），见 app.css 的媒体查询。
 
 ## Service Worker（PWA）
 

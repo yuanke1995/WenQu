@@ -34,19 +34,25 @@ const KB_MIN = 90
 
 let raf = 0
 let lastKb = -1
+let lastVh = -1
 
 function apply () {
   raf = 0
   if (!isNarrow.value || !vv) return
   // offsetTop 必须减掉：它是「页面被顶上去的量」，不减会把键盘高度高估一截
   const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
-  if (kb === lastKb) return // 去重：iOS 键盘动画期间每帧都触发 resize，不去重会持续写样式触发布局
+  const vh = Math.round(vv.height)
+  // 去重必须同时看 kb 与 vh：浏览器进入/退出全屏、地址栏收放只改 vv.height 而 kb 不变——
+  // 只按 kb 去重会让 --app-vh 停在旧值，容器比当前可视区矮一截，
+  // 表现为「全屏后输入区悬在半空不贴底」。
+  if (kb === lastKb && vh === lastVh) return
   lastKb = kb
+  lastVh = vh
   const effective = kb > KB_MIN ? kb : 0
   const root = document.documentElement.style
   root.setProperty('--kb', effective + 'px')
   // 键盘收起时 vv.height 回到 innerHeight，--app-vh 自动归位，满高容器随之恢复
-  root.setProperty('--app-vh', vv.height + 'px')
+  root.setProperty('--app-vh', vh + 'px')
   kbOpen.value = effective > 0
   // 供 ChatPage 等需要在键盘态下重测 textarea 高度、维持贴底的消费方使用
   window.dispatchEvent(new CustomEvent('app:kb', { detail: { open: kbOpen.value, height: effective } }))
@@ -61,11 +67,17 @@ export function installKeyboardInset () {
   // 转屏时 visualViewport 的宽高互换，必须重算。
   // 延后一帧：orientationchange 触发时 vv 上还是转屏前的值
   window.addEventListener('orientationchange', () => setTimeout(schedule, 120), { passive: true })
-  // 离开窄屏要清干净，否则 PC 上残留 --kb 让布局莫名缺一截
+  // 离开窄屏要清干净，否则 PC 上（或手机横屏宽于 768 时）残留的
+  // --kb / --app-vh 会让布局莫名缺一截或停在小屏高度
   watch(isNarrow, v => {
-    if (v) { lastKb = -1; schedule() } else {
+    if (v) { lastKb = -1; lastVh = -1; schedule() } else {
       document.documentElement.style.removeProperty('--kb')
+      document.documentElement.style.removeProperty('--app-vh')
       lastKb = -1
+      lastVh = -1
     }
   })
+  // 挂载即测一次：首屏就有正确的 --app-vh，不必等首个 resize 事件
+  //（否则初值落在回退分支，.content-app 的 100vh 与 .m-chat 的 100dvh 各走各的）
+  schedule()
 }

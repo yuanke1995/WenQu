@@ -54,13 +54,27 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   color-scheme: light;
   /* ---- 安全区（刘海屏 / Home Indicator）----
-     依赖 index.html 的 viewport-fit=cover，否则四项恒为 0。
+     依赖 index.html 的 viewport-fit=cover，否则 env() 恒为 0。
      统一收成变量而非各处直写 env()：横屏时左右两侧也有值（刘海在横屏边），
-     消费方按需取用即可，不必各自判断方向。 */
-  --sat: env(safe-area-inset-top, 0px);
-  --sar: env(safe-area-inset-right, 0px);
-  --sab: env(safe-area-inset-bottom, 0px);
-  --sal: env(safe-area-inset-left, 0px);
+     消费方按需取用即可，不必各自判断方向。
+     ⚠️ 默认按 0 处理，只在真正贴边的显示模式（PWA 独立窗口 / 全屏，见下方媒体查询）
+     才取 env()：普通浏览器标签里浏览器 UI 已避开刘海与手势条，但部分 Chromium 内核
+     手机浏览器（夸克等）会把屏幕切洞的 inset 泄漏给页面——顶栏多出一段留白、
+     输入区被手势条顶起不贴底。iOS Safari 普通标签本来就报 0，行为不变。 */
+  --sat: 0px; --sar: 0px; --sab: 0px; --sal: 0px;
+}
+
+/* 只有内容真正延伸到屏幕物理边缘的显示模式才需要让开安全区。
+   浏览器内「隐藏工具栏的全屏」display-mode 仍是 browser——那种场景下
+   夸克把全屏也当作贴边处理，但用户预期是输入区贴到最底（手势条区域
+   由系统负责），故同样不取 env()。 */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+  }
 }
 
 /* 暗色主题：只换 token 值，组件样式零改动。
