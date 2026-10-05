@@ -107,12 +107,12 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
 import * as echarts from 'echarts/core'
 import { LineChart, PieChart } from 'echarts/charts'
-import { TooltipComponent, GridComponent } from 'echarts/components'
+import { TooltipComponent, GridComponent, TitleComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { getUsageStats } from '../api'
 import { themeState } from '../utils/theme'
 
-echarts.use([LineChart, PieChart, TooltipComponent, GridComponent, CanvasRenderer])
+echarts.use([LineChart, PieChart, TooltipComponent, GridComponent, TitleComponent, CanvasRenderer])
 
 // ==================== 状态与数据 ====================
 const loading = ref(false)
