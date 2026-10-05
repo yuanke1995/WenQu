@@ -505,9 +505,12 @@ const chatPendingText = computed(() => {
   if (!defaultReady.value) parts.push('设置默认聊天模型')
   return parts.join('、')
 })
-const menuPending = m =>
-  (m.path === '/chat' && !chatDone.value) || (m.path === '/knowledge' && !embeddingReady.value)
+// 未完成对账（loaded=false）时一律按「不显示」处理：模块级状态刷新后初始为空，
+// 此时 chatModels/embeddingCount 全空会被误读成「真的没配」，导致 tag 闪一下
+const menuPending = m => !setupGuide.loaded ? false
+  : (m.path === '/chat' && !chatDone.value) || (m.path === '/knowledge' && !embeddingReady.value)
 const menuTitle = m => {
+  if (!setupGuide.loaded) return m.name
   if (m.path === '/chat' && !chatDone.value) return `${m.name} — 还差：${chatPendingText.value}`
   if (m.path === '/knowledge' && !embeddingReady.value) return `${m.name} — 还差：添加向量模型（建知识库需要）`
   return m.name
