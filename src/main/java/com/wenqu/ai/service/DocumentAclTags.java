@@ -158,8 +158,14 @@ public class DocumentAclTags {
     public AclTags bake(AiDocument doc) {
         String shareConfig = doc == null ? null : doc.getShareConfig();
         if (shareConfig == null || shareConfig.isBlank()) {
-            // 未配置 → 跟随库：不写任何 acl* 标签
-            return new AclTags(false, List.of(), List.of(), true);
+            // 未配置 → 跟随库。
+            // <b>烘焙成 aclGlobal（而不是「不写任何 acl* 字段」）</b>：检索期的文档门是
+            // (aclGlobal OR aclDept OR aclUser) 的 OR 组，**没有 acl 标签的文档一律不命中 → 永不可见**。
+            // 「跟随库」的实际可见性 = 库门内全员可读，与显式 global 完全同构，故同用 aclGlobal 表达。
+            // 早期版本选择「不写字段」表示跟随（想省一次写入），结果这类文档 100% 漏召回——
+            // 实测：文档 share_config 全为 NULL 的库，重建后 aclGlobal=[] 查 0 命中。
+            // 结论：<b>可见范围的每一种情形都必须有对应标签，没有标签 = 不可见</b>，不是「无限制」。
+            return new AclTags(true, List.of(), List.of(), true);
         }
         ResourceVisibilityService.ShareConfig cfg = resourceVisibilityService.parseForTagCompile(shareConfig);
         if (cfg == null || cfg.readScope == null) {
