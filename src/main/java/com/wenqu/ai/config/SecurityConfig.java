@@ -165,6 +165,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path == null) return false;
         if (path.equals("/api/ai/document/stats")) return false;
         if (path.equals("/api/ai/document/queue/stats")) return true;
+        // 运维端点（向量索引诊断 / 同模型重建）：**刻意不放行给普通用户**——
+        // 重建会 DROP 整库索引并重新调嵌入模型，是重量级且花钱的操作，只走管理员判定。
+        // 注意：新增 /xxx-yyy 形态的端点必须在此显式排除，否则会「看着像同一段」被漏掉而落默认门禁。
+        if (path.equals("/api/ai/document/vector-diagnose")) return false;
+        if (path.equals("/api/ai/document/rebuild-kb")) return false;
         // 知识库：列表 / 详情 / 新建 / 编辑 / 删除 / 移动文档
         if (path.equals("/api/ai/kb") || path.equals("/api/ai/kb/list")
                 || path.matches("/api/ai/kb/[^/]+") || path.matches("/api/ai/kb/doc/[^/]+")) return true;

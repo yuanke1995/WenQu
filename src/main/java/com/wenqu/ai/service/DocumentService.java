@@ -740,6 +740,57 @@ public class DocumentService {
         t.start();
     }
 
+    /**
+     * 同模型重建本库向量（异步，运维用）：<b>不需要换向量模型</b>，用当前绑定重跑一遍。
+     *
+     * <p><b>为什么需要这个入口（2026-10-05）</b>：{@link #reembedKbAsync} 只在
+     * <b>embeddingRef 变更</b>时被 {@code KnowledgeBaseController.update} 触发
+     * （条件是 {@code !oldRef.equals(newRef)}），于是有两类运维操作没有入口：
+     * <ol>
+     *   <li>检索期过滤下推上线后，<b>存量向量缺 ACL 标签</b>（FT.ALTER 只改schema 不回填
+     *       历史 JSON），需重建才能让全部块参与下推过滤；</li>
+     *   <li>索引 schema 被动过（如字段 SEPARATOR 声明错误，RediSearch 不支持改已有字段属性，
+     *       只能 DROP 重建）后，需要一个不换模型的重建途径。</li>
+     * </ol>
+     * 传 oldRef=newRef 即走「DROP 索引 → 按当前模型重新向量化写回」，
+     * <b>顺带修好重复/错误声明的 schema</b>（DROP 时 schema 一并丢弃重建）。
+     *
+     * <p><b>与换绑重嵌共用同一把分布式锁</b>（{@link #REEMBED_LOCK_KEY}）：
+     * 并发调用时后来者直接跳过并告警，不会两实例同时 DROP 同一索引。
+     */
+    public void rebuildKbVectorsAsync(String kbId) {
+        Thread t = new Thread(() -> {
+            if (!acquireReembedLock()) {
+                log.warn("[FAIL-LOUD] [KB-Rebuild] 全量重嵌入正在进行，知识库 {} 的重建未执行（请稍后重试）", kbId);
+                return;
+            }
+            try {
+                KnowledgeBase kb = kbMapper.selectById(kbId);
+                String ref = kb == null || kb.getEmbeddingRef() == null ? "" : kb.getEmbeddingRef().trim();
+                if (ref.isBlank()) {
+                    // 绑定必填（validateEmbeddingRef），走到这里说明上游校验失效，fail-loud 不静默回落
+                    log.error("[FAIL-LOUD] [KB-Rebuild] 知识库 {} 未绑定向量模型，无法重建", kbId);
+                    return;
+                }
+                List<String> docIds = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                                .select(AiDocument::getId)
+                                .eq(AiDocument::getKbId, kbId)
+                                .eq(AiDocument::getDeleted, 0)).stream()
+                        .map(AiDocument::getId).toList();
+                // oldRef=newRef：模型不变，仅 DROP 索引后按当前模型重新向量化写回
+                // （顺带刷 ACL 标签 + 修正被动过的 schema）
+                log.info("[KB-Rebuild] 知识库 {} 触发同模型重建：模型={}，文档 {} 个", kbId, ref, docIds.size());
+                reembedKb(kbId, docIds, ref, ref);
+            } catch (Exception e) {
+                log.error("[FAIL-LOUD] [KB-Rebuild] 知识库 {} 重建失败: {}", kbId, e.getMessage(), e);
+            } finally {
+                releaseReembedLock();
+            }
+        }, "rebuild-kb-" + kbId);
+        t.setDaemon(true);
+        t.start();
+    }
+
     private void reembedKb(String kbId, List<String> docIds, String oldRef, String newRef) {
         String old = oldRef == null ? "" : oldRef.trim();
         String neu = newRef == null ? "" : newRef.trim();

@@ -41,6 +41,8 @@ public class DocumentController {
     private final com.wenqu.ai.service.ResourceVisibilityService visibility;
     private final com.wenqu.ai.service.KnowledgeBaseService kbService;
     private final com.wenqu.ai.service.RoleService roleService;
+    /** 向量索引注册中心：运维端点用它做索引诊断（ACL 字段就绪 / 存量标签回填状态） */
+    private final com.wenqu.ai.service.KbVectorStoreRegistry kbVectorStores;
 
     // ==================== 资源级权限（自建自管，数据按 userId 隔离，无角色直通） ====================
 
@@ -379,7 +381,31 @@ public class DocumentController {
         return ResultJson.ok(documentService.statsHitCounts());
     }
 
-    @Operation(summary = "文档版本列表", description = "获取文档的历史版本列表（倒序）；共享范围内可见")
+    @Operation(summary = "向量索引诊断", description = "诊断某知识库向量索引：ACL 可过滤字段是否就绪、存量向量是否已带 ACL 标签"
+            + "（两者含义不同——字段齐备≠标签已回填，FT.ALTER 只改 schema 不动历史 JSON）。仅管理员")
+@GetMapping("/vector-diagnose")
+public ResultJson vectorDiagnose(
+        @Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
+    if (!admin()) throw new BizException("仅管理员可查看向量索引诊断");
+    return ResultJson.ok(kbVectorStores.diagnose(kbId));
+}
+
+@Operation(summary = "同模型重建库向量", description = "不换向量模型，DROP 该库索引后按当前绑定重新向量化写回（异步）。"
+            + "用途：存量向量补 ACL 标签（让检索期过滤下推生效）、修复被动过的索引 schema。仅管理员")
+@PostMapping("/rebuild-kb")
+public ResultJson rebuildKb(
+        @Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
+    if (!admin()) throw new BizException("仅管理员可重建库向量");
+    var kb = kbService.get(kbId);
+    if (kb == null) throw new BizException("知识库不存在");
+    if (kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
+        throw new BizException("该知识库未绑定向量模型，无法重建");
+    }
+    documentService.rebuildKbVectorsAsync(kbId);
+    return ResultJson.ok("已提交重建任务（异步执行，耗时取决于块数与嵌入模型速度）");
+}
+
+@Operation(summary = "文档版本列表", description = "获取文档的历史版本列表（倒序）；共享范围内可见")
     @GetMapping("/{id}/versions")
     public ResultJson versions(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {

@@ -16,6 +16,7 @@ import redis.clients.jedis.search.schemafields.TagField;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -76,6 +77,53 @@ public class KbVectorStoreRegistry {
     /** KB 独立索引名（与 build 一致；DROP 旧索引用） */
     public static String kbIndexName(String kbId) {
         return "ai-doc-kb-" + kbId;
+    }
+
+    /**
+     * 索引诊断（运维用，只读）：某库向量的「schema 是否就绪 + 存量向量是否已带 ACL 标签」。
+     *
+     * <p>回答运维最常问的两个问题，<b>两者含义不同、必须分开看</b>：
+     * <ul>
+     *   <li><b>schemaReady</b>：索引有没有 ACL 可过滤字段 → 决定检索期下推能不能用
+     *       （缺字段时 {@code ensureAclSchema} 会自动热补，失败则下推退回无过滤检索）；</li>
+     *   <li><b>docsWithAclTag</b>：存量向量里有多少条真的带 ACL 标签 ——<b>schema 就绪 ≠ 标签已回填</b>：
+     *       {@code FT.ALTER} 只改 schema 不动历史 JSON，老向量没有 acl* 字段，检索期仍会被
+     *       下推过滤掉（漏召回，不是越权）。</li>
+     * </ul>
+     * 不区分这两个会误判成「字段齐了=召回就正常」。
+     */
+    public Map<String, Object> diagnose(String kbId) {
+        String index = kbIndexName(kbId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kbId", kbId);
+        out.put("index", index);
+        try {
+            boolean fieldsReady = hasAllAclFields(index);
+            out.put("schemaReady", fieldsReady);
+            out.put("indexedDocs", countDocs(index, "*"));
+            long tagged = countDocs(index, "@aclGlobal:{1} | @aclDept:* | @aclUser:*");
+            out.put("docsWithAclTag", tagged);
+            out.put("aclPushdownUsable", fieldsReady && tagged > 0);
+            out.put("hint", !fieldsReady
+                    ? "索引缺 ACL 可过滤字段：访问该库时会自动 FT.ALTER 热补；持续失败请检查 Redis 权限"
+                    : (tagged > 0
+                        ? "ACL 下推已生效"
+                        : "schema 已就绪但存量向量无 ACL 标签，需重建：POST /api/ai/document/rebuild-kb"));
+        } catch (Exception e) {
+            out.put("error", e.getMessage());
+        }
+        return out;
+    }
+
+    /** 索引内满足条件的文档数（索引不存在或查询失败返回 -1，用 limit(0,0) 只取 total 不取文档） */
+    private long countDocs(String index, String queryText) {
+        try {
+            var r = sharedJedis().ftSearch(index,
+                    new redis.clients.jedis.search.Query(queryText).limit(0, 0).dialect(2));
+            return r.getTotalResults();
+        } catch (Exception e) {
+            return -1L;
+        }
     }
 
     /** DROP 该 KB 的独立索引（连数据删除——旧模型向量全部作废，用于按库重嵌/清空绑定）；索引不存在时忽略 */
