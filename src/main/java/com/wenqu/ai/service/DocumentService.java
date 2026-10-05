@@ -673,7 +673,7 @@ public class DocumentService {
             if (k.getImages() != null) {
                 metadata.put("images", k.getImages());
             }
-            documentAclTags.enrichByDocId(metadata, null, k.getDocId(), null);
+            documentAclTags.putKbId(metadata, k.getDocId());
             storeOf(k.getDocId()).add(List.of(new Document(k.getId(),
                     buildEmbedText(k.getTitle(), k.getTitlePath(), content, null), metadata)));
             k.setVectorId(k.getId());
@@ -825,9 +825,9 @@ public class DocumentService {
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", ConfigDefaults.PARSE_EMBED_RETRY_COUNT));
         int done = 0;
         int failed = 0;
-        // ACL 烘焙句柄：预载本库全部文档行，重嵌出的向量必须带 ACL 标签（否则检索期下推会漏召回）
-        try (DocumentAclTags.AclBatch aclBatch = documentAclTags.newBatch()
-                .preload(rows.stream().map(Knowledge::getDocId).toList())) {
+        // 库门字段：整库重嵌时所有文档同属本库，直接写 kbId，无需逐块查文档行
+        //（文档级 ACL 已回晚绑定——检索期按命中块实时查 MySQL 判定，不依赖向量标签）
+        {
             for (int i = 0; i < rows.size(); i += batchSize) {
                 List<Knowledge> batch = rows.subList(i, Math.min(i + batchSize, rows.size()));
                 List<org.springframework.ai.document.Document> docs = new ArrayList<>(batch.size());
@@ -838,7 +838,7 @@ public class DocumentService {
                     metadata.put("knowledgeId", k.getId());
                     if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) metadata.put("titlePath", k.getTitlePath());
                     if (k.getImages() != null) metadata.put("images", k.getImages());
-                    aclBatch.enrich(metadata, k.getDocId());
+                    metadata.put(DocumentAclTags.FIELD_KB_ID, kbId);
                     docs.add(new org.springframework.ai.document.Document(k.getId(),
                             buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata));
                 }
@@ -862,6 +862,7 @@ public class DocumentService {
         reembedExtras(docIds, target);
         log.info("[KB-Reembed] 知识库 {} 重嵌完成: 模型 {}，成功 {} 块，失败 {} 块，维度 {}", kbId, neu, done, failed, newDim);
     }
+
 
     /**
      * 单文档跨库向量迁移（异步）：moveDoc 前后两库向量模型不同时调用——
@@ -1060,9 +1061,8 @@ public class DocumentService {
             List<Knowledge> oldList = knowledgeMapper.selectList(
                     new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             hadExistingContent = !oldList.isEmpty();
-            // ACL 标签：循环外编译一次，本方法所有新块共用（避免每块重复解析 share_config JSON）
+            // 库门字段：循环外查一次文档行拿 kbId，本方法所有新块共用（避免每块查库）
             AiDocument docRow = documentMapper.selectById(docId);
-            DocumentAclTags.AclTags aclTags = documentAclTags.bake(docRow);
             String kbIdOfDoc = docRow == null ? null : docRow.getKbId();
             // 旧块按 content_hash 索引（同内容多块 → List，逐块一一对应出队，避免重复内容块 id 抖动）
             Map<String, List<Knowledge>> oldByHash = new HashMap<>();
@@ -1128,8 +1128,9 @@ public class DocumentService {
                 if (!chunk.images().isEmpty()) {
                     metadata.put("images", JSON.toJSONString(chunk.images()));
                 }
-                // ACL 烘焙：标签已在循环外编译（docRow/aclTags），循环内零查询
-                documentAclTags.enrich(metadata, docRow, kbIdOfDoc, aclTags);
+                if (kbIdOfDoc != null && !kbIdOfDoc.isBlank()) {
+                    metadata.put(DocumentAclTags.FIELD_KB_ID, kbIdOfDoc);
+                }
                 aiDocs.add(new Document(knowledge.getId(),
                         buildEmbedText(chunk.title(), chunk.titlePath(), chunk.content(), overlapPrefix), metadata));
                 newBlocks.add(knowledge);
@@ -1776,7 +1777,7 @@ public class DocumentService {
             metadata.put("knowledgeId", k.getId());
             if (titlePath != null && !titlePath.isBlank()) metadata.put("titlePath", titlePath);
             if (k.getImages() != null) metadata.put("images", k.getImages());
-            documentAclTags.enrichByDocId(metadata, null, docId, null);
+            documentAclTags.putKbId(metadata, docId);
             aiDocs.add(new org.springframework.ai.document.Document(k.getId(),
                     buildEmbedText(title, titlePath, content, null), metadata));
             rebuilt.add(k);

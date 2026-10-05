@@ -144,25 +144,22 @@ public class HybridRetrievalService {
         double keywordWeight = configService.getDouble("retrieval.keywordWeight");
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
-        Set<String> nonVisibleDocIds = loadNonVisibleDocIds();
-
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
         List<Document> vectorDocs = vectorSearch(query, diag, kbIds);
 
         // 2. 关键词召回（并行，超时兜底）
         List<Knowledge> kwDocs = keywordSearch(query, diag);
 
-        // 可见范围过滤：剔除当前用户不可见的文档命中（与向量路同口径，统一在此拦截）
-        if (!nonVisibleDocIds.isEmpty()) {
-            kwDocs = kwDocs.stream().filter(k -> {
-                String d = k.getDocId() == null ? null : String.valueOf(k.getDocId());
-                return d == null || !nonVisibleDocIds.contains(d);
-            }).toList();
-        }
-
         // 3. 批量加载向量命中的知识块元数据（一次 selectBatchIds 替代逐条 selectById）+ 不可召回文档集合
         Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
+
+        // 4. 可见范围过滤（**晚绑定**：召回后才判，只查「本轮命中的那些文档」）
+        //    旧实现是召回前全表扫 c_ai_document 算出不可见集合——文档量涨上去就是每问一次全表，
+        //    且 ACL 真相被复制进向量 metadata 造成两处口径（详见 DocumentAclTags 类注释）。
+        //    现在只对命中块涉及的 docId 批量查一次（WHERE id IN (...)，主键索引、亚毫秒级），
+        //    判定全部收敛到 ResourceVisibilityService 一处，改共享范围下次检索即生效、无需重写索引。
+        Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, kwDocs, kidMap);
 
         // 4. 合并去重 + 加权（向量权重 × 归一化向量分 + 关键词权重 × 词频加权分；双命中叠加）
         Map<String, Hit> merged = new LinkedHashMap<>();
@@ -176,8 +173,13 @@ public class HybridRetrievalService {
             boolean augHit = k != null && !String.valueOf(doc.getId()).equals(String.valueOf(k.getId()));
             String kid = augHit ? String.valueOf(k.getId()) : String.valueOf(doc.getId());
             String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(doc);
-            if (docId != null && (blockedDocIds.contains(docId) || nonVisibleDocIds.contains(docId))) {
+            if (docId != null && blockedDocIds.contains(docId)) {
                 log.debug("[RAG] 跳过非生效文档命中: docId={} kid={}", docId, kid);
+                continue;
+            }
+            // 可见范围：白名单判定（docId 为空=手动知识块，不在文档 ACL 管辖内，保留）
+            if (docId != null && !docId.isBlank() && !visibleDocIds.contains(docId)) {
+                log.debug("[RAG] 跳过不可见文档命中: docId={} kid={}", docId, kid);
                 continue;
             }
             if (k != null && k.getStatus() != null && k.getStatus() == 1) {
@@ -195,6 +197,12 @@ public class HybridRetrievalService {
         }
         // 关键词命中：score = 关键词权重 × 词频加权分；与向量命中叠加（相加）
         for (Knowledge k : kwDocs) {
+            // 可见范围：白名单判定（与向量路同口径；docId 为空=手动块，不在文档 ACL 管辖内）
+            String kDocId = k.getDocId() == null ? "" : String.valueOf(k.getDocId());
+            if (!kDocId.isBlank() && !visibleDocIds.contains(kDocId)) {
+                log.debug("[RAG] 跳过不可见文档命中（关键词路）: docId={} kid={}", kDocId, k.getId());
+                continue;
+            }
             double hitRate = k.getKwScore(); // 词频加权归一化分（0~1，替代原词元占比）
             double score = keywordWeight * hitRate;
             merged.merge(k.getId(), buildHit(k, score), (oldHit, newHit) ->
@@ -765,30 +773,32 @@ public class HybridRetrievalService {
         try {
             Set<String> visibleKbIds = loadVisibleKbIds();
             if (visibleKbIds == null) {
-                // 库可见性查询失败：不猜、不放行，退回事后过滤（那里同样 fail-loud 记录）
+                // 库可见性查询失败：不猜、不放行，退回不下的检索（文档级晚绑定过滤仍会拦住越权）
                 if (diag != null) diag.aclPushdownFailed("可见库集合查询失败");
                 return null;
             }
             if (kbIds != null && !kbIds.isEmpty()) {
                 visibleKbIds.retainAll(kbIds);
             }
-            return documentAclTags.buildFilterExpression(visibleKbIds,
-                    RequestUser.departmentId(), RequestUser.uid());
+            return documentAclTags.buildKbGateExpression(visibleKbIds);
         } catch (Exception e) {
             if (diag != null) diag.aclPushdownFailed(e.getMessage());
-            log.warn("[FAIL-LOUD] 编译 ACL 过滤条件失败，本次退回事后过滤: {}", e.getMessage());
+            log.warn("[FAIL-LOUD] 编译库门过滤条件失败，本次退回无下推检索（文档级过滤仍生效）: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * 当前用户可读的知识库 id 集合（库门）。
-     * <p>只查知识库表（库数量是几十量级），<b>不再全表扫 c_ai_document</b>——
-     * 旧实现的 {@code loadNonVisibleDocIds()} 每次检索都select 全表文档，文档量大时是硬伤。
-     * 文档级 ACL 已改由索引 metadata 承担，这里只负责库级。
+     * 当前用户可读的知识库 id 集合（<b>库门下推的唯一来源，每次实时计算</b>）。
      *
-     * @return 可见库 id 集合；查询失败返回 null（调用方据此退回事后过滤，<b>不返回空集</b>——
-     *         空集会被编译成「什么都搜不到」，把一次DB 抖动变成全量召回失败）
+     * <p><b>为什么库级能下推而文档级不能</b>：库集合是几十量级、每轮实时算（<b>无陈旧问题</b>），
+     * 且能整库挡掉召回；文档级是「未配置共享=跟随库」这种依赖 DB 状态的规则，
+     * 索引层无法表达，只能在应用层逐条判（晚绑定，见 {@link DocumentAclTags} 类注释）。
+     *
+     * <p><b>查库表而非文档表</b>：库数量是几十量级，文档表会随使用持续增长。
+     *
+     * @return 可见库 id 集合；查询失败返回 null（调用方据此退回无下推，<b>不返回空集</b>——
+     *         空集会被编译成「什么都搜不到」，把一次 DB 抖动变成全量召回失败）
      */
     private Set<String> loadVisibleKbIds() {
         try {
@@ -809,54 +819,66 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 可见范围过滤：返回当前用户【不可见】的文档 id 集合（<b>事后过滤兜底</b>）。
+     * <b>检索期可见范围判定（晚绑定，唯一入口）</b>：返回<b>本轮命中块涉及</b>的文档里，当前用户可见的 docId 集合。
      *
-     * <p><b>定位已从「主过滤」降为「兜底」</b>：检索时过滤（{@link #buildAclFilter}）才是主路径。
-     * 本方法仍保留，因为下推有两类失效面：
-     * <ol>
-     *   <li>索引未热补 ACL 字段 / 存量向量无 ACL 标签 → 下推漏召回（安全方向，但召回受损）；</li>
-     *   <li>表达式非法、库集合查询失败 → 本次退回无过滤检索，<b>此时若无本兜底即等于越权</b>。</li>
-     * </ol>
-     * 两者都要求「过滤逻辑独立于索引层再判一次」，而不是信任索引层的过滤一定生效。
+     * <p><b>为什么是「按命中块查」而不是「全表算不可见集」</b>（2026-10-05 晚绑定改造）：
+     * 旧实现每问一次都 {@code selectList} 全表 {@code c_ai_document}（无 WHERE）并逐行解析
+     * {@code share_config}，文档量涨上去就是硬伤；更本质的问题是它与「写入侧把 ACL 烘焙进向量
+     * metadata」并存，导致<b>同一份 share_config 被两处各解析一次</b>，口径易漂移
+     * （「OR 门里没有标签=永不可见」那次 bug 即由此而来）。
+     * <p>现在只查本轮命中的那些文档（向量路 metadata + 关键词路 docId 合并去重），
+     * 走主键索引、亚毫秒级；<b>改共享范围下次检索即生效，不需要重写任何索引</b>。
      *
-     * <p><b>两级判定，与管理接口同口径</b>：文档可见 = 所属知识库允许 <b>且</b>（文档自身未配置共享
-     * 时跟随库，显式配置时按配置判）。
-     * <p>兜底：查询异常时返回空集（放行全部），不静默误伤——注意这是<b>安全方向的失败</b>：
-     * 异常极罕见（DB 不可用时上层查询也已失败），且下推已在正常路径生效。
+     * <p><b>两级判定，与管理接口同源</b>（全部走 {@link ResourceVisibilityService}，判定逻辑只此一处）：
+     * 文档可见 = 所属库可读 <b>且</b> 文档自身可读（未配置共享时跟随库）。
+     *
+     * <p><b>异常时的取向</b>：查询失败返回<b>空集</b>（=什么都不可见）而非放行全部。
+     * 这是与旧实现相反的取舍，理由是<b>权限判定失败应当 fail-closed</b>：
+     * 放行全部等于把一次 DB 抖动变成越权，而空集最坏只是「检索不到、报个错」。
+     * 用户重试或运维介入即可恢复，不会泄露内容。
      */
-    private Set<String> loadNonVisibleDocIds() {
+    private Set<String> loadVisibleDocIdsOfHits(List<Document> vectorDocs, List<Knowledge> kwDocs,
+                                               Map<String, Knowledge> kidMap) {
+        // 汇总本轮涉及的 docId：向量路优先取块表（权威），取不到再退metadata（向量库可能丢 metadata）
+        Set<String> hitDocIds = new LinkedHashSet<>();
+        for (Document d : vectorDocs == null ? List.<Document>of() : vectorDocs) {
+            Knowledge k = kidMap == null ? null : kidMap.get(String.valueOf(d.getId()));
+            String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(d);
+            if (docId != null && !docId.isBlank()) hitDocIds.add(docId);
+        }
+        for (Knowledge k : kwDocs == null ? List.<Knowledge>of() : kwDocs) {
+            if (k.getDocId() != null && !String.valueOf(k.getDocId()).isBlank()) {
+                hitDocIds.add(String.valueOf(k.getDocId()));
+            }
+        }
+        if (hitDocIds.isEmpty()) return Set.of();
+
         try {
-            List<AiDocument> docs = documentMapper.selectList(
-                    new QueryWrapper<AiDocument>().select("id", "kb_id", "share_config", "created_by"));
-            if (docs.isEmpty()) return Set.of();
+            List<AiDocument> docs = documentMapper.selectBatchIds(hitDocIds);
             ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
                     RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
 
-            // 库级：按 share_config 判（未配置=私有；个人默认库即归属人可见）
-            Set<String> visibleKbIds = new LinkedHashSet<>();
-            for (com.wenqu.ai.model.KnowledgeBase kb : knowledgeBaseService.list()) {
-                if (resourceVisibilityService.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-                    visibleKbIds.add(kb.getId());
-                }
+            // 库级：可见库集合（几十行，逐个 JSON 判；库级已下推进索引，这里是文档级的库门复核）
+            Set<String> visibleKbIds = loadVisibleKbIds();
+            if (visibleKbIds == null) {
+                log.error("[FAIL-LOUD] 可见库集合查询失败，本轮按「全部不可见」处理（fail-closed）");
+                return Set.of();
             }
 
-            Set<String> nonVisible = new LinkedHashSet<>();
+            Set<String> visible = new LinkedHashSet<>();
             for (AiDocument d : docs) {
-                String id = String.valueOf(d.getId());
+                if (d == null) continue;
                 String kbId = d.getKbId();
                 // 未归属任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
-                boolean kbVisible = kbId == null || kbId.isBlank()
-                        || visibleKbIds.contains(kbId);
+                boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
                 boolean docVisible = resourceVisibilityService.canReadDocFollowKb(
                         p, d.getShareConfig(), d.getCreatedBy());
-                if (!docVisible || !kbVisible) {
-                    nonVisible.add(id);
-                }
+                if (kbVisible && docVisible) visible.add(String.valueOf(d.getId()));
             }
-            return nonVisible;
+            return visible;
         } catch (Exception e) {
-            log.error("[FAIL-LOUD] 查询文档可见范围失败，放行全部: {}", e.getMessage());
+            // fail-closed：判定失败时不可见，而不是放行（见方法注释）
+            log.error("[FAIL-LOUD] 查询命中文档可见范围失败，本轮按「全部不可见」处理: {}", e.getMessage());
             return Set.of();
         }
     }
