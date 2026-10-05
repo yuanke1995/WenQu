@@ -7,7 +7,7 @@ import { ref } from 'vue'
 import { chatStreams } from '../views/store'
 // 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档），
 // 内置工具与后端 ToolInventoryService.LABELS 同源但口径更口语；MCP 工具名是用户登记的
-// server 动态合入的（w_q_ 前缀），只映射常用 server 的常用工具（context7 / deepwiki），
+// server 动态合入的（带 clientInfo 前缀），只映射常用 server 的常用工具（context7 / deepwiki），
 // 未映射的去掉前缀原样展示，不臆造翻译。
 const TOOL_LABELS = {
   searchKnowledge: '查知识库资料',
@@ -30,13 +30,16 @@ const TOOL_LABELS = {
   write_file: '写入文件',
   edit_file: '编辑文件',
   ls: '查看文件列表',
-  // MCP（context7）：去 w_q_ 前缀后按裸名匹配
+  // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '查找文档来源',
   query_docs: '查阅官方文档',
   // MCP（deepwiki）
   read_wiki_structure: '查看 Wiki 目录',
   read_wiki_contents: '阅读 Wiki 内容',
-  ask_question: '向 Wiki 提问'
+  ask_wiki_question: '向 Wiki 提问',
+  // deepwiki 私有模式 / 按需注册的工具，公网端点默认不出现，登记私有实例时才会命中
+  list_wiki_repos: '查看可用 Wiki 仓库',
+  generate_wiki: '生成代码 Wiki'
 }
 // 悬停一句话说明（这个工具到底在干什么；未收录的不显示 title）
 const TOOL_DESCS = {
@@ -64,14 +67,23 @@ const TOOL_DESCS = {
   query_docs: '到对应库的官方文档里查找相关内容',
   read_wiki_structure: '浏览开源项目 Wiki 的目录结构',
   read_wiki_contents: '阅读开源项目 Wiki 的具体内容',
-  ask_question: '就开源项目 Wiki 的内容提问并取回答案'
+  ask_wiki_question: '就开源项目 Wiki 的内容提问并取回答案',
+  list_wiki_repos: '列出当前账号在 DeepWiki 上已建索引的仓库',
+  generate_wiki: '为指定仓库生成一份代码 Wiki 文档'
 }
-// ⚠️ 与 McpClientService 的 clientInfo name 对应：wen-qu → w_q_（改名时需同步）
-const MCP_CLIENT_PREFIX = 'w_q_'
-const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
+// ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
+// clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀：非字母数字段丢弃、
+// 小写、用_ 连接、无分隔符。clientInfo.name="wen-qu" ⇒ 前缀 "wen_qu"（2026-10-05 反编译 1.1.8 核实，
+// 原注释写的 w_q_ 是错的，导致剥前缀失效、MCP 工具名全部落到「裸名原样展示」）。
+// w_q_ 保留兼容：历史记录里若已有按旧口径写入的名字，仍能剥掉。
+const MCP_CLIENT_PREFIXES = ['wen_qu', 'w_q_']
+const bareToolName = n => {
+  const pre = MCP_CLIENT_PREFIXES.find(p => n.startsWith(p))
+  return pre ? n.slice(pre.length) : n
+}
 const toolLabel = n => {
   if (TOOL_LABELS[n]) return TOOL_LABELS[n]
-  // MCP 工具记录名带 w_q_ 前缀：先去前缀再试一次映射，未映射的展示裸名
+  // MCP 工具记录名带 clientInfo 前缀：先去前缀再试一次映射，未映射的展示裸名
   const bare = bareToolName(n)
   return TOOL_LABELS[bare] || bare
 }
@@ -581,7 +593,7 @@ const verLabel = m => verLocal(m)
   ? `${(m.vIndex || 0) + 1}/${m.versions.length}`
   : `${m.variantIndex || 1}/${m.variantCount || 1}`
 export {
-  TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIX, bareToolName, toolLabel, toolDesc, toolCallsView,
+  TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
   toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, TOOL_BRIEF_KEYS, oneLine,
