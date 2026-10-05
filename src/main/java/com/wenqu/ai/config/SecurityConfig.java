@@ -67,9 +67,10 @@ public class SecurityConfig implements WebMvcConfigurer {
                 || path.equals("/api/ai/sessions") || path.startsWith("/api/ai/sessions/")) {
             return true;
         }
-        // 分享管理（个人设置内的面板）：枚举与停用**我自己**分享过的会话。
+        // 分享管理（个人设置内的面板）：枚举 / 停用 / 清除记录，均只作用于**我自己**分享过的会话。
         // 注意不能靠上面的 "/api/ai/session/" 前缀带过——这里是 "session-shares"（连字符），
         // 不匹配 "session/"，漏写会让普通用户直接 403、只有管理员能看见自己的分享列表。
+        // 前缀分支同时覆盖 /session-shares/{id}（停用）与 /session-shares/{id}/record（清除记录）。
         if (path.equals("/api/ai/session-shares") || path.startsWith("/api/ai/session-shares/")) {
             return true;
         }

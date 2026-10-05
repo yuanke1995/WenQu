@@ -260,6 +260,9 @@ export const getSharedSession = token => request(`/share/session/${encodeURIComp
 export const listMySessionShares = () => request('/session-shares')
 /** 按会话停用分享（分享管理页用；会话已删除的悬空记录同样可停，故不走 /session/{id}/share） */
 export const stopShareBySession = sid => request(`/session-shares/${encodeURIComponent(sid)}`, { method: 'DELETE' })
+/** 彻底清除一条**已停止**的分享记录（生效中的后端会拒 400，须先停止分享） */
+export const purgeShareRecord = sid =>
+  request(`/session-shares/${encodeURIComponent(sid)}/record`, { method: 'DELETE' })
 
 /**
  * 列出会话（游标分页）：首页不传 cursor；后续页传上一页返回的 nextCursor。

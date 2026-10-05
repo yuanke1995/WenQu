@@ -193,6 +193,7 @@
           <p class="pf-hint">
             会话分享生成的是<strong>只读链接</strong>：拿到链接的人可以查看这段对话，不能继续提问。
             链接展示的是会话<strong>最新内容而非快照</strong>——分享后继续在这段对话里聊到敏感内容，链接页也会跟着变。
+            停止分享后链接立即失效，记录保留到清理周期结束（与会话保留期一致），也可以随时手动清除。
           </p>
           <a-spin :spinning="shareLoading">
             <div v-if="!shares.length" class="mem-empty">
@@ -221,7 +222,7 @@
                   <div v-if="s.enabled" class="shm-link">
                     <span class="shm-url">{{ shareUrlOf(s.token) }}</span>
                   </div>
-                  <div v-if="s.orphaned" class="shm-note">这条链接已打不开（会话已删除），停用后记录仅留档。</div>
+                  <div v-if="s.orphaned" class="shm-note">这条链接已打不开（会话已删除）。停用后超保留期自动清理，也可在此立即清除。</div>
                 </div>
                 <div class="shm-acts">
                   <template v-if="s.enabled">
@@ -234,6 +235,9 @@
                   <template v-else>
                     <span class="shm-off-note">已停止</span>
                     <button v-if="!s.orphaned" class="app-link-btn" @click="restartShare(s)">重新开启</button>
+                    <!-- 清除记录：已停用才给。悬空行没有信息价值（标题已退化、内容不可访问），
+                         是堆积面板的主要来源，需要一个立即清掉的出口而不必等 30 天保留期 -->
+                    <button class="app-link-btn danger" @click="purgeRecord(s)">清除记录</button>
                   </template>
                 </div>
               </div>
@@ -256,7 +260,7 @@ import { shareUrlOf } from './shareSession'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          getUserSettings, saveUserSettings,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory,
-         listMySessionShares, stopShareBySession, enableSessionShare } from '../api'
+         listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -654,6 +658,23 @@ const restartShare = async (s, okMsg = '已重新开启分享') => {
     } else message.error(r?.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { shareBusy.value = '' }
+}
+
+/** 清除记录：物理删除一条已停止的分享记录（与"停止分享"不同，那个只让链接失效） */
+const purgeRecord = s => {
+  Modal.confirm({
+    title: '清除这条分享记录？',
+    content: '记录会从分享管理里移除，访问次数等统计一并消失，无法恢复。会话本身不受影响。' +
+      (s.orphaned ? '（该会话已删除，此记录已无用途。）' : ''),
+    okText: '清除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await purgeShareRecord(s.sessionId)
+        if (r && r.success !== false) { message.success('记录已清除'); await loadShares() }
+        else message.error(r?.msg || '清除失败')
+      } catch (e) { message.error(e.message || '清除失败') }
+    }
+  })
 }
 
 // 面板切换时才拉列表：其余面板不碰这个接口（个人设置是常驻页，每次进都拉会白跑一次）

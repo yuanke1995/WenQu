@@ -202,6 +202,29 @@ public class SessionShareService {
     }
 
     /**
+     * 彻底清除一条分享记录（分享管理页的"清除此记录"）。
+     *
+     * <p><b>硬约束：只允许删已停用（enabled=0）的</b>。生效中的链接随时可能被访客打开，
+     * 直接删会让访问量统计断档、也让用户失去"这条还在外发"的感知——必须先走停止分享。
+     * 会话已删除的悬空记录天然是停用态，所以这是它们唯一的清理出口。
+     *
+     * <p>调用方须先按 created_by 校验归属（见 ChatController 的对应端点）。
+     *
+     * @return 是否真的删掉了一条（false = 不存在、不是本人的、或仍在生效中）
+     */
+    public boolean purge(String sessionId, String uid) {
+        SessionShare exist = get(sessionId);
+        if (exist == null) return false;
+        if (exist.getCreatedBy() == null || !exist.getCreatedBy().equals(uid)) return false;
+        if (exist.getEnabled() != null && exist.getEnabled() == 1) return false;
+        sessionShareMapper.delete(new LambdaQueryWrapper<SessionShare>()
+                .eq(SessionShare::getId, exist.getId())
+                .eq(SessionShare::getEnabled, 0)); // 二次确认：并发下若刚被重新开启就不删
+        log.info("[SHARE] 分享记录已清除 session={} by={}", sessionId, uid);
+        return true;
+    }
+
+    /**
      * 公开消息列表：裁剪到"可对外"的字段——正文 + 角色的时间；助手消息带回引用来源的
      * 文档名/章节/相关度（不带 snippet 与知识块 id）。
      * <p>

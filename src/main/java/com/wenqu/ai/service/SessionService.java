@@ -1508,12 +1508,12 @@ public class SessionService {
     }
 
     /**
-     * 过期数据清理（ScheduleCenter 周期触发）：物理清除逻辑删除标记且超过保留期的会话与消息。
-     * 保留期即"撤销删除"窗口——物理清除后撤销必然返回 0（前端提示已过撤销期）。
-     * 幂等可并发（多副本各自触发互不冲突）；单类失败仅告警，另一类继续。
+     * 过期数据清理（ScheduleCenter 周期触发）：物理清除逻辑删除标记且超过保留期的会话与消息，
+     * 以及**已停用**且超期的分享记录。保留期即"撤销删除"窗口——物理清除后撤销必然返回 0
+     * （前端提示已过撤销期）。幂等可并发（多副本各自触发互不冲突）；单类失败仅告警，另一类继续。
      *
      * @param retentionDays 保留天数（<=0 表示停用）
-     * @return 清理统计 {sessions, messages}，供日志与观测
+     * @return 清理统计 {sessions, messages, shares}，供日志与观测
      */
     public Map<String, Object> purgeExpired(int retentionDays) {
         Map<String, Object> stat = new HashMap<>();
@@ -1529,11 +1529,20 @@ public class SessionService {
         } catch (Exception e) {
             log.warn("[CLEANUP] 过期消息物理清理失败: {}", e.getMessage());
         }
+        // 已停用的分享记录：与消息同保留期清掉。停用 = 用户关闭了这件事，
+        // 不清就会永久留存（链接凭据虽然失效了，但"谁在何时分享过什么"的档案会一直留着），
+        // 分享管理面板也会被早已失效的记录越撑越长。生效中的（enabled=1）绝不在此列。
+        try {
+            stat.put("shares", sessionShareMapper.purgeDisabledOlderThan(cutoff));
+        } catch (Exception e) {
+            log.warn("[CLEANUP] 过期分享记录清理失败: {}", e.getMessage());
+        }
         int sessions = ((Number) stat.getOrDefault("sessions", 0)).intValue();
         int messages = ((Number) stat.getOrDefault("messages", 0)).intValue();
-        if (sessions > 0 || messages > 0) {
-            log.info("[CLEANUP] 过期数据清理完成：会话 {} 条、消息 {} 条（保留 {} 天，截止 {}）",
-                    sessions, messages, retentionDays, cutoff);
+        int shares = ((Number) stat.getOrDefault("shares", 0)).intValue();
+        if (sessions > 0 || messages > 0 || shares > 0) {
+            log.info("[CLEANUP] 过期数据清理完成：会话 {} 条、消息 {} 条、已停用分享 {} 条"
+                    + "（保留 {} 天，截止 {}）", sessions, messages, shares, retentionDays, cutoff);
         }
         return stat;
     }

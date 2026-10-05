@@ -522,6 +522,29 @@ public class ChatController {
         return ResultJson.ok("已停止分享");
     }
 
+    /**
+     * 彻底清除一条分享记录（与"停止分享"分开：那个让链接失效、这个让记录消失）。
+     *
+     * <p>只接受已停用的记录——生效中的必须先停止，否则用户会在"链接还开着"的同时
+     * 把记录删掉，既失去感知也让访问量断档。会话已删除的悬空记录天然是停用态，
+     * 这是它们唯一的清理出口。
+     */
+    @Operation(summary = "清除分享记录", description = "物理删除一条**已停止**的分享记录；生效中的返回 400，须先停止分享")
+    @DeleteMapping("/session-shares/{sessionId}/record")
+    public ResultJson purgeShareRecord(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        // 归属校验先做（分享记录是归属凭据），再由 service 判停用态
+        var share = sessionShareService.get(sessionId);
+        if (share == null || !RequestUser.uid().equals(share.getCreatedBy())) {
+            throw new BizException(404, "分享记录不存在");
+        }
+        if (share.getEnabled() != null && share.getEnabled() == 1) {
+            throw new BizException(400, "该链接仍在生效中，请先停止分享再清除记录");
+        }
+        sessionShareService.purge(sessionId, RequestUser.uid());
+        return ResultJson.ok("记录已清除");
+    }
+
     @Operation(summary = "查询会话分享状态", description = "返回 {enabled, token, visitCount, lastVisitAt}；未分享返回 enabled=false。仅会话所有者可查")
     @GetMapping("/session/{sessionId}/share")
     public ResultJson getSessionShare(
