@@ -43,13 +43,13 @@
 
           <div class="app-card set-card">
             <!-- 工具族合并入口：总开关与子工具 / 联网搜索（后续新工具族继续加页签）——
-                 避免左侧导航随工具面板膨胀；页签风格与「定时维护」一致（a-tabs），
+                 避免左侧导航随工具面板膨胀；页签风格与「定时任务」一致（a-tabs），
                  pane 留空只当页签条，内容在下方按 toolTab 对应的 panel 字段渲染 -->
             <a-tabs v-if="current === 'tool'" v-model:activeKey="toolTab" class="sched-tabs">
               <a-tab-pane key="tool" tab="总开关与子工具" />
               <a-tab-pane key="webSearch" tab="联网搜索" />
             </a-tabs>
-            <!-- 定时维护面板内容多（参数表单 + 任务状态 + 执行日志），用页签组织避免一页滚到底。
+            <!-- 定时任务面板内容多（参数表单 + 任务状态 + 执行日志），用页签组织避免一页滚到底。
                  页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换 -->
             <a-tabs v-if="current === 'maintenance'" v-model:activeKey="maintTab" class="sched-tabs">
               <a-tab-pane key="config" tab="参数配置" />
@@ -81,7 +81,7 @@
                 </template>
               </template>
 
-              <!-- API Key 管理（6.5）：签发 / 列表 / 停用 / 删除 -->
+              <!-- API 密钥（6.5）：签发 / 列表 / 停用 / 删除 -->
               <template v-if="current === 'apiKey'">
                 <!-- 工具栏：搜索 + 概览统计 + 主操作 -->
                 <div class="key-bar">
@@ -537,9 +537,9 @@ import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, 
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
-  chat: '智能问答模型', vision: '视觉模型', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
+  chat: '对话模型', vision: '图片描述', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
   context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', webSearch: '联网搜索',
-  ratelimit: '接口限流', maintenance: '定时维护', apiKey: 'API Key 管理', skills: '技能（预算）',
+  ratelimit: '接口限流', maintenance: '定时任务', apiKey: 'API 密钥', skills: '技能预算',
   agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆', debug: '调试设置'
 }
 // 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），
@@ -784,7 +784,7 @@ watch(
 // 「测试连接」按钮则走 /config/probe，同样用表单当前值——先测后存，不必先保存。
 
 // ==================== 重嵌入状态 ====================
-// ==================== API Key 管理（6.5） ====================
+// ==================== API 密钥（6.5） ====================
 const keys = ref([])
 const keysLoading = ref(false)
 const keyKeyword = ref('')
@@ -1221,7 +1221,7 @@ onMounted(fetchAndFill)
 .probe-chip { margin-left: 8px; font-size: 11px; border-radius: 999px; padding: 3px 9px; cursor: help; }
 .probe-chip.ok { color: var(--app-ok); background: var(--app-ok-weak); }
 .probe-chip.bad { color: var(--app-danger); background: var(--app-danger-weak); }
-/* API Key 管理（6.5） */
+/* API 密钥（6.5） */
 .key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
@@ -1289,7 +1289,7 @@ onMounted(fetchAndFill)
 .audit-chip.run { color: var(--app-accent); background: var(--app-accent-weak); }
 .audit-chip.paused { color: var(--app-warn-text); background: var(--app-warn-weak); }
 .audit-chip.idle { color: var(--app-text3); background: var(--app-border, rgba(127,127,127,.15)); }
-/* 定时维护页签条（风格对齐智能体 hub 的 a-tabs：同样字号/内边距/分割线） */
+/* 定时任务页签条（风格对齐智能体 hub 的 a-tabs：同样字号/内边距/分割线） */
 .sched-tabs { margin: 0 4px; }
 .sched-tabs :deep(.ant-tabs-nav) { margin-bottom: 0; }
 .sched-tabs :deep(.ant-tabs-tab) { font-size: 13px; padding: 10px 2px; }

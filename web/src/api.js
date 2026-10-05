@@ -513,7 +513,7 @@ export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => 
 }
 export const getMcpAuditSummary = () => request('/mcp/audit/summary')
 
-/** 定时任务管理（仅管理员，设置页·定时维护）：ScheduleCenter 运行快照 / 手动触发 / 执行日志 */
+/** 定时任务管理（仅管理员，设置页·定时任务）：ScheduleCenter 运行快照 / 手动触发 / 执行日志 */
 export const getScheduleTasks = () => request('/schedule/tasks')
 export const triggerScheduleTask = name =>
   request('/schedule/tasks/trigger', { method: 'POST', body: JSON.stringify({ name }) })
@@ -571,7 +571,7 @@ export const batchDeleteSkills = ids =>
 export const batchSetSkillsDisabled = (ids, disabled) =>
   request('/skill/batch-disabled', { method: 'POST', body: JSON.stringify({ ids, disabled }) })
 
-// ==================== API Key 管理（对外开放问答能力） ====================
+// ==================== API 密钥（对外开放问答能力） ====================
 export const listApiKeys = () => request('/api-key/list')
 export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })
 export const setApiKeyDisabled = (id, disabled) =>

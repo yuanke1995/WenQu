@@ -341,7 +341,7 @@ public class ConfigService {
         d.put("eval.judgeModel", "");              // 评判用独立模型（留空=跳过 LLM 自动评判）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
-        // 定时维护（schedule 包读取；≤0=暂停对应任务）
+        // 定时任务（schedule 包读取；≤0=暂停对应任务）
         d.put("images.chatCleanupIntervalMs", "86400000");   // 聊天图片清理间隔(ms)
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
@@ -489,7 +489,7 @@ public class ConfigService {
         d.put("agent.dispatchNarrowScope", "false");       // 委派收窄检索范围：挑出子集后主检索收窄到主智能体库∪选中助手库（默认关——路由判错会漏召回）
         d.put("agent.routeTimeoutMs", String.valueOf(ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));             // 路由判定超时（超时回退全部候选）
         d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）
-        // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时维护 → 智能体配置版本」
+        // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）
         // MCP **服务端**（对外提供端点）：把已发布的智能体暴露给 Claude/Cursor 等外部客户端

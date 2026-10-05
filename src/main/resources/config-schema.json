@@ -4,7 +4,7 @@
   "panels": [
     {
       "key": "chat",
-      "title": "智能问答模型",
+      "title": "对话模型",
       "sections": [
         "模型与连接（厂商预设自动填充地址与补全路径）",
         "回答行为与内容",
@@ -73,12 +73,12 @@
     },
     {
       "key": "apiKey",
-      "title": "API Key 管理（对外开放问答能力）",
+      "title": "API 密钥（对外开放问答能力）",
       "sections": []
     },
     {
       "key": "skills",
-      "title": "技能（Skills）预算与安装策略（技能内容归个人）",
+      "title": "技能预算与安装策略（技能内容归个人）",
       "sections": [
         "上下文预算",
         "远程安装（来源白名单）"
@@ -98,7 +98,7 @@
     },
     {
       "key": "maintenance",
-      "title": "定时维护（索引对账 / 自动体检 / 清理）",
+      "title": "定时任务（索引对账 / 自动体检 / 清理）",
       "sections": [
         "启动自愈与索引对账",
         "自动体检（检索质量回归）",
@@ -3309,7 +3309,7 @@
     "workflowScheduleScanInterval": "工作流定时触发扫描间隔（ms，默认 30 秒）：扫描到期的定时工作流并派发已发布版本运行。≤0 = 暂停该扫描任务（已配置定时的工作流不再自动触发）。",
     "workflowMaxConcurrentRuns": "工作流异步调试运行的并发上限（派发池 core=max）。超过上限的运行进入排队队列并显示 queued，可在画布取消排队；改后需重启生效。",
     "workflowRunQueueCapacity": "工作流异步运行的排队容量：并发满后最多排这么多，再来的直接拒绝并落 failed（fail-loud，不无限堆积）。改后需重启生效。",
-    "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力的总开关（默认关），下有两类端点：① per-agent 端点 /ai/mcp/{token}——智能体发布时勾选「MCP 端点」，一个端点就是那一个智能体，token 即凭据，撤销分享立即失效；② 平台级入口 /ai/mcp——一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据是请求头的 API Key，且该 Key 必须在「API Key 管理」里打开 MCP 开关。两类端点都按调用者/发布者自身的可见范围执行。",
+    "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力的总开关（默认关），下有两类端点：① per-agent 端点 /ai/mcp/{token}——智能体发布时勾选「MCP 端点」，一个端点就是那一个智能体，token 即凭据，撤销分享立即失效；② 平台级入口 /ai/mcp——一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据是请求头的 API Key，且该 Key 必须在「API 密钥」里打开 MCP 开关。两类端点都按调用者/发布者自身的可见范围执行。",
     "mcpServerTimeout": "外部客户端调用该智能体时，服务端等待一轮问答完成的上限。超时会向客户端返回错误而不是继续空等；智能体开了深度思考或多子代理时建议调大。",
     "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。",
     "webSearchProvider": "联网搜索服务商。tavily/bocha 为托管服务（需 API Key、按次计费）；generic 走自建 SearXNG 或内部搜索服务（baseUrl 必填，通常无需密钥）。",

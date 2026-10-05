@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 定时任务执行日志查询（设置页「定时维护」面板）。
+ * 定时任务执行日志查询（设置页「定时任务」面板）。
  * <p>
  * 写入方是 {@link com.wenqu.ai.schedule.ScheduleCenter}（每次任务完成后落一行），
  * 本服务只做分页查询与面向界面的行裁剪——任务列表快照/手动触发直接走 ScheduleCenter，

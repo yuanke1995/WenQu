@@ -185,7 +185,7 @@ public class McpServerService {
         ApiKey key = plainKey.isEmpty() ? null : apiKeyService.verify(plainKey);
         if (key == null || key.getMcpEnabled() == null || key.getMcpEnabled() != 1) {
             log.warn("[MCP-SERVER] 平台级入口凭据无效或未授权 ip={}", clientIp(request));
-            return jsonError(HttpStatus.UNAUTHORIZED, "API Key 无效，或未授权访问 MCP 入口（需在 API Key 管理中开启）");
+            return jsonError(HttpStatus.UNAUTHORIZED, "API Key 无效，或未授权访问 MCP 入口（需在「API 密钥」中开启）");
         }
         WebMvcStatelessServerTransport transport = WebMvcStatelessServerTransport.builder()
                 .messageEndpoint(PLATFORM_ENDPOINT)

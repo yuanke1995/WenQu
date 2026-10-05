@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  * - 执行：任务体统一提交 ThreadPoolManager 线程池，慢任务不占用调度线程；
  *   上一轮未结束则本轮跳过（防重叠），失败只告警下轮重试；
  * - 可观测：每个任务带一句话说明与间隔配置键，运行统计（上次结果/耗时/下次预期）留在内存，
- *   每次执行完成后落一行 {@code c_ai_schedule_run}（设置页「定时维护」面板查看），并支持手动触发一次；
+ *   每次执行完成后落一行 {@code c_ai_schedule_run}（设置页「定时任务」面板查看），并支持手动触发一次；
  * - 放在 ApplicationReadyEvent：晚于 SchemaMigrator/所有 @PostConstruct，配置与表结构就绪。
  * 多副本：各副本独立调度，任务体需自身幂等（现有任务均满足）。
  *
@@ -399,7 +399,7 @@ public class ScheduleCenter {
     }
 
     /**
-     * 全量任务快照（设置页「定时维护」面板数据源）：注册元数据 + 实时间隔 + 内存运行统计。
+     * 全量任务快照（设置页「定时任务」面板数据源）：注册元数据 + 实时间隔 + 内存运行统计。
      * 时间均为 epoch 毫秒（前端格式化）；从未跑完的任务 lastFinishedAt=null。
      */
     public List<Map<String, Object>> snapshot() {

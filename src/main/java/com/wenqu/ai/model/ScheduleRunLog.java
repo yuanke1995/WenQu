@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 定时任务执行日志：{@link com.wenqu.ai.schedule.ScheduleCenter} 每次触发完成后落一行，
- * 供设置页「定时维护」面板查看任务运行历史（上次何时跑、跑了多久、成败原因）。
+ * 供设置页「定时任务」面板查看任务运行历史（上次何时跑、跑了多久、成败原因）。
  * <p>
  * 写入约定：<b>只在任务体结束后落行</b>（一次性 insert，不先插 running 再更新——
  * 高频扫描任务（如解析队列 5s 一轮）下双写纯浪费，"执行中"状态由 ScheduleCenter
