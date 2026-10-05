@@ -31,6 +31,14 @@
     <template v-else-if="field.type === 'number'">
       <a-input-number v-model:value="value" :min="field.min" :max="field.max" :step="field.step"
                       :style="{ width: (field.width || 200) + 'px' }" />
+      <!-- ms 类字段：常用值下拉（schema presets）+ 当前值的人类可读换算，免得对着 86400000 猜单位 -->
+      <template v-if="presetOptions.length">
+        <a-select class="num-presets" :value="presetPick" placeholder="常用"
+                  :style="{ width: '92px', marginLeft: '8px' }" @change="onPresetPick">
+          <a-select-option v-for="o in presetOptions" :key="o.value" :value="o.value">{{ o.label }}</a-select-option>
+        </a-select>
+        <span v-if="msHint" class="num-hint">= {{ msHint }}</span>
+      </template>
     </template>
 
     <template v-else-if="field.type === 'range'">
@@ -66,7 +74,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { FIELDS, isVisible } from '../configSchema'
 import ModelSelect from './ModelSelect.vue'
@@ -111,6 +119,35 @@ const tipText = computed(() => {
 // 条件显隐统一走 configSchema.isVisible（path / path=v1,v2 两种形态），blocksOf 过滤分节标题用的是同一份逻辑
 const visible = computed(() => isVisible(props.field, props.form))
 
+// ms 类字段的常用值下拉：schema 里 presets 为 [毫秒, 中文标签] 数组；选完即写回表单并复位占位
+const presetOptions = computed(() =>
+  (props.field.presets || []).map(([v, label]) => ({ value: v, label })))
+const presetPick = ref(undefined)
+const onPresetPick = v => {
+  if (v == null) return
+  value.value = v
+  presetPick.value = undefined
+}
+
+// 当前毫秒值的人类可读换算（如 86400000 → 1 天；只取两级防提示过长），0/空值不显示
+const msHint = computed(() => {
+  if (!presetOptions.value.length) return ''
+  const v = Number(read(props.form, props.field.path))
+  if (!Number.isFinite(v) || v <= 0) return ''
+  const units = [[86400000, '天'], [3600000, '小时'], [60000, '分钟'], [1000, '秒']]
+  let rest = v
+  const parts = []
+  for (const [u, name] of units) {
+    if (rest >= u) {
+      const c = Math.floor(rest / u)
+      parts.push(c + ' ' + name)
+      rest -= c * u
+    }
+  }
+  if (rest > 0) parts.push(rest + ' ms')
+  return parts.slice(0, 2).join(' ') || ''
+})
+
 // 枚举变更需要通知使用方（如切换关键词引擎要校验服务）
 const onSelectChange = v => emit('change', props.field, v)
 </script>
@@ -132,5 +169,12 @@ const onSelectChange = v => emit('change', props.field, v)
   border-radius: 50%;
   background: var(--app-warn);
   margin-right: 6px;
+}
+.num-presets { flex: none; }
+.num-hint {
+  font-size: 12px;
+  color: var(--app-text3);
+  margin-left: 8px;
+  white-space: nowrap;
 }
 </style>

@@ -240,7 +240,8 @@
       "step": 30000,
       "width": 200,
       "note": "SSE 超时截断并提示，默认 300000",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [1800000, "30 分钟"]]
     },
     {
       "backendKey": "chat.approvalTimeoutMs",
@@ -257,7 +258,8 @@
       "step": 15000,
       "width": 200,
       "note": "智能体开启执行确认后等待用户批准的上限，超时按拒绝",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [30000, "30 秒"], [60000, "1 分钟"], [120000, "2 分钟"], [300000, "5 分钟"]]
     },
     {
       "backendKey": "chat.maxImagesPerMessage",
@@ -320,7 +322,8 @@
       "min": 0,
       "width": 200,
       "note": "过期附件清理任务的运行间隔（0=暂停）",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [600000, "10 分钟"], [1800000, "30 分钟"], [3600000, "1 小时"], [86400000, "1 天"]]
     },
     {
       "backendKey": "chat.retrievalDebugEnabled",
@@ -412,7 +415,8 @@
       "step": 5000,
       "width": 200,
       "note": "单张图片描述的读取超时（客户端启动时构建，改动需重启生效）",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [10000, "10 秒"], [30000, "30 秒"], [60000, "1 分钟"]]
     },
     {
       "backendKey": "vision.retryCount",
@@ -849,7 +853,8 @@
       "width": 180,
       "note": "版面解析服务单次调用超时；大 PDF 版面解析慢，默认 600000=10 分钟",
       "tier": 2,
-      "vif": "parse.ocrEngine=pp_structure_v3,mineru"
+      "vif": "parse.ocrEngine=pp_structure_v3,mineru",
+      "presets": [ [60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [1200000, "20 分钟"]]
     },
     {
       "backendKey": "parse.childEnabled",
@@ -1074,9 +1079,18 @@
       "def": "off",
       "width": 340,
       "options": [
-        { "value": "off", "label": "off（关闭：一次性检索管线）" },
-        { "value": "high", "label": "high（深度思考高档及以上自动开启）" },
-        { "value": "always", "label": "always（全部知识问答轮次开启）" }
+        {
+          "value": "off",
+          "label": "off（关闭：一次性检索管线）"
+        },
+        {
+          "value": "high",
+          "label": "high（深度思考高档及以上自动开启）"
+        },
+        {
+          "value": "always",
+          "label": "always（全部知识问答轮次开启）"
+        }
       ],
       "note": "Agentic RAG · 自主多轮检索：模型自评首轮检索证据是否充分，不足时自主调用知识检索工具换关键词/换角度再检索，证据足够才作答（Deep Research 形态）；检索次数仍受「单轮工具步数上限」约束",
       "tier": 3
@@ -1131,7 +1145,8 @@
       "step": 500,
       "width": 200,
       "note": "混合检索总超时",
-      "tier": 2
+      "tier": 2,
+      "presets": [ [3000, "3 秒"], [5000, "5 秒"], [8000, "8 秒"], [15000, "15 秒"], [30000, "30 秒"]]
     },
     {
       "backendKey": "rerank.enabled",
@@ -1463,7 +1478,8 @@
       "step": 3600000,
       "width": 200,
       "note": "≤0 = 暂停清理，默认 86400000（每天）",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3600000, "1 小时"], [21600000, "6 小时"], [43200000, "12 小时"], [86400000, "1 天"], [259200000, "3 天"]]
     },
     {
       "backendKey": "images.chatRetentionMillis",
@@ -1480,7 +1496,8 @@
       "step": 86400000,
       "width": 220,
       "note": "默认 604800000（7 天），超期清理聊天上传图",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [86400000, "1 天"], [259200000, "3 天"], [604800000, "7 天"], [1296000000, "15 天"], [2592000000, "30 天"]]
     },
     {
       "backendKey": "skill.injectMaxChars",
@@ -1841,7 +1858,8 @@
       "width": 200,
       "note": "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）",
       "vif": "agent.enabled",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3000, "3 秒"], [5000, "5 秒"], [8000, "8 秒"], [15000, "15 秒"], [20000, "20 秒"]]
     },
     {
       "panel": "skills",
@@ -1890,7 +1908,8 @@
       "step": 3600000,
       "width": 220,
       "backendKey": "artifact.cleanupIntervalMs",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3600000, "1 小时"], [21600000, "6 小时"], [43200000, "12 小时"], [86400000, "1 天"], [259200000, "3 天"]]
     },
     {
       "panel": "maintenance",
@@ -1938,7 +1957,8 @@
       "width": 200,
       "note": "一轮问答的最长等待（含检索/深度思考）；超时记为该轮失败，会话里保留已产出的部分",
       "backendKey": "scheduled.timeoutMs",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [900000, "15 分钟"]]
     },
     {
       "panel": "maintenance",
@@ -1955,7 +1975,8 @@
       "width": 220,
       "note": "≤0=暂停扫描（等于临时停掉所有定时任务，但任务配置保留）",
       "backendKey": "scheduled.scanIntervalMs",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [10000, "10 秒"], [30000, "30 秒"], [60000, "1 分钟"], [300000, "5 分钟"]]
     },
     {
       "backendKey": "web.refreshEnabled",
@@ -1986,7 +2007,8 @@
       "step": 10000,
       "width": 220,
       "note": "≤0=暂停扫描；只需比 cron 精度更频繁地查库",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [30000, "30 秒"], [60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [1800000, "30 分钟"]]
     },
     {
       "backendKey": "oidc.enabled",
@@ -2428,7 +2450,8 @@
       "width": 180,
       "vif": "webSearch.enabled",
       "tier": 3,
-      "tips": "webSearchTimeoutMs"
+      "tips": "webSearchTimeoutMs",
+      "presets": [ [3000, "3 秒"], [5000, "5 秒"], [8000, "8 秒"], [15000, "15 秒"], [30000, "30 秒"]]
     },
     {
       "backendKey": "webSearch.snippetChars",
@@ -2644,7 +2667,8 @@
       "note": "≤0 = 暂停日志清理任务（日志会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3600000, "1 小时"], [43200000, "12 小时"], [86400000, "1 天"]]
     },
     {
       "backendKey": "workflow.maxSteps",
@@ -2698,7 +2722,8 @@
       "step": 30000,
       "width": 220,
       "note": "subagent 节点等待回答的上限（下限 30s）",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [60000, "1 分钟"], [180000, "3 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [1800000, "30 分钟"]]
     },
     {
       "backendKey": "workflow.runLogRetentionDays",
@@ -2733,7 +2758,8 @@
       "note": "≤0 = 暂停清理任务（运行记录会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3600000, "1 小时"], [43200000, "12 小时"], [86400000, "1 天"]]
     },
     {
       "backendKey": "workflow.scheduleScanIntervalMs",
@@ -2750,7 +2776,8 @@
       "step": 10000,
       "width": 220,
       "note": "≤0 = 暂停「工作流定时触发」任务（已配的定时工作流不再自动运行）",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [10000, "10 秒"], [30000, "30 秒"], [60000, "1 分钟"], [300000, "5 分钟"]]
     },
     {
       "backendKey": "workflow.maxConcurrentRuns",
@@ -2821,7 +2848,8 @@
       "note": "≤0 = 暂停清理任务（通知会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
-      "tier": 3
+      "tier": 3,
+      "presets": [ [3600000, "1 小时"], [43200000, "12 小时"], [86400000, "1 天"]]
     },
     {
       "backendKey": "mcp.server.enabled",
@@ -2972,7 +3000,8 @@
       "step": 500,
       "width": 140,
       "note": "扫描器探测待解析任务的频率，太小会加重数据库压力",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [1000, "1 秒"], [5000, "5 秒"], [10000, "10 秒"], [30000, "30 秒"], [60000, "1 分钟"]]
     },
     {
       "backendKey": "parse.taskTimeoutMs",
@@ -2989,7 +3018,8 @@
       "step": 60000,
       "width": 140,
       "note": "单个文档解析超时时间，超时按可重试失败处理并轮换下一个任务",
-      "tier": 3
+      "tier": 3,
+      "presets": [ [300000, "5 分钟"], [600000, "10 分钟"], [1200000, "20 分钟"], [1800000, "30 分钟"]]
     },
     {
       "backendKey": "parse.taskLeaseSeconds",
