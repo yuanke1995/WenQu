@@ -70,10 +70,22 @@ public class ParseQueueService {
     private final DocumentService documentService;
     /** 文档行只读（解析终态通知取归属人/文件名/块数）：mapper 无状态，直接注入不参与构造环 */
     private final AiDocumentMapper aiDocumentMapper;
+    /** 知识库行只读（批量失败告警取库归属人）：mapper 无状态，直接注入 */
+    private final com.wenqu.ai.mapper.KnowledgeBaseMapper knowledgeBaseMapper;
     /** 站内通知：解析终态（成功/终态失败）的用户可感知面。旁路语义，落库失败不影响解析收口 */
     private final NotificationService notificationService;
     /** 配置变更时（parse.embedConcurrency）按需增减许可 */
     private final Gate embedGate;
+
+    /** 批量失败告警阈值：同库窗口内终态失败达到该数即告警一次 */
+    private static final int BATCH_ALERT_THRESHOLD = 5;
+    /** 批量失败告警窗口（毫秒） */
+    private static final long BATCH_ALERT_WINDOW_MS = 10 * 60_000L;
+    /**
+     * 同库终态失败滑动窗口（kbId → 失败时刻队列）：达到阈值告警一次后清零重计，
+     * 同一波故障只轰炸一条通知。内存态即可（故障窗口远小于进程生命周期；多副本各告警一条可接受）。
+     */
+    private final Map<String, java.util.concurrent.ConcurrentLinkedDeque<Long>> batchFailures = new ConcurrentHashMap<>();
 
     /** worker 池：并发即 parse.concurrency，队列只做提交缓冲（队列满走 CallerRuns，绝不丢任务） */
     private volatile ThreadPoolExecutor parseExecutor;
@@ -89,11 +101,14 @@ public class ParseQueueService {
 
     public ParseQueueService(ParseTaskMapper parseTaskMapper, ConfigService configService,
                              @org.springframework.context.annotation.Lazy DocumentService documentService,
-                             AiDocumentMapper aiDocumentMapper, NotificationService notificationService) {
+                             AiDocumentMapper aiDocumentMapper,
+                             com.wenqu.ai.mapper.KnowledgeBaseMapper knowledgeBaseMapper,
+                             NotificationService notificationService) {
         this.parseTaskMapper = parseTaskMapper;
         this.configService = configService;
         this.documentService = documentService;
         this.aiDocumentMapper = aiDocumentMapper;
+        this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.notificationService = notificationService;
         this.embedGate = new Gate(Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY)));
     }
@@ -228,9 +243,40 @@ public class ParseQueueService {
                         "文档「" + doc.getFileName() + "」解析失败",
                         error + "（重试已达上限或为不可重试错误；可在文档管理中重新解析）",
                         "kb", doc.getKbId());
+                maybeAlertBatchFailure(doc);
             }
         } catch (Exception e) {
             log.warn("[PARSE-QUEUE] 解析终态通知组装失败（不影响收口）doc={}: {}", docId, e.getMessage());
+        }
+    }
+
+    /**
+     * 同库批量解析失败告警：滑动窗口内终态失败达到 {@value #BATCH_ALERT_THRESHOLD} 个即给库归属人
+     * 发一条汇总告警（单文档失败已有逐条通知，这里是"这个库在批量出问题"的聚合面——
+     * 上游解析服务/embedding 网关挂掉时逐条通知会把铃铛刷满）。告警一次后窗口清零重计。
+     * 旁路语义：任何异常只记 WARN，不影响解析收口。
+     */
+    private void maybeAlertBatchFailure(AiDocument doc) {
+        try {
+            String kbId = doc.getKbId();
+            if (kbId == null || kbId.isBlank()) return;
+            long now = System.currentTimeMillis();
+            var window = batchFailures.computeIfAbsent(kbId, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+            window.addLast(now);
+            while (!window.isEmpty() && now - window.peekFirst() > BATCH_ALERT_WINDOW_MS) window.pollFirst();
+            if (window.size() < BATCH_ALERT_THRESHOLD) return;
+            window.clear();
+            var kb = knowledgeBaseMapper.selectById(kbId);
+            if (kb == null || kb.getCreatedBy() == null) return;
+            notificationService.create(kb.getCreatedBy(), Notification.TYPE_PARSE_BATCH_FAILED,
+                    "知识库「" + kb.getName() + "」批量解析失败",
+                    "近 " + (BATCH_ALERT_WINDOW_MS / 60_000) + " 分钟内有 " + BATCH_ALERT_THRESHOLD
+                            + " 个以上文档解析终态失败（最近一次：文档「" + doc.getFileName()
+                            + "」），疑似解析/向量化服务异常，请检查解析服务状态。",
+                    "kb", kbId);
+            log.warn("[PARSE-QUEUE] 批量失败告警 kb={}（窗口内失败达 {} 个）", kbId, BATCH_ALERT_THRESHOLD);
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 批量失败告警组装失败（不影响收口）doc={}: {}", doc.getId(), e.getMessage());
         }
     }
 

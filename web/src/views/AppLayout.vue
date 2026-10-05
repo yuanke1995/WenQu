@@ -527,8 +527,9 @@ const doLogout = async () => {
 }
 
 // ==================== 站内通知（铃铛）：未读数 30s 轮询，点开拉列表 ====================
-// 后端触发面：解析终态（成功/终态失败）、工作流失败/超时/挂起待审核（非 manual 的失败才通知——
-// manual 的发起人正在画布前看 SSE 实时进度）、网页源自动刷新失败。接收人=资源归属人。
+// 后端触发面：解析终态（成功/终态失败/同库批量失败）、工作流失败/超时/挂起待审核（非 manual 的
+// 失败才通知——manual 的发起人正在画布前看 SSE 实时进度）、网页源自动刷新失败、定时任务终态
+// （完成/失败）、检索评估下滑预警（管理员）、工具审批待决。接收人=资源归属人（平台预警=管理员）。
 const notifOpen = ref(false)
 const notifLoading = ref(false)
 const notifItems = ref([])
@@ -539,18 +540,28 @@ let notifTimer = null
 const NOTIF_ICONS = {
   'parse.done': CheckCircleFilled,
   'parse.failed': CloseCircleFilled,
+  'parse.batch.failed': CloseCircleFilled,
   'workflow.failed': CloseCircleFilled,
   'workflow.timeout': ExclamationCircleFilled,
   'workflow.approval': ExclamationCircleFilled,
-  'web.refresh.failed': CloseCircleFilled
+  'web.refresh.failed': CloseCircleFilled,
+  'schedule.done': CheckCircleFilled,
+  'schedule.failed': CloseCircleFilled,
+  'eval.decline': ExclamationCircleFilled,
+  'tool.approval': ExclamationCircleFilled
 }
 const NOTIF_TONES = {
   'parse.done': 'ok',
   'parse.failed': 'err',
+  'parse.batch.failed': 'err',
   'workflow.failed': 'err',
   'workflow.timeout': 'warn',
   'workflow.approval': 'warn',
-  'web.refresh.failed': 'err'
+  'web.refresh.failed': 'err',
+  'schedule.done': 'ok',
+  'schedule.failed': 'err',
+  'eval.decline': 'warn',
+  'tool.approval': 'warn'
 }
 const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
 const notifClass = t => NOTIF_TONES[t] || ''
@@ -599,6 +610,7 @@ const openNotif = async n => {
   }
   if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
   else if (n.refType === 'workflow' && n.refId) router.push({ path: '/agents', query: { tab: 'workflow' } })
+  else if (n.refType === 'session' && n.refId) goChat({ path: '/chat', query: { sid: n.refId } })
   notifOpen.value = false
 }
 

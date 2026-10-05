@@ -322,6 +322,8 @@ public class RagService {
     private final com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper;
     /** @ 引用：被引文档的块直接前置进上下文（不经检索，不参与相关性门） */
     private final com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper;
+    /** 站内通知：工具审批待决（tool.approval）通知发起人。旁路语义 */
+    private final NotificationService notificationService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
     private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -403,7 +405,8 @@ public class RagService {
                       UserConfigService userConfigService,
                       org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
                       com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
-                      com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper) {
+                      com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
+                      NotificationService notificationService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -437,6 +440,7 @@ public class RagService {
         this.modelRegistryService = modelRegistryService;
         this.toolApprovalMapper = toolApprovalMapper;
         this.knowledgeMapper = knowledgeMapper;
+        this.notificationService = notificationService;
     }
 
     /**
@@ -1788,6 +1792,12 @@ public class RagService {
                                 log.warn("[TOOL] 审批记录落库失败（不阻塞审批流程）: {}", e.getMessage());
                             }
                             PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
+                            // 审批待决站内通知（旁路）：SSE 只能触达正开着这个会话页的人，人不在页面时
+                            // 铃铛是唯一可感知面。超时/裁决后通知不撤（留在列表里作审计痕迹，点了即已读）。
+                            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
+                                    "工具执行待确认：" + name,
+                                    "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
+                                    "session", st.sessionId);
                             try {
                                 Map<String, Object> req = new LinkedHashMap<>();
                                 req.put("approvalId", approvalId);

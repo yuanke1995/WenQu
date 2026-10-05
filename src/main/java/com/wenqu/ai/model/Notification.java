@@ -64,4 +64,14 @@ public class Notification {
     public static final String TYPE_WORKFLOW_APPROVAL = "workflow.approval";
     /** 网页源自动刷新失败 */
     public static final String TYPE_WEB_REFRESH_FAILED = "web.refresh.failed";
+    /** 定时任务（用户自建的定时智能体任务）执行完成 */
+    public static final String TYPE_SCHEDULE_DONE = "schedule.done";
+    /** 定时任务（用户自建的定时智能体任务）执行失败 */
+    public static final String TYPE_SCHEDULE_FAILED = "schedule.failed";
+    /** 检索评估自动体检下滑预警（收件人为管理员级账号） */
+    public static final String TYPE_EVAL_DECLINE = "eval.decline";
+    /** 工具执行审批待决（ask 模式的有副作用工具挂起等人确认） */
+    public static final String TYPE_TOOL_APPROVAL = "tool.approval";
+    /** 知识库批量解析失败告警（同库短窗内多个文档终态失败，收件人为库归属人） */
+    public static final String TYPE_PARSE_BATCH_FAILED = "parse.batch.failed";
 }

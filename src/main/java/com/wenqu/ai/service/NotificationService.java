@@ -36,6 +36,10 @@ public class NotificationService {
 
     private final NotificationMapper notificationMapper;
     private final ConfigService configService;
+    /** 管理员判定（eval.decline 这类平台级预警的收件人范围） */
+    private final RoleService roleService;
+    /** 用户表（createForAdmins 解析管理员级账号清单） */
+    private final com.wenqu.ai.mapper.UserMapper userMapper;
 
     /** 列表单次上限（防止一次拉爆；前端铃铛面板一屏足够） */
     private static final int LIST_MAX_LIMIT = 200;
@@ -70,6 +74,26 @@ public class NotificationService {
         } catch (Exception e) {
             log.warn("[NOTIFY] 通知落库失败（不影响主链路）type={} uid={} title={} err={}",
                     type, uid, title, e.getMessage());
+        }
+    }
+
+    /**
+     * 给全部管理员级账号各发一条平台级预警（eval.decline 等：事件没有单一归属人，责任面是管理员）。
+     * 同样是旁路语义：解析收件人失败/无管理员时静默跳过，绝不上抛。
+     */
+    public void createForAdmins(String type, String title, String content, String refType, String refId) {
+        try {
+            List<String> codes = roleService.adminCodes();
+            if (codes.isEmpty()) return;
+            List<com.wenqu.ai.model.User> admins = userMapper.selectList(
+                    new LambdaQueryWrapper<com.wenqu.ai.model.User>().in(com.wenqu.ai.model.User::getRole, codes));
+            for (com.wenqu.ai.model.User u : admins) {
+                if (u.getStatus() == null || u.getStatus() == 1) {
+                    create(u.getUid(), type, title, content, refType, refId);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[NOTIFY] 管理员通知组装失败（不影响主链路）type={} title={} err={}", type, title, e.getMessage());
         }
     }
 

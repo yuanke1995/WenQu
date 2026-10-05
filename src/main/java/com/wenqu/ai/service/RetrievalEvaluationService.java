@@ -14,6 +14,7 @@ import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.AiDocument;
 import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.model.Message;
+import com.wenqu.ai.model.Notification;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
@@ -93,6 +94,8 @@ public class RetrievalEvaluationService {
     private final UserMapper userMapper;
     private final AppProperties properties;
     private final ChatClient chatClient;
+    /** 站内通知：自动体检下滑预警（eval.decline）广播给管理员级账号。旁路语义 */
+    private final NotificationService notificationService;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -105,7 +108,8 @@ public class RetrievalEvaluationService {
                                       KeywordExtractor keywordExtractor, RerankService rerankService,
                                       MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
                                       AiDocumentMapper documentMapper, UserMapper userMapper,
-                                      AppProperties properties, ChatClient chatClient) {
+                                      AppProperties properties, ChatClient chatClient,
+                                      NotificationService notificationService) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -116,6 +120,7 @@ public class RetrievalEvaluationService {
         this.userMapper = userMapper;
         this.properties = properties;
         this.chatClient = chatClient;
+        this.notificationService = notificationService;
     }
 
     @jakarta.annotation.PreDestroy
@@ -640,6 +645,14 @@ public class RetrievalEvaluationService {
         }
         report.put("elapsedMs", System.currentTimeMillis() - start);
         configService.putInternal("eval.lastReport", JSON.toJSONString(report));
+        // 下滑预警：广播给管理员级账号（体检无人值守跑，红黄灯不在眼前——通知是可感知面；
+        // 旁路调用，create/createForAdmins 内部已全捕获，失败不影响体检收口）
+        if ("decline".equals(report.get("status"))) {
+            notificationService.createForAdmins(Notification.TYPE_EVAL_DECLINE,
+                    "检索质量下滑预警",
+                    String.valueOf(report.get("message")) + "。请前往「检索评估」页查看报告详情。",
+                    null, null);
+        }
         log.info("[Eval] 自动体检完成: status={}, caseCount={}, elapsed={}ms",
                 report.get("status"), report.get("caseCount"), report.get("elapsedMs"));
         return report;

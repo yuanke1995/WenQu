@@ -7,6 +7,7 @@ import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.ScheduledJobMapper;
 import com.wenqu.ai.mapper.ScheduledRunMapper;
 import com.wenqu.ai.model.Agent;
+import com.wenqu.ai.model.Notification;
 import com.wenqu.ai.model.ScheduledJob;
 import com.wenqu.ai.model.ScheduledRun;
 import com.wenqu.ai.thread.ThreadPoolManager;
@@ -73,19 +74,23 @@ public class ScheduledJobService {
     private final RagService ragService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
+    /** 站内通知：定时任务终态（完成/失败）通知归属人。旁路语义，create 内部已全捕获 */
+    private final NotificationService notificationService;
 
     /** 正在执行的任务 id（防同一任务上轮未跑完又被触发；单实例内有效） */
     private final Set<String> runningJobs = ConcurrentHashMap.newKeySet();
 
     public ScheduledJobService(ScheduledJobMapper jobMapper, ScheduledRunMapper runMapper,
                                ConfigService configService, RagService ragService,
-                               SessionService sessionService, AgentMapper agentMapper) {
+                               SessionService sessionService, AgentMapper agentMapper,
+                               NotificationService notificationService) {
         this.jobMapper = jobMapper;
         this.runMapper = runMapper;
         this.configService = configService;
         this.ragService = ragService;
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
+        this.notificationService = notificationService;
     }
 
     // ==================== CRUD ====================
@@ -278,8 +283,30 @@ public class ScheduledJobService {
             runMapper.updateById(run);
             job.setLastRunAt(run.getStartedAt());
             jobMapper.updateById(job);
+            notifyRunOutcome(job, run);
             log.info("[SCHEDULED] 任务「{}」执行结束：status={} 用时={}ms session={}",
                     job.getName(), run.getStatus(), System.currentTimeMillis() - t0, run.getSessionId());
+        }
+    }
+
+    /**
+     * 终态站内通知（对齐 notifyRunOutcome 模式；create 旁路语义，失败不影响收口）：
+     * 执行全程在后台线程，归属人不在现场——成功告知「结果已就绪」（答案在结果会话里），
+     * 失败告知原因。skipped 是「上轮还在跑」的过程说明，落了执行记录即可，不发通知。
+     */
+    private void notifyRunOutcome(ScheduledJob job, ScheduledRun run) {
+        String status = run.getStatus();
+        String sid = run.getSessionId();
+        if ("succeeded".equals(status)) {
+            notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_DONE,
+                    "定时任务「" + job.getName() + "」执行完成",
+                    "本轮结果已写入结果会话，点击查看。",
+                    sid == null ? null : "session", sid);
+        } else if ("failed".equals(status)) {
+            notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_FAILED,
+                    "定时任务「" + job.getName() + "」执行失败",
+                    run.getError() == null ? "执行异常，详情见执行历史。" : run.getError(),
+                    sid == null ? null : "session", sid);
         }
     }
 
