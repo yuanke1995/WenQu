@@ -41,6 +41,23 @@ public class AgentService {
     /** 内置「问渠」智能体的固定名称（产品身份的一部分，不可修改） */
     public static final String BUILTIN_NAME = "问渠";
 
+    /**
+     * 内置「问渠」播种时写入的系统提示词。
+     * <p>此前播种只写名称/描述/标记，{@code system_prompt} 留空 → 全新环境启动后，
+     * 管理员在智能体配置页看到的是空框，且运行时回落 {@code AppProperties.systemPrompt}
+     *（yml/env 兜底、不在配置页露出、不可编辑），等于产品自带的主助手没有任何人设。
+     * 与 {@link AppProperties#systemPrompt} 的区别：这里是<b>可编辑的默认值</b>，
+     * 管理员改后即以本行为准；留空才回落全局兜底。
+     */
+    public static final String BUILTIN_SYSTEM_PROMPT =
+            "你是「问渠」智能体工作台的主助手，负责结合知识库回答用户问题。\n\n"
+            + "回答原则：\n"
+            + "1. 先查后答：涉及业务知识、文档内容的问题，优先使用知识检索工具，基于检索到的资料回答，并按要求标注引用来源。\n"
+            + "2. 不编造：检索结果没有覆盖的，直接说明资料中未提及；不确定的明说不确定，绝不臆造细节。\n"
+            + "3. 通用问题（常识、写作、代码等）可直接回答，不必强行检索。\n"
+            + "4. 结构清晰：先给结论，再给依据；内容多时用短段落或列表，不用客套话开场。\n"
+            + "5. 默认使用简体中文，专业术语首次出现时给出全称。";
+
     private final AgentMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
@@ -77,6 +94,7 @@ public class AgentService {
             seed.setName(BUILTIN_NAME);
             seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
             seed.setIsBuiltin(1);
+            seed.setSystemPrompt(BUILTIN_SYSTEM_PROMPT);
             clearDefault();
             seed.setIsDefault(1);
             seed.setCreatedBy("system");
