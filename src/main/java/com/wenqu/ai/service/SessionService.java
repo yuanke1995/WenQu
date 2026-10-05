@@ -80,6 +80,61 @@ public class SessionService {
     }
 
     /**
+     * 「新建对话」入口：先复用当前用户已存在的空会话（无消息、未绑定智能体、未置顶），没有才真正新建。
+     * <p>
+     * 空会话数量恒定为 1（前端侧栏本就隐藏空会话，堆积的空会话不出现在界面上，只会在游标分页里
+     * 挤占真实会话的名额——首屏 20 条里大半是空会话时，侧栏首屏看起来就只剩几条）。
+     * 复用条件与前端 useChatEngine 的本地复用口径一致：未绑定智能体的空会话才复用（已绑定的带着
+     * 自己的绑定，复用会让「切换智能体」看起来没生效）。定时任务 / 工作流 / MCP 建会话走
+     * createSession，不参与复用——它们的会话有各自语义，不该占用用户待用的空会话。
+     * <p>
+     * 并发：两次「新建对话」同时进来会各自查不到空会话、各建一个，故按用户加短锁；
+     * 抢不到锁时稍等再查一次（持锁方已落库即可命中复用）。
+     */
+    public String createOrReuseEmptySession(String userId) {
+        final String uid = normalizeUser(userId);
+        final String lockKey = KEY_PREFIX + "empty-lock:" + uid;
+        Boolean locked = null;
+        try {
+            locked = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", 5, TimeUnit.SECONDS);
+            if (!Boolean.TRUE.equals(locked)) {
+                // 并发点击：等持锁方写完再查，避免两边都扑空各建一个
+                Thread.sleep(150);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            // 加锁失败不阻断建会话（Redis 抖动不该让「新建对话」失败），退化为无锁查询
+            log.warn("空会话复用加锁失败: {}", e.getMessage());
+        }
+        try {
+            Session empty = findEmptySession(uid);
+            return empty != null ? empty.getId() : createSession(uid);
+        } finally {
+            if (Boolean.TRUE.equals(locked)) {
+                try {
+                    redisTemplate.delete(lockKey);
+                } catch (Exception e) {
+                    log.warn("空会话复用锁释放失败: {}", e.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 取当前用户可复用的空会话（无消息、未绑定智能体、未置顶；取最近更新的那条） */
+    private Session findEmptySession(String uid) {
+        LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
+        q.eq(Session::getUserId, uid)
+                .eq(Session::getMessageCount, 0)
+                .isNull(Session::getAgentId)
+                .and(w -> w.isNull(Session::getIsPinned).or().ne(Session::getIsPinned, 1))
+                .orderByDesc(Session::getUpdateTime)
+                .last("LIMIT 1");
+        List<Session> rows = sessionMapper.selectList(q);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
      * 归属校验：会话不存在抛 404；存在但不属于该用户则抛 403。
      * anonymous 名下的存量会话仅未登录（anonymous）调用方可访问；登录用户一律严格隔离，
      * 不允许读取他人（含历史匿名）会话。

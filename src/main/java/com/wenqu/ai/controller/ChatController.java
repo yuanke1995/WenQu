@@ -450,10 +450,10 @@ public class ChatController {
         return ResultJson.ok(Map.of("deleted", deleted));
     }
 
-    @Operation(summary = "新建会话", description = "创建一个新的对话会话（归属当前用户），返回会话 ID")
+    @Operation(summary = "新建会话", description = "取一个空白会话供「新建对话」使用：优先复用当前用户已有的空会话（空会话恒为 1 条），没有才新建；返回会话 ID")
     @PostMapping("/session/new")
     public ResultJson newSession(HttpServletRequest httpRequest) {
-        return ResultJson.ok(Map.of("sessionId", sessionService.createSession(RequestUser.uid())));
+        return ResultJson.ok(Map.of("sessionId", sessionService.createOrReuseEmptySession(RequestUser.uid())));
     }
 
     @Operation(summary = "知识块详情", description = "获取指定知识块的全文内容（引用溯源：弹窗展示来源知识块全文与图片）")
