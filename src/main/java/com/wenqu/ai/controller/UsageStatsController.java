@@ -34,7 +34,8 @@ public class UsageStatsController {
                     + "heatmap=近365天稀疏日清单；trend/models=时间范围内每日×模型趋势与模型占比")
     @GetMapping("/stats/usage")
     public ResultJson<Map<String, Object>> usage(
-            @Parameter(description = "趋势与模型占比的时间范围（天）：7 或 30") @RequestParam(defaultValue = "30") Integer range) {
+            @Parameter(description = "趋势与模型占比的时间范围（天）：7 或 30")
+            @RequestParam(value = "range", defaultValue = "30") Integer range) {
         String uid = RequestUser.uid();
         if (RequestUser.ANONYMOUS.equals(uid)) {
             return ResultJson.ok(UsageStatsService.empty());
