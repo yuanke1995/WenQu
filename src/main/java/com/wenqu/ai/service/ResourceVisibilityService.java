@@ -128,6 +128,18 @@ public class ResourceVisibilityService {
         }
     }
 
+    /**
+     * 供「ACL 下推」侧只读解析 share_config（{@link DocumentAclTags} 烘焙标签时用）。
+     * <p><b>刻意复用本类的解析口径而不让调用方各自反序列化</b>：同一份 share_config 的解读
+     * 必须只有一处实现，否则「写入侧烘焙的标签」与「读取侧判定的权限」会出现口径漂移——
+     * 前者按global 放行、后者按 user 拒绝这类偏差会让权限静默失效。
+     *
+     * @return 解析结果；空白/非法 JSON 返回 {@code null}（调用方按「未配置」处理）
+     */
+    public ShareConfig parseForTagCompile(String shareConfigJson) {
+        return parse(shareConfigJson);
+    }
+
     /** scope 是否命中该用户（scope 为 null ＝未声明 ＝不命中任何人） */
     private static boolean scopeMatches(Principal p, Scope s) {
         if (s == null) return false;

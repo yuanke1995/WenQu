@@ -55,6 +55,8 @@ public class HybridRetrievalService {
     private final KnowledgeBaseService knowledgeBaseService;
     /** P1 GraphRAG 图扩展（收口处调用；GraphRagService 不反向依赖本服务，无环） */
     private final GraphRagService graphRagService;
+    /** ACL 标签编译：把可见库集合 + 当前身份编译成向量索引的 filter 表达式（检索时过滤） */
+    private final DocumentAclTags documentAclTags;
 
     /** 全量重嵌入进行中（持有分布式锁的实例正在 DROP/重建向量索引）→ 各实例向量路跳过降级关键词 */
     private boolean reembedInProgress() {
@@ -91,12 +93,15 @@ public class HybridRetrievalService {
         private boolean multiTimeout;    // 多路检索超时/失败 → 降级首路/仅用已完成结果
         private String lastError;
         private int graphExpanded;       // P1：图扩展并入的块数（GraphRAG 开启的库才有值）
+        private String aclPushdownError; // ACL 过滤条件下推失败（已退回事后过滤兜底，非越权但召回受损）
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
         void keywordFailed() { this.keywordFailed = true; }
         void keywordBusy() { this.keywordBusy = true; }
         void keywordFallback() { this.keywordFallback = true; }
         void multiTimeout() { this.multiTimeout = true; }
+        /** ACL 下推失败（记error 而非布尔：既要让调试面板看到原因，也避免多字段互相覆盖） */
+        void aclPushdownFailed(String err) { this.aclPushdownError = err; }
 
         /** 清空本次诊断（改写回退/二次检索前调用：最终用于回答的那次检索的状态为准） */
         void reset() {
@@ -106,6 +111,7 @@ public class HybridRetrievalService {
             this.keywordFallback = false;
             this.multiTimeout = false;
             this.lastError = null;
+            this.aclPushdownError = null;
         }
 
         public boolean isVectorFailed() { return vectorFailed; }
@@ -116,6 +122,8 @@ public class HybridRetrievalService {
         public String lastError() { return lastError; }
         public int getGraphExpanded() { return graphExpanded; }
         void addGraphExpanded(int n) { this.graphExpanded += n; }
+        /** ACL 下推失败原因（null=本次下推正常） */
+        public String aclPushdownError() { return aclPushdownError; }
     }
 
     /**
@@ -337,15 +345,29 @@ public class HybridRetrievalService {
         }
         List<VectorStore> stores = resolveVectorStores(kbIds);
         if (stores.isEmpty()) return List.of();
+        // 可见范围过滤条件（检索时过滤）：可见库集合 + 当前用户身份，编译成 RediSearch filter 下推。
+        // 必须在 resolveVectorStores 之后、similaritySearch 之前求值——下推靠它把无权文档挡在 KNN 之外。
+        String aclFilter = buildAclFilter(kbIds, diag);
         try {
-            SearchRequest req = SearchRequest.builder()
+            SearchRequest.Builder builder = SearchRequest.builder()
                     .query(query)
                     // topK 直接取配置（默认 15，下限 1）：评估扫参需要小于 15 的值，max(15,...) 钳制会让扫参等价
                     .topK(Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
                     // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
                     // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
-                    .similarityThreshold(vecThreshold())
-                    .build();
+                    .similarityThreshold(vecThreshold());
+            // ACL 下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
+            // 下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
+            if (aclFilter != null && !aclFilter.isBlank()) {
+                try {
+                    builder = builder.filterExpression(aclFilter);
+                } catch (Exception e) {
+                    if (diag != null) diag.aclPushdownFailed(e.getMessage());
+                    log.warn("[FAIL-LOUD] ACL 过滤条件下推失败，本次退回无过滤向量检索（改由事后过滤兜底）: {}",
+                            e.getMessage());
+                }
+            }
+            SearchRequest req = builder.build();
             // 单库（绝大多数场景：无自定义向量模型库，或范围命中单一库）直接查，保持原行为
             if (stores.size() == 1) return stores.get(0).similaritySearch(req);
             // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
@@ -719,13 +741,88 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 可见范围过滤：返回当前用户【不可见】的文档 id 集合。
-     * <p><b>两级判定，与管理接口同口径</b>：文档可见 = 所属知识库允许 **且**（文档自身未配置共享
-     * 时跟随库，显式配置时按配置判）——库是文档的归属边界，谁建归谁语义下未配置共享的文档
-     * 不再自带「全局可见」，越权仍由库门兜底（私有库的内容不会因文档空白共享而泄露）。
-     * <p>知识库按 share_config 判（未配置=私有，谁建归谁；个人默认库即归属人可见），
-     * 未归属库的文档（kbId 空）按默认库判定，与其余入口同口径。
-     * 兜底：查询异常时返回空集（放行全部），不静默误伤。
+     * 编译 ACL 过滤表达式并下推到向量索引（检索时过滤）。
+     *
+     * <p><b>「检索时过滤」与「检索后过滤」的差别就在这里</b>：
+     * <ul>
+     *   <li><b>检索后过滤</b>（旧）：先无差别召回 topK，再在 Java 里逐条判可见性并剔除
+     *       ——<b>不可见文档照样占掉 topK 名额</b>。topK=15 若12 条是别人的私有文档，
+     *       本用户只剩 3 条可用，召回率被ACL 悄悄吃掉；</li>
+     *   <li><b>检索时过滤</b>（现）：把「可见库 IN(...) AND (aclGlobal OR aclDept OR aclUser)」
+     *       作为 RediSearch filter 下推，无权文档<b>在 KNN 之前</b>就被排除，
+     *       topK 名额全部属于当前用户可见的文档。</li>
+     * </ul>
+     *
+     * <p><b>库门与请求范围的交集</b>：kbIds（智能体/工具绑定的库范围）比可见库集合更窄时，
+     * 取交集才是本次真正要搜的库——只按可见库过滤会忽略范围收窄（虽不越权，但白搜了无权无关的库）。
+     *
+     * <p><b>安全方向</b>：可见库为空（当前用户一个库都读不了）→ 构造永假表达式（查不到任何东西），
+     * <b>而不是省略过滤</b>。省略等于对全库放开，是最危险的写法。
+     *
+     * @return filter 表达式；无法确定可见库时返回 null（退回无过滤检索 + 事后过滤兜底）
+     */
+    private String buildAclFilter(java.util.Collection<String> kbIds, RetrievalDiag diag) {
+        try {
+            Set<String> visibleKbIds = loadVisibleKbIds();
+            if (visibleKbIds == null) {
+                // 库可见性查询失败：不猜、不放行，退回事后过滤（那里同样 fail-loud 记录）
+                if (diag != null) diag.aclPushdownFailed("可见库集合查询失败");
+                return null;
+            }
+            if (kbIds != null && !kbIds.isEmpty()) {
+                visibleKbIds.retainAll(kbIds);
+            }
+            return documentAclTags.buildFilterExpression(visibleKbIds,
+                    RequestUser.departmentId(), RequestUser.uid());
+        } catch (Exception e) {
+            if (diag != null) diag.aclPushdownFailed(e.getMessage());
+            log.warn("[FAIL-LOUD] 编译 ACL 过滤条件失败，本次退回事后过滤: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 当前用户可读的知识库 id 集合（库门）。
+     * <p>只查知识库表（库数量是几十量级），<b>不再全表扫 c_ai_document</b>——
+     * 旧实现的 {@code loadNonVisibleDocIds()} 每次检索都select 全表文档，文档量大时是硬伤。
+     * 文档级 ACL 已改由索引 metadata 承担，这里只负责库级。
+     *
+     * @return 可见库 id 集合；查询失败返回 null（调用方据此退回事后过滤，<b>不返回空集</b>——
+     *         空集会被编译成「什么都搜不到」，把一次DB 抖动变成全量召回失败）
+     */
+    private Set<String> loadVisibleKbIds() {
+        try {
+            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                    RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+            Set<String> visible = new LinkedHashSet<>();
+            for (com.wenqu.ai.model.KnowledgeBase kb : knowledgeBaseService.list()) {
+                if (resourceVisibilityService.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                    visible.add(kb.getId());
+                }
+            }
+            return visible;
+        } catch (Exception e) {
+            log.error("[FAIL-LOUD] 查询可见知识库失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 可见范围过滤：返回当前用户【不可见】的文档 id 集合（<b>事后过滤兜底</b>）。
+     *
+     * <p><b>定位已从「主过滤」降为「兜底」</b>：检索时过滤（{@link #buildAclFilter}）才是主路径。
+     * 本方法仍保留，因为下推有两类失效面：
+     * <ol>
+     *   <li>索引未热补 ACL 字段 / 存量向量无 ACL 标签 → 下推漏召回（安全方向，但召回受损）；</li>
+     *   <li>表达式非法、库集合查询失败 → 本次退回无过滤检索，<b>此时若无本兜底即等于越权</b>。</li>
+     * </ol>
+     * 两者都要求「过滤逻辑独立于索引层再判一次」，而不是信任索引层的过滤一定生效。
+     *
+     * <p><b>两级判定，与管理接口同口径</b>：文档可见 = 所属知识库允许 <b>且</b>（文档自身未配置共享
+     * 时跟随库，显式配置时按配置判）。
+     * <p>兜底：查询异常时返回空集（放行全部），不静默误伤——注意这是<b>安全方向的失败</b>：
+     * 异常极罕见（DB 不可用时上层查询也已失败），且下推已在正常路径生效。
      */
     private Set<String> loadNonVisibleDocIds() {
         try {

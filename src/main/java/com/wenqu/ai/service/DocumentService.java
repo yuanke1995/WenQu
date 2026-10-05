@@ -86,6 +86,8 @@ public class DocumentService {
     private final KnowledgeBaseService kbService;
     private final AppProperties properties;
     private final DocumentMetaCache documentMetaCache;
+    /** ACL 标签烘焙：写向量时把文档共享范围编成索引 metadata，供检索期下推过滤 */
+    private final DocumentAclTags documentAclTags;
     private final com.wenqu.ai.mapper.QaLogMapper qaLogMapper;
     private final List<DocumentParser> parsers;
     private final ConfigService configService;
@@ -671,6 +673,7 @@ public class DocumentService {
             if (k.getImages() != null) {
                 metadata.put("images", k.getImages());
             }
+            documentAclTags.enrichByDocId(metadata, null, k.getDocId(), null);
             storeOf(k.getDocId()).add(List.of(new Document(k.getId(),
                     buildEmbedText(k.getTitle(), k.getTitlePath(), content, null), metadata)));
             k.setVectorId(k.getId());
@@ -771,25 +774,30 @@ public class DocumentService {
         int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", ConfigDefaults.PARSE_EMBED_RETRY_COUNT));
         int done = 0;
         int failed = 0;
-        for (int i = 0; i < rows.size(); i += batchSize) {
-            List<Knowledge> batch = rows.subList(i, Math.min(i + batchSize, rows.size()));
-            List<org.springframework.ai.document.Document> docs = new ArrayList<>(batch.size());
-            for (Knowledge k : batch) {
-                Map<String, Object> metadata = new HashMap<>();
-                if (k.getDocId() != null) metadata.put("docId", k.getDocId());
-                metadata.put("title", k.getTitle() == null ? "" : k.getTitle());
-                metadata.put("knowledgeId", k.getId());
-                if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) metadata.put("titlePath", k.getTitlePath());
-                if (k.getImages() != null) metadata.put("images", k.getImages());
-                docs.add(new org.springframework.ai.document.Document(k.getId(),
-                        buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata));
-            }
-            try {
-                vectorAddWithRetryInto(target, "kb-" + kbId, docs, embedRetry);
-                done += docs.size();
-            } catch (Exception e) {
-                failed += docs.size();
-                log.warn("[FAIL-LOUD] [KB-Reembed] 批次重嵌失败（{} 块）: {}", docs.size(), e.getMessage());
+        // ACL 烘焙句柄：预载本库全部文档行，重嵌出的向量必须带 ACL 标签（否则检索期下推会漏召回）
+        try (DocumentAclTags.AclBatch aclBatch = documentAclTags.newBatch()
+                .preload(rows.stream().map(Knowledge::getDocId).toList())) {
+            for (int i = 0; i < rows.size(); i += batchSize) {
+                List<Knowledge> batch = rows.subList(i, Math.min(i + batchSize, rows.size()));
+                List<org.springframework.ai.document.Document> docs = new ArrayList<>(batch.size());
+                for (Knowledge k : batch) {
+                    Map<String, Object> metadata = new HashMap<>();
+                    if (k.getDocId() != null) metadata.put("docId", k.getDocId());
+                    metadata.put("title", k.getTitle() == null ? "" : k.getTitle());
+                    metadata.put("knowledgeId", k.getId());
+                    if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) metadata.put("titlePath", k.getTitlePath());
+                    if (k.getImages() != null) metadata.put("images", k.getImages());
+                    aclBatch.enrich(metadata, k.getDocId());
+                    docs.add(new org.springframework.ai.document.Document(k.getId(),
+                            buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata));
+                }
+                try {
+                    vectorAddWithRetryInto(target, "kb-" + kbId, docs, embedRetry);
+                    done += docs.size();
+                } catch (Exception e) {
+                    failed += docs.size();
+                    log.warn("[FAIL-LOUD] [KB-Reembed] 批次重嵌失败（{} 块）: {}", docs.size(), e.getMessage());
+                }
             }
         }
         // 4. 回写本库维度（设置页/排查展示）
@@ -1001,6 +1009,10 @@ public class DocumentService {
             List<Knowledge> oldList = knowledgeMapper.selectList(
                     new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             hadExistingContent = !oldList.isEmpty();
+            // ACL 标签：循环外编译一次，本方法所有新块共用（避免每块重复解析 share_config JSON）
+            AiDocument docRow = documentMapper.selectById(docId);
+            DocumentAclTags.AclTags aclTags = documentAclTags.bake(docRow);
+            String kbIdOfDoc = docRow == null ? null : docRow.getKbId();
             // 旧块按 content_hash 索引（同内容多块 → List，逐块一一对应出队，避免重复内容块 id 抖动）
             Map<String, List<Knowledge>> oldByHash = new HashMap<>();
             for (Knowledge ok : oldList) {
@@ -1065,6 +1077,8 @@ public class DocumentService {
                 if (!chunk.images().isEmpty()) {
                     metadata.put("images", JSON.toJSONString(chunk.images()));
                 }
+                // ACL 烘焙：标签已在循环外编译（docRow/aclTags），循环内零查询
+                documentAclTags.enrich(metadata, docRow, kbIdOfDoc, aclTags);
                 aiDocs.add(new Document(knowledge.getId(),
                         buildEmbedText(chunk.title(), chunk.titlePath(), chunk.content(), overlapPrefix), metadata));
                 newBlocks.add(knowledge);
@@ -1711,6 +1725,7 @@ public class DocumentService {
             metadata.put("knowledgeId", k.getId());
             if (titlePath != null && !titlePath.isBlank()) metadata.put("titlePath", titlePath);
             if (k.getImages() != null) metadata.put("images", k.getImages());
+            documentAclTags.enrichByDocId(metadata, null, docId, null);
             aiDocs.add(new org.springframework.ai.document.Document(k.getId(),
                     buildEmbedText(title, titlePath, content, null), metadata));
             rebuilt.add(k);

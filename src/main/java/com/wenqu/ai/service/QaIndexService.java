@@ -54,6 +54,9 @@ public class QaIndexService {
     /** 对话模型（DynamicOpenAiChatModel；无全局兜底模型，生成用模型来自库主个人默认聊天模型） */
     private final ChatModel chatModel;
 
+    /** ACL 标签烘焙：问答对向量与主块同索引，必须同样带 ACL 标签，否则检索期下推会漏召回 */
+    private final DocumentAclTags qaAclTags;
+
     /** 送入 LLM 的块正文上限（超出截断：QA 是问法增强，不需要全文） */
     private static final int MAX_CONTENT_CHARS = 3000;
     /** 低于该长度的小块不生成（一段话生成 QA 得不偿失） */
@@ -111,6 +114,7 @@ public class QaIndexService {
                 md.put("knowledgeId", k.getId());
                 md.put("title", row.getQuestion());
                 md.put("kind", "qa");
+                qaAclTags.enrichByDocId(md, null, docId, null);
                 vectors.add(new Document(row.getId(), row.getQuestion(), md));
                 total++;
             }
@@ -209,6 +213,7 @@ public class QaIndexService {
             md.put("knowledgeId", qa.getKnowledgeId());
             md.put("title", qa.getQuestion());
             md.put("kind", "qa");
+            qaAclTags.enrichByDocId(md, null, qa.getDocId(), null);
             vectors.add(new Document(qa.getId(), qa.getQuestion(), md));
         }
         int batchSize = 50;

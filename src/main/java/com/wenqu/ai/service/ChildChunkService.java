@@ -38,6 +38,8 @@ public class ChildChunkService {
     private final KnowledgeChildMapper childMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final ConfigService configService;
+    /** ACL 标签烘焙：子块向量与主块同索引，必须同样带 ACL 标签，否则检索期下推会漏召回 */
+    private final DocumentAclTags childAclTags;
 
     /** 子块尺寸上下限（字符） */
     private static final int MIN_CHILD_SIZE = 100;
@@ -82,6 +84,8 @@ public class ChildChunkService {
                 md.put("knowledgeId", k.getId());
                 md.put("title", k.getTitle() == null ? "" : k.getTitle());
                 md.put("kind", "child");
+                // ACL 烘焙：子块向量与主块同库同索引，同样要带 ACL 标签（否则检索期下推漏召回）
+                childAclTags.enrichByDocId(md, null, docId, null);
                 vectors.add(new Document(row.getId(), embedText(k.getTitle(), k.getTitlePath(), slices.get(s)), md));
                 total++;
             }
@@ -217,6 +221,7 @@ public class ChildChunkService {
             md.put("knowledgeId", row.getKnowledgeId());
             md.put("title", title);
             md.put("kind", "child");
+            childAclTags.enrichByDocId(md, null, row.getDocId(), null);
             vectors.add(new Document(row.getId(), embedText(title, path, row.getContent()), md));
         }
         int batchSize = 50;
