@@ -1050,7 +1050,7 @@
       </div>
     </Teleport>
 
-    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 多段占比条 + 分类明细 + 缓存命中率）。
+    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 占用填充条 + 分类明细 + 缓存命中率）。
          数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
     <Teleport to="body">
       <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
@@ -1066,21 +1066,24 @@
             </div>
           </div>
           <template v-if="ctxCapData.window > 0">
+            <!-- 填充宽=用量/窗口（与标题占用率同口径，空轨即剩余窗口），段宽在填充内按构成比分 -->
             <div class="ctxcap-bar">
-              <span v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-seg"
-                    :style="{ width: ctxCapData.pctOf(r) + '%', background: r.color }"
-                    :title="r.label + ' ' + ctxCapData.pctOf(r).toFixed(1) + '%'"></span>
+              <div class="ctxcap-fill" :style="{ width: ctxCapData.fillPct + '%' }">
+                <span v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-seg"
+                      :style="{ width: ctxCapData.pctOf(r) + '%', background: r.color }"
+                      :title="r.label + ' ' + fmtWindow(r.tokens) + '（占本轮用量 ' + ctxCapData.pctOf(r).toFixed(1) + '%）'"></span>
+              </div>
             </div>
             <div v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-row">
               <span class="ctxcap-dot" :style="{ background: r.color }"></span>
               <span class="ctxcap-row-label">{{ r.label }}</span>
-              <span class="ctxcap-row-val">{{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
+              <span class="ctxcap-row-val">{{ fmtWindow(r.tokens) }} · {{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
             </div>
             <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">发送问题后显示分类占用</div>
             <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
               <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
             </div>
-            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 用量为本轮真实 prompt token（网关未回传时按估算）</div>
+            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 占比按本轮用量计 · 用量为本轮真实 prompt token（网关未回传时按估算）</div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在模型管理中声明</div>
         </div>
@@ -2201,6 +2204,8 @@ const ctxCapData = computed(() => {
   const cached = t && Number(t.cached) > 0 ? Number(t.cached) : 0
   return {
     window: window_, used, pct, rows, sum,
+    // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽），填充内段宽按构成比分
+    fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0,
     // 分类占比以分类之和为分母（校准后与 prompt 一致；无 parts 时退化为空列表）
     pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0,
     cached, cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
@@ -4708,6 +4713,7 @@ onMounted(async () => {
 .ctxcap-title { font-size: 13px; font-weight: 600; }
 .ctxcap-num { font-size: 12px; color: var(--app-text3); }
 .ctxcap-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--app-accent-weak); }
+.ctxcap-fill { display: flex; height: 100%; }
 .ctxcap-seg { display: block; height: 100%; }
 .ctxcap-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
 .ctxcap-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
