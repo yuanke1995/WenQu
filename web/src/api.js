@@ -91,7 +91,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onPlan, onApprovalRequired, onProcess, onUsage,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onAgentDelegated, onPlan, onApprovalRequired, onProcess, onUsage,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
     contextWindow = null, editMessageId = ''
   } = opts
@@ -165,7 +165,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
       // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
       attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       skills: Array.isArray(skills) && skills.length ? skills : undefined,
-      // 输入框 @ 引用（[{type:'kb'|'doc', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容（服务端校验可见性）
+      // 输入框 @ 引用（[{type:'kb'|'doc'|'agent', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容、agent 临时委派本轮作答（服务端校验可见性）
       mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
       // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
       historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
@@ -211,6 +211,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated,description,digest}
               else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
               else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
+              else if (d.type === 'agent_delegated') { onAgentDelegated && onAgentDelegated(d.content) } // content 为 {id,name,description}：本轮由 @ 提及的智能体作答（会话绑定不变）
               else if (d.type === 'agent_bound') { onAgentBound && onAgentBound(d.content) } // content 为 {locked,agentId,agentName}：会话级绑定结果（首问解析并锁定后立即下发，不等整轮结束）
               else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
               else if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,degradations} JSON 字符串

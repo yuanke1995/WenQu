@@ -76,7 +76,7 @@
             </span>
             <span class="msd-line"></span>
           </div>
-          <div class="msg-block" :class="m.role">
+          <div class="msg-block" :class="[m.role, { editing: editingIdx === i }]">
             <div class="bubble" :class="m.role">
               <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
                 <img v-for="(u, ui) in m.images" :key="ui" :src="resolveImg(u)" class="msg-img"
@@ -93,8 +93,10 @@
               <!-- @ 引用（本轮显式指定的知识库/文档）：只对当轮生效，随内存消息展示 -->
               <div v-if="m.role === 'user' && m.mentions && m.mentions.length" class="msg-files">
                 <span v-for="(mm, mi) in m.mentions" :key="mi" class="msg-file"
-                      :title="mm.type === 'kb' ? '引用的知识库（本轮检索范围）' : '引用的文档（内容直接带入上下文）'">
+                      :title="mm.type === 'kb' ? '引用的知识库（本轮检索范围）'
+                              : (mm.type === 'agent' ? '提及的智能体（本轮由它作答）' : '引用的文档（内容直接带入上下文）')">
                   <database-outlined v-if="mm.type === 'kb'" class="msg-file-ic" />
+                  <robot-outlined v-else-if="mm.type === 'agent'" class="msg-file-ic" />
                   <file-text-outlined v-else class="msg-file-ic" />
                   <span class="msg-file-name">{{ mm.name || mm.id }}</span>
                 </span>
@@ -196,6 +198,13 @@
                 <span>已派遣「{{ m.dispatched.name }}」</span>
                 <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
                 <span v-if="m.dispatched.description" class="dispatch-desc">{{ m.dispatched.description }}</span>
+              </div>
+              <!-- 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答。用户主动指令，常显不进排障开关；
+                   刷新后按落库归属与会话绑定比对恢复（见 switchSession），前后端口径一致 -->
+              <div v-if="m.delegated" class="dispatch-chip delegated-chip">
+                <robot-outlined class="dispatch-ic" />
+                <span>由「{{ m.delegated.name }}」回答本轮</span>
+                <span v-if="m.delegated.description" class="dispatch-desc">{{ m.delegated.description }}</span>
               </div>
               <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="tool-status-list">
@@ -384,17 +393,48 @@
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
-            <!-- 就地编辑框：确认后从这一轮整段重新生成，旧分支软删留档可切回 -->
+            <!-- 就地编辑卡：原位替换该气泡的紧凑右对齐卡。除正文外，图片/附件可增删、@ 引用可移除
+                 （随行内容播种自原消息；深度思考/技能/# 历史引用沿用原轮不展示）。
+                 确认后从这一轮整段重新生成，旧分支软删留档可切回 -->
             <div v-if="m.role === 'user' && editingIdx === i" class="msg-inline-edit">
-              <textarea :ref="setEditingRef" v-model="editingText" class="msg-inline-edit-input" rows="3"
-                        @keydown.enter.exact.prevent="confirmEdit" @keydown.esc.prevent="cancelEdit" />
-              <div class="msg-inline-edit-actions">
-                <span class="msg-inline-edit-hint">发送后将从这一轮重新生成，旧回答保留为可切换的版本</span>
-                <button class="app-btn ghost small" @click="cancelEdit">取消</button>
-                <button class="app-btn small" :disabled="editingBusy || !editingText.trim()" @click="confirmEdit">
-                  <send-outlined /> 重新生成
-                </button>
+              <textarea :ref="setEditingRef" v-model="editingText" class="msg-inline-edit-input" rows="1"
+                        placeholder="编辑这一问题…" @input="autosizeEditing" @paste="onEditPaste" @keydown="onEditKeydown" />
+              <div v-if="editImgs.length" class="pending-imgs">
+                <div v-for="(u, pi) in editImgs" :key="pi" class="pending-img">
+                  <img :src="resolveImg(u.dataUrl)" alt="待发送图片" @click="previewEditImage(pi)" />
+                  <span class="pending-del" @click.stop="removeEditImage(pi)">×</span>
+                </div>
               </div>
+              <div v-if="editAtts.length" class="pending-files">
+                <div v-for="(f, fi) in editAtts" :key="fi" class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
+                  <file-text-outlined class="pending-file-ic" />
+                  <span class="pending-file-name">{{ f.name }}</span>
+                  <span v-if="f.uploading" class="pending-file-size">上传中…</span>
+                  <span v-else-if="f.error" class="pending-file-size">上传失败</span>
+                  <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
+                  <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
+                </div>
+              </div>
+              <div v-if="editMentions.length" class="edit-mentions">
+                <span v-for="(mm, mi2) in editMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
+                      :class="'mention-' + mm.type"
+                      :title="mm.type === 'kb' ? '本轮检索收窄到该知识库'
+                              : (mm.type === 'agent' ? '本轮改由该智能体作答（会话绑定不变）' : '该文档内容直接带入本轮上下文')">
+                  <robot-outlined v-if="mm.type === 'agent'" class="at-chip-ic" />
+                  <database-outlined v-else-if="mm.type === 'kb'" class="at-chip-ic" />
+                  <file-text-outlined v-else class="at-chip-ic" />
+                  <span class="at-chip-name">{{ mm.name || mm.id }}</span>
+                  <span class="at-chip-del" title="移除该引用" @click="removeEditMention(mi2)">×</span>
+                </span>
+              </div>
+              <div class="msg-inline-edit-actions">
+                <button class="app-icon-btn" title="添加图片或附件" @click="pickEditFiles"><paper-clip-outlined /></button>
+                <span class="msg-inline-edit-hint"><info-circle-outlined /> 编辑后将从此处重新开始对话，已有产物不会被删除</span>
+                <button class="app-btn ghost" @click="cancelEdit">取消</button>
+                <button class="app-btn" :disabled="editingBusy || (!editingText.trim() && !editImgs.length && !editAtts.length)"
+                        @click="confirmEdit">发送</button>
+              </div>
+              <input :ref="setEditAttachInputRef" type="file" multiple style="display:none" @change="onEditAttachChange" />
             </div>
           </div>
         </div>
@@ -426,8 +466,10 @@
         <div v-if="pendingMentions.length" class="at-chips">
           <span v-for="(mm, mi) in pendingMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
                 :class="'mention-' + mm.type"
-                :title="mm.type === 'kb' ? '本轮检索收窄到该知识库' : '该文档内容直接带入本轮上下文'">
+                :title="mm.type === 'kb' ? '本轮检索收窄到该知识库'
+                        : (mm.type === 'agent' ? '本轮改由该智能体作答（会话绑定不变）' : '该文档内容直接带入本轮上下文')">
             <database-outlined v-if="mm.type === 'kb'" class="at-chip-ic" />
+            <robot-outlined v-else-if="mm.type === 'agent'" class="at-chip-ic" />
             <file-text-outlined v-else class="at-chip-ic" />
             <span class="at-chip-name">{{ mm.name || mm.id }}</span>
             <span class="at-chip-del" title="移除该引用" @click="removeMention(mi)">×</span>
@@ -454,7 +496,7 @@
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
               <span class="mention-head-tag">@</span>
-              <span class="mention-head-word" :class="{ dim: !mentionQuery }">{{ mentionQuery || '输入以筛选知识库或文档' }}</span>
+              <span class="mention-head-word" :class="{ dim: !mentionQuery }">{{ mentionQuery || '输入以筛选知识库、文档或智能体' }}</span>
               <button class="app-icon-btn" title="关闭" @click="closeMentionPanel"><close-outlined /></button>
             </div>
             <div class="mention-tabs">
@@ -463,6 +505,9 @@
               </button>
               <button class="mention-tab" :class="{ on: mentionTab === 'doc' }" @click="switchMentionTab('doc')">
                 <file-text-outlined /> 文档 {{ mentionDocs.length }}
+              </button>
+              <button class="mention-tab" :class="{ on: mentionTab === 'agent' }" @click="switchMentionTab('agent')">
+                <robot-outlined /> 智能体 {{ mentionAgents.length }}
               </button>
             </div>
             <div class="mention-list">
@@ -481,6 +526,20 @@
                   {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
                 </div>
               </template>
+              <template v-else-if="mentionTab === 'agent'">
+                <div v-for="(a, ai) in mentionAgentFiltered" :key="a.id" class="mention-item"
+                     :class="{ on: isMentioned('agent', a.id), hi: mentionHi === ai }" @click="pickMentionByClick('agent', a)">
+                  <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
+                  <div class="mention-text">
+                    <span class="mention-name">{{ a.name }}</span>
+                    <span class="mention-desc">{{ a.desc || '本轮改由该智能体作答' }}</span>
+                  </div>
+                  <check-outlined v-if="isMentioned('agent', a.id)" class="mention-check" />
+                </div>
+                <div v-if="!mentionAgentFiltered.length" class="mention-empty">
+                  {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
+                </div>
+              </template>
               <template v-else>
                 <div v-for="(d, di) in mentionDocFiltered" :key="d.id" class="mention-item"
                      :class="{ on: isMentioned('doc', d.id), hi: mentionHi === di }" @click="pickMentionByClick('doc', d)">
@@ -497,7 +556,7 @@
               </template>
             </div>
             <div class="mention-foot">
-              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文
+              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文；@ 智能体 = 本轮改由它作答（会话绑定不变）
             </div>
           </div>
           <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
@@ -1041,7 +1100,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CompressOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, SendOutlined } from '@ant-design/icons-vue'
+         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, submitFeedback as apiSubmitFeedback,
          getKnowledgeDetail, debugRetrieval, deleteMessageGroup, switchMessageVariant, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, getUserSettings, approveToolCall, addEvalCase,
@@ -2616,6 +2675,12 @@ const switchSession = async sid => {
             timeline: []
           }
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
+          // 会话内 @ 智能体（§4）：落库的归属与会话绑定不同 = 该轮由 @ 提及的智能体作答，
+          // 刷新后委派徽标照常回显（绑定镜像缺省时无从比对则不显示，与排障徽标同一宽容口径）
+          const bound = boundAgentOf(sid)
+          if (msg.agentId && msg.agentName && bound && msg.agentId !== (bound.agentId || '')) {
+            msg.delegated = { name: msg.agentName, description: '' }
+          }
           return msg
         })
       // 该会话正在流式回答：把 live 消息接回视图尾部。流式中的这轮前后端不落库助手消息，
@@ -2753,11 +2818,11 @@ const compressImage = file => new Promise((resolve, reject) => {
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
   img.src = url
 })
-const addImageFiles = files => {
+const addImageFiles = (files, list = pendingImages) => {
   for (const f of files) {
-    if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); break }
+    if (list.value.length >= 5) { message.warning('最多上传 5 张图片'); break }
     if (!f.type.startsWith('image/')) continue
-    compressImage(f).then(dataUrl => pendingImages.value.push({ dataUrl })).catch(() => message.error(`图片处理失败: ${f.name}`))
+    compressImage(f).then(dataUrl => list.value.push({ dataUrl })).catch(() => message.error(`图片处理失败: ${f.name}`))
   }
 }
 const removePendingImage = i => pendingImages.value.splice(i, 1)
@@ -2826,10 +2891,11 @@ const fmtSize = n => {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
   return (n / 1024 / 1024).toFixed(1) + ' MB'
 }
-/** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去） */
-const uploadOneFile = async f => {
+/** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去）；
+ *  list 缺省挂主输入框，编辑卡复用时传自己的列表 */
+const uploadOneFile = async (f, list = pendingFiles) => {
   const item = { name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '' }
-  pendingFiles.value.push(item)
+  list.value.push(item)
   try {
     const r = await uploadChatAttachment(f)
     const d = r?.data || {}
@@ -2847,28 +2913,32 @@ const uploadOneFile = async f => {
 }
 /** 是否存在还没传完的附件（发送前拦一道：不然用户以为发出去了，其实附件没带上） */
 const hasUploadingFile = () => pendingFiles.value.some(f => f.uploading)
-/** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致） */
-const addFiles = files => {
+/** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致）；
+ *  target 缺省挂主输入框，编辑卡复用时传 { images, files } 两个 ref 列表 */
+const addFiles = (files, target) => {
+  const imgList = target?.images || pendingImages
+  const fileList = target?.files || pendingFiles
   for (const f of files) {
     if (f.type.startsWith('image/')) {
-      if (pendingImages.value.length >= 5) { message.warning('最多上传 5 张图片'); continue }
-      compressImage(f).then(dataUrl => pendingImages.value.push({ dataUrl }))
+      if (imgList.value.length >= 5) { message.warning('最多上传 5 张图片'); continue }
+      compressImage(f).then(dataUrl => imgList.value.push({ dataUrl }))
         .catch(() => message.error(`图片处理失败: ${f.name}`))
       continue
     }
-    if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); break }
+    if (fileList.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); break }
     if (!SUPPORTED_EXTS.includes(extOf(f.name))) {
       message.warning(`暂不支持的附件类型：${f.name}（支持 PDF / Word / Excel / PPT / 文本与代码文件）`)
       continue
     }
     if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${f.name}`); continue }
-    uploadOneFile(f)
+    uploadOneFile(f, fileList)
   }
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
 
-// ==================== @ 引用（本轮显式指定知识库/文档） ====================
-// 语义：kb=本轮检索收窄到该库；doc=该文档内容块强制前置进上下文（不经检索、不受相关性门/去冗余约束）。
+// ==================== @ 引用（本轮显式指定知识库/文档/智能体） ====================
+// 语义：kb=本轮检索收窄到该库；doc=该文档内容块强制前置进上下文（不经检索、不受相关性门/去冗余约束）；
+//       agent=临时委派该智能体作答本轮（人设/知识库/工具整轮按它执行，会话绑定不变——落点在后端轮级覆盖）。
 // 交互：输入框敲 @ 唤起候选面板（面板不抢焦点，筛选词实时取「@ 到光标」之间的正文 + ↑↓ 选 + Enter 确认 + 多选），
 //       选中项以 chip 显示在输入框上方。引用字符 @ 本身照常留在输入框里（用户可任意位置输入 @），
 //       确认后会把「@ + 筛选词」这一段从正文里摘掉，不留残渣。
@@ -2890,22 +2960,32 @@ const toggleMention = (type, item) => {
     pendingMentions.value = pendingMentions.value.filter(m => !(m.type === type && m.id === id))
     return
   }
-  if (pendingMentions.value.length >= MAX_MENTIONS) {
-    message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档`)
+  // 智能体委派是单主语：一轮只能由一个智能体作答，再选一个=替换（不是多选累加）。
+  // 总量仍守 MAX_MENTIONS（后端 chat.maxMentionsPerMessage 同限，超了会 400）
+  if (type === 'agent') {
+    const hadAgent = pendingMentions.value.some(m => m.type === 'agent')
+    if (!hadAgent && pendingMentions.value.length >= MAX_MENTIONS) {
+      message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档/智能体`)
+      return
+    }
+    pendingMentions.value = pendingMentions.value.filter(m => m.type !== 'agent')
+  } else if (pendingMentions.value.length >= MAX_MENTIONS) {
+    message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档/智能体`)
     return
   }
   pendingMentions.value.push({
     type,
     id,
-    name: type === 'kb' ? item.name : item.fileName,
+    name: type === 'kb' ? item.name : (type === 'agent' ? item.name : item.fileName),
     kbId: type === 'doc' ? (item.kbId || '') : ''
   })
 }
 const removeMention = i => pendingMentions.value.splice(i, 1)
-/** 切库/文档：候选集换了，高亮下标要收敛回合法范围（否则 kb 第 20 条切到 doc 只有 3 条时按 Enter 会选空） */
+/** 切库/文档/智能体：候选集换了，高亮下标要收敛回合法范围（否则 kb 第 20 条切到 doc 只有 3 条时按 Enter 会选空） */
 const switchMentionTab = t => {
   mentionTab.value = t
-  const n = t === 'kb' ? mentionKbFiltered.value.length : mentionDocFiltered.value.length
+  const n = t === 'kb' ? mentionKbFiltered.value.length
+    : t === 'agent' ? mentionAgentFiltered.value.length : mentionDocFiltered.value.length
   if (mentionHi.value >= n) mentionHi.value = 0
 }
 
@@ -2915,6 +2995,7 @@ const openMentionPanel = () => {
   mentionHi.value = 0
   if (panelTriggerCh !== '@') { panelTriggerPos = -1; panelTriggerCh = '' }
   if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
+  if (!agentList.value.length) loadAgents()   // 智能体候选直接复用下拉的数据（挂载时已开始加载，兜底再拉一次）
 }
 const closeMentionPanel = () => closeAllPanels()
 
@@ -2953,6 +3034,11 @@ const mentionMatch = (text, q) => !q || String(text || '').toLowerCase().include
 const mentionQueryNorm = computed(() => mentionQuery.value.trim())
 const mentionKbFiltered = computed(() =>
   mentionKbs.value.filter(k => mentionMatch(k.name, mentionQueryNorm.value) || mentionMatch(k.desc, mentionQueryNorm.value)))
+// 智能体候选复用对话页下拉的同一份可读主智能体列表（available 口径：不含子智能体、按共享范围过滤）
+const mentionAgents = computed(() =>
+  agentList.value.map(a => ({ id: a.id, name: a.name, desc: a.description || '', icon: a.icon, isBuiltin: a.isBuiltin })))
+const mentionAgentFiltered = computed(() =>
+  mentionAgents.value.filter(a => mentionMatch(a.name, mentionQueryNorm.value) || mentionMatch(a.desc, mentionQueryNorm.value)))
 const mentionDocFiltered = computed(() =>
   mentionDocs.value
     .filter(d => mentionMatch(d.fileName, mentionQueryNorm.value))
@@ -2990,7 +3076,10 @@ const closeAllPanels = () => {
 }
 /** 当前打开面板的候选总数与高亮下标读写（三面板结构一致，抽出来避免各写一遍 if/else） */
 const panelListSize = () => {
-  if (mentionOpen.value) return mentionTab.value === 'kb' ? mentionKbFiltered.value.length : mentionDocFiltered.value.length
+  if (mentionOpen.value) {
+    return mentionTab.value === 'kb' ? mentionKbFiltered.value.length
+      : mentionTab.value === 'agent' ? mentionAgentFiltered.value.length : mentionDocFiltered.value.length
+  }
   if (slashOpen.value) return slashFiltered.value.length
   if (histOpen.value) return histCandidates.value.length
   return 0
@@ -3010,7 +3099,8 @@ const movePanelHi = dir => {
 const confirmPanelHi = () => {
   const i = getPanelHi().value
   if (mentionOpen.value) {
-    const item = mentionTab.value === 'kb' ? mentionKbFiltered.value[i] : mentionDocFiltered.value[i]
+    const item = mentionTab.value === 'kb' ? mentionKbFiltered.value[i]
+      : mentionTab.value === 'agent' ? mentionAgentFiltered.value[i] : mentionDocFiltered.value[i]
     if (!item) return false
     stripTriggerToken()
     toggleMention(mentionTab.value, item)
@@ -3557,7 +3647,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: model || userDefaultModel.value }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -3764,6 +3854,18 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
+    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变）。用户指令，常显徽标；
+    // 归属同步改写（done 的 delegatedAgentName 会再校正一次，两处同值）
+    onAgentDelegated: payload => {
+      try {
+        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!r || !r.name) return
+        msg.delegated = { name: r.name, description: r.description || '' }
+        msg.agentName = r.name
+        if (r.id) msg.agentId = r.id
+        liveScroll()
+      } catch (e) { /* 忽略 */ }
+    },
     // 会话级绑定结果：后端在首问解析并锁定后就下发（不等整轮结束），输入区立刻切锁定态
     onAgentBound: payload => {
       try {
@@ -3798,6 +3900,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           }
         }
         if (p.agentName) msg.agentName = p.agentName
+        // 会话内 @ 智能体（§4）：done 的 agentName 是会话绑定口径，本轮由被 @ 的智能体作答时
+        // 气泡归属按委派值覆盖（后端落库快照同为委派智能体，刷新后回显一致）
+        if (p.delegatedAgentName) {
+          msg.agentName = p.delegatedAgentName
+          if (p.delegatedAgentId) msg.agentId = p.delegatedAgentId
+        }
         // 生效模型以后端权威解析为准（请求未带覆盖时后端回落个人默认，前端预填值在此校正）
         if (typeof p.model === 'string' && p.model) msg.model = p.model
         if (p.thinking) msg.thinking = p.thinking
@@ -4118,15 +4226,30 @@ const debugStages = computed(() => {
 })
 
 // ==================== 消息编辑重发（从该轮重新生成，旧分支可回看切换） ====================
-// 就地编辑：点「编辑」在该气泡下展开编辑框，确认后从这一轮整段重新生成——
+// 就地编辑：点「编辑」后编辑卡原位替换该气泡（右对齐紧凑卡），确认后从这一轮整段重新生成——
 // 被编辑消息及其后的旧分支由后端软删留档（variant_group/variant_tail），可随时切回。
 // 编辑重发与直接回填输入框（旧行为，发起新一轮）是两个入口：这里走 editMessageId 分支链路。
 const editingIdx = ref(null)
 const editingText = ref('')
 const editingBusy = ref(false)
 const editingRef = ref(null)
+// 随行内容：从原消息播种，编辑期内可增删（图片/附件与主输入框同构同管线；@ 引用只可移除；
+// 深度思考/技能/# 历史引用不进编辑卡，沿用原轮）。历史回放的图片只剩服务端 URL，重发时按 data: 过滤
+const editImgs = ref([])      // [{ dataUrl }]
+const editAtts = ref([])      // [{ name, mime, size, fileId, uploading, error }]，attachData+attachments 合并态
+const editMentions = ref([])  // [{ type, id, name, kbId }]
+const editAttachInput = ref(null)
 // v-for 内的模板 ref 走函数式（ref 属性在循环里会聚集成数组，取值麻烦）
 const setEditingRef = el => { editingRef.value = el }
+const setEditAttachInputRef = el => { editAttachInput.value = el }
+
+// 输入区自适应高度：起步单行随内容长高，超过 200px 内部滚动（与紧凑卡外形匹配）
+const autosizeEditing = () => {
+  const el = editingRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+}
 
 const editMessage = mi => {
   if (loading.value || editingBusy.value) return
@@ -4136,9 +4259,51 @@ const editMessage = mi => {
   // 已有编辑框在别处打开：切换目标
   editingIdx.value = mi
   editingText.value = m.content
-  nextTick(() => editingRef.value?.focus())
+  editImgs.value = (m.images || []).map(u => ({ dataUrl: u }))
+  // attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并成一份可编辑列表
+  const metaByName = new Map((m.attachments || []).map(a => [a.name, a]))
+  editAtts.value = (m.attachData || []).map(a => ({ size: metaByName.get(a.name)?.size, uploading: false, error: '', ...a }))
+  editMentions.value = [...(m.mentions || [])]
+  nextTick(() => { autosizeEditing(); editingRef.value?.focus() })
 }
-const cancelEdit = () => { editingIdx.value = null; editingText.value = '' }
+const cancelEdit = () => {
+  editingIdx.value = null
+  editingText.value = ''
+  editImgs.value = []; editAtts.value = []; editMentions.value = []
+}
+
+// ---- 编辑卡的随行内容操作：管线完全复用主输入框，只换目标列表 ----
+const pickEditFiles = () => editAttachInput.value?.click()
+const onEditAttachChange = e => {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+  addFiles(files, { images: editImgs, files: editAtts })
+}
+const onEditPaste = e => {
+  const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
+  if (!imgs.length) return
+  e.preventDefault()
+  e.stopPropagation()   // 截住冒泡：window 级粘贴监听会把图挂到主输入框去
+  addImageFiles(imgs, editImgs)
+}
+const removeEditImage = i => editImgs.value.splice(i, 1)
+const removeEditAtt = i => editAtts.value.splice(i, 1)
+const removeEditMention = i => editMentions.value.splice(i, 1)
+const previewEditImage = pi => {
+  if (!editImgs.value.length) return
+  previewList.value = editImgs.value.map(p => resolveImg(p.dataUrl))
+  previewIndex.value = pi
+  resetView()
+}
+// 键盘：Enter 发送 / Shift+Enter 换行 / Esc 取消；输入法组合中的 Enter/Esc 是候选操作，放行给 IME
+const onEditKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return
+  if (e.key === 'Enter') {
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); confirmEdit() }
+    return
+  }
+  if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
+}
 
 const confirmEdit = () => {
   const mi = editingIdx.value
@@ -4146,32 +4311,44 @@ const confirmEdit = () => {
   const old = messages.value[mi]
   const txt = editingText.value.trim()
   if (!old || old.role !== 'user') { cancelEdit(); return }
-  if (!txt) { message.warning('内容不能为空'); return }
-  if (txt === old.content) { cancelEdit(); return }  // 内容没变=原样重发，没有分支语义，直接收起
+  if (editAtts.value.some(f => f.uploading)) { message.warning('附件还在上传中，请稍候再发送'); return }
+  // 附件只带 fileId（与主输入框 send 同口径），没传完/失败的丢弃
+  const okAtts = editAtts.value.filter(f => f.fileId && !f.error)
+  const atts = okAtts.map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
+  const attsMeta = okAtts.map(f => ({ name: f.name, mime: f.mime, size: f.size }))
+  const imgsAll = editImgs.value.map(p => p.dataUrl)
+  // 只有本会话的 data: 图能重发（历史回放的图只剩服务端 URL，与重新生成的口径一致）
+  const imgs = imgsAll.filter(u => u.startsWith('data:'))
+  const mentionsNew = [...editMentions.value]
+  if (!txt && !imgs.length && !atts.length) { message.warning('内容不能为空'); return }
+  // 什么都没改=没有分支语义，直接收起，不打无谓的重发（文本/图片/附件/@ 引用任一变了才重发）
+  const listEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
+  const attEq = (a, b) => a.length === b.length && a.every((x, k) => x.name === b[k].name && x.mime === b[k].mime && x.fileId === b[k].fileId)
+  const mentionEq = (a, b) => a.length === b.length && a.every((x, k) => x.type === b[k].type && x.id === b[k].id)
+  if (txt === old.content && listEq(imgsAll, old.images || [])
+      && attEq(atts, Array.isArray(old.attachData) ? old.attachData : [])
+      && mentionEq(mentionsNew, Array.isArray(old.mentions) ? old.mentions : [])) { cancelEdit(); return }
   if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
   const editMessageId = old.messageId
   if (!editMessageId) { message.warning('该消息尚未落库，暂不能编辑重发'); return }
   cancelEdit()
   // 本地视图截断到该轮之前：旧分支整体交给后端软删留档，本地不再渲染（切回走分支切换接口+重拉历史）
-  const imgs = (old.images || []).filter(u => u.startsWith('data:'))
-  const atts = Array.isArray(old.attachData) ? old.attachData : []
   const skills = Array.isArray(old.skills) ? old.skills : []
-  const mentions = Array.isArray(old.mentions) ? old.mentions : []
   const historyRefs = Array.isArray(old.historyRefs) ? old.historyRefs : []
   const deep = !!old.deepThink
   messages.value = messages.value.slice(0, mi)
-  // 新分支的用户消息：继承原消息的图片/附件/引用与档位；版本计数 +1（旧值缺省=首次编辑即 2 版）
+  // 新分支的用户消息：档位/技能/# 历史引用沿用原轮，正文/图片/附件/@ 引用以编辑后的为准；
+  // 版本计数 +1（旧值缺省=首次编辑即 2 版）
   const verN = (old.variantCount || 1) + 1
   const nu = reactive({
     role: 'user', content: txt,
-    images: Array.isArray(old.images) ? [...old.images] : [],
-    attachments: Array.isArray(old.attachments) ? old.attachments : [],
-    attachData: atts, skills, mentions, historyRefs, deepThink: deep,
+    images: imgsAll, attachments: attsMeta, attachData: atts,
+    skills, mentions: mentionsNew, historyRefs, deepThink: deep,
     time: Date.now(), messageId: null,
     variantCount: verN, variantIndex: verN
   })
   messages.value.push(nu)
-  streamAnswer(txt, imgs, null, false, 1, deep, atts, skills, mentions, null, historyRefs, editMessageId, nu)
+  streamAnswer(txt, imgs, null, false, 1, deep, atts, skills, mentionsNew, null, historyRefs, editMessageId, nu)
 }
 
 // ==================== 分支版本切换（持久化多版本：编辑重发 + 重新生成刷新后仍可切） ====================
@@ -4648,6 +4825,8 @@ onMounted(async () => {
 .dispatch-ic { color: var(--app-accent); font-size: 12px; }
 .dispatch-fallback { color: var(--app-text3); }
 .dispatch-desc { color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+/* @ 智能体委派徽标（§4）：与派遣徽标同族，但这是用户指令——常显，配色加重以示区别 */
+.delegated-chip { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); font-weight: 500; }
 
 .fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
 /* 重新生成的多版本切换器：与操作图标同一行，弱化呈现 */
@@ -4670,21 +4849,30 @@ onMounted(async () => {
   opacity: 0; transition: opacity .15s;
 }
 .msg-block:hover .msg-edit-row { opacity: 1; }
-/* 就地编辑框：悬浮在用户气泡下方（与 msg-edit-row 同一挂点层），编辑期间覆盖式展示 */
+/* 就地编辑卡：原位替换该用户气泡（右对齐紧凑卡，对齐主流产品「编辑=原地重写这一问」），
+   不再全宽悬浮盖住回答。起步单行随内容长高；图片/附件/@ 引用 chips 随行展示，可增删 */
+.msg-block.user.editing > .bubble, .msg-block.user.editing > .msg-edit-row { display: none; }
 .msg-inline-edit {
-  position: absolute; top: calc(100% + 26px); left: 0; right: 0; z-index: 3;
-  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
-  padding: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .1);
+  width: min(560px, 100%);
+  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 14px;
+  padding: 10px 12px 10px 14px; box-shadow: 0 6px 20px rgba(0, 0, 0, .06);
   display: flex; flex-direction: column; gap: 8px;
 }
 .msg-inline-edit-input {
-  width: 100%; resize: vertical; min-height: 64px; max-height: 240px;
-  border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px;
-  background: var(--app-panel-2); color: var(--app-text); font: inherit; line-height: 1.6; outline: none;
+  width: 100%; resize: none; overflow-y: auto; max-height: 200px;
+  border: none; padding: 0; background: transparent; color: var(--app-text);
+  font: inherit; line-height: 1.65; outline: none;
 }
-.msg-inline-edit-input:focus { border-color: var(--app-accent); }
-.msg-inline-edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.msg-inline-edit-hint { margin-right: auto; font-size: 11px; color: var(--app-text3); }
+.msg-inline-edit-input::placeholder { color: var(--app-text3); }
+.msg-inline-edit .pending-imgs, .msg-inline-edit .pending-files { margin: 0; max-width: none; }
+.edit-mentions { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg-inline-edit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.msg-inline-edit-hint {
+  margin-right: auto; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--app-text3); min-width: 0;
+}
+.msg-inline-edit-actions .app-btn { border-radius: 999px; padding: 5px 14px; }
+.msg-inline-edit-actions .app-btn.ghost { background: var(--app-panel); }
 .msg-time-inline { font-size: 11px; color: var(--app-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
 .msg-tokens { font-size: 11px; color: var(--app-text3); white-space: nowrap; cursor: default; }
 .jump-latest {
@@ -4724,10 +4912,12 @@ onMounted(async () => {
 .at-chip-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .at-chip-del { flex: none; cursor: pointer; font-size: 13px; line-height: 1; opacity: .65; padding: 0 1px; }
 .at-chip-del:hover { opacity: 1; color: var(--app-danger); }
-/* @ 引用 chip：知识库/文档用图标与底色区隔（技能 chip 沿用 .skill-chip 原样） */
+/* @ 引用 chip：知识库/文档/智能体用图标与底色区隔（技能 chip 沿用 .skill-chip 原样） */
 .at-chips-note { font-size: 11px; color: var(--app-text3); align-self: center; margin-left: 2px; }
 .at-chip-ic { font-size: 12px; flex: none; }
 .mention-chip.mention-doc { background: var(--app-warn-weak); color: var(--app-warn-text); }
+/* @ 智能体 chip（§4 轮级委派）：沿用默认主色弱底，与 kb（同主色系）靠图标区分 */
+.mention-chip.mention-agent { border: 1px solid var(--app-accent); }
 /* # 历史引用 chip：info 弱底与 kb（主色）/doc（warn）区分 */
 .at-chip.hist-chip { background: var(--app-info-weak); color: var(--app-accent); border: 1px solid var(--app-info-border); }
 
@@ -4777,6 +4967,8 @@ onMounted(async () => {
 .mention-check { color: var(--app-accent); flex: none; }
 .mention-empty { padding: 18px 8px; text-align: center; font-size: 12px; color: var(--app-text3); }
 .mention-foot { padding: 7px 12px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); }
+/* @ 智能体候选：头像自带配色块（AgentAvatar），只对齐基线不套底色 */
+.mention-ava-agent { flex: none; margin-top: 1px; }
 /* # 历史引用面板：问/答头像按角色着色（问=主色、答=弱底），一眼分清引用的是问题还是回答 */
 .mention-ava.hist-ava-q { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
 .mention-ava.hist-ava-a { font-weight: 600; }

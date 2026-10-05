@@ -628,10 +628,27 @@ public class RagService {
         // 声明在智能体解析之前：会话锁定的智能体若已不可用，需要就地登记提示而不是静默改用全局配置
         List<Map<String, String>> degradations = new ArrayList<>();
         Set<String> degradedCodes = new HashSet<>();
+        // §4 会话内 @ 智能体：消息里 @ 了其他主智能体 = 本轮临时委派它作答——人设/知识库/工具集整轮按它执行，
+        // 会话绑定不变（不落 session，仅本轮覆盖）。先于绑定解析：委派生效时请求里的 "auto" 不再触发
+        // 派遣路由（显式指定优先于路由，不为注定被覆盖的一轮花一次 LLM 判路调用）
+        final Agent delegatedAgent = resolveDelegatedAgent(mentions, degradations, degradedCodes);
+        String bindAgentId = agentId;
+        if (delegatedAgent != null && "auto".equals(agentId)) {
+            bindAgentId = null;   // 首问绑定按默认智能体收敛；已锁定会话本就忽略请求 agentId，无影响
+        }
         // 智能体（4.1）：会话级绑定——已锁定的会话沿用锁定值，未锁定的按请求解析并锁定（首问路由一次）。
         // 派遣在 resolveModel 之后（用当轮生效模型判路），失败回落默认智能体
-        final Agent agent = resolveSessionAgent(sessionId, agentId, question, resolvedModel, emitter,
+        final Agent boundAgent = resolveSessionAgent(sessionId, bindAgentId, question, resolvedModel, emitter,
                 degradations, degradedCodes);
+        // 委派生效判定：@ 的智能体与会话绑定（或默认解析结果）同一人时无需覆盖，也不发委派事件
+        final boolean delegatedRound = delegatedAgent != null
+                && (boundAgent == null || !delegatedAgent.getId().equals(boundAgent.getId()));
+        final Agent agent = delegatedRound ? delegatedAgent : boundAgent;
+        if (delegatedRound) {
+            log.info("[AGENT] 会话 {} 本轮由 @ 提及的智能体 {}（{}）作答（会话绑定不变）",
+                    sessionId, delegatedAgent.getId(), delegatedAgent.getName());
+            emitAgentDelegated(emitter, delegatedAgent, sessionId);
+        }
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
         }
@@ -644,7 +661,8 @@ public class RagService {
                         "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
             }
             runWorkflowChat(sessionId, question, userId, emitter, startTime, degradations, degradedCodes,
-                    agent, guestMode, regenerate, replaceMessageId, editVariantGroup);
+                    agent, guestMode, regenerate, replaceMessageId, editVariantGroup,
+                    delegatedRound ? delegatedAgent : null);
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
@@ -820,7 +838,7 @@ public class RagService {
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
-                        userMessageId);
+                        userMessageId, delegatedRound ? delegatedAgent : null);
                 return;
             }
 
@@ -1502,6 +1520,8 @@ public class RagService {
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.userMessageId = userMessageId; // 本轮用户消息 ID（编辑重发后前端挂切换器/再编辑用）
+            st.delegatedAgentId = delegatedRound ? delegatedAgent.getId() : null; // §4 轮级委派归属（随 done 下发）
+            st.delegatedAgentName = delegatedRound ? delegatedAgent.getName() : null;
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
@@ -2974,6 +2994,13 @@ public class RagService {
                                     finalBinding.agentName() == null ? "" : finalBinding.agentName());
                         }
                     }
+                    // §4 轮级委派归属：本轮由 @ 提及的智能体作答时单独下发（agentId/agentName 保持会话绑定口径，
+                    // 前端绑定镜像不受影响；气泡归属按委派值展示，与刷新后按落库快照回显的结果一致）
+                    if (st.delegatedAgentId != null) {
+                        donePayload.put("delegatedAgentId", st.delegatedAgentId);
+                        donePayload.put("delegatedAgentName",
+                                st.delegatedAgentName == null ? "" : st.delegatedAgentName);
+                    }
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
@@ -3111,6 +3138,10 @@ public class RagService {
         /** 本轮智能体归属快照（buildAnswerStream 回填）：中断兜底落库时 appendMessage 需要，彼时已拿不到闭包里的 agent */
         volatile String agentId;
         volatile String agentName;
+        /** §4 轮级委派：本轮由 @ 提及的智能体作答时的归属（null=无委派）。随 done 单独下发——
+         *  done 的 agentId/agentName 保持「会话绑定」口径（前端绑定镜像依赖它），委派归属不可混入 */
+        volatile String delegatedAgentId;
+        volatile String delegatedAgentName;
 
         AnswerStreamState(String sessionId, String question, String userId, SseEmitter emitter,
                           Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
@@ -3741,6 +3772,58 @@ public class RagService {
         } catch (Exception e) {
             log.debug("[DISPATCH] 派遣结果事件下发失败（不影响问答）: {}", e.getMessage());
         }
+    }
+
+    /**
+     * §4 轮级委派下发：{id,name,description}。用户主动 @ 的归属变化要在当轮看得见（气泡上「由 X 作答本轮」），
+     * 不能像自动派遣那样归入排障开关——那是系统行为，这是用户指令。
+     */
+    private void emitAgentDelegated(SseEmitter emitter, Agent delegate, String sessionId) {
+        try {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("id", delegate.getId());
+            info.put("name", delegate.getName());
+            info.put("description", delegate.getDescription());
+            sendSseEvent(emitter, "agent_delegated", JSON.toJSONString(info), sessionId);
+        } catch (Exception e) {
+            log.debug("[AGENT] 委派事件下发失败（不影响问答）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * §4 会话内 @ 智能体：从本轮 mentions 解析轮级委派的智能体（type=agent，取第一个）。
+     * <p>控制器同步段已做存在性/可读性/子智能体校验；流水线异步线程仍按同一信任边界走
+     * {@code agentService.get} 重新解析实体（与 kb/doc 引用同口径，不信任请求直达数据）——
+     * 校验通过后至流水线执行之间被删除/改权限的罕见竞态按降级处理：回落会话绑定智能体，
+     * 不终止本轮（会话智能体还能答，损失只是"委派没生效"且用户看得见原因）。
+     * 多个 agent 提及：取第一个，其余登记降级提示（答一轮的语义只有单主语）。
+     */
+    private Agent resolveDelegatedAgent(List<ChatRequest.Mention> mentions,
+                                        List<Map<String, String>> degradations, Set<String> degradedCodes) {
+        if (mentions == null || mentions.isEmpty()) return null;
+        Agent first = null;
+        boolean hasMore = false;
+        for (ChatRequest.Mention m : mentions) {
+            if (m == null || !"agent".equals(m.getType()) || m.getId() == null || m.getId().isBlank()) continue;
+            if (first != null) {
+                hasMore = true;
+                continue;
+            }
+            Agent a = agentService.get(m.getId());
+            if (a == null) {
+                String shown = (m.getName() == null || m.getName().isBlank()) ? m.getId() : m.getName();
+                addDegradation(degradations, degradedCodes, "agentMentionUnavailable",
+                        "你 @ 的智能体「" + shown + "」已不可访问（被删除或权限变更），本轮由会话绑定的智能体回答");
+                log.warn("[AGENT] @ 提及的智能体 {} 不可解析，本轮回落会话绑定", m.getId());
+            } else {
+                first = a;
+            }
+        }
+        if (first != null && hasMore) {
+            addDegradation(degradations, degradedCodes, "agentMentionMultiple",
+                    "一次只能由一个智能体作答：已取第一个 @ 的「" + first.getName() + "」，其余提及本轮忽略");
+        }
+        return first;
     }
 
     /**
@@ -5110,7 +5193,7 @@ public class RagService {
     private void runWorkflowChat(String sessionId, String question, String userId, SseEmitter emitter,
                                  long startTime, List<Map<String, String>> degradations,
                                  Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate,
-                                 String replaceMessageId, String editVariantGroup) {
+                                 String replaceMessageId, String editVariantGroup, Agent delegatedAgent) {
         sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
         java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
@@ -5199,6 +5282,11 @@ public class RagService {
                     donePayload.put("agentId", finalBinding.agentId());
                     donePayload.put("agentName", finalBinding.agentName() == null ? "" : finalBinding.agentName());
                 }
+            }
+            // §4 轮级委派归属（与主链路同口径）：工作流智能体被 @ 委派时气泡归属按委派值展示
+            if (delegatedAgent != null) {
+                donePayload.put("delegatedAgentId", delegatedAgent.getId());
+                donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
             }
             sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
             completeEmitter(emitter);
@@ -5308,7 +5396,7 @@ public class RagService {
                                     String[] thinkingHolder, List<Map<String, String>> degradations,
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel, boolean guestMode, String replaceMessageId,
-                                    String userMessageId) {
+                                    String userMessageId, Agent delegatedAgent) {
         try {
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答；
             // 例外：用户 @ 了文档（mentionText 非空）时有参考资料，引用规则按主链路口径放开
@@ -5377,6 +5465,8 @@ public class RagService {
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.userMessageId = userMessageId; // 本轮用户消息 ID（随 done 下发，编辑重发后前端挂切换器）
+            st.delegatedAgentId = delegatedAgent != null ? delegatedAgent.getId() : null; // §4 轮级委派归属
+            st.delegatedAgentName = delegatedAgent != null ? delegatedAgent.getName() : null;
             st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）

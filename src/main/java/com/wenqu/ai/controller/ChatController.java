@@ -61,6 +61,7 @@ public class ChatController {
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
     private final com.wenqu.ai.service.ResourceVisibilityService visibility;
     private final com.wenqu.ai.service.KnowledgeBaseService kbService;
+    private final com.wenqu.ai.service.AgentService agentService;
     private final com.wenqu.ai.mapper.AiDocumentMapper documentMapper;
     private final com.wenqu.ai.service.ChatUploadService chatUploadService;
     private final com.wenqu.ai.service.SessionShareService sessionShareService;
@@ -208,7 +209,7 @@ public class ChatController {
         if (mentions == null || mentions.isEmpty()) return null;
         int max = Math.max(1, configService.getInt("chat.maxMentionsPerMessage", 10));
         if (mentions.size() > max) {
-            throw new BizException("一次最多引用 " + max + " 个知识库/文档");
+            throw new BizException("一次最多引用 " + max + " 个知识库/文档/智能体");
         }
         boolean admin = adminGuard.isAdmin(httpRequest);
         var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
@@ -249,8 +250,21 @@ public class ChatController {
                 normalized.setId(doc.getId());
                 normalized.setName(doc.getFileName());
                 normalized.setKbId(doc.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : doc.getKbId());
+            } else if ("agent".equals(type)) {
+                // @ 智能体（轮级委派）：get() 内含可读校验（共享范围外按不存在处理，不泄露存在性）。
+                // 子智能体是主智能体的内部检索角色，不作为问答角色直接提及——与对话页下拉同一口径
+                var a = agentService.get(id);
+                if (a == null) {
+                    throw new BizException("提及的智能体不存在或无权访问");
+                }
+                if (Integer.valueOf(1).equals(a.getIsSubagent())) {
+                    throw new BizException("子智能体不能被 @ 提及（它只能被主智能体委派调用）");
+                }
+                normalized.setType("agent");
+                normalized.setId(a.getId());
+                normalized.setName(a.getName());
             } else {
-                throw new BizException("不支持的引用类型：" + m.getType() + "（仅支持 kb / doc）");
+                throw new BizException("不支持的引用类型：" + m.getType() + "（仅支持 kb / doc / agent）");
             }
             out.add(normalized);
         }

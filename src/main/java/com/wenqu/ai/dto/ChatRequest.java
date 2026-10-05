@@ -29,7 +29,7 @@ public class ChatRequest {
     @Schema(description = "用户上传附件（文档类，非图片）：先经 /chat/attachment 上传换 fileId，这里只带引用（不内联内容）")
     private List<Attachment> attachments;
 
-    @Schema(description = "输入框 @ 引用（本轮显式指定的资料范围）：kb=检索收窄到这些知识库；doc=该文档的块强制进上下文")
+    @Schema(description = "输入框 @ 引用：kb=检索收窄到这些知识库；doc=该文档的块强制进上下文；agent=临时委派该智能体作答本轮（会话绑定不变）")
     private List<Mention> mentions;
 
     @Schema(description = "输入框 # 引用的会话历史消息：服务端按 messageId 从当前会话读回内容，前置进本轮上下文（不信任客户端传的任何文本）")
@@ -58,14 +58,16 @@ public class ChatRequest {
      * @ 引用（用户显式指定，优先于智能体配置）：
      * <ul>
      *   <li>{@code kb}：本轮检索范围收窄到被引库；</li>
-     *   <li>{@code doc}：该文档的内容块**不经检索直接前置**进上下文（用户认为它相关，不该被相关性门/排序挡掉）。</li>
+     *   <li>{@code doc}：该文档的内容块**不经检索直接前置**进上下文（用户认为它相关，不该被相关性门/排序挡掉）；</li>
+     *   <li>{@code agent}：临时委派该智能体作答本轮——人设/知识库/工具集整轮按它执行，
+     *       会话绑定不变（仅本轮覆盖，不落 session）。子智能体不可被直接提及。</li>
      * </ul>
      * 服务端会按当前用户做可见性校验（fail-loud：不可见/不存在直接拒绝，不静默忽略）。
      */
     @Data
     @Schema(description = "@ 引用项")
     public static class Mention {
-        @Schema(description = "类型：kb=知识库 / doc=文档", example = "doc")
+        @Schema(description = "类型：kb=知识库 / doc=文档 / agent=智能体（轮级委派）", example = "doc")
         private String type;
 
         @Schema(description = "资源 ID", example = "uuid-xxxx")
