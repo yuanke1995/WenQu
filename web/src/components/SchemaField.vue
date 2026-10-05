@@ -4,14 +4,14 @@
       <a-tooltip v-if="tipText" :title="tipText" placement="top"
                  :overlay-inner-style="{ whiteSpace: 'pre-line' }">
         <span style="display:inline-flex;align-items:center">
-          <span v-if="field.core" class="core-dot"></span>{{ field.label }}
+          <span>{{ field.label }}</span>
           <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
           <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
           <question-circle-outlined class="tip-icon" />
         </span>
       </a-tooltip>
       <span v-else style="display:inline-flex;align-items:center">
-        <span v-if="field.core" class="core-dot"></span>{{ field.label }}
+        <span>{{ field.label }}</span>
         <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
         <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
       </span>
@@ -178,14 +178,6 @@ const onSelectChange = v => emit('change', props.field, v)
 }
 .tip-icon:hover {
   color: var(--app-accent);
-}
-.core-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--app-warn);
-  margin-right: 6px;
 }
 .num-presets { flex: none; }
 .ms-row {
