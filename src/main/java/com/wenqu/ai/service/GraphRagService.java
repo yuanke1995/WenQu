@@ -246,6 +246,243 @@ public class GraphRagService {
         return Map.of("rows", rows, "total", pg.getTotal(), "page", p, "size", s);
     }
 
+    // ==================== §5 图谱可视化：聚合查询（只读，RBAC 沿 /graph/** 门控） ====================
+
+    /**
+     * 图谱视图（§5 核心接口）：按关联度取前 {@code limit} 个实体 + 这些实体之间的关系
+     * （同一 (主体,谓词,客体) 的多条三元组合并成一条带计数的关系边）。
+     * <p>
+     * 与 {@link #triples} 的分工：triples 是逐条核对清单（带来源文档名），view 是<b>画图数据</b>——
+     * 度数在库内 GROUP BY 聚合，前端不用再拉全量三元组自行统计（大库下 500 条采样会以偏概全）。
+     * 零三元组的孤立实体不进视图（画出来只是孤点，徒增噪音）；实体数超 limit 时 truncated=true，
+     * 前端提示「展示关联度最高的前 N 个」，完整定位交给 {@link #search}（超出视图的实体聚焦其邻域）。
+     */
+    public Map<String, Object> view(String kbId, int limit) {
+        requireKb(kbId);
+        int n = Math.min(Math.max(20, limit), 500);
+        // 度数 = 实体在三元组中出现的次数（主语/客体两侧各记一次）
+        Map<String, Integer> degree = new HashMap<>();
+        tripleMapper.subjectDegree(kbId).forEach(r -> degree.merge(str(r.get("entityId")), ((Number) r.get("cnt")).intValue(), Integer::sum));
+        tripleMapper.objectDegree(kbId).forEach(r -> degree.merge(str(r.get("entityId")), ((Number) r.get("cnt")).intValue(), Integer::sum));
+        // 前 N 实体（按度数降序；同名次保持稳定序，避免刷新后布局无谓抖动）
+        List<String> topIds = degree.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .limit(n)
+                .map(Map.Entry::getKey)
+                .toList();
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        if (!topIds.isEmpty()) {
+            Map<String, GraphEntity> ents = entityMapper.selectBatchIds(topIds).stream()
+                    .collect(Collectors.toMap(GraphEntity::getId, e -> e));
+            for (String id : topIds) {
+                GraphEntity e = ents.get(id);
+                if (e == null) continue;   // 三元组残留但实体行已被清（清图非事务边界）：跳过
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", e.getId());
+                m.put("name", e.getName());
+                m.put("degree", degree.get(id));
+                m.put("mentionCount", e.getMentionCount());
+                nodes.add(m);
+            }
+        }
+        List<Map<String, Object>> edges = new ArrayList<>();
+        if (!nodes.isEmpty()) {
+            List<String> nodeIds = nodes.stream().map(m -> String.valueOf(m.get("id"))).toList();
+            for (Map<String, Object> r : tripleMapper.aggregateEdges(kbId, nodeIds)) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("source", str(r.get("sourceId")));
+                m.put("target", str(r.get("targetId")));
+                m.put("predicate", str(r.get("predicate")));
+                m.put("count", ((Number) r.get("cnt")).intValue());
+                edges.add(m);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("totals", Map.of("entities", entityMapper.selectCount(new LambdaQueryWrapper<GraphEntity>().eq(GraphEntity::getKbId, kbId)),
+                "triples", tripleMapper.selectCount(new LambdaQueryWrapper<GraphTriple>().eq(GraphTriple::getKbId, kbId))));
+        out.put("limit", n);
+        out.put("truncated", degree.size() > nodes.size());
+        out.put("nodes", nodes);
+        out.put("edges", edges);
+        return out;
+    }
+
+    /**
+     * 实体详情（§5 点实体看三元组）：实体的全部三元组（主/客两侧），带来源文档名与知识块定位
+     * （chunkId/chunkIndex，前端「查看源块」用）。度数即三元组条数（与 view 的度数同口径）。
+     */
+    public Map<String, Object> entityDetail(String kbId, String entityId) {
+        requireKb(kbId);
+        GraphEntity e = requireEntity(kbId, entityId);
+        List<GraphTriple> ts = tripleMapper.selectList(new LambdaQueryWrapper<GraphTriple>()
+                .eq(GraphTriple::getKbId, kbId)
+                .and(w -> w.eq(GraphTriple::getSubjectId, entityId).or().eq(GraphTriple::getObjectId, entityId))
+                .orderByDesc(GraphTriple::getCreateTime));
+        Set<String> otherIds = new HashSet<>();
+        Set<String> docIds = new HashSet<>();
+        Set<String> chunkIds = new HashSet<>();
+        for (GraphTriple t : ts) {
+            otherIds.add(t.getSubjectId());
+            otherIds.add(t.getObjectId());
+            if (t.getDocId() != null) docIds.add(t.getDocId());
+            if (t.getChunkId() != null) chunkIds.add(t.getChunkId());
+        }
+        Map<String, String> names = new HashMap<>();
+        if (!otherIds.isEmpty()) {
+            entityMapper.selectBatchIds(otherIds).forEach(x -> names.put(x.getId(), x.getName()));
+        }
+        Map<String, String> docNames = new HashMap<>();
+        if (!docIds.isEmpty()) {
+            docMapper.selectBatchIds(docIds).forEach(d -> docNames.put(d.getId(), d.getFileName()));
+        }
+        Map<String, Knowledge> chunks = chunkIds.isEmpty() ? Map.of()
+                : knowledgeMapper.selectBatchIds(chunkIds).stream().collect(Collectors.toMap(Knowledge::getId, k -> k));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (GraphTriple t : ts) {
+            Knowledge k = t.getChunkId() == null ? null : chunks.get(t.getChunkId());
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("id", t.getId());
+            r.put("subjectId", t.getSubjectId());
+            r.put("subject", names.getOrDefault(t.getSubjectId(), t.getSubjectId()));
+            r.put("predicate", t.getPredicate());
+            r.put("objectId", t.getObjectId());
+            r.put("object", names.getOrDefault(t.getObjectId(), t.getObjectId()));
+            r.put("doc", docNames.getOrDefault(t.getDocId(), t.getDocId()));
+            r.put("docId", t.getDocId());
+            r.put("chunkId", t.getChunkId());
+            r.put("chunkIndex", k == null ? null : k.getChunkIndex());
+            rows.add(r);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entity", Map.of("id", e.getId(), "name", e.getName(),
+                "aliases", parseAliases(e), "mentionCount", e.getMentionCount() == null ? 0 : e.getMentionCount()));
+        out.put("degree", ts.size());
+        out.put("triples", rows);
+        return out;
+    }
+
+    /**
+     * 实体邻域（§5 搜索定位的兜底）：搜索命中的实体不在默认视图前 N 里时，以它为中心取
+     * 一跳邻域子图（该实体的全部三元组聚合），前端整体重渲染为聚焦视图——
+     * 与 view() 的 nodes/edges 同构，渲染层零分叉。
+     */
+    public Map<String, Object> neighbor(String kbId, String entityId) {
+        Map<String, Object> detail = entityDetail(kbId, entityId);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ts = (List<Map<String, Object>>) detail.get("triples");
+        String centerId = entityId;
+        Map<String, Integer> degree = new LinkedHashMap<>();
+        // 聚合键 (subject,predicate,object) → 边；display 名映射已由 detail 做好（键用实体 id，显示时再换名）
+        Map<String, Map<String, Object>> edgeByKey = new LinkedHashMap<>();
+        for (Map<String, Object> t : ts) {
+            String s = String.valueOf(t.get("subjectId"));
+            String o = String.valueOf(t.get("objectId"));
+            degree.merge(s, 1, Integer::sum);
+            degree.merge(o, 1, Integer::sum);
+            String key = s + "|" + t.get("predicate") + "|" + o;
+            edgeByKey.computeIfAbsent(key, k -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("source", s);
+                m.put("target", o);
+                m.put("predicate", t.get("predicate"));
+                m.put("count", 0);
+                return m;
+            }).merge("count", 1, (a, b) -> ((Number) a).intValue() + ((Number) b).intValue());
+        }
+        Map<String, String> names = new HashMap<>();
+        names.put(centerId, String.valueOf(((Map<?, ?>) detail.get("entity")).get("name")));
+        for (Map<String, Object> t : ts) {
+            names.put(String.valueOf(t.get("subjectId")), String.valueOf(t.get("subject")));
+            names.put(String.valueOf(t.get("objectId")), String.valueOf(t.get("object")));
+        }
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        for (Map.Entry<String, Integer> en : degree.entrySet()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", en.getKey());
+            m.put("name", names.getOrDefault(en.getKey(), en.getKey()));
+            m.put("degree", en.getValue());
+            nodes.add(m);
+        }
+        // 中心节点排最前（渲染层可据此给中心实体做视觉强调）
+        nodes.sort((a, b) -> centerId.equals(a.get("id")) ? -1 : centerId.equals(b.get("id")) ? 1 : 0);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("center", Map.of("id", centerId, "name", names.getOrDefault(centerId, centerId)));
+        out.put("nodes", nodes);
+        out.put("edges", new ArrayList<>(edgeByKey.values()));
+        return out;
+    }
+
+    /**
+     * 实体搜索（§5 按实体搜索定位）：按显示名/归一名模糊匹配（别名不参与——归一名已覆盖
+     * 大小写/全半角差异，别名只影响抽取去重）。命中前 20 个，按提及次数降序。
+     */
+    public List<Map<String, Object>> search(String kbId, String q) {
+        requireKb(kbId);
+        String query = q == null ? "" : q.trim();
+        if (query.isEmpty()) return List.of();
+        List<GraphEntity> hits = entityMapper.selectList(new LambdaQueryWrapper<GraphEntity>()
+                .eq(GraphEntity::getKbId, kbId)
+                .and(w -> w.like(GraphEntity::getName, query).or().like(GraphEntity::getNameNorm, query))
+                .orderByDesc(GraphEntity::getMentionCount)
+                .last("LIMIT 20"));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GraphEntity e : hits) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", e.getId());
+            m.put("name", e.getName());
+            m.put("mentionCount", e.getMentionCount() == null ? 0 : e.getMentionCount());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 知识块内容（§5 跳转源知识块）：按 chunkId 取块原文 + 所属文档，供实体三元组面板
+     * 「查看源块」弹层展示——溯源闭环的最后一跳。跨库 chunkId 一律拒绝（不泄露他库内容）。
+     */
+    public Map<String, Object> chunk(String kbId, String chunkId) {
+        requireKb(kbId);
+        if (chunkId == null || chunkId.isBlank()) throw new BizException(404, "知识块不存在");
+        Knowledge k = knowledgeMapper.selectById(chunkId);
+        if (k == null) throw new BizException(404, "知识块不存在");
+        AiDocument doc = k.getDocId() == null ? null : docMapper.selectById(k.getDocId());
+        if (doc == null || !kbId.equals(doc.getKbId())) throw new BizException(404, "知识块不存在");
+        String content = k.getContent() == null ? "" : k.getContent();
+        int max = Math.max(500, configService.getInt("graphrag.chunkViewMaxChars", 4000));
+        boolean truncated = content.length() > max;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", k.getId());
+        out.put("docId", doc.getId());
+        out.put("doc", doc.getFileName());
+        out.put("chunkIndex", k.getChunkIndex());
+        out.put("title", k.getTitle());
+        out.put("titlePath", k.getTitlePath());
+        out.put("content", truncated ? content.substring(0, max) : content);
+        out.put("truncated", truncated);
+        return out;
+    }
+
+    private void requireKb(String kbId) {
+        if (kbMapper.selectById(kbId) == null) throw new BizException(404, "知识库不存在");
+    }
+
+    private GraphEntity requireEntity(String kbId, String entityId) {
+        GraphEntity e = entityId == null ? null : entityMapper.selectById(entityId);
+        if (e == null || !kbId.equals(e.getKbId())) throw new BizException(404, "实体不存在");
+        return e;
+    }
+
+    /** 实体别名 JSON → 列表（解析失败/为空返回空列表；展示封顶 8 条，与写入上限一致） */
+    private List<String> parseAliases(GraphEntity e) {
+        try {
+            if (e.getAliases() == null || e.getAliases().isBlank()) return List.of();
+            List<String> list = JSON.parseArray(e.getAliases(), String.class);
+            return list == null ? List.of() : list.stream().limit(8).toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
     /** 清空该库图谱（显式动作；开关关闭不删数据） */
     public Map<String, Object> clear(String kbId) {
         KnowledgeBase kb = kbMapper.selectById(kbId);

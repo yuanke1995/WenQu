@@ -15,6 +15,10 @@
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
           <setting-outlined /> 知识库配置
         </button>
+        <!-- §5 图谱视图入口：与库列表页共用同一弹窗组件（库详情页直接看「知识资产」） -->
+        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="graphModal = true">
+          <apartment-outlined /> 图谱
+        </button>
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
@@ -372,6 +376,9 @@
     <!-- 知识库配置（与知识库列表页同一弹窗组件）：当前库的解析/检索参数就地改，保存后刷新库信息 -->
     <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" @saved="fetchKbs" />
 
+    <!-- 知识图谱（与知识库列表页同一弹窗组件）：库详情页的「图谱」入口 -->
+    <KnowledgeGraphModal v-model:open="graphModal" :kb="currentKb" />
+
     <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
       <img :src="kbImgUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
@@ -390,7 +397,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined,
-         InboxOutlined, FileOutlined, CloseOutlined } from '@ant-design/icons-vue'
+         InboxOutlined, FileOutlined, CloseOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
@@ -400,6 +407,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          getDocumentQueueStats, listAvailableModels } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
+import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
@@ -468,6 +476,9 @@ const currentKbName = computed(() => {
 // 当前库行对象来自 fetchKbs 的列表缓存（含 parseParams/queryParams），弹窗组件据此回填表单
 const kbCfgVisible = ref(false)
 const currentKb = computed(() => kbases.value.find(x => x.id === currentKbId.value) || null)
+
+// ==================== 知识图谱（§5：与库列表页共用同一弹窗组件） ====================
+const graphModal = ref(false)
 const openKbConfig = () => {
   if (!currentKb.value) {
     message.warning('知识库信息尚未加载完成，请稍候重试')

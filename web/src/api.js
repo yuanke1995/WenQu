@@ -1049,6 +1049,12 @@ export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POS
 export const graphStatus = kbId => request(`/graph/${kbId}/status`)
 export const graphTriples = (kbId, page = 1, size = 20) => request(`/graph/${kbId}/triples?page=${page}&size=${size}`)
 export const graphClear = kbId => request(`/graph/${kbId}`, { method: 'DELETE' })
+// ---------- §5 图谱可视化（聚合视图 / 实体溯源 / 搜索定位） ----------
+export const graphViewData = (kbId, limit = 300) => request(`/graph/${kbId}/view?limit=${limit}`)
+export const graphEntityDetail = (kbId, entityId) => request(`/graph/${kbId}/entity/${entityId}`)
+export const graphNeighbor = (kbId, entityId) => request(`/graph/${kbId}/neighbor/${entityId}`)
+export const graphSearchEntity = (kbId, q) => request(`/graph/${kbId}/search?q=${encodeURIComponent(q)}`)
+export const graphChunk = (kbId, chunkId) => request(`/graph/${kbId}/chunk/${chunkId}`)
 
 // ---------- 站内通知（铃铛；解析/工作流/网页源刷新等异步事件的用户可感知面） ----------
 export const notificationList = (limit = 50) => request(`/notification/list?limit=${limit}`)
