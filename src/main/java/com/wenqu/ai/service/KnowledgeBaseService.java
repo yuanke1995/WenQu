@@ -46,6 +46,8 @@ public class KnowledgeBaseService {
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
     /** 归属人查询（谁建归谁，原全局默认库已划转给第一个管理员）；仅依赖 Mapper，无循环依赖 */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
+    /** 向量索引注册中心：删库时级联清理本库向量索引与数据（否则留孤儿索引占内存） */
+    private final KbVectorStoreRegistry kbVectorStores;
     /** 读全局配置（chunk/解析参数等）；GraphRAG 抽取模型回落库主个人默认聊天模型——见 userMapper */
     private final ConfigService configService;
     /** 管理员级判定（含自定义 admin_flag=1 角色）：官方内置库的检索/解析参数维护放行走它 */
@@ -59,12 +61,14 @@ public class KnowledgeBaseService {
                                 AgentMapper agentMapper,
                                 com.wenqu.ai.service.ModelRegistryService modelRegistryService,
                                 com.wenqu.ai.mapper.UserMapper userMapper,
+                                KbVectorStoreRegistry kbVectorStores,
                                 ConfigService configService, RoleService roleService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
         this.modelRegistryService = modelRegistryService;
         this.userMapper = userMapper;
+        this.kbVectorStores = kbVectorStores;
         this.configService = configService;
         this.roleService = roleService;
     }
@@ -252,7 +256,34 @@ public class KnowledgeBaseService {
         defaultIdByUid.clear();
         // 级联清理：从关联智能体（含子智能体）的 knowledgeBaseIds 里摘除本库 ID，避免悬挂引用
         cleanupAgentReferences(id);
+        // 级联清理：本库独立向量索引 + 其 JSON 向量数据。
+        // 不清会留下「孤儿索引」——库已删但 ai-doc-kb-{id} 与 ai:chunkkb-{id}:* 常驻 Redis，
+        // 既占内存（每条向量按维度数×4 字节，1024 维≈4KB/条），又会让人误以为该库仍可检索
+        // （KbVectorStoreRegistry.allStores 走 customKbs()，已删库不在其中故不会真被路由到，
+        //  但残留数据不会被任何路径回收）。历史已产生多个孤儿索引，需一并清理。
+        cleanupVectorIndex(id);
         return null;
+    }
+
+    /**
+     * 删除本库向量索引与其 JSON 向量数据（库删除时调用；best-effort，失败不阻断删库）。
+     *
+     * <p><b>为什么必须清</b>：{@link KbVectorStoreRegistry#dropKbIndex} 用的是
+     * {@code FT.DROPINDEX ... DD}（连数据删除），正是重嵌/清空绑定场景要的行为；
+     * 但删库场景同样适用——库都没了，向量留着毫无意义。
+     *
+     * <p><b>失败不阻断删库</b>：删库是用户的显式意图，不能因为 Redis 抖动就失败
+     * （否则用户会看到「删除失败」却其实库已删或反之）。残留数据最坏是占内存 + 成孤儿索引，
+     * 可事后手工清理，<b>不构成正确性风险</b>（检索路由按 {@code customKbs()} 走，已删库不会被命中）。
+     */
+    private void cleanupVectorIndex(String kbId) {
+        try {
+            kbVectorStores.dropKbIndex(kbId);
+            // dropKbIndex 已含「移除进程内缓存实例」，这里无需再 remove
+        } catch (Exception e) {
+            log.warn("[KB] 清理知识库 {} 的向量索引失败（残留数据可手工清理，不影响删库）: {}",
+                    kbId, e.getMessage());
+        }
     }
 
     /** 知识库删除后同步摘除各智能体 knowledgeBaseIds 中的该库 ID（like 预筛 + splitIds 精确匹配） */

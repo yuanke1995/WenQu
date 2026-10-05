@@ -44,7 +44,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class KbVectorStoreRegistry {
 
-    private final KnowledgeBaseService kbService;
+    /**
+     * 知识库表（<b>刻意直连 Mapper，不注入 {@link KnowledgeBaseService}</b>）。
+     *
+     * <p><b>为什么</b>：删库要级联清理向量索引，故KnowledgeBaseService 依赖本类；
+     * 若本类再依赖 KnowledgeBaseService 就成<b>循环依赖</b>，Spring Boot 2.6+ 默认禁止
+     * （启动直接失败：Relying upon circular references is discouraged）。
+     * 本类只用到「按 id 取库」与「列出绑了向量模型的库」两个查询，纯数据访问，
+     * 直连 Mapper 无行为差异且打断环——低层依赖高层的 Mapper，而不是反过来依赖它的 Service。
+     */
+    private final com.wenqu.ai.mapper.KnowledgeBaseMapper kbMapper;
     private final DynamicEmbeddingModel embeddingModel;
     private final RedisProperties redisProperties;
 
@@ -65,7 +74,7 @@ public class KbVectorStoreRegistry {
         String effective = kbId.trim();
         RedisVectorStore custom = byKb.get(effective);
         if (custom != null) return custom;
-        KnowledgeBase kb = kbService.get(effective);
+        KnowledgeBase kb = (effective == null || effective.isBlank()) ? null : kbMapper.selectById(effective);
         if (kb == null || kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
             // 历史空绑定不再自动回填；走到这里说明向量模型未绑定，fail-loud 暴露而不是悄悄写错索引
             throw new IllegalStateException("知识库 " + effective + " 未绑定向量模型，无法路由向量库（请在知识库管理中绑定）");
@@ -191,7 +200,10 @@ public class KbVectorStoreRegistry {
 
     /** 当前全部独立（自定义向量模型）向量库——无 scope 的全库检索按此展开；全局库由调用方并入 */
     public List<KnowledgeBase> customKbs() {
-        return kbService.listCustomEmbedding();
+        return kbMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getDeleted, 0)
+                .isNotNull(KnowledgeBase::getEmbeddingRef)
+                .ne(KnowledgeBase::getEmbeddingRef, ""));
     }
 
     private RedisVectorStore build(KnowledgeBase kb) {
@@ -309,7 +321,7 @@ public class KbVectorStoreRegistry {
     private boolean recreateIndexWithGateSchema(String kbId, String index) {
         try {
             // 维度取自当前模型绑定（重建 schema 必须与向量实际维度一致，否则倒排建不起来）
-            KnowledgeBase kb = kbService.get(kbId);
+            KnowledgeBase kb = kbMapper.selectById(kbId);
             if (kb == null || kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
                 log.warn("[KB-VEC] 知识库 {} 无向量模型绑定，跳过 schema 重建", kbId);
                 return false;
