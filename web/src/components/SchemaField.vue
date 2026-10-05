@@ -36,8 +36,8 @@
         <!-- flex 垂直居中：antd 的 input-number 与 select 各自 inline-block 按基线排，会差半个像素行 -->
         <span class="ms-row">
           <a-input-number v-model:value="msAmount" :min="msAmountMin" :max="msAmountMax"
-                          :step="1" style="width: 130px" />
-          <a-select v-model:value="msUnit" :options="msUnits" style="width: 92px; margin-left: 8px" />
+                          :step="1" style="width: 96px" />
+          <a-select v-model:value="msUnit" :options="msUnits" style="width: 84px; margin-left: 6px" />
           <span v-if="msUnit !== 1 && value != null" class="num-hint">= {{ value }} ms</span>
         </span>
       </template>
