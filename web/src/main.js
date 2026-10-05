@@ -1,5 +1,7 @@
 import { createApp } from 'vue'
-import Antd from 'ant-design-vue'
+// antd 不再全量注册：模板里的 a-xxx 由 unplugin-vue-components 在编译期按需解析
+// （见 vite.config.js 的 AntDesignVueResolver）。js 侧命令式 API（message/Modal/theme）
+// 仍走各文件的具名导入——antd-vue 的 sideEffects 声明保证这些能被 tree-shake。
 import { message } from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 import './md.css'
@@ -94,5 +96,5 @@ window.addEventListener('app:forbidden', e => {
 // 已登录才拉取；未登录直接进登录页，避免无谓的 401 噪音。
 const boot = isLoggedIn() ? ensureAuth() : Promise.resolve()
 boot.finally(() => {
-  app.use(Antd).use(router).mount('#app')
+  app.use(router).mount('#app')
 })
