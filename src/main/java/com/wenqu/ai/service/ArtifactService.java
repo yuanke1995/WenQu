@@ -310,6 +310,88 @@ public class ArtifactService {
     }
 
     /**
+     * 分享链接下载产物：凭分享会话取回**属于该会话**的产物文件。
+     *
+     * <p><b>入参是库里的产物 url，不是访客给的路径</b>：调用方
+     * （{@code SessionShareService}）按会话内产物的固定序号取出该条记录，
+     * 访客全程只能提供一个整数下标。这既避免了把 {@code artifacts/{uid}/…} 里的
+     * uid 暴露到分享出去的 URL 上，也从根上消除了"路径是访客可控输入"这个攻击面——
+     * 目录穿越、任意文件读在结构上就不成立，而不是靠过滤拦下来。
+     *
+     * <p><b>归属校验（fail-closed）</b>：产物可能已被软删、被超期清理、或文件已不在磁盘，
+     * 任一情况都返回 null（调用方按 404），不给访客一个点开必然失败的下载入口。
+     *
+     * @return 可下载的产物（文件已在磁盘上）；不通过校验或文件已不在返回 null
+     */
+    public SharedArtifact readForShare(String sessionId, String storedUrl) {
+        if (sessionId == null || sessionId.isBlank() || storedUrl == null || storedUrl.isBlank()) {
+            return null;
+        }
+        String rel = toObjectKey(storedUrl);
+        if (rel == null) return null;
+        String[] seg = rel.split("/");
+        // artifacts/{x}/{y}（遗留布局：x=sessionId）或 artifacts/{uid}/{yyyyMM}/{id}_{name}（现行）
+        if (seg.length != 3 && seg.length != 4) return null;
+
+        // 库里有行：归属与存活一律以库为准（最强判据），不看路径字面
+        Artifact row = findByObjectKey(rel);
+        if (row != null) {
+            if (row.getDeleted() != null && row.getDeleted() == 1) return null;
+            if (!sessionId.equals(row.getSessionId())) return null;
+            return materialize(row.getObjectKey(), row.getFilename());
+        }
+        // 库里无行：只可能是产物表建立之前的遗留布局，要求目录段严格等于本会话 id
+        if (seg.length == 3 && sessionId.equals(seg[1])) {
+            return materialize(rel, seg[2]);
+        }
+        return null;
+    }
+
+    /** 分享下载用的产物视图（file 已确认存在） */
+    public record SharedArtifact(Path file, String filename) {
+    }
+
+    /**
+     * 库里存的产物 url → 产物根目录下的相对路径。存的是原始 url（签名在展示层现签），
+     * 形如 {@code /ai/artifacts/…}；可能带 query（历史脏数据）故先剥掉。
+     * 越界形态（不以 artifacts/ 开头、含穿越段）一律 null。
+     */
+    private String toObjectKey(String storedUrl) {
+        String p = storedUrl;
+        int q = p.indexOf('?');
+        if (q >= 0) p = p.substring(0, q);
+        if (p.startsWith("/ai/")) p = p.substring("/ai/".length());
+        while (p.startsWith("/")) p = p.substring(1);
+        if (p.isBlank() || !p.startsWith("artifacts/")) return null;
+        if (p.contains("..") || p.contains("\\") || p.contains("\0")) return null;
+        for (String s : p.split("/")) {
+            if (s.isBlank() || s.equals(".") || s.equals("..")) return null;
+        }
+        // 二次保险：解析后必须仍在产物根目录内
+        Path root = baseDir();
+        if (!root.resolve(p).normalize().startsWith(root)) return null;
+        return p;
+    }
+
+    /** 按 objectKey 回表（精确匹配，不做模糊前缀——宁可查不到也不猜） */
+    private Artifact findByObjectKey(String objectKey) {
+        List<Artifact> rows = artifactMapper.selectList(new LambdaQueryWrapper<Artifact>()
+                .eq(Artifact::getObjectKey, objectKey)
+                .last("LIMIT 1"));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** 确认文件确实在磁盘上才返回（表在文件不在 = 访客拿到一个必然 404 的下载入口） */
+    private SharedArtifact materialize(String objectKey, String filename) {
+        if (objectKey == null || objectKey.isBlank()) return null;
+        Path f = baseDir().resolve(objectKey).normalize();
+        if (!f.startsWith(baseDir()) || !Files.isRegularFile(f)) return null;
+        String name = (filename == null || filename.isBlank())
+                ? f.getFileName().toString() : filename;
+        return new SharedArtifact(f, name);
+    }
+
+    /**
      * 通过 SSE 实时下发一条产物事件（工具执行时调用）。客户端断开或未登记 emitter 时静默忽略。
      *
      * @param eventType 事件类型（"artifact"）

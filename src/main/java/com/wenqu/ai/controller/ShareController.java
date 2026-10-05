@@ -88,6 +88,37 @@ public class ShareController {
                 "description", ctx.agent().getDescription() == null ? "" : ctx.agent().getDescription()));
     }
 
+    /**
+     * 下载分享会话里的产物文件（免登录，凭 token）。
+     *
+     * <p><b>为什么不复用产物列表里的签名 URL</b>：产物走 {@code /ai/artifacts/**} 静态映射 +
+     * expire+sig 拦截器，签名默认只有 1 小时，而分享链接可以挂几个月——把签名 URL 写进分享页，
+     * 等于给出一批"当天能下、隔天全 401"的死链。改成每次下载凭 token 重新解析并现场返回，
+     * 让链接有效期与分享有效期一致（都只由 enabled 决定）。
+     *
+     * <p>入参只有会话内序号 {@code seq}，没有路径：产物归属校验、序号→文件的映射、
+     * 已删/已清理的判定全在 {@code SessionShareService.sharedArtifact} 内完成。
+     * 停用或换 token 后立即 404（与 {@link #sharedSession} 同一套 resolvePublic 口径，
+     * 不区分"不存在"与"已停用"）；文件已被超期清理或手动删除同样 404。
+     */
+    @Operation(summary = "下载分享产物", description = "按分享 token 下载该会话的产物（凭会话内序号；停用即失效）")
+    @GetMapping("/session/{token}/artifact")
+    public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadArtifact(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话内产物序号") @RequestParam("seq") int seq) {
+        var artifact = sessionShareService.sharedArtifact(token, seq);
+        if (artifact == null) throw new BizException(404, "产物不存在或分享链接已失效");
+        // 中文文件名必须按 RFC 5987 编码，否则部分浏览器/客户端落盘乱码
+        String encoded = java.net.URLEncoder.encode(artifact.filename(), java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        log.info("[AUDIT] 分享产物下载 token={} file={} seq={}", token, artifact.filename(), seq);
+        return org.springframework.http.ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
+                .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                .body(new org.springframework.core.io.FileSystemResource(artifact.file()));
+    }
+
     @Operation(summary = "游客对话历史", description = "取游客自己会话的最近若干轮（刷新页面恢复用；只能取自己的会话）")
     @GetMapping("/{token}/history")
     public ResultJson history(

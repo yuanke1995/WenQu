@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.SessionShareMapper;
 import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -30,11 +29,22 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class SessionShareService {
 
     private final SessionShareMapper sessionShareMapper;
     private final SessionService sessionService;
+    /**
+     * 产物读取（分享下载用）。单向依赖：ArtifactService 不引用本服务，无循环。
+     */
+    private final ArtifactService artifactService;
+
+    public SessionShareService(SessionShareMapper sessionShareMapper,
+                               SessionService sessionService,
+                               ArtifactService artifactService) {
+        this.sessionShareMapper = sessionShareMapper;
+        this.sessionService = sessionService;
+        this.artifactService = artifactService;
+    }
 
     /**
      * 列出我分享过的全部会话（分享管理页数据源）。
@@ -232,11 +242,20 @@ public class SessionShareService {
      * 联网来源天然没有 fileName（那是库内文档名），裁掉 origin 会被当成库内来源
      * 渲染成"来源文档不可用"。siteName/url 一并带上：前者是联网来源的展示名，
      * 后者供页面给出原网页入口（两者都是公开信息，不含库内容）。
+     * <p>
+     * <b>产物（artifacts）也外发</b>，只给文件名/大小/说明 + 一个会话内序号 {@code seq}，
+     * <b>不给 url</b>：产物文件走 {@code /ai/artifacts/**} 静态映射 +
+     * {@code ImageAuthInterceptor} 的 expire+sig 校验，签名默认只�� 1 小时，
+     * 而分享链接能挂很久——把签名 URL 写进分享页等于给出一批"当天能下、隔天全 401"的死链。
+     * 链接真正的长期凭据是 token，下载必须凭 token 现场换（见 {@link #sharedArtifactUrl}）。
+     * 只传序号而非路径：{@code artifacts/{uid}/…} 里的 uid 不该出现在外发 URL 上，
+     * 顺带让"路径"这个访客可控输入彻底不存在（目录穿越面在结构上不成立）。
      */
     public List<Map<String, Object>> publicHistory(String sessionId) {
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
         if (history == null) return List.of();
         List<Map<String, Object>> out = new ArrayList<>();
+        int artSeq = 0;
         for (Map<String, Object> m : history) {
             String role = m.get("role") == null ? "" : String.valueOf(m.get("role"));
             if (!"user".equals(role) && !"assistant".equals(role)) continue;
@@ -263,9 +282,81 @@ public class SessionShareService {
                 }
                 if (!slim.isEmpty()) one.put("sources", slim);
             }
+            if ("assistant".equals(role)) {
+                List<Map<String, Object>> arts = publicArtifacts(m.get("artifacts"), artSeq);
+                if (!arts.isEmpty()) {
+                    artSeq += arts.size();
+                    one.put("artifacts", arts);
+                }
+            }
             out.add(one);
         }
         return out;
+    }
+
+    /**
+     * 产物清单裁剪：只留 seq/filename/size/description（都是分享者自己生成的成果元信息）。
+     * {@code seqBase} 是本会话内产物的起始序号——按会话整体编号而非消息内编号，
+     * 访客拿到的是一个稳定的"这段对话里的第 N 个产物"，与消息顺序绑定但不含任何路径信息。
+     */
+    private static List<Map<String, Object>> publicArtifacts(Object raw, int seqBase) {
+        if (!(raw instanceof List<?> list) || list.isEmpty()) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        int i = 0;
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> a)) continue;
+            String filename = a.get("filename") == null ? null : String.valueOf(a.get("filename"));
+            if (filename == null || filename.isBlank()) continue;
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("seq", seqBase + i++);
+            one.put("filename", filename);
+            if (a.get("size") != null) one.put("size", a.get("size"));
+            if (a.get("description") != null) one.put("description", a.get("description"));
+            out.add(one);
+        }
+        return out;
+    }
+
+    /**
+     * 分享页拼产物下载地址：{@code /api/ai/share/session/{token}/artifact?seq=N}。
+     * 相对路径返回空串（非 API 调用场景，如单测），前端拼 BASE 即可。
+     */
+    public String sharedArtifactUrl(String token, int seq) {
+        if (token == null || token.isBlank() || seq < 0) return "";
+        return "/share/session/" + token + "/artifact?seq=" + seq;
+    }
+
+    /**
+     * 按会话内序号取回产物文件（凭 token 的下载端点调用）。
+     *
+     * <p>序号 → 具体产物的映射靠**重新扫一遍会话历史**得到，与 {@link #publicHistory}
+     * 用的是同一个来源和同一套过滤规则，因此不存在"页面显示第 2 个、下下来却是第 1 个"的错位。
+     * 代价是每次下载多读一次历史——分享页是只读低频场景，这个换法比在内存里维护映射表
+     * 简单得多，也不会因为两处规则各写一份而漂移。
+     *
+     * @return 可下载产物；序号越界/已被删除/文件不在返回 null（调用方按 404）
+     */
+    public ArtifactService.SharedArtifact sharedArtifact(String token, int seq) {
+        if (token == null || token.isBlank() || seq < 0) return null;
+        var share = resolvePublic(token);
+        if (share == null) return null;
+        String sessionId = share.getSessionId();
+        List<Map<String, Object>> history = sessionService.getHistory(sessionId);
+        if (history == null) return null;
+        int cur = 0;
+        for (Map<String, Object> m : history) {
+            if (!"assistant".equals(String.valueOf(m.get("role")))) continue;
+            if (!(m.get("artifacts") instanceof List<?> list)) continue;
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> a)) continue;
+                String filename = a.get("filename") == null ? null : String.valueOf(a.get("filename"));
+                if (filename == null || filename.isBlank()) continue; // 与 publicArtifacts 同一条过滤
+                if (cur++ != seq) continue;
+                // url 取库里存的原始地址；签名在 ArtifactService 内按会话归属现场重签
+                return artifactService.readForShare(sessionId, a.get("url") == null ? null : String.valueOf(a.get("url")));
+            }
+        }
+        return null;
     }
 
     private static String newToken() {

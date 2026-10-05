@@ -15,11 +15,25 @@
     </div>
     <div v-else-if="!info.messages.length" class="sh-state">这段对话还没有内容。</div>
 
-    <div v-else class="sh-list">
+    <div v-else ref="listEl" class="sh-list">
       <div v-for="(m, i) in info.messages" :key="i" class="sh-row" :class="m.role">
         <div v-if="m.role === 'user'" class="sh-bubble user">{{ m.content }}</div>
         <div v-else class="sh-bubble ai">
           <div class="md" v-html="renderMd(m.content, [])"></div>
+          <!-- 产物：模型为本轮问题生成的文件，本就是这段对话的一部分，跟着分享出去。
+               下载地址不来自响应里的 url（那是被 1 小时签名保护的地址，分享链接却能挂很久），
+               而是按 token 现场换——见下方 artifactHref。 -->
+          <div v-if="m.artifacts && m.artifacts.length" class="sh-art-list">
+            <a v-for="(a, ai) in m.artifacts" :key="ai" class="sh-art"
+               :href="artifactHref(a)" :download="a.filename" target="_blank" rel="noopener"
+               :title="'下载 ' + a.filename">
+              <file-text-outlined class="sh-art-icon" />
+              <span class="sh-art-name">{{ a.filename }}</span>
+              <span v-if="a.description" class="sh-art-desc">{{ a.description }}</span>
+              <span v-if="fmtSize(a.size)" class="sh-art-size">{{ fmtSize(a.size) }}</span>
+              <download-outlined class="sh-art-dl" />
+            </a>
+          </div>
           <!-- 引用来源只给文档名与章节：知识块全文不外发（链接一旦外流不至于把库内容带出去） -->
           <div v-if="m.sources && m.sources.length" class="sh-src">
             <div class="sh-src-t">引用来源</div>
@@ -61,6 +75,25 @@ const info = ref({ title: '', messages: [], sharedAt: null })
 /** 外部来源（联网 WEB / MCP）：没有库内文档名，展示名用站点名——与对话页 externalOrigin 同口径。
  *  漏判会让联网来源落进「来源文档不可用」分支（fileName 对它们本就为空）。 */
 const external = s => s?.origin === 'WEB' || s?.origin === 'MCP'
+
+/**
+ * 产物下载地址：按会话内序号拼下载端点，**不复用响应里的 url**。
+ * 产物文件由 /ai/artifacts/** 静态映射 + expire+sig 拦截器保护，签名默认只签 1 小时，
+ * 而分享链接能挂很久——直接把签名 URL 写进页面会得到"当天能下、隔天全 401"的死链。
+ * 这里让后端凭 token 现场返回，链接有效期与分享有效期一致。
+ * 走 VITE_API_BASE 前缀：分享页与产物下载同域，但开发态经 vite /proxy 转发，两种环境都要对。
+ */
+const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
+const artifactHref = a => `${BASE}/share/session/${encodeURIComponent(String(route.params.token || ''))}/artifact?seq=${a.seq}`
+
+/** 字节数 → 可读体积（分享页只做展示，够用即可；未知大小不显示） */
+const fmtSize = n => {
+  const v = Number(n)
+  if (!Number.isFinite(v) || v <= 0) return ''
+  if (v < 1024) return v + ' B'
+  if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB'
+  return (v / 1024 / 1024).toFixed(1) + ' MB'
+}
 
 const fmtTime = ts => {
   if (!ts) return ''
@@ -113,6 +146,22 @@ onMounted(async () => {
   background: var(--app-panel); border: 1px solid var(--app-border);
   padding: 12px 14px; border-radius: 12px 12px 12px 2px; width: 100%;
 }
+/* 产物卡：与对话页 .artifact-item 同一形态（图标 + 文件名 + 说明 + 下载箭头），
+   但用 --app-* token 以适配分享页的独立配色；文件名单行省略，窄屏不撑破 */
+.sh-art-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.sh-art {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 9px; border: 1px solid var(--app-border); border-radius: 8px;
+  background: var(--app-bg); color: var(--app-text2);
+  text-decoration: none; font-size: 12px; min-width: 0;
+}
+.sh-art:hover { border-color: var(--app-accent); background: var(--app-accent-weak); }
+.sh-art-icon { color: var(--app-accent); flex: none; }
+.sh-art-name { font-weight: 500; color: var(--app-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-art-desc { color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sh-art-size { color: var(--app-text3); font-size: 11px; flex: none; margin-left: auto; }
+.sh-art-dl { color: var(--app-text3); flex: none; }
+
 .sh-src { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
 .sh-src-t { font-size: 11px; color: var(--app-text3); margin-bottom: 6px; }
 .sh-src-item { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--app-text2); padding: 2px 0; }
@@ -138,6 +187,9 @@ onMounted(async () => {
   .sh-list { gap: 12px; }
   .sh-bubble { max-width: 92%; }
   .sh-bubble.ai { padding: 10px 12px; }
+  /* 产物行是分享页的主要交互目标，放到 44px 触摸热区；文件名仍单行省略不换行 */
+  .sh-art { padding: 11px 10px; }
+  .sh-art-desc { display: none; }
   /* 页脚链接是主要交互，44px 触摸热区 */
   .sh-foot { margin: 20px 0 16px; padding-top: 12px; }
   .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }
