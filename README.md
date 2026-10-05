@@ -63,13 +63,14 @@
 | 文档解析 | Apache POI 5.2.3（docx/xlsx）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
 | 序列化 / 文档 | fastjson2 2.0.31；springdoc-openapi 2.8.8（Swagger UI，生产默认关） |
 | 安全 | RSA 加密落库模型 API Key（`ConfigCryptoService`）+ SHA-256 哈希签发对外 API Key + 图片 HMAC 签名 URL + PBKDF2 密码哈希 + JWT 登录令牌 + OIDC 单点登录 |
-| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js + @vue-flow/core 1.48.2（工作流画布，锁版本）（`.nvmrc` 固定 Node **18.19.0**，Node ≥18 均可） |
+| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js + @vue-flow/core 1.48.2（工作流画布，锁版本）（`.nvmrc` 固定 Node **22** LTS，依赖链要求 ≥22.12 或 20.19+） |
 
 ## 快速开始
 
 ### 环境要求
 
-- JDK 17、Node.js ≥18（`.nvmrc` 固定 18.19.0）
+- JDK 17、Node.js ≥22.12（或 20.19+；`.nvmrc` 固定 22 LTS）
+  - Node 18 会在构建时抛 `paths[0] argument must be of type string`：`unplugin` 用了 Node 20.11+ 才有的 `import.meta.dirname`
 - MySQL 协议数据库（MySQL 8 / OceanBase）
 - Redis Stack（向量索引）
 - Docker（可选：沙盒、Docker Compose 一键部署）
@@ -163,7 +164,8 @@ docker compose up -d
 
 ```bash
 cd web
-nvm use            # .nvmrc 固定 Node 18.19.0（Node ≥18 均可，建议 18/20/22）
+nvm use            # .nvmrc 固定 Node 22 LTS（依赖链要求 ≥22.12，Node 18 会构建失败）
+                   # 本机没有 22 就先：nvm install 22
 npm install
 npm run dev        # 访问 http://localhost:5800/chat（端口被占直接报错，不会跳号）
 ```
@@ -508,7 +510,7 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 │       └── sandbox-image/Dockerfile # 派生沙盒镜像（容器内无 sudo，运行时依赖必须烧进镜像层）
 ├── user-data/                       # 沙盒持久卷：shared/{uid}/workspace/（bind 给容器内 /home/gem/user-data）
 ├── skill-projections/               # 沙盒技能投影（只读挂给容器内 /home/gem/skills）
-└── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 18.19.0）
+└── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 22 LTS）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
     ├── src/router.js                # 路由表（/chat /agents /knowledge /artifacts /stats /profile /s/:token /shared/:token + 管理页；管理页带管理员守卫）
     └── src/views/                   # AppLayout / ChatPage / AgentsHubPage(六 Tab) / FlowEditor / KnowledgeBasePage /
@@ -572,7 +574,7 @@ bash deploy/sandbox-provisioner/run.sh status
 - 智能体会话级绑定：会话首问锁定后全程不变，切换须新建会话；绑定智能体被删/无权时 fail-loud 提示，不静默换人
 
 **部署与数据**
-- `.nvmrc` 固定 Node 18.19.0（Node ≥18 均可构建）
+- `.nvmrc` 固定 Node 22 LTS（要求 ≥22.12，Node 18/21 不可构建）
 - 存量库升级：`SchemaMigrator` 启动自动补列补索引（幂等）；JSON 列需库侧表达式默认值
 - 图片访问路径：后端返回 `/ai/images/...`（含 context-path），前端经 `/proxy` 代理时已去 `/ai` 前缀
 - 过期会话/消息自动清理：默认每日清除逻辑删除超过 30 天的会话与消息（保留期即「撤销删除」窗口）
