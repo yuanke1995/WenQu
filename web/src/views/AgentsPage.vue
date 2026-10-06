@@ -1489,6 +1489,8 @@ onMounted(async () => { })
 /* 公开发布弹窗 */
 .pub-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
 .pub-row { display: flex; flex-direction: column; gap: 6px; }
+/* 开关不随列布局的 cross-axis stretch 拉成通栏（MCP 开关行是 column，不挡会被拉满宽） */
+.pub-row > .ant-switch { align-self: flex-start; }
 .pub-row:first-child { flex-direction: row; align-items: center; gap: 10px; }
 .pub-row-t { font-size: 13px; color: var(--app-text2, var(--app-text2)); }
 .pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2, var(--app-text2)); }
