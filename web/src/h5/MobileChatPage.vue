@@ -84,6 +84,7 @@
         @ask="ask"
         @copy="copyAnswer"
         @copy-user="copyUserMessage"
+        @more="openRound"
       />
     </main>
 
@@ -153,6 +154,7 @@
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
+    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" />
 
     <!-- ==================== 来源详情 ==================== -->
     <BottomSheet :open="src.visible" :title="src.title" max-height="72dvh" @close="src.visible = false">
@@ -222,6 +224,7 @@ import MobileModelSheet from './MobileModelSheet.vue'
 import MobileAttachSheet from './MobileAttachSheet.vue'
 import MobileRefSheet from './MobileRefSheet.vue'
 import MobileNotifSheet from './MobileNotifSheet.vue'
+import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 
@@ -260,9 +263,11 @@ const modelOpen = ref(false)
 const attachOpen = ref(false)
 const refOpen = ref(false)
 const notifOpen = ref(false)
+const roundOpen = ref(false)
+const roundIdx = ref(-1)
 const closeSheets = () => {
   sessionsOpen.value = false; modelOpen.value = false; attachOpen.value = false
-  refOpen.value = false; notifOpen.value = false
+  refOpen.value = false; notifOpen.value = false; roundOpen.value = false
 }
 
 // ==================== 站内通知（铃铛角标 + 通知 sheet） ====================
@@ -339,6 +344,10 @@ const onNewChat = async () => { sessionsOpen.value = false; await createNewSessi
 // 壳外页面跳转（个人设置/帮助中心）：这两个页面本就在窄屏白名单里（DesktopOnlyGuard），
 // 移动壳过去只需给入口——落在 AppLayout 窄屏形态（顶栏标题随路由、可再走抽屉回对话）
 const onGoPage = path => { closeSheets(); router.push(path).catch(() => {}) }
+
+// 单轮操作（消息操作行的「⋯」）：先标选中（操作行保持可见，看得出在操作哪一条），再开 sheet。
+// 目标下标记在 roundIdx 上、sheet 只读它——不读 activeIdx：sheet 关掉后用户上翻，选中态变化不该影响已关闭的 sheet
+const openRound = i => { activeIdx.value = i; roundIdx.value = i; roundOpen.value = true }
 
 // ==================== 会话内查找 ====================
 // 与 PC 的 Ctrl/⌘+F 是同一份实现（src/chat/useChatSearch.js）：行契约统一为 [data-row-index]

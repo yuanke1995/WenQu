@@ -246,6 +246,9 @@
             <button class="act-btn" :class="{ on: m.fb === 1 }" :disabled="m.fb != null" title="有帮助" @click.stop="$emit('feedback', m, 1)"><like-outlined /></button>
             <button class="act-btn" :class="{ on: m.fb === 0 }" :disabled="m.fb != null" title="没帮助" @click.stop="$emit('feedback', m, 0)"><dislike-outlined /></button>
             <button class="act-btn" :disabled="loading" title="重新生成" @click.stop="$emit('retry', index)"><reload-outlined /></button>
+            <!-- 单轮操作（PC 是 a-dropdown）：导出这轮 / 加入评测集 / 检索调试 / 删除本轮。
+                 触屏没有 hover 菜单，收进底部 sheet（MobileRoundSheet） -->
+            <button class="act-btn" title="更多操作" @click.stop="$emit('more', index)"><more-outlined /></button>
           </template>
           <span v-if="m.tokens" class="act-time">≈{{ fmtTokens(m.tokens.total) }} tokens</span>
           <span v-if="m.time" class="act-time">{{ fmtMsgTime(m.time) }}</span>
@@ -260,7 +263,7 @@ import { computed } from 'vue'
 import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
-  FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined
+  FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined
 } from '@ant-design/icons-vue'
 import { renderMd, resolveImg, copyCode, handleMdAction } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
@@ -287,7 +290,7 @@ const props = defineProps({
   variantSwitching: { type: Boolean, default: false }
 })
 const emit = defineEmits(['activate', 'preview', 'source', 'retry', 'edit', 'feedback', 'approve',
-  'switch-version', 'ask', 'copy', 'copy-user'])
+  'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
 // 富渲染：沙盒运行按钮需要会话作用域（与 PC 的 MD_RICH 同口径）
 const MD_RICH = { runnable: true }

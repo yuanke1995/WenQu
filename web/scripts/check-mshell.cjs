@@ -45,6 +45,25 @@ function serveStatic (page) {
       ], nextCursor: 0, hasMore: false, total: 3, unreadCount: 3 })
     }
     if (u.pathname === '/api/ai/notification/read' || u.pathname === '/api/ai/notification/read-all') return json({})
+    // 单轮操作（P1）断言所需：一段可加载的历史 + 管理员调试开关 + 调试/评测/删除接口
+    if (u.pathname === '/api/ai/config') return json({ chat: { retrievalDebugEnabled: { value: 'true' } } })
+    if (u.pathname === '/api/ai/session/s-round') {
+      return json([
+        { messageId: 'q-1', role: 'user', content: '登录步骤是什么？', createTime: Date.now() - 120000 },
+        { messageId: 'a-1', role: 'assistant', content: '按下面三步登录：① 打开登录页 ② 输入账号 ③ 提交。', createTime: Date.now() - 60000,
+          sources: [{ knowledgeId: 'k-1', ref: '1', fileName: '操作手册.pdf', title: '登录', snippet: '登录流程说明…', score: 0.82 }],
+          tokens: { prompt: 1200, context: 8, output: 300, total: 1500 } }
+      ])
+    }
+    if (u.pathname === '/api/ai/debug/retrieval') {
+      return json({ keywordTerms: ['登录', '步骤'], rerankApplied: false, rerankSkipReason: '未启用重排',
+        keywordHits: [{ title: '登录', docName: '操作手册.pdf', snippet: '关键词命中片段', hitRate: 0.9 }],
+        vectorHits: [{ title: '登录', docName: '操作手册.pdf', snippet: '向量命中片段', score: 0.77 }],
+        merged: [{ title: '登录', docName: '操作手册.pdf', score: 0.8 }],
+        reranked: [], finalContext: [{ title: '登录', docName: '操作手册.pdf', score: 0.8 }], excluded: [] })
+    }
+    if (u.pathname === '/api/ai/eval/case') return json({ added: true, expected: 1 })
+    if (u.pathname.startsWith('/api/ai/message-group/')) return json({})
     if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
     }
@@ -194,6 +213,54 @@ const check = (ok, label, detail = '') => {
   const rProf = await page.evaluate(() => ({ path: location.pathname, topbar: !!document.querySelector('.m-topbar'), shell: !!document.querySelector('.m-chat') }))
   check(rProf.path === '/profile', '点「个人设置」进入 /profile', `path=${rProf.path}`)
   check(!rProf.shell && rProf.topbar, '个人设置走窄屏工作台（顶栏在、移动壳不在）', JSON.stringify(rProf))
+
+  // ---- 单轮操作 sheet（P1）：历史加载 → 「⋯」→ 导出/评测/调试/删除 ----
+  // 这一段用 mock 的历史（s-round）驱动真渲染：操作行只对"最新一条"或选中态出现，
+  // 静态断言测不到这层，必须真点开。
+  await page.goto(ORIGIN + '/m/chat?sid=s-round', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+  const loaded = await page.evaluate(() => ({ rows: document.querySelectorAll('.mrow').length,
+    more: !!document.querySelector('.ai-actions .act-btn[title="更多操作"]') }))
+  check(loaded.rows === 2, 'mock 历史渲染出两行消息', `rows=${loaded.rows}`)
+  check(loaded.more, '最新一条 AI 消息的操作行有「更多操作」入口')
+  await page.locator('.ai-actions .act-btn[title="更多操作"]').dispatchEvent('click')
+  await page.waitForTimeout(900)
+  const rdMenu = await page.evaluate(() => [...document.querySelectorAll('.rd-btn')].map(b => b.textContent.trim()))
+  check(rdMenu.some(t => t.includes('导出这轮问答')) && rdMenu.some(t => t.includes('加入评测集'))
+    && rdMenu.some(t => t.includes('检索调试')) && rdMenu.some(t => t.includes('删除本轮对话')),
+    '单轮操作 sheet 四项齐全（导出/评测/调试/删除）', rdMenu.join('/'))
+
+  // 导出：双通道（保存文件 + 复制全文）
+  await page.locator('.rd-btn', { hasText: '导出这轮问答' }).first().dispatchEvent('click')
+  await page.waitForTimeout(900)
+  const rdExport = await page.evaluate(() => [...document.querySelectorAll('.rd-row .rd-btn')].map(b => b.textContent.trim()))
+  check(rdExport.length === 2 && rdExport[0].includes('保存文件') && rdExport[1].includes('复制全文'),
+    '导出后给出保存/复制双通道', rdExport.join('/'))
+
+  // 检索调试：分阶段结果（六段）+ 返回
+  await page.locator('.rd-btn', { hasText: '检索调试' }).first().dispatchEvent('click')
+  await page.waitForTimeout(1000)
+  const rdDebug = await page.evaluate(() => ({ stages: document.querySelectorAll('.rd-stage').length,
+    terms: document.querySelectorAll('.rd-term').length,
+    title: (document.querySelector('.bs-title') || {}).textContent || '' }))
+  check(rdDebug.title.includes('检索调试'), '调试视图标题切换', rdDebug.title)
+  check(rdDebug.stages === 6, '调试结果分六段展示', `stages=${rdDebug.stages}`)
+  check(rdDebug.terms === 2, '关键词词条已展示', `terms=${rdDebug.terms}`)
+  await page.locator('.rd-btn', { hasText: '返回操作' }).first().dispatchEvent('click')
+  await page.waitForTimeout(600)
+  check(await page.evaluate(() => [...document.querySelectorAll('.rd-btn')].some(b => b.textContent.includes('删除本轮对话'))),
+    '「返回操作」回到菜单视图')
+
+  // 删除本轮：确认弹窗（Modal.confirm）→ 消息移除
+  await page.locator('.rd-btn', { hasText: '删除本轮对话' }).first().dispatchEvent('click')
+  await page.waitForTimeout(700)
+  const confirmShown = await page.evaluate(() => !!document.querySelector('.ant-modal-confirm'))
+  check(confirmShown, '删除本轮弹确认框（Modal.confirm，触屏可靠）')
+  await page.locator('.ant-modal-confirm-btns .ant-btn-dangerous').first().dispatchEvent('click')
+  await page.waitForTimeout(1200)
+  const afterDel = await page.evaluate(() => ({ rows: document.querySelectorAll('.mrow').length,
+    welcome: !!document.querySelector('.m-welcome') }))
+  check(afterDel.rows === 0 && afterDel.welcome, '删除本轮后消息流移除该轮（回到空态）', JSON.stringify(afterDel))
 
   // ---- PC 回归：桌面（无触屏）访问 /m/chat 应被弹回 /chat，且不渲染移动壳 ----
   const desktop = await ctx.newPage()
