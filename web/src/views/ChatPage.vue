@@ -9,7 +9,9 @@
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
-          <button class="app-icon-btn" title="分享这段对话（只读链接）" @click="openShare">
+          <!-- 分享激活态：图标转琥珀，与侧栏会话行的分享标记同色（链接还开着不进弹窗也得有感知） -->
+          <button class="app-icon-btn" :class="{ 'share-on': shareActive }" @click="openShare"
+                  :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'">
             <share-alt-outlined />
           </button>
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
@@ -19,7 +21,7 @@
         </div>
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
-      <MobileChatHead v-if="isNarrow" @search="openSearch" @share="openShare" @panel="togglePanel" />
+      <MobileChatHead v-if="isNarrow" :share-active="shareActive" @search="openSearch" @share="openShare" @panel="togglePanel" />
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
       <div v-if="searchOpen" class="chat-search">
@@ -2137,6 +2139,13 @@ const {
   load: loadShare, enable: enableShare, disable: stopShare, copyLink: copyShareLink
 } = useSessionShare({ sessionId: () => currentSessionId.value })
 
+// 顶栏/移动头分享图标的激活态：与侧栏会话行的分享标记**同源**（sessionStore.list[].shared，
+// 后端会话列表按 enabled=1 下发）。开启与停止分享的每个入口（PC 弹窗、移动 sheet、个人设置→
+// 分享管理）都 markSessionShared 回写过这个字段，所以顶栏与侧栏天然同态、也不为图标多发一次请求；
+// 页面刷新后由 loadSessions 的权威值兜底。当前会话不在已加载页里时同样查不到（= 侧栏也看不到它）。
+const shareActive = computed(() =>
+  sessionStore.list.some(s => s.id === currentSessionId.value && !!s.shared))
+
 const openShare = async () => {
   if (!messages.value.length) { message.info('当前会话还没有内容可分享'); return }
   shareVisible.value = true
@@ -2752,6 +2761,9 @@ onMounted(async () => {
 /* 头部动作区：右对齐一组；分享/查找用全局 app-icon-btn（无框，悬停显 accent-weak 底色） */
 .head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .head-actions .app-icon-btn { font-size: 15px; }
+/* 分享激活态：琥珀（--app-warn）= 侧栏会话行分享标记同色。选择器比全局 .app-icon-btn:hover
+   更高权，悬停时不褪回强调蓝——激活是状态、不该被 hover 盖掉（底色仍随 hover 变） */
+.head-actions .app-icon-btn.share-on { color: var(--app-warn); }
 .head-quiet-btn {
   border: none; background: transparent; cursor: pointer; padding: 4px 8px;
   border-radius: 6px; font-size: 12px; color: var(--app-text3);

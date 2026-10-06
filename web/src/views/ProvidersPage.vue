@@ -2,9 +2,10 @@
   <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（页名 sr-only + 说明 + 主操作）+ 带内边距的内容区 -->
   <div class="app-page">
     <div class="app-page-head">
-      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">模型供应商</h1>
-      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。谁建归谁：你新建的供应商只有你能看到和使用</span>
+      <span class="head-count">共 <b>{{ list.length }}</b> 个供应商 · 已启用 <b>{{ enabledCount }}</b> · 模型 <b>{{ modelTotal }}</b> 个</span>
+      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。你新建的供应商只有你能看到和使用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
@@ -271,7 +272,7 @@
             <div class="pm-field">
               <div class="pm-label">
                 上下文窗口
-                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。对话类模型必填（无全局兜底，未声明时检索资料无法填入）。">
+                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。对话类模型必填（未声明时检索资料无法填入）。">
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
@@ -717,6 +718,10 @@ function typeChips(p) {
     .filter(k => counts[k])
     .map(k => ({ key: k, ...TYPE_META[k], count: counts[k] }))
 }
+
+/** 页头统计：启用中的供应商数 / 跨供应商的已登记模型总数 */
+const enabledCount = computed(() => list.value.filter(p => p.enabled).length)
+const modelTotal = computed(() => list.value.reduce((n, p) => n + (p.modelCount || 0), 0))
 
 const load = async () => {
   loading.value = true
@@ -1309,6 +1314,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 页头统计（与技能 / MCP 面板同款）：数字加重、小字说明 */
+.head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.head-count b { color: var(--app-text); font-weight: 600; }
 /* 批量操作区（页头最右，分隔线与常规按钮划清界限）：开关恒在最右、进出模式位置不动 */
 .batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }

@@ -5,8 +5,12 @@
     <!-- 编辑态（editingId !== null）或运行历史态，整页替换列表；列表头/列表体随之隐藏 -->
     <template v-if="editingId === null && historyId === null">
     <div class="app-page-head">
-      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
+      <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">工作流</h1>
+      <span class="head-count">
+        共 <b>{{ totalCount }}</b> 个 · 已发布 <b>{{ publishedCount }}</b> · 草稿 <b>{{ draftCount }}</b>
+        <template v-if="shared.length"> · 共享给我的 <b>{{ shared.length }}</b> 个</template>
+      </span>
       <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
       <button class="app-btn" style="margin-left:auto" @click="openTemplates">
@@ -256,6 +260,10 @@ const sections = computed(() => [
   { key: 'mine', rows: mine.value },
   { key: 'shared', rows: shared.value }
 ])
+/** 页头统计：共 = 我创建的 + 共享给我的；已发布/草稿按全部可见条目拆分（与卡片状态口径一致） */
+const totalCount = computed(() => mine.value.length + shared.value.length)
+const publishedCount = computed(() => [...mine.value, ...shared.value].filter(r => r.status === 'published').length)
+const draftCount = computed(() => totalCount.value - publishedCount.value)
 /** 是否可管理（编辑/发布/共享/删除）；共享只读为 false */
 const canManage = r => r.myPermission === 'MANAGE'
 
@@ -722,6 +730,9 @@ watch(() => [route.query.wf, route.query.run], () => { if (mine.value.length || 
 </script>
 
 <style scoped>
+/* 页头统计（与技能 / MCP 面板同款）：数字加重、小字说明 */
+.head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.head-count b { color: var(--app-text); font-weight: 600; }
 /* 批量操作区（页头最右，分隔线与常规按钮划清界限）：开关恒在最右、进出模式位置不动 */
 .batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
 /* 「批量管理」开关的激活态：品牌色描边提示当前处于批量模式 */

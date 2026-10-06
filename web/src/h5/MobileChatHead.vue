@@ -7,7 +7,8 @@
     <button class="m-ch-btn" title="在本会话中查找" @click="$emit('search')">
       <search-outlined />
     </button>
-    <button class="m-ch-btn" title="分享这段对话（只读链接）" @click="$emit('share')">
+    <button class="m-ch-btn" :class="{ 'share-on': shareActive }" @click="$emit('share')"
+            :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'">
       <share-alt-outlined />
     </button>
     <!-- 状态面板：窄屏是覆盖式 sheet，点开即用；文案用图标，语义靠 title 提示 -->
@@ -21,7 +22,8 @@
 import { SearchOutlined, ShareAltOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 
 // 纯展示 + 事件转发，不持有状态（对话/面板状态都在 ChatPage），
-// 避免窄屏与宽屏两套状态打架
+// 避免窄屏与宽屏两套状态打架；shareActive 也由 ChatPage 传入（与侧栏分享标记同源的会话状态）
+defineProps({ shareActive: { type: Boolean, default: false } })
 defineEmits(['search', 'share', 'panel'])
 </script>
 
@@ -41,4 +43,6 @@ defineEmits(['search', 'share', 'panel'])
   touch-action: manipulation;   /* 禁掉双击缩放，保证首次点击生效 */
 }
 .m-ch-btn:active { color: var(--app-accent); background: var(--app-accent-weak); }
+/* 分享激活态：琥珀（--app-warn）= 侧栏会话行分享标记同色；按下也不闪回强调蓝（激活是状态非手势） */
+.m-ch-btn.share-on, .m-ch-btn.share-on:active { color: var(--app-warn); }
 </style>
