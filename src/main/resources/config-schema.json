@@ -1082,6 +1082,21 @@
       "tier": 1
     },
     {
+      "backendKey": "retrieval.aclTopKSupplant",
+      "panel": "retrieval",
+      "section": 1,
+      "group": "retrieval",
+      "key": "aclTopKSupplant",
+      "path": "retrieval.aclTopKSupplant",
+      "label": "权限补采",
+      "type": "boolean",
+      "tips": "aclTopKSupplant",
+      "def": true,
+      "width": 200,
+      "note": "同库内混放不同可见范围的文档时，无权限文档会在检索后被剔除、但仍占用召回名额，导致其他人搜不到本该搜到的内容。开启后：若有效命中不足，按保留率自动放大向量召回上限补采一次（上限 4 倍），把召回名额补满。代价是向量检索变慢；根治办法仍是把不同可见范围的文档分到不同知识库。",
+      "tier": 2
+    },
+    {
       "backendKey": "retrieval.minContextScore",
       "panel": "retrieval",
       "section": 1,
@@ -3581,6 +3596,7 @@
     "reflectiveRetrieval": "检索-反思循环（Agentic RAG · 自主多轮检索）：开启后模型回答前先自评首轮检索证据是否充分，不足时自主调用知识检索工具换关键词/换角度再检索，证据足够才作答——从「搜一次答一次」跃迁到 Deep Research 形态。high=深度思考强度高档（含以上）的轮次自动启用；always=所有知识问答轮次启用。检索次数仍受「单轮工具步数上限」约束；生效依赖工具总开关开启且模型支持 Function Calling，不满足时本轮自动降级并在回答上方提示。",
     "minContextScore": "上下文/引用的最低相关分门槛（重排分门）：仅对重排分（0~1 相关性分域）生效，重排分低于该值的块不进上下文、也不出现在引用列表。分域双门口径：重排本轮实际执行过时排序分为重排分（走本门槛），且超出重排区间的未重排尾部候选不借融合门入场；未启用重排或重排未执行（候选不足重排区间）时排序分为加权融合分，走「融合分门 minFusionScore」。若发现正常资料被拦（回答称知识库无相关内容），调低到 0.45~0.5，或设 0 关闭。跳过的块不占上下文名额，检索调试里仍可见原始召回。",
     "vectorTopK": "向量检索最多取回的候选块数：用户说法与手册用词不一致时，调大能让语义相近但用词不同的块也进入候选（再经融合/重排决定最终入选）。调大更全但更慢。",
+    "aclTopKSupplant": "权限补采：解决「同库内不同可见范围」导致的召回名额被占满。关闭后严格按「向量召回上限」取一次，检索更快但有效命中可能不足。通常保持开启；若发现向量检索变慢且日志频繁出现「权限补采」，优先去检查知识库是否该拆分。",
     "keywordLimit": "关键词检索最多返回的知识块数（引擎为 mysql 时即 SQL LIMIT，meilisearch 时为索引查询 limit）。调高召回更全但更慢、融合分计算更重。",
     "retrievalTimeout": "混合检索超时（ms）：关键词子检索与总检索的超时上限，超时降级返回已收集结果。",
     "rewriteTimeoutMs": "查询改写超时（ms）：LLM 改写问题（多轮追问补全上下文）的等待上限，超时则用原问题检索并提示。本地模型响应慢时调大可减少改写降级，默认 5000。",
@@ -3761,6 +3777,7 @@
     "retrieval.minContextScore": "检索：上下文/引用的最低相关分门槛(排序分=重排分??融合分，低于该值的知识块不进上下文与引用；0=关闭)",
     "retrieval.keywordLimit": "检索：关键词召回词数上限",
     "retrieval.vectorTopK": "检索：向量召回 topK（评估对比后可应用）",
+    "retrieval.aclTopKSupplant": "检索：权限有效召回补采（有效命中不足时放大 topK 补采一次）",
     "retrieval.searchTimeoutMs": "检索：混合检索总超时(ms,含关键词并行)",
     "keyword.engine": "关键词引擎：mysql / meilisearch（切换前先探测并重建索引）",
     "keyword.baseUrl": "关键词引擎：Meilisearch 服务地址",

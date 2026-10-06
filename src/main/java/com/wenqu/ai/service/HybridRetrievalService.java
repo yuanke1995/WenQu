@@ -163,7 +163,9 @@ public class HybridRetrievalService {
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
         //    adaptiveTopK=true 时按「权限有效召回目标」补采（生产问答）；false 时严格按配置 topK 一次（评估/调试）
-        List<Document> vectorDocs = adaptiveTopK
+        //    补采还受 retrieval.aclTopKSupplant 总闸约束：应急阀，管理员可在设置页关掉（见下方 KNN 成本说明）
+        boolean supplement = adaptiveTopK && configService.getBoolean("retrieval.aclTopKSupplant", true);
+        List<Document> vectorDocs = supplement
                 ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
                 : vectorSearch(query, diag, kbIds, 0);
 
@@ -294,9 +296,10 @@ public class HybridRetrievalService {
 
     /**
      * 多路检索；{@code adaptiveTopK} 见 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
-     * <p><b>多路模式默认不补采</b>（{@code false}）：每一路都独立走 KNN，补采会把 N 路的 topK
-     * 同步放大，KNN 成本乘以路数；多路的意义本就是「拆子问题各取一批候选再归并」，
-     * 名额损失由归并后的多样性部分抵消。需要补采请走单路。
+     * <p><b>多路的补采按路数收敛</b>：≤2 路开（每路补 1 次、最坏 topK 翻倍，总 KNN 成本 ≤4 倍，
+     * 且多路本就为拆子问题取多样性，收益最大）；≥3 路不开——N 路同步放大 KNN 而
+     * {@code multiSearchPool} 仅 4 线程，成本乘路数后超时风险陡增，此时归并后的多路共识与
+     * 多样性收益已能覆盖名额损失。
      */
     public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag,
             java.util.Collection<String> kbIds, boolean adaptiveTopK) {
@@ -309,9 +312,16 @@ public class HybridRetrievalService {
             // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
             // 必须在提交前取快照、在子线程内重放；否则多路并行检索静默退化为全局配置（库级/智能体级策略全丢）
             Map<String, String> runOverrides = configService.currentOverrides();
+            // 多路是否开补采：按「路数 × 补采倍数」的总 KNN 成本设闸。
+            // 补采只补 1 次但 topK 最高放大到 MAX_TOPK_CAP(=60)，即单路最坏 2 倍 KNN；
+            // N 路并行时总成本是 N×2 倍，而 multiSearchPool 只有 4 线程——4 路开补采等于把
+            // 向量路 KNN 打满 8 倍，超时风险陡增。故按路数收敛：≤2 路开（成本可控且收益最大，
+            // 拆子问题本就为多样性），≥3 路不开（此时归并后的多路共识与多样性收益已能覆盖名额损失）。
+            boolean multiSupplement = adaptiveTopK && qs.size() <= 2;
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
                     .map(q -> CompletableFuture.supplyAsync(
-                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds, adaptiveTopK)), multiSearchPool))
+                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds, multiSupplement)),
+                            multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(configService.getInt("retrieval.searchTimeoutMs", 8000), TimeUnit.MILLISECONDS);

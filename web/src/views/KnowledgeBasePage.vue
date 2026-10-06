@@ -14,8 +14,14 @@
           <div class="kb-card-head">
             <KbIcon :kb="kb" :size="22" />
             <span class="kb-name">{{ kb.name }}</span>
-            <a-tag v-if="kb.isDefault === 1" color="blue" style="margin-left:auto">默认</a-tag>
-            <a-tag v-if="kb.builtin === 1" color="gold" :style="kb.isDefault === 1 ? '' : 'margin-left:auto'">官方</a-tag>
+            <!-- 混合权限（库内文档分属不同可见范围）：同库内无权文档会在检索后剔除时占用召回名额，
+                 建议分库根治。默认不显示，鼠标悬停说明原因。 -->
+            <a-tooltip v-if="kb.mixedScope" title="库内文档分属不同可见范围：同库内无权限的文档仍会占用召回名额，可能导致其他人搜不到内容。建议拆成多个知识库。">
+              <a-tag color="orange" class="kb-mixed-tag"
+                     :style="(kb.isDefault === 1 || kb.builtin === 1) ? '' : 'margin-left:auto'">建议分库</a-tag>
+            </a-tooltip>
+            <a-tag v-if="kb.isDefault === 1" color="blue" :style="kb.mixedScope ? '' : 'margin-left:auto'">默认</a-tag>
+            <a-tag v-if="kb.builtin === 1" color="gold" :style="(kb.isDefault === 1 || kb.mixedScope) ? '' : 'margin-left:auto'">官方</a-tag>
           </div>
           <p class="kb-card-desc" :title="kb.description || ''">{{ kb.description || '暂无描述' }}</p>
           <div class="kb-card-meta">
@@ -141,6 +147,9 @@ onMounted(() => {
 .kb-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--app-text2); }
 .kb-meta-sep { color: var(--app-text3); }
 .kb-card-actions { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--app-border); padding-top: 8px; margin-top: auto; }
+/* 建议分库：治理建议而非状态标记，弱化视觉权重（不与「默认/官方」抢焦点），靠颜色区分语义 */
+.kb-mixed-tag { opacity: .75; font-weight: 400; }
+.kb-mixed-tag:hover { opacity: 1; }
 .kb-dim { color: var(--app-text3); font-size: 11px; }
 .kb-params { color: var(--app-ok); font-size: 11px; }
 .kb-warn { color: var(--app-danger); font-size: 11px; }

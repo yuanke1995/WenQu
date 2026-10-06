@@ -735,6 +735,15 @@ public class ConfigService {
         return getOrDefaultParsed(key, Boolean::parseBoolean, false);
     }
 
+    /**
+     * 带默认值的布尔读取（与 {@link #getInt(String, int)} 同模式）。
+     * <p>为什么需要：{@link #getBoolean(String)} 在键未配置时返回 false，对「默认应开启」的新增开关
+     * 会静默变成关闭（该键尚未入库时永远读不到）。故新增开关一律用本方法显式给出默认值。
+     */
+    public boolean getBoolean(String key, boolean def) {
+        return getOrDefaultParsed(key, Boolean::parseBoolean, def);
+    }
+
     /** 保存可编辑项（白名单校验）→ 写 DB + 刷新缓存 */
     public Map<String, String> update(Map<String, Map<String, String>> groups) {
         Map<String, String> updates = new HashMap<>();

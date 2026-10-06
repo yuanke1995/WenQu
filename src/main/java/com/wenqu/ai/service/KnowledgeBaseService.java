@@ -52,6 +52,9 @@ public class KnowledgeBaseService {
     private final ConfigService configService;
     /** 管理员级判定（含自定义 admin_flag=1 角色）：官方内置库的检索/解析参数维护放行走它 */
     private final RoleService roleService;
+    /** share_config 统一解析入口（混合权限检测用；避免各自反序列化导致口径漂移——见 hasReadScope）。
+     *  只依赖 RoleService，无循环依赖。 */
+    private final ResourceVisibilityService visibilityService;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -62,7 +65,8 @@ public class KnowledgeBaseService {
                                 com.wenqu.ai.service.ModelRegistryService modelRegistryService,
                                 com.wenqu.ai.mapper.UserMapper userMapper,
                                 KbVectorStoreRegistry kbVectorStores,
-                                ConfigService configService, RoleService roleService) {
+                                ConfigService configService, RoleService roleService,
+                                ResourceVisibilityService visibilityService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
@@ -71,6 +75,7 @@ public class KnowledgeBaseService {
         this.kbVectorStores = kbVectorStores;
         this.configService = configService;
         this.roleService = roleService;
+        this.visibilityService = visibilityService;
     }
 
     // ==================== 读写 ====================
@@ -522,9 +527,69 @@ public class KnowledgeBaseService {
         return m;
     }
 
+    /**
+     * 「混合权限」库集合：库内<b>同时存在</b>「跟随库的文档」与「显式限定了共享范围的文档」。
+     *
+     * <p><b>为什么要检出</b>：文档级可见性是<b>召回后剔除</b>（只有库级下推），所以同库里的
+     * 无权限文档会先占掉向量 topK 名额，别人能搜到的内容就少了（检索侧有补采兜底，但只是缓解，
+     * 代价是向量检索变慢）。根治办法是把不同可见范围的文档分到不同库——而这件事只能靠人做，
+     * 平台只能告诉用户「这个库该拆了」。
+     *
+     * <p><b>判定口径</b>：文档 share_config 为空 = 跟随库（见 canReadDocFollowKb 语义）；
+     * 非空且解析出 read_scope = 限定了范围。只统计 status=0（生效）且未删除的文档。
+     *
+     * <p><b>成本</b>：一次 {@code GROUP BY kb_id} 聚合（扫 c_ai_document 的 kb_id/share_config
+     * 两列，索引覆盖），随库列表一起下发，不单独开接口——避免为一个提示多一个端点。
+     *
+     * @return 存在混合权限的库ID集合（无则空集）
+     */
+    public Set<String> mixedScopeKbIds() {
+        Set<String> out = new LinkedHashSet<>();
+        try {
+            List<AiDocument> docs = docMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .select(AiDocument::getKbId, AiDocument::getShareConfig)
+                    .isNotNull(AiDocument::getKbId)
+                    .ne(AiDocument::getKbId, "")
+                    .eq(AiDocument::getStatus, 0));
+            // 每个库两个计数：跟随库的 / 显式限定范围的。两者都 >0 即混合。
+            Map<String, int[]> byKb = new LinkedHashMap<>();
+            for (AiDocument d : docs) {
+                String kbId = d.getKbId();
+                if (kbId == null || kbId.isBlank()) continue;
+                int[] c = byKb.computeIfAbsent(kbId, k -> new int[2]);
+                boolean scoped = hasReadScope(d.getShareConfig());
+                c[scoped ? 1 : 0]++;
+            }
+            byKb.forEach((kbId, c) -> {
+                if (c[0] > 0 && c[1] > 0) out.add(kbId);
+            });
+        } catch (Exception e) {
+            // 体检类读侧统计失败不阻断库列表：降级为「不提示」，绝不因提示功能让整个列表打不开
+            log.warn("[KB] 混合权限库检测失败，跳过提示: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /**
+     * share_config 是否显式限定了读取范围（空/不可解析 = 未限定 = 跟随库）。
+     * <p><b>刻意走 {@link ResourceVisibilityService#parseForTagCompile} 而不是自己反序列化</b>：
+     * 库的 share_config 字段是下划线风格（access_level / user_uids），实体是驼峰
+     * （accessLevel / userUids），靠 fastjson2 的命名策略转换——在别处自己 parse 极易漏掉这个
+     * 约定而恒解析成 null（本次首版就踩了：判定恒为「未限定」，提示永不出现）。
+     * 统一入口同时保证「解读 share_config 只有一处实现」。
+     */
+    private boolean hasReadScope(String shareConfigJson) {
+        if (shareConfigJson == null || shareConfigJson.isBlank()) return false;
+        ResourceVisibilityService.ShareConfig cfg = visibilityService.parseForTagCompile(shareConfigJson);
+        return cfg != null && cfg.readScope != null;
+    }
+
     /** 列表页用：库 + 文档数 + 是否默认 */
     public List<Map<String, Object>> listWithCounts() {
         Map<String, Integer> counts = docCounts();
+        // 混合权限库标记（同库内既有跟随库的文档、又有显式限定范围的文档）→ 前端提示建议分库。
+        // 统计失败已在 mixedScopeKbIds 内部降级为空集，这里只负责随列表下发。
+        Set<String> mixedScope = mixedScopeKbIds();
         List<Map<String, Object>> out = new ArrayList<>();
         for (KnowledgeBase kb : list()) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -550,6 +615,8 @@ public class KnowledgeBaseService {
             m.put("createTime", kb.getCreateTime());
             m.put("updateTime", kb.getUpdateTime());
             m.put("docCount", counts.getOrDefault(kb.getId(), 0));
+            // 混合权限标记：库内文档分属不同可见范围 → 建议分库（见 mixedScopeKbIds）
+            m.put("mixedScope", mixedScope.contains(kb.getId()));
             out.add(m);
         }
         return out;
