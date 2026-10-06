@@ -538,6 +538,11 @@ const errorBrief = (raw, kind) => {
     return '连接已中断：回答未正常结束'
   }
   if (/AbortError|aborted?/i.test(s)) return '生成已停止'
+  // 额度不足必须在 429 分支**之前**判：网关的额度耗尽常返回 429 + insufficient_quota，
+  // 先命中「限流」就会给出「等一会就好」的误导建议——而额度问题等多久都不会自己好
+  if (/额度不足|余额不足|套餐已到期|配额耗尽|insufficient.?quota|billing|payment required|arrearage|out of credit|insufficient balance/i.test(s)) {
+    return '模型服务额度不足：请到「模型供应商」充值，或改用其他模型'
+  }
   if (/timeout|timed?\s*out/i.test(s)) return '请求超时：模型服务响应过慢或网络不稳定，可重试'
   if (/Failed to fetch|NetworkError|network/i.test(s)) return '网络连接失败：请检查网络或代理设置'
   if (/401|Unauthorized/i.test(s)) return '鉴权失败：登录已过期，请重新登录'

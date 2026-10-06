@@ -4,6 +4,9 @@ import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.util.BatchResults;
 import com.wenqu.ai.util.RequestUser;
 import com.wenqu.ai.service.ConnectivityProbeService;
+import com.wenqu.ai.service.ModelQuotaGuard;
+import com.wenqu.ai.service.ModelQuotaService;
+import com.wenqu.ai.service.ModelReferenceScanner;
 import com.wenqu.ai.service.ModelRegistryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -33,6 +36,8 @@ public class ProviderController {
 
     private final ModelRegistryService modelRegistryService;
     private final ConnectivityProbeService connectivityProbeService;
+    private final ModelReferenceScanner referenceScanner;
+    private final ModelQuotaService quotaService;
 
     @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；每行带 ownerUid/manageable")
     @GetMapping
@@ -88,8 +93,22 @@ public class ProviderController {
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
         ResultJson denied = denyUnlessManageable(id);
         if (denied != null) return denied;
-        modelRegistryService.deleteProvider(id);
+        modelRegistryService.deleteProvider(id, referenceScanner);
         return ResultJson.ok("已删除");
+    }
+
+    @Operation(summary = "供应商被引用清单", description = "列出该供应商下模型当前被哪些位置引用（知识库向量/图谱模型、"
+            + "个人默认模型、个人设置、系统配置槽位、游客对话模型），每条带类型标签、可读名称与跳转 ID。"
+            + "用于额度不足时定位「该去改哪几处」；与删除守门同一口径。返回 "
+            + "{total, editableCount, hasBlocking, byKind, items:[{kind,label,name,id,hint,editable}]}")
+    @GetMapping("/{id}/references")
+    public ResultJson references(
+            @Parameter(description = "供应商ID") @PathVariable("id") String id) {
+        ResultJson denied = denyUnlessManageable(id);
+        if (denied != null) return denied;
+        // 会话级覆盖的提示项由扫描器统一附带（overviewOf 内已 add sessionHint），
+        // 控制器不自行拼装——否则两处各记一份「有哪些引用」，必然漂移
+        return ResultJson.ok(referenceScanner.overviewOf(id));
     }
 
     // --------------------------------------------------------------------------------------------------
@@ -115,7 +134,7 @@ public class ProviderController {
                 continue;
             }
             try {
-                modelRegistryService.deleteProvider(id);
+                modelRegistryService.deleteProvider(id, referenceScanner);
                 succeeded.add(id);
             } catch (Exception e) {
                 failed.add(BatchResults.failItem(id, p.getName(), BatchResults.errMsg(e)));
@@ -209,7 +228,20 @@ public class ProviderController {
             default -> "chat";
         };
         String path = str(body.get("completionsPath"));
-        return ResultJson.ok(connectivityProbeService.probe(group, baseUrl, apiKey, model, path));
+        Map<String, Object> probe = connectivityProbeService.probe(group, baseUrl, apiKey, model, path);
+        // 探测结果同样要反映到额度状态：用户充值/换 Key 后测一次就解除禁选（不必等下一次真实调用）；
+        // 反过来，测出余额不足时也立刻登记——用户在设置页点一次就能确认问题，不用先被问答打脸。
+        if (providerId != null && !providerId.isBlank()) {
+            boolean available = Boolean.TRUE.equals(probe.get("available"));
+            String detail = str(probe.get("detail"));
+            if (available) {
+                quotaService.markRecovered(providerId);
+            } else if (ModelQuotaGuard.isQuotaExhausted(
+                    new IllegalStateException(detail == null ? "" : detail))) {
+                quotaService.markExhausted(providerId, model, detail);
+            }
+        }
+        return ResultJson.ok(probe);
     }
 
     /**

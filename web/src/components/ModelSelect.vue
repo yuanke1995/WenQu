@@ -35,6 +35,7 @@
         :key="m.ref"
         :value="m.ref"
         :label="m.displayName"
+        :disabled="m.quotaBlocked"
         @mouseenter="emitOptionHover(m.ref, $event)"
         @mouseleave="emitOptionHover('', $event)"
       />
@@ -43,9 +44,13 @@
     <template #option="opt">
       <span v-if="opt.value === ''" class="ms-inherit">{{ opt.label }}</span>
       <span v-else-if="!opt.value" class="ms-group-text">{{ opt.label }}</span>
-      <span v-else class="ms-option">
+      <span v-else class="ms-option" :class="{ 'ms-option-blocked': blockedOf(opt.value) }">
         <ProviderIcon :icon="iconOf(opt.value)" :name="providerNameOf(opt.value)" :size="16" />
         <span class="ms-name">{{ opt.label }}</span>
+        <!-- 额度不足标记：就地告知「这个选不了、为什么选不了」，而不是等点了才报错。
+             原因用 title 原生提示而非 a-tooltip：disabled 的 option 在 rc-select 里可能收不到
+             鼠标事件，包一层 tooltip 反而会跟着一起失效，用户就只剩下「灰的」没有解释。 -->
+        <span v-if="blockedOf(opt.value)" class="ms-quota-flag" :title="blockedTip(opt.value)">额度不足</span>
       </span>
     </template>
     <template v-if="!loading && !groups.length" #notFoundContent>
@@ -172,6 +177,24 @@ function providerNameOf(ref) {
   return ''
 }
 
+// ==================== 额度不足标记（引路标志） ====================
+/**
+ * 该模型所属供应商是否额度不足。
+ * 后端按供应商级打标（余额/配额是网关账户级的事，一个模型欠费意味着同一 Key 下全部模型都调不通），
+ * 因此这里查分组头即可，不必逐模型找。
+ */
+function blockedOf(ref) {
+  const g = groups.value.find(x => x.models.some(m => m.ref === ref))
+  return !!(g && g.quotaBlocked)
+}
+/** 悬浮说明：为什么选不了 + 怎么恢复（不写「联系管理员」——供应商是本人登记的，只能自己处理） */
+function blockedTip(ref) {
+  const g = groups.value.find(x => x.models.some(m => m.ref === ref))
+  const why = (g && g.quotaMessage) ? `（${g.quotaMessage}）` : ''
+  return `${(g && g.name) || '该供应商'}额度不足或套餐已到期${why}。充值或换用其他供应商后即可重新选择；`
+    + '若已充值，点该供应商的「测试连接」验证一下就会恢复可选。'
+}
+
 onMounted(() => load())
 
 // 同一实例被切到不同类型槽位时（如个人设置聊天↔视觉共用一个选择器）按缓存重过滤，
@@ -210,10 +233,15 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 
 <style scoped>
 .ms-option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
   max-width: 100%;
+}
+/* 模型名可压缩、红标不可压：额度标记是「为什么选不了」的答案，被 ellipsis 吃掉就白做了 */
+.ms-option .ms-name {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .ms-name {
   overflow: hidden;
@@ -222,6 +250,22 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 }
 .ms-inherit {
   color: #888;
+}
+/* 额度不足行：整行压暗 + 「额度不足」红标。压暗用 opacity 而非改色，
+   保证品牌图标与文字都一起变淡（antd disabled 已会给底色，这里只补视觉层次） */
+.ms-option-blocked {
+  opacity: 0.55;
+}
+.ms-quota-flag {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--app-danger-text);
+  background: var(--app-danger-weak);
+  cursor: help;
 }
 .ms-empty {
   padding: 8px 0;

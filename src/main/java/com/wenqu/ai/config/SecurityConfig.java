@@ -209,7 +209,7 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 模型供应商的自助端点（普通用户可访问）。
      * <p>
      * 覆盖：列表 / 新建（{@code /provider}）、单个的改删与启停、单个的模型登记、
-     * 先测后存用的 {@code /models/fetch} 与 {@code /test}。
+     * 单个的被引用清单（{@code /{id}/references}）、先测后存用的 {@code /models/fetch} 与 {@code /test}。
      * 写操作的归属判定不在拦截器做——由 {@code ProviderController.denyUnlessManageable}
      * 按「管理员级全部 / 普通用户仅自己登记的个人级」逐资源裁决。
      * {@code /provider/available} 在更早的白名单分支已放行。
@@ -218,7 +218,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path == null) return false;
         return path.equals("/api/ai/provider")
                 || path.matches("/api/ai/provider/[^/]+")
-                || path.matches("/api/ai/provider/[^/]+/(models|enabled)")
+                || path.matches("/api/ai/provider/[^/]+/(models|enabled|references)")
                 || path.equals("/api/ai/provider/models/fetch")
                 || path.equals("/api/ai/provider/test");
     }

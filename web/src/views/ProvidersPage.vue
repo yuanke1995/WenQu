@@ -37,11 +37,22 @@
                     归属 {{ p.ownerUid }}
                   </a-tag>
                   <a-tag v-if="!p.enabled" color="default" class="pv-disabled-tag">已停用</a-tag>
+                  <!-- 额度不足标记：这是「模型用不了」最常见的真实原因，列表上直接标出来，
+                       用户不必先发起一次注定失败的问答去撞出错误 -->
+                  <a-tag v-if="p.quotaBlocked" color="error" class="pv-quota-tag">额度不足</a-tag>
                 </div>
                 <div class="pv-url" :title="p.baseUrl">{{ p.baseUrl }}</div>
               </div>
               <a-switch v-if="p.manageable" :checked="p.enabled" size="small"
                         @change="v => onToggle(p, v)" />
+            </div>
+            <!-- 额度不足时的处置条：说清「哪里用不到」+ 直接给查看引用入口。
+                 没有它的话用户只知道「这个供应商坏了」，不知道自己的哪些库/配置在依赖它 -->
+            <div v-if="p.quotaBlocked" class="pv-quota-bar">
+              <span class="pv-quota-msg" :title="p.quotaMessage || ''">
+                {{ p.quotaMessage || '账户余额不足或套餐已到期' }}
+              </span>
+              <button class="app-link-btn" @click="openRefs(p)">查看引用</button>
             </div>
             <div class="pv-models">
               <a-tag v-for="t in typeChips(p)" :key="t.key" :color="t.color" class="pv-type-tag">
@@ -407,6 +418,38 @@
         </div>
       </template>
     </a-modal>
+
+    <!-- 被引用清单：额度不足时「该去改哪几处」的落地页。逐条给出引用类型、名称、后果与跳转，
+         逐处可改而不是只给一句「仍被引用」——否则用户只能全局搜模型名碰运气 -->
+    <a-modal v-model:open="showRefs" :title="`「${refsProvider?.name || ''}」的模型被用在哪里`"
+             :width="640" :footer="null" @cancelled="showRefs = false">
+      <a-spin :spinning="refsLoading">
+        <template v-if="refsData">
+          <div class="pv-refs-head">
+            共 <b>{{ refsData.total || 0 }}</b> 处引用
+            <template v-if="refsData.total">
+              ，其中 <b>{{ refsData.editableCount || 0 }}</b> 处可在下列位置直接修改
+            </template>
+          </div>
+          <div v-if="!refsData.items || !refsData.items.length" class="pv-refs-empty">
+            当前没有任何地方引用它的模型，可直接在这里处理。
+          </div>
+          <div v-else class="pv-refs-list">
+            <div v-for="(r, i) in refsData.items" :key="r.kind + '-' + (r.id || i)" class="pv-ref-item">
+              <div class="pv-ref-main">
+                <a-tag :color="refKindColor(r.kind)" class="pv-ref-kind">{{ r.label }}</a-tag>
+                <span class="pv-ref-name">{{ r.name }}</span>
+              </div>
+              <div class="pv-ref-hint">{{ r.hint }}</div>
+              <a-button v-if="refJumpOf(r)" size="small" class="pv-ref-go" @click="jumpRef(r)">
+                去修改
+              </a-button>
+              <span v-else-if="!r.editable" class="pv-ref-note">无管理入口</span>
+            </div>
+          </div>
+        </template>
+      </a-spin>
+    </a-modal>
   </div>
 </template>
 
@@ -420,9 +463,9 @@ import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { authUser } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import {
-  listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
+listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
-  batchDeleteProviders, batchSetProvidersEnabled
+  batchDeleteProviders, batchSetProvidersEnabled, listProviderReferences
 } from '../api'
 
 const route = useRoute()
@@ -433,6 +476,59 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
+
+// ---- 被引用清单（额度不足时的处置入口）----
+const showRefs = ref(false)
+const refsLoading = ref(false)
+const refsProvider = ref(null)
+const refsData = ref(null)
+
+/** 打开引用清单：实时查一次而非用列表里的缓存——引用关系随时会变（别人改了配置） */
+const openRefs = async (p) => {
+  refsProvider.value = p
+  refsData.value = null
+  showRefs.value = true
+  refsLoading.value = true
+  try {
+    const r = await listProviderReferences(p.id)
+    refsData.value = (r && r.data) || {}
+  } catch (e) {
+    refsData.value = { items: [], total: 0, error: '引用清单加载失败，请重试' }
+  } finally {
+    refsLoading.value = false
+  }
+}
+
+/** 引用类型的标签配色（按影响面分档：库=红，个人默认=橙，全平台=紫，其余=灰） */
+const refKindColor = kind => ({
+  kbEmbedding: 'error', kbGraph: 'error',
+  userDefault: 'warning', userConfig: 'warning',
+  configSlot: 'purple', agentShare: 'default', session: 'default'
+}[kind] || 'default')
+
+/**
+ * 逐条引用的跳转目标。**只给真能改的地点**：无管理入口的（历史会话覆盖）不给按钮，
+ * 给了跳不过去比不给更让人困惑。
+ * 注意：个人默认模型与个人设置那两条如果 uid 不是自己，是别人的配置，本界面改不了，
+ * 因此只对「本人」给入口——供应商是本人登记的，但引用的可能是别人的个人设置。
+ */
+const refJumpOf = r => {
+  const meUid = me.value
+  if (r.kind === 'kbEmbedding' || r.kind === 'kbGraph') {
+    return r.id ? { path: `/knowledge/${r.id}/docs` } : null
+  }
+  if (r.kind === 'configSlot') return { path: '/settings' }
+  if ((r.kind === 'userDefault' || r.kind === 'userConfig') && r.id && r.id === meUid) {
+    return { path: '/profile' }
+  }
+  return null
+}
+const jumpRef = r => {
+  const to = refJumpOf(r)
+  if (!to) return
+  showRefs.value = false
+  router.push(to)
+}
 
 // 当前登录人 uid（归属提示只用它判断「这是不是别人的供应商」）
 const me = computed(() => authUser.value?.user || '')
@@ -1230,6 +1326,45 @@ onMounted(async () => {
 .pv-empty-title { font-weight: 600; margin-bottom: 6px; }
 .pv-empty-desc { color: var(--app-text3, var(--app-text3)); font-size: 13px; max-width: 520px; margin: 0 auto; }
 .pv-hint { font-size: 12px; color: var(--app-text3, var(--app-text3)); }
+/* ==================== 额度不足标记与被引用清单 ====================
+   样式一律走 --app-* token，亮/暗主题自动跟随（暗色下 --app-danger-weak 是深棕底而非浅粉）。 */
+.pv-quota-tag { font-size: 11px; line-height: 18px; margin-inline-end: 0; }
+.pv-quota-bar {
+  margin-top: 8px; padding: 7px 9px;
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--app-danger-border); border-radius: 8px;
+  background: var(--app-danger-weak);
+}
+.pv-quota-msg {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--app-danger-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv-refs-head { font-size: 13px; color: var(--app-text2, var(--app-text2)); margin-bottom: 10px; }
+.pv-refs-empty {
+  padding: 18px 0; text-align: center; font-size: 13px;
+  color: var(--app-text3, var(--app-text3));
+}
+.pv-refs-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.pv-ref-item {
+  padding: 8px 10px; border: 1px solid var(--app-border, var(--app-border));
+  border-radius: 8px; background: var(--app-panel-2);
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  column-gap: 10px; row-gap: 2px;
+}
+.pv-ref-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pv-ref-kind { font-size: 11px; line-height: 18px; margin-inline-end: 0; flex: none; }
+.pv-ref-name {
+  font-size: 13px; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv-ref-hint {
+  grid-column: 1; font-size: 11px; color: var(--app-text3, var(--app-text3));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv-ref-go { grid-column: 2; grid-row: 1 / span 2; flex: none; }
+.pv-ref-note {
+  grid-column: 2; grid-row: 1 / span 2; font-size: 11px; color: var(--app-text3, var(--app-text3));
+}
 .pv-icon-picker {
   display: flex; flex-wrap: wrap; gap: 4px;
   max-height: 132px; overflow-y: auto; padding: 2px;

@@ -29,7 +29,7 @@
       </div>
     </div>
 
-    <!-- 类型偏好（静音）：展开显示 11 类开关 -->
+    <!-- 类型偏好（静音）：展开后按 TYPES 逐类列出（数量随类型表自动增长，不写死数字） -->
     <a-collapse v-model:activeKey="prefActive" class="nc-pref" v-if="prefOpen">
       <a-collapse-panel key="pref" header="通知类型偏好（关闭后不再接收该类通知）">
         <div class="nc-pref-grid">
@@ -109,7 +109,9 @@ const TYPES = [
   { type: 'schedule.done', label: '定时任务完成', icon: CheckCircleFilled, tone: 'ok' },
   { type: 'schedule.failed', label: '定时任务失败', icon: CloseCircleFilled, tone: 'err' },
   { type: 'eval.decline', label: '检索评估下滑', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'tool.approval', label: '工具审批待决', icon: ExclamationCircleFilled, tone: 'warn' }
+  { type: 'tool.approval', label: '工具审批待决', icon: ExclamationCircleFilled, tone: 'warn' },
+  // 额度不足是「该充值了」而非系统故障：警告色（红叉会让人以为是 bug）
+  { type: 'model.quota', label: '模型额度不足', icon: ExclamationCircleFilled, tone: 'warn' }
 ]
 const META = Object.fromEntries(TYPES.map(t => [t.type, t]))
 const iconOf = t => (META[t]?.icon) || BellOutlined
@@ -214,6 +216,8 @@ const navOf = n => {
   if (n.refType === 'kb' && n.refId) return { path: `/knowledge/${n.refId}/docs` }
   if (n.refType === 'workflow' && n.refId) return { path: '/agents', query: { tab: 'workflow' } }
   if (n.refType === 'session' && n.refId) return { path: '/chat', query: { sid: n.refId } }
+  // 模型额度不足：直达模型供应商页（供应商管理并入智能体页 ?tab=providers）
+  if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
   return null
 }
 const openRow = n => {

@@ -22,7 +22,10 @@ export const NOTIF_ICONS = {
   'schedule.done': CheckCircleFilled,
   'schedule.failed': CloseCircleFilled,
   'eval.decline': ExclamationCircleFilled,
-  'tool.approval': ExclamationCircleFilled
+  'tool.approval': ExclamationCircleFilled,
+  // 额度不足是「需要人处理」而非「系统故障」：用警告色而非错误色——
+  // 红叉会让人以为是 bug，实际是账户该充值了
+  'model.quota': ExclamationCircleFilled
 }
 const NOTIF_TONES = {
   'parse.done': 'ok',
@@ -35,7 +38,8 @@ const NOTIF_TONES = {
   'schedule.done': 'ok',
   'schedule.failed': 'err',
   'eval.decline': 'warn',
-  'tool.approval': 'warn'
+  'tool.approval': 'warn',
+  'model.quota': 'warn'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
 export const notifClass = t => NOTIF_TONES[t] || ''

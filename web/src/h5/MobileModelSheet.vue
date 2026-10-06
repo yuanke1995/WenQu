@@ -26,6 +26,9 @@
 
       <!-- ---- 模型选择 ---- -->
       <div class="ms-section-title">模型</div>
+      <!-- 当前生效模型所属供应商欠费：就地告知（与 PC 选择器的额度标记同一件事），
+           不处理的话用户会带着一个必失败的模型继续对话，报错时才第一次知道 -->
+      <div v-if="currentBlockedTip" class="ms-note warn"><exclamation-circle-outlined /> {{ currentBlockedTip }}</div>
       <div v-if="loadingModels" class="ms-note">加载中…</div>
       <template v-else>
         <button v-if="userDefaultModel" class="ms-row" :class="{ on: !currentOverrideModel }" type="button" @click="pick('')">
@@ -35,10 +38,11 @@
           <check-outlined v-if="!currentOverrideModel" class="ms-check" />
         </button>
         <template v-for="g in groups" :key="g.providerId">
-          <div class="ms-group">{{ g.name }}</div>
+          <div class="ms-group">{{ g.name }}<span v-if="g.quotaBlocked" class="ms-quota-flag">额度不足</span></div>
           <button v-for="m in g.models" :key="m.ref" class="ms-row" :class="{ on: currentOverrideModel === m.ref }" type="button" @click="pick(m.ref)">
             <ProviderIcon :icon="m.icon" :name="g.name" :size="18" />
             <span class="ms-name">{{ m.displayName }}</span>
+            <span v-if="g.quotaBlocked" class="ms-quota-flag">额度不足</span>
             <check-outlined v-if="currentOverrideModel === m.ref" class="ms-check" />
           </button>
         </template>
@@ -95,7 +99,7 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { CheckOutlined } from '@ant-design/icons-vue'
+import { CheckOutlined, ExclamationCircleOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -136,7 +140,27 @@ const load = async () => {
 }
 watch(() => props.open, v => { if (v) load() })
 
+// ==================== 额度不足（供应商级，与 PC ModelSelect 同一后端打标） ====================
+// 触屏没有 hover，PC 的 title 提示在这里无效——被欠费拦下的行保持可点，
+// 点了弹 toast 说明原因与恢复路径，而不是 disabled 死行让用户对「灰的」一头雾水。
+const blockedGroupOf = ref => {
+  const g = groups.value.find(x => (x.models || []).some(m => m.ref === ref))
+  return (g && g.quotaBlocked) ? g : null
+}
+const blockedTipOf = g => {
+  const why = g.quotaMessage ? `（${g.quotaMessage}）` : ''
+  return `${g.name}额度不足或套餐已到期${why}。充值或换用其他供应商后即可恢复；若已充值，在电脑端点该供应商的「测试连接」验证一次即解除。`
+}
+const currentBlockedTip = computed(() => {
+  const g = blockedGroupOf(effectiveModel.value)
+  return g ? `当前模型所在的「${g.name}」${g.quotaMessage ? '额度不足：' + g.quotaMessage : '额度不足'}，回答会失败，请在下方换用其他模型。` : ''
+})
+
 const pick = ref_ => {
+  if (ref_) {
+    const g = blockedGroupOf(ref_)
+    if (g) { message.warning(blockedTipOf(g)); return }
+  }
   currentOverrideModel.value = ref_ || ''
   message.success(ref_ ? `已切换为「${modelLabelOf(ref_)}」` : '已跟随个人默认模型')
 }
@@ -206,4 +230,13 @@ const doCompact = async () => {
 .ms-chip.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); font-weight: 500; }
 .ms-chip:disabled { opacity: .55; }
 .ms-note { font-size: 12px; color: var(--app-text3); padding: 4px 2px 8px; }
+.ms-note.warn { color: var(--app-warn-text); line-height: 1.6; }
+/* 额度不足标：警告色小 pill。红标不可被 ellipsis 吃掉——它就是「为什么选不了」的答案 */
+.ms-quota-flag {
+  flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  color: var(--app-warn-text); background: var(--app-warn-weak); border: 1px solid var(--app-warn-border);
+}
+.ms-group .ms-quota-flag { margin-left: 6px; }
+.ms-row .ms-quota-flag { margin-left: auto; }
+.ms-row .ms-check + .ms-quota-flag, .ms-row .ms-quota-flag + .ms-check { margin-left: 6px; }
 </style>

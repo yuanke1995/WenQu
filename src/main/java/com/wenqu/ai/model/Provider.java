@@ -62,6 +62,22 @@ public class Provider {
      */
     private String ownerUid;
 
+    /**
+     * 额度状态：null/空=正常；exhausted=额度不足（余额耗尽/配额用尽/套餐到期）。
+     * 由 {@code ModelQuotaService} 在真实调用失败时登记，任何一次成功调用即清除——
+     * 纯被动检测，不做定时体检，避免无谓的调用开销与花费。
+     */
+    private String quotaStatus;
+
+    /** 额度异常原因（网关返回原文摘要，供界面与通知展示；正常时 NULL） */
+    private String quotaMessage;
+
+    /** 触发额度不足的模型名（裸模型名，不含 providerId 前缀；正常时 NULL） */
+    private String quotaModelId;
+
+    /** 额度状态最近一次判定时刻（正常时 NULL；超过时效未复现视为已自愈，不在界面禁选） */
+    private LocalDateTime quotaCheckedAt;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

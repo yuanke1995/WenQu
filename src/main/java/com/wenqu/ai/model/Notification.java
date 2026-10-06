@@ -83,4 +83,10 @@ public class Notification {
     public static final String TYPE_TOOL_APPROVAL = "tool.approval";
     /** 知识库批量解析失败告警（同库短窗内多个文档终态失败，收件人为库归属人） */
     public static final String TYPE_PARSE_BATCH_FAILED = "parse.batch.failed";
+    /**
+     * 模型供应商额度不足（余额耗尽/配额用尽/套餐到期），收件人为供应商归属人
+     * （供应商「谁建归谁」，只有归属人能充值或换 Key——发给管理员等于把问题派给无权处理的人）。
+     * 正文带引用清单（哪些知识库/哪些人的默认模型在用它），refType=provider 可跳转模型供应商页。
+     */
+    public static final String TYPE_MODEL_QUOTA = "model.quota";
 }

@@ -69,8 +69,9 @@ function serveStatic (page) {
     if (u.pathname === '/api/ai/document/queue/stats') return json({ pending: 0, running: 1 })
     if (u.pathname === '/api/ai/config/public') return json({ upload: { maxFileSize: 209715200, allowedExts: ['docx', 'pdf', 'xlsx'] } })
     // 配置引导（setupGuide）的两个数据源：模型可用列表与个人偏好（defaultModel）
+    // 就绪态的供应商带 quotaBlocked：模型 sheet 的额度标记/拦截断言用
     if (u.pathname === '/api/ai/provider/available') {
-      return json(setupUnready ? [] : [{ name: '平台内置', models: [{ ref: 'chat-1', displayName: '演示聊天模型', type: 'chat' }] }])
+      return json(setupUnready ? [] : [{ name: '平台内置', quotaBlocked: true, quotaMessage: '余额不足', models: [{ ref: 'chat-1', displayName: '演示聊天模型', type: 'chat' }] }])
     }
     if (u.pathname === '/api/ai/user/preference') return json({ defaultModel: setupUnready ? '' : 'chat-1' })
     if (u.pathname === '/api/ai/session/s-round') {
@@ -189,6 +190,21 @@ const check = (ok, label, detail = '') => {
   await page.locator('.bs-close').first().dispatchEvent('click'); await page.waitForTimeout(500)
   check(!(await page.evaluate(() => !!document.querySelector('.bs-sheet'))), '会话列表 sheet 可关闭')
   check(await openSheet('.m-tool[title="模型与思考"]', 1200), '模型与思考 sheet 可打开')
+
+  // ---- 额度不足对齐（与 PC ModelSelect 同一打标）：组头/行标 + 点拦截 + 说明 toast ----
+  const quota = await page.evaluate(() => ({
+    flags: document.querySelectorAll('.ms-quota-flag').length,
+    row: !!document.querySelector('.ms-row .ms-quota-flag'),
+    note: (document.querySelector('.ms-note.warn') || {}).textContent || ''
+  }))
+  check(quota.flags >= 2, '额度不足标记渲染（组头 + 模型行）', `flags=${quota.flags}`)
+  check(quota.note.includes('额度不足') && quota.note.includes('换用其他模型'), '当前生效模型被欠费拦下时就地提示', quota.note.trim().slice(0, 40))
+  await page.locator('.ms-row .ms-quota-flag').first().dispatchEvent('click')
+  await page.waitForTimeout(700)
+  const quotaToast = await page.evaluate(() => (document.querySelector('.ant-message-notice-content') || {}).textContent || '')
+  check(quotaToast.includes('额度不足') && quotaToast.includes('充值'), '点欠费模型弹说明 toast（不选中）', quotaToast.trim().slice(0, 40))
+  const notSelected = await page.evaluate(() => !document.querySelector('.ms-row.on .ms-quota-flag'))
+  check(notSelected, '欠费行不可被选中（无 on 态）')
   await page.locator('.bs-close').first().dispatchEvent('click'); await page.waitForTimeout(500)
   check(await openSheet('.m-tool[title^="添加"]'), '「+」内容 sheet 可打开')
   const tabs = await page.evaluate(() => [...document.querySelectorAll('.as-tab')].map(x => x.textContent.trim()))

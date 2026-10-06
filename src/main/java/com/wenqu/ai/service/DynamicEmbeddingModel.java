@@ -1,14 +1,19 @@
 package com.wenqu.ai.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.EmbeddingRequest;
+import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * 向量模型引用路由器：按知识库绑定（{@code kb.embedding_ref = {providerId}/{modelId}}）解析并缓存
@@ -34,6 +39,8 @@ public class DynamicEmbeddingModel {
     private final ModelRegistryService registry;
     private final RetryTemplate retryTemplate;
     private final ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry;
+    /** 额度状态登记：向量侧的额度失败发生在异步线程里，不登记就只会有一行没人看的日志 */
+    private final ModelQuotaService quotaService;
 
     /** 按引用解析的向量客户端缓存（KB 自定义向量模型用），key=路由指纹 */
     private final java.util.concurrent.ConcurrentHashMap<String, EmbeddingModel> refDelegates =
@@ -41,16 +48,22 @@ public class DynamicEmbeddingModel {
 
     public DynamicEmbeddingModel(ModelRegistryService registry,
                                  ObjectProvider<RetryTemplate> retryTemplate,
-                                 ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry) {
+                                 ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry,
+                                 ModelQuotaService quotaService) {
         this.registry = registry;
         this.retryTemplate = retryTemplate.getIfAvailable();
         this.observationRegistry = observationRegistry;
+        this.quotaService = quotaService;
     }
 
     /**
      * 按引用解析的向量模型：引用格式 {@code providerId/modelId} → 供应商网关。
      * 引用无效（空/非引用/供应商不存在）抛 IllegalArgumentException——调用方应先经 KB 保存校验
      * 或显式配置（如 memory.platformEmbeddingRef），运行时触达即配置缺失。
+     *
+     * <p>返回的是<b>带额度登记的包装</b>：真正发起 embed 的调用（大多在异步线程：重嵌入、
+     * QA/子块向量、记忆向量化）失败时会被静默吞成一行日志，套上这层才能让额度不足
+     * 登记到供应商并通知归属人，而不是消失在日志里。
      */
     public EmbeddingModel forRef(String ref) {
         String v = ref == null ? "" : ref.trim();
@@ -59,11 +72,87 @@ public class DynamicEmbeddingModel {
             throw new IllegalArgumentException("向量模型引用无效: " + (v.isEmpty() ? "（未绑定）" : v)
                     + "（请重新绑定向量模型）");
         }
-        return refDelegates.computeIfAbsent(resolved.embeddingFingerprint(), k -> {
+        EmbeddingModel delegate = refDelegates.computeIfAbsent(resolved.embeddingFingerprint(), k -> {
             String[] np = DynamicOpenAiChatModel.normalize(resolved.baseUrl(), resolved.embeddingsPath(),
                     DEFAULT_EMBEDDINGS_PATH, "/embeddings");
             return build(np[0], np[1], resolved.modelId(), resolved.apiKey());
         });
+        return new QuotaAwareEmbeddingModel(delegate, resolved, v);
+    }
+
+    /**
+     * 向量调用的额度登记包装（不改变任何向量语义，只在成功/失败两个时刻打点）。
+     *
+     * <p>「成功即清标记」这一条在这里尤其重要：向量调用是文档解析/重建索引的日常路径，
+     * 充值后用户重解析一个文档就能自动解除禁选，不需要任何手动操作。
+     */
+    private final class QuotaAwareEmbeddingModel implements EmbeddingModel {
+        private final EmbeddingModel delegate;
+        private final ModelRegistryService.ModelRoute route;
+        private final String ref;
+
+        QuotaAwareEmbeddingModel(EmbeddingModel delegate, ModelRegistryService.ModelRoute route, String ref) {
+            this.delegate = delegate;
+            this.route = route;
+            this.ref = ref;
+        }
+
+        @Override
+        public float[] embed(Document document) {
+            try {
+                float[] r = delegate.embed(document);
+                quotaService.markRecovered(route.providerId());
+                return r;
+            } catch (RuntimeException e) {
+                throw quotaAware(e);
+            }
+        }
+
+        @Override
+        public float[] embed(String text) {
+            try {
+                float[] r = delegate.embed(text);
+                quotaService.markRecovered(route.providerId());
+                return r;
+            } catch (RuntimeException e) {
+                throw quotaAware(e);
+            }
+        }
+
+        @Override
+        public List<float[]> embed(List<String> texts) {
+            try {
+                List<float[]> r = delegate.embed(texts);
+                quotaService.markRecovered(route.providerId());
+                return r;
+            } catch (RuntimeException e) {
+                throw quotaAware(e);
+            }
+        }
+
+        @Override
+        public EmbeddingResponse call(EmbeddingRequest request) {
+            try {
+                EmbeddingResponse r = delegate.call(request);
+                quotaService.markRecovered(route.providerId());
+                return r;
+            } catch (RuntimeException e) {
+                throw quotaAware(e);
+            }
+        }
+
+        @Override
+        public int dimensions() {
+            return delegate.dimensions();
+        }
+
+        /** 额度不足 → 登记 + 换成可行动文案；其余原样抛出（不猜测其它失败的归因） */
+        private RuntimeException quotaAware(RuntimeException err) {
+            if (!ModelQuotaGuard.isQuotaExhausted(err)) return err;
+            quotaService.markExhausted(route.providerId(), ref, err.getMessage());
+            com.wenqu.ai.model.Provider p = registry.providerById(route.providerId());
+            return new IllegalStateException(ModelQuotaGuard.userMessage(p == null ? null : p.getName()), err);
+        }
     }
 
     private EmbeddingModel build(String baseUrl, String embeddingsPath, String model, String apiKey) {

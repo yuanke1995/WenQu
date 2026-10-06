@@ -577,6 +577,7 @@ const openNotif = async n => {
   } else if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
   else if (n.refType === 'workflow' && n.refId) router.push({ path: '/agents', query: { tab: 'workflow' } })
   else if (n.refType === 'session' && n.refId) goChat({ path: '/chat', query: { sid: n.refId } })
+  else if (n.refType === 'provider' && n.refId) router.push({ path: '/agents', query: { tab: 'providers' } })
   notifOpen.value = false
 }
 

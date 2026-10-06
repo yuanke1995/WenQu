@@ -7,7 +7,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.mapper.ModelInfoMapper;
 import com.wenqu.ai.mapper.ProviderMapper;
-import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.model.ModelInfo;
 import com.wenqu.ai.model.Provider;
 import lombok.extern.slf4j.Slf4j;
@@ -75,11 +74,6 @@ public class ModelRegistryService {
     private final ProviderMapper providerMapper;
     private final ModelInfoMapper modelMapper;
     private final com.wenqu.ai.mapper.AgentMapper agentMapper;
-    private final com.wenqu.ai.mapper.UserMapper userMapper;
-    private final com.wenqu.ai.mapper.ConfigMapper configMapper;
-    private final com.wenqu.ai.mapper.KnowledgeBaseMapper kbMapper;
-    /** 个人设置模型引用（c_ai_user_config）——删除供应商守门用 */
-    private final com.wenqu.ai.mapper.UserConfigMapper userConfigMapper;
     private final ConfigService configService;
     private final ConfigCryptoService crypto;
     private final StringRedisTemplate redisTemplate;
@@ -90,19 +84,11 @@ public class ModelRegistryService {
 
     public ModelRegistryService(ProviderMapper providerMapper, ModelInfoMapper modelMapper,
                                 com.wenqu.ai.mapper.AgentMapper agentMapper,
-                                com.wenqu.ai.mapper.UserMapper userMapper,
-                                com.wenqu.ai.mapper.ConfigMapper configMapper,
-                                com.wenqu.ai.mapper.KnowledgeBaseMapper kbMapper,
-                                com.wenqu.ai.mapper.UserConfigMapper userConfigMapper,
                                 ConfigService configService, ConfigCryptoService crypto,
                                 StringRedisTemplate redisTemplate, RedisProperties redisProperties) {
         this.providerMapper = providerMapper;
         this.modelMapper = modelMapper;
         this.agentMapper = agentMapper;
-        this.userMapper = userMapper;
-        this.configMapper = configMapper;
-        this.kbMapper = kbMapper;
-        this.userConfigMapper = userConfigMapper;
         this.configService = configService;
         this.crypto = crypto;
         this.redisTemplate = redisTemplate;
@@ -464,6 +450,8 @@ public class ModelRegistryService {
             m.put("sortOrder", p.getSortOrder());
             m.put("ownerUid", p.getOwnerUid());
             m.put("manageable", canManage(p, uid, role));
+            // 额度状态：让供应商列表直接呈现「额度不足」标记与原因，不必另开接口
+            m.putAll(ModelQuotaService.quotaFields(p));
             Map<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
             for (String t : TYPES) typeCounts.put(t, 0);
             int total = 0;
@@ -802,6 +790,8 @@ public class ModelRegistryService {
         for (Provider p : ps) {
             if (Integer.valueOf(0).equals(p.getEnabled())) continue;
             if (!canUse(p, uid, role)) continue;
+            // 额度不足判定整供应商一次（同一 Key 下所有模型同时不可用，无需逐模型算）
+            boolean quotaBlocked = ModelQuotaService.isBlocked(p);
             List<Map<String, Object>> ms = new ArrayList<>();
             for (ModelInfo mi : models) {
                 if (!p.getId().equals(mi.getProviderId())) continue;
@@ -832,6 +822,12 @@ public class ModelRegistryService {
                 // contextWindowMin 声明可选下限（null=不可调，面板行保持只读）
                 m.put("contextWindow", mi.getContextWindow());
                 m.put("contextWindowMin", mi.getContextWindowMin());
+                // 额度不足标记（供应商级）：选择器据此把该供应商下所有模型标灰禁选并说明原因。
+                // 整供应商而非单模型——余额/配额是网关账户级的事，一个模型欠费意味着同一 Key
+                // 下全部模型都调不通；个别模型单独不可用（如套餐不含某模型）由网关文案区分，
+                // 但同样表现为额度类失败，标在供应商级才不会漏。
+                m.put("quotaBlocked", quotaBlocked);
+                m.put("quotaMessage", quotaBlocked ? p.getQuotaMessage() : null);
                 ms.add(m);
             }
             if (ms.isEmpty()) continue;
@@ -839,6 +835,9 @@ public class ModelRegistryService {
             g.put("providerId", p.getId());
             g.put("name", p.getName());
             g.put("icon", p.getIcon());
+            // 供应商级额度标记（前端可只读分组头，不必逐行判断）
+            g.put("quotaBlocked", quotaBlocked);
+            g.put("quotaMessage", quotaBlocked ? p.getQuotaMessage() : null);
             g.put("models", ms);
             result.add(g);
         }
@@ -925,46 +924,29 @@ public class ModelRegistryService {
     }
 
     /**
-     * 删除供应商（连同其模型登记）。被引用（智能体模型 / 用户默认模型 / 知识库向量 / 系统配置活跃槽位 /
-     * 个人设置模型引用）时拒绝；退役与个人专属（personalOnly）配置键的遗留行只告警不阻挡——
-     * 前者界面无处可改，后者的引用归各用户个人设置管理，挡在这里只会形成删不掉又说不清的僵局。
+     * 删除供应商（连同其模型登记）。被引用时拒绝；退役与个人专属（personalOnly）配置键的
+     * 遗留行只告警不阻挡——前者界面无处可改，后者的引用归各用户个人设置管理，挡在这里只会
+     * 形成删不掉又说不清的僵局。
+     * <p>
+     * 引用集合来自 {@link ModelReferenceScanner}（与额度不足时给用户看的「谁在用我」完全同一份
+     * 口径）——原先此处内联一份计数逻辑，导致出现「删时被拦、却找不到地方改」的矛盾。
      */
-    public void deleteProvider(String id) {
+    public void deleteProvider(String id, ModelReferenceScanner referenceScanner) {
         Provider p = providerMapper.selectById(id);
         if (p == null) throw new IllegalArgumentException("供应商不存在");
-        String prefix = id + "/";
-        List<String> refs = new ArrayList<>();
-        Long userRefs = userMapper.selectCount(new LambdaQueryWrapper<com.wenqu.ai.model.User>()
-                .likeRight(com.wenqu.ai.model.User::getDefaultModel, prefix));
-        if (userRefs != null && userRefs > 0) refs.add("个人默认模型 ×" + userRefs);
-        // 个人设置（c_ai_user_config）里的模型引用：历史个人覆盖的模型类字段（问答对生成/重排等
-        // personalOnly 键的存量行）——归属人自己在个人设置里即可改掉，属"可处理"引用，必须挡
-        Long personalRefs = userConfigMapper.selectCount(
-                new LambdaQueryWrapper<com.wenqu.ai.model.UserConfig>()
-                        .likeRight(com.wenqu.ai.model.UserConfig::getConfigValue, prefix));
-        if (personalRefs != null && personalRefs > 0) refs.add("个人设置模型引用 ×" + personalRefs);
-        Long kbRefs = kbMapper.selectCount(new LambdaQueryWrapper<KnowledgeBase>()
-                .likeRight(KnowledgeBase::getEmbeddingRef, prefix));
-        if (kbRefs != null && kbRefs > 0) refs.add("知识库绑定向量模型 ×" + kbRefs);
-        List<com.wenqu.ai.model.Config> cfgRefs = configMapper.selectList(
-                new LambdaQueryWrapper<com.wenqu.ai.model.Config>()
-                        .likeRight(com.wenqu.ai.model.Config::getConfigValue, prefix));
-        List<String> slotKeys = new ArrayList<>();
-        for (com.wenqu.ai.model.Config c : cfgRefs) {
-            // 只有活跃键（defaults() 定义、设置页可见可改）且非个人专属键才阻挡删除；退役键/个人专属键
-            // 的遗留行对用户不可见也不可改（personalOnly 已由个人层接管），挡删除是死路——只告警
-            if (configService.isLiveKey(c.getConfigKey()) && !configService.isPersonalOnly(c.getConfigKey())) {
-                slotKeys.add(c.getConfigKey());
-            } else {
-                log.warn("[Provider] 遗留/个人专属配置键 {} 引用了供应商 {}，删除后该引用随之失效",
-                        c.getConfigKey(), p.getName());
-            }
+        List<ModelReferenceScanner.Reference> refs = referenceScanner.referencesOf(id);
+        List<String> labels = new ArrayList<>();
+        Map<String, Long> counted = new java.util.LinkedHashMap<>();
+        for (ModelReferenceScanner.Reference r : refs) {
+            // 不可就地修改的引用（如会话覆盖）不作为删除的阻挡项：它无处可改，
+            // 挡在这里只会让用户无论如何都删不掉
+            if (r.editable()) counted.merge(r.label(), 1L, Long::sum);
         }
-        if (!slotKeys.isEmpty()) {
-            refs.add("系统配置槽位（" + String.join("、", slotKeys) + "）×" + slotKeys.size());
+        for (Map.Entry<String, Long> e : counted.entrySet()) {
+            labels.add(e.getKey() + " ×" + e.getValue());
         }
-        if (!refs.isEmpty()) {
-            throw new IllegalArgumentException("供应商「" + p.getName() + "」仍被引用（" + String.join("、", refs)
+        if (!labels.isEmpty()) {
+            throw new IllegalArgumentException("供应商「" + p.getName() + "」仍被引用（" + String.join("、", labels)
                     + "），请先在个人设置/知识库/系统设置改用其他模型");
         }
         modelMapper.delete(new LambdaQueryWrapper<ModelInfo>().eq(ModelInfo::getProviderId, id));

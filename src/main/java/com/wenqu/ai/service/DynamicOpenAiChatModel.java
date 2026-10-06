@@ -51,6 +51,8 @@ public class DynamicOpenAiChatModel implements ChatModel {
     private final Environment environment;
     /** 用量台账：所有推理调用在路由出口统一记账（供应商账单与个人统计的唯一数据源） */
     private final UsageLedgerService usageLedger;
+    /** 额度状态登记（识别在 ModelQuotaGuard，本类只负责在路由出口触发登记与恢复） */
+    private final ModelQuotaService quotaService;
     /** 容器存在则复用（与自动配置构建的 ChatModel 行为一致），缺失时用 builder 内部默认值 */
     private final RetryTemplate retryTemplate;
     private final ObservationRegistry observationRegistry;
@@ -60,11 +62,13 @@ public class DynamicOpenAiChatModel implements ChatModel {
 
     public DynamicOpenAiChatModel(ModelRegistryService registry, Environment environment,
                                   UsageLedgerService usageLedger,
+                                  ModelQuotaService quotaService,
                                   ObjectProvider<RetryTemplate> retryTemplate,
                                   ObjectProvider<ObservationRegistry> observationRegistry) {
         this.registry = registry;
         this.environment = environment;
         this.usageLedger = usageLedger;
+        this.quotaService = quotaService;
         this.retryTemplate = retryTemplate.getIfAvailable();
         this.observationRegistry = observationRegistry.getIfAvailable();
     }
@@ -72,11 +76,19 @@ public class DynamicOpenAiChatModel implements ChatModel {
     @Override
     public ChatResponse call(Prompt prompt) {
         ModelRegistryService.ModelRoute route = requireRoute(prompt);
-        ChatResponse resp = current(route).call(rewriteModel(prompt, route));
+        String modelRef = modelOf(prompt);
+        ChatResponse resp;
+        try {
+            resp = current(route).call(rewriteModel(prompt, route));
+        } catch (Exception e) {
+            throw quotaAware(e, route, modelRef);
+        }
+        // 调用成功 = 该供应商已恢复（清掉可能残留的额度标记，让它重新可选）
+        quotaService.markRecovered(route.providerId());
         // 记账必须在路由出口做：这里是全平台 LLM 请求的唯一必经点，任何新增调用方
         // （工作流节点、工具、未来的×××）都不可能绕过，天然不会因为漏改而丢账
         try {
-            usageLedger.recordCall(UsageAttr.current(), modelOf(prompt),
+            usageLedger.recordCall(UsageAttr.current(), modelRef,
                     resp.getMetadata() == null ? null : resp.getMetadata().getUsage());
         } catch (Exception e) {
             log.warn("[UsageLedger] 非流式用量记账异常（不影响本次调用）: {}", e.getMessage());
@@ -100,6 +112,9 @@ public class DynamicOpenAiChatModel implements ChatModel {
             // 每订阅一个累加器：多次订阅互不串账
             UsageAccumulator acc = new UsageAccumulator();
             UsageAttr.Attr[] holder = new UsageAttr.Attr[1];
+            // 是否已收到过输出块：只有完整走完才谈得上"调用成功、可清除额度标记"，
+            // 中途报错/被取消都不算（网关可能已扣费但本轮没成，不能据此认为额度恢复）
+            boolean[] gotOutput = new boolean[1];
             // 已收到的输出文本（取消时的中断估算用）
             StringBuilder received = new StringBuilder();
             return delegate.stream(rewritten)
@@ -112,9 +127,19 @@ public class DynamicOpenAiChatModel implements ChatModel {
                         if (r.getResult() != null && r.getResult().getOutput() != null
                                 && r.getResult().getOutput().getText() != null) {
                             received.append(r.getResult().getOutput().getText());
+                            gotOutput[0] = true;
                         }
                         if (r.getMetadata() == null) return;
                         acc.accept(r.getMetadata().getId(), r.getMetadata().getUsage());
+                    })
+                    .doOnError(err -> {
+                        // 额度不足在此登记并转成可行动文案——流式错误经 Reactor 冒泡，
+                        // 不在这里拦就会一路裸奔到 RagService 的通用兜底（用户只看到"请稍后重试"）
+                        throw quotaAware(err, route, modelRef);
+                    })
+                    .doOnComplete(() -> {
+                        // 正常收尾 = 该供应商可用，清除可能残留的额度标记
+                        if (gotOutput[0]) quotaService.markRecovered(route.providerId());
                     })
                     .doFinally(sig -> {
                         try {
@@ -153,6 +178,43 @@ public class DynamicOpenAiChatModel implements ChatModel {
                             + "）：请在对话页模型选择器或个人设置中选择可用模型");
         }
         return route;
+    }
+
+    /** 额度不足的识别与文案收口（<b>全平台聊天调用的唯一出口</b>）。
+     *
+     * <p>为什么放在这里：这是所有 LLM 请求必经之处，识别一次即覆盖问答、工作流节点、
+     * 子代理、工具内部调用等全部调用方——任何新增调用方都不可能绕过，也不会漏判。
+     *
+     * <p>做三件事：① 识别为额度不足时在供应商上登记并发通知（让归属人知道，且知道该改哪几处）；
+     * ② 抛带可行动文案的 {@link com.wenqu.ai.common.BizException} 替代网关原文
+     * （原文是给开发者看的 "You exceeded your current quota"，用户需要知道「去充值或换模型」）；
+     * ③ <b>非额度问题一律原样抛出</b>——不在这里猜测任何其它失败的归因。
+     *
+     * @param err 原异常（Reactor 侧可能是任意 Throwable，故不收窄为 Exception）
+     * @return 需要向上抛的异常（额度不足时是新造的 BizException，否则是原异常）
+     */
+    private RuntimeException quotaAware(Throwable err, ModelRegistryService.ModelRoute route, String modelRef) {
+        if (!ModelQuotaGuard.isQuotaExhausted(err)) {
+            // 非额度问题原样上抛（Error 也照抛：吞掉它比原样冒泡危险得多）
+            return err instanceof RuntimeException re
+                    ? re : new IllegalStateException(String.valueOf(err.getMessage()), err);
+        }
+        // 登记（内部全捕获，失败只记 WARN：问答已经失败了，登记不能让它更糟）
+        quotaService.markExhausted(route.providerId(), modelRef, rootMessage(err));
+        com.wenqu.ai.model.Provider p = registry.providerById(route.providerId());
+        return new com.wenqu.ai.common.BizException(ModelQuotaGuard.userMessage(p == null ? null : p.getName()));
+    }
+
+    /** 异常链根因文案（额度原因要展示给用户看，网关原文比"未知错误"有用） */
+    private static String rootMessage(Throwable e) {
+        Throwable cur = e;
+        String last = null;
+        int depth = 0;
+        while (cur != null && depth++ < 12) {
+            if (cur.getMessage() != null && !cur.getMessage().isBlank()) last = cur.getMessage();
+            cur = cur.getCause() == cur ? null : cur.getCause();
+        }
+        return last;
     }
 
     /** 请求模型名（options.model，可能为引用/遗留名/null） */

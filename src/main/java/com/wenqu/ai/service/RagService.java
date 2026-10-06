@@ -2668,8 +2668,13 @@ public class RagService {
                     }
                     Throwable root = error;
                     while (root.getCause() != null) root = root.getCause();
+                    // 额度不足/限流不重试：重试只会再打一次注定失败的请求（可能再被计费一次），
+                    // 额度不足等多久都不会自己好，该做的是提示去充值或换模型。
+                    // 识别口径在 ModelQuotaGuard（与聊天链路同一处），此处只负责不给它重试。
+                    boolean retryable = !ModelQuotaGuard.isQuotaExhausted(error)
+                            && !ModelQuotaGuard.isRateLimited(error);
                     boolean noTokenYet = st.fullResponse.length() == 0 && st.emitBuf.length() == 0;
-                    if (noTokenYet && st.retried.getAndIncrement() < streamRetryCount()) {
+                    if (retryable && noTokenYet && st.retried.getAndIncrement() < streamRetryCount()) {
                         log.warn("[FAIL-LOUD] 主 LLM 流式中断且未输出 token，自动重试第 {} 次: {} -> {}",
                                 st.retried.get(), error.getClass().getSimpleName(), root);
                         // 重建全新流，丢弃旧缓冲（避免重试拼接出重复内容）
@@ -2689,10 +2694,21 @@ public class RagService {
                         return;
                     }
                     log.error("Stream error: {} -> {}", error.getClass().getSimpleName(), root.toString());
-                    String msg = (root instanceof java.net.ConnectException)
-                            ? "无法连接 AI 服务，请检查网络或 API 地址"
-                            : "AI 回复失败，请稍后重试";
-                    st.degradations.add(Map.of("code", "streamError", "msg", "模型输出中断：" + msg));
+                    // 额度不足/限流单独成句：这两类的处置与「稍后重试」完全相反
+                    // （限流等一会就好，额度不足要去充值或换模型），混进通用兜底等于没告诉用户
+                    String msg;
+                    if (root instanceof java.net.ConnectException) {
+                        msg = "无法连接 AI 服务，请检查网络或 API 地址";
+                    } else if (ModelQuotaGuard.isQuotaExhausted(error)) {
+                        msg = "模型服务额度不足：请到「模型供应商」充值，或改用其他模型";
+                    } else if (ModelQuotaGuard.isRateLimited(error)) {
+                        msg = "模型服务限流，请稍后重试";
+                    } else {
+                        msg = "AI 回复失败，请稍后重试";
+                    }
+                    st.degradations.add(Map.of("code",
+                            ModelQuotaGuard.isQuotaExhausted(error) ? "modelQuotaExhausted" : "streamError",
+                            "msg", "模型输出中断：" + msg));
                     sendSseEvent(emitter, "error", msg, st.sessionId);
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);

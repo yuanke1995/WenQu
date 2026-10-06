@@ -314,11 +314,15 @@ export const listDocuments = kbId => request('/document/list' + (kbId ? '?kbId='
 /** 知识库列表（含每个库的文档数） */
 export const listKnowledgeBases = () => request('/kb/list')
 
-// ==================== 帮助中心（官方内置手册，只读） ====================
+// ==================== 帮助中心（官方内置手册：读只读 / 同步需管理员） ====================
 /** 手册篇目列表（官方内置库的只读视图） */
 export const listManualDocs = () => request('/manual/documents')
 /** 单篇内容（Markdown 原文） */
 export const getManualDocContent = id => request(`/manual/documents/${encodeURIComponent(id)}/content`)
+/** 手动同步官方手册（仅管理员）：逐篇重块向量化，会消耗向量模型额度；内容未变则跳过不产生调用。
+ *  超时同工作流「同步调试运行」口径给到 5 分钟——十余篇逐块向量化可能跑很久，
+ *  但不宜给满 10 分钟：超长等待期间用户无从判断是卡住还是在跑。 */
+export const syncManual = () => request('/manual/sync', { method: 'POST', timeout: 300000 })
 
 // 知识库参数默认值（检索/解析参数的当前生效默认值：个人设置 > 系统全局）：新建库模板预填 + 表单占位符展示。
 // 普通用户可读（/config 是管理端点会 403），知识库已对普通用户开放自建。
@@ -1005,9 +1009,13 @@ export const saveProviderModels = (id, models) =>
 /** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 可传掩码（后端用库中真实 Key） */
 export const fetchProviderModels = (baseUrl, apiKey, providerId) =>
   request('/provider/models/fetch', { method: 'POST', body: JSON.stringify({ baseUrl, apiKey, providerId }), timeout: 20000 })
-/** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank/audio/omni） */
+/** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank/audio/omni）。
+ *  探测成功会顺带清除该供应商的「额度不足」标记（用户充值/换 Key 后测一次即恢复可选）。 */
 export const testProvider = body =>
   request('/provider/test', { method: 'POST', body: JSON.stringify(body), timeout: 20000 })
+/** 供应商被引用清单：定位「这个模型在哪些地方被用着」。
+ *  返回 {total, editableCount, hasBlocking, byKind, items:[{kind,label,name,id,hint,editable}]} */
+export const listProviderReferences = id => request(`/provider/${encodeURIComponent(id)}/references`)
 /** 可用模型清单（登录即可用；type 过滤如 chat/vision/embedding/rerank）：[{providerId,name,icon,models:[{ref,modelId,displayName,type}]}]。
  *  此处解包信封直接返回数组（ModelSelect/modelRef 两处消费方都按数组用，漏解包会静默变空态） */
 export const listAvailableModels = async (type = '') => {

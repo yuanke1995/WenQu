@@ -476,6 +476,10 @@ CREATE TABLE IF NOT EXISTS `c_ai_provider` (
     `sort_order`       INT          DEFAULT 0 COMMENT '排序（小在前）',
     `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
     `owner_uid`        VARCHAR(64)  DEFAULT NULL COMMENT '归属用户：谁建归谁（仅归属人可见可用，2026-10，不存在平台共享）；历史遗留空值=无主行，启动回填',
+    `quota_status`     VARCHAR(16)  DEFAULT NULL COMMENT '额度状态: NULL=正常 exhausted=额度不足（余额耗尽/配额用尽/套餐到期）。纯被动：真实调用失败时登记，任一次成功调用即清除',
+    `quota_message`    VARCHAR(512) DEFAULT NULL COMMENT '额度异常原因（网关返回原文摘要，供界面与通知展示；正常时 NULL）',
+    `quota_model_id`   VARCHAR(255) DEFAULT NULL COMMENT '触发额度不足的模型名（裸模型名，不含 providerId 前缀；正常时 NULL）',
+    `quota_checked_at` DATETIME     DEFAULT NULL COMMENT '额度状态最近判定时刻（正常时 NULL；超时效未复现视为已自愈）',
     `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`)
@@ -895,10 +899,10 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
 CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',
     `uid`         VARCHAR(64)   NOT NULL COMMENT '接收人（uid；每人只看自己的通知）',
-    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决',
+    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 model.quota=模型供应商额度不足',
     `title`       VARCHAR(200)  NOT NULL COMMENT '一句话标题（列表主文本）',
     `content`     VARCHAR(1000) DEFAULT NULL COMMENT '详情（块数/失败原因等，落库前截断）',
-    `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流 session=会话（/chat?sid=）',
+    `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流 session=会话（/chat?sid=） provider=模型供应商（/providers）',
     `ref_id`      VARCHAR(50)   DEFAULT NULL COMMENT '跳转目标 ID（kbId / workflowId / sessionId；空=不可跳转）',
     `ref_sub`     VARCHAR(64)   DEFAULT NULL COMMENT '二级跳转目标: 工作流审批=runId 工具审批=approvalId（前端据此直达可裁决位置）',
     `hit_count`   INT           NOT NULL DEFAULT 1 COMMENT '同类事件合并计数（同 dedup_key 未读期内重复发生 → +1 而非新增行；列表可显示「×N」）',
