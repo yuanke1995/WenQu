@@ -80,14 +80,15 @@
                     工作流 {{ workflowName(a.workflowId) }}
                   </span>
                   <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
-                  <span v-if="scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
+                  <span v-if="!isBuiltin(a) && scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
                 </div>
                 <div class="ap-card-foot">
                   <!-- 管理入口按后端回填的 manageable 收起：普通用户看内置问渠/仅可读的共享智能体时，
                        不给"点了报错"的死路（写路径后端还会按共享范围二次判定） -->
                   <template v-if="a.manageable">
                     <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
-                    <button class="app-link-btn" @click.stop="openShare(a)">共享</button>
+                    <!-- 内置问渠全员可读（可读性走内置豁免，共享范围不参与判定），共享对它不生效，不给死路入口 -->
+                    <button v-if="!isBuiltin(a)" class="app-link-btn" @click.stop="openShare(a)">共享</button>
                     <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
                     <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
                     <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>

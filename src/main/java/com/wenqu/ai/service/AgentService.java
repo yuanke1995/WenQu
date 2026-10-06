@@ -134,7 +134,19 @@ public class AgentService {
                 log.info("[AGENT] 内置「问渠」唯一性维护完成: 保留 {}（{}），降级 {} 条", keeper.getName(), keeper.getId(), builtins.size() - 1);
                 return;
             }
-            if (builtins.size() == 1) return;
+            if (builtins.size() == 1) {
+                // 内置「问渠」可读性走 readable() 的内置豁免，shareConfig 永不参与判定——
+                // 存量环境若残留过共享配置（历史上接口未拦），在此归一清掉，避免界面上出现误导性的共享范围标记
+                Agent keeper = builtins.get(0);
+                if (keeper.getShareConfig() != null) {
+                    mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                            .eq(Agent::getId, keeper.getId())
+                            .set(Agent::getShareConfig, null)
+                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    log.info("[AGENT] 内置「问渠」共享范围不参与可见性判定，已清除残留配置: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                return;
+            }
             Agent seed = new Agent();
             seed.setName(BUILTIN_NAME);
             seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
@@ -413,6 +425,10 @@ public class AgentService {
     public void updateShareConfig(String id, String shareConfigJson) {
         Agent existing = mapper.selectById(id);
         if (existing == null) throw new BizException(404, "智能体不存在");
+        // 内置「问渠」readable() 直接豁免共享判定（人人可读），shareConfig 对它是不生效的死数据——fail-loud 拒绝
+        if (Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+            throw new BizException("内置「问渠」为系统默认智能体，全员可用，无需配置共享范围");
+        }
         ensureManageable(existing);
         resourceVisibilityService.validateShareConfig(shareConfigJson);
         String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
