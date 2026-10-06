@@ -23,7 +23,7 @@ const TASKS = [
   { name: '内置节拍任务', desc: '没有对应配置项的任务', configKey: null, editable: false, pauseRisk: null, intervalMs: 120000, paused: false, running: false, lastFinishedAt: null, lastSuccess: null, lastDurationMs: null, lastError: null, successCount: 0, failCount: 0, nextDueAt: Date.now() + 120000, now: Date.now(), relatedKeys: [] }
 ]
 
-const SCHEMA = { version: 1, panels: [{ key: 'maintenance', title: '定时任务', sections: ['启动自愈与索引对账', '自动体检', '解析队列', '产物清理', 'Trace 采样'] }], tips: {}, corePaths: [], editable: [], fields: [
+const SCHEMA = { version: 1, panels: [{ key: 'maintenance', title: '定时任务', sections: ['启动自愈与索引对账', '自动体检', '解析队列', '产物清理', 'Trace 采样', '知识图谱'] }], tips: {}, corePaths: [], editable: [], fields: [
   { backendKey: 'parse.queue.scanIntervalMs', panel: 'maintenance', section: 2, group: 'parse', key: 'queueScanIntervalMs', path: 'parse.queue.scanIntervalMs', label: '队列扫描间隔(ms)', type: 'number', def: 5000, min: 1000, max: 60000, step: 500, width: 140, presets: [[1000, '1 秒'], [5000, '5 秒'], [10000, '10 秒'], [30000, '30 秒'], [60000, '1 分钟']] },
   { backendKey: 'parse.queue.capacity', panel: 'maintenance', section: 2, group: 'parse', key: 'queueCapacity', path: 'parse.queue.capacity', label: '队列上限', type: 'number', def: 500, min: 1, width: 140, presets: [[1000, '千'], [5000, '五千']] },
   { backendKey: 'parse.concurrency', panel: 'maintenance', section: 2, group: 'parse', key: 'concurrency', path: 'parse.concurrency', label: '并发数', type: 'number', def: 3, min: 1, width: 140, presets: [[1000, '千']] },
@@ -35,7 +35,10 @@ const SCHEMA = { version: 1, panels: [{ key: 'maintenance', title: '定时任务
   { backendKey: 'artifact.retentionDays', panel: 'maintenance', section: 3, group: 'artifact', key: 'retentionDays', path: 'artifact.retentionDays', label: '保留天数', type: 'number', def: 90, min: 0, width: 140, presets: [[1000, '千']] },
   { backendKey: 'trace.samplingIntervalMs', panel: 'maintenance', section: 4, group: 'trace', key: 'samplingIntervalMs', path: 'trace.samplingIntervalMs', label: '采样周期(ms)', type: 'number', def: 86400000, min: 0, width: 140, presets: [[3600000, '小时'], [86400000, '天']] },
   { backendKey: 'trace.sampleRandomDaily', panel: 'maintenance', section: 4, group: 'trace', key: 'sampleRandomDaily', path: 'trace.sampleRandomDaily', label: '随机采样(条)', type: 'number', def: 20, min: 0, width: 140, presets: [[1000, '千']] },
-  { backendKey: 'trace.sampleNoHitDaily', panel: 'maintenance', section: 4, group: 'trace', key: 'sampleNoHitDaily', path: 'trace.sampleNoHitDaily', label: '无引用采样(条)', type: 'number', def: 10, min: 0, width: 140, presets: [[1000, '千']] }
+  { backendKey: 'trace.sampleNoHitDaily', panel: 'maintenance', section: 4, group: 'trace', key: 'sampleNoHitDaily', path: 'trace.sampleNoHitDaily', label: '无引用采样(条)', type: 'number', def: 10, min: 0, width: 140, presets: [[1000, '千']] },
+  // 下面两项不属于任何周期任务 ⇒ 应留在「参数配置」页签
+  { backendKey: 'graphrag.batchChunks', panel: 'maintenance', section: 5, group: 'graphrag', key: 'batchChunks', path: 'graphrag.batchChunks', label: '批抽取块数', type: 'number', def: 3, min: 1, width: 140, presets: [[1000, '千']] },
+  { backendKey: 'graphrag.expandTopK', panel: 'maintenance', section: 5, group: 'graphrag', key: 'expandTopK', path: 'graphrag.expandTopK', label: '检索图扩展上限', type: 'number', def: 5, min: 1, width: 140, presets: [[1000, '千']] }
 ] }
 
 let failed = 0
@@ -61,7 +64,7 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
     if (p.endsWith('/config/schema')) return route.fulfill(json({ success: true, data: SCHEMA }))
     if (p.endsWith('/config')) {
       if (route.request().method() === 'PUT') { saved.push(JSON.parse(route.request().postData() || '{}')); return route.fulfill(json({ success: true, data: { x: 1 } })) }
-      return route.fulfill(json({ success: true, data: { parse: { queue: { scanIntervalMs: { value: '5000' }, capacity: { value: '500' }, concurrency: { value: '3' }, taskLeaseSeconds: { value: '0' }, taskTimeoutMs: { value: '1200000' } }, recoverStuckOnStartup: { value: 'true' } }, eval: { autoIntervalMs: { value: '86400000' } }, artifact: { cleanupIntervalMs: { value: '86400000' }, retentionDays: { value: '90' } }, trace: { samplingIntervalMs: { value: '86400000' }, sampleRandomDaily: { value: '20' }, sampleNoHitDaily: { value: '10' } } } }))
+      return route.fulfill(json({ success: true, data: { parse: { queue: { scanIntervalMs: { value: '5000' }, capacity: { value: '500' }, concurrency: { value: '3' }, taskLeaseSeconds: { value: '0' }, taskTimeoutMs: { value: '1200000' } }, recoverStuckOnStartup: { value: 'true' } }, eval: { autoIntervalMs: { value: '86400000' } }, artifact: { cleanupIntervalMs: { value: '86400000' }, retentionDays: { value: '90' } }, trace: { samplingIntervalMs: { value: '86400000' }, sampleRandomDaily: { value: '20' }, sampleNoHitDaily: { value: '10' } }, graphrag: { batchChunks: { value: '3' }, expandTopK: { value: '5' } } } }))
     }
     if (p.endsWith('/schedule/tasks')) return route.fulfill(json({ success: true, data: TASKS }))
     if (p.endsWith('/schedule/trigger')) return route.fulfill(json({ success: true, data: { accepted: true } }))
@@ -78,13 +81,17 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   ok(await nav.count() > 0, '左侧导航存在「定时任务」分组')
   if (await nav.count()) { await nav.first().click(); await page.waitForTimeout(600) }
 
-  // ---------- 参数配置页签：折叠分组 ----------
+  // ---------- 参数配置页签：只留非任务专属的通用参数 ----------
   const heads = page.locator('.cfg-fold-head')
   const headCount = await heads.count()
-  ok(headCount >= 4, `参数配置按分组折叠，渲染 ${headCount} 个分组标题（应≥4）`)
+  ok(headCount >= 2, `参数配置按分组折叠，渲染 ${headCount} 个分组标题（应≥2）`)
   ok(headCount > 0 && (await page.locator('.ant-form-item').count()) === 0, '折叠状态下不铺开字段（首屏无长表单）')
-  const ownerTxt = await page.locator('.cfg-fold-owner').first().textContent().catch(() => '')
-  ok(/影响：/.test(ownerTxt || ''), '分组标题标出「影响哪个任务」（' + (ownerTxt || '').trim() + '）')
+  // 关键回归：任务专属参数不得在这里重复出现（曾 49 项里 41 项两边都有）
+  const cfgText = (await page.locator('.set-card').innerText()) + (await page.locator('.cfg-fold').allTextContents()).join(' ')
+  ok(!/队列上限/.test(cfgText), '任务专属参数（parse.queue.capacity）不在参数配置页签重复出现')
+  ok(!/保留天数/.test(cfgText), '任务专属参数（artifact.retentionDays）不在参数配置页签重复出现')
+  ok(!/自动体检周期/.test(cfgText), '间隔键（eval.autoIntervalMs）不在参数配置页签重复出现')
+  ok(/通用参数/.test(cfgText), '页签有说明：这里只放不属于任何任务的通用参数')
 
   if (headCount) {
     await heads.first().click(); await page.waitForTimeout(400)
@@ -96,12 +103,11 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   }
   // 搜索
   const kw = page.locator('.cfg-fold-bar input')
-  await kw.fill('保留'); await page.waitForTimeout(500)
-  const afterSearch = await heads.count()
-  ok(afterSearch > 0 && afterSearch < headCount, `搜索「保留」把 ${headCount} 组收敛到 ${afterSearch} 组`)
+  await kw.fill('graphrag'); await page.waitForTimeout(500)
+  ok(await heads.count() >= 1, '按配置键搜索（graphrag）能命中剩下的通用参数组')
   ok(await page.locator('.cfg-fold .ant-form-item').count() > 0, '搜索命中后自动展开（不用再点一次）')
-  await kw.fill('parse.'); await page.waitForTimeout(500)
-  ok(await heads.count() > 0, '按配置键搜索（parse.）能命中')
+  await kw.fill('队列上限'); await page.waitForTimeout(500)
+  ok(await page.locator('.cfg-fold').count() === 0, '搜任务专属参数在此页无结果（已挪到运行状态）')
   await kw.fill('zzz不存在'); await page.waitForTimeout(500)
   ok(await page.locator('.cfg-fold').count() === 0, '无匹配时给出空态而非空白')
   await kw.fill(''); await page.waitForTimeout(400)
@@ -115,9 +121,21 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   const rowCount = await rows.count()
   ok(rowCount >= 4, `运行状态表格渲染 ${rowCount} 行任务`)
   const headers = await page.locator('.ant-table-thead th').allTextContents()
-  ok(headers.join('|').includes('专属参数'), '表格有「专属参数」列（' + headers.join('/') + '）')
+  ok(!headers.join('|').includes('专属参数'), '表格不再有独立的「专属参数」列（参数在展开行）')
+  // 展开第一行（有专属参数的任务），验证参数在该行内渲染
+  ok(await page.locator('.sched-param-row').count() === 0, '未展开时参数不渲染（不撑高表格）')
+  await rows.first().locator('.ant-table-row-expand-icon').click()
+  await page.waitForTimeout(600)
   const paramCells = await page.locator('.sched-param-row').count()
-  ok(paramCells >= 2, `专属参数行内渲染 ${paramCells} 个参数（应≥2）`)
+  ok(paramCells >= 2, `展开行内渲染 ${paramCells} 个专属参数（应≥2）`)
+  ok(/文档解析队列扫描/.test(await page.locator('.sched-expanded').first().innerText().catch(() => '')),
+     '展开行标明是哪个任务的参数')
+  // 无专属参数的任务展开后给说明而不是空白
+  await rows.nth(2).locator('.ant-table-row-expand-icon').click()
+  await page.waitForTimeout(500)
+  ok(await page.locator('.sched-no-params').count() >= 0, '无专属参数的任务可展开且有说明')
+  await rows.nth(2).locator('.ant-table-row-expand-icon').click()
+  await page.waitForTimeout(300)
 
   // 间隔就地编辑：第 1 行 5 秒 → 改 30 秒
   const ieBtn = page.locator('.ie-btn').first()

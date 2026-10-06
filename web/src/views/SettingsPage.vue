@@ -58,14 +58,16 @@
             </a-tabs>
 
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
-              <!-- 参数配置页签：定时任务有 14 组 50+ 项，全平铺要滚很久且看不出该调哪个。
-                   只有「定时任务」面板改折叠分组（其余面板项数少，折叠反而多一层点击）。
-                   每组标题带所属任务名，回答"这个旋钮归谁管"；间隔与任务专属参数另有
-                   「运行状态」页签可就地改，这里标注出来避免两处找。 -->
+              <!-- 参数配置页签：**只放不属于任何周期任务的参数**（其余 41 项在「运行状态」表格里
+                   就地调整，见那边的展开行）。两个页签曾各存一份同样的旋钮，49 项里 41 项重复，
+                   改一处要猜另一处是否跟着变——现在每个参数只有一个家。
+                   剩下的通用项按分组折叠，仍保留搜索：数量不多但分组关系仍有意义。 -->
               <template v-if="current === 'maintenance' && maintTab === 'config'">
+                <a-alert type="info" show-icon style="margin-bottom:12px"
+                         message="这里是**不属于任何定时任务**的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），请到「运行状态」页签展开对应任务就地调整。" />
                 <div class="cfg-fold-bar">
                   <a-input v-model:value="maintKeyword" size="small" allow-clear
-                           placeholder="搜参数名 / 配置键，如 保留、parse." style="width: 240px">
+                           placeholder="搜参数名 / 配置键，如 重试、graphrag." style="width: 240px">
                     <template #prefix><search-outlined class="res-search-ic" /></template>
                   </a-input>
                   <span class="key-dim">{{ maintFoldedGroups.length }} 组 · 共 {{ maintTotalCount }} 项</span>
@@ -79,7 +81,6 @@
                     <span class="fold-caret">{{ openFolds.includes(g.title) ? '▾' : '▸' }}</span>
                     <span>{{ g.title }}</span>
                     <span class="cfg-fold-n">{{ g.fields.length }} 项</span>
-                    <span v-if="g.owner" class="cfg-fold-owner">影响：{{ g.owner }}</span>
                   </div>
                   <template v-if="openFolds.includes(g.title)">
                     <template v-for="(blk, i) in g.blocks" :key="i">
@@ -379,7 +380,8 @@
                     </a-tooltip>
                   </div>
                   <a-table :data-source="scheduleTasks" size="small" row-key="name" :pagination="false"
-                           :loading="schedLoading" :scroll="{ x: 1180 }">
+                           :loading="schedLoading" :scroll="{ x: 1020 }"
+                           :expanded-row-keys="expandedTasks" @expandedRowsChange="onExpandChange">
                     <a-table-column title="任务" key="name" width="190">
                       <template #default="{ record }">
                         <a-tooltip :title="record.desc">
@@ -400,19 +402,6 @@
                           @save="v => saveInterval(record, v)" />
                         <span v-else-if="record.paused" class="key-dim">—</span>
                         <span v-else class="key-dim">{{ fmtInterval(record.intervalMs) }}</span>
-                      </template>
-                    </a-table-column>
-                    <a-table-column title="专属参数" key="params" width="240">
-                      <template #default="{ record }">
-                        <div v-if="!taskParamsOf(record).length" class="key-dim">—</div>
-                        <div v-else class="sched-params">
-                          <div v-for="f in taskParamsOf(record)" :key="f.path" class="sched-param-row">
-                            <a-tooltip :title="paramTip(f)">
-                              <span class="sched-param-label">{{ f.label }}</span>
-                            </a-tooltip>
-                            <SchemaField :field="f" :form="form" :tips="TIPS" bare />
-                          </div>
-                        </div>
                       </template>
                     </a-table-column>
                     <a-table-column title="状态" key="state" width="80">
@@ -473,6 +462,29 @@
                         </button>
                       </template>
                     </a-table-column>
+
+                    <!-- 展开行：该任务的专属参数（只影响本任务的旋钮）。
+                         做成展开行而非独立列——独立列会把每行撑得很高（文档解析队列扫描有 6 项），
+                         且与折叠分组里的同名参数重复。展开后此处即该参数唯一的可调位置。 -->
+                    <template #expandedRowRender="{ record }">
+                      <div v-if="!taskParamsOf(record).length" class="key-dim sched-no-params">
+                        该任务没有专属参数（间隔已在上方可直接调整）
+                      </div>
+                      <div v-else class="sched-expanded">
+                        <div class="cfg-sub sched-expanded-title">
+                          「{{ record.name }}」的专属参数
+                          <span class="key-dim">（只影响这一个任务，保存后经顶部「保存配置」统一生效）</span>
+                        </div>
+                        <div class="sched-expanded-grid">
+                          <div v-for="f in taskParamsOf(record)" :key="f.path" class="sched-param-row">
+                            <a-tooltip :title="paramTip(f)">
+                              <span class="sched-param-label">{{ f.label }}</span>
+                            </a-tooltip>
+                            <SchemaField :field="f" :form="form" :tips="TIPS" bare />
+                          </div>
+                        </div>
+                      </div>
+                    </template>
                   </a-table>
                 </div>
               </template>
@@ -1247,34 +1259,41 @@ const toggleTaskPause = record => {
   })
 }
 
-// ==================== 参数配置页签的折叠分组（定时任务面板） ====================
-// 定时任务面板 14 组 50+ 项平铺要滚很久，且看不出某个旋钮归哪个任务。这里按 schema 的
-// sections 分组折叠，并在标题上标出「影响哪个任务」——后者由后端 relatedKeys 反查得到，
-// 口径与「运行状态」页签的专属参数完全一致（同一份数据源，不会两处说法打架）。
+// ==================== 参数配置页签（只放非任务专属的通用参数） ====================
+// 此前两个页签各存一份同样的旋钮：49 项里 41 项两边都有（间隔 20 + 专属参数 27），
+// 改一处要猜另一处是否跟着变。现按「一个参数只有一个家」收口：
+//   · 任务间隔 → 「运行状态」表格的间隔列，就地编辑；
+//   · 任务专属参数（后端 relatedKeys 声明）→ 「运行状态」表格的展开行；
+//   · 其余通用参数（GraphRAG、重试、启动复位、缓存 TTL、版本保留…）→ 留在本页签。
+// 归属数据源仍是后端 relatedKeys，与运行状态页签同一份，不存在两处说法不一致的可能。
 const maintKeyword = ref('')
 const openFolds = ref([])
 
-/** 配置键 → 引用它的任务名（一个键可能被多个任务引用，如 notification.dedupWindow） */
-const taskNamesByKey = computed(() => {
-  const m = new Map()
+/** 已被「运行状态」页签收走的配置键（间隔键 + 各任务 relatedKeys），本页签一律不再渲染 */
+const taskOwnedKeys = computed(() => {
+  const s = new Set()
   for (const t of scheduleTasks.value) {
-    for (const k of t.relatedKeys || []) {
-      if (!m.has(k)) m.set(k, [])
-      m.get(k).push(t.name)
-    }
+    if (t.configKey) s.add(t.configKey)
+    for (const k of t.relatedKeys || []) s.add(k)
   }
-  return m
+  return s
 })
 
 /**
- * 分组视图：blocksOf 的扁平块按 sub 标题切成组（section === -1 的字段无标题，单独归首组）。
- * 搜索同时命中参数名、配置键与分组标题——按分组标题命中时保留整组（用户找的是"网页源"这一类）。
+ * 分组视图：blocksOf 的扁平块按 sub 标题切成组（section === -1 的字段无标题，单独归首组），
+ * 并**剔除已被「运行状态」页签收走的键**（见 taskOwnedKeys）。
+ * 某组被剔空后整组不出现——避免留下一个点开是空的标题。
+ * 搜索同时命中参数名、配置键与分组标题——按分组标题命中时保留整组（用户找的是"GraphRAG"这一类）。
  */
 const maintFoldedGroups = computed(() => {
   // 折叠视图只服务「定时任务」面板；其他分组的面板 key 在 PANELS 里查不到，
   // 直接调 blocksOf 会读 p.sections 抛错（面板数据来自后端 schema，未就绪时同理）
   if (current.value !== 'maintenance') return []
+  // 快照未到时 owned 为空 ⇒ 会把 41 项任务专属参数全放回本页签，与运行状态页签重复。
+  // 等快照到齐再算，宁可先空着（面板顶部本就有 loading 态），也不能闪出一份重复的表单。
+  if (!scheduleTasks.value.length) return []
   const kw = maintKeyword.value.trim().toLowerCase()
+  const owned = taskOwnedKeys.value
   const out = []
   let cur = null
   for (const blk of blocksOf('maintenance', !advMode.value, form.value)) {
@@ -1282,15 +1301,13 @@ const maintFoldedGroups = computed(() => {
       cur = { title: blk.title, blocks: [], fields: [] }
       out.push(cur)
     } else {
+      if (owned.has(blk.field.backendKey)) continue
       if (!cur) { cur = { title: '其他', blocks: [], fields: [] }; out.push(cur) }
       cur.blocks.push(blk)
       cur.fields.push(blk.field)
     }
   }
-  const groups = out.filter(g => g.fields.length).map(g => {
-    const owner = [...new Set(g.fields.flatMap(f => taskNamesByKey.value.get(f.backendKey) || []))]
-    return { ...g, owner: owner.join('、') }
-  })
+  const groups = out.filter(g => g.fields.length)
   if (!kw) return groups
   return groups.filter(g =>
     g.title.toLowerCase().includes(kw) ||
@@ -1310,6 +1327,12 @@ const toggleFold = title => {
 const toggleAllFold = () => {
   openFolds.value = allFolded.value ? [] : maintFoldedGroups.value.map(g => g.title)
 }
+
+// ==================== 运行状态表格的展开行（任务专属参数） ====================
+// 展开状态按任务名记（不用索引：刷新后行序可能变）。切换面板时清空，避免带着上次的面板状态回来。
+const expandedTasks = ref([])
+const onExpandChange = keys => { expandedTasks.value = keys.slice() }
+watch(() => current.value, () => { expandedTasks.value = [] })
 
 // 搜到只剩一两组时自动展开它们：否则用户搜完看到的是一堆折叠标题，还得再点一次
 watch(maintFoldedGroups, gs => {
@@ -1483,18 +1506,21 @@ onMounted(fetchAndFill)
 .sched-tabs :deep(.ant-tabs-nav::before) { border-color: var(--app-border); }
 .sched-tabs :deep(.ant-tabs-content-holder) { display: none; }
 .sched-pane { padding: 12px 0 0; }
-/* 定时任务·运行状态：任务行内的专属参数（label + 裸控件，控件自带紧凑宽度） */
-.sched-params { display: flex; flex-direction: column; gap: 2px; }
-.sched-param-row { display: flex; align-items: center; gap: 6px; min-height: 24px; }
-.sched-param-label { font-size: 12px; color: var(--app-text3); flex: none; max-width: 104px; line-height: 1.3; }
+/* 定时任务·运行状态：展开行里的任务专属参数。两列网格铺开——单列会让 6 项参数拉得很长 */
+.sched-expanded { padding: 4px 0 10px; }
+.sched-expanded-title { margin-top: 0; }
+.sched-expanded-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 20px;
+}
+.sched-no-params { padding: 6px 2px; }
+.sched-param-row { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.sched-param-label { font-size: 12px; color: var(--app-text3); flex: none; max-width: 150px; line-height: 1.3; }
 /* 参数配置页签的折叠分组 */
 .cfg-fold-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .cfg-fold { border-bottom: 1px solid var(--app-border); }
 .cfg-fold:last-child { border-bottom: none; }
 .cfg-fold-head { display: flex; align-items: center; gap: 8px; padding: 9px 2px; }
 .cfg-fold-n { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 1px 8px; }
-/* 标题右侧的「影响：xxx」——回答"这组参数归哪个任务"，颜色压低避免与标题抢视线 */
-.cfg-fold-owner { font-size: 11px; color: var(--app-text3); margin-left: auto; text-align: right; }
 .cfg-fold .cfg-sub { margin-top: 4px; }
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
