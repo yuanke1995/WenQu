@@ -36,3 +36,5 @@ package-lock.json
 /dumps/
 /skill-projections/
 /user-data/
+/deploy/sandbox-provisioner/data.ms/
+/scripts/mac/data.ms/
