@@ -831,6 +831,8 @@ export const getBadCases = () => request('/analytics/badcases')
 
 // ---------- 使用统计（个人用量；统计卡全时段，range 只影响趋势/模型占比） ----------
 export const getUsageStats = range => request(`/stats/usage?range=${range === 7 ? 7 : 30}`)
+// 费用报表（管理）：全员台账×模型单价，按用户/按模型两维度；range=7|30
+export const getUsageCost = range => request(`/stats/cost?range=${range === 7 ? 7 : 30}`)
 
 // ==================== 用户长期记忆（个人设置页管理；提取与注入在后端自动完成） ====================
 /** 我的记忆列表（按更新时间倒序；含来源与被注入次数） */

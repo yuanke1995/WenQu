@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -58,6 +59,12 @@ public class ModelInfo {
 
     /** 最大输出 token（NULL=未声明，不下发 max_tokens 交由厂商默认；作为 max_tokens 随请求下发，同时从窗口预算中预留） */
     private Integer maxOutput;
+
+    /** 输入单价（元/百万 tokens；NULL=未配置，费用报表对该模型显示「未计价」；0=免费模型，合法值） */
+    private BigDecimal inputPrice;
+
+    /** 输出单价（元/百万 tokens；NULL=未配置；输出通常比输入贵，两价独立登记） */
+    private BigDecimal outputPrice;
 
     /** 启用: 1=启用 0=停用 */
     private Integer enabled;

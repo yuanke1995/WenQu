@@ -504,6 +504,9 @@ public class ModelRegistryService {
             m.put("contextWindow", mi.getContextWindow());
             m.put("contextWindowMin", mi.getContextWindowMin());
             m.put("maxOutput", mi.getMaxOutput());
+            // 单价（元/百万 tokens）：编辑弹窗回显用；费用报表按 登记单价×台账 tokens 换算
+            m.put("inputPrice", mi.getInputPrice());
+            m.put("outputPrice", mi.getOutputPrice());
             m.put("enabled", !Integer.valueOf(0).equals(mi.getEnabled()));
             m.put("remark", mi.getRemark());
             result.add(m);
@@ -1018,6 +1021,9 @@ public class ModelRegistryService {
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
             mi.setContextWindowMin(intOrNull(item.get("contextWindowMin")));
             mi.setMaxOutput(intOrNull(item.get("maxOutput")));
+            // 单价（元/百万 tokens，输入/输出分开）：费用报表的价格源；留空=未配置（该模型费用显示未计价）
+            mi.setInputPrice(decOrNull(item.get("inputPrice")));
+            mi.setOutputPrice(decOrNull(item.get("outputPrice")));
             // 窗口无全局兜底：对话类模型（chat/vision/omni 参与问答检索预算）必须声明窗口——
             // 不强制的话运行时该模型检索预算被托底 1000（fail-loud 降级），登记时就拦住
             if (mi.getContextWindow() == null
@@ -1243,6 +1249,20 @@ public class ModelRegistryService {
         try {
             int v = Integer.parseInt(s);
             return v > 0 ? v : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 前端表单值 → 价格（元/百万 tokens）。空=未配置（NULL）；**0 是合法值**（免费模型）；
+     *  负数/非数字视为未配置（登记噪声不落库，费用报表宁缺勿错）。 */
+    private static java.math.BigDecimal decOrNull(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty()) return null;
+        try {
+            java.math.BigDecimal v = new java.math.BigDecimal(s);
+            return v.signum() >= 0 ? v.setScale(2, java.math.RoundingMode.HALF_UP) : null;
         } catch (NumberFormatException e) {
             return null;
         }

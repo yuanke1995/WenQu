@@ -173,6 +173,51 @@
             </a-table>
           </div>
         </a-tab-pane>
+
+        <!-- ============ 费用（§13 Token 成本报表）：台账×模型单价，按用户/按模型 ============ -->
+        <a-tab-pane key="cost" tab="费用">
+          <div class="metric-grid" style="margin-bottom:12px">
+            <div class="app-card metric">
+              <div class="metric-label">区间费用</div>
+              <div class="metric-num">{{ fmtCost(cost.total) }}</div>
+              <a-segmented v-model:value="costRange" size="small" style="margin-top:6px"
+                           :options="[{ value: 7, label: '近 7 日' }, { value: 30, label: '近 30 日' }]" @change="loadCost" />
+            </div>
+            <div class="app-card metric">
+              <div class="metric-label">未计价 tokens</div>
+              <div class="metric-num">{{ fmtTokensCompact(cost.unpricedTokens) }}</div>
+              <div class="metric-sub" style="margin-top:6px">模型未登记单价，费用合计不含这部分</div>
+            </div>
+          </div>
+          <div v-if="(cost.unpricedModels || []).length" class="app-card" style="margin-bottom:12px">
+            <div class="app-card-title">未计价模型
+              <span class="card-sub">在「智能体 → 模型供应商 → 管理模型 → 编辑」里登记单价后即可计入费用</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 8px">
+              <a-tag v-for="m in cost.unpricedModels" :key="m" color="orange">{{ m }}</a-tag>
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="app-card">
+              <div class="app-card-title">按用户<span class="card-sub">台账输入/输出 tokens × 模型单价</span></div>
+              <a-table :data-source="cost.byUser || []" :columns="costUserCols" size="small" row-key="uid"
+                       :loading="costLoading" :pagination="false" :locale="{ emptyText: '该时间范围内没有用量' }">
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '—' }}</template>
+                </template>
+              </a-table>
+            </div>
+            <div class="app-card">
+              <div class="app-card-title">按模型<span class="card-sub">计价口径：输入/输出单价分开（元/百万 tokens）</span></div>
+              <a-table :data-source="cost.byModel || []" :columns="costModelCols" size="small" row-key="model"
+                       :loading="costLoading" :pagination="false" :locale="{ emptyText: '该时间范围内没有用量' }">
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '未计价' }}</template>
+                </template>
+              </a-table>
+            </div>
+          </div>
+        </a-tab-pane>
       </a-tabs>
 
       <!-- Trace 详情抽屉 -->
@@ -272,7 +317,8 @@ import { ref, computed, onMounted, h } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   getAnalytics, getUnmatchedQuestions, createKnowledge, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck,
-  listTraces, getChatTrace, getWorkflowTrace, listTracePool, labelTraceSample, dismissTraceSample, runTraceSampling, getTraceStats
+  listTraces, getChatTrace, getWorkflowTrace, listTracePool, labelTraceSample, dismissTraceSample, runTraceSampling, getTraceStats,
+  getUsageCost
 } from '../api'
 
 const tab = ref('overview')
@@ -613,6 +659,47 @@ const reloadAll = async () => {
   finally { analyticsLoading.value = false }
 }
 
+// ==================== 费用（§13）：台账×模型单价，按用户/按模型 ====================
+const costRange = ref(30)
+const costLoading = ref(false)
+const cost = ref({})
+const loadCost = async () => {
+  costLoading.value = true
+  try {
+    const r = await getUsageCost(costRange.value)
+    if (r.success) cost.value = r.data || {}
+    else message.error(r.msg || '费用报表加载失败')
+  } catch (e) { message.error(e.message || '费用报表加载失败') }
+  finally { costLoading.value = false }
+}
+const costUserCols = [
+  { title: '用户', dataIndex: 'name', key: 'name' },
+  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '费用', key: 'cost', width: 110, align: 'right' }
+]
+const costModelCols = [
+  { title: '模型', dataIndex: 'label', key: 'label' },
+  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '费用', key: 'cost', width: 110, align: 'right' }
+]
+/** 费用（元）：null=无可计费用；小额保留分位 */
+const fmtCost = v => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0) return '¥0'
+  if (n < 0.01) return '<¥0.01'
+  return '¥' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+/** token 大数缩写（万/亿），看板表格用 */
+const fmtTokensCompact = n => {
+  const v = Number(n) || 0
+  if (v >= 1e8) return (Math.round(v / 1e7) / 10) + '亿'
+  if (v >= 1e4) return (Math.round(v / 1e3) / 10) + '万'
+  return String(v)
+}
+
 onMounted(() => {
   loadBadCases()
   getEvalLastReport().then(r => { if (r.success) report.value = r.data || null }).catch(() => {})
@@ -621,6 +708,7 @@ onMounted(() => {
   loadPoolStats()
   loadPool()
   loadTraces()
+  loadCost()
 })
 </script>
 

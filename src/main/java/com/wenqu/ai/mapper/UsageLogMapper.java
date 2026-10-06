@@ -39,4 +39,20 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     @Select("SELECT DISTINCT DATE_FORMAT(create_time, '%Y-%m-%d') AS d FROM c_ai_usage_log "
             + "WHERE uid = #{uid} ORDER BY d")
     List<String> statActiveDates(@Param("uid") String uid);
+
+    /**
+     * 用户×模型×日 token 明细（费用报表唯一数据源）：输入/输出分开聚合，
+     * 费用 = Σ(输入×输入单价 + 输出×输出单价)，价格按模型登记在 Java 侧换算——
+     * 不在 SQL 里 join c_ai_model：单价随登记随时可改，SQL 端固化快照会让历史费用跟着漂移。
+     * uid=null 跨全部用户（管理侧），since=null 全量（个人费用卡全时段口径）。
+     */
+    @Select("<script>SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS d, uid AS uid, model AS model, "
+            + "SUM(prompt_tokens) AS p, SUM(completion_tokens) AS c, SUM(total_tokens) AS t "
+            + "FROM c_ai_usage_log "
+            + "<where>"
+            + "<if test='uid != null'>uid = #{uid}</if>"
+            + "<if test='since != null'>AND create_time &gt;= #{since}</if>"
+            + "</where> "
+            + "GROUP BY d, uid, model ORDER BY d</script>")
+    List<Map<String, Object>> statCostDetail(@Param("uid") String uid, @Param("since") LocalDateTime since);
 }

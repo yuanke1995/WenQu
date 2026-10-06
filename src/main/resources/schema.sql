@@ -495,6 +495,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
     `context_window` INT        DEFAULT NULL COMMENT '上下文窗口上限 token（对话类模型必填，无全局兜底；即用户可选区间的最大值/默认值；上下文预算=窗口×安全系数−输出限制）',
     `context_window_min` INT    DEFAULT NULL COMMENT '上下文窗口下限 token（NULL=不可调；与 context_window 构成用户在聊天页可选区间 [min,max]，默认取 max）',
     `max_output`   INT          DEFAULT NULL COMMENT '最大输出 token（NULL=未声明，不下发 max_tokens 交由厂商默认；作为 max_tokens 随请求下发，同时从窗口预算中预留）',
+    `input_price`  DECIMAL(10,2) DEFAULT NULL COMMENT '输入单价（元/百万 tokens；NULL=未配置，费用报表对该模型显示未计价；0=免费模型）',
+    `output_price` DECIMAL(10,2) DEFAULT NULL COMMENT '输出单价（元/百万 tokens；NULL=未配置；输出通常比输入贵，两价独立登记）',
     `enabled`      INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',
     `remark`       VARCHAR(255) DEFAULT NULL COMMENT '备注（如上下文窗口说明）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

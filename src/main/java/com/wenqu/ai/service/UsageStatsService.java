@@ -1,15 +1,22 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.mapper.MessageMapper;
+import com.wenqu.ai.mapper.ModelInfoMapper;
 import com.wenqu.ai.mapper.UsageLogMapper;
+import com.wenqu.ai.mapper.UserMapper;
+import com.wenqu.ai.model.ModelInfo;
+import com.wenqu.ai.model.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +59,8 @@ public class UsageStatsService {
 
     private final MessageMapper messageMapper;
     private final UsageLogMapper usageLogMapper;
+    private final ModelInfoMapper modelInfoMapper;
+    private final UserMapper userMapper;
 
     /** 空结果（未登录匿名身份无可归属的个人用量，不展示匿名兼容池数据） */
     public static Map<String, Object> empty() {
@@ -172,12 +181,35 @@ public class UsageStatsService {
                 .toList();
 
         Long longestSeconds = messageMapper.statLongestSessionSeconds(userId);
+
+        // ---- 费用（§13 Token 成本报表）：台账 tokens × 模型登记单价，Java 侧换算 ----
+        // 全时段费用（统计卡口径）+ 区间内按模型费用（模型列表同窗口）；未登记单价的模型
+        // 不计入费用，其 token 数单列（unpricedTokens）让「费用数字不完整」可见，而不是静默少算。
+        Map<String, BigDecimal[]> prices = priceMap();
+        List<Map<String, Object>> allCost = usageLogMapper.statCostDetail(userId, null);
+        double totalCost = 0;
+        long totalUnpriced = 0;
+        for (Map<String, Object> row : allCost) {
+            BigDecimal[] p = prices.get(String.valueOf(row.get("model")));
+            long t = num(row.get("t"));
+            if (p == null) { totalUnpriced += t; continue; }
+            totalCost += num(row.get("p")) / 1_000_000.0 * p[0].doubleValue()
+                    + num(row.get("c")) / 1_000_000.0 * p[1].doubleValue();
+        }
+        Map<String, Object> rangeCostByModel = rangeCostByModel(userId, today.minusDays(r - 1L).atStartOfDay(), prices);
+        for (Map<String, Object> m : models) {
+            Object cost = rangeCostByModel.get(m.get("model"));
+            m.put("cost", cost);   // null=该模型未登记单价（前端显示「未计价」）
+        }
+
         Map<String, Object> cards = new LinkedHashMap<>();
         cards.put("totalTokens", totalTokens);
         cards.put("peakDayTokens", peakDay);
         cards.put("longestChatSeconds", longestSeconds == null ? 0L : longestSeconds);
         cards.put("currentStreakDays", currentStreak);
         cards.put("longestStreakDays", longestStreak);
+        cards.put("totalCost", round2(totalCost));
+        cards.put("unpricedTokens", totalUnpriced);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("cards", cards);
@@ -185,6 +217,134 @@ public class UsageStatsService {
         out.put("trend", trend);
         out.put("models", models);
         return out;
+    }
+
+    /**
+     * 管理侧费用报表（§13）：全员台账 × 模型登记单价，按用户 / 按模型两个维度聚合。
+     * 单价未配置的模型照常出现在维度里但费用记 null（token 数照实），费用合计只含有价部分——
+     * 未计价 token 总量单列，避免「总费用」被误读成全部消耗的真实成本。
+     *
+     * @param range 时间范围（天）：7 或 30，其他值归一为 30
+     */
+    public Map<String, Object> adminCost(int range) {
+        int r = range == 7 ? 7 : 30;
+        LocalDate today = LocalDate.now();
+        Map<String, BigDecimal[]> prices = priceMap();
+        List<Map<String, Object>> rows = usageLogMapper.statCostDetail(null, today.minusDays(r - 1L).atStartOfDay());
+
+        double total = 0;
+        long unpricedTokens = 0;
+        // uid -> {tokens, cost}；model -> {tokens, cost, priced}
+        Map<String, long[]> userTok = new LinkedHashMap<>();
+        Map<String, double[]> userCost = new HashMap<>();
+        Map<String, long[]> modelTok = new LinkedHashMap<>();
+        Map<String, double[]> modelCost = new HashMap<>();
+        Set<String> unpricedModels = new TreeSet<>();
+        for (Map<String, Object> row : rows) {
+            String model = row.get("model") == null ? UNKNOWN_LABEL : String.valueOf(row.get("model"));
+            String uid = row.get("uid") == null ? "" : String.valueOf(row.get("uid"));
+            long p = num(row.get("p")), c = num(row.get("c")), t = num(row.get("t"));
+            BigDecimal[] price = prices.get(model);
+            Double cost = null;
+            if (price != null) {
+                cost = p / 1_000_000.0 * price[0].doubleValue() + c / 1_000_000.0 * price[1].doubleValue();
+                total += cost;
+            } else {
+                unpricedTokens += t;
+                unpricedModels.add(model);
+            }
+            userTok.computeIfAbsent(uid, k -> new long[2])[0] += p;
+            userTok.get(uid)[1] += c;
+            if (cost != null) userCost.merge(uid, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
+            modelTok.computeIfAbsent(model, k -> new long[2])[0] += p;
+            modelTok.get(model)[1] += c;
+            if (cost != null) modelCost.merge(model, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
+        }
+
+        // 用户名回填（看板展示 uid 没有人味；量级=成员数，一次全量可接受）
+        Map<String, String> names = new HashMap<>();
+        try {
+            for (User u : userMapper.selectList(null)) names.put(u.getUid(), u.getUsername());
+        } catch (Exception e) {
+            log.warn("[Cost] 用户名回填失败，按 uid 展示: {}", e.getMessage());
+        }
+        List<Map<String, Object>> byUser = userTok.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    double[] cost = userCost.get(e.getKey());
+                    m.put("uid", e.getKey());
+                    m.put("name", names.getOrDefault(e.getKey(), e.getKey()));
+                    m.put("promptTokens", e.getValue()[0]);
+                    m.put("completionTokens", e.getValue()[1]);
+                    m.put("tokens", e.getValue()[0] + e.getValue()[1]);
+                    m.put("cost", cost == null ? null : round2(cost[0]));
+                    return m;
+                })
+                .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed())
+                .toList();
+        List<Map<String, Object>> byModel = modelTok.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    double[] cost = modelCost.get(e.getKey());
+                    m.put("model", e.getKey());
+                    m.put("label", labelOf(e.getKey()));
+                    m.put("promptTokens", e.getValue()[0]);
+                    m.put("completionTokens", e.getValue()[1]);
+                    m.put("tokens", e.getValue()[0] + e.getValue()[1]);
+                    m.put("cost", cost == null ? null : round2(cost[0]));
+                    m.put("priced", cost != null);
+                    return m;
+                })
+                .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed())
+                .toList();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("range", r);
+        out.put("total", round2(total));
+        out.put("unpricedTokens", unpricedTokens);
+        out.put("unpricedModels", List.copyOf(unpricedModels));
+        out.put("byUser", byUser);
+        out.put("byModel", byModel);
+        return out;
+    }
+
+    /** 模型引用 → [输入单价, 输出单价]（元/百万 tokens）；ref 规则与台账 model 列一致（providerId/modelId） */
+    private Map<String, BigDecimal[]> priceMap() {
+        Map<String, BigDecimal[]> out = new HashMap<>();
+        try {
+            for (ModelInfo mi : modelInfoMapper.selectList(null)) {
+                if (mi.getInputPrice() == null && mi.getOutputPrice() == null) continue;
+                out.put(mi.getProviderId() + "/" + mi.getModelId(),
+                        new BigDecimal[]{mi.getInputPrice() == null ? BigDecimal.ZERO : mi.getInputPrice(),
+                                         mi.getOutputPrice() == null ? BigDecimal.ZERO : mi.getOutputPrice()});
+            }
+        } catch (Exception e) {
+            log.warn("[Cost] 模型单价读取失败，本轮费用按未计价处理: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /** 区间内按模型的费用：model → 费用（元，2 位小数）；未登记单价的模型不在返回里 */
+    private Map<String, Object> rangeCostByModel(String userId, LocalDateTime since, Map<String, BigDecimal[]> prices) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : usageLogMapper.statCostDetail(userId, since)) {
+            String model = row.get("model") == null ? UNKNOWN_LABEL : String.valueOf(row.get("model"));
+            BigDecimal[] p = prices.get(model);
+            if (p == null) continue;
+            double cost = num(row.get("p")) / 1_000_000.0 * p[0].doubleValue()
+                    + num(row.get("c")) / 1_000_000.0 * p[1].doubleValue();
+            if (out.containsKey(model)) {
+                cost += ((Number) out.get(model)).doubleValue();
+            }
+            out.put(model, round2(cost));
+        }
+        return out;
+    }
+
+    private static double round2(double v) {
+        return BigDecimal.valueOf(v).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
 
     /** 最长连续天数：排序后相邻日期差 1 天即延续 */

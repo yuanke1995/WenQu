@@ -14,6 +14,11 @@
           <div class="stat-num">{{ c.value }}</div>
           <div class="stat-label">{{ c.label }}</div>
         </div>
+        <!-- 费用卡：模型登记单价 × 台账 tokens 换算；有未计价模型的用量时提示数字不完整 -->
+        <div class="stat-cell">
+          <div class="stat-num">{{ fmtCost(cards.totalCost) }}<i v-if="unpricedTokens" class="stat-approx">*</i></div>
+          <div class="stat-label">累计费用<template v-if="unpricedTokens">（*{{ fmtTokens(unpricedTokens) }} tokens 未计价）</template></div>
+        </div>
       </div>
 
       <!-- ==================== Token 活动（近一年热力图） ==================== -->
@@ -81,7 +86,7 @@
                 <i class="tl-dot" :style="{ background: seriesColor(m.model) }"></i>
                 <div class="legend-main">
                   <div class="legend-name">{{ m.label || m.model }}</div>
-                  <div class="legend-sub">{{ fmtTokens(m.tokens) }} tokens</div>
+                  <div class="legend-sub">{{ fmtTokens(m.tokens) }} tokens<template v-if="m.cost != null"> · {{ fmtCost(m.cost) }}</template><template v-else-if="m.cost === null && hasAnyPrice"> · 未计价</template></div>
                 </div>
                 <div class="legend-pct">{{ pct(m.tokens) }}%</div>
               </div>
@@ -122,8 +127,12 @@ const cards = ref({})          // { totalTokens, peakDayTokens, longestChatSecon
 const heatmap = ref([])        // [{ date, tokens }] 稀疏日清单（近 365 天）
 const trendDays = ref([])      // ['yyyy-MM-dd', ...]
 const trendSeries = ref([])    // [{ model, values[] }]
-const modelRows = ref([])      // [{ model, tokens }]（近 N 日）
+const modelRows = ref([])      // [{ model, tokens, cost }]（近 N 日；cost=null=该模型未登记单价）
 const hasUnrecorded = computed(() => modelRows.value.some(m => m.model === '未记录'))
+// 有任一模型配置了价格才在列表里显示「未计价」标注——全员都没配价时整列都是噪声
+const hasAnyPrice = computed(() => modelRows.value.some(m => m.cost != null))
+// 未计价模型的 token 总量（费用数字不含它）
+const unpricedTokens = computed(() => Number(cards.value.unpricedTokens) || 0)
 
 const load = async () => {
   loading.value = true
@@ -183,6 +192,15 @@ function fmtDuration(sec) {
   if (d > 0) return `${d} 天 ${h} 小时`
   if (h > 0) return `${h} 小时 ${m} 分钟`
   return `${m} 分钟`
+}
+
+/** 费用（元）：null=没有任何已计价用量（显示 —）；小额保留分位，大额千分位 */
+function fmtCost(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0) return '¥0'
+  if (n < 0.01) return '<¥0.01'
+  return '¥' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 // ==================== Token 活动热力图 ====================

@@ -296,6 +296,26 @@
                 <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindowMin = q">{{ fmtK(q) }}</button>
               </div>
             </div>
+            <div class="pm-field">
+              <div class="pm-label">
+                输入单价
+                <a-tooltip title="费用报表的计价输入：该模型每百万输入 token 的价格（元）。留空=未配置，费用报表对该模型显示「未计价」；0=免费模型。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input-number v-model:value="editForm.inputPrice" :min="0" :step="0.5" :precision="2"
+                              placeholder="元 / 百万 tokens" style="width:100%" />
+            </div>
+            <div class="pm-field">
+              <div class="pm-label">
+                输出单价
+                <a-tooltip title="费用报表的计价输入：该模型每百万输出 token 的价格（元），通常高于输入价。留空=未配置；0=免费。">
+                  <question-circle-outlined class="pm-q" />
+                </a-tooltip>
+              </div>
+              <a-input-number v-model:value="editForm.outputPrice" :min="0" :step="0.5" :precision="2"
+                              placeholder="元 / 百万 tokens" style="width:100%" />
+            </div>
           </div>
           <div class="pm-hint">
             窗口：对话类模型必填（向量/重排/OCR/语音等能力型可留空）；最小窗口留空=聊天页不可调档；最大输出留空=不主动限制（按厂商默认）。
@@ -821,7 +841,8 @@ const budgetConflict = computed(() => {
 const blankEditForm = () => ({
   modelId: '', displayName: '', modelType: 'chat',
   visionCapable: 'auto', toolCapable: 'auto', thinking: 'auto',
-  defaultReasoningLevel: undefined, contextWindow: null, contextWindowMin: null, maxOutput: null
+  defaultReasoningLevel: undefined, contextWindow: null, contextWindowMin: null, maxOutput: null,
+  inputPrice: null, outputPrice: null
 })
 
 const openModelAdd = () => {
@@ -847,7 +868,9 @@ const openModelEdit = record => {
     defaultReasoningLevel: record.defaultReasoningLevel || undefined,
     contextWindow: record.contextWindow ?? null,
     contextWindowMin: record.contextWindowMin ?? null,
-    maxOutput: record.maxOutput ?? null
+    maxOutput: record.maxOutput ?? null,
+    inputPrice: record.inputPrice ?? null,
+    outputPrice: record.outputPrice ?? null
   }
   editLevels.value = Array.isArray(record.reasoningLevels) ? [...record.reasoningLevels] : []
   editOpen.value = true
@@ -921,7 +944,9 @@ const applyModelEdit = () => {
     defaultReasoningLevel: cap ? (f.defaultReasoningLevel || null) : null,
     contextWindow: f.contextWindow ?? null,
     contextWindowMin: f.contextWindowMin ?? null,
-    maxOutput: f.maxOutput ?? null
+    maxOutput: f.maxOutput ?? null,
+    inputPrice: f.inputPrice ?? null,
+    outputPrice: f.outputPrice ?? null
   }
   if (editIsNew.value) {
     models.value.push({
