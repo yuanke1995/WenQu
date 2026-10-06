@@ -121,24 +121,8 @@
         <div v-else-if="m.content || !m.loading" class="md bubble-md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }"
              :data-msg-index="index" @click="onMdClick" v-html="renderMd(m.content || '', m.images, MD_RICH)" />
 
-        <!-- 智能体提问卡（人在回路）：模型调 askUser 工具后挂起；首个候选=推荐项，超时按它默认执行 -->
-        <div v-if="m.ask" class="card ask-card">
-          <div class="ask-head"><question-circle-outlined /> 智能体向你提问</div>
-          <div class="ask-q">{{ m.ask.question }}</div>
-          <div v-if="m.ask.options && m.ask.options.length" class="ask-opts">
-            <button v-for="(op, oi) in m.ask.options" :key="oi" class="ask-opt" type="button"
-                    :disabled="m.ask.busy" @click.stop="$emit('answer-ask', op)">
-              <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
-            </button>
-          </div>
-          <div class="ask-custom">
-            <input v-model="m.ask.custom" class="ask-input" :maxlength="2000" :disabled="m.ask.busy"
-                   placeholder="或输入你自己的答案…" @keydown.enter.prevent="$emit('answer-ask', m.ask.custom)" />
-            <button class="ask-send" type="button" :disabled="m.ask.busy || !(m.ask.custom || '').trim()"
-                    @click.stop="$emit('answer-ask', m.ask.custom)">提交</button>
-          </div>
-          <div class="ask-hint">{{ m.ask.answered ? '已回答，模型继续中…' : '未回答将按推荐项「' + (m.ask.options[0] || '') + '」默认执行' }}</div>
-        </div>
+        <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
+             整块替换成提问面板（见 MobileChatPage 的 m-askp）；答复后问答记录以工具卡形态留在本气泡 -->
 
         <!-- 工具列表兜底（历史消息无时间线时） -->
         <div v-if="m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="card">
@@ -321,7 +305,7 @@ const props = defineProps({
   variantSwitching: { type: Boolean, default: false }
 })
 const emit = defineEmits(['activate', 'preview', 'source', 'retry', 'edit', 'feedback', 'approve',
-  'answer-ask', 'switch-version', 'ask', 'copy', 'copy-user', 'more'])
+  'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
 // 富渲染：沙盒运行按钮需要会话作用域（与 PC 的 MD_RICH 同口径）
 const MD_RICH = { runnable: true }
@@ -448,23 +432,7 @@ const onMdClick = e => {
 .tool-line { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
 .tool-line-name { font-size: 13px; }
 
-/* 智能体提问卡（askUser，人在回路）：中性色，非审批的警告色 */
-.ask-card { display: flex; flex-direction: column; gap: 8px; }
-.ask-head { font-size: 13px; font-weight: 600; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
-.ask-q { font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
-.ask-opts { display: flex; flex-wrap: wrap; gap: 8px; }
-.ask-opt {
-  text-align: left; min-height: 36px; padding: 6px 12px; border: 1px solid var(--app-border); border-radius: 9px;
-  background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
-}
-.ask-opt:disabled { opacity: 0.6; }
-.ask-rec { flex: none; font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: var(--app-ok-weak); color: var(--app-ok); margin-right: 6px; }
-.ask-custom { display: flex; align-items: center; gap: 8px; }
-.ask-input { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--app-border); border-radius: 8px; padding: 0 10px; font-size: 13px; background: var(--app-panel); color: var(--app-text); }
-.ask-input:disabled { opacity: 0.6; }
-.ask-send { min-height: 34px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation; }
-.ask-send:disabled { opacity: 0.5; }
-.ask-hint { font-size: 12px; color: var(--app-text3); }
+/* 智能体提问（askUser）待答态由 MobileChatPage 的 m-askp 面板承载，气泡内不再渲染提问卡 */
 
 /* askUser 问答记录（工具卡内常显：问题 + 答案） */
 .ask-rec-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }

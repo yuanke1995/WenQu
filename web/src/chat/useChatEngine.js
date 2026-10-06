@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk,
+         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -936,8 +936,8 @@ async function resolveApproval (m, approved) {
     if (m.approval) m.approval.busy = false
   }
 }
-/** 智能体提问：提交用户点选/输入的答案；答案作为工具结果回给模型继续本轮。卡片保留到
- *  done 工具状态到达（问答记录卡接管展示），期间置 busy 防重复提交 */
+/** 智能体提问：提交用户点选/输入的答案；答案作为工具结果回给模型继续本轮。桌面壳的提问面板
+ *  依赖本函数（面板挂在消息上，点选即答）；卡片保留到 done 工具状态到达（问答记录卡接管展示） */
 async function answerAsk (m, text) {
   const t = (text || '').trim()
   if (!m.ask || m.ask.busy || !t) return
@@ -953,6 +953,24 @@ async function answerAsk (m, text) {
     hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '回答提交失败')
+    if (m.ask) m.ask.busy = false
+  }
+}
+/** 忽略智能体提问：不作答，立即按推荐项默认执行（与超时默认同语义的提前触发） */
+async function ignoreAsk (m) {
+  if (!m.ask || m.ask.busy) return
+  m.ask.busy = true
+  try {
+    const r = await ignoreAgentAsk(m.ask.id)
+    if (r && r.success === false) {
+      message.warning(r.msg || '操作失败')
+      m.ask.busy = false
+      return
+    }
+    m.ask.answered = '（已忽略）'
+    hooks.scrollSoft?.()
+  } catch (e) {
+    message.error(e.message || '操作失败')
     if (m.ask) m.ask.busy = false
   }
 }
@@ -1089,11 +1107,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 忽略 */ }
     },
     onAskUser: payload => {
-      // 智能体提问（人在回路）：提问卡挂到当前 AI 气泡，用户点选/输入后模型继续走。
-      // options 第一项是模型给的推荐项（前端标「推荐」，超时按它默认执行）
+      // 智能体提问（人在回路）：提问面板挂到当前 AI 气泡状态上，桌面壳据此把底部输入框整块
+      // 替换成提问面板；用户点选/输入/忽略后模型继续走。
+      // options 第一项是模型给的推荐项（超时未答按它默认执行）
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        msg.ask = { id: j.askId, question: j.question, options: j.options || [], timeoutMs: j.timeoutMs, busy: false, answered: '' }
+        msg.ask = { id: j.askId, topic: j.topic || '', question: j.question, options: j.options || [], timeoutMs: j.timeoutMs, busy: false, answered: '' }
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1488,7 +1507,7 @@ const ready = async () => {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk,
+    text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk, ignoreAsk,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

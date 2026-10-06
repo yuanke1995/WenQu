@@ -95,16 +95,17 @@ const toolCallsView = list => {
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
 }
 // ==================== askUser（向用户提问）问答记录 ====================
-// 工具入参 args 为 {question, options} JSON 字符串（SSE 短摘要/落库全文同构），result=用户所选/
-// 输入的答案（超时未答=推荐项+超时说明后缀）。解析失败（截断/旧数据）时降级为只显示答案。
+// 工具入参 args 为 {topic?, question, options} JSON 字符串（SSE 短摘要/落库全文同构），
+// result=用户所选/输入的答案（超时未答=推荐项+超时说明后缀）。解析失败（截断/旧数据）时降级为只显示答案。
 const askUserView = t => {
-  let question = '', options = null
+  let topic = '', question = '', options = null
   try {
     const j = JSON.parse(t?.args || 'null')
+    topic = (j && j.topic) || ''
     question = (j && j.question) || ''
     options = j && Array.isArray(j.options) ? j.options : null
   } catch (e) { /* 入参截断/旧数据：仅显示答案 */ }
-  return { question, options, answer: (t && (t.result || t.output)) || '' }
+  return { topic, question, options, answer: (t && (t.result || t.output)) || '' }
 }
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时

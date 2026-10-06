@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.model.Agent;
@@ -5132,7 +5133,7 @@ public class RagService {
      * 不可用/超限提示。**超时按推荐项（options 第一项）默认执行**——推荐项由模型放第一位、
      * 前端标注「推荐」；答案附「超时默认」说明，避免模型把默认决策说成用户亲选。
      */
-    private String doAskUser(AnswerStreamState st, String question, java.util.List<String> options) {
+    private String doAskUser(AnswerStreamState st, String topic, String question, java.util.List<String> options) {
         if (st.guestMode) {
             return "（游客会话不支持结构化提问：请改为在回答正文中直接列出候选选项，请用户回复序号或自行描述。）";
         }
@@ -5144,14 +5145,16 @@ public class RagService {
             return "（提问内容为空，工具未执行。请给出要问用户的问题后重试。）";
         }
         if (q.length() > 500) q = q.substring(0, 500);
+        String t = topic == null ? "" : topic.trim();
+        if (t.length() > 16) t = t.substring(0, 16);
         // 选项归一：去空白/去空/去重（保序），合法区间 2~6 个；单项超长截断
         java.util.List<String> opts = new java.util.ArrayList<>();
         if (options != null) {
             for (String o : options) {
                 if (o == null) continue;
-                String t = o.trim();
-                if (t.isEmpty() || opts.contains(t)) continue;
-                opts.add(t.length() > 200 ? t.substring(0, 200) : t);
+                String s = o.trim();
+                if (s.isEmpty() || opts.contains(s)) continue;
+                opts.add(s.length() > 200 ? s.substring(0, 200) : s);
             }
         }
         if (opts.size() < 2 || opts.size() > 6) {
@@ -5160,7 +5163,7 @@ public class RagService {
         long timeout = approvalTimeoutMs();
         String askId = java.util.UUID.randomUUID().toString();
         java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
-        // 落库（复用 c_ai_tool_approval：tool_name=askUser，question+options 存 request_args，答案存 answer）
+        // 落库（复用 c_ai_tool_approval：tool_name=askUser，topic+question+options 存 request_args，答案存 answer）
         try {
             com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
             rec.setId(askId);
@@ -5169,6 +5172,7 @@ public class RagService {
             rec.setToolName("askUser");
             rec.setStatus("PENDING");
             Map<String, Object> args = new LinkedHashMap<>();
+            if (!t.isEmpty()) args.put("topic", t);
             args.put("question", q);
             args.put("options", opts);
             String argsJson = JSON.toJSONString(args);
@@ -5182,11 +5186,12 @@ public class RagService {
         // 提问待答站内通知（旁路）：SSE 只能触达正开着会话页的人，人不在页面时铃铛是唯一可感知面。
         // 口径与工具审批一致：去重键防刷屏，refSub=askId 供通知深链直达可答位置。
         notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
-                "智能体向你提问", q,
+                t.isEmpty() ? "智能体向你提问" : "智能体向你提问：" + t, q,
                 "session", st.sessionId, "ask:" + askId, askId);
         try {
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("askId", askId);
+            if (!t.isEmpty()) req.put("topic", t);
             req.put("question", q);
             req.put("options", opts);
             req.put("timeoutMs", timeout);
@@ -5236,6 +5241,40 @@ public class RagService {
     }
 
     /**
+     * 用户忽略提问（提问面板「忽略」按钮）：不作答，立即按推荐项（选项第一项）默认执行——
+     * 与超时默认同一语义的提前触发。答案给模型时附「非用户亲选」说明，防止模型把默认决策
+     * 说成用户选择；审计记 APPROVED + 推荐项原文（用户确实做出了「跳过」动作）。
+     */
+    public boolean resolveAskIgnore(String askId, String uid) {
+        if (askId == null || askId.isBlank()) return false;
+        // 推荐项从落库 args 还原（DB 是权威源：内存 future 只负责唤醒）
+        java.util.List<String> opts;
+        try {
+            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
+            if (rec == null || !"askUser".equals(rec.getToolName())) return false;
+            if (uid == null || !uid.equals(rec.getUserId())) {
+                log.warn("[ASK] 忽略人非本轮用户，拒绝: askId={} by={}", askId, uid);
+                return false;
+            }
+            if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
+            com.alibaba.fastjson2.JSONObject args = JSON.parseObject(rec.getRequestArgs());
+            com.alibaba.fastjson2.JSONArray arr = args == null ? null : args.getJSONArray("options");
+            opts = arr == null ? java.util.List.of() : arr.toJavaList(String.class);
+        } catch (Exception e) {
+            log.warn("[ASK] 忽略提问读取记录失败: askId={} {}", askId, e.getMessage());
+            return false;
+        }
+        if (opts.isEmpty()) return false;
+        String recommended = opts.get(0);
+        boolean dbOk = markAskResolved(askId, "APPROVED", recommended, uid);
+        PendingAsk p = PENDING_ASKS.get(askId);
+        if (p == null) return dbOk;
+        if (uid == null || !uid.equals(p.userId())) return false;
+        return p.future().complete(recommended
+                + "\n（用户选择忽略此问题，系统已按推荐项默认采用；这是默认决策，并非用户亲自选择。）");
+    }
+
+    /**
      * 从通知恢复提问卡：按 id 取提问记录（仅本人可查；不存在/非本人返回 null）。
      * 用于用户点开 tool.ask 通知后在会话内重建提问卡——刷新丢失的 SSE 卡据此补回。
      */
@@ -5274,14 +5313,13 @@ public class RagService {
         }
     }
 
-    /** 本轮工具上下文：会话/用户归属 + askUser 执行器（闭包持有 st，提问卡 SSE 与阻塞等待都靠它） */
+    /** 本轮工具上下文：会话/用户归属 + askUser 执行器（闭包持有 st，提问面板 SSE 与阻塞等待都靠它） */
     private java.util.Map<String, Object> toolContext(AnswerStreamState st) {
         java.util.Map<String, Object> ctx = new java.util.HashMap<>();
         ctx.put(PresentArtifactTool.CTX_SESSION_ID, st.sessionId);
         ctx.put(PresentArtifactTool.CTX_USER_ID, st.userId);
         ctx.put(BuiltinTools.CTX_ASK,
-                (java.util.function.BiFunction<String, java.util.List<String>, String>)
-                        (q, opts) -> doAskUser(st, q, opts));
+                (BuiltinTools.AskFn) (t, q, opts) -> doAskUser(st, t, q, opts));
         return ctx;
     }
 

@@ -772,6 +772,10 @@ export const approveToolCall = (approvalId, approved) =>
 export const answerAgentAsk = (askId, answer) =>
   request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ answer }) })
 
+/** 忽略智能体提问：不作答，立即按推荐项（选项第一项）默认执行——与超时默认同语义的提前触发 */
+export const ignoreAgentAsk = askId =>
+  request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ ignore: true }) })
+
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>
   request(`/knowledge/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })

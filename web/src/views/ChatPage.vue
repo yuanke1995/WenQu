@@ -310,26 +310,8 @@
                   <span class="approval-hint">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</span>
                 </div>
               </div>
-              <!-- 智能体提问（人在回路）：模型调 askUser 工具后挂起，用户点选/输入后同一轮继续。
-                   首个候选是模型给的推荐项（超时未答按它默认执行，超时说明会随工具结果回给模型） -->
-              <div v-if="m.ask" class="ask-card">
-                <div class="ask-title"><question-circle-outlined /> 智能体向你提问</div>
-                <div class="ask-q">{{ m.ask.question }}</div>
-                <div class="ask-opts">
-                  <button v-for="(op, oi) in m.ask.options" :key="oi" class="app-btn small ask-opt"
-                          :disabled="m.ask.busy" @click="answerAsk(m, op)">
-                    <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
-                  </button>
-                </div>
-                <div class="ask-custom">
-                  <input v-model="m.ask.custom" class="ask-input" :maxlength="2000" :disabled="m.ask.busy"
-                         placeholder="或输入你自己的答案…" @keydown.enter="answerAsk(m, m.ask.custom)" />
-                  <button class="app-btn small" :disabled="m.ask.busy || !(m.ask.custom || '').trim()"
-                          @click="answerAsk(m, m.ask.custom)">提交</button>
-                </div>
-                <div class="approval-hint">{{ m.ask.answered ? '已回答，模型继续中…'
-                  : '未回答将在 ' + Math.round((m.ask.timeoutMs || 120000) / 1000) + ' 秒后按推荐项「' + (m.ask.options[0] || '') + '」默认执行' }}</div>
-              </div>
+              <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
+                   替换成提问面板（见 pendingAsk / askp-*），答复后问答记录以工具卡形态留在本气泡 -->
               <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
@@ -575,7 +557,7 @@
             <span class="pending-del" @click.stop="removePendingImage(pi)">×</span>
           </div>
         </div>
-        <div class="input-box">
+        <div v-if="!pendingAsk" class="input-box">
           <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
@@ -842,6 +824,37 @@
               <pause-circle-outlined v-else />
             </button>
             <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="send"><arrow-up-outlined /></button>
+          </div>
+        </div>
+        <!-- 智能体提问面板：当前会话有挂起提问时完全替换聊天输入框（模型在等答案，输入框此时不可用）。
+             样式对齐「编号选项 + 自定义输入末项 + 键盘导航 + 忽略/提交」的提问卡；答复后面板撤下、
+             输入框回归，问答记录以工具卡形态留在气泡原位 -->
+        <div v-else class="input-box askp-box" @keydown="onAskPanelKeydown">
+          <div class="askp-head">
+            <span class="askp-tag">{{ pendingAsk.ask.topic || '向用户提问' }}</span>
+            <span class="askp-q">{{ pendingAsk.ask.question }}</span>
+            <span v-if="pendingAsk.ask.answered" class="askp-state ok">已回答，模型继续中…</span>
+          </div>
+          <div class="askp-opts">
+            <button v-for="(op, oi) in pendingAsk.ask.options" :key="oi" type="button"
+                    class="askp-opt" :class="{ sel: askSelIdx === oi }"
+                    :disabled="pendingAsk.ask.busy" @click="answerAsk(pendingAsk, op)">
+              <span class="askp-no">{{ oi + 1 }}.</span>
+              <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
+              <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
+            </button>
+            <div class="askp-opt askp-custom-row" :class="{ sel: askSelIdx === pendingAsk.ask.options.length }">
+              <span class="askp-no">{{ pendingAsk.ask.options.length + 1 }}.</span>
+              <input ref="askCustomRef" v-model="askCustom" class="askp-input" :maxlength="2000"
+                     :disabled="pendingAsk.ask.busy" placeholder="输入你的回答…" />
+            </div>
+          </div>
+          <div class="askp-foot">
+            <span class="askp-hint"><info-circle-outlined /> 使用 Tab / 上下键选择，回车或空格确认；未答超时将按推荐项默认执行</span>
+            <span class="askp-actions">
+              <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy" @click="ignoreAsk(pendingAsk)">忽略</button>
+              <button class="app-btn small" :disabled="pendingAsk.ask.busy" @click="askSubmit">提交</button>
+            </span>
           </div>
         </div>
         <input ref="attachInput" type="file" multiple style="display:none" @change="onAttachChange" />
@@ -2483,7 +2496,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk,
+  text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk, ignoreAsk,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -2523,6 +2536,74 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// ==================== 智能体提问面板（替换聊天输入框） ====================
+// 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
+// 答复后工具终态到达（msg.ask 清空），面板撤下、输入框回归，问答记录以工具卡形态留在气泡原位。
+// 键盘：Tab/↑↓ 在「选项+自定义输入行」间循环，回车/空格确认（输入框内回车=提交自定义答案）。
+const pendingAsk = computed(() => {
+  const list = messages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m && m.role === 'ai' && m.ask) return m
+  }
+  return null
+})
+const askSelIdx = ref(0)        // 键盘高亮：0..n-1=选项，n=自定义输入行
+const askCustom = ref('')
+const askCustomRef = ref(null)
+watch(() => pendingAsk.value?.ask, () => {
+  askSelIdx.value = 0
+  askCustom.value = ''
+  nextTick(() => { const el = askCustomRef.value; if (el && el.focus) el.focus() })
+})
+// 选项展示拆分：「关键词：说明」→ 关键词加粗 + 说明弱化；无冒号时整句作为关键词
+const askOptionParts = (op) => {
+  const s = String(op || '')
+  const i = s.search(/[：:]/)
+  return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
+}
+const askSubmit = () => {
+  const m = pendingAsk.value
+  if (!m || m.ask.busy) return
+  const t = (askCustom.value || '').trim()
+  if (t) { answerAsk(m, t); return }
+  const op = (m.ask.options || [])[askSelIdx.value]
+  if (op) answerAsk(m, op)
+}
+// 高亮移动时同步焦点：落到自定义输入行→聚焦（可直接打字），落到选项行→失焦（避免误输入）
+const focusAskRow = () => {
+  const n = (pendingAsk.value?.ask.options || []).length
+  nextTick(() => {
+    const el = askCustomRef.value
+    if (!el) return
+    if (askSelIdx.value === n) el.focus()
+    else if (document.activeElement === el) el.blur()
+  })
+}
+const onAskPanelKeydown = (e) => {
+  const ask = pendingAsk.value?.ask
+  if (!ask || ask.busy) return
+  const total = (ask.options || []).length + 1   // 最后一格=自定义输入行
+  const inInput = e.target && e.target.tagName === 'INPUT'
+  if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+    askSelIdx.value = (askSelIdx.value + 1) % total
+    focusAskRow()
+    e.preventDefault()
+  } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+    askSelIdx.value = (askSelIdx.value - 1 + total) % total
+    focusAskRow()
+    e.preventDefault()
+  } else if (e.key === 'Enter') {
+    // 输入框内且已打字 → 提交自定义答案；否则回车=确认当前高亮项
+    if (inInput && askCustom.value.trim()) answerAsk(pendingAsk.value, askCustom.value)
+    else askSubmit()
+    e.preventDefault()
+  } else if (e.key === ' ' && !inInput) {
+    askSubmit()
+    e.preventDefault()
+  }
+}
 
 // ==================== 手动压缩摘要弹窗（/compact 结果条「查看摘要」） ====================
 // 打开时快照摘要与用量：发送下一轮会清掉 compactNotice，弹窗若直接读它会当场变空
@@ -3455,6 +3536,30 @@ onMounted(async () => {
 /* 提问恢复横幅复用 approval-recovery 容器；补充问答行样式 */
 .ar-ask-q { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
 .ar-ask-answer { font-size: 12px; font-weight: 600; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+
+/* ==================== 智能体提问面板（替换聊天输入框） ====================
+   挂起提问时整块顶替 composer：编号选项（关键词加粗 + 说明弱化、首项带「推荐」）、
+   自定义输入作末项、底部键盘提示 + 忽略/提交。键盘高亮用 .sel（Tab/↑↓ 移动）。 */
+.askp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
+.askp-q { font-size: 13.5px; font-weight: 600; color: var(--app-text); }
+.askp-state.ok { font-size: 12px; color: var(--app-ok); }
+.askp-opts { display: flex; flex-direction: column; gap: 2px; }
+.askp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 8px; font-size: 13px; line-height: 1.55; color: var(--app-text); cursor: pointer; }
+.askp-opt:hover { background: var(--app-panel-2); }
+.askp-opt.sel { background: var(--app-panel-2); box-shadow: inset 2px 0 0 var(--app-accent, var(--app-ok)); }
+.askp-opt:disabled { opacity: 0.55; cursor: default; }
+.askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.askp-kw { font-weight: 600; }
+.askp-rec { font-weight: 600; color: var(--app-ok); }
+.askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
+.askp-custom-row { cursor: text; }
+.askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 13px; color: var(--app-text); padding: 0; }
+.askp-input::placeholder { color: var(--app-text3); }
+.askp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.askp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
+.askp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ar-status.ar-err { color: var(--app-danger); }
 
 /* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */

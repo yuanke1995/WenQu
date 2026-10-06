@@ -113,7 +113,6 @@
         @edit="startEdit"
         @feedback="submitFeedback"
         @approve="resolveApproval"
-        @answer-ask="t => answerAsk(m, t)"
         @switch-version="switchBranch"
         @ask="ask"
         @copy="copyAnswer"
@@ -159,7 +158,37 @@
         </span>
       </div>
 
-      <div class="m-input-card">
+      <!-- 智能体提问面板：当前会话有挂起提问时整块替换输入卡（模型在等答案，此刻也发不了新消息）。
+           触屏无键盘导航，直接点选；答复后面板撤下、输入卡回归，问答记录留在气泡原位 -->
+      <div v-if="pendingAsk" class="m-input-card m-askp">
+        <div class="m-askp-head">
+          <span class="m-askp-tag">{{ pendingAsk.ask.topic || '向用户提问' }}</span>
+          <span class="m-askp-q">{{ pendingAsk.ask.question }}</span>
+        </div>
+        <div class="m-askp-opts">
+          <button v-for="(op, oi) in pendingAsk.ask.options" :key="oi" class="m-askp-opt" type="button"
+                  :disabled="pendingAsk.ask.busy" @click="answerAsk(pendingAsk, op)">
+            <span class="m-askp-no">{{ oi + 1 }}.</span>
+            <span class="m-askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="m-askp-rec">（推荐）</span></span>
+            <span v-if="askOptionParts(op).rest" class="m-askp-rest">{{ askOptionParts(op).rest }}</span>
+          </button>
+          <div class="m-askp-opt m-askp-custom">
+            <span class="m-askp-no">{{ pendingAsk.ask.options.length + 1 }}.</span>
+            <input v-model="askCustom" class="m-askp-input" :maxlength="2000" :disabled="pendingAsk.ask.busy"
+                   placeholder="输入你的回答…" @keydown.enter.prevent="answerAsk(pendingAsk, askCustom)" />
+          </div>
+        </div>
+        <div class="m-askp-foot">
+          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已回答，模型继续中…' : '未答超时将按推荐项默认执行' }}</span>
+          <span class="m-askp-actions">
+            <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy" @click="ignoreAsk(pendingAsk)">忽略</button>
+            <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || !askCustom.trim()"
+                    @click="answerAsk(pendingAsk, askCustom)">提交</button>
+          </span>
+        </div>
+      </div>
+
+      <div v-else class="m-input-card">
         <textarea
           ref="ta"
           v-model="text"
@@ -364,11 +393,32 @@ const {
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, answerAsk, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
+  ignoreAsk,
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
   // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
   compactNotice, compactContext,
   ready
 } = engine
+
+// ==================== 智能体提问面板（替换输入卡） ====================
+// 与 PC 壳同语义：存在挂起提问时输入卡整块换成提问面板，答复后回归、问答记录留在气泡原位。
+// 触屏没有 Tab/↑↓ 键盘导航，直接点选即可。
+const pendingAsk = computed(() => {
+  const list = messages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m && m.role === 'ai' && m.ask) return m
+  }
+  return null
+})
+const askCustom = ref('')
+watch(() => pendingAsk.value?.ask?.id, () => { askCustom.value = '' })
+// 「关键词：说明」拆两段（关键词加粗、说明弱化）；无冒号时整句作关键词
+const askOptionParts = (op) => {
+  const s = String(op || '')
+  const i = s.search(/[：:]/)
+  return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
+}
 
 // ==================== 手动压缩上下文（/compact 的移动入口） ====================
 // 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区（与窗口档位同处一块）；
@@ -742,6 +792,26 @@ onUnmounted(() => {
   padding: 6px 8px 6px;
 }
 .m-input-card:focus-within { border-color: var(--app-accent-border); }
+
+/* ==================== 智能体提问面板（替换输入卡） ==================== */
+.m-askp { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.m-askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.m-askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
+.m-askp-q { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.m-askp-opts { display: flex; flex-direction: column; gap: 2px; }
+.m-askp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 9px 8px; font-size: 14px; line-height: 1.55; color: var(--app-text); touch-action: manipulation; }
+.m-askp-opt:active { background: var(--app-panel); }
+.m-askp-opt:disabled { opacity: 0.55; }
+.m-askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-askp-kw { font-weight: 600; }
+.m-askp-rec { font-weight: 600; color: var(--app-ok); }
+.m-askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
+.m-askp-custom { align-items: center; }
+.m-askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 15px; color: var(--app-text); padding: 0; }
+.m-askp-input::placeholder { color: var(--app-text3); }
+.m-askp-foot { display: flex; align-items: center; gap: 8px; }
+.m-askp-hint { font-size: 12px; color: var(--app-text3); margin-right: auto; }
+.m-askp-actions { display: flex; align-items: center; gap: 8px; }
 .m-ta {
   width: 100%; box-sizing: border-box; border: none; background: transparent; resize: none;
   color: var(--app-text); font-size: 16px; line-height: 1.5; padding: 6px 4px;

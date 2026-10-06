@@ -325,14 +325,19 @@ public class ChatController {
 
     @Operation(summary = "回答智能体提问", description = "回答智能体的结构化提问（ask_user 事件下发，人在回路）：仅本轮用户本人可答，"
             + "答案作为工具结果回给模型继续本轮回答；超时未答时系统按推荐项（选项第一项）默认执行。"
-            + "提问挂起为内存态，刷新页面即失效（该轮按超时推荐项收尾）。")
+            + "body 传 {answer} 为作答；传 {ignore:true} 为忽略（不作答，立即按推荐项默认执行）。"
+            + "提问挂起为内存态，刷新页面即失效（该轮按中止收尾）。")
     @PostMapping("/ask-user/{askId}")
     public ResultJson answerAgentAsk(
             @Parameter(description = "提问 ID（ask_user 事件下发）") @PathVariable("askId") String askId,
-            @RequestBody Map<String, String> body) {
-        boolean ok = ragService.resolveAsk(askId, body.get("answer"), com.wenqu.ai.util.RequestUser.uid());
+            @RequestBody Map<String, Object> body) {
+        boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
+        boolean ok = ignore
+                ? ragService.resolveAskIgnore(askId, com.wenqu.ai.util.RequestUser.uid())
+                : ragService.resolveAsk(askId, body.get("answer") == null ? null : String.valueOf(body.get("answer")),
+                        com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("提问不存在、已回答或已超时");
-        return ResultJson.ok("已提交");
+        return ResultJson.ok(ignore ? "已忽略，按推荐项默认执行" : "已提交");
     }
 
     @Operation(summary = "智能体提问记录（恢复）", description = "按提问 ID 取本人的提问记录（tool.ask 通知点击后重建提问卡用）；" +
