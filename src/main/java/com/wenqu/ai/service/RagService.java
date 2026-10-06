@@ -290,6 +290,9 @@ public class RagService {
     /** 知识库服务：解析「智能体关联的知识库 → 允许检索的文档集合」，检索按库隔离 */
     private final KnowledgeBaseService knowledgeBaseService;
 
+    /** 角色服务：提问者是否管理员级（内置 admin/superadmin 或自定义 admin_flag 角色）——回答按角色收敛管理端内容 */
+    private final RoleService roleService;
+
     /** 用户表（个人默认模型解析） */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
@@ -400,6 +403,7 @@ public class RagService {
                       AgentDispatchService agentDispatchService,
                       McpClientService mcpClientService,
                       KnowledgeBaseService knowledgeBaseService,
+                      RoleService roleService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
                       UserMemoryService userMemoryService,
@@ -434,6 +438,7 @@ public class RagService {
         this.agentDispatchService = agentDispatchService;
         this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
+        this.roleService = roleService;
         this.userMapper = userMapper;
         this.userMemoryService = userMemoryService;
         this.userConfigService = userConfigService;
@@ -672,7 +677,7 @@ public class RagService {
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
-        // 内置「问渠」按本轮使用者解析为自己的默认库（智能体全局一只、默认库每人一个，无法静态绑定）。
+        // 内置「问渠」按本轮使用者解析为「自己的默认库 ＋ 官方内置手册库」（智能体全局一只、默认库每人一个，无法静态绑定）。
         // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
         // 重赋值为「主智能体库 ∪ 被选中子智能体库」（见检索前的路由段），因此不能声明为 final
         java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent, userId);
@@ -1089,6 +1094,15 @@ public class RagService {
                     // 联网来源与知识库来源同一套编号：不区分对待，否则"来自联网"会成为不标注的借口
                     .append("\n若本轮提供了联网搜索资料，它与知识库资料同等对待：引用时同样在句末用 [N] 标注，"
                             + "并只能使用工具实际返回的编号；搜索未覆盖的内容如实说明未找到依据，不得凭常识补写。");
+            // 使用者身份段：手册/资料里的管理端章节对所有提问者都可检索到，但回答要按角色收敛——普通成员
+            // （无管理端权限）只给使用侧结论并说明「由管理员配置」，管理员给完整操作路径。
+            // 身份已在流水线线程装载（loadIdentity），游客分享/MCP 等链路按会话归属人判定；未登录按普通成员口径
+            boolean adminLike = roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role());
+            system.append(adminLike
+                    ? "\n\n【使用者身份】本轮提问者是管理员：涉及系统设置、模型供应商、成员与权限、部署运维、API Key 等管理端内容时，"
+                            + "可给出完整操作路径与配置说明。"
+                    : "\n\n【使用者身份】本轮提问者是普通成员（没有管理端权限）：涉及系统设置、模型供应商、成员与权限、部署运维、API Key 等管理端内容时，"
+                            + "说明该能力属于管理端、由管理员配置，不要展开管理端操作步骤；只回答他在使用侧能做什么（如提问、上传资料、选用智能体等）。");
             // 检索-反思循环（Agentic RAG）：首轮检索结果之外授权模型自主多轮检索——工具已强制暴露
             // （enabledToolCallbacks），这里只补「何时该再检索、何时该停」的判定规则
             if (reflectiveRetrieval) {
@@ -4050,16 +4064,37 @@ public class RagService {
 
     /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */
     private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId) {
-        String builtinKb = builtinDefaultKbId(agent, userId);
-        if (builtinKb != null) return List.of(builtinKb);
+        Set<String> builtinScope = builtinScopeKbIds(agent, userId);
+        if (builtinScope != null) return builtinScope;
         return (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
                 ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
     }
 
     /**
-     * 内置「问渠」的检索范围 = <b>本轮使用者自己的默认库「问渠」</b>。智能体行全局唯一
+     * 内置「问渠」的检索范围（非内置或身份无法解析时返回 null）= <b>本轮使用者的默认库「问渠」
+     * ＋ 官方内置手册库</b>（「问渠使用手册」，存在时）。默认库每人一个、没有可静态绑定的库 ID，
+     * 按使用者动态解析（见 {@link #builtinDefaultKbId}）；手册库是独立的内置库（全局一只、
+     * 全员只读），并轨后「问渠怎么用」类问题才检索得到官方手册。
+     *
+     * @return 库 ID 集合（默认库在前）；非内置智能体或无法解析身份时返回 null（回落不限库）
+     */
+    private Set<String> builtinScopeKbIds(Agent agent, String userId) {
+        String defaultKb = builtinDefaultKbId(agent, userId);
+        if (defaultKb == null) return null;
+        Set<String> out = new java.util.LinkedHashSet<>();
+        out.add(defaultKb);
+        KnowledgeBase manual = knowledgeBaseService.builtinKb();
+        if (manual != null && manual.getId() != null && !manual.getId().isBlank()) {
+            out.add(manual.getId());
+        }
+        return out;
+    }
+
+    /**
+     * 内置「问渠」的默认库解析 = <b>本轮使用者自己的默认库「问渠」</b>。智能体行全局唯一
      * （启动维护：多余降级、缺失播种，created_by='system'），默认库却每人一个——没有可静态
      * 绑定的库 ID，故在这里按使用者动态解析（{@link KnowledgeBaseService#defaultId} 懒创建）。
+     * 完整检索范围（默认库 ＋ 官方手册库）见 {@link #builtinScopeKbIds}。
      * <p>游客分享/MCP/定时任务等链路传入的 userId 即发布者或任务归属人，同样按人解析；
      * 匿名或解析失败返回 null（回落旧行为：不限库，仍受可见性约束）。
      *
@@ -4087,19 +4122,22 @@ public class RagService {
      * </ol>
      * 注意：库 ID 配错时得到的是空集合，检索结果自然为空——**不会退化为全库**，
      * 避免配置错误静默放宽检索范围。
-     * <p>内置「问渠」例外：范围恒为使用者默认库「问渠」的<b>整库</b>（见 {@link #builtinDefaultKbId}），
-     * 不叠加文档级细选——该字段对内置无编辑入口，存量值也不再生效。</p>
+     * <p>内置「问渠」例外：范围恒为使用者默认库「问渠」＋官方内置手册库的<b>整库</b>
+     * （见 {@link #builtinScopeKbIds}），不叠加文档级细选——该字段对内置无编辑入口，存量值也不再生效。</p>
      */
     private Set<String> resolveScopeDocIds(Agent agent, String userId) {
         if (agent == null) return null;
+        Set<String> builtinScope = builtinScopeKbIds(agent, userId);
+        if (builtinScope != null) {
+            // 内置：整库范围（默认库＋官方手册库），文档级细选不参与
+            return knowledgeBaseService.docIdsOf(builtinScope);
+        }
         Set<String> byKb = null;
-        String builtinKb = builtinDefaultKbId(agent, userId);
-        String kbIds = builtinKb != null ? builtinKb : agent.getKnowledgeBaseIds();
+        String kbIds = agent.getKnowledgeBaseIds();
         if (kbIds != null && !kbIds.isBlank()) {
             Set<String> ids = KnowledgeBaseService.splitIds(kbIds);
             if (!ids.isEmpty()) byKb = knowledgeBaseService.docIdsOf(ids);
         }
-        if (builtinKb != null) return byKb; // 内置：整库范围，文档级细选不参与
         // 文档级细选：沿用原语义（null/空/all = 不限制）
         Set<String> fine = null;
         String scope = agent.getKnowledgeScope();

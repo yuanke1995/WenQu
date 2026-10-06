@@ -182,12 +182,13 @@
 
           <section class="app-card">
             <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />知识库范围</h2>
-            <!-- 内置「问渠」：全局一只、默认库每人一个，没有可静态绑定的库——固定检索使用者自己的默认库，
+            <!-- 内置「问渠」：全局一只、默认库每人一个，没有可静态绑定的库——固定检索使用者自己的默认库 ＋ 官方使用手册库，
                  不给任何选择入口（后端 update 同口径拒绝改动） -->
             <template v-if="form.isBuiltin === 1">
-              <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span></div>
+              <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span><span class="ap-chip">问渠使用手册</span></div>
               <p class="ap-block-hint" style="margin:8px 0 0">
-                固定使用默认知识库「问渠」：上传到该库的资料就是它的检索范围；不可改为其它库，也不可关闭检索。
+                固定检索你的默认知识库「问渠」与官方《问渠使用手册》：上传到「问渠」库的资料就是它的检索范围，
+                产品用法问题由使用手册解答；不可改为其它库，也不可关闭检索。
               </p>
             </template>
             <template v-else>
@@ -806,8 +807,8 @@ const sections = computed(() => {
   return secs
 })
 const scopeText = a => {
-  // 内置「问渠」：固定检索使用者的默认库「问渠」（每人一个，运行时按使用者解析，无静态绑定）
-  if (isBuiltin(a)) return '「问渠」知识库'
+  // 内置「问渠」：固定检索使用者的默认库「问渠」＋官方使用手册库（默认库每人一个，运行时按使用者解析，无静态绑定）
+  if (isBuiltin(a)) return '「问渠」知识库＋使用手册'
   if (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true) return '不使用知识库'
   const n = String(a.knowledgeBaseIds || '').split(',').filter(Boolean).length
   if (!n) return '全部知识库'
@@ -1338,7 +1339,7 @@ const save = async () => {
     ...(f.isBuiltin === 1 ? {} : { icon: f.icon || '' }),
     description: f.description.trim(),
     systemPrompt: f.systemPrompt,
-    // 知识库范围：内置「问渠」固定检索使用者的默认库（后端同口径锁死、拒绝改动），与图标同理不带字段；
+    // 知识库范围：内置「问渠」固定检索使用者的默认库＋官方使用手册（后端同口径锁死、拒绝改动），与图标同理不带字段；
     // 其余智能体——「全部知识库」清空（空 → 后端存 null → 不限制）、「指定知识库」存逗号串、
     // 「不使用知识库」置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
     ...(f.isBuiltin === 1 ? {} : {
