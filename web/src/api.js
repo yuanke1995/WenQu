@@ -91,7 +91,7 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onAgentDelegated, onPlan, onApprovalRequired, onProcess, onUsage,
+    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onAgentDelegated, onPlan, onApprovalRequired, onAskUser, onProcess, onUsage,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
     contextWindow = null, editMessageId = ''
   } = opts
