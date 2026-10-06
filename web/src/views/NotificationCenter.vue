@@ -29,9 +29,10 @@
       </div>
     </div>
 
-    <!-- 类型偏好（静音）：展开后按 TYPES 逐类列出（数量随类型表自动增长，不写死数字） -->
-    <a-collapse v-model:activeKey="prefActive" class="nc-pref" v-if="prefOpen">
-      <a-collapse-panel key="pref" header="通知类型偏好（关闭后不再接收该类通知）">
+    <!-- 类型偏好（静音）：点开按钮即完整展开（不做二次折叠），按 TYPES 逐类列出（数量随类型表自动增长，不写死数字） -->
+    <div v-if="prefOpen" class="nc-pref">
+      <div class="nc-pref-head">通知类型偏好（关闭后不再接收该类通知）</div>
+      <div class="nc-pref-body">
         <div class="nc-pref-grid">
           <label v-for="t in TYPES" :key="t.type" class="nc-pref-item">
             <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
@@ -43,8 +44,8 @@
           <span class="nc-meta">保存即生效；恢复某类需重新开启。静音仅影响本人，不产生通知。</span>
           <button class="app-btn small" :disabled="savingPref" @click="savePrefs">保存偏好</button>
         </div>
-      </a-collapse-panel>
-    </a-collapse>
+      </div>
+    </div>
 
     <div class="app-page-body">
       <a-spin :spinning="loading">
@@ -240,9 +241,8 @@ const fmt = v => {
   return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-// 类型偏好（静音）
+// 类型偏好（静音）：点按钮即整块展开，不做二次折叠
 const prefOpen = ref(false)
-const prefActive = ref([])
 const mutedTypes = ref([])
 const savingPref = ref(false)
 const muted = t => mutedTypes.value.includes(t)
@@ -270,6 +270,8 @@ onMounted(() => { load(); refreshCounts(); loadPrefs() })
 .nc-danger { color: var(--app-danger); }
 .nc-danger:hover:not(:disabled) { background: var(--app-danger-weak); }
 .nc-pref { margin: 0 0 12px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: var(--app-radius); }
+.nc-pref-head { padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--app-text); border-bottom: 1px solid var(--app-border); }
+.nc-pref-body { padding: 14px; }
 .nc-pref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
 .nc-pref-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
 .nc-pref-ic { font-size: 15px; flex: none; }
