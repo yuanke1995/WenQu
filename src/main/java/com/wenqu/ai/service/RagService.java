@@ -5183,11 +5183,9 @@ public class RagService {
             log.warn("[ASK] 提问记录落库失败（不阻塞提问流程）: {}", e.getMessage());
         }
         PENDING_ASKS.put(askId, new PendingAsk(st.sessionId, st.userId, future));
-        // 提问待答站内通知（旁路）：SSE 只能触达正开着会话页的人，人不在页面时铃铛是唯一可感知面。
-        // 口径与工具审批一致：去重键防刷屏，refSub=askId 供通知深链直达可答位置。
-        notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
-                t.isEmpty() ? "智能体向你提问" : "智能体向你提问：" + t, q,
-                "session", st.sessionId, "ask:" + askId, askId);
+        // 不再发 tool.ask 站内通知：提问只对本页有效（ask_user 事件已经能把提问卡送到正在看这个会话的人），
+        // 跳转恢复横幅反而在会话顶部常驻一块与气泡内问答记录重复的卡片。代价是「人不在这个会话页时」
+        // 无从知晓——但那本来也答不了（提问挂起是内存态，跨设备不可达），超时按推荐项默认执行即可。
         try {
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("askId", askId);
@@ -5272,23 +5270,6 @@ public class RagService {
         if (uid == null || !uid.equals(p.userId())) return false;
         return p.future().complete(recommended
                 + "\n（用户选择忽略此问题，系统已按推荐项默认采用；这是默认决策，并非用户亲自选择。）");
-    }
-
-    /**
-     * 从通知恢复提问卡：按 id 取提问记录（仅本人可查；不存在/非本人返回 null）。
-     * 用于用户点开 tool.ask 通知后在会话内重建提问卡——刷新丢失的 SSE 卡据此补回。
-     */
-    public com.wenqu.ai.model.ToolApproval getAsk(String askId, String uid) {
-        if (askId == null || askId.isBlank()) return null;
-        try {
-            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
-            if (rec == null || !"askUser".equals(rec.getToolName())) return null;
-            if (rec.getUserId() == null || !rec.getUserId().equals(uid)) return null;
-            return rec;
-        } catch (Exception e) {
-            log.warn("[ASK] 恢复提问查询失败 askId={}: {}", askId, e.getMessage());
-            return null;
-        }
     }
 
     /** 更新提问记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝；answer 可空）。best-effort 不抛 */

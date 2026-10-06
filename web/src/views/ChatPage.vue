@@ -52,29 +52,9 @@
         </div>
       </div>
 
-      <!-- 智能体提问恢复横幅：点开 tool.ask 通知直达会话时，按 askId 重建提问卡（与审批恢复同构）。
-           PENDING 可点选/输入作答；已终态只展示状态（已回答/超时按推荐项默认执行） -->
-      <div v-if="recoveryAsk" class="approval-recovery">
-        <div class="ar-title"><question-circle-outlined /> 智能体提问</div>
-        <div v-if="askRecoveryView.question" class="ar-ask-q">{{ askRecoveryView.question }}</div>
-        <div v-if="recoveryAsk.status === 'PENDING' && askRecoveryView.options && askRecoveryView.options.length" class="ask-opts">
-          <button v-for="(op, oi) in askRecoveryView.options" :key="oi" class="app-btn small ask-opt"
-                  :disabled="recoveryAskBusy" @click="resolveAskRecovery(op)">
-            <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
-          </button>
-        </div>
-        <div v-if="recoveryAsk.status === 'PENDING'" class="ask-custom">
-          <input v-model="askRecoveryCustom" class="ask-input" :maxlength="2000"
-                 placeholder="或输入你自己的答案…" @keydown.enter="resolveAskRecovery(askRecoveryCustom)" />
-          <button class="app-btn small" :disabled="recoveryAskBusy || !askRecoveryCustom.trim()"
-                  @click="resolveAskRecovery(askRecoveryCustom)">提交</button>
-        </div>
-        <div class="ar-foot">
-          <span class="ar-status" :class="'ar-' + askRecoveryStatusClass">{{ askRecoveryStatusText }}</span>
-          <span v-if="recoveryAsk.status !== 'PENDING' && askRecoveryView.answer" class="ar-ask-answer">{{ askRecoveryView.answer }}</span>
-          <button class="app-btn ghost small" @click="dismissAskRecovery">关闭</button>
-        </div>
-      </div>
+      <!-- 智能体提问不再有「通知 → 跳转恢复」通道：提问只在当前会话内有效（ask_user 事件已把提问卡
+           送到正在看这个会话的人），挂起态是内存态、跨设备本就不可达。顶部常驻一块与气泡内问答记录
+           重复的卡片反而挤占消息区，故整条恢复链路（tool.ask 通知 + ?ask= 深链）已下线。 -->
 
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
@@ -1234,7 +1214,6 @@ import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
-import { useAskRecovery } from '../chat/useAskRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          askUserView,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
@@ -1250,12 +1229,8 @@ const router = useRouter()
 const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStatusText,
         statusClass: recoveryStatusClass, resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
-// ==================== 智能体提问恢复（通知 → 会话）：按 askId 重建提问卡 ====================
-// 与审批恢复同构（src/chat/useAskRecovery.js）：?ask=<id> 深链 → 取本人记录 → PENDING 可作答
-const { ask: recoveryAsk, busy: recoveryAskBusy, statusText: askRecoveryStatusText,
-        statusClass: askRecoveryStatusClass, view: askRecoveryView, resolve: resolveAskRecovery,
-        dismiss: dismissAskRecovery } = useAskRecovery()
-const askRecoveryCustom = ref('')   // 恢复横幅的自定义答案输入
+// 注：智能体提问**没有**这一层恢复。提问挂起是内存态（SSE 事件 + 会话内内存表），
+// 跨刷新/跨设备本就不可达，tool.ask 通知 + ?ask= 深链这条「伪恢复」通道已下线。
 
 const textareaRef = ref(null)
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
@@ -3514,28 +3489,12 @@ onMounted(async () => {
 .ar-status.ar-pending { color: var(--app-warn-text); }
 .ar-status.ar-ok { color: var(--app-ok); }
 
-/* 智能体提问卡（askUser，人在回路）：中性色而非审批的警告色——提问不是异常，是交互 */
-.ask-card { margin-top: 8px; border: 1px solid var(--app-border, var(--app-warn-border)); background: var(--app-panel-2); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
-.ask-title { font-size: 13px; font-weight: 600; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
-.ask-q { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
-.ask-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.ask-opt { text-align: left; }
-.ask-rec { flex: none; font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: var(--app-ok-weak); color: var(--app-ok); margin-right: 6px; }
-.ask-custom { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.ask-input { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--app-border, #d9dee5); border-radius: 6px; padding: 0 8px; font-size: 12px; background: var(--app-panel); color: var(--app-text); }
-.ask-input:focus { outline: none; border-color: var(--app-ok, #4a90d9); }
-.ask-input:disabled { opacity: 0.6; }
-
 /* askUser 问答记录（工具卡内常显：问题 + 答案；刷新/历史恢复同构） */
 .ask-record-body { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
 .ask-record-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
 .ask-record-q .anticon { margin-top: 3px; color: var(--app-text3); }
 .ask-record-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
 .ask-record-a .anticon { margin-top: 3px; color: var(--app-ok); }
-
-/* 提问恢复横幅复用 approval-recovery 容器；补充问答行样式 */
-.ar-ask-q { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
-.ar-ask-answer { font-size: 12px; font-weight: 600; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
 
 /* ==================== 智能体提问面板（替换聊天输入框） ====================
    挂起提问时整块顶替 composer：编号选项（关键词加粗 + 说明弱化、首项带「推荐」）、

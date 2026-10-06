@@ -1118,5 +1118,3 @@ export const notificationSavePreferences = mutedTypes => request('/notification/
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
 // （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）
 export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
-// 智能体提问恢复：按 askId 取本人提问记录（tool.ask 通知点击后重建提问卡）
-export const getAgentAsk = id => request(`/ask-user/${encodeURIComponent(id)}`)

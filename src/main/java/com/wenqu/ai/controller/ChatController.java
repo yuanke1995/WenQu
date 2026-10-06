@@ -340,14 +340,6 @@ public class ChatController {
         return ResultJson.ok(ignore ? "已忽略，按推荐项默认执行" : "已提交");
     }
 
-    @Operation(summary = "智能体提问记录（恢复）", description = "按提问 ID 取本人的提问记录（tool.ask 通知点击后重建提问卡用）；" +
-            "不存在/非本人返回 null。requestArgs 为 {question, options} JSON，answer 为用户所选/超时默认的答案。")
-    @GetMapping("/ask-user/{askId}")
-    public ResultJson getAgentAsk(
-            @Parameter(description = "提问 ID") @PathVariable("askId") String askId) {
-        return ResultJson.ok(ragService.getAsk(askId, com.wenqu.ai.util.RequestUser.uid()));
-    }
-
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
             + "首页不传 cursor，后续页传上一页返回的 nextCursor；keyword 按标题或消息内容模糊搜索（分页同样生效）。"
             + "返回 items / nextCursor / hasMore / groupCounts（置顶/今天/7天内/更早分组总数，仅统计有消息的会话） / total")

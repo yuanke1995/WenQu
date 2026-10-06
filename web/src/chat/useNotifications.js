@@ -7,7 +7,7 @@
 // 检索评估下滑预警、工具审批待决；接收人=资源归属人（平台预警=管理员）。
 import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, QuestionCircleFilled } from '@ant-design/icons-vue'
+import { BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons-vue'
 import { notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
 
 /** 类型 → 图标/语义色：成功绿、失败红、等待/超时黄 */
@@ -23,7 +23,6 @@ export const NOTIF_ICONS = {
   'schedule.failed': CloseCircleFilled,
   'eval.decline': ExclamationCircleFilled,
   'tool.approval': ExclamationCircleFilled,
-  'tool.ask': QuestionCircleFilled,
   // 额度不足是「需要人处理」而非「系统故障」：用警告色而非错误色——
   // 红叉会让人以为是 bug，实际是账户该充值了
   'model.quota': ExclamationCircleFilled
@@ -40,7 +39,6 @@ const NOTIF_TONES = {
   'schedule.failed': 'err',
   'eval.decline': 'warn',
   'tool.approval': 'warn',
-  'tool.ask': 'warn',
   'model.quota': 'warn'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
