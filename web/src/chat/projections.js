@@ -441,6 +441,26 @@ const THINK_CAPS = {
   switchable: { visible: true, locked: false, on: null }, // on=null → 读按模型记忆
   always: { visible: true, locked: true, on: true }
 }
+// ==================== 回答归属徽标的智能体头像 ====================
+/**
+ * 「由「X」回答」徽标左侧的图标数据源：从可用智能体列表里按 id（优先）或名称回查该条消息的归属智能体，
+ * 交给 components/AgentAvatar.vue 渲染（品牌标 / emoji / 默认机器人三态由它统一解析，不在视图里各写一套）。
+ *
+ * 为什么按 id 与名称双路：历史消息只保证有 agentName（落库快照），实时流式轮才有 agentId；
+ * 而「@ 提及的智能体作答」这类委派轮，agentId 指向被委派者、与列表项对得上，历史恢复时按名称也能命中。
+ *
+ * 查不到（智能体已被删除/不可见、旧消息只有名字对不上）返回 null —— AgentAvatar 缺省即默认机器人，
+ * 与改动前的写死 <robot-outlined> 表现一致，不出现空洞。
+ */
+const agentBadgeOf = (agents, agentId, agentName) => {
+  const list = Array.isArray(agents) ? agents : []
+  if (agentId) {
+    const byId = list.find(a => a && a.id === agentId)
+    if (byId) return byId
+  }
+  if (agentName) return list.find(a => a && a.name === agentName) || null
+  return null
+}
 // ==================== 思考等级（低/中/高/超高/极致，按模型支持档位给选项） ====================
 /** 档位展示名与顺序（与后端 REASONING_LEVEL_LIST 同序，弱→强） */
 const REASONING_LEVELS = [
@@ -652,6 +672,6 @@ export {
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
-  fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief,
+  fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel
 }

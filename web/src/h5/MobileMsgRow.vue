@@ -42,10 +42,10 @@
       <!-- ==================== 助手消息 ==================== -->
       <template v-else>
         <div v-if="showAgentTag && debugDisplay" class="agent-tag">
-          <robot-outlined /> 由「{{ m.agentName }}」回答
+          <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.agentName)" :size="14" /> 由「{{ m.agentName }}」回答
         </div>
         <div v-if="m.delegated" class="agent-tag">
-          <robot-outlined /> 由「{{ m.delegated.name }}」回答本轮
+          <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.delegated.name)" :size="14" /> 由「{{ m.delegated.name }}」回答本轮
           <span v-if="m.delegated.description" class="agent-tag-desc">{{ m.delegated.description }}</span>
         </div>
         <div v-if="m.dispatched && debugDisplay" class="agent-tag">
@@ -267,7 +267,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
@@ -280,9 +280,10 @@ import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fallbackDur, toolCallsView, toolSearchQueries, subagentCard, barWidth, toggleSubagents, fmtDuration,
-  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel
+  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import AgentAvatar from '../components/AgentAvatar.vue'
 
 const props = defineProps({
   m: { type: Object, required: true },
@@ -311,6 +312,10 @@ const showAgentTag = computed(() => {
   const m = props.m
   return m.role === 'ai' && !!m.agentName
 })
+// 徽标头像数据源：可用智能体清单由引擎持有（同 provide 'wqChat' 的其它 sheet 同一取法）；
+// 查不到时 agentBadgeOf 返回 null → AgentAvatar 落回默认机器人，与改动前一致
+const engine = inject('wqChat', null)
+const badgeOf = (agentId, agentName) => agentBadgeOf(engine?.agentList?.value, agentId, agentName)
 
 const onRowTap = () => { if (!props.active) emit('activate', props.index) }
 
@@ -376,6 +381,8 @@ const onMdClick = e => {
 
 /* ---- 助手消息 ---- */
 .agent-tag { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; font-size: 12px; color: var(--app-text3); }
+/* 徽标内头像：AgentAvatar 自带圆角块，只保证不被 flex 压扁（与 PC 的 .agent-tag-ava 同口径） */
+.agent-tag-ava { flex: none; }
 .agent-tag-desc { color: var(--app-text3); opacity: .85; }
 .bubble-md {
   background: var(--app-panel); border: 1px solid var(--app-border);

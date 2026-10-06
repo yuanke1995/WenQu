@@ -123,7 +123,7 @@
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
               <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
               <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
-                <robot-outlined class="agent-tag-ic" />
+                <AgentAvatar class="agent-tag-ava" :agent="agentBadgeOf(agentList, m.agentId, m.agentName)" :size="14" />
                 <span>由「{{ m.agentName }}」回答</span>
               </div>
               <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
@@ -223,7 +223,7 @@
               <!-- 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答。用户主动指令，常显不进排障开关；
                    刷新后按落库归属与会话绑定比对恢复（见 switchSession），前后端口径一致 -->
               <div v-if="m.delegated" class="dispatch-chip delegated-chip">
-                <robot-outlined class="dispatch-ic" />
+                <AgentAvatar class="dispatch-ava" :agent="agentBadgeOf(agentList, m.agentId, m.delegated.name)" :size="14" />
                 <span>由「{{ m.delegated.name }}」回答本轮</span>
                 <span v-if="m.delegated.description" class="dispatch-desc">{{ m.delegated.description }}</span>
               </div>
@@ -1220,7 +1220,7 @@ import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, 
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
-         THINK_LEVEL_ON, levelLabel, stopTick } from '../chat/projections'
+         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf } from '../chat/projections'
 
 const router = useRouter()
 
@@ -3017,6 +3017,7 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--app-accent) 6%, transparent);
 }
 .dispatch-ic { color: var(--app-accent); font-size: 12px; }
+.dispatch-ava { flex: none; }  /* 委派徽标内的智能体头像，同 .agent-tag-ava */
 .dispatch-fallback { color: var(--app-text3); }
 .dispatch-desc { color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
 /* @ 智能体委派徽标（§4）：与派遣徽标同族，但这是用户指令——常显，配色加重以示区别 */
@@ -3244,7 +3245,8 @@ onMounted(async () => {
   font-size: 12px; color: var(--app-text2);
   border: 1px solid var(--app-border); border-radius: 999px; padding: 2px 10px;
 }
-.agent-tag-ic { font-size: 12px; opacity: .8; }
+/* 徽标内的智能体头像：AgentAvatar 自带圆角块，这里只保证不被 flex 压扁 */
+.agent-tag-ava { flex: none; }
 /* 模型切换记录（— ⇄ 模型已切换 A → B —）：居中分隔条独占一行，弱化呈现；flex-basis:100%
    配合 .row 的 flex-wrap 把气泡挤到下一行。
    左右内缩到正文列宽（.msg-block 的 min(94%,860px)）：分隔条盒子仍占满一行，
