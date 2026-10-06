@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -58,8 +59,17 @@ public class ScheduleCenter {
 
     /** 调度节拍：触发精度上限（各任务间隔远大于此值，±10s 抖动可忽略） */
     private static final long TICK_MS = 10_000;
-    /** 间隔下限：防误配打爆 */
-    private static final long MIN_INTERVAL_MS = 60_000;
+    /**
+     * 间隔下限：与调度节拍同值（{@link #TICK_MS}），即"一个节拍"。
+     * <p>此前取 60s（意图是防误配打爆），但它把秒级扫描任务的配置静默抬到了一分钟：
+     * {@code parse.queue.scanIntervalMs} 默认 5s、工作流/定时智能体扫描 30s，实际都按 60s 跑，
+     * 而设置页「间隔」列照实显示配置值（5 秒）——界面与行为不符，且无人察觉。
+     * <p>节拍本身已经是天然且足够的打爆保护：调度线程 10s 才醒一次，
+     * 任何任务都不可能跑得比一个节拍更密，所以下限对齐节拍即可，不需要额外抬到分钟级。
+     * 该常量同时用于 {@link #tick()} 的触发判定与 {@link #snapshot()} 的下次预计，
+     * 两处共用同一个值 ⇒ 界面显示的间隔与实际触发周期永远一致。
+     */
+    private static final long MIN_INTERVAL_MS = TICK_MS;
     /** 执行日志 error_msg 截断长度（与 c_ai_schedule_run.error_msg 列宽一致） */
     private static final int ERROR_MAX_LEN = 1000;
 
@@ -286,6 +296,7 @@ public class ScheduleCenter {
                 });
 
         long now = System.currentTimeMillis();
+        verifyTaskParams();
         for (PeriodicTask task : tasks) {
             if (task.runOnStartup.getAsBoolean()) {
                 fire(task, "startup");
@@ -310,17 +321,83 @@ public class ScheduleCenter {
      * （如挂起的工作流永不落终态、Redis 断线期间配置变更静默丢失）。这类任务的注册处显式给出
      * 一句话代价，经 {@link #snapshot()} 下发给设置页，在暂停确认弹窗里展示——避免管理员
      * 在不知情的情况下关掉自愈机制。
+     * <p>该任务的专属可调参数不在这里传，而是按任务名从 {@link #TASK_PARAMS} 取——
+     * 17 处注册点各写一遍参数清单，必然出现「改了 A 任务漏改 B 任务」的漂移；
+     * 集中在一张表里，且 {@link #start()} 启动时校验表与注册任务名一一对应。
      */
     private void register(String name, String desc, String configKey,
                           IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
                           String pauseRisk) {
-        tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, body, pauseRisk));
+        tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, body, pauseRisk,
+                TASK_PARAMS.getOrDefault(name, List.of())));
     }
+
+    /**
+     * 每个周期任务的「专属可调参数」：只登记**该任务自身行为**的旋钮（保留期、并发、阈值、总量上限等），
+     * 间隔键不在其中（单独成列）。设置页据此把参数按任务归组——原先所有参数平铺在一张长表单里，
+     * 管理员无法判断某个旋钮该在哪调。
+     * <p>登记纪律：
+     * <ul>
+     *   <li>只写**确实影响本任务**的键，且必须是 {@code config-schema.json} 里可编辑的键
+     *       （{@link ConfigSchemaService#isEditable}，快照里会过滤掉不可编辑的）；
+     *   <li>不写任务体顺带读到、但属于别的子系统通用配置的键（如关键词引擎连接、问答链路参数）——
+     *       那些归它们自己的面板，写进来会让"这个旋钮管谁"变模糊；
+     *   <li>一个键可被多个任务登记（如 notification.dedupWindow），前端按任务分组展示，不影响原表单。
+     * </ul>
+     * 键名写错不会有任何症状（快照里被 isEditable 滤掉＝界面少一项），故 {@link #start()} 启动时
+     * 对照 schema 逐个校验并告警——避免"配了但界面不显示"这类静默失效。
+     */
+    private static final Map<String, List<String>> TASK_PARAMS = Map.ofEntries(
+            Map.entry("关键词索引精确对账", List.of("keyword.reconcileOnStartup")),
+            Map.entry("聊天图片目录清理", List.of("images.chatRetentionMillis")),
+            Map.entry("聊天附件超期清理", List.of("chat.uploadRetentionHours")),
+            Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
+            Map.entry("过期会话/消息清理", List.of("cleanup.sessionRetentionDays")),
+            Map.entry("产物超期清理", List.of("artifact.retentionDays")),
+            Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs")),
+            Map.entry("文档解析队列扫描", List.of("parse.queue.capacity", "parse.concurrency",
+                    "parse.taskLeaseSeconds", "parse.taskTimeoutMs", "parse.embedConcurrency", "parse.ocrGateConcurrency")),
+            Map.entry("网页源定时刷新", List.of("web.refreshEnabled")),
+            Map.entry("沙盒空闲回收", List.of("sandbox.idleReleaseMinutes")),
+            Map.entry("工作流运行记录清理", List.of("workflow.runLogRetentionDays")),
+            Map.entry("工作流定时触发", List.of("workflow.maxSteps", "workflow.runTimeoutSeconds",
+                    "workflow.subagentTimeoutMs", "workflow.maxConcurrentRuns", "workflow.runQueueCapacity")),
+            Map.entry("Trace 线上采样", List.of("trace.sampleRandomDaily", "trace.sampleNoHitDaily")),
+            Map.entry("任务执行日志清理", List.of("schedule.runLogRetentionDays")),
+            Map.entry("站内通知清理", List.of("notification.retentionDays", "notification.dedupWindow"))
+    );
 
     /** 停机：先停节拍调度（不再触发新任务），池内在跑任务由 ThreadPoolManager 优雅停机收尾 */
     @jakarta.annotation.PreDestroy
     void shutdown() {
         scheduler.shutdownNow();
+    }
+
+    /**
+     * 启动自检：{@link #TASK_PARAMS} 的表名必须与实际注册的任务名一一对应，且其中每个键
+     * 都必须在 config-schema.json 里可编辑。两类写错（任务改名 / 键名拼错）都不会抛异常，
+     * 只表现为设置页少显示一个旋钮——属于最难自查的静默失效，故启动即告警。
+     */
+    private void verifyTaskParams() {
+        Set<String> registered = tasks.stream().map(t -> t.name).collect(Collectors.toSet());
+        for (String name : TASK_PARAMS.keySet()) {
+            if (!registered.contains(name)) {
+                log.warn("[Schedule] TASK_PARAMS 里的任务名「{}」没有对应的注册任务（任务可能已改名）", name);
+            }
+        }
+        for (PeriodicTask t : tasks) {
+            if (!TASK_PARAMS.containsKey(t.name) && t.configKey != null) {
+                log.debug("[Schedule] 任务「{}」未登记专属参数（只有间隔可调）", t.name);
+            }
+        }
+        for (Map.Entry<String, List<String>> e : TASK_PARAMS.entrySet()) {
+            for (String key : e.getValue()) {
+                if (!configSchemaService.isEditable(key)) {
+                    log.warn("[Schedule] TASK_PARAMS 中「{}」的键 {} 在 config-schema.json 不可编辑，界面不会显示",
+                            e.getKey(), key);
+                }
+            }
+        }
     }
 
     private void tick() {
@@ -436,6 +513,10 @@ public class ScheduleCenter {
             // 暂停代价说明（仅少数任务非空）；设置页暂停确认弹窗展示，避免误关自愈机制
             m.put("pauseRisk", t.pauseRisk);
             m.put("intervalMs", interval);
+            // 该任务专属可调参数（仅保留 schema 里可编辑的键）：设置页按任务归组，避免管理员
+            // 在一张平铺长表单里猜「这个旋钮管谁」。不可编辑的键在此滤掉，不外泄到界面。
+            m.put("relatedKeys", t.relatedKeys.stream()
+                    .filter(configSchemaService::isEditable).toList());
             m.put("paused", interval <= 0);
             m.put("running", t.running.get());
             m.put("lastTrigger", t.lastTrigger);
@@ -461,6 +542,8 @@ public class ScheduleCenter {
         final String configKey;
         /** 暂停代价说明（null=无特别代价）；设置页暂停确认时展示 */
         final String pauseRisk;
+        /** 该任务专属可调参数（见 {@link #REGISTER_TASK_PARAMS}）；设置页按任务归组展示 */
+        final List<String> relatedKeys;
         final IntSupplier intervalMs;
         final BooleanSupplier runOnStartup;
         final Runnable body;
@@ -476,7 +559,7 @@ public class ScheduleCenter {
 
         PeriodicTask(String name, String desc, String configKey,
                      IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
-                     String pauseRisk) {
+                     String pauseRisk, List<String> relatedKeys) {
             this.name = name;
             this.desc = desc;
             this.configKey = configKey;
@@ -484,6 +567,7 @@ public class ScheduleCenter {
             this.runOnStartup = runOnStartup;
             this.body = body;
             this.pauseRisk = pauseRisk;
+            this.relatedKeys = relatedKeys == null ? List.of() : List.copyOf(relatedKeys);
         }
     }
 }

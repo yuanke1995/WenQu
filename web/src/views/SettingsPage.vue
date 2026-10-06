@@ -58,7 +58,41 @@
             </a-tabs>
 
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
-              <template v-if="current !== 'maintenance' || maintTab === 'config'">
+              <!-- 参数配置页签：定时任务有 14 组 50+ 项，全平铺要滚很久且看不出该调哪个。
+                   只有「定时任务」面板改折叠分组（其余面板项数少，折叠反而多一层点击）。
+                   每组标题带所属任务名，回答"这个旋钮归谁管"；间隔与任务专属参数另有
+                   「运行状态」页签可就地改，这里标注出来避免两处找。 -->
+              <template v-if="current === 'maintenance' && maintTab === 'config'">
+                <div class="cfg-fold-bar">
+                  <a-input v-model:value="maintKeyword" size="small" allow-clear
+                           placeholder="搜参数名 / 配置键，如 保留、parse." style="width: 240px">
+                    <template #prefix><search-outlined class="res-search-ic" /></template>
+                  </a-input>
+                  <span class="key-dim">{{ maintFoldedGroups.length }} 组 · 共 {{ maintTotalCount }} 项</span>
+                  <button class="app-link-btn" @click="toggleAllFold">{{ allFolded ? '全部展开' : '全部收起' }}</button>
+                </div>
+                <div v-if="!maintFoldedGroups.length" class="key-usage-list key-dim">
+                  没有匹配「{{ maintKeyword }}」的参数
+                </div>
+                <div v-for="g in maintFoldedGroups" :key="g.title" class="cfg-fold">
+                  <div class="fold-head cfg-fold-head" @click="toggleFold(g.title)">
+                    <span class="fold-caret">{{ openFolds.includes(g.title) ? '▾' : '▸' }}</span>
+                    <span>{{ g.title }}</span>
+                    <span class="cfg-fold-n">{{ g.fields.length }} 项</span>
+                    <span v-if="g.owner" class="cfg-fold-owner">影响：{{ g.owner }}</span>
+                  </div>
+                  <template v-if="openFolds.includes(g.title)">
+                    <template v-for="(blk, i) in g.blocks" :key="i">
+                      <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
+                      <template v-else-if="blk.type === 'field'">
+                        <SchemaField :field="blk.field" :form="form" :tips="TIPS" />
+                      </template>
+                    </template>
+                  </template>
+                </div>
+              </template>
+
+              <template v-else-if="current !== 'maintenance' || maintTab !== 'config'">
                 <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode, form)" :key="i">
                   <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
 
@@ -331,11 +365,13 @@
               </template>
 
               <!-- 定时任务·运行状态页签：ScheduleCenter 内存快照（统计随重启归零）。
-                   暂停/恢复即把间隔配置写 0 / 默认值（参数在「参数配置」页签），复用既有保存链路 -->
+                   暂停/恢复即把间隔配置写 0 / 默认值，复用既有保存链路。
+                   间隔与「专属参数」都可就地编辑：这两个旋钮只对本任务生效，是管理员最常调的，
+                   放在任务所在行里改，不必再去「参数配置」页签猜哪个参数管哪个任务 -->
               <template v-if="current === 'maintenance' && maintTab === 'status'">
                 <div class="key-usage-body sched-pane">
                   <div class="audit-filter">
-                    <span class="key-dim">共 {{ scheduleTasks.length }} 个任务 · 「暂停」= 间隔配置写 0，恢复 = 写回默认值；间隔等参数在「参数配置」页签调整</span>
+                    <span class="key-dim">共 {{ scheduleTasks.length }} 个任务 · 点间隔或「调参」可就地改，保存即生效（下一调度节拍约 10s 内）</span>
                     <a-tooltip title="刷新运行状态">
                       <button class="app-icon-btn" aria-label="刷新定时任务状态" :disabled="schedLoading" @click="loadSchedule">
                         <reload-outlined />
@@ -343,7 +379,7 @@
                     </a-tooltip>
                   </div>
                   <a-table :data-source="scheduleTasks" size="small" row-key="name" :pagination="false"
-                           :loading="schedLoading" :scroll="{ x: 1020 }">
+                           :loading="schedLoading" :scroll="{ x: 1180 }">
                     <a-table-column title="任务" key="name" width="190">
                       <template #default="{ record }">
                         <a-tooltip :title="record.desc">
@@ -353,10 +389,30 @@
                         <div v-else class="sched-cfgkey key-dim">内置节拍</div>
                       </template>
                     </a-table-column>
-                    <a-table-column title="间隔" key="interval" width="90">
+                    <a-table-column title="间隔" key="interval" width="150">
                       <template #default="{ record }">
-                        <span v-if="record.paused" class="key-dim">—</span>
-                        <span v-else>{{ fmtInterval(record.intervalMs) }}</span>
+                        <!-- 间隔就地编辑：单行内改完即存，不跳页签。内置节拍（无配置键）只读 -->
+                        <IntervalEditor
+                          v-if="record.editable"
+                          :model-value="record.intervalMs"
+                          :saving="schedSavingKey === record.configKey"
+                          :paused="record.paused"
+                          @save="v => saveInterval(record, v)" />
+                        <span v-else-if="record.paused" class="key-dim">—</span>
+                        <span v-else class="key-dim">{{ fmtInterval(record.intervalMs) }}</span>
+                      </template>
+                    </a-table-column>
+                    <a-table-column title="专属参数" key="params" width="240">
+                      <template #default="{ record }">
+                        <div v-if="!taskParamsOf(record).length" class="key-dim">—</div>
+                        <div v-else class="sched-params">
+                          <div v-for="f in taskParamsOf(record)" :key="f.path" class="sched-param-row">
+                            <a-tooltip :title="paramTip(f)">
+                              <span class="sched-param-label">{{ f.label }}</span>
+                            </a-tooltip>
+                            <SchemaField :field="f" :form="form" :tips="TIPS" bare />
+                          </div>
+                        </div>
                       </template>
                     </a-table-column>
                     <a-table-column title="状态" key="state" width="80">
@@ -538,7 +594,8 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
          getToolInventory } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema } from '../configSchema'
+import IntervalEditor from '../components/IntervalEditor.vue'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, corePanels, hiddenFieldCount, applyServerSchema, isCoreField } from '../configSchema'
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -1049,6 +1106,8 @@ const maintTab = ref('config')
 const scheduleTasks = ref([])
 const schedLoading = ref(false)
 const schedToggling = ref('')
+/** 正在保存间隔的任务配置键（表格内联编辑的 loading 态） */
+const schedSavingKey = ref('')
 const runLogRows = ref([])
 const runLogTotal = ref(0)
 const runLogPage = ref(1)
@@ -1057,7 +1116,10 @@ const runLogLoading = ref(false)
 const runLogFilter = ref({ taskName: null, success: null })
 
 watch(maintTab, v => {
-  if (v === 'status' && !scheduleTasks.value.length) loadSchedule()
+  // 快照是「运行状态」表格与「参数配置」分组标题（影响哪个任务）共同的数据源，
+  // 且参数配置是默认页签 ⇒ 进面板就要拉，不能等到切到运行状态，否则折叠标题上的
+  // 「影响：xxx」在首屏是空的（正是"不知道该调哪个参数"的由来）
+  if ((v === 'status' || v === 'config') && !scheduleTasks.value.length) loadSchedule()
   if (v === 'logs') loadRunLogs(true)
 })
 
@@ -1112,6 +1174,44 @@ const runLogRetentionDays = computed(() => {
   return v == null || v === '' ? 7 : v
 })
 
+/** 配置键 → schema 字段定义（按 backendKey 索引，全局唯一） */
+const fieldByKey = key => FIELDS.find(f => f.backendKey === key)
+
+/**
+ * 该任务在运行状态行内展示的「专属参数」：后端按任务声明的 relatedKeys（只含 schema 可编辑的键）。
+ * 基础模式（高级设置关）下这些键都不是核心项，此时整列留空——与「参数配置」页签的隐藏口径一致，
+ * 免得同一参数在那边被藏起来、却在这行冒出来。开关打开后全部显示。
+ */
+const taskParamsOf = record => (record.relatedKeys || [])
+  .map(fieldByKey)
+  .filter(f => f && (advMode.value || isCoreField(f)))
+
+/** 专属参数的悬浮说明：schema 的 tips 长说明 + note 短备注，口径与「参数配置」页签一致 */
+const paramTip = field => {
+  const t = (field.tips ? TIPS[field.tips] : '') || ''
+  return [t, field.note || ''].filter(Boolean).join('\n') || field.path
+}
+
+/**
+ * 间隔就地保存（运行状态表格内联编辑）：与「暂停/恢复」同一条链路——写间隔配置键本身。
+ * 保存后同步本地表单与基线，否则顶部「N 项已修改未保存」会把这次已生效的改动算成脏项。
+ */
+const saveInterval = async (record, ms) => {
+  const field = fieldByKey(record.configKey)
+  if (!field) { message.error('配置定义中找不到 ' + record.configKey); return }
+  schedSavingKey.value = record.configKey
+  try {
+    const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(ms) } })
+    if (r.success) {
+      message.success(`「${record.name}」间隔已改为 ${fmtInterval(ms)}，下一节拍（约 10s）生效`)
+      writeForm(form.value, field.path || (field.group + '.' + field.key), ms)
+      initialPayload.value = buildPayload()
+      loadSchedule()
+    } else message.error(r.msg || '间隔保存失败')
+  } catch (e) { message.error(e.message || '间隔保存失败') }
+  finally { schedSavingKey.value = '' }
+}
+
 /** 暂停/恢复：写间隔配置 0 / 默认值；同步本地表单与基线，避免顶部脏计数误报 */
 const toggleTaskPause = record => {
   const field = FIELDS.find(f => f.backendKey === record.configKey)
@@ -1147,8 +1247,84 @@ const toggleTaskPause = record => {
   })
 }
 
-/** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */
-const doTrigger = async record => {
+// ==================== 参数配置页签的折叠分组（定时任务面板） ====================
+// 定时任务面板 14 组 50+ 项平铺要滚很久，且看不出某个旋钮归哪个任务。这里按 schema 的
+// sections 分组折叠，并在标题上标出「影响哪个任务」——后者由后端 relatedKeys 反查得到，
+// 口径与「运行状态」页签的专属参数完全一致（同一份数据源，不会两处说法打架）。
+const maintKeyword = ref('')
+const openFolds = ref([])
+
+/** 配置键 → 引用它的任务名（一个键可能被多个任务引用，如 notification.dedupWindow） */
+const taskNamesByKey = computed(() => {
+  const m = new Map()
+  for (const t of scheduleTasks.value) {
+    for (const k of t.relatedKeys || []) {
+      if (!m.has(k)) m.set(k, [])
+      m.get(k).push(t.name)
+    }
+  }
+  return m
+})
+
+/**
+ * 分组视图：blocksOf 的扁平块按 sub 标题切成组（section === -1 的字段无标题，单独归首组）。
+ * 搜索同时命中参数名、配置键与分组标题——按分组标题命中时保留整组（用户找的是"网页源"这一类）。
+ */
+const maintFoldedGroups = computed(() => {
+  // 折叠视图只服务「定时任务」面板；其他分组的面板 key 在 PANELS 里查不到，
+  // 直接调 blocksOf 会读 p.sections 抛错（面板数据来自后端 schema，未就绪时同理）
+  if (current.value !== 'maintenance') return []
+  const kw = maintKeyword.value.trim().toLowerCase()
+  const out = []
+  let cur = null
+  for (const blk of blocksOf('maintenance', !advMode.value, form.value)) {
+    if (blk.type === 'sub') {
+      cur = { title: blk.title, blocks: [], fields: [] }
+      out.push(cur)
+    } else {
+      if (!cur) { cur = { title: '其他', blocks: [], fields: [] }; out.push(cur) }
+      cur.blocks.push(blk)
+      cur.fields.push(blk.field)
+    }
+  }
+  const groups = out.filter(g => g.fields.length).map(g => {
+    const owner = [...new Set(g.fields.flatMap(f => taskNamesByKey.value.get(f.backendKey) || []))]
+    return { ...g, owner: owner.join('、') }
+  })
+  if (!kw) return groups
+  return groups.filter(g =>
+    g.title.toLowerCase().includes(kw) ||
+    g.fields.some(f => (f.label || '').toLowerCase().includes(kw) ||
+                       (f.backendKey || '').toLowerCase().includes(kw)))
+})
+
+const maintTotalCount = computed(() =>
+  maintFoldedGroups.value.reduce((n, g) => n + g.fields.length, 0))
+const allFolded = computed(() =>
+  maintFoldedGroups.value.length > 0 && openFolds.value.length >= maintFoldedGroups.value.length)
+const toggleFold = title => {
+  const i = openFolds.value.indexOf(title)
+  if (i >= 0) openFolds.value.splice(i, 1)
+  else openFolds.value.push(title)
+}
+const toggleAllFold = () => {
+  openFolds.value = allFolded.value ? [] : maintFoldedGroups.value.map(g => g.title)
+}
+
+// 搜到只剩一两组时自动展开它们：否则用户搜完看到的是一堆折叠标题，还得再点一次
+watch(maintFoldedGroups, gs => {
+  if (!maintKeyword.value.trim()) return
+  openFolds.value = gs.map(g => g.title)
+})
+// 换面板/开关高级模式后分组会变，收起状态整体重置（否则可能停在一堆已不存在的标题上）
+watch([() => current.value, advMode], () => { openFolds.value = [] })
+// 首次进入「定时任务」面板：maintTab 默认就是 config，watch(maintTab) 不会触发，
+// 但折叠标题的「影响哪个任务」依赖任务快照 ⇒ 进面板即拉一次
+watch(() => current.value, v => {
+  if (v === 'maintenance' && !scheduleTasks.value.length) loadSchedule()
+})
+
+/** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */const doTrigger = async record => {
   try {
     const r = await triggerScheduleTask(record.name)
     if (r.success && r.data?.accepted) {
@@ -1307,6 +1483,19 @@ onMounted(fetchAndFill)
 .sched-tabs :deep(.ant-tabs-nav::before) { border-color: var(--app-border); }
 .sched-tabs :deep(.ant-tabs-content-holder) { display: none; }
 .sched-pane { padding: 12px 0 0; }
+/* 定时任务·运行状态：任务行内的专属参数（label + 裸控件，控件自带紧凑宽度） */
+.sched-params { display: flex; flex-direction: column; gap: 2px; }
+.sched-param-row { display: flex; align-items: center; gap: 6px; min-height: 24px; }
+.sched-param-label { font-size: 12px; color: var(--app-text3); flex: none; max-width: 104px; line-height: 1.3; }
+/* 参数配置页签的折叠分组 */
+.cfg-fold-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.cfg-fold { border-bottom: 1px solid var(--app-border); }
+.cfg-fold:last-child { border-bottom: none; }
+.cfg-fold-head { display: flex; align-items: center; gap: 8px; padding: 9px 2px; }
+.cfg-fold-n { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 1px 8px; }
+/* 标题右侧的「影响：xxx」——回答"这组参数归哪个任务"，颜色压低避免与标题抢视线 */
+.cfg-fold-owner { font-size: 11px; color: var(--app-text3); margin-left: auto; text-align: right; }
+.cfg-fold .cfg-sub { margin-top: 4px; }
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
 

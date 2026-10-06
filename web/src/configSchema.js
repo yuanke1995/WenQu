@@ -55,6 +55,9 @@ export function hiddenFieldCount (panel) {
  */
 export function blocksOf (panel, coreOnly = false, form = null) {
   const p = PANELS.find(x => x.key === panel)
+  // 面板未登记时返回空块而不是读 p.sections 崩掉：panel 由调用方决定（可能是分组 key、
+  // 也可能是尚未从后端到达的 key），崩在这里会连带整个设置页白屏并吞掉真实报错
+  if (!p) return []
   const blocks = []
   const keep = f => (!coreOnly || isCoreField(f)) && (!form || isVisible(f, form))
   for (let i = 0; i < p.sections.length; i++) {

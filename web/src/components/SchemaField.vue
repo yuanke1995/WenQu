@@ -1,5 +1,28 @@
 <template>
-  <a-form-item v-if="visible">
+  <!-- 裸控件模式（bare）：用在 a-form 之外（如运行状态表格的行内参数）。
+       a-form-item 依赖 Form 上下文提供 label 栅格与校验，脱离 a-form 渲染会整块塌掉不显示，
+       故此处不套 a-form-item，由使用方自带标签与提示。 -->
+  <template v-if="bare">
+    <template v-if="field.type === 'switch'">
+      <a-switch v-model:checked="value" size="small" />
+    </template>
+    <template v-else-if="field.type === 'number'">
+      <a-input-number v-if="msUnits.length" v-model:value="msAmount" size="small"
+                      :min="msAmountMin" :max="msAmountMax" :step="1" style="width: 76px" />
+      <a-input-number v-else v-model:value="value" size="small" :min="field.min" :max="field.max"
+                      :step="field.step" style="width: 84px" />
+    </template>
+    <template v-else-if="field.type === 'select'">
+      <a-select v-model:value="value" size="small" :options="field.options" style="width: 120px" />
+    </template>
+    <template v-else-if="field.type === 'model'">
+      <ModelSelect v-model="value" :type="field.modelType || 'chat'" :allow-clear="!!field.allowClear" width="100%" />
+    </template>
+    <a-input-password v-else-if="field.type === 'password'" v-model:value="value" size="small" style="width: 120px" />
+    <a-input v-else v-model:value="value" size="small" style="width: 120px" />
+  </template>
+
+  <a-form-item v-else-if="visible">
     <template #label>
       <a-tooltip v-if="tipText" :title="tipText" placement="top"
                  :overlay-inner-style="{ whiteSpace: 'pre-line' }">
@@ -86,7 +109,9 @@ import ModelSelect from './ModelSelect.vue'
 const props = defineProps({
   field: { type: Object, required: true },
   form: { type: Object, required: true },
-  tips: { type: Object, default: () => ({}) }
+  tips: { type: Object, default: () => ({}) },
+  /** 裸控件模式：不套 a-form-item（见模板顶部注释）。标签与说明由使用方负责 */
+  bare: { type: Boolean, default: false }
 })
 const emit = defineEmits(['change'])
 
