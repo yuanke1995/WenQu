@@ -76,7 +76,7 @@
         <template v-else>
           <WelcomeCopy variant="mobile" :agent-name="engine.currentAgent?.name || ''" :think-on="deepThinkOn"
                        :attach-count="pendingImages.length + pendingFiles.length" :mentions="mentionNames" />
-          <MobileSampleCards :questions="SAMPLE_QUESTIONS" @ask="ask" />
+          <MobileSampleCards v-if="sampleQuestions.length" :questions="sampleQuestions" @ask="ask" />
         </template>
       </div>
 
@@ -382,6 +382,8 @@ const {
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
   // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
   compactNotice, compactContext,
+  // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可自定义可关闭；与 PC 壳同一份生效值）
+  sampleQuestions,
   ready
 } = engine
 
@@ -495,13 +497,6 @@ const modelShort = computed(() => {
 const hasChips = computed(() => pendingImages.value.length || pendingFiles.value.length || pickedSkills.value.length
   || pendingMentions.value.length || pendingHistoryRefs.value.length)
 
-// ==================== 空态示例问题（与 PC 同四类） ====================
-const SAMPLE_QUESTIONS = [
-  { icon: '🔍', label: '知识检索', text: '帮我查一下系统操作手册里的登录步骤' },
-  { icon: '📝', label: '总结提炼', text: '把这篇文档的核心要点总结成 5 条' },
-  { icon: '✍️', label: '辅助写作', text: '帮我起草一份项目周报的框架' },
-  { icon: '📊', label: '对比分析', text: '对比一下方案 A 和方案 B 的优劣' }
-]
 const ask = q => { text.value = q; nextTick(send) }
 
 // ==================== 交互细节 ====================

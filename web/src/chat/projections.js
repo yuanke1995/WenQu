@@ -677,6 +677,28 @@ const canSwitchNext = m => verLocal(m)
 const verLabel = m => verLocal(m)
   ? `${(m.vIndex || 0) + 1}/${m.versions.length}`
   : `${m.variantIndex || 1}/${m.variantCount || 1}`
+
+// ==================== 空态示例问题（新会话空态的引导卡，点一下即按这条提问） ====================
+// 生效文案来自 /config/public 的 ui.sampleQuestions（个人覆盖 > 系统全局；关掉开关或清空即空串）。
+// 内置这份只在配置没取到时兜底——空态刚打开就什么都没有，比多展示四条更容易被当成坏了。
+const DEFAULT_SAMPLE_QUESTIONS = [
+  { label: '🔍 知识检索', text: '帮我查一下问渠怎么上传文档' },
+  { label: '📝 总结提炼', text: '帮我总结一份文档的核心要点' },
+  { label: '✍️ 辅助写作', text: '帮我起草一份项目周报的框架' },
+  { label: '📊 对比分析', text: '帮我对比一下两个方案的优缺点' }
+]
+// 一行一条；写成「标签｜问题」时前段作小标题（全/半角竖线都认），只写问题则无标签。
+// 空行、只有标签没有问题的行丢弃——配置里多敲一个回车不该渲染出一张空卡
+const parseSampleQuestions = raw => String(raw || '').split('\n')
+  .map(line => line.trim())
+  .filter(Boolean)
+  .map(line => {
+    const i = line.search(/[|｜]/)
+    if (i < 0) return { label: '', text: line }
+    const text = line.slice(i + 1).trim()
+    return text ? { label: line.slice(0, i).trim(), text } : null
+  })
+  .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
   toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText, askUserView,
@@ -688,5 +710,6 @@ export {
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
-  snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel
+  snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
+  DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions
 }

@@ -192,6 +192,36 @@
       "tier": 2
     },
     {
+      "backendKey": "chat.sampleQuestionsEnabled",
+      "panel": "chat",
+      "section": 1,
+      "group": "chat",
+      "key": "sampleQuestionsEnabled",
+      "path": "chat.sampleQuestionsEnabled",
+      "label": "空态示例问题",
+      "type": "switch",
+      "def": true,
+      "note": "新会话的空态是否展示示例问题卡（点一下即按这条提问）；关掉则整块不显示",
+      "personal": true,
+      "tier": 2
+    },
+    {
+      "backendKey": "chat.sampleQuestions",
+      "panel": "chat",
+      "section": 1,
+      "group": "chat",
+      "key": "sampleQuestions",
+      "path": "chat.sampleQuestions",
+      "label": "示例问题内容",
+      "type": "textarea",
+      "def": "🔍 知识检索｜帮我查一下问渠怎么上传文档\n📝 总结提炼｜帮我总结一份文档的核心要点\n✍️ 辅助写作｜帮我起草一份项目周报的框架\n📊 对比分析｜帮我对比一下两个方案的优缺点",
+      "rows": 4,
+      "ph": "每行一条；写成「标签｜问题」可给这条加一行小标题，只写问题也可以",
+      "note": "一行一条示例问题，按填写顺序展示。清空并保存=回到系统默认；要彻底不显示请关掉上面的开关",
+      "personal": true,
+      "tier": 2
+    },
+    {
       "backendKey": "chat.pipelineThreads",
       "panel": "chat",
       "section": 3,

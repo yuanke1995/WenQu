@@ -339,6 +339,15 @@ public class ConfigService {
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关；统管调试显示含降级提示）
+        // 空态示例问题（对话页新会话空态的引导卡，点一下即按这条提问）：体验项 → schema 标 personal，
+        // 个人设置可覆盖成自己的或关掉；生效值 = 个人值 > 系统全局，经 /config/public 下发给两套对话页。
+        // 内容一行一条，可写「标签｜问题」（schema def 与本串同值：def 管设置页展示，这里管运行时种子）
+        d.put("chat.sampleQuestionsEnabled", "true");
+        d.put("chat.sampleQuestions",
+                "🔍 知识检索｜帮我查一下问渠怎么上传文档\n"
+                        + "📝 总结提炼｜帮我总结一份文档的核心要点\n"
+                        + "✍️ 辅助写作｜帮我起草一份项目周报的框架\n"
+                        + "📊 对比分析｜帮我对比一下两个方案的优缺点");
         // 接口限流（按用户/IP 固定窗口）
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));

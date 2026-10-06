@@ -1,12 +1,10 @@
 <template>
-  <!-- 窄屏示例问题：横向滑动卡片。
-       PC 态是 2×2 网格（4 张卡竖排占满一屏，字被压到 11px）；窄屏改为「一张一张横滑」，
-       卡片保持可读的宽高，靠惯性感浏览。这是主流产品的空态引导做法。 -->
+  <!-- 窄屏示例问题：竖向排列，一行一张卡。
+       PC 态是 2×2 网格；窄屏竖排四张，字号保持可读（PC 卡在 375px 上会被压到 11px）。 -->
   <div class="m-samples">
-    <button v-for="q in questions" :key="q.text" class="ms-card" type="button" @click="$emit('ask', q.text)">
-      <span class="ms-ic">{{ q.icon }}</span>
+    <button v-for="(q, i) in questions" :key="i" class="ms-card" type="button" @click="$emit('ask', q.text)">
       <span class="ms-text">
-        <span class="ms-label">{{ q.label }}</span>
+        <span v-if="q.label" class="ms-label">{{ q.label }}</span>
         <span class="ms-q">{{ q.text }}</span>
       </span>
     </button>
@@ -21,25 +19,19 @@ defineEmits(['ask'])
 </script>
 
 <style scoped>
-/* scroll-snap：松手后卡片停在整位，不会停在半张（半张会让人以为还能继续滑但滑不动） */
+/* 竖向堆叠：四张卡一行一张，手机上一屏内可全部看到 */
 .m-samples {
-  display: flex; gap: 10px; overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  padding: 2px 12px 8px;      /* 左侧留出与标题的视觉对齐，右侧留出可滑动提示 */
-  scrollbar-width: none;
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; max-width: 560px; margin: 0 auto; box-sizing: border-box;
+  padding: 2px 12px 8px;      /* 横向内边距与欢迎区节奏对齐；使用方列表已加内边距时会取消 */
 }
-.m-samples::-webkit-scrollbar { display: none; }  /* 隐藏滚动条：滑动是自明的，不需要条 */
 .ms-card {
-  flex: none; width: 76%; max-width: 300px;
-  scroll-snap-align: start;
   display: flex; align-items: flex-start; gap: 10px; text-align: left;
   padding: 14px; cursor: pointer; touch-action: manipulation;
   background: var(--app-panel); border: 1px solid var(--app-border);
   border-radius: var(--app-radius); color: var(--app-text);
 }
 .ms-card:active { border-color: var(--app-accent); background: var(--app-accent-weak); }
-.ms-ic { font-size: 20px; flex: none; line-height: 1.3; }
 .ms-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* 标签与问题都可读：PC 态在 375px 上被压到 11px，这里恢复 12/14px */
 .ms-label { font-size: 12px; color: var(--app-text3); }

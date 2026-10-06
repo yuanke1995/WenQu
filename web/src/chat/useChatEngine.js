@@ -15,7 +15,8 @@ import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
-         pushTimelineTool, pushTimelineArtifact, snapshotVersion, applyVersion, toolCallsView, histItemDigest } from './projections'
+         pushTimelineTool, pushTimelineArtifact, snapshotVersion, applyVersion, toolCallsView, histItemDigest,
+         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -356,6 +357,12 @@ const debugEntryVisible = ref(false)
 // 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
 // /config 是管理端点，普通用户调它 403 并触发全局 403 提示（角色未授权），故不复用。
 const debugDisplayVisible = ref(false)
+// 空态示例问题（新会话空态的引导卡）：生效文案走 /config/public 的 ui.sampleQuestions
+// （个人覆盖 > 系统全局，管理员在系统设置改默认，用户在个人设置→对话偏好改自己的或关掉）。
+// null=配置还没取到/取失败（用内置默认，别让用户对着空白首屏）；空串=明确不展示
+const sampleQuestionsRaw = ref(null)
+const sampleQuestions = computed(() => sampleQuestionsRaw.value == null
+  ? DEFAULT_SAMPLE_QUESTIONS : parseSampleQuestions(sampleQuestionsRaw.value))
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
@@ -1544,6 +1551,9 @@ const ready = async () => {
   getRuntimeConfig().then(r => {
     if (!r.success) return
     debugDisplayVisible.value = r.data?.ui?.debugEntry === true
+    // 键缺失（老后端/未重启）按 null 处理 → 用内置默认；下发空串才是「不展示」
+    const sq = r.data?.ui?.sampleQuestions
+    sampleQuestionsRaw.value = typeof sq === 'string' ? sq : null
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
@@ -1570,6 +1580,8 @@ const ready = async () => {
     // 模型
     modelMap, currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel,
     effectiveModelIcon, effectiveModelProvider, modelSourceLabel, debugEntryVisible, debugDisplayVisible,
+    // 空态示例问题（新会话空态引导卡；两套壳共用同一份生效值）
+    sampleQuestions,
     // 检索 / 用量 / 来源 / 上下文容量
     lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,

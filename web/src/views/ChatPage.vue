@@ -72,19 +72,20 @@
             <WelcomeCopy :variant="isNarrow ? 'mobile' : 'pc'" :agent-name="currentAgent?.name || ''"
                          :think-on="deepThinkOn" :attach-count="pendingImages.length + pendingFiles.length"
                          :mentions="mentionNames" />
-            <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析）
-                 宽屏用 2×2 网格；窄屏换横滑卡片（src/h5/MobileSampleCards.vue）——
-                 网格在 375px 上会把 4 张卡竖排占满一屏、字压到 11px -->
-            <div v-if="!isNarrow" class="welcome-samples">
-              <button v-for="q in SAMPLE_QUESTIONS" :key="q.text" class="ws-card" type="button" @click="ask(q.text)">
-                <span class="ws-ic">{{ q.icon }}</span>
-                <span class="ws-text">
-                  <span class="ws-label">{{ q.label }}</span>
-                  <span class="ws-q">{{ q.text }}</span>
-                </span>
-              </button>
-            </div>
-            <MobileSampleCards v-else :questions="SAMPLE_QUESTIONS" @ask="ask" />
+            <!-- 示例问题：点击即发（内容走配置 chat.sampleQuestions，个人覆盖 > 系统全局，可自定义可关闭）。
+                 宽屏 2×2 网格；窄屏竖排卡片（src/h5/MobileSampleCards.vue，字号恢复 12/14px）。
+                 关掉或清空即整块不显示，标题与输入框照常 -->
+            <template v-if="sampleQuestions.length">
+              <div v-if="!isNarrow" class="welcome-samples">
+                <button v-for="(q, i) in sampleQuestions" :key="i" class="ws-card" type="button" @click="ask(q.text)">
+                  <span class="ws-text">
+                    <span v-if="q.label" class="ws-label">{{ q.label }}</span>
+                    <span class="ws-q">{{ q.text }}</span>
+                  </span>
+                </button>
+              </div>
+              <MobileSampleCards v-else :questions="sampleQuestions" @ask="ask" />
+            </template>
           </template>
         </div>
 
@@ -2446,14 +2447,6 @@ const confirmEdit = () => {
   messages.value.push(nu)
   streamAnswer(txt, imgs, null, false, 1, deep, atts, skills, mentionsNew, null, historyRefs, editMessageId, nu)
 }
-// 空态示例问题（通用四类，不绑定具体知识库——点击即发，检索链路自动走当前智能体/全局库）
-const SAMPLE_QUESTIONS = [
-  { icon: '🔍', label: '知识检索', text: '帮我查一下系统操作手册里的登录步骤' },
-  { icon: '📝', label: '总结提炼', text: '把这篇文档的核心要点总结成 5 条' },
-  { icon: '✍️', label: '辅助写作', text: '帮我起草一份项目周报的框架' },
-  { icon: '📊', label: '对比分析', text: '对比一下方案 A 和方案 B 的优劣' }
-]
-
 const ask = q => { text.value = q; nextTick(send) }
 
 // 贴底自动滚动（上翻回看历史暂停跟随）
@@ -2507,6 +2500,8 @@ const {
   // 模型
   currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
   effectiveModelProvider, modelSourceLabel, debugEntryVisible, debugDisplayVisible,
+  // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可关可自定义）
+  sampleQuestions,
   // 检索 / 用量 / 来源
   lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel,
@@ -2793,9 +2788,9 @@ onMounted(async () => {
   padding: 11px 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
 }
 .ws-card:hover { border-color: var(--app-accent); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
-.ws-ic { font-size: 16px; line-height: 1.3; flex: none; }
 .ws-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ws-label { font-size: 11px; color: var(--app-text3); }
+/* 小标题（配置里的「标签｜问题」前段，可自带 emoji）：12px 与窄屏卡片同口径 */
+.ws-label { font-size: 12px; color: var(--app-text3); }
 .ws-q { font-size: 13px; color: var(--app-text2); }
 
 /* 消息错误卡：独立于正文气泡（半程内容保留在上方），分类文案 + 重试 + 详情折叠 */

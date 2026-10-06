@@ -35,6 +35,7 @@ public class ConfigController {
     private final KeywordIndexService keywordIndexService;
     private final ConnectivityProbeService connectivityProbeService;
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
+    private final com.wenqu.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
     @GetMapping
@@ -86,9 +87,26 @@ public class ConfigController {
         // 「检索调试」「加入评测集」这类必 403 的管理入口仍只在管理员侧单独判定，不复用本值。
         Map<String, Object> ui = new LinkedHashMap<>();
         ui.put("debugEntry", configService.getBoolean("chat.retrievalDebugEnabled"));
+        // 空态示例问题（对话页新会话空态的引导卡）：下发**生效文案**——个人覆盖 > 系统全局，
+        // 开关关掉或内容为空即空串，前端整块不渲染。本端点在安全白名单内，匿名调用没有个人层，只拿全局值
+        ui.put("sampleQuestions", sampleQuestionsText());
         resp.put("ui", ui);
 
         return ResultJson.ok(resp);
+    }
+
+    /** 空态示例问题的生效文案（个人值 > 系统全局；开关关或无内容返回空串） */
+    private String sampleQuestionsText() {
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        String personalOn = userConfigService.personalValue(uid, "chat.sampleQuestionsEnabled");
+        boolean on = personalOn.isBlank()
+                ? configService.getBoolean("chat.sampleQuestionsEnabled", true)
+                : "true".equalsIgnoreCase(personalOn.trim());
+        if (!on) return "";
+        String personal = userConfigService.personalValue(uid, "chat.sampleQuestions");
+        if (!personal.isBlank()) return personal;
+        String global = configService.get("chat.sampleQuestions");
+        return global == null ? "" : global;
     }
 
     /** 字节数 → 可读标签（如 209715200 → "200MB"） */
