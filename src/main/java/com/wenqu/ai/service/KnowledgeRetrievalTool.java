@@ -132,7 +132,10 @@ public class KnowledgeRetrievalTool {
         KbScope scope = KB_SCOPE.get();
         List<Hit> hits;
         try {
-            hits = hybridRetrievalService.search(query.trim(), null, scope == null ? null : scope.kbIds());
+            // adaptiveTopK=true：与主链路同口径，权限剔掉的名额由补采补回（工具结果直接进模型上下文，
+            // 召回不足会表现为「知识库里明明有却答不出来」）
+            hits = hybridRetrievalService.search(query.trim(), null,
+                    scope == null ? null : scope.kbIds(), true);
         } catch (Exception e) {
             return "知识库检索失败：" + e.getMessage();
         }

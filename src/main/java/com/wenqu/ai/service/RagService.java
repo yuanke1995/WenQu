@@ -961,7 +961,8 @@ public class RagService {
                         retrievalQuery = thinkTerms.isEmpty()
                                 ? dr.refinedQuery()
                                 : dr.refinedQuery() + " " + String.join(" ", thinkTerms);
-                        hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
+                        // adaptiveTopK=true：生产问答，让「权限有效召回」参与 topK 配额（见 HybridRetrievalService.search 四参重载）
+                        hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds, true);
                         rankQuery = retrievalQuery;
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
@@ -985,10 +986,10 @@ public class RagService {
                 // 深度思考失败但产生了思考内容：用"原问题 + 思考词元"检索，思考不算白费（比纯普通检索召回更好）
                 if (useDeepThink && !thinkTerms.isEmpty()) {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
-                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds, true);
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 } else {
-                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds);
+                    hits = hybridRetrievalService.search(retrievalQuery, retrievalDiag, scopeKbIds, true);
                     // 重排只在此处做：上方 thinkTerms 分支已重排过，落到这里再排一次是同批文档同 query
                     // 的重复计费/重复延迟（second rank 结果不变）
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);

@@ -517,7 +517,8 @@ public class WorkflowEngine {
             String query = render(cfgStr(n, "query", true), ref -> resolveRef(ref, ctx, state));
             Collection<String> kbIds = kbIdsOf(n);
             int topK = cfgInt(n, "topK", 5, 1, MAX_TOPK);
-            List<Hit> hits = withReplay(ctx, () -> retrievalService.search(query, null, kbIds));
+            // adaptiveTopK=true：节点按 topK 截断，权限剔掉的名额会让节点结果直接变少，补采后由 topK 再裁剪
+            List<Hit> hits = withReplay(ctx, () -> retrievalService.search(query, null, kbIds, true));
             if (hits == null) hits = List.of();
             // 补重排（强制窗口）：search() 只出融合分，低分门若直接比较，词面重叠的无关块（融合分 0.6+）
             // 会盖过真实重排分 ~0.000x 混进节点结果——与 searchKnowledge 工具同源的分域错配问题。

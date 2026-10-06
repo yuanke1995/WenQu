@@ -234,10 +234,24 @@ public class SubAgentOrchestrator {
         /** 创建上下文时父线程（问答流水线）捕获的用量归属 uid（null=无用户上下文）：分支线程的
          *  ThreadLocal 不可见，要点提炼/supervisor 聚合等辅助调用的记账归属从这里取。 */
         final String billingUid;
+        /** 创建上下文时父线程捕获的<b>检索身份三元组</b>（uid/部门/角色）：分支跑在 reactor 线程池，
+         *  {@code RequestUser} ThreadLocal 不可见 ⇒ 库门编译与文档可见性晚绑定都会拿到 anonymous，
+         *  导致「共享给我的资料在子代理分支里检索不到」（与 billingUid 同一个 ThreadLocal 盲区，但影响检索正确性）。
+         *  部门/角色一并带：可见性判定要按部门/角色判，缺一项就会把本该可见的文档判为不可见。 */
+        final String identityUid;
+        final String identityDept;
+        final String identityRole;
 
         RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
                String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
                String billingUid) {
+            this(question, subQueries, subAgents, onBranch, resolvedModel, baseOverrides, baseUserOverrides,
+                    billingUid, null, null, null);
+        }
+
+        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
+               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
+               String billingUid, String identityUid, String identityDept, String identityRole) {
             this.question = question;
             this.subQueries = subQueries;
             this.subAgents = subAgents;
@@ -248,6 +262,9 @@ public class SubAgentOrchestrator {
             this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
             this.baseUserOverrides = baseUserOverrides == null ? Map.of() : baseUserOverrides;
             this.billingUid = billingUid;
+            this.identityUid = identityUid;
+            this.identityDept = identityDept;
+            this.identityRole = identityRole;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -331,9 +348,16 @@ public class SubAgentOrchestrator {
         long t0 = System.currentTimeMillis();
         // 归属 uid 只在入口线程（问答流水线）可见，RunCtx 带进分支线程供辅助调用记账
         String entryUid = com.wenqu.ai.util.RequestUser.uid();
+        // 检索身份三元组：同样只在入口线程可见，但分支检索（库门下推 + 文档可见性晚绑定）要按真实用户判，
+        // 不带则分支拿到 anonymous → 配了共享范围（department/user）的文档被判不可见，
+        // 表现为「主链路能引用的资料，子代理分支里检索不到」。anonymous 时整体置 null（保持既有 fail-closed 行为）。
+        String entryDept = com.wenqu.ai.util.RequestUser.departmentId();
+        String entryRole = com.wenqu.ai.util.RequestUser.role();
+        boolean anonymous = com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(entryUid);
         RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel,
                 configService.currentOverrides(), configService.currentUserOverrides(),
-                com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(entryUid) ? null : entryUid);
+                anonymous ? null : entryUid,
+                anonymous ? null : entryUid, entryDept, entryRole);
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
@@ -532,18 +556,29 @@ public class SubAgentOrchestrator {
     }
 
     /**
-     * 在并行分支线程内重放本轮检索参数覆盖后执行分支主体。
+     * 在并行分支线程内重放本轮检索参数覆盖与<b>检索身份</b>后执行分支主体。
      * <p>分支跑在 reactor 线程池（{@code Schedulers.parallel()}），拿不到问答流水线线程的 ThreadLocal
-     * 覆盖值 ⇒ 不重放的话分支检索按全局参数跑（"编排卡片命中块数与主链路不一致"的隐藏原因）。
-     * 线程池复用，finally 必须清，避免把本轮策略泄漏给下一个任务。
+     * ⇒ 不重放的话分支检索按全局参数跑（"编排卡片命中块数与主链路不一致"的隐藏原因），
+     * 且身份为 anonymous（"共享给我的资料子代理检索不到"的根因）。
+     * 线程池复用，finally 必须清，避免把本轮策略/身份泄漏给下一个任务。
      */
     private void runWithOverrides(RunCtx ctx, Runnable task) {
         Map<String, String> ov = ctx.baseOverrides;
         Map<String, String> uv = ctx.baseUserOverrides;
         boolean hasOv = ov != null && !ov.isEmpty();
         boolean hasUv = uv != null && !uv.isEmpty();
+        // 身份重放与配置覆盖相互独立：即使没有任何配置覆盖，身份也必须重放（否则检索按 anonymous 判权限）
+        String curUid = com.wenqu.ai.util.RequestUser.uid();
+        boolean foreignIdentity = ctx.identityUid != null && !ctx.identityUid.equals(curUid);
+        if (foreignIdentity) {
+            com.wenqu.ai.util.RequestUser.set(ctx.identityUid, ctx.identityDept, ctx.identityRole);
+        }
         if (!hasOv && !hasUv) {
-            task.run();
+            try {
+                task.run();
+            } finally {
+                if (foreignIdentity) com.wenqu.ai.util.RequestUser.clear();
+            }
             return;
         }
         if (hasOv) configService.putOverrides(ov);
@@ -553,6 +588,7 @@ public class SubAgentOrchestrator {
         } finally {
             if (hasOv) configService.clearOverride();
             if (hasUv) configService.clearUserOverrides();
+            if (foreignIdentity) com.wenqu.ai.util.RequestUser.clear();
         }
     }
 
@@ -571,7 +607,9 @@ public class SubAgentOrchestrator {
             java.util.Collection<String> branchKbIds = sub == null || sub.getKnowledgeBaseIds() == null
                     || sub.getKnowledgeBaseIds().isBlank()
                     ? null : KnowledgeBaseService.splitIds(sub.getKnowledgeBaseIds());
-            List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery, null, branchKbIds);
+            // adaptiveTopK=true：子代理与主链路同口径，让权限有效召回参与 topK 配额
+            // （子代理只取 topKPerAgent 条，权限剔掉的名额会直接让分支结果变少）
+            List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery, null, branchKbIds, true);
             if (sub != null) hits = inScope(hits, sub.scopeDocIds());
             List<HybridRetrievalService.Hit> fresh = new ArrayList<>();
             synchronized (ctx) {

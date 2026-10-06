@@ -138,14 +138,34 @@ public class HybridRetrievalService {
         return search(query, diag, null);
     }
 
+    /**
+     * 混合检索；{@code kbIds} 限定检索的知识库（空=全部）。
+     * <p><b>不启用权限补采</b>（{@code adaptiveTopK=false}）——等价于改动前的行为，供量化评估
+     * （{@code RetrievalEvaluationService}）与检索调试面板使用：它们比较的是检索策略本身，
+     * 补采会改变 topK 语义、让跨轮基线不可比（评测基线是调 vectorWeight/阈值后重标定的锚点）。
+     */
     public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
+        return search(query, diag, kbIds, false);
+    }
+
+    /**
+     * @param kbIds 限定检索的知识库（空=全部）
+     * @param adaptiveTopK 是否启用「权限有效召回」补采（见 {@link #vectorSearch}）。
+     *        <b>{@code false} 时严格按配置 topK 取一次</b>——量化评估与检索调试必须走此路。
+     *        生产问答走 {@code true}，让权限过滤参与配额计算。
+     */
+    public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds,
+            boolean adaptiveTopK) {
         // 权重动态读取（DB 配置，保存即生效；缺失时兜底 yml 默认值 0.6/0.4/0.1）
         double vectorWeight = configService.getDouble("retrieval.vectorWeight");
         double keywordWeight = configService.getDouble("retrieval.keywordWeight");
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
-        List<Document> vectorDocs = vectorSearch(query, diag, kbIds);
+        //    adaptiveTopK=true 时按「权限有效召回目标」补采（生产问答）；false 时严格按配置 topK 一次（评估/调试）
+        List<Document> vectorDocs = adaptiveTopK
+                ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
+                : vectorSearch(query, diag, kbIds, 0);
 
         // 2. 关键词召回（并行，超时兜底）
         List<Knowledge> kwDocs = keywordSearch(query, diag);
@@ -269,10 +289,21 @@ public class HybridRetrievalService {
     }
 
     public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag, java.util.Collection<String> kbIds) {
+        return searchMulti(queries, diag, kbIds, false);
+    }
+
+    /**
+     * 多路检索；{@code adaptiveTopK} 见 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
+     * <p><b>多路模式默认不补采</b>（{@code false}）：每一路都独立走 KNN，补采会把 N 路的 topK
+     * 同步放大，KNN 成本乘以路数；多路的意义本就是「拆子问题各取一批候选再归并」，
+     * 名额损失由归并后的多样性部分抵消。需要补采请走单路。
+     */
+    public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag,
+            java.util.Collection<String> kbIds, boolean adaptiveTopK) {
         if (queries == null || queries.isEmpty()) return List.of();
         List<String> qs = queries.stream().map(String::trim).filter(q -> !q.isBlank()).distinct().toList();
         if (qs.size() <= 1) {
-            return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds);
+            return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds, adaptiveTopK);
         }
         try {
             // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
@@ -280,7 +311,7 @@ public class HybridRetrievalService {
             Map<String, String> runOverrides = configService.currentOverrides();
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
                     .map(q -> CompletableFuture.supplyAsync(
-                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds)), multiSearchPool))
+                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds, adaptiveTopK)), multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(configService.getInt("retrieval.searchTimeoutMs", 8000), TimeUnit.MILLISECONDS);
@@ -343,8 +374,41 @@ public class HybridRetrievalService {
         return vectorSearch(query, null, null);
     }
 
-    /** 带诊断的向量召回（fail-loud：失败写入 diag）；kbIds 限定知识库（空=全部库分组检索） */
+    /**
+     * 带诊断的向量召回（fail-loud：单路失败/降级写入 diag）；kbIds 限定知识库（空=全部库分组检索）。
+     * <p><b>严格按配置 topK 取一次，不补采</b>——调试面板要展示的就是「当前配置下的真实召回」，
+     * 补采会掩盖 topK 被权限吃掉的事实。需要生产问答的补采行为请走 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
+     */
     public List<Document> vectorSearch(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
+        return vectorSearch(query, diag, kbIds, 0);
+    }
+
+    /**
+     * 向量召回；{@code minWantedHits} = 通过可见性判定的目标条数（&lt;=0 表示不补采，按配置 topK 取一次）。
+     *
+     * <p><b>为什么需要补采（治本点）</b>：文档级 ACL 是<b>晚绑定</b>——向量路先按 topK 取候选，
+     * 再由 {@link #loadVisibleDocIdsOfHits} 剔除无权文档。于是「topK 配额」被同库内的无权文档占掉，
+     * 用户实际拿到的有效命中少于 topK（私有文档占比越高损失越大），而系统以为召回正常。
+     * 本方法把固定配额改成<b>「要够 N 条有效结果才停」</b>：先按配置 topK 取一次，
+     * 若因权限被剔除导致有效条数不足，按实测保留率放大 topK <b>补采一次</b>，过滤仍由调用方做。
+     * 权限过滤从「削减结果」变成「参与配额计算」。
+     *
+     * <p><b>为什么不做「文档级 ACL 下推索引」</b>（2026-10-06 复核否决，见 cd57b47）：
+     * 下推要求权限变更时重写向量标签，而标签陈旧即越权；且要覆盖 6 处写入点 + QA/子块附加索引，
+     * 极易做漏。补采是纯读侧优化，不碰任何写入路径，风险面小得多。
+     *
+     * <p><b>边界（安全与成本）</b>：
+     * <ul>
+     *   <li>最多补采 <b>1 次</b>，不递归——避免可见集合极小时反复放大把 KNN 打满；</li>
+     *   <li>放大后 topK 有硬上限 {@value #MAX_TOPK_CAP}；</li>
+     *   <li>只在<b>确实有东西被剔除且仍不足</b>时补：全部可见（保留率=1）不放大；
+     *       <b>全被剔除（保留率=0）也不放大</b>——那是「该用户对命中库无权」，属权限配置/可见集合问题，
+     *       放大 topK 既无意义（还是那些文档）又像在掩盖问题；</li>
+     *   <li>计数失败不补采（保持初召回）：补采是<em>优化</em>不是安全手段，权限判定始终由晚绑定兜底。</li>
+     * </ul>
+     */
+    private List<Document> vectorSearch(String query, RetrievalDiag diag,
+            java.util.Collection<String> kbIds, int minWantedHits) {
         // 全量重嵌入期间（任一实例执行 DROP/重建索引中）：向量索引不存在或半成品，
         // 直接跳过向量路（安静降级关键词路），避免对半成品索引检索产生错误/空召回与噪音告警
         if (reembedInProgress()) {
@@ -357,48 +421,99 @@ public class HybridRetrievalService {
         // 必须在 resolveVectorStores 之后、similaritySearch 之前求值——下推靠它把无权文档挡在 KNN 之外。
         String aclFilter = buildAclFilter(kbIds, diag);
         try {
-            SearchRequest.Builder builder = SearchRequest.builder()
-                    .query(query)
-                    // topK 直接取配置（默认 15，下限 1）：评估扫参需要小于 15 的值，max(15,...) 钳制会让扫参等价
-                    .topK(Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
-                    // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
-                    // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
-                    .similarityThreshold(vecThreshold());
-            // 库门下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
-            // 下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
-            if (aclFilter != null && !aclFilter.isBlank()) {
-                try {
-                    builder = builder.filterExpression(aclFilter);
-                } catch (Exception e) {
-                    if (diag != null) diag.aclPushdownFailed(e.getMessage());
-                    log.warn("[FAIL-LOUD] ACL 过滤条件下推失败，本次退回无过滤向量检索（改由事后过滤兜底）: {}",
-                            e.getMessage());
-                }
+            int baseTopK = Math.max(1, configService.getInt("retrieval.vectorTopK", 15));
+            List<Document> first = similaritySearchAcross(stores, query, aclFilter, baseTopK, diag);
+            if (minWantedHits <= 0 || first.isEmpty()) return first;
+
+            int visibleCount = countVisibleHits(first);
+            if (visibleCount >= minWantedHits || visibleCount == 0) return first;
+
+            // 保留率 = 有效/召回。visibleCount==0 已在上行 return，故除数必 >0
+            double keepRate = (double) visibleCount / first.size();
+            int target = Math.min((int) Math.ceil(baseTopK / keepRate), MAX_TOPK_CAP);
+            if (target <= baseTopK) {
+                log.debug("[RAG] 权限补采：放大后 topK={} 未超过 {} 上限，保持初召回（keepRate={}）",
+                        target, MAX_TOPK_CAP, String.format("%.2f", keepRate));
+                return first;
             }
-            SearchRequest req = builder.build();
-            // 单库（绝大多数场景：无自定义向量模型库，或范围命中单一库）直接查，保持原行为
-            if (stores.size() == 1) return stores.get(0).similaritySearch(req);
-            // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
-            Map<String, Document> merged = new LinkedHashMap<>();
-            for (VectorStore st : stores) {
-                try {
-                    for (Document d : st.similaritySearch(req)) {
-                        merged.merge(String.valueOf(d.getId()), d, (a, b) ->
-                                parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
-                    }
-                } catch (Exception e) {
-                    log.warn("[FAIL-LOUD] 向量检索失败（单库，其余库继续）: {}", e.getMessage());
-                }
-            }
-            List<Document> out = new ArrayList<>(merged.values());
-            out.sort((a, b) -> Double.compare(parseScore(b.getScore()), parseScore(a.getScore())));
-            return out;
+            log.info("[RAG] 权限补采：有效命中 {}/{}（keepRate={}），topK {} → {} 补采一次",
+                    visibleCount, first.size(), String.format("%.2f", keepRate), baseTopK, target);
+            List<Document> second = similaritySearchAcross(stores, query, aclFilter, target, diag);
+            return second.isEmpty() ? first : second;
         } catch (Exception e) {
             // M4 fail-loud：向量路失败不再静默空
             if (diag != null) diag.vectorFailed(e.getMessage());
             log.warn("[FAIL-LOUD] 向量检索失败: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** 补采放大后的 topK 硬上限：防止「几乎全被剔除」时把 KNN 打成重负载 */
+    private static final int MAX_TOPK_CAP = 60;
+
+    /**
+     * 统计本轮向量命中里<b>通过可见性判定</b>的条数（只计数，不做任何权限决策）。
+     * 可见性唯一出口 = {@code ResourceVisibilityService}，此处只借用其判定做配额估算；
+     * 最终过滤仍在 {@code search()} 内进行——补采只决定「多取多少」，绝不参与权限放行。
+     */
+    private int countVisibleHits(List<Document> vectorDocs) {
+        try {
+            Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
+            Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, List.of(), kidMap);
+            int n = 0;
+            for (Document d : vectorDocs) {
+                Knowledge k = kidMap.get(String.valueOf(d.getId()));
+                String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(d);
+                // docId 为空 = 手动知识块，不在文档 ACL 管辖内，计为可见
+                if (docId == null || docId.isBlank() || visibleDocIds.contains(docId)) n++;
+            }
+            return n;
+        } catch (Exception e) {
+            // 计数失败不进补采（保持初召回）——补采是优化不是安全手段
+            log.debug("[RAG] 权限补采跳过：可见性计数失败 {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /** 按 topK 逐库检索并合并（多库时向量空间互不相通，必须逐库查后归并） */
+    private List<Document> similaritySearchAcross(List<VectorStore> stores, String query,
+            String aclFilter, int topK, RetrievalDiag diag) {
+        SearchRequest.Builder builder = SearchRequest.builder()
+                .query(query)
+                // topK 直接取配置（默认 15，下限 1）：评估扫参需要小于 15 的值，max(15,...) 钳制会让扫参等价
+                .topK(Math.max(1, topK))
+                // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
+                // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
+                .similarityThreshold(vecThreshold());
+        // 库门下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
+        // 下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
+        if (aclFilter != null && !aclFilter.isBlank()) {
+            try {
+                builder = builder.filterExpression(aclFilter);
+            } catch (Exception e) {
+                if (diag != null) diag.aclPushdownFailed(e.getMessage());
+                log.warn("[FAIL-LOUD] 库门过滤条件下推失败，本次退回无过滤向量检索（改由事后过滤兜底）: {}",
+                        e.getMessage());
+            }
+        }
+        SearchRequest req = builder.build();
+        // 单库（绝大多数场景：无自定义向量模型库，或范围命中单一库）直接查，保持原行为
+        if (stores.size() == 1) return stores.get(0).similaritySearch(req);
+        // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
+        Map<String, Document> merged = new LinkedHashMap<>();
+        for (VectorStore st : stores) {
+            try {
+                for (Document d : st.similaritySearch(req)) {
+                    merged.merge(String.valueOf(d.getId()), d, (a, b) ->
+                            parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
+                }
+            } catch (Exception e) {
+                log.warn("[FAIL-LOUD] 向量检索失败（单库，其余库继续）: {}", e.getMessage());
+            }
+        }
+        List<Document> out = new ArrayList<>(merged.values());
+        out.sort((a, b) -> Double.compare(parseScore(b.getScore()), parseScore(a.getScore())));
+        return out;
     }
 
     /** 目标知识库集合 → 去重后的向量库实例（每库按各自绑定的向量模型路由独立索引） */
