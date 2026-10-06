@@ -279,7 +279,7 @@ public class KnowledgeBaseService {
         // 级联清理：本库独立向量索引 + 其 JSON 向量数据。
         // 不清会留下「孤儿索引」——库已删但 ai-doc-kb-{id} 与 ai:chunkkb-{id}:* 常驻 Redis，
         // 既占内存（每条向量按维度数×4 字节，1024 维≈4KB/条），又会让人误以为该库仍可检索
-        // （KbVectorStoreRegistry.allStores 走 customKbs()，已删库不在其中故不会真被路由到，
+        // （检索侧按 customKbs() 展开可见库，已删库不在其中故不会真被路由到，
         //  但残留数据不会被任何路径回收）。历史已产生多个孤儿索引，需一并清理。
         cleanupVectorIndex(id);
         return null;

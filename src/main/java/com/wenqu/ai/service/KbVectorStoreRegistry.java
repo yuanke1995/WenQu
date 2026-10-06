@@ -548,17 +548,4 @@ public class KbVectorStoreRegistry {
         }
         return sharedJedis;
     }
-
-    /** 全部知识库的独立向量库（供无 scope 的全库检索展开；顺序无关） */
-    public List<VectorStore> allStores() {
-        List<VectorStore> out = new ArrayList<>();
-        for (KnowledgeBase kb : customKbs()) {
-            try {
-                out.add(storeForKb(kb.getId()));
-            } catch (Exception e) {
-                log.warn("[KB-VEC] 知识库 {} 向量库构建失败（跳过该库）: {}", kb.getId(), e.getMessage());
-            }
-        }
-        return out;
-    }
 }

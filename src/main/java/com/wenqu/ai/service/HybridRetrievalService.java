@@ -534,11 +534,46 @@ public class HybridRetrievalService {
         return out;
     }
 
-    /** 目标知识库集合 → 去重后的向量库实例（每库按各自绑定的向量模型路由独立索引） */
+    /**
+     * 目标知识库集合 → 去重后的向量库实例（每库按各自绑定的向量模型路由独立索引）。
+     *
+     * <p><b>为什么必须在建实例之前按可见性收窄（2026-10-06 修）</b>：
+     * 原来 kbIds 为空时直接 {@code allStores()} 展开<b>全部</b>已绑模型的库，不看当前用户能不能读。
+     * 后果不是「多搜了点无关内容」这么轻——向量空间互不相通，逐库检索意味着<b>每个库都要用自己绑定的
+     * 向量模型把 query 嵌一遍</b>，于是：
+     * <ol>
+     *   <li><b>烧别人的额度</b>：A 用户提问会去调 B 用户知识库绑定的供应商，B 的账户被扣费、
+     *       B 收到「额度不足」通知，而 A 全程不知情（实测：yuanke 名下库的嵌入模型额度耗尽后，
+     *       admin 提问反复报「阿里百炼平台额度不足」，对话模型用的却是 admin 自己的 glm-5.3）；</li>
+     *   <li><b>报错归属错位</b>：库里那套「通知归属人不是管理员」的设计是对的（供应商谁建归谁），
+     *       但检索期越权代打把这条设计的前提破坏了——owner 从没 configuring 过这条链路，却在替别人背额度；</li>
+     *   <li><b>拖慢每一轮问答</b>：无谓的嵌入往返 + 无谓的索引 KNN。</li>
+     * </ol>
+     *
+     * <p><b>与库门过滤的关系</b>：{@link #buildAclFilter} 编译的 kbId 表达式只对<b>已发出去的那次检索</b>生效，
+     * 它挡得住「yuanke 的块被返回给 admin」，却<b>挡不住这次检索本身发生</b>（嵌入请求在过滤前就发出去了）。
+     * 可见性必须在<b>发起检索之前</b>收窄，过滤只是第二道防线、不能顶替这一步。
+     *
+     * <p><b>安全方向</b>：可见库查询失败（{@code loadVisibleKbIds()} 返回 null）时<b>不放行</b>——
+     * 退化成「不搜任何库」，宁可本轮无召回也不越权代打他人额度（与库门表达式同一取向：
+     * 空集=什么都搜得到是最危险的写法）。
+     */
     private List<VectorStore> resolveVectorStores(java.util.Collection<String> kbIds) {
-        if (kbIds == null || kbIds.isEmpty()) return kbVectorStores.allStores();
+        Set<String> visibleKbIds = loadVisibleKbIds();
+        if (visibleKbIds == null) {
+            // 可见库判不出来 ⇒ 不猜、不放行：本轮不发起任何向量检索（fail-closed）
+            log.error("[FAIL-LOUD] 可见库集合查询失败，本轮跳过向量检索（不代打无权库的向量模型）");
+            return List.of();
+        }
+        // 请求范围（智能体/工具绑定）更窄时取交集：范围外的库既无权也不该被检索
+        Set<String> targetKbIds = new LinkedHashSet<>();
+        for (com.wenqu.ai.model.KnowledgeBase kb : kbVectorStores.customKbs()) {
+            if (!visibleKbIds.contains(kb.getId())) continue;
+            if (kbIds != null && !kbIds.isEmpty() && !kbIds.contains(kb.getId())) continue;
+            targetKbIds.add(kb.getId());
+        }
         java.util.LinkedHashMap<VectorStore, Boolean> out = new java.util.LinkedHashMap<>();
-        for (String kbId : kbIds) {
+        for (String kbId : targetKbIds) {
             try {
                 out.put(kbVectorStores.storeForKb(kbId), Boolean.TRUE);
             } catch (Exception e) {
