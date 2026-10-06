@@ -383,7 +383,9 @@
           <span class="pub-row-t">{{ pubMcpEnabled ? 'MCP 端点已开启：Claude / Cursor 等外部客户端可用该地址直接调用这个智能体' : 'MCP 端点未开启（开启后同一 token 兼作 MCP 凭据）' }}</span>
           <div class="pub-hint" v-if="!pubEnabled">需先启用公开分享；还需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</div>
         </div>
-        <template v-if="pubToken">
+        <!-- 分享停用后链接与端点一并失效（token 保留）：停用时不展示任何可复制的形态，
+             否则用户会把打不开的链接/连不上的 MCP 配置复制出去还以为能用 -->
+        <template v-if="pubToken && pubEnabled">
           <div class="pub-row">
             <span class="pub-label">分享链接</span>
             <div class="pub-copy-row">
@@ -414,6 +416,10 @@
             </a-popconfirm>
           </div>
         </template>
+        <!-- 停用但 token 保留：给出一句说明，替换掉上面的链接/iframe/MCP 展示 -->
+        <div class="pub-row" v-else-if="pubToken && !pubEnabled">
+          <div class="pub-hint">分享链接与 MCP 端点已随分享停用而失效（token 已保留，重新开启上面的开关即恢复访问）。</div>
+        </div>
       </div>
     </a-modal>
 
