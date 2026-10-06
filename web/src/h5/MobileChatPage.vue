@@ -880,7 +880,9 @@ onUnmounted(() => {
   background: var(--app-accent); color: #fff; font-size: 18px;
   display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
-.m-send:disabled { background: var(--app-accent-disabled); }
+/* 禁用态：浅蓝底 + 白图标对比度太低，图标几乎看不见（看着像按钮坏了）。
+   改灰底灰图标，与 PC 端 .send-btn / 分享页 .sc-send 同一口径。 */
+.m-send:disabled { background: var(--app-border); color: var(--app-text3); }
 .m-send.stop { background: var(--app-danger-weak); color: var(--app-danger-text); border: 1px solid var(--app-danger-border); }
 
 /* ---- 来源详情 ---- */

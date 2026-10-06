@@ -174,6 +174,15 @@ function send () {
 function stop () {
   if (controller) controller.abort()
   sending.value = false
+  // 中断要收尾当前轮：只置 sending=false 的话，那条「正在检索资料…」会永久卡在页面上，
+  // 用户看到的是个再也不会动的提示（后续新消息也压不掉它）。
+  // 补一句「已停止生成」既解释了这个空结果，也让它走正常气泡形态。
+  const cur = messages.value[messages.value.length - 1]
+  if (cur && cur.role === 'assistant' && !cur.content) {
+    cur.stage = ''
+    cur.content = '_已停止生成_'
+  }
+  scrollBottom()
 }
 </script>
 
@@ -208,8 +217,14 @@ function stop () {
 
 /* ---------- 消息区 ---------- */
 .sc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px; }
-/* 对话线程限宽居中：此前气泡直接铺满视口，宽屏下行长失控、左右两侧空白比例失衡 */
-.sc-thread { max-width: 820px; margin: 0 auto; }
+/* 对话线程限宽居中：此前气泡直接铺满视口，宽屏下行长失控、左右两侧空白比例失衡。
+   margin-top:auto 由下方 .sc-list:not(.hero) > .sc-thread 规则接管（保持水平 auto 居中）。 */
+.sc-thread { max-width: 820px; margin-left: auto; margin-right: auto; }
+/* 消息不足一屏时把线程压到下半区（justify-content:flex-end + 顶部 auto 外边距），
+   贴着输入框上沿。顶部对齐会让首轮对话时整页只剩顶部一条、下面全空，看着像没加载完。
+   margin-top:auto 而非 padding-bottom 撑开：padding 会让滚动容器永远多出一段可滚空白。 */
+.sc-list:not(.hero) { display: flex; flex-direction: column; justify-content: flex-end; }
+.sc-list:not(.hero) > .sc-thread { margin-top: auto; }
 /* 空态：垂直居中，不再顶在上方。
    width:100% 是必需的——.sc-list.hero 是 flex 容器，居中子项默认按内容宽度收缩，
    桌面 1280 下空态块会缩成 210px 的一小条。 */
@@ -284,7 +299,11 @@ function stop () {
   transition: background .15s;
 }
 .sc-send:hover { background: var(--app-accent-hover); }
-.sc-send:disabled { background: var(--app-accent-disabled); cursor: not-allowed; }
+/* 禁用态：浅蓝底（--app-accent-disabled）+ 白图标，对比度太低，图标几乎看不见，
+   看着像按钮坏了。改灰底灰图标 —— 禁用就该"退后"而不是"变淡"。
+   :hover 规则在禁用时也会命中，要显式压回灰底，否则鼠标一放上去就"可用了"的错觉。 */
+.sc-send:disabled { background: var(--app-border); color: var(--app-text3); cursor: not-allowed; }
+.sc-send:disabled:hover { background: var(--app-border); }
 .sc-send.stop { background: #f53f3f; }
 .sc-foot {
   max-width: 820px; margin: 8px auto 0; display: flex; justify-content: space-between;

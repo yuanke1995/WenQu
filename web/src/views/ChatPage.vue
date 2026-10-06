@@ -3423,7 +3423,9 @@ onMounted(async () => {
   display: inline-flex; align-items: center; justify-content: center; transition: background .2s;
 }
 .send-btn:hover:not(:disabled) { background: var(--app-accent-hover); }
-.send-btn:disabled { background: var(--app-accent-disabled); cursor: not-allowed; }
+/* 禁用态：浅蓝底（--app-accent-disabled）+ 白图标，对比度太低，图标几乎看不见，
+   看着像按钮坏了。改灰底灰图标 —— 禁用就该"退后"而不是"变淡"（分享页同步）。 */
+.send-btn:disabled { background: var(--app-border); color: var(--app-text3); cursor: not-allowed; }
 /* 停止态：弱化危险色（浅红底+危险色内容，与 app-pill.err/右栏停止按钮同一视觉语言），不做实心红圆 */
 .send-btn.stop {
   background: var(--app-danger-weak); color: var(--app-danger-text);
