@@ -174,14 +174,11 @@ function send () {
 function stop () {
   if (controller) controller.abort()
   sending.value = false
-  // 中断要收尾当前轮：只置 sending=false 的话，那条「正在检索资料…」会永久卡在页面上，
-  // 用户看到的是个再也不会动的提示（后续新消息也压不掉它）。
-  // 补一句「已停止生成」既解释了这个空结果，也让它走正常气泡形态。
+  // 中断要把这一轮**整条撤掉**，不能只置 sending=false——那样「正在检索资料…」会永久
+  // 卡在页面上（后续新消息也压不掉它）。曾改成补一句「已停止生成」占位气泡，
+  // 但那是空的回答，留在对话里比不留更碍眼；用户点了停止，要的就是"没这条"。
   const cur = messages.value[messages.value.length - 1]
-  if (cur && cur.role === 'assistant' && !cur.content) {
-    cur.stage = ''
-    cur.content = '_已停止生成_'
-  }
+  if (cur && cur.role === 'assistant' && !cur.content) messages.value.pop()
   scrollBottom()
 }
 </script>
@@ -217,14 +214,11 @@ function stop () {
 
 /* ---------- 消息区 ---------- */
 .sc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px; }
-/* 对话线程限宽居中：此前气泡直接铺满视口，宽屏下行长失控、左右两侧空白比例失衡。
-   margin-top:auto 由下方 .sc-list:not(.hero) > .sc-thread 规则接管（保持水平 auto 居中）。 */
-.sc-thread { max-width: 820px; margin-left: auto; margin-right: auto; }
-/* 消息不足一屏时把线程压到下半区（justify-content:flex-end + 顶部 auto 外边距），
-   贴着输入框上沿。顶部对齐会让首轮对话时整页只剩顶部一条、下面全空，看着像没加载完。
-   margin-top:auto 而非 padding-bottom 撑开：padding 会让滚动容器永远多出一段可滚空白。 */
-.sc-list:not(.hero) { display: flex; flex-direction: column; justify-content: flex-end; }
-.sc-list:not(.hero) > .sc-thread { margin-top: auto; }
+/* 对话线程限宽居中：此前气泡直接铺满视口，宽屏下行长失控、左右两侧空白比例失衡 */
+.sc-thread { max-width: 820px; margin: 0 auto; }
+/* 消息从顶部往下排（所有聊天产品的行为，也是内容变多时的自然方向）。
+   曾试过"内容不足一屏时贴底"（justify-content:flex-end + margin-top:auto），
+   结果首轮只有一条消息时它沉到页面最底部、上方 500px 全空，看着像掉下去了 —— 更糟，已回退。 */
 /* 空态：垂直居中，不再顶在上方。
    width:100% 是必需的——.sc-list.hero 是 flex 容器，居中子项默认按内容宽度收缩，
    桌面 1280 下空态块会缩成 210px 的一小条。 */
