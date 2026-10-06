@@ -1,4 +1,4 @@
-package com.wenqu.ai.config;
+package com.wenqu.ai.startup;
 
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;

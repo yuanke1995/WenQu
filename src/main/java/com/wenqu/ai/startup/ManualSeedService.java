@@ -1,4 +1,8 @@
-package com.wenqu.ai.service;
+package com.wenqu.ai.startup;
+
+import com.wenqu.ai.service.DocumentService;
+import com.wenqu.ai.service.DynamicEmbeddingModel;
+import com.wenqu.ai.service.ModelRegistryService;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -11,10 +15,8 @@ import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.parser.TextParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -23,6 +25,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,11 +38,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>
  * 设计要点：
  * <ul>
- *   <li><b>触发时机</b>：{@link ApplicationReadyEvent}（晚于全部 ApplicationRunner，
- *       保证 SchemaMigrator 已把 builtin/source_hash 列补齐）；</li>
+ *   <li><b>触发时机：纯手动</b>（{@code POST /api/ai/manual/sync}，仅管理员）。
+ *       2026-10-06 起<b>不再随启动自动跑</b>——同步是真发 embedding 请求的动作（每篇逐块向量化，
+ *       十余篇手册 = 数十次远程调用），而重启是纯运维动作、用户什么都没做却被扣费；
+ *       额度耗尽时更会连带「删不掉旧篇目」（向量清理同样走该供应商），手册库就此卡死。
+ *       与「后台动作不许偷烧额度」是同一条约束（见 {@link StartupDataPolicy}）；</li>
  *   <li><b>幂等增量</b>：按源文件 SHA-256 指纹（c_ai_document.source_hash）判定——
- *       指纹未变且状态生效则跳过；变更/新增整篇重建（删旧文档走 {@link DocumentService#delete} 全套清理）；
- *       status=3（上次向量化失败）的篇目无条件重建，实现重启自愈；</li>
+ *       指纹未变且状态生效则跳过（<b>跳过不花钱</b>）；变更/新增整篇重建
+ *       （删旧文档走 {@link DocumentService#delete} 全套清理）；</li>
  *   <li><b>权限语义</b>：库 createdBy=system + share_config 全员只读 ⇒ 现有 ResourceVisibilityService
  *       天然「人人可读、无人可管」，检索可见性零改动；服务层 update/delete 另有 builtin 拦截双保险；</li>
  *   <li><b>向量模型</b>：优先沿用已解析可用的现有绑定；否则取既有知识库绑定的众数，
@@ -49,7 +55,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li><b>绕过解析队列</b>：手册随包分发、内容小且纯文本，直接 TextParser 分块 +
  *       {@link DocumentService#embedAndStore}（向量化+关键词索引与手动建块同口径），不占用上传解析队列。</li>
  * </ul>
- * 假设：单实例种子（多实例各自跑同一套幂等同步，最坏并发重建同一篇目，结果一致；源文件指纹保证不重复入库）。
+ * 前提：手动触发是单实例动作（多实例下需由运维指定一个实例点，或接受并发重建同一篇目——
+ * 源文件指纹保证最终结果一致）。
  *
  * @author yuanke
  */
@@ -92,23 +99,46 @@ public class ManualSeedService {
         this.dynamicEmbeddingModel = dynamicEmbeddingModel;
     }
 
-    @EventListener(ApplicationReadyEvent.class)
-    public void onReady() {
-        if (!running.compareAndSet(false, true)) return;
+    /**
+     * 手动触发同步（管理员端点 {@code POST /api/ai/manual/sync} 调用）。
+     *
+     * <p><b>2026-10-06：改为纯手动</b>。此前挂在 {@code ApplicationReadyEvent} 上每次启动自动跑，
+     * 而同步是<b>真发 embedding 请求</b>的（每篇逐块向量化，手册十余篇 = 数十次远程调用），
+     * 扣的是所选向量模型供应商的额度——服务重启属于纯运维动作，用户什么都没做却被扣费；
+     * 额度耗尽时更会连带「删不掉旧篇目」（向量清理同样走该供应商），手册库就此卡死。
+     * 周期任务/后台动作一律不许在用户无感知时烧额度，改为由管理员显式触发。
+     */
+    public Map<String, Object> syncNow() {
+        // 防重入：同步是长任务（逐块向量化），并发触发会互相删对方的旧篇目
+        if (!running.compareAndSet(false, true)) {
+            return Map.of("accepted", false, "reason", "同步正在进行中，请勿重复触发");
+        }
+        long startMs = System.currentTimeMillis();
         try {
-            sync();
+            Stats stats = sync();
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("accepted", true);
+            out.put("added", stats.added());
+            out.put("rebuilt", stats.rebuilt());
+            out.put("kept", stats.kept());
+            out.put("failed", stats.failed());
+            out.put("removed", stats.removed());
+            out.put("costMs", System.currentTimeMillis() - startMs);
+            return out;
         } catch (Exception e) {
-            // 启动种子失败不阻断应用，但必须 ERROR 显式留痕（不静默）
-            log.error("[ManualSeed] 官方内置手册同步失败（不影响应用启动）: {}", e.getMessage(), e);
+            log.error("[ManualSeed] 官方内置手册同步失败: {}", e.getMessage(), e);
+            throw e;
+        } finally {
+            running.set(false);
         }
     }
 
     /** 同步主体：解析 classpath 手册 → 官方库 get-or-create → 按指纹增量重建篇目 */
-    void sync() {
+    Stats sync() {
         List<ManualFile> files = loadBundledFiles();
         if (files.isEmpty()) {
             log.warn("[ManualSeed] classpath:manual/ 下没有手册文件，跳过同步");
-            return;
+            return new Stats(0, 0, 0, 0, 0);
         }
 
         // 1. 官方库 get-or-create
@@ -119,7 +149,7 @@ public class ManualSeedService {
         boolean rebuildAll = false;
         if (kb == null) {
             String ref = resolveEmbeddingRef(null);
-            if (ref == null) return; // resolveEmbeddingRef 内已 ERROR 留痕
+            if (ref == null) return new Stats(0, 0, 0, 0, 0); // resolveEmbeddingRef 内已 ERROR 留痕
             kb = new KnowledgeBase();
             kb.setName(MANUAL_KB_NAME);
             kb.setDescription("问渠官方使用手册：产品功能、操作指南、配置说明与常见问题。随版本自动同步，全员可读，不可编辑；可在对话中直接提问，也可绑定到智能体知识范围。");
@@ -140,7 +170,7 @@ public class ManualSeedService {
             String current = kb.getEmbeddingRef();
             if (!refResolves(current)) {
                 String ref = resolveEmbeddingRef(current);
-                if (ref == null) return;
+                if (ref == null) return new Stats(0, 0, 0, 0, 0);
                 kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
                         .eq(KnowledgeBase::getId, kb.getId())
                         .set(KnowledgeBase::getEmbeddingRef, ref)
@@ -193,6 +223,19 @@ public class ManualSeedService {
         }
         log.info("[ManualSeed] 同步完成：新增 {}，重建 {}，跳过 {}，失败 {}，移除 {}（库 {}）",
                 added, rebuilt, kept, failed, removed, kb.getId());
+        return new Stats(added, rebuilt, kept, failed, removed);
+    }
+
+    /**
+     * 同步结果统计（手动触发的返回体）。
+     * 报数而非只给「成功/失败」：手册同步是真花钱的动作，管理员需要知道这一次
+     * 到底重建了几篇（=烧了多少 embedding），否则点完只有一句「已完成」无从判断。
+     */
+    public record Stats(int added, int rebuilt, int kept, int failed, int removed) {
+        /** 实际产生向量调用的篇目数（新增 + 重建；跳过的篇目不花钱） */
+        public int embedded() {
+            return added + rebuilt;
+        }
     }
 
     /**

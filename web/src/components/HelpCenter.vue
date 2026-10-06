@@ -19,8 +19,13 @@
       <article class="help-article-wrap">
         <a-alert v-if="activeDoc && activeDoc.status === 3" type="warning" show-icon
                  :message="'该篇同步失败：' + (activeDoc.failReason || '未知原因')" style="margin-bottom:12px" />
-        <a-empty v-if="!loading && !docs.length"
-                 description="内置手册尚未同步（通常为向量模型未配置或服务首次启动中），稍后刷新重试" style="padding:60px 0" />
+        <a-empty v-if="!loading && !docs.length" style="padding:60px 0">
+          <template #description>
+            内置手册尚未同步。手册随版本分发，需由管理员在系统设置里点「同步官方手册」写入本库
+            （同步会对每篇逐块调用向量模型并消耗额度，故不在服务启动时自动执行）。
+          </template>
+          <a-button v-if="canSync" type="primary" :loading="syncing" @click="doSync">立即同步</a-button>
+        </a-empty>
         <div v-else-if="activeHtml" class="help-article md-body" v-html="activeHtml"></div>
         <a-spin v-else-if="contentLoading" style="display:block;margin:60px auto" />
       </article>
@@ -30,10 +35,11 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined } from '@ant-design/icons-vue'
-import { listManualDocs, getManualDocContent } from '../api'
+import { listManualDocs, getManualDocContent, syncManual } from '../api'
 import { renderMd, copyCode } from '../utils/markdown'
+import { authUser } from '../utils/auth'
 
 const docs = ref([])
 const activeId = ref('')
@@ -42,6 +48,39 @@ const activeHtml = ref('')
 const loading = ref(false)
 const contentLoading = ref(false)
 const kw = ref('')
+const syncing = ref(false)
+
+// 同步是写操作且会消耗向量模型额度，接口本身也限管理员；非管理员只读手册，不显示入口。
+// 用后端下发的 admin 布尔（管理员级含自定义 admin_flag），不按 role 字符串硬编码比较。
+const canSync = computed(() => Boolean(authUser.value?.admin))
+
+/**
+ * 手动同步官方手册。同步会对每篇逐块调向量模型，**会产生真实费用**，
+ * 因此二次确认并把「可能花费」摆在明面上——不能让人在不知情的下一步点下去才发现额度少了。
+ */
+const doSync = () => {
+  Modal.confirm({
+    title: '同步官方手册？',
+    content: '将对随包分发的每篇手册逐块重新向量化，**会调用向量模型并消耗供应商额度**。'
+      + '若内容未变化则自动跳过、不产生调用。通常只在版本升级后需要同步一次。',
+    okText: '确认同步',
+    cancelText: '取消',
+    onOk: async () => {
+      syncing.value = true
+      try {
+        const r = await syncManual()
+        const d = (r && r.data) || {}
+        message.success(`同步完成：新增 ${d.added ?? 0}、重建 ${d.rebuilt ?? 0}、跳过 ${d.kept ?? 0}`
+          + `${d.failed ? `、失败 ${d.failed}` : ''}`)
+        await load()
+      } catch (e) {
+        message.error(e.message || '同步失败')
+      } finally {
+        syncing.value = false
+      }
+    },
+  })
+}
 
 const filtered = computed(() => {
   const k = kw.value.trim().toLowerCase()

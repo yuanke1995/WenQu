@@ -302,6 +302,12 @@ public class ConfigService {
         d.put("keyword.engine", properties.getKeyword().getEngine());
         d.put("keyword.baseUrl", properties.getKeyword().getBaseUrl());
         d.put("keyword.apiKey", properties.getKeyword().getApiKey());   // master key RSA 加密入库（设置页可改，改后客户端自动重建）；未配置时回退 env AI_MEILI_KEY
+        d.put("keyword.reconcileIntervalMs", "3600000");     // 关键词索引精确对账周期（ms，默认 1 小时；≤0 暂停）。只比 Meilisearch 与 MySQL，不调任何模型
+        // 启动首轮对账：2026-10-06 默认关闭。此前库里存的是 true，导致每次重启都跑一遍全量双向比对——
+        // 虽然不烧额度，但多副本各跑一遍纯属无谓扫描（对账已由上面的周期任务覆盖，启动首轮没有不可替代的价值）。
+        // 注意：此前本键既没登记进 defaults() 也不在 config-schema.json，导致设置页看不到、改不了，
+        // 值只能手工改库——「隐藏开关」本身就是隐患，故在此正式登记。
+        d.put("keyword.reconcileOnStartup", "false");
         // 解析行为参数
         d.put("parse.concurrency", "3");                   // 文档解析 worker 并发数（队列worker 数；下游 OCR/视觉/embedding 另有闸门限流）
         d.put("parse.queue.capacity", "500");              // 解析队列容量：排队满则上传直接拒（不再是"收下再丢解析任务"）

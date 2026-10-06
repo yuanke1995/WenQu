@@ -1027,6 +1027,36 @@
       "tier": 2
     },
     {
+      "backendKey": "keyword.reconcileIntervalMs",
+      "panel": "retrieval",
+      "section": 0,
+      "group": "keyword",
+      "key": "reconcileIntervalMs",
+      "path": "keyword.reconcileIntervalMs",
+      "label": "索引对账周期",
+      "type": "number",
+      "tips": "keywordReconcile",
+      "def": 3600000,
+      "min": 0,
+      "width": 200,
+      "note": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档并定向修复漂移的周期（毫秒，默认 1 小时；0=暂停）。只比对索引与数据库，不调用任何模型，不消耗额度",
+      "tier": 3
+    },
+    {
+      "backendKey": "keyword.reconcileOnStartup",
+      "panel": "retrieval",
+      "section": 0,
+      "group": "keyword",
+      "key": "reconcileOnStartup",
+      "path": "keyword.reconcileOnStartup",
+      "label": "启动时对账",
+      "type": "switch",
+      "tips": "keywordReconcile",
+      "def": false,
+      "note": "服务启动后立即跑一轮索引对账。默认关闭：重启是纯运维动作，周期任务已覆盖对账需求，启动首轮在多副本下还会让每个副本各扫一遍",
+      "tier": 3
+    },
+    {
       "backendKey": "retrieval.vectorWeight",
       "panel": "retrieval",
       "section": 1,
@@ -3733,7 +3763,8 @@
     "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。",
     "notificationRetention": "站内通知（解析完成/失败、工作流失败/超时/待审核、网页源刷新失败）的保留天数：超期物理删除，不区分已读未读。通知指向的运行记录与解析任务本身也有各自的保留期，通知活得比它们久没有回溯价值。",
     "notificationCleanupInterval": "站内通知清理任务的运行间隔（毫秒，默认每日）。≤0 = 暂停清理任务（通知会持续累积，不建议）。",
-    "agentVersionKeep": "智能体每次保存都会留下一份配置快照，可查看与上一版的字段级差异、一键回滚。本项控制每个智能体保留多少份（按时间从早往晚删）；回滚本身也会生成一条新版本记录。"
+    "agentVersionKeep": "智能体每次保存都会留下一份配置快照，可查看与上一版的字段级差异、一键回滚。本项控制每个智能体保留多少份（按时间从早往晚删）；回滚本身也会生成一条新版本记录。",
+    "keywordReconcile": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移；不调用任何模型、不消耗额度。差异超过 max(1000, 有效块/3) 时转全量重建"
   },
   "corePaths": [
     "vision.enabled",
@@ -3880,6 +3911,7 @@
     "mcp.server.enabled": "MCP 服务端点（对外提供）",
     "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
     "graphrag.maxTriplesPerChunk": "GraphRAG：每块最多抽几条关系（成本闸，超出的丢弃）",
-    "graphrag.expandTopK": "GraphRAG：检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减"
+    "graphrag.expandTopK": "GraphRAG：检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减",
+    "keyword.reconcileIntervalMs": "关键词索引精确对账周期（毫秒，0=暂停）"
   }
 }

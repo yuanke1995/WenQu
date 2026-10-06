@@ -1,4 +1,4 @@
-package com.wenqu.ai.config;
+package com.wenqu.ai.startup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.ApiEndpointMapper;
