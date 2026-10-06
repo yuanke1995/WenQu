@@ -209,11 +209,20 @@ public class KbVectorStoreRegistry {
 
     private RedisVectorStore build(KnowledgeBase kb) {
         String kbId = kb.getId();
-        log.info("[KB-VEC] 为知识库「{}」构建独立向量索引: index=ai-doc-kb-{}, prefix=ai:chunkkb-{}:, 模型={}",
+        String index = kbIndexName(kbId);
+        log.info("[KB-VEC] 为知识库「{}」构建独立向量索引: index={}, prefix=ai:chunkkb-{}:, 模型={}",
                 kb.getName(), kbId, kbId, kb.getEmbeddingRef());
+        // 维度来源包一层本地真值：见 LocalDimensionEmbeddingModel 的类注释——不包的话
+        // RedisVectorStore 建埋点上下文时会远程探维度，把「删向量」绑到 embedding 服务可用性上
+        // （额度耗尽即删不掉文档）；且只有「索引 schema」一级不够，启动清文档时索引尚未建立，
+        // 必须再接库级登记维度才能做到零网络调用。
+        org.springframework.ai.embedding.EmbeddingModel model =
+                new LocalDimensionEmbeddingModel(embeddingModel.forRef(kb.getEmbeddingRef()),
+                        () -> indexDimension(index),
+                        () -> registeredDimension(kbId));
         RedisVectorStore store = RedisVectorStore
-                .builder(sharedJedis(), embeddingModel.forRef(kb.getEmbeddingRef()))
-                .indexName(kbIndexName(kbId))
+                .builder(sharedJedis(), model)
+                .indexName(index)
                 .prefix("ai:chunkkb-" + kbId + ":")
                 // 可过滤 metadata（全部 TAG）：docId/kbId 两个库门字段。
                 // 不声明这些字段则 RedisFilterExpressionConverter.doKey() 会抛
@@ -227,6 +236,76 @@ public class KbVectorStoreRegistry {
         // 必须显式热补（FT.ALTER 不动向量数据，秒级完成）
         ensureKbGateSchema(kbId);
         return store;
+    }
+
+    /**
+     * 库级登记维度（{@code c_ai_knowledge_base.embedding_dimensions}），未登记返回 -1。
+     *
+     * <p>换模型重嵌成功时由 {@code DocumentService.reembedKbAsync} 回写；建库时也由保存探测写入。
+     * 有了它，索引重建（{@code recreateIndexWithGateSchema}）与实例构建（{@code build}）
+     * 都不必远程探维度。
+     */
+    private int registeredDimension(String kbId) {
+        try {
+            KnowledgeBase row = kbMapper.selectById(kbId);
+            if (row == null || row.getEmbeddingDimensions() == null || row.getEmbeddingDimensions() <= 0) return -1;
+            return row.getEmbeddingDimensions();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * 解析某库向量维度（<b>零网络调用优先</b>）：库级登记 → 索引 schema 真值 → 远程探测。
+     *
+     * <p>前两级覆盖了绝大多数场景：库级登记值在建库/重嵌成功时已写入，索引真值是已落盘向量的实际维度。
+     * 只有首次建库、且尚未登记维度时才需要远程探一次（那是真正必须问模型的场景）。
+     */
+    private int resolveDimension(String kbId, String index, String ref) {
+        int registered = registeredDimension(kbId);
+        if (registered > 0) return registered;
+        int local = indexDimension(index);
+        if (local > 0) return local;
+        return embeddingModel.forRef(ref).dimensions();
+    }
+
+    /**
+     * 读索引 schema 里 vector 字段的 <b>DIM</b>（本地真值，索引不存在/读不到返回 -1）。
+     *
+     * <p><b>为什么以索引为准而不是远程再探一次</b>：索引记的是「这批已写入向量实际是多少维」，
+     * 远程探的是「模型现在返回多少维」。换模型未重嵌时两者会不一致，而写入能否成功取决于前者，
+     * 所以建 schema / 填埋点都必须以索引为准。
+     *
+     * <p>解析口径与 {@link #hasAllGateFields} 同源：{@code ftInfo} 的 {@code attributes} 是
+     * <b>扁平键值对 List</b>，且 vector 字段的键名是<b>小写 {@code dim}</b>
+     * （TAG 字段的 {@code SEPARATOR} 才是大写——两者大小写不一致，按键名精确匹配）。
+     */
+    private int indexDimension(String index) {
+        try {
+            Map<String, Object> info = sharedJedis().ftInfo(index);
+            if (info == null || !(info.get("attributes") instanceof List<?> attrs)) return -1;
+            for (Object o : attrs) {
+                if (!(o instanceof List<?> pairs)) continue;
+                boolean isVectorField = false;
+                Integer dim = null;
+                for (int i = 0; i + 1 < pairs.size(); i += 2) {
+                    String key = String.valueOf(pairs.get(i));
+                    if ("attribute".equals(key)) isVectorField = "embedding".equals(String.valueOf(pairs.get(i + 1)));
+                    else if ("dim".equals(key)) {
+                        try {
+                            dim = Integer.parseInt(String.valueOf(pairs.get(i + 1)));
+                        } catch (NumberFormatException ignored) {
+                            // 非数值 dim 视为读不到
+                        }
+                    }
+                }
+                if (isVectorField && dim != null) return dim;
+            }
+            return -1;
+        } catch (Exception e) {
+            // 索引不存在（首次建库）或读失败 → 返回 -1，由调用方回落远程探测
+            return -1;
+        }
     }
 
     /**
@@ -317,13 +396,15 @@ public class KbVectorStoreRegistry {
      */
     private boolean recreateIndexWithGateSchema(String kbId, String index) {
         try {
-            // 维度取自当前模型绑定（重建 schema 必须与向量实际维度一致，否则倒排建不起来）
             KnowledgeBase kb = kbMapper.selectById(kbId);
             if (kb == null || kb.getEmbeddingRef() == null || kb.getEmbeddingRef().isBlank()) {
                 log.warn("[KB-VEC] 知识库 {} 无向量模型绑定，跳过 schema 重建", kbId);
                 return false;
             }
-            int dim = embeddingModel.forRef(kb.getEmbeddingRef()).dimensions();
+            // 维度取自当前模型绑定（重建 schema 必须与向量实际维度一致，否则倒排建不起来）。
+            // 优先用库级登记维度（重嵌成功时已回写），其次索引 schema 真值，两者都无才远程探测
+            // ——与 build() 同一套取维度口径，避免「重建 schema」这个后台动作又去打 embedding 网关。
+            int dim = resolveDimension(kbId, index, kb.getEmbeddingRef());
             if (dim <= 0) {
                 log.warn("[KB-VEC] 知识库 {} 向量模型维度探测失败（{}），跳过 schema 重建", kbId, dim);
                 return false;

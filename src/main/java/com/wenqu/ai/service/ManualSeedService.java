@@ -72,6 +72,8 @@ public class ManualSeedService {
     private final DocumentService documentService;
     private final TextParser textParser;
     private final ModelRegistryService modelRegistryService;
+    /** 向量模型路由器：换模型时探测维度并登记，避免启动清篇目时远程探维度 */
+    private final DynamicEmbeddingModel dynamicEmbeddingModel;
 
     /** 防重入（Ready 事件只会触发一次，防御未来多处触发） */
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -79,13 +81,15 @@ public class ManualSeedService {
     @Autowired
     public ManualSeedService(KnowledgeBaseMapper kbMapper, AiDocumentMapper documentMapper,
                              KnowledgeMapper knowledgeMapper, DocumentService documentService,
-                             TextParser textParser, ModelRegistryService modelRegistryService) {
+                             TextParser textParser, ModelRegistryService modelRegistryService,
+                             DynamicEmbeddingModel dynamicEmbeddingModel) {
         this.kbMapper = kbMapper;
         this.documentMapper = documentMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.documentService = documentService;
         this.textParser = textParser;
         this.modelRegistryService = modelRegistryService;
+        this.dynamicEmbeddingModel = dynamicEmbeddingModel;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -140,7 +144,10 @@ public class ManualSeedService {
                 kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
                         .eq(KnowledgeBase::getId, kb.getId())
                         .set(KnowledgeBase::getEmbeddingRef, ref)
-                        .set(KnowledgeBase::getEmbeddingDimensions, null)
+                        // 换模型：探一次新模型维度并登记（不走后台远程探维度那条路）。
+                        // 启动时维度若留空，随后的删篇目/建索引都得远程探 embedding，
+                        // 会白烧该供应商额度（额度耗尽还会连带删不掉文档）。
+                        .set(KnowledgeBase::getEmbeddingDimensions, probeDimension(ref))
                         .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
                 log.warn("[ManualSeed] 手册库原向量模型 {} 已不可解析，切换为 {}，本轮全篇重建", current, ref);
                 rebuildAll = true;
@@ -308,6 +315,26 @@ public class ManualSeedService {
         log.error("[ManualSeed] 未检测到任何可用向量模型（请在「供应商管理」登记 embedding 模型，或在任一知识库完成绑定）——"
                 + "官方内置手册本轮未同步，恢复后重启服务自动补齐");
         return null;
+    }
+
+    /**
+     * 探测向量模型维度并登记（换模型时用）。
+     *
+     * <p>维度登记后，后续删篇目/建索引取维度都走本地真值。Spring AI 1.1.8 在模型名
+     * 不在内置维度表时会真发一次 embedding 请求数维度——启动流程本就与用户无关，
+     * 不登记就等于每次启动都白烧一次该供应商额度（且额度耗尽会连带删不掉文档）。
+     *
+     * @return 维度；探测失败返回 null（留空后续按需回落探测，不阻断同步）
+     */
+    private Integer probeDimension(String ref) {
+        try {
+            int dim = dynamicEmbeddingModel.forRef(ref).dimensions();
+            return dim > 0 ? dim : null;
+        } catch (Exception e) {
+            log.warn("[ManualSeed] 向量模型 {} 维度探测失败（维度留空，本轮重建时按需回落探测）: {}",
+                    ref, e.getMessage());
+            return null;
+        }
     }
 
     /** 引用是否可解析且确为向量类型（ModelRegistryService 系统级解析，与运行时 storeForKb 同源） */

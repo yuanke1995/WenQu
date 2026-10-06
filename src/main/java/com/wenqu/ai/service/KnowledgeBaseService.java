@@ -55,6 +55,8 @@ public class KnowledgeBaseService {
     /** share_config 统一解析入口（混合权限检测用；避免各自反序列化导致口径漂移——见 hasReadScope）。
      *  只依赖 RoleService，无循环依赖。 */
     private final ResourceVisibilityService visibilityService;
+    /** 向量模型路由器：建库/换模型时探测维度并登记（避免后台动作反复远程探维度） */
+    private final DynamicEmbeddingModel dynamicEmbeddingModel;
 
     /** 个人默认库 id 缓存（uid → kbId；任何库写入后整体清空，量小且请求内命中） */
     private final java.util.concurrent.ConcurrentHashMap<String, String> defaultIdByUid =
@@ -66,7 +68,8 @@ public class KnowledgeBaseService {
                                 com.wenqu.ai.mapper.UserMapper userMapper,
                                 KbVectorStoreRegistry kbVectorStores,
                                 ConfigService configService, RoleService roleService,
-                                ResourceVisibilityService visibilityService) {
+                                ResourceVisibilityService visibilityService,
+                                DynamicEmbeddingModel dynamicEmbeddingModel) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
@@ -76,6 +79,7 @@ public class KnowledgeBaseService {
         this.configService = configService;
         this.roleService = roleService;
         this.visibilityService = visibilityService;
+        this.dynamicEmbeddingModel = dynamicEmbeddingModel;
     }
 
     // ==================== 读写 ====================
@@ -127,6 +131,10 @@ public class KnowledgeBaseService {
         kb.setShareConfig(str(body.get("shareConfig")));
         kb.setEmbeddingRef(validateEmbeddingRef(str(body.get("embeddingRef")), uid,
                 com.wenqu.ai.util.RequestUser.role()));
+        // 新建时探测一次向量维度并登记（用户主动操作，消耗可预期）：登记后本库所有后台动作
+        // （删文档/删块/清索引/建 schema）取维度都走本地真值，不再打 embedding 网关——
+        // 否则这些与用户无关的后台动作会持续消耗该库绑定供应商的额度（额度耗尽还会连带删不掉文档）。
+        kb.setEmbeddingDimensions(probeEmbeddingDimension(kb.getEmbeddingRef()));
         // 开关开启时保存即校验抽取模型可用（库级优先、回落全局；对库主不可用一律拦下，
         // 避免"开关开着、解析后抽取永远失败"的静默状态）
         ensureGraphModelUsable(kb.getGraphEnabled(), kb.getGraphModelRef(), uid,
@@ -199,10 +207,13 @@ public class KnowledgeBaseService {
         if (body.containsKey("embeddingRef")) {
             // 归属校验按**当前操作者**判（create/update 都只在请求线程里被控制器调用；
             // 能走到这里的操作者即该库的管理者，见 KnowledgeBaseController 的资源级判定）
-            upd.set(KnowledgeBase::getEmbeddingRef, validateEmbeddingRef(str(body.get("embeddingRef")),
-                    com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.role()));
-            // 模型切换后维度以重嵌结果为准，先清掉旧记录
-            upd.set(KnowledgeBase::getEmbeddingDimensions, null);
+            String newRef = validateEmbeddingRef(str(body.get("embeddingRef")),
+                    com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.role());
+            upd.set(KnowledgeBase::getEmbeddingRef, newRef);
+            // 模型切换：旧维度作废，但立即探新模型的维度登记——不留空是为了让换模型后的
+            // 删文档/清索引等后台动作不必再远程探维度（换模型本就是用户主动操作，此刻探一次合理）。
+            // 重嵌成功后 DocumentService.reembedKbAsync 会以实际维度再回写校正。
+            upd.set(KnowledgeBase::getEmbeddingDimensions, probeEmbeddingDimension(newRef));
         }
         // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
         int resultingGraph = kb.getGraphEnabled() == null ? 0 : kb.getGraphEnabled();
@@ -330,6 +341,29 @@ public class KnowledgeBaseService {
             throw new com.wenqu.ai.common.BizException("知识库向量模型需为向量类型（当前所选为 " + type + " 类型）");
         }
         return v;
+    }
+
+    /**
+     * 探测向量模型维度，供库级登记（{@code embedding_dimensions}）。
+     *
+     * <p><b>为什么建库/换模型时就要探</b>：维度只用于「取维度」这一件事，而
+     * {@code RedisVectorStore} 的删除、建 schema 都会取它（Spring AI 1.1.8 查不到内置维度表
+     * 就真发一次 embedding 请求）。不在这里登记，那些<b>与用户无关的后台动作</b>——删文档、
+     * 删块、清索引、定时任务清库——每次都要打网关，持续消耗本库绑定供应商的额度；
+     * 额度耗尽时更连带「文档删不掉」（删除链路在建埋点上下文时先取维度）。
+     *
+     * <p><b>探测失败不阻断保存</b>：维度只是缓存值，未登记时后续仍会回落远程探测。
+     * 但要 WARN 留痕——否则表现为「偶发地删文档失败」，无从追查。
+     */
+    private Integer probeEmbeddingDimension(String ref) {
+        try {
+            int dim = dynamicEmbeddingModel.forRef(ref).dimensions();
+            return dim > 0 ? dim : null;
+        } catch (Exception e) {
+            log.warn("[KB-VEC] 向量模型 {} 维度探测失败（不影响保存，维度留空后续按需回落探测）: {}",
+                    ref, e.getMessage());
+            return null;
+        }
     }
 
     /**
