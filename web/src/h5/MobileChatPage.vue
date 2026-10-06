@@ -60,12 +60,21 @@
     </div>
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
-      <!-- 空态：品牌 + 示例问题（点即发） -->
+      <!-- 空态：品牌 + 示例问题（点即发）。
+           门控与 PC 欢迎区同一条：聊天/默认模型未就绪时换成配置引导——没有模型时点示例
+           只会弹拦截 toast，是死路；loaded=false（首次对账未成功）维持示例卡，不闪假引导 -->
       <div v-if="!messages.length" class="m-welcome">
         <BrandMark class="m-brand" />
-        <div class="m-welcome-title">有什么可以帮你？</div>
-        <div class="m-welcome-sub">智能体与知识库问答，支持图片提问与深度思考</div>
-        <MobileSampleCards :questions="SAMPLE_QUESTIONS" @ask="ask" />
+        <template v-if="setupGuide.loaded && !chatDone">
+          <div class="m-welcome-title">欢迎使用问渠</div>
+          <div class="m-welcome-sub">完成下面的配置即可开始对话</div>
+          <div class="m-setup"><SetupGuide scope="chat" variant="card" /></div>
+        </template>
+        <template v-else>
+          <div class="m-welcome-title">有什么可以帮你？</div>
+          <div class="m-welcome-sub">智能体与知识库问答，支持图片提问与深度思考</div>
+          <MobileSampleCards :questions="SAMPLE_QUESTIONS" @ask="ask" />
+        </template>
       </div>
 
       <MobileMsgRow
@@ -227,6 +236,8 @@ import MobileNotifSheet from './MobileNotifSheet.vue'
 import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
+import SetupGuide from '../components/SetupGuide.vue'
+import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 
 const router = useRouter()
 
@@ -489,6 +500,7 @@ const onViewportChange = () => { if (!preferMobileShell()) router.replace({ path
 
 onMounted(async () => {
   window.addEventListener('resize', onViewportChange, { passive: true })
+  refreshSetupGuide()   // 空态引导卡状态（TTL 15s 去重；PC 由 AppLayout/ChatPage 触发，移动壳不经那边）
   await ready()
   autosize()
 })
@@ -594,6 +606,8 @@ onUnmounted(() => {
 .m-brand { font-size: 40px; }
 .m-welcome-title { margin-top: 12px; font-size: 19px; font-weight: 600; }
 .m-welcome-sub { margin: 6px 0 16px; font-size: 13px; color: var(--app-text3); text-align: center; }
+/* 配置引导卡：SetupGuide 是 PC 宽度设计（max-width 560px），容器内收边并左对齐文字 */
+.m-setup { width: 100%; max-width: 460px; padding: 0 4px; box-sizing: border-box; text-align: left; }
 .m-jump {
   position: absolute; right: 14px; bottom: calc(150px + var(--sab, 0px) + var(--kb, 0px));
   width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--app-border);

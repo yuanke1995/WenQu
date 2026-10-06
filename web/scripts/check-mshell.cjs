@@ -25,6 +25,8 @@ const ORIGIN = 'http://m.local'
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
 // 静态服务 + mock 身份（路由守卫要 /auth/me；其余接口掐断 → 页面落到「无会话」的空态）
+// 配置引导断言用开关：先给"未就绪"（无模型）看引导卡，断言后翻成"就绪"看示例卡
+let setupUnready = true
 function serveStatic (page) {
   return page.route('**/*', route => {
     const u = new URL(route.request().url())
@@ -47,12 +49,18 @@ function serveStatic (page) {
     if (u.pathname === '/api/ai/notification/read' || u.pathname === '/api/ai/notification/read-all') return json({})
     // 单轮操作（P1）断言所需：一段可加载的历史 + 管理员调试开关 + 调试/评测/删除接口
     if (u.pathname === '/api/ai/config') return json({ chat: { retrievalDebugEnabled: { value: 'true' } } })
+    // 配置引导（setupGuide）的两个数据源：模型可用列表与个人偏好（defaultModel）
+    if (u.pathname === '/api/ai/provider/available') {
+      return json(setupUnready ? [] : [{ name: '平台内置', models: [{ ref: 'chat-1', displayName: '演示聊天模型', type: 'chat' }] }])
+    }
+    if (u.pathname === '/api/ai/user/preference') return json({ defaultModel: setupUnready ? '' : 'chat-1' })
     if (u.pathname === '/api/ai/session/s-round') {
       return json([
         { messageId: 'q-1', role: 'user', content: '登录步骤是什么？', createTime: Date.now() - 120000 },
         { messageId: 'a-1', role: 'assistant', content: '按下面三步登录：① 打开登录页 ② 输入账号 ③ 提交。', createTime: Date.now() - 60000,
           sources: [{ knowledgeId: 'k-1', ref: '1', fileName: '操作手册.pdf', title: '登录', snippet: '登录流程说明…', score: 0.82 }],
-          tokens: { prompt: 1200, context: 8, output: 300, total: 1500 } }
+          tokens: { prompt: 1200, context: 8, budget: 8000, window: 8000, output: 300, total: 1500, cached: 600,
+                    parts: { messages: 900, system: 200, input: 100 } } }
       ])
     }
     if (u.pathname === '/api/ai/debug/retrieval') {
@@ -133,6 +141,24 @@ const check = (ok, label, detail = '') => {
   check(m1.sendSize >= 40, '发送键触控热区 ≥40px', `w=${m1.sendSize}`)
   check(m1.minBarBtn >= 40, '顶栏按钮触控热区 ≥40px', `minW=${m1.minBarBtn}`)
   check(m1.chatH >= 800, '满高容器（--app-vh 生效）', `h=${m1.chatH}`)
+
+  // ---- 空态配置引导（P2）：模型未就绪 → 配置引导卡；就绪 → 回到示例卡（与 PC 欢迎区同一门控）----
+  const guideState = await page.evaluate(() => ({
+    sg: !!document.querySelector('.m-welcome .sg'),
+    samples: !!document.querySelector('.m-samples'),
+    title: (document.querySelector('.m-welcome-title') || {}).textContent || ''
+  }))
+  check(guideState.sg && !guideState.samples, '模型未就绪时空态显示配置引导卡（不再显示点了必失败的示例）', JSON.stringify(guideState))
+  check(guideState.title.includes('欢迎使用问渠'), '引导态标题切换', guideState.title)
+  setupUnready = false
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(1300)
+  const readyState = await page.evaluate(() => ({
+    sg: !!document.querySelector('.m-welcome .sg'),
+    samples: !!document.querySelector('.m-samples'),
+    title: (document.querySelector('.m-welcome-title') || {}).textContent || ''
+  }))
+  check(!readyState.sg && readyState.samples, '模型就绪后空态回到示例卡', JSON.stringify(readyState))
 
   // ---- 各 sheet 开合 ----
   const openSheet = async (sel, waitMs = 900) => {
@@ -223,6 +249,19 @@ const check = (ok, label, detail = '') => {
     more: !!document.querySelector('.ai-actions .act-btn[title="更多操作"]') }))
   check(loaded.rows === 2, 'mock 历史渲染出两行消息', `rows=${loaded.rows}`)
   check(loaded.more, '最新一条 AI 消息的操作行有「更多操作」入口')
+
+  // ---- 上下文容量（P2）：填充段 + 窗口占用 + 缓存命中率（mock tokens 带 parts/window/cached）----
+  check(await openSheet('.m-bar-title'), '状态与来源 sheet 可打开（容量断言用）')
+  const capState = await page.evaluate(() => ({
+    segs: document.querySelectorAll('.cap-bar .cap-seg').length,
+    meta: (document.querySelector('.cap-meta') || {}).textContent.replace(/\s+/g, ' ').trim(),
+    rows: [...document.querySelectorAll('.rs-kv .cap-label')].map(x => x.textContent.trim()).join('/')
+  }))
+  check(capState.segs === 3, '容量填充条按分类分段（mock 三类）', `segs=${capState.segs}`)
+  check(/缓存命中 50%/.test(capState.meta), '窗口用量与缓存命中率已展示', capState.meta)
+  check(capState.rows.includes('消息') && capState.rows.includes('系统提示词'), '分类明细带标签', capState.rows)
+  await page.locator('.bs-close').first().dispatchEvent('click')
+  await page.waitForTimeout(500)
   await page.locator('.ai-actions .act-btn[title="更多操作"]').dispatchEvent('click')
   await page.waitForTimeout(900)
   const rdMenu = await page.evaluate(() => [...document.querySelectorAll('.rd-btn')].map(b => b.textContent.trim()))

@@ -53,6 +53,8 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 | 站内通知 | 侧栏 foot 铃铛 popover（未读 Badge，30s 轮询） | 顶栏铃铛 → 通知 sheet（角标与列表同源，同一份 useNotifications.js） |
 | 个人设置 / 帮助 / 主题 / 退出 | 侧栏 foot | 会话 sheet 底部四项（壳外入口；通知不在其中，铃铛是高频动作单列顶栏） |
 | 工具审批恢复 | 消息区顶部横幅（`?approval=` 深链重建） | 消息区顶部横幅（同一份 useApprovalRecovery.js） |
+| 上下文容量 | 工具栏圆环 + 悬浮容量卡（十类构成/缓存命中） | 「状态与来源」sheet 的容量段（同算法，分段与标签同 PC） |
+| 空态配置引导 | 欢迎区换 `SetupGuide`（`loaded && !chatDone` 门控） | 同左（同一组件、同一门控；移动壳自己触发 refreshSetupGuide） |
 | 会话分享（只读链接） | 页头动作区的 `a-modal` | 「状态与来源」sheet 内展开（同一份 shareSession.js） |
 | 导出 Markdown | 页头「更多」菜单 / 侧栏菜单 | 会话级：「状态与来源」sheet 保存 + 复制双通道；单轮：操作行「⋯」→ sheet（同 PC 的 buildAnswerMd/buildSessionMd） |
 | 「更多」菜单（评测 / 检索调试 / 删除本轮） | 消息操作行的 a-dropdown | 操作行「⋯」→ 底部 sheet（MobileRoundSheet，同四项） |

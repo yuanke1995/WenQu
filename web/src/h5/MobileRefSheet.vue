@@ -36,6 +36,24 @@
         <div v-if="tokens.cached > 0" class="rs-kv"><span>缓存命中</span><b>{{ tokens.cached }} tokens</b></div>
       </template>
 
+      <!-- ---- 上下文容量（PC 是工具栏圆环 + 悬浮容量卡；手机收进这里）----
+           门控与标题同 PC：窗口未知时退化为纯构成列表（只给分类，不编造分母） -->
+      <div class="rs-section">上下文容量<span v-if="cap.window > 0" class="rs-n">占窗口 {{ cap.pct }}%</span></div>
+      <template v-if="cap.window > 0">
+        <div class="cap-bar">
+          <span v-for="r in cap.rows" :key="r.key" class="cap-seg" :style="{ width: cap.segW(r), background: r.color }" />
+        </div>
+        <div class="cap-meta">
+          {{ fmtWindow(cap.used) }} / {{ fmtWindow(cap.window) }}
+          <template v-if="cap.cacheRate != null"> · 缓存命中 {{ cap.cacheRate }}%</template>
+        </div>
+      </template>
+      <div v-for="r in cap.rows" :key="r.key" class="rs-kv">
+        <span class="cap-label"><i class="cap-dot" :style="{ background: r.color }" />{{ r.label }}</span>
+        <b>{{ fmtTokens(r.tokens) }}</b>
+      </div>
+      <div v-if="!cap.window && !cap.rows.length" class="rs-empty">本轮还没有容量明细（随用量事件下发）</div>
+
       <!-- ---- 会话累计 ---- -->
       <div class="rs-section">本会话累计</div>
       <div class="rs-kv"><span>已完成轮次</span><b>{{ sessionTokens.rounds }}</b></div>
@@ -103,7 +121,7 @@ import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutline
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import { fmtTokens } from '../utils/token'
-import { fmtSourceScore } from '../chat/projections'
+import { fmtSourceScore, fmtWindow } from '../chat/projections'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'
@@ -113,7 +131,39 @@ defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionTokensLabel, sessionRetrieval, sessionArtifacts,
-  currentSessionId, currentSessionTitle, messages } = engine
+  currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel } = engine
+
+// 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
+// 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
+// 纯呈现映射，两端各自持有（抽到共用单元会把两端一起拖住）。
+const CTX_PART_META = [
+  { key: 'messages', label: '消息', color: '#1677ff' },
+  { key: 'summary', label: '早期摘要', color: '#13c2c2' },
+  { key: 'chunks', label: '知识块', color: '#52c41a' },
+  { key: 'system', label: '系统提示词', color: '#722ed1' },
+  { key: 'toolSchema', label: '系统工具', color: '#fa8c16' },
+  { key: 'mcpSchema', label: 'MCP 工具', color: '#eb2f96' },
+  { key: 'skill', label: '技能', color: '#a0d911' },
+  { key: 'memory', label: '记忆', color: '#2f54eb' },
+  { key: 'input', label: '输入', color: '#8c8c8c' },
+  { key: 'other', label: '其他', color: '#bfbfbf' }
+]
+const cap = computed(() => {
+  const t = ctxTokens.value
+  const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || Number(t && t.budget) || 0
+  const used = t ? (Number(t.prompt) || Number(t.context) || 0) : 0
+  const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
+  const rows = parts
+    ? CTX_PART_META.filter(x => Number(parts[x.key]) > 0).map(x => ({ ...x, tokens: Number(parts[x.key]) }))
+    : []
+  const cached = (t && Number(t.cached) > 0) ? Number(t.cached) : 0
+  return {
+    window: win, used, rows,
+    pct: win > 0 ? Math.min(100, Math.round(used / win * 1000) / 10) : 0,
+    segW: r => win > 0 ? Math.min(100, r.tokens / win * 100).toFixed(2) + '%' : '0%',
+    cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
+  }
+})
 
 // 分组展开态：PC 侧这份状态在视图层（srcOpen/srcOpenOf/toggleSrc 未进引擎），移动壳按同口径本地实现
 //（key → 开/合，默认展开；存 reactive 容器而非 computed 内，流式更新 sources 后已收起的组不弹回）
@@ -199,6 +249,12 @@ watch(currentSessionId, () => { built.value = null; shareOpen.value = false; res
 .rs-ic { color: var(--app-text3); flex: none; }
 .rs-kv { display: flex; justify-content: space-between; font-size: 13px; color: var(--app-text2); padding: 7px 2px; border-bottom: 1px dashed var(--app-border); }
 .rs-kv b { color: var(--app-text); font-weight: 500; }
+/* 容量填充条：轨道 8px 圆角，段宽=该分类占窗口的比例（分段之和即用量，天然与用量口径一致） */
+.cap-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--app-panel-2); border: 1px solid var(--app-border); }
+.cap-seg { height: 100%; }
+.cap-meta { font-size: 12px; color: var(--app-text3); padding: 6px 2px 2px; }
+.cap-label { display: inline-flex; align-items: center; gap: 6px; }
+.cap-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .rs-art { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; color: var(--app-text2); text-decoration: none; font-size: 13px; }
 .rs-art-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 「这段对话」的操作块：44px 触摸热区，危险动作（停止分享）单独占一行不与常用动作挤在一起 */
