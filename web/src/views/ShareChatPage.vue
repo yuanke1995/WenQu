@@ -12,33 +12,29 @@
       </a>
     </header>
 
-    <div ref="listEl" class="sc-list" :class="{ hero: !messages.length && !loading }">
-      <!-- 空态：整块垂直居中（此前顶在上方留大片空白，页面显得空且廉价） -->
-      <div v-if="!messages.length && !loading" class="sc-hero">
-        <div class="sc-hero-mark"><AgentAvatar :agent="info" :size="56" /></div>
-        <h1 class="sc-hero-t">{{ info.name || '智能体对话' }}</h1>
-        <p class="sc-hero-d">{{ info.description || '在下方输入你的问题，我会基于所配置的资料与能力回答。' }}</p>
-        <div class="sc-hero-tip">
-          <span class="sc-hero-dot" />
-          {{ info.name ? `正在与「${info.name}」对话` : '智能体已就绪' }}
-        </div>
+    <div ref="listEl" class="sc-list">
+      <!-- 空态：与 ChatPage 的 .welcome 同一套（靠上 + 智能体头像 + 名称 + 描述），
+           此前自创了"垂直居中 + 就绪胶囊"那套，与主聊天页观感不一致。 -->
+      <div v-if="!messages.length && !loading" class="sc-welcome">
+        <AgentAvatar :agent="info" :size="44" class="sc-welcome-mark" />
+        <h2>{{ info.name || '智能体对话' }}</h2>
+        <p>{{ info.description || '在下方输入你的问题，我会基于所配置的资料与能力回答。' }}</p>
       </div>
-      <div v-else class="sc-thread">
-        <div v-for="(m, i) in messages" :key="i" class="sc-row" :class="m.role">
+      <div v-for="(m, i) in messages" :key="i" class="sc-row" :class="m.role">
+        <div class="sc-msg-block" :class="m.role">
+          <!-- 用户：浅灰底气泡（与 ChatPage .bubble.user 同款，不是主色蓝） -->
           <div v-if="m.role === 'user'" class="sc-bubble user">{{ m.content }}</div>
-          <div v-else class="sc-bubble-wrap ai">
-            <div class="sc-ai-mark"><AgentAvatar :agent="info" :size="26" /></div>
-            <!-- 还没出正文时不要画气泡壳：只留头像 + 一行带呼吸点的提示。
-                 此前是「空气泡（有边框有内边距）里再套一个虚线小框」，框中框套两层，
-                 文字还被虚线框挤成两行。生成中本就该是轻量的。 -->
+          <!-- AI：无气泡，正文直接排（ChatPage .bubble.ai 是 transparent + padding:0） -->
+          <div v-else class="sc-bubble ai">
+            <!-- 还没出正文时只留一行带呼吸点的提示，不画任何框 -->
             <div v-if="!m.content" class="sc-typing">
               <span class="sc-pulse" /><span>{{ m.stage || '正在思考…' }}</span>
             </div>
-            <div v-else class="sc-bubble ai">
+            <template v-else>
               <div class="sc-md" v-html="renderMd(m.content, [])"></div>
-              <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注，不再单独起框 -->
+              <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注 -->
               <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ m.stage }}</div>
-            </div>
+            </template>
           </div>
         </div>
       </div>
@@ -212,52 +208,46 @@ function stop () {
 }
 .sc-brand:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 
-/* ---------- 消息区 ---------- */
-.sc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px; }
-/* 对话线程限宽居中：此前气泡直接铺满视口，宽屏下行长失控、左右两侧空白比例失衡 */
-.sc-thread { max-width: 820px; margin: 0 auto; }
-/* 消息从顶部往下排（所有聊天产品的行为，也是内容变多时的自然方向）。
-   曾试过"内容不足一屏时贴底"（justify-content:flex-end + margin-top:auto），
-   结果首轮只有一条消息时它沉到页面最底部、上方 500px 全空，看着像掉下去了 —— 更糟，已回退。 */
-/* 空态：垂直居中，不再顶在上方。
-   width:100% 是必需的——.sc-list.hero 是 flex 容器，居中子项默认按内容宽度收缩，
-   桌面 1280 下空态块会缩成 210px 的一小条。 */
-.sc-list.hero { display: flex; align-items: center; justify-content: center; }
-.sc-hero { width: 100%; max-width: 560px; text-align: center; padding: 0 20px; }
-.sc-hero-mark { display: flex; justify-content: center; margin-bottom: 16px; }
-.sc-hero-t { margin: 0 0 8px; font-size: 20px; font-weight: 600; color: var(--app-text); line-height: 1.4; }
-.sc-hero-d { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--app-text2); }
-.sc-hero-tip {
-  display: inline-flex; align-items: center; gap: 6px; margin-top: 18px;
-  font-size: 12px; color: var(--app-text3);
-  background: var(--app-panel); border: 1px solid var(--app-border);
-  border-radius: 999px; padding: 5px 12px;
-}
-.sc-hero-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-ok); flex: none; }
+/* ---------- 消息区：与 ChatPage 同一套设计语言 ----------
+   之前分享页自创了另一套（用户蓝底 + AI 白底带边框 + 消息侧挂头像），
+   与主聊天页观感割裂。关键三条按 ChatPage 对齐：
+   ① 用户气泡是 --app-panel-2 浅灰底，不是主色蓝；
+   ② AI 消息**完全无气泡**（transparent + padding:0），正文直接排版；
+   ③ 消息块 max-width: min(94%, 860px) 居中，与 .input-box 同宽。 */
+.sc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 32px 8px; }
 
-.sc-row { display: flex; margin-bottom: 18px; }
-.sc-row.user { justify-content: flex-end; }
-.sc-bubble-wrap { display: flex; gap: 10px; align-items: flex-start; min-width: 0; max-width: 100%; }
-.sc-ai-mark { flex: none; margin-top: 2px; }
-.sc-bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.75; word-break: break-word; }
-/* 用户气泡：右对齐 + 主色实底；AI 气泡：白底卡片 + 细边（此前 AI 侧无气泡感，与用户气泡同为圆角块、难分主次） */
-.sc-bubble.user { background: var(--app-accent); color: #fff; white-space: pre-wrap; box-shadow: var(--app-shadow-sm); }
-.sc-bubble.ai {
-  background: var(--app-panel); color: var(--app-text);
-  border: 1px solid var(--app-border); box-shadow: var(--app-shadow-sm);
-  border-top-left-radius: 4px; min-width: 0;
+/* 空态 = ChatPage 的 .welcome：靠上（padding 72px 起），不垂直居中 */
+.sc-welcome { text-align: center; padding: 72px 20px 40px; }
+.sc-welcome-mark { display: block; margin: 0 auto; }
+.sc-welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; color: var(--app-text); }
+.sc-welcome p { color: var(--app-text3); margin: 0; font-size: 13px; line-height: 1.7; }
+
+.sc-row { display: flex; flex-wrap: wrap; margin-bottom: 20px; justify-content: center; }
+.sc-msg-block {
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  max-width: min(94%, 860px); width: 100%;
 }
-/* 生成中（正文未到）：无边框的一行提示，不占气泡壳。
-   此前是「空气泡里套虚线小框」，两层框把 6 个字挤成两行，看着像坏掉的卡片。 */
+.sc-msg-block.user { align-items: flex-end; }
+.sc-msg-block.ai { align-items: flex-start; }
+
+.sc-bubble { width: 100%; line-height: 1.65; font-size: 14px; color: var(--app-text); word-break: break-word; }
+/* 用户气泡：浅灰底 + 圆角，宽度贴合内容（与 ChatPage .bubble.user 逐项一致） */
+.sc-bubble.user {
+  background: var(--app-panel-2); border-radius: 12px; padding: 9px 14px;
+  width: fit-content; max-width: 100%; white-space: pre-wrap;
+}
+/* AI 侧无气泡：正文直接排版，不画边框不画底 */
+.sc-bubble.ai { background: transparent; padding: 0; }
+
+/* 生成中（正文未到）：一行带呼吸点的提示，什么框都不画。
+   加 flex:none 是因为它是 .sc-msg-block 的 flex item，默认可被压缩，一压就折成两行。 */
 .sc-typing {
-  /* flex:none —— 它是 .sc-bubble-wrap 的 flex item，默认可被压缩，
-     一旦被压就会把「正在检索资料」折成两行（截图里的现象） */
   flex: none;
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 13px; color: var(--app-text3); line-height: 1.6;
-  padding: 3px 0; white-space: nowrap;
+  padding: 2px 0; white-space: nowrap;
 }
-/* 正文已出、又推来阶段提示：作为正文下方的脚注一行，不单独起框 */
+/* 正文已出、又推来阶段提示：正文下方的脚注一行 */
 .sc-stage {
   display: flex; align-items: center; gap: 7px;
   font-size: 12px; color: var(--app-text3); margin-top: 8px; line-height: 1.6;
@@ -268,49 +258,45 @@ function stop () {
 }
 @keyframes sc-blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
-/* ---------- 输入区 ---------- */
-.sc-input-wrap {
-  flex: none; padding: 14px 20px 12px;
-  background: var(--app-panel); border-top: 1px solid var(--app-border);
-}
+/* ---------- 输入区：与 ChatPage .input-box 同款 ---------- */
+.sc-input-wrap { flex: none; padding: 10px 20px 12px; background: var(--app-bg); }
 .sc-input {
-  display: flex; gap: 10px; align-items: flex-end;
-  max-width: 820px; margin: 0 auto;
-  background: var(--app-bg); border: 1px solid var(--app-border-strong);
-  border-radius: 14px; padding: 6px 6px 6px 12px;
-  transition: border-color .15s, box-shadow .15s;
+  position: relative; display: flex; gap: 8px; align-items: flex-end;
+  max-width: 860px; margin: 0 auto;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 16px; padding: 10px 12px 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
+  transition: border-color .2s, box-shadow .2s;
 }
-.sc-input:focus-within { border-color: var(--app-accent); box-shadow: 0 0 0 3px var(--app-accent-weak); }
+.sc-input:focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
+}
 .sc-textarea {
   flex: 1; resize: none; border: none; background: transparent;
-  padding: 6px 0; font-size: 14px; line-height: 1.6; font-family: inherit;
+  padding: 6px 4px; font-size: 14px; line-height: 1.6; font-family: inherit;
   color: var(--app-text); outline: none;
 }
 .sc-send {
-  width: 36px; height: 36px; border-radius: 10px; border: none; flex: none;
+  width: 30px; height: 30px; border-radius: 50%; border: none; flex: none;
   background: var(--app-accent); color: #fff; cursor: pointer; font-size: 15px;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background .15s;
+  display: inline-flex; align-items: center; justify-content: center; transition: background .2s;
 }
-.sc-send:hover { background: var(--app-accent-hover); }
-/* 禁用态：浅蓝底（--app-accent-disabled）+ 白图标，对比度太低，图标几乎看不见，
-   看着像按钮坏了。改灰底灰图标 —— 禁用就该"退后"而不是"变淡"。
-   :hover 规则在禁用时也会命中，要显式压回灰底，否则鼠标一放上去就"可用了"的错觉。 */
+.sc-send:hover:not(:disabled) { background: var(--app-accent-hover); }
+/* 禁用态：浅蓝底 + 白图标对比度太低，图标几乎看不见。改灰底灰图标（与 ChatPage/H5 同口径） */
 .sc-send:disabled { background: var(--app-border); color: var(--app-text3); cursor: not-allowed; }
-.sc-send:disabled:hover { background: var(--app-border); }
-.sc-send.stop { background: #f53f3f; }
+/* 停止态：弱化危险色（浅红底+危险色内容），与 ChatPage .send-btn.stop 同一视觉语言 */
+.sc-send.stop { background: var(--app-danger-weak); color: var(--app-danger-text); border: 1px solid var(--app-danger-border); }
 .sc-foot {
-  max-width: 820px; margin: 8px auto 0; display: flex; justify-content: space-between;
+  max-width: 860px; margin: 8px auto 0; display: flex; justify-content: space-between;
   gap: 12px; font-size: 11.5px; color: var(--app-text3);
 }
 .sc-foot-hint { white-space: nowrap; }
 
 /* iframe 嵌入紧凑模式：无头部、小内边距、空态收紧（宿主给的框通常只有 420×640） */
 .sc-page.embed .sc-list { padding: 12px; }
-.sc-page.embed .sc-thread { max-width: 100%; }
-.sc-page.embed .sc-list.hero { padding: 16px 12px; }
-.sc-page.embed .sc-hero-mark { margin-bottom: 10px; }
-.sc-page.embed .sc-hero-t { font-size: 16px; }
+.sc-page.embed .sc-welcome { padding: 28px 12px 20px; }
+.sc-page.embed .sc-welcome h2 { font-size: 15px; margin-top: 10px; }
 .sc-page.embed .sc-input-wrap { padding: 8px 12px 8px; }
 .sc-page.embed .sc-foot-hint { display: none; }
 
@@ -341,10 +327,11 @@ function stop () {
   .sc-brand { padding: 5px 7px; }
   .sc-list { padding: 14px 12px 8px; overscroll-behavior-y: contain; }
   .sc-row { margin-bottom: 14px; }
-  .sc-hero { padding: 0 8px; }
-  .sc-hero-t { font-size: 18px; }
-  /* 气泡 78% 在窄屏上偏窄，行长变短反而更易读，但留 88% 更省纵向空间 */
-  .sc-bubble { max-width: 86%; padding: 9px 12px; font-size: 14px; }
+  .sc-welcome { padding: 40px 8px 24px; }
+  /* 消息块在窄屏放开到 100%：min(94%,860px) 的 94% 在 412 屏上只有 387px，
+     再叠加气泡自身内边距会显得窄；行长由 .sc-bubble 的可读宽度兜住 */
+  .sc-msg-block { max-width: 100%; }
+  .sc-bubble.user { padding: 8px 12px; }
   /* 底部输入区：留出 Home Indicator + 键盘高度 */
   .sc-input-wrap { padding: 8px 10px calc(8px + var(--sab, 0px)); }
   .sc-input { gap: 6px; padding: 5px 5px 5px 10px; border-radius: 12px; }

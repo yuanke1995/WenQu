@@ -141,12 +141,15 @@ const check = (ok, label, detail = '') => {
     const page_ = document.querySelector('.sc-page')
     const list = document.querySelector('.sc-list')
     const listRect = list ? list.getBoundingClientRect() : { height: 0 }
-    const heroRect = document.querySelector('.sc-hero') ? document.querySelector('.sc-hero').getBoundingClientRect() : null
+    const heroRect = document.querySelector('.sc-welcome') ? document.querySelector('.sc-welcome').getBoundingClientRect() : null
+    // 标题顶边（不是 .sc-welcome 盒子顶边——后者含 72px padding，量盒子会低估留白）
+    const heroTitle = document.querySelector('.sc-welcome h2')
+    const heroTitleTop = heroTitle ? Math.round(heroTitle.getBoundingClientRect().top) : -1
     return {
       name: (document.querySelector('.sc-name') || {}).textContent || '',
-      hero: !!document.querySelector('.sc-hero'),
+      hero: !!document.querySelector('.sc-welcome'),
       // 空态必须垂直居中：此前顶在上方，下面留一大片空白，页面显得空且廉价
-      heroTopGap: heroRect ? Math.round(heroRect.top - listRect.top) : -1,
+      heroTopGap: heroTitleTop,
       heroBotGap: heroRect && listRect.height ? Math.round(listRect.top + listRect.height - heroRect.bottom) : -1,
       headAvatarEmoji: (document.querySelector('.sc-avatar') || {}).textContent || '',
       brand: !!document.querySelector('.sc-brand'),
@@ -160,9 +163,11 @@ const check = (ok, label, detail = '') => {
   check(sc.name.includes('客服助手') && sc.hero, '智能体分享页头部与空态渲染', sc.name)
   check(sc.headAvatarEmoji.includes('📦'), '头部用智能体自身图标（icon 字段透传到 AgentAvatar）', sc.headAvatarEmoji)
   check(sc.brand, '头部右侧有「问渠 WenQu」品牌标识（访客知道这是谁家的机器人）')
-  // 空态居中：上下留白差不超过 60px 才算真的居中（此前 top≈24 / bot≈700）
-  check(sc.heroTopGap > 0 && sc.heroBotGap > 0 && Math.abs(sc.heroTopGap - sc.heroBotGap) < 60,
-    '空态在消息区垂直居中（非顶靠）', `top=${sc.heroTopGap} bottom=${sc.heroBotGap}`)
+  // 空态改为**靠上**（对齐 ChatPage .welcome 的 padding:72px 起）。
+  // 曾改成垂直居中、后又试过"消息贴底"，两次都被判定为更糟并回退 —— 这里是回归保护。
+  // 断标题顶边：.sc-welcome 盒子含 72px padding，量盒子会低估实际留白。
+  check(sc.heroTopGap >= 100,
+    '空态靠上且留出呼吸位（对齐 ChatPage .welcome：72px padding + 44px 标 + 14px 间距）', `标题top=${sc.heroTopGap}`)
   check(sc.taFont >= 16, '输入框字号 ≥16px（iOS 聚焦不缩放）', `font=${sc.taFont}`)
   check(sc.taEnterhint === 'send', '软键盘回车键显「发送」（enterkeyhint=send）', `enterkeyhint=${sc.taEnterhint}`)
   check(sc.sendSize >= 44, '发送键触摸热区 ≥44px', `w=${sc.sendSize}`)
@@ -210,7 +215,14 @@ const check = (ok, label, detail = '') => {
       // 单行：高度不应超过 ~28px（折成两行会翻倍）
       tipH: Math.round(r.height), tipW: Math.round(r.width),
       // 生成中不该有气泡壳：没有边框/底色，也就没有"框中框"
-      bubbleN: document.querySelectorAll('.sc-bubble.ai').length,
+      // 「无气泡壳」= 元素可存在（内容容器），但不得有边框/底色/内边距。
+      // 断元素个数会把"改成 transparent 但保留容器"这种正确实现误判成 bug。
+      bubbleStyle: (() => {
+        const e = document.querySelector('.sc-bubble.ai')
+        if (!e) return null
+        const cs = getComputedStyle(e)
+        return { bg: cs.backgroundColor, border: cs.borderTopWidth, pad: cs.paddingTop }
+      })(),
       rows: document.querySelectorAll('.sc-row').length,
       sending: !!document.querySelector('.sc-send.stop')
     }
@@ -220,8 +232,11 @@ const check = (ok, label, detail = '') => {
     '进行中：提示只出现一次（不多处渲染同一条）', `typing=${during.tipN} stage=${during.stageN} "${during.tipText}"`)
   check(during.tipH > 0 && during.tipH <= 30,
     '进行中：提示是单行（不被挤成两行）', `h=${during.tipH} "${during.tipText}"`)
-  check(during.bubbleN === 0,
-    '进行中：不画空气泡壳（此前是「空气泡里再套虚线小框」的框中框）', `bubble=${during.bubbleN}`)
+  // AI 侧**本就没有气泡壳**（对齐 ChatPage .bubble.ai：transparent + padding:0）。
+  // 断"背景透明 + 无边框 + 无内边距"三项，而不是断元素个数——元素是内容容器，本就该存在。
+  const bs = during.bubbleStyle
+  check(bs && bs.bg === 'rgba(0, 0, 0, 0)' && parseFloat(bs.border) === 0 && parseFloat(bs.pad) === 0,
+    '进行中：AI 侧无气泡壳（背景透明/无边框/无内边距）', JSON.stringify(bs))
   check(during.rows === 2, '进行中：一轮问答仍只渲染 2 条（无多余的阶段气泡）', `rows=${during.rows}`)
 
   // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
@@ -242,23 +257,25 @@ const check = (ok, label, detail = '') => {
   await dpage.waitForTimeout(900)
   const dsc = await dpage.evaluate(() => {
     const ta = document.querySelector('.sc-textarea')
-    const th = document.querySelector('.sc-thread') || document.querySelector('.sc-hero')
-    const hero = document.querySelector('.sc-hero')
+    const th = document.querySelector('.sc-msg-block')
+    const hero = document.querySelector('.sc-welcome')
     const inp = document.querySelector('.sc-input')
     return {
       taFont: ta ? getComputedStyle(ta).fontSize : '',
       // 桌面宽度下线程/输入区必须限宽居中，否则 1280 宽的气泡行长失控。
       // 空态量 maxWidth 而非实际宽：hero 是 flex 居中子项，按内容收缩是 flex 的正常行为，
       // 真正要卡的是「它最多能有多宽」——CSS 错写成 max-width 缺失时才会真的铺满。
-      heroMax: hero ? Math.round(parseFloat(getComputedStyle(hero).maxWidth) || 9999) : 0,
+      // .sc-welcome 无 max-width（块级靠父 padding 控宽），断 max-width 会读到 9999。
+      // 断**内容实际宽度**：不铺满视口即可。
+      heroW: hero ? Math.round(hero.getBoundingClientRect().width) : 0,
       threadW: th ? Math.round(th.getBoundingClientRect().width) : 0,
       inputW: inp ? Math.round(inp.getBoundingClientRect().width) : 0,
       vw: window.innerWidth
     }
   })
   check(parseFloat(dsc.taFont) < 16, '桌面输入框保持 14px（16px 规则只在 ≤768 补丁内）', `font=${dsc.taFont}`)
-  check(dsc.heroMax > 0 && dsc.heroMax <= 640, '桌面空态限宽（≤640px，不铺满视口）', `max=${dsc.heroMax}/${dsc.vw}`)
-  check(dsc.inputW > 0 && dsc.inputW <= 840, '桌面输入区限宽居中（≤840px）', `w=${dsc.inputW}`)
+  check(dsc.heroW > 0 && dsc.heroW < dsc.vw, '桌面空态内容不铺满视口（左右有留白）', `w=${dsc.heroW}/${dsc.vw}`)
+  check(dsc.inputW > 0 && dsc.inputW <= 880, '桌面输入区限宽居中（与 ChatPage 同为 860）', `w=${dsc.inputW}`)
 
   const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401/i.test(e))
   check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))
