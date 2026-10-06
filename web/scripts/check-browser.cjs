@@ -61,6 +61,13 @@ function serveStatic (page) {
       ], nextCursor: 0, hasMore: false, total: 3, unreadCount: 3 })
     }
     if (u.pathname === '/api/ai/notification/read' || u.pathname === '/api/ai/notification/read-all') return json({})
+    // 我的产物：窄屏白名单与删除确认口径的断言需要列表数据
+    if (u.pathname === '/api/ai/artifact/list') {
+      return json([
+        { id: 11, filename: '周报.md', ext: 'md', size: 2048, createTime: '2026-10-06T09:00:00', description: '项目周报', url: '/files/11.md', expireTime: '' },
+        { id: 12, filename: '清单.csv', ext: 'csv', size: 512, createTime: '2026-10-05T18:30:00', description: '', url: '/files/12.csv', expireTime: '' }
+      ])
+    }
     if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
     }
@@ -232,6 +239,30 @@ const check = (ok, label, detail = '') => {
   check(rec.url.includes('approval=ap-1') && /sid=s-appr/.test(rec.url), '审批通知深链带 sid+approval', rec.url)
   check(rec.banner.includes('联网搜索'), 'PC 恢复横幅按 approvalId 重建', rec.banner)
   check(rec.btns.includes('批准执行') && rec.btns.includes('拒绝'), '横幅给出批准/拒绝', rec.btns.join('/'))
+
+  // ---- 我的产物（P4）：白名单页在窄屏真渲染 + 操作区换行 + 删除确认走 Modal.confirm ----
+  await page.goto(ORIGIN + '/artifacts', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  const artN = await page.evaluate(() => {
+    const de = document.documentElement
+    const acts = [...document.querySelectorAll('.art-acts > .app-btn')].map(b => Math.round(b.getBoundingClientRect().height))
+    const firstAct = document.querySelector('.art-acts')
+    const row = document.querySelector('.art-row')
+    return { rows: document.querySelectorAll('.art-row').length, card: !!document.querySelector('.dg-card'),
+      scrollW: de.scrollWidth, clientW: de.clientWidth, minAct: acts.length ? Math.min(...acts) : 0,
+      // 操作区是否真的换到了下一行（窄屏整组右对齐）：它在首行之下
+      actsBelow: !!(firstAct && row) ? Math.round(firstAct.getBoundingClientRect().top) > Math.round(row.getBoundingClientRect().top) + 10 : false }
+  })
+  check(!artN.card && artN.rows === 2, '窄屏 /artifacts 渲染真实页面（白名单生效，mock 两行）', JSON.stringify(artN))
+  check(artN.scrollW <= artN.clientW + 1, '窄屏产物页无横向溢出', `scrollW=${artN.scrollW} clientW=${artN.clientW}`)
+  check(artN.minAct >= 44, '窄屏产物操作按钮触摸热区 ≥44px', `minH=${artN.minAct}`)
+  check(artN.actsBelow, '窄屏操作区整组换行（不与文件名挤在一行）')
+  await page.locator('.art-acts .art-del').first().dispatchEvent('click')
+  await page.waitForTimeout(700)
+  const artModal = await page.evaluate(() => (document.querySelector('.ant-modal-confirm') || {}).innerText || '')
+  check(/删除/.test(artModal) && /不可恢复/.test(artModal), '删除确认走 Modal.confirm（触屏/iab 可靠）', artModal.replace(/\s+/g, ' ').slice(0, 36))
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
 
   // ---- 引导卡：非白名单页面窄屏应给引导卡，且真实页面**未渲染** ----
   // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat

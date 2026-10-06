@@ -3,23 +3,21 @@
     <div class="app-page-head">
       <h1 class="app-page-title">我的产物</h1>
       <span class="head-hint-plain">模型在回答里生成的可下载文件（Markdown / CSV / JSON / HTML），按用户归属保存</span>
-      <a-input v-model:value="keyword" placeholder="按文件名搜索" allow-clear style="width:200px;margin-left:auto"
-               @press-enter="load" @change="onKeywordChange" />
-      <button class="app-btn" :disabled="loading" @click="load">
-        <reload-outlined /> 刷新
-      </button>
-      <template v-if="rows.length">
+      <!-- 工具条分两组：窄屏各自占一整行（搜索行 / 批量行），宽屏保持原来的单行排布 -->
+      <div class="art-tools">
+        <a-input v-model:value="keyword" placeholder="按文件名搜索" allow-clear class="art-search"
+                 @press-enter="load" @change="onKeywordChange" />
+        <button class="app-btn" :disabled="loading" @click="load">
+          <reload-outlined /> 刷新
+        </button>
+      </div>
+      <div v-if="rows.length" class="art-batch">
         <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
-        <a-popconfirm v-if="selectedIds.length"
-                      :title="`删除选中的 ${selectedIds.length} 个产物？`"
-                      description="将同时删除文件，删除后不可恢复。"
-                      ok-text="删除" cancel-text="取消" :ok-button-props="{ danger: true }"
-                      @confirm="doBatchDelete">
-          <button class="app-btn ghost small art-del" :disabled="batchLoading">
-            <delete-outlined /> 删除选中（{{ selectedIds.length }}）
-          </button>
-        </a-popconfirm>
-      </template>
+        <button v-if="selectedIds.length" class="app-btn ghost small art-del" :disabled="batchLoading"
+                @click="askBatchDelete">
+          <delete-outlined /> 删除选中（{{ selectedIds.length }}）
+        </button>
+      </div>
     </div>
 
     <div class="app-page-body">
@@ -55,17 +53,15 @@
                 </span>
               </div>
             </div>
-            <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
-              <download-outlined /> 下载
-            </a>
-            <a-popconfirm :title="`删除「${r.filename}」？`"
-                          description="将删除该产物及其文件，删除后不可恢复。"
-                          ok-text="删除" cancel-text="取消" :ok-button-props="{ danger: true }"
-                          @confirm="doDelete(r)">
-              <button class="app-btn ghost small art-del" title="删除">
+            <!-- 操作区独立成组：窄屏整组换行右对齐（见 .art-acts 的媒体查询） -->
+            <div class="art-acts">
+              <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
+                <download-outlined /> 下载
+              </a>
+              <button class="app-btn ghost small art-del" title="删除" @click="askDelete(r)">
                 <delete-outlined />
               </button>
-            </a-popconfirm>
+            </div>
           </div>
         </div>
       </a-spin>
@@ -75,7 +71,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { listArtifacts, deleteArtifact, deleteArtifactsBatch } from '../api'
 
@@ -135,6 +131,23 @@ const expireSoon = t => {
   const d = expireDaysLeft(t)
   return d !== null && d <= 3
 }
+
+// ==================== 删除确认：Modal.confirm（含手机） ====================
+// 原先单条与批量都用 a-popconfirm：click 触发的小浮层在手机/iab（触屏）上不可靠，
+// 而 /artifacts 现已进窄屏白名单；Modal.confirm 与侧栏删会话（AppLayout）同一口径，
+// 全端统一，不再按设备分支——浮层可靠性问题在 PC 上并不存在，没必要保留两套
+const askDelete = row => Modal.confirm({
+  title: `删除「${row.filename}」？`,
+  content: '将删除该产物及其文件，删除后不可恢复。',
+  okText: '删除', okType: 'danger', cancelText: '取消',
+  onOk: () => doDelete(row)
+})
+const askBatchDelete = () => Modal.confirm({
+  title: `删除选中的 ${selectedIds.value.length} 个产物？`,
+  content: '将同时删除文件，删除后不可恢复。',
+  okText: '删除', okType: 'danger', cancelText: '取消',
+  onOk: () => doBatchDelete()
+})
 
 // ==================== 勾选 / 批量删除 ====================
 const allChecked = computed(() => rows.value.length > 0 && selectedIds.value.length === rows.value.length)
@@ -211,4 +224,24 @@ onMounted(load)
 .art-del { color: var(--app-danger, var(--app-danger)); }
 .art-empty { text-align: center; padding: 28px 16px; }
 .art-empty-title { margin: 0 0 6px; font-weight: 500; }
+.art-tools, .art-batch { display: contents; }   /* 宽屏：保持页头单行流式排布（与改动前一致） */
+.art-search { width: 200px; margin-left: auto; }
+.art-acts { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ==================== 窄屏（手机）：/artifacts 在守卫白名单里，这里做真适配 ====================
+   页头两组各占一行、操作区换行右对齐、触摸热区加高；行内布局不变（卡片列表天然适合竖排） */
+@media (max-width: 768px) {
+  .app-page-head { align-items: baseline; }
+  .art-tools, .art-batch { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .art-tools { margin-top: 2px; }
+  .art-search { flex: 1; width: auto; min-width: 0; margin-left: 0; }
+  /* 搜索框与「刷新」同排；批量行只在有选中时撑到右侧 */
+  .art-batch { justify-content: flex-start; }
+  .art-row { flex-wrap: wrap; row-gap: 0; }
+  .art-main { flex: 1 1 auto; }
+  .art-acts { width: 100%; justify-content: flex-end; }
+  .art-acts > .app-btn { min-height: 44px; padding: 0 14px; }
+  /* 行内勾选：把点击区从 16px 撑到 30×44（antd 的 wrapper 本身就是可点区域） */
+  .art-row :deep(.ant-checkbox-wrapper) { width: 30px; height: 44px; display: inline-flex; align-items: center; }
+}
 </style>

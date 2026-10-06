@@ -49,6 +49,7 @@
     <div v-if="!menuFor" class="ss-foot">
       <button class="ss-foot-btn" type="button" @click="$emit('profile')"><user-outlined />个人设置</button>
       <button class="ss-foot-btn" type="button" @click="$emit('help')"><question-circle-outlined />帮助中心</button>
+      <button class="ss-foot-btn" type="button" @click="$emit('artifacts')"><file-text-outlined />我的产物</button>
       <button class="ss-foot-btn" type="button" @click="onToggleTheme">
         <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
       </button>
@@ -85,7 +86,7 @@ import { computed, h, inject, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
-         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined } from '@ant-design/icons-vue'
+         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
@@ -101,7 +102,7 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   currentId: { type: String, default: '' }
 })
-const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', 'help'])
+const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', 'help', 'artifacts'])
 
 // 壳外入口：个人设置/帮助是页面跳转（emit 给移动壳，与 select/new-chat 同路径），
 // 主题与退出是本 sheet 自持的动作（与会话行操作同一层级）
@@ -274,7 +275,8 @@ const doDelete = () => {
   background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
 }
 .ss-foot-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
-.ss-foot-btn.danger { color: var(--app-danger); border-color: var(--app-danger-border); }
+/* 危险动作独占整行：五个入口时它落单，占左列会与上面的成对按钮不对齐 */
+.ss-foot-btn.danger { grid-column: 1 / -1; color: var(--app-danger); border-color: var(--app-danger-border); }
 /* 安装入口占整行：它不是与应用内动作并列的一项，而是"把应用装到桌面"这条独立路径 */
 .ss-foot-btn.install { grid-column: 1 / -1; color: var(--app-accent); border-color: var(--app-accent-border); }
 .ss-foot-btn.danger:active { background: var(--app-danger-weak); color: var(--app-danger); }

@@ -33,6 +33,8 @@ const check = (ok, label, detail = '') => {
     /<slot\s+v-else\s*\/>/.test(s) ? '' : '白名单页面也会显示引导卡（登录后落地页 /chat 被拦）')
   check(/v-if="!allowed"/.test(s), '引导卡渲染条件绑定 allowed 判据')
   check(/'\/chat'/.test(s), '白名单含 /chat（登录落地页）')
+  // 白名单每加一页，就必须有对应的窄屏适配与断言（check-mshell/check-browser 各一段）
+  check(/'\/artifacts'/.test(s), '白名单含 /artifacts（产物查看/下载是真需求）')
 }
 
 // ---- ② antd Textarea 没有 resize()，必须走 resizableTextArea.instance ----

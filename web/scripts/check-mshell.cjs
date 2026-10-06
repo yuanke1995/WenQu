@@ -49,6 +49,13 @@ function serveStatic (page) {
     if (u.pathname === '/api/ai/notification/read' || u.pathname === '/api/ai/notification/read-all') return json({})
     // 单轮操作（P1）断言所需：一段可加载的历史 + 管理员调试开关 + 调试/评测/删除接口
     if (u.pathname === '/api/ai/config') return json({ chat: { retrievalDebugEnabled: { value: 'true' } } })
+    // 我的产物（P4）：壳外入口直达 /artifacts 的断言需要列表数据
+    if (u.pathname === '/api/ai/artifact/list') {
+      return json([
+        { id: 11, filename: '周报.md', ext: 'md', size: 2048, createTime: '2026-10-06T09:00:00', description: '项目周报', url: '/files/11.md', expireTime: '' },
+        { id: 12, filename: '清单.csv', ext: 'csv', size: 512, createTime: '2026-10-05T18:30:00', description: '', url: '/files/12.csv', expireTime: '' }
+      ])
+    }
     // 配置引导（setupGuide）的两个数据源：模型可用列表与个人偏好（defaultModel）
     if (u.pathname === '/api/ai/provider/available') {
       return json(setupUnready ? [] : [{ name: '平台内置', models: [{ ref: 'chat-1', displayName: '演示聊天模型', type: 'chat' }] }])
@@ -232,14 +239,32 @@ const check = (ok, label, detail = '') => {
   // ---- 壳外入口：会话 sheet 底部四项（个人设置/帮助/主题/退出）----
   check(await openSheet('.m-bar-btn[title="会话列表"]'), '会话 sheet 可再次打开')
   const foot = await page.evaluate(() => [...document.querySelectorAll('.ss-foot-btn')].map(b => b.textContent.trim()))
-  // 四项固定入口；安装到桌面是第五项（仅"可安装"时出现，headless 里通常没有 beforeinstallprompt）
-  check(foot.length >= 4 && foot[0].includes('个人设置') && foot[1].includes('帮助中心')
-    && foot[2].includes('主题') && foot[3].includes('退出登录'), '会话 sheet 底部四项壳外入口', foot.join('/'))
+  // 入口按文案断言（顺序不重要）：安装到桌面仅"可安装"时出现，headless 里通常没有 beforeinstallprompt
+  const needFoot = ['个人设置', '帮助中心', '我的产物', '主题', '退出登录']
+  check(needFoot.every(t => foot.some(x => x.includes(t))), '会话 sheet 底部壳外入口齐全（含我的产物）', foot.join('/'))
   await page.locator('.ss-foot-btn').first().dispatchEvent('click')
   await page.waitForTimeout(1200)
   const rProf = await page.evaluate(() => ({ path: location.pathname, topbar: !!document.querySelector('.m-topbar'), shell: !!document.querySelector('.m-chat') }))
   check(rProf.path === '/profile', '点「个人设置」进入 /profile', `path=${rProf.path}`)
   check(!rProf.shell && rProf.topbar, '个人设置走窄屏工作台（顶栏在、移动壳不在）', JSON.stringify(rProf))
+
+  // ---- 我的产物（P4）：壳外入口直达 + 真页面（白名单）+ 触摸热区 + 无横向溢出 ----
+  await page.goto(ORIGIN + '/m/chat', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+  check(await openSheet('.m-bar-btn[title="会话列表"]'), '会话 sheet 可再次打开（产物入口）')
+  await page.locator('.ss-foot-btn', { hasText: '我的产物' }).first().dispatchEvent('click')
+  await page.waitForTimeout(1300)
+  const art = await page.evaluate(() => {
+    const de = document.documentElement
+    const acts = [...document.querySelectorAll('.art-acts > .app-btn')].map(b => Math.round(b.getBoundingClientRect().height))
+    return { path: location.pathname, rows: document.querySelectorAll('.art-row').length,
+      card: !!document.querySelector('.dg-card'), scrollW: de.scrollWidth, clientW: de.clientWidth,
+      minAct: acts.length ? Math.min(...acts) : 0 }
+  })
+  check(art.path === '/artifacts', '点「我的产物」进入 /artifacts', art.path)
+  check(art.rows === 2 && !art.card, '产物页真渲染（未被引导卡拦，mock 两行）', JSON.stringify(art))
+  check(art.scrollW <= art.clientW + 1, '产物页无横向溢出', `scrollW=${art.scrollW} clientW=${art.clientW}`)
+  check(art.minAct >= 44, '产物操作按钮触摸热区 ≥44px', `minH=${art.minAct}`)
 
   // ---- 单轮操作 sheet（P1）：历史加载 → 「⋯」→ 导出/评测/调试/删除 ----
   // 这一段用 mock 的历史（s-round）驱动真渲染：操作行只对"最新一条"或选中态出现，

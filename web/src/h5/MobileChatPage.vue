@@ -158,7 +158,8 @@
                         @select="onSelectSession"
                         @new-chat="onNewChat"
                         @profile="() => onGoPage('/profile')"
-                        @help="() => onGoPage('/help')" />
+                        @help="() => onGoPage('/help')"
+                        @artifacts="() => onGoPage('/artifacts')" />
     <MobileModelSheet :open="modelOpen" @close="modelOpen = false" />
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
