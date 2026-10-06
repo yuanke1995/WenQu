@@ -936,20 +936,43 @@ async function resolveApproval (m, approved) {
     if (m.approval) m.approval.busy = false
   }
 }
-/** 智能体提问：提交用户点选/输入的答案；答案作为工具结果回给模型继续本轮。桌面壳的提问面板
- *  依赖本函数（面板挂在消息上，点选即答）；卡片保留到 done 工具状态到达（问答记录卡接管展示） */
-async function answerAsk (m, text) {
+/** 智能体提问（一卡多问）：在某题上点选一个选项——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成） */
+function pickAskOption (m, page, oi) {
+  const a = m && m.ask
+  if (!a || a.busy || a.answered) return
+  if (!a.questions[page] || oi == null || oi < 0 || oi >= a.questions[page].options.length) return
+  a.sels[page] = oi
+  a.customs[page] = ''
+}
+/** 智能体提问（一卡多问）：在某题输入自定义答案——记录并标记为「自定义」（下标=选项数） */
+function setAskCustom (m, page, text) {
+  const a = m && m.ask
+  if (!a || a.busy || a.answered) return
   const t = (text || '').trim()
-  if (!m.ask || m.ask.busy || !t) return
-  m.ask.busy = true
+  a.customs[page] = text || ''
+  if (t) a.sels[page] = a.questions[page].options.length
+  else if (a.sels[page] === a.questions[page].options.length) a.sels[page] = null
+}
+/** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空，由后端按该题推荐项默认执行 */
+async function askSubmitAll (m) {
+  const a = m && m.ask
+  if (!a || a.busy || a.answered) return
+  const answers = a.questions.map((q, i) => {
+    const sel = a.sels[i]
+    if (sel != null && sel < q.options.length) return q.options[sel]
+    const c = (a.customs[i] || '').trim()
+    if (c) return c
+    return ''   // 未答 → 后端按推荐项默认
+  })
+  a.busy = true
   try {
-    const r = await answerAgentAsk(m.ask.id, t)
+    const r = await answerAgentAsk(a.id, answers)
     if (r && r.success === false) {
       message.warning(r.msg || '回答提交失败')
-      m.ask.busy = false
+      a.busy = false
       return
     }
-    m.ask.answered = t
+    a.answered = true
     hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '回答提交失败')
@@ -1107,12 +1130,35 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 忽略 */ }
     },
     onAskUser: payload => {
-      // 智能体提问（人在回路）：提问面板挂到当前 AI 气泡状态上，桌面壳据此把底部输入框整块
-      // 替换成提问面板；用户点选/输入/忽略后模型继续走。
-      // options 第一项是模型给的推荐项（超时未答按它默认执行）
+      // 智能体提问（人在回路，一卡多问）：提问面板挂到当前 AI 气泡状态上，桌面壳据此把底部输入框整块
+      // 替换成提问面板；用户逐题翻页作答、一次性批量提交后模型继续走。
+      // questions 为问题数组（每题 options 第一项是模型给的推荐项，超时未答按它默认执行）
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        msg.ask = { id: j.askId, topic: j.topic || '', question: j.question, options: j.options || [], timeoutMs: j.timeoutMs, busy: false, answered: '' }
+        let questions
+        if (Array.isArray(j.questions) && j.questions.length) {
+          questions = j.questions.map(x => ({
+            topic: x.topic || '',
+            question: x.question || '',
+            options: Array.isArray(x.options) ? x.options : []
+          }))
+        } else if (j.question) {
+          // 兼容旧式单问题（等价于一题一卡）
+          questions = [{ topic: j.topic || '', question: j.question, options: j.options || [] }]
+        } else {
+          questions = []
+        }
+        const n = questions.length
+        msg.ask = {
+          id: j.askId,
+          questions,
+          timeoutMs: j.timeoutMs || 0,
+          deadline: (j.timeoutMs || 0) > 0 ? Date.now() + j.timeoutMs : 0,
+          busy: false,
+          answered: false,
+          sels: new Array(n).fill(null),   // 每题已选选项下标（null=未答）
+          customs: new Array(n).fill('')   // 每题自定义输入
+        }
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1507,7 +1553,7 @@ const ready = async () => {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk, ignoreAsk,
+    text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, setAskCustom, askSubmitAll, ignoreAsk,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

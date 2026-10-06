@@ -768,9 +768,10 @@ export const batchReparseDocuments = ids =>
 export const approveToolCall = (approvalId, approved) =>
   request(`/tool-approval/${encodeURIComponent(approvalId)}`, { method: 'POST', body: JSON.stringify({ approved }) })
 
-/** 智能体提问（人在回路）：回答 ask_user 事件下发的结构化提问；仅本轮用户本人可答，答案作为工具结果回给模型 */
-export const answerAgentAsk = (askId, answer) =>
-  request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ answer }) })
+/** 智能体提问（人在回路）：回答 ask_user 事件下发的结构化提问；仅本轮用户本人可答，答案作为工具结果回给模型。
+ *  answers 为与问题下标对齐的答案数组（一卡多问批量提交）；单问题也可传单元素数组 */
+export const answerAgentAsk = (askId, answers) =>
+  request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ answers }) })
 
 /** 忽略智能体提问：不作答，立即按推荐项（选项第一项）默认执行——与超时默认同语义的提前触发 */
 export const ignoreAgentAsk = askId =>

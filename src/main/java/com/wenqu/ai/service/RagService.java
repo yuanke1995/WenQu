@@ -1002,6 +1002,11 @@ public class RagService {
             if (retrievalDiag.isVectorFailed()) {
                 addDegradation(degradations, degradedCodes, "vectorFailed", "向量检索失败，本次仅关键词召回");
             }
+            // 多库检索中某库向量检索失败：其余库向量命中仍参与召回，不能谎称"仅关键词召回"；
+            // 提示用户相关库未参与本次召回（具体供应商/原因见服务端日志与额度通知）
+            if (retrievalDiag.isVectorPartialFailed()) {
+                addDegradation(degradations, degradedCodes, "vectorPartialFailed", "部分知识库向量检索失败，相关库未参与本次召回");
+            }
             if (retrievalDiag.isKeywordFailed()) {
                 addDegradation(degradations, degradedCodes, "keywordDegraded", "关键词引擎不可用，已降级 MySQL 检索");
             }
@@ -5126,6 +5131,9 @@ public class RagService {
     /** askUser 单轮提问上限：防模型把「一问一答」变成刷屏循环；正常澄清 1~2 问足够 */
     private static final int MAX_ASKS_PER_TURN = 3;
 
+    /** askUser 单张卡片承载的问题上限（一卡多问）：超出截断保留前 N，防止单卡过长 */
+    private static final int MAX_QUESTIONS_PER_CARD = 3;
+
     /**
      * askUser 工具执行体（BuiltinTools.askUser 经 ToolContext 注入调用）：向用户发出结构化提问并
      * 阻塞等待答案，与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 审计 + SSE 提问卡
@@ -5133,37 +5141,48 @@ public class RagService {
      * 不可用/超限提示。**超时按推荐项（options 第一项）默认执行**——推荐项由模型放第一位、
      * 前端标注「推荐」；答案附「超时默认」说明，避免模型把默认决策说成用户亲选。
      */
-    private String doAskUser(AnswerStreamState st, String topic, String question, java.util.List<String> options) {
+    /**
+     * askUser 工具执行体（一卡多问版）：向用户一次性下发多个结构化问题并阻塞等待批量作答，
+     * 与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 审计 + SSE 提问卡 + 站内通知旁路）。
+     * 返回值直接作为工具结果回给模型：每问一个答案的并行数组（多问为 JSON 数组字符串，单问退化为纯文本），
+     * 未作答的问题按该题推荐项（options 第一项）默认执行并附「非用户亲选」说明。
+     */
+    private String doAskUserMulti(AnswerStreamState st, java.util.List<BuiltinTools.AskQuestion> raw) {
         if (st.guestMode) {
             return "（游客会话不支持结构化提问：请改为在回答正文中直接列出候选选项，请用户回复序号或自行描述。）";
         }
         if (st.askCount.incrementAndGet() > MAX_ASKS_PER_TURN) {
             return "（本轮提问次数已达上限 " + MAX_ASKS_PER_TURN + " 次：请基于已有信息直接作答，不要再提问。）";
         }
-        String q = question == null ? "" : question.trim();
-        if (q.isEmpty()) {
-            return "（提问内容为空，工具未执行。请给出要问用户的问题后重试。）";
-        }
-        if (q.length() > 500) q = q.substring(0, 500);
-        String t = topic == null ? "" : topic.trim();
-        if (t.length() > 16) t = t.substring(0, 16);
-        // 选项归一：去空白/去空/去重（保序），合法区间 2~6 个；单项超长截断
-        java.util.List<String> opts = new java.util.ArrayList<>();
-        if (options != null) {
-            for (String o : options) {
-                if (o == null) continue;
-                String s = o.trim();
-                if (s.isEmpty() || opts.contains(s)) continue;
-                opts.add(s.length() > 200 ? s.substring(0, 200) : s);
+        // 归一为多问题列表（每题独立校验：空问题/选项非法直接丢弃该题，不留半成品卡）
+        java.util.List<QItem> qs = new java.util.ArrayList<>();
+        for (BuiltinTools.AskQuestion a : raw) {
+            if (a == null) continue;
+            String q = a.question() == null ? "" : a.question().trim();
+            if (q.isEmpty()) continue;
+            if (q.length() > 500) q = q.substring(0, 500);
+            String t = a.topic() == null ? "" : a.topic().trim();
+            if (t.length() > 16) t = t.substring(0, 16);
+            java.util.List<String> opts = new java.util.ArrayList<>();
+            if (a.options() != null) {
+                for (String o : a.options()) {
+                    if (o == null) continue;
+                    String s = o.trim();
+                    if (s.isEmpty() || opts.contains(s)) continue;
+                    opts.add(s.length() > 200 ? s.substring(0, 200) : s);
+                }
             }
+            if (opts.size() < 2 || opts.size() > 6) continue; // 单题选项须 2~6，非法该题跳过
+            qs.add(new QItem(t, q, opts));
         }
-        if (opts.size() < 2 || opts.size() > 6) {
-            return "（候选选项须为 2~6 个，工具未执行。请调整后重试，或直接在回答正文中列出选项提问。）";
+        if (qs.isEmpty()) {
+            return "（无有效问题：每题须含非空的 question 与 2~6 个选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
         }
+        if (qs.size() > MAX_QUESTIONS_PER_CARD) qs = new java.util.ArrayList<>(qs.subList(0, MAX_QUESTIONS_PER_CARD));
         long timeout = approvalTimeoutMs();
         String askId = java.util.UUID.randomUUID().toString();
         java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
-        // 落库（复用 c_ai_tool_approval：tool_name=askUser，topic+question+options 存 request_args，答案存 answer）
+        // 落库（复用 c_ai_tool_approval：tool_name=askUser，questions 存 request_args，答案数组存 answer）
         try {
             com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
             rec.setId(askId);
@@ -5171,12 +5190,7 @@ public class RagService {
             rec.setUserId(st.userId);
             rec.setToolName("askUser");
             rec.setStatus("PENDING");
-            Map<String, Object> args = new LinkedHashMap<>();
-            if (!t.isEmpty()) args.put("topic", t);
-            args.put("question", q);
-            args.put("options", opts);
-            String argsJson = JSON.toJSONString(args);
-            rec.setRequestArgs(argsJson.length() > 2000 ? argsJson.substring(0, 2000) : argsJson);
+            rec.setRequestArgs(askArgsJson(qs));
             rec.setCreatedAt(java.time.LocalDateTime.now());
             toolApprovalMapper.insert(rec);
         } catch (Exception e) {
@@ -5189,22 +5203,16 @@ public class RagService {
         try {
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("askId", askId);
-            if (!t.isEmpty()) req.put("topic", t);
-            req.put("question", q);
-            req.put("options", opts);
+            req.put("questions", qs.stream().map(this::askQuestionToMap).toList());
             req.put("timeoutMs", timeout);
             sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId);
-            log.info("[ASK] 等待用户作答: askId={} session={}", askId, st.sessionId);
+            log.info("[ASK] 等待用户批量作答: askId={} session={} n={}", askId, st.sessionId, qs.size());
             String answer;
             try {
                 answer = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException te) {
-                String recommended = opts.get(0);
-                markAskResolved(askId, "TIMEOUT", recommended, st.userId);
-                log.info("[ASK] 提问超时，按推荐项默认执行: askId={} session={}", askId, st.sessionId);
-                answer = recommended + "\n（用户超时未回答，系统已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+                answer = buildCombinedAnswer(askId, st.userId, qs, null, "TIMEOUT");
             } catch (java.util.concurrent.ExecutionException ee) {
-                // future 只会被正常 complete（resolveAsk），异常兜底按中止处理
                 markAskResolved(askId, "TIMEOUT", null, st.userId);
                 answer = "（用户中止了本轮回答：请基于已有信息直接作答，不要再次提问。）";
             } catch (InterruptedException ie) {
@@ -5218,24 +5226,49 @@ public class RagService {
         }
     }
 
+    /** 单题内部表示 */
+    private record QItem(String topic, String question, java.util.List<String> options) {}
+
+    /** questions → SSE/落库用的 Map（topic 可空省略） */
+    private Map<String, Object> askQuestionToMap(QItem x) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (!x.topic().isEmpty()) m.put("topic", x.topic());
+        m.put("question", x.question());
+        m.put("options", x.options());
+        return m;
+    }
+
+    /** questions → request_args JSON（TEXT 列，放宽到 8000 字符防多问题截断） */
+    private String askArgsJson(java.util.List<QItem> qs) {
+        String json = JSON.toJSONString(java.util.Map.of("questions", qs.stream().map(this::askQuestionToMap).toList()));
+        return json.length() > 8000 ? json.substring(0, 8000) : json;
+    }
+
     /**
      * 用户回答智能体提问：仅发起该轮问答的用户本人可答（uid 比对，内存态与 DB 双重校验，
      * 与工具审批同口径）。内存态丢失（刷新页面/进程重启）时仍更新 DB 记录（幂等），但无法唤醒
      * 已挂起的工具线程，该轮将按超时推荐项收尾。
      */
-    public boolean resolveAsk(String askId, String answer, String uid) {
+    public boolean resolveAsk(String askId, java.util.List<String> answers, String uid) {
         if (askId == null || askId.isBlank()) return false;
-        String a = answer == null ? "" : answer.trim();
-        if (a.isEmpty()) return false;
-        if (a.length() > 2000) a = a.substring(0, 2000);
-        boolean dbOk = markAskResolved(askId, "APPROVED", a, uid);
-        PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) return dbOk;
-        if (uid == null || !uid.equals(p.userId())) {
+        com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
+        if (rec == null || !"askUser".equals(rec.getToolName())) return false;
+        if (uid == null || !uid.equals(rec.getUserId())) {
             log.warn("[ASK] 答题人非本轮用户，拒绝: askId={} by={}", askId, uid);
             return false;
         }
-        return p.future().complete(a);
+        if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
+        java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
+        if (qs.isEmpty()) return false;
+        java.util.List<String> norm = answers == null ? java.util.List.of() : answers;
+        String combined = buildCombinedAnswer(askId, uid, qs, norm, "APPROVED");
+        PendingAsk p = PENDING_ASKS.get(askId);
+        if (p == null) return true; // DB 已落库；内存态丢失则该轮按超时收尾
+        if (!uid.equals(p.userId())) {
+            log.warn("[ASK] 答题人非本轮用户（内存），拒绝: askId={} by={}", askId, uid);
+            return false;
+        }
+        return p.future().complete(combined);
     }
 
     /**
@@ -5246,30 +5279,76 @@ public class RagService {
     public boolean resolveAskIgnore(String askId, String uid) {
         if (askId == null || askId.isBlank()) return false;
         // 推荐项从落库 args 还原（DB 是权威源：内存 future 只负责唤醒）
-        java.util.List<String> opts;
-        try {
-            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
-            if (rec == null || !"askUser".equals(rec.getToolName())) return false;
-            if (uid == null || !uid.equals(rec.getUserId())) {
-                log.warn("[ASK] 忽略人非本轮用户，拒绝: askId={} by={}", askId, uid);
-                return false;
-            }
-            if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
-            com.alibaba.fastjson2.JSONObject args = JSON.parseObject(rec.getRequestArgs());
-            com.alibaba.fastjson2.JSONArray arr = args == null ? null : args.getJSONArray("options");
-            opts = arr == null ? java.util.List.of() : arr.toJavaList(String.class);
-        } catch (Exception e) {
-            log.warn("[ASK] 忽略提问读取记录失败: askId={} {}", askId, e.getMessage());
+        com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
+        if (rec == null || !"askUser".equals(rec.getToolName())) return false;
+        if (uid == null || !uid.equals(rec.getUserId())) {
+            log.warn("[ASK] 忽略人非本轮用户，拒绝: askId={} by={}", askId, uid);
             return false;
         }
-        if (opts.isEmpty()) return false;
-        String recommended = opts.get(0);
-        boolean dbOk = markAskResolved(askId, "APPROVED", recommended, uid);
+        if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
+        java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
+        if (qs.isEmpty()) return false;
+        String combined = buildCombinedAnswer(askId, uid, qs, null, "IGNORE");
         PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) return dbOk;
+        if (p == null) return true;
         if (uid == null || !uid.equals(p.userId())) return false;
-        return p.future().complete(recommended
-                + "\n（用户选择忽略此问题，系统已按推荐项默认采用；这是默认决策，并非用户亲自选择。）");
+        return p.future().complete(combined);
+    }
+
+    /** 从落库 request_args 还原问题列表（兼容旧式单问题 {question,options} 与一卡多问 {questions}） */
+    private java.util.List<QItem> parseQuestions(String argsJson) {
+        java.util.List<QItem> out = new java.util.ArrayList<>();
+        try {
+            com.alibaba.fastjson2.JSONObject args = JSON.parseObject(argsJson);
+            if (args == null) return out;
+            com.alibaba.fastjson2.JSONArray arr = args.getJSONArray("questions");
+            if (arr != null) {
+                for (int i = 0; i < arr.size(); i++) {
+                    com.alibaba.fastjson2.JSONObject o = arr.getJSONObject(i);
+                    if (o == null) continue;
+                    String q = o.getString("question");
+                    if (q == null || q.isEmpty()) continue;
+                    com.alibaba.fastjson2.JSONArray opts = o.getJSONArray("options");
+                    java.util.List<String> os = opts == null ? java.util.List.of() : opts.toJavaList(String.class);
+                    out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"), q, os));
+                }
+                return out;
+            }
+            // 旧式单问题
+            String q = args.getString("question");
+            if (q == null || q.isEmpty()) return out;
+            com.alibaba.fastjson2.JSONArray opts = args.getJSONArray("options");
+            java.util.List<String> os = opts == null ? java.util.List.of() : opts.toJavaList(String.class);
+            out.add(new QItem(args.getString("topic") == null ? "" : args.getString("topic"), q, os));
+        } catch (Exception e) {
+            log.warn("[ASK] 解析提问参数失败: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /**
+     * 组装批量答案：未作答的问题按该题推荐项（options[0]）默认执行并附「非用户亲选」说明；
+     * 落库 answer 列（TEXT），返回工具结果文本（单问退化为纯文本，多问为 JSON 数组字符串，与问题下标对齐）。
+     */
+    private String buildCombinedAnswer(String askId, String uid, java.util.List<QItem> qs,
+                                       java.util.List<String> userAnswers, String mode) {
+        java.util.List<String> finalAnswers = new java.util.ArrayList<>();
+        for (int i = 0; i < qs.size(); i++) {
+            String ua = (userAnswers != null && i < userAnswers.size()) ? userAnswers.get(i) : null;
+            if (ua != null && !ua.trim().isEmpty()) { finalAnswers.add(ua.trim()); continue; }
+            String recommended = qs.get(i).options().isEmpty() ? "" : qs.get(i).options().get(0);
+            String note = switch (mode) {
+                case "IGNORE" -> "（用户选择忽略此问题，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+                case "TIMEOUT" -> "（用户超时未回答，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+                default -> "（用户未作答，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+            };
+            finalAnswers.add(recommended + "\n" + note);
+        }
+        String answerJson = JSON.toJSONString(finalAnswers);
+        String status = "APPROVED".equals(mode) ? "APPROVED" : "TIMEOUT";
+        markAskResolved(askId, status, answerJson, uid);
+        if (qs.size() == 1) return finalAnswers.get(0);
+        return answerJson;
     }
 
     /** 更新提问记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝；answer 可空）。best-effort 不抛 */
@@ -5300,7 +5379,7 @@ public class RagService {
         ctx.put(PresentArtifactTool.CTX_SESSION_ID, st.sessionId);
         ctx.put(PresentArtifactTool.CTX_USER_ID, st.userId);
         ctx.put(BuiltinTools.CTX_ASK,
-                (BuiltinTools.AskFn) (t, q, opts) -> doAskUser(st, t, q, opts));
+                (BuiltinTools.AskFn) qs -> doAskUserMulti(st, qs));
         return ctx;
     }
 

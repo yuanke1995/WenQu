@@ -332,10 +332,21 @@ public class ChatController {
             @Parameter(description = "提问 ID（ask_user 事件下发）") @PathVariable("askId") String askId,
             @RequestBody Map<String, Object> body) {
         boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
-        boolean ok = ignore
-                ? ragService.resolveAskIgnore(askId, com.wenqu.ai.util.RequestUser.uid())
-                : ragService.resolveAsk(askId, body.get("answer") == null ? null : String.valueOf(body.get("answer")),
-                        com.wenqu.ai.util.RequestUser.uid());
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        boolean ok;
+        if (ignore) {
+            ok = ragService.resolveAskIgnore(askId, uid);
+        } else {
+            // 一卡多问：answers 为与问题下标对齐的答案数组；兼容旧式单答案 {answer}
+            java.util.List<String> answers = new java.util.ArrayList<>();
+            Object raw = body.get("answers");
+            if (raw instanceof java.util.List<?> list) {
+                for (Object x : list) if (x != null) answers.add(String.valueOf(x));
+            } else if (body.get("answer") != null) {
+                answers.add(String.valueOf(body.get("answer")));
+            }
+            ok = ragService.resolveAsk(askId, answers, uid);
+        }
         if (!ok) return ResultJson.error("提问不存在、已回答或已超时");
         return ResultJson.ok(ignore ? "已忽略，按推荐项默认执行" : "已提交");
     }

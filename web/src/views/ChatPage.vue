@@ -173,8 +173,16 @@
                         <!-- askUser 问答记录：问与答常显（不藏进展开区），刷新/历史恢复同构 -->
                         <template v-if="t.name === 'askUser' && t.status !== 'start'">
                           <div class="ask-record-body">
-                            <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
-                            <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+                            <template v-if="askUserView(t).multi">
+                              <div v-for="(q, qi) in askUserView(t).questions" :key="qi" class="ask-record-item">
+                                <div class="ask-record-q"><question-circle-outlined /> <template v-if="askUserView(t).questions.length > 1">{{ qi + 1 }}. </template>{{ q.question }}</div>
+                                <div v-if="q.answer" class="ask-record-a"><check-circle-outlined /> {{ q.answer }}</div>
+                              </div>
+                            </template>
+                            <template v-else>
+                              <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
+                              <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+                            </template>
                           </div>
                         </template>
                         <div v-if="t._open" class="tl-card-body">
@@ -811,29 +819,39 @@
              输入框回归，问答记录以工具卡形态留在气泡原位 -->
         <div v-else class="input-box askp-box" @keydown="onAskPanelKeydown">
           <div class="askp-head">
-            <span class="askp-tag">{{ pendingAsk.ask.topic || '向用户提问' }}</span>
-            <span class="askp-q">{{ pendingAsk.ask.question }}</span>
-            <span v-if="pendingAsk.ask.answered" class="askp-state ok">已回答，模型继续中…</span>
+            <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
+            <span class="askp-q">{{ curAsk.question }}</span>
+            <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
+            <span v-else-if="askExpired" class="askp-state warn">已超时，系统按推荐项默认执行…</span>
+            <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
+              <clock-circle-outlined /> {{ askCountdownText }}
+            </span>
+            <span v-if="pendingAsk.ask.questions.length > 1" class="askp-pager">
+              <button class="askp-page-btn" type="button" :disabled="askPage <= 0 || pendingAsk.ask.busy" @click="askPage--">‹</button>
+              <span class="askp-page-num">{{ askPage + 1 }} / {{ pendingAsk.ask.questions.length }}</span>
+              <button class="askp-page-btn" type="button" :disabled="askPage >= pendingAsk.ask.questions.length - 1 || pendingAsk.ask.busy" @click="askPage++">›</button>
+            </span>
           </div>
           <div class="askp-opts">
-            <button v-for="(op, oi) in pendingAsk.ask.options" :key="oi" type="button"
-                    class="askp-opt" :class="{ sel: askSelIdx === oi }"
-                    :disabled="pendingAsk.ask.busy" @click="answerAsk(pendingAsk, op)">
+            <button v-for="(op, oi) in curAsk.options" :key="oi" type="button"
+                    class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi }"
+                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="pickAskOption(pendingAsk, askPage, oi)">
               <span class="askp-no">{{ oi + 1 }}.</span>
               <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
               <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
             </button>
-            <div class="askp-opt askp-custom-row" :class="{ sel: askSelIdx === pendingAsk.ask.options.length }">
-              <span class="askp-no">{{ pendingAsk.ask.options.length + 1 }}.</span>
-              <input ref="askCustomRef" v-model="askCustom" class="askp-input" :maxlength="2000"
-                     :disabled="pendingAsk.ask.busy" placeholder="输入你的回答…" />
+            <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length }">
+              <span class="askp-no">{{ curAsk.options.length + 1 }}.</span>
+              <input ref="askCustomRef" v-model="pendingAsk.ask.customs[askPage]" class="askp-input" :maxlength="2000"
+                     :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired"
+                     placeholder="输入你的回答…" @input="setAskCustom(pendingAsk, askPage, pendingAsk.ask.customs[askPage])" />
             </div>
           </div>
           <div class="askp-foot">
-            <span class="askp-hint"><info-circle-outlined /> 使用 Tab / 上下键选择，回车或空格确认；未答超时将按推荐项默认执行</span>
+            <span class="askp-hint"><info-circle-outlined /> 逐题选择后点 ‹ › 翻页，底部「提交」一次性作答；未答将按推荐项默认执行</span>
             <span class="askp-actions">
-              <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy" @click="ignoreAsk(pendingAsk)">忽略</button>
-              <button class="app-btn small" :disabled="pendingAsk.ask.busy" @click="askSubmit">提交</button>
+              <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
+              <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
             </span>
           </div>
         </div>
@@ -2471,7 +2489,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk, ignoreAsk,
+  text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, setAskCustom, askSubmitAll, ignoreAsk,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -2524,58 +2542,90 @@ const pendingAsk = computed(() => {
   }
   return null
 })
-const askSelIdx = ref(0)        // 键盘高亮：0..n-1=选项，n=自定义输入行
-const askCustom = ref('')
+const askPage = ref(0)              // 当前翻页（0 基）：一卡多问逐题展示
 const askCustomRef = ref(null)
-watch(() => pendingAsk.value?.ask, () => {
-  askSelIdx.value = 0
-  askCustom.value = ''
-  nextTick(() => { const el = askCustomRef.value; if (el && el.focus) el.focus() })
+const askNow = ref(Date.now())      // 倒计时心跳（仅挂起中有 deadline 时走表）
+let askTimer = null
+// 当前展示的问题（随翻页切换）；越界时回退到最后一题
+const curAsk = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.questions.length) return { topic: '', question: '', options: [] }
+  const p = Math.min(askPage.value, a.questions.length - 1)
+  return a.questions[p] || { topic: '', question: '', options: [] }
 })
+// 已答题数（已选选项或已输入自定义）
+const askAnsweredCount = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a) return 0
+  return a.questions.reduce((n, q, i) => n + ((a.sels[i] != null) || (a.customs[i] || '').trim() ? 1 : 0), 0)
+})
+// 剩余毫秒 / 是否已超时 / 倒计时文本（mm:ss）
+const askRemaining = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.deadline) return 0
+  return Math.max(0, a.deadline - askNow.value)
+})
+const askExpired = computed(() => {
+  const a = pendingAsk.value?.ask
+  return !!(a && a.deadline && !a.answered && askRemaining.value <= 0)
+})
+const askCountdownText = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.deadline || a.answered) return ''
+  const s = Math.ceil(askRemaining.value / 1000)
+  const mm = String(Math.floor(s / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return mm + ':' + ss
+})
+watch(() => pendingAsk.value?.ask, (a) => {
+  askPage.value = 0
+  // 仅在有 deadline 时启心跳；归零后停止（由 onToolStatus 收卡，或用户已提交）
+  if (a && a.deadline) {
+    if (!askTimer) askTimer = setInterval(() => { askNow.value = Date.now() }, 1000)
+  } else if (askTimer) {
+    clearInterval(askTimer); askTimer = null
+  }
+  nextTick(() => { const el = askCustomRef.value; if (el && el.focus) el.focus() })
+}, { flush: 'post' })
+watch(askExpired, (exp) => { if (exp && askTimer) { clearInterval(askTimer); askTimer = null } })
 // 选项展示拆分：「关键词：说明」→ 关键词加粗 + 说明弱化；无冒号时整句作为关键词
 const askOptionParts = (op) => {
   const s = String(op || '')
   const i = s.search(/[：:]/)
   return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
 }
-const askSubmit = () => {
-  const m = pendingAsk.value
-  if (!m || m.ask.busy) return
-  const t = (askCustom.value || '').trim()
-  if (t) { answerAsk(m, t); return }
-  const op = (m.ask.options || [])[askSelIdx.value]
-  if (op) answerAsk(m, op)
-}
 // 高亮移动时同步焦点：落到自定义输入行→聚焦（可直接打字），落到选项行→失焦（避免误输入）
 const focusAskRow = () => {
-  const n = (pendingAsk.value?.ask.options || []).length
+  const a = pendingAsk.value?.ask
+  const n = (curAsk.value.options || []).length
   nextTick(() => {
     const el = askCustomRef.value
     if (!el) return
-    if (askSelIdx.value === n) el.focus()
+    if (a && a.sels[askPage.value] === n) el.focus()
     else if (document.activeElement === el) el.blur()
   })
 }
 const onAskPanelKeydown = (e) => {
-  const ask = pendingAsk.value?.ask
-  if (!ask || ask.busy) return
-  const total = (ask.options || []).length + 1   // 最后一格=自定义输入行
+  const a = pendingAsk.value?.ask
+  if (!a || a.busy || a.answered || askExpired.value) return
+  const total = (curAsk.value.options || []).length + 1   // 最后一格=自定义输入行
   const inInput = e.target && e.target.tagName === 'INPUT'
+  const sel = a.sels[askPage.value] == null ? 0 : a.sels[askPage.value]
   if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
-    askSelIdx.value = (askSelIdx.value + 1) % total
+    a.sels[askPage.value] = (sel + 1) % total
     focusAskRow()
     e.preventDefault()
   } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
-    askSelIdx.value = (askSelIdx.value - 1 + total) % total
+    a.sels[askPage.value] = (sel - 1 + total) % total
     focusAskRow()
     e.preventDefault()
   } else if (e.key === 'Enter') {
-    // 输入框内且已打字 → 提交自定义答案；否则回车=确认当前高亮项
-    if (inInput && askCustom.value.trim()) answerAsk(pendingAsk.value, askCustom.value)
-    else askSubmit()
+    // 输入框内且已打字 → 锁定自定义；否则回车=确认当前高亮项（只记录，不提交；提交由底部按钮统一批量完成）
+    if (inInput && (a.customs[askPage.value] || '').trim()) setAskCustom(pendingAsk.value, askPage.value, a.customs[askPage.value])
+    else if (a.sels[askPage.value] != null) pickAskOption(pendingAsk.value, askPage.value, a.sels[askPage.value])
     e.preventDefault()
   } else if (e.key === ' ' && !inInput) {
-    askSubmit()
+    if (a.sels[askPage.value] != null) pickAskOption(pendingAsk.value, askPage.value, a.sels[askPage.value])
     e.preventDefault()
   }
 }
@@ -3491,6 +3541,7 @@ onMounted(async () => {
 
 /* askUser 问答记录（工具卡内常显：问题 + 答案；刷新/历史恢复同构） */
 .ask-record-body { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+.ask-record-item { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--app-panel-2); border-radius: 8px; }
 .ask-record-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
 .ask-record-q .anticon { margin-top: 3px; color: var(--app-text3); }
 .ask-record-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
@@ -3504,6 +3555,14 @@ onMounted(async () => {
 .askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
 .askp-q { font-size: 13.5px; font-weight: 600; color: var(--app-text); }
 .askp-state.ok { font-size: 12px; color: var(--app-ok); }
+.askp-state.warn { font-size: 12px; color: var(--app-warn); }
+.askp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.askp-timer.warn { color: var(--app-warn); }
+.askp-pager { flex: none; margin-left: 8px; display: inline-flex; align-items: center; gap: 2px; }
+.askp-page-btn { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--app-border); background: var(--app-panel-2); color: var(--app-text2); border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.askp-page-btn:hover:not(:disabled) { color: var(--app-text); border-color: var(--app-accent, var(--app-ok)); }
+.askp-page-btn:disabled { opacity: 0.4; cursor: default; }
+.askp-page-num { min-width: 34px; text-align: center; font-size: 12px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
 .askp-opts { display: flex; flex-direction: column; gap: 2px; }
 .askp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 8px; font-size: 13px; line-height: 1.55; color: var(--app-text); cursor: pointer; }
 .askp-opt:hover { background: var(--app-panel-2); }

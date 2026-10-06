@@ -137,32 +137,41 @@
         </span>
       </div>
 
-      <!-- 智能体提问面板：当前会话有挂起提问时整块替换输入卡（模型在等答案，此刻也发不了新消息）。
-           触屏无键盘导航，直接点选；答复后面板撤下、输入卡回归，问答记录留在气泡原位 -->
+      <!-- 智能体提问面板（一卡多问）：当前会话有挂起提问时整块替换输入卡。
+           触屏直接点选；逐题翻页、底部一次提交；答复后面板撤下、输入卡回归，问答记录留在气泡原位 -->
       <div v-if="pendingAsk" class="m-input-card m-askp">
         <div class="m-askp-head">
-          <span class="m-askp-tag">{{ pendingAsk.ask.topic || '向用户提问' }}</span>
-          <span class="m-askp-q">{{ pendingAsk.ask.question }}</span>
+          <span class="m-askp-tag">{{ mCurAsk.topic || '向用户提问' }}</span>
+          <span class="m-askp-q">{{ mCurAsk.question }}</span>
+          <span v-if="mAskExpired" class="m-askp-state warn">已超时</span>
+          <span v-if="mAskCountdownText" class="m-askp-timer" :class="{ warn: mAskExpired }">{{ mAskCountdownText }}</span>
+          <span v-if="pendingAsk.ask.questions.length > 1" class="m-askp-pager">
+            <button class="m-askp-page-btn" type="button" :disabled="mAskPage <= 0 || pendingAsk.ask.busy" @click="mAskPage--">‹</button>
+            <span class="m-askp-page-num">{{ mAskPage + 1 }} / {{ pendingAsk.ask.questions.length }}</span>
+            <button class="m-askp-page-btn" type="button" :disabled="mAskPage >= pendingAsk.ask.questions.length - 1 || pendingAsk.ask.busy" @click="mAskPage++">›</button>
+          </span>
         </div>
         <div class="m-askp-opts">
-          <button v-for="(op, oi) in pendingAsk.ask.options" :key="oi" class="m-askp-opt" type="button"
-                  :disabled="pendingAsk.ask.busy" @click="answerAsk(pendingAsk, op)">
+          <button v-for="(op, oi) in mCurAsk.options" :key="oi" class="m-askp-opt" type="button"
+                  :class="{ sel: pendingAsk.ask.sels[mAskPage] === oi }"
+                  :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="pickAskOption(pendingAsk, mAskPage, oi)">
             <span class="m-askp-no">{{ oi + 1 }}.</span>
             <span class="m-askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="m-askp-rec">（推荐）</span></span>
             <span v-if="askOptionParts(op).rest" class="m-askp-rest">{{ askOptionParts(op).rest }}</span>
           </button>
-          <div class="m-askp-opt m-askp-custom">
-            <span class="m-askp-no">{{ pendingAsk.ask.options.length + 1 }}.</span>
-            <input v-model="askCustom" class="m-askp-input" :maxlength="2000" :disabled="pendingAsk.ask.busy"
-                   placeholder="输入你的回答…" @keydown.enter.prevent="answerAsk(pendingAsk, askCustom)" />
+          <div class="m-askp-opt m-askp-custom" :class="{ sel: pendingAsk.ask.sels[mAskPage] === mCurAsk.options.length }">
+            <span class="m-askp-no">{{ mCurAsk.options.length + 1 }}.</span>
+            <input v-model="pendingAsk.ask.customs[mAskPage]" class="m-askp-input" :maxlength="2000"
+                   :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired"
+                   placeholder="输入你的回答…" @input="setAskCustom(pendingAsk, mAskPage, pendingAsk.ask.customs[mAskPage])"
+                   @keydown.enter.prevent="setAskCustom(pendingAsk, mAskPage, pendingAsk.ask.customs[mAskPage])" />
           </div>
         </div>
         <div class="m-askp-foot">
-          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已回答，模型继续中…' : '未答超时将按推荐项默认执行' }}</span>
+          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '逐题作答后底部提交；未答将按推荐项默认执行' }}</span>
           <span class="m-askp-actions">
-            <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy" @click="ignoreAsk(pendingAsk)">忽略</button>
-            <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || !askCustom.trim()"
-                    @click="answerAsk(pendingAsk, askCustom)">提交</button>
+            <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
+            <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ mAskAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
           </span>
         </div>
       </div>
@@ -366,7 +375,7 @@ provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
-  resolveApproval, answerAsk, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
+  resolveApproval, pickAskOption, setAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   ignoreAsk,
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
@@ -386,8 +395,43 @@ const pendingAsk = computed(() => {
   }
   return null
 })
-const askCustom = ref('')
-watch(() => pendingAsk.value?.ask?.id, () => { askCustom.value = '' })
+// 一卡多问：当前翻页 + 当前题 + 已答计数 + 超时倒计时
+const mAskPage = ref(0)
+const mCurAsk = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.questions.length) return { topic: '', question: '', options: [] }
+  return a.questions[Math.min(mAskPage.value, a.questions.length - 1)] || { topic: '', question: '', options: [] }
+})
+const mAskAnsweredCount = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a) return 0
+  return a.questions.reduce((n, q, i) => n + ((a.sels[i] != null) || (a.customs[i] || '').trim() ? 1 : 0), 0)
+})
+const mAskNow = ref(Date.now())
+let mAskTimer = null
+const mAskRemaining = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.deadline) return 0
+  return Math.max(0, a.deadline - mAskNow.value)
+})
+const mAskExpired = computed(() => {
+  const a = pendingAsk.value?.ask
+  return !!(a && a.deadline && !a.answered && mAskRemaining.value <= 0)
+})
+const mAskCountdownText = computed(() => {
+  const a = pendingAsk.value?.ask
+  if (!a || !a.deadline || a.answered) return ''
+  const s = Math.ceil(mAskRemaining.value / 1000)
+  const mm = String(Math.floor(s / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return mm + ':' + ss
+})
+watch(() => pendingAsk.value?.ask, (a) => {
+  mAskPage.value = 0
+  if (a && a.deadline) { if (!mAskTimer) mAskTimer = setInterval(() => { mAskNow.value = Date.now() }, 1000) }
+  else if (mAskTimer) { clearInterval(mAskTimer); mAskTimer = null }
+}, { flush: 'post' })
+watch(mAskExpired, (exp) => { if (exp && mAskTimer) { clearInterval(mAskTimer); mAskTimer = null } })
 // 「关键词：说明」拆两段（关键词加粗、说明弱化）；无冒号时整句作关键词
 const askOptionParts = (op) => {
   const s = String(op || '')
@@ -764,8 +808,16 @@ onUnmounted(() => {
 .m-askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .m-askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
 .m-askp-q { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.m-askp-state.warn { font-size: 12px; color: var(--app-warn); }
+.m-askp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-askp-timer.warn { color: var(--app-warn); }
+.m-askp-pager { flex: none; margin-left: 8px; display: inline-flex; align-items: center; gap: 2px; }
+.m-askp-page-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text2); border-radius: 6px; font-size: 15px; line-height: 1; padding: 0; }
+.m-askp-page-btn:disabled { opacity: 0.4; }
+.m-askp-page-num { min-width: 36px; text-align: center; font-size: 12px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
 .m-askp-opts { display: flex; flex-direction: column; gap: 2px; }
 .m-askp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 9px 8px; font-size: 14px; line-height: 1.55; color: var(--app-text); touch-action: manipulation; }
+.m-askp-opt.sel { background: var(--app-panel); box-shadow: inset 2px 0 0 var(--app-accent, var(--app-ok)); }
 .m-askp-opt:active { background: var(--app-panel); }
 .m-askp-opt:disabled { opacity: 0.55; }
 .m-askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }

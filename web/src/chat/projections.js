@@ -95,17 +95,40 @@ const toolCallsView = list => {
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
 }
 // ==================== askUser（向用户提问）问答记录 ====================
-// 工具入参 args 为 {topic?, question, options} JSON 字符串（SSE 短摘要/落库全文同构），
-// result=用户所选/输入的答案（超时未答=推荐项+超时说明后缀）。解析失败（截断/旧数据）时降级为只显示答案。
+// 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；
+// result=批量答案：多问题为与问题下标对齐的 JSON 数组字符串，单问题退化为纯文本（超时/忽略=推荐项+说明后缀）。
+// 解析失败（截断/旧数据）时降级为只显示答案。
 const askUserView = t => {
-  let topic = '', question = '', options = null
+  let topic = '', question = '', options = null, questions = null
   try {
     const j = JSON.parse(t?.args || 'null')
-    topic = (j && j.topic) || ''
-    question = (j && j.question) || ''
-    options = j && Array.isArray(j.options) ? j.options : null
+    if (j && Array.isArray(j.questions) && j.questions.length) {
+      questions = j.questions.map(x => ({
+        topic: x.topic || '',
+        question: x.question || '',
+        options: Array.isArray(x.options) ? x.options : null
+      }))
+    } else if (j) {
+      topic = j.topic || ''
+      question = j.question || ''
+      options = Array.isArray(j.options) ? j.options : null
+    }
   } catch (e) { /* 入参截断/旧数据：仅显示答案 */ }
-  return { topic, question, options, answer: (t && (t.result || t.output)) || '' }
+  const raw = (t && (t.result || t.output)) || ''
+  // 多问题答案：尝试解析为 JSON 数组（与 questions 下标对齐）
+  let answers = null
+  if (questions) {
+    try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：按单问处理 */ }
+  }
+  if (questions) {
+    const list = questions.map((q, i) => ({
+      topic: q.topic, question: q.question, options: q.options,
+      // 多问答案=JSON 数组；单问（questions 仅 1 项）= 纯文本，解析失败回退到 raw
+      answer: answers && i < answers.length ? answers[i] : (questions.length === 1 ? raw : '')
+    }))
+    return { multi: true, questions: list }
+  }
+  return { topic, question, options, answer: raw }
 }
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
