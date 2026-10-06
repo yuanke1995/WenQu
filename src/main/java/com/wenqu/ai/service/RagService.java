@@ -5131,8 +5131,14 @@ public class RagService {
     /** askUser 单轮提问上限：防模型把「一问一答」变成刷屏循环；正常澄清 1~2 问足够 */
     private static final int MAX_ASKS_PER_TURN = 3;
 
-    /** askUser 单张卡片承载的问题上限（一卡多问）：超出截断保留前 N，防止单卡过长 */
-    private static final int MAX_QUESTIONS_PER_CARD = 3;
+    /** askUser 单张卡片承载的问题上限（一卡多问）：超出则整卡拒绝、让模型合并后重问。
+     *  刻意不做「静默截断保留前 N」：截断会让模型拿到的答案数组比它自己传入的问题数短，
+     *  下标对不上（模型会把第 N 个答案当成第 N+1 问的），且界面上会出现「有问无答」的残缺问。 */
+    private static final int MAX_QUESTIONS_PER_CARD = 6;
+
+    /** askUser 提问卡等待上限（一卡多问需人工逐题作答，比工具审批宽）：固定 5 分钟。
+     *  前端倒计时直接取 SSE 下发的 timeoutMs 显示，故与后端阻塞超时必须同源。 */
+    private static final long ASK_TIMEOUT_MS = 5 * 60 * 1000L;
 
     /**
      * askUser 工具执行体（BuiltinTools.askUser 经 ToolContext 注入调用）：向用户发出结构化提问并
@@ -5178,8 +5184,11 @@ public class RagService {
         if (qs.isEmpty()) {
             return "（无有效问题：每题须含非空的 question 与 2~6 个选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
         }
-        if (qs.size() > MAX_QUESTIONS_PER_CARD) qs = new java.util.ArrayList<>(qs.subList(0, MAX_QUESTIONS_PER_CARD));
-        long timeout = approvalTimeoutMs();
+        if (qs.size() > MAX_QUESTIONS_PER_CARD) {
+            return "（本次提问共 " + qs.size() + " 个问题，超过单卡上限 " + MAX_QUESTIONS_PER_CARD
+                    + " 个，工具未执行：请把问题合并或分批，压缩到 " + MAX_QUESTIONS_PER_CARD + " 个以内后重新提问。）";
+        }
+        long timeout = ASK_TIMEOUT_MS;
         String askId = java.util.UUID.randomUUID().toString();
         java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
         // 落库（复用 c_ai_tool_approval：tool_name=askUser，questions 存 request_args，答案数组存 answer）

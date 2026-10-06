@@ -97,7 +97,11 @@ const toolCallsView = list => {
 // ==================== askUser（向用户提问）问答记录 ====================
 // 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；
 // result=批量答案：多问题为与问题下标对齐的 JSON 数组字符串，单问题退化为纯文本（超时/忽略=推荐项+说明后缀）。
-// 解析失败（截断/旧数据）时降级为只显示答案。
+//
+// 两个必须收口的渲染口径（否则会出现「有问无答」的残缺问）：
+//  ① answers 非数组 ⇒ 这张卡根本没发出去（超限被拒 / 提问次数用尽 / 无有效问题），
+//     result 是一句说明而不是答案——此时按单条说明渲染，绝不按问题逐条铺开空答。
+//  ② answers 数组比问题短 ⇒ 历史数据里后端曾静默截断过（现已改为整卡拒绝），只渲染有答案的前 N 问。
 const askUserView = t => {
   let topic = '', question = '', options = null, questions = null
   try {
@@ -121,10 +125,13 @@ const askUserView = t => {
     try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：按单问处理 */ }
   }
   if (questions) {
-    const list = questions.map((q, i) => ({
+    // ① 没发出去的卡：result 是说明文本，按单条展示
+    if (!answers) return { topic: '', question: '', options: null, answer: raw, notice: true }
+    // ② 截断过的历史数据：只渲染有答案的部分
+    const list = questions.slice(0, answers.length).map((q, i) => ({
       topic: q.topic, question: q.question, options: q.options,
       // 多问答案=JSON 数组；单问（questions 仅 1 项）= 纯文本，解析失败回退到 raw
-      answer: answers && i < answers.length ? answers[i] : (questions.length === 1 ? raw : '')
+      answer: i < answers.length ? answers[i] : (questions.length === 1 ? raw : '')
     }))
     return { multi: true, questions: list }
   }

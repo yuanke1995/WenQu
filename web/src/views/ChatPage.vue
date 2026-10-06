@@ -170,21 +170,8 @@
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                         </button>
-                        <!-- askUser 问答记录：问与答常显（不藏进展开区），刷新/历史恢复同构 -->
-                        <template v-if="t.name === 'askUser' && t.status !== 'start'">
-                          <div class="ask-record-body">
-                            <template v-if="askUserView(t).multi">
-                              <div v-for="(q, qi) in askUserView(t).questions" :key="qi" class="ask-record-item">
-                                <div class="ask-record-q"><question-circle-outlined /> <template v-if="askUserView(t).questions.length > 1">{{ qi + 1 }}. </template>{{ q.question }}</div>
-                                <div v-if="q.answer" class="ask-record-a"><check-circle-outlined /> {{ q.answer }}</div>
-                              </div>
-                            </template>
-                            <template v-else>
-                              <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
-                              <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
-                            </template>
-                          </div>
-                        </template>
+                        <!-- askUser 问答记录：可折叠（默认收起），刷新/历史恢复同构 -->
+                        <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <div v-if="t._open" class="tl-card-body">
                           <template v-if="t.args">
                             <div class="tl-io-label">入参</div>
@@ -264,13 +251,8 @@
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                       <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                     </button>
-                    <!-- askUser 问答记录：问与答常显（不藏进展开区），刷新/历史恢复同构 -->
-                    <template v-if="t.name === 'askUser' && t.status !== 'start'">
-                      <div class="ask-record-body">
-                        <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
-                        <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
-                      </div>
-                    </template>
+                    <!-- askUser 问答记录：可折叠（默认收起），刷新/历史恢复同构 -->
+                    <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                     <div v-if="t._open" class="tl-card-body">
                       <template v-if="t.args">
                         <div class="tl-io-label">入参</div>
@@ -1227,13 +1209,13 @@ import { isNarrow, isCoarse } from '../h5/mobile'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
+import AskRecordCard from '../components/AskRecordCard.vue'
 
 // 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
-         askUserView,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -3539,13 +3521,7 @@ onMounted(async () => {
 .ar-status.ar-pending { color: var(--app-warn-text); }
 .ar-status.ar-ok { color: var(--app-ok); }
 
-/* askUser 问答记录（工具卡内常显：问题 + 答案；刷新/历史恢复同构） */
-.ask-record-body { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
-.ask-record-item { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--app-panel-2); border-radius: 8px; }
-.ask-record-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
-.ask-record-q .anticon { margin-top: 3px; color: var(--app-text3); }
-.ask-record-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
-.ask-record-a .anticon { margin-top: 3px; color: var(--app-ok); }
+/* askUser 问答记录由共用组件 AskRecordCard 承载（自带折叠头与样式） */
 
 /* ==================== 智能体提问面板（替换聊天输入框） ====================
    挂起提问时整块顶替 composer：编号选项（关键词加粗 + 说明弱化、首项带「推荐」）、

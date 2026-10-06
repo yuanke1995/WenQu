@@ -98,11 +98,8 @@
                     <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
                   </button>
-                  <!-- askUser 问答记录：问与答常显（与 PC 同构） -->
-                  <div v-if="t.name === 'askUser' && t.status !== 'start'" class="ask-rec-body">
-                    <div v-if="askUserView(t).question" class="ask-rec-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
-                    <div v-if="askUserView(t).answer" class="ask-rec-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
-                  </div>
+                  <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
+                  <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <div v-show="t._open" class="card-body">
                     <template v-if="t.args"><div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre></template>
                     <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
@@ -136,10 +133,7 @@
           </button>
           <div v-show="m._fbOpen" class="card-body">
             <template v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti">
-              <div v-if="t.name === 'askUser' && t.status !== 'start'" class="ask-rec-body">
-                <div v-if="askUserView(t).question" class="ask-rec-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
-                <div v-if="askUserView(t).answer" class="ask-rec-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
-              </div>
+              <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
               <div v-else class="tool-line">
                 <check-outlined v-if="t.status === 'done'" class="ic-ok" />
                 <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
@@ -286,8 +280,9 @@ import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fallbackDur, toolCallsView, toolSearchQueries, subagentCard, barWidth, toggleSubagents, fmtDuration,
-  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, askUserView
+  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel
 } from '../chat/projections'
+import AskRecordCard from '../components/AskRecordCard.vue'
 
 const props = defineProps({
   m: { type: Object, required: true },
@@ -434,12 +429,14 @@ const onMdClick = e => {
 
 /* 智能体提问（askUser）待答态由 MobileChatPage 的 m-askp 面板承载，气泡内不再渲染提问卡 */
 
-/* askUser 问答记录（工具卡内常显：问题 + 答案） */
-.ask-rec-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.ask-rec-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
-.ask-rec-q .anticon { margin-top: 3px; color: var(--app-text3); }
-.ask-rec-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
-.ask-rec-a .anticon { margin-top: 3px; color: var(--app-ok); }
+/* askUser 问答记录由共用组件 AskRecordCard 承载（自带折叠头与样式）。
+   两处宿主内边距不同，用 :deep 分别覆盖，让折叠头与各自的卡片头左右对齐：
+   ① .tool-card 内的直接子节点 → 对齐 .card-head 的 10px 12px；
+   ② 兜底分支在 .card-body（已有 12px padding）内 → 只需清零自身外边距。 */
+.tool-card :deep(.ask-rec) { --ask-rec-pad: 10px 12px; margin: 0 0 4px; }
+.tool-card :deep(.ask-rec-body) { padding: 4px 12px 0; }
+.card-body :deep(.ask-rec) { margin: 0 0 8px; }
+.card-body :deep(.ask-rec-body) { padding: 4px 0 0; }
 
 .err-card { border: 1px solid var(--app-danger-border); background: var(--app-danger-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .err-card.net { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
