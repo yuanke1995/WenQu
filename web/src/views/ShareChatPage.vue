@@ -28,13 +28,16 @@
           <div v-if="m.role === 'user'" class="sc-bubble user">{{ m.content }}</div>
           <div v-else class="sc-bubble-wrap ai">
             <div class="sc-ai-mark"><AgentAvatar :agent="info" :size="26" /></div>
-            <div class="sc-bubble ai">
+            <!-- 还没出正文时不要画气泡壳：只留头像 + 一行带呼吸点的提示。
+                 此前是「空气泡（有边框有内边距）里再套一个虚线小框」，框中框套两层，
+                 文字还被虚线框挤成两行。生成中本就该是轻量的。 -->
+            <div v-if="!m.content" class="sc-typing">
+              <span class="sc-pulse" /><span>{{ m.stage || '正在思考…' }}</span>
+            </div>
+            <div v-else class="sc-bubble ai">
               <div class="sc-md" v-html="renderMd(m.content, [])"></div>
-              <!-- 阶段提示只在这里出现一次。此前下面还挂了一条 sending && lastAiStage 的
-                   「正在检索资料…」独立气泡，与本处 m.stage 指向同一份状态 ⇒ 同一句话渲染两遍 -->
-              <div v-if="m.stage" class="sc-stage" :class="{ live: sending }">
-                <span v-if="sending" class="sc-pulse" />{{ m.stage }}
-              </div>
+              <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注，不再单独起框 -->
+              <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ m.stage }}</div>
             </div>
           </div>
         </div>
@@ -235,12 +238,20 @@ function stop () {
   border: 1px solid var(--app-border); box-shadow: var(--app-shadow-sm);
   border-top-left-radius: 4px; min-width: 0;
 }
-.sc-stage { font-size: 12px; color: var(--app-text3); margin-top: 6px; }
-/* 进行中：气泡内的虚线小条 + 呼吸点（此前这条提示是一条独立气泡，与气泡内的 m.stage 重复渲染） */
-.sc-stage.live {
-  display: inline-flex; align-items: center; gap: 7px;
-  background: var(--app-panel-2); border: 1px dashed var(--app-border-strong);
-  border-radius: 8px; padding: 4px 10px; color: var(--app-text2);
+/* 生成中（正文未到）：无边框的一行提示，不占气泡壳。
+   此前是「空气泡里套虚线小框」，两层框把 6 个字挤成两行，看着像坏掉的卡片。 */
+.sc-typing {
+  /* flex:none —— 它是 .sc-bubble-wrap 的 flex item，默认可被压缩，
+     一旦被压就会把「正在检索资料」折成两行（截图里的现象） */
+  flex: none;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--app-text3); line-height: 1.6;
+  padding: 3px 0; white-space: nowrap;
+}
+/* 正文已出、又推来阶段提示：作为正文下方的脚注一行，不单独起框 */
+.sc-stage {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--app-text3); margin-top: 8px; line-height: 1.6;
 }
 .sc-pulse {
   width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none;

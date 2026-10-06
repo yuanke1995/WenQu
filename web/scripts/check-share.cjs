@@ -180,13 +180,15 @@ const check = (ok, label, detail = '') => {
   await page.click('.sc-send')
   await page.waitForTimeout(1500)
   const streamed = await page.evaluate(() => ({
-    // 正文已开始（token 已到）⇒ 阶段提示应已撤掉；若有残留说明 stage 没被清
+    // 正文已开始（token 已到）⇒ 阶段提示应已撤掉（m.stage 随正文开始被清）
     stageN: document.querySelectorAll('.sc-stage').length,
+    typingN: document.querySelectorAll('.sc-typing').length,
     body: (document.querySelector('.sc-bubble.ai') || {}).textContent || '',
     bubbles: document.querySelectorAll('.sc-row').length
   }))
   check(streamed.body.includes('答案是 5'), '分享页 SSE 正文正常渲染（stage→token→done 全链路）', streamed.body.slice(0, 40))
-  check(streamed.stageN === 0, '正文开始后阶段提示已撤掉（不与正文并存）', `stageN=${streamed.stageN}`)
+  check(streamed.stageN === 0 && streamed.typingN === 0,
+    '正文出来后阶段提示已消失（既无脚注也无「正在思考」行）', `stage=${streamed.stageN} typing=${streamed.typingN}`)
   check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的阶段气泡）', `rows=${streamed.bubbles}`)
 
   // 进行中（只收到 stage、还没正文）：阶段提示**全页只能有一条**。
@@ -197,14 +199,29 @@ const check = (ok, label, detail = '') => {
   await page.fill('.sc-textarea', '你好')
   await page.click('.sc-send')
   await page.waitForTimeout(1600)
-  const during = await page.evaluate(() => ({
-    stageN: document.querySelectorAll('.sc-stage').length,
-    stageText: [...document.querySelectorAll('.sc-stage')].map(e => e.textContent.trim()),
-    rows: document.querySelectorAll('.sc-row').length,
-    sending: !!document.querySelector('.sc-send.stop')
-  }))
+  const during = await page.evaluate(() => {
+    const tip = document.querySelector('.sc-typing')
+    const r = tip ? tip.getBoundingClientRect() : { width: 0, height: 0 }
+    return {
+      // 提示行唯一（不多处渲染同一条）
+      tipN: document.querySelectorAll('.sc-typing').length,
+      stageN: document.querySelectorAll('.sc-stage').length,
+      tipText: tip ? tip.textContent.trim() : '',
+      // 单行：高度不应超过 ~28px（折成两行会翻倍）
+      tipH: Math.round(r.height), tipW: Math.round(r.width),
+      // 生成中不该有气泡壳：没有边框/底色，也就没有"框中框"
+      bubbleN: document.querySelectorAll('.sc-bubble.ai').length,
+      rows: document.querySelectorAll('.sc-row').length,
+      sending: !!document.querySelector('.sc-send.stop')
+    }
+  })
   check(during.sending, '流未结束时发送键处于「停止」态（确在生成中）')
-  check(during.stageN === 1, '进行中：阶段提示全页只有 1 条（不重复渲染）', `stageN=${during.stageN} text=${during.stageText.join(' / ')}`)
+  check(during.tipN === 1 && during.stageN === 0,
+    '进行中：提示只出现一次（不多处渲染同一条）', `typing=${during.tipN} stage=${during.stageN} "${during.tipText}"`)
+  check(during.tipH > 0 && during.tipH <= 30,
+    '进行中：提示是单行（不被挤成两行）', `h=${during.tipH} "${during.tipText}"`)
+  check(during.bubbleN === 0,
+    '进行中：不画空气泡壳（此前是「空气泡里再套虚线小框」的框中框）', `bubble=${during.bubbleN}`)
   check(during.rows === 2, '进行中：一轮问答仍只渲染 2 条（无多余的阶段气泡）', `rows=${during.rows}`)
 
   // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
