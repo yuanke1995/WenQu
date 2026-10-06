@@ -1498,4 +1498,18 @@ const fmtTime = t => {
   .col-act { width: 158px; }
   .doc-row { gap: 8px; }
 }
+/* 手机（/knowledge 已进窄屏白名单，只读浏览）：行重排成两行——
+   首行文件名占满，次行状态 pill + 操作右对齐。表头栅格在重排后失去对照意义，整体隐藏；
+   多选勾选随批量操作栏一起退出手机（行内单条操作仍在，管理动作回桌面做）。 */
+@media (max-width: 560px) {
+  .head-row { display: none; }
+  .doc-row { flex-wrap: wrap; row-gap: 6px; padding: 10px 12px; }
+  .col-check { display: none; }
+  .col-name { flex: 1 1 100%; }
+  /* 状态列在 ≤640 被隐藏，这里恢复：解析中/失败是只读浏览最需要看见的状态 */
+  .col-status { display: flex; width: auto; flex: 1 1 auto; min-width: 0; }
+  .col-act { width: auto; flex: none; margin-left: auto; }
+  .file-desc { display: none; }   /* 描述挤进首行只会截断成噪声，悬浮 title 仍在 */
+  .doc-row :deep(.ant-checkbox-wrapper) { width: 30px; height: 44px; }
+}
 </style>

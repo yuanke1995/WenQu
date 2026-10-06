@@ -26,11 +26,12 @@ const ALLOW = [
   '/chat',       // 对话（主入口）
   '/profile',    // 个人设置：改密码必须在手机上可用
   '/help',       // 帮助中心：纯文档阅读，窄屏样式由 md.css 兜住
-  '/artifacts'   // 我的产物：卡片列表形态，手机上查看/下载是真需求（窄屏适配见 ArtifactsPage.vue）
+  '/artifacts',  // 我的产物：卡片列表形态，手机上查看/下载是真需求（窄屏适配见 ArtifactsPage.vue）
+  '/knowledge'   // 知识库：只读浏览（库卡片 + 文档列表 + 知识块预览），管理动作仍在桌面做
 ]
 // 兜底用前缀匹配：带路径参数的子路由（/knowledge/:id/docs）按前缀判，
 // 不在前缀表里即视为引导卡
-const ALLOW_PREFIX = ['/profile', '/help']
+const ALLOW_PREFIX = ['/profile', '/help', '/knowledge']
 
 const props = defineProps({
   path: { type: String, required: true }

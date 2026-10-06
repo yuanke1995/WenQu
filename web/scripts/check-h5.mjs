@@ -35,6 +35,8 @@ const check = (ok, label, detail = '') => {
   check(/'\/chat'/.test(s), '白名单含 /chat（登录落地页）')
   // 白名单每加一页，就必须有对应的窄屏适配与断言（check-mshell/check-browser 各一段）
   check(/'\/artifacts'/.test(s), '白名单含 /artifacts（产物查看/下载是真需求）')
+  check(/'\/knowledge'/.test(s) && /'\/knowledge'/.test(stripComments(read('src/h5/DesktopOnlyGuard.vue')).match(/ALLOW_PREFIX = (\[[^\]]*\])/)?.[1] || ''),
+    '白名单含 /knowledge 且前缀表覆盖 /knowledge/:id/docs')
 }
 
 // ---- ② antd Textarea 没有 resize()，必须走 resizableTextArea.instance ----

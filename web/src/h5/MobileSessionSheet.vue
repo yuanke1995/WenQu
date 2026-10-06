@@ -50,6 +50,7 @@
       <button class="ss-foot-btn" type="button" @click="$emit('profile')"><user-outlined />个人设置</button>
       <button class="ss-foot-btn" type="button" @click="$emit('help')"><question-circle-outlined />帮助中心</button>
       <button class="ss-foot-btn" type="button" @click="$emit('artifacts')"><file-text-outlined />我的产物</button>
+      <button class="ss-foot-btn" type="button" @click="$emit('knowledge')"><database-outlined />知识库</button>
       <button class="ss-foot-btn" type="button" @click="onToggleTheme">
         <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
       </button>
@@ -86,7 +87,7 @@ import { computed, h, inject, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
-         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined } from '@ant-design/icons-vue'
+         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
@@ -102,7 +103,7 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   currentId: { type: String, default: '' }
 })
-const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', 'help', 'artifacts'])
+const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', 'help', 'artifacts', 'knowledge'])
 
 // 壳外入口：个人设置/帮助是页面跳转（emit 给移动壳，与 select/new-chat 同路径），
 // 主题与退出是本 sheet 自持的动作（与会话行操作同一层级）

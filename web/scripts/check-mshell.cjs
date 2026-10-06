@@ -56,6 +56,18 @@ function serveStatic (page) {
         { id: 12, filename: '清单.csv', ext: 'csv', size: 512, createTime: '2026-10-05T18:30:00', description: '', url: '/files/12.csv', expireTime: '' }
       ])
     }
+    // 知识库只读浏览（P5）：库卡片 + 文档列表（页头统计与上传配置也在此 mock）
+    if (u.pathname === '/api/ai/kb/list') {
+      return json([{ id: 'kb-1', name: '产品手册', description: '产品操作与常见问题', docCount: 2, isDefault: 0, builtin: 0, mixedScope: false }])
+    }
+    if (u.pathname === '/api/ai/document/list') {
+      return json([
+        { id: 'd-1', kbId: 'kb-1', fileName: '安装指南.pdf', fileType: 'pdf', fileSize: 1048576, chunkCount: 12, status: 0, createdBy: 'nobody', createTime: '2026-10-06T09:00:00' },
+        { id: 'd-2', kbId: 'kb-1', fileName: '接口说明.docx', fileType: 'docx', fileSize: 4096, chunkCount: 5, status: 2, parseProgress: 60, parseDesc: '解析中', createdBy: 'nobody', createTime: '2026-10-06T08:00:00' }
+      ])
+    }
+    if (u.pathname === '/api/ai/document/queue/stats') return json({ pending: 0, running: 1 })
+    if (u.pathname === '/api/ai/config/public') return json({ upload: { maxFileSize: 209715200, allowedExts: ['docx', 'pdf', 'xlsx'] } })
     // 配置引导（setupGuide）的两个数据源：模型可用列表与个人偏好（defaultModel）
     if (u.pathname === '/api/ai/provider/available') {
       return json(setupUnready ? [] : [{ name: '平台内置', models: [{ ref: 'chat-1', displayName: '演示聊天模型', type: 'chat' }] }])
@@ -265,6 +277,43 @@ const check = (ok, label, detail = '') => {
   check(art.rows === 2 && !art.card, '产物页真渲染（未被引导卡拦，mock 两行）', JSON.stringify(art))
   check(art.scrollW <= art.clientW + 1, '产物页无横向溢出', `scrollW=${art.scrollW} clientW=${art.clientW}`)
   check(art.minAct >= 44, '产物操作按钮触摸热区 ≥44px', `minH=${art.minAct}`)
+
+  // ---- 知识库只读浏览（P5）：入口 → 库卡片 → 文档列表（行重排 + 无溢出）----
+  await page.goto(ORIGIN + '/m/chat', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+  check(await openSheet('.m-bar-btn[title="会话列表"]'), '会话 sheet 可再次打开（知识库入口）')
+  await page.locator('.ss-foot-btn', { hasText: '知识库' }).first().dispatchEvent('click')
+  await page.waitForTimeout(1300)
+  const kb = await page.evaluate(() => ({
+    path: location.pathname, cards: document.querySelectorAll('.kb-card').length,
+    card: !!document.querySelector('.dg-card'), name: (document.querySelector('.kb-name') || {}).textContent || '',
+    scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth
+  }))
+  check(kb.path === '/knowledge', '点「知识库」进入 /knowledge', kb.path)
+  check(kb.cards === 1 && !kb.card, '库卡片真渲染（未被引导卡拦）', JSON.stringify(kb))
+  check(kb.scrollW <= kb.clientW + 1, '知识库列表页无横向溢出', `scrollW=${kb.scrollW} clientW=${kb.clientW}`)
+  await page.locator('.kb-card').first().dispatchEvent('click')
+  await page.waitForTimeout(1300)
+  const docs = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.doc-row:not(.head-row)')]
+    const first = rows[0]
+    const name = first ? first.querySelector('.col-name') : null
+    const act = first ? first.querySelector('.col-act') : null
+    return {
+      path: location.pathname, rows: rows.length,
+      headHidden: !document.querySelector('.head-row') || document.querySelector('.head-row').offsetHeight === 0,
+      // 重排生效：文件名行在操作行上方（同一行内 name 顶满、act 换到下一行）
+      actBelow: !!(name && act) && Math.round(act.getBoundingClientRect().top) > Math.round(name.getBoundingClientRect().top) + 6,
+      statusShown: first ? getComputedStyle(first.querySelector('.col-status')).display !== 'none' : false,
+      scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth
+    }
+  })
+  check(docs.path === '/knowledge/kb-1/docs', '点库卡片进入文档列表', docs.path)
+  check(docs.rows === 2, '文档列表真渲染（mock 两行）', `rows=${docs.rows}`)
+  check(docs.headHidden, '≤560px 表头行隐藏（栅格已重排）')
+  check(docs.actBelow, '操作区换到文件名下一行', JSON.stringify(docs))
+  check(docs.statusShown, '状态列恢复可见（解析中/失败是只读浏览的关键状态）')
+  check(docs.scrollW <= docs.clientW + 1, '文档列表页无横向溢出', `scrollW=${docs.scrollW} clientW=${docs.clientW}`)
 
   // ---- 单轮操作 sheet（P1）：历史加载 → 「⋯」→ 导出/评测/调试/删除 ----
   // 这一段用 mock 的历史（s-round）驱动真渲染：操作行只对"最新一条"或选中态出现，

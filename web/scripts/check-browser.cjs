@@ -68,6 +68,18 @@ function serveStatic (page) {
         { id: 12, filename: '清单.csv', ext: 'csv', size: 512, createTime: '2026-10-05T18:30:00', description: '', url: '/files/12.csv', expireTime: '' }
       ])
     }
+    // 知识库只读浏览：库卡片 + 文档列表
+    if (u.pathname === '/api/ai/kb/list') {
+      return json([{ id: 'kb-1', name: '产品手册', description: '产品操作与常见问题', docCount: 2, isDefault: 0, builtin: 0, mixedScope: false }])
+    }
+    if (u.pathname === '/api/ai/document/list') {
+      return json([
+        { id: 'd-1', kbId: 'kb-1', fileName: '安装指南.pdf', fileType: 'pdf', fileSize: 1048576, chunkCount: 12, status: 0, createdBy: 'nobody', createTime: '2026-10-06T09:00:00' },
+        { id: 'd-2', kbId: 'kb-1', fileName: '接口说明.docx', fileType: 'docx', fileSize: 4096, chunkCount: 5, status: 2, parseProgress: 60, parseDesc: '解析中', createdBy: 'nobody', createTime: '2026-10-06T08:00:00' }
+      ])
+    }
+    if (u.pathname === '/api/ai/document/queue/stats') return json({ pending: 0, running: 1 })
+    if (u.pathname === '/api/ai/config/public') return json({ upload: { maxFileSize: 209715200, allowedExts: ['docx', 'pdf', 'xlsx'] } })
     if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
     }
@@ -263,6 +275,35 @@ const check = (ok, label, detail = '') => {
   check(/删除/.test(artModal) && /不可恢复/.test(artModal), '删除确认走 Modal.confirm（触屏/iab 可靠）', artModal.replace(/\s+/g, ' ').slice(0, 36))
   await page.keyboard.press('Escape')
   await page.waitForTimeout(400)
+
+  // ---- 知识库只读浏览（P5）：白名单 + 行重排 ----
+  await page.goto(ORIGIN + '/knowledge', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  const kbN = await page.evaluate(() => ({
+    cards: document.querySelectorAll('.kb-card').length, card: !!document.querySelector('.dg-card'),
+    scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth
+  }))
+  check(!kbN.card && kbN.cards === 1, '窄屏 /knowledge 渲染库卡片（白名单生效）', JSON.stringify(kbN))
+  check(kbN.scrollW <= kbN.clientW + 1, '窄屏知识库列表无横向溢出', `scrollW=${kbN.scrollW} clientW=${kbN.clientW}`)
+  await page.goto(ORIGIN + '/knowledge/kb-1/docs', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1000)
+  const docsN = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.doc-row:not(.head-row)')]
+    const first = rows[0]
+    const name = first ? first.querySelector('.col-name') : null
+    const act = first ? first.querySelector('.col-act') : null
+    const headRow = document.querySelector('.head-row')
+    return {
+      rows: rows.length, card: !!document.querySelector('.dg-card'),
+      headHidden: !headRow || headRow.offsetHeight === 0,
+      actBelow: !!(name && act) && Math.round(act.getBoundingClientRect().top) > Math.round(name.getBoundingClientRect().top) + 6,
+      scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth
+    }
+  })
+  check(!docsN.card && docsN.rows === 2, '窄屏文档列表真渲染（前缀放行 + mock 两行）', JSON.stringify(docsN))
+  check(docsN.headHidden, '窄屏文档表头隐藏（行重排生效）')
+  check(docsN.actBelow, '窄屏文档操作区换到文件名下一行')
+  check(docsN.scrollW <= docsN.clientW + 1, '窄屏文档列表无横向溢出', `scrollW=${docsN.scrollW} clientW=${docsN.clientW}`)
 
   // ---- 引导卡：非白名单页面窄屏应给引导卡，且真实页面**未渲染** ----
   // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat

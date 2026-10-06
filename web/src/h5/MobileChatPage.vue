@@ -170,7 +170,8 @@
                         @new-chat="onNewChat"
                         @profile="() => onGoPage('/profile')"
                         @help="() => onGoPage('/help')"
-                        @artifacts="() => onGoPage('/artifacts')" />
+                        @artifacts="() => onGoPage('/artifacts')"
+                        @knowledge="() => onGoPage('/knowledge')" />
     <MobileModelSheet :open="modelOpen" @close="modelOpen = false" />
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
