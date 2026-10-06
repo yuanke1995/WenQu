@@ -20,7 +20,7 @@ const fs = require('fs')
 
 const EDGE = process.env.WQ_BROWSER || '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
 if (!fs.existsSync(EDGE)) { console.log('SKIP  未找到浏览器：' + EDGE + '（可用 WQ_BROWSER 指定）'); process.exit(0) }
-const DIST_DIR = path.resolve(__dirname, '../dist')
+const DIST_DIR = path.resolve(__dirname, '../' + (process.env.WQ_DIST || 'dist'))
 if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) { console.log('SKIP  未找到 dist 产物（先 npx vite build）'); process.exit(0) }
 const ORIGIN = 'http://share.local'
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -40,7 +40,7 @@ const SHARED = {
     ] }
   ]
 }
-const AGENT = { name: '客服助手', description: '回答产品与订单问题' }
+const AGENT = { name: '客服助手', description: '回答产品与订单问题', icon: '📦', isBuiltin: false }
 
 function serveStatic (page) {
   return page.route('**/*', route => {
@@ -117,17 +117,31 @@ const check = (ok, label, detail = '') => {
     const de = document.documentElement
     const ta = document.querySelector('.sc-textarea')
     const send = document.querySelector('.sc-send')
+    const page_ = document.querySelector('.sc-page')
+    const list = document.querySelector('.sc-list')
+    const listRect = list ? list.getBoundingClientRect() : { height: 0 }
+    const heroRect = document.querySelector('.sc-hero') ? document.querySelector('.sc-hero').getBoundingClientRect() : null
     return {
       name: (document.querySelector('.sc-name') || {}).textContent || '',
-      empty: !!document.querySelector('.sc-empty'),
+      hero: !!document.querySelector('.sc-hero'),
+      // 空态必须垂直居中：此前顶在上方，下面留一大片空白，页面显得空且廉价
+      heroTopGap: heroRect ? Math.round(heroRect.top - listRect.top) : -1,
+      heroBotGap: heroRect && listRect.height ? Math.round(listRect.top + listRect.height - heroRect.bottom) : -1,
+      headAvatarEmoji: (document.querySelector('.sc-avatar') || {}).textContent || '',
+      brand: !!document.querySelector('.sc-brand'),
       taFont: ta ? parseFloat(getComputedStyle(ta).fontSize) : 0,
       taEnterhint: ta ? (ta.getAttribute('enterkeyhint') || '') : '',
       sendSize: send ? Math.round(send.getBoundingClientRect().width) : 0,
-      vhH: document.querySelector('.sc-page') ? Math.round(document.querySelector('.sc-page').getBoundingClientRect().height) : 0,
+      vhH: page_ ? Math.round(page_.getBoundingClientRect().height) : 0,
       scrollW: de.scrollWidth, clientW: de.clientWidth
     }
   })
-  check(sc.name.includes('客服助手') && sc.empty, '智能体分享页头部与空态渲染', sc.name)
+  check(sc.name.includes('客服助手') && sc.hero, '智能体分享页头部与空态渲染', sc.name)
+  check(sc.headAvatarEmoji.includes('📦'), '头部用智能体自身图标（icon 字段透传到 AgentAvatar）', sc.headAvatarEmoji)
+  check(sc.brand, '头部右侧有「问渠 WenQu」品牌标识（访客知道这是谁家的机器人）')
+  // 空态居中：上下留白差不超过 60px 才算真的居中（此前 top≈24 / bot≈700）
+  check(sc.heroTopGap > 0 && sc.heroBotGap > 0 && Math.abs(sc.heroTopGap - sc.heroBotGap) < 60,
+    '空态在消息区垂直居中（非顶靠）', `top=${sc.heroTopGap} bottom=${sc.heroBotGap}`)
   check(sc.taFont >= 16, '输入框字号 ≥16px（iOS 聚焦不缩放）', `font=${sc.taFont}`)
   check(sc.taEnterhint === 'send', '软键盘回车键显「发送」（enterkeyhint=send）', `enterkeyhint=${sc.taEnterhint}`)
   check(sc.sendSize >= 44, '发送键触摸热区 ≥44px', `w=${sc.sendSize}`)
@@ -152,9 +166,23 @@ const check = (ok, label, detail = '') => {
   await dpage.waitForTimeout(900)
   const dsc = await dpage.evaluate(() => {
     const ta = document.querySelector('.sc-textarea')
-    return { taFont: ta ? getComputedStyle(ta).fontSize : '' }
+    const th = document.querySelector('.sc-thread') || document.querySelector('.sc-hero')
+    const hero = document.querySelector('.sc-hero')
+    const inp = document.querySelector('.sc-input')
+    return {
+      taFont: ta ? getComputedStyle(ta).fontSize : '',
+      // 桌面宽度下线程/输入区必须限宽居中，否则 1280 宽的气泡行长失控。
+      // 空态量 maxWidth 而非实际宽：hero 是 flex 居中子项，按内容收缩是 flex 的正常行为，
+      // 真正要卡的是「它最多能有多宽」——CSS 错写成 max-width 缺失时才会真的铺满。
+      heroMax: hero ? Math.round(parseFloat(getComputedStyle(hero).maxWidth) || 9999) : 0,
+      threadW: th ? Math.round(th.getBoundingClientRect().width) : 0,
+      inputW: inp ? Math.round(inp.getBoundingClientRect().width) : 0,
+      vw: window.innerWidth
+    }
   })
   check(parseFloat(dsc.taFont) < 16, '桌面输入框保持 14px（16px 规则只在 ≤768 补丁内）', `font=${dsc.taFont}`)
+  check(dsc.heroMax > 0 && dsc.heroMax <= 640, '桌面空态限宽（≤640px，不铺满视口）', `max=${dsc.heroMax}/${dsc.vw}`)
+  check(dsc.inputW > 0 && dsc.inputW <= 840, '桌面输入区限宽居中（≤840px）', `w=${dsc.inputW}`)
 
   const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401/i.test(e))
   check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))

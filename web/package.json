@@ -13,6 +13,7 @@
     "check": "node scripts/verify-sfc.mjs && node scripts/check-guard.mjs && node scripts/check-h5.mjs && node scripts/check-engine-imports.mjs",
     "check:browser": "node scripts/check-browser.cjs",
     "check:share": "node scripts/check-share.cjs",
+    "check:publish": "node scripts/check-publish.cjs",
     "gen:icons": "node scripts/gen-icons.mjs",
     "check:mshell": "node scripts/check-mshell.cjs"
   },

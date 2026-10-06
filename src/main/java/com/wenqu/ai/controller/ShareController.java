@@ -79,13 +79,16 @@ public class ShareController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "分享信息", description = "token 换取智能体公开信息（名称/描述；不含提示词与知识库配置）")
+    @Operation(summary = "分享信息", description = "token 换取智能体公开信息（名称/描述/图标；不含提示词与知识库配置）")
     @GetMapping("/{token}/info")
     public ResultJson info(@Parameter(description = "分享令牌") @PathVariable("token") String token) {
         var ctx = agentShareService.resolveGuest(token);
         return ResultJson.ok(Map.of(
                 "name", ctx.agent().getName() == null ? "" : ctx.agent().getName(),
-                "description", ctx.agent().getDescription() == null ? "" : ctx.agent().getDescription()));
+                "description", ctx.agent().getDescription() == null ? "" : ctx.agent().getDescription(),
+                // 图标：分享页头部/空态复用 AgentAvatar 的同一套解析口径（'wenqu'=品牌标 / emoji / 空=机器人）
+                "icon", ctx.agent().getIcon() == null ? "" : ctx.agent().getIcon(),
+                "isBuiltin", ctx.agent().getIsBuiltin() != null && ctx.agent().getIsBuiltin() == 1));
     }
 
     /**

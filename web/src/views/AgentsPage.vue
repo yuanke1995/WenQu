@@ -366,60 +366,130 @@
       </a-spin>
     </a-drawer>
 
-    <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入） -->
-    <a-modal v-model:open="pubVisible" title="公开发布" :width="560" :footer="null">
-      <div class="pub-form">
-        <div class="pub-row">
-          <a-switch v-model:checked="pubEnabled" @change="savePublish" />
-          <span class="pub-row-t">{{ pubEnabled ? '已发布：拿到链接的人可以免登录与该智能体对话' : '已停用：链接暂不可访问（token 保留，重新开启即恢复）' }}</span>
+    <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入 + MCP 端点）
+         结构：状态卡（一个总开关说清"发布没发布"）→ 游客能力（模型 / MCP）→ 分发方式（Tab 三选一）。
+         此前把链接、iframe、MCP 三段形态连同四段说明文字平铺一列，弹窗被撑到一屏半、
+         复制按钮被输入框挤成竖排（"复 制"/"打 开"），且看不出三者其实是同一 token 的三种用法。 -->
+    <a-modal v-model:open="pubVisible" :width="640" :footer="null" class="ap-pub-modal" destroy-on-close>
+      <template #title>
+        <div class="pub-title">
+          <AgentAvatar :agent="pubAgent" :size="22" />
+          <span>公开发布</span>
+          <span class="pub-title-sub">{{ pubAgentName || '智能体' }}</span>
         </div>
-        <div class="pub-row">
-          <span class="pub-label">游客对话模型</span>
-          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随我的个人默认模型" />
-          <div class="pub-hint">只能选择你自己可用的模型（平台级或个人级）；游客检索知识库按你的可见范围执行</div>
+      </template>
+
+      <!-- 状态卡：发布与否一眼可见，说明只有一句 -->
+      <div class="pub-status" :class="pubEnabled ? 'on' : 'off'">
+        <div class="pub-status-l">
+          <div class="pub-status-t">{{ pubEnabled ? '已发布' : '未发布' }}</div>
+          <div class="pub-status-d">
+            {{ pubEnabled ? '拿到下方链接的人可免登录与该智能体对话' : '开启后生成一条公开链接；停用时链接保留、立即失效' }}
+          </div>
         </div>
-        <div class="pub-row">
-          <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" @change="savePublish" />
-          <span class="pub-row-t">{{ pubMcpEnabled ? 'MCP 端点已开启：Claude / Cursor 等外部客户端可用该地址直接调用这个智能体' : 'MCP 端点未开启（开启后同一 token 兼作 MCP 凭据）' }}</span>
-          <div class="pub-hint" v-if="!pubEnabled">需先启用公开分享；还需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</div>
+        <a-switch v-model:checked="pubEnabled" @change="savePublish" />
+      </div>
+
+      <!-- 游客能力：模型归属发布者（只能选自己可用的），MCP 端点是分享的附加形态 -->
+      <div class="pub-block">
+        <div class="pub-block-h">游客能力</div>
+        <div class="pub-field">
+          <span class="pub-label">对话模型</span>
+          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型" />
         </div>
-        <!-- 分享停用后链接与端点一并失效（token 保留）：停用时不展示任何可复制的形态，
-             否则用户会把打不开的链接/连不上的 MCP 配置复制出去还以为能用 -->
-        <template v-if="pubToken && pubEnabled">
-          <div class="pub-row">
-            <span class="pub-label">分享链接</span>
-            <div class="pub-copy-row">
-              <a-input :value="shareUrl" readonly size="small" />
-              <button class="app-btn ghost small" @click="copyText(shareUrl, '链接已复制')">复制</button>
-              <a :href="shareUrl" target="_blank" rel="noopener" class="app-link-btn">打开</a>
+        <div class="pub-switch-row">
+          <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" size="small" @change="savePublish" />
+          <div class="pub-switch-t">
+            <div class="pub-switch-label">开放 MCP 端点</div>
+            <div class="pub-switch-d">开启后同一个 token 兼作 MCP 凭据，Claude / Cursor 等客户端可直连</div>
+          </div>
+        </div>
+        <div v-if="!pubEnabled" class="pub-warn">
+          <exclamation-circle-outlined />
+          <span>MCP 端点依赖公开分享，且需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</span>
+        </div>
+      </div>
+
+      <!-- 分发形态：三选一。共享同一个 token，切换不产生新链接 -->
+      <div class="pub-block" v-if="pubToken && pubEnabled">
+        <div class="pub-block-h">分发方式</div>
+        <a-tabs v-model:activeKey="pubTab" size="small" class="pub-tabs">
+          <a-tab-pane key="link" tab="分享链接">
+            <div class="pub-code-row">
+              <code class="pub-code">{{ shareUrl }}</code>
+              <button class="pub-icon-btn" title="复制链接" aria-label="复制链接"
+                      @click="copyText(shareUrl, '链接已复制')"><copy-outlined /></button>
+              <a :href="shareUrl" target="_blank" rel="noopener" class="pub-icon-btn" title="在新标签打开" aria-label="打开链接">
+                <export-outlined />
+              </a>
             </div>
-          </div>
-          <div class="pub-row">
-            <span class="pub-label">iframe 嵌入</span>
-            <a-textarea :value="iframeSnippet" readonly :rows="3" class="pub-iframe" />
-            <button class="app-btn ghost small" style="margin-top:6px" @click="copyText(iframeSnippet, '嵌入代码已复制')">复制嵌入代码</button>
-            <div class="pub-hint">粘贴到任意网页；游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露</div>
-          </div>
-          <div class="pub-row">
-            <span class="pub-label">MCP 端点</span>
-            <div class="pub-copy-row">
-              <a-input :value="mcpUrl" readonly size="small" />
-              <button class="app-btn ghost small" @click="copyText(mcpUrl, 'MCP 地址已复制')">复制</button>
+            <div class="pub-hint">发给任何人即可免登录对话。游客检索知识库按你的可见范围执行。</div>
+          </a-tab-pane>
+
+          <a-tab-pane key="iframe" tab="嵌入网页">
+            <div class="pub-sub-label">尺寸</div>
+            <div class="pub-size-row">
+              <label class="pub-size">
+                <span>宽</span>
+                <a-input-number v-model:value="pubFrameW" :min="280" :max="1200" :step="20" size="small" />
+              </label>
+              <label class="pub-size">
+                <span>高</span>
+                <a-input-number v-model:value="pubFrameH" :min="360" :max="1000" :step="20" size="small" />
+              </label>
+              <span class="pub-hint inline">改尺寸会同步进下面的代码，复制走即可</span>
             </div>
-            <a-textarea :value="mcpJson" readonly :rows="4" class="pub-iframe" />
-            <button class="app-btn ghost small" style="margin-top:6px" @click="copyText(mcpJson, 'mcp.json 已复制')">复制 Cursor 配置</button>
-            <div class="pub-hint">粘贴到 Claude Desktop 的 Integrations 或项目根目录 .cursor/mcp.json。地址含凭据，等同密钥：撤销分享或关掉上面开关立即失效。外部调用同样受限——沙盒 / 产物 / 个人技能与个人 MCP 不暴露</div>
-          </div>
-          <div class="pub-row">
-            <a-popconfirm title="撤销后链接立即失效，重新发布会生成新链接，确定撤销？" @confirm="doRevoke">
-              <button class="app-link-btn danger">撤销分享</button>
-            </a-popconfirm>
-          </div>
-        </template>
-        <!-- 停用但 token 保留：给出一句说明，替换掉上面的链接/iframe/MCP 展示 -->
-        <div class="pub-row" v-else-if="pubToken && !pubEnabled">
-          <div class="pub-hint">分享链接与 MCP 端点已随分享停用而失效（token 已保留，重新开启上面的开关即恢复访问）。</div>
+            <div class="pub-code-row">
+              <pre class="pub-code block">{{ iframeSnippet }}</pre>
+              <button class="pub-icon-btn" title="复制嵌入代码" aria-label="复制嵌入代码"
+                      @click="copyText(iframeSnippet, '嵌入代码已复制')"><copy-outlined /></button>
+            </div>
+            <div class="pub-hint">粘贴到任意网页。游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露。</div>
+          </a-tab-pane>
+
+          <a-tab-pane key="mcp" tab="MCP 端点">
+            <template v-if="pubMcpEnabled">
+              <div class="pub-sub-label">端点地址</div>
+              <div class="pub-code-row">
+                <code class="pub-code">{{ mcpUrl }}</code>
+                <button class="pub-icon-btn" title="复制地址" aria-label="复制 MCP 地址"
+                        @click="copyText(mcpUrl, 'MCP 地址已复制')"><copy-outlined /></button>
+              </div>
+              <div class="pub-sub-label">mcp.json（Cursor / Claude Desktop）</div>
+              <div class="pub-code-row">
+                <pre class="pub-code block">{{ mcpJson }}</pre>
+                <button class="pub-icon-btn" title="复制 mcp.json" aria-label="复制 mcp.json"
+                        @click="copyText(mcpJson, 'mcp.json 已复制')"><copy-outlined /></button>
+              </div>
+              <div class="pub-hint">
+                粘贴到 Claude Desktop 的 Integrations 或项目根目录 .cursor/mcp.json。
+                地址含凭据等同密钥：撤销分享或关掉上面开关立即失效。外部调用同样受限——沙盒 / 产物 / 个人技能与个人 MCP 不暴露。
+              </div>
+            </template>
+            <div v-else class="pub-placeholder">
+              <ApiOutlined />
+              <div>尚未开放 MCP 端点</div>
+              <div class="pub-hint">在「游客能力」里打开开关后，这里会给出可直接粘贴的端点地址与配置文件。</div>
+            </div>
+          </a-tab-pane>
+        </a-tabs>
+      </div>
+
+      <!-- 停用但 token 保留：给出一句说明，替换掉上面的分发区 -->
+      <div class="pub-block" v-else-if="pubToken && !pubEnabled">
+        <div class="pub-block-h">分发方式</div>
+        <div class="pub-placeholder">
+          <link-outlined />
+          <div>链接已随分享停用而失效</div>
+          <div class="pub-hint">token 已保留，重新开启上面的总开关即恢复访问，链接不变。</div>
         </div>
+      </div>
+
+      <div class="pub-foot">
+        <a-popconfirm title="撤销后链接立即失效，重新发布会生成新链接，确定撤销？" ok-text="撤销" cancel-text="取消" @confirm="doRevoke">
+          <button class="app-link-btn danger" :disabled="!pubToken">撤销分享</button>
+        </a-popconfirm>
+        <span class="pub-foot-hint" v-if="pubToken && pubEnabled">链接即凭据，请勿公开到不受控的渠道</span>
       </div>
     </a-modal>
 
@@ -482,7 +552,8 @@ import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
-  SafetyOutlined, PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined
+  SafetyOutlined, PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
+  CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
          listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
@@ -879,10 +950,17 @@ function openShare (a) {
 const pubVisible = ref(false)
 const pubAgentId = ref('')
 const pubAgentName = ref('')
+/** 弹窗标题栏的智能体头像：与列表卡片共用 AgentAvatar 的 icon 解析口径（品牌标 / emoji / 默认机器人） */
+const pubAgent = ref({ name: '', icon: '', isBuiltin: 0 })
 const pubEnabled = ref(false)
 const pubMcpEnabled = ref(false)
 const pubModelRef = ref('')
 const pubToken = ref('')
+/** 分发方式当前页签（三种形态共用一个 token，切页签不产生新链接） */
+const pubTab = ref('link')
+/** iframe 嵌入尺寸：此前 420×640 写死在代码里，用户想改只能复制出去手改。做成可调并实时反映进代码 */
+const pubFrameW = ref(420)
+const pubFrameH = ref(640)
 const shareUrl = computed(() => pubToken.value ? window.location.origin + '/s/' + pubToken.value : '')
 // MCP 端点（/ai/mcp/{token}）：与网页分享同一 token，token 即凭据
 const mcpUrl = computed(() => pubToken.value ? window.location.origin + '/ai/mcp/' + pubToken.value : '')
@@ -890,17 +968,19 @@ const mcpJson = computed(() => mcpUrl.value
   ? JSON.stringify({ mcpServers: { [pubAgentName.value || 'wenqu']: { url: mcpUrl.value } } }, null, 2)
   : '')
 const iframeSnippet = computed(() => shareUrl.value
-  ? `<iframe src="${shareUrl.value}?embed=1" style="width:420px;height:640px;border:1px solid #e5e6eb;border-radius:12px" title="AI 助手"></iframe>`
+  ? `<iframe src="${shareUrl.value}?embed=1" style="width:${pubFrameW.value}px;height:${pubFrameH.value}px;border:1px solid #e5e6eb;border-radius:12px" title="${pubAgentName.value || 'AI 助手'}"></iframe>`
   : '')
 
 async function openPublish (a) {
   pubAgentId.value = a.id
   pubAgentName.value = a.name || ''
+  pubAgent.value = { name: a.name || '', icon: a.icon || '', isBuiltin: a.isBuiltin || 0 }
   pubVisible.value = true
   pubToken.value = ''
   pubEnabled.value = false
   pubMcpEnabled.value = false
   pubModelRef.value = ''
+  pubTab.value = 'link'
   try {
     const r = await getAgentPublish(a.id)
     if (r && r.success !== false && r.data) {
@@ -1486,17 +1566,90 @@ onMounted(async () => { })
 }
 .ap-cap-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 2px; }
 .ap-cap-global { color: var(--app-text3); }
-/* 公开发布弹窗 */
-.pub-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
-.pub-row { display: flex; flex-direction: column; gap: 6px; }
-/* 开关不随列布局的 cross-axis stretch 拉成通栏（MCP 开关行是 column，不挡会被拉满宽） */
-.pub-row > .ant-switch { align-self: flex-start; }
-.pub-row:first-child { flex-direction: row; align-items: center; gap: 10px; }
-.pub-row-t { font-size: 13px; color: var(--app-text2, var(--app-text2)); }
-.pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2, var(--app-text2)); }
-.pub-copy-row { display: flex; gap: 8px; align-items: center; }
-.pub-iframe { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; }
-.pub-hint { font-size: 12px; color: var(--app-text3, var(--app-text3)); }
+/* ==================== 公开发布弹窗 ====================
+   结构：标题栏（智能体头像+名）→ 状态卡（总开关）→ 游客能力（模型 / MCP）→ 分发方式（Tab）→ 底部撤销。
+   此前是一列平铺的 pub-row，输入框把「复制」「打开」两个按钮挤成竖排单字；现改为
+   「代码块 + 右侧图标按钮」一行到底，按钮 flex:none 不再被压缩。 */
+.pub-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.pub-title-sub {
+  font-size: 12px; font-weight: 400; color: var(--app-text3);
+  padding-left: 8px; border-left: 1px solid var(--app-border);
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pub-block { margin-top: 16px; }
+.pub-block-h {
+  font-size: 11px; font-weight: 600; color: var(--app-text3);
+  letter-spacing: .04em; margin-bottom: 8px;
+}
+
+/* 状态卡：色底随开关切换，「发没发」这件事一眼可见 */
+.pub-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius); padding: 12px 14px;
+  background: var(--app-panel-2);
+}
+.pub-status.on { background: var(--app-ok-weak); border-color: var(--app-ok-weak-hover); }
+.pub-status-t { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.pub-status.on .pub-status-t { color: var(--app-ok); }
+.pub-status-d { font-size: 12px; color: var(--app-text3); margin-top: 2px; line-height: 1.6; }
+
+.pub-field { display: flex; flex-direction: column; gap: 6px; }
+.pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2); }
+.pub-switch-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; }
+.pub-switch-row > .ant-switch { margin-top: 1px; flex: none; }
+.pub-switch-label { font-size: 13px; color: var(--app-text); }
+.pub-switch-d { font-size: 12px; color: var(--app-text3); margin-top: 2px; line-height: 1.6; }
+.pub-warn {
+  display: flex; align-items: flex-start; gap: 7px; margin-top: 10px;
+  font-size: 12px; line-height: 1.6; color: var(--app-warn-text);
+  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border);
+  border-radius: var(--app-radius-sm); padding: 8px 10px;
+}
+.pub-warn .anticon { flex: none; margin-top: 2px; }
+
+/* 分发方式：三种形态共享同一 token，页签切换避免一次铺满一屏半 */
+.pub-tabs :deep(.ant-tabs-nav) { margin-bottom: 10px; }
+.pub-sub-label { font-size: 12px; color: var(--app-text2); margin: 10px 0 5px; }
+.pub-sub-label:first-child { margin-top: 0; }
+/* iframe 尺寸：改完实时反映进代码，用户不必复制出去手改 style */
+.pub-size-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pub-size { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); }
+.pub-size :deep(.ant-input-number) { width: 88px; }
+.pub-hint.inline { margin-top: 0; }
+/* 代码块：等宽 + 可换行（URL/JSON 不再被输入框横向裁掉），右侧按钮固定不参与压缩 */
+.pub-code-row { display: flex; gap: 8px; align-items: stretch; }
+.pub-code {
+  flex: 1; min-width: 0;
+  display: block; padding: 8px 10px; border-radius: var(--app-radius-sm);
+  background: var(--app-code-bg); border: 1px solid var(--app-border);
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.6;
+  color: var(--app-text2); word-break: break-all; white-space: pre-wrap;
+}
+.pub-code.block { white-space: pre-wrap; }
+.pub-icon-btn {
+  flex: none; align-self: stretch; width: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
+  background: var(--app-panel); color: var(--app-text2); cursor: pointer; font-size: 14px;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.pub-icon-btn:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.pub-hint { font-size: 12px; color: var(--app-text3); line-height: 1.65; margin-top: 8px; }
+
+/* 占位（未开启 MCP / 已停用）：给出下一步，而不是白屏或空文本框 */
+.pub-placeholder {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 20px 12px; border: 1px dashed var(--app-border-strong); border-radius: var(--app-radius);
+  font-size: 13px; color: var(--app-text2);
+}
+.pub-placeholder > .anticon { font-size: 20px; color: var(--app-text3); }
+.pub-placeholder .pub-hint { margin-top: 0; max-width: 380px; }
+
+.pub-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--app-border);
+}
+.pub-foot-hint { font-size: 11.5px; color: var(--app-text3); }
 
 /* ==================== 委派编排视图（拓扑） ==================== */
 .ap-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
