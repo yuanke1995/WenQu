@@ -161,6 +161,14 @@ public class Agent {
     private Integer manageable;
 
     /**
+     * 公开发布状态（列表接口按 c_ai_agent_share 批量回填，仅供前端卡片标「已发布」）：
+     * 1=发布中（share 行存在且 enabled=1）；0/NULL=未发布或已停用。
+     * 真正的游客判权走 {@link AgentShareService#resolveGuest}，此处不做授权依据。
+     */
+    @TableField(exist = false)
+    private Integer published;
+
+    /**
      * 本智能体的检索参数覆盖（JSON，键为 retrieval.* / rerank.* 的短名，如
      * {"vectorWeight":0.8,"vecThreshold":0.35}；null/空=全部继承全局设置）。
      * 用途：不同智能体可按自己的场景定制检索策略（如法律助手提高阈值保精度、手册助手放宽保召回）。

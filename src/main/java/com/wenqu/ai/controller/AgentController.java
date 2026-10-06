@@ -57,12 +57,21 @@ public class AgentController {
     }
 
     @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；所有人只返回自己创建的、内置问渠与显式共享给自己的"
-            + "（数据按 userId 隔离）；每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）")
+            + "（数据按 userId 隔离）；每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）"
+            + "与 published（公开发布中 1/0，供卡片标「已发布」）")
     @GetMapping("/list")
     public ResultJson list() {
         List<com.wenqu.ai.model.Agent> agents = agentService.list();
         for (com.wenqu.ai.model.Agent a : agents) {
             a.setManageable(canManage(a) ? 1 : 0);
+        }
+        // 发布状态整页一次 in 回填（c_ai_agent_share：行存在且 enabled=1 才算发布中；停用/撤销都不算）
+        java.util.Set<String> publishedIds = new java.util.HashSet<>();
+        for (com.wenqu.ai.model.AgentShare s : agentShareService.listByAgents(agents.stream().map(com.wenqu.ai.model.Agent::getId).toList())) {
+            if (s.getEnabled() != null && s.getEnabled() == 1) publishedIds.add(s.getAgentId());
+        }
+        for (com.wenqu.ai.model.Agent a : agents) {
+            a.setPublished(publishedIds.contains(a.getId()) ? 1 : 0);
         }
         agents = agents.stream().filter(agentService::readable).toList();
         return ResultJson.ok(agents);

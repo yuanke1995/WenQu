@@ -79,6 +79,9 @@
                   <span v-if="a.workflowId" class="ap-chip ap-chip-on" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
                     工作流 {{ workflowName(a.workflowId) }}
                   </span>
+                  <!-- 公开发布中：弹窗里改态后同步本行，卡片即时反映，不再"发布完毫无感知" -->
+                  <span v-if="a.published === 1" class="ap-chip ap-chip-on"
+                        title="公开发布中：拿到链接的人可免登录与该智能体对话，点「发布」可管理链接">已发布</span>
                   <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
                   <span v-if="!isBuiltin(a) && scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
                 </div>
@@ -397,7 +400,7 @@
         <div class="pub-block-h">游客能力</div>
         <div class="pub-field">
           <span class="pub-label">对话模型</span>
-          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型" />
+          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型" @change="savePublish" />
         </div>
         <div class="pub-switch-row">
           <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" size="small" @change="savePublish" />
@@ -1013,6 +1016,9 @@ async function savePublish () {
     if (r && r.success !== false && r.data) {
       pubToken.value = r.data.token || ''
       pubMcpEnabled.value = !!r.data.mcpEnabled
+      // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
+      const row = agents.value.find(x => x.id === pubAgentId.value)
+      if (row) row.published = pubEnabled.value ? 1 : 0
       message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
     } else message.error(r?.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
@@ -1022,6 +1028,8 @@ async function doRevoke () {
   try {
     const r = await revokeAgentPublish(pubAgentId.value)
     if (r && r.success !== false) {
+      const row = agents.value.find(x => x.id === pubAgentId.value)
+      if (row) row.published = 0
       pubVisible.value = false
       message.success('已撤销分享')
     } else message.error(r?.msg || '撤销失败')

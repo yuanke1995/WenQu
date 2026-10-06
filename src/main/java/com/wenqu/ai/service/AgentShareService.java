@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.List;
 
 /**
  * 智能体公开分享服务（/s/{token} 免登录对话）
@@ -50,6 +51,13 @@ public class AgentShareService {
         return shareMapper.selectOne(new LambdaQueryWrapper<AgentShare>()
                 .eq(AgentShare::getAgentId, agentId)
                 .last("limit 1"));
+    }
+
+    /** 按智能体批量取分享配置（一次 in 覆盖整页，供列表接口回填卡片发布状态，避免逐行查询） */
+    public List<AgentShare> listByAgents(List<String> agentIds) {
+        if (agentIds == null || agentIds.isEmpty()) return List.of();
+        return shareMapper.selectList(new LambdaQueryWrapper<AgentShare>()
+                .in(AgentShare::getAgentId, agentIds));
     }
 
     /**

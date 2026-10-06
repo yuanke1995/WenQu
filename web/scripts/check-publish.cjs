@@ -27,6 +27,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // 一个「已发布 + MCP 已开」的智能体（覆盖信息最全的形态）
 const AGENTS = [
   { id: 'a-1', name: '问渠', description: '内置的知识库问答助手', icon: 'wenqu', isBuiltin: 1, manageable: 1,
+    published: 1,
     shareConfig: '', workflowId: '', toolKnowledge: 1, createTime: '2026-10-01T10:00:00' }
 ]
 const PUBLISH = { enabled: true, mcpEnabled: true, token: 'tok-abc123', modelRef: '' }
@@ -42,7 +43,16 @@ function serveStatic (page) {
         body: JSON.stringify({ success: true, data: { user: 'admin', username: '管理员', role: 'superadmin', admin: true, menus: [] } }) })
     }
     if (u.pathname === '/api/ai/agent/list') return json(AGENTS)
-    if (u.pathname === '/api/ai/agent/a-1/publish') return json(PUBLISH)
+    if (u.pathname === '/api/ai/agent/a-1/publish') {
+      // POST=弹窗里拨开关（savePublish）：按请求体回写 enabled，模拟后端真实落库
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON() || {}
+        PUBLISH.enabled = !!body.enabled
+        PUBLISH.mcpEnabled = !!body.mcpEnabled
+        return json({ enabled: PUBLISH.enabled, mcpEnabled: PUBLISH.mcpEnabled, token: 'tok-abc123', modelRef: '' })
+      }
+      return json(PUBLISH)
+    }
     if (u.pathname === '/api/ai/kb/list') return json([])
     if (u.pathname === '/api/ai/skill/list' || u.pathname === '/api/ai/skills') return json([])
     if (u.pathname === '/api/ai/mcp/status') return json({ enabled: false })
@@ -83,6 +93,11 @@ const check = (ok, label, detail = '') => {
 
   await page.goto(ORIGIN + '/agents', { waitUntil: 'networkidle' })
   await page.waitForTimeout(1200)
+
+  // 卡片级发布状态（本次新增）：列表接口带 published，发布中的智能体卡片标「已发布」
+  const chipOn = await page.evaluate(() =>
+    [...document.querySelectorAll('.ap-card .ap-chip')].some(c => c.textContent.trim() === '已发布'))
+  check(chipOn, '列表卡片对发布中的智能体标「已发布」')
 
   // 从卡片点「发布」进弹窗（这条入口曾因 @click.stop 缺失而打不开）
   const cardBtns = await page.$$('.ap-card-foot .app-link-btn')
@@ -209,6 +224,14 @@ const check = (ok, label, detail = '') => {
 
   const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401|Failed to fetch/i.test(e))
   check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))
+
+  // 关掉总开关（savePublish 走 POST）：卡片上的「已发布」必须即时消失——本次修的正是
+  // 「发布后界面无感知」：弹窗里改态后同步列表行，不重拉、不刷新。
+  await page.click('.pub-status .ant-switch')
+  await page.waitForTimeout(800)
+  const chipAfter = await page.evaluate(() =>
+    [...document.querySelectorAll('.ap-card .ap-chip')].some(c => c.textContent.trim() === '已发布'))
+  check(!chipAfter, '弹窗里停用发布后，卡片「已发布」标记即时消失')
 
   await browser.close()
   console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
