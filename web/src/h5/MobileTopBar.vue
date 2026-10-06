@@ -27,9 +27,10 @@ import { sessionStore } from '../views/store'
 
 const route = useRoute()
 
-// 标题取当前会话（route.query.sid 对应项）的标题，纯 computed 不发请求；
-// 没有 sid（新对话）或会话未在已加载列表里（分页未拉到）时回落「新对话」
+// 标题：对话页取当前会话名，**其它页取路由标题**（个人设置 / 帮助中心…）。
+// 此前一律按会话取名，非对话页窄屏顶栏会一直显示「新对话」，与页面内容对不上。
 const title = computed(() => {
+  if (route.path !== '/chat') return route.meta?.title || '问渠'
   const sid = route.query.sid
   if (!sid) return '新对话'
   const hit = (sessionStore.list || []).find(s => s.id === sid)

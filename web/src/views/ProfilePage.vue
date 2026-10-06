@@ -4,7 +4,7 @@
       <h1 class="app-page-title">个人设置</h1>
     </div>
     <div class="pf-body">
-      <nav class="pf-nav">
+      <nav ref="pfNavEl" class="pf-nav">
         <button v-for="n in navs" :key="n.key" class="pf-nav-item"
                 :class="{ active: current === n.key }" @click="current = n.key">
           {{ n.label }}
@@ -52,7 +52,7 @@
           <div class="pf-field">
             <div class="pf-field-head"><span class="pf-label">昵称</span></div>
             <div class="pf-row">
-              <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear style="width:280px"
+              <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear class="pf-nick-input"
                        placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
               <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
             </div>
@@ -67,7 +67,7 @@
           <div class="pf-row">
             <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
             <ModelSelect v-model="pref[panelMeta.field]" type="chat"
-                         inherit-label="不设默认" :width="360" :disabled="loading" />
+                         inherit-label="不设默认" :width="isNarrow ? '100%' : 360" :disabled="loading" />
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
@@ -79,7 +79,7 @@
               只有被修改过的项才记为你的个人设置，其余继续跟随全局。
             </p>
             <a-spin :spinning="prefLoading">
-              <a-form v-if="answerFields.length" layout="vertical" style="max-width:560px">
+              <a-form v-if="answerFields.length" layout="vertical" class="pf-form pf-form-wide">
                 <SchemaField v-for="f in answerFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
               </a-form>
               <p v-else-if="!prefLoading" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
@@ -104,7 +104,7 @@
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
           <h2 class="app-card-title">修改密码</h2>
-          <a-form layout="vertical" style="max-width:360px">
+          <a-form layout="vertical" class="pf-form">
             <a-form-item label="当前密码" required>
               <a-input-password v-model:value="pwdForm.oldPassword" placeholder="请输入当前密码" @pressEnter="submitPwd" />
             </a-form-item>
@@ -250,7 +250,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
@@ -264,6 +264,7 @@ import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfil
 import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
 import UserAvatar from '../components/UserAvatar.vue'
+import { isNarrow } from '../h5/mobile'
 
 const router = useRouter()
 const route = useRoute()
@@ -279,6 +280,13 @@ const navs = [
 const PANEL_KEYS = navs.map(n => n.key)
 const current = ref(PANEL_KEYS.includes(route.query.panel) ? route.query.panel : 'profile')
 watch(() => route.query.panel, v => { if (PANEL_KEYS.includes(v)) current.value = v })
+// 窄屏 Tab 是顶部横滑条：激活项必须滚进可视区（点相邻项浏览器自己看得见，
+// 但 ?panel= 深链直达最后一个 Tab 时条停在起点，激活项藏在屏外像「点了没反应」）
+const pfNavEl = ref(null)
+watch(current, () => nextTick(() => {
+  pfNavEl.value?.querySelector('.pf-nav-item.active')
+    ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
+}))
 
 const PANELS = {
   chat: {
@@ -710,6 +718,11 @@ onMounted(() => {
 .pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
 .pf-row { display: flex; align-items: center; gap: 10px; }
+/* 昵称输入框：PC 定宽 280（与保存按钮并排）；窄屏改全宽（见下方 768 块） */
+.pf-nick-input { width: 280px; }
+/* 表单最大宽度：PC 上限避免长行难读；窄屏取消（见下方 768 块） */
+.pf-form { max-width: 360px; }
+.pf-form-wide { max-width: 560px; }
 .pf-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
 
 /* 头像区：左预览 + 右侧「按钮行 / 说明行」两行，不再把按钮和长说明挤成一条横带 */
@@ -821,4 +834,59 @@ onMounted(() => {
 .mem-auto-text { flex: 1; min-width: 0; }
 .mem-auto-title { font-size: 13px; color: var(--app-text); font-weight: 500; margin-bottom: 2px; }
 .mem-auto-row .pf-sub-hint { margin: 0; }
+
+/* ==================== 窄屏（手机）适配 ====================
+   这一页是手机上的白名单页（改昵称/头像/密码是刚需），窄屏必须真能用：
+   左列 Tab 竖排 + 定宽卡片 + 并排表单在 412px 上会把内容挤到破版
+   （实测「清除头像」探出视口被裁、「保存」两字压成竖排、emoji 每格 13px 点不中）。
+   这里把结构改成移动端设置页的常规形态：顶部横滑 Tab + 全宽卡片 + 换行表单。 */
+@media (max-width: 768px) {
+  /* 页头大标题与移动顶栏重复（顶栏已随路由显示「个人设置」），隐藏省一截首屏；
+     scoped 只作用于本组件，不影响 /help 等同样用 .app-page-head 的页面 */
+  .app-page-head { display: none; }
+
+  /* Tab：左列竖排 → 顶部横滑胶囊（竖排会吃掉 1/3 宽度） */
+  .pf-body { flex-direction: column; }
+  .pf-nav {
+    width: auto; flex-direction: row; gap: 6px;
+    border-right: none; border-bottom: 1px solid var(--app-border);
+    padding: 8px 10px; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .pf-nav::-webkit-scrollbar { display: none; }
+  .pf-nav-item {
+    flex: none; white-space: nowrap; min-height: 36px; padding: 8px 14px;
+    border: 1px solid var(--app-border); border-radius: 999px; font-size: 13px;
+    display: inline-flex; align-items: center; touch-action: manipulation;
+  }
+  .pf-nav-item.active { border-color: var(--app-accent-border); color: var(--app-accent); }
+
+  /* 内容区与卡片：全宽（640/720 上限在 412px 上只会让右侧留白不齐） */
+  .pf-content { padding: 12px 12px calc(24px + var(--sab, 0px)); }
+  .pf-card, .mem-card, .shm-card { max-width: none; padding: 14px; }
+
+  /* 表单行换行：昵称输入 + 保存按钮并排会挤压（保存两字被压成竖排） */
+  .pf-row { flex-wrap: wrap; }
+  .pf-nick-input { width: 100%; }
+  .pf-form, .pf-form-wide { max-width: none; }
+
+  /* 头像区纵向居中：72px 头像 + 按钮行 + 说明横向放不下（「清除头像」被挤出视口） */
+  .pf-avatar-block { flex-direction: column; align-items: center; gap: 12px; }
+  .pf-avatar-side { align-items: center; padding-top: 0; }
+  .pf-op-row { flex-wrap: wrap; justify-content: center; }
+  .pf-avatar-side .pf-sub-hint { text-align: center; }
+
+  /* emoji 网格 8 列：15 列时每格仅 13px 宽，手指点不中（860 块的 10 列同样偏小） */
+  .pf-emoji-pick { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
+  .pf-emoji-opt { font-size: 20px; }
+
+  /* 触控热区下限 */
+  .pf-nav-item, .pf-emoji-opt, .app-btn { min-height: 34px; }
+  /* 记忆页的添加行：输入框占满整行（原 min-width 200 与分类框并排会溢出） */
+  .mem-add-row { gap: 8px; }
+  .mem-add-input { min-width: 100%; }
+  .mem-add-cat { flex: 1; width: auto; }
+  /* 分享管理：操作按钮行换行 */
+  .shm-acts { flex-wrap: wrap; }
+}
 </style>

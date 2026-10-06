@@ -21,7 +21,7 @@
 //    **绝不可**再写 height:calc(100% - var(--kb))，那会把键盘高度扣两次，
 //    消息区在键盘弹起时凭空矮一个键盘的高度。
 import { ref, watch } from 'vue'
-import { isNarrow } from './mobile'
+import { isNarrow, isCoarse, preferMobileShell } from './mobile'
 
 const vv = window.visualViewport || null
 
@@ -32,13 +32,19 @@ export const kbOpen = ref(false)
 // 那个不是键盘，不能据此缩小布局
 const KB_MIN = 90
 
+// 是否需要键盘适配：**PC 窄屏补丁（≤768）∪ 移动壳接管范围（触屏且 ≤1024）**。
+// 判据必须覆盖移动壳：手机横屏约 900px 既不是 isNarrow、又仍由移动壳接管，
+// 只看 isNarrow 会让横屏下 --app-vh/--kb 完全不写 → 键盘弹起容器不收缩、输入区被盖住。
+// 平板横屏（触屏但 >1024，走 PC 布局）两者皆假 → 不写变量，不干扰工作台外壳。
+const needInset = () => isNarrow.value || preferMobileShell()
+
 let raf = 0
 let lastKb = -1
 let lastVh = -1
 
 function apply () {
   raf = 0
-  if (!isNarrow.value || !vv) return
+  if (!needInset() || !vv) return
   // offsetTop 必须减掉：它是「页面被顶上去的量」，不减会把键盘高度高估一截
   const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
   const vh = Math.round(vv.height)
@@ -67,10 +73,12 @@ export function installKeyboardInset () {
   // 转屏时 visualViewport 的宽高互换，必须重算。
   // 延后一帧：orientationchange 触发时 vv 上还是转屏前的值
   window.addEventListener('orientationchange', () => setTimeout(schedule, 120), { passive: true })
-  // 离开窄屏要清干净，否则 PC 上（或手机横屏宽于 768 时）残留的
-  // --kb / --app-vh 会让布局莫名缺一截或停在小屏高度
-  watch(isNarrow, v => {
-    if (v) { lastKb = -1; lastVh = -1; schedule() } else {
+  // 离开「窄屏 / 移动壳」范围要清干净，否则 PC 上（或平板横屏 >1024 时）残留的
+  // --kb / --app-vh 会让布局莫名缺一截或停在小屏高度。
+  // 监听两个判据 ref：preferMobileShell 由 isCoarse 与窗口宽度共同决定，
+  // 转屏/接上鼠标（isCoarse 变）都要重算。
+  watch([isNarrow, isCoarse], () => {
+    if (needInset()) { lastKb = -1; lastVh = -1; schedule() } else {
       document.documentElement.style.removeProperty('--kb')
       document.documentElement.style.removeProperty('--app-vh')
       lastKb = -1
