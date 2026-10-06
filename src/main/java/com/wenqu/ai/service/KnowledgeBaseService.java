@@ -42,14 +42,9 @@ public class KnowledgeBaseService {
 
     /**
      * 个人默认库「问渠」的固定描述（名称 / 图标 / 描述同为身份字段，对默认库不可编辑）。
-     * <p>也是新老环境的唯一文案源：旧环境里仍带着首版播种文案的默认库，触达时自动升级为本文案
-     * （见 {@link #LEGACY_DEFAULT_DESC}）；以后改文案只需改这里。
+     * <p>只作用于新创建的默认库（种子）；存量库不做迁移。
      */
-    public static final String DEFAULT_DESC = "问渠默认知识库：未显式指定归属的文档自动归入本库。";
-
-    /** 首版播种描述：存量默认库等于它 = 从未被人改动过，触达即升级为 {@link #DEFAULT_DESC} */
-    private static final String LEGACY_DEFAULT_DESC =
-            "你的系统默认知识库：未指定归属的文档都归入本库；先绑定你自己的向量模型即可使用。";
+    public static final String DEFAULT_DESC = "问渠默认知识库：你的个人默认库；文档可在「文档管理」里切换归入本库。";
 
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
@@ -519,14 +514,6 @@ public class KnowledgeBaseService {
             } else if (def.getId() == null || def.getId().isBlank()) {
                 // 历史空主键行：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存 404——触达即自愈
                 healEmptyDefaultId(def);
-            } else if (LEGACY_DEFAULT_DESC.equals(def.getDescription())) {
-                // 存量默认库描述仍是最初的播种文案（= 从未被改动过）：触达即升级为新文案——描述已锁死不可编辑，
-                // 不升级旧环境将永远停在旧文案；精确匹配旧文案才改，自定义过的分毫不动
-                def.setDescription(DEFAULT_DESC);
-                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
-                        .eq(KnowledgeBase::getId, def.getId())
-                        .set(KnowledgeBase::getDescription, DEFAULT_DESC));
-                log.info("[KB] 默认知识库描述已升级为最新默认文案: {}（{}）", BUILTIN_NAME, def.getId());
             }
             defaultIdByUid.put(owner, def.getId());
             return def.getId();
