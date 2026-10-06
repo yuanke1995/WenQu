@@ -433,6 +433,20 @@ const toolSearchQueries = m => {
   }
   return qs
 }
+// 检索状态行文案（PC + 移动壳共用一份判据，两端不许各自内联拼「搜索 N 个关键词」）。
+// 关键词数为 0 时整段不输出：提问被停用词表与单字规则滤净时（"怎么用"/"为什么呢"/"1+1" 这类）
+// jieba 提不出主词元，但向量召回照跑、refs 照有，这个 0 对用户是噪音，看着像检索没生效。
+// 返回 '' = 本轮没有任何可展示的检索信息，调用方据此整行不渲染（只剩一个空箭头更糟）。
+const retrievalLineTitle = m => {
+  const r = m?.retrieved || null
+  const keywords = r ? (r.keywords || 0) : 0
+  const refs = r ? (r.refs || 0) : (Array.isArray(m?.sources) ? m.sources.length : 0)
+  let s = keywords > 0 ? `搜索 ${keywords} 个关键词` : ''
+  if (refs > 0) s += (s ? '，' : '') + `参考 ${refs} 段资料`
+  // 主链路没检索出内容、但模型主动做过精确检索：展开后仍有检索词可看，给个不空的标题
+  if (!s && toolSearchQueries(m).length) s = '精确检索'
+  return s
+}
 /** 深度思考按模型库登记的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
  *  模型不在模型库（遗留裸名）按可开关处理。开关记忆按模型分开存（ai_deep_think: {ref:0|1}，
  *  旧版单个 '1'/'0' 迁移为所有模型的初始默认）。 */
@@ -670,6 +684,7 @@ export {
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, TOOL_BRIEF_KEYS, oneLine,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
+  retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,

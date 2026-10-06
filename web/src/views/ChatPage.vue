@@ -302,10 +302,9 @@
                 <compress-outlined style="margin-right:6px" />
                 已把 {{ m.tokens.historyCompressed }} 轮早期对话压缩为摘要（完整记录仍可在会话中回看）
               </div>
-              <div v-if="m.role === 'ai' && (m.retrieved || (m.sources && m.sources.length))" class="retrieval-merged">
+              <div v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                  <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="m.retrieved.refs > 0">，参考 {{ m.retrieved.refs }} 段资料</template><template v-if="m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
-                  <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
+                  <template v-if="retrievalLineTitle(m)">{{ retrievalLineTitle(m) }}<template v-if="m.retrieved && m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
                   <caret-right-outlined class="tl-caret" :class="{ open: m.rtOpen }" />
                 </div>
                 <div v-if="m.rtOpen" class="retrieval-detail">
@@ -896,7 +895,7 @@
         <div class="rp-card">
           <div class="rp-label">最近一次检索</div>
           <template v-if="lastRetrieved || lastSources.length">
-            <div class="rp-row"><span>检索词 {{ lastRetrieved?.keywords ?? '—' }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span></div>
+            <div class="rp-row"><span v-if="lastRetrieved?.keywords > 0">检索词 {{ lastRetrieved.keywords }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span><span v-if="!(lastRetrieved?.keywords > 0) && (lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">未提取到关键词（纯向量召回）</span><span v-if="!(lastRetrieved?.keywords > 0) && !(lastRetrieved?.refs ?? lastSources.length)" class="rp-dim">本轮未检索到相关资料</span></div>
             <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
             <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
             <template v-if="toolSearchQueries(lastAi).length">
@@ -1217,7 +1216,7 @@ import { useChatSearch } from '../chat/useChatSearch'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
-         groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
+         groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf } from '../chat/projections'

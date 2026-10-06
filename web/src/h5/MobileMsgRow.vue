@@ -186,13 +186,10 @@
         </div>
 
         <!-- 检索行：折叠看检索词与引用片段 -->
-        <div v-if="m.retrieved || (m.sources && m.sources.length)" class="card">
+        <div v-if="retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length)" class="card">
           <button class="card-head" type="button" @click.stop="m.rtOpen = !m.rtOpen">
             <search-outlined class="ic-accent" />
-            <span class="card-title">
-              <template v-if="m.retrieved">搜索 {{ m.retrieved.keywords }} 个关键词<template v-if="m.retrieved.refs > 0">，参考 {{ m.retrieved.refs }} 段资料</template></template>
-              <template v-else>参考 {{ (m.sources || []).length }} 段资料</template>
-            </span>
+            <span class="card-title">{{ retrievalLineTitle(m) }}</span>
             <caret-right-outlined class="caret" :class="{ open: m.rtOpen }" />
           </button>
           <div v-show="m.rtOpen" class="card-body">
@@ -279,7 +276,7 @@ import { fmtTokens } from '../utils/token'
 import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
-  fallbackDur, toolCallsView, toolSearchQueries, subagentCard, barWidth, toggleSubagents, fmtDuration,
+  fallbackDur, toolCallsView, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
