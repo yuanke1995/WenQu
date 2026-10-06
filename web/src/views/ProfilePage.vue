@@ -142,39 +142,57 @@
             <a-input v-model:value="memDraft" :maxlength="500" allow-clear class="mem-add-input"
                      placeholder="手动添加一条记忆，如：我负责 XX 系统的运维" @pressEnter="addMemory" />
             <a-select v-model:value="memDraftCat" class="mem-add-cat" :options="CAT_OPTIONS" />
-            <button class="app-btn" :disabled="memSaving || !memDraft.trim()" @click="addMemory">添加</button>
+            <button class="app-btn" :disabled="memSaving || !memDraft.trim()" @click="addMemory">{{ memAdding ? '添加中…' : '添加' }}</button>
+          </div>
+          <!-- 批量操作栏：有勾选即出现（勾选命中区=行左侧整列，见 .mem-check） -->
+          <div v-if="memSelected.length" class="mem-batch">
+            <span class="mem-batch-count">已选 {{ memSelected.length }} 条：</span>
+            <button class="app-btn ghost small mem-danger" :disabled="memSaving" @click="confirmRemoveSelected">删除</button>
+            <button v-if="memSelected.length < memories.length" class="app-link-btn"
+                    @click="memSelected = memories.map(m => m.id)">全选剩余</button>
+            <button class="app-link-btn" @click="memSelected = []">取消选择</button>
           </div>
           <a-spin :spinning="memLoading">
-            <div v-if="!memories.length" class="mem-empty">
+            <div v-if="memError" class="mem-empty">
+              <div class="mem-empty-ico">⚠️</div>
+              <p class="mem-empty-title">记忆列表没加载出来</p>
+              <p class="pf-sub-hint">{{ memError }}</p>
+              <button class="app-btn ghost small" :disabled="memLoading" @click="loadMemories">重试</button>
+            </div>
+            <div v-else-if="!memories.length" class="mem-empty">
               <div class="mem-empty-ico">💡</div>
               <p class="mem-empty-title">还没有记忆</p>
               <p class="pf-sub-hint">多聊几轮让系统自动提炼，或在上方手动添加一条。</p>
             </div>
             <div v-else class="mem-list">
-              <div v-for="m in memories" :key="m.id" class="mem-item">
-                <!-- 编辑态：文本域独占卡片，计数与按钮同排（antd show-count 渲染在文本域下方，会与按钮行重叠） -->
-                <template v-if="memEditing === m.id">
-                  <a-textarea v-model:value="memEditDraft" :maxlength="500"
-                              :auto-size="{ minRows: 2, maxRows: 8 }" />
-                  <div class="mem-edit-foot">
-                    <span class="mem-edit-count">{{ memEditDraft.length }} / 500</span>
-                    <button class="app-btn ghost" :disabled="memSaving" @click="memEditing = ''">取消</button>
-                    <button class="app-btn" :disabled="memSaving || !memEditDraft.trim()" @click="saveMemEdit(m)">保存</button>
-                  </div>
-                </template>
-                <template v-else>
-                  <div class="mem-content">{{ m.content }}</div>
-                  <div class="mem-foot">
-                    <span class="mem-tag" :class="'mem-cat-' + (m.category || 'fact')">{{ categoryLabel(m.category) }}</span>
-                    <span v-if="m.source === 'auto'" class="mem-tag mem-src"
-                          :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
-                    <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
-                    <span class="mem-acts">
-                      <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
-                      <button class="app-link-btn danger" @click="confirmRemoveMemory(m)">删除</button>
-                    </span>
-                  </div>
-                </template>
+              <div v-for="m in memories" :key="m.id" class="mem-item" :class="{ sel: memSelected.includes(m.id) }">
+                <a-checkbox class="mem-check" :checked="memSelected.includes(m.id)"
+                            @change="e => toggleMemSelect(m.id, e.target.checked)" />
+                <div class="mem-main">
+                  <!-- 编辑态：文本域独占卡片，计数与按钮同排（antd show-count 渲染在文本域下方，会与按钮行重叠） -->
+                  <template v-if="memEditing === m.id">
+                    <a-textarea v-model:value="memEditDraft" :maxlength="500"
+                                :auto-size="{ minRows: 2, maxRows: 8 }" />
+                    <div class="mem-edit-foot">
+                      <span class="mem-edit-count">{{ memEditDraft.length }} / 500</span>
+                      <button class="app-btn ghost" :disabled="memSaving" @click="memEditing = ''">取消</button>
+                      <button class="app-btn" :disabled="memSaving || !memEditDraft.trim()" @click="saveMemEdit(m)">保存</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="mem-content">{{ m.content }}</div>
+                    <div class="mem-foot">
+                      <span class="mem-tag" :class="'mem-cat-' + (m.category || 'fact')">{{ categoryLabel(m.category) }}</span>
+                      <span v-if="m.source === 'auto'" class="mem-tag mem-src"
+                            :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
+                      <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
+                      <span class="mem-acts">
+                        <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
+                        <button class="app-link-btn danger" @click="confirmRemoveMemory(m)">删除</button>
+                      </span>
+                    </div>
+                  </template>
+                </div>
               </div>
             </div>
           </a-spin>
@@ -546,24 +564,34 @@ const categoryLabel = c => CATEGORY_LABELS[c] || '事实'
 const CAT_OPTIONS = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))
 const memDraftCat = ref('fact')
 
+const memError = ref('')
 const loadMemories = async () => {
   memLoading.value = true
+  memError.value = ''
   try {
     const r = await listMyMemories()
     memories.value = (r && r.data) || []
-  } catch (e) { /* 静默：列表加载失败不阻塞其他面板 */ }
-  finally { memLoading.value = false }
+    // 选中项对账：刷新后已不在列表的 id 移出，避免批量栏计数虚高、删除时打空
+    const alive = new Set(memories.value.map(m => m.id))
+    memSelected.value = memSelected.value.filter(id => alive.has(id))
+  } catch (e) {
+    // 不能静默：失败会落到「还没有记忆」空态，用户以为刚添加的记忆没生效
+    memories.value = []
+    memError.value = e.message || '记忆列表加载失败'
+  } finally { memLoading.value = false }
 }
+const memAdding = ref(false)
 const addMemory = async () => {
   const c = memDraft.value.trim()
   if (!c) return
   memSaving.value = true
+  memAdding.value = true
   try {
     const r = await addMyMemory(c, memDraftCat.value)
     if (r && r.success !== false) { memDraft.value = ''; await loadMemories() }
     else message.error(r?.msg || '添加失败')
   } catch (e) { message.error(e.message || '添加失败') }
-  finally { memSaving.value = false }
+  finally { memSaving.value = false; memAdding.value = false }
 }
 const startMemEdit = m => { memEditing.value = m.id; memEditDraft.value = m.content }
 const saveMemEdit = async m => {
@@ -592,6 +620,34 @@ const removeMemory = async m => {
     if (r && r.success !== false) await loadMemories()
     else message.error(r?.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
+}
+
+// ---- 长期记忆：批量勾选 / 批量删除 ----
+const memSelected = ref([])
+const toggleMemSelect = (id, checked) => {
+  memSelected.value = checked ? [...memSelected.value, id] : memSelected.value.filter(x => x !== id)
+}
+const confirmRemoveSelected = () => {
+  const ids = [...memSelected.value]
+  Modal.confirm({
+    title: `删除选中的 ${ids.length} 条记忆？`,
+    content: '删掉的记忆不会再被提起，无法恢复。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: () => removeSelectedMemories(ids)
+  })
+}
+/** 批量删除：后端只有单条 DELETE（自带归属校验），条数上限 50 以内并行发完即可 */
+const removeSelectedMemories = async ids => {
+  memSaving.value = true
+  try {
+    const rs = await Promise.allSettled(ids.map(id => deleteMyMemory(id)))
+    const ok = rs.filter(r => r.status === 'fulfilled' && r.value?.success !== false).length
+    if (ok === ids.length) message.success(`已删除 ${ok} 条记忆`)
+    else message.error(`已删除 ${ok} 条，${ids.length - ok} 条失败`)
+    memSelected.value = []
+    await loadMemories()
+  } catch (e) { message.error(e.message || '删除失败') }
+  finally { memSaving.value = false }
 }
 
 // ---- 分享管理（会话只读链接的统一回看与停用） ----
@@ -694,7 +750,9 @@ const purgeRecord = s => {
 }
 
 // 面板切换时才拉列表：其余面板不碰这个接口（个人设置是常驻页，每次进都拉会白跑一次）
+// 记忆同理——自动提炼是在后台往库里加条目的，切回面板必须重拉，否则看到的是进页那一刻的旧快照
 watch(current, v => {
+  if (v === 'memory') loadMemories()
   if (v === 'shares') {
     focusSid.value = route.query.sid || ''
     loadShares()
@@ -703,10 +761,10 @@ watch(current, v => {
 
 onMounted(() => {
   load()
-  loadMemories()
   loadPrefs()
   ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
-  // 直接以 ?panel=shares 深链进入（侧栏入口）时，watch(current) 不会触发——初始化归位前手动拉一次
+  // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
+  if (current.value === 'memory') loadMemories()
   if (current.value === 'shares') loadShares()
 })
 </script>
@@ -779,9 +837,30 @@ onMounted(() => {
 .mem-add-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .mem-add-input { flex: 1; min-width: 200px; }
 .mem-add-cat { width: 92px; flex: none; }
+/* 批量操作栏（与文档页 / 通知中心 batch-bar 同款）：有勾选才出现，动作收敛在这里 */
+.mem-batch {
+  display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 8px 12px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px;
+  font-size: 12px; color: var(--app-accent);
+}
+.mem-batch-count { font-weight: 600; }
+.mem-danger { color: var(--app-danger); }
+.mem-danger:hover:not(:disabled) { background: var(--app-danger-weak); }
 /* 记忆列表：每条一张软卡片，内容完整换行（不再单行截断省略） */
 .mem-list { display: flex; flex-direction: column; gap: 8px; }
-.mem-item { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; }
+.mem-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px;
+}
+.mem-item.sel { border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.mem-main { flex: 1; min-width: 0; }
+/* 勾选命中区：撑满「行左边界 → 正文前」整列、整行高（antd wrapper 是 label，@click.stop 只盖内层 16px，
+   所以靠负外边距吃掉行内边距与 flex gap 来放大，而不是靠 stop）。
+   内层 .ant-checkbox 自带 align-self:center，拉高后会居中下沉 → 改回 flex-start；
+   上内边距 12.5px = 行上内边距 10px + 2.5px 首行对齐偏移，勾选框与正文首行齐平 */
+.mem-item :deep(.mem-check) { align-self: stretch; align-items: flex-start; padding: 12.5px 8px 2.5px 13px; margin: -10px -8px -10px -13px; }
+.mem-item :deep(.mem-check .ant-checkbox) { align-self: flex-start; }
 .mem-content { font-size: 13px; line-height: 1.65; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
 /* 元信息行：分类/来源/使用度靠左，编辑删除靠右——独立一行，任何宽度都不变形 */
 .mem-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
