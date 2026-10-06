@@ -131,7 +131,9 @@
               描述还是「自动派遣」的路由依据：用户开启自动派遣时，系统按名称+描述把每条问题派给最合适的智能体——
               各智能体的职责要互不重叠，重叠会导致派错。
             </p>
-            <a-form-item label="用途">
+            <!-- 用途与图标对内置「问渠」是身份锁死项（后端同样 fail-loud 拒绝改动），配置页不再给入口：
+                 「用途」改成子智能体会让唯一的默认智能体从对话页消失，「图标」换掉就丢了品牌标 -->
+            <a-form-item label="用途" v-if="form.isBuiltin !== 1">
               <a-radio-group v-model:value="form.isSubagent">
                 <a-radio-button :value="0">主智能体</a-radio-button>
                 <a-radio-button :value="1">子智能体</a-radio-button>
@@ -144,10 +146,10 @@
               <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
                        placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
               <div v-if="form.isBuiltin === 1" class="ap-block-hint" style="margin:6px 0 0">
-                内置智能体「问渠」的名称不可修改（图标默认用问渠品牌标，可在下方更换）。
+                内置智能体「问渠」是系统默认角色：名称、用途与图标随产品固定，不可修改。
               </div>
             </a-form-item>
-            <a-form-item label="图标">
+            <a-form-item label="图标" v-if="form.isBuiltin !== 1">
               <div class="ap-icon-pick">
                 <button v-for="opt in iconOptions" :key="opt.value || 'default'" type="button"
                         class="ap-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
@@ -750,10 +752,9 @@ function buildQueryParams (qp, rr) {
 
 const form = ref(blankForm())
 
-// 图标可选集按身份过滤：问渠品牌标为内置「问渠」专属（后端同样强制），其它智能体的选项里不出现
-const iconOptions = computed(() => form.value.isBuiltin === 1
-  ? ICON_OPTIONS
-  : ICON_OPTIONS.filter(o => o.value !== 'wenqu'))
+// 图标可选集：问渠品牌标为内置「问渠」专属（后端同样强制），非内置智能体的选项里不出现。
+// 内置问渠整块「图标」已隐藏，这里恒走过滤分支
+const iconOptions = computed(() => ICON_OPTIONS.filter(o => o.value !== 'wenqu'))
 
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
@@ -1303,8 +1304,9 @@ const save = async () => {
   if (!f.name.trim()) { message.warning('请填写名称'); return }
   const payload = {
     name: f.name.trim(),
-    // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存
-    icon: f.icon || '',
+    // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存。
+    // 内置「问渠」的图标已锁死（配置页无入口、后端拒绝改动），此处不带该字段，避免每次保存都写一遍
+    ...(f.isBuiltin === 1 ? {} : { icon: f.icon || '' }),
     description: f.description.trim(),
     systemPrompt: f.systemPrompt,
     // 「全部知识库」时清空（空 → 后端存 null → 不限制）；「指定知识库」时存逗号串；

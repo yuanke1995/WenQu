@@ -48,6 +48,13 @@ public class AgentService {
     public static final String BUILTIN_NAME = "问渠";
 
     /**
+     * 内置「问渠」智能体的固定图标：问渠品牌标（不可修改）。
+     * <p>与 {@link KnowledgeBaseService#ICON_BRAND} 同值但各表各义——一个是智能体头像、一个是知识库图标，
+     * 各自单独声明常量，避免改动其中一处意外波及另一处。</p>
+     */
+    public static final String BUILTIN_ICON = "wenqu";
+
+    /**
      * 内置「问渠」播种时写入的系统提示词。
      * <p>此前播种只写名称/描述/标记，{@code system_prompt} 留空 → 全新环境启动后，
      * 管理员在智能体配置页看到的是空框，且运行时回落 {@code AppProperties.systemPrompt}
@@ -138,21 +145,39 @@ public class AgentService {
                 // 内置「问渠」可读性走 readable() 的内置豁免，shareConfig 永不参与判定——
                 // 存量环境若残留过共享配置（历史上接口未拦），在此归一清掉，避免界面上出现误导性的共享范围标记
                 Agent keeper = builtins.get(0);
+                LambdaUpdateWrapper<Agent> fix = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, keeper.getId());
+                boolean dirty = false;
                 if (keeper.getShareConfig() != null) {
-                    mapper.update(null, new LambdaUpdateWrapper<Agent>()
-                            .eq(Agent::getId, keeper.getId())
-                            .set(Agent::getShareConfig, null)
-                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    fix.set(Agent::getShareConfig, null);
+                    dirty = true;
                     log.info("[AGENT] 内置「问渠」共享范围不参与可见性判定，已清除残留配置: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                // 用途/图标同为身份锁死项（配置页已隐藏、接口层已拒绝改动）：存量环境里若残留历史错值，
+                // 在此归一回来——否则库里存着 is_subagent=1 / 非品牌标，界面上已无从纠正
+                if (Integer.valueOf(1).equals(keeper.getIsSubagent())) {
+                    fix.set(Agent::getIsSubagent, 0);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」固定为主智能体，已修正遗留的子智能体标记: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                if (!BUILTIN_ICON.equals(keeper.getIcon())) {
+                    fix.set(Agent::getIcon, BUILTIN_ICON);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」固定使用问渠品牌标，已修正遗留图标: {}（{}，原 {}）",
+                            keeper.getName(), keeper.getId(), keeper.getIcon());
+                }
+                if (dirty) {
+                    fix.set(Agent::getUpdateTime, LocalDateTime.now());
+                    mapper.update(null, fix);
                 }
                 return;
             }
             Agent seed = new Agent();
             seed.setName(BUILTIN_NAME);
+            seed.setIcon(BUILTIN_ICON);
             seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
             seed.setIsBuiltin(1);
             seed.setSystemPrompt(BUILTIN_SYSTEM_PROMPT);
-            clearDefault();
+            clearDefault(null); // 播种行尚未落库，无自身可排除
             seed.setIsDefault(1);
             seed.setCreatedBy("system");
             LocalDateTime now = LocalDateTime.now();
@@ -299,7 +324,7 @@ public class AgentService {
         // 子智能体不参与「默认」：它只能被主智能体委派调用，不能作为对话页预选角色
         boolean isSub = Integer.valueOf(1).equals(a.getIsSubagent());
         if (!isSub && (Boolean.TRUE.equals(a.getIsDefault()) || Integer.valueOf(1).equals(a.getIsDefault()))) {
-            clearDefault();
+            clearDefault(null); // 新行尚未落库，无自身可排除
             a.setIsDefault(1);
         } else {
             a.setIsDefault(0);
@@ -323,12 +348,27 @@ public class AgentService {
                 throw new BizException("内置智能体「" + existing.getName() + "」的名称不可修改");
             }
         }
+        // 同理锁死「用途」与「图标」：内置问渠恒为主智能体（改成子智能体会让它从对话页下拉消失，
+        // 全局就没有默认角色了）、图标恒为问渠品牌标。配置页已隐藏这两项，这里做接口层兜底，
+        // 防止绕过界面直接调接口改掉身份字段。
+        if (body != null && Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+            if (body.containsKey("isSubagent") && Integer.valueOf(1).equals(toTri(body.get("isSubagent")))) {
+                throw new BizException("内置智能体「" + existing.getName() + "」固定为主智能体，用途不可修改");
+            }
+            if (body.containsKey("icon")) {
+                String requestedIcon = asText(body.get("icon"), 32);
+                if (!BUILTIN_ICON.equals(requestedIcon)) {
+                    throw new BizException("内置智能体「" + existing.getName() + "」固定使用问渠品牌标，图标不可修改");
+                }
+            }
+        }
         // 改动前的快照串先算好：toEntity 会就地改写 existing（合并 body 字段），之后就拿不到原值了
         String beforeJson = snapshotJson(existing);
         Agent a = toEntity(body, existing);
         a.setUpdateTime(LocalDateTime.now());
         if (Integer.valueOf(1).equals(a.getIsDefault())) {
-            clearDefault();
+            // 本行原本可能已是默认：排除自身，否则 clearDefault 会把它清零而 updateColumns 又不写回该列
+            clearDefault(id);
             a.setIsDefault(1);
         }
         // 存量智能体（版本表还空着）首次保存：先把改动前的状态补成 v1，这样本次改动本身也能一键回滚
@@ -407,7 +447,7 @@ public class AgentService {
         if (Integer.valueOf(1).equals(target.getIsSubagent())) {
             throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
         }
-        clearDefault();
+        clearDefault(id);
         Agent a = new Agent();
         a.setId(id);
         a.setIsDefault(1);
@@ -511,11 +551,20 @@ public class AgentService {
         return id;
     }
 
-    private void clearDefault() {
+    /**
+     * 清掉其它智能体上的默认标记，为把 {@code keepId} 设为默认做准备。
+     * <p><b>必须排除 {@code keepId} 本身</b>：本行若原本就是默认，清零后若请求体没带 isDefault，
+     * {@link #updateColumns} 不会把该列写回去（只写 body 里出现过的字段）——本行就永久停在 0，
+     * 系统默认智能体凭空消失（2026-10-06 实测：改个描述就把内置问渠的默认标记弄丢了）。</p>
+     */
+    private void clearDefault(String keepId) {
         List<Agent> all = mapper.selectList(new LambdaQueryWrapper<Agent>().eq(Agent::getIsDefault, 1));
         for (Agent a : all) {
-            a.setIsDefault(0);
-            mapper.updateById(a);
+            if (a.getId().equals(keepId)) continue;
+            mapper.update(null, new LambdaUpdateWrapper<Agent>()
+                    .eq(Agent::getId, a.getId())
+                    .set(Agent::getIsDefault, 0)
+                    .set(Agent::getUpdateTime, LocalDateTime.now()));
         }
     }
 
@@ -568,7 +617,7 @@ public class AgentService {
                 .eq(AgentVersion::getAgentId, id)
                 .eq(AgentVersion::getVersion, targetVersion));
         if (target == null) throw new BizException(404, "版本 v" + targetVersion + " 不存在");
-        applyConfig(id, parseConfig(target.getConfig()));
+        applyConfig(id, parseConfig(target.getConfig()), Integer.valueOf(1).equals(agent.getIsBuiltin()));
         Agent updated = mapper.selectById(id);
         // 版本记录 best-effort：配置已应用，快照写失败不应把回滚报成失败（否则用户以为没回滚、实际已回滚）
         recordVersion(id, snapshotJson(updated), "回滚自 v" + targetVersion);
@@ -679,13 +728,19 @@ public class AgentService {
         return v == null ? "" : String.valueOf(v);
     }
 
-    /** 把快照配置写回智能体行：逐列显式 set（含 null——回滚到"未设置"是合法目标，NOT_NULL 策略会漏掉） */
-    private void applyConfig(String agentId, Map<String, Object> cfg) {
+    /** 把快照配置写回智能体行：逐列显式 set（含 null——回滚到"未设置"是合法目标，NOT_NULL 策略会漏掉）
+     *  <p>内置「问渠」跳过 icon / isSubagent：这两项是身份锁死项，历史快照里可能存着旧值
+     *  （本次锁死之前允许改），回滚若照写会把身份字段改回去，而配置页已无入口可纠正。</p> */
+    private void applyConfig(String agentId, Map<String, Object> cfg, boolean builtin) {
         LambdaUpdateWrapper<Agent> uw = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, agentId);
         String name = raw(cfg.get("name"));
         // 名称是 NOT NULL 且内置智能体名称不可变：快照里缺名称时保留现值，不写入 null
         if (StringUtils.hasText(name)) uw.set(Agent::getName, name);
-        uw.set(Agent::getIcon, raw(cfg.get("icon")));
+        if (builtin) {
+            uw.set(Agent::getIcon, BUILTIN_ICON).set(Agent::getIsSubagent, 0);
+        } else {
+            uw.set(Agent::getIcon, raw(cfg.get("icon")));
+        }
         uw.set(Agent::getDescription, raw(cfg.get("description")));
         uw.set(Agent::getSystemPrompt, raw(cfg.get("systemPrompt")));
         uw.set(Agent::getKnowledgeScope, raw(cfg.get("knowledgeScope")));
@@ -702,7 +757,7 @@ public class AgentService {
         uw.set(Agent::getSkills, raw(cfg.get("skills")));
         uw.set(Agent::getMcps, raw(cfg.get("mcps")));
         uw.set(Agent::getBuiltinTools, raw(cfg.get("builtinTools")));
-        uw.set(Agent::getIsSubagent, asInt(cfg.get("isSubagent")));
+        if (!builtin) uw.set(Agent::getIsSubagent, asInt(cfg.get("isSubagent")));
         uw.set(Agent::getSubAgentIds, raw(cfg.get("subAgentIds")));
         uw.set(Agent::getQueryParams, raw(cfg.get("queryParams")));
         uw.set(Agent::getWorkflowId, raw(cfg.get("workflowId")));
