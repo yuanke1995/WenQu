@@ -63,7 +63,7 @@
       <div v-else-if="graphInfo.triples" class="graph-note">
         {{ truncated
           ? `图谱较大，展示关联度最高的前 ${viewLimit} 个实体；其余实体用右上角搜索定位。`
-          : '点一个节点可在下方查看它的三元组与来源块；拖动节点/空白平移、滚轮缩放。' }}
+          : '点一个节点会聚焦与它相连的整条关系链（其余淡化），下方列出三元组与来源块；拖动节点/空白平移、滚轮缩放。' }}
       </div>
     </div>
 
@@ -104,6 +104,9 @@ import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+// 深路径取内部 ecData 写入器：force graph 的 emphasis.focus 只认 'adjacency'（trajectory 仅桑基图支持），
+// 想聚焦「整条关系链」只能自算索引集后写回元素（GraphView 内部给节点写 focus 用的就是它）
+import { getECData } from 'echarts/lib/util/innerStore.js'
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 import {
   graphBuild, graphStatus, graphTriples, graphClear,
@@ -185,8 +188,9 @@ const truncated = ref(false)
 const overviewData = ref(null)   // 全景数据缓存（聚焦模式「返回全景」用，免重拉）
 const focused = ref(null)        // {id, name}：邻域聚焦模式
 const VIEW_LIMIT = 300
+let chainFocusSets = null        // 节点数据下标 → 所在连通链的 {node:[], edge:[]} 下标集（聚焦范围）
 
-const closeEntityPanel = () => { selectedDetail.value = null }
+const closeEntityPanel = () => { selectedDetail.value = null; clearNodeFocus() }
 
 const aliasText = detail => (detail.entity.aliases || []).join('、')
 
@@ -238,7 +242,9 @@ function renderFromData(data, focus) {
     const item = {
       name: n.name,
       symbolSize: focus && focus.id === n.id ? 46 : Math.min(44, 12 + Math.round(((n.degree || 1) / maxDegree) * 28)),
-      label: { show: true, fontSize: 10 }
+      label: { show: true, fontSize: 10 },
+      // adjacency 只作为兜底范围（链索引集由 applyChainFocus 覆写）；悬停节点才触发聚焦，悬停连线不淡化全图
+      emphasis: { focus: 'adjacency', label: { fontWeight: 'bold' } }
     }
     if (focus && focus.id === n.id) item.itemStyle = { color: '#e6a23c' }
     return item
@@ -253,6 +259,8 @@ function renderFromData(data, focus) {
       predicate: e.predicate
     }
   }).filter(Boolean)
+  // 整条关系链：按实体无向遍历求连通分量，记每个节点的分量内 点/线 数据下标
+  chainFocusSets = buildChainFocusSets(nodes, edges, chartLinks)
   viewLimit.value = data.limit || VIEW_LIMIT
   truncated.value = !!data.truncated
   // echarts 走 canvas 渲染，不解析 CSS 变量——读变量当前实际值（随亮暗主题），直接写 var(--app-*) 会静默失效
@@ -280,22 +288,105 @@ function renderFromData(data, focus) {
       itemStyle: { color: '#4f6ef2' }
     }]
   }, true)
-  // 点节点 = 拉服务端实体详情（完整三元组 + 溯源），不再用采样边就近过滤
+  applyChainFocus()
+  // 点节点 = 拉服务端实体详情（完整三元组 + 溯源）+ 聚焦该节点所在的整条关系链
   chartInstance.on('click', p => {
     if (p.dataType === 'node') {
       const id = nameToId.get(p.name)
-      if (id) loadEntityDetail(id)
+      if (id) {
+        loadEntityDetail(id)
+        focusNodeVisual(p.name)
+      }
     }
   })
   if (focus) {
     // 聚焦实体高亮 + 居中提示（dispatchAction 是运行时动作，不重建力模拟）
-    chartInstance.dispatchAction({ type: 'highlight', seriesIndex: 0, name: focus.name })
+    focusNodeVisual(focus.name)
     chartInstance.dispatchAction({ type: 'showTip', seriesIndex: 0, name: focus.name })
+  }
+  // 鼠标离开元素/画布后 echarts 会清掉 blur，按选中点重聚焦（zr 随 dispose 一起销毁，不需要解绑）
+  chartInstance.getZr().on('mouseout', refocusChain)
+  chartInstance.getZr().on('globalout', refocusChain)
+}
+
+/** 连通分量 → 每个节点的聚焦索引集（{node:[], edge:[]} 均为当前渲染内的数据下标），供 blur 机制「保留不淡化」用 */
+function buildChainFocusSets(nodes, edges, chartLinks) {
+  const idIndex = new Map(nodes.map((n, i) => [n.id, i]))
+  const adj = new Map(nodes.map(n => [n.id, []]))
+  edges.forEach(e => {
+    if (adj.has(e.source) && adj.has(e.target)) {
+      adj.get(e.source).push(e.target)
+      adj.get(e.target).push(e.source)
+    }
+  })
+  const compOfId = new Map()
+  const compNodes = []
+  const compEdges = []
+  nodes.forEach(n => {
+    if (compOfId.has(n.id)) return
+    const c = compNodes.length
+    compNodes.push([])
+    compEdges.push([])
+    const stack = [n.id]
+    compOfId.set(n.id, c)
+    while (stack.length) {
+      const cur = stack.pop()
+      compNodes[c].push(idIndex.get(cur))
+      for (const next of adj.get(cur)) {
+        if (!compOfId.has(next)) { compOfId.set(next, c); stack.push(next) }
+      }
+    }
+  })
+  chartLinks.forEach((l, i) => {
+    const c = compOfId.get(nameToId.get(l.source))
+    if (c != null) compEdges[c].push(i)
+  })
+  return nodes.map(n => {
+    const c = compOfId.get(n.id)
+    return { node: compNodes[c], edge: compEdges[c] }
+  })
+}
+
+/** 把链索引写到节点元素上：hover/点选的 blur 范围都从这里取（renderFromData 与 resize 重建后需重写） */
+function applyChainFocus() {
+  if (!chartInstance || !chainFocusSets) return
+  const data = chartInstance.getModel()?.getSeriesByIndex(0)?.getData()
+  if (!data) return
+  for (let i = 0; i < data.count(); i++) {
+    const el = data.getItemGraphicEl(i)
+    if (el) getECData(el).focus = chainFocusSets[i]
+  }
+}
+
+// 节点聚焦（点选 / 悬停 / 搜索定位共用）：highlight 触发模糊范围 = 该点所在整条关系链，其余淡化。
+// 换点先 downplay 旧点，防止上一个点的强调残留；全程 dispatchAction，不 setOption（会重建力模拟与漫游坐标系）
+let focusedNodeName = null
+
+function focusNodeVisual(name) {
+  if (!chartInstance || !name) return
+  if (focusedNodeName && focusedNodeName !== name) chartInstance.dispatchAction({ type: 'downplay', seriesIndex: 0 })
+  focusedNodeName = name
+  chartInstance.dispatchAction({ type: 'highlight', seriesIndex: 0, name })
+}
+
+function clearNodeFocus() {
+  if (!chartInstance || !focusedNodeName) return
+  chartInstance.dispatchAction({ type: 'downplay', seriesIndex: 0 })
+  focusedNodeName = null
+}
+
+// 点选聚焦要「钉住」：鼠标移开元素时 echarts 会按 hover 语义清掉全部 blur，
+// 这里在其后按当前选中点重新聚焦，保持「选中即整条链常亮」
+function refocusChain() {
+  if (focusedNodeName && chartInstance) {
+    chartInstance.dispatchAction({ type: 'highlight', seriesIndex: 0, name: focusedNodeName })
   }
 }
 
 function disposeChart() {
   if (chartInstance) { chartInstance.dispose(); chartInstance = null }
+  focusedNodeName = null
+  chainFocusSets = null
 }
 
 // ==================== 实体详情（点实体看三元组） ====================
@@ -353,11 +444,11 @@ const onSearchPick = async entityId => {
   if (!ent) return
   const inView = overviewData.value?.nodes?.some(n => n.id === entityId)
   if (inView && !focused.value) {
-    // 已在全景里：直接高亮 + 打开三元组面板（不动图表状态）
+    // 已在全景里：直接聚焦 + 打开三元组面板（不动图表状态）
     loadEntityDetail(entityId)
     const name = [...nameToId.entries()].find(([, id]) => id === entityId)?.[0]
     if (chartInstance && name) {
-      chartInstance.dispatchAction({ type: 'highlight', seriesIndex: 0, name })
+      focusNodeVisual(name)
       chartInstance.dispatchAction({ type: 'showTip', seriesIndex: 0, name })
     }
   } else {
@@ -399,7 +490,11 @@ const doClearGraph = async () => {
   } catch (e) { message.error(e.message || '清空失败') }
 }
 
-const onWinResize = () => { if (chartInstance) chartInstance.resize() }
+const onWinResize = () => {
+  if (!chartInstance) return
+  chartInstance.resize()
+  applyChainFocus()   // resize 触发重渲染会用回 adjacency 兜底范围，这里重新写回链索引
+}
 window.addEventListener('resize', onWinResize)
 
 watch(() => props.open, open => {
