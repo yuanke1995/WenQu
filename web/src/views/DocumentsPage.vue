@@ -11,20 +11,24 @@
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
       <div class="doc-tools">
-        <!-- 知识库配置直达：解析/检索参数就地改，不用回知识库列表页 -->
-        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
+        <!-- 知识库配置直达：解析/检索参数与向量模型就地改，不用回知识库列表页。
+             内置库对管理员开放（内容只读但配置可改，与后端内置库白名单同口径） -->
+        <button v-if="canConfigKb" class="app-btn ghost" @click="openKbConfig">
           <setting-outlined /> 知识库配置
         </button>
-        <!-- §5 图谱视图入口：与库列表页共用同一弹窗组件（库详情页直接看「知识资产」） -->
+        <!-- §5 图谱视图入口：与库列表页共用同一弹窗组件。
+             刻意仍用 canManageCurrentKb（内置库为 false）：图谱弹窗里含「构建图谱」「清空图谱」
+             两个真调模型 / 删数据的写操作，对内置库开放等于给了写入入口，不合适。 -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="graphModal = true">
           <apartment-outlined /> 图谱
         </button>
         <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
-        <!-- 上传门槛：对当前库有管理权（自己的库，或管理员） -->
-        <button v-if="canManageCurrentKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
+        <!-- 上传门槛：对当前库有管理权（自己的库，或管理员）。内置库内容随版本同步，
+             后端 DocumentController 会明确拒绝，故此处不开放——放开只会让用户点完吃到一句报错 -->
+        <button v-if="canUploadToKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
           <link-outlined /> 网页导入
         </button>
-        <button v-if="canManageCurrentKb" class="app-btn" :disabled="uploading" @click="openUpload">
+        <button v-if="canUploadToKb" class="app-btn" :disabled="uploading" @click="openUpload">
           <upload-outlined /> {{ uploading ? '上传中…' : '上传文档' }}
         </button>
       </div>
@@ -459,11 +463,26 @@ const currentKbBuiltin = computed(() => {
 })
 /** 当前库是否可管理（上传/批量操作的门槛；官方内置库对所有人只读） */
 const canManageCurrentKb = computed(() => {
-  if (currentKbBuiltin.value) return false
+  // 官方内置库：文档内容只读（上传/删除篇目都不开放，与后端 DocumentController 一致），
+  // 但**「知识库配置」对管理员开放**——检索/解析参数与向量模型是运行时配置，管理员要能改
+  // （后端 KnowledgeBaseService.update 的内置库白名单即这三个字段）。
+  // 管理员级也要放行：内置库 createdBy=system ⇒ 任何人都拿不到 MANAGE，只判「是否本人创建」
+  // 的话管理员也会被误挡在门外。这与后端 requireManage 对内置库走 roleService.isAdminCode 同口径。
+  if (currentKbBuiltin.value) return isAdmin
   if (isAdmin) return true
   const k = kbases.value.find(x => x.id === currentKbId.value)
   return !!k && k.createdBy === myUid.value
 })
+/**
+ * 「知识库配置」是否可见：内置库对管理员开放，其余按常规管理权。
+ * 与 canManageCurrentKb 拆开的原因：这两个能力的粒度不同——配置是运行时参数（管理员可改），
+ * 写入内容则受内置库的只读约束。合成一个判定会让「放开配置」顺带放开「上传」（后端会拒），
+ * 或反之把配置也一起挡掉。
+ */
+const canConfigKb = computed(() => canManageCurrentKb.value)
+/** 能否往当前库写入内容：内置库一律不可（内容随版本同步，后端会明确拒绝） */
+const canUploadToKb = computed(() => canManageCurrentKb.value && !currentKbBuiltin.value)
+
 /** 单个文档是否可管理（创建者或管理员；后端还会按共享范围二次判定；官方内置库的篇目只读） */
 const canManageDoc = d => !currentKbBuiltin.value && (isAdmin || (myUid.value && d.createdBy === myUid.value))
 /** 当前所在知识库（路由参数）：列表/上传都限定在该库 */
