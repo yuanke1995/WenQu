@@ -944,14 +944,14 @@ function pickAskOption (m, page, oi) {
   a.sels[page] = oi
   a.customs[page] = ''
 }
-/** 智能体提问（一卡多问）：在某题输入自定义答案——记录并标记为「自定义」（下标=选项数） */
-function setAskCustom (m, page, text) {
+/** 智能体提问（一卡多问）：确认某题自定义答案（回车/失焦）——有文本即标记该题已答（sels=选项数） */
+function commitAskCustom (m, page) {
   const a = m && m.ask
   if (!a || a.busy || a.answered) return
-  const t = (text || '').trim()
-  a.customs[page] = text || ''
-  if (t) a.sels[page] = a.questions[page].options.length
-  else if (a.sels[page] === a.questions[page].options.length) a.sels[page] = null
+  const len = (a.questions[page] && a.questions[page].options ? a.questions[page].options.length : 0)
+  const t = (a.customs[page] || '').trim()
+  if (t) a.sels[page] = len
+  else if (a.sels[page] === len) a.sels[page] = null
 }
 /** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空，由后端按该题推荐项默认执行 */
 async function askSubmitAll (m) {
@@ -1553,7 +1553,7 @@ const ready = async () => {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, setAskCustom, askSubmitAll, ignoreAsk,
+    text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

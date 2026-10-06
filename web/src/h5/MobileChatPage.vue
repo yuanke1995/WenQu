@@ -154,7 +154,7 @@
         <div class="m-askp-opts">
           <button v-for="(op, oi) in mCurAsk.options" :key="oi" class="m-askp-opt" type="button"
                   :class="{ sel: pendingAsk.ask.sels[mAskPage] === oi }"
-                  :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="pickAskOption(pendingAsk, mAskPage, oi)">
+                  :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="onPickM(oi)">
             <span class="m-askp-no">{{ oi + 1 }}.</span>
             <span class="m-askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="m-askp-rec">（推荐）</span></span>
             <span v-if="askOptionParts(op).rest" class="m-askp-rest">{{ askOptionParts(op).rest }}</span>
@@ -163,12 +163,12 @@
             <span class="m-askp-no">{{ mCurAsk.options.length + 1 }}.</span>
             <input v-model="pendingAsk.ask.customs[mAskPage]" class="m-askp-input" :maxlength="2000"
                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired"
-                   placeholder="输入你的回答…" @input="setAskCustom(pendingAsk, mAskPage, pendingAsk.ask.customs[mAskPage])"
-                   @keydown.enter.prevent="setAskCustom(pendingAsk, mAskPage, pendingAsk.ask.customs[mAskPage])" />
+                   placeholder="输入你的回答…" @blur="commitCustomM(mAskPage, false)"
+                   @keydown.enter.prevent="commitCustomM(mAskPage, true)" />
           </div>
         </div>
         <div class="m-askp-foot">
-          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '逐题作答后底部提交；未答将按推荐项默认执行' }}</span>
+          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '选完自动跳下一题，全部选完自动提交；未答按推荐项默认' }}</span>
           <span class="m-askp-actions">
             <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
             <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ mAskAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
@@ -375,7 +375,7 @@ provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
-  resolveApproval, pickAskOption, setAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
+  resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   ignoreAsk,
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
@@ -402,10 +402,12 @@ const mCurAsk = computed(() => {
   if (!a || !a.questions.length) return { topic: '', question: '', options: [] }
   return a.questions[Math.min(mAskPage.value, a.questions.length - 1)] || { topic: '', question: '', options: [] }
 })
+// 已答（已确认）题数：只看 sels（选项点选或自定义已确认）。自定义「已输入未确认」不算，
+// 否则自动提交会在敲第一个字时就触发。
 const mAskAnsweredCount = computed(() => {
   const a = pendingAsk.value?.ask
   if (!a) return 0
-  return a.questions.reduce((n, q, i) => n + ((a.sels[i] != null) || (a.customs[i] || '').trim() ? 1 : 0), 0)
+  return a.sels.filter(s => s != null).length
 })
 const mAskNow = ref(Date.now())
 let mAskTimer = null
@@ -438,6 +440,35 @@ const askOptionParts = (op) => {
   const i = s.search(/[：:]/)
   return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
 }
+// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）
+const advanceM = (page) => {
+  const a = pendingAsk.value?.ask
+  if (!a) return
+  const next = a.questions.findIndex((q, i) => i > page && a.sels[i] == null)
+  if (next >= 0) { mAskPage.value = next; return }
+  const firstUnanswered = a.questions.findIndex((q, i) => a.sels[i] == null)
+  mAskPage.value = firstUnanswered >= 0 ? firstUnanswered : a.questions.length - 1
+}
+// 点选某题选项：记录 → 自动跳下一题
+const onPickM = (oi) => {
+  const m = pendingAsk.value
+  if (!m || !m.ask || m.ask.busy || m.ask.answered || mAskExpired.value) return
+  pickAskOption(m, mAskPage.value, oi)
+  advanceM(mAskPage.value)
+}
+// 确认某题自定义答案：回车确认并跳下一题；失焦只确认不跳题（避免打字后点选项时记错题）
+const commitCustomM = (page, doAdvance) => {
+  const m = pendingAsk.value
+  if (!m || !m.ask || m.ask.busy || m.ask.answered || mAskExpired.value) return
+  commitAskCustom(m, page)
+  if (doAdvance && m.ask.sels[page] != null) advanceM(page)
+}
+// 全部题都确认过 → 自动提交（提交后 busy/answered 置位，条件不再满足，只触发一次）
+watch(() => {
+  const a = pendingAsk.value?.ask
+  return a && !a.busy && !a.answered && !mAskExpired.value && a.questions.length > 0
+    && a.sels.filter(s => s != null).length === a.questions.length
+}, (done) => { if (done) askSubmitAll(pendingAsk.value) })
 
 // ==================== 手动压缩上下文（/compact 的移动入口） ====================
 // 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区（与窗口档位同处一块）；

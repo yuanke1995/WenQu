@@ -170,7 +170,7 @@
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                         </button>
-                        <!-- askUser 问答记录：可折叠（默认收起），刷新/历史恢复同构 -->
+                        <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <div v-if="t._open" class="tl-card-body">
                           <template v-if="t.args">
@@ -251,7 +251,7 @@
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                       <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                     </button>
-                    <!-- askUser 问答记录：可折叠（默认收起），刷新/历史恢复同构 -->
+                    <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                     <div v-if="t._open" class="tl-card-body">
                       <template v-if="t.args">
@@ -815,21 +815,21 @@
           </div>
           <div class="askp-opts">
             <button v-for="(op, oi) in curAsk.options" :key="oi" type="button"
-                    class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi }"
-                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="pickAskOption(pendingAsk, askPage, oi)">
+                    class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi, 'k-hi': askHi === oi }"
+                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="onPick(oi)">
               <span class="askp-no">{{ oi + 1 }}.</span>
               <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
               <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
             </button>
-            <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length }">
+            <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length, 'k-hi': askHi === curAsk.options.length }">
               <span class="askp-no">{{ curAsk.options.length + 1 }}.</span>
               <input ref="askCustomRef" v-model="pendingAsk.ask.customs[askPage]" class="askp-input" :maxlength="2000"
                      :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired"
-                     placeholder="输入你的回答…" @input="setAskCustom(pendingAsk, askPage, pendingAsk.ask.customs[askPage])" />
+                     placeholder="输入你的回答…" @blur="commitCustomAt(askPage, false)" @keydown.enter.prevent="commitCustomAt(askPage, true)" />
             </div>
           </div>
           <div class="askp-foot">
-            <span class="askp-hint"><info-circle-outlined /> 逐题选择后点 ‹ › 翻页，底部「提交」一次性作答；未答将按推荐项默认执行</span>
+            <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；未答将按推荐项默认执行</span>
             <span class="askp-actions">
               <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
               <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
@@ -2470,7 +2470,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, setAskCustom, askSubmitAll, ignoreAsk,
+  text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -2526,6 +2526,7 @@ const pendingAsk = computed(() => {
 const askPage = ref(0)              // 当前翻页（0 基）：一卡多问逐题展示
 const askCustomRef = ref(null)
 const askNow = ref(Date.now())      // 倒计时心跳（仅挂起中有 deadline 时走表）
+const askHi = ref(null)             // 键盘高亮行（0..n-1=选项，n=自定义）；null=不高亮（推荐项不预选）
 let askTimer = null
 // 当前展示的问题（随翻页切换）；越界时回退到最后一题
 const curAsk = computed(() => {
@@ -2534,11 +2535,12 @@ const curAsk = computed(() => {
   const p = Math.min(askPage.value, a.questions.length - 1)
   return a.questions[p] || { topic: '', question: '', options: [] }
 })
-// 已答题数（已选选项或已输入自定义）
+// 已答（已确认）题数：只看 sels（选项点选或自定义已确认）。自定义「已输入但未确认」不算，
+// 否则自动提交会在用户刚敲第一个字时就触发。
 const askAnsweredCount = computed(() => {
   const a = pendingAsk.value?.ask
   if (!a) return 0
-  return a.questions.reduce((n, q, i) => n + ((a.sels[i] != null) || (a.customs[i] || '').trim() ? 1 : 0), 0)
+  return a.sels.filter(s => s != null).length
 })
 // 剩余毫秒 / 是否已超时 / 倒计时文本（mm:ss）
 const askRemaining = computed(() => {
@@ -2560,6 +2562,7 @@ const askCountdownText = computed(() => {
 })
 watch(() => pendingAsk.value?.ask, (a) => {
   askPage.value = 0
+  askHi.value = null
   // 仅在有 deadline 时启心跳；归零后停止（由 onToolStatus 收卡，或用户已提交）
   if (a && a.deadline) {
     if (!askTimer) askTimer = setInterval(() => { askNow.value = Date.now() }, 1000)
@@ -2568,6 +2571,8 @@ watch(() => pendingAsk.value?.ask, (a) => {
   }
   nextTick(() => { const el = askCustomRef.value; if (el && el.focus) el.focus() })
 }, { flush: 'post' })
+// 手动翻页 / 自动跳题后清掉键盘高亮，避免高亮行号与新题不符
+watch(askPage, () => { askHi.value = null })
 watch(askExpired, (exp) => { if (exp && askTimer) { clearInterval(askTimer); askTimer = null } })
 // 选项展示拆分：「关键词：说明」→ 关键词加粗 + 说明弱化；无冒号时整句作为关键词
 const askOptionParts = (op) => {
@@ -2577,36 +2582,67 @@ const askOptionParts = (op) => {
 }
 // 高亮移动时同步焦点：落到自定义输入行→聚焦（可直接打字），落到选项行→失焦（避免误输入）
 const focusAskRow = () => {
-  const a = pendingAsk.value?.ask
   const n = (curAsk.value.options || []).length
   nextTick(() => {
     const el = askCustomRef.value
     if (!el) return
-    if (a && a.sels[askPage.value] === n) el.focus()
+    if (askHi.value === n) el.focus()
     else if (document.activeElement === el) el.blur()
   })
 }
+// 点选某题的一个选项：记录选择 → 自动跳到下一道未答题
+const onPick = (oi) => {
+  const m = pendingAsk.value
+  if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
+  pickAskOption(m, askPage.value, oi)
+  askHi.value = null
+  advanceAfterSelect(askPage.value)
+}
+// 确认某题自定义答案：回车（doAdvance=true）确认并跳下一题；失焦只确认不跳题，
+// 避免「先打字再点某个选项」时 blur 先触发跳题、导致随后的 click 记到别的题上
+const commitCustomAt = (page, doAdvance) => {
+  const m = pendingAsk.value
+  if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
+  commitAskCustom(m, page)
+  if (doAdvance && m.ask.sels[page] != null) {
+    askHi.value = null
+    advanceAfterSelect(page)
+  }
+}
+// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）
+const advanceAfterSelect = (page) => {
+  const a = pendingAsk.value?.ask
+  if (!a) return
+  const next = a.questions.findIndex((q, i) => i > page && a.sels[i] == null)
+  if (next >= 0) { askPage.value = next; return }
+  const firstUnanswered = a.questions.findIndex((q, i) => a.sels[i] == null)
+  askPage.value = firstUnanswered >= 0 ? firstUnanswered : a.questions.length - 1
+}
+// 全部题都确认过 → 自动提交（只触发一次：提交后 answered/busy 置位，watch 条件不再满足）
+watch(() => {
+  const a = pendingAsk.value?.ask
+  return a && !a.busy && !a.answered && !askExpired.value && a.questions.length > 0
+    && a.sels.filter(s => s != null).length === a.questions.length
+}, (done) => { if (done) askSubmitAll(pendingAsk.value) })
 const onAskPanelKeydown = (e) => {
   const a = pendingAsk.value?.ask
   if (!a || a.busy || a.answered || askExpired.value) return
   const total = (curAsk.value.options || []).length + 1   // 最后一格=自定义输入行
   const inInput = e.target && e.target.tagName === 'INPUT'
-  const sel = a.sels[askPage.value] == null ? 0 : a.sels[askPage.value]
+  const cur = askHi.value == null ? (a.sels[askPage.value] == null ? -1 : a.sels[askPage.value]) : askHi.value
   if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
-    a.sels[askPage.value] = (sel + 1) % total
+    askHi.value = (cur + 1) % total
     focusAskRow()
     e.preventDefault()
   } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
-    a.sels[askPage.value] = (sel - 1 + total) % total
+    askHi.value = (cur - 1 + total) % total
     focusAskRow()
     e.preventDefault()
-  } else if (e.key === 'Enter') {
-    // 输入框内且已打字 → 锁定自定义；否则回车=确认当前高亮项（只记录，不提交；提交由底部按钮统一批量完成）
-    if (inInput && (a.customs[askPage.value] || '').trim()) setAskCustom(pendingAsk.value, askPage.value, a.customs[askPage.value])
-    else if (a.sels[askPage.value] != null) pickAskOption(pendingAsk.value, askPage.value, a.sels[askPage.value])
-    e.preventDefault()
-  } else if (e.key === ' ' && !inInput) {
-    if (a.sels[askPage.value] != null) pickAskOption(pendingAsk.value, askPage.value, a.sels[askPage.value])
+  } else if (e.key === 'Enter' || (e.key === ' ' && !inInput)) {
+    // 回车/空格=确认当前高亮项（点选或自定义），确认后自动跳下一题
+    if (askHi.value == null) { e.preventDefault(); return }
+    if (askHi.value < (curAsk.value.options || []).length) onPick(askHi.value)
+    else commitCustomAt(askPage.value)
     e.preventDefault()
   }
 }
@@ -3544,6 +3580,7 @@ onMounted(async () => {
 .askp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 8px; font-size: 13px; line-height: 1.55; color: var(--app-text); cursor: pointer; }
 .askp-opt:hover { background: var(--app-panel-2); }
 .askp-opt.sel { background: var(--app-panel-2); box-shadow: inset 2px 0 0 var(--app-accent, var(--app-ok)); }
+.askp-opt.k-hi { background: var(--app-panel-2); }
 .askp-opt:disabled { opacity: 0.55; cursor: default; }
 .askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .askp-kw { font-weight: 600; }
