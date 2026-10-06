@@ -152,6 +152,13 @@ const check = (ok, label, detail = '') => {
       heroTopGap: heroTitleTop,
       heroBotGap: heroRect && listRect.height ? Math.round(listRect.top + listRect.height - heroRect.bottom) : -1,
       headAvatarEmoji: (document.querySelector('.sc-avatar') || {}).textContent || '',
+      // 整页底色必须是白（--app-panel）。此前用 --app-bg 灰底时，用户气泡的
+      // --app-panel-2 浅灰几乎与背景同色、输入框阴影浮在灰底上，整页观感偏暗，
+      // 就是用户说的"看着不一样"。与 ChatPage .chat2 同为 --app-panel。
+      pageBg: (() => { const e = document.querySelector('.sc-page')
+        return e ? getComputedStyle(e).backgroundColor : '' })(),
+      // 用户气泡底色必须与页面底色**可区分**：灰底+浅灰气泡 = 隐形
+
       brand: !!document.querySelector('.sc-brand'),
       taFont: ta ? parseFloat(getComputedStyle(ta).fontSize) : 0,
       taEnterhint: ta ? (ta.getAttribute('enterkeyhint') || '') : '',
@@ -163,6 +170,9 @@ const check = (ok, label, detail = '') => {
   check(sc.name.includes('客服助手') && sc.hero, '智能体分享页头部与空态渲染', sc.name)
   check(sc.headAvatarEmoji.includes('📦'), '头部用智能体自身图标（icon 字段透传到 AgentAvatar）', sc.headAvatarEmoji)
   check(sc.brand, '头部右侧有「问渠 WenQu」品牌标识（访客知道这是谁家的机器人）')
+  check(sc.pageBg === 'rgb(255, 255, 255)',
+    '整页白底（对齐 ChatPage .chat2；灰底会让浅灰用户气泡隐形）', `bg=${sc.pageBg}`)
+
   // 空态改为**靠上**（对齐 ChatPage .welcome 的 padding:72px 起）。
   // 曾改成垂直居中、后又试过"消息贴底"，两次都被判定为更糟并回退 —— 这里是回归保护。
   // 断标题顶边：.sc-welcome 盒子含 72px padding，量盒子会低估实际留白。
@@ -195,6 +205,14 @@ const check = (ok, label, detail = '') => {
   check(streamed.stageN === 0 && streamed.typingN === 0,
     '正文出来后阶段提示已消失（既无脚注也无「正在思考」行）', `stage=${streamed.stageN} typing=${streamed.typingN}`)
   check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的阶段气泡）', `rows=${streamed.bubbles}`)
+  // 灰底时代浅灰用户气泡几乎隐形（"看着不一样"的主因）——有消息后再取样比对
+  const contrast = await page.evaluate(() => {
+    const p = document.querySelector('.sc-page'), u = document.querySelector('.sc-bubble.user')
+    if (!p || !u) return null
+    return { page: getComputedStyle(p).backgroundColor, user: getComputedStyle(u).backgroundColor }
+  })
+  check(contrast && contrast.user && contrast.user !== contrast.page,
+    '用户气泡底色与页面底色可区分（灰底 + 浅灰气泡 = 隐形）', JSON.stringify(contrast))
 
   // 进行中（只收到 stage、还没正文）：阶段提示**全页只能有一条**。
   // tok-3 的 mock 只发 stage 帧，响应体结束后前端 pump() 走 done 分支只 settle 不改 sending

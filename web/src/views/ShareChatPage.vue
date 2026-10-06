@@ -180,7 +180,10 @@ function stop () {
 </script>
 
 <style scoped>
-.sc-page { display: flex; flex-direction: column; height: 100vh; background: var(--app-bg); }
+/* 整页白底（对齐 ChatPage .chat2 的 background: var(--app-panel)）。
+   此前用 --app-bg（灰）导致观感整体偏暗：输入框的悬浮阴影浮在灰底上、
+   用户气泡的 --app-panel-2 浅灰几乎与背景同色 —— 这就是"看着不一样"的主因。 */
+.sc-page { display: flex; flex-direction: column; height: 100vh; background: var(--app-panel); }
 
 /* ---------- 头部 ---------- */
 .sc-head {
@@ -259,7 +262,7 @@ function stop () {
 @keyframes sc-blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
 /* ---------- 输入区：与 ChatPage .input-box 同款 ---------- */
-.sc-input-wrap { flex: none; padding: 10px 20px 12px; background: var(--app-bg); }
+.sc-input-wrap { flex: none; padding: 10px 20px 12px; background: var(--app-panel); }
 .sc-input {
   position: relative; display: flex; gap: 8px; align-items: flex-end;
   max-width: 860px; margin: 0 auto;
