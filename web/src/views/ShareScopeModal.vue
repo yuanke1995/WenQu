@@ -4,6 +4,9 @@
            @update:open="v => emit('update:open', v)" @ok="save">
     <a-alert v-if="violation" type="warning" show-icon style="margin-bottom:12px"
              message="管理权限范围大于读取权限，请调整后再保存。" />
+    <!-- 分库建议：仅在读取范围窄于整库时提示（读取=全局即整个库都对齐，无需提示） -->
+    <a-alert v-if="tip && form.read.level !== 'global'" type="info" show-icon style="margin-bottom:12px"
+             :message="tip" />
 
     <!-- 读取权限 -->
     <div class="scope-section">
@@ -107,6 +110,12 @@ const props = defineProps({
   readVerb: { type: String, default: '查看' },
   /** 当前 share_config 原文（空 = 未配置 = 仅自己，谁建归谁） */
   shareConfig: { type: String, default: '' },
+  /**
+   * 场景化提示（如「建议分库」）。仅在读取范围非全局时显示——读取=全局说明整个库口径一致，
+   * 无需提示。刻意做成显式 prop 而非按 resourceLabel 推断：同一个组件还被智能体 / 工作流 /
+   * API Key 共用，「建议分库」只对文档成立，猜错就会给不相干的场景塞一条错误建议。
+   */
+  tip: { type: String, default: '' },
   /** 保存回调：async (json) => ResultJson；由调用方决定打到哪个接口 */
   saveFn: { type: Function, required: true }
 })

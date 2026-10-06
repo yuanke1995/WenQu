@@ -371,7 +371,8 @@
 
     <!-- 共享范围（公共组件：与智能体 / API Key 共用同一套两区表单） -->
     <ShareScopeModal v-model:open="shareVisible" resource-label="文档" read-verb="查看并检索"
-                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="fetchList" />
+                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn"
+                     :tip="SCOPE_TIP" @saved="fetchList" />
 
     <!-- 知识库配置（与知识库列表页同一弹窗组件）：当前库的解析/检索参数就地改，保存后刷新库信息 -->
     <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" @saved="fetchKbs" />
@@ -852,6 +853,15 @@ const shareVisible = ref(false)
 const shareTarget = ref({ id: '', shareConfig: '' })
 // 保存回调透传给组件：组件只负责表单与校验，打哪个接口由调用方决定
 const saveShareFn = json => updateDocumentShare(shareTarget.value.id, json)
+
+/**
+ * 文档共享范围弹窗里的「分库建议」提示（组件仅在读取范围非全局时显示）。
+ *
+ * <p>为什么建议分库而不是靠文档级权限硬扛：文档级可见性是<b>召回后剔除</b>（库级才下推），
+ * 同一个库里的无权文档仍会先占掉向量 topK 名额，别人能搜到的内容就少了。
+ * 分库后整库口径一致，库门在候选阶段就挡掉，召回名额一个不浪费。
+ */
+const SCOPE_TIP = '建议把不同可见范围的文档分到不同知识库：同一库内的文档级权限是在检索后才剔除的，无权限的文档仍会占用召回名额，可能导致其他人搜不到本该搜到的内容。'
 
 // 文档行的共享范围标记：仅显式共享时显示（未配置=跟随库即默认，不显示以免噪音）
 function scopeLabel (d) {
