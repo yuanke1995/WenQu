@@ -400,8 +400,13 @@
                           <a-switch size="small" :checked="!record.paused"
                                     :loading="schedToggling === record.name" @change="toggleTaskPause(record)" />
                         </a-tooltip>
-                        <a-tooltip v-else title="间隔为内置节拍（无对应配置项），不可暂停">
+                        <a-tooltip v-else :title="'间隔为内置节拍（无对应配置项），不可暂停'">
                           <span class="key-dim">内置</span>
+                        </a-tooltip>
+                        <!-- 暂停代价提示：少数任务停掉后会留下不易察觉的副作用（挂起 run 不落终态、
+                             Redis 断线期间配置变更丢失），在列表上直接标出，避免误关自愈机制 -->
+                        <a-tooltip v-if="record.pauseRisk && !record.paused" :title="record.pauseRisk">
+                          <span class="sched-risk">!</span>
                         </a-tooltip>
                       </template>
                     </a-table-column>
@@ -522,7 +527,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, getConfigSchema, saveConfig, resetConfig,
@@ -1113,12 +1118,18 @@ const toggleTaskPause = record => {
   if (!field) { message.error('配置定义中找不到 ' + record.configKey); return }
   const pausing = !record.paused
   const defVal = Number(field.def ?? 0)
+  // 暂停代价说明（后端随快照下发）：停掉自愈类任务会留下不易察觉的副作用，必须在确认前讲清
+  const risk = pausing && record.pauseRisk
   Modal.confirm({
     title: pausing ? `暂停「${record.name}」？` : `恢复「${record.name}」？`,
-    content: pausing
-      ? '把间隔配置写为 0，下一个调度节拍（约 10s）生效；期间任务不再自动触发，仍可手动执行。'
-      : `把间隔配置恢复为默认值（${defVal}ms），下一个调度节拍生效。`,
+    content: h('div', [
+      h('div', pausing
+        ? '把间隔配置写为 0，下一个调度节拍（约 10s）生效；期间任务不再自动触发，仍可手动执行。'
+        : `把间隔配置恢复为默认值（${defVal}ms），下一个调度节拍生效。`),
+      risk ? h('div', { style: 'margin-top:8px;color:var(--app-warn-text)' }, '⚠ ' + risk) : null
+    ]),
     okText: pausing ? '暂停' : '恢复', cancelText: '取消',
+    okButtonProps: risk ? { danger: true } : null,
     onOk: async () => {
       schedToggling.value = record.name
       try {
@@ -1322,6 +1333,12 @@ onMounted(fetchAndFill)
   color: var(--app-danger); background: var(--app-danger-weak); cursor: help;
 }
 .sched-ok { color: var(--app-ok); }
+/* 暂停代价提示标记：停掉该任务会留下不易察觉的副作用（挂起 run 不落终态等），鼠标悬停看说明 */
+.sched-risk {
+  display: inline-block; margin-left: 4px; width: 14px; height: 14px; line-height: 14px;
+  border-radius: 50%; text-align: center; font-size: 10px; font-weight: 600;
+  color: var(--app-warn-text); background: var(--app-warn-weak); cursor: help;
+}
 .sched-bad { color: var(--app-danger); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
