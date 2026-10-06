@@ -20,9 +20,6 @@
             </a-menu>
           </template>
         </a-dropdown>
-        <button class="app-btn ghost small nc-danger" :disabled="!selected.length" @click="deleteSelected">
-          删除选中 ({{ selected.length }})
-        </button>
         <button class="app-btn ghost small" @click="prefOpen = !prefOpen">
           <setting-outlined /> 通知偏好
         </button>
@@ -47,6 +44,16 @@
       </div>
     </div>
 
+    <!-- 批量操作栏：有勾选即出现（点勾选命中区进入，见 .nc-check） -->
+    <div v-if="selected.length" class="nc-batch">
+      <span class="nc-batch-count">已选 {{ selected.length }} 条：</span>
+      <button class="app-btn ghost small" @click="markRead([...selected])">标记已读</button>
+      <a-popconfirm title="确定删除选中的通知？" ok-text="删除" cancel-text="取消" @confirm="deleteSelected">
+        <button class="app-btn ghost small nc-danger">删除</button>
+      </a-popconfirm>
+      <button class="app-link-btn" @click="selected = []">取消选择</button>
+    </div>
+
     <div class="app-page-body">
       <a-spin :spinning="loading">
         <div v-if="!items.length && !loading" class="nc-empty">
@@ -55,8 +62,8 @@
         </div>
         <template v-else>
           <div v-for="n in items" :key="n.id" class="nc-item" :class="{ unread: !n.readFlag }"
-               @click="openRow(n)">
-            <a-checkbox :checked="selected.includes(n.id)" @click.stop @change="e => toggleSelect(n.id, e.target.checked)" />
+               @click="openRow(n, $event)">
+            <a-checkbox class="nc-check" :checked="selected.includes(n.id)" @change="e => toggleSelect(n.id, e.target.checked)" />
             <component :is="iconOf(n.type)" class="nc-ic" :class="toneOf(n.type)" />
             <div class="nc-body">
               <div class="nc-row1">
@@ -221,7 +228,12 @@ const navOf = n => {
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
   return null
 }
-const openRow = n => {
+const openRow = (n, e) => {
+  const t = e?.target
+  // 勾选命中区（antd wrapper 是 label，@click.stop 只盖住内层 16px）：只勾选、不跳转
+  if (t?.closest?.('.nc-check')) return
+  // 批量勾选中：点行=勾选/取消，避免勾选时误触「查看详情」跳走；点链接仍可直达详情
+  if (selected.value.length && !t?.closest?.('.nc-link')) return toggleSelect(n.id, !selected.value.includes(n.id))
   if (!n.readFlag) markRead([n.id])
   const to = navOf(n)
   if (to) router.push(to)
@@ -280,11 +292,18 @@ onMounted(() => { load(); refreshCounts(); loadPrefs() })
 .nc-pref-ic.warn { color: var(--app-warn); }
 .nc-pref-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .nc-meta { font-size: 12px; color: var(--app-text3); margin-right: auto; }
+.nc-batch { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 0 0 10px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px; font-size: 12px; color: var(--app-accent); }
+.nc-batch-count { font-weight: 600; }
 .nc-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 0; color: var(--app-text3); }
 .nc-empty-ic { font-size: 40px; opacity: .5; }
 .nc-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
 .nc-item:hover { background: var(--app-panel-2); }
 .nc-item.unread { background: var(--app-accent-weak); }
+/* 勾选命中区：antd wrapper 本身即可点 label —— 内边距 + 负外边距把命中区撑满「文字前的整个左侧」
+   （行左边界 → 图标前，整行高度）；内层 .ant-checkbox 默认 align-self:center（拉高后会居中下沉），
+   改回 flex-start，并让上内边距多 2.5px 抵消，勾选框视觉位置与原来逐像素一致 */
+.nc-item :deep(.nc-check) { align-self: stretch; align-items: flex-start; padding: 14.5px 9px 9.5px 13px; margin: -12px -9px -12px -13px; }
+.nc-item :deep(.nc-check .ant-checkbox) { align-self: flex-start; }
 .nc-ic { font-size: 17px; margin-top: 2px; flex: none; }
 .nc-ic.ok { color: var(--app-ok); }
 .nc-ic.err { color: var(--app-danger); }
