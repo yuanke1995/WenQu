@@ -88,7 +88,9 @@
               <!-- 分享中：只标 enabled=1（链接还开着）。已停止的不标——否则每次停止分享后
                    这个图标就永久留在列表里变成噪音。关闭入口在会话内分享面板 / 个人设置→分享管理 -->
               <a-tooltip v-if="s.shared" title="这段对话正在对外分享（只读链接生效中）">
-                <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage" />
+                <!-- 必须显式传 s.id：直接把函数名当事件处理器，Vue 会把 PointerEvent 当 sid 传进去，
+                     跳过去就是 /profile?panel=shares&sid=[object PointerEvent]，深链定位静默失效 -->
+                <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage(s.id)" />
               </a-tooltip>
               <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
                 <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
@@ -105,9 +107,13 @@
                     <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
                     <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
                     <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
-                    <!-- 分享状态不能从会话列表就地判断（是否生效/访问量都在分享记录上），
-                         这里只做跳转，管理动作集中在分享管理面板，避免两处各自维护一套开关语义 -->
-                    <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享设置</a-menu-item>
+                    <!-- 分享：常驻入口。分享动作本身在聊天页的分享弹窗里（那里才有「链接展示
+                         最新内容」的隐私提示与换新/停止），所以这里只发信号让聊天页打开弹窗。
+                         侧栏与聊天页是兄弟组件，不能直接调弹窗，信号走 sessionStore.shareOpenTick。 -->
+                    <a-menu-item key="share"><share-alt-outlined /> 分享</a-menu-item>
+                    <!-- 分享管理：已分享的会话再给一个「回看全部」入口。停用/清除等管理动作在那边
+                         （是否生效、访问量都只在分享记录上，列表项里查不到） -->
+                    <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享管理</a-menu-item>
                     <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
                     <a-menu-divider />
                     <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
@@ -145,16 +151,6 @@
       </a-modal>
 
       <div class="side-foot">
-        <!-- 分享管理：分享出去的链接会散在各处（微信、邮件、别人转发），侧栏行内标记只答"还在开着吗"，
-             这里答"我一共发出过哪些、被访问过几次"。仅在存在生效中的分享时出现，
-             停止最后一条后自动消失——常驻一个永远空的入口只会稀释侧栏。 -->
-        <a-tooltip v-if="activeShareCount > 0" title="分享管理（个人设置）" placement="right">
-          <button class="foot-share" @click="openShareManage()">
-            <share-alt-outlined />
-            <span v-if="!collapsed" class="foot-share-text">分享管理</span>
-            <span v-if="!collapsed" class="app-pill foot-share-count">{{ activeShareCount }}</span>
-          </button>
-        </a-tooltip>
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
@@ -297,11 +293,6 @@ const toggleFold = () => {
 
 const visibleSessionList = computed(visibleSessions)
 
-// 生效中的分享条数（侧栏底部入口的显示条件 + 计数）。
-// 只数当前已加载的列表项：列表是游标分页，首屏之外的会话本来就不在侧栏可见，
-// 这个数字的语义是"你能看见的这些里有几条在对外"，不是全库统计（那是分享管理页的职责）。
-const activeShareCount = computed(() => sessionStore.list.filter(s => s.shared).length)
-
 // 会话时间字段稳健解析：ISO 字符串为主（Spring 默认序列化），兼容时间戳/数组/对象形态
 const sessTime = v => {
   if (!v) return null
@@ -384,6 +375,16 @@ const newChat = () => {
 }
 const openSession = sid => goChat({ path: '/chat', query: { sid } })
 
+// 菜单「分享」：切到该会话并让聊天页弹出分享面板。
+// 信号必须**在路由切换之后**再发：聊天页是拿到路由才 loadHistory，弹窗的前置条件是
+// messages 非空（同页 openShare 的守卫），先发信号会在历史到达前就被挡掉。
+// 目标就是当前会话时 router.push 是 no-op（不产生新历史记录），行为与切会话一致。
+const requestShareOpen = s => {
+  if (!s || !s.id) return
+  goChat({ path: '/chat', query: { ...route.query, sid: s.id } })
+  sessionStore.shareOpenTick++
+}
+
 // 整会话导出 Markdown（无需先打开会话）
 const exportSessionMd = s => {
   if (s && s.id) exportSessionMarkdown(s.id, s.title || 'AI对话')
@@ -422,6 +423,7 @@ const sessionMenu = (s, key) => {
   if (key === 'rename') renameSession(s)
   else if (key === 'favorite') toggleFavorite(s)
   else if (key === 'export') exportSessionMd(s)
+  else if (key === 'share') requestShareOpen(s)
   else if (key === 'share-manage') openShareManage(s.id)
   else if (key === 'batch') enterBatchMode()
   else if (key === 'delete') confirmDelete(s)
@@ -615,8 +617,6 @@ onMounted(async () => {
    横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
 .side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
-/* 折叠态：分享入口只留图标，按侧边栏中轴对齐（与导航图标一致） */
-.side.collapsed .foot-share { flex-basis: auto; justify-content: center; padding: 6px 0; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
 .fold { margin-left: auto; }
@@ -768,20 +768,7 @@ onMounted(async () => {
 .side-foot {
   display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
   border-top: 1px solid var(--app-border);
-  /* 分享管理入口走 flex-wrap 换行独占一行：与下方"头像+图标"横排区隔开，
-     避免把通知/主题/退出三个常驻图标挤窄 */
-  flex-wrap: wrap;
 }
-.foot-share {
-  flex-basis: 100%; order: -1;
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; margin-bottom: 4px; border-radius: 8px;
-  border: 1px solid var(--app-border); background: var(--app-panel);
-  color: var(--app-text2); font-size: 12px; cursor: pointer; text-align: left;
-}
-.foot-share:hover { color: var(--app-accent); border-color: var(--app-accent); }
-.foot-share-text { flex: 1; min-width: 0; }
-.foot-share-count { flex: none; }
 /* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
 .foot-user {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;

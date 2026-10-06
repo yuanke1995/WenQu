@@ -23,9 +23,11 @@ export const sessionStore = reactive({
   // 跨页信号（路由 push 在同路径下是 no-op，query 不变 watch 不触发，需显式计数驱动）：
   // newChatTick  新建对话请求（聊天页消费后回写 newChatSeen，避免挂载期重复消费）
   // autoPickTick 当前会话被删除等场景 → 聊天页自动落到最近会话或新建
+  // shareOpenTick 侧栏会话菜单「分享」→ 聊天页打开分享弹窗（需先切到该会话，故不能只靠路由）
   newChatTick: 0,
   newChatSeen: 0,
-  autoPickTick: 0
+  autoPickTick: 0,
+  shareOpenTick: 0
 })
 
 // ==================== 流式回答记录（模块级单例，跨路由存活） ====================
@@ -111,6 +113,19 @@ export function collapseSessions () {
 
 // 侧边栏展示：隐藏空会话（与旧版口径一致，空会话由聊天页"无感复用"逻辑管理）
 export const visibleSessions = () => sessionStore.list.filter(s => (s.messageCount ?? 0) > 0)
+
+// 分享状态变更后回写列表项的 shared 标记：侧栏行内的分享图标（v-if="s.shared"）读的就是它。
+// 不回写的话，生成/停止分享后图标要等下次整表 loadSessions 才出现，用户会以为分享没生效。
+// 纯本地更新、不发请求 —— 权威值仍在服务端，下次 loadSessions 会覆盖。
+export function markSessionShared (sid, shared) {
+  if (!sid) return
+  const flag = shared ? 1 : 0
+  // firstPage.items 与 list 是同一批对象引用（首屏快照只slice 了数组），改 list 即改快照；
+  // 这里仍显式兜一遍 list / 快照两条路径，避免日后有人把快照改成深拷贝时静默漏掉。
+  for (const item of sessionStore.list) if (item.id === sid) item.shared = flag
+  const fp = sessionStore.firstPage
+  if (fp) for (const item of fp.items) if (item.id === sid) item.shared = flag
+}
 
 // 首条消息发出即把会话抬进侧栏列表（不等回答完成）：列表隐藏空会话，若等 onDone 才刷新，
 // 长回答生成期间新会话在侧栏不可见。纯本地乐观更新，权威数据仍由 onDone 后的 loadSessions 兜底

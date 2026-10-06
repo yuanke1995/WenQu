@@ -257,6 +257,7 @@ import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
 import { shareUrlOf } from './shareSession'
+import { markSessionShared } from './store'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          getUserSettings, saveUserSettings,
          listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory,
@@ -638,8 +639,13 @@ const stopShare = s => {
     onOk: async () => {
       try {
         const r = await stopShareBySession(s.sessionId)
-        if (r && r.success !== false) { message.success('已停止分享'); await loadShares() }
-        else message.error(r?.msg || '停止失败')
+        if (r && r.success !== false) {
+          message.success('已停止分享')
+          // 同步侧栏行内图标：本页是「全部」的视角，操作对象同样在侧栏列表里，
+          // 不同步的话从本页停掉分享，回对话页看到的还是分享中的图标
+          markSessionShared(s.sessionId, false)
+          await loadShares()
+        } else message.error(r?.msg || '停止失败')
       } catch (e) { message.error(e.message || '停止失败') }
     }
   })
@@ -661,6 +667,8 @@ const restartShare = async (s, okMsg = '已重新开启分享') => {
     const r = await enableSessionShare(s.sessionId)
     if (r && r.success !== false) {
       message.success(okMsg)
+      // 换新/重开后该会话的分享标记必然为真，同步侧栏行内图标
+      markSessionShared(s.sessionId, true)
       await loadShares()
       focusSid.value = s.sessionId
     } else message.error(r?.msg || '操作失败')

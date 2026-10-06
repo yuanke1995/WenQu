@@ -1180,7 +1180,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
@@ -1193,7 +1193,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
 import { getKnowledgeDetail, debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
-import { loadSessions } from './store'
+import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
@@ -1222,6 +1222,7 @@ import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, 
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf } from '../chat/projections'
 
 const router = useRouter()
+const route = useRoute()
 
 // ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
 // 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
@@ -2141,6 +2142,16 @@ const openShare = async () => {
   shareVisible.value = true
   await loadShare()
 }
+
+// 侧栏会话菜单「分享」：切会话后打开这个弹窗（菜单在 AppLayout，是本页的兄弟组件，
+// 只能靠 store 信号通信）。**必须等历史到位再开** —— 菜单是「先跳路由再发信号」，
+// 此刻 messages 还是上一条会话的或空的；直接调 openShare 会被 messages.length 守卫挡掉。
+// 轮询上限 2s：异常情况下（历史 403/空）也退出，不能无限等 —— 之后用户可点顶栏图标手动开。
+const consumeShareOpen = async () => {
+  for (let i = 0; i < 40 && !messages.value.length; i++) await new Promise(r => setTimeout(r, 50))
+  await openShare()
+}
+watch(() => sessionStore.shareOpenTick, () => { if (route.path === '/chat') consumeShareOpen() })
 /** 生成或换新链接（后端对已开启的分享再次开启会换 token，旧链接立即失效）。
  *  刻意包一层而非直接指过去：模板 @click 会把 MouseEvent 当第一个实参传进来，
  *  形参取 regenerate 时「生成」会被当成「换新」（!!event === true）。 */

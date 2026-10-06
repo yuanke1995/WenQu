@@ -8,6 +8,7 @@
 import { computed, ref, unref } from 'vue'
 import { message } from 'ant-design-vue'
 import { getSessionShare, enableSessionShare, disableSessionShare } from '../api'
+import { markSessionShared } from './store'
 import { copyText } from '../utils/clipboard'
 
 /** 分享链接的唯一拼装处（只读携带者可看不可续聊） */
@@ -35,6 +36,9 @@ export const useSessionShare = ({ sessionId }) => {
     try {
       const r = await getSessionShare(sidOf())
       info.value = r?.data || emptyInfo()
+      // 顺带校正侧栏标记：分享可以在另一台设备上开启，本机列表里的 shared 还是旧的。
+      // 回写的是服务端权威值，不会覆盖本地刚做的乐观更新（值本来就一致）。
+      markSessionShared(sidOf(), Boolean(info.value.enabled))
     } catch (e) {
       message.error('读取分享状态失败：' + (e.message || ''))
       reset()
@@ -49,6 +53,9 @@ export const useSessionShare = ({ sessionId }) => {
     try {
       const r = await enableSessionShare(sidOf())
       info.value = { ...(r?.data || {}), enabled: true, visitCount: 0 }
+      // 回写侧栏列表项：会话分享弹窗开着时侧栏就在旁边，图标必须立刻出现/保持，
+      // 不能等下一次 loadSessions（用户会以为链接没生效而重复生成）
+      markSessionShared(sidOf(), true)
       message.success(regenerate ? '已换新链接，旧链接立即失效' : '分享链接已生成')
       return true
     } catch (e) {
@@ -64,6 +71,7 @@ export const useSessionShare = ({ sessionId }) => {
     try {
       await disableSessionShare(sidOf())
       reset()
+      markSessionShared(sidOf(), false)
       message.success('已停止分享，链接立即失效')
       return true
     } catch (e) {
