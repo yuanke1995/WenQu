@@ -74,8 +74,8 @@
           <div class="m-setup"><SetupGuide scope="chat" variant="card" /></div>
         </template>
         <template v-else>
-          <div class="m-welcome-title">有什么可以帮你？</div>
-          <div class="m-welcome-sub">智能体与知识库问答，支持图片提问与深度思考</div>
+          <WelcomeCopy variant="mobile" :agent-name="engine.currentAgent?.name || ''" :think-on="deepThinkOn"
+                       :attach-count="pendingImages.length + pendingFiles.length" :mentions="mentionNames" />
           <MobileSampleCards :questions="SAMPLE_QUESTIONS" @ask="ask" />
         </template>
       </div>
@@ -302,6 +302,7 @@ import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 import SetupGuide from '../components/SetupGuide.vue'
+import WelcomeCopy from '../components/WelcomeCopy.vue'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 
 const router = useRouter()
@@ -383,6 +384,9 @@ const {
   compactNotice, compactContext,
   ready
 } = engine
+
+// 空态引导用：本轮 @ 引用的资料名（欢迎副标题会说明「只在这些资料里找答案」）
+const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
 
 // ==================== 智能体提问面板（替换输入卡） ====================
 // 与 PC 壳同语义：存在挂起提问时输入卡整块换成提问面板，答复后回归、问答记录留在气泡原位。

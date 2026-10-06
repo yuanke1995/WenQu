@@ -69,8 +69,9 @@
             <div class="welcome-guide"><SetupGuide scope="chat" variant="card" /></div>
           </template>
           <template v-else>
-            <h2>有什么可以帮你？</h2>
-            <p>智能体与知识库问答，支持图片提问与深度思考</p>
+            <WelcomeCopy :variant="isNarrow ? 'mobile' : 'pc'" :agent-name="currentAgent?.name || ''"
+                         :think-on="deepThinkOn" :attach-count="pendingImages.length + pendingFiles.length"
+                         :mentions="mentionNames" />
             <!-- 示例问题：点击即发（对齐主流产品空态引导；通用四类：检索/总结/写作/分析）
                  宽屏用 2×2 网格；窄屏换横滑卡片（src/h5/MobileSampleCards.vue）——
                  网格在 375px 上会把 4 张卡竖排占满一屏、字压到 11px -->
@@ -1206,6 +1207,7 @@ import ProviderIcon from '../components/ProviderIcon.vue'
 import BrandMark from '../components/BrandMark.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
+import WelcomeCopy from '../components/WelcomeCopy.vue'
 import { isNarrow, isCoarse } from '../h5/mobile'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
@@ -2530,6 +2532,9 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// 空态引导用：本轮 @ 引用的资料名（副标题会说明「只在这些资料里找答案」）
+const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
