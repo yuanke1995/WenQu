@@ -61,6 +61,9 @@ public class Agent {
     /**
      * 内置标记：1=系统内置「问渠」智能体——<b>全局唯一</b>（启动时由 AgentService 维护：多余降级、缺失播种），
      * 所有登录用户可读可用，仅管理员级可配置、不可删除；0/NULL=普通智能体。
+     * <p>检索范围固定为<b>使用者自己的默认库「问渠」</b>（每人一个、运行时按使用者解析，见
+     * {@code RagService.builtinDefaultKbId}）：智能体行全局一只、默认库每人一个，没有可静态绑定的库 ID，
+     * 故 {@link #knowledgeBaseIds} / {@link #knowledgeDisabled} 对内置行不参与判定，也不可经 API 修改。
      */
     private Integer isBuiltin;
 

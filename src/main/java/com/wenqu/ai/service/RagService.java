@@ -672,9 +672,10 @@ public class RagService {
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
+        // 内置「问渠」按本轮使用者解析为自己的默认库（智能体全局一只、默认库每人一个，无法静态绑定）。
         // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
         // 重赋值为「主智能体库 ∪ 被选中子智能体库」（见检索前的路由段），因此不能声明为 final
-        java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent);
+        java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent, userId);
         // @ 引用（输入框显式指定，**优先于智能体配置**——与「手动指定优先」的既有口径一致）：
         //   kb  → 本轮检索收窄到被引库，不跑无关库、不让无关块挤占上下文名额；
         //   doc → 该文档的块不经检索直接前置进上下文（用户认为它相关，不该被相关性门/排序挡掉），
@@ -705,12 +706,14 @@ public class RagService {
         final String thinkLevel = resolveReasoningLevel(resolvedModel, reasoningLevel);
         // 「不使用知识库」的纯角色智能体：整条跳过检索链路（改写/深度思考检索/命中填充/子代理编排都不跑，
         // 省掉整轮检索+重排成本）；用户手动 @ 的文档仍会前置进上下文（手动指定优先于智能体配置）。
-        final boolean knowledgeOff = agent != null && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
+        // 内置「问渠」豁免：其范围固定为使用者默认库（配置页无入口、后端拒绝改动），存量行若带 1 也不生效
+        final boolean knowledgeOff = agent != null && !Integer.valueOf(1).equals(agent.getIsBuiltin())
+                && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
         // 检索范围：智能体关联的知识库（主路径）→ 库内文档；knowledgeScope 降级为「库内再细选文档」
         // @ 文档时收窄到这些文档（显式指定优先）——用户就是在问这份文档，别的文档的块不该进上下文
         final Set<String> scopeDocIds = mentionScope != null && !mentionScope.docIds().isEmpty()
                 ? new LinkedHashSet<>(mentionScope.docIds())
-                : resolveScopeDocIds(agent);
+                : resolveScopeDocIds(agent, userId);
         // Agentic RAG「检索-反思」循环模式判定：开启后本轮强制暴露知识检索工具，并在生成提示词
         // 注入「证据充分性自评」循环规则——模型判断首轮检索证据不足时自主换关键词/换角度再检索
         // （次数仍由 agent.maxToolSteps 兜底），证据足够才作答。
@@ -912,7 +915,7 @@ public class RagService {
                             bounded = true;
                         }
                         for (Agent sub : delegated) {
-                            java.util.Collection<String> subKbs = scopeKbIdsOf(sub);
+                            java.util.Collection<String> subKbs = scopeKbIdsOf(sub, userId);
                             if (subKbs != null) {
                                 union.addAll(subKbs);
                                 bounded = true;
@@ -4046,9 +4049,31 @@ public class RagService {
     }
 
     /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */
-    private static java.util.Collection<String> scopeKbIdsOf(Agent agent) {
+    private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId) {
+        String builtinKb = builtinDefaultKbId(agent, userId);
+        if (builtinKb != null) return List.of(builtinKb);
         return (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
                 ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
+    }
+
+    /**
+     * 内置「问渠」的检索范围 = <b>本轮使用者自己的默认库「问渠」</b>。智能体行全局唯一
+     * （启动维护：多余降级、缺失播种，created_by='system'），默认库却每人一个——没有可静态
+     * 绑定的库 ID，故在这里按使用者动态解析（{@link KnowledgeBaseService#defaultId} 懒创建）。
+     * <p>游客分享/MCP/定时任务等链路传入的 userId 即发布者或任务归属人，同样按人解析；
+     * 匿名或解析失败返回 null（回落旧行为：不限库，仍受可见性约束）。
+     *
+     * @return 默认库 id；非内置智能体或无法解析身份时返回 null
+     */
+    private String builtinDefaultKbId(Agent agent, String userId) {
+        if (agent == null || !Integer.valueOf(1).equals(agent.getIsBuiltin())) return null;
+        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(userId)) return null;
+        try {
+            return knowledgeBaseService.defaultId(userId);
+        } catch (Exception e) {
+            log.warn("[KB] 内置「问渠」默认库解析失败（本轮按不限库检索）uid={}: {}", userId, e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -4062,15 +4087,19 @@ public class RagService {
      * </ol>
      * 注意：库 ID 配错时得到的是空集合，检索结果自然为空——**不会退化为全库**，
      * 避免配置错误静默放宽检索范围。
+     * <p>内置「问渠」例外：范围恒为使用者默认库「问渠」的<b>整库</b>（见 {@link #builtinDefaultKbId}），
+     * 不叠加文档级细选——该字段对内置无编辑入口，存量值也不再生效。</p>
      */
-    private Set<String> resolveScopeDocIds(Agent agent) {
+    private Set<String> resolveScopeDocIds(Agent agent, String userId) {
         if (agent == null) return null;
         Set<String> byKb = null;
-        String kbIds = agent.getKnowledgeBaseIds();
+        String builtinKb = builtinDefaultKbId(agent, userId);
+        String kbIds = builtinKb != null ? builtinKb : agent.getKnowledgeBaseIds();
         if (kbIds != null && !kbIds.isBlank()) {
             Set<String> ids = KnowledgeBaseService.splitIds(kbIds);
             if (!ids.isEmpty()) byKb = knowledgeBaseService.docIdsOf(ids);
         }
+        if (builtinKb != null) return byKb; // 内置：整库范围，文档级细选不参与
         // 文档级细选：沿用原语义（null/空/all = 不限制）
         Set<String> fine = null;
         String scope = agent.getKnowledgeScope();
@@ -5935,8 +5964,8 @@ public class RagService {
                     startTime, question, thinkingHolder, degradations, degradedCodes, null);
             st.docMetaCache = documentMetaCache;
             // 本轮无知识库检索，但工具仍可能被模型调用：范围同样跟随智能体库绑定（库隔离）
-            st.toolScopeKbIds = scopeKbIdsOf(agent);
-            st.toolScopeDocIds = resolveScopeDocIds(agent);
+            st.toolScopeKbIds = scopeKbIdsOf(agent, userId);
+            st.toolScopeDocIds = resolveScopeDocIds(agent, userId);
             // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;

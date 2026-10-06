@@ -361,6 +361,18 @@ public class AgentService {
                     throw new BizException("内置智能体「" + existing.getName() + "」固定使用问渠品牌标，图标不可修改");
                 }
             }
+            // 知识库范围同为身份锁死项：内置「问渠」固定检索使用者自己的默认库「问渠」——智能体全局一只、
+            // 默认库每人一个（运行时按使用者解析，见 RagService），没有可静态绑定的库 ID。与现值等价的
+            // 提交放行（旧前端整单保存不受影响），真正改动 fail-loud 拒绝——静默忽略会让人以为改成功了。
+            String curKb = asText(existing.getKnowledgeBaseIds(), 1000);
+            String reqKb = body.containsKey("knowledgeBaseIds") ? asText(body.get("knowledgeBaseIds"), 1000) : curKb;
+            boolean curOff = Integer.valueOf(1).equals(existing.getKnowledgeDisabled());
+            boolean reqOff = body.containsKey("knowledgeDisabled")
+                    ? Integer.valueOf(1).equals(toTri(body.get("knowledgeDisabled"))) : curOff;
+            if (!java.util.Objects.equals(curKb, reqKb) || curOff != reqOff) {
+                throw new BizException("内置智能体「" + existing.getName()
+                        + "」固定检索默认知识库「问渠」，知识库范围不可修改");
+            }
         }
         // 改动前的快照串先算好：toEntity 会就地改写 existing（合并 body 字段），之后就拿不到原值了
         String beforeJson = snapshotJson(existing);

@@ -69,7 +69,7 @@
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
                   <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
-                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全局唯一，全员可用，仅管理员可配置">内置</span>
+                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置">内置</span>
                   </span>
                 </div>
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
@@ -173,7 +173,7 @@
 
           <section class="app-card">
             <h2 class="app-card-title"><thunderbolt-outlined class="ap-sec-ic" />提示词</h2>
-            <p class="ap-block-hint">智能体不再绑定聊天模型：回答用哪套模型由用户在对话页选择或个人设置默认。</p>
+            <p class="ap-block-hint">智能体不绑定聊天模型：回答用哪套模型由用户在对话页选择或个人设置默认。</p>
             <a-form-item label="系统提示词" style="margin-bottom:0">
               <a-textarea v-model:value="form.systemPrompt" :rows="6"
                           placeholder="填写后完全替换全局系统提示词；留空沿用全局" />
@@ -182,25 +182,35 @@
 
           <section class="app-card">
             <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />知识库范围</h2>
-            <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的「知识库」（文档归属哪个库，在「文档管理」里设置）。</p>
-            <a-radio-group v-model:value="scopeMode">
-              <a-radio-button value="all">全部知识库</a-radio-button>
-              <a-radio-button value="pick">指定知识库</a-radio-button>
-              <a-radio-button value="none">不使用知识库</a-radio-button>
-            </a-radio-group>
-            <div v-if="scopeMode === 'pick'" class="ap-pick">
-              <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
-                        show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                        placeholder="选择允许检索的知识库" />
-              <div class="ap-block-hint" style="margin:6px 0 0">
-                已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则该智能体检索不到任何内容。
-                选定后还可在下方「检索参数」覆盖该库的策略（留空即用知识库自己的配置）。
+            <!-- 内置「问渠」：全局一只、默认库每人一个，没有可静态绑定的库——固定检索使用者自己的默认库，
+                 不给任何选择入口（后端 update 同口径拒绝改动） -->
+            <template v-if="form.isBuiltin === 1">
+              <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span></div>
+              <p class="ap-block-hint" style="margin:8px 0 0">
+                固定使用默认知识库「问渠」：上传到该库的资料就是它的检索范围；不可改为其它库，也不可关闭检索。
+              </p>
+            </template>
+            <template v-else>
+              <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的「知识库」（文档归属哪个库，在「文档管理」里设置）。</p>
+              <a-radio-group v-model:value="scopeMode">
+                <a-radio-button value="all">全部知识库</a-radio-button>
+                <a-radio-button value="pick">指定知识库</a-radio-button>
+                <a-radio-button value="none">不使用知识库</a-radio-button>
+              </a-radio-group>
+              <div v-if="scopeMode === 'pick'" class="ap-pick">
+                <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
+                          show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
+                          placeholder="选择允许检索的知识库" />
+                <div class="ap-block-hint" style="margin:6px 0 0">
+                  已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则该智能体检索不到任何内容。
+                  选定后还可在下方「检索参数」覆盖该库的策略（留空即用知识库自己的配置）。
+                </div>
               </div>
-            </div>
-            <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
-              纯角色智能体：完全不走资料检索，仅凭系统提示词与对话上下文作答。
-              适合通用法律顾问、写作助手这类不挂资料的场景；对话中手动 @ 的文档仍会被参考。
-            </div>
+              <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
+                纯角色智能体：完全不走资料检索，仅凭系统提示词与对话上下文作答。
+                适合通用法律顾问、写作助手这类不挂资料的场景；对话中手动 @ 的文档仍会被参考。
+              </div>
+            </template>
           </section>
 
           <!-- 检索参数紧跟知识库范围（库范围→库参数），宽屏双栏时与「身份/提示词」同属左栏 -->
@@ -592,10 +602,10 @@ const CAPS = [
   // 技能与 MCP 是**个人资产**：这里选中的是「引用串」——个人资源存 {uid}/{name}，
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
   // 两者都没有独立的全局开关（配置里已无 skill.enabled / mcp.enabled），只受「工具调用」总闸制约。
-  { key: 'toolSkill', label: '技能 Skills', desc: '限定用哪几个技能（内置技能对所有人按名字生效；我的技能只对我自己生效）', icon: AppstoreOutlined,
+  { key: 'toolSkill', label: '技能 Skills', desc: '限定用哪几个技能（内置技能对所有人生效；你名下的技能只对你生效）', icon: AppstoreOutlined,
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     gate: ['tool', 'enabled'] },
-  { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（MCP 归个人：只对我自己生效）', icon: ApiOutlined,
+  { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（仅对你生效）', icon: ApiOutlined,
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
   { key: 'toolWebsearch', label: '联网搜索', desc: '模型可自主联网检索；命中结果登记为网页来源，与知识库来源共用引用编号', icon: GlobalOutlined,
@@ -796,6 +806,8 @@ const sections = computed(() => {
   return secs
 })
 const scopeText = a => {
+  // 内置「问渠」：固定检索使用者的默认库「问渠」（每人一个，运行时按使用者解析，无静态绑定）
+  if (isBuiltin(a)) return '「问渠」知识库'
   if (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true) return '不使用知识库'
   const n = String(a.knowledgeBaseIds || '').split(',').filter(Boolean).length
   if (!n) return '全部知识库'
@@ -1092,6 +1104,7 @@ const globalText = c => {
 
 // ==================== 生效摘要（实时随表单变化） ====================
 const summaryScope = computed(() => {
+  if (form.value.isBuiltin === 1) return '「问渠」知识库'
   if (scopeMode.value === 'none') return '不使用知识库'
   if (scopeMode.value !== 'pick') return '全部文档'
   const n = (form.value.knowledgeBaseIds || []).length
@@ -1325,10 +1338,13 @@ const save = async () => {
     ...(f.isBuiltin === 1 ? {} : { icon: f.icon || '' }),
     description: f.description.trim(),
     systemPrompt: f.systemPrompt,
-    // 「全部知识库」时清空（空 → 后端存 null → 不限制）；「指定知识库」时存逗号串；
-    // 「不使用知识库」时置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
-    knowledgeBaseIds: scopeMode.value === 'pick' ? (f.knowledgeBaseIds || []).join(',') : '',
-    knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0,
+    // 知识库范围：内置「问渠」固定检索使用者的默认库（后端同口径锁死、拒绝改动），与图标同理不带字段；
+    // 其余智能体——「全部知识库」清空（空 → 后端存 null → 不限制）、「指定知识库」存逗号串、
+    // 「不使用知识库」置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
+    ...(f.isBuiltin === 1 ? {} : {
+      knowledgeBaseIds: scopeMode.value === 'pick' ? (f.knowledgeBaseIds || []).join(',') : '',
+      knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0
+    }),
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
     toolWebsearch: tri(f.toolWebsearch),
@@ -1548,6 +1564,8 @@ onMounted(async () => { })
 .qp-rerank-ctl { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .qp-inherit { font-size: 11px; color: var(--app-text3); }
 .ap-pick { margin-top: 12px; }
+/* 内置「问渠」的知识库范围为固定展示（无选择入口）：单行芯片，与选择器同起点对齐 */
+.ap-kb-fixed { margin-top: 4px; }
 .ap-sec-ic { font-size: 13px; color: var(--app-text3); }
 /* 图标选择器：一排可选头像块，选中态用品牌色描边 + 光圈 */
 .ap-icon-pick { display: flex; flex-wrap: wrap; gap: 6px; }
