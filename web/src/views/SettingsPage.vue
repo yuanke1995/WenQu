@@ -25,10 +25,11 @@
         </span>
       </nav>
 
-      <!-- 右侧：当前分组表单 -->
-      <section class="set-content">
-        <a-spin :spinning="loading">
-          <div class="set-panel-head">
+      <!-- 右侧：当前分组表单。fill 模式（运行状态页签）整块按视口高度铺满，
+           滚动交给内部表格，见 .set-panel--fill 的注释 -->
+      <section class="set-content" :class="{ 'set-panel--fill': isFillPanel }">
+        <a-spin :spinning="loading" :class="{ 'set-spin--fill': isFillPanel }">
+          <div class="set-panel-head" :class="{ 'set-spin-fill__item': isFillPanel }">
             <h3 class="app-page-title">{{ currentPanel?.title }}</h3>
             <span v-if="!advMode && hiddenHere > 0" class="adv-hidden-hint">
               已隐藏 {{ hiddenHere }} 项高级配置（右上角「高级设置」可查看）
@@ -93,7 +94,11 @@
                 </div>
               </template>
 
-              <template v-else-if="current !== 'maintenance' || maintTab !== 'config'">
+              <!-- 通用字段分支：**只服务非定时任务面板**。定时任务面板三个页签各有自己的
+                   渲染分支（config 走折叠分组 / status 走表格 / logs 走日志），
+                   若这里用 `maintTab !== 'config'` 放行，切到运行状态时会把 49 个字段
+                   连带折叠分组一起再渲染一遍，叠在表格下方 ⇒ 页面凭空多出 3000+px 滚动。 -->
+              <template v-else-if="current !== 'maintenance'">
                 <template v-for="(blk, i) in blocksOf(activeFormPanel, !advMode, form)" :key="i">
                   <div v-if="blk.type === 'sub'" class="cfg-sub">{{ blk.title }}</div>
 
@@ -380,7 +385,8 @@
                     </a-tooltip>
                   </div>
                   <a-table :data-source="scheduleTasks" size="small" row-key="name" :pagination="false"
-                           :loading="schedLoading" :scroll="{ x: 1020 }"
+                           :loading="schedLoading" :scroll="{ x: 1020, y: tableScrollY }"
+                           class="sched-table"
                            :expanded-row-keys="expandedTasks" @expandedRowsChange="onExpandChange">
                     <a-table-column title="任务" key="name" width="190">
                       <template #default="{ record }">
@@ -595,7 +601,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, getConfigSchema, saveConfig, resetConfig,
@@ -1120,6 +1126,43 @@ const schedLoading = ref(false)
 const schedToggling = ref('')
 /** 正在保存间隔的任务配置键（表格内联编辑的 loading 态） */
 const schedSavingKey = ref('')
+
+/**
+ * 运行状态表格体的最大高度（px，超出则表格内部滚动，表头固定）。
+ * 17 个任务行约 58px/行 = 986px，比一屏高 ⇒ 让整页滚的话，用户要滚过整张表
+ * 才能看到页头说明，展开某行后要滚两屏。
+ *
+ * <p>**按容器真实高度算，不按 window.innerHeight 算**——这是本条最关键的一点。
+ * `.set-content` 是 flex:1 但没有固定高度，它随内容长高，所以
+ * `window.innerHeight - 固定常数` 算出来的值对不上它真实的可视高度
+ * （实测：视口 900 时 .set-content.clientHeight 只有 849，差的是页头 51px）。
+ * 早先按估值 220 / 实测常数 143 各试一次都判错方向（后者甚至让整页滚动从 48px 涨到 176px）。
+ * 现在直接量容器：clientHeight 减去工具条(26) + 表头(≈41) + 面板 padding(≈27) 余量。
+ *
+ * <p>不用纯 CSS flex 链的原因：多级 flex 里 .sched-pane 的 flex:1 实测压不住
+ * （父 .set-card 734px 而它 1085px），改 height:0 又会把表格压成零高、
+ * 元素被父层 overflow 裁掉——页面看着不滚了，但末 4 行既看不见也滚不到，是"假优化"。
+ */
+const isFillPanel = computed(() => current.value === 'maintenance' && maintTab.value === 'status')
+/** 表格体之外、同一屏内还要占的高度。实测标定过程：先按 100 取 → 整页差 168px；
+ *  改 196 → 差 72px；再补 72（合计 268）恰好归零。构成：面板标题 16 + 页签条 41
+ *  + 工具条 26 + 表头 41 + 卡片 padding 48 + 展开行余量。 */
+const TABLE_CHROME_H = 268
+const tableScrollY = ref(520)
+const computeTableScrollY = () => {
+  const el = document.querySelector('.set-content')
+  // 容器不可用（面板未挂载）时退回窗口估算，下一次 resize / 进入面板会纠正
+  const avail = el ? el.clientHeight : window.innerHeight - 51
+  tableScrollY.value = Math.max(320, avail - TABLE_CHROME_H)
+}
+onMounted(() => {
+  computeTableScrollY()
+  window.addEventListener('resize', computeTableScrollY)
+})
+onUnmounted(() => window.removeEventListener('resize', computeTableScrollY))
+// 切到运行状态时容器才挂载，需重算一次（v-if 渲染时机晚于 watch）
+watch(() => current.value, v => { if (v === 'maintenance') nextTick(computeTableScrollY) })
+watch(maintTab, v => { if (v === 'status') nextTick(computeTableScrollY) })
 const runLogRows = ref([])
 const runLogTotal = ref(0)
 const runLogPage = ref(1)
@@ -1421,6 +1464,10 @@ onMounted(fetchAndFill)
 .set-nav-item:hover { background: var(--app-accent-weak); }
 .set-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 .set-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
+/* 运行状态页签：整块不再随内容长高，滚动交给内部表格。
+   .set-content 是 flex:1 但无固定高度 ⇒ 它跟着内容长高，overflow-y 永不触发；
+   所以这里让 .set-content 自身在 fill 模式下不再滚动，由表格体限高来吸收多余高度。 */
+.set-panel--fill { overflow: hidden; }
 .set-panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .set-card { padding: 18px 20px 6px; }
 .cfg-sub { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--app-border); }
@@ -1506,6 +1553,10 @@ onMounted(fetchAndFill)
 .sched-tabs :deep(.ant-tabs-nav::before) { border-color: var(--app-border); }
 .sched-tabs :deep(.ant-tabs-content-holder) { display: none; }
 .sched-pane { padding: 12px 0 0; }
+/* 定时任务·运行状态：表格体高度由 tableScrollY 按容器真实高度限定，表头由 antd 自己固定。
+   不要给 th 加 position:sticky——设了 scroll.y 后 antd 会把表头拆成独立的
+   .ant-table-header，两份表格出现行高错位（表格里还有一张隐藏的 measure row，
+   tr 数量比数据行多一行，Playwright 的可点性检查会被它误判成"被遮挡"）。 */
 /* 定时任务·运行状态：展开行里的任务专属参数。两列网格铺开——单列会让 6 项参数拉得很长 */
 .sched-expanded { padding: 4px 0 10px; }
 .sched-expanded-title { margin-top: 0; }

@@ -122,6 +122,15 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   ok(rowCount >= 4, `运行状态表格渲染 ${rowCount} 行任务`)
   const headers = await page.locator('.ant-table-thead th').allTextContents()
   ok(!headers.join('|').includes('专属参数'), '表格不再有独立的「专属参数」列（参数在展开行）')
+
+  // 回归：切到运行状态时，参数配置页签的字段不得仍在 DOM 里。
+  // 曾因通用分支写成 `current !== 'maintenance' || maintTab !== 'config'`，
+  // 切到运行状态时 49 个字段被再渲染一遍叠在表格下 ⇒ 凭空多出 3000+px 滚动。
+  const paneH = await page.locator('.sched-pane').evaluate(el => el.scrollHeight).catch(() => 0)
+  const rowH = await rows.first().evaluate(el => el.getBoundingClientRect().height).catch(() => 0)
+  const expectMax = rowH * rowCount + 160   // 表格 + 工具条 + 展开行的余量
+  ok(paneH > 0 && paneH < expectMax,
+     `运行状态页高度只由表格决定（实测 ${Math.round(paneH)}px，上界 ${Math.round(expectMax)}px = ${Math.round(rowH)}px×${rowCount}行+余量）`)
   // 展开第一行（有专属参数的任务），验证参数在该行内渲染
   ok(await page.locator('.sched-param-row').count() === 0, '未展开时参数不渲染（不撑高表格）')
   await rows.first().locator('.ant-table-row-expand-icon').click()
@@ -150,7 +159,13 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   for (let i = 0; i < 4; i++) await numInput.press('Backspace')
   await numInput.type('30')
   await page.waitForTimeout(200)
-  await page.locator('.ie-ok').click(); await page.waitForTimeout(900)
+  // 用回车提交而不是点 ✓：antd 表格在固定表头模式下有一张隐藏的 measure row
+  // （height:0 的占位，tr 数量比数据行多），Playwright 的可点性检查会被它判成
+  // "被遮挡"（实测 document.elementFromPoint 也命中它，尽管按钮几何上在自己 td 内）。
+  // 真人点击不受影响——事件直接派发给按钮。IntervalEditor 本就绑了 @press-enter，
+  // 回车是真实用户会用的路径。
+  await numInput.press('Enter')
+  await page.waitForTimeout(900)
   // 保存走既有 saveConfig 链路：按 group + submitKey 提交（parse.queue.scanIntervalMs
   // 落在 parse 组、键名 queueScanIntervalMs），值是毫秒字符串
   const put = saved.find(s => s.parse && s.parse.queueScanIntervalMs)
