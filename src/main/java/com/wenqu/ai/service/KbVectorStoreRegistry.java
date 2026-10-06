@@ -112,6 +112,7 @@ public class KbVectorStoreRegistry {
         out.put("kbId", kbId);
         out.put("index", index);
         out.put("aclMode", "late-binding（文档级 ACL 实时查库，向量只存 kbId 库门）");
+        out.put("gateFields", "docId,kbId");
         try {
             boolean fieldsReady = hasAllGateFields(index);
             out.put("schemaReady", fieldsReady);
@@ -146,13 +147,13 @@ public class KbVectorStoreRegistry {
     }
 
     /**
-     * 抽样统计带 ACL 标签的向量数（最多抽 {@value} 条）。
+     * 抽样统计带库门字段 {@code kbId} 的向量数（最多抽 {@value} 条）。
      * <p><b>为什么抽样而不是 FT.SEARCH 聚合</b>：TAG 字段不支持 {@code @field:{*}} 通配
      * （实测 {@code @docId:*} 直接报 Syntax error），跨字段 OR 通配也不被解析器接受，
-     * 拿不到「任一 acl 字段有值」的总数。抽样读 JSON 键已足够区分
+     * 拿不到「任一 TAG 字段有值」的总数。抽样读 JSON 键已足够区分
      * 「已回填」与「未回填」两种需处置状态，成本也更低（不必扫全索引）。
      *
-     * @return 抽样中带标签的条数；索引不可读返回 -1
+     * @return 抽样中带库门字段的条数；索引不可读返回 -1
      */
     private long sampleWithKbId(String index) {
         String prefix = index.replace("ai-doc-kb-", "ai:chunkkb-") + ":";
@@ -214,46 +215,43 @@ public class KbVectorStoreRegistry {
                 .builder(sharedJedis(), embeddingModel.forRef(kb.getEmbeddingRef()))
                 .indexName(kbIndexName(kbId))
                 .prefix("ai:chunkkb-" + kbId + ":")
-                // 可过滤 metadata（全部 TAG）：docId/kbId + 三个 ACL 标签。
+                // 可过滤 metadata（全部 TAG）：docId/kbId 两个库门字段。
                 // 不声明这些字段则 RedisFilterExpressionConverter.doKey() 会抛
-                // "Not allowed filter identifier name"，且索引层无字段可过滤（ACL 下推无从谈起）。
+                // "Not allowed filter identifier name"，且索引层无字段可过滤（库门下推无从谈起）。
                 .metadataFields(DocumentAclTags.METADATA_FIELDS)
                 .initializeSchema(true)
                 .build();
         // 立即按该模型维度建索引（beforeAnyWrite/Search 均可用；维度探测在 forRef 委托内部完成）
         store.afterPropertiesSet();
-        // 新建索引已含 ACL 字段；存量索引 afterPropertiesSet 会因已存在而跳过建schema，
+        // 新建索引已含库门字段；存量索引 afterPropertiesSet 会因已存在而跳过建schema，
         // 必须显式热补（FT.ALTER 不动向量数据，秒级完成）
         ensureKbGateSchema(kbId);
         return store;
     }
 
     /**
-     * 热补存量索引的 ACL 可过滤字段（FT.ALTER SCHEMA ADD）。
+     * 热补存量索引的可过滤字段（FT.ALTER SCHEMA ADD）。
+     *
+     * <p><b>补的是「库门字段」，不是 ACL 标签</b>（2026-10-06 晚绑定改造后语义变化）：
+     * 文档级 ACL 已改为检索期按命中块实时查 MySQL（{@code HybridRetrievalService.loadVisibleDocIdsOfHits}），
+     * 不再烘焙进索引，所以这里只补 {@code docId}/{@code kbId} 两个 TAG（{@link DocumentAclTags#METADATA_FIELDS}）。
      *
      * <p><b>为什么必须显式补</b>：{@link RedisVectorStore#afterPropertiesSet()} 在索引已存在时
      * 直接 return（源码：{@code if (jedis.ftList().contains(indexName)) return;}），
      * 也就是说 builder 里声明的 metadataFields <b>只对新建索引生效</b>。存量索引若不补，
-     * 检索期{@code @aclGlobal:{1}} 会报「字段不存在」而整个向量路失败。
-     *
-     * <p><b>存量向量补不出 ACL 值（这是预期中间态，不是 bug）</b>：FT.ALTER 只改schema，
-     * 不会回填历史 JSON 里的字段值。老向量没有 acl* 字段 → 检索期 ACL 条件对它们一律不命中 →
-     * <b>漏召回（安全方向：宁可少召回也绝不越权）</b>。要恢复完整召回需重建该库向量
-     * （{@code DocumentService.reembedKbAsync}），重建后新向量即带 ACL 标签。
+     * 检索期 {@code kbId IN [...]} 库门过滤会报「字段不存在」而整个向量路失败。
      *
      * <p><b>Spring AI 建索引时不带 SEPARATOR（2026-10-05 实测，重要）</b>：
      * {@link RedisVectorStore} 的 {@code schemaField(MetadataField)} 只按字段类型生成
      * {@code TextField}/{@code TagField}/{@code NumericField}，<b>不设置 SEPARATOR</b>；
      * builder 的 {@code metadataFields(...)} 也无法表达分隔符。
-     * 于是<b>所有由 Spring AI 新建的索引，ACL 字段的 SEPARATOR 都是空的</b>，
-     * 而多值标签（部门/用户级共享）在无分隔符时只能整体匹配、查单个值恒 0 命中
-     * → 单值（aclGlobal/kbId）正常，多值（aclDept/aclUser）静默失效。
+     * 将来若引入多值库门字段，无分隔符时只能整体匹配、查单个值恒 0 命中。当前两个 TAG 都是单值，不受影响。
      * <p>本方法把「字段缺失」与「SEPARARATOR 不对」都视为需处理：
      * <ul>
      *   <li><b>字段缺失</b> → 逐个 {@code ftAlter} 补（带正确 SEPARATOR）；</li>
      *   <li><b>字段在但 SEPARATOR 不对</b> → RediSearch <b>不支持改已有字段属性</b>，
      *       {@code ftAlter} 只会报 Duplicate 而无效果。此时只能 <b>DROP 索引重建</b>
-     *       （不带 DD 时 JSON 向量数据不丢），并<b>告警要求运维重建该库向量</b>——
+     *       （不带 DD 时 JSON 向量数据不丢）——
      *       但注意 DROP 后 Spring AI 仍会建成无 SEPARATOR 的 schema，所以
      *       <b>必须在 DROP 之后由本类自己用带 SEPARATOR 的 schema 重建</b>，见 {@link #recreateIndexWithGateSchema}。</li>
      * </ul>
@@ -268,8 +266,7 @@ public class KbVectorStoreRegistry {
             //        只能 DROP 后由本类用带 SEPARATOR 的 schema 重建（JSON 数据不丢）
             boolean separatorWrong = !existing.isEmpty() && !gateSeparatorOk(index);
             if (separatorWrong) {
-                log.warn("[KB-VEC] 索引 {} 的 ACL 字段缺 SEPARATOR（Spring AI 建索引时不会设置），"
-                        + "多值 ACL 标签（部门/用户级共享）将无法按值命中 → 重建 schema", index);
+                log.warn("[KB-VEC] 索引 {} 的库门字段缺 SEPARATOR（Spring AI 建索引时不会设置）→ 重建 schema", index);
                 if (recreateIndexWithGateSchema(kbId, index)) return;
                 // 重建失败：继续走补字段（至少让字段存在，单值标签可用）
             }
@@ -277,30 +274,30 @@ public class KbVectorStoreRegistry {
             for (RedisVectorStore.MetadataField mf : DocumentAclTags.METADATA_FIELDS) {
                 if (existing.contains(mf.name())) continue;
                 try {
-                    sharedJedis().ftAlter(index, List.of(aclTagField(mf.name())));
-                    log.info("[KB-VEC] 索引 {} 已热补 ACL 字段 {}", index, mf.name());
+                    sharedJedis().ftAlter(index, List.of(gateTagField(mf.name())));
+                    log.info("[KB-VEC] 索引 {} 已热补库门字段 {}", index, mf.name());
                 } catch (Exception e) {
                     // 单字段失败不阻断其余字段（并发的另一实例可能刚补上同一字段）
                     log.warn("[KB-VEC] 索引 {} 补字段 {} 失败（可能已被其它实例补上）: {}",
                             index, mf.name(), e.getMessage());
                 }
             }
-            log.info("[KB-VEC] 索引 {} ACL 可过滤字段已就绪（存量向量待重建后才参与 ACL 下推）", index);
+            log.info("[KB-VEC] 索引 {} 库门可过滤字段已就绪（存量向量待重建后才带 kbId）", index);
         } catch (Exception e) {
             // fail-loud：schema 补失败不静默——检索期下推会拿不到字段，召回会掉。
             // 注意这里<b>不抛异常中断</b>：索引仍可正常读写（无过滤检索），
             // 越权风险由 HybridRetrievalService 的事后过滤兜底，属安全方向。
-            log.error("[FAIL-LOUD] 索引 {} 热补 ACL 字段失败，本库将只走事后过滤（召回率下降但不会越权）: {}",
+            log.error("[FAIL-LOUD] 索引 {} 热补库门字段失败，本库将只走事后过滤（召回率下降但不会越权）: {}",
                     index, e.getMessage());
         }
     }
 
     /**
-     * ACL 字段的 TagField 定义：{@code $.name AS name TAG SEPARATOR ","}。
+     * 库门字段的 TagField 定义：{@code $.name AS name TAG SEPARATOR ","}。
      * <p>SEPARATOR 是多值标签生效的<b>必要条件</b>，缺它则整个字段值当字面量
      * （实测：写 {@code deptA,deptB} 后查 {@code deptA} 恒 0 命中）。单值字段设了无副作用。
      */
-    private SchemaField aclTagField(String name) {
+    private SchemaField gateTagField(String name) {
         return TagField.of("$." + name)
                 .as(name)
                 .separator(DocumentAclTags.MULTI_VALUE_SEPARATOR.charAt(0));
@@ -345,7 +342,7 @@ public class KbVectorStoreRegistry {
                     .as("embedding")
                     .build());
             for (RedisVectorStore.MetadataField mf : DocumentAclTags.METADATA_FIELDS) {
-                fields.add(aclTagField(mf.name()));
+                fields.add(gateTagField(mf.name()));
             }
             String resp = sharedJedis().ftCreate(index,
                     FTCreateParams.createParams()
@@ -365,7 +362,7 @@ public class KbVectorStoreRegistry {
     }
 
         /**
-     * 索引中<b>已存在的 ACL 字段</b>是否都带正确 SEPARATOR。
+     * 索引中<b>已存在的库门字段</b>是否都带正确 SEPARATOR。
      * <p>与 {@link #hasAllGateFields} 分工：那个判「字段齐不齐」，这个判「字段在但属性对不对」——
      * 后者是 Spring AI 建索引的必然缺口（{@code schemaField()} 不设 SEPARATOR），
      * 且 RediSearch 不允许事后改属性，只能 DROP 重建。
@@ -384,11 +381,11 @@ public class KbVectorStoreRegistry {
                     else if ("SEPARATOR".equals(key)) separator = String.valueOf(pairs.get(i + 1));
                 }
                 if (attrName == null) continue;
-                boolean isAclField = false;
+                boolean isGateField = false;
                 for (RedisVectorStore.MetadataField mf : DocumentAclTags.METADATA_FIELDS) {
-                    if (mf.name().equals(attrName)) { isAclField = true; break; }
+                    if (mf.name().equals(attrName)) { isGateField = true; break; }
                 }
-                if (isAclField && !DocumentAclTags.MULTI_VALUE_SEPARATOR.equals(separator)) return false;
+                if (isGateField && !DocumentAclTags.MULTI_VALUE_SEPARATOR.equals(separator)) return false;
             }
             return true;
         } catch (Exception e) {
@@ -396,7 +393,7 @@ public class KbVectorStoreRegistry {
         }
     }
 
-    /** 索引中已存在的 ACL 字段名集合（读不到时返回空集 → 逐个补，补已存在的会报错但被忽略） */
+    /** 索引中已存在的库门字段名集合（读不到时返回空集 → 逐个补，补已存在的会报错但被忽略） */
     private Set<String> existingGateFieldNames(String index) {
         Set<String> names = new HashSet<>();
         try {
@@ -418,7 +415,7 @@ public class KbVectorStoreRegistry {
     }
 
     /**
-     * 索引 schema 是否已含全部 ACL 可过滤字段<b>且 SEPARATOR 正确</b>（齐备则无需 ALTER）。
+     * 索引 schema 是否已含全部库门可过滤字段<b>且 SEPARATOR 正确</b>（齐备则无需 ALTER）。
      *
      * <p><b>{@code ftInfo} 的返回结构（Jedis 6.0 实测）</b>：{@code Map<String,Object>} 里
      * {@code attributes} 节点是 {@code List<Object>}，<b>每个元素是扁平键值对 List</b>

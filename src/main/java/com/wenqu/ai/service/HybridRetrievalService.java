@@ -100,7 +100,7 @@ public class HybridRetrievalService {
         void keywordBusy() { this.keywordBusy = true; }
         void keywordFallback() { this.keywordFallback = true; }
         void multiTimeout() { this.multiTimeout = true; }
-        /** ACL 下推失败（记error 而非布尔：既要让调试面板看到原因，也避免多字段互相覆盖） */
+        /** 库门下推失败（记 error 而非布尔：既要让调试面板看到原因，也避免多字段互相覆盖）。字段名沿用 acl* 前缀，属既有 API 契约不更名 */
         void aclPushdownFailed(String err) { this.aclPushdownError = err; }
 
         /** 清空本次诊断（改写回退/二次检索前调用：最终用于回答的那次检索的状态为准） */
@@ -122,7 +122,7 @@ public class HybridRetrievalService {
         public String lastError() { return lastError; }
         public int getGraphExpanded() { return graphExpanded; }
         void addGraphExpanded(int n) { this.graphExpanded += n; }
-        /** ACL 下推失败原因（null=本次下推正常） */
+        /** 库门下推失败原因（null=本次下推正常）。字段名沿用 acl* 前缀，属既有 API 契约不更名 */
         public String aclPushdownError() { return aclPushdownError; }
     }
 
@@ -364,7 +364,7 @@ public class HybridRetrievalService {
                     // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
                     // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
                     .similarityThreshold(vecThreshold());
-            // ACL 下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
+            // 库门下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
             // 下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
             if (aclFilter != null && !aclFilter.isBlank()) {
                 try {
@@ -749,17 +749,24 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 编译 ACL 过滤表达式并下推到向量索引（检索时过滤）。
+     * 编译<b>库门</b>过滤表达式并下推到向量索引（检索时过滤）。
      *
-     * <p><b>「检索时过滤」与「检索后过滤」的差别就在这里</b>：
+     * <p><b>下推范围仅限库级</b>（2026-10-06 晚绑定改造后）：文档级 ACL 依赖
+     * 「未配置共享=跟随库」这种 DB 状态规则，索引层无法表达，改由
+     * {@link #loadVisibleDocIdsOfHits} 在检索后按命中块实时判定（晚绑定）。
+     * 库级满足下推三前提——集合小（几十个库）、每次实时算（无陈旧问题）、能整库挡掉召回。
+     *
+     * <p><b>「检索时过滤」与「检索后过滤」的差别</b>：
      * <ul>
-     *   <li><b>检索后过滤</b>（旧）：先无差别召回 topK，再在 Java 里逐条判可见性并剔除
-     *       ——<b>不可见文档照样占掉 topK 名额</b>。topK=15 若12 条是别人的私有文档，
-     *       本用户只剩 3 条可用，召回率被ACL 悄悄吃掉；</li>
-     *   <li><b>检索时过滤</b>（现）：把「可见库 IN(...) AND (aclGlobal OR aclDept OR aclUser)」
-     *       作为 RediSearch filter 下推，无权文档<b>在 KNN 之前</b>就被排除，
-     *       topK 名额全部属于当前用户可见的文档。</li>
+     *   <li><b>检索后过滤</b>：先无差别召回 topK，再在 Java 里逐条判可见性并剔除
+     *       ——<b>不可见文档照样占掉 topK 名额</b>。topK=15 若 12 条是别人的私有文档，
+     *       本用户只剩 3 条可用，召回率被 ACL 悄悄吃掉；</li>
+     *   <li><b>检索时过滤</b>（现，库级）：把「可见库 IN(...)」作为 RediSearch filter 下推，
+     *       无权库的文档<b>在 KNN 之前</b>就被排除，topK 名额不被整库浪费。</li>
      * </ul>
+     *
+     * <p><b>残留代价（已知，接受）</b>：库级已下推，但<b>文档级不享有此优化</b>——
+     * 同一个库内的私有文档仍会占掉 topK 名额，这是换「权限真相单一来源 + 改权限即时生效」的代价。
      *
      * <p><b>库门与请求范围的交集</b>：kbIds（智能体/工具绑定的库范围）比可见库集合更窄时，
      * 取交集才是本次真正要搜的库——只按可见库过滤会忽略范围收窄（虽不越权，但白搜了无权无关的库）。

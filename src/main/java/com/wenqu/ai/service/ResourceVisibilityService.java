@@ -129,7 +129,7 @@ public class ResourceVisibilityService {
     }
 
     /**
-     * 供「ACL 下推」侧只读解析 share_config（{@link DocumentAclTags} 烘焙标签时用）。
+     * 供向量库门字段写入侧（{@link DocumentAclTags#putKbId} 烘焙 kbId 时）与诊断端点只读解析 share_config。
      * <p><b>刻意复用本类的解析口径而不让调用方各自反序列化</b>：同一份 share_config 的解读
      * 必须只有一处实现，否则「写入侧烘焙的标签」与「读取侧判定的权限」会出现口径漂移——
      * 前者按global 放行、后者按 user 拒绝这类偏差会让权限静默失效。

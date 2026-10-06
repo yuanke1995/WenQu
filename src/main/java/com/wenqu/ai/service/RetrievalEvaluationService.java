@@ -307,7 +307,7 @@ public class RetrievalEvaluationService {
     }
 
     /**
-     * asUid：评测执行身份。检索层按该用户可读范围过滤文档（loadNonVisibleDocIds 读 RequestUser），
+     * asUid：评测执行身份。检索层按该用户可读范围过滤文档（loadVisibleDocIdsOfHits 读 RequestUser），
      * 评测线程池不继承请求线程的 ThreadLocal，必须显式装载到每个执行线程（finally 清理）。
      * 此前评测线程身份恒为 anonymous：私有库整库被可见性过滤剔除，recall 恒 0 —— 工装缺陷，非检索质量问题。
      */

@@ -574,8 +574,9 @@ public class RagService {
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
-                // 流水线线程**没有请求上下文**：检索的文档可见性过滤（HybridRetrievalService
-                // .loadNonVisibleDocIds 读 RequestUser）会拿到 anonymous ⇒ 配了共享范围（department/user）
+                // 流水线线程**没有请求上下文**：检索的库门下推与文档可见性晚绑定
+                // （HybridRetrievalService.buildAclFilter / loadVisibleDocIdsOfHits 读 RequestUser）
+                // 会拿到 anonymous ⇒ 可见库集合为空/受限，配了共享范围（department/user）
                 // 的文档被判为不可见并被过滤，表现就是"共享给我的资料，我在问答里检索不到"。
                 // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
@@ -3852,8 +3853,9 @@ public class RagService {
     /** 个人偏好用户行（含三类个人默认模型）；匿名/未登录/查询失败返回 null（全部走空语义） */
     /**
      * 在流水线线程内装载本轮用户身份（uid / 部门 / 角色），供检索的文档可见性过滤按**真实用户**判定。
-     * <p>背景：问答流水线跑在独立线程池、没有请求上下文，而 {@code HybridRetrievalService.loadNonVisibleDocIds()}
-     * 是从 {@code RequestUser} 取身份的 ⇒ 只会拿到 anonymous。其后果是：配了共享范围
+     * <p>背景：问答流水线跑在独立线程池、没有请求上下文，而 {@code HybridRetrievalService} 的
+     * 库门下推（{@code loadVisibleKbIds}）与文档可见性晚绑定（{@code loadVisibleDocIdsOfHits}）
+     * 都从 {@code RequestUser} 取身份 ⇒ 只会拿到 anonymous。其后果是：配了共享范围
      * （{@code access_level=department/user}）的文档，对**包括被授权者在内**的所有人都判为不可见并被过滤——
      * 也就是"共享给我、或我自己限定范围的资料，在问答里检索不到"。
      * <p>身份从用户档案读，与调用线程无关：网页问答（Tomcat 线程）与定时任务（池线程，uid 由参数传入）
