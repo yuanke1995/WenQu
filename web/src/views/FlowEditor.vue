@@ -193,7 +193,7 @@
                 </div>
                 <a-input v-if="b.key !== 'else'" v-model:value="b.expr"
                          :placeholder="'表达式，如 {{llm.answer}}.length() > 0'" />
-                <div v-else class="wf-hint" style="margin-top:4px">else 为兜底分支，无需表达式。</div>
+                <div v-else class="wf-hint" style="margin-top:4px">else 为默认分支，无需表达式。</div>
               </div>
               <button class="app-btn ghost small" @click="editConfig.branches.push({ key: '', expr: '' })">+ 添加分支</button>
               <div class="wf-hint">
@@ -326,7 +326,7 @@
                 </div>
                 <a-input v-if="b.key !== 'else'" v-model:value="b.expr"
                          :placeholder="'表达式，如 {{llm.answer}}.contains(\'DONE\') == false'" />
-                <div v-else class="wf-hint" style="margin-top:4px">else 为兜底分支，无需表达式。</div>
+                <div v-else class="wf-hint" style="margin-top:4px">else 为默认分支，无需表达式。</div>
               </div>
               <button class="app-btn ghost small" @click="editConfig.branches.push({ key: '', expr: '' })">+ 添加分支</button>
               <div class="wf-hint">
@@ -355,7 +355,7 @@
               </div>
               <div class="wf-hint">
                 输出 <code>text</code>：把所选技能全文拼成一段「按技能要求作答」的上下文，下游 LLM 节点用
-                <code v-pre>{{skill_1.text}}</code> 引用即可。技能是个人资产，按运行发起人取用。
+                <code v-pre>{{skill_1.text}}</code> 引用即可；运行时取用发起人自己名下的技能。
               </div>
             </template>
 

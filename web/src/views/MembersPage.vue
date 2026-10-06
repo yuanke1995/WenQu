@@ -289,7 +289,7 @@ const roleTip = computed(() => {
   const r = roles.value.find(x => x.code === userForm.value.role)
   if (!r) return ''
   if (r.adminFlag === 1) return '管理员级角色：可访问全部管理功能。'
-  return r.builtin === 1 ? '普通角色：问答与个人资产，可按权限管理中的绑定开放更多功能。' : '自定义角色：按「权限管理 → 角色权限」的绑定开放菜单与接口。'
+  return r.builtin === 1 ? '普通角色：问答与个人资源，可按权限管理中的绑定开放更多功能。' : '自定义角色：按「权限管理 → 角色权限」的绑定开放菜单与接口。'
 })
 
 /* ==================== 加载（按页签懒加载 + 保存后按需重拉） ==================== */

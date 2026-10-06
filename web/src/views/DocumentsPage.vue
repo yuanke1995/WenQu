@@ -880,7 +880,7 @@ const saveShareFn = json => updateDocumentShare(shareTarget.value.id, json)
  * 同一个库里的无权文档仍会先占掉向量 topK 名额，别人能搜到的内容就少了。
  * 分库后整库口径一致，库门在候选阶段就挡掉，召回名额一个不浪费。
  */
-const SCOPE_TIP = '建议把不同可见范围的文档分到不同知识库：同一库内的文档级权限是在检索后才剔除的，无权限的文档仍会占用召回名额，可能导致其他人搜不到本该搜到的内容。'
+const SCOPE_TIP = '建议把不同可见范围的文档分到不同知识库：同一库内混有别人看不到的文档时，其他人可能搜不到本该搜到的内容。'
 
 // 文档行的共享范围标记：仅显式共享时显示（未配置=跟随库即默认，不显示以免噪音）
 function scopeLabel (d) {
@@ -1517,11 +1517,11 @@ const fmtTime = t => {
   .col-act { width: 158px; }
   .doc-row { gap: 8px; }
 }
-/* 手机（/knowledge 已进窄屏白名单，只读浏览）：行重排成两行——
+/* 窄屏（≤768，与全站窄屏基准同口径；/knowledge 已进窄屏白名单，只读浏览）：行重排成两行——
    首行文件名占满，次行状态 pill + 操作右对齐。表头栅格在重排后失去对照意义，整体隐藏；
-   多选勾选随批量操作栏一起退出手机（行内单条操作仍在，管理动作回桌面做）。 */
+   多选勾选随批量操作栏一起退出窄屏（行内单条操作仍在，管理动作回桌面做）。 */
 .doc-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-@media (max-width: 560px) {
+@media (max-width: 768px) {
   .head-row { display: none; }
   .doc-row { flex-wrap: wrap; row-gap: 6px; padding: 10px 12px; }
   .col-check { display: none; }
