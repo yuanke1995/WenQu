@@ -189,7 +189,7 @@
           </template>
           <a-badge :count="unreadCount" :offset="[-4, 4]" size="small" :title="''">
             <a-tooltip title="通知" placement="right">
-              <button class="app-icon-btn"><bell-outlined /></button>
+              <button class="app-icon-btn notif-bell"><bell-outlined /></button>
             </a-tooltip>
           </a-badge>
         </a-popover>
@@ -244,9 +244,9 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
-         RightOutlined, BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
-         notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
+         RightOutlined, BellOutlined } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
+import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
@@ -558,89 +558,18 @@ const doLogout = async () => {
   router.replace('/login')
 }
 
-// ==================== 站内通知（铃铛）：未读数 30s 轮询，点开拉列表 ====================
-// 后端触发面：解析终态（成功/终态失败/同库批量失败）、工作流失败/超时/挂起待审核（非 manual 的
-// 失败才通知——manual 的发起人正在画布前看 SSE 实时进度）、网页源自动刷新失败、定时任务终态
-// （完成/失败）、检索评估下滑预警（管理员）、工具审批待决。接收人=资源归属人（平台预警=管理员）。
+// ==================== 站内通知（铃铛） ====================
+// 取数口径（未读数 30s 轮询 / 列表 / 乐观置已读）与移动壳通知 sheet 共用同一份
+// src/chat/useNotifications.js（后端触发面见该文件注释）；本页只管呈现（popover）
+// 与「点开跳哪」的路由语义——移动壳跳 /m/chat，两端落点不同、读状态口径必须相同。
 const notifOpen = ref(false)
-const notifLoading = ref(false)
-const notifItems = ref([])
-const unreadCount = ref(0)
-let notifTimer = null
-
-// 类型 → 图标/语义色：成功绿、失败红、等待/超时黄
-const NOTIF_ICONS = {
-  'parse.done': CheckCircleFilled,
-  'parse.failed': CloseCircleFilled,
-  'parse.batch.failed': CloseCircleFilled,
-  'workflow.failed': CloseCircleFilled,
-  'workflow.timeout': ExclamationCircleFilled,
-  'workflow.approval': ExclamationCircleFilled,
-  'web.refresh.failed': CloseCircleFilled,
-  'schedule.done': CheckCircleFilled,
-  'schedule.failed': CloseCircleFilled,
-  'eval.decline': ExclamationCircleFilled,
-  'tool.approval': ExclamationCircleFilled
-}
-const NOTIF_TONES = {
-  'parse.done': 'ok',
-  'parse.failed': 'err',
-  'parse.batch.failed': 'err',
-  'workflow.failed': 'err',
-  'workflow.timeout': 'warn',
-  'workflow.approval': 'warn',
-  'web.refresh.failed': 'err',
-  'schedule.done': 'ok',
-  'schedule.failed': 'err',
-  'eval.decline': 'warn',
-  'tool.approval': 'warn'
-}
-const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
-const notifClass = t => NOTIF_TONES[t] || ''
-// 复用会话时间的稳健解析（ISO/数组/对象形态都兼容）
-const notifTime = v => {
-  const d = sessTime(v)
-  if (!d) return ''
-  const diff = Date.now() - d.getTime()
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`
-  const p = n => String(n).padStart(2, '0')
-  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-// 未读数轮询：失败静默（登录态失效由 app:unauthorized 全局接管，轮询自身不弹错）
-const refreshUnread = async () => {
-  try {
-    const res = await notificationUnreadCount()
-    // request() 返回的是响应信封 {success,code,msg,data}，业务体在 data 里（与 store.js 取值口径一致）
-    unreadCount.value = res?.data?.count || 0
-  } catch { /* 下一轮再试 */ }
-}
-const loadNotifs = async () => {
-  notifLoading.value = true
-  try {
-    const res = await notificationList({ limit: 50 })
-    notifItems.value = res?.data?.items || []
-    unreadCount.value = res?.data?.unreadCount || 0
-  } catch (e) { message.error(e.message || '通知加载失败') }
-  finally { notifLoading.value = false }
-}
+const { items: notifItems, loading: notifLoading, unreadCount,
+        loadList: loadNotifs, markRead, markAllRead: markAllReadApi } = useNotifications()
 const onNotifOpen = open => { if (open) loadNotifs() }
-const markAllRead = async () => {
-  try {
-    await notificationMarkAllRead()
-    notifItems.value = notifItems.value.map(n => ({ ...n, readFlag: 1 }))
-    unreadCount.value = 0
-  } catch (e) { message.error(e.message || '操作失败') }
-}
-// 点击通知：先本地置已读（乐观更新，失败回滚），再按 ref 跳转（审批类带二级目标直达可裁决位置）
+const markAllRead = () => markAllReadApi()
+// 点击通知：置已读（乐观更新，失败回滚在共用单元里），再按 ref 跳转（审批类带二级目标直达可裁决位置）
 const openNotif = async n => {
-  if (!n.readFlag) {
-    n.readFlag = 1
-    unreadCount.value = Math.max(0, unreadCount.value - 1)
-    notificationMarkRead([n.id]).catch(() => { n.readFlag = 0; refreshUnread() })
-  }
+  markRead(n)
   if (n.type === 'workflow.approval' && n.refId && n.refSub) {
     router.push({ path: '/agents', query: { tab: 'workflow', wf: n.refId, run: n.refSub } })
   } else if (n.type === 'tool.approval' && n.refId && n.refSub) {
@@ -653,21 +582,14 @@ const openNotif = async n => {
 
 // 铃铛 → 通知中心页
 const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications') }
-
-// 切回页面/窗口聚焦立即刷新未读数（登录态失效由全局拦截器接管，这里只静默刷新）
-const onVisible = () => { if (document.visibilityState === 'visible') refreshUnread() }
 onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
   navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
   loadSessions()
-  refreshUnread()
   refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
-  notifTimer = setInterval(refreshUnread, 30_000)
-  window.addEventListener('focus', refreshUnread)
-  document.addEventListener('visibilitychange', onVisible)
+  // 通知未读轮询与 focus/visibility 刷新由 useNotifications 自持（首拉 + 30s 定时 + 卸载清理）
 })
-onUnmounted(() => { clearInterval(notifTimer); window.removeEventListener('focus', refreshUnread); document.removeEventListener('visibilitychange', onVisible) })
 </script>
 
 <style scoped>

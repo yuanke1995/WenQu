@@ -13,6 +13,8 @@ src/chat/useChatSearch.js   会话内查找（Range + CSS Custom Highlight API�
 src/views/shareSession.js   会话分享的状态机与链接拼装 —— 共用
 src/views/exportMd.js       Markdown 导出（拼装 / 落盘分开，给移动端留第二条出口）—— 共用
 src/utils/clipboard.js      复制文本（clipboard API + execCommand 双路径）—— 共用
+src/chat/useNotifications.js     站内通知取数（未读轮询/列表/乐观置已读）—— 共用，不含路由
+src/chat/useApprovalRecovery.js  工具审批恢复状态机（?approval= 深链 → 重建/裁决）—— 共用
 src/views/ChatPage.vue      PC 壳（三栏工作台，保留既有窄屏补丁给「鼠标用户拖窄窗口」）
 src/h5/MobileChatPage.vue   移动壳（/m/chat，独立布局，不经 AppLayout）
 ```
@@ -48,6 +50,9 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 | 会话管理 | 侧栏常驻 | 底部 sheet（搜索/分组/置顶/重命名/删除） |
 | 新问题置顶 | 尾随留白（桌面语义） | 用户消息出现即送上容器顶（不加留白，见下） |
 | 会话内查找 | Ctrl/⌘+F 热键 | 顶栏按钮 → 消息流上方查找条 |
+| 站内通知 | 侧栏 foot 铃铛 popover（未读 Badge，30s 轮询） | 顶栏铃铛 → 通知 sheet（角标与列表同源，同一份 useNotifications.js） |
+| 个人设置 / 帮助 / 主题 / 退出 | 侧栏 foot | 会话 sheet 底部四项（壳外入口；通知不在其中，铃铛是高频动作单列顶栏） |
+| 工具审批恢复 | 消息区顶部横幅（`?approval=` 深链重建） | 消息区顶部横幅（同一份 useApprovalRecovery.js） |
 | 会话分享（只读链接） | 页头动作区的 `a-modal` | 「状态与来源」sheet 内展开（同一份 shareSession.js） |
 | 导出 Markdown | 页头「更多」菜单 / 侧栏菜单 | 「状态与来源」sheet：保存文件 + 复制全文双通道；会话列表菜单：下载（同 PC 口径） |
 | 评测 / 检索调试 / 删除本轮 | 「更多」菜单 | 未做（管理向，见「待补」） |
@@ -95,8 +100,10 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 - `node scripts/verify-sfc.mjs`：SFC 编译、模块解析、CSS 语法、项目约束、PWA 资源存在性。
 - `node scripts/check-engine-imports.mjs`：projections 引用完整 + 从引擎 inject 解构的名字必须真实存在
   （两类漏接都只在真浏览器渲染时才炸，这里前移为静态失败）。
-- `node scripts/check-mshell.cjs`：412×916 触屏跑 dist 产物，验重定向/结构/热区/sheet 开合/桌面弹回。
-- `node scripts/check-browser.cjs`：PC 壳（含鼠标拖窄窗口）回归。
+- `node scripts/check-mshell.cjs`：412×916 触屏跑 dist 产物，验重定向/结构/热区/sheet 开合/
+  通知角标与通知 sheet 深链/壳外入口/桌面弹回（通知与审批接口带 mock，断言的是真渲染）。
+- `node scripts/check-browser.cjs`：PC 壳（含鼠标拖窄窗口）回归，同样覆盖铃铛弹层与审批恢复横幅
+  ——通知/审批抽成共用单元后，两端各有一条真点开的断言守着绑定没漏。
 `npm run check` 串起静态三件套；`check:browser` / `check:mshell` 需 playwright-core，单独跑。
 
 ## 待补（v1 有意留白，按需再做）
@@ -107,5 +114,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 - 分享链接在阅读侧**刻意不做**移动专属页：`/shared/{token}` 复用 PC 那张 `SharedSessionPage.vue`
   （自带 @media ≤768px 适配，且 `meta.pageFlow` 已绕开 AppLayout 的 100vh 溢出陷阱）。
   另起 `/m/shared/{token}` 等于要求分享时先猜对方设备在哪一端——做不到，也没收益。
-- 多智能体胶囊：移动壳用「模型与思考」sheet 承载模型/思考/窗口，未做智能体切换入口
-  （引擎已有 `pickAgent`，接一个 sheet 即可）。
+- 通知 sheet 只做「有什么新事 + 直达」：筛选/清理/静音偏好留 PC 通知中心整页
+  （管理向；`/notifications` 不在窄屏白名单，这是有意的）。
+- 已销账（曾被列为待补，现已落地）：多智能体切换入口在「模型与思考」sheet 内（M3），
+  会话分享 / 导出 Markdown / 会话内查找（5d0ff1b），通知与壳外入口、审批恢复横幅（本批）。

@@ -43,6 +43,18 @@
       </button>
     </div>
 
+    <!-- 壳外入口（对称 PC 侧栏 foot）：手机上聊天以外的页面只从这里进。
+         不塞进顶栏：个人设置/帮助/主题/退出全是低频动作，挤在顶栏只会稀释「新建/查找」的位置；
+         通知是高频动作，单列在顶栏铃铛（带未读角标）。 -->
+    <div v-if="!menuFor" class="ss-foot">
+      <button class="ss-foot-btn" type="button" @click="$emit('profile')"><user-outlined />个人设置</button>
+      <button class="ss-foot-btn" type="button" @click="$emit('help')"><question-circle-outlined />帮助中心</button>
+      <button class="ss-foot-btn" type="button" @click="onToggleTheme">
+        <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
+      </button>
+      <button class="ss-foot-btn danger" type="button" @click="doLogout"><logout-outlined />退出登录</button>
+    </div>
+
     <!-- 行操作（底部二级 sheet 太重，这里用行内操作条） -->
     <div v-if="menuFor" class="ss-menu">
       <div class="ss-menu-title">{{ menuFor.title || '新对话' }}</div>
@@ -65,11 +77,15 @@
 
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
+         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
-import { pinSession, favoriteSession, renameSessionApi } from '../api'
+import { pinSession, favoriteSession, renameSessionApi, logoutApi } from '../api'
+import { clearAuth } from '../utils/auth'
+import { themeState, toggleTheme } from '../utils/theme'
 import { exportSessionMarkdown } from '../views/exportMd'
 
 // 引擎实例（provide 自移动壳）：删除会话复用其 handleDeleteSession（含当前会话被删后的落点）
@@ -79,7 +95,27 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   currentId: { type: String, default: '' }
 })
-const emit = defineEmits(['close', 'select', 'new-chat', 'changed'])
+const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', 'help'])
+
+// 壳外入口：个人设置/帮助是页面跳转（emit 给移动壳，与 select/new-chat 同路径），
+// 主题与退出是本 sheet 自持的动作（与会话行操作同一层级）
+const router = useRouter()
+const onToggleTheme = () => toggleTheme()
+// 退出登录：令牌无状态，清本地令牌并回登录页（与 PC 侧栏同口径）。
+// 移动端多一步确认：这个入口贴着会话列表，误触后要重新输密码，代价比多点一下高。
+const doLogout = () => {
+  Modal.confirm({
+    title: '退出登录',
+    content: '退出后需要重新登录才能继续使用。',
+    okText: '退出', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
+      clearAuth()
+      message.success('已退出登录')
+      router.replace('/login')
+    }
+  })
+}
 
 const kw = ref('')
 let searchTimer = null
@@ -198,6 +234,21 @@ const doDelete = () => {
 .ss-more { width: 40px; border: none; background: transparent; color: var(--app-text3); font-size: 16px; touch-action: manipulation; }
 .ss-empty { padding: 24px 0; text-align: center; color: var(--app-text3); font-size: 13px; }
 .ss-more-load { min-height: 40px; border: none; background: transparent; color: var(--app-accent); font-size: 13px; touch-action: manipulation; }
+
+/* 壳外入口：sticky 贴底——会话列表很长时也不必滚到底才能退出登录（PC 侧栏 foot 同理） */
+.ss-foot {
+  position: sticky; bottom: 0; margin-top: 12px; padding-top: 10px;
+  background: var(--app-panel); border-top: 1px solid var(--app-border);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.ss-foot-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border: 1px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
+}
+.ss-foot-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
+.ss-foot-btn.danger { color: var(--app-danger); border-color: var(--app-danger-border); }
+.ss-foot-btn.danger:active { background: var(--app-danger-weak); color: var(--app-danger); }
 
 .ss-menu { position: sticky; bottom: 0; margin-top: 10px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--app-shadow); }
 .ss-menu-title { font-size: 13px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

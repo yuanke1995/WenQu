@@ -697,8 +697,10 @@ let sessionRecovering = false
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
-  // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上
-  router.replace({ path: hooks.chatPath, query: { sid } }).catch(() => {})
+  // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上。
+  // 必须保留兄弟参数：?approval=<id>（工具审批通知深链）直接写 query:{sid} 会被抹掉，
+  // 恢复横幅能否出现变成异步时序的侥幸（fetch 先回才亮），刷新后则永久丢失。
+  router.replace({ path: hooks.chatPath, query: { ...route.query, sid } }).catch(() => {})
   try {
     // 403（会话归属拒绝）由本函数静默回退处理，不触发全局提示
     const r = await getHistory(sid, { silentForbidden: true })

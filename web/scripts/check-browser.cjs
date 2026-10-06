@@ -49,6 +49,21 @@ function serveStatic (page) {
         headers: { 'access-control-allow-origin': '*' },
         body: JSON.stringify({ success: true, data: { user: 'admin', username: '管理员', role: 'superadmin', admin: true, menus: [] } }) })
     }
+    // 通知接口给真实 mock：铃铛角标/弹层/深链的断言需要数据（其余接口仍掐断）
+    const json = data => route.fulfill({ status: 200, contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ success: true, data }) })
+    if (u.pathname === '/api/ai/notification/unread-count') return json({ count: 3 })
+    if (u.pathname === '/api/ai/notification/list') {
+      return json({ items: [
+        { id: 1, type: 'tool.approval', title: '工具审批待处理', content: '请求执行「联网搜索」', refId: 's-appr', refSub: 'ap-1', readFlag: 0, createTime: Date.now() - 60000 },
+        { id: 2, type: 'parse.done', title: '文档解析完成', content: '手册.pdf', refType: 'kb', refId: 'kb-1', readFlag: 0, createTime: Date.now() - 3600000 },
+        { id: 3, type: 'schedule.done', title: '定时任务完成', refType: 'session', refId: 's-9', readFlag: 1, createTime: Date.now() - 7200000 }
+      ], nextCursor: 0, hasMore: false, total: 3, unreadCount: 3 })
+    }
+    if (u.pathname === '/api/ai/notification/read' || u.pathname === '/api/ai/notification/read-all') return json({})
+    if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
+      return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
+    }
     if (u.host !== 'h5.local') return route.abort()      // 其余外部请求掐断
     let p = decodeURIComponent(u.pathname)
     let f = path.join(DIST_DIR, p)
@@ -177,6 +192,46 @@ const check = (ok, label, detail = '') => {
   check(!w.hasTopbar, '宽屏不渲染移动顶栏')
   check(w.sidePos !== 'fixed', '宽屏侧栏非 fixed（回归 PC 布局）', `position=${w.sidePos}`)
   check(w.sideLeft === 0 && w.sideW >= 190, '宽屏侧栏常驻 200px', `left=${w.sideLeft} w=${w.sideW}`)
+
+  // ---- PC 铃铛（取数单元与移动壳共用）：角标 / 弹层 / 深链 ----
+  // 这三条同时守着一次重构：通知逻辑从 AppLayout 抽到 chat/useNotifications.js 后，
+  // 模板绑定的名字若没对上，弹层会渲染成空壳而不报错（只有真点开才看得见）。
+  const bell = await wide.evaluate(() => {
+    const b = document.querySelector('.notif-bell')
+    const cnt = b ? b.closest('.ant-badge') : null
+    return { has: !!b, count: cnt && cnt.querySelector('.ant-badge-count') ? cnt.querySelector('.ant-badge-count').textContent.trim() : '' }
+  })
+  check(bell.has, '侧栏 foot 通知铃铛存在')
+  check(bell.count === '3', '铃铛角标显示未读数（mock 3）', `count=${bell.count}`)
+  await wide.locator('.notif-bell').dispatchEvent('click')
+  await wide.waitForTimeout(900)
+  const pop = await wide.evaluate(() => ({
+    n: document.querySelectorAll('.notif-panel .notif-item').length,
+    unread: document.querySelectorAll('.notif-panel .notif-item.unread').length,
+    time: (document.querySelector('.notif-panel .notif-time') || {}).textContent || ''
+  }))
+  check(pop.n === 3, '铃铛弹层列出 3 条通知', `n=${pop.n}`)
+  check(pop.unread === 2, '未读样式标出 2 条', `unread=${pop.unread}`)
+  check(/\S/.test(pop.time), '相对时间已格式化（notifTime 生效）', `time=${pop.time}`)
+
+  // 会话类通知 → /chat?sid=…
+  await wide.locator('.notif-panel .notif-item').nth(2).dispatchEvent('click')
+  await wide.waitForTimeout(900)
+  check(await wide.evaluate(() => location.pathname + location.search) === '/chat?sid=s-9',
+    '点会话类通知直达会话', await wide.evaluate(() => location.pathname + location.search))
+  // 审批类通知 → /chat?sid=…&approval=…，且顶部恢复横幅按 approvalId 重建
+  await wide.locator('.notif-bell').dispatchEvent('click')
+  await wide.waitForTimeout(800)
+  await wide.locator('.notif-panel .notif-item').nth(0).dispatchEvent('click')
+  await wide.waitForTimeout(1300)
+  const rec = await wide.evaluate(() => ({
+    url: location.pathname + location.search,
+    banner: document.querySelector('.approval-recovery') ? document.querySelector('.approval-recovery').innerText.replace(/\s+/g, ' ').slice(0, 40) : '',
+    btns: [...document.querySelectorAll('.approval-recovery button')].map(b => b.textContent.trim())
+  }))
+  check(rec.url.includes('approval=ap-1') && /sid=s-appr/.test(rec.url), '审批通知深链带 sid+approval', rec.url)
+  check(rec.banner.includes('联网搜索'), 'PC 恢复横幅按 approvalId 重建', rec.banner)
+  check(rec.btns.includes('批准执行') && rec.btns.includes('拒绝'), '横幅给出批准/拒绝', rec.btns.join('/'))
 
   // ---- 引导卡：非白名单页面窄屏应给引导卡，且真实页面**未渲染** ----
   // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat

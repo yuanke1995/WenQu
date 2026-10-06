@@ -43,7 +43,7 @@
         <div class="ar-title"><exclamation-circle-outlined /> 工具审批待处理：{{ recoveryApproval.toolName }}</div>
         <pre v-if="recoveryApproval.requestArgs" class="ar-args">{{ recoveryApproval.requestArgs }}</pre>
         <div class="ar-foot">
-          <span class="ar-status" :class="recoveryStatusClass">{{ recoveryStatusText }}</span>
+          <span class="ar-status" :class="'ar-' + recoveryStatusClass">{{ recoveryStatusText }}</span>
           <template v-if="recoveryApproval.status === 'PENDING'">
             <button class="app-btn small" :disabled="recoveryBusy" @click="resolveRecovery(true)">批准执行</button>
             <button class="app-btn ghost small" :disabled="recoveryBusy" @click="resolveRecovery(false)">拒绝</button>
@@ -1109,7 +1109,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
@@ -1119,8 +1119,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 import { getKnowledgeDetail, debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
-         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
-         getToolApproval, approveToolCall } from '../api'
+         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
 import { loadSessions } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
@@ -1141,6 +1140,7 @@ import MobileSampleCards from '../h5/MobileSampleCards.vue'
 // 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
+import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
@@ -1149,41 +1149,11 @@ import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, 
          THINK_LEVEL_ON, levelLabel, stopTick } from '../chat/projections'
 
 const router = useRouter()
-const route = useRoute()
 
 // ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
-const recoveryApproval = ref(null)
-const recoveryBusy = ref(false)
-const recoveryStatusText = computed(() => {
-  const s = recoveryApproval.value?.status
-  return { PENDING: '待处理', APPROVED: '已批准', REJECTED: '已拒绝', TIMEOUT: '已超时' }[s] || (s || '未知')
-})
-const recoveryStatusClass = computed(() => {
-  const s = recoveryApproval.value?.status
-  return s === 'PENDING' ? 'ar-pending' : (s === 'APPROVED' ? 'ar-ok' : 'ar-err')
-})
-const loadRecovery = async () => {
-  const id = route.query.approval
-  if (!id) { recoveryApproval.value = null; return }
-  try {
-    const r = await getToolApproval(id)
-    recoveryApproval.value = r?.data || null
-    if (!recoveryApproval.value) message.info('该审批请求不存在或已失效（可能已超时）')
-  } catch (e) { recoveryApproval.value = null; message.error('恢复审批失败：' + (e.message || '')) }
-}
-const resolveRecovery = async approved => {
-  if (!recoveryApproval.value) return
-  recoveryBusy.value = true
-  try {
-    await approveToolCall(recoveryApproval.value.id, approved)
-    message.success(approved ? '已批准' : '已拒绝')
-    await loadRecovery()   // 刷新状态：内存态可能已失效，DB 终态即准
-  } catch (e) { message.error('审批失败：' + (e.message || '')) }
-  finally { recoveryBusy.value = false }
-}
-const dismissRecovery = () => { recoveryApproval.value = null }
-onMounted(loadRecovery)
-watch(() => route.query.approval, loadRecovery)
+// 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
+const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStatusText,
+        statusClass: recoveryStatusClass, resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
 const textareaRef = ref(null)
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================

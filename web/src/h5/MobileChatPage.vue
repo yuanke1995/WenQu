@@ -19,6 +19,12 @@
       <button class="m-bar-btn" type="button" title="新建对话" @click="createNewSession()">
         <plus-outlined />
       </button>
+      <!-- 通知：手机上「平台有新事」的唯一入口（PC 是侧栏 foot 的铃铛 popover）。
+           取数实例由本页 provide，角标与 sheet 列表共用同一份未读数 -->
+      <button class="m-bar-btn" type="button" title="通知" @click="notifOpen = true">
+        <bell-outlined />
+        <span v-if="notifUnread > 0" class="m-bar-badge">{{ notifUnread > 99 ? '99+' : notifUnread }}</span>
+      </button>
     </header>
 
     <!-- 会话内查找：移动壳没有 Ctrl+F，入口在顶栏。行作为 flex:none 插在消息流之上——
@@ -35,6 +41,22 @@
       <button class="mf-btn" type="button" title="上一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(-1)"><up-outlined /></button>
       <button class="mf-btn" type="button" title="下一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(1)"><down-outlined /></button>
       <button class="mf-btn" type="button" title="关闭查找" @click="closeSearch"><close-outlined /></button>
+    </div>
+
+    <!-- 工具审批恢复横幅：点开 tool.approval 通知直达会话时，按 approvalId 重建审批卡
+         （随刷新丢失的内联卡据此补回；内存态可能已失效，此时 status 为终态并提示）。
+         与 PC 壳顶部横幅是同一份状态机（chat/useApprovalRecovery.js）。 -->
+    <div v-if="recApproval" class="m-rec">
+      <div class="m-rec-title"><exclamation-circle-outlined /> 工具审批待处理：{{ recApproval.toolName }}</div>
+      <pre v-if="recApproval.requestArgs" class="m-rec-args">{{ recApproval.requestArgs }}</pre>
+      <div class="m-rec-foot">
+        <span class="m-rec-status" :class="'rec-' + recStatusClass">{{ recStatusText }}</span>
+        <template v-if="recApproval.status === 'PENDING'">
+          <button class="m-rec-btn primary" type="button" :disabled="recBusy" @click="resolveRecovery(true)">批准执行</button>
+          <button class="m-rec-btn" type="button" :disabled="recBusy" @click="resolveRecovery(false)">拒绝</button>
+        </template>
+        <button class="m-rec-btn ghost" type="button" @click="dismissRecovery">关闭</button>
+      </div>
     </div>
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
@@ -124,10 +146,13 @@
     <MobileSessionSheet :open="sessionsOpen" :current-id="currentSessionId || ''"
                         @close="sessionsOpen = false"
                         @select="onSelectSession"
-                        @new-chat="onNewChat" />
+                        @new-chat="onNewChat"
+                        @profile="() => onGoPage('/profile')"
+                        @help="() => onGoPage('/help')" />
     <MobileModelSheet :open="modelOpen" @close="modelOpen = false" />
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
+    <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
 
     <!-- ==================== 来源详情 ==================== -->
     <BottomSheet :open="src.visible" :title="src.title" max-height="72dvh" @close="src.visible = false">
@@ -180,10 +205,13 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
-  ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined
+  ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
+  BellOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
+import { useNotifications } from '../chat/useNotifications'
+import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, resolveImg, enhanceDiagrams } from '../utils/markdown'
 import { preferMobileShell } from './mobile'
@@ -193,6 +221,7 @@ import MobileSessionSheet from './MobileSessionSheet.vue'
 import MobileModelSheet from './MobileModelSheet.vue'
 import MobileAttachSheet from './MobileAttachSheet.vue'
 import MobileRefSheet from './MobileRefSheet.vue'
+import MobileNotifSheet from './MobileNotifSheet.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 
@@ -230,7 +259,23 @@ const sessionsOpen = ref(false)
 const modelOpen = ref(false)
 const attachOpen = ref(false)
 const refOpen = ref(false)
-const closeSheets = () => { sessionsOpen.value = false; modelOpen.value = false; attachOpen.value = false; refOpen.value = false }
+const notifOpen = ref(false)
+const closeSheets = () => {
+  sessionsOpen.value = false; modelOpen.value = false; attachOpen.value = false
+  refOpen.value = false; notifOpen.value = false
+}
+
+// ==================== 站内通知（铃铛角标 + 通知 sheet） ====================
+// 取数口径与 PC 铃铛共用一份（chat/useNotifications.js）：本页持实例（顶栏角标要用未读数），
+// 经 provide 给 MobileNotifSheet —— 各调一次会造出两份未读数，角标与列表会各说各话
+const notif = useNotifications()
+provide('wqNotif', notif)
+const notifUnread = notif.unreadCount
+
+// ==================== 工具审批恢复（通知 → 会话） ====================
+// 与 PC 壳顶部横幅同一份状态机：?approval=<id> 到达时重建审批卡（两端「批准/拒绝 → 重取状态」同口径）
+const { approval: recApproval, busy: recBusy, statusText: recStatusText, statusClass: recStatusClass,
+        resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
 // ==================== 引擎（与 PC 同一份） ====================
 // 刻意不传 focusInput：移动端挂载即弹软键盘是反模式（PC 传它是为了键盘用户开箱可打）。
@@ -290,6 +335,10 @@ const onSelectSession = async sid => {
   if (sid !== currentSessionId.value) await engine.switchSession(sid)
 }
 const onNewChat = async () => { sessionsOpen.value = false; await createNewSession() }
+
+// 壳外页面跳转（个人设置/帮助中心）：这两个页面本就在窄屏白名单里（DesktopOnlyGuard），
+// 移动壳过去只需给入口——落在 AppLayout 窄屏形态（顶栏标题随路由、可再走抽屉回对话）
+const onGoPage = path => { closeSheets(); router.push(path).catch(() => {}) }
 
 // ==================== 会话内查找 ====================
 // 与 PC 的 Ctrl/⌘+F 是同一份实现（src/chat/useChatSearch.js）：行契约统一为 [data-row-index]
@@ -463,6 +512,12 @@ onUnmounted(() => {
 }
 .m-bar-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 .m-bar-dot { position: absolute; top: 8px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--app-accent); }
+/* 未读角标：数字形态（PC 铃铛是 a-badge，这里自绘保持移动壳零 antd 组件依赖） */
+.m-bar-badge {
+  position: absolute; top: 3px; right: 3px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--app-danger); color: #fff;
+  font-size: 10px; line-height: 16px; font-weight: 600; text-align: center;
+}
 .m-bar-title {
   flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   border: none; background: transparent; color: var(--app-text); font-size: 15px; font-weight: 600;
@@ -491,6 +546,32 @@ onUnmounted(() => {
 }
 .mf-btn:disabled { color: var(--app-text3); opacity: .5; }
 .mf-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
+
+/* ---- 工具审批恢复横幅（?approval= 深链）---- */
+.m-rec {
+  flex: none; margin: 8px 10px 0; padding: 10px 12px;
+  border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.m-rec-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
+.m-rec-args {
+  margin: 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 8px;
+  padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace;
+  white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; color: var(--app-text2);
+}
+.m-rec-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.m-rec-status { font-size: 12px; margin-right: auto; }
+.m-rec-status.rec-pending { color: var(--app-warn-text); }
+.m-rec-status.rec-ok { color: var(--app-ok); }
+.m-rec-status.rec-err { color: var(--app-danger); }
+.m-rec-btn {
+  min-height: 36px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 9px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
+}
+.m-rec-btn:disabled { opacity: .55; }
+.m-rec-btn.primary { background: var(--app-accent); border-color: var(--app-accent); color: #fff; }
+.m-rec-btn.primary:disabled { background: var(--app-accent-disabled); border-color: var(--app-accent-disabled); }
+.m-rec-btn.ghost { border-style: dashed; color: var(--app-text3); }
 
 /* ---- 消息流 ---- */
 .m-list {
