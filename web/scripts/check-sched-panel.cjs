@@ -24,8 +24,10 @@ const TASKS = [
 ]
 
 const SCHEMA = { version: 1, panels: [{ key: 'maintenance', title: '定时任务', sections: ['启动自愈与索引对账', '自动体检', '解析队列', '产物清理', 'Trace 采样', '知识图谱'] }], tips: {}, corePaths: [], editable: [], fields: [
-  { backendKey: 'parse.queue.scanIntervalMs', panel: 'maintenance', section: 2, group: 'parse', key: 'queueScanIntervalMs', path: 'parse.queue.scanIntervalMs', label: '队列扫描间隔(ms)', type: 'number', def: 5000, min: 1000, max: 60000, step: 500, width: 140, presets: [[1000, '1 秒'], [5000, '5 秒'], [10000, '10 秒'], [30000, '30 秒'], [60000, '1 分钟']] },
-  { backendKey: 'parse.queue.capacity', panel: 'maintenance', section: 2, group: 'parse', key: 'queueCapacity', path: 'parse.queue.capacity', label: '队列上限', type: 'number', def: 500, min: 1, width: 140, presets: [[1000, '千'], [5000, '五千']] },
+  // 短键必须与 backendKey 去掉「parse.」前缀后一致（group + 短键 = backendKey）：
+  // 后端 ConfigService.update 拼回全键查白名单，拼不齐保存被静默丢弃（保存提示成功但开关不回弹）
+  { backendKey: 'parse.queue.scanIntervalMs', panel: 'maintenance', section: 2, group: 'parse', key: 'queue.scanIntervalMs', path: 'parse.queue.scanIntervalMs', label: '队列扫描间隔(ms)', type: 'number', def: 5000, min: 0, max: 60000, step: 500, width: 140, presets: [[1000, '1 秒'], [5000, '5 秒'], [10000, '10 秒'], [30000, '30 秒'], [60000, '1 分钟']] },
+  { backendKey: 'parse.queue.capacity', panel: 'maintenance', section: 2, group: 'parse', key: 'queue.capacity', path: 'parse.queue.capacity', label: '队列上限', type: 'number', def: 500, min: 1, width: 140, presets: [[1000, '千'], [5000, '五千']] },
   { backendKey: 'parse.concurrency', panel: 'maintenance', section: 2, group: 'parse', key: 'concurrency', path: 'parse.concurrency', label: '并发数', type: 'number', def: 3, min: 1, width: 140, presets: [[1000, '千']] },
   { backendKey: 'parse.taskLeaseSeconds', panel: 'maintenance', section: 2, group: 'parse', key: 'taskLeaseSeconds', path: 'parse.taskLeaseSeconds', label: '租约(秒)', type: 'number', def: 0, min: 0, width: 140, presets: [[1000, '千']] },
   { backendKey: 'parse.taskTimeoutMs', panel: 'maintenance', section: 2, group: 'parse', key: 'taskTimeoutMs', path: 'parse.taskTimeoutMs', label: '解析超时(ms)', type: 'number', def: 1200000, min: 0, width: 140, presets: [[60000, '分钟'], [3600000, '小时']] },
@@ -167,10 +169,22 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   await numInput.press('Enter')
   await page.waitForTimeout(900)
   // 保存走既有 saveConfig 链路：按 group + submitKey 提交（parse.queue.scanIntervalMs
-  // 落在 parse 组、键名 queueScanIntervalMs），值是毫秒字符串
-  const put = saved.find(s => s.parse && s.parse.queueScanIntervalMs)
-  ok(put && String(put.parse.queueScanIntervalMs) === '30000',
+  // 落在 parse 组、键名 queue.scanIntervalMs），值是毫秒字符串
+  const put = saved.find(s => s.parse && s.parse['queue.scanIntervalMs'])
+  ok(put && String(put.parse['queue.scanIntervalMs']) === '30000',
      '保存发出 30 秒 = 30000ms（实发 ' + JSON.stringify(put) + '）')
+
+  // 暂停开关：确认后必须发 { parse: { 'queue.scanIntervalMs': '0' } }。
+  // 短键写成 queueScanIntervalMs 时后端白名单匹配不上，写入被静默丢弃——界面提示「已暂停」
+  // 但开关不动（本轮修复的正是这个），所以这里断言的是「发出去的键」，与后端 key 同源
+  await page.locator('.sched-table .ant-table-row').first().locator('.ant-switch').click()
+  await page.waitForTimeout(400)
+  const okBtn = page.locator('.ant-modal-confirm-btns .ant-btn-primary')
+  ok(await okBtn.count() > 0, '点暂停开关弹出确认框')
+  if (await okBtn.count()) { await okBtn.click(); await page.waitForTimeout(800) }
+  const pz = saved.find(s => s.parse && s.parse['queue.scanIntervalMs'] === '0')
+  ok(!!pz, '暂停发出 0ms 且键名为 queue.scanIntervalMs（实发 ' + JSON.stringify(pz || {}) + '）')
+
   // 保存后顶部不应残留「未保存」脏计数（就地保存已同步基线）
   const dirty = await page.locator('.dirty-hint').count()
   ok(dirty === 0, '就地保存后顶部无「已修改未保存」误报')

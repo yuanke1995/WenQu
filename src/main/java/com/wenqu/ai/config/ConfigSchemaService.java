@@ -111,6 +111,18 @@ public class ConfigSchemaService {
                 if (byKey.put(key, f) != null) {
                     throw new IllegalStateException("config-schema.json 字段 backendKey 重复: " + key);
                 }
+                // group + 短键(submitKey||key) 必须拼回 backendKey：设置页读写是两段式
+                // （ConfigService.update 用 group 前缀拼全键查白名单、snapshot 按首点拆组回显），
+                // 拼不齐时该字段的保存会被 isEditable 静默丢弃——界面提示「已保存」但值没变、
+                // 后端不报错、日志无痕（parse.queue.* 曾因此写成 parse.queueScanIntervalMs，暂停开关点了没反应）
+                String shortKey = j.getString("submitKey");
+                if (shortKey == null || shortKey.isBlank()) shortKey = j.getString("key");
+                String group = j.getString("group");
+                if (group != null && !group.isBlank() && shortKey != null && !shortKey.isBlank()
+                        && !(group + "." + shortKey).equals(key)) {
+                    throw new IllegalStateException("config-schema.json 字段 " + key
+                            + " 的 group + 短键拼接不等于 backendKey（实际拼出 " + group + "." + shortKey + "）");
+                }
                 fs.add(f);
             }
         }
