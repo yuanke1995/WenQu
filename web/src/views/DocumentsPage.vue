@@ -10,7 +10,7 @@
       <a-tooltip v-if="queueText" :title="'上传只登记解析任务，后台队列按并发逐个执行（队列满会直接拒绝新上传，不会先收下再丢）+ 失败任务可点「重解析」重试'">
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <div class="doc-tools">
         <!-- 知识库配置直达：解析/检索参数就地改，不用回知识库列表页 -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openKbConfig">
           <setting-outlined /> 知识库配置
@@ -1501,6 +1501,7 @@ const fmtTime = t => {
 /* 手机（/knowledge 已进窄屏白名单，只读浏览）：行重排成两行——
    首行文件名占满，次行状态 pill + 操作右对齐。表头栅格在重排后失去对照意义，整体隐藏；
    多选勾选随批量操作栏一起退出手机（行内单条操作仍在，管理动作回桌面做）。 */
+.doc-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 @media (max-width: 560px) {
   .head-row { display: none; }
   .doc-row { flex-wrap: wrap; row-gap: 6px; padding: 10px 12px; }
@@ -1511,5 +1512,8 @@ const fmtTime = t => {
   .col-act { width: auto; flex: none; margin-left: auto; }
   .file-desc { display: none; }   /* 描述挤进首行只会截断成噪声，悬浮 title 仍在 */
   .doc-row :deep(.ant-checkbox-wrapper) { width: 30px; height: 44px; }
+  /* 页头工具组：被 flex 压到 min-content 时四字标签会竖排叠字——整组换行铺开、按钮不换行 */
+  .doc-tools { width: 100%; margin-left: 0; flex-wrap: wrap; row-gap: 6px; }
+  .doc-tools .app-btn { white-space: nowrap; min-height: 38px; padding: 0 10px; font-size: 12px; }
 }
 </style>
