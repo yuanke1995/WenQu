@@ -907,7 +907,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
     PRIMARY KEY (`id`),
     KEY `idx_task_time` (`task_name`, `started_at`),
     KEY `idx_started` (`started_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行日志（ScheduleCenter 每次触发完成后落一行；按保留期定期清理）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行日志（只记有信息量的执行：失败/手动/有产出；高频任务空跑不记；按保留期定期清理）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',

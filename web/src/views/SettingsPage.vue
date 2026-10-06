@@ -495,7 +495,8 @@
                 </div>
               </template>
 
-              <!-- 定时任务·执行日志页签：c_ai_schedule_run 分页（每次执行完成落一行，超期由清理任务删除） -->
+              <!-- 定时任务·执行日志页签：c_ai_schedule_run 分页（只记有信息量的执行：失败/手动触发/有产出；
+                   高频扫描任务空跑不落行；超期由清理任务删除） -->
               <template v-if="current === 'maintenance' && maintTab === 'logs'">
                 <div class="key-usage-body sched-pane">
                   <div class="audit-filter">
@@ -514,7 +515,9 @@
                         <reload-outlined />
                       </button>
                     </a-tooltip>
-                    <span class="key-dim">保留 {{ runLogRetentionDays }} 天</span>
+                    <a-tooltip title="只记有信息量的执行：失败 / 手动触发 / 有产出。解析队列扫描等高频任务空跑不落行">
+                      <span class="key-dim">保留 {{ runLogRetentionDays }} 天</span>
+                    </a-tooltip>
                     <button class="app-link-btn danger" :disabled="runLogLoading" @click="confirmClearRunLogs">清空</button>
                   </div>
                   <a-table :data-source="runLogRows" size="small" row-key="id" :pagination="false"

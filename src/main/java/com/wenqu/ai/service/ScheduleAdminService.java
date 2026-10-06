@@ -15,7 +15,8 @@ import java.util.Map;
 /**
  * 定时任务执行日志查询（设置页「定时任务」面板）。
  * <p>
- * 写入方是 {@link com.wenqu.ai.schedule.ScheduleCenter}（每次任务完成后落一行），
+ * 写入方是 {@link com.wenqu.ai.schedule.ScheduleCenter}（只记有信息量的执行：失败/手动触发/有产出，
+ * 高频扫描任务空跑不落行），
  * 本服务只做分页查询与面向界面的行裁剪——任务列表快照/手动触发直接走 ScheduleCenter，
  * 不经过本服务（避免多一层转发）。
  *
@@ -67,8 +68,8 @@ public class ScheduleAdminService {
     }
 
     /**
-     * 清空全部执行日志（立即生效，不等保留期清理任务）。高频任务数天即可累积上万行，
-     * 界面提供一键清空；返回删除行数供提示。
+     * 清空全部执行日志（立即生效，不等保留期清理任务）。空跑不记后写入量已收敛，
+     * 但失败与有效执行仍会长期累积，界面提供一键清空；返回删除行数供提示。
      */
     public long clearRuns() {
         return scheduleRunLogMapper.delete(null);

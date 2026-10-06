@@ -8,11 +8,12 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 定时任务执行日志：{@link com.wenqu.ai.schedule.ScheduleCenter} 每次触发完成后落一行，
+ * 定时任务执行日志：{@link com.wenqu.ai.schedule.ScheduleCenter} 在「有信息量」的执行完成后落一行
+ * （失败 / 手动触发 / 有实质产出；高频扫描任务空跑不落行），
  * 供设置页「定时任务」面板查看任务运行历史（上次何时跑、跑了多久、成败原因）。
  * <p>
  * 写入约定：<b>只在任务体结束后落行</b>（一次性 insert，不先插 running 再更新——
- * 高频扫描任务（如解析队列 5s 一轮）下双写纯浪费，"执行中"状态由 ScheduleCenter
+ * 高频扫描任务（如解析队列 10s 一轮）下双写纯浪费，"执行中"状态由 ScheduleCenter
  * 内存快照表达）。保留期由 {@code schedule.runLogRetentionDays} 控制，超期由
  * 注册在调度中心自己的「任务执行日志清理」任务定期物理删除。
  *

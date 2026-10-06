@@ -187,9 +187,13 @@ public class ScheduledJobService {
 
     // ==================== 调度与执行 ====================
 
-    /** 节拍扫描：把到期的启用任务派发给线程池执行（不阻塞调度线程） */
-    public void tick() {
-        if (!configService.getBoolean("scheduled.enabled")) return;
+    /**
+     * 节拍扫描：把到期的启用任务派发给线程池执行（不阻塞调度线程）。
+     *
+     * @return 本轮到期处理的用户任务数（0=空跑——无到期任务或总开关关闭，调用方据此免落执行日志）
+     */
+    public int tick() {
+        if (!configService.getBoolean("scheduled.enabled")) return 0;
         LocalDateTime now = LocalDateTime.now();
         List<ScheduledJob> due = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
                 .eq(ScheduledJob::getEnabled, 1)
@@ -204,6 +208,7 @@ public class ScheduledJobService {
             jobMapper.updateById(job);
             dispatch(job, "scheduled");
         }
+        return due.size();
     }
 
     /** 手动立即执行（异步：执行可能持续几十秒，接口立即返回，状态看执行历史） */

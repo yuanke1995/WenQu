@@ -161,10 +161,16 @@ public class ParseQueueService {
 
     // ==================== 扫描 ====================
 
-    /** 扫描器主体（由 ScheduleCenter 定时调用）：回收租约 → 抢占 → 投池 */
-    public void scan() {
-        if (!scanning.compareAndSet(false, true)) return;   // 上一轮未结束跳过（防重叠）
-        syncConcurrency();                                   // 并发可热改（保持既有"保存即生效"）
+    /**
+     * 扫描器主体（由 ScheduleCenter 定时调用）：回收租约 → 抢占 → 投池。
+     *
+     * @return 本轮抢占投递的任务数（0=空跑，调用方据此免落执行日志）
+     * <p>扫描异常刻意上抛（此前就地吞掉只留 WARN 行）：交给 ScheduleCenter 落失败行 + 下轮节拍重试——
+     * 调度侧已改为"空跑不记"，就地吞掉会让 DB 故障在执行日志里毫无痕迹。
+     */
+    public int scan() {
+        if (!scanning.compareAndSet(false, true)) return 0;   // 上一轮未结束跳过（防重叠）
+        syncConcurrency();                                    // 并发可热改（保持既有"保存即生效"）
         try {
             reapTimeouts();
             int limit = Math.max(1, concurrency()) * 4 + SCAN_SLACK;
@@ -176,8 +182,7 @@ public class ParseQueueService {
                     submit(task);
                 }
             }
-        } catch (Exception e) {
-            log.warn("[PARSE-QUEUE] 扫描失败（下轮重试）: {}", e.getMessage());
+            return claimed;
         } finally {
             scanning.set(false);
         }

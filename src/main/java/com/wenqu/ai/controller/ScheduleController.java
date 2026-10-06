@@ -53,7 +53,8 @@ public class ScheduleController {
         return ResultJson.ok(scheduleCenter.triggerNow(name.trim()));
     }
 
-    @Operation(summary = "执行日志", description = "c_ai_schedule_run 分页（只在任务完成后落行）。筛选：taskName 任务名、success 1/0")
+    @Operation(summary = "执行日志", description = "c_ai_schedule_run 分页（只记有信息量的执行：失败/手动触发/有产出；"
+            + "解析队列扫描等高频任务空跑不落行）。筛选：taskName 任务名、success 1/0")
     @GetMapping("/runs")
     public ResultJson runs(@RequestParam(value = "taskName", required = false) String taskName,
                            @RequestParam(value = "success", required = false) Integer success,

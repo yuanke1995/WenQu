@@ -364,9 +364,12 @@ public class DocumentService {
      * 逐个重新抓网 + 同名替换重建（复用 {@link #importFromUrl} 全套入库链路：落盘/异步解析/向量化/索引），
      * 成功/失败均推进 last_refresh_at 与 next_refresh_at。由 {@link ScheduleCenter} 节拍调用；
      * 单实例下先推进 next_refresh_at 再执行，天然防重复触发；失败 fail-loud 不中断其他文档。
+     *
+     * @return 本轮实际处理的文档数（含刷新失败的——逐文档失败已单独告警，不使任务行变红；
+     *         0=空跑——无到期文档或总开关关闭，调用方据此免落执行日志）
      */
-    public void refreshDueWebSources() {
-        if (!configService.getBoolean("web.refreshEnabled")) return;
+    public int refreshDueWebSources() {
+        if (!configService.getBoolean("web.refreshEnabled")) return 0;
         LocalDateTime now = LocalDateTime.now();
         List<AiDocument> due = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
                 .eq(AiDocument::getFileType, "url")
@@ -375,10 +378,12 @@ public class DocumentService {
                 .le(AiDocument::getNextRefreshAt, now)
                 .eq(AiDocument::getDeleted, 0)
                 .last("limit " + WEB_REFRESH_SCAN_LIMIT));
+        int processed = 0;
         for (AiDocument doc : due) {
             if (!refreshingDocs.add(doc.getId())) {
                 continue; // 同文档上轮未结束跳过
             }
+            processed++;
             try {
                 log.info("[WEB-REFRESH] 开始刷新 doc={} url={}", doc.getId(), doc.getSourceUrl());
                 importFromUrl(doc.getSourceUrl(), doc.getDescription(), doc.getKbId());
@@ -401,6 +406,7 @@ public class DocumentService {
                 refreshingDocs.remove(doc.getId());
             }
         }
+        return processed;
     }
 
     /** 配置网页源自动刷新：开启时校验 cron（5段）并重算 next_refresh_at；关闭时清空 next_refresh_at。仅 file_type=url 有效 */

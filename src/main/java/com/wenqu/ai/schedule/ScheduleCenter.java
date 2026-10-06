@@ -46,8 +46,9 @@ import java.util.stream.Collectors;
  *   改配置（含 ≤0 暂停）即时生效无需重启，精度为一个节拍；
  * - 执行：任务体统一提交 ThreadPoolManager 线程池，慢任务不占用调度线程；
  *   上一轮未结束则本轮跳过（防重叠），失败只告警下轮重试；
- * - 可观测：每个任务带一句话说明与间隔配置键，运行统计（上次结果/耗时/下次预期）留在内存，
- *   每次执行完成后落一行 {@code c_ai_schedule_run}（设置页「定时任务」面板查看），并支持手动触发一次；
+ * - 可观测：每个任务带一句话说明与间隔配置键，运行统计（上次结果/耗时/下次预期）留在内存，并支持手动触发一次。
+ *   执行日志（{@code c_ai_schedule_run}，设置页「定时任务」面板查看）只记有信息量的执行——失败 /
+ *   手动触发 / 有实质产出；高频扫描任务空跑不落行（见 {@link #registerWork}），防心跳把日志淹掉；
  * - 放在 ApplicationReadyEvent：晚于 SchemaMigrator/所有 @PostConstruct，配置与表结构就绪。
  * 多副本：各副本独立调度，任务体需自身幂等（现有任务均满足）。
  *
@@ -72,6 +73,11 @@ public class ScheduleCenter {
     private static final long MIN_INTERVAL_MS = TICK_MS;
     /** 执行日志 error_msg 截断长度（与 c_ai_schedule_run.error_msg 列宽一致） */
     private static final int ERROR_MAX_LEN = 1000;
+    /**
+     * 任务体返回值哨兵：&lt;0 表示无「处理量」语义，每轮完成恒落执行日志
+     * （register 的 Runnable 任务体统一包装为该值；registerWork 返回负数同样按恒落处理，防误算漏记）。
+     */
+    private static final int ALWAYS_LOG = -1;
 
     private final List<PeriodicTask> tasks = new ArrayList<>();
     private final ConfigService configService;
@@ -132,8 +138,11 @@ public class ScheduleCenter {
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         // ==================== 周期任务注册处 ====================
-        // register 参数：名称 / 一句话说明 / 间隔配置键（null=内置节拍；键必须是 config-schema.json
-        // 里的 backendKey 才能在界面暂停）/ 间隔(ms)动态读取（≤0=暂停）/ 启动首轮 / 任务体
+        // register：任务体为 Runnable，每轮完成必落一行执行日志（低频任务——每次跑都有信息量）；
+        // registerWork：任务体返回本轮处理量（int），成功且处理量=0 且非手动触发时不落行
+        //   （高频扫描任务——空跑占其日志九成以上）；失败/手动触发/有产出照常落行。两者运行统计一致。
+        // 其余参数：名称 / 一句话说明 / 间隔配置键（null=内置节拍；键必须是 config-schema.json
+        // 里的 backendKey 才能在界面暂停）/ 间隔(ms)动态读取（≤0=暂停）/ 启动首轮。
 
         // 关键词索引精确对账：按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复漂移
         register("关键词索引精确对账", "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移",
@@ -193,7 +202,8 @@ public class ScheduleCenter {
 
         // 定时执行智能体：扫描到期的用户任务并派发（间隔 scheduled.scanIntervalMs，默认 30s；≤0 暂停）。
         // 任务体只做"扫描 + 投递到线程池"，实际执行在别的池线程里跑，所以不会被几十秒的长任务拖住。
-        register("定时智能体任务", "扫描到期的用户定时任务并派发执行（scheduled.enabled 总开关之下）",
+        // 返回本轮派发数——空跑（无到期任务/总开关关闭）不落执行日志。
+        registerWork("定时智能体任务", "扫描到期的用户定时任务并派发执行（scheduled.enabled 总开关之下）",
                 "scheduled.scanIntervalMs",
                 () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
                 () -> false,
@@ -201,7 +211,8 @@ public class ScheduleCenter {
 
         // 文档解析队列扫描：把 c_ai_parse_task 里到期的任务抢占后投给 worker 池执行（间隔 parse.queue.scanIntervalMs，默认 5s；≤0 暂停）。
         // 上传/重解析只往这张表登记一行，解析全靠这里的扫描器推动——批量上传不会因为"队列内存溢出/满"丢任务。
-        register("文档解析队列扫描", "把 c_ai_parse_task 里到期的解析任务抢占后投给 worker 池执行（上传/重解析全靠它推动）",
+        // 返回本轮抢占数：空跑（无到期任务）不落执行日志；扫描失败上抛落失败行（scan 内部不再吞异常）。
+        registerWork("文档解析队列扫描", "把 c_ai_parse_task 里到期的解析任务抢占后投给 worker 池执行（上传/重解析全靠它推动）",
                 "parse.queue.scanIntervalMs",
                 () -> configService.getInt("parse.queue.scanIntervalMs", 5_000),
                 () -> false,
@@ -209,7 +220,8 @@ public class ScheduleCenter {
 
         // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（间隔 web.refreshScanIntervalMs，默认 60s；≤0 暂停）。
         // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。
-        register("网页源定时刷新", "扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（web.refreshEnabled 总开关之下）",
+        // 返回本轮处理数（含刷失败的文档，逐文档失败不使任务行变红）：空跑（无到期文档）不落执行日志。
+        registerWork("网页源定时刷新", "扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（web.refreshEnabled 总开关之下）",
                 "web.refreshScanIntervalMs",
                 () -> configService.getInt("web.refreshScanIntervalMs", 60_000),
                 () -> false,
@@ -219,7 +231,8 @@ public class ScheduleCenter {
         // 只能按空闲时长回收，否则用过沙盒的会话会永久占着一个容器。
         // 阈值 sandbox.idleReleaseMinutes（0=不回收）、间隔 sandbox.cleanupIntervalMs（≤0=暂停）。
         // provider 不可达/未配置 token 时 releaseIdle 内部按失败计数并摘除缓存条目，不会拖垮节拍线程。
-        register("沙盒空闲回收", "回收空闲超过 sandbox.idleReleaseMinutes 的会话沙盒容器（0=不回收）",
+        // 返回实际回收数：无事可收不落执行日志。
+        registerWork("沙盒空闲回收", "回收空闲超过 sandbox.idleReleaseMinutes 的会话沙盒容器（0=不回收）",
                 "sandbox.cleanupIntervalMs",
                 () -> configService.getInt("sandbox.cleanupIntervalMs", ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS),
                 () -> false,
@@ -229,7 +242,8 @@ public class ScheduleCenter {
         // 间隔 workflow.approvalReapIntervalMs，默认 60s；≤0 = 暂停。
         // ⚠ 暂停代价：挂起不批的 run 永远停在 waiting_approval——不占执行线程（挂起时线程已释放），
         //   但运行记录不落终态、审批卡片持续等待，且清理任务显式排除该状态（不会被保留期回收）
-        register("工作流审批超时回收", "把挂起超过节点 timeoutSeconds 的人工审核 run 落 timeout 终态（⚠ 暂停后挂起的 run 将一直停在「待审核」不收口）",
+        // 返回回收数：无超时挂起不落执行日志。
+        registerWork("工作流审批超时回收", "把挂起超过节点 timeoutSeconds 的人工审核 run 落 timeout 终态（⚠ 暂停后挂起的 run 将一直停在「待审核」不收口）",
                 "workflow.approvalReapIntervalMs",
                 () -> configService.getInt("workflow.approvalReapIntervalMs", 60_000),
                 () -> false,
@@ -253,7 +267,8 @@ public class ScheduleCenter {
 
         // 工作流定时触发：扫描到期的启用定时工作流，派发已发布版本运行（间隔 workflow.scheduleScanIntervalMs，默认 30s；≤0 暂停）。
         // 与定时智能体任务同一范式：先推进 next_run_at 再异步派发，防同轮重复触发；只跑已发布版本，失败自动重试 1 次。
-        register("工作流定时触发", "扫描到期的定时工作流并派发已发布版本运行（定时只跑已发布版本）",
+        // 返回本轮派发数：空跑（无到期工作流）不落执行日志。
+        registerWork("工作流定时触发", "扫描到期的定时工作流并派发已发布版本运行（定时只跑已发布版本）",
                 "workflow.scheduleScanIntervalMs",
                 () -> configService.getInt("workflow.scheduleScanIntervalMs", 30_000),
                 () -> false,
@@ -268,7 +283,7 @@ public class ScheduleCenter {
                 () -> traceService.sampleDaily());
 
         // 任务执行日志清理：c_ai_schedule_run 按保留期物理删除（保留期 schedule.runLogRetentionDays，默认 7 天）。
-        // 高频扫描任务（解析队列 5s 一轮）每天可产生上万行日志，不清理会无限累积。
+        // 空跑不记已收敛高频任务的写入量，但失败与有效执行仍会长期累积，不清理会无限增长。
         register("任务执行日志清理", "物理删除超过保留期（schedule.runLogRetentionDays）的定时任务执行日志",
                 "schedule.runLogCleanupIntervalMs",
                 () -> configService.getInt("schedule.runLogCleanupIntervalMs", 86_400_000),
@@ -316,6 +331,17 @@ public class ScheduleCenter {
     }
 
     /**
+     * 注册「空跑不记」型周期任务（高频扫描类，如解析队列 10s 级扫描）：任务体返回本轮处理量，
+     * 成功且处理量为 0 且非手动触发时不落执行日志——这类任务空跑占日志九成以上，会把失败与
+     * 有效执行淹掉；失败、手动触发、有处理量照常落行。运行统计（内存）与 {@link #register} 一致。
+     * <p>任务体返回 0 = 本轮空跑（免记）；返回 &gt;0 = 处理量；返回负数同样恒落行（见 {@link #ALWAYS_LOG}）。
+     */
+    private void registerWork(String name, String desc, String configKey,
+                              IntSupplier intervalMs, BooleanSupplier runOnStartup, IntSupplier body) {
+        registerWork(name, desc, configKey, intervalMs, runOnStartup, body, null);
+    }
+
+    /**
      * 注册周期任务，{@code pauseRisk} 为暂停该任务的代价说明（null=无特别代价）。
      * <p>暂停本身只是「间隔写 0」，没有技术阻力；但个别任务停掉后会留下不易察觉的副作用
      * （如挂起的工作流永不落终态、Redis 断线期间配置变更静默丢失）。这类任务的注册处显式给出
@@ -328,6 +354,18 @@ public class ScheduleCenter {
     private void register(String name, String desc, String configKey,
                           IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
                           String pauseRisk) {
+        IntSupplier alwaysLog = () -> {
+            body.run();
+            return ALWAYS_LOG;
+        };
+        tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, alwaysLog, pauseRisk,
+                TASK_PARAMS.getOrDefault(name, List.of())));
+    }
+
+    /** {@link #registerWork} 的带暂停代价版本（pauseRisk 语义见同名参数处） */
+    private void registerWork(String name, String desc, String configKey,
+                              IntSupplier intervalMs, BooleanSupplier runOnStartup, IntSupplier body,
+                              String pauseRisk) {
         tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, body, pauseRisk,
                 TASK_PARAMS.getOrDefault(name, List.of())));
     }
@@ -442,15 +480,16 @@ public class ScheduleCenter {
         return Map.of("accepted", true);
     }
 
-    /** 任务体执行 + 运行统计 + 执行日志落库（调用方已持有 running=true） */
+    /** 任务体执行 + 运行统计 + 按策略落执行日志（空跑不记；调用方已持有 running=true） */
     private void runBody(PeriodicTask task) {
         long startMs = System.currentTimeMillis();
         long startNano = System.nanoTime();
         boolean success;
         String error = null;
+        int processed = ALWAYS_LOG;   // 任务体未及返回（抛异常）按恒落处理，失败必可见
         try {
             log.debug("[Schedule] 定时任务触发: {}", task.name);
-            task.body.run();
+            processed = task.body.getAsInt();
             success = true;
         } catch (Exception e) {
             success = false;
@@ -467,7 +506,12 @@ public class ScheduleCenter {
         task.lastError = error;
         (success ? task.successCount : task.failCount).incrementAndGet();
         // ---- 执行日志落库（只落完成态，一次 insert；失败不影响任务本身，仅告警）----
-        insertRunLog(task.name, task.lastTrigger, success, error, durationMs, startMs);
+        // 空跑不记：处理量=0 的成功自动轮（如解析队列扫描没抢到任务）不落行——10s 级任务空跑
+        // 日积上万行会把失败/有效执行淹掉；手动触发必落（用户点了要看反馈），失败必落（error 上方已判）。
+        boolean idleNoop = success && processed == 0 && !"manual".equals(task.lastTrigger);
+        if (!idleNoop) {
+            insertRunLog(task.name, task.lastTrigger, success, error, durationMs, startMs);
+        }
     }
 
     private void insertRunLog(String taskName, String trigger, boolean success, String error, long durationMs, long startMs) {
@@ -546,7 +590,8 @@ public class ScheduleCenter {
         final List<String> relatedKeys;
         final IntSupplier intervalMs;
         final BooleanSupplier runOnStartup;
-        final Runnable body;
+        /** 任务体：返回值=本轮处理量——0=空跑（成功且非手动的自动轮不落日志）；&lt;0=恒落（{@link #ALWAYS_LOG}），&gt;0=有产出 */
+        final IntSupplier body;
         final AtomicBoolean running = new AtomicBoolean(false);
         final AtomicLong successCount = new AtomicLong();
         final AtomicLong failCount = new AtomicLong();
@@ -558,7 +603,7 @@ public class ScheduleCenter {
         volatile String lastError;
 
         PeriodicTask(String name, String desc, String configKey,
-                     IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
+                     IntSupplier intervalMs, BooleanSupplier runOnStartup, IntSupplier body,
                      String pauseRisk, List<String> relatedKeys) {
             this.name = name;
             this.desc = desc;
