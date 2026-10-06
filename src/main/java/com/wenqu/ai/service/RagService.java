@@ -2005,6 +2005,18 @@ public class RagService {
     /** 终态记录（done 汇总 + 随消息持久化）保存的全文上限：前端工具卡片展开查看完整入参/输出 */
     private static final int TOOL_IO_MAX = 8 * 1024;
 
+    /**
+     * 哪些工具的 SSE 实时副本必须带完整入参/结果（不受 {@link #TOOL_IO_SSE_BRIEF} 截断）。
+     *
+     * <p>截断对这些工具不是「摘要」而是「破坏」：前端要 JSON.parse 出来才能渲染，
+     * 砍一刀后解析必然失败，于是卡片只剩半截。askUser 尤其致命——多问题的入参
+     * （questions 数组）动辄 600+ 字符，200 字截断后既丢问题、又把答案的 JSON
+     * 数组当纯文本原样打印，且**刷新后走8KB 全文又正常**，看起来像随机故障。
+     */
+    private static boolean needsFullToolIO(String name) {
+        return "askUser".equals(name);
+    }
+
     private static String truncBrief(String s, int max) {
         return s == null ? "" : s.substring(0, Math.min(max, s.length()));
     }
@@ -2271,10 +2283,11 @@ public class RagService {
         if (attempts > 1) {
             rec.put("attempts", attempts); // 自动重试后成功：前端显示「重试 N 次」
         }
-        String argsBrief = truncBrief(input, TOOL_IO_SSE_BRIEF);
+        int sseLimit = needsFullToolIO(name) ? TOOL_IO_MAX : TOOL_IO_SSE_BRIEF;
+        String argsBrief = truncBrief(input, sseLimit);
         rec.put("args", argsBrief);
         if (resultOrError != null) {
-            rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, TOOL_IO_SSE_BRIEF));
+            rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, sseLimit));
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
         // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
