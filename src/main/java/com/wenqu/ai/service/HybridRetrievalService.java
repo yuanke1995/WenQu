@@ -87,6 +87,8 @@ public class HybridRetrievalService {
      */
     public static final class RetrievalDiag {
         private boolean vectorFailed;
+        /** 多库检索中某库失败（其余库仍正常返回）——与 vectorFailed 互斥：后者是单库向量路整体失败 */
+        private boolean vectorPartialFailed;
         private boolean keywordFailed;   // Meili 不可用（探测失败/冷却/401）→ 本次降级 MySQL LIKE
         private boolean keywordBusy;     // 关键词降级检索繁忙/超时 → 本次跳过关键词路
         private boolean keywordFallback; // Meili 无命中回退 MySQL（仅调试面板展示，不扰用户）
@@ -96,6 +98,7 @@ public class HybridRetrievalService {
         private String aclPushdownError; // ACL 过滤条件下推失败（已退回事后过滤兜底，非越权但召回受损）
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
+        void vectorPartialFailed(String err) { this.vectorPartialFailed = true; if (this.lastError == null) this.lastError = err; }
         void keywordFailed() { this.keywordFailed = true; }
         void keywordBusy() { this.keywordBusy = true; }
         void keywordFallback() { this.keywordFallback = true; }
@@ -106,6 +109,7 @@ public class HybridRetrievalService {
         /** 清空本次诊断（改写回退/二次检索前调用：最终用于回答的那次检索的状态为准） */
         void reset() {
             this.vectorFailed = false;
+            this.vectorPartialFailed = false;
             this.keywordFailed = false;
             this.keywordBusy = false;
             this.keywordFallback = false;
@@ -115,6 +119,7 @@ public class HybridRetrievalService {
         }
 
         public boolean isVectorFailed() { return vectorFailed; }
+        public boolean isVectorPartialFailed() { return vectorPartialFailed; }
         public boolean isKeywordFailed() { return keywordFailed; }
         public boolean isKeywordBusy() { return keywordBusy; }
         public boolean isKeywordFallback() { return keywordFallback; }
@@ -518,7 +523,10 @@ public class HybridRetrievalService {
                             parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
                 }
             } catch (Exception e) {
-                log.warn("[FAIL-LOUD] 向量检索失败（单库，其余库继续）: {}", e.getMessage());
+                // 多库检索中单库失败：其余库继续返回，但必须把失败透传到 diag——否则用户侧降级提示被吞、
+                // 静默丢掉该库向量召回（单库整体失败走外层 vectorFailed，二者互斥）
+                if (diag != null) diag.vectorPartialFailed(e.getMessage());
+                log.warn("[FAIL-LOUD] 向量检索失败（多库检索中某库失败，其余库继续）: {}", e.getMessage());
             }
         }
         List<Document> out = new ArrayList<>(merged.values());
