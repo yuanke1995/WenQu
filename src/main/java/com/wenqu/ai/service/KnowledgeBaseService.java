@@ -40,6 +40,17 @@ public class KnowledgeBaseService {
     /** 个人默认知识库固定名称（问渠，与内置问渠智能体同品牌：智能体全局一个，默认库每人一个） */
     public static final String BUILTIN_NAME = "问渠";
 
+    /**
+     * 个人默认库「问渠」的固定描述（名称 / 图标 / 描述同为身份字段，对默认库不可编辑）。
+     * <p>也是新老环境的唯一文案源：旧环境里仍带着首版播种文案的默认库，触达时自动升级为本文案
+     * （见 {@link #LEGACY_DEFAULT_DESC}）；以后改文案只需改这里。
+     */
+    public static final String DEFAULT_DESC = "问渠默认知识库：未显式指定归属的文档自动归入本库。";
+
+    /** 首版播种描述：存量默认库等于它 = 从未被人改动过，触达即升级为 {@link #DEFAULT_DESC} */
+    private static final String LEGACY_DEFAULT_DESC =
+            "你的系统默认知识库：未指定归属的文档都归入本库；先绑定你自己的向量模型即可使用。";
+
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
     private final AgentMapper agentMapper;
@@ -190,7 +201,18 @@ public class KnowledgeBaseService {
             }
             upd.set(KnowledgeBase::getName, requested);
         }
-        if (body.containsKey("description")) upd.set(KnowledgeBase::getDescription, str(body.get("description")));
+        if (body.containsKey("description")) {
+            // 默认库（问渠）描述固定：与名称/图标同为身份字段（fail-loud；等值提交放行，旧前端整单保存不受影响）
+            String reqDesc = str(body.get("description"));
+            String curDesc = kb.getDescription();
+            boolean sameDesc = java.util.Objects.equals(
+                    reqDesc == null ? null : reqDesc.trim(),
+                    curDesc == null ? null : curDesc.trim());
+            if (kb.getIsDefault() != null && kb.getIsDefault() == 1 && !sameDesc) {
+                throw new com.wenqu.ai.common.BizException("默认知识库「" + kb.getName() + "」的描述不可修改");
+            }
+            upd.set(KnowledgeBase::getDescription, reqDesc);
+        }
         // 图标：emoji 原样存；空串归一为 null（= 默认展示）。
         // 品牌标为默认库专属：默认库恒为 wenqu（改其它值拒绝）；非默认库用 wenqu 也拒绝。
         // isDefault 不再是可写字段（每人一个、系统懒创建），body 带了也忽略——无「晋升为默认库」路径
@@ -482,7 +504,7 @@ public class KnowledgeBaseService {
             if (def == null) {
                 def = new KnowledgeBase();
                 def.setName(BUILTIN_NAME);
-                def.setDescription("你的系统默认知识库：未指定归属的文档都归入本库；先绑定你自己的向量模型即可使用。");
+                def.setDescription(DEFAULT_DESC);
                 def.setIsDefault(1);
                 // 默认库恒为问渠品牌标（与新建/编辑的强制口径一致）
                 def.setIcon(ICON_BRAND);
@@ -497,6 +519,14 @@ public class KnowledgeBaseService {
             } else if (def.getId() == null || def.getId().isBlank()) {
                 // 历史空主键行：ASSIGN_UUID 只补 null 不补 ''，空 id 会让编辑保存 404——触达即自愈
                 healEmptyDefaultId(def);
+            } else if (LEGACY_DEFAULT_DESC.equals(def.getDescription())) {
+                // 存量默认库描述仍是最初的播种文案（= 从未被改动过）：触达即升级为新文案——描述已锁死不可编辑，
+                // 不升级旧环境将永远停在旧文案；精确匹配旧文案才改，自定义过的分毫不动
+                def.setDescription(DEFAULT_DESC);
+                kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getId, def.getId())
+                        .set(KnowledgeBase::getDescription, DEFAULT_DESC));
+                log.info("[KB] 默认知识库描述已升级为最新默认文案: {}（{}）", BUILTIN_NAME, def.getId());
             }
             defaultIdByUid.put(owner, def.getId());
             return def.getId();

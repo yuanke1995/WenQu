@@ -3,19 +3,24 @@
            :width="640" :confirm-loading="saving"
            @update:open="v => emit('update:open', v)" @ok="save">
     <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }">
-      <!-- 官方内置库：仅检索/解析参数可维护（后端白名单同口径），其余由版本同步维护 -->
+      <!-- 官方内置库：仅检索/解析参数与向量模型可维护（后端白名单同口径），其余由版本同步维护 -->
       <div v-if="isBuiltin" class="kb-hint" style="margin:0 0 10px">
-        官方内置库：文档内容随版本自动同步，名称 / 图标 / 描述与向量绑定不可修改；
-        <b>可维护下面的检索与解析参数</b>（典型用途：绑定重排模型——不绑则没有精排，相关分门从重排门退化到融合分门，词面重叠的弱相关块更容易混进引用）。
+        官方内置库：文档内容随版本自动同步，名称 / 图标 / 描述不可修改；
+        <b>仅向量模型与检索/解析参数可维护</b>（典型用途：绑定重排模型——不绑则没有精排，相关分门从重排门退化到融合分门，词面重叠的弱相关块更容易混进引用）。
       </div>
-      <a-form-item label="名称" :required="!isBuiltin">
-        <a-input v-model:value="form.name" :disabled="isBuiltin" placeholder="如：操作手册库" />
+      <a-form-item label="名称" :required="!isBuiltin && !isDefaultKb">
+        <a-input v-model:value="form.name" :disabled="isBuiltin || isDefaultKb" placeholder="如：操作手册库" />
+        <div v-if="isDefaultKb" class="kb-hint" style="margin-top:4px">默认库名称固定，不可修改</div>
       </a-form-item>
       <a-form-item label="图标">
-        <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改；官方内置库图标同样随版本固定 -->
-        <div v-if="iconLocked || isBuiltin" class="kb-icon-locked">
+        <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改；官方内置库图标随版本同步固定 -->
+        <div v-if="isDefaultKb" class="kb-icon-locked">
           <KbIcon :kb="{ icon: 'wenqu', isDefault: 1 }" :size="26" />
-          <span class="kb-hint">{{ iconLockHint }}</span>
+          <span class="kb-hint">「{{ props.kb.name || '默认知识库' }}」为默认库，固定使用问渠品牌标，不可修改</span>
+        </div>
+        <div v-else-if="isBuiltin" class="kb-icon-locked">
+          <KbIcon :kb="props.kb" :size="26" />
+          <span class="kb-hint">官方内置库图标随版本自动同步，不可修改</span>
         </div>
         <template v-else>
           <div class="kb-icon-pick">
@@ -30,7 +35,8 @@
         </template>
       </a-form-item>
       <a-form-item label="描述">
-        <a-input v-model:value="form.description" :disabled="isBuiltin" placeholder="这个库放什么资料" />
+        <a-input v-model:value="form.description" :disabled="isBuiltin || isDefaultKb" placeholder="这个库放什么资料" />
+        <div v-if="isDefaultKb" class="kb-hint" style="margin-top:4px">默认库描述固定，不可修改</div>
       </a-form-item>
       <!-- 向量模型：官方内置库也**可改**（管理员级）。原先随「名称/描述」一起置灰，而后端
            同一批字段里又放开了检索参数——于是引用清单里「去修改」指过来，看到的却是一个
@@ -146,24 +152,24 @@
         </a-collapse-panel>
       </a-collapse>
 
-      <!-- 设默认库是全局动作（影响所有人的新建归属），仅管理员 -->
-      <a-form-item v-if="isAdmin" label="设为默认库" style="margin-top:12px">
-        <a-switch v-model:checked="form.isDefault" />
-        <span class="kb-hint" style="margin-left:8px">新建文档默认归属</span>
-      </a-form-item>
+      <!-- 无「设为默认库」开关：默认库是「未指定归属文档」的兜底（每人一个、系统懒创建、不可删）；
+           后端 isDefault 不可写（无晋升路径），UI 上传也全部显式带库——2026-10-06 评估后不提供换默认库入口 -->
 
-      <!-- P1 GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展 -->
-      <a-form-item label="GraphRAG 知识图谱" class="kb-item-wrap-label" style="margin-top:4px">
-        <a-switch v-model:checked="form.graphEnabled" />
+      <!-- P1 GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展；
+           官方内置库不显示——后端 builtin 白名单只收检索/解析参数与向量模型，提交会被整单拒绝 -->
+      <a-form-item v-if="!isBuiltin" label="知识图谱" style="margin-top:4px">
+        <div class="kb-switch-line">
+          <a-switch v-model:checked="form.graphEnabled" />
+        </div>
         <div class="kb-hint" style="margin-top:4px">
-          开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）；已有文档点列表页「构建图谱」回溯。
+          GraphRAG：开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）；已有文档点列表页「构建图谱」回溯。
         </div>
       </a-form-item>
-      <a-form-item v-if="form.graphEnabled" label="图谱抽取模型" class="kb-item-wrap-label">
+      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型">
         <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随库主默认聊天模型" />
         <div class="kb-hint" style="margin-top:4px">
-          本库抽三元组用的聊天模型（归你所有：谁建库用谁的模型，抽取消耗的 token 记在所选模型上）。
-          留空回落库主在个人设置里选的默认聊天模型；两者都没有 = 不抽取（开启时会被拦下）。
+          本库抽三元组用的聊天模型（抽取消耗的 token 记在所选模型上）。
+          留空则用库主在个人设置里选的默认聊天模型；两者都没有 = 不抽取（开启时会被拦下）。
         </div>
       </a-form-item>
     </a-form>
@@ -177,10 +183,9 @@ import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults, getKbPara
 import ModelSelect from './ModelSelect.vue'
 import KbIcon from './KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
-import { isAdminSync } from '../utils/auth'
 
 // 图标可选集（emoji 口径与智能体一致）：''=默认库图标；其余 emoji 原样存库、原样渲染。
-// 「问渠品牌标」不进选择集——它是默认库专属（编辑默认库时锁定态单独展示，见 iconLocked）
+// 「问渠品牌标」不进选择集——它是默认库专属（编辑默认库时锁定态单独展示，见 isDefaultKb）
 const ICON_OPTIONS = [
   { value: '', label: '默认图标' },
   { value: '📚', label: '资料' },
@@ -202,13 +207,12 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:open', 'saved'])
 
-const isAdmin = isAdminSync()
 const isEdit = computed(() => !!props.kb)
 const saving = ref(false)
 
 function blank () {
   return {
-    name: '', description: '', icon: '', embeddingRef: '', isDefault: false, graphEnabled: false, graphModelRef: '',
+    name: '', description: '', icon: '', embeddingRef: '', graphEnabled: false, graphModelRef: '',
     q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
@@ -236,7 +240,6 @@ function hydrateForm (row) {
   // 图标：未配时默认库按问渠品牌标预选（口径同智能体：内置默认 wenqu）
   f.icon = row?.icon || (row?.isDefault === 1 ? 'wenqu' : '')
   f.embeddingRef = row?.embeddingRef || ''
-  f.isDefault = row?.isDefault === 1
   f.graphEnabled = row?.graphEnabled === 1
   f.graphModelRef = row?.graphModelRef || ''
   let q = {}
@@ -288,16 +291,8 @@ const form = ref(blank())
 // 但检索/解析参数与**向量模型可改**（后端 KnowledgeBaseService.update 对内置库是这三个字段的白名单，
 // 前后端必须严格一致——多提交一个字段会被后端整单 fail-loud 拒绝）
 const isBuiltin = computed(() => props.kb?.builtin === 1)
-// 默认库图标锁定：恒为问渠品牌标（编辑中的默认库，或本次勾选了「设为默认库」）
-const iconLocked = computed(() => props.kb?.isDefault === 1 || form.value.isDefault)
-const iconLockHint = computed(() => props.kb?.isDefault === 1
-  ? `「${props.kb.name || '默认知识库'}」为默认库，固定使用问渠品牌标，不可修改`
-  : '设为默认库后固定使用问渠品牌标，保存后不可修改')
-// 勾选「设为默认库」即锁定为品牌标（取消勾选恢复可自选；默认库被降级时品牌标随身份失效）
-watch(() => form.value.isDefault, on => {
-  if (on) form.value.icon = 'wenqu'
-  else if (props.kb?.isDefault === 1) form.value.icon = ''
-})
+// 默认库（问渠，每人一个、系统懒创建）：图标恒为问渠品牌标、名称固定，表单只读展示（后端同样强制）
+const isDefaultKb = computed(() => props.kb?.isDefault === 1)
 const triOptions = [
   { value: 'true', label: '开' },
   { value: 'false', label: '关' }
@@ -475,7 +470,6 @@ const save = async () => {
       embeddingRef: form.value.embeddingRef,
       queryParams,
       parseParams,
-      isDefault: form.value.isDefault ? 1 : 0,
       graphEnabled: form.value.graphEnabled ? 1 : 0,
       graphModelRef: form.value.graphModelRef || ''
     }
@@ -519,8 +513,6 @@ const save = async () => {
 /* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */
 .kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; min-width: 0; }
 .kb-warn { color: var(--app-danger); }
-/* 长标签「GraphRAG 知识图谱」放不下标准 5/24 标签列：放开 nowrap 折成两行，
-   保持与表单其他行同一标签列右对齐（antd 标签默认 nowrap + 固定行高，需一并放开） */
-.kb-item-wrap-label :deep(.ant-form-item-label),
-.kb-item-wrap-label :deep(.ant-form-item-label > label) { white-space: normal; height: auto; }
+/* 开关行：裸放开关会贴行首，中心比标签文字高约 8px；撑到 32px 并居中 = 与输入框/标签文字同轴 */
+.kb-switch-line { display: flex; align-items: center; min-height: 32px; }
 </style>

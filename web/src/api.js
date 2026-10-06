@@ -462,9 +462,10 @@ export const listCredentials = () => request('/credential/list')
 export const createCredential = body => request('/credential', { method: 'POST', body: JSON.stringify(body) })
 export const updateCredential = (id, body) => request(`/credential/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteCredential = id => request(`/credential/${id}`, { method: 'DELETE' })
-/** 新建知识库：{name, description, queryParams, isDefault} */
+/** 新建知识库：{name(必填), embeddingRef(必填), description, icon, queryParams, parseParams, graphEnabled, graphModelRef}；
+ *  isDefault 由系统管理（默认库每人一个、系统懒创建），提交会被忽略 */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
-/** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局 */
+/** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局；isDefault 同上（会被忽略） */
 export const updateKnowledgeBase = (id, body) => request(`/kb/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 /** 删除知识库（默认库或库内仍有文档时后端会拒绝并返回原因） */
 export const deleteKnowledgeBase = id => request(`/kb/${id}`, { method: 'DELETE' })

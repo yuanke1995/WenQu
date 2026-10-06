@@ -1,5 +1,5 @@
 <template>
-  <div class="kb-page">
+  <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">知识库</h3>
       <span class="head-hint-plain">文档的容器：检索按库隔离，向量/检索/解析参数随库（留空继承全局模板）</span>
@@ -8,49 +8,51 @@
       </button>
     </div>
 
-    <a-spin :spinning="loading">
-      <div class="kb-cards">
-        <div v-for="kb in list" :key="kb.id" class="app-card kb-card" @click="openDocs(kb)">
-          <div class="kb-card-head">
-            <KbIcon :kb="kb" :size="22" />
-            <span class="kb-name">{{ kb.name }}</span>
-            <!-- 混合权限（库内文档分属不同可见范围）：同库内无权文档会在检索后剔除时占用召回名额，
-                 建议分库根治。默认不显示，鼠标悬停说明原因。 -->
-            <a-tooltip v-if="kb.mixedScope" title="库内文档分属不同可见范围：同库内无权限的文档仍会占用召回名额，可能导致其他人搜不到内容。建议拆成多个知识库。">
-              <a-tag color="orange" class="kb-mixed-tag"
-                     :style="(kb.isDefault === 1 || kb.builtin === 1) ? '' : 'margin-left:auto'">建议分库</a-tag>
-            </a-tooltip>
-            <a-tag v-if="kb.isDefault === 1" color="blue" :style="kb.mixedScope ? '' : 'margin-left:auto'">默认</a-tag>
-            <a-tag v-if="kb.builtin === 1" color="gold" :style="(kb.isDefault === 1 || kb.mixedScope) ? '' : 'margin-left:auto'">官方</a-tag>
-          </div>
-          <p class="kb-card-desc" :title="kb.description || ''">{{ kb.description || '暂无描述' }}</p>
-          <div class="kb-card-meta">
-            <span :class="{ 'kb-zero': !kb.docCount }">{{ kb.docCount }} 个文档</span>
-            <span class="kb-meta-sep">·</span>
-            <span v-if="kb.embeddingRef" :title="kb.embeddingRef">{{ modelRefInfo(kb.embeddingRef)?.displayName || '自定义向量模型' }}</span>
-            <span v-else class="kb-warn">未绑定向量模型</span>
-            <span class="kb-meta-sep">·</span>
-            <span v-if="kb.queryParams" class="kb-params" title="库级检索参数已覆盖全局">检索已自定义</span>
-            <span v-if="kb.parseParams" class="kb-params" title="库级解析参数已覆盖全局">解析已自定义</span>
-            <span v-if="!kb.queryParams && !kb.parseParams" class="kb-dim">继承全局参数</span>
-          </div>
-          <div class="kb-card-actions" @click.stop>
-            <!-- 官方内置库：文档内容随版本自动同步（后端拒绝改内容与删除），但检索/解析参数是运行时配置、
-                 同步不碰——管理员可编辑这两项（典型用途：给官方库绑定重排模型）。非管理员仍无任何管理入口 -->
-            <template v-if="isAdmin || (kb.createdBy === myUid && kb.builtin !== 1)">
-              <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
-              <template v-if="kb.builtin !== 1">
-                <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
-                <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
-                <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
+    <div class="app-page-body">
+      <a-spin :spinning="loading">
+        <div class="kb-cards">
+          <div v-for="kb in list" :key="kb.id" class="app-card kb-card" @click="openDocs(kb)">
+            <div class="kb-card-head">
+              <KbIcon :kb="kb" :size="22" />
+              <span class="kb-name">{{ kb.name }}</span>
+              <!-- 混合权限（库内文档分属不同可见范围）：同库内无权文档会在检索后剔除时占用召回名额，
+                   建议分库根治。默认不显示，鼠标悬停说明原因。 -->
+              <a-tooltip v-if="kb.mixedScope" title="库内文档分属不同可见范围：其他人可能搜不全这个库里的内容。建议把不同可见范围的文档拆成多个知识库。">
+                <a-tag color="orange" class="kb-mixed-tag"
+                       :style="(kb.isDefault === 1 || kb.builtin === 1) ? '' : 'margin-left:auto'">建议分库</a-tag>
+              </a-tooltip>
+              <a-tag v-if="kb.isDefault === 1" color="blue" :style="kb.mixedScope ? '' : 'margin-left:auto'">默认</a-tag>
+              <a-tag v-if="kb.builtin === 1" color="gold" :style="(kb.isDefault === 1 || kb.mixedScope) ? '' : 'margin-left:auto'">官方</a-tag>
+            </div>
+            <p class="kb-card-desc" :title="kb.description || ''">{{ kb.description || '暂无描述' }}</p>
+            <div class="kb-card-meta">
+              <span :class="{ 'kb-zero': !kb.docCount }">{{ kb.docCount }} 个文档</span>
+              <span class="kb-meta-sep">·</span>
+              <span v-if="kb.embeddingRef" :title="kb.embeddingRef">{{ modelRefInfo(kb.embeddingRef)?.displayName || '自定义向量模型' }}</span>
+              <span v-else class="kb-warn">未绑定向量模型</span>
+              <span class="kb-meta-sep">·</span>
+              <span v-if="kb.queryParams" class="kb-params" title="库级检索参数已覆盖全局">检索已自定义</span>
+              <span v-if="kb.parseParams" class="kb-params" title="库级解析参数已覆盖全局">解析已自定义</span>
+              <span v-if="!kb.queryParams && !kb.parseParams" class="kb-dim">继承全局参数</span>
+            </div>
+            <div class="kb-card-actions" @click.stop>
+              <!-- 官方内置库：文档内容随版本自动同步（后端拒绝改内容与删除），但检索/解析参数是运行时配置、
+                   同步不碰——管理员可编辑这两项（典型用途：给官方库绑定重排模型）。非管理员仍无任何管理入口 -->
+              <template v-if="isAdmin || (kb.createdBy === myUid && kb.builtin !== 1)">
+                <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
+                <template v-if="kb.builtin !== 1">
+                  <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
+                  <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
+                  <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
+                </template>
               </template>
-            </template>
-            <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
+              <button class="app-link-btn" style="margin-left:auto" @click="openDocs(kb)">文档管理 →</button>
+            </div>
           </div>
+          <div v-if="!loading && !list.length" class="kb-empty">还没有知识库，点右上角「新建知识库」创建</div>
         </div>
-        <div v-if="!loading && !list.length" class="kb-empty">还没有知识库，点右上角「新建知识库」创建</div>
-      </div>
-    </a-spin>
+      </a-spin>
+    </div>
 
     <!-- 知识库新建/编辑共用一个弹窗组件（文档列表页「知识库配置」也用它，避免两份表单走样） -->
     <KnowledgeBaseEditModal v-model:open="showEdit" :kb="editing" @saved="load" />
@@ -131,7 +133,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.kb-page { padding: 4px 2px; }
+/* 内边距/滚动由 .app-page-body 提供（与文档页/智能体/技能同一套骨架），此处只放网格与卡片细节 */
 .kb-cards {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px; align-items: stretch;
