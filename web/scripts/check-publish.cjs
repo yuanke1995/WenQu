@@ -102,16 +102,33 @@ const check = (ok, label, detail = '') => {
     const tabs = [...document.querySelectorAll('.pub-tabs .ant-tabs-tab')]
     const active = document.querySelector('.pub-tabs .ant-tabs-tab-active')
     const code = document.querySelector('.pub-code')
-    const btns = [...document.querySelectorAll('.pub-code-row .pub-icon-btn')]
-    // 「复 制」竖排是 flex 压缩的典型症状：按钮宽度小于文字宽度即被逐字折行
-    const squeezed = btns.filter(b => b.getBoundingClientRect().width < 30).length
+    const btns = [...document.querySelectorAll('.pub-code-act .pub-icon-btn')]
+    // 「复 制」竖排是 flex 压缩的典型症状：按钮被压到容不下内容时，中文逐字折行。
+    // 现在是方块图标按钮（内含单个图标字符、绝不折行），故判据从「宽度阈值」改成
+    // 「宽高都必须是方形且不小于设计尺寸」——压扁会表现为宽高不等。
+    const squeezed = btns.filter(b => {
+      const r = b.getBoundingClientRect()
+      return Math.abs(r.width - r.height) > 2 || r.width < 26
+    }).length
+    // 按钮必须浮在代码框**内部**（此前独占一列，把单行 URL 挤成两行）
+    const boxes = [...document.querySelectorAll('.pub-code-box')]
+    const insideAll = boxes.every(bx => {
+      const br = bx.getBoundingClientRect()
+      return [...bx.querySelectorAll('.pub-icon-btn')].every(btn => {
+        const r = btn.getBoundingClientRect()
+        return r.left >= br.left - 1 && r.right <= br.right + 1 && r.top >= br.top - 1
+      })
+    })
+    // 代码框占满整行：右边界贴近弹窗内容区（独占一列时右边会空出一列按钮的宽度）
+    const codeVsBox = boxes.length ? Math.round(boxes[0].getBoundingClientRect().width) : 0
+    const tabsW = (() => { const t = document.querySelector('.pub-tabs .ant-tabs-tabpane-active'); return t ? Math.round(t.getBoundingClientRect().width) : 0 })()
     return {
       hasStatus: !!status, statusOn: status ? status.classList.contains('on') : false,
       statusText: status ? (status.querySelector('.pub-status-t') || {}).textContent || '' : '',
       tabs: tabs.map(t => t.textContent.trim()),
       activeTab: active ? active.textContent.trim() : '',
       codeText: code ? code.textContent.trim() : '',
-      btnN: btns.length, squeezed,
+      btnN: btns.length, squeezed, insideAll, codeVsBox, tabsW,
       btnW: btns.length ? Math.round(btns[0].getBoundingClientRect().width) : 0,
       modalH: Math.round(mr.height), modalTop: Math.round(mr.top),
       avatarInTitle: !!document.querySelector('.pub-title svg'),
@@ -124,7 +141,9 @@ const check = (ok, label, detail = '') => {
   check(m.avatarInTitle, '弹窗标题带智能体头像（品牌标 SVG）')
   check(m.tabs.length === 3 && m.activeTab === '分享链接', '三种分发形态收进页签，默认停在分享链接', m.tabs.join('/'))
   check(m.codeText.includes('/s/tok-abc123'), '分享链接页签给出真实链接', m.codeText)
-  check(m.squeezed === 0 && m.btnW >= 32, '代码块右侧按钮未被挤成竖排单字', `btn=${m.btnN} squeezed=${m.squeezed} w=${m.btnW}`)
+  check(m.squeezed === 0 && m.btnW >= 28, '代码框内按钮未被挤成竖排单字', `btn=${m.btnN} squeezed=${m.squeezed} w=${m.btnW}`)
+  check(m.insideAll, '复制/打开按钮浮在代码框内部（不再独占一列）')
+  check(m.codeVsBox > 0 && m.tabsW - m.codeVsBox < 4, '代码框占满整行宽度（右侧不空出一列）', `code=${m.codeVsBox} pane=${m.tabsW}`)
   check(!m.warn, '已发布态不再展示「MCP 依赖公开分享」的警告条')
   check(m.revoke, '底部有独立的「撤销分享」')
   check(m.scrollW <= m.clientW + 1, '弹窗无横向溢出', `scrollW=${m.scrollW} clientW=${m.clientW}`)
@@ -180,13 +199,13 @@ const check = (ok, label, detail = '') => {
     const mr = el ? el.getBoundingClientRect() : { width: 0 }
     // 可见页签内取：antd Tabs 会销毁未激活页签的 DOM
     const pane = document.querySelector('.pub-tabs .ant-tabs-tabpane-active')
-    const btn = (pane || document).querySelector('.pub-code-row .pub-icon-btn')
+    const btn = (pane || document).querySelector('.pub-code-act .pub-icon-btn')
     return { w: Math.round(mr.width || 0), scrollW: de.scrollWidth, clientW: de.clientWidth,
-      pane: !!pane, rowN: document.querySelectorAll('.pub-code-row').length,
+      pane: !!pane, rowN: document.querySelectorAll('.pub-code-box').length,
       btnW: btn ? Math.round(btn.getBoundingClientRect().width) : 0 }
   })
   check(narrow.scrollW <= narrow.clientW + 1, '窄宽度（820）弹窗无横向溢出', `scrollW=${narrow.scrollW} clientW=${narrow.clientW}`)
-  check(narrow.btnW >= 32, '窄宽度下复制按钮仍是可点尺寸（不被压扁）', `w=${narrow.btnW} pane=${narrow.pane} rowN=${narrow.rowN}`)
+  check(narrow.btnW >= 28, '窄宽度下框内复制按钮仍是可点尺寸（不被压扁）', `w=${narrow.btnW} pane=${narrow.pane} boxN=${narrow.rowN}`)
 
   const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401|Failed to fetch/i.test(e))
   check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))

@@ -30,14 +30,12 @@
             <div class="sc-ai-mark"><AgentAvatar :agent="info" :size="26" /></div>
             <div class="sc-bubble ai">
               <div class="sc-md" v-html="renderMd(m.content, [])"></div>
-              <div v-if="m.stage" class="sc-stage">{{ m.stage }}</div>
+              <!-- 阶段提示只在这里出现一次。此前下面还挂了一条 sending && lastAiStage 的
+                   「正在检索资料…」独立气泡，与本处 m.stage 指向同一份状态 ⇒ 同一句话渲染两遍 -->
+              <div v-if="m.stage" class="sc-stage" :class="{ live: sending }">
+                <span v-if="sending" class="sc-pulse" />{{ m.stage }}
+              </div>
             </div>
-          </div>
-        </div>
-        <div v-if="sending && lastAiStage" class="sc-row ai">
-          <div class="sc-bubble-wrap ai">
-            <div class="sc-ai-mark"><AgentAvatar :agent="info" :size="26" /></div>
-            <div class="sc-stage live"><span class="sc-pulse" />{{ lastAiStage }}</div>
           </div>
         </div>
       </div>
@@ -68,7 +66,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
 import { SendOutlined, StopOutlined } from '@ant-design/icons-vue'
@@ -85,7 +83,6 @@ const info = ref({ name: '', description: '', icon: '', isBuiltin: false })
 const messages = ref([])
 const draft = ref('')
 const sending = ref(false)
-const lastAiStage = ref('')
 const listEl = ref(null)
 let sessionId = ''
 let controller = null
@@ -134,17 +131,20 @@ function send () {
   if (!text || sending.value) return
   draft.value = ''
   messages.value.push({ role: 'user', content: text })
-  const ai = { role: 'assistant', content: '', stage: '' }
+  // 必须用 reactive 包一条消息：直接 push 普通对象再回头改 `ai.stage` 是**绕过代理**的写入，
+  // 不触发重渲染（症状：阶段提示永远不出现，页面只显示空气泡 + 停止键）。
+  // 此前之所以"看起来正常"，是旁边恰好有个 ref（lastAiStage）在变更、顺带触发了一次重渲染，
+  // 把绕过代理写进去的值读了出来——删掉那个 ref 后这条路径就彻底失效了。
+  const ai = reactive({ role: 'assistant', content: '', stage: '' })
   messages.value.push(ai)
   sending.value = true
-  lastAiStage.value = ''
   scrollBottom()
   controller = new AbortController()
   sendShareMessage(token.value, { sessionId, visitorId: visitorId(), message: text }, {
     signal: controller.signal,
-    onStage: s => { ai.stage = s; lastAiStage.value = s; scrollBottom() },
+    onStage: s => { ai.stage = s; scrollBottom() },
     onToken: t => {
-      if (ai.stage) { ai.stage = ''; lastAiStage.value = '' }
+      if (ai.stage) ai.stage = ''   // 正文开始即撤掉阶段提示
       ai.content += t
       scrollBottom()
     },
@@ -236,10 +236,11 @@ function stop () {
   border-top-left-radius: 4px; min-width: 0;
 }
 .sc-stage { font-size: 12px; color: var(--app-text3); margin-top: 6px; }
+/* 进行中：气泡内的虚线小条 + 呼吸点（此前这条提示是一条独立气泡，与气泡内的 m.stage 重复渲染） */
 .sc-stage.live {
   display: inline-flex; align-items: center; gap: 7px;
-  background: var(--app-panel); border: 1px dashed var(--app-border-strong);
-  border-radius: 8px; padding: 6px 12px; color: var(--app-text2); margin-top: 0;
+  background: var(--app-panel-2); border: 1px dashed var(--app-border-strong);
+  border-radius: 8px; padding: 4px 10px; color: var(--app-text2);
 }
 .sc-pulse {
   width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none;

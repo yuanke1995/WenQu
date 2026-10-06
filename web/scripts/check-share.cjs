@@ -50,6 +50,27 @@ function serveStatic (page) {
     // 免登录页不走 /auth/me；分享接口按 token 给 mock
     if (u.pathname === '/api/ai/share/session/tok-1') return json(SHARED)
     if (u.pathname === '/api/ai/share/tok-2/info') return json(AGENT)
+    // 游客流式对话 mock（两个 token 各测一个场景）。
+    // 存在意义是**抓阶段提示重复渲染**：真实 SSE 会连发多条 stage，而模板曾同时渲染
+    // 「气泡内 m.stage」与「底部 sending && lastAiStage」两个同源节点 ⇒ 同一句话出现两次。
+    //   tok-3 = 只发 stage 不发 token/done：响应体结束后前端 pump() 停在 done 分支，
+    //           sending 仍是 true ⇒ 页面冻结在「进行中」，正好采样重复渲染。
+    //   tok-2 = 完整流：验证结束后阶段提示已撤掉、行数不重复。
+    if (u.pathname === '/api/ai/share/tok-3/chat' || u.pathname === '/api/ai/share/tok-2/chat') {
+      const tok3 = u.pathname.includes('tok-3')
+      const frames = [
+        'data: ' + JSON.stringify({ type: 'stage', content: '正在检索资料…' }) + '\n\n',
+        'data: ' + JSON.stringify({ type: 'stage', content: '正在检索资料…' }) + '\n\n'
+      ]
+      if (!tok3) frames.push(
+        'data: ' + JSON.stringify({ type: 'token', content: '根据文档，' }) + '\n\n',
+        'data: ' + JSON.stringify({ type: 'token', content: '答案是 5。' }) + '\n\n',
+        'data: ' + JSON.stringify({ type: 'done', sessionId: 's-share-1' }) + '\n\n')
+      return route.fulfill({ status: 200, contentType: 'text/event-stream',
+        headers: { 'access-control-allow-origin': '*', 'cache-control': 'no-cache' },
+        body: frames.join('') })
+    }
+    if (u.pathname === '/api/ai/share/tok-3/info') return json(AGENT)
     if (u.host !== 'share.local') return route.abort()
     let p = decodeURIComponent(u.pathname)
     let f = path.join(DIST_DIR, p)
@@ -147,6 +168,44 @@ const check = (ok, label, detail = '') => {
   check(sc.sendSize >= 44, '发送键触摸热区 ≥44px', `w=${sc.sendSize}`)
   check(sc.vhH >= 800 && sc.vhH <= 916, '满高容器消费 --app-vh（键盘弹起收缩的前提）', `h=${sc.vhH}`)
   check(sc.scrollW <= sc.clientW + 1, '智能体分享页无横向溢出', `scrollW=${sc.scrollW} clientW=${sc.clientW}`)
+
+  // ---- 真发一条消息：阶段提示必须只出现一次 ----
+  // 2026-10 用户截图报「正在检索资料…」出现两次。根因是模板同时渲染了两处同源状态：
+  // 气泡内的 m.stage 与底部一条 sending && lastAiStage 的独立气泡。
+  // 这里让 SSE 连发两次相同 stage（真实链路就是会重复推同一条阶段），
+  // 再断言全页 .sc-stage 只有 1 个。
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.fill('.sc-textarea', '你好')
+  await page.click('.sc-send')
+  await page.waitForTimeout(1500)
+  const streamed = await page.evaluate(() => ({
+    // 正文已开始（token 已到）⇒ 阶段提示应已撤掉；若有残留说明 stage 没被清
+    stageN: document.querySelectorAll('.sc-stage').length,
+    body: (document.querySelector('.sc-bubble.ai') || {}).textContent || '',
+    bubbles: document.querySelectorAll('.sc-row').length
+  }))
+  check(streamed.body.includes('答案是 5'), '分享页 SSE 正文正常渲染（stage→token→done 全链路）', streamed.body.slice(0, 40))
+  check(streamed.stageN === 0, '正文开始后阶段提示已撤掉（不与正文并存）', `stageN=${streamed.stageN}`)
+  check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的阶段气泡）', `rows=${streamed.bubbles}`)
+
+  // 进行中（只收到 stage、还没正文）：阶段提示**全页只能有一条**。
+  // tok-3 的 mock 只发 stage 帧，响应体结束后前端 pump() 走 done 分支只 settle 不改 sending
+  // ⇒ 页面稳定停在「进行中」，可重复采样，不怕时序抖动。
+  await page.goto(ORIGIN + '/s/tok-3', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.fill('.sc-textarea', '你好')
+  await page.click('.sc-send')
+  await page.waitForTimeout(1600)
+  const during = await page.evaluate(() => ({
+    stageN: document.querySelectorAll('.sc-stage').length,
+    stageText: [...document.querySelectorAll('.sc-stage')].map(e => e.textContent.trim()),
+    rows: document.querySelectorAll('.sc-row').length,
+    sending: !!document.querySelector('.sc-send.stop')
+  }))
+  check(during.sending, '流未结束时发送键处于「停止」态（确在生成中）')
+  check(during.stageN === 1, '进行中：阶段提示全页只有 1 条（不重复渲染）', `stageN=${during.stageN} text=${during.stageText.join(' / ')}`)
+  check(during.rows === 2, '进行中：一轮问答仍只渲染 2 条（无多余的阶段气泡）', `rows=${during.rows}`)
 
   // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
   const dpage = await ctx.newPage()

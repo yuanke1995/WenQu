@@ -417,19 +417,21 @@
         <div class="pub-block-h">分发方式</div>
         <a-tabs v-model:activeKey="pubTab" size="small" class="pub-tabs">
           <a-tab-pane key="link" tab="分享链接">
-            <div class="pub-code-row">
+            <div class="pub-code-box">
               <code class="pub-code">{{ shareUrl }}</code>
-              <button class="pub-icon-btn" title="复制链接" aria-label="复制链接"
-                      @click="copyText(shareUrl, '链接已复制')"><copy-outlined /></button>
-              <a :href="shareUrl" target="_blank" rel="noopener" class="pub-icon-btn" title="在新标签打开" aria-label="打开链接">
-                <export-outlined />
-              </a>
+              <!-- 按钮浮在代码框内右上角：此前独占一列，把本就单行的 URL 挤成两行 -->
+              <div class="pub-code-act">
+                <a :href="shareUrl" target="_blank" rel="noopener" class="pub-icon-btn" title="在新标签打开" aria-label="打开链接">
+                  <export-outlined />
+                </a>
+                <button class="pub-icon-btn" title="复制链接" aria-label="复制链接"
+                        @click="copyText(shareUrl, '链接已复制')"><copy-outlined /></button>
+              </div>
             </div>
             <div class="pub-hint">发给任何人即可免登录对话。游客检索知识库按你的可见范围执行。</div>
           </a-tab-pane>
 
           <a-tab-pane key="iframe" tab="嵌入网页">
-            <div class="pub-sub-label">尺寸</div>
             <div class="pub-size-row">
               <label class="pub-size">
                 <span>宽</span>
@@ -439,12 +441,14 @@
                 <span>高</span>
                 <a-input-number v-model:value="pubFrameH" :min="360" :max="1000" :step="20" size="small" />
               </label>
-              <span class="pub-hint inline">改尺寸会同步进下面的代码，复制走即可</span>
+              <span class="pub-size-hint">改尺寸会同步进下面的代码，复制走即可</span>
             </div>
-            <div class="pub-code-row">
+            <div class="pub-code-box">
               <pre class="pub-code block">{{ iframeSnippet }}</pre>
-              <button class="pub-icon-btn" title="复制嵌入代码" aria-label="复制嵌入代码"
-                      @click="copyText(iframeSnippet, '嵌入代码已复制')"><copy-outlined /></button>
+              <div class="pub-code-act">
+                <button class="pub-icon-btn" title="复制嵌入代码" aria-label="复制嵌入代码"
+                        @click="copyText(iframeSnippet, '嵌入代码已复制')"><copy-outlined /></button>
+              </div>
             </div>
             <div class="pub-hint">粘贴到任意网页。游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露。</div>
           </a-tab-pane>
@@ -452,16 +456,20 @@
           <a-tab-pane key="mcp" tab="MCP 端点">
             <template v-if="pubMcpEnabled">
               <div class="pub-sub-label">端点地址</div>
-              <div class="pub-code-row">
+              <div class="pub-code-box">
                 <code class="pub-code">{{ mcpUrl }}</code>
-                <button class="pub-icon-btn" title="复制地址" aria-label="复制 MCP 地址"
-                        @click="copyText(mcpUrl, 'MCP 地址已复制')"><copy-outlined /></button>
+                <div class="pub-code-act">
+                  <button class="pub-icon-btn" title="复制地址" aria-label="复制 MCP 地址"
+                          @click="copyText(mcpUrl, 'MCP 地址已复制')"><copy-outlined /></button>
+                </div>
               </div>
               <div class="pub-sub-label">mcp.json（Cursor / Claude Desktop）</div>
-              <div class="pub-code-row">
+              <div class="pub-code-box">
                 <pre class="pub-code block">{{ mcpJson }}</pre>
-                <button class="pub-icon-btn" title="复制 mcp.json" aria-label="复制 mcp.json"
-                        @click="copyText(mcpJson, 'mcp.json 已复制')"><copy-outlined /></button>
+                <div class="pub-code-act">
+                  <button class="pub-icon-btn" title="复制 mcp.json" aria-label="复制 mcp.json"
+                          @click="copyText(mcpJson, 'mcp.json 已复制')"><copy-outlined /></button>
+                </div>
               </div>
               <div class="pub-hint">
                 粘贴到 Claude Desktop 的 Integrations 或项目根目录 .cursor/mcp.json。
@@ -1614,25 +1622,33 @@ onMounted(async () => { })
 .pub-sub-label { font-size: 12px; color: var(--app-text2); margin: 10px 0 5px; }
 .pub-sub-label:first-child { margin-top: 0; }
 /* iframe 尺寸：改完实时反映进代码，用户不必复制出去手改 style */
-.pub-size-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pub-size-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .pub-size { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); }
 .pub-size :deep(.ant-input-number) { width: 88px; }
-.pub-hint.inline { margin-top: 0; }
-/* 代码块：等宽 + 可换行（URL/JSON 不再被输入框横向裁掉），右侧按钮固定不参与压缩 */
-.pub-code-row { display: flex; gap: 8px; align-items: stretch; }
+.pub-size-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+/* 代码框：占满整行，复制/打开按钮**浮在框内**右上角。
+   此前按钮与代码框并排（flex 两列），链接这种单行内容被挤到两行、按钮还拉成一条竖条。 */
+.pub-code-box { position: relative; }
 .pub-code {
-  flex: 1; min-width: 0;
   display: block; padding: 8px 10px; border-radius: var(--app-radius-sm);
   background: var(--app-code-bg); border: 1px solid var(--app-border);
   font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.6;
   color: var(--app-text2); word-break: break-all; white-space: pre-wrap;
+  /* 右上角给悬浮按钮腾出位置：否则长链接会绕到按钮底下被遮住 */
+  padding-right: 76px;
 }
 .pub-code.block { white-space: pre-wrap; }
+/* 悬浮动作区：贴框内右上角，默认半透明，hover 显形 —— 不占布局宽度 */
+.pub-code-act {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; gap: 4px; opacity: .55; transition: opacity .15s;
+}
+.pub-code-box:hover .pub-code-act, .pub-code-act:focus-within { opacity: 1; }
 .pub-icon-btn {
-  flex: none; align-self: stretch; width: 34px;
+  width: 28px; height: 28px;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
-  background: var(--app-panel); color: var(--app-text2); cursor: pointer; font-size: 14px;
+  border: 1px solid var(--app-border); border-radius: 6px;
+  background: var(--app-panel); color: var(--app-text2); cursor: pointer; font-size: 13px;
   transition: color .15s, border-color .15s, background .15s;
 }
 .pub-icon-btn:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
