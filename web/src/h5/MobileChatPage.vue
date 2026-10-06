@@ -59,6 +59,30 @@
       </div>
     </div>
 
+    <!-- 智能体提问恢复横幅：点开 tool.ask 通知直达会话时，按 askId 重建提问卡（与审批恢复同构）。
+         PENDING 可点选/输入作答；已终态只展示状态（已回答/超时按推荐项默认执行） -->
+    <div v-if="recAsk" class="m-rec">
+      <div class="m-rec-title"><question-circle-outlined /> 智能体提问</div>
+      <div v-if="recAskView.question" class="m-ask-q">{{ recAskView.question }}</div>
+      <div v-if="recAsk.status === 'PENDING' && recAskView.options && recAskView.options.length" class="m-ask-opts">
+        <button v-for="(op, oi) in recAskView.options" :key="oi" class="m-rec-btn ask-opt" type="button"
+                :disabled="recAskBusy" @click="resolveAskRecovery(op)">
+          <span v-if="oi === 0" class="m-ask-rec">推荐</span>{{ op }}
+        </button>
+      </div>
+      <div v-if="recAsk.status === 'PENDING'" class="m-ask-custom">
+        <input v-model="recAskCustom" class="m-ask-input" :maxlength="2000"
+               placeholder="或输入你自己的答案…" @keydown.enter="resolveAskRecovery(recAskCustom)" />
+        <button class="m-rec-btn primary" type="button" :disabled="recAskBusy || !recAskCustom.trim()"
+                @click="resolveAskRecovery(recAskCustom)">提交</button>
+      </div>
+      <div class="m-rec-foot">
+        <span class="m-rec-status" :class="'rec-' + recAskStatusClass">{{ recAskStatusText }}</span>
+        <span v-if="recAsk.status !== 'PENDING' && recAskView.answer" class="m-ask-answer">{{ recAskView.answer }}</span>
+        <button class="m-rec-btn ghost" type="button" @click="dismissAskRecovery">关闭</button>
+      </div>
+    </div>
+
     <main ref="box" class="m-list" @scroll.passive="onScroll">
       <!-- 空态：品牌 + 示例问题（点即发）。
            门控与 PC 欢迎区同一条：聊天/默认模型未就绪时换成配置引导——没有模型时点示例
@@ -89,6 +113,7 @@
         @edit="startEdit"
         @feedback="submitFeedback"
         @approve="resolveApproval"
+        @answer-ask="t => answerAsk(m, t)"
         @switch-version="switchBranch"
         @ask="ask"
         @copy="copyAnswer"
@@ -239,12 +264,13 @@ import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
-  BellOutlined, ExclamationCircleOutlined
+  BellOutlined, ExclamationCircleOutlined, QuestionCircleOutlined
 } from '@ant-design/icons-vue'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useNotifications } from '../chat/useNotifications'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
+import { useAskRecovery } from '../chat/useAskRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, resolveImg, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
@@ -316,6 +342,12 @@ const notifUnread = notif.unreadCount
 const { approval: recApproval, busy: recBusy, statusText: recStatusText, statusClass: recStatusClass,
         resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
+// ==================== 智能体提问恢复（通知 → 会话） ====================
+// 与 PC 壳同构（chat/useAskRecovery.js）：?ask=<id> 到达时重建提问卡，PENDING 可点选/输入作答
+const { ask: recAsk, busy: recAskBusy, statusText: recAskStatusText, statusClass: recAskStatusClass,
+        view: recAskView, resolve: resolveAskRecovery, dismiss: dismissAskRecovery } = useAskRecovery()
+const recAskCustom = ref('')   // 恢复横幅的自定义答案输入
+
 // ==================== 引擎（与 PC 同一份） ====================
 // 刻意不传 focusInput：移动端挂载即弹软键盘是反模式（PC 传它是为了键盘用户开箱可打）。
 const engine = useChatEngine({
@@ -330,7 +362,7 @@ provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
-  resolveApproval, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
+  resolveApproval, answerAsk, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
   // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
@@ -624,6 +656,15 @@ onUnmounted(() => {
 .m-rec-status.rec-pending { color: var(--app-warn-text); }
 .m-rec-status.rec-ok { color: var(--app-ok); }
 .m-rec-status.rec-err { color: var(--app-danger); }
+/* 提问恢复横幅（复用 m-rec 容器）的问答行 */
+.m-ask-q { font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+.m-ask-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.m-ask-opts .m-rec-btn { text-align: left; }
+.m-ask-rec { flex: none; font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: var(--app-ok-weak); color: var(--app-ok); margin-right: 6px; }
+.m-ask-custom { display: flex; align-items: center; gap: 8px; }
+.m-ask-input { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--app-border); border-radius: 8px; padding: 0 10px; font-size: 13px; background: var(--app-panel); color: var(--app-text); }
+.m-ask-input:disabled { opacity: 0.6; }
+.m-ask-answer { font-size: 12px; font-weight: 600; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
 .m-rec-btn {
   min-height: 36px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 9px;
   background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;

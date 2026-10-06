@@ -2512,8 +2512,8 @@ public class RagService {
                 // 工具上下文：把当前会话 ID 与用户 ID 注入，供产物交付、沙盒等工具定位会话与归属。
                 // userId 必须随 toolContext 透传——工具回调跑在 Spring AI 响应式 I/O 线程上，
                 // 读 RequestUser.uid()（ThreadLocal）跨线程失效会回落成 anonymous，导致沙盒建到 shared/anonymous。
-                .toolContext(java.util.Map.of(PresentArtifactTool.CTX_SESSION_ID, st.sessionId,
-                        PresentArtifactTool.CTX_USER_ID, st.userId))
+                // 另注入 askUser 执行器（闭包持有本轮会话态 st）：提问卡 SSE、阻塞等待、超时默认都依赖它。
+                .toolContext(toolContext(st))
                 .stream()
                 // 用 chatResponse 而非 content：流式中顺便捕获网关返回的真实 token usage（部分兼容网关
                 // 在末块 metadata.usage 里给出 completion_tokens；拿不到则回落 TokenCounter 估算）。
@@ -3110,6 +3110,8 @@ public class RagService {
         volatile java.util.Set<String> mcpToolNames = java.util.Set.of();
         /** 本轮已注册的 MCP 引用条数（上限 tool.mcpCiteMaxRefs，防引用面板被单轮刷屏） */
         final java.util.concurrent.atomic.AtomicInteger mcpCiteCount = new java.util.concurrent.atomic.AtomicInteger();
+        /** 本轮 askUser 已提问次数（上限 MAX_ASKS_PER_TURN）：多轮澄清合法，刷屏循环不合法 */
+        final java.util.concurrent.atomic.AtomicInteger askCount = new java.util.concurrent.atomic.AtomicInteger();
         /** 工具执行审批模式（本轮智能体的 toolApprovalMode；null=auto） */
         volatile String toolApprovalMode;
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
@@ -5111,6 +5113,177 @@ public class RagService {
 
     private static final java.util.concurrent.ConcurrentHashMap<String, PendingApproval> PENDING_APPROVALS =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** askUser 挂起项：askId → 等待用户作答（内存态；刷新页面/进程重启即失效，超时按推荐项默认执行） */
+    private record PendingAsk(String sessionId, String userId,
+                              java.util.concurrent.CompletableFuture<String> future) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, PendingAsk> PENDING_ASKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** askUser 单轮提问上限：防模型把「一问一答」变成刷屏循环；正常澄清 1~2 问足够 */
+    private static final int MAX_ASKS_PER_TURN = 3;
+
+    /**
+     * askUser 工具执行体（BuiltinTools.askUser 经 ToolContext 注入调用）：向用户发出结构化提问并
+     * 阻塞等待答案，与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 审计 + SSE 提问卡
+     * + 站内通知旁路）。返回值直接作为工具结果回给模型：用户所选/输入的答案文本，或带括号的
+     * 不可用/超限提示。**超时按推荐项（options 第一项）默认执行**——推荐项由模型放第一位、
+     * 前端标注「推荐」；答案附「超时默认」说明，避免模型把默认决策说成用户亲选。
+     */
+    private String doAskUser(AnswerStreamState st, String question, java.util.List<String> options) {
+        if (st.guestMode) {
+            return "（游客会话不支持结构化提问：请改为在回答正文中直接列出候选选项，请用户回复序号或自行描述。）";
+        }
+        if (st.askCount.incrementAndGet() > MAX_ASKS_PER_TURN) {
+            return "（本轮提问次数已达上限 " + MAX_ASKS_PER_TURN + " 次：请基于已有信息直接作答，不要再提问。）";
+        }
+        String q = question == null ? "" : question.trim();
+        if (q.isEmpty()) {
+            return "（提问内容为空，工具未执行。请给出要问用户的问题后重试。）";
+        }
+        if (q.length() > 500) q = q.substring(0, 500);
+        // 选项归一：去空白/去空/去重（保序），合法区间 2~6 个；单项超长截断
+        java.util.List<String> opts = new java.util.ArrayList<>();
+        if (options != null) {
+            for (String o : options) {
+                if (o == null) continue;
+                String t = o.trim();
+                if (t.isEmpty() || opts.contains(t)) continue;
+                opts.add(t.length() > 200 ? t.substring(0, 200) : t);
+            }
+        }
+        if (opts.size() < 2 || opts.size() > 6) {
+            return "（候选选项须为 2~6 个，工具未执行。请调整后重试，或直接在回答正文中列出选项提问。）";
+        }
+        long timeout = approvalTimeoutMs();
+        String askId = java.util.UUID.randomUUID().toString();
+        java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
+        // 落库（复用 c_ai_tool_approval：tool_name=askUser，question+options 存 request_args，答案存 answer）
+        try {
+            com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
+            rec.setId(askId);
+            rec.setSessionId(st.sessionId);
+            rec.setUserId(st.userId);
+            rec.setToolName("askUser");
+            rec.setStatus("PENDING");
+            Map<String, Object> args = new LinkedHashMap<>();
+            args.put("question", q);
+            args.put("options", opts);
+            String argsJson = JSON.toJSONString(args);
+            rec.setRequestArgs(argsJson.length() > 2000 ? argsJson.substring(0, 2000) : argsJson);
+            rec.setCreatedAt(java.time.LocalDateTime.now());
+            toolApprovalMapper.insert(rec);
+        } catch (Exception e) {
+            log.warn("[ASK] 提问记录落库失败（不阻塞提问流程）: {}", e.getMessage());
+        }
+        PENDING_ASKS.put(askId, new PendingAsk(st.sessionId, st.userId, future));
+        // 提问待答站内通知（旁路）：SSE 只能触达正开着会话页的人，人不在页面时铃铛是唯一可感知面。
+        // 口径与工具审批一致：去重键防刷屏，refSub=askId 供通知深链直达可答位置。
+        notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
+                "智能体向你提问", q,
+                "session", st.sessionId, "ask:" + askId, askId);
+        try {
+            Map<String, Object> req = new LinkedHashMap<>();
+            req.put("askId", askId);
+            req.put("question", q);
+            req.put("options", opts);
+            req.put("timeoutMs", timeout);
+            sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId);
+            log.info("[ASK] 等待用户作答: askId={} session={}", askId, st.sessionId);
+            String answer;
+            try {
+                answer = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                String recommended = opts.get(0);
+                markAskResolved(askId, "TIMEOUT", recommended, st.userId);
+                log.info("[ASK] 提问超时，按推荐项默认执行: askId={} session={}", askId, st.sessionId);
+                answer = recommended + "\n（用户超时未回答，系统已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+            } catch (java.util.concurrent.ExecutionException ee) {
+                // future 只会被正常 complete（resolveAsk），异常兜底按中止处理
+                markAskResolved(askId, "TIMEOUT", null, st.userId);
+                answer = "（用户中止了本轮回答：请基于已有信息直接作答，不要再次提问。）";
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                markAskResolved(askId, "TIMEOUT", null, st.userId);
+                answer = "（本轮问答已被中止：请基于已有信息直接作答，不要再次提问。）";
+            }
+            return answer;
+        } finally {
+            PENDING_ASKS.remove(askId);
+        }
+    }
+
+    /**
+     * 用户回答智能体提问：仅发起该轮问答的用户本人可答（uid 比对，内存态与 DB 双重校验，
+     * 与工具审批同口径）。内存态丢失（刷新页面/进程重启）时仍更新 DB 记录（幂等），但无法唤醒
+     * 已挂起的工具线程，该轮将按超时推荐项收尾。
+     */
+    public boolean resolveAsk(String askId, String answer, String uid) {
+        if (askId == null || askId.isBlank()) return false;
+        String a = answer == null ? "" : answer.trim();
+        if (a.isEmpty()) return false;
+        if (a.length() > 2000) a = a.substring(0, 2000);
+        boolean dbOk = markAskResolved(askId, "APPROVED", a, uid);
+        PendingAsk p = PENDING_ASKS.get(askId);
+        if (p == null) return dbOk;
+        if (uid == null || !uid.equals(p.userId())) {
+            log.warn("[ASK] 答题人非本轮用户，拒绝: askId={} by={}", askId, uid);
+            return false;
+        }
+        return p.future().complete(a);
+    }
+
+    /**
+     * 从通知恢复提问卡：按 id 取提问记录（仅本人可查；不存在/非本人返回 null）。
+     * 用于用户点开 tool.ask 通知后在会话内重建提问卡——刷新丢失的 SSE 卡据此补回。
+     */
+    public com.wenqu.ai.model.ToolApproval getAsk(String askId, String uid) {
+        if (askId == null || askId.isBlank()) return null;
+        try {
+            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
+            if (rec == null || !"askUser".equals(rec.getToolName())) return null;
+            if (rec.getUserId() == null || !rec.getUserId().equals(uid)) return null;
+            return rec;
+        } catch (Exception e) {
+            log.warn("[ASK] 恢复提问查询失败 askId={}: {}", askId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 更新提问记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝；answer 可空）。best-effort 不抛 */
+    private boolean markAskResolved(String askId, String status, String answer, String uid) {
+        try {
+            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
+            if (rec == null) return false;
+            if (uid != null && !uid.equals(rec.getUserId())) {
+                log.warn("[ASK] 答题人非本轮用户（DB），拒绝: askId={} by={}", askId, uid);
+                return false;
+            }
+            if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
+            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
+                    .eq(com.wenqu.ai.model.ToolApproval::getId, askId)
+                    .set(com.wenqu.ai.model.ToolApproval::getStatus, status)
+                    .set(com.wenqu.ai.model.ToolApproval::getAnswer, answer)
+                    .set(com.wenqu.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
+            return true;
+        } catch (Exception e) {
+            log.warn("[ASK] 提问裁决落库失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** 本轮工具上下文：会话/用户归属 + askUser 执行器（闭包持有 st，提问卡 SSE 与阻塞等待都靠它） */
+    private java.util.Map<String, Object> toolContext(AnswerStreamState st) {
+        java.util.Map<String, Object> ctx = new java.util.HashMap<>();
+        ctx.put(PresentArtifactTool.CTX_SESSION_ID, st.sessionId);
+        ctx.put(PresentArtifactTool.CTX_USER_ID, st.userId);
+        ctx.put(BuiltinTools.CTX_ASK,
+                (java.util.function.BiFunction<String, java.util.List<String>, String>)
+                        (q, opts) -> doAskUser(st, q, opts));
+        return ctx;
+    }
 
     /**
      * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对，内存态与 DB 双重校验）；

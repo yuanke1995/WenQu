@@ -213,6 +213,8 @@ const navOf = n => {
     return { path: '/agents', query: { tab: 'workflow', wf: n.refId, run: n.refSub } }
   if (n.type === 'tool.approval' && n.refId && n.refSub)
     return { path: '/chat', query: { sid: n.refId, approval: n.refSub } }
+  if (n.type === 'tool.ask' && n.refId && n.refSub)
+    return { path: '/chat', query: { sid: n.refId, ask: n.refSub } }
   if (n.refType === 'kb' && n.refId) return { path: `/knowledge/${n.refId}/docs` }
   if (n.refType === 'workflow' && n.refId) return { path: '/agents', query: { tab: 'workflow' } }
   if (n.refType === 'session' && n.refId) return { path: '/chat', query: { sid: n.refId } }

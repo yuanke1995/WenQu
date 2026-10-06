@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -447,5 +448,35 @@ public class BuiltinTools {
             if (st == i) throw new IllegalArgumentException("期望数字");
             return Double.parseDouble(s.substring(st, i));
         }
+    }
+
+    /** ToolContext 键：askUser 的本轮执行器（RagService 装配会话态时注入）。BiFunction&lt;问题, 选项, 答案/提示&gt; */
+    public static final String CTX_ASK = "wenqu.askUser.fn";
+
+    /**
+     * 向用户提出选择题并等待作答（人在回路）。
+     * <p>
+     * 本方法是内置工具里唯一的例外面：其余都是「纯计算、立即返回」，这一个会**阻塞挂起**等待用户
+     * 在聊天区点选/输入。执行器经 ToolContext 注入（{@link #CTX_ASK}），由 RagService 装配本轮
+     * 会话态时提供（SSE 下发提问卡、内存 future 阻塞、超时按推荐项默认执行），与工具审批共用
+     * 同一套挂起-恢复管道。缺少执行器（子智能体编排等未注入场景）时降级为提示模型改用正文提问。
+     */
+    @Tool(description = "向用户提出一个选择题并等待其作答（人在回路）。只在必须由用户拍板才能继续时调用："
+            + "方案取舍、需求澄清、确认执行范围等；能自行判断或查资料解决的事项不要调用。"
+            + "把最推荐的选项放在 options 第一位（用户超时未回答时将按它默认执行，前端也会给它标注「推荐」）；"
+            + "用户可以点选候选，也可以自由输入其他答案。一次调用只问一个问题；"
+            + "需要问多个问题时，等上一个答案返回后再调用下一次（每轮最多 3 问）。")
+    public String askUser(
+            @ToolParam(description = "要问用户的问题：一句话交代背景与要决定的事") String question,
+            @ToolParam(description = "候选选项，2~6 个，每项一句话；第一项视为推荐项") java.util.List<String> options,
+            ToolContext toolContext) {
+        Object fn = toolContext == null ? null : toolContext.getContext().get(CTX_ASK);
+        if (!(fn instanceof java.util.function.BiFunction)) {
+            return "（askUser 工具当前不可用：请改为在回答正文中直接列出候选选项，请用户回复序号或自行描述。）";
+        }
+        @SuppressWarnings("unchecked")
+        java.util.function.BiFunction<String, java.util.List<String>, String> ask =
+                (java.util.function.BiFunction<String, java.util.List<String>, String>) fn;
+        return ask.apply(question, options);
     }
 }

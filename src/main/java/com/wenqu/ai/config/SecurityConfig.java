@@ -84,6 +84,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
                 || path.startsWith("/api/ai/tool-approval/"))) return true;
+        // 智能体提问（人在回路）：POST /ask-user/{id} 同口径——归属由 resolveAsk 按 uid 严格校验；
+        // 放行是为了等答复超 120s 后 JWT 过期的场景也能拿到干净的"已失效"错误而不是 401 强登出
+        if ("POST".equals(method) && (path.equals("/api/ai/ask-user")
+                || path.startsWith("/api/ai/ask-user/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;
         // 登录相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）

@@ -53,6 +53,7 @@ public class ToolInventoryService {
         LABELS.put("textStats", "文本统计");
         LABELS.put("base64", "Base64 编解码");
         LABELS.put("hash", "哈希计算");
+        LABELS.put("askUser", "向用户提问（人在回路）");
         LABELS.put("presentArtifact", "生成文件产物");
         LABELS.put("readSkill", "读取技能");
         LABELS.put("execute", "执行沙盒命令");

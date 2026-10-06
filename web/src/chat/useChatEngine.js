@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall,
+         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -936,6 +936,26 @@ async function resolveApproval (m, approved) {
     if (m.approval) m.approval.busy = false
   }
 }
+/** 智能体提问：提交用户点选/输入的答案；答案作为工具结果回给模型继续本轮。卡片保留到
+ *  done 工具状态到达（问答记录卡接管展示），期间置 busy 防重复提交 */
+async function answerAsk (m, text) {
+  const t = (text || '').trim()
+  if (!m.ask || m.ask.busy || !t) return
+  m.ask.busy = true
+  try {
+    const r = await answerAgentAsk(m.ask.id, t)
+    if (r && r.success === false) {
+      message.warning(r.msg || '回答提交失败')
+      m.ask.busy = false
+      return
+    }
+    m.ask.answered = t
+    hooks.scrollSoft?.()
+  } catch (e) {
+    message.error(e.message || '回答提交失败')
+    if (m.ask) m.ask.busy = false
+  }
+}
 const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
                       attachments = [], skills = [], mentions = [], prev = null, historyRefs = [],
                       editMessageId = '', editUserMsg = null) => {
@@ -1068,6 +1088,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
+    onAskUser: payload => {
+      // 智能体提问（人在回路）：提问卡挂到当前 AI 气泡，用户点选/输入后模型继续走。
+      // options 第一项是模型给的推荐项（前端标「推荐」，超时按它默认执行）
+      try {
+        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
+        msg.ask = { id: j.askId, question: j.question, options: j.options || [], timeoutMs: j.timeoutMs, busy: false, answered: '' }
+        liveScroll()
+      } catch (e) { /* 忽略 */ }
+    },
     onImage: imgs2 => {
       try {
         const parsed = JSON.parse(imgs2)
@@ -1091,6 +1120,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (!t || !t.name) return
         if (!Array.isArray(msg.toolCalls)) msg.toolCalls = []
         if (t.status === 'start') {
+          // askUser 的「进行中」由提问卡（m.ask）表达，不渲染通用工具卡——否则一问两卡
+          if (t.name === 'askUser') return
           const rec = { ...t, startAt: Date.now() }
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
@@ -1099,6 +1130,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           msg.stage = ''
           ensureTick()
         } else {
+          // askUser 已出终态（用户已答或超时默认）：问答记录卡接管展示，撤掉提问卡
+          if (t.name === 'askUser' && msg.ask) msg.ask = null
           const list = msg.toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
           if (last) {
@@ -1234,6 +1267,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (msg.content === '') msg.content = '（已停止生成）'
       msg.loading = false
+      // 整轮已收口：提问卡（若还在）撤掉——超时默认走的是 done 前的 tool_status 终态，此处兜底
+      if (msg.ask) msg.ask = null
       // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
@@ -1453,7 +1488,7 @@ const ready = async () => {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, streamAnswer, resolveApproval,
+    text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

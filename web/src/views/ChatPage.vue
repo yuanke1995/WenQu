@@ -52,6 +52,30 @@
         </div>
       </div>
 
+      <!-- 智能体提问恢复横幅：点开 tool.ask 通知直达会话时，按 askId 重建提问卡（与审批恢复同构）。
+           PENDING 可点选/输入作答；已终态只展示状态（已回答/超时按推荐项默认执行） -->
+      <div v-if="recoveryAsk" class="approval-recovery">
+        <div class="ar-title"><question-circle-outlined /> 智能体提问</div>
+        <div v-if="askRecoveryView.question" class="ar-ask-q">{{ askRecoveryView.question }}</div>
+        <div v-if="recoveryAsk.status === 'PENDING' && askRecoveryView.options && askRecoveryView.options.length" class="ask-opts">
+          <button v-for="(op, oi) in askRecoveryView.options" :key="oi" class="app-btn small ask-opt"
+                  :disabled="recoveryAskBusy" @click="resolveAskRecovery(op)">
+            <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
+          </button>
+        </div>
+        <div v-if="recoveryAsk.status === 'PENDING'" class="ask-custom">
+          <input v-model="askRecoveryCustom" class="ask-input" :maxlength="2000"
+                 placeholder="或输入你自己的答案…" @keydown.enter="resolveAskRecovery(askRecoveryCustom)" />
+          <button class="app-btn small" :disabled="recoveryAskBusy || !askRecoveryCustom.trim()"
+                  @click="resolveAskRecovery(askRecoveryCustom)">提交</button>
+        </div>
+        <div class="ar-foot">
+          <span class="ar-status" :class="'ar-' + askRecoveryStatusClass">{{ askRecoveryStatusText }}</span>
+          <span v-if="recoveryAsk.status !== 'PENDING' && askRecoveryView.answer" class="ar-ask-answer">{{ askRecoveryView.answer }}</span>
+          <button class="app-btn ghost small" @click="dismissAskRecovery">关闭</button>
+        </div>
+      </div>
+
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
@@ -166,6 +190,13 @@
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                         </button>
+                        <!-- askUser 问答记录：问与答常显（不藏进展开区），刷新/历史恢复同构 -->
+                        <template v-if="t.name === 'askUser' && t.status !== 'start'">
+                          <div class="ask-record-body">
+                            <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
+                            <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+                          </div>
+                        </template>
                         <div v-if="t._open" class="tl-card-body">
                           <template v-if="t.args">
                             <div class="tl-io-label">入参</div>
@@ -245,6 +276,13 @@
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                       <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                     </button>
+                    <!-- askUser 问答记录：问与答常显（不藏进展开区），刷新/历史恢复同构 -->
+                    <template v-if="t.name === 'askUser' && t.status !== 'start'">
+                      <div class="ask-record-body">
+                        <div v-if="askUserView(t).question" class="ask-record-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
+                        <div v-if="askUserView(t).answer" class="ask-record-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+                      </div>
+                    </template>
                     <div v-if="t._open" class="tl-card-body">
                       <template v-if="t.args">
                         <div class="tl-io-label">入参</div>
@@ -271,6 +309,26 @@
                   <button class="app-btn ghost small" :disabled="m.approval.busy" @click="resolveApproval(m, false)">拒绝</button>
                   <span class="approval-hint">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</span>
                 </div>
+              </div>
+              <!-- 智能体提问（人在回路）：模型调 askUser 工具后挂起，用户点选/输入后同一轮继续。
+                   首个候选是模型给的推荐项（超时未答按它默认执行，超时说明会随工具结果回给模型） -->
+              <div v-if="m.ask" class="ask-card">
+                <div class="ask-title"><question-circle-outlined /> 智能体向你提问</div>
+                <div class="ask-q">{{ m.ask.question }}</div>
+                <div class="ask-opts">
+                  <button v-for="(op, oi) in m.ask.options" :key="oi" class="app-btn small ask-opt"
+                          :disabled="m.ask.busy" @click="answerAsk(m, op)">
+                    <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
+                  </button>
+                </div>
+                <div class="ask-custom">
+                  <input v-model="m.ask.custom" class="ask-input" :maxlength="2000" :disabled="m.ask.busy"
+                         placeholder="或输入你自己的答案…" @keydown.enter="answerAsk(m, m.ask.custom)" />
+                  <button class="app-btn small" :disabled="m.ask.busy || !(m.ask.custom || '').trim()"
+                          @click="answerAsk(m, m.ask.custom)">提交</button>
+                </div>
+                <div class="approval-hint">{{ m.ask.answered ? '已回答，模型继续中…'
+                  : '未回答将在 ' + Math.round((m.ask.timeoutMs || 120000) / 1000) + ' 秒后按推荐项「' + (m.ask.options[0] || '') + '」默认执行' }}</div>
               </div>
               <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
@@ -1138,7 +1196,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CompressOutlined,
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
+         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
+         CheckCircleOutlined } from '@ant-design/icons-vue'
 import { getKnowledgeDetail, debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
@@ -1162,7 +1221,9 @@ import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
+import { useAskRecovery } from '../chat/useAskRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
+         askUserView,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -1175,6 +1236,13 @@ const router = useRouter()
 // 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
 const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStatusText,
         statusClass: recoveryStatusClass, resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
+
+// ==================== 智能体提问恢复（通知 → 会话）：按 askId 重建提问卡 ====================
+// 与审批恢复同构（src/chat/useAskRecovery.js）：?ask=<id> 深链 → 取本人记录 → PENDING 可作答
+const { ask: recoveryAsk, busy: recoveryAskBusy, statusText: askRecoveryStatusText,
+        statusClass: askRecoveryStatusClass, view: askRecoveryView, resolve: resolveAskRecovery,
+        dismiss: dismissAskRecovery } = useAskRecovery()
+const askRecoveryCustom = ref('')   // 恢复横幅的自定义答案输入
 
 const textareaRef = ref(null)
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
@@ -2415,7 +2483,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, streamAnswer, resolveApproval,
+  text, canSend, send, stop, streamAnswer, resolveApproval, answerAsk,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -3364,6 +3432,29 @@ onMounted(async () => {
 .ar-status { font-size: 12px; margin-right: auto; }
 .ar-status.ar-pending { color: var(--app-warn-text); }
 .ar-status.ar-ok { color: var(--app-ok); }
+
+/* 智能体提问卡（askUser，人在回路）：中性色而非审批的警告色——提问不是异常，是交互 */
+.ask-card { margin-top: 8px; border: 1px solid var(--app-border, var(--app-warn-border)); background: var(--app-panel-2); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
+.ask-title { font-size: 13px; font-weight: 600; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
+.ask-q { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ask-opt { text-align: left; }
+.ask-rec { flex: none; font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: var(--app-ok-weak); color: var(--app-ok); margin-right: 6px; }
+.ask-custom { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ask-input { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--app-border, #d9dee5); border-radius: 6px; padding: 0 8px; font-size: 12px; background: var(--app-panel); color: var(--app-text); }
+.ask-input:focus { outline: none; border-color: var(--app-ok, #4a90d9); }
+.ask-input:disabled { opacity: 0.6; }
+
+/* askUser 问答记录（工具卡内常显：问题 + 答案；刷新/历史恢复同构） */
+.ask-record-body { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+.ask-record-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
+.ask-record-q .anticon { margin-top: 3px; color: var(--app-text3); }
+.ask-record-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
+.ask-record-a .anticon { margin-top: 3px; color: var(--app-ok); }
+
+/* 提问恢复横幅复用 approval-recovery 容器；补充问答行样式 */
+.ar-ask-q { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+.ar-ask-answer { font-size: 12px; font-weight: 600; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
 .ar-status.ar-err { color: var(--app-danger); }
 
 /* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */

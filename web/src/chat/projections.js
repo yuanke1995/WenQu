@@ -23,6 +23,7 @@ const TOOL_LABELS = {
   textStats: '统计字数',
   base64: 'Base64 转码',
   hash: '计算哈希值',
+  askUser: '向用户提问',
   readSkill: '读取技能说明',
   webSearch: '联网搜索',
   execute: '运行命令',
@@ -56,6 +57,7 @@ const TOOL_DESCS = {
   textStats: '统计文本的字数、行数、段落数等',
   base64: '在文本与 Base64 编码之间互相转换',
   hash: '给文本算一个「指纹」，用于校验内容是否被改过',
+  askUser: '向你提出选项问题，点选或输入答案后继续回答',
   readSkill: '按需加载某个技能的详细说明',
   webSearch: '上网搜索相关资料，结果会作为引用来源',
   execute: '在隔离的云端沙盒里执行命令行（不影响本机）',
@@ -92,6 +94,18 @@ const toolCallsView = list => {
   if (!Array.isArray(list)) return []
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
 }
+// ==================== askUser（向用户提问）问答记录 ====================
+// 工具入参 args 为 {question, options} JSON 字符串（SSE 短摘要/落库全文同构），result=用户所选/
+// 输入的答案（超时未答=推荐项+超时说明后缀）。解析失败（截断/旧数据）时降级为只显示答案。
+const askUserView = t => {
+  let question = '', options = null
+  try {
+    const j = JSON.parse(t?.args || 'null')
+    question = (j && j.question) || ''
+    options = j && Array.isArray(j.options) ? j.options : null
+  } catch (e) { /* 入参截断/旧数据：仅显示答案 */ }
+  return { question, options, answer: (t && (t.result || t.output)) || '' }
+}
 const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
@@ -111,6 +125,7 @@ const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.s
 const busyOf = m => {
   if (!m || !m.loading) return null
   if (m.approval) return null                     // 等用户批准：进度让位给审批卡
+  if (m.ask) return null                          // 等用户作答：进度让位给提问卡
   if (m.retrying) return { text: '连接中断，正在自动重试…', warn: true }
   if (toolRunning(m)) return null                 // 工具自己会转圈并计时
   if (subRunning(m)) return null                  // 编排卡片每个分支自带转圈 + 进度条
@@ -599,7 +614,7 @@ const verLabel = m => verLocal(m)
   : `${m.variantIndex || 1}/${m.variantCount || 1}`
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
-  toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText,
+  toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, TOOL_BRIEF_KEYS, oneLine,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,

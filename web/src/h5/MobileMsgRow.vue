@@ -98,6 +98,11 @@
                     <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
                   </button>
+                  <!-- askUser 问答记录：问与答常显（与 PC 同构） -->
+                  <div v-if="t.name === 'askUser' && t.status !== 'start'" class="ask-rec-body">
+                    <div v-if="askUserView(t).question" class="ask-rec-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
+                    <div v-if="askUserView(t).answer" class="ask-rec-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+                  </div>
                   <div v-show="t._open" class="card-body">
                     <template v-if="t.args"><div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre></template>
                     <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
@@ -116,6 +121,25 @@
         <div v-else-if="m.content || !m.loading" class="md bubble-md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }"
              :data-msg-index="index" @click="onMdClick" v-html="renderMd(m.content || '', m.images, MD_RICH)" />
 
+        <!-- 智能体提问卡（人在回路）：模型调 askUser 工具后挂起；首个候选=推荐项，超时按它默认执行 -->
+        <div v-if="m.ask" class="card ask-card">
+          <div class="ask-head"><question-circle-outlined /> 智能体向你提问</div>
+          <div class="ask-q">{{ m.ask.question }}</div>
+          <div v-if="m.ask.options && m.ask.options.length" class="ask-opts">
+            <button v-for="(op, oi) in m.ask.options" :key="oi" class="ask-opt" type="button"
+                    :disabled="m.ask.busy" @click.stop="$emit('answer-ask', op)">
+              <span v-if="oi === 0" class="ask-rec">推荐</span>{{ op }}
+            </button>
+          </div>
+          <div class="ask-custom">
+            <input v-model="m.ask.custom" class="ask-input" :maxlength="2000" :disabled="m.ask.busy"
+                   placeholder="或输入你自己的答案…" @keydown.enter.prevent="$emit('answer-ask', m.ask.custom)" />
+            <button class="ask-send" type="button" :disabled="m.ask.busy || !(m.ask.custom || '').trim()"
+                    @click.stop="$emit('answer-ask', m.ask.custom)">提交</button>
+          </div>
+          <div class="ask-hint">{{ m.ask.answered ? '已回答，模型继续中…' : '未回答将按推荐项「' + (m.ask.options[0] || '') + '」默认执行' }}</div>
+        </div>
+
         <!-- 工具列表兜底（历史消息无时间线时） -->
         <div v-if="m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="card">
           <button class="card-head" type="button" @click.stop="m._fbOpen = !m._fbOpen">
@@ -127,13 +151,19 @@
             <caret-right-outlined class="caret" :class="{ open: m._fbOpen }" />
           </button>
           <div v-show="m._fbOpen" class="card-body">
-            <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tool-line">
-              <check-outlined v-if="t.status === 'done'" class="ic-ok" />
-              <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
-              <span v-else class="spinner"></span>
-              <span class="tool-line-name">{{ toolLabel(t.name) }}</span>
-              <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
-            </div>
+            <template v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti">
+              <div v-if="t.name === 'askUser' && t.status !== 'start'" class="ask-rec-body">
+                <div v-if="askUserView(t).question" class="ask-rec-q"><question-circle-outlined /> {{ askUserView(t).question }}</div>
+                <div v-if="askUserView(t).answer" class="ask-rec-a"><check-circle-outlined /> {{ askUserView(t).answer }}</div>
+              </div>
+              <div v-else class="tool-line">
+                <check-outlined v-if="t.status === 'done'" class="ic-ok" />
+                <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
+                <span v-else class="spinner"></span>
+                <span class="tool-line-name">{{ toolLabel(t.name) }}</span>
+                <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -263,7 +293,8 @@ import { computed } from 'vue'
 import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
-  FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined
+  FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
+  QuestionCircleOutlined, CheckCircleOutlined
 } from '@ant-design/icons-vue'
 import { renderMd, resolveImg, copyCode, handleMdAction } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
@@ -271,7 +302,7 @@ import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fallbackDur, toolCallsView, toolSearchQueries, subagentCard, barWidth, toggleSubagents, fmtDuration,
-  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel
+  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, askUserView
 } from '../chat/projections'
 
 const props = defineProps({
@@ -290,7 +321,7 @@ const props = defineProps({
   variantSwitching: { type: Boolean, default: false }
 })
 const emit = defineEmits(['activate', 'preview', 'source', 'retry', 'edit', 'feedback', 'approve',
-  'switch-version', 'ask', 'copy', 'copy-user', 'more'])
+  'answer-ask', 'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
 // 富渲染：沙盒运行按钮需要会话作用域（与 PC 的 MD_RICH 同口径）
 const MD_RICH = { runnable: true }
@@ -416,6 +447,31 @@ const onMdClick = e => {
 .io-err { color: var(--app-danger-text); }
 .tool-line { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
 .tool-line-name { font-size: 13px; }
+
+/* 智能体提问卡（askUser，人在回路）：中性色，非审批的警告色 */
+.ask-card { display: flex; flex-direction: column; gap: 8px; }
+.ask-head { font-size: 13px; font-weight: 600; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
+.ask-q { font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask-opt {
+  text-align: left; min-height: 36px; padding: 6px 12px; border: 1px solid var(--app-border); border-radius: 9px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
+}
+.ask-opt:disabled { opacity: 0.6; }
+.ask-rec { flex: none; font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: var(--app-ok-weak); color: var(--app-ok); margin-right: 6px; }
+.ask-custom { display: flex; align-items: center; gap: 8px; }
+.ask-input { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--app-border); border-radius: 8px; padding: 0 10px; font-size: 13px; background: var(--app-panel); color: var(--app-text); }
+.ask-input:disabled { opacity: 0.6; }
+.ask-send { min-height: 34px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation; }
+.ask-send:disabled { opacity: 0.5; }
+.ask-hint { font-size: 12px; color: var(--app-text3); }
+
+/* askUser 问答记录（工具卡内常显：问题 + 答案） */
+.ask-rec-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ask-rec-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
+.ask-rec-q .anticon { margin-top: 3px; color: var(--app-text3); }
+.ask-rec-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
+.ask-rec-a .anticon { margin-top: 3px; color: var(--app-ok); }
 
 .err-card { border: 1px solid var(--app-danger-border); background: var(--app-danger-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .err-card.net { border-color: var(--app-warn-border); background: var(--app-warn-weak); }

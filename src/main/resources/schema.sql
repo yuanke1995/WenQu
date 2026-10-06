@@ -703,13 +703,14 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
     `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '待审批工具名（沙盒/MCP）',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT',
-    `request_args` VARCHAR(2000) DEFAULT NULL COMMENT '工具入参摘要（截断 2000 字符，审计回溯用）',
+    `request_args` VARCHAR(2000) DEFAULT NULL COMMENT '工具入参摘要（截断 2000 字符，审计回溯用；提问类记录存 {question,options} JSON）',
+    `answer`       VARCHAR(2000) DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时按推荐项默认执行时也落此列',
     `created_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '挂起时刻',
     `resolved_at`  DATETIME      DEFAULT NULL COMMENT '裁决/超时时刻',
     PRIMARY KEY (`id`),
     KEY `idx_status_created` (`status`, `created_at`),
     KEY `idx_user` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批记录（人在回路：持久化 + 审计 + 进程重启后可见）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批/智能体提问记录（人在回路：持久化 + 审计 + 进程重启后可见）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',

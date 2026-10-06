@@ -37,8 +37,11 @@ public class ToolApproval {
     /** 状态: PENDING / APPROVED / REJECTED / TIMEOUT */
     private String status;
 
-    /** 工具入参摘要（截断 2000 字符，审计与回溯用） */
+    /** 工具入参摘要（截断 2000 字符，审计与回溯用；提问类记录存 {question,options} JSON） */
     private String requestArgs;
+
+    /** 裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时按推荐项默认执行时也落此列 */
+    private String answer;
 
     /** 创建时间（挂起时刻） */
     private LocalDateTime createdAt;

@@ -214,6 +214,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
               else if (d.type === 'agent_delegated') { onAgentDelegated && onAgentDelegated(d.content) } // content 为 {id,name,description}：本轮由 @ 提及的智能体作答（会话绑定不变）
               else if (d.type === 'agent_bound') { onAgentBound && onAgentBound(d.content) } // content 为 {locked,agentId,agentName}：会话级绑定结果（首问解析并锁定后立即下发，不等整轮结束）
               else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
+              else if (d.type === 'ask_user') { onAskUser && onAskUser(d.content) } // content 为 {askId,question,options,timeoutMs}：智能体结构化提问（人在回路）
               else if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,degradations} JSON 字符串
               else if (d.type === 'error') { end(d.content); return }
             } catch (e) {
@@ -767,6 +768,10 @@ export const batchReparseDocuments = ids =>
 export const approveToolCall = (approvalId, approved) =>
   request(`/tool-approval/${encodeURIComponent(approvalId)}`, { method: 'POST', body: JSON.stringify({ approved }) })
 
+/** 智能体提问（人在回路）：回答 ask_user 事件下发的结构化提问；仅本轮用户本人可答，答案作为工具结果回给模型 */
+export const answerAgentAsk = (askId, answer) =>
+  request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ answer }) })
+
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>
   request(`/knowledge/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
@@ -1107,4 +1112,7 @@ export const notificationClear = scope => request('/notification/clear', { metho
 export const notificationPreferences = () => request('/notification/preferences')
 export const notificationSavePreferences = mutedTypes => request('/notification/preferences', { method: 'PUT', body: JSON.stringify({ mutedTypes }) })
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
-export const getToolApproval = id => request(`/chat/tool-approval/${id}`)
+// （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）
+export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
+// 智能体提问恢复：按 askId 取本人提问记录（tool.ask 通知点击后重建提问卡）
+export const getAgentAsk = id => request(`/ask-user/${encodeURIComponent(id)}`)
