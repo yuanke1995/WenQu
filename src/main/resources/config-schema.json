@@ -1611,6 +1611,259 @@
       "tier": 2
     },
     {
+      "backendKey": "parse.recoverStuckOnStartup",
+      "panel": "maintenance",
+      "section": 0,
+      "group": "parse",
+      "key": "recoverStuckOnStartup",
+      "path": "parse.recoverStuckOnStartup",
+      "label": "启动复位崩溃残留解析",
+      "type": "switch",
+      "tips": "parseRecoverStuck",
+      "def": true,
+      "note": "服务启动时把状态卡在「解析中」的文档复位为待重解析（崩溃/强杀残留）。默认开启：复位是幂等的且能自愈卡死的文档；多副本部署时每个副本都会各复位一次，可置 false 交给「文档解析队列扫描」自然重试",
+      "tier": 3
+    },
+    {
+      "backendKey": "eval.autoIntervalMs",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "autoIntervalMs",
+      "path": "eval.autoIntervalMs",
+      "label": "自动体检周期(ms)",
+      "type": "number",
+      "tips": "evalAutoIntervalMs",
+      "def": 86400000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "note": "按线上参数跑检索评估集并与上期对比的周期（毫秒，默认每天）；≤0 = 暂停。评估集为空时自动跳过。开启 eval.judgeEnabled 时会调评判模型，按评估集规模计费",
+      "tier": 3,
+      "presets": [
+        [
+          3600000,
+          "1 小时"
+        ],
+        [
+          21600000,
+          "6 小时"
+        ],
+        [
+          86400000,
+          "1 天"
+        ]
+      ]
+    },
+    {
+      "backendKey": "eval.judgeEnabled",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "judgeEnabled",
+      "path": "eval.judgeEnabled",
+      "label": "LLM 自动评判",
+      "type": "switch",
+      "tips": "evalJudgeEnabled",
+      "def": false,
+      "note": "用模型给评估集答案打分（相关性/忠实度）。默认关：评估集越大耗时与费用越明显。开启后自动体检会调用 eval.judgeModel 指定的模型",
+      "tier": 3
+    },
+    {
+      "backendKey": "eval.judgeModel",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "judgeModel",
+      "path": "eval.judgeModel",
+      "label": "评判模型",
+      "type": "model",
+      "tips": "evalJudgeModel",
+      "modelType": "chat",
+      "def": "",
+      "note": "自动体检的评判模型（留空 = 跳过 LLM 自动评判，只算检索指标）。模型归登记人所有；所选供应商额度不足时体检判失败而非静默回落",
+      "vif": "eval.judgeEnabled",
+      "tier": 3
+    },
+    {
+      "backendKey": "eval.autoThresholdPct",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "autoThresholdPct",
+      "path": "eval.autoThresholdPct",
+      "label": "退化判定跌幅(%)",
+      "type": "number",
+      "tips": "evalAutoThresholdPct",
+      "def": 10,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "width": 200,
+      "note": "指标相对上期跌幅超过该百分比即在看板标红（默认 10%）。调小更灵敏但更易因评估集波动误报",
+      "tier": 3
+    },
+    {
+      "backendKey": "trace.samplingIntervalMs",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "trace",
+      "key": "samplingIntervalMs",
+      "path": "trace.samplingIntervalMs",
+      "label": "线上采样周期(ms)",
+      "type": "number",
+      "tips": "traceSamplingInterval",
+      "def": 86400000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "note": "线上对话按规则入采样池的周期（毫秒，默认每天）：差评必采，无引用与随机条数见下方两项。≤0 = 暂停采样（评测集不再回流新样本，已有样本不受影响）",
+      "tier": 3,
+      "presets": [
+        [
+          3600000,
+          "1 小时"
+        ],
+        [
+          86400000,
+          "1 天"
+        ]
+      ]
+    },
+    {
+      "backendKey": "trace.sampleRandomDaily",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "trace",
+      "key": "sampleRandomDaily",
+      "path": "trace.sampleRandomDaily",
+      "label": "每日随机采样(条)",
+      "type": "number",
+      "tips": "traceSampleRandom",
+      "def": 20,
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "width": 200,
+      "note": "每轮从线上对话随机抽取的条数（默认 20，温和策略）；0 = 不采。差评始终必采，不受此项影响",
+      "tier": 3
+    },
+    {
+      "backendKey": "trace.sampleNoHitDaily",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "trace",
+      "key": "sampleNoHitDaily",
+      "path": "trace.sampleNoHitDaily",
+      "label": "每日无引用采样(条)",
+      "type": "number",
+      "tips": "traceSampleNoHit",
+      "def": 10,
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "width": 200,
+      "note": "每轮从无引用回答中抽取的条数（默认 10）——这类样本最可能是召回问题，标注价值最高；0 = 不采",
+      "tier": 3
+    },
+    {
+      "backendKey": "cleanup.sessionCleanupIntervalMs",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "sessionCleanupIntervalMs",
+      "path": "cleanup.sessionCleanupIntervalMs",
+      "label": "清理任务间隔(ms)",
+      "type": "number",
+      "tips": "sessionCleanupInterval",
+      "def": 86400000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "note": "扫描并物理删除超保留期会话与其消息的周期（毫秒，默认每天）；≤0 = 暂停（软删记录持续累积，不建议）",
+      "tier": 3,
+      "presets": [
+        [
+          3600000,
+          "1 小时"
+        ],
+        [
+          86400000,
+          "1 天"
+        ],
+        [
+          604800000,
+          "7 天"
+        ]
+      ]
+    },
+    {
+      "backendKey": "cleanup.sessionRetentionDays",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "sessionRetentionDays",
+      "path": "cleanup.sessionRetentionDays",
+      "label": "会话保留天数",
+      "type": "number",
+      "tips": "sessionRetentionDays",
+      "def": 30,
+      "min": 1,
+      "max": 3650,
+      "step": 1,
+      "width": 200,
+      "note": "软删后仍可撤销的窗口（天数，默认 30）：超期才被清理任务物理删除。调大可保留更久，代价是存储与查询变慢",
+      "tier": 3
+    },
+    {
+      "backendKey": "cache.docMetaTtlSeconds",
+      "panel": "maintenance",
+      "section": 4,
+      "group": "cache",
+      "key": "docMetaTtlSeconds",
+      "path": "cache.docMetaTtlSeconds",
+      "label": "文档名缓存 TTL(秒)",
+      "type": "number",
+      "tips": "docMetaCacheTtl",
+      "def": 600,
+      "min": 0,
+      "step": 60,
+      "width": 200,
+      "note": "文档名/元数据的本地缓存时长（秒，默认 600）。调小能更快看到其他副本的改名结果，代价是查询变多；0 = 不缓存",
+      "tier": 3
+    },
+    {
+      "backendKey": "config.reloadIntervalMs",
+      "panel": "maintenance",
+      "section": 4,
+      "group": "config",
+      "key": "reloadIntervalMs",
+      "path": "config.reloadIntervalMs",
+      "label": "配置兜底刷新间隔(ms)",
+      "type": "number",
+      "tips": "configReloadInterval",
+      "def": 300000,
+      "min": 0,
+      "step": 60000,
+      "width": 220,
+      "note": "多副本配置同步的周期兜底（毫秒，默认 5 分钟）：Redis 订阅正常时配置随广播即时生效，本任务只补订阅断线期间漏掉的变更。≤0 = 暂停——此后若 Redis 断线，配置变更会静默丢失直到重启，故不建议暂停",
+      "tier": 3,
+      "presets": [
+        [
+          60000,
+          "1 分钟"
+        ],
+        [
+          300000,
+          "5 分钟"
+        ],
+        [
+          1800000,
+          "30 分钟"
+        ]
+      ]
+    },
+    {
       "backendKey": "images.chatCleanupIntervalMs",
       "panel": "maintenance",
       "section": 2,
@@ -2991,6 +3244,37 @@
       ]
     },
     {
+      "backendKey": "workflow.approvalReapIntervalMs",
+      "panel": "maintenance",
+      "section": 11,
+      "group": "workflow",
+      "key": "approvalReapIntervalMs",
+      "path": "workflow.approvalReapIntervalMs",
+      "label": "审批超时回收间隔(ms)",
+      "type": "number",
+      "tips": "workflowApprovalReap",
+      "def": 60000,
+      "min": 0,
+      "step": 10000,
+      "width": 220,
+      "note": "扫描挂起待审 run 并把超过节点 timeoutSeconds 的落 timeout 终态的周期（毫秒，默认 60 秒）。⚠ 暂停风险：挂着不批的 run 将一直停在「待审核」不收口（不占线程池，但状态不终结、审批卡一直转）；确需长时间人工审批时才暂停",
+      "tier": 3,
+      "presets": [
+        [
+          60000,
+          "1 分钟"
+        ],
+        [
+          300000,
+          "5 分钟"
+        ],
+        [
+          1800000,
+          "30 分钟"
+        ]
+      ]
+    },
+    {
       "backendKey": "workflow.maxSteps",
       "panel": "maintenance",
       "section": 11,
@@ -3643,6 +3927,13 @@
     "evalAutoIntervalMs": "自动体检的执行周期（ms，≤0=暂停）。按周期跑评估集并对比历史指标，指标跌幅超过「退化判定跌幅」即标记退化。默认 86400000（每天）。",
     "evalAutoThresholdPct": "退化判定阈值：某项指标相对上次体检的跌幅超过该百分比即判为退化并在报告中标出。调小更敏感（更早发现轻微退化，但噪声多）；调大更宽容。",
     "evalJudgeModel": "体检的 LLM 评判所用模型（留空则复用当前问答模型）。可指定更便宜的模型专做「资料是否足以回答」的判断，降低体检成本。",
+    "evalJudgeEnabled": "用大模型给自动体检的答案打分（是否忠于资料、是否答非所问）。默认关闭：评估集越大，耗时与模型费用越明显。关闭时体检只算检索类指标（召回率/MRR 等），不花模型费用。",
+    "docMetaCacheTtl": "文档名与元数据的本地缓存时长（秒）。同一份文档在多处展示（引用列表、解析详情等），缓存能显著减少重复查库；调小可更快看到其他副本的改名结果，代价是查询次数上升。默认 600 秒。",
+    "configReloadInterval": "多副本配置同步的周期兜底间隔（ms，≤0=暂停）。正常情况下任意实例保存配置会经 Redis 广播，其他副本即时刷新；本任务只负责补齐「订阅断线期间」漏掉的变更。默认 300000（5 分钟）。不建议暂停——暂停后若 Redis 断线，配置变更会静默丢失直到重启。",
+    "traceSamplingInterval": "线上对话采样入池的周期（ms，≤0=暂停）。按规则挑选真实对话样本（差评必采、无引用与随机各若干条）供人工标注后回流评测集，让评估集贴近真实问法。默认 86400000（每天）。不消耗对话模型额度，只记录已有对话。",
+    "traceSampleRandom": "每轮随机采样的条数（默认 20）。随机样本覆盖长尾问法，避免评测集只集中在差评与无引用两类；条数越多人工标注成本越高。0=不采。",
+    "traceSampleNoHit": "每轮无引用回答的采样条数（默认 10）。无引用往往意味着检索没召回，是评估集里最该被标注的一类；条数越多越能暴露召回问题。0=不采。",
+    "workflowApprovalReap": "人工审核超时回收的扫描间隔（ms，默认 60000）。审核等待是「人在回路」，没有自动恢复语义，所以挂起超过节点超时时间的运行会被判定超时并终止，审批记录同时置为超时。⚠ 暂停后果：挂着不批的运行将一直停在「待审核」状态不收口——不占用执行线程，但审批卡片会持续等待、运行记录也不会进入终态。仅在确实需要超长人工审批窗口时才暂停。",
     "chatImgCleanupInterval": "聊天上传图片的清理任务间隔（ms，≤0=暂停）。默认 86400000（每天）扫描一次超期图片并删除。",
     "chatImgRetention": "聊天上传图片的保留时长（ms）。超过该时长且无引用的聊天图片会被清理，防止磁盘无限增长；默认 604800000（7 天）。",
     "sessionCleanupInterval": "会话清理任务间隔（ms，≤0=暂停）。默认 86400000（每天）扫描并删除超期会话。",
@@ -3862,6 +4153,14 @@
     "skill.remoteAllowedHosts": "技能（Skills）：远程安装来源域名白名单（逗号分隔，空=关闭远程安装）",
     "artifact.retentionDays": "产物保留天数（0=不清理）",
     "artifact.cleanupIntervalMs": "产物超期清理任务间隔(ms，≤0=暂停)",
+    "eval.autoIntervalMs": "检索评估自动体检周期(ms，≤0=暂停)",
+    "eval.judgeEnabled": "自动体检的LLM评判开关(默认关，避免评估集大时产生模型费用)",
+    "cleanup.sessionCleanupIntervalMs": "过期会话/消息物理清理任务间隔(ms，≤0=暂停)",
+    "cleanup.sessionRetentionDays": "会话保留天数(即软删后的撤销窗口天数)",
+    "cache.docMetaTtlSeconds": "文档名/元数据本地缓存时长(秒，0=不缓存)",
+    "config.reloadIntervalMs": "多副本配置同步的周期兜底刷新间隔(ms，≤0=暂停；暂停后Redis断线期间配置变更会丢失)",
+    "trace.samplingIntervalMs": "Trace线上采样周期(ms，≤0=暂停)",
+    "workflow.approvalReapIntervalMs": "工作流审批超时回收间隔(ms，≤0=暂停；暂停后挂起run不落终态)",
     "scheduled.enabled": "定时执行智能体总开关",
     "scheduled.maxPerUser": "每人定时任务数上限（0=不限）",
     "scheduled.timeoutMs": "定时任务单次执行超时(ms)",

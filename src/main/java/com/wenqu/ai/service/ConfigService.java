@@ -474,6 +474,8 @@ public class ConfigService {
         d.put("workflow.runLogRetentionDays", "30");       // 工作流运行记录保留天数（含 DSL 快照与节点 trace 大字段；超期由「工作流运行记录清理」任务物理删除）
         d.put("workflow.runCleanupIntervalMs", "86400000"); // 工作流运行记录清理间隔（ms，默认每日；≤0 暂停）
         d.put("workflow.scheduleScanIntervalMs", "30000");  // 工作流定时触发扫描间隔（ms，默认 30s；≤0 暂停「工作流定时触发」任务）
+        d.put("workflow.approvalReapIntervalMs", "60000"); // 审批超时回收间隔（ms，默认 60s；≤0 暂停，暂停后挂起 run 不落终态）
+        d.put("config.reloadIntervalMs", "300000");        // 多副本配置同步的周期兜底刷新间隔（ms，默认 5min；≤0 暂停）
         d.put("notification.retentionDays", "30");          // 站内通知保留天数（超期由「站内通知清理」任务物理删除，不区分已读未读）
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
