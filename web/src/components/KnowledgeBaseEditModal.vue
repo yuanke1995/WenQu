@@ -32,10 +32,16 @@
       <a-form-item label="描述">
         <a-input v-model:value="form.description" :disabled="isBuiltin" placeholder="这个库放什么资料" />
       </a-form-item>
-      <a-form-item label="向量模型" :required="!isBuiltin">
+      <!-- 向量模型：官方内置库也**可改**（管理员级）。原先随「名称/描述」一起置灰，而后端
+           同一批字段里又放开了检索参数——于是引用清单里「去修改」指过来，看到的却是一个
+           灰框：供应商额度耗尽时，管理员唯一能救内置库的动作就是换一个能用的向量模型。 -->
+      <a-form-item label="向量模型" required>
         <ModelSelect v-model="form.embeddingRef" type="embedding"
-                     :width="320" :admin-tip-visible="true" :disabled="isBuiltin" />
+                     :width="320" :admin-tip-visible="true" />
         <div class="kb-hint">必选：本库文档按此模型向量化与检索（不同模型的向量空间不兼容，无法跨模型混用）；换模型会自动按库重嵌入，期间该库检索降级关键词路。</div>
+        <div v-if="isBuiltin" class="kb-hint">
+          当前供应商额度不足时，在这里换成一个能用的向量模型即可救活本库；改完点「保存」会按库重嵌入已有文档。
+        </div>
       </a-form-item>
 
       <!-- 高级参数：默认收起（小白不改就能用），每个字段的问号里有"这是什么/什么时候才需要调" -->
@@ -278,8 +284,9 @@ function serialize (f) {
 
 const form = ref(blank())
 
-// 官方内置库（builtin=1）：文档内容随版本自动同步，弹窗只开放检索/解析参数——
-// 后端 KnowledgeBaseService.update 对内置库同样是这两个字段的白名单，前后端口径一致
+// 官方内置库（builtin=1）：文档内容随版本自动同步，名称/图标/描述不接受编辑；
+// 但检索/解析参数与**向量模型可改**（后端 KnowledgeBaseService.update 对内置库是这三个字段的白名单，
+// 前后端必须严格一致——多提交一个字段会被后端整单 fail-loud 拒绝）
 const isBuiltin = computed(() => props.kb?.builtin === 1)
 // 默认库图标锁定：恒为问渠品牌标（编辑中的默认库，或本次勾选了「设为默认库」）
 const iconLocked = computed(() => props.kb?.isDefault === 1 || form.value.isDefault)
@@ -432,22 +439,25 @@ watch(() => props.open, open => {
 })
 
 const save = async () => {
-  // 官方内置库：名称/向量模型由版本同步维护，这里不校验也不提交（后端白名单同样只收检索/解析参数）
+  // 官方内置库：名称/描述/图标不接受编辑（后端白名单会拒），但**向量模型可改**——
+  // 供应商额度耗尽时，换一个能用的向量模型是管理员唯一能救这个库的动作。
+  // 提交字段必须与后端白名单严格一致，多一个字段都会被 fail-loud 整单拒绝。
   if (!isBuiltin.value) {
     if (!form.value.name || !form.value.name.trim()) {
       message.warning('请填写知识库名称')
       return
     }
-    if (!form.value.embeddingRef) {
-      message.warning('请选择向量模型（必选：向量空间与库一一对应）')
-      return
-    }
+  }
+  if (!form.value.embeddingRef) {
+    message.warning('请选择向量模型（必选：向量空间与库一一对应）')
+    return
   }
   saving.value = true
   try {
     const { queryParams, parseParams } = serialize(form.value)
     if (isBuiltin.value) {
-      const savedBuiltin = await updateKnowledgeBase(props.kb.id, { queryParams, parseParams })
+      const savedBuiltin = await updateKnowledgeBase(props.kb.id,
+        { queryParams, parseParams, embeddingRef: form.value.embeddingRef })
       if (savedBuiltin && savedBuiltin.success === false) {
         message.error(savedBuiltin.msg || '保存失败')
         return

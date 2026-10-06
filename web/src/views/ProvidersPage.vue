@@ -444,7 +444,7 @@
               <a-button v-if="refJumpOf(r)" size="small" class="pv-ref-go" @click="jumpRef(r)">
                 去修改
               </a-button>
-              <span v-else-if="!r.editable" class="pv-ref-note">无管理入口</span>
+              <span v-else class="pv-ref-note">{{ refNoteOf(r) }}</span>
             </div>
           </div>
         </template>
@@ -528,6 +528,21 @@ const jumpRef = r => {
   if (!to) return
   showRefs.value = false
   router.push(to)
+}
+
+/**
+ * 不可就地修改的引用，说清「为什么改不了、怎么办」——
+ * 原来统一写「无管理入口」，等于把用户指到一扇没把手的门：既然点不动，得说明替代路径。
+ * ⚠️ editable 判定在前端（refJumpOf），后端 ModelReferenceScanner 另有一套口径，
+ * 两者必须对得上，否则会出现「按钮给得出去、跳过去却是灰框」。
+ */
+const refNoteOf = r => {
+  if (r.kind === 'session') return '进该会话切一次模型即可覆盖'
+  if (r.kind === 'userDefault' || r.kind === 'userConfig') {
+    return r.id && r.id !== me.value ? `属 ${r.name} 的个人设置，需其本人修改` : '无管理入口'
+  }
+  if (r.kind === 'configSlot') return '请到系统设置对应项修改'
+  return '无管理入口'
 }
 
 // 当前登录人 uid（归属提示只用它判断「这是不是别人的供应商」）

@@ -71,7 +71,7 @@ public class KnowledgeBaseController {
         // 能改哪些字段由服务层白名单兜住（KnowledgeBaseService.update），内容/删除仍不可动。
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
             if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {
-                throw new BizException("官方内置知识库仅管理员可维护检索/解析设置（文档内容随版本自动同步）");
+                throw new BizException("官方内置知识库仅管理员可维护检索/解析设置与向量模型（文档内容随版本自动同步）");
             }
             return;
         }

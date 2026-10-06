@@ -156,21 +156,25 @@ public class KnowledgeBaseService {
     public KnowledgeBase update(String id, Map<String, Object> body) {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) return null;
-        // 官方内置库（builtin=1）：文档内容随版本自动同步（ManualSeedService），名称/图标/共享范围/向量绑定
-        // 等不接受人工编辑（控制器 requireManage 已拦，这里再兜一层防未来新调用路径绕过控制器）。
-        // 例外：**检索/解析参数是纯运行时配置，版本同步完全不碰**（同步只按指纹重建篇目、按需维护 embedding_ref），
-        // 而官方库同样必须能绑重排模型——不绑就拿不到重排分，引用门从重排门 0.6 退化到融合分门
-        // （minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板。故对管理员级开放这两个字段，其余一律 fail-loud 拒绝（不静默忽略）。
+        // 官方内置库（builtin=1）：文档内容随版本自动同步（ManualSeedService），名称/图标/共享范围
+        // 不接受人工编辑（控制器 requireManage 已拦，这里再兜一层防未来新调用路径绕过控制器）。
+        // 例外：**检索/解析参数与向量模型绑定是纯运行时配置，版本同步不主动覆盖**
+        // （同步只在「原绑定已不可解析」时才换模型并全篇重建）：
+        // ① 参数必须可改——官方库同样要能绑重排模型，不绑就拿不到重排分，引用门从重排门 0.6
+        //    退化到融合分门（minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板；
+        // ② 向量模型必须可改——供应商额度耗尽时，管理员唯一能救这个库的动作就是换一个能用的向量
+        //    模型。原先白名单漏了它，表现为「引用清单里点去修改 → 弹窗里向量模型是灰的」，
+        //    而提示却说「仅 1 处可在下列位置直接修改」，指了个改不了的地方。
         boolean builtin = kb.getBuiltin() != null && kb.getBuiltin() == 1;
         if (builtin) {
             if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {
                 throw new com.wenqu.ai.common.BizException("官方内置知识库「" + kb.getName()
-                        + "」仅管理员可维护检索/解析设置（内容随版本自动同步）");
+                        + "」仅管理员可维护检索/解析设置与向量模型（内容随版本自动同步）");
             }
             for (String k : body.keySet()) {
-                if (!"queryParams".equals(k) && !"parseParams".equals(k)) {
+                if (!"queryParams".equals(k) && !"parseParams".equals(k) && !"embeddingRef".equals(k)) {
                     throw new com.wenqu.ai.common.BizException("官方内置知识库「" + kb.getName()
-                            + "」仅可修改检索/解析设置，不接受字段：" + k
+                            + "」仅可修改检索/解析设置与向量模型，不接受字段：" + k
                             + "（名称/图标/共享范围与文档内容随版本自动同步）");
                 }
             }
