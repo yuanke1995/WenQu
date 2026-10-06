@@ -53,6 +53,11 @@
         <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
       </button>
       <button class="ss-foot-btn danger" type="button" @click="doLogout"><logout-outlined />退出登录</button>
+      <!-- 安装到桌面（PWA）：Android 走 beforeinstallprompt，iOS 走图文指引（见 h5/pwa.js）；
+           应用内浏览器（微信等）与已安装时不显示 -->
+      <button v-if="installVisible" class="ss-foot-btn install" type="button" @click="onInstall">
+        <mobile-outlined />安装到桌面
+      </button>
     </div>
 
     <!-- 行操作（底部二级 sheet 太重，这里用行内操作条） -->
@@ -76,11 +81,12 @@
 </template>
 
 <script setup>
-import { computed, inject, ref, watch } from 'vue'
+import { computed, h, inject, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
-         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined } from '@ant-design/icons-vue'
+import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi } from '../api'
@@ -101,6 +107,27 @@ const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', '
 // 主题与退出是本 sheet 自持的动作（与会话行操作同一层级）
 const router = useRouter()
 const onToggleTheme = () => toggleTheme()
+
+// 安装到桌面：能弹浏览器安装提示就弹；iOS 没有该能力，给「分享 → 添加到主屏幕」图文步骤
+// （computed 而非一次性求值：beforeinstallprompt 在挂载后到达时入口要能自己出现）
+const installVisible = computed(() => installEntryVisible())
+const onInstall = async () => {
+  if (installable.value) {
+    const fired = await promptInstall()
+    if (fired) message.success('已弹出安装提示，按提示完成即可')
+    return
+  }
+  Modal.info({
+    title: '添加到主屏幕',
+    okText: '知道了',
+    content: h('div', { style: 'line-height:1.9' }, [
+      h('div', 'Safari 不支持一键安装，按下面三步添加：'),
+      h('div', '① 点底部「分享」按钮'),
+      h('div', '② 选「添加到主屏幕」'),
+      h('div', '③ 点右上角「添加」')
+    ])
+  })
+}
 // 退出登录：令牌无状态，清本地令牌并回登录页（与 PC 侧栏同口径）。
 // 移动端多一步确认：这个入口贴着会话列表，误触后要重新输密码，代价比多点一下高。
 const doLogout = () => {
@@ -248,6 +275,8 @@ const doDelete = () => {
 }
 .ss-foot-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 .ss-foot-btn.danger { color: var(--app-danger); border-color: var(--app-danger-border); }
+/* 安装入口占整行：它不是与应用内动作并列的一项，而是"把应用装到桌面"这条独立路径 */
+.ss-foot-btn.install { grid-column: 1 / -1; color: var(--app-accent); border-color: var(--app-accent-border); }
 .ss-foot-btn.danger:active { background: var(--app-danger-weak); color: var(--app-danger); }
 
 .ss-menu { position: sticky; bottom: 0; margin-top: 10px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--app-shadow); }

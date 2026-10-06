@@ -91,6 +91,12 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 - 只在生产构建注册（`import.meta.env.PROD`）；dev 不注册，避免缓存干扰 vite。
 - 资源名带 hash ⇒ 新版本新 URL，天然无陈旧问题；SW 版本号变更时清理旧缓存。
 
+安装入口（`h5/pwa.js`，main.js 顶层 `registerPwa()`）：manifest + SW 只让应用「可安装」，入口要自己给。
+- Android/Chromium：接住 `beforeinstallprompt` 并 `preventDefault()`（浏览器自带的迷你提示条位置不可控），
+  会话 sheet 底部出现「安装到桌面」，点击触发原生安装提示；
+- iOS Safari：没有该事件，给「分享 → 添加到主屏幕」图文步骤；
+- 应用内浏览器（微信/QQ/微博/支付宝）与已在 standalone 运行时不显示入口。
+
 ## 明确**不放**在这里的东西
 
 - `ChatPage.vue` / `AppLayout.vue` —— PC 壳；手机不再走它们（但桌面窄窗口仍走）。

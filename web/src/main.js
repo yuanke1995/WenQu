@@ -16,6 +16,8 @@ import { initTheme } from './utils/theme'
 // 必须在此处（组件树之外）安装——它监听的是 window 事件，与任何组件无关，
 // 且要在首次渲染前就位，否则首帧会拿到过期的视口高度。
 import { installKeyboardInset } from './h5/keyboard'
+// PWA 安装提示：必须在顶层就接住 beforeinstallprompt（事件在页面加载后不久就可能触发）
+import { registerPwa } from './h5/pwa'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -54,6 +56,9 @@ initTheme()
 
 // 软键盘视口变量：宽屏全程不启用（--kb 恒为 0、--app-vh 不写），PC 行为零变化
 installKeyboardInset()
+
+// PWA 安装：接住 beforeinstallprompt（Android/Chromium），iOS 走图文指引（见 h5/pwa.js）
+registerPwa()
 
 // ==================== PWA：Service Worker 注册（仅生产构建） ====================
 // 只缓存 /assets/*（带内容 hash 的构建产物），分享页与 API 明确排除——策略见 public/sw.js 头注释。

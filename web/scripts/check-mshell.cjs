@@ -232,7 +232,8 @@ const check = (ok, label, detail = '') => {
   // ---- 壳外入口：会话 sheet 底部四项（个人设置/帮助/主题/退出）----
   check(await openSheet('.m-bar-btn[title="会话列表"]'), '会话 sheet 可再次打开')
   const foot = await page.evaluate(() => [...document.querySelectorAll('.ss-foot-btn')].map(b => b.textContent.trim()))
-  check(foot.length === 4 && foot[0].includes('个人设置') && foot[1].includes('帮助中心')
+  // 四项固定入口；安装到桌面是第五项（仅"可安装"时出现，headless 里通常没有 beforeinstallprompt）
+  check(foot.length >= 4 && foot[0].includes('个人设置') && foot[1].includes('帮助中心')
     && foot[2].includes('主题') && foot[3].includes('退出登录'), '会话 sheet 底部四项壳外入口', foot.join('/'))
   await page.locator('.ss-foot-btn').first().dispatchEvent('click')
   await page.waitForTimeout(1200)
@@ -300,6 +301,27 @@ const check = (ok, label, detail = '') => {
   const afterDel = await page.evaluate(() => ({ rows: document.querySelectorAll('.mrow').length,
     welcome: !!document.querySelector('.m-welcome') }))
   check(afterDel.rows === 0 && afterDel.welcome, '删除本轮后消息流移除该轮（回到空态）', JSON.stringify(afterDel))
+
+  // ---- PWA 安装入口（P3）：iOS 无 beforeinstallprompt，给图文步骤；应用内浏览器不给 ----
+  const iosCtx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+  })
+  const iosPage = await iosCtx.newPage()
+  await serveStatic(iosPage)
+  await iosPage.goto(ORIGIN + '/login', { waitUntil: 'networkidle' })
+  await iosPage.evaluate(() => { localStorage.setItem('ai_token', 'mock-token-for-verify') })
+  await iosPage.goto(ORIGIN + '/m/chat', { waitUntil: 'networkidle' })
+  await iosPage.waitForTimeout(1400)
+  await iosPage.locator('.m-bar-btn[title="会话列表"]').first().dispatchEvent('click')
+  await iosPage.waitForTimeout(800)
+  const iosFoot = await iosPage.evaluate(() => [...document.querySelectorAll('.ss-foot-btn')].map(b => b.textContent.trim()))
+  check(iosFoot.some(t => t.includes('安装到桌面')), 'iOS 上壳外入口给出「安装到桌面」', iosFoot.join('/'))
+  await iosPage.locator('.ss-foot-btn', { hasText: '安装到桌面' }).first().dispatchEvent('click')
+  await iosPage.waitForTimeout(800)
+  const iosModal = await iosPage.evaluate(() => (document.querySelector('.ant-modal-confirm') || {}).innerText || '')
+  check(/添加到主屏幕/.test(iosModal), 'iOS 给出图文安装步骤', iosModal.replace(/\s+/g, ' ').slice(0, 50))
+  await iosCtx.close()
 
   // ---- PC 回归：桌面（无触屏）访问 /m/chat 应被弹回 /chat，且不渲染移动壳 ----
   const desktop = await ctx.newPage()
