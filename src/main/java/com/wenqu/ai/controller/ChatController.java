@@ -430,6 +430,35 @@ public class ChatController {
         return ResultJson.ok(history);
     }
 
+    @Operation(summary = "手动压缩会话上下文",
+            description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令）：除最近 2 轮原样保留外，其余全部并入会话摘要，"
+                    + "为后续提问腾出上下文空间；可带 instruction 指定这次摘要要保留什么。摘要调用按 chat 桶限频并计入用量台账。"
+                    + "返回 {compressedTurns, compressedMessages, keepRecent, summaryTokens, summary, rounds, partial}；"
+                    + "compressedTurns=0 表示对话还短、无需压缩")
+    @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
+    @PostMapping("/session/{sessionId}/compact")
+    public ResultJson compactSession(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @RequestBody(required = false) Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        String userId = RequestUser.uid();
+        sessionService.assertOwned(sessionId, userId);
+        // 摘要要花一次（长会话是数次）模型调用：并入 chat 桶限频，防连点刷额度
+        rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
+                ? "ip:" + clientIp(httpRequest) : "user:" + userId);
+        Object modelArg = body == null ? null : body.get("model");
+        Object instrArg = body == null ? null : body.get("instruction");
+        // 模型解析顺序与会话当轮一致（前端选的会话模型 > 个人默认）；都没有时 fail-loud 引导配置，
+        // 而不是发空 model 到网关
+        String resolvedModel = ragService.resolveChatModel(userId,
+                modelArg == null ? null : String.valueOf(modelArg));
+        if (resolvedModel.isBlank()) {
+            throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
+        }
+        String instruction = instrArg == null ? null : String.valueOf(instrArg);
+        return ResultJson.ok(ragService.compactSession(sessionId, resolvedModel, instruction), "压缩完成");
+    }
+
     @Operation(summary = "删除会话", description = "删除指定会话（MySQL 软删除 + Redis 清理；校验会话归属）")
     @DeleteMapping("/session/{sessionId}")
     public ResultJson deleteSession(

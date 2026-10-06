@@ -247,6 +247,15 @@ export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
 /** 清除会话（Redis 缓存） */
 export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE' })
 
+/**
+ * 手动压缩会话上下文（/compact）：早期对话并入摘要，为后续提问腾出上下文空间。
+ * instruction 为附加要求（可空）；model 传会话当前选择的模型引用（空=后端按个人默认解析）。
+ * 长会话后端分批多次调用模型（每批最多 60s，最多 8 批），故超时给到 300s——
+ * 默认 30s 会把正常等待误判成超时。超时后已压好的批次已落库，可再次执行接着压。
+ */
+export const compactSessionApi = (sid, { instruction = '', model = '' } = {}) =>
+  request(`/session/${sid}/compact`, { method: 'POST', body: JSON.stringify({ instruction, model }), timeout: 300000 })
+
 // ==================== 会话只读分享（链接持有者可看，不可续聊） ====================
 /** 查询分享状态（仅会话所有者）：{enabled, token, visitCount, lastVisitAt} */
 export const getSessionShare = sid => request(`/session/${sid}/share`)

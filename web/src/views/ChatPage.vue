@@ -453,6 +453,17 @@
             </div>
           </div>
         </div>
+        <!-- 手动压缩结果条（/compact）：纯本地状态、不落库；下一轮发送即退场，
+             避免它躺在最新回答下方被读成「本轮压缩了 N 轮」（那是气泡上 ctx-compress-bar 的语义） -->
+        <div v-if="compactNotice && compactNotice.sid === currentSessionId" class="ctx-compress-bar compact-notice">
+          <compress-outlined class="cn-ic" />
+          <span class="cn-text">
+            已把 {{ compactNotice.turns }} 轮早期对话压缩为摘要，最近 {{ compactNotice.keepTurns }} 轮保持原样
+            <template v-if="compactNotice.partial">（会话很长，本次只压了最早的几批，可再次执行 /compact 继续）</template>
+          </span>
+          <button v-if="compactNotice.summary" class="app-btn ghost small" @click="openCompactSummary">查看摘要</button>
+          <button class="app-icon-btn" title="不再显示" @click="compactNotice = null"><close-outlined /></button>
+        </div>
         <!-- 尾随留白：本轮问题下方补足一屏，使贴底落点=问题置顶（回答长过一屏后归零，恢复正常贴底跟尾） -->
         <div v-if="tailSpacer > 0" class="tail-spacer" :style="{ height: tailSpacer + 'px' }" aria-hidden="true"></div>
         <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
@@ -586,14 +597,14 @@
                    :class="{ hi: slashHi === ci }" @click="runSlashCommand(c)">
                 <span class="mention-ava"><component :is="c.icon" /></span>
                 <div class="mention-text">
-                  <span class="mention-name">{{ c.name }}</span>
+                  <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
                   <span class="mention-desc">{{ c.desc }}</span>
                 </div>
                 <span class="slash-kind" :class="c.kind === 'tpl' ? 'k-tpl' : 'k-act'">{{ c.kind === 'tpl' ? '模板' : '操作' }}</span>
               </div>
               <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
             </div>
-            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行</div>
+            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行；命令可附要求（如 /compact 保留结论）</div>
           </div>
           <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
           <div v-if="histOpen" class="mention-panel">
@@ -995,6 +1006,16 @@
           </a-collapse>
         </template>
       </a-spin>
+    </a-modal>
+
+    <!-- 压缩后的摘要全文：压缩结果条「查看摘要」打开。正文在打开时快照（compactSummaryText），
+         否则发送新一轮清掉 compactNotice 后，弹窗内容会跟着变空 -->
+    <a-modal v-model:open="compactSummaryOpen" title="早期对话摘要" :footer="null" width="640px">
+      <div class="csum-tip">
+        以下是后续回答里「早期对话」的呈现形式（约 {{ fmtTokens(compactSummaryTokens) }} tokens）。
+        完整问答仍保留在会话中，往上翻可回看。
+      </div>
+      <pre class="csum-body">{{ compactSummaryText }}</pre>
     </a-modal>
 
     <!-- 图片灯箱：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
@@ -1862,7 +1883,9 @@ const syncPanelQuery = () => {
     return
   }
   const q = text.value.slice(panelTriggerPos + 1, caret)
-  if (/\s/.test(q)) { closeAllPanels(); return }
+  // 空白 = 这个"词"已经结束，收起面板；例外是 / 命令的带参写法（/compact 保留结论）——
+  // 别名打完整后敲的空格是在给命令传要求，此时收起面板就等于把参数那半句丢掉
+  if (/\s/.test(q) && !(slashOpen.value && slashArgPending(q))) { closeAllPanels(); return }
   if (mentionOpen.value) mentionQuery.value = q
   else if (slashOpen.value) slashQuery.value = q
   else if (histOpen.value) histQuery.value = q
@@ -1899,6 +1922,7 @@ const slashQuery = ref('')
 const slashHi = ref(0)
 // kind: tpl=插入问法框架到输入框（可再编辑）；act=会话级操作，立即执行
 // 模板贴合本系统场景：资料类问法配合 @ 文档/知识库使用，检索类问法用于优化提问
+// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），带别名的 act 命令可跟参数：「别名 + 空格 + 要求」
 const slashCommands = [
   { key: 'tpl-summary', kind: 'tpl', icon: FileTextOutlined, name: '总结资料',
     desc: '生成总结问法框架，配合 @ 文档使用', tpl: '请总结以下内容的要点与结论：\n' },
@@ -1912,6 +1936,9 @@ const slashCommands = [
     desc: '多维度对比分析并给出建议', tpl: '请从多个维度对比分析以下内容，最后给出选择建议：\n' },
   { key: 'tpl-optimize', kind: 'tpl', icon: QuestionCircleOutlined, name: '优化提问',
     desc: '把问题改写为更适合知识库检索的表述', tpl: '请帮我优化下面这个问题的表述，使其更适合用于知识库检索：\n' },
+  { key: 'act-compact', kind: 'act', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
+    desc: '早期对话压缩为摘要，腾出上下文空间（可附要求）',
+    run: args => compactContext(args) },
   { key: 'act-export', kind: 'act', icon: FileTextOutlined, name: '导出会话 Markdown',
     desc: '把当前会话全部问答导出为 .md 文件',
     run: () => { if (!currentSessionId.value) { message.warning('当前没有可导出的会话'); return } exportSessionMarkdown(currentSessionId.value, currentSessionTitle.value) } },
@@ -1930,12 +1957,31 @@ const openSlashPanel = () => {
 const closeSlashPanel = () => closeAllPanels()
 // slashQuery 直接来自输入框正文（「/ 到光标」之间），不再需要剥唤起键
 const slashQueryNorm = computed(() => slashQuery.value.trim())
+/** / 命令的带参判定（/compact 保留结论）：别名打完整后再出现的空白，是在给命令传要求，不是在结束筛选 */
+const slashArgPending = q => {
+  const s = String(q || '').trimStart().toLowerCase()
+  return slashCommands.some(c => c.cmd && s.startsWith(c.cmd.toLowerCase() + ' '))
+}
+/** 命令参数：筛选词里「别名 + 空格」之后的部分（原文切片，保留用户输入的大小写与用词） */
+const slashArgsOf = c => {
+  const cmd = (c.cmd || '').toLowerCase()
+  if (!cmd) return ''
+  const raw = slashQuery.value.trim()
+  return raw.toLowerCase().startsWith(cmd) ? raw.slice(cmd.length).trim() : ''
+}
 const slashFiltered = computed(() => {
   const q = slashQueryNorm.value.toLowerCase()
   if (!q) return slashCommands
-  return slashCommands.filter(c => c.name.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q))
+  return slashCommands.filter(c => {
+    const cmd = (c.cmd || '').toLowerCase()
+    // 别名：前缀补全（/com → 压缩上下文），或「别名 + 空格 + 参数」仍命中该命令
+    if (cmd && (cmd.startsWith(q) || q.startsWith(cmd + ' '))) return true
+    return c.name.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q)
+  })
 })
 const runSlashCommand = c => {
+  // 参数先取：下面 stripTriggerToken/closeAllPanels 会把触发片段与筛选词清掉，取晚了就只能拿到空串
+  const args = slashArgsOf(c)
   slashOpen.value = false
   if (c.kind === 'tpl') {
     // 模板替换掉「/ + 筛选词」这段触发文本（而不是追加到末尾），否则会留下 "/总结\n请总结…" 的残渣。
@@ -1969,9 +2015,10 @@ const runSlashCommand = c => {
     })
   } else {
     // act（立即执行的动作）不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
+    // （带参的命令同理："/compact 保留结论"整段都要摘走，参数已在上方取到）
     stripTriggerToken()
     closeAllPanels()
-    c.run?.()
+    c.run?.(args)
   }
 }
 // ==================== # 历史引用面板（勾选本会话历史问答 → 本轮上下文） ====================
@@ -2397,7 +2444,9 @@ const {
   // # 历史引用
   pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
   // 会话生命周期 / 重新生成 / 分支 / 初始化
-  switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready
+  switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready,
+  // 手动压缩上下文（/compact：命令面板与结果条）
+  compactNotice, compactContext
 } = useChatEngine({
   chatPath: '/chat',
   scrollFollow: () => nextTick(() => { updateTailSpacer(); scroll() }),
@@ -2406,6 +2455,17 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// ==================== 手动压缩摘要弹窗（/compact 结果条「查看摘要」） ====================
+// 打开时快照摘要与用量：发送下一轮会清掉 compactNotice，弹窗若直接读它会当场变空
+const compactSummaryOpen = ref(false)
+const compactSummaryText = ref('')
+const compactSummaryTokens = ref(0)
+const openCompactSummary = () => {
+  compactSummaryText.value = compactNotice.value?.summary || ''
+  compactSummaryTokens.value = compactNotice.value?.summaryTokens || 0
+  compactSummaryOpen.value = true
+}
 
 // 开始回答即收起悬浮思考面板（loading 声明后才能 watch，getter 在 watch 调用时同步执行）
 watch(() => loading.value, v => { if (v) hideThinkPanel() })
@@ -2651,6 +2711,19 @@ onMounted(async () => {
   margin-top: 8px; padding: 6px 10px; border-radius: 6px;
   background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); color: var(--app-accent);
   font-size: 12px; line-height: 1.6; display: flex; align-items: center;
+}
+/* 手动压缩结果条（/compact）：消息流尾部独立一条，与消息气泡同宽居中收边 */
+.compact-notice { margin: 12px 24px 0; gap: 8px; }
+.cn-ic { flex: none; }
+.cn-text { flex: 1; min-width: 0; }
+.compact-notice .app-icon-btn { color: inherit; opacity: .75; }
+.compact-notice .app-icon-btn:hover { opacity: 1; }
+/* 摘要弹窗 */
+.csum-tip { margin-bottom: 10px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.csum-body {
+  margin: 0; max-height: 52vh; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);
+  font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
 }
 
 /* 上下文容量卡（悬浮右栏模型行）：与深度思考面板同一套 fixed 定位约定 */
@@ -2913,6 +2986,8 @@ onMounted(async () => {
   padding: 3px 9px; border-radius: 999px;
 }
 .mention-tab:hover { background: var(--app-panel-2); color: var(--app-text2); }
+/* 带英文别名的命令（/compact）：别名在前，中文名在后——用户照着敲就能命中 */
+.slash-cmd { margin-right: 6px; font-size: 12px; color: var(--app-accent); }
 .mention-tab.on { background: var(--app-accent-weak); color: var(--app-accent); }
 .mention-list { overflow-y: auto; padding: 6px; max-height: 264px; }
 .mention-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }

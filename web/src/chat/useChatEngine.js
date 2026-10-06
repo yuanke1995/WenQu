@@ -7,7 +7,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, getConfig, getRuntimeConfig, listAvailableAgents,
+import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
@@ -902,6 +902,9 @@ const send = () => {
   }
   text.value = ''
   hooks.closePanels?.()   // 正文清空后触发字符已失效，显式收起（不依赖 input 回调的副作用）
+  // 压缩结果条随下一轮退场：它记录的是「刚才压了什么」，继续对话后仍摆在消息流最下方，
+  // 会被读成「本轮压缩了 N 轮」（与气泡上的自动压缩提示条混淆）
+  compactNotice.value = null
   pendingImages.value = []
   pendingFiles.value = []
   pickedSkills.value = []
@@ -1367,6 +1370,49 @@ const stop = () => {
     st.abort.abort()  // abort → api.js 按正常结束回调 onDone（气泡收尾为「已停止生成」）
   }
 }
+// ==================== 手动压缩会话上下文（/compact） ====================
+// 与「按阈值自动压缩」共用同一套摘要机制（后端 RagService.compactSession），差别是显式发起：
+// 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 轮外全部并入摘要」。
+const compacting = ref(false)
+// 最近一次压缩结果（本地提示条，不落库）：带 sid，会话切走后不再显示——否则会把别的会话的结论挂在当前会话下
+const compactNotice = ref(null)
+
+/**
+ * 手动压缩当前会话上下文：早期对话并入摘要，完整记录仍留在会话里可回看。
+ * @param instruction 附加要求（可空，如「保留结论与数字、忽略寒暄」），随摘要提示词下发给模型
+ * @returns 后端统计（compressedTurns/summary 等）；无会话/正在回答/失败返回 null（原因已就地提示）
+ */
+const compactContext = async (instruction = '') => {
+  const sid = currentSessionId.value
+  if (!sid) { message.warning('当前没有可压缩的会话'); return null }
+  // 正在回答时不允许压缩：本轮正在读/写同一份摘要，交叉会互相覆盖
+  if (loading.value) { message.warning('正在生成回答，等本轮结束后再压缩'); return null }
+  if (compacting.value) return null
+  compacting.value = true
+  const hide = message.loading('正在压缩早期对话…', 0)
+  try {
+    const r = await compactSessionApi(sid, { instruction, model: currentOverrideModel.value || '' })
+    const d = (r && r.data) || {}
+    // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 轮不会被压掉）
+    if (!d.compressedTurns) { message.info('没有可压缩的早期对话（对话还短，或已经压过了）'); return d }
+    // keepRecent 是消息条数（一会合一答算两条），提示条按「轮」说话，故折半后再至少保 1
+    compactNotice.value = {
+      sid, turns: d.compressedTurns, keepTurns: Math.max(1, Math.round((d.keepRecent || 4) / 2)),
+      summary: d.summary || '', summaryTokens: d.summaryTokens || 0, partial: !!d.partial
+    }
+    message.success(d.partial
+      ? `已压缩 ${d.compressedTurns} 轮早期对话（会话很长，可再次执行 /compact 继续）`
+      : `已压缩 ${d.compressedTurns} 轮早期对话为摘要`)
+    return d
+  } catch (e) {
+    message.error(e?.message || '压缩失败，请稍后重试')
+    return null
+  } finally {
+    hide()
+    compacting.value = false
+  }
+}
+
 // ==================== 挂载初始化 ====================
 // 原 ChatPage onMounted 的引擎侧主体（window/document 监听与 refreshSetupGuide 留在视图）：
 // 先 loadSessions，再拉智能体/技能候选（不阻塞首屏），然后按 sid / newChatTick / autoPick
@@ -1440,6 +1486,8 @@ const ready = async () => {
     MAX_HISTORY_REFS, pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
     // 会话生命周期
     switchSession, creatingSession, createNewSession, autoPick, handleDeleteSession,
+    // 手动压缩上下文（/compact：PC 斜杠命令与移动端模型面板共用）
+    compacting, compactNotice, compactContext,
     // 重新生成 / 分支切换 / 挂载初始化
     switchVersion, regenerate, variantSwitching, switchBranch, ready
   }

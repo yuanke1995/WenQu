@@ -714,6 +714,27 @@ public class ModelRegistryService {
     }
 
     /**
+     * 思考关闭的请求体增量（与 {@link #reasoningExtraBody} 对称，「能关就关」的辅助调用用）：
+     * 摘要/改写这类不需要推理的调用里，思考 token 与正文共享 max_tokens，默认开思考的模型
+     * （DeepSeek V3/V4、GLM-5、豆包 Seed 等）会把输出预算花在推理上，正文返回空——实测
+     * 摘要调用 completion 恒等于 max_tokens 上限而内容为空，就是被推理吃光的。
+     * <p>返回空 Map = <b>关不掉或不敢关</b>：恒思考模型（R1/QwQ 等）没有关闭开关，发关闭字段
+     * 多半被网关拒绝；未识别方言与 OpenAI 系同理不下发未知字段（宁可多给输出预算，也不冒 400 风险）。
+     */
+    public Map<String, Object> reasoningOffBody(String ref) {
+        ModelInfo mi = modelInfoOf(ref);
+        if (mi == null) return Map.of();
+        // 只有登记为「可开关思考」的模型才存在"关"这个动作
+        if (!THINK_SWITCHABLE.equals(resolveThinking(mi))) return Map.of();
+        return switch (reasoningDialectOf(mi.getModelId())) {
+            case QWEN -> Map.of("enable_thinking", false);
+            // 与 reasoningExtraBody 里的 thinking.type=enabled 同一字段（该方言族的思考开关）
+            case DEEPSEEK, GLM, DOUBAO, KIMI, MINIMAX -> Map.of("thinking", Map.of("type", "disabled"));
+            default -> Map.of();
+        };
+    }
+
+    /**
      * 思考强度的 {@code reasoning_effort} 取值（已按厂商收敛表映射）：供调用方走
      * OpenAiChatOptions 的<b>原生</b> setter 下发——不能经 extraBody（同名键会重复序列化）。
      * <p>返回 null 表示该方言不用 effort（Claude 走 token 预算、网关无强度语义），

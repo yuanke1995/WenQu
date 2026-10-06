@@ -4341,6 +4341,13 @@ public class RagService {
     private static final int HISTORY_SCAN_LIMIT = 200;
     /** 至少保留原样的消息条数（2 轮）：保证最近一问一答逐字在场，压缩不吞掉刚说的话 */
     private static final int HISTORY_MIN_KEEP = 4;
+    /** 手动压缩（/compact）单次请求的摘要调用上限与单批输入上限：长会话分多批滚动合并，
+     *  避免一次调用吃掉整窗（输入超限会被网关直接拒绝）；到上限仍有积压时回传 partial，不假装压完了 */
+    private static final int COMPACT_MAX_ROUNDS = 8;
+    private static final int COMPACT_CHUNK_TOKENS = 12000;
+    /** 手动压缩单批超时下限（毫秒）：用户显式发起、界面有 loading，不必卡自动路径那个 20 秒的紧阈值
+     *  （单批输出接近 1024 上限时实测可跑 19 秒，紧阈值下会误判超时） */
+    private static final long COMPACT_TIMEOUT_FLOOR_MS = 60000L;
 
     /**
      * 预算驱动装配对话历史（替代旧的「按轮数 + 单条截断」）：近期轮次原样注入、更早轮次滚动压缩进会话摘要，
@@ -4376,7 +4383,8 @@ public class RagService {
                 if (keepFrom > 0) {
                     List<Map<String, Object>> older = backlog.subList(0, keepFrom);
                     try {
-                        String merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older));
+                        // 自动压缩跑在回答链路里：超时用紧阈值（等不起），与手动 /compact 的宽等待分开
+                        String merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older), null, null);
                         if (merged != null && !merged.isBlank()) {
                             long newUntil = seqOf(older.get(older.size() - 1));
                             sessionService.updateHistorySummary(sessionId, merged, newUntil);
@@ -4401,6 +4409,121 @@ public class RagService {
         int from = fitFromNewest(backlog, recentBudget);
         String recentText = historyText(backlog.subList(from, backlog.size()));
         return new HistoryBundle(summary, recentText, summaryTokens, TokenCounter.estimate(recentText), compressedTurns);
+    }
+
+    /**
+     * 手动压缩会话上下文（/compact 斜杠命令）。
+     * <p>
+     * 与自动压缩的差别：自动压缩在「摘要 + 积压 &gt; 检索预算 × compressRatio」时才动、且只压到阈值内；
+     * 用户显式发起时不等阈值，也不看 {@code context.historyCompress} 开关——该开关只管"要不要自动压"，
+     * 而摘要注入本身与它无关（关掉自动压缩的人照样会带摘要），所以手动压缩始终可用。
+     * 压缩目标明确：除最近 {@link #HISTORY_MIN_KEEP} 条原样保留外，其余全部并入会话摘要。
+     * <p>
+     * 长会话分多批：每批从最旧往新取到 {@link #COMPACT_CHUNK_TOKENS} 为止，先并入旧摘要再落库
+     * （下一批复用刚落库的摘要，边压边持久化——中途失败时已压部分不丢）；最多 {@link #COMPACT_MAX_ROUNDS} 批，
+     * 到上限仍有积压则回传 {@code partial=true}，由前端提示可再次执行。历史读取失败/首批压缩失败会抛异常
+     * （会话未被改动，fail-loud），已压了一部分之后再失败则返回已完成的部分。
+     *
+     * @param resolvedModel 摘要调用所用模型（调用方已解析；空值由调用方拦在前面）
+     * @param instruction   用户附加要求（可空）：希望这次摘要保留什么、忽略什么
+     * @return compressedTurns / compressedMessages / keepRecent / summaryTokens / summary / rounds / partial
+     */
+    public Map<String, Object> compactSession(String sessionId, String resolvedModel, String instruction) {
+        Session session = sessionService.sessionById(sessionId);
+        String summary = (session == null || session.getHistorySummary() == null) ? "" : session.getHistorySummary();
+        long untilSeq = (session == null || session.getSummaryUntilSeq() == null) ? 0L : session.getSummaryUntilSeq();
+        int compressedMessages = 0;
+        int rounds = 0;
+        boolean partial = false;
+        long batchTimeout = Math.max(configService.getLong("context.compressTimeoutMs", 20000L),
+                COMPACT_TIMEOUT_FLOOR_MS);
+        while (rounds < COMPACT_MAX_ROUNDS) {
+            List<Map<String, Object>> backlog = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_SCAN_LIMIT);
+            if (backlog == null) {
+                if (compressedMessages == 0) throw new com.wenqu.ai.common.BizException("会话历史读取失败，请稍后重试");
+                partial = true;
+                break;
+            }
+            int keepFrom = backlog.size() - HISTORY_MIN_KEEP;
+            if (keepFrom <= 0) break;   // 只剩近期原样：压完了
+            List<Map<String, Object>> older = backlog.subList(0, compactChunkSize(backlog, keepFrom));
+            long newUntil = seqOf(older.get(older.size() - 1));
+            // 序号没推进（消息缺 sequence）：宁可停手也不做死循环，已压的部分照常返回
+            if (newUntil <= untilSeq) {
+                partial = true;
+                break;
+            }
+            String merged;
+            try {
+                merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older), instruction, batchTimeout);
+            } catch (Exception e) {
+                if (compressedMessages == 0) {
+                    log.warn("[CTX] 手动压缩失败（{} 条待压，会话未改动）: {}", older.size(), e.getMessage());
+                    throw new com.wenqu.ai.common.BizException("压缩失败：" + compactFailReason(e) + "，会话未被改动");
+                }
+                log.warn("[CTX] 手动压缩中途失败（已并入 {} 条）: {}", compressedMessages, e.getMessage());
+                partial = true;
+                break;
+            }
+            if (merged == null || merged.isBlank()) {
+                // 空摘要不能落库：会把旧摘要一起清掉，等于凭空丢历史。
+                // 模型空回答多半是思考档吃掉了输出预算（maxTokens 计入推理 token）——留痕才查得动
+                log.warn("[CTX] 手动压缩拿到空摘要（已并入 {} 条，本批 {} 条，模型 {}）",
+                        compressedMessages, older.size(), resolvedModel);
+                if (compressedMessages == 0) throw new com.wenqu.ai.common.BizException("模型未返回摘要内容，会话未被改动，请稍后重试");
+                partial = true;
+                break;
+            }
+            sessionService.updateHistorySummary(sessionId, merged, newUntil);
+            summary = merged;
+            untilSeq = newUntil;
+            compressedMessages += older.size();
+            rounds++;
+            log.info("[CTX] 手动压缩第 {} 批：{} 条并入摘要（until={}，摘要 {} token）",
+                    rounds, older.size(), newUntil, TokenCounter.estimate(summary));
+        }
+        if (!partial && rounds >= COMPACT_MAX_ROUNDS) {
+            // 达到批次上限：确认是真的还有积压（而非刚好压完），否则用户会白看到一句"可再次执行"
+            List<Map<String, Object>> rest = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_MIN_KEEP + 1);
+            partial = rest != null && rest.size() > HISTORY_MIN_KEEP;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("compressedTurns", compressedMessages <= 0 ? 0 : Math.max(1, compressedMessages / 2));
+        out.put("compressedMessages", compressedMessages);
+        out.put("keepRecent", HISTORY_MIN_KEEP);
+        out.put("summaryTokens", TokenCounter.estimate(summary));
+        out.put("summary", summary);
+        out.put("rounds", rounds);
+        out.put("partial", partial);
+        return out;
+    }
+
+    /** 手动压缩的失败原因：超时的 TimeoutException 消息为 null，直接拼 getMessage() 会给用户一句空话 */
+    private String compactFailReason(Exception e) {
+        if (e instanceof TimeoutException) return "模型响应超时";
+        String m = e.getMessage();
+        return (m == null || m.isBlank()) ? e.getClass().getSimpleName() : m;
+    }
+
+    /** 单批压缩条数：从最旧往新装，装到 {@link #COMPACT_CHUNK_TOKENS} 为止（至少 1 条——单条自身超上限也得压走） */
+    private int compactChunkSize(List<Map<String, Object>> backlog, int limit) {
+        int total = 0;
+        int take = 0;
+        while (take < limit) {
+            int t = TokenCounter.estimate(historyLine(backlog.get(take)));
+            if (take > 0 && total + t > COMPACT_CHUNK_TOKENS) break;
+            total += t;
+            take++;
+        }
+        return Math.max(1, take);
+    }
+
+    /**
+     * 非问答轮（手动压缩 /compact）的生效模型解析：显式指定 &gt; 个人默认；返回空串表示未配置，
+     * 由调用方 fail-loud 引导用户选模型（与问答轮同一解析顺序，避免两条路走进不同模型）
+     */
+    public String resolveChatModel(String userId, String modelOverride) {
+        return resolveModel(modelOverride, loadPrefUser(userId));
     }
 
     /** 一条历史消息的注入文本（role: content，剥离 [图片N] 标记；全文注入，不再按字符硬截断） */
@@ -4489,30 +4612,46 @@ public class RagService {
      * 摘要与会话绑定、与模型无关（切换模型可复用）；超时/失败抛异常由调用方回落。
      * 用量归属：压缩跑在专属线程池上，ThreadLocal/请求上下文都不可见——入口线程先取 uid，
      * 池内 hold 显式带上（台账按 UsageAttr 记账），finally 清理防线程复用污染。
+     *
+     * @param instruction 用户对本次压缩的额外要求（/compact 可带，自动压缩传 null）：想保住什么、忽略什么
+     * @param timeoutOverrideMs 超时覆盖（毫秒，null=用 context.compressTimeoutMs）：手动压缩没有"卡在回答中间"
+     *                          的问题，可以等更久——单批输出接近上限时耗时可到 20 秒上下，与自动路径的
+     *                          紧阈值不是一回事
      */
-    private String summarizeHistory(String sessionId, String resolvedModel, String oldSummary, String olderText) throws Exception {
+    private String summarizeHistory(String sessionId, String resolvedModel, String oldSummary, String olderText,
+                                    String instruction, Long timeoutOverrideMs) throws Exception {
         String prompt = "你是对话历史压缩器。把下面的对话记录压缩成简洁要点摘要，供后续回答继续参考：\n"
                 + "1. 保留：用户的目标与诉求、已达成的结论与决定、出现的关键实体（人名/产品名/编号/数值/时间）、尚未解决的问题。\n"
                 + "2. 丢弃：寒暄、重复表述、已被后续对话推翻的中间过程。\n"
                 + "3. 用第三人称陈述（\"用户询问了…\"\"助手回答了…\"），按时间顺序条目化。\n"
-                + "4. 只输出摘要正文，不要解释、不要加标题。\n\n"
+                + "4. 只输出摘要正文，不要解释、不要加标题。\n"
+                + (instruction == null || instruction.isBlank() ? ""
+                        : "5. 用户对本次压缩的额外要求（优先满足，但不得与 1~4 冲突）：" + instruction.trim() + "\n")
+                + "\n"
                 + (oldSummary == null || oldSummary.isBlank() ? "" : "【已有摘要（更早的历史）】\n" + oldSummary + "\n\n")
                 + "【本次要并入的对话】\n" + olderText;
-        long timeoutMs = configService.getLong("context.compressTimeoutMs", 20000L);
+        long timeoutMs = timeoutOverrideMs != null ? timeoutOverrideMs
+                : configService.getLong("context.compressTimeoutMs", 20000L);
+        // 摘要不需要推理：思考 token 与正文共享 max_tokens，默认开思考的模型会把预算全花在推理上、
+        // 正文返回空（实测摘要 completion 恒等于上限而内容为空）。能关思考的方言下发关闭字段；
+        // 关不掉的（恒思考 / 未识别方言）多留一份输出预算，别让摘要被推理挤没。
+        Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(resolvedModel);
+        int summaryMaxTokens = thinkOff.isEmpty() ? 2560 : 1024;
         String billingUid = com.wenqu.ai.util.RequestUser.uid();
         java.util.concurrent.Future<String> f = compressExecutor.submit(() -> {
             com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
                     com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
                     sessionId, null, "compress"));
             try {
+                OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder()
+                        .model(resolvedModel)
+                        .temperature(0.2)
+                        .maxTokens(summaryMaxTokens);
+                if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
                 return chatClient.prompt()
                         .system("你是对话历史压缩器，只输出要点摘要。")
                         .user(prompt)
-                        .options(OpenAiChatOptions.builder()
-                                .model(resolvedModel)
-                                .temperature(0.2)
-                                .maxTokens(1024)
-                                .build())
+                        .options(opts.build())
                         .call()
                         .content();
             } finally {

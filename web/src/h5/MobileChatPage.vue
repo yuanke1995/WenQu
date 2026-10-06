@@ -101,6 +101,17 @@
       <arrow-down-outlined />
     </button>
 
+    <!-- 手动压缩结果条（PC 端 /compact 的同一份状态）：消息流与输入区之间的独立横条，
+         发送下一轮即退场，不会被读成「本轮压缩」（那是回答气泡内 info-bar 的语义） -->
+    <div v-if="compactNotice && compactNotice.sid === currentSessionId" class="m-compact-bar">
+      <span class="mc-text">
+        已把 {{ compactNotice.turns }} 轮早期对话压缩为摘要，最近 {{ compactNotice.keepTurns }} 轮保持原样
+        <template v-if="compactNotice.partial">（会话很长，可再次压缩继续）</template>
+      </span>
+      <button v-if="compactNotice.summary" class="mc-btn" type="button" @click="openCompactSummary">查看</button>
+      <button class="mc-btn ghost" type="button" title="不再显示" @click="compactNotice = null"><close-outlined /></button>
+    </div>
+
     <!-- ==================== 输入区 ==================== -->
     <footer class="m-composer">
       <!-- 本轮随行内容 chips -->
@@ -203,6 +214,15 @@
       </div>
     </Teleport>
 
+    <!-- ==================== 压缩摘要（结果条「查看」） ==================== -->
+    <BottomSheet :open="csumOpen" title="早期对话摘要" max-height="70dvh" @close="csumOpen = false">
+      <div class="mc-sum-tip">
+        以下是后续回答里「早期对话」的呈现形式（约 {{ fmtTokens(csumTokens) }} tokens）。
+        完整问答仍保留在会话中，往上翻可回看。
+      </div>
+      <pre class="mc-sum-body">{{ csumText }}</pre>
+    </BottomSheet>
+
     <!-- ==================== 反馈 ==================== -->
     <BottomSheet :open="fb.open" :title="fb.rating === 1 ? '这条回答有帮助' : '这条回答没帮助'" max-height="60dvh" @close="fb.open = false">
       <textarea v-model="fb.text" class="m-fb-ta" rows="3" placeholder="补充说明（选填）：哪里好 / 哪里不对？"></textarea>
@@ -226,6 +246,7 @@ import { useNotifications } from '../chat/useNotifications'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, resolveImg, enhanceDiagrams } from '../utils/markdown'
+import { fmtTokens } from '../utils/token'
 import { preferMobileShell } from './mobile'
 import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
@@ -310,8 +331,24 @@ const {
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
+  // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
+  // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
+  compactNotice, compactContext,
   ready
 } = engine
+
+// ==================== 手动压缩上下文（/compact 的移动入口） ====================
+// 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区（与窗口档位同处一块）；
+// 结果条摆在消息流底部，发送下一轮即退场（引擎内清），语义与 PC 结果条一致
+const csumOpen = ref(false)
+const csumText = ref('')
+const csumTokens = ref(0)
+const openCompactSummary = () => {
+  // 打开时快照：发送下一轮会清掉 compactNotice，弹层若直读它会当场变空
+  csumText.value = compactNotice.value?.summary || ''
+  csumTokens.value = compactNotice.value?.summaryTokens || 0
+  csumOpen.value = true
+}
 
 // 模型短名（工具条展示）：优先模型库友好名，缩到 10 字以内
 const modelShort = computed(() => {
@@ -614,6 +651,26 @@ onUnmounted(() => {
   width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--app-border);
   background: var(--app-panel); color: var(--app-text2); font-size: 16px; box-shadow: var(--app-shadow);
   display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation; z-index: 5;
+}
+
+/* ---- 手动压缩结果条（/compact）---- */
+.m-compact-bar {
+  flex: none; display: flex; align-items: center; gap: 8px; margin: 0 10px 4px;
+  padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); color: var(--app-accent);
+}
+.mc-text { flex: 1; min-width: 0; }
+.mc-btn {
+  flex: none; min-height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--app-accent-border); background: transparent; color: inherit;
+  touch-action: manipulation;
+}
+.mc-btn.ghost { border-color: transparent; opacity: .75; }
+.mc-sum-tip { margin-bottom: 8px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.mc-sum-body {
+  margin: 0; max-height: 52dvh; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);
+  font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
 }
 
 /* ---- 输入区 ---- */

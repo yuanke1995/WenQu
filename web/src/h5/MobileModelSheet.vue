@@ -79,6 +79,15 @@
         </div>
         <div class="ms-note">窗口越大能带上更多资料与历史，费用也相应增加</div>
       </template>
+
+      <!-- ---- 上下文压缩（PC 端 /compact 命令的移动入口）---- -->
+      <div class="ms-section-title">上下文</div>
+      <button class="ms-row" type="button" :disabled="loading || compacting" @click="doCompact">
+        <span class="ms-ico-fallback">压</span>
+        <span class="ms-name">压缩上下文</span>
+        <span class="ms-sub">{{ compacting ? '压缩中…' : '早期对话并入摘要' }}</span>
+      </button>
+      <div class="ms-note">把较早的对话压缩成摘要，为后续提问腾出空间；完整记录仍可在会话中回看（PC 端也可用 /compact 命令）</div>
     </div>
   </BottomSheet>
 </template>
@@ -99,6 +108,7 @@ const emit = defineEmits(['close'])
 const engine = inject('wqChat')
 const {
   currentOverrideModel, userDefaultModel, effectiveModel, effectiveModelLabel, loading,
+  compacting, compactContext,
   thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, setThinkLevel, modelLabelOf,
   ctxWindowOptionsOf, effectiveCtxWindowOf,
   agentList, AUTO_AGENT, currentAgentId, currentAgentName, hasDefaultAgent, agentLocked, pickAgent
@@ -148,6 +158,11 @@ const toggleThink = () => {
 }
 const setLevel = v => setThinkLevel(v)
 const setWindow = v => engine.setCtxWindow(v)
+// 压缩后关掉 sheet：结果条在聊天页消息流底部，留在 sheet 里看不到反馈（失败/无需压缩的原因也走 toast）
+const doCompact = async () => {
+  const d = await compactContext()
+  if (d) emit('close')
+}
 </script>
 
 <style scoped>
