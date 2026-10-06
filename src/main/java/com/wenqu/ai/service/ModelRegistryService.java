@@ -21,6 +21,7 @@ import redis.clients.jedis.JedisPubSub;
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -79,8 +80,36 @@ public class ModelRegistryService {
     private final StringRedisTemplate redisTemplate;
     private final RedisProperties redisProperties;
 
-    private volatile List<Provider> providers = List.of();
-    private volatile List<ModelInfo> models = List.of();
+    private volatile Snapshot snap = Snapshot.of(List.of(), List.of());
+
+    /**
+     * 注册中心内存快照：列表与查询索引一次构建、单次 volatile 发布——读方拿到的是同版本数据，
+     * 不会出现「列表已换、索引未换」的撕裂读。索引兑现了启动全量加载的价值：原先每次路由解析、
+     * 能力判定都线性扫全平台登记（模型多了以后每条消息要扫几遍），现为 O(1)。
+     */
+    private record Snapshot(List<Provider> providers,
+                            List<ModelInfo> models,
+                            Map<String, Provider> providerIndex,
+                            Map<String, ModelInfo> modelIndex,
+                            Map<String, List<ModelInfo>> modelsByProvider) {
+
+        static Snapshot of(List<Provider> ps, List<ModelInfo> ms) {
+            Map<String, Provider> byId = new HashMap<>(Math.max(16, ps.size() * 2));
+            for (Provider p : ps) byId.put(p.getId(), p);
+            Map<String, ModelInfo> byRef = new HashMap<>(Math.max(16, ms.size() * 2));
+            Map<String, List<ModelInfo>> byProvider = new HashMap<>();
+            for (ModelInfo m : ms) {
+                byRef.put(m.getProviderId() + "/" + m.getModelId(), m);
+                byProvider.computeIfAbsent(m.getProviderId(), k -> new ArrayList<>()).add(m);
+            }
+            return new Snapshot(List.copyOf(ps), List.copyOf(ms), byId, byRef, byProvider);
+        }
+
+        /** 某供应商下的模型登记（保持读入时的相对顺序；无登记返回空列表） */
+        List<ModelInfo> modelsOf(String providerId) {
+            return modelsByProvider.getOrDefault(providerId, List.of());
+        }
+    }
 
     public ModelRegistryService(ProviderMapper providerMapper, ModelInfoMapper modelMapper,
                                 com.wenqu.ai.mapper.AgentMapper agentMapper,
@@ -99,17 +128,17 @@ public class ModelRegistryService {
     public void init() {
         reload();
         startRedisSync();
-        log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型", providers.size(), models.size());
+        log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型",
+                snap.providers().size(), snap.models().size());
     }
 
 
-    /** 全量重读供应商与模型库（本地变更 / Redis 订阅通知时调用） */
+    /** 全量重读供应商与模型库并重建索引（本地变更 / Redis 订阅通知时调用） */
     public void reload() {
         try {
             List<Provider> ps = providerMapper.selectList(new LambdaQueryWrapper<Provider>());
             List<ModelInfo> ms = modelMapper.selectList(new LambdaQueryWrapper<ModelInfo>());
-            providers = ps;
-            models = ms;
+            snap = Snapshot.of(ps, ms);
         } catch (Exception e) {
             log.warn("[Provider] 供应商缓存重载失败: {}", e.getMessage());
         }
@@ -190,12 +219,8 @@ public class ModelRegistryService {
         String v = reference.trim();
         int i = v.indexOf('/');
         if (i <= 0 || i == v.length() - 1) return null;
-        String pid = v.substring(0, i);
-        String mid = v.substring(i + 1);
-        for (ModelInfo m : models) {
-            if (pid.equals(m.getProviderId()) && mid.equals(m.getModelId())) return m;
-        }
-        return null;
+        // 按第一个斜杠校验切分后，原串即索引键（providerId 无斜杠，模型名可自带斜杠）
+        return snap.modelIndex().get(v);
     }
 
     /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
@@ -247,10 +272,7 @@ public class ModelRegistryService {
 
     public Provider providerById(String id) {
         if (id == null || id.isBlank()) return null;
-        for (Provider p : providers) {
-            if (id.equals(p.getId())) return p;
-        }
-        return null;
+        return snap.providerIndex().get(id);
     }
 
     /** 已存供应商的解密后 apiKey（供连通性测试等需要真实 Key 的场景；供应商不存在返回 null） */
@@ -298,25 +320,17 @@ public class ModelRegistryService {
     }
 
     private String displayNameOf(Provider p, String modelId) {
-        for (ModelInfo m : models) {
-            if (p.getId().equals(m.getProviderId()) && modelId.equals(m.getModelId())
-                    && m.getDisplayName() != null && !m.getDisplayName().isBlank()) {
-                return m.getDisplayName();
-            }
-        }
-        return modelId;
+        ModelInfo m = snap.modelIndex().get(p.getId() + "/" + modelId);
+        return m != null && m.getDisplayName() != null && !m.getDisplayName().isBlank()
+                ? m.getDisplayName() : modelId;
     }
 
     /** 引用对应模型的登记类型（chat/vision/embedding/rerank/other；非引用或未登记返回 null） */
     public String referenceType(String value) {
         ModelRoute r = resolveReference(value);
         if (r == null) return null;
-        for (ModelInfo mi : models) {
-            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
-                return mi.getModelType();
-            }
-        }
-        return null;
+        ModelInfo mi = snap.modelIndex().get(r.providerId() + "/" + r.modelId());
+        return mi == null ? null : mi.getModelType();
     }
 
     /**
@@ -399,12 +413,8 @@ public class ModelRegistryService {
         if (TYPE_OMNI.equals(actual)) return true;
         ModelRoute r = resolveReference(value);
         if (r == null) return false;
-        for (ModelInfo mi : models) {
-            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
-                return visionCapable(mi);
-            }
-        }
-        return false;
+        ModelInfo mi = snap.modelIndex().get(r.providerId() + "/" + r.modelId());
+        return mi != null && visionCapable(mi);
     }
 
     /**
@@ -414,12 +424,8 @@ public class ModelRegistryService {
     public boolean visionCapableOf(String ref) {
         ModelRoute r = resolveReference(ref);
         if (r == null) return false;
-        for (ModelInfo mi : models) {
-            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
-                return visionCapable(mi);
-            }
-        }
-        return false;
+        ModelInfo mi = snap.modelIndex().get(r.providerId() + "/" + r.modelId());
+        return mi != null && visionCapable(mi);
     }
 
     /**
@@ -429,7 +435,7 @@ public class ModelRegistryService {
      */
     public List<Map<String, Object>> listProviders(String uid, String role) {
         List<Provider> ps = new ArrayList<>();
-        for (Provider p : providers) {
+        for (Provider p : snap.providers()) {
             if (canUse(p, uid, role)) ps.add(p);
         }
         ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
@@ -455,11 +461,9 @@ public class ModelRegistryService {
             Map<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
             for (String t : TYPES) typeCounts.put(t, 0);
             int total = 0;
-            for (ModelInfo mi : models) {
-                if (p.getId().equals(mi.getProviderId())) {
-                    total++;
-                    typeCounts.merge(mi.getModelType() == null ? TYPE_OTHER : mi.getModelType(), 1, Integer::sum);
-                }
+            for (ModelInfo mi : snap.modelsOf(p.getId())) {
+                total++;
+                typeCounts.merge(mi.getModelType() == null ? TYPE_OTHER : mi.getModelType(), 1, Integer::sum);
             }
             m.put("modelCount", total);
             m.put("typeCounts", typeCounts);
@@ -471,8 +475,7 @@ public class ModelRegistryService {
     /** 某供应商的模型列表（管理界面） */
     public List<Map<String, Object>> listModels(String providerId) {
         List<Map<String, Object>> result = new ArrayList<>();
-        for (ModelInfo mi : models) {
-            if (!providerId.equals(mi.getProviderId())) continue;
+        for (ModelInfo mi : snap.modelsOf(providerId)) {
             Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("id", mi.getId());
             m.put("modelId", mi.getModelId());
@@ -769,12 +772,8 @@ public class ModelRegistryService {
     public String referenceThinking(String modelValue) {
         ModelRegistryService.ModelRoute r = resolveReference(modelValue);
         if (r == null) return THINK_SWITCHABLE;
-        for (ModelInfo mi : models) {
-            if (r.providerId().equals(mi.getProviderId()) && r.modelId().equals(mi.getModelId())) {
-                return resolveThinking(mi);
-            }
-        }
-        return THINK_SWITCHABLE;
+        ModelInfo mi = snap.modelIndex().get(r.providerId() + "/" + r.modelId());
+        return mi == null ? THINK_SWITCHABLE : resolveThinking(mi);
     }
 
     /**
@@ -783,7 +782,7 @@ public class ModelRegistryService {
      * 按请求者归属过滤——个人级供应商的模型只出现在归属人自己的选择器里。
      */
     public List<Map<String, Object>> available(String type, String uid, String role) {
-        List<Provider> ps = new ArrayList<>(providers);
+        List<Provider> ps = new ArrayList<>(snap.providers());
         ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
                 .thenComparing(p -> nz(p.getName())));
         List<Map<String, Object>> result = new ArrayList<>();
@@ -793,8 +792,7 @@ public class ModelRegistryService {
             // 额度不足判定整供应商一次（同一 Key 下所有模型同时不可用，无需逐模型算）
             boolean quotaBlocked = ModelQuotaService.isBlocked(p);
             List<Map<String, Object>> ms = new ArrayList<>();
-            for (ModelInfo mi : models) {
-                if (!p.getId().equals(mi.getProviderId())) continue;
+            for (ModelInfo mi : snap.modelsOf(p.getId())) {
                 if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
                 // type 支持逗号分隔多类型（如 "vision,ocr"，与前端 ModelSelect 的 type 契约一致）；
                 // 期望 vision 时放宽口径：具备图片理解能力的模型（visionCapable，可与聊天并存）同样入选
@@ -851,13 +849,12 @@ public class ModelRegistryService {
      * 无任何可用向量模型时返回 null（调用方显式告警，不静默兜底）。
      */
     public String firstAvailableEmbeddingRef() {
-        List<Provider> ps = new ArrayList<>(providers);
+        List<Provider> ps = new ArrayList<>(snap.providers());
         ps.sort(Comparator.comparingInt((Provider p) -> p.getSortOrder() == null ? 0 : p.getSortOrder())
                 .thenComparing(p -> nz(p.getName())));
         for (Provider p : ps) {
             if (Integer.valueOf(0).equals(p.getEnabled())) continue;
-            for (ModelInfo mi : models) {
-                if (!p.getId().equals(mi.getProviderId())) continue;
+            for (ModelInfo mi : snap.modelsOf(p.getId())) {
                 if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
                 if (!TYPE_EMBEDDING.equals(mi.getModelType())) continue;
                 return p.getId() + "/" + mi.getModelId();
@@ -1098,9 +1095,7 @@ public class ModelRegistryService {
             if (data == null || data.isEmpty()) throw new IllegalArgumentException("网关未返回模型列表（data 为空）");
             java.util.Set<String> registered = new java.util.HashSet<>();
             if (providerId != null && !providerId.isBlank()) {
-                for (ModelInfo mi : models) {
-                    if (providerId.equals(mi.getProviderId())) registered.add(mi.getModelId());
-                }
+                for (ModelInfo mi : snap.modelsOf(providerId)) registered.add(mi.getModelId());
             }
             List<Map<String, Object>> result = new ArrayList<>();
             for (int i = 0; i < data.size(); i++) {
