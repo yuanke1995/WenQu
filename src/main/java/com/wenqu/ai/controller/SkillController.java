@@ -1,5 +1,6 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.SkillService;
 import com.wenqu.ai.util.BatchResults;
@@ -24,15 +25,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 技能（Skills）管理接口：**每人管自己的**。列表 / 详情 / 新建 / 停用 / 删除。
+ * 技能（Skills）管理接口：**个人技能每人管自己的**；内置技能所有人可见、只能各自停用，管理员可改写。
  *
  * <p>技能是「一段 Markdown 做法说明」的能力包：system prompt 只注入名称与描述，
- * 模型按需用 readSkill 工具取全文。数据来源两层：
+ * 模型按需用 readSkill 工具取全文。数据来源三层：
  * <ul>
  *   <li>内置：随版本分发的 {@code classpath:skills/*&#47;SKILL.md}（所有人可见、不可删，可各自停用）；</li>
+ *   <li>内置改写：{@code c_ai_builtin_skill_override}，管理员改写后全局生效（仅管理员可写，见 updateBuiltin/resetBuiltin）；</li>
  *   <li>个人：当前用户名下的记录（自建或 URL 安装），与他人完全隔离。</li>
  * </ul>
  * 归属一律取 {@link RequestUser#uid()}（来自登录令牌），不接受客户端自报的用户标识。
+ *
+ * <p><b>为什么改写端点要方法内自查管理员</b>：{@code /api/ai/skill} 前缀在 SecurityConfig 里整段放行给登录用户
+ * （个人资产语义），所以内置改写这类全局动作拿不到拦截器兜底，必须 fail-closed 自查。
  *
  * @author yuanke
  */
@@ -44,6 +49,7 @@ public class SkillController {
 
     private final SkillService skillService;
     private final com.wenqu.ai.service.ConfigService configService;
+    private final com.wenqu.ai.service.RoleService roleService;
 
     /** 平台「工具调用」总开关：关闭时模型无法调用 readSkill 读正文，界面据此给出提示（技能仍能登记） */
     private boolean toolsEnabled() {
@@ -83,12 +89,15 @@ public class SkillController {
             m.put("hash", s.hash());
             m.put("source", s.source());
             m.put("size", s.size());
+            m.put("overridden", s.overridden());
             m.put("disabled", st.disabled());
             skills.add(m);
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("skills", skills);
         data.put("toolsEnabled", toolsEnabled());
+        // 内置改写是全局动作，界面据此只给管理员显示「编辑/恢复默认」入口（后端仍会再判一次权限）
+        data.put("canOverrideBuiltin", isAdmin());
         return ResultJson.ok(data);
     }
 
@@ -106,6 +115,7 @@ public class SkillController {
         m.put("hash", s.hash());
         m.put("source", s.source());
         m.put("size", s.size());
+        m.put("overridden", s.overridden());
         m.put("disabled", st.disabled());
         m.put("content", skillService.readContent(RequestUser.uid(), s.dirName()));
         return ResultJson.ok(m);
@@ -139,6 +149,45 @@ public class SkillController {
     public ResultJson delete(@PathVariable("name") String name) {
         skillService.delete(RequestUser.uid(), name);
         return ResultJson.ok(Map.of("dirName", name));
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 内置技能改写（仅管理员）：内容落 c_ai_builtin_skill_override，全局生效而非「管理员自己那份」
+    // --------------------------------------------------------------------------------------------------
+
+    @Operation(summary = "改写内置技能", description = "body: {content}（SKILL.md 全文，须含 frontmatter 的 name/description）。"
+            + "改写后所有用户（含其他管理员）读到的都是这份内容；仅管理员。内置技能的 name 是智能体技能引用的匹配键，"
+            + "改名需同步改智能体上引用它的技能名")
+    @PutMapping("/{name}/builtin")
+    public ResultJson updateBuiltin(@PathVariable("name") String name, @RequestBody Map<String, String> body) {
+        requireAdmin();
+        SkillService.Skill s = skillService.updateBuiltin(RequestUser.uid(), name, body.get("content"));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("dirName", s.dirName());
+        data.put("name", s.name());
+        data.put("description", s.description());
+        data.put("version", s.version());
+        data.put("hash", s.hash());
+        data.put("size", s.size());
+        data.put("overridden", true);
+        return ResultJson.ok(data);
+    }
+
+    @Operation(summary = "恢复内置技能默认内容", description = "删除改写行，回到随版本分发的 SKILL.md；无改写时幂等成功。仅管理员")
+    @DeleteMapping("/{name}/builtin")
+    public ResultJson resetBuiltin(@PathVariable("name") String name) {
+        requireAdmin();
+        skillService.resetBuiltin(name);
+        return ResultJson.ok(Map.of("dirName", name, "overridden", false));
+    }
+
+    /** 管理员级判定（含自定义 admin_flag=1 角色）；fail-closed，不用拦截器兜底 */
+    private boolean isAdmin() {
+        return roleService.isAdminCode(RequestUser.role());
+    }
+
+    private void requireAdmin() {
+        if (!isAdmin()) throw new BizException(403, "仅管理员可改写内置技能");
     }
 
     // --------------------------------------------------------------------------------------------------

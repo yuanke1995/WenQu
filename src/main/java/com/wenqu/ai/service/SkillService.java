@@ -3,8 +3,10 @@ package com.wenqu.ai.service;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.mapper.BuiltinSkillOverrideMapper;
 import com.wenqu.ai.mapper.SkillDisabledMapper;
 import com.wenqu.ai.mapper.UserSkillMapper;
+import com.wenqu.ai.model.BuiltinSkillOverride;
 import com.wenqu.ai.model.SkillDisabled;
 import com.wenqu.ai.model.UserSkill;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +41,9 @@ import java.util.regex.Pattern;
  *
  * <p><b>归属：每个用户管自己的技能</b>（原「管理员在服务器上放目录 + 全局停用名单」的形态已废弃）：
  * <ul>
- *   <li>内置：{@code classpath:skills/*&#47;SKILL.md}（随发布分发，所有人可见、不可删，可各自停用）；</li>
+ *   <li>内置：{@code classpath:skills/*&#47;SKILL.md}（随发布分发，所有人可见、不可删，可各自停用）；
+ *       管理员可在界面上改写内置技能，改写内容落 {@link BuiltinSkillOverride}（全局唯一一份，所有人读到同一份），
+ *       删除该行即恢复随版本分发的原文；</li>
  *   <li>个人：{@code c_ai_user_skill}，按 uid 隔离（自建或 URL 安装），停用随行。</li>
  * </ul>
  *
@@ -66,6 +70,7 @@ public class SkillService {
     private final ConfigService configService;
     private final UserSkillMapper userSkillMapper;
     private final SkillDisabledMapper skillDisabledMapper;
+    private final BuiltinSkillOverrideMapper builtinOverrideMapper;
 
     /**
      * 技能元信息（不含正文，列表用）。
@@ -77,9 +82,10 @@ public class SkillService {
      * @param source      builtin（内置）/ user（自建）/ url（URL 安装）
      * @param dirName     技能标识（定位技能用）
      * @param size        内容字节数
+     * @param overridden  仅内置技能：内容是否已被管理员改写（false = 用随版本分发的原文）
      */
     public record Skill(String name, String description, String version, String hash,
-                        String source, String dirName, long size) {
+                        String source, String dirName, long size, boolean overridden) {
     }
 
     /** 技能 + 停用状态：一次查库得到全量视图，避免"列 N 个技能再逐个判定停用"的 N+1 */
@@ -93,13 +99,21 @@ public class SkillService {
      */
     public List<SkillState> listWithState(String uid) {
         Set<String> builtinDisabled = builtinDisabledDirNames(uid);
+        Map<String, BuiltinSkillOverride> overrides = overrideByDirName();
         Map<String, SkillState> byDir = new LinkedHashMap<>();
-        // 1) 内置层（classpath，fat jar 内也可扫）
+        // 1) 内置层（classpath，fat jar 内也可扫；管理员改写过则用改写内容）
         try {
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
             for (Resource r : resolver.getResources("classpath*:skills/*/" + SKILL_FILE)) {
                 try (InputStream in = r.getInputStream()) {
-                    Skill s = parse(new String(in.readAllBytes(), StandardCharsets.UTF_8), dirNameOf(r), "builtin");
+                    String dir = dirNameOf(r);
+                    String packaged = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                    BuiltinSkillOverride ov = overrides.get(dir);
+                    // overridden 标记只看「有没有这一行覆盖」，不比对内容：管理员改回与原文一致也仍算改写
+                    // （界面上标了「已改写」但内容其实一样，代价远小于每次编辑都去 diff 一遍原文）
+                    Skill s = ov != null
+                            ? parse(ov.getContent(), dir, "builtin", true)
+                            : parse(packaged, dir, "builtin", false);
                     byDir.put(s.dirName(), new SkillState(s, builtinDisabled.contains(s.dirName())));
                 }
             }
@@ -110,7 +124,7 @@ public class SkillService {
         for (UserSkill row : ownRows(uid)) {
             if (row.getContent() == null) continue;
             try {
-                Skill s = parse(row.getContent(), row.getDirName(), sourceOf(row));
+                Skill s = parse(row.getContent(), row.getDirName(), sourceOf(row), false);
                 byDir.put(s.dirName(), new SkillState(s, Integer.valueOf(1).equals(row.getDisabled())));
             } catch (Exception e) {
                 log.warn("[SKILL] 个人技能 {} 解析失败（跳过）: {}", row.getDirName(), e.getMessage());
@@ -232,7 +246,7 @@ public class SkillService {
         String desc = (description == null || description.isBlank()) ? firstLine(body) : description.trim();
         saveRow(newRow(uid, n, n, desc, md, "user", "1.0.0"));
         log.info("[SKILL] 创建个人技能 uid={} skill={}（{} 字节）", uid, n, md.length());
-        return parse(md, n, "user");
+        return parse(md, n, "user", false);
     }
 
     /**
@@ -257,7 +271,7 @@ public class SkillService {
             throw new BizException("技能文件缺少 frontmatter（应以 --- 开头并包含 name / description），"
                     + "请确认链接指向 SKILL.md 原文");
         }
-        Skill meta = parse(content, "", "url");
+        Skill meta = parse(content, "", "url", false);
         String dir = (nameOverride != null && !nameOverride.isBlank()) ? nameOverride.trim() : meta.name();
         if (dir == null || dir.isBlank() || !NAME_OK.matcher(dir).matches()) {
             throw new BizException("无法从内容确定技能名，请显式填写名称（中英文/数字/下划线/连字符，1~64 字符）");
@@ -274,7 +288,7 @@ public class SkillService {
         }
         saveRow(newRow(uid, dir, meta.name(), meta.description(), content, "url", meta.version()));
         log.info("[SKILL] uid={} 从 URL 安装技能 {} ← {}", uid, dir, u);
-        return parse(content, dir, "url");
+        return parse(content, dir, "url", false);
     }
 
     /**
@@ -312,6 +326,85 @@ public class SkillService {
         }
         userSkillMapper.deleteById(row.getId());
         log.info("[SKILL] 删除个人技能 uid={} skill={}", uid, dirName);
+    }
+
+    // ==================== 内置技能的全局改写（管理员） ====================
+
+    /**
+     * 管理员改写内置技能：把内容落到 {@code c_ai_builtin_skill_override}，所有人（不只是管理员）读到的都是这份。
+     *
+     * <p>三条硬约束，缺一不可：
+     * <ul>
+     *   <li>只能改**内置**技能：个人技能走各自的编辑/新建，不受此影响（否则两套语义打架）；</li>
+     *   <li>内容必须自带 frontmatter 且 description 非空——技能靠这一行决定要不要读，空描述等于装了不生效；</li>
+     *   <li>正文里若带 frontmatter，其 name 会成为技能的显示名，而智能体上的技能引用按**名字**弱匹配
+     *       （内置技能不带归属前缀，见 SkillController#list），改名会让存量智能体的引用失配。
+     *       这里不静默放行也不静默忽略：原名与新名的差异落到日志，界面在提交前提示调用方比对。</li>
+     * </ul>
+     *
+     * @param uid   操作人 uid（写审计列）
+     * @return 改写后的技能元信息
+     */
+    public Skill updateBuiltin(String uid, String dirName, String content) {
+        if (dirName == null || dirName.isBlank()) throw new BizException("技能标识为空");
+        if (!builtinDirNames().contains(dirName)) {
+            throw new BizException("技能不存在或不是内置技能：" + dirName);
+        }
+        String md = content == null ? "" : content.trim();
+        if (md.isEmpty()) throw new BizException("技能内容不能为空");
+        // 先按包内原名兜底：frontmatter 缺失时 parse 会用 fallbackDir，不会把技能名变成空串
+        Skill packaged = parse(packagedContent(dirName), dirName, "builtin", false);
+        Skill edited = parse(md, dirName, "builtin", true);
+        if (edited.description().isBlank()) {
+            throw new BizException("技能缺少 description——模型靠它判断何时读取该技能，"
+                    + "请在内容开头的 frontmatter 里补上（--- / name: / description: / ---）");
+        }
+        BuiltinSkillOverride row = overrideByDirName().get(dirName);
+        boolean create = row == null;
+        if (create) {
+            row = new BuiltinSkillOverride();
+            row.setDirName(dirName);
+        }
+        row.setName(edited.name());
+        row.setDescription(edited.description());
+        row.setVersion(edited.version());
+        row.setContent(md);
+        row.setUpdatedBy(uid);
+        try {
+            if (create) builtinOverrideMapper.insert(row);
+            else builtinOverrideMapper.updateById(row);
+        } catch (Exception e) {
+            throw new BizException("内置技能改写保存失败：" + e.getMessage());
+        }
+        log.info("[SKILL] 管理员改写内置技能 uid={} skill={} name:{}→{} ({} 字节)",
+                uid, dirName, packaged.name(), edited.name(), md.length());
+        return edited;
+    }
+
+    /**
+     * 恢复内置技能默认内容：删除改写行，下一次读取即回到随版本分发的 SKILL.md。
+     * 已无改写行时视为幂等成功（界面上点两次「恢复默认」不该报错）。
+     */
+    public void resetBuiltin(String dirName) {
+        if (dirName == null || dirName.isBlank()) throw new BizException("技能标识为空");
+        int n = builtinOverrideMapper.delete(new LambdaQueryWrapper<BuiltinSkillOverride>()
+                .eq(BuiltinSkillOverride::getDirName, dirName));
+        if (n > 0) log.info("[SKILL] 内置技能 {} 已恢复默认内容", dirName);
+        else log.info("[SKILL] 内置技能 {} 本无改写，恢复默认为幂等空操作", dirName);
+    }
+
+    /** 内置技能随包分发的原始内容（读不到返回空串——调用方已校验技能存在） */
+    private String packagedContent(String dirName) {
+        try {
+            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            Resource r = resolver.getResource("classpath:skills/" + dirName + "/" + SKILL_FILE);
+            try (InputStream in = r.getInputStream()) {
+                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            log.warn("[SKILL] 内置技能 {} 原文读取失败: {}", dirName, e.getMessage());
+            return "";
+        }
     }
 
     // ==================== 内部 ====================
@@ -357,9 +450,15 @@ public class SkillService {
         return out;
     }
 
-    /** 读全文：内置走 classpath，个人库读 content 列 */
+    /** 读全文：内置走 classpath（或管理员改写），个人库读 content 列 */
     private String readRaw(String uid, Skill s) {
         if ("builtin".equals(s.source())) {
+            // 管理员改写过就读改写内容——列表/详情/readSkill/promptBlock 全部经由这里或 listWithState，
+            // 口径只有这一处，避免出现「列表显示改写后的描述、模型读到原文」这类不一致
+            if (s.overridden()) {
+                BuiltinSkillOverride ov = overrideByDirName().get(s.dirName());
+                if (ov != null && ov.getContent() != null) return ov.getContent();
+            }
             try {
                 PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
                 Resource r = resolver.getResource("classpath:skills/" + s.dirName() + "/" + SKILL_FILE);
@@ -373,6 +472,20 @@ public class SkillService {
         }
         UserSkill row = ownRow(uid, s.dirName());
         return row == null ? null : row.getContent();
+    }
+
+    /** 管理员对内置技能的全局改写（dirName → 行）；一次全表查，调用方按需取 */
+    private Map<String, BuiltinSkillOverride> overrideByDirName() {
+        Map<String, BuiltinSkillOverride> out = new LinkedHashMap<>();
+        try {
+            for (BuiltinSkillOverride row : builtinOverrideMapper.selectList(null)) {
+                out.put(row.getDirName(), row);
+            }
+        } catch (Exception e) {
+            // 读失败按「没有改写」处理：退回随版本分发的原文（内容至少可用），不阻断列表/问答
+            log.warn("[SKILL] 内置技能改写表读取失败（按未改写处理）: {}", e.getMessage());
+        }
+        return out;
     }
 
     private UserSkill newRow(String uid, String dirName, String display, String desc, String content,
@@ -477,7 +590,7 @@ public class SkillService {
     }
 
     /** 解析 SKILL.md：frontmatter（YAML，safe 模式）取 name/description/version，其余为正文 */
-    private Skill parse(String raw, String fallbackDir, String source) {
+    private Skill parse(String raw, String fallbackDir, String source, boolean overridden) {
         String name = fallbackDir, desc = "", version = "";
         Matcher m = FRONTMATTER.matcher(raw);
         if (m.find()) {
@@ -497,7 +610,7 @@ public class SkillService {
         }
         if (name == null || name.isBlank()) name = fallbackDir;
         return new Skill(name.trim(), desc.trim(), version.trim(), sha8(raw), source, fallbackDir,
-                raw.getBytes(StandardCharsets.UTF_8).length);
+                raw.getBytes(StandardCharsets.UTF_8).length, overridden);
     }
 
     private static String frontmatter(String name, String description, String version) {

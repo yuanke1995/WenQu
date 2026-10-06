@@ -544,6 +544,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_skill_disabled` (
     PRIMARY KEY (`uid`, `dir_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内置技能的个人停用标记（内置技能随版本分发、所有人可见，是否停用由各人自定）';
 
+CREATE TABLE IF NOT EXISTS `c_ai_builtin_skill_override` (
+    `dir_name`    VARCHAR(64)  NOT NULL COMMENT '内置技能标识（classpath skills/{dirName}/SKILL.md 的目录名），主键',
+    `name`        VARCHAR(200) NOT NULL COMMENT '技能显示名（frontmatter name，注入系统提示用；改它会让智能体上按名字的引用失配，故开放编辑但会提示）',
+    `description` VARCHAR(500) DEFAULT NULL COMMENT '一句话描述（模型据此判断要不要读取该技能）',
+    `version`     VARCHAR(32)  DEFAULT NULL COMMENT '版本（frontmatter version）',
+    `content`     MEDIUMTEXT   NOT NULL COMMENT '管理员改写后的 SKILL.md 全文（含 YAML frontmatter；只作纯文本读取，不执行其中任何内容）',
+    `updated_by`  VARCHAR(64)  DEFAULT NULL COMMENT '最后修改人 uid（审计）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`dir_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内置技能的全局改写（管理员可编辑内置技能；无行=用随版本分发的原文，删除该行即恢复默认）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',

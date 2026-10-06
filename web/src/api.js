@@ -586,6 +586,11 @@ export const installSkillFromUrl = (url, name) =>
 export const setSkillDisabled = (name, disabled) =>
   request(`/skill/${encodeURIComponent(name)}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
 export const deleteSkill = name => request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })
+// 内置技能改写（仅管理员）：内容全局生效（所有人读到同一份），删除改写行即恢复随版本分发的默认内容
+export const updateBuiltinSkill = (name, content) =>
+  request(`/skill/${encodeURIComponent(name)}/builtin`, { method: 'PUT', body: JSON.stringify({ content }) })
+export const resetBuiltinSkill = name =>
+  request(`/skill/${encodeURIComponent(name)}/builtin`, { method: 'DELETE' })
 // 批量：ids 为技能名（dirName）清单；返回 {succeeded:[name], failed:[{id,name,error}]}
 export const batchDeleteSkills = ids =>
   request('/skill/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
