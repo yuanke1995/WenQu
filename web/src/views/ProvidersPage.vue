@@ -1320,7 +1320,8 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
 }
-.pv-card { padding: 14px 16px; }
+/* 卡片改纵向 flex：同一行里各卡内容行数不同（额度条/备注有无），操作按钮统一沉到卡片底部对齐 */
+.pv-card { padding: 14px 16px; display: flex; flex-direction: column; }
 .pv-head { display: flex; align-items: center; gap: 12px; }
 .pv-title { flex: 1; min-width: 0; }
 .pv-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
@@ -1336,7 +1337,7 @@ onMounted(async () => {
 .pv-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .pv-none { color: var(--app-text3, var(--app-text3)); font-size: 12px; }
 .pv-remark { margin-top: 6px; font-size: 12px; color: var(--app-text3, var(--app-text3)); }
-.pv-actions { margin-top: 10px; display: flex; gap: 4px; }
+.pv-actions { margin-top: auto; padding-top: 10px; display: flex; gap: 4px; }
 .pv-empty { text-align: center; padding: 40px 20px; }
 .pv-empty-title { font-weight: 600; margin-bottom: 6px; }
 .pv-empty-desc { color: var(--app-text3, var(--app-text3)); font-size: 13px; max-width: 520px; margin: 0 auto; }
