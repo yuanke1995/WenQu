@@ -153,11 +153,14 @@ public class ScheduleCenter {
                 () -> false,
                 () -> evalService.runAutoCheck());
         // 配置缓存兜底刷新：Redis 订阅断线期间错过的变更由周期全量重读补齐
-        register("配置缓存兜底刷新", "Redis 订阅断线期间错过的配置变更由周期全量重读补齐（内置 5 分钟节拍，不可暂停）",
-                null,
-                () -> 5 * 60 * 1000,
+        // （间隔 config.reloadIntervalMs，默认 5 分钟；≤0 = 暂停。暂停后 Redis 一旦断线，
+        //  其他实例收不到广播，配置变更会静默保持旧值直到重启——这是它可暂停的唯一代价）
+        register("配置缓存兜底刷新", "Redis 订阅断线期间错过的配置变更由周期全量重读补齐（暂停后断线期间的变更会丢失直到重启）",
+                "config.reloadIntervalMs",
+                () -> configService.getInt("config.reloadIntervalMs", 5 * 60 * 1000),
                 () -> false,
-                () -> configService.reload());
+                () -> configService.reload(),
+                "暂停后若 Redis 订阅断线，其他实例收不到配置变更广播，期间改过的配置会静默保持旧值直到重启。正常情况下订阅即时生效、暂停无感知，仅在订阅异常时暴露。");
         // 过期会话/消息物理清理：硬删逻辑删除标记超保留期的会话与其消息（保留期即撤销窗口；间隔/保留期配置化）
         register("过期会话/消息清理", "硬删逻辑删除标记超保留期的会话与其消息（保留期 cleanup.sessionRetentionDays 即撤销窗口）",
                 "cleanup.sessionCleanupIntervalMs",
@@ -212,12 +215,16 @@ public class ScheduleCenter {
                 () -> false,
                 () -> sandboxService.releaseIdle());
 
-        // 工作流人工审核超时回收：挂起超过节点 timeoutSeconds 的 run 落 timeout 终态（审核是人在回路，无自动恢复语义）
-        register("工作流审批超时回收", "把挂起超过节点 timeoutSeconds 的人工审核 run 落 timeout 终态（内置 60s 节拍，不可暂停）",
-                null,
-                () -> 60_000,
+        // 工作流人工审核超时回收：挂起超过节点 timeoutSeconds 的 run落 timeout 终态（审核是人在回路，无自动恢复语义）
+        // 间隔 workflow.approvalReapIntervalMs，默认 60s；≤0 = 暂停。
+        // ⚠ 暂停代价：挂起不批的 run 永远停在 waiting_approval——不占执行线程（挂起时线程已释放），
+        //   但运行记录不落终态、审批卡片持续等待，且清理任务显式排除该状态（不会被保留期回收）
+        register("工作流审批超时回收", "把挂起超过节点 timeoutSeconds 的人工审核 run 落 timeout 终态（⚠ 暂停后挂起的 run 将一直停在「待审核」不收口）",
+                "workflow.approvalReapIntervalMs",
+                () -> configService.getInt("workflow.approvalReapIntervalMs", 60_000),
                 () -> false,
-                () -> workflowService.reapApprovalTimeouts());
+                () -> workflowService.reapApprovalTimeouts(),
+                "挂起不审批的运行将永远停在「待审核」：不占用执行线程（挂起时线程已释放），但运行记录不落终态、审批卡片持续等待，且记录清理任务显式排除该状态（不会被保留期回收）。仅在确实需要超长人工审批窗口时才暂停。");
 
         // 工作流运行记录清理：c_ai_workflow_run 按保留期物理删除（保留期 workflow.runLogRetentionDays，默认 30 天）。
         // dsl_snapshot + node_traces 是大字段，随运行次数无限膨胀——与任务执行日志清理同一口径；
@@ -294,7 +301,20 @@ public class ScheduleCenter {
 
     private void register(String name, String desc, String configKey,
                           IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body) {
-        tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, body));
+        register(name, desc, configKey, intervalMs, runOnStartup, body, null);
+    }
+
+    /**
+     * 注册周期任务，{@code pauseRisk} 为暂停该任务的代价说明（null=无特别代价）。
+     * <p>暂停本身只是「间隔写 0」，没有技术阻力；但个别任务停掉后会留下不易察觉的副作用
+     * （如挂起的工作流永不落终态、Redis 断线期间配置变更静默丢失）。这类任务的注册处显式给出
+     * 一句话代价，经 {@link #snapshot()} 下发给设置页，在暂停确认弹窗里展示——避免管理员
+     * 在不知情的情况下关掉自愈机制。
+     */
+    private void register(String name, String desc, String configKey,
+                          IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
+                          String pauseRisk) {
+        tasks.add(new PeriodicTask(name, desc, configKey, intervalMs, runOnStartup, body, pauseRisk));
     }
 
     /** 停机：先停节拍调度（不再触发新任务），池内在跑任务由 ThreadPoolManager 优雅停机收尾 */
@@ -413,6 +433,8 @@ public class ScheduleCenter {
             m.put("configKey", t.configKey);
             // 键必须在 config-schema.json 才可经设置页写值（暂停/恢复=改间隔配置，非编辑键只展示）
             m.put("editable", t.configKey != null && configSchemaService.isEditable(t.configKey));
+            // 暂停代价说明（仅少数任务非空）；设置页暂停确认弹窗展示，避免误关自愈机制
+            m.put("pauseRisk", t.pauseRisk);
             m.put("intervalMs", interval);
             m.put("paused", interval <= 0);
             m.put("running", t.running.get());
@@ -437,6 +459,8 @@ public class ScheduleCenter {
         final String desc;
         /** 间隔配置键（null=内置节拍）；暂停/恢复=改这个键的值（0=暂停），键须在 config-schema.json */
         final String configKey;
+        /** 暂停代价说明（null=无特别代价）；设置页暂停确认时展示 */
+        final String pauseRisk;
         final IntSupplier intervalMs;
         final BooleanSupplier runOnStartup;
         final Runnable body;
@@ -451,13 +475,15 @@ public class ScheduleCenter {
         volatile String lastError;
 
         PeriodicTask(String name, String desc, String configKey,
-                     IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body) {
+                     IntSupplier intervalMs, BooleanSupplier runOnStartup, Runnable body,
+                     String pauseRisk) {
             this.name = name;
             this.desc = desc;
             this.configKey = configKey;
             this.intervalMs = intervalMs;
             this.runOnStartup = runOnStartup;
             this.body = body;
+            this.pauseRisk = pauseRisk;
         }
     }
 }
