@@ -955,7 +955,8 @@ public class RagService {
                         if (!thinkTerms.isEmpty()) {
                             queries.add(String.join(" ", thinkTerms));
                         }
-                        hits = hybridRetrievalService.searchMulti(queries, retrievalDiag, scopeKbIds);
+                        // adaptiveTopK=true：多路内部按路数收敛（≤2 路开补采，≥3 路不开，见 searchMulti 注释）
+                        hits = hybridRetrievalService.searchMulti(queries, retrievalDiag, scopeKbIds, true);
                         rankQuery = dr.refinedQuery();
                     } else {
                         retrievalQuery = thinkTerms.isEmpty()
