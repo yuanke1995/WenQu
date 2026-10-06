@@ -92,7 +92,9 @@ function serveStatic (page) {
     }
     if (u.pathname === '/api/ai/eval/case') return json({ added: true, expected: 1 })
     if (u.pathname.startsWith('/api/ai/message-group/')) return json({})
-    if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
+    // 路径与 src/api.js 一致（/api/ai/tool-approval/{id}）：写成 /chat/tool-approval/ 会 404，
+    // 恢复横幅的两条断言会静默变成假阴性
+    if (u.pathname.startsWith('/api/ai/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
     }
     if (u.host !== 'm.local') return route.abort()
@@ -274,7 +276,61 @@ const check = (ok, label, detail = '') => {
   await page.waitForTimeout(1200)
   const rProf = await page.evaluate(() => ({ path: location.pathname, topbar: !!document.querySelector('.m-topbar'), shell: !!document.querySelector('.m-chat') }))
   check(rProf.path === '/profile', '点「个人设置」进入 /profile', `path=${rProf.path}`)
-  check(!rProf.shell && rProf.topbar, '个人设置走窄屏工作台（顶栏在、移动壳不在）', JSON.stringify(rProf))
+  check(!rProf.shell && rProf.topbar, '个人设置走 H5 外壳（顶栏在、移动壳不在）', JSON.stringify(rProf))
+
+  // ---- H5 外壳连续性（非对话页不能掉回 PC 形态）：触屏下 PC 侧栏（含抽屉 DOM）整体退场，
+  //      左上角菜单 / 「搜索会话」开的都是 /m/chat 那张会话 sheet ----
+  const h5NoSide = await page.evaluate(() => ({ side: !!document.querySelector('.app-root .side'), path: location.pathname }))
+  check(!h5NoSide.side, 'H5 外壳：/profile 页无 PC 侧栏/抽屉 DOM', JSON.stringify(h5NoSide))
+  await page.locator('.m-topbar .m-tb-btn[title="菜单与会话"]').first().dispatchEvent('click')
+  await page.waitForTimeout(700)
+  const h5Menu = await page.evaluate(() => ({
+    side: !!document.querySelector('.side'),
+    sheet: !!document.querySelector('.bs-sheet'),
+    title: (document.querySelector('.bs-title') || {}).textContent || '',
+    foot: [...document.querySelectorAll('.ss-foot-btn')].length
+  }))
+  check(!h5Menu.side && h5Menu.sheet && h5Menu.title.includes('会话'),
+    '左上角菜单打开 H5 会话 sheet（非 PC 抽屉）', JSON.stringify(h5Menu))
+  check(h5Menu.foot >= 4, 'sheet 底部壳外入口在（菜单即 H5 菜单）', `foot=${h5Menu.foot}`)
+  await page.locator('.bs-close').first().dispatchEvent('click')
+  await page.waitForTimeout(500)
+  // 铃铛：侧栏 foot 的铃铛随侧栏一起退场后，通知不能在非对话页失去入口——顶栏必须有，
+  // 且角标/列表用的仍是 AppLayout 那一份未读数（provide 给 sheet，不是第二份实例）
+  const h5Bell = await page.evaluate(() => {
+    const b = document.querySelector('.m-topbar .m-tb-btn[title="通知"]')
+    const badge = b ? b.querySelector('.m-tb-badge') : null
+    return { has: !!b, badge: badge ? badge.textContent.trim() : '' }
+  })
+  check(h5Bell.has && h5Bell.badge === '3', 'H5 顶栏铃铛在且带未读角标', JSON.stringify(h5Bell))
+  await page.locator('.m-topbar .m-tb-btn[title="通知"]').first().dispatchEvent('click')
+  await page.waitForTimeout(800)
+  const h5Notif = await page.evaluate(() => ({ sheet: !!document.querySelector('.bs-sheet'), n: document.querySelectorAll('.nt-item').length }))
+  check(h5Notif.sheet && h5Notif.n === 3, 'H5 顶栏铃铛打开通知 sheet', JSON.stringify(h5Notif))
+  await page.locator('.bs-close').first().dispatchEvent('click')
+  await page.waitForTimeout(400)
+  await page.locator('.m-topbar .m-tb-btn[title="搜索会话"]').first().dispatchEvent('click')
+  await page.waitForTimeout(800)
+  const h5Search = await page.evaluate(() => ({
+    sheet: !!document.querySelector('.bs-sheet'),
+    focused: (document.activeElement && document.activeElement.className) || ''
+  }))
+  check(h5Search.sheet && h5Search.focused.includes('ss-search-input'),
+    '「搜索会话」开同一张 sheet 且光标落在搜索框', JSON.stringify(h5Search))
+  await page.locator('.bs-close').first().dispatchEvent('click')
+  await page.waitForTimeout(400)
+
+  // ---- 手机横屏（900px > 768 的「窄屏」阈值但仍是触屏）：外壳必须是 H5 的，不能摊成 PC 侧栏 ----
+  await page.setViewportSize({ width: 900, height: 412 })
+  await page.waitForTimeout(600)
+  const land = await page.evaluate(() => ({
+    path: location.pathname, topbar: !!document.querySelector('.m-topbar'),
+    side: !!document.querySelector('.side'), shell: !!document.querySelector('.m-chat')
+  }))
+  check(land.path === '/profile' && land.topbar && !land.side && !land.shell,
+    '横屏（900px 触屏）仍在 H5 外壳：顶栏在、PC 侧栏不在', JSON.stringify(land))
+  await page.setViewportSize({ width: 412, height: 916 })
+  await page.waitForTimeout(600)
 
   // ---- 我的产物（P4）：壳外入口直达 + 真页面（白名单）+ 触摸热区 + 无横向溢出 ----
   await page.goto(ORIGIN + '/m/chat', { waitUntil: 'networkidle' })

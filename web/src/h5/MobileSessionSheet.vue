@@ -7,6 +7,7 @@
       <div class="ss-search">
         <search-outlined class="ss-search-ic" />
         <input
+          ref="searchInputRef"
           v-model="kw"
           class="ss-search-input"
           type="search"
@@ -91,13 +92,15 @@ import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlin
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
-import { pinSession, favoriteSession, renameSessionApi, logoutApi } from '../api'
+import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi } from '../api'
 import { clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
 import { exportSessionMarkdown } from '../views/exportMd'
 
-// 引擎实例（provide 自移动壳）：删除会话复用其 handleDeleteSession（含当前会话被删后的落点）
-const engine = inject('wqChat')
+// 引擎实例（provide 自移动壳）：删除会话复用其 handleDeleteSession（含当前会话被删后的落点）。
+// AppLayout（H5 外壳的非对话页）没有引擎——那边退化为直接调删除接口 + 刷新列表，
+// 落点由「当前会话」概念缺席自然消解：非对话页本来就不在会话里
+const engine = inject('wqChat', null)
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -155,6 +158,12 @@ const onInput = () => {
 }
 const clearKw = () => { kw.value = ''; loadSessions('').catch(() => {}) }
 watch(() => props.open, v => { if (v) { kw.value = sessionStore.keyword || '' } })
+
+// 顶栏「搜索会话」按钮：打开 sheet 后把光标送进搜索框（意图一步到位，与 PC 抽屉的 openSideSearch 同口径）。
+// 等一个动画节拍再聚焦：sheet 是 v-if 挂载 + 220ms 上滑，挂载前聚焦会被浏览器忽略
+const searchInputRef = ref(null)
+const focusSearch = () => setTimeout(() => { const el = searchInputRef.value; if (el) el.focus() }, 260)
+defineExpose({ focusSearch })
 
 // 时间字段稳健解析 + 分桶（与 AppLayout 的 sessTime/groupedSessions 同口径）
 const sessTime = v => {
@@ -233,8 +242,13 @@ const doDelete = () => {
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       menuFor.value = null
-      // 走引擎的删除（当前会话被删时它会自动落到最近会话/新建并同步 URL，与 PC 侧栏同一路径）
-      await engine.handleDeleteSession(s.id).catch(() => {})
+      if (engine) {
+        // 走引擎的删除（当前会话被删时它会自动落到最近会话/新建并同步 URL，与 PC 侧栏同一路径）
+        await engine.handleDeleteSession(s.id).catch(() => {})
+      } else {
+        await deleteSessionApi(s.id).catch(() => {})
+        await loadSessions(kw.value).catch(() => {})
+      }
       emit('changed', s.id)
     }
   })

@@ -5,8 +5,11 @@
          会话搜索防抖、分组折叠、批量模式、游标分页、置顶/重命名/删除约 200 行逻辑若另建
          抽屉组件就得复制或抽 composable，两份实现必然漂移。
          collapsed 是 PC 的持久化偏好（用户在桌面折叠过侧栏后窄屏会全是小圆点），窄屏用
-         `collapsed && !isNarrow` 挡掉。 -->
-    <aside class="side" :class="{ collapsed: collapsed && !isNarrow, open: sideOpen }">
+         `collapsed && !isNarrow` 挡掉。
+         mobileShell（触屏 H5 外壳）下整个退场：菜单/会话列表由 MobileSessionSheet 承担，
+         那里的会话行与操作与抽屉同源 store、同一组接口，但形态是移动的——不让 PC 抽屉
+         出现在 H5 里（横屏时它还会以常驻栏形态直接摊在左侧）。 -->
+    <aside v-if="!mobileShell" class="side" :class="{ collapsed: collapsed && !isNarrow, open: sideOpen }">
       <div class="side-logo">
         <BrandMark :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
@@ -213,13 +216,16 @@
     </a-drawer>
 
     <!-- 抽屉遮罩：窄屏点它关闭侧栏。放在 aside 之后（z-index 更低），保证点击穿透到遮罩而非抽屉 -->
-    <div v-if="isNarrow && sideOpen" class="side-mask" @click="sideOpen = false"></div>
+    <div v-if="!mobileShell && isNarrow && sideOpen" class="side-mask" @click="sideOpen = false"></div>
 
-    <!-- 主内容区：窄屏顶部插入移动顶栏（抽屉入口 / 会话标题 / 搜索 / 新建 / 帮助） -->
+    <!-- 主内容区：窄屏/H5 外壳顶部插入移动顶栏（菜单 / 会话标题 / 搜索 / 新建 / 帮助[ / 通知]）
+         mobileShell 单独判：手机横屏（约 900px）不是「窄屏」但仍是 H5，顶栏与 H5 菜单必须还在 -->
     <div class="main">
-      <MobileTopBar v-if="isNarrow" @toggle-side="sideOpen = !sideOpen" @search="openSideSearch" @new-chat="newChat" />
+      <MobileTopBar v-if="isNarrow || mobileShell" :notif="mobileShell" :unread="unreadCount"
+                    @toggle-side="onMenuEntry" @search="openSideSearch" @new-chat="newChat"
+                    @notif="notifSheetOpen = true" />
       <div class="main-body">
-        <DesktopOnlyGuard v-if="isNarrow" :path="route.path">
+        <DesktopOnlyGuard v-if="isNarrow || mobileShell" :path="route.path">
           <router-view />
         </DesktopOnlyGuard>
         <router-view v-else />
@@ -228,11 +234,25 @@
 
     <!-- 全局帮助入口：右下角悬浮「?」，任意页面就抽屉读手册（帮助中心整页 /help 上不重复出现） -->
     <HelpFab />
+
+    <!-- ==================== H5 外壳（触屏）的菜单 ====================
+         就是 /m/chat 左上角那个会话 sheet：会话列表（含置顶/重命名/删除/导出）+ 壳外入口
+         （个人设置/帮助中心/我的产物/知识库/主题/退出）。非对话页点菜单按钮或「搜索会话」
+         都开它——H5 里「左上角菜单」只有这一种形态，PC 抽屉不再出现。
+         桌面与「鼠标用户拖窄窗口」mobileShell 恒 false，DOM 与行为零改动。 -->
+    <MobileSessionSheet v-if="mobileShell" ref="shellSheetRef" :open="sessionsOpen"
+                        :current-id="route.query.sid || ''"
+                        @close="sessionsOpen = false"
+                        @select="onSheetSelect" @new-chat="onSheetNewChat"
+                        @profile="goShellPage('/profile')" @help="goShellPage('/help')"
+                        @artifacts="goShellPage('/artifacts')" @knowledge="goShellPage('/knowledge')" />
+    <!-- 通知 sheet：与侧栏铃铛 popover 同一份取数实例（provide 在 script 里） -->
+    <MobileNotifSheet v-if="mobileShell" :open="notifSheetOpen" @close="notifSheetOpen = false" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
@@ -248,10 +268,12 @@ import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
-import { isNarrow } from '../h5/mobile'
+import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
 import MobileTopBar from '../h5/MobileTopBar.vue'
+import MobileSessionSheet from '../h5/MobileSessionSheet.vue'
+import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
@@ -347,16 +369,44 @@ const isActive = p => route.path === p
 // 刷新后默认关着才是符合预期的（记住它会让下次进来莫名其妙开着一个遮罩）
 const sideOpen = ref(false)
 
-// 路由变化即关抽屉：窄屏下选完会话就该看到对话内容，而不是隔着一层遮罩。
+// ==================== H5 外壳（触屏）的菜单 ====================
+// 就是 /m/chat 那个会话 sheet（会话列表 + 壳外入口）。AppLayout 没有 chat 引擎，
+// sheet 内部对「删除会话」做了回退（直接调接口），落点差异见 MobileSessionSheet 注释
+const sessionsOpen = ref(false)
+const notifSheetOpen = ref(false)
+const shellSheetRef = ref(null)
+// 顶栏菜单按钮：触屏开 H5 sheet，桌面窄窗口仍开抽屉
+const onMenuEntry = () => {
+  if (mobileShell.value) sessionsOpen.value = true
+  else sideOpen.value = !sideOpen.value
+}
+// 选会话 / 新建 / 壳外页面：落点与移动壳一致——/chat 由路由守卫改写成 /m/chat（sid 随 query 透传）
+const onSheetSelect = sid => {
+  sessionsOpen.value = false
+  router.push({ path: '/chat', query: { sid } }).catch(() => {})
+}
+const onSheetNewChat = () => { sessionsOpen.value = false; newChat() }
+const goShellPage = path => { sessionsOpen.value = false; router.push(path).catch(() => {}) }
+
+// 路由变化即关抽屉/关 sheet：窄屏下选完会话就该看到对话内容，而不是隔着一层遮罩。
 // 转宽屏也必须关——遮罩是 fixed 的，留着会把整个宽屏盖住
-watch(() => route.fullPath, () => { if (isNarrow.value) sideOpen.value = false })
+watch(() => route.fullPath, () => {
+  if (isNarrow.value) sideOpen.value = false
+  sessionsOpen.value = false
+  notifSheetOpen.value = false
+})
 watch(isNarrow, v => { if (!v) sideOpen.value = false })
 
-// 顶栏「搜索」按钮：打开抽屉并聚焦搜索框。只开抽屉的话用户的意图（找会话）没有一步到位，
+// 顶栏「搜索」按钮：打开菜单并把光标送进搜索框。只打开的话用户的意图（找会话）没有一步到位，
 // 还得再点一次输入框。抽屉是 transform 动画，等它到位再聚焦，否则聚焦动作发生在
-// 元素还在屏外时会被浏览器忽略
+// 元素还在屏外时会被浏览器忽略（H5 sheet 的聚焦节拍由 sheet 自己等，见其 focusSearch）
 const searchInputRef = ref(null)
 const openSideSearch = () => {
+  if (mobileShell.value) {
+    sessionsOpen.value = true
+    if (shellSheetRef.value) shellSheetRef.value.focusSearch()
+    return
+  }
   sideOpen.value = true
   setTimeout(() => searchInputRef.value && searchInputRef.value.focus(), 260)
 }
@@ -568,6 +618,9 @@ const notifOpen = ref(false)
 const { items: notifItems, loading: notifLoading, unreadCount,
         loadList: loadNotifs, markRead, markAllRead: markAllReadApi } = useNotifications()
 const onNotifOpen = open => { if (open) loadNotifs() }
+// H5 外壳的通知 sheet（顶栏铃铛）经 provide 取同一份实例——各调一次 useNotifications
+// 会造出两份未读数，角标与列表会各说各话（与移动壳 provide 给 MobileNotifSheet 同口径）
+provide('wqNotif', { items: notifItems, loading: notifLoading, unreadCount, loadList: loadNotifs, markRead, markAllRead: markAllReadApi })
 const markAllRead = () => markAllReadApi()
 // 点击通知：置已读（乐观更新，失败回滚在共用单元里），再按 ref 跳转（审批类带二级目标直达可裁决位置）
 const openNotif = async n => {

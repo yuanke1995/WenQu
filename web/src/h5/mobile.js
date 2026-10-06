@@ -15,7 +15,7 @@
 // 且 antd 的 modal/drawer/select 虽然 teleport 到 body，但媒体查询匹配的是视口宽度、
 // 与 DOM 层级无关，写在 app.css 里的 768 规则对浮层照样命中。
 // isNarrow 只在「必须改行为或模板」的地方消费（见 ChatPage / AppLayout）。
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const NARROW = '(max-width: 768px)'
 const COARSE = '(pointer: coarse)'
@@ -46,10 +46,17 @@ bind(mqNarrow, isNarrow)
 bind(mqCoarse, isCoarse)
 bind(mqNoHover, isCoarse)
 
-// ==================== 移动壳（/m/chat）的设备判据 ====================
+// ==================== 移动壳（/m/chat 及触屏下的全局外壳）的设备判据 ====================
 // 与「布局形态」（isNarrow，宽度 ≤768）分开：手机上把 /chat 交给移动原生壳，
 // 判据是**触屏**（isCoarse）且宽度 ≤1024——覆盖手机竖屏/横屏（横屏约 900px）与平板竖屏；
 // 桌面（含把窗口拖窄的鼠标用户）isCoarse 恒 false，永远留在 PC 布局（其窄屏行为由既有补丁承担）。
 // 为什么不用 isNarrow：手机横屏宽于 768 就不是「窄屏」了，但依然是触屏，仍该进移动壳。
+// 宽度口径走 matchMedia 而非 window.innerWidth：与 CSS 同源，且是响应式的（innerWidth 变化
+// 不触发重算）——AppLayout 要按它决定渲染 H5 外壳还是 PC 工作台，旋转屏幕就得跟着切。
 const MOBILE_SHELL_MAX_W = 1024
-export const preferMobileShell = () => isCoarse.value && (window.innerWidth || 0) <= MOBILE_SHELL_MAX_W
+const mqShell = mq(`(max-width: ${MOBILE_SHELL_MAX_W}px)`)
+const shellNarrow = ref(mqShell ? mqShell.matches : false)
+bind(mqShell, shellNarrow)
+export const mobileShell = computed(() => isCoarse.value && shellNarrow.value)
+// 函数形态保留：router 守卫 / keyboard.js / MobileChatPage 既有调用点不改
+export const preferMobileShell = () => mobileShell.value

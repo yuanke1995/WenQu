@@ -1,6 +1,6 @@
 <template>
-  <!-- 窄屏顶栏：抽屉入口 / 会话标题 / 搜索 / 新建 / 帮助。
-       刻意不放主题切换、通知、退出——窄屏放不下一排图标，这三项抽屉底部 .side-foot 已全都有。 -->
+  <!-- 窄屏顶栏：菜单入口 / 会话标题 / 搜索 / 新建 / 帮助（H5 外壳下再补一个通知）。
+       刻意不放主题切换、退出——窄屏放不下一排图标，这两项菜单底部 .side-foot / sheet foot 已全都有。 -->
   <header class="m-topbar">
     <button class="m-tb-btn" title="菜单与会话" @click="$emit('toggle-side')">
       <menu-outlined />
@@ -16,14 +16,28 @@
     <button class="m-tb-btn" title="帮助中心" @click="openHelp">
       <question-circle-outlined />
     </button>
+    <!-- 通知（仅 H5 外壳）：触屏下侧栏整体退场，铃铛不能只留在侧栏 foot——
+         与 /m/chat 顶栏同口径（角标与列表共用同一份未读数） -->
+    <button v-if="notif" class="m-tb-btn" title="通知" @click="$emit('notif')">
+      <bell-outlined />
+      <span v-if="unread > 0" class="m-tb-badge">{{ unread > 99 ? '99+' : unread }}</span>
+    </button>
   </header>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { MenuOutlined, SearchOutlined, PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { MenuOutlined, SearchOutlined, PlusOutlined, QuestionCircleOutlined, BellOutlined } from '@ant-design/icons-vue'
 import { sessionStore } from '../views/store'
+
+// notif/unread：H5 外壳（AppLayout 的触屏形态）传入——顶栏多一个铃铛入口；
+// 抽屉形态（桌面窄窗口）不传，顶栏与之前完全一致（通知在抽屉 foot）
+defineProps({
+  notif: { type: Boolean, default: false },
+  unread: { type: Number, default: 0 }
+})
+defineEmits(['toggle-side', 'search', 'new-chat', 'notif'])
 
 const route = useRoute()
 
@@ -54,11 +68,17 @@ const openHelp = () => window.dispatchEvent(new CustomEvent('app:open-help'))
 }
 /* 触摸热区 44×44（触屏设计规范的下限，指尖点得准） */
 .m-tb-btn {
-  flex: none; width: 44px; height: 44px; border: none; background: transparent;
+  flex: none; position: relative; width: 44px; height: 44px; border: none; background: transparent;
   color: var(--app-text2); font-size: 17px; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 8px; touch-action: manipulation;
   transition: color .15s, background .15s;
+}
+/* 未读角标：与移动壳顶栏 .m-bar-badge 同形态（同一份未读数、同一种表达） */
+.m-tb-badge {
+  position: absolute; top: 3px; right: 3px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--app-danger); color: #fff;
+  font-size: 10px; line-height: 16px; font-weight: 600; text-align: center;
 }
 .m-tb-btn:active { color: var(--app-accent); background: var(--app-accent-weak); }
 /* 标题占满剩余宽度并单行省略：会话名可能很长，不截断会把右侧按钮挤出屏幕 */

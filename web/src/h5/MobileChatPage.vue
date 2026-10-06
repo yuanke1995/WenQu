@@ -523,8 +523,9 @@ const onSelectSession = async sid => {
 }
 const onNewChat = async () => { sessionsOpen.value = false; await createNewSession() }
 
-// 壳外页面跳转（个人设置/帮助中心）：这两个页面本就在窄屏白名单里（DesktopOnlyGuard），
-// 移动壳过去只需给入口——落在 AppLayout 窄屏形态（顶栏标题随路由、可再走抽屉回对话）
+// 壳外页面跳转（个人设置/帮助中心）：这些页面本就在窄屏白名单里（DesktopOnlyGuard），
+// 移动壳过去只需给入口——落在 AppLayout 的 H5 外壳形态（顶栏标题随路由，左上角菜单仍是
+// 这张会话 sheet，见 AppLayout 的 mobileShell 分支），不会掉回 PC 抽屉
 const onGoPage = path => { closeSheets(); router.push(path).catch(() => {}) }
 
 // 单轮操作（消息操作行的「⋯」）：先标选中（操作行保持可见，看得出在操作哪一条），再开 sheet。

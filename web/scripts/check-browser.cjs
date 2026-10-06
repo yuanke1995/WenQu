@@ -80,7 +80,8 @@ function serveStatic (page) {
     }
     if (u.pathname === '/api/ai/document/queue/stats') return json({ pending: 0, running: 1 })
     if (u.pathname === '/api/ai/config/public') return json({ upload: { maxFileSize: 209715200, allowedExts: ['docx', 'pdf', 'xlsx'] } })
-    if (u.pathname.startsWith('/api/ai/chat/tool-approval/')) {
+    // 路径与 src/api.js 一致（/api/ai/tool-approval/{id}）：写成 /chat/tool-approval/ 会 404
+    if (u.pathname.startsWith('/api/ai/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
     }
     if (u.host !== 'h5.local') return route.abort()      // 其余外部请求掐断
