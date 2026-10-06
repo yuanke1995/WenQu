@@ -31,6 +31,7 @@
           :rows="isEmbed ? 1 : 2"
           :disabled="sending"
           placeholder="输入问题，Enter 发送"
+          enterkeyhint="send"
           @keydown.enter.exact.prevent="send"
         ></textarea>
         <button v-if="!sending" class="sc-send" :disabled="!draft.trim()" aria-label="发送" @click="send">

@@ -1,0 +1,165 @@
+// 分享阅读侧（/shared/:token 只读会话分享 + /s/:token 智能体对话）的真浏览器校验。
+// 为什么单独一个脚本：分享链接大量在手机/微信里打开，是传播转化的产品门面（roadmap §14），
+// 但这两个页面免登录、不走 AppLayout，check-mshell（移动壳）与 check-browser（PC 壳）都不经过它们
+// ——check-h5 只断言「@media 存在」，测不出真渲染里的溢出/热区/键盘细节。
+//
+// 前置：先构建产物到 web/dist
+//   npx vite build --outDir dist --emptyOutDir
+// 依赖：playwright-core（不装进项目，临时用）：
+//   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
+//   NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-share.cjs
+'use strict'
+let chromium
+try { ({ chromium } = require('playwright-core')) } catch (e) {
+  console.log('SKIP  未安装 playwright-core，跳过分享页浏览器验证')
+  console.log('      安装：cd /tmp/wq-verify && npm i playwright-core')
+  process.exit(0)
+}
+const path = require('path')
+const fs = require('fs')
+
+const EDGE = process.env.WQ_BROWSER || '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+if (!fs.existsSync(EDGE)) { console.log('SKIP  未找到浏览器：' + EDGE + '（可用 WQ_BROWSER 指定）'); process.exit(0) }
+const DIST_DIR = path.resolve(__dirname, '../dist')
+if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) { console.log('SKIP  未找到 dist 产物（先 npx vite build）'); process.exit(0) }
+const ORIGIN = 'http://share.local'
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
+
+// 分享接口 mock：/shared 用 getSharedSession（含产物与两类来源），/s 用 getShareInfo
+const SHARED = {
+  title: '季度复盘讨论',
+  sharedAt: '2026-10-06T09:00:00',
+  messages: [
+    { role: 'user', content: '帮我把本季度的结论整理成一页周报' },
+    { role: 'ai', content: '## 本季度结论\n\n1. 检索质量达标\n2. 引用可溯源', artifacts: [
+      { filename: '季度周报.md', size: 2048, seq: 1, description: '一页纸周报' }
+    ], sources: [
+      { ref: '1', fileName: '产品手册.pdf', title: '指标口径' },
+      { ref: '2', origin: 'WEB', siteName: 'example.com', title: '行业报告', url: 'https://example.com/report' }
+    ] }
+  ]
+}
+const AGENT = { name: '客服助手', description: '回答产品与订单问题' }
+
+function serveStatic (page) {
+  return page.route('**/*', route => {
+    const u = new URL(route.request().url())
+    const json = data => route.fulfill({ status: 200, contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ success: true, data }) })
+    // 免登录页不走 /auth/me；分享接口按 token 给 mock
+    if (u.pathname === '/api/ai/share/session/tok-1') return json(SHARED)
+    if (u.pathname === '/api/ai/share/tok-2/info') return json(AGENT)
+    if (u.host !== 'share.local') return route.abort()
+    let p = decodeURIComponent(u.pathname)
+    let f = path.join(DIST_DIR, p)
+    if (p === '/' || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST_DIR, 'index.html')
+    try {
+      const buf = fs.readFileSync(f)
+      route.fulfill({ status: 200, body: buf, headers: { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' } })
+    } catch (e) { route.abort() }
+  })
+}
+
+let bad = 0
+const check = (ok, label, detail = '') => {
+  if (!ok) bad++
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? '  →  ' + detail : ''}`)
+}
+
+;(async () => {
+  const browser = await chromium.launch({ executablePath: EDGE, headless: true })
+  // ---- 手机上下文：412×916 触屏（iQOO Neo11 档，与 check-mshell 同口径）----
+  const ctx = await browser.newContext({
+    viewport: { width: 412, height: 916 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 15; V2318A) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+  })
+  const page = await ctx.newPage()
+  await serveStatic(page)
+  const errors = []
+  page.on('pageerror', e => errors.push(String(e.message)))
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
+
+  // ---- /shared/:token（只读会话分享）----
+  await page.goto(ORIGIN + '/shared/tok-1', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1100)
+  const sh = await page.evaluate(() => {
+    const de = document.documentElement
+    const rows = [...document.querySelectorAll('.sh-row')]
+    const art = document.querySelector('.sh-art')
+    const brand = document.querySelector('.sh-brand')
+    const inLayout = !!document.querySelector('.content-app')   // pageFlow：不该进 AppLayout 外壳
+    return {
+      title: (document.querySelector('.sh-title') || {}).textContent || '',
+      rows: rows.length, userBubble: !!document.querySelector('.sh-bubble.user'),
+      // markdown-it 配置把标题层级整体下移一级（## → h3），断言跟着真实渲染走
+      mdRendered: !!document.querySelector('.sh-bubble.ai .md h3, .sh-bubble.ai .md h2'),
+      artH: art ? Math.round(art.getBoundingClientRect().height) : 0,
+      srcN: document.querySelectorAll('.sh-src-item').length,
+      webLink: !!document.querySelector('.sh-src-link'),
+      brandH: brand ? Math.round(brand.getBoundingClientRect().height) : 0,
+      inLayout, scrollW: de.scrollWidth, clientW: de.clientWidth
+    }
+  })
+  check(sh.title.includes('季度复盘'), '只读分享页标题渲染', sh.title)
+  check(sh.rows === 2 && sh.userBubble && sh.mdRendered, '消息渲染且 AI 侧 markdown 已排版', JSON.stringify(sh))
+  check(sh.artH >= 44, '产物卡触摸热区 ≥44px（分享页主要交互目标）', `h=${sh.artH}`)
+  check(sh.srcN === 2, '引用来源两条（库内 + 联网）', `n=${sh.srcN}`)
+  check(sh.webLink, '联网来源给「打开原网页」链接（库内来源不给，内容不外发）')
+  check(sh.brandH >= 44, '页脚品牌链接触摸热区 ≥44px', `h=${sh.brandH}`)
+  check(!sh.inLayout, 'pageFlow 生效：不进 AppLayout 外壳（否则 100vh 截断滚不动）')
+  check(sh.scrollW <= sh.clientW + 1, '只读分享页无横向溢出', `scrollW=${sh.scrollW} clientW=${sh.clientW}`)
+
+  // ---- /s/:token（智能体对话分享，可续聊）----
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1100)
+  const sc = await page.evaluate(() => {
+    const de = document.documentElement
+    const ta = document.querySelector('.sc-textarea')
+    const send = document.querySelector('.sc-send')
+    return {
+      name: (document.querySelector('.sc-name') || {}).textContent || '',
+      empty: !!document.querySelector('.sc-empty'),
+      taFont: ta ? parseFloat(getComputedStyle(ta).fontSize) : 0,
+      taEnterhint: ta ? (ta.getAttribute('enterkeyhint') || '') : '',
+      sendSize: send ? Math.round(send.getBoundingClientRect().width) : 0,
+      vhH: document.querySelector('.sc-page') ? Math.round(document.querySelector('.sc-page').getBoundingClientRect().height) : 0,
+      scrollW: de.scrollWidth, clientW: de.clientWidth
+    }
+  })
+  check(sc.name.includes('客服助手') && sc.empty, '智能体分享页头部与空态渲染', sc.name)
+  check(sc.taFont >= 16, '输入框字号 ≥16px（iOS 聚焦不缩放）', `font=${sc.taFont}`)
+  check(sc.taEnterhint === 'send', '软键盘回车键显「发送」（enterkeyhint=send）', `enterkeyhint=${sc.taEnterhint}`)
+  check(sc.sendSize >= 44, '发送键触摸热区 ≥44px', `w=${sc.sendSize}`)
+  check(sc.vhH >= 800 && sc.vhH <= 916, '满高容器消费 --app-vh（键盘弹起收缩的前提）', `h=${sc.vhH}`)
+  check(sc.scrollW <= sc.clientW + 1, '智能体分享页无横向溢出', `scrollW=${sc.scrollW} clientW=${sc.clientW}`)
+
+  // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
+  const dpage = await ctx.newPage()
+  await dpage.setViewportSize({ width: 1280, height: 800 })
+  await serveStatic(dpage)
+  await dpage.goto(ORIGIN + '/shared/tok-1', { waitUntil: 'networkidle' })
+  await dpage.waitForTimeout(900)
+  const dsh = await dpage.evaluate(() => {
+    const head = document.querySelector('.sh-head')
+    const ta = null
+    return { headW: head ? Math.round(head.getBoundingClientRect().width) : 0,
+      artH: document.querySelector('.sh-art') ? Math.round(document.querySelector('.sh-art').getBoundingClientRect().height) : 0 }
+  })
+  check(dsh.headW >= 700 && dsh.headW <= 820, '桌面只读分享页保持 820px 居中栏', `w=${dsh.headW}`)
+  check(dsh.artH > 0 && dsh.artH < 44, '桌面产物卡保持紧凑行（44px 热区仅触屏）', `h=${dsh.artH}`)
+  await dpage.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await dpage.waitForTimeout(900)
+  const dsc = await dpage.evaluate(() => {
+    const ta = document.querySelector('.sc-textarea')
+    return { taFont: ta ? getComputedStyle(ta).fontSize : '' }
+  })
+  check(parseFloat(dsc.taFont) < 16, '桌面输入框保持 14px（16px 规则只在 ≤768 补丁内）', `font=${dsc.taFont}`)
+
+  const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401/i.test(e))
+  check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))
+
+  await browser.close()
+  console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
+  process.exit(bad ? 1 : 0)
+})().catch(e => { console.error('验证脚本异常：', e.message); process.exit(2) })
