@@ -2,11 +2,13 @@ package com.wenqu.ai.config;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -67,6 +69,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ResultJson<Void>> handleNotFound(NoResourceFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ResultJson.error(404, "请求的资源不存在"));
+    }
+
+    /**
+     * 请求方法不支持（如 GET 打 POST 端点）：405，WARN 记录方法与路径便于归因（多为外部扫描/误用），不走系统异常兜底
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ResultJson<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e,
+                                                                     HttpServletRequest request) {
+        log.warn("请求方法不支持: {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ResultJson.error(405, "请求方法不支持"));
     }
 
     /**
