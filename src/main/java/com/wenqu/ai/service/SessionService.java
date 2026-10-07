@@ -725,10 +725,23 @@ public class SessionService {
                                 String thinking, String retrieved, String artifacts, String toolCalls,
                                 String attachments, String tokens, String timeline, String processText,
                                 String agentId, String agentName, String model) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, null);
+    }
+
+    /**
+     * 追加消息（含相关推荐）：related 为 JSON 数组字符串（「接下来可以」的推荐问句清单）。
+     * 落库意义：此前只随 done 事件下发、不入库，刷新后推荐整块消失；而模型把正文误写进
+     * &lt;related&gt; 时剥离即等于内容永久丢失（RagService 的 related 护栏要靠这一列留痕）。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText,
+                                String agentId, String agentName, String model, String related) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model);
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -739,7 +752,8 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model);
+            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -768,6 +782,12 @@ public class SessionService {
             if (retrieved != null && !retrieved.isBlank()) {
                 try {
                     redisMsg.put("retrieved", JSON.parse(retrieved));
+                } catch (Exception ignored) {
+                }
+            }
+            if (related != null && !related.isBlank()) {
+                try {
+                    redisMsg.put("related", JSON.parseArray(related, String.class));
                 } catch (Exception ignored) {
                 }
             }
@@ -830,7 +850,8 @@ public class SessionService {
     private String appendToMysql(String sessionId, String role, String content, List<String> images,
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
-                                 String processText, String agentId, String agentName, String model) {
+                                 String processText, String agentId, String agentName, String model,
+                                 String related) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -857,6 +878,7 @@ public class SessionService {
             msg.setImages(images != null && !images.isEmpty() ? JSON.toJSONString(images) : null);
             msg.setSources(sources);
             msg.setRetrieved(retrieved);
+            msg.setRelated(related);
             msg.setArtifacts(artifacts);
             msg.setToolCalls(toolCalls);
             msg.setAttachments(attachments);
@@ -1320,6 +1342,13 @@ public class SessionService {
         }
         if (m.getRetrieved() != null && !m.getRetrieved().isBlank()) {
             map.put("retrieved", m.getRetrieved()); // 检索状态行（前端 JSON.parse）
+        }
+        if (m.getRelated() != null && !m.getRelated().isBlank()) {
+            try {
+                map.put("related", JSON.parseArray(m.getRelated(), String.class)); // 「接下来可以」推荐（历史回显）
+            } catch (Exception e) {
+                // related 解析失败忽略
+            }
         }
         if (m.getArtifacts() != null && !m.getArtifacts().isBlank()) {
             try {

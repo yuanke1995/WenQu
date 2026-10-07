@@ -39,6 +39,8 @@ public class Message {
     private String sources;
     /** 检索状态行数据 (JSON: keywords/refs/terms) */
     private String retrieved;
+    /** 相关推荐问句 (JSON数组字符串)：此前只随 done 事件下发，刷新后"接下来可以"整块消失 */
+    private String related;
     /** 产物交付 (JSON数组: [{url,filename,size,description}]，原始 URL 存库、展示层签名) */
     private String artifacts;
 

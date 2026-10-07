@@ -265,6 +265,18 @@ public class RagService {
     /** 中断兜底落库时追加在正文尾部的截断标记：刷新/历史可见的 fail-loud 提示。
      *  落在时间线区间之外，前端 restore 后由尾段兜底渲染成独立的引用块 */
     private static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
+    /** 网关 finish_reason=length（输出达长度上限）时的用户可见标注：正文尾部直书，刷新后仍在 */
+    private static final String LENGTH_TRUNCATED_SUFFIX =
+            "\n\n> ⏹ 回答写到长度上限被截断，可让我接着说完，或重新生成";
+    /** 生成量与正文字数严重不符（内容在生成链路里丢失）时的用户可见标注 */
+    private static final String OUTPUT_LOST_SUFFIX =
+            "\n\n> ⚠️ 这次回答不完整，有内容在生成过程中丢失，建议重新生成";
+    /** 推荐块条目超过此长度即视为「正文被写进 related」，并回回答而不是剥离丢弃 */
+    private static final int RELATED_PROSE_MIN_CHARS = 80;
+    /** 生成量对账门槛：最终轮输出不足此 token 数时不参与对账（短回答的字符/token 比波动太大） */
+    private static final int OUTPUT_LOSS_MIN_TOKENS = 150;
+    /** 生成量对账比例：中文字符/token 实测 0.7~1.4，低于 0.15 才认定有内容丢失（留足误判余量） */
+    private static final double OUTPUT_LOSS_CHAR_PER_TOKEN = 0.15;
 
     private final ChatClient chatClient;
     private final SessionService sessionService;
@@ -2290,6 +2302,44 @@ public class RagService {
         return tokens;
     }
 
+    /**
+     * 回答被截断的判定与用户可见标注文案（null=未截断）。两条独立证据：
+     * ① 网关明说 finish_reason=length（输出达上限）；
+     * ② 暗截断——最终轮真实输出 token 折算的字符量，远高于实际进入回答/过程/思考/工具入参的字符数，
+     *    说明有内容在剥离环节消失了（此前这类轮次连一条提示都没有，用户只看到断在半句的回答）。
+     * ② 只在网关回了真实 usage 时参与判定，且门槛留足余量：中英混排、表格与 markdown 都会拉低
+     * 字符/token 比，宁可漏报不可误报。
+     */
+    private String truncationSuffix(AnswerStreamState st, String answer) {
+        if (st.finishLength) {
+            addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
+                    "回答达到模型输出长度上限被截断；可在模型管理中调大该模型的最大输出");
+            log.warn("[FAIL-LOUD] 网关 finish_reason=length，回答被截断: session={}, 正文 {} 字",
+                    st.sessionId, answer.length());
+            return LENGTH_TRUNCATED_SUFFIX;
+        }
+        long finalRoundOutput = st.roundUsage.finalRoundCompletion();
+        boolean realUsage = st.roundUsage.completionTotal() > 0 || st.realOutputTokens > 0;
+        // 工具入参同样是模型生成的输出（写文件类工具动辄几百 token），不计进"已交代"必然误判
+        int toolArgChars = 0;
+        for (Map<String, Object> rec : st.toolCalls) {
+            Object args = rec.get("args");
+            if (args != null) toolArgChars += String.valueOf(args).length();
+        }
+        int accounted = answer.length() + st.processResponse.length() + st.reasoningChars + toolArgChars;
+        if (realUsage && finalRoundOutput >= OUTPUT_LOSS_MIN_TOKENS
+                && accounted < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN) {
+            addDegradation(st.degradations, st.degradedCodes, "outputLost",
+                    "模型本轮生成 " + finalRoundOutput + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");
+            log.warn("[FAIL-LOUD] 生成量与正文字数不符: session={}, 最终轮输出={} tokens, 已交代={} 字"
+                            + "（正文 {}/过程 {}/思考 {}/工具入参 {}）, finishReason={}",
+                    st.sessionId, finalRoundOutput, accounted, answer.length(),
+                    st.processResponse.length(), st.reasoningChars, toolArgChars, st.lastFinishReason);
+            return OUTPUT_LOST_SUFFIX;
+        }
+        return null;
+    }
+
     /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts) {
@@ -2576,8 +2626,24 @@ public class RagService {
                         st.roundUsage.accept(resp.getMetadata() == null ? null : resp.getMetadata().getId(), usage);
                     }
                     Object output = resp.getResult() == null ? null : resp.getResult().getOutput();
-                    String delta = (output instanceof org.springframework.ai.chat.messages.AssistantMessage am
-                            ? (am.getText() == null ? "" : am.getText()) : "");
+                    String delta = "";
+                    if (resp.getResult() != null) {
+                        // 终止原因挂在 Generation 元数据上（网关只在末块携带）。工具循环各轮末块的到达顺序
+                        // 不保证（见 UsageAccumulator 注释），故不按"最后一个"取值，而是任一轮报 length 即判
+                        // 截断：正常轮只会是 stop / tool_calls，出现 length 就是那一轮输出被上限切断了。
+                        String fr = resp.getResult().getMetadata() == null
+                                ? null : resp.getResult().getMetadata().getFinishReason();
+                        if (fr != null && !fr.isBlank()) {
+                            st.lastFinishReason = fr;
+                            if ("length".equalsIgnoreCase(fr)) st.finishLength = true;
+                        }
+                    }
+                    if (output instanceof org.springframework.ai.chat.messages.AssistantMessage am) {
+                        delta = am.getText() == null ? "" : am.getText();
+                        // 思考增量计入 completion tokens 却不进正文，生成量对账必须扣掉它否则必然误判
+                        Object rc = am.getMetadata() == null ? null : am.getMetadata().get("reasoningContent");
+                        if (rc != null) st.reasoningChars += String.valueOf(rc).length();
+                    }
                     return delta;
                 })
                 .doOnNext(token -> {
@@ -2726,6 +2792,10 @@ public class RagService {
                         st.processOpen = false;
                         st.openProcessChars = 0;
                         st.processMalformedNoted = false;
+                        // 终止原因与思考量是旧一次尝试的观测值：不归零则重试后可能带着上次的 length 误标
+                        st.finishLength = false;
+                        st.lastFinishReason = null;
+                        st.reasoningChars = 0;
                         st.disposableRef.set(buildAnswerStream(system, user, st, agent));
                         return;
                     }
@@ -2814,6 +2884,23 @@ public class RagService {
                         related = extractRelated(st.fullResponse);
                     }
                     String answer = st.fullResponse.toString();
+                    // 护栏：模型把正文写进 <related> 时，"剥离推荐块"等于把回答吃掉——实测出现过
+                    // 回答只剩开头 28 字、其余整段落进推荐块（推荐块此前不随消息落库，刷新后彻底消失）。
+                    // 推荐位只放短句，超长条目按正文并回回答。
+                    List<String> relatedChips = new ArrayList<>();
+                    List<String> relatedProse = new ArrayList<>();
+                    for (String r : related) {
+                        if (r.length() > RELATED_PROSE_MIN_CHARS) relatedProse.add(r); else relatedChips.add(r);
+                    }
+                    if (!relatedProse.isEmpty()) {
+                        String merged = String.join("\n\n", relatedProse);
+                        answer = answer.isBlank() ? merged : answer.stripTrailing() + "\n\n" + merged;
+                        related = relatedChips;
+                        addDegradation(st.degradations, st.degradedCodes, "relatedHoldsAnswer",
+                                "模型把正文写进了推荐块（" + relatedProse.size() + " 段），已并回回答");
+                        log.warn("[FAIL-LOUD] related 内含正文 {} 段（{} 字），已并回回答: session={}",
+                                relatedProse.size(), merged.length(), st.sessionId);
+                    }
                     // 引用来源（局部可变：语义一致性自检会剔除不支撑的条目并重编 ref，替换新列表）
                     List<Map<String, Object>> sources = st.sources;
 
@@ -2917,6 +3004,13 @@ public class RagService {
                         }
                         st.stageMs.put("citation", System.currentTimeMillis() - st.startTime);
                     }
+                    // 截断必须让用户看见：降级提示受 chat.retrievalDebugEnabled 控制（面向用户的部署
+                    // 默认关闭），只落提示等于没提示——标注直接进正文尾部，随 done 与落库一起走，
+                    // 刷新后仍在（与中断兜底的 TRUNCATION_SUFFIX 同口径）。
+                    String truncSuffix = truncationSuffix(st, answer);
+                    if (truncSuffix != null) {
+                        answer = answer.stripTrailing() + truncSuffix;
+                    }
                     // 引用来源被裁剪后，检索状态行的 refs 需同步（否则"参考 N 段资料"与展开明细不一致，
                     // 且该值会随消息持久化、历史恢复时同样错位）。terms/keywords 不受影响；
                     // 正常未裁剪时 sources.size() 与 refs 相等，重算后值不变。
@@ -2990,7 +3084,9 @@ public class RagService {
                                 // 下发 + 前端永远转圈」，且日志只有一行 onErrorDropped 极难定位。
                                 agent == null ? null : agent.getId(),
                                 agent == null ? null : agent.getName(),
-                                st.model);
+                                st.model,
+                                // 相关推荐随消息落库：此前只随 done 下发，刷新后「接下来可以」整块消失
+                                related.isEmpty() ? null : JSON.toJSONString(related));
                         // 新回答挂上被替换旧回答的版本组键：组内版本序列即 ‹ n/N › 切换数据源
                         if (replaceGroup != null && messageId != null) {
                             sessionService.setMessageVariant(messageId, replaceGroup);
@@ -3175,6 +3271,16 @@ public class RagService {
         /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
         volatile int realPromptTokens;
         volatile int realOutputTokens;
+        /**
+         * 网关在末块携带的终止原因（stop/length/tool_calls/…；null=网关未带）。
+         * 截断判定的直接依据——此前只看「输出 token ≥ 声明的最大输出」，而模型声明值常远大于
+         * 厂商实际上限，那条判定等于永不生效。
+         */
+        volatile String lastFinishReason;
+        /** 本轮任一轮次报过 finish_reason=length（输出触顶）：截断标注的判据，比逐轮取值抗末块乱序 */
+        volatile boolean finishLength;
+        /** 本轮网关返回的思考增量字符数（计入 completion tokens 但不进正文）：生成量对账要扣掉它 */
+        volatile int reasoningChars;
         /** 缓存命中的 prompt token（网关 prompt_tokens_details.cached_tokens；0=网关未回传，面板隐藏该行） */
         volatile int cachedPromptTokens;
         /**

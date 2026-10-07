@@ -724,7 +724,8 @@ const switchSession = async sid => {
             images: Array.isArray(m.images) ? m.images : [],
             attachments: Array.isArray(m.attachments) ? m.attachments : [],
             sources: Array.isArray(m.sources) ? m.sources : [],
-            related: [],
+            // 「接下来可以」推荐（随消息落库后回显）：此前恒为空数组，刷新后推荐整块消失
+            related: Array.isArray(m.related) ? m.related : [],
             thinking: m.thinking || '',
             thinkOpen: false,
             time: m.createTime ? new Date(m.createTime).getTime() : null,

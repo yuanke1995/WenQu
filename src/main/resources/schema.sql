@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `images`      TEXT         DEFAULT NULL COMMENT '关联图片URL (JSON数组字符串)',
     `sources`     TEXT         DEFAULT NULL COMMENT '引用来源 (JSON数组字符串)',
     `retrieved`   TEXT         DEFAULT NULL COMMENT '检索状态行数据 (JSON: keywords/refs/terms)',
+    `related`     TEXT         DEFAULT NULL COMMENT '相关推荐问句 (JSON数组字符串)；不落库则刷新后"接下来可以"整块消失',
     `artifacts`   TEXT         DEFAULT NULL COMMENT '产物交付 (JSON数组: [{url,filename,size,description}])',
     `tool_calls`  MEDIUMTEXT   DEFAULT NULL COMMENT '工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]；入参/输出存≤8KB全文，供前端卡片展开)',
     `timeline`    TEXT         DEFAULT NULL COMMENT '回答时间线 (JSON数组：正文区间段 / 过程区间段 / 工具下标段 / 产物下标段，记录交错顺序，刷新后还原过程视图)',
