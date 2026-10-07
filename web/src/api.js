@@ -83,6 +83,47 @@ function upload(path, formData, onProgress) {
 }
 
 /**
+ * ==================== SSE 事件表（登录态与游客分享共用）====================
+ * 「事件名 → 回调名」只在这里声明一次。两条链路（sendQuestion / sendShareMessage）各自只管传输与收尾，
+ * 派发统一走 dispatchChatEvent。此前它们各写一份 if/else（主链路认 20 种事件、分享链路只认 4 种），
+ * 新增事件必然漏一处——游客分享看不到图片与引用就是这么掉的。
+ * 终止事件 done / error 刻意不进表：两条链路的收尾语义不同（分享链路的 sessionId 在事件信封上，
+ * 且要摘掉 visibilitychange 监听）。
+ */
+const CHAT_EVENT_CB = {
+  token: 'onToken', stage: 'onStage', plan: 'onPlan', usage: 'onUsage',
+  retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
+  image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
+  tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
+  subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
+  agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
+  agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser'
+}
+
+/** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
+function parseChatEvent (line) {
+  if (!line.startsWith('data:')) return null
+  try {
+    const d = JSON.parse(line.slice(5).trim())
+    return d && d.type ? d : null
+  } catch (e) {
+    console.warn('[SSE] JSON 解析失败，已忽略该行:', e.message)
+    return null
+  }
+}
+
+/**
+ * 把一条非终止事件派发给 handlers 上对应的回调（回调没传即忽略——分享页就不关心工具卡与审批）。
+ * handlers 直接复用调用方的 options 对象：本表的值就是其中的回调键名，不再另立一份映射字面量。
+ */
+function dispatchChatEvent (d, handlers) {
+  const name = CHAT_EVENT_CB[d.type]
+  if (!name) { console.warn('[SSE] 未识别事件类型:', d.type); return false }
+  if (typeof handlers[name] === 'function') handlers[name](d.content == null ? '' : d.content)
+  return true
+}
+
+/**
  * 流式聊天（SSE）
  * signal 用于停止生成（外部 AbortController.abort()）
  * deepThink=true 时后端先流式输出思考过程（thinking / thinking_done 事件）
@@ -91,7 +132,9 @@ function upload(path, formData, onProgress) {
  */
 export function sendQuestion(sessionId, question, images = [], opts = {}) {
   const {
-    onToken, onImage, onDone, onError, onThinking, onThinkingDone, onWarn, onStage, onRetrieved, onArtifact, onToolStatus, onToolOutput, onSubagent, onSubagentRoute, onAgentDispatched, onAgentBound, onAgentDelegated, onPlan, onApprovalRequired, onAskUser, onProcess, onUsage,
+    // on* 回调不逐个解构：非终止事件由 dispatchChatEvent 按 CHAT_EVENT_CB 直接从 opts 取，
+    // 新增事件只改那张表。这里只留本函数收尾要用的两个。
+    onDone, onError,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
     contextWindow = null, editMessageId = ''
   } = opts
@@ -192,35 +235,11 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
         buffer = lines.pop() || ''
         for (const line of lines) {
           // Spring SseEmitter 输出 "data:{...}"（冒号后无空格），需兼容带/不带空格两种
-          if (line.startsWith('data:')) {
-            try {
-              const d = JSON.parse(line.substring(5).trim())
-              if (d.type === 'token') { onToken(d.content) }
-              else if (d.type === 'stage') { onStage && onStage(d.content) }
-              else if (d.type === 'plan') { onPlan && onPlan(d.content) } // content 为本轮执行计划步骤名数组 ["理解问题","检索知识库",…]
-              else if (d.type === 'usage') { onUsage && onUsage(d.content) } // content 为 {context,budget,hits,prompt,window,windowSource,parts}：生成开始时的 prompt 侧用量估算（done 的 tokens 为实测终值）
-              else if (d.type === 'retrieved') { onRetrieved && onRetrieved(d.content) }
-              else if (d.type === 'thinking') { onThinking && onThinking(d.content) }
-              else if (d.type === 'thinking_done') { onThinkingDone && onThinkingDone(d.content) }
-              else if (d.type === 'image') { onImage(d.content) }
-              else if (d.type === 'warn') { onWarn && onWarn(d.content) }
-              else if (d.type === 'artifact') { onArtifact && onArtifact(d.content) } // content 为 {url,filename,description}
-              else if (d.type === 'tool_status') { onToolStatus && onToolStatus(d.content) } // content 为 {name,status,elapsedMs,args,result|error}
-              else if (d.type === 'tool_output') { onToolOutput && onToolOutput(d.content) } // content 为 {name,delta}：工具执行中 stdout/stderr 增量
-              else if (d.type === 'process') { onProcess && onProcess(d.content) } // content 为过程独白（<process> 标签内）增量：时间线灰字过程段
-              else if (d.type === 'subagent') { onSubagent && onSubagent(d.content) } // content 为 {id,name,status,hits,elapsedMs,delegated,description,digest}
-              else if (d.type === 'subagent_route') { onSubagentRoute && onSubagentRoute(d.content) } // content 为 {candidates,picked,names}
-              else if (d.type === 'agent_dispatched') { onAgentDispatched && onAgentDispatched(d.content) } // content 为 {candidates,id,name,description,fallback}
-              else if (d.type === 'agent_delegated') { onAgentDelegated && onAgentDelegated(d.content) } // content 为 {id,name,description}：本轮由 @ 提及的智能体作答（会话绑定不变）
-              else if (d.type === 'agent_bound') { onAgentBound && onAgentBound(d.content) } // content 为 {locked,agentId,agentName}：会话级绑定结果（首问解析并锁定后立即下发，不等整轮结束）
-              else if (d.type === 'approval_required') { onApprovalRequired && onApprovalRequired(d.content) } // content 为 {approvalId,tool,args,timeoutMs}
-              else if (d.type === 'ask_user') { onAskUser && onAskUser(d.content) } // content 为 {askId,question,options,timeoutMs}：智能体结构化提问（人在回路）
-              else if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,degradations} JSON 字符串
-              else if (d.type === 'error') { end(d.content); return }
-            } catch (e) {
-              console.warn('[SSE] JSON 解析失败，已忽略该行:', e.message)
-            }
-          }
+          const d = parseChatEvent(line)
+          if (!d) continue
+          if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,finalImages,degradations,…} JSON 字符串
+          if (d.type === 'error') { end(d.content); return }
+          dispatchChatEvent(d, opts)
         }
         read()
       }).catch(e => {
@@ -654,9 +673,11 @@ export const getShareHistory = (token, sessionId, visitorId) =>
 
 /**
  * 游客流式对话（SSE，免登录）：token 即凭据；服务端按发布者身份检索、游客受限工具集。
- * 事件：token（增量正文）/ stage（阶段提示）/ done（本轮完成，含 sessionId）/ error / warn
+ * 事件派发与登录态主链路共用 CHAT_EVENT_CB（图片/引用/工具状态等一律不再各认一份）；
+ * 差别只在终止事件：done 的信封上带 sessionId（首轮由服务端建会话，前端要存下来续聊）。
  */
-export function sendShareMessage(token, payload, { onToken, onStage, onDone, onError, onWarn, signal, idleTimeoutMs = 120000 } = {}) {
+export function sendShareMessage(token, payload, opts = {}) {
+  const { onDone, onError, signal, idleTimeoutMs = 120000 } = opts
   if (typeof onDone !== 'function' || typeof onError !== 'function') return
   const controller = new AbortController()
   let idleTimer = null
@@ -696,17 +717,12 @@ export function sendShareMessage(token, payload, { onToken, onStage, onDone, onE
     const decoder = new TextDecoder()
     let buf = ''
     const handleEvent = raw => {
-      const line = raw.split('\n').find(l => l.startsWith('data:'))
-      if (!line) return
-      let data = null
-      try { data = JSON.parse(line.slice(5).trim()) } catch (e) { return }
-      if (!data || !data.type) return
+      const d = parseChatEvent(raw.split('\n').find(l => l.startsWith('data:')) || '')
+      if (!d) return
       armIdle()
-      if (data.type === 'token') onToken && onToken(data.content || '')
-      else if (data.type === 'stage') onStage && onStage(data.content || '')
-      else if (data.type === 'warn') onWarn && onWarn(data.content || '')
-      else if (data.type === 'error') { settle(); onError(data.content || '回答失败') }
-      else if (data.type === 'done') { settle(); onDone(data) }
+      if (d.type === 'done') { settle(); onDone(d); return }
+      if (d.type === 'error') { settle(); onError(d.content || '回答失败'); return }
+      dispatchChatEvent(d, opts)
     }
     const pump = () => reader.read().then(({ done, value }) => {
       if (done) { settle(); return }

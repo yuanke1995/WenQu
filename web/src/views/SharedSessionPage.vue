@@ -15,11 +15,11 @@
     </div>
     <div v-else-if="!info.messages.length" class="sh-state">这段对话还没有内容。</div>
 
-    <div v-else ref="listEl" class="sh-list">
+    <div v-else class="sh-list">
       <div v-for="(m, i) in info.messages" :key="i" class="sh-row" :class="m.role">
         <div v-if="m.role === 'user'" class="sh-bubble user">{{ m.content }}</div>
         <div v-else class="sh-bubble ai">
-          <div class="md" v-html="renderMd(m.content, [])"></div>
+          <AnswerBody :content="m.content" :images="m.images" :citations="false" />
           <!-- 产物：模型为本轮问题生成的文件，本就是这段对话的一部分，跟着分享出去。
                下载地址不来自响应里的 url（那是被 1 小时签名保护的地址，分享链接却能挂很久），
                而是按 token 现场换——见下方 artifactHref。 -->
@@ -57,17 +57,22 @@
       <span>内容由 AI 生成，请注意甄别</span>
       <a href="/" class="sh-brand">问渠 WenQu</a>
     </footer>
+
+    <!-- 正文浮层宿主：本页只用得到图片灯箱（点正文配图看大图）。
+         角标已用 :citations="false" 关掉，所以来源弹窗与悬浮卡不会被触发。 -->
+    <AnswerViewerHost />
   </div>
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { getSharedSession } from '../api'
-import { renderMd, enhanceDiagrams } from '../utils/markdown'
+// 正文与图片灯箱与主聊天页同源（mermaid 补画也已下沉到 AnswerBody，不再由本页整容器扫一遍）
+import AnswerBody from '../components/AnswerBody.vue'
+import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 
 const route = useRoute()
-const listEl = ref(null)
 const loading = ref(true)
 const error = ref('')
 const info = ref({ title: '', messages: [], sharedAt: null })
@@ -112,9 +117,6 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  // Mermaid：渲染层只吐占位容器，数据到位后补图（分享页无会话，故不开沙盒运行按钮）
-  await nextTick()
-  if (listEl.value) enhanceDiagrams(listEl.value).catch(() => {})
 })
 </script>
 

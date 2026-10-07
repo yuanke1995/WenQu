@@ -240,8 +240,10 @@
         </a>
         <div v-if="src.loading" class="m-src-tip">正在读取原文…</div>
         <div v-if="src.snippet" class="m-src-snippet">{{ src.snippet }}</div>
-        <img v-for="(u, i) in src.images" :key="i" class="m-src-img" :src="resolveImg(u)" alt="原文图片" @click="openPreview(src.images.map(resolveImg), i)" />
-        <div v-if="src.content" class="md m-src-content" v-html="renderMd(src.content, [])" />
+        <!-- 原文配图按 PC 同口径内联回正文：先给无编号的 [图片] 补上序号，再让 renderMd 按下标还原。
+             此前是把图单独排在正文上方 + 正文里留「[图片1]」四个字，读者对不上是哪张。 -->
+        <div v-if="src.content" class="md m-src-content"
+             v-html="renderMd(prepKnowledgeContent(src.content, src.images), src.images)" />
         <div v-if="!src.loading && !src.content && !src.snippet" class="m-src-tip">该来源没有可展示的内容</div>
       </div>
     </BottomSheet>
@@ -310,7 +312,7 @@ import { useChatSearch } from '../chat/useChatSearch'
 import { useNotifications } from '../chat/useNotifications'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
-import { renderMd, resolveImg, enhanceDiagrams } from '../utils/markdown'
+import { renderMd, prepKnowledgeContent, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
 import { preferMobileShell } from './mobile'
 import BottomSheet from './BottomSheet.vue'
@@ -949,7 +951,6 @@ onUnmounted(() => {
 .m-src-url { display: inline-flex; align-items: center; gap: 6px; color: var(--app-accent); font-size: 14px; text-decoration: none; }
 .m-src-tip { font-size: 13px; color: var(--app-text3); }
 .m-src-snippet { font-size: 13px; color: var(--app-text2); background: var(--app-panel-2); border-radius: 8px; padding: 10px; line-height: 1.7; }
-.m-src-img { width: 100%; border-radius: 8px; }
 .m-src-content { font-size: 14px; line-height: 1.75; }
 
 /* ---- 图片查看 ---- */

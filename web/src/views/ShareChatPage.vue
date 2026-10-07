@@ -31,9 +31,23 @@
               <span class="sc-pulse" /><span>{{ m.stage || '正在思考…' }}</span>
             </div>
             <template v-else>
-              <div class="sc-md" v-html="renderMd(m.content, [])"></div>
+              <AnswerBody :content="m.content" :images="m.images" :sources="m.sources"
+                          :msg-index="i" :streaming="!!m.loading" />
               <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注 -->
               <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ m.stage }}</div>
+              <!-- 引用来源：与主聊天页同一份 sourceName 口径，点开的是同一个来源弹窗 -->
+              <div v-if="m.sources && m.sources.length" class="sc-srcs">
+                <button class="sc-srcs-head" type="button" @click="m.srcOpen = !m.srcOpen">
+                  <span>引用 {{ m.sources.length }} 条来源</span>
+                  <caret-right-outlined class="sc-srcs-caret" :class="{ open: m.srcOpen }" />
+                </button>
+                <div v-if="m.srcOpen" class="sc-srcs-list">
+                  <div v-for="s in m.sources" :key="s.ref" class="sc-src" title="点击查看原文" @click="openSource(s)">
+                    <span class="sc-src-no">[{{ s.ref }}]</span>
+                    <span class="sc-src-name">{{ sourceName(s) }}</span>
+                  </div>
+                </div>
+              </div>
             </template>
           </div>
         </div>
@@ -61,6 +75,10 @@
         <span v-if="!isEmbed" class="sc-foot-hint">Enter 发送 · Shift + Enter 换行</span>
       </div>
     </footer>
+
+    <!-- 正文浮层（图片灯箱 / 引用来源弹窗 / 角标悬浮卡）：与主聊天页共用一份实现。
+         不传 sessionId ⇒ 来源弹窗里的代码块不给「在云端沙盒运行」（游客链路本就不暴露沙盒）。 -->
+    <AnswerViewerHost />
   </div>
 </template>
 
@@ -68,11 +86,15 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
-import { SendOutlined, StopOutlined } from '@ant-design/icons-vue'
+import { SendOutlined, StopOutlined, CaretRightOutlined } from '@ant-design/icons-vue'
 import { getShareInfo, getShareHistory, sendShareMessage } from '../api'
-import { renderMd } from '../utils/markdown'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import BrandMark from '../components/BrandMark.vue'
+// 正文与浮层与主聊天页同源：图片、引用角标、来源弹窗、灯箱都走同一套，不再各写一份
+import AnswerBody from '../components/AnswerBody.vue'
+import AnswerViewerHost from '../components/AnswerViewerHost.vue'
+import { openSource } from '../chat/answerViewer'
+import { sourceName } from '../chat/projections'
 
 const route = useRoute()
 const token = computed(() => String(route.params.token || ''))
@@ -118,7 +140,13 @@ onMounted(async () => {
       if (r && r.success !== false && Array.isArray(r.data) && r.data.length) {
         messages.value = r.data
           .filter(m => m && m.content)
-          .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+          .map(m => ({
+            role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
+            // 图片与引用随消息一起落库（后端 toMessageMap 同源输出），刷新后不必重问一遍才有图
+            images: Array.isArray(m.images) ? m.images : [],
+            sources: Array.isArray(m.sources) ? m.sources : [],
+            srcOpen: true
+          }))
         scrollBottom()
       }
     } catch (e) { /* 历史失败不阻塞对话 */ }
@@ -134,7 +162,7 @@ function send () {
   // 不触发重渲染（症状：阶段提示永远不出现，页面只显示空气泡 + 停止键）。
   // 此前之所以"看起来正常"，是旁边恰好有个 ref（lastAiStage）在变更、顺带触发了一次重渲染，
   // 把绕过代理写进去的值读了出来——删掉那个 ref 后这条路径就彻底失效了。
-  const ai = reactive({ role: 'assistant', content: '', stage: '' })
+  const ai = reactive({ role: 'assistant', content: '', stage: '', images: [], sources: [], srcOpen: true, loading: true })
   messages.value.push(ai)
   sending.value = true
   scrollBottom()
@@ -147,9 +175,25 @@ function send () {
       ai.content += t
       scrollBottom()
     },
+    // 图片按到达顺序整组下发（[图片N] 的 N 就是这个数组的下标），与主聊天页同口径
+    onImage: payload => {
+      try {
+        const parsed = JSON.parse(payload)
+        ai.images = Array.isArray(parsed) ? parsed : []
+      } catch (e) { ai.images = [] }
+    },
     onDone: d => {
       sending.value = false
       ai.stage = ''
+      ai.loading = false
+      // done.content 是本轮落库版汇总：sources（角标点开的就是它）、finalImages（正文图）、
+      // finalContent（引用自检/清理后改写过正文时，以它为准，否则 [图片N] 与 [N] 的下标会错位）
+      try {
+        const p = JSON.parse(d.content || '{}')
+        if (Array.isArray(p.sources)) ai.sources = p.sources
+        if (Array.isArray(p.finalImages)) ai.images = p.finalImages
+        if (typeof p.finalContent === 'string' && p.finalContent !== '') ai.content = p.finalContent
+      } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复
       if (d && d.sessionId) {
         sessionId = d.sessionId
@@ -160,6 +204,7 @@ function send () {
     onError: msg => {
       sending.value = false
       ai.stage = ''
+      ai.loading = false
       if (!ai.content) ai.content = '⚠️ ' + (msg || '回答失败')
       else message.warning(msg || '本轮中断')
       scrollBottom()
@@ -175,6 +220,8 @@ function stop () {
   // 但那是空的回答，留在对话里比不留更碍眼；用户点了停止，要的就是"没这条"。
   const cur = messages.value[messages.value.length - 1]
   if (cur && cur.role === 'assistant' && !cur.content) messages.value.pop()
+  // 已出正文的那条要撤掉打字光标：否则停止后正文末尾永远闪著「在出字」
+  else if (cur && cur.role === 'assistant') cur.loading = false
   scrollBottom()
 }
 </script>
@@ -303,18 +350,25 @@ function stop () {
 .sc-page.embed .sc-input-wrap { padding: 8px 12px 8px; }
 .sc-page.embed .sc-foot-hint { display: none; }
 
-/* markdown 基础排版（复用全局 renderMd，气泡内适配） */
-.sc-md :deep(p) { margin: 0 0 8px; }
-.sc-md :deep(p:last-child) { margin-bottom: 0; }
-.sc-md :deep(h1), .sc-md :deep(h2), .sc-md :deep(h3) { font-size: 14.5px; font-weight: 600; margin: 12px 0 6px; }
-.sc-md :deep(h1:first-child), .sc-md :deep(h2:first-child), .sc-md :deep(h3:first-child) { margin-top: 0; }
-.sc-md :deep(pre) { background: var(--app-code-bg); border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 12.5px; }
-.sc-md :deep(code) { background: var(--app-code-inline-bg); border-radius: 3px; padding: 1px 4px; font-size: 12.5px; }
-.sc-md :deep(pre code) { background: none; padding: 0; }
-.sc-md :deep(table) { border-collapse: collapse; font-size: 13px; }
-.sc-md :deep(th), .sc-md :deep(td) { border: 1px solid var(--app-border); padding: 4px 8px; }
-.sc-md :deep(ul), .sc-md :deep(ol) { padding-left: 20px; margin: 6px 0; }
-.sc-md :deep(a) { color: var(--app-accent); }
+/* 正文排版与引用角标/图片样式全在 src/md.css（.md 全局规则，与主聊天页同源），此处不再各写一份。
+   这里只补本页自有的「引用来源」折叠条。 */
+.sc-srcs { margin-top: 10px; border-top: 1px solid var(--app-border); padding-top: 6px; }
+.sc-srcs-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 2px 0; border: none; background: transparent; cursor: pointer;
+  font-size: 12.5px; color: var(--app-text2); font-family: inherit;
+}
+.sc-srcs-head:hover { color: var(--app-accent); }
+.sc-srcs-caret { font-size: 10px; transition: transform .18s; }
+.sc-srcs-caret.open { transform: rotate(90deg); }
+.sc-srcs-list { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.sc-src {
+  display: flex; align-items: baseline; gap: 6px; padding: 4px 6px; border-radius: 6px;
+  font-size: 12.5px; color: var(--app-text2); cursor: pointer; min-width: 0;
+}
+.sc-src:hover { background: var(--app-panel-2); color: var(--app-accent); }
+.sc-src-no { flex: none; color: var(--app-text3); font-size: 11px; }
+.sc-src-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ==================== 移动端窄屏（h5）====================
    分享链接大量在微信/手机浏览器里打开，这页不走 AppLayout、此前零窄屏适配。

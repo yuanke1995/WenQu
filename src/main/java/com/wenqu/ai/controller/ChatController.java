@@ -425,7 +425,9 @@ public class ChatController {
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
         // 分支版本信息回填（编辑重发/重新生成的 ‹ n/N › 切换数据源）：带组标记的消息补 variantCount/variantIndex
         sessionService.attachVariantInfo(sessionId, history);
-        // 历史图片存的是原始 URL，响应时动态签名（避免签名过期导致恢复会话图片 401）
+        // 历史图片存的是原始 URL，响应时动态签名（避免签名过期导致恢复会话图片 401）；
+        // 与游客分享历史共用同一份出参签名口径，见 ImageUrlSigner.signMessageMedia
+        imageUrlSigner.signMessageMedia(history);
         // 同步带回各回答消息的既有评价（fb）：前端"有/没帮助单选锁定"依赖此状态，刷新后不丢
         List<String> msgIds = history.stream()
                 .map(m -> m.get("messageId") == null ? null : String.valueOf(m.get("messageId")))
@@ -434,32 +436,6 @@ public class ChatController {
                 .toList();
         Map<String, Integer> ratings = qaLogService.loadFeedbackRatings(msgIds);
         for (Map<String, Object> msg : history) {
-            Object imgs = msg.get("images");
-            if (imgs instanceof List<?> list && !list.isEmpty()) {
-                msg.put("images", list.stream()
-                        .map(String::valueOf)
-                        .map(imageUrlSigner::signUrl)
-                        .toList());
-            }
-            // 引用来源内的图片同样动态签名（引用弹窗直接加载；原始 URL 存库，避免签名过期 401）
-            Object srcs = msg.get("sources");
-            if (srcs instanceof List<?> srcList && !srcList.isEmpty()
-                    && srcList.get(0) instanceof Map) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> typed = (List<Map<String, Object>>) srcList;
-                msg.put("sources", imageUrlSigner.signSourceImages(typed));
-            }
-            // 产物卡片 URL 动态签名（下载/预览走静态资源鉴权；原始 URL 存库）
-            Object arts = msg.get("artifacts");
-            if (arts instanceof List<?> artList && !artList.isEmpty()
-                    && artList.get(0) instanceof Map) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> typedArts = (List<Map<String, Object>>) artList;
-                for (Map<String, Object> a : typedArts) {
-                    Object u = a.get("url");
-                    if (u != null) a.put("url", imageUrlSigner.signUrl(String.valueOf(u)));
-                }
-            }
             Object mid = msg.get("messageId");
             if (mid != null) {
                 Integer fb = ratings.get(String.valueOf(mid));

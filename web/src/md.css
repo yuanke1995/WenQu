@@ -184,3 +184,68 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
   /* 链接下划线：触屏无 hover，靠 :hover 才显的反馈要给常驻版 */
   .md a { text-decoration: underline; text-underline-offset: 2px; }
 }
+
+/* ==================== 正文浮层（图片灯箱 / 角标悬浮卡 / 来源弹窗内容）====================
+   与 .md 排版同源：这三样的 DOM 在 components/AnswerViewerHost.vue（状态与动作在
+   chat/answerViewer.js），主聊天页与两个分享页共用一份，所以样式也必须留在全局——
+   放进某个页面的 scoped 块里，另外两页就是「能点但没样式」的裸状态。 */
+
+/* 流式打字光标：贴在正文末尾（.md::after），长回答中段能看出"在出字"而不是卡住了 */
+.md.streaming::after {
+  content: '▍';
+  color: var(--app-accent);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* 角标 ↔ 右栏来源联动：hover 常驻底色，从右栏点进来的一次闪烁定位 */
+.md .ref-sup.ref-hl { background: var(--app-accent-weak); border-radius: 3px; }
+.md .ref-sup.ref-flash { animation: ref-flash 1.5s ease; }
+@keyframes ref-flash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .md .ref-sup.ref-flash { animation: none; } }
+
+/* 来源弹窗内容 */
+.src-content { max-height: 55vh; overflow-y: auto; line-height: 1.7; font-size: 14px; padding-right: 6px; }
+.src-origin-link { display: inline-block; margin-top: 12px; color: var(--app-accent); font-size: 13px; }
+
+/* 灯箱 */
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; z-index: 2000; cursor: zoom-out; overflow: hidden; }
+.lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 4px; cursor: grab; user-select: none; transition: transform .12s ease; }
+.lightbox-close { position: fixed; top: 16px; right: 24px; font-size: 36px; color: #fff; cursor: pointer; line-height: 1; opacity: .85; }
+.lightbox-close:hover { opacity: 1; }
+.lightbox-count { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.75); font-size: 13px; background: rgba(0,0,0,.45); padding: 2px 12px; border-radius: 12px; }
+.lightbox-tip { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.6); font-size: 12px; user-select: none; }
+.lightbox-prev, .lightbox-next {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.4); color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; z-index: 2001; user-select: none;
+}
+.lightbox-prev { left: 16px; }
+.lightbox-next { right: 16px; }
+.lightbox-prev:hover:not(:disabled), .lightbox-next:hover:not(:disabled) { background: rgba(0,0,0,.7); }
+.lightbox-prev:disabled, .lightbox-next:disabled { opacity: .25; cursor: not-allowed; }
+
+/* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */
+.ref-card {
+  position: fixed; z-index: 3000; background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-lg); padding: 10px 12px;
+}
+.ref-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ref-card-no { color: var(--app-accent); font-size: 12px; font-weight: 600; flex: none; }
+.ref-card-file {
+  font-size: 12px; color: var(--app-text); font-weight: 500; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ref-card-score { font-size: 11px; color: var(--app-text3); margin-left: auto; flex: none; }
+.ref-card-title { font-size: 12px; color: var(--app-text2); margin-bottom: 4px; }
+.ref-card-snippet {
+  font-size: 12px; color: var(--app-text2); line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ref-card-btn {
+  margin-top: 8px; padding: 0; border: none; background: transparent;
+  color: var(--app-accent); font-size: 12px; cursor: pointer;
+}
+.ref-card-btn:hover { text-decoration: underline; }

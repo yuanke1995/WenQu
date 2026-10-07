@@ -70,14 +70,17 @@
             <caret-right-outlined class="caret" :class="{ open: m.thinkOpen }" />
           </button>
           <div v-show="m.thinkOpen" class="card-body">
-            <div class="md think-md" v-html="renderMd(m.thinking, [])" />
+            <AnswerBody class="think-md" :content="m.thinking" :viewer="false" />
           </div>
         </div>
 
         <!-- 时间线：正文与过程/工具按到达顺序交错 -->
-        <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index" @click="onMdClick">
+        <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index">
           <template v-for="(seg, si) in timelineView(m)" :key="si">
-            <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images, MD_RICH)" />
+            <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
+                        :images="m.images" :sources="m.sources" :msg-index="index"
+                        runnable :session-id="sessionId" :streaming="m.loading"
+                        :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
             <div v-else-if="seg.kind === 'process'" class="card proc-card">
               <button class="card-head" type="button" @click.stop="toggleProc(m, seg)">
                 <span class="card-title">执行过程</span>
@@ -124,8 +127,11 @@
         </div>
         <!-- 无时间线（整段渲染）。正文为空且在生成中时不渲染气泡壳——
              否则「正在检索/生成」阶段会出现一个空白的圆角框（进度行已表达状态） -->
-        <div v-else-if="m.content || !m.loading" class="md bubble-md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }"
-             :data-msg-index="index" @click="onMdClick" v-html="renderMd(m.content || '', m.images, MD_RICH)" />
+        <AnswerBody v-else-if="m.content || !m.loading" class="bubble-md" :content="m.content || ''"
+                    :images="m.images" :sources="m.sources" :msg-index="index"
+                    runnable :session-id="sessionId"
+                    :streaming="m.loading && !m.failed && !!(m.content && m.content.trim())"
+                    :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
 
         <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
              整块替换成提问面板（见 MobileChatPage 的 m-askp）；答复后问答记录以工具卡形态留在本气泡 -->
@@ -280,7 +286,8 @@ import {
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
   QuestionCircleOutlined, CheckCircleOutlined
 } from '@ant-design/icons-vue'
-import { renderMd, resolveImg, copyCode, handleMdAction } from '../utils/markdown'
+import { resolveImg } from '../utils/markdown'
+import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
@@ -310,9 +317,6 @@ const props = defineProps({
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
-// 富渲染：沙盒运行按钮需要会话作用域（与 PC 的 MD_RICH 同口径）
-const MD_RICH = { runnable: true }
-
 const showActions = computed(() => props.active || (props.m.role === 'ai' && props.isLast))
 // 归属徽标去重（与 PC 的 showAgentTag 同口径，但简化：只在首条或归属变化时显示）
 const showAgentTag = computed(() => {
@@ -326,26 +330,13 @@ const badgeOf = (agentId, agentName) => agentBadgeOf(engine?.agentList?.value, a
 
 const onRowTap = () => { if (!props.active) emit('activate', props.index) }
 
-/** 正文点击委托：代码复制 / 沙盒运行与预览 / 引用角标 → 来源（与 PC 同四分支，去掉 hover 相关） */
-const onMdClick = e => {
-  const t = e.target
-  const copyBtn = t && t.closest ? t.closest('.code-copy') : null
-  if (copyBtn) { copyCode(copyBtn); return }
-  const mdAct = t && t.closest ? t.closest('.md-act') : null
-  if (mdAct && handleMdAction(mdAct, { sessionId: props.sessionId })) return
-  if (t && t.classList && t.classList.contains('ref-sup')) {
-    const n = Number(t.dataset.ref)
-    const src = (props.m.sources || [])[n - 1]
-    if (src) emit('source', src)
-    return
-  }
-  if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
-    const seq = Number(t.dataset.seq || 0)
-    const imgs = props.m.images || []
-    if (imgs.length) emit('preview', imgs.map(resolveImg), seq > 0 && seq <= imgs.length ? seq - 1 : 0)
-    else emit('preview', [t.getAttribute('src')], 0)
-  }
-}
+/**
+ * 正文点击的复制/沙盒运行/角标/图片四分支已在 chat/answerViewer 的 handleBodyClick 里收口
+ * （与 PC 同一份）。移动壳只是把后两分支接到自己的底部抽屉与简化灯箱上 —— 所以这里
+ * 只剩两个转发函数，不再自己写一遍委托逻辑。
+ */
+const onBodyCitation = src => emit('source', src)
+const onBodyPreview = (urls, index) => emit('preview', urls, index)
 </script>
 
 <style scoped>

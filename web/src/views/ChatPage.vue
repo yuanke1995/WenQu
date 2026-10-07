@@ -57,7 +57,7 @@
       <!-- 智能体提问不走顶部横幅：卡片已落库、等待期间断线不中止本轮，恢复由引擎在会话加载时
            按待答记录重建底部答题面板（hydratePendingAsk），与实时卡同一处、同一套交互。 -->
 
-      <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
+      <div class="messages" ref="box" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
           <!-- 引导卡：聊天模型/默认模型未就绪时替代示例问题（loaded 门控——首次对账未成功前维持现状，
@@ -147,11 +147,13 @@
                   <span v-else class="think-badge">已完成</span>
                   <caret-right-outlined class="tl-caret" :class="{ open: m.thinkOpen }" />
                 </div>
-                <div v-show="m.thinkOpen" class="think-body"><div class="md" v-html="renderMd(m.thinking, [])"></div></div>
+                <div v-show="m.thinkOpen" class="think-body"><AnswerBody :content="m.thinking" :streaming="m.thinkLoading" /></div>
               </div>
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineView(m)" :key="si">
-                  <div v-if="seg.kind === 'text'" class="tl-text" v-html="renderMd(m.content.slice(seg.from, seg.to), m.images, MD_RICH)"></div>
+                  <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
+                              :images="m.images" :sources="m.sources" :msg-index="i"
+                              runnable :session-id="currentSessionId" :streaming="m.loading" />
                   <!-- 过程独白段：区间指向 m.processText（与正文分流），「深度思考」标题行常驻、内容可折叠 -->
                   <div v-else-if="seg.kind === 'process'" class="tl-process-block">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
@@ -206,7 +208,9 @@
                 </template>
               </div>
               <!-- streaming（打字光标）仅在正文已有内容时挂：检索/等待阶段正文为空，光标会孤悬成一块 -->
-<div v-else class="md" :class="{ streaming: m.loading && !m.failed && !!(m.content && m.content.trim()) }" :data-msg-index="i" v-html="renderMd(m.content, m.images, MD_RICH)"></div>
+              <AnswerBody v-else :content="m.content" :images="m.images" :sources="m.sources" :msg-index="i"
+                          runnable :session-id="currentSessionId"
+                          :streaming="m.loading && !m.failed && !!(m.content && m.content.trim())" />
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
@@ -998,31 +1002,9 @@
       </div>
     </aside>
 
-    <!-- 引用来源详情弹窗 -->
-    <a-modal v-model:open="sourceVisible" :title="sourceTitle" :footer="null" :width="sourceImages.length ? 720 : 560"
-             wrap-class-name="source-modal" :keyboard="!previewUrl" :mask-closable="!previewUrl">
-      <a-spin v-if="sourceLoading" style="display:block;margin:40px auto" />
-      <div v-else class="md src-content" @click="openPreview"
-           v-html="renderMd(prepKnowledgeContent(sourceContent || sourceSnippet, sourceImages), sourceImages, MD_RICH)"></div>
-      <a v-if="sourceUrl" class="src-origin-link" :href="sourceUrl" target="_blank" rel="noopener">打开原网页</a>
-    </a-modal>
-
-    <!-- 引用角标悬浮卡：Teleport 到 body（不被消息区 overflow 裁剪），fixed 定位跟随角标 -->
-    <Teleport to="body">
-      <div v-if="refTip" class="ref-card" :style="refCardStyle"
-           @mouseenter="cancelCloseRefTip" @mouseleave="scheduleCloseRefTip">
-        <div class="ref-card-head">
-          <span class="ref-card-no">[{{ refTip.ref }}]</span>
-          <span class="ref-card-file" :title="refTip.fileName">{{ refTip.fileName }}</span>
-          <span v-if="debugDisplayVisible && refTip.score != null" class="ref-card-score" :title="refTip.scoreLabel">
-            {{ refTip.scoreLabel }} {{ Number(refTip.score).toFixed(2) }}
-          </span>
-        </div>
-        <div v-if="refTip.title" class="ref-card-title">§ {{ refTip.title }}</div>
-        <div class="ref-card-snippet">{{ refTip.snippet }}</div>
-        <button v-if="refTip.src" class="ref-card-btn" type="button" @click.stop="refTipOpenSource">查看原文 →</button>
-      </div>
-    </Teleport>
+    <!-- 正文浮层宿主（来源弹窗 / 角标悬浮卡 / 图片灯箱）：DOM 与状态见 components/AnswerViewerHost.vue
+         与 chat/answerViewer.js。整页只挂这一处——每条消息各挂一份会让多图切换互相打架。 -->
+    <AnswerViewerHost :debug-visible="debugDisplayVisible" :session-id="currentSessionId" />
 
     <!-- 会话分享（只读链接） -->
     <a-modal v-model:open="shareVisible" title="分享这段对话" :footer="null" width="520px">
@@ -1114,18 +1096,6 @@
       </div>
       <pre class="csum-body">{{ pasteView.text }}</pre>
     </a-modal>
-
-    <!-- 图片灯箱：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
-    <div v-if="previewUrl" class="lightbox" @click="closeLightbox" @wheel.prevent="onWheel">
-      <img :src="previewUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
-           :style="{ transform: 'translate(' + offset.x + 'px,' + offset.y + 'px) scale(' + zoom + ')' }"
-           @mousedown="onImgMouseDown" @mousemove="onImgMouseMove" @mouseup="onImgMouseUp" @mouseleave="onImgMouseUp" @dblclick="resetView" />
-      <button v-if="previewList.length > 1" class="lightbox-prev" :disabled="previewIndex === 0" @click.stop="prevImg">‹</button>
-      <button v-if="previewList.length > 1" class="lightbox-next" :disabled="previewIndex === previewList.length - 1" @click.stop="nextImg">›</button>
-      <span class="lightbox-close" @click.stop="closeLightbox">×</span>
-      <span v-if="previewList.length > 1" class="lightbox-count">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
-      <span class="lightbox-tip">滚轮缩放 · 拖动平移 · 双击重置 · ESC 关闭</span>
-    </div>
 
     <!-- 深度思考面板卡：悬浮模型下拉行时在该行右侧弹出（Teleport 到 body + fixed 定位，随悬浮行开合）。
          展示该模型自己的设置：上下文窗口（登记了「最小~最大」区间时可点选档位，默认最大）+ 思考强度
@@ -1237,9 +1207,9 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
          CheckCircleOutlined } from '@ant-design/icons-vue'
-import { getKnowledgeDetail, debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
+import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
-import { renderMd, resolveImg, onImgError, copyCode, prepKnowledgeContent, handleMdAction, enhanceDiagrams } from '../utils/markdown'
+import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
@@ -1257,10 +1227,15 @@ import { isNarrow, isCoarse } from '../h5/mobile'
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
+// 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
+import AnswerBody from '../components/AnswerBody.vue'
+import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 
 // 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
+// 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
+import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
@@ -1434,12 +1409,7 @@ const onMessagesScroll = () => {
   if (!el) return
   stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_MARGIN
 }
-const previewList = ref([])
-const previewIndex = ref(0)
-const previewUrl = computed(() => previewList.value[previewIndex.value] || '')
-const zoom = ref(1)
-const offset = ref({ x: 0, y: 0 })
-const dragState = ref(null)
+
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
 // ⚠️ panelStored 的初值必须**逐字保留**原表达式里的 `window.innerWidth > 1200`：
 //   769~1200px 的桌面窗口下右栏是浮层（≤1200 媒体查询），初值必须为收起；
@@ -1492,9 +1462,8 @@ const hideCtxCap = () => {
 }
 const onCtxCapEnter = () => { ctxCapHovered = true; clearTimeout(ctxCapTimer) }
 const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
-// 回答富渲染开关：问答页是唯一有会话上下文的消费方，故显式开「在沙盒中运行」按钮
-// （后端 scope=(sessionId,uid)；其它页面默认不开——没有会话，按钮点了必然失败）
-const MD_RICH = { runnable: true }
+// 「在沙盒中运行」按钮的开关不再由本页持有：正文统一走 AnswerBody，runnable 直接写在调用点上
+// （问答页是唯一有会话上下文的消费方；其它页面默认不开——没有会话，按钮点了必然失败）。
 // ===== 右栏统计口径切换（P0 #4）：本轮=最近完成轮明细；会话=全量累计（选择持久化） =====
 const panelScope = ref(localStorage.getItem('app_panel_scope') === 'session' ? 'session' : 'round')
 watch(panelScope, v => { try { localStorage.setItem('app_panel_scope', v) } catch (e) { /* 存储不可用忽略 */ } })
@@ -1521,123 +1490,10 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
 ### 五、反馈与改进
 
 如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
-const sourceVisible = ref(false)
-const sourceTitle = ref('')
-const sourceSnippet = ref('')
-const sourceImages = ref([])
-const sourceContent = ref('')
-const sourceLoading = ref(false)
-/** 联网来源（origin=WEB）的原网页地址：库内来源为空，此时弹窗不显示「打开原网页」 */
-const sourceUrl = ref('')
-const openSource = async s => {
-  if (!s) return
-  sourceUrl.value = ''
-  // 外部来源（联网/MCP）没有库内文档可打开：getKnowledgeDetail(knowledgeId) 必然失败，
-  // 走这里展示站点/标题/摘要并给出原网页链接（否则用户点角标得到空白弹窗）
-  if (externalOrigin(s)) {
-    sourceTitle.value = (s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源')) + (s.title ? ' §' + s.title : '')
-    sourceSnippet.value = s.snippet || '（该来源未提供摘要）'
-    sourceImages.value = []
-    sourceContent.value = ''
-    sourceLoading.value = false
-    sourceVisible.value = true
-    sourceUrl.value = s.url || ''
-    return
-  }
-  sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
-  sourceSnippet.value = s.snippet || '（无原文片段）'
-  sourceImages.value = Array.isArray(s.images) ? s.images : []
-  sourceContent.value = ''
-  sourceLoading.value = true
-  sourceVisible.value = true
-  try {
-    const r = await getKnowledgeDetail(s.knowledgeId)
-    if (r.success && r.data) {
-      sourceContent.value = r.data.content || ''
-      if (Array.isArray(r.data.images)) sourceImages.value = r.data.images
-      if (r.data.title) sourceTitle.value = (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + ' §' + r.data.title
-    }
-  } catch (e) { /* 接口失败回退 snippet */ }
-  finally { sourceLoading.value = false }
-}
-
-// 引用角标悬浮卡（自绘浮层，替代原生 title——原生 title 有约 1s 延迟、不可样式化、
-// 换行不渲染、也放不下相关度）：展示序号 + 来源文件 + 章节 + 片段 + 相关度，
-// 「查看原文」跳来源弹窗；同时驱动右栏来源联动（hoveredRef 高亮）。
-const refTip = ref(null)
-const refTipPos = ref({ left: 12, top: 0, above: false })
-let refTipTimer = null
-const refCardStyle = computed(() => {
-  const w = Math.min(400, Math.max(260, window.innerWidth - 24))
-  const left = Math.max(12, Math.min(refTipPos.value.left, window.innerWidth - w - 12))
-  return {
-    left: left + 'px',
-    top: refTipPos.value.top + 'px',
-    width: w + 'px',
-    transform: refTipPos.value.above ? 'translateY(-100%)' : 'none'
-  }
-})
-const cancelCloseRefTip = () => { if (refTipTimer) { clearTimeout(refTipTimer); refTipTimer = null } }
-const closeRefTip = () => { cancelCloseRefTip(); refTip.value = null }
-/** 延迟关闭：角标 → 浮层之间有一段空隙，立即关闭会闪 */
-const scheduleCloseRefTip = () => {
-  cancelCloseRefTip()
-  refTipTimer = setTimeout(() => { refTip.value = null }, 160)
-}
-const showRefTip = (el, msgIdx, n) => {
-  const src = messages.value[msgIdx]?.sources?.[n - 1]
-  const r = el.getBoundingClientRect()
-  const above = r.bottom + 240 > window.innerHeight
-  refTipPos.value = { left: r.left, top: above ? r.top - 6 : r.bottom + 6, above }
-  if (!src) {
-    // 来源未随本轮下发（如工具模式：模型引用的是 searchKnowledge 工具返回的【引用N】，
-    // 该结果在工具卡片里而不在 sources）——不静默无响应，给明确说明
-    refTip.value = {
-      ref: n, fileName: '', title: '',
-      snippet: '本轮的引用来源未随消息下发。若本轮调用了「知识库检索」工具，可在工具卡片中查看检索到的原文片段。',
-      score: null, scoreLabel: '', src: null
-    }
-    return
-  }
-  refTip.value = {
-    ref: n,
-    // 外部来源（联网/MCP）没有 fileName/docId，用站点名；MCP 无相关度分，标签区留空
-    fileName: externalOrigin(src)
-      ? (src.siteName || (src.origin === 'MCP' ? 'MCP 来源' : '联网来源'))
-      : (src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识')),
-    title: src.title || '',
-    snippet: src.snippet || '（无原文片段）',
-    score: (src.rerankScore != null ? src.rerankScore : src.score),
-    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.rerankScore != null ? '重排相关度' : (src.origin === 'MCP' ? '' : '检索融合分')),
-    src
-  }
-}
-const refTipOpenSource = () => {
-  const s = refTip.value && refTip.value.src
-  closeRefTip()
-  if (s) openSource(s)
-}
-
-const refHover = e => {
-  const t = e.target
-  if (!t || !t.classList) return
-  if (!t.classList.contains('ref-sup')) {
-    if (hoveredRef.value != null) hoveredRef.value = null
-    scheduleCloseRefTip()
-    return
-  }
-  cancelCloseRefTip()
-  const n = Number(t.dataset.ref)
-  hoveredRef.value = n
-  const mdEl = t.closest('.md')
-  const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
-  showRefTip(t, msgIdx, n)
-}
 
 // ===== 引用相关度 + 角标联动（P1 #5）=====
 // 分值口径：rerankScore=重排模型相关度（重排实际执行才有），否则回落检索融合分 score；都缺则不显示。
 // 分值属于调参排障信息，默认不对普通用户露出：显示统一挂 debugDisplayVisible（chat.retrievalDebugEnabled）
-const hoveredRef = ref(null)
 const setSupHighlight = (refN, on) => {
   const idx = lastAi.value ? messages.value.indexOf(lastAi.value) : -1
   if (idx < 0) return
@@ -1661,38 +1517,6 @@ const locateSource = s => {
     setTimeout(() => el.classList.remove('ref-flash'), 1600)
   } else {
     openSource(s)
-  }
-}
-
-// 消息内容点击：代码复制 / 代码块运行与预览 / 引用角标 → 来源弹窗 / 图片 → 灯箱（事件委托）
-const openPreview = e => {
-  const t = e.target
-  const copyBtn = t && t.closest ? t.closest('.code-copy') : null
-  if (copyBtn) { copyCode(copyBtn); return }
-  // 富渲染按钮（沙盒运行 / 内联预览）：紧跟复制按钮判定，命中即消费
-  const mdAct = t && t.closest ? t.closest('.md-act') : null
-  if (mdAct && handleMdAction(mdAct, { sessionId: currentSessionId.value })) return
-  if (t && t.classList && t.classList.contains('ref-sup')) {
-    const mdEl = t.closest('.md')
-    const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
-    const ref = Number(t.dataset.ref)
-    const src = messages.value[msgIdx]?.sources?.[ref - 1]
-    if (src) openSource(src)
-    return
-  }
-  if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
-    const mdEl = t.closest('.md')
-    const msgIdx = mdEl ? Number(mdEl.dataset.msgIndex) : -1
-    const seq = Number(t.dataset.seq || 0)
-    const imgs = messages.value[msgIdx]?.images
-    if (Array.isArray(imgs) && imgs.length) {
-      previewList.value = imgs.map(resolveImg)
-      previewIndex.value = seq > 0 && seq <= imgs.length ? seq - 1 : 0
-    } else {
-      previewList.value = [t.getAttribute('src')]
-      previewIndex.value = 0
-    }
-    resetView()
   }
 }
 
@@ -1721,38 +1545,6 @@ const doSubmitFeedback = async () => {
   } catch (e) { message.error(e.message || '提交失败') }
   finally { feedbackSubmitting.value = false }
 }
-
-// 灯箱
-const resetView = () => { zoom.value = 1; offset.value = { x: 0, y: 0 } }
-const prevImg = () => { if (previewIndex.value > 0) { previewIndex.value--; resetView() } }
-const nextImg = () => { if (previewIndex.value < previewList.value.length - 1) { previewIndex.value++; resetView() } }
-const closeLightbox = () => { previewList.value = []; previewIndex.value = 0; resetView(); dragState.value = null }
-const onWheel = e => {
-  let factor = Math.pow(1.08, -e.deltaY / 100)
-  if (factor > 1.3) factor = 1.3
-  if (factor < 1 / 1.3) factor = 1 / 1.3
-  zoom.value = Math.min(8, Math.max(0.25, zoom.value * factor))
-}
-const onImgMouseDown = e => {
-  if (e.button !== 0) return
-  dragState.value = { startX: e.clientX, startY: e.clientY, ox: offset.value.x, oy: offset.value.y }
-  e.preventDefault()
-}
-const onImgMouseMove = e => {
-  if (!dragState.value) return
-  offset.value.x = dragState.value.ox + (e.clientX - dragState.value.startX)
-  offset.value.y = dragState.value.oy + (e.clientY - dragState.value.startY)
-}
-const onImgMouseUp = () => { dragState.value = null }
-const onKeydown = e => {
-  if (e.key === 'Escape') closeLightbox()
-  else if (e.key === 'ArrowLeft') prevImg()
-  else if (e.key === 'ArrowRight') nextImg()
-}
-watch(previewUrl, v => {
-  if (v) window.addEventListener('keydown', onKeydown)
-  else window.removeEventListener('keydown', onKeydown)
-})
 
 // 全局快捷键：ESC 两段式停止（防误触：清输入的 Esc 不会误杀生成中的回答）/ 清空输入；粘贴发图
 /** 生成中按第一次 Esc 只上膛——按钮切 esc 键帽，2s 内再按才真正停止，超时自动回落 */
@@ -1816,16 +1608,10 @@ onUnmounted(() => {
 })
 const focusInput = () => nextTick(() => textareaRef.value?.focus())
 const previewPendingImage = pi => {
-  if (!pendingImages.value.length) return
-  previewList.value = pendingImages.value.map(p => p.dataUrl)
-  previewIndex.value = pi
-  resetView()
+  openImages(pendingImages.value.map(p => p.dataUrl), pi)
 }
 const openPreviewFromMsg = (m, index) => {
-  if (!m.images || !m.images.length) return
-  previewList.value = m.images.map(resolveImg)
-  previewIndex.value = index || 0
-  resetView()
+  openImages((m.images || []).map(resolveImg), index || 0)
 }
 const dragOver = ref(false)
 let dragDepth = 0
@@ -2451,10 +2237,7 @@ const removeEditImage = i => editImgs.value.splice(i, 1)
 const removeEditAtt = i => editAtts.value.splice(i, 1)
 const removeEditMention = i => editMentions.value.splice(i, 1)
 const previewEditImage = pi => {
-  if (!editImgs.value.length) return
-  previewList.value = editImgs.value.map(p => resolveImg(p.dataUrl))
-  previewIndex.value = pi
-  resetView()
+  openImages(editImgs.value.map(p => resolveImg(p.dataUrl)), pi)
 }
 // 键盘：Enter 发送 / Shift+Enter 换行 / Esc 取消；输入法组合中的 Enter/Esc 是候选操作，放行给 IME
 const onEditKeydown = e => {
@@ -2754,14 +2537,8 @@ watch(messages, () => {
   searchPos.value = 0 // 换会话后从头开始，避免停在上一个会话的偏移上
   nextTick(() => { paintSearchHighlight(); scrollToMatch() })
 })
-// Mermaid 图表：渲染层只吐占位容器，绘图是异步且懒加载依赖，必须在 DOM 落地后补（v-html 之后）。
-// **只在非流式态补图**：流式期间 ```mermaid 围栏是半截代码，画必然失败，每个 token 重试一次纯属浪费；
-// 停流后 loading 转 false，本 watch 再触发一次把完整图表画出来。
-watch([messages, loading], async () => {
-  if (loading.value) return
-  await nextTick()
-  if (box.value) enhanceDiagrams(box.value).catch(() => { /* 绘图失败已在容器内就地提示，不外抛 */ })
-})
+// Mermaid 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份，且同样只在非流式态画：
+// 流式期间 ```mermaid 围栏是半截代码，画必然失败，每个 token 重试一次纯属浪费）。
 
 onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
@@ -2818,13 +2595,6 @@ onMounted(async () => {
 }
 .share-actions { margin-top: 14px; display: flex; gap: 8px; }
 .share-intro { font-size: 13px; color: var(--app-text2); line-height: 1.8; margin: 0 0 10px; }
-/* 流式打字光标：贴在正文末尾（.md::after），长回答中段能看出"在出字"而不是卡住了 */
-.md.streaming::after {
-  content: '▍';
-  color: var(--app-accent);
-  animation: caret-blink 1s steps(2, start) infinite;
-}
-@keyframes caret-blink { 50% { opacity: 0; } }
 /* 头部动作区：右对齐一组；分享/查找用全局 app-icon-btn（无框，悬停显 accent-weak 底色） */
 .head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .head-actions .app-icon-btn { font-size: 15px; }
@@ -3067,7 +2837,6 @@ onMounted(async () => {
 /* 联网来源标记：与库内来源区分开，用户有权知道这条依据是网上的还是库里的 */
 .rt-ref-web { margin: 0 6px; padding: 0 5px; border-radius: 4px; background: var(--app-panel-2);
   color: var(--app-text3); font-size: 11px; }
-.src-origin-link { display: inline-block; margin-top: 12px; color: var(--app-accent); font-size: 13px; }
 .rt-snip { color: var(--app-text3); margin-top: 2px; }
 
 /* 子智能体编排卡片（仅委派模式；对齐通用智能体平台的子任务卡片：名字+状态+任务描述+要点结果） */
@@ -3607,10 +3376,6 @@ onMounted(async () => {
 .rp-src-score { flex: none; font-size: 11px; color: var(--app-accent); }
 .rp-src-sub .rp-src-name { flex: 1; min-width: 0; }
 .rp-src-sub.hl { background: var(--app-accent-weak); border-radius: 4px; }
-.md .ref-sup.ref-hl { background: var(--app-accent-weak); border-radius: 3px; }
-.md .ref-sup.ref-flash { animation: ref-flash 1.5s ease; }
-@keyframes ref-flash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
-@media (prefers-reduced-motion: reduce) { .md .ref-sup.ref-flash { animation: none; } }
 
 /* 右栏运行控制（停止 / 重试本轮） */
 .rp-ctrl { display: flex; }
@@ -3623,9 +3388,6 @@ onMounted(async () => {
 .rp-ctrl-btn.is-stop { color: var(--app-danger); border-color: var(--app-danger-border); }
 .rp-ctrl-btn.is-stop:hover { color: var(--app-danger); border-color: var(--app-danger); background: var(--app-danger-weak); }
 
-/* 来源弹窗内容 */
-.src-content { max-height: 55vh; overflow-y: auto; line-height: 1.7; font-size: 14px; padding-right: 6px; }
-
 /* 检索调试面板 */
 .dbg-item { padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2); }
 .dbg-terms { padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--app-info-border); border-radius: 6px; background: var(--app-info-weak); }
@@ -3634,23 +3396,6 @@ onMounted(async () => {
 .dbg-title { font-weight: 500; font-size: 13px; }
 .dbg-snippet { margin-top: 3px; font-size: 12px; color: var(--app-text3); word-break: break-all; }
 
-/* 灯箱 */
-.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: flex; align-items: center; justify-content: center; z-index: 2000; cursor: zoom-out; overflow: hidden; }
-.lightbox-img { max-width: 90vw; max-height: 90vh; border-radius: 4px; cursor: grab; user-select: none; transition: transform .12s ease; }
-.lightbox-close { position: fixed; top: 16px; right: 24px; font-size: 36px; color: #fff; cursor: pointer; line-height: 1; opacity: .85; }
-.lightbox-close:hover { opacity: 1; }
-.lightbox-count { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.75); font-size: 13px; background: rgba(0,0,0,.45); padding: 2px 12px; border-radius: 12px; }
-.lightbox-tip { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.6); font-size: 12px; user-select: none; }
-.lightbox-prev, .lightbox-next {
-  position: fixed; top: 50%; transform: translateY(-50%);
-  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
-  background: rgba(0,0,0,.4); color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; z-index: 2001; user-select: none;
-}
-.lightbox-prev { left: 16px; }
-.lightbox-next { right: 16px; }
-.lightbox-prev:hover:not(:disabled), .lightbox-next:hover:not(:disabled) { background: rgba(0,0,0,.7); }
-.lightbox-prev:disabled, .lightbox-next:disabled { opacity: .25; cursor: not-allowed; }
 /* 工具执行审批（人在回路） */
 .approval-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
 .approval-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
@@ -3702,30 +3447,6 @@ onMounted(async () => {
 .askp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .askp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ar-status.ar-err { color: var(--app-danger); }
-
-/* 引用角标悬浮卡（自绘，替代原生 title；Teleport 到 body 故用 fixed 定位） */
-.ref-card {
-  position: fixed; z-index: 3000; background: var(--app-panel);
-  border: 1px solid var(--app-border); border-radius: var(--app-radius);
-  box-shadow: var(--app-shadow-lg); padding: 10px 12px;
-}
-.ref-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-.ref-card-no { color: var(--app-accent); font-size: 12px; font-weight: 600; flex: none; }
-.ref-card-file {
-  font-size: 12px; color: var(--app-text); font-weight: 500; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ref-card-score { font-size: 11px; color: var(--app-text3); margin-left: auto; flex: none; }
-.ref-card-title { font-size: 12px; color: var(--app-text2); margin-bottom: 4px; }
-.ref-card-snippet {
-  font-size: 12px; color: var(--app-text2); line-height: 1.6;
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
-}
-.ref-card-btn {
-  margin-top: 8px; padding: 0; border: none; background: transparent;
-  color: var(--app-accent); font-size: 12px; cursor: pointer;
-}
-.ref-card-btn:hover { text-decoration: underline; }
 
 /* ==================== 响应式：窄屏适配 ====================
    ≤1200：状态栏由占位列改浮层（消息是主内容，需要时点「状态」按钮展开）。

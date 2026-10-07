@@ -54,6 +54,7 @@ public class ShareController {
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final com.wenqu.ai.service.SessionShareService sessionShareService;
+    private final com.wenqu.ai.service.ImageUrlSigner imageUrlSigner;
 
     /** 单条提问长度上限（与对话页同量级的防滥用口径） */
     private static final int MAX_QUESTION_CHARS = 8000;
@@ -134,7 +135,12 @@ public class ShareController {
         } catch (BizException e) {
             return ResultJson.ok(List.of()); // 404/403 一律按空历史（不泄露会话存在性）
         }
-        return ResultJson.ok(sessionService.getRecentHistory(sessionId, 20));
+        var history = sessionService.getRecentHistory(sessionId, 20);
+        // 与登录态会话历史同一套出参签名口径（ImageUrlSigner.signMessageMedia）：库里存的是原始 URL，
+        // 签名是一次性凭据不能落库，所以每次响应现场签。少了这一步，游客刷新页面后图片全 404
+        // （首轮能看到图，因为 SSE 下发时已签过）。
+        imageUrlSigner.signMessageMedia(history);
+        return ResultJson.ok(history);
     }
 
     @Operation(summary = "游客对话", description = "免登录流式问答（SSE）：按发布者身份检索、游客受限工具集；按 IP 限频")

@@ -37,13 +37,17 @@ public class SessionShareService {
      * 产物读取（分享下载用）。单向依赖：ArtifactService 不引用本服务，无循环。
      */
     private final ArtifactService artifactService;
+    /** 分享出参的图片签名（库里存原始 URL，签名是一次性凭据，只在响应时现场签） */
+    private final ImageUrlSigner imageUrlSigner;
 
     public SessionShareService(SessionShareMapper sessionShareMapper,
                                SessionService sessionService,
-                               ArtifactService artifactService) {
+                               ArtifactService artifactService,
+                               ImageUrlSigner imageUrlSigner) {
         this.sessionShareMapper = sessionShareMapper;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
+        this.imageUrlSigner = imageUrlSigner;
     }
 
     /**
@@ -265,6 +269,11 @@ public class SessionShareService {
             one.put("role", role);
             one.put("content", content);
             one.put("time", m.get("time"));
+            // 正文配图随回答一起外发：正文里的 [图片N] 就是按这个数组的下标还原的，
+            // 不给它，分享页的图位会退化成「[图片1]」四个字。
+            // 边界不变：引用来源仍只给文档名/章节/相关度，知识块全文与块内图不外发。
+            Object imgs = m.get("images");
+            if (imgs instanceof List<?> imgList && !imgList.isEmpty()) one.put("images", imgList);
             Object srcs = m.get("sources");
             if ("assistant".equals(role) && srcs instanceof List<?> list && !list.isEmpty()) {
                 List<Map<String, Object>> slim = new ArrayList<>();
@@ -291,6 +300,8 @@ public class SessionShareService {
             }
             out.add(one);
         }
+        // 与登录态会话历史同一套出参签名（库里存原始 URL，签名会过期，只在响应时现场签）
+        imageUrlSigner.signMessageMedia(out);
         return out;
     }
 

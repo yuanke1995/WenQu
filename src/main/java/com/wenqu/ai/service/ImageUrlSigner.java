@@ -95,6 +95,41 @@ public class ImageUrlSigner {
     }
 
     /**
+     * 消息列表出参的统一签名：正文图、引用来源图、产物 URL 就地换成带签名的地址。
+     * <p>库里存的是原始 URL（签名是一次性凭据，落库等于写进过期数据），所以每次响应都要现场签一遍。
+     * 这段循环此前只长在会话历史接口的实现里，游客分享历史走的是另一条返回路径、没签名 →
+     * 症状是「首次回答能看到图，一刷新全成『图片链接无效或已过期』」。</p>
+     * <p>入参必须是响应副本（{@code SessionService} 每次查询新建 Map），原地改不会污染缓存。</p>
+     */
+    public void signMessageMedia(List<Map<String, Object>> messages) {
+        if (!isEnabled() || messages == null || messages.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> msg : messages) {
+            if (msg == null) continue;
+            Object imgs = msg.get("images");
+            if (imgs instanceof List<?> list && !list.isEmpty()) {
+                msg.put("images", list.stream().map(String::valueOf).map(this::signUrl).toList());
+            }
+            Object srcs = msg.get("sources");
+            if (srcs instanceof List<?> srcList && !srcList.isEmpty() && srcList.get(0) instanceof Map) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> typed = (List<Map<String, Object>>) srcList;
+                msg.put("sources", signSourceImages(typed));
+            }
+            Object arts = msg.get("artifacts");
+            if (arts instanceof List<?> artList && !artList.isEmpty() && artList.get(0) instanceof Map) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> typedArts = (List<Map<String, Object>>) artList;
+                for (Map<String, Object> a : typedArts) {
+                    Object u = a.get("url");
+                    if (u != null) a.put("url", signUrl(String.valueOf(u)));
+                }
+            }
+        }
+    }
+
+    /**
      * 校验图片请求的签名与有效期
      *
      * @param path   请求路径（如 /images/{docId}/0.png，不含 context-path）
