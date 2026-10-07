@@ -427,7 +427,7 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `citationCheckEnabled`、`pipelineThreads`(8)、`streamRetryCount`、`sseTimeoutMs`、`approvalTimeoutMs`、`maxImagesPerMessage`(5)、`maxImageMb`、`uploadRetentionHours`、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled` | 聊天模型走「会话覆盖 > 个人默认」引用；行为项保存即生效。温度已降级为隐藏参数（仅 DB 可调）；全局 System Prompt / 附加指令 / 历史轮数已退役——提示词归智能体、历史走滚动压缩 |
+| `chat.*` | `citationCheckEnabled`、`pipelineThreads`(8)、`streamRetryCount`、`sseTimeoutMs`、`approvalTimeoutMs`、`askTimeoutMs`(10min)、`maxImagesPerMessage`(5)、`maxImageMb`、`uploadRetentionHours`、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled` | 聊天模型走「会话覆盖 > 个人默认」引用；行为项保存即生效。温度已降级为隐藏参数（仅 DB 可调）；全局 System Prompt / 附加指令 / 历史轮数已退役——提示词归智能体、历史走滚动压缩 |
 | `embedding.*` | `dimensions`(系统回写，只读) | 向量模型绑定知识库 `embedding_ref`；换绑重嵌入先探测维度，通过才 DROP 重建 |
 | `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门)、`relatedCount`(3，下一步建议条数、个人可调) | 多数保存即生效 |
 | `chunk.*` / `parse.*` | `maxSize`(800)、`structural`(true)、`concurrency`(2)、`ocrDpi`(200)；问答对生成无独立模型键（跟随库主个人默认聊天模型） | **需重解析/对后续解析生效** |

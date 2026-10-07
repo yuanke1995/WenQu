@@ -81,6 +81,8 @@ public class Notification {
     public static final String TYPE_EVAL_DECLINE = "eval.decline";
     /** 工具执行审批待决（ask 模式的有副作用工具挂起等人确认） */
     public static final String TYPE_TOOL_APPROVAL = "tool.approval";
+    /** 智能体提问待决（askUser 结构化提问卡挂起等用户作答，超时/忽略都不替用户选） */
+    public static final String TYPE_TOOL_ASK = "tool.ask";
     /** 知识库批量解析失败告警（同库短窗内多个文档终态失败，收件人为库归属人） */
     public static final String TYPE_PARSE_BATCH_FAILED = "parse.batch.failed";
     /**

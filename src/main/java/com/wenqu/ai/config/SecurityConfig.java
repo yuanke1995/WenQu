@@ -85,8 +85,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
                 || path.startsWith("/api/ai/tool-approval/"))) return true;
         // 智能体提问（人在回路）：POST /ask-user/{id} 同口径——归属由 resolveAsk 按 uid 严格校验；
-        // 放行是为了等答复超 120s 后 JWT 过期的场景也能拿到干净的"已失效"错误而不是 401 强登出
-        if ("POST".equals(method) && (path.equals("/api/ai/ask-user")
+        // 放行是为了等答复超 120s 后 JWT 过期的场景也能拿到干净的"已失效"错误而不是 401 强登出。
+        // GET /ask-user/pending 是卡片恢复入口（会话加载时取自己的待答提问），同样只按 uid 过滤。
+        if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/ask-user")
                 || path.startsWith("/api/ai/ask-user/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;

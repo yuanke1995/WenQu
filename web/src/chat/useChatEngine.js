@@ -9,6 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk,
+         listPendingAsks,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -803,6 +804,8 @@ const switchSession = async sid => {
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
       messages.value = list
+      // 提问卡恢复（fire-and-forget）：等待作答期间断线不再中止本轮，所以刷新/换设备后进来仍能把那张卡答完
+      if (!st || !st.msg.ask) hydratePendingAsk(sid)
       // 先按新列表重算尾随留白、等它落屏再贴底：落点是本轮问题置顶
       //（列表短于一屏时留白为 0，落点即内容底）
       hooks.scrollForce?.()
@@ -988,7 +991,117 @@ function commitAskCustom (m, page) {
   if (t) a.sels[page] = len
   else if (a.sels[page] === len) a.sels[page] = null
 }
-/** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空，由后端按该题推荐项默认执行 */
+/**
+ * 把一张提问卡挂到消息上（SSE 实时下发与刷新/换设备后重建两条路共用）。
+ * @param remainingMs 倒计时剩余毫秒；不传则按 j.timeoutMs 从此刻起算（实时路径没有时差）
+ * j.restored=true 表示这张卡是从服务端待答记录重建的：本设备没有这一轮的流式通道，答完后回答在
+ * 后台生成，要靠 pollRestoredAnswer 轮询历史取回。
+ */
+function mountAskCard (m, j, remainingMs) {
+  let questions
+  if (Array.isArray(j.questions) && j.questions.length) {
+    questions = j.questions.map(x => ({
+      topic: x.topic || '',
+      question: x.question || '',
+      options: Array.isArray(x.options) ? x.options : []
+    }))
+  } else if (j.question) {
+    // 兼容旧式单问题（等价于一题一卡）
+    questions = [{ topic: j.topic || '', question: j.question, options: j.options || [] }]
+  } else {
+    questions = []
+  }
+  const n = questions.length
+  const ms = Number(remainingMs != null ? remainingMs : j.timeoutMs) || 0
+  m.ask = {
+    id: j.askId,
+    questions,
+    timeoutMs: Number(j.timeoutMs) || 0,
+    deadline: ms > 0 ? Date.now() + ms : 0,
+    busy: false,
+    answered: false,
+    restored: !!j.restored,
+    sels: new Array(n).fill(null),   // 每题已选选项下标（null=未答）
+    customs: new Array(n).fill('')   // 每题自定义输入
+  }
+  return m.ask
+}
+
+/**
+ * 会话加载/切换后恢复待答提问卡：提问已落库、等待期间断线不中止本轮，所以刷新页面或换设备后
+ * 那根工具线程还阻塞着，答案照样送得回去。只重建「未过期且唤醒句柄还在」的最新一张——
+ * 同一轮连问几卡时，早先那张已随工具终态落成气泡里的问答记录。
+ */
+const hydratePendingAsk = async sid => {
+  if (!sid) return
+  const st = chatStreams.get(sid)
+  if (st && st.msg && st.msg.ask) return   // 实时卡还挂在这一轮上，不重复挂
+  let items
+  try {
+    const r = await listPendingAsks(sid)
+    items = (r && r.data && Array.isArray(r.data.items)) ? r.data.items : []
+  } catch (e) {
+    // 静默失败会被读成「我那条没生效」：恢复入口拉不动要出声（不打断正常问答，只提示）
+    if (currentSessionId.value === sid) message.warning('待答提问恢复失败：' + (e?.message || '网络异常'))
+    return
+  }
+  if (currentSessionId.value !== sid) return   // 快速切会话：晚到响应不覆盖当前视图
+  const alive = items.filter(x => x && !x.expired && x.live)
+  const dead = items.filter(x => x && !x.expired && !x.live)
+  if (!alive.length) {
+    // 卡片还在但唤醒句柄已不在（进程重启过）：这一轮没人接，说清楚而不是留个点了没反应的输入框
+    if (dead.length) message.warning('这一轮的提问已失效（服务已重启），回答没有继续生成')
+    return
+  }
+  const item = alive[alive.length - 1]
+  const list = messages.value
+  // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你作答」的占位泡，
+  // 答题面板照旧挂底部；答完轮询到新回答后整个列表按历史重载，占位泡随之消失
+  const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
+    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+    thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
+    toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null })
+  mountAskCard(anchor, { ...item, restored: true }, item.remainingMs)
+  messages.value = [...list, anchor]
+  hooks.scrollForce?.()
+}
+
+/** 恢复态轮询句柄（同一时刻只留一份：切会话/答完即停） */
+let restoredPoll = null
+const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll); restoredPoll = null } }
+
+/**
+ * 恢复态卡片答完后的答案取回：本设备没有这一轮的流式通道，回答在后台生成。
+ * 先记下当前历史条数，每 4s 比一次——多出那条（助手回答落库）即完成，重载会话视图。
+ */
+const pollRestoredAnswer = async (sid, msg) => {
+  stopRestoredPoll()
+  let baseline = -1
+  try {
+    const r = await getHistory(sid, { silentForbidden: true })
+    baseline = Array.isArray(r?.data) ? r.data.length : -1
+  } catch (e) { /* 拿不到基线就不轮询，用户自己回到会话仍能看到答案 */ }
+  if (baseline < 0) return
+  let ticks = 0
+  restoredPoll = setInterval(async () => {
+    if (currentSessionId.value !== sid) { stopRestoredPoll(); return }
+    if (++ticks > 45) {
+      stopRestoredPoll()
+      if (msg) msg.stage = ''
+      message.warning('这一轮回答还在生成，稍后回到本会话查看')
+      return
+    }
+    try {
+      const r = await getHistory(sid, { silentForbidden: true })
+      const list = Array.isArray(r?.data) ? r.data : null
+      if (!list || list.length <= baseline) return
+      stopRestoredPoll()
+      await switchSession(sid)
+    } catch (e) { /* 单次失败等下一轮 */ }
+  }, 4000)
+}
+
+/** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空——后端不会替你选，只把「这一题没答」回给模型 */
 async function askSubmitAll (m) {
   const a = m && m.ask
   if (!a || a.busy || a.answered) return
@@ -997,7 +1110,7 @@ async function askSubmitAll (m) {
     if (sel != null && sel < q.options.length) return q.options[sel]
     const c = (a.customs[i] || '').trim()
     if (c) return c
-    return ''   // 未答 → 后端按推荐项默认
+    return ''   // 未答 → 模型收到「这一题用户没回答」，不替用户选
   })
   a.busy = true
   try {
@@ -1005,16 +1118,25 @@ async function askSubmitAll (m) {
     if (r && r.success === false) {
       message.warning(r.msg || '回答提交失败')
       a.busy = false
+      // 恢复态的卡：本轮已无人接收（超时/重启），留着只会让人反复提交，撤下并重载会话
+      if (a.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     a.answered = true
+    if (a.restored) {
+      // 本设备没有这一轮的流，终态事件不会来撤卡：自己撤下面板、把气泡交给后台生成并轮询取回
+      m.ask = null
+      m.stage = '回答生成中，稍后自动刷新…'
+      pollRestoredAnswer(currentSessionId.value, m)
+      return
+    }
     hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '回答提交失败')
     if (m.ask) m.ask.busy = false
   }
 }
-/** 忽略智能体提问：不作答，立即按推荐项默认执行（与超时默认同语义的提前触发） */
+/** 忽略智能体提问：不作答，让模型带着「这一题用户没回答」继续推进（与超时同语义） */
 async function ignoreAsk (m) {
   if (!m.ask || m.ask.busy) return
   m.ask.busy = true
@@ -1023,6 +1145,13 @@ async function ignoreAsk (m) {
     if (r && r.success === false) {
       message.warning(r.msg || '操作失败')
       m.ask.busy = false
+      if (m.ask.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      return
+    }
+    if (m.ask.restored) {
+      m.ask = null
+      m.stage = '回答生成中，稍后自动刷新…'
+      pollRestoredAnswer(currentSessionId.value, m)
       return
     }
     m.ask.answered = '（已忽略）'
@@ -1167,33 +1296,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     onAskUser: payload => {
       // 智能体提问（人在回路，一卡多问）：提问面板挂到当前 AI 气泡状态上，桌面壳据此把底部输入框整块
       // 替换成提问面板；用户逐题翻页作答、一次性批量提交后模型继续走。
-      // questions 为问题数组（每题 options 第一项是模型给的推荐项，超时未答按它默认执行）
+      // 每题 options 第一项是模型给的推荐项（仅提示用）——超时与忽略都不会替你选答案
       try {
-        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        let questions
-        if (Array.isArray(j.questions) && j.questions.length) {
-          questions = j.questions.map(x => ({
-            topic: x.topic || '',
-            question: x.question || '',
-            options: Array.isArray(x.options) ? x.options : []
-          }))
-        } else if (j.question) {
-          // 兼容旧式单问题（等价于一题一卡）
-          questions = [{ topic: j.topic || '', question: j.question, options: j.options || [] }]
-        } else {
-          questions = []
-        }
-        const n = questions.length
-        msg.ask = {
-          id: j.askId,
-          questions,
-          timeoutMs: j.timeoutMs || 0,
-          deadline: (j.timeoutMs || 0) > 0 ? Date.now() + j.timeoutMs : 0,
-          busy: false,
-          answered: false,
-          sels: new Array(n).fill(null),   // 每题已选选项下标（null=未答）
-          customs: new Array(n).fill('')   // 每题自定义输入
-        }
+        mountAskCard(msg, typeof payload === 'string' ? JSON.parse(payload) : payload)
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1230,7 +1335,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           msg.stage = ''
           ensureTick()
         } else {
-          // askUser 已出终态（用户已答或超时默认）：问答记录卡接管展示，撤掉提问卡
+          // askUser 已出终态（用户已答，或超时/忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡
           if (t.name === 'askUser' && msg.ask) msg.ask = null
           const list = msg.toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
@@ -1367,7 +1472,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       if (msg.content === '') msg.content = '（已停止生成）'
       msg.loading = false
-      // 整轮已收口：提问卡（若还在）撤掉——超时默认走的是 done 前的 tool_status 终态，此处兜底
+      // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
       if (msg.ask) msg.ask = null
       // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
@@ -1628,6 +1733,8 @@ const ready = async () => {
     MAX_HISTORY_REFS, pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
     // 会话生命周期
     switchSession, creatingSession, createNewSession, autoPick, handleDeleteSession,
+    // 提问卡恢复（切换会话自动跑；通知深链落到当前会话时页面可再点名一次）
+    hydratePendingAsk,
     // 手动压缩上下文（/compact：PC 斜杠命令与移动端模型面板共用）
     compacting, compactNotice, compactContext,
     // 重新生成 / 分支切换 / 挂载初始化

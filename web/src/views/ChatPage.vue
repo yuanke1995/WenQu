@@ -54,9 +54,8 @@
         </div>
       </div>
 
-      <!-- 智能体提问不再有「通知 → 跳转恢复」通道：提问只在当前会话内有效（ask_user 事件已把提问卡
-           送到正在看这个会话的人），挂起态是内存态、跨设备本就不可达。顶部常驻一块与气泡内问答记录
-           重复的卡片反而挤占消息区，故整条恢复链路（tool.ask 通知 + ?ask= 深链）已下线。 -->
+      <!-- 智能体提问不走顶部横幅：卡片已落库、等待期间断线不中止本轮，恢复由引擎在会话加载时
+           按待答记录重建底部答题面板（hydratePendingAsk），与实时卡同一处、同一套交互。 -->
 
       <div class="messages" ref="box" @click="openPreview" @mouseover="refHover" @mouseleave="scheduleCloseRefTip" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
@@ -841,7 +840,7 @@
             <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
             <span class="askp-q">{{ curAsk.question }}</span>
             <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
-            <span v-else-if="askExpired" class="askp-state warn">已超时，系统按推荐项默认执行…</span>
+            <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
             <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
               <clock-circle-outlined /> {{ askCountdownText }}
             </span>
@@ -867,7 +866,7 @@
             </div>
           </div>
           <div class="askp-foot">
-            <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；未答将按推荐项默认执行</span>
+            <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；没答的题不替你选</span>
             <span class="askp-actions">
               <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
               <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
@@ -1279,8 +1278,8 @@ const route = useRoute()
 const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStatusText,
         statusClass: recoveryStatusClass, resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
-// 注：智能体提问**没有**这一层恢复。提问挂起是内存态（SSE 事件 + 会话内内存表），
-// 跨刷新/跨设备本就不可达，tool.ask 通知 + ?ask= 深链这条「伪恢复」通道已下线。
+// 注：智能体提问不走 approval 那种顶部横幅——卡片已落库且等待作答期间断线不中止本轮，
+// 恢复改由引擎在会话加载时按待答记录重建提问卡（hydratePendingAsk），仍挂在底部答题面板原位。
 
 const textareaRef = ref(null)
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
@@ -2650,6 +2649,9 @@ watch(() => pendingAsk.value?.ask, (a) => {
   askHi.value = null
   // 仅在有 deadline 时启心跳；归零后停止（由 onToolStatus 收卡，或用户已提交）
   if (a && a.deadline) {
+    // 挂卡的这一刻就先对表：后台标签页里 1s 心跳会被节流到分钟级，不校准则首屏倒计时
+    // 按上一次 askNow 的旧值算，能比真实剩余多出好几分钟（2026-10-07 真机复测见到 11:32 / 10:00）
+    askNow.value = Date.now()
     if (!askTimer) askTimer = setInterval(() => { askNow.value = Date.now() }, 1000)
   } else if (askTimer) {
     clearInterval(askTimer); askTimer = null

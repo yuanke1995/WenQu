@@ -779,9 +779,15 @@ export const approveToolCall = (approvalId, approved) =>
 export const answerAgentAsk = (askId, answers) =>
   request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ answers }) })
 
-/** 忽略智能体提问：不作答，立即按推荐项（选项第一项）默认执行——与超时默认同语义的提前触发 */
+/** 忽略智能体提问：不作答，让智能体带着「这一题用户没回答」继续推进（与超时同语义） */
 export const ignoreAgentAsk = askId =>
   request(`/ask-user/${encodeURIComponent(askId)}`, { method: 'POST', body: JSON.stringify({ ignore: true }) })
+
+/** 待答提问（卡片恢复入口）：列本人该会话仍挂起的 askUser 提问卡。
+ *  返回 {items:[{askId,questions,timeoutMs,remainingMs,createdAt,expired,live}]}；
+ *  live=false 表示唤醒句柄已随进程重启消失，作答送不到智能体 */
+export const listPendingAsks = sessionId =>
+  request(`/ask-user/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>

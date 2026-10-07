@@ -118,6 +118,7 @@ const TYPES = [
   { type: 'schedule.failed', label: '定时任务失败', icon: CloseCircleFilled, tone: 'err' },
   { type: 'eval.decline', label: '检索评估下滑', icon: ExclamationCircleFilled, tone: 'warn' },
   { type: 'tool.approval', label: '工具审批待决', icon: ExclamationCircleFilled, tone: 'warn' },
+  { type: 'tool.ask', label: '智能体提问待答', icon: ExclamationCircleFilled, tone: 'warn' },
   // 额度不足是「该充值了」而非系统故障：警告色（红叉会让人以为是 bug）
   { type: 'model.quota', label: '模型额度不足', icon: ExclamationCircleFilled, tone: 'warn' }
 ]

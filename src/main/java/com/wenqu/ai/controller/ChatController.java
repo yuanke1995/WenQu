@@ -324,9 +324,10 @@ public class ChatController {
     }
 
     @Operation(summary = "回答智能体提问", description = "回答智能体的结构化提问（ask_user 事件下发，人在回路）：仅本轮用户本人可答，"
-            + "答案作为工具结果回给模型继续本轮回答；超时未答时系统按推荐项（选项第一项）默认执行。"
-            + "body 传 {answer} 为作答；传 {ignore:true} 为忽略（不作答，立即按推荐项默认执行）。"
-            + "提问挂起为内存态，刷新页面即失效（该轮按中止收尾）。")
+            + "答案作为工具结果回给模型继续本轮回答。提问卡持久化在 c_ai_tool_approval（PENDING→终态），"
+            + "等待期间客户端断开不中止本轮，故刷新页面/换设备后仍可经 /ask-user/pending 取回卡片作答。"
+            + "body 传 {answers:[...]} 为作答（与问题下标对齐，兼容旧式单答案 {answer}）；传 {ignore:true} 为忽略（不作答）。"
+            + "超时与忽略都不替用户选答案。返回 false 表示这次作答没能送达（已收尾，或唤醒句柄随进程重启消失）。")
     @PostMapping("/ask-user/{askId}")
     public ResultJson answerAgentAsk(
             @Parameter(description = "提问 ID（ask_user 事件下发）") @PathVariable("askId") String askId,
@@ -347,8 +348,18 @@ public class ChatController {
             }
             ok = ragService.resolveAsk(askId, answers, uid);
         }
-        if (!ok) return ResultJson.error("提问不存在、已回答或已超时");
-        return ResultJson.ok(ignore ? "已忽略，按推荐项默认执行" : "已提交");
+        if (!ok) return ResultJson.error("提问已结束，这次作答没能送达智能体");
+        return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
+    }
+
+    @Operation(summary = "待答提问（恢复）", description = "按会话列本人仍挂在 PENDING 的 askUser 提问卡，"
+            + "供前端在会话加载/切换与点开 tool.ask 通知时重建卡片。返回 items：{askId,questions,timeoutMs,"
+            + "remainingMs,createdAt,expired,live}；live=false 表示唤醒句柄已不在（进程重启），作答送不到模型。")
+    @GetMapping("/ask-user/pending")
+    public ResultJson listPendingAsks(
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        return ResultJson.ok(java.util.Map.of("items",
+                ragService.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"

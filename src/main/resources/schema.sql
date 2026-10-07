@@ -717,7 +717,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '待审批工具名（沙盒/MCP）',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT',
     `request_args` VARCHAR(2000) DEFAULT NULL COMMENT '工具入参摘要（截断 2000 字符，审计回溯用；提问类记录存 {question,options} JSON）',
-    `answer`       VARCHAR(2000) DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时按推荐项默认执行时也落此列',
+    `answer`       VARCHAR(2000) DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时/忽略不代答时落给模型的「未作答」说明',
     `created_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '挂起时刻',
     `resolved_at`  DATETIME      DEFAULT NULL COMMENT '裁决/超时时刻',
     PRIMARY KEY (`id`),
@@ -913,7 +913,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
 CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',
     `uid`         VARCHAR(64)   NOT NULL COMMENT '接收人（uid；每人只看自己的通知）',
-    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 model.quota=模型供应商额度不足',
+    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 tool.ask=智能体提问待答 model.quota=模型供应商额度不足',
     `title`       VARCHAR(200)  NOT NULL COMMENT '一句话标题（列表主文本）',
     `content`     VARCHAR(1000) DEFAULT NULL COMMENT '详情（块数/失败原因等，落库前截断）',
     `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流 session=会话（/chat?sid=） provider=模型供应商（/providers）',

@@ -59,8 +59,8 @@
       </div>
     </div>
 
-    <!-- 智能体提问没有恢复横幅（与 PC 壳同口径）：tool.ask 通知 + ?ask= 深链已下线，
-         提问只在当前会话内有效，答复后问答记录以工具卡形态留在气泡里。 -->
+    <!-- 智能体提问不走顶部横幅（与 PC 壳同口径）：卡片已落库、等待期间断线不中止本轮，
+         会话加载时由引擎按待答记录重建底部答题面板；答复后问答记录以工具卡形态留在气泡里。 -->
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
       <!-- 空态：品牌 + 示例问题（点即发）。
@@ -179,7 +179,7 @@
           </div>
         </div>
         <div class="m-askp-foot">
-          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '选完自动跳下一题，全部选完自动提交；未答按推荐项默认' }}</span>
+          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '选完自动跳下一题，全部选完自动提交；没答的题不替你选' }}</span>
           <span class="m-askp-actions">
             <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
             <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ mAskAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
@@ -381,8 +381,8 @@ const notifUnread = notif.unreadCount
 const { approval: recApproval, busy: recBusy, statusText: recStatusText, statusClass: recStatusClass,
         resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
 
-// 注：智能体提问**没有**这一层恢复（与 PC 壳同口径）。提问挂起是内存态、跨设备不可达，
-// tool.ask 通知 + ?ask= 深链这条「伪恢复」通道已下线。
+// 注：智能体提问不走这层横幅（与 PC 壳同口径）——卡片已落库、等待期间断线不中止本轮，
+// 恢复由引擎在会话加载时按待答记录重建底部答题面板（hydratePendingAsk）。
 
 // ==================== 引擎（与 PC 同一份） ====================
 // 刻意不传 focusInput：移动端挂载即弹软键盘是反模式（PC 传它是为了键盘用户开箱可打）。
@@ -459,7 +459,11 @@ const mAskCountdownText = computed(() => {
 })
 watch(() => pendingAsk.value?.ask, (a) => {
   mAskPage.value = 0
-  if (a && a.deadline) { if (!mAskTimer) mAskTimer = setInterval(() => { mAskNow.value = Date.now() }, 1000) }
+  // 挂卡先对表：后台标签页的 1s 心跳会被节流到分钟级，不校准则首屏倒计时按旧值算多出几分钟
+  if (a && a.deadline) {
+    mAskNow.value = Date.now()
+    if (!mAskTimer) mAskTimer = setInterval(() => { mAskNow.value = Date.now() }, 1000)
+  }
   else if (mAskTimer) { clearInterval(mAskTimer); mAskTimer = null }
 }, { flush: 'post' })
 watch(mAskExpired, (exp) => { if (exp && mAskTimer) { clearInterval(mAskTimer); mAskTimer = null } })

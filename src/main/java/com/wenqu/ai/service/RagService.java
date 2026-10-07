@@ -588,23 +588,16 @@ public class RagService {
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
         // 收集型通道（定时任务/MCP/子智能体节点）不挂：它没有真实响应、节奏由调用方 awaitDone 控制。
+        TurnDeadline ledger = null;
         if (!(emitter instanceof CollectingSseEmitter)) {
-            TurnDeadline deadline = new TurnDeadline(turnMachineBudgetMs());
-            TURN_DEADLINES.put(emitter, deadline);
-            startTurnWatchdog(emitter, sessionId, deadline);
+            ledger = new TurnDeadline(turnMachineBudgetMs());
+            TURN_DEADLINES.put(emitter, ledger);
+            startTurnWatchdog(emitter, sessionId, ledger);
         }
-        emitter.onCompletion(() -> {
-            ACTIVE_SSE.remove(emitter);
-            stopTurnDeadline(emitter);
-        });
-        emitter.onTimeout(() -> {
-            ACTIVE_SSE.remove(emitter);
-            stopTurnDeadline(emitter);
-        });
-        emitter.onError(t -> {
-            ACTIVE_SSE.remove(emitter);
-            stopTurnDeadline(emitter);
-        });
+        final TurnDeadline deadline = ledger;
+        emitter.onCompletion(() -> releaseSseChannel(emitter, deadline, sessionId));
+        emitter.onTimeout(() -> releaseSseChannel(emitter, deadline, sessionId));
+        emitter.onError(t -> releaseSseChannel(emitter, deadline, sessionId));
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
@@ -1619,8 +1612,8 @@ public class RagService {
 
             // 前端断开/终态时停止生成。整轮截断（原「SSE 超时」）已由 startTurnWatchdog 承担：
             // 容器级超时不可续期且会把人工答题时间算进去，emitter 不再设容器超时
-            emitter.onCompletion(() -> st.disposeSafe());
-            emitter.onError(t -> st.disposeSafe());
+            emitter.onCompletion(() -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
+            emitter.onError(t -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
 
         } catch (Exception e) {
             log.error("Chat error", e);
@@ -2016,7 +2009,8 @@ public class RagService {
 
     /**
      * 本轮耗时台账：整轮预算只计<b>机器</b>时间，人在回路的等待从中扣除。
-     * <p>背景：askUser 提问卡单卡允许等 5 分钟、工具审批 120s，而容器级 SSE 超时是<b>从请求开始
+     * <p>背景：askUser 提问卡单卡允许等 chat.askTimeoutMs（默认 10 分钟）、工具审批 120s，而容器级 SSE
+     * 超时是<b>从请求开始
      * 一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，实测发心跳也不复位）。
      * 于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，
      * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatController），
@@ -2058,6 +2052,13 @@ public class RagService {
             long b = waitBegin;
             if (b > 0) w += System.currentTimeMillis() - b;
             return System.currentTimeMillis() - startMs - w;
+        }
+
+        /** 通道断开时台账要不要留着续跑：本轮正等用户作答，或已转后台续跑且尚未落库收尾 */
+        boolean holdsForDetachedTurn() {
+            AnswerStreamState s = state;
+            if (s == null) return false;
+            return s.askWaits.get() > 0 || (s.detached && !s.settled());
         }
     }
 
@@ -2104,6 +2105,20 @@ public class RagService {
         if (d != null && d.watchdog != null) {
             d.watchdog.cancel(false);
         }
+    }
+
+    /**
+     * 通道生命周期回调（onCompletion/onTimeout/onError）：清断开登记并回收整轮台账。
+     * <p>例外：台账所绑的那轮正在等用户作答、或已转入「断线后台续跑」且尚未落库收尾时，
+     * <b>必须留着台账与看门狗</b>——那是后台轮唯一的机器耗时上界，随通道一起回收等于放它无界跑下去。
+     */
+    private void releaseSseChannel(SseEmitter emitter, TurnDeadline deadline, String sessionId) {
+        ACTIVE_SSE.remove(emitter);
+        if (deadline != null && deadline.holdsForDetachedTurn()) {
+            log.info("[ASK] 客户端断开但本轮仍在等人作答/后台续跑，整轮台账与看门狗保留: session={}", sessionId);
+            return;
+        }
+        stopTurnDeadline(emitter);
     }
 
     /**
@@ -2720,7 +2735,7 @@ public class RagService {
                 // 工具上下文：把当前会话 ID 与用户 ID 注入，供产物交付、沙盒等工具定位会话与归属。
                 // userId 必须随 toolContext 透传——工具回调跑在 Spring AI 响应式 I/O 线程上，
                 // 读 RequestUser.uid()（ThreadLocal）跨线程失效会回落成 anonymous，导致沙盒建到 shared/anonymous。
-                // 另注入 askUser 执行器（闭包持有本轮会话态 st）：提问卡 SSE、阻塞等待、超时默认都依赖它。
+                // 另注入 askUser 执行器（闭包持有本轮会话态 st）：提问卡 SSE、阻塞等待、超时收尾都依赖它。
                 .toolContext(toolContext(st))
                 .stream()
                 // 用 chatResponse 而非 content：流式中顺便捕获网关返回的真实 token usage（部分兼容网关
@@ -2800,7 +2815,8 @@ public class RagService {
                                 String procPart = bufStr.substring(pIdx + "<process>".length());
                                 if (!ansPart.isEmpty()) {
                                     st.fullResponse.append(ansPart);
-                                    if (!sendSseEvent(emitter, "token", ansPart, st.sessionId)) {
+                                    if (!sendSseEvent(emitter, "token", ansPart, st.sessionId)
+                                            && !st.keepRunningWithoutChannel()) {
                                         st.disposeSafe();
                                         return;
                                     }
@@ -2812,8 +2828,10 @@ public class RagService {
                                         "模型输出格式异常（related 标签未闭合），已按原文清理");
                                 String raw = bufStr;
                                 st.fullResponse.append(raw);
-                                // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）
-                                if (!sendSseEvent(emitter, "token", raw, st.sessionId)) {
+                                // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）；
+                                // 本轮在等人作答或已转后台续跑则只丢事件、继续生成
+                                if (!sendSseEvent(emitter, "token", raw, st.sessionId)
+                                        && !st.keepRunningWithoutChannel()) {
                                     st.disposeSafe();
                                     return;
                                 }
@@ -2870,8 +2888,10 @@ public class RagService {
                     if (openBody != null) st.emitBuf.append("<process>").append(heldProc);
                     if (!sendPart.isEmpty()) {
                         st.fullResponse.append(sendPart);
-                        // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）
-                        if (!sendSseEvent(emitter, "token", sendPart, st.sessionId)) {
+                        // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）；
+                        // 本轮在等人作答或已转后台续跑则只丢事件、继续生成（正文仍会完整落库）
+                        if (!sendSseEvent(emitter, "token", sendPart, st.sessionId)
+                                && !st.keepRunningWithoutChannel()) {
                             st.disposeSafe();
                         }
                     }
@@ -2885,8 +2905,9 @@ public class RagService {
                     }
                 })
                 .doOnError(error -> {
-                    // 客户端已断开：不重试也不报错（管道已不在），直接收尾
-                    if (clientDisconnected(st.emitter)) {
+                    // 客户端已断开：不重试也不报错（管道已不在），直接收尾；
+                    // 本轮在等人作答或已转后台续跑则照常走错误处置（重试/降级落库），不给断开掐死
+                    if (clientDisconnected(st.emitter) && !st.keepRunningWithoutChannel()) {
                         st.disposeSafe();
                         return;
                     }
@@ -2941,6 +2962,7 @@ public class RagService {
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);
                     completeEmitter(emitter);
+                    stopTurnDeadline(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
                 })
                 .doOnComplete(() -> {
@@ -3286,6 +3308,8 @@ public class RagService {
                     }
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
+                    // 本轮收尾：显式回收台账（断线后台续跑的轮在通道断开回调里被故意留着，重复回收无害）
+                    stopTurnDeadline(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
                     // 记忆提取：问答完整落定后异步提炼长期记忆（服务内自判开关/游客/匿名，best-effort）；
                     // 提取调用跟随本轮生效模型（st.model，done 时 fail-loud 保证非空）
@@ -3430,6 +3454,36 @@ public class RagService {
         /** 助手消息落库幂等闸：正常完成（doOnComplete）与中断兜底（disposeSafe → persistPartialAnswer）
          *  两条路径 CAS 先到先得——SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条 */
         final java.util.concurrent.atomic.AtomicBoolean answerPersistGate = new java.util.concurrent.atomic.AtomicBoolean(false);
+        /**
+         * 提问卡（askUser）阻塞计数：>0 表示本轮正挂在「等你作答」上。此刻通道失效<b>不中止本轮</b>
+         * ——提问已落库，用户在另一台设备或刷新页面后仍能答，答案必须回到还阻塞着的工具线程。
+         */
+        final java.util.concurrent.atomic.AtomicInteger askWaits = new java.util.concurrent.atomic.AtomicInteger();
+        /**
+         * 断线后台续跑：本轮失去了通道（人在作答时才断开），此后 SSE 事件一律丢弃，
+         * 但生成继续走完并按正常路径完整落库——用户回到本会话就能看到答案。
+         */
+        volatile boolean detached;
+
+        /**
+         * 通道已失效（客户端断开 / emitter 完成 / 发送失败）时问一句：本轮还要不要继续跑？
+         * <p>正在等用户作答、或早已转入后台续跑 ⇒ 置 {@link #detached} 返回 true：事件丢弃但不掐流，
+         * 用户答完后回答照常生成并落库；其余情形返回 false，由调用方照常规中止本轮并落半程正文
+         * ——「断开即止损」的成本闸门口径不变，只在人在回路这一段让路。
+         */
+        boolean keepRunningWithoutChannel() {
+            if (askWaits.get() > 0 || detached) {
+                detached = true;
+                return true;
+            }
+            return false;
+        }
+
+        /** 本轮是否已收尾（正文已落库，正常完成或截断兜底都算）：台账据此回收 */
+        boolean settled() {
+            return answerPersistGate.get();
+        }
+
         /** 本轮智能体归属快照（buildAnswerStream 回填）：中断兜底落库时 appendMessage 需要，彼时已拿不到闭包里的 agent */
         volatile String agentId;
         volatile String agentName;
@@ -3466,6 +3520,8 @@ public class RagService {
             // 客户端断开：顺带停整轮流级心跳（防断开后调度任务空转泄漏；发送失败也会自停，双保险）
             java.util.concurrent.ScheduledFuture<?> hb = heartbeat;
             if (hb != null) hb.cancel(false);
+            // 本轮已中止：整轮台账与看门狗一并回收（通道断开回调遇后台续跑时会故意留着它）
+            stopTurnDeadline(emitter);
             Disposable d = disposableRef.get();
             if (d != null) d.dispose();
             // 中断兜底：已流出半程正文则按截断态落库，刷新/重进会话后已生成的部分仍在历史里
@@ -5431,7 +5487,12 @@ public class RagService {
     private static final java.util.concurrent.ConcurrentHashMap<String, PendingApproval> PENDING_APPROVALS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** askUser 挂起项：askId → 等待用户作答（内存态；刷新页面/进程重启即失效，超时按推荐项默认执行） */
+    /**
+     * askUser 挂起项：askId → 等待用户作答的内存唤醒句柄。
+     * <p>只有它负责「把答案送回还阻塞着的工具线程」；卡片本体（问题/时限/答案）以 c_ai_tool_approval
+     * 为准，所以刷新页面或换设备后仍能查到并作答。进程重启后句柄消失（live=false），此时作答只入审计、
+     * 无法送达模型，该轮按超时收尾。
+     */
     private record PendingAsk(String sessionId, String userId,
                               java.util.concurrent.CompletableFuture<String> future) {
     }
@@ -5452,22 +5513,22 @@ public class RagService {
      *  传入的问题数对不上，界面上还会出现「有问无答」的残缺问。 */
     private static final int MAX_ASK_OPTIONS = 3;
 
-    /** askUser 提问卡等待上限（一卡多问需人工逐题作答，比工具审批宽）：固定 5 分钟。
-     *  前端倒计时直接取 SSE 下发的 timeoutMs 显示，故与后端阻塞超时必须同源。 */
-    private static final long ASK_TIMEOUT_MS = 5 * 60 * 1000L;
+    /** askUser 提问卡等待上限（一卡多问需人工逐题作答，比工具审批宽）：默认 10 分钟，
+     *  平台可调（chat.askTimeoutMs）。提问已落库且等待期间断线不中止本轮，所以窗口可以给到分钟级；
+     *  前端倒计时取 SSE 下发的 timeoutMs、跨设备恢复取 DB 的 created_at + 本值，两处口径必须同源。 */
+    private long askTimeoutMs() {
+        long t = configService.getLong("chat.askTimeoutMs");
+        return t > 0 ? t : 600000L;
+    }
 
     /**
-     * askUser 工具执行体（BuiltinTools.askUser 经 ToolContext 注入调用）：向用户发出结构化提问并
-     * 阻塞等待答案，与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 审计 + SSE 提问卡
-     * + 站内通知旁路）。返回值直接作为工具结果回给模型：用户所选/输入的答案文本，或带括号的
-     * 不可用/超限提示。**超时按推荐项（options 第一项）默认执行**——推荐项由模型放第一位、
-     * 前端标注「推荐」；答案附「超时默认」说明，避免模型把默认决策说成用户亲选。
-     */
-    /**
      * askUser 工具执行体（一卡多问版）：向用户一次性下发多个结构化问题并阻塞等待批量作答，
-     * 与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 审计 + SSE 提问卡 + 站内通知旁路）。
-     * 返回值直接作为工具结果回给模型：每问一个答案的并行数组（多问为 JSON 数组字符串，单问退化为纯文本），
-     * 未作答的问题按该题推荐项（options 第一项）默认执行并附「非用户亲选」说明。
+     * 与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 卡片记录 + SSE 提问卡 + 站内通知旁路）。
+     * <p>返回值直接作为工具结果回给模型：每问一个答案的并行数组（多问为 JSON 数组字符串，单问退化为纯文本）。
+     * <b>超时与忽略都不替用户选</b>——该题回一句「用户没有回答」，由模型自行推进（见
+     * {@link #buildCombinedAnswer}）。等待窗口 chat.askTimeoutMs（默认 10 分钟）；这段时间内客户端断开
+     * 不中止本轮（见 {@link AnswerStreamState#keepRunningWithoutChannel}），用户刷新或换设备后仍可按
+     * DB 记录重建卡片并把答案送回来。
      */
     private String doAskUserMulti(AnswerStreamState st, java.util.List<BuiltinTools.AskQuestion> raw) {
         if (st.guestMode) {
@@ -5505,7 +5566,7 @@ public class RagService {
             return "（本次提问共 " + qs.size() + " 个问题，超过单卡上限 " + MAX_QUESTIONS_PER_CARD
                     + " 个，工具未执行：请把问题合并或分批，压缩到 " + MAX_QUESTIONS_PER_CARD + " 个以内后重新提问。）";
         }
-        long timeout = ASK_TIMEOUT_MS;
+        long timeout = askTimeoutMs();
         String askId = java.util.UUID.randomUUID().toString();
         java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
         // 落库（复用 c_ai_tool_approval：tool_name=askUser，questions 存 request_args，答案数组存 answer）
@@ -5523,18 +5584,32 @@ public class RagService {
             log.warn("[ASK] 提问记录落库失败（不阻塞提问流程）: {}", e.getMessage());
         }
         PENDING_ASKS.put(askId, new PendingAsk(st.sessionId, st.userId, future));
-        // 不再发 tool.ask 站内通知：提问只对本页有效（ask_user 事件已经能把提问卡送到正在看这个会话的人），
-        // 跳转恢复横幅反而在会话顶部常驻一块与气泡内问答记录重复的卡片。代价是「人不在这个会话页时」
-        // 无从知晓——但那本来也答不了（提问挂起是内存态，跨设备不可达），超时按推荐项默认执行即可。
+        // 提问待答站内通知（旁路）：卡片已落库且等待期间断线不中止本轮，人不在本页时铃铛是唯一
+        // 可感知面，点进去仍能把这张卡答完（会话加载时按 DB 待答记录重建卡片）。
+        try {
+            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
+                    qs.size() > 1 ? "智能体有 " + qs.size() + " 个问题想跟你确认" : "智能体在等你回答",
+                    "回到会话里作答，它才按你的选择继续；没答的那题不会替你选。",
+                    "session", st.sessionId, "ask:" + askId, askId);
+        } catch (Exception e) {
+            log.warn("[ASK] 提问通知写入失败（不阻塞提问）: {}", e.getMessage());
+        }
         try {
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("askId", askId);
             req.put("questions", qs.stream().map(this::askQuestionToMap).toList());
             req.put("timeoutMs", timeout);
-            sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId);
-            log.info("[ASK] 等待用户批量作答: askId={} session={} n={}", askId, st.sessionId, qs.size());
+            // 卡片下发失败（连接已断）：本轮就此转入后台续跑——提问已落库，用户从别的页面答完，
+            // 回答照样生成并落库，回会话页可见。不转的话答完的第一个 token 发送失败会掐掉整轮。
+            if (!sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId)) {
+                st.detached = true;
+                log.info("[ASK] 提问卡通道已失效，本轮转后台续跑: askId={} session={}", askId, st.sessionId);
+            }
+            log.info("[ASK] 等待用户批量作答: askId={} session={} n={} 窗口={}ms",
+                    askId, st.sessionId, qs.size(), timeout);
             String answer;
             beginHumanWait(st.emitter);   // 用户作答时间不计入整轮机器预算（见 TurnDeadline）
+            st.askWaits.incrementAndGet();
             try {
                 answer = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException te) {
@@ -5547,6 +5622,7 @@ public class RagService {
                 markAskResolved(askId, "TIMEOUT", null, st.userId);
                 answer = "（本轮问答已被中止：请基于已有信息直接作答，不要再次提问。）";
             } finally {
+                st.askWaits.decrementAndGet();
                 endHumanWait(st.emitter);
             }
             return answer;
@@ -5575,8 +5651,10 @@ public class RagService {
 
     /**
      * 用户回答智能体提问：仅发起该轮问答的用户本人可答（uid 比对，内存态与 DB 双重校验，
-     * 与工具审批同口径）。内存态丢失（刷新页面/进程重启）时仍更新 DB 记录（幂等），但无法唤醒
-     * 已挂起的工具线程，该轮将按超时推荐项收尾。
+     * 与工具审批同口径）。
+     * <p>提问卡已落库、等待期间断线不中止本轮，所以刷新页面或换设备后按 {@link #listPendingAsks}
+     * 取回卡片仍能把答案送到那根还阻塞着的工具线程。返回 false 表示这次作答没能送达（记录不存在/
+     * 非本人/已收尾，或唤醒句柄已随进程重启消失），调用方据此提示用户。
      */
     public boolean resolveAsk(String askId, java.util.List<String> answers, String uid) {
         if (askId == null || askId.isBlank()) return false;
@@ -5590,24 +5668,73 @@ public class RagService {
         java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
         if (qs.isEmpty()) return false;
         java.util.List<String> norm = answers == null ? java.util.List.of() : answers;
-        String combined = buildCombinedAnswer(askId, uid, qs, norm, "APPROVED");
         PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) return true; // DB 已落库；内存态丢失则该轮按超时收尾
+        if (p == null) {
+            // 没有人真的在等这轮（进程重启过，或多副本下这轮挂在另一个实例上）：答案无处可送。
+            // 记录置终态并把用户所答留进审计列，卡片因此从待答列表消失，不再误导成「答了就生效」
+            markAskResolved(askId, "TIMEOUT", JSON.toJSONString(norm), uid);
+            log.info("[ASK] 唤醒句柄已不在，本轮无法续跑: askId={} session={}", askId, rec.getSessionId());
+            return false;
+        }
         if (!uid.equals(p.userId())) {
             log.warn("[ASK] 答题人非本轮用户（内存），拒绝: askId={} by={}", askId, uid);
             return false;
         }
+        String combined = buildCombinedAnswer(askId, uid, qs, norm, "APPROVED");
         return p.future().complete(combined);
     }
 
     /**
-     * 用户忽略提问（提问面板「忽略」按钮）：不作答，立即按推荐项（选项第一项）默认执行——
-     * 与超时默认同一语义的提前触发。答案给模型时附「非用户亲选」说明，防止模型把默认决策
-     * 说成用户选择；审计记 APPROVED + 推荐项原文（用户确实做出了「跳过」动作）。
+     * 待答提问列表（卡片持久化后的恢复入口）：按会话取本人名下仍是 PENDING 的 askUser 记录，
+     * 供前端在会话加载/切换、或点开 tool.ask 通知进入会话时重建提问卡。
+     * <p>{@code live=false} 表示卡片还在但唤醒句柄已不在（进程重启；多副本下也可能是那轮挂在别的实例），
+     * 此时作答送不到模型，前端按「本轮已结束」提示而不是给一个静默失败的输入框。
+     * 倒计时以 DB 的 {@code createdAt} + 当前窗口换算，与后端阻塞超时同源。
+     */
+    public java.util.List<java.util.Map<String, Object>> listPendingAsks(String sessionId, String uid) {
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
+        long window = askTimeoutMs();
+        try {
+            java.util.List<com.wenqu.ai.model.ToolApproval> rows = toolApprovalMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.ToolApproval>()
+                            .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
+                            .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
+                            .eq(com.wenqu.ai.model.ToolApproval::getToolName, "askUser")
+                            .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
+                            .orderByAsc(com.wenqu.ai.model.ToolApproval::getCreatedAt));
+            for (com.wenqu.ai.model.ToolApproval rec : rows) {
+                java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
+                if (qs.isEmpty()) continue;
+                long createdMs = rec.getCreatedAt() == null ? 0L
+                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("askId", rec.getId());
+                item.put("questions", qs.stream().map(this::askQuestionToMap).toList());
+                item.put("timeoutMs", window);
+                item.put("remainingMs", remaining);
+                item.put("createdAt", createdMs);
+                // 已过期但还没被超时路径收尾（超时分支落终态需要工具线程醒一次）：不再当作可答卡片重建
+                item.put("expired", remaining <= 0);
+                item.put("live", PENDING_ASKS.containsKey(rec.getId()));
+                out.add(item);
+                if (out.size() >= 10) break; // 一卡最多 6 问、一轮最多 3 卡，10 条封顶纯属防御
+            }
+        } catch (Exception e) {
+            log.warn("[ASK] 待答提问查询失败 session={}: {}", sessionId, e.getMessage());
+        }
+        return out;
+    }
+
+
+    /**
+     * 用户忽略提问（提问面板「忽略」按钮）：不作答，立刻让本轮带着「用户没答这一题」继续推进
+     * ——与超时同一语义的提前触发，都不替用户选答案。审计记 TIMEOUT + 空答案（用户确实做了「跳过」动作）。
      */
     public boolean resolveAskIgnore(String askId, String uid) {
         if (askId == null || askId.isBlank()) return false;
-        // 推荐项从落库 args 还原（DB 是权威源：内存 future 只负责唤醒）
+        // 问题列表从落库 args 还原（DB 是权威源：内存 future 只负责唤醒）
         com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
         if (rec == null || !"askUser".equals(rec.getToolName())) return false;
         if (uid == null || !uid.equals(rec.getUserId())) {
@@ -5617,10 +5744,14 @@ public class RagService {
         if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
         java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
         if (qs.isEmpty()) return false;
-        String combined = buildCombinedAnswer(askId, uid, qs, null, "IGNORE");
         PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) return true;
+        if (p == null) {
+            markAskResolved(askId, "TIMEOUT", null, uid);
+            log.info("[ASK] 唤醒句柄已不在，忽略动作无处生效: askId={} session={}", askId, rec.getSessionId());
+            return false;
+        }
         if (uid == null || !uid.equals(p.userId())) return false;
+        String combined = buildCombinedAnswer(askId, uid, qs, null, "IGNORE");
         return p.future().complete(combined);
     }
 
@@ -5656,7 +5787,10 @@ public class RagService {
     }
 
     /**
-     * 组装批量答案：未作答的问题按该题推荐项（options[0]）默认执行并附「非用户亲选」说明；
+     * 组装批量答案：未作答的问题<b>不替用户选</b>——把「这一题没答」如实回给模型，让它基于已有
+     * 信息自行推进或在正文里请用户回复。此前按推荐项（options[0]）代答：即便附了「并非用户亲自选择」
+     * 的注脚，模型转述时仍会把默认决策讲成用户亲选，且业界（Claude Code 到期取消、Cursor 上报 skip）
+     * 都没有「超时即替人选第一项」这一档。
      * 落库 answer 列（TEXT），返回工具结果文本（单问退化为纯文本，多问为 JSON 数组字符串，与问题下标对齐）。
      */
     private String buildCombinedAnswer(String askId, String uid, java.util.List<QItem> qs,
@@ -5665,13 +5799,14 @@ public class RagService {
         for (int i = 0; i < qs.size(); i++) {
             String ua = (userAnswers != null && i < userAnswers.size()) ? userAnswers.get(i) : null;
             if (ua != null && !ua.trim().isEmpty()) { finalAnswers.add(ua.trim()); continue; }
-            String recommended = qs.get(i).options().isEmpty() ? "" : qs.get(i).options().get(0);
-            String note = switch (mode) {
-                case "IGNORE" -> "（用户选择忽略此问题，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
-                case "TIMEOUT" -> "（用户超时未回答，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
-                default -> "（用户未作答，已按推荐项默认采用；这是默认决策，并非用户亲自选择。）";
+            // 统一前缀「（用户未回答这一题」：前端问答记录据此渲染成「未作答」，
+            // 不把给模型看的处置指令原样摊给用户（见 web/src/chat/projections.js askUserView）
+            String lead = switch (mode) {
+                case "IGNORE" -> "（用户未回答这一题（点了忽略）";
+                case "TIMEOUT" -> "（用户未回答这一题（已超时）";
+                default -> "（用户未回答这一题（提交时留空）";
             };
-            finalAnswers.add(recommended + "\n" + note);
+            finalAnswers.add(lead + "。请基于已有信息自行判断，不要替用户假定选择，也不要重复提问。）");
         }
         String answerJson = JSON.toJSONString(finalAnswers);
         String status = "APPROVED".equals(mode) ? "APPROVED" : "TIMEOUT";
@@ -5769,7 +5904,8 @@ public class RagService {
         }
     }
 
-    /** 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起） */
+    /** 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起；
+     *  askUser 提问卡同表同理——重启后那根阻塞的工具线程已不在，卡片留着也无人可唤醒） */
     @jakarta.annotation.PostConstruct
     public void purgeStaleApprovals() {
         try {
@@ -6275,8 +6411,8 @@ public class RagService {
             st.effectiveMaxOutput = effectiveMaxOutputOf(resolvedModel);
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
-            emitter.onCompletion(() -> st.disposeSafe());
-            emitter.onError(t -> st.disposeSafe());
+            emitter.onCompletion(() -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
+            emitter.onError(t -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
         } catch (Exception e) {
             log.error("No-knowledge chat error", e);
             sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
