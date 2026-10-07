@@ -670,6 +670,12 @@ export const getShareInfo = token => request(`/share/${token}/info`)
 /** 游客：自己会话的最近历史（刷新恢复用） */
 export const getShareHistory = (token, sessionId, visitorId) =>
   request(`/share/${token}/history?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+/** 游客：自己在该分享链接下的历史会话（{items:[{id,title,updateTime,messageCount}]}，按更新时间倒序） */
+export const listShareSessions = (token, visitorId) =>
+  request(`/share/${token}/sessions?visitorId=${encodeURIComponent(visitorId)}`)
+/** 游客：清除自己在该链接下的全部会话（公用电脑上问完就抹掉，删了找不回） */
+export const clearShareSessions = (token, visitorId) =>
+  request(`/share/${token}/sessions?visitorId=${encodeURIComponent(visitorId)}`, { method: 'DELETE' })
 
 /**
  * 游客流式对话（SSE，免登录）：token 即凭据；服务端按发布者身份检索、游客受限工具集。

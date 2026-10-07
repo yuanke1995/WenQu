@@ -402,6 +402,11 @@
           <div class="pub-status-d">
             {{ pubEnabled ? '拿到下方链接的人可免登录与该智能体对话' : '开启后生成一条公开链接；停用时链接保留、立即失效' }}
           </div>
+          <!-- 发布出去后唯一能回收的信号：被提问了多少次、最近一次何时（对话内容不对发布者开放） -->
+          <div v-if="pubEnabled && pubVisitCount" class="pub-status-stat">
+            <history-outlined />
+            <span>已被提问 {{ pubVisitCount }} 次<template v-if="pubLastVisitAt"> · 最近 {{ fmtTime(pubLastVisitAt) }}</template></span>
+          </div>
         </div>
         <a-switch v-model:checked="pubEnabled" @change="savePublish" />
       </div>
@@ -981,6 +986,9 @@ const pubEnabled = ref(false)
 const pubMcpEnabled = ref(false)
 const pubModelRef = ref('')
 const pubToken = ref('')
+/** 发布后的回收信号（visit_count 每次游客发起对话 +1） */
+const pubVisitCount = ref(0)
+const pubLastVisitAt = ref('')
 /** 分发方式当前页签（三种形态共用一个 token，切页签不产生新链接） */
 const pubTab = ref('link')
 /** iframe 嵌入尺寸：此前 420×640 写死在代码里，用户想改只能复制出去手改。做成可调并实时反映进代码 */
@@ -1006,6 +1014,8 @@ async function openPublish (a) {
   pubMcpEnabled.value = false
   pubModelRef.value = ''
   pubTab.value = 'link'
+  pubVisitCount.value = 0
+  pubLastVisitAt.value = ''
   try {
     const r = await getAgentPublish(a.id)
     if (r && r.success !== false && r.data) {
@@ -1013,6 +1023,8 @@ async function openPublish (a) {
       pubMcpEnabled.value = !!r.data.mcpEnabled
       pubModelRef.value = r.data.modelRef || ''
       pubToken.value = r.data.token || ''
+      pubVisitCount.value = r.data.visitCount || 0
+      pubLastVisitAt.value = r.data.lastVisitAt || ''
     }
   } catch (e) { message.error(e.message || '分享配置加载失败') }
 }
@@ -1629,6 +1641,10 @@ onMounted(async () => { })
 .pub-status-t { font-size: 13px; font-weight: 600; color: var(--app-text); }
 .pub-status.on .pub-status-t { color: var(--app-ok); }
 .pub-status-d { font-size: 12px; color: var(--app-text3); margin-top: 2px; line-height: 1.6; }
+.pub-status-stat {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  font-size: 12px; color: var(--app-text2);
+}
 
 .pub-field { display: flex; flex-direction: column; gap: 6px; }
 .pub-label { font-size: 12px; font-weight: 600; color: var(--app-text2); }

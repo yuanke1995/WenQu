@@ -55,6 +55,8 @@ public final class ConfigDefaults {
     public static final int MCP_SERVER_TIMEOUT_MS = 180_000;
     /** artifact.retentionDays：产物保留天数（0=不清理） */
     public static final int ARTIFACT_RETENTION_DAYS = 90;
+    /** cleanup.visitorIdleDays：访客会话闲置多少天后回收（分享页与 MCP 端点产生，没有主人会去删） */
+    public static final int VISITOR_SESSION_IDLE_DAYS = 30;
     /** agent.routeTimeoutMs：自动派遣路由判定超时（超时回退全部候选） */
     public static final int AGENT_ROUTE_TIMEOUT_MS = 8_000;
     /** sandbox.cleanupIntervalMs：沙盒空闲回收扫描间隔 */

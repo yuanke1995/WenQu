@@ -30,7 +30,8 @@ const AGENTS = [
     published: 1,
     shareConfig: '', workflowId: '', toolKnowledge: 1, createTime: '2026-10-01T10:00:00' }
 ]
-const PUBLISH = { enabled: true, mcpEnabled: true, token: 'tok-abc123', modelRef: '' }
+const PUBLISH = { enabled: true, mcpEnabled: true, token: 'tok-abc123', modelRef: '',
+  visitCount: 7, lastVisitAt: '2026-10-06T15:40:00' }
 
 function serveStatic (page) {
   return page.route('**/*', route => {
@@ -140,6 +141,9 @@ const check = (ok, label, detail = '') => {
     return {
       hasStatus: !!status, statusOn: status ? status.classList.contains('on') : false,
       statusText: status ? (status.querySelector('.pub-status-t') || {}).textContent || '' : '',
+      // 发布后的回收信号（游客被提问了几次）
+      statText: (() => { const e = document.querySelector('.pub-status-stat'); return e ? e.textContent.replace(/\s+/g, ' ').trim() : '' })(),
+      statH: (() => { const e = document.querySelector('.pub-status-stat'); return e ? Math.round(e.getBoundingClientRect().height) : 0 })(),
       tabs: tabs.map(t => t.textContent.trim()),
       activeTab: active ? active.textContent.trim() : '',
       codeText: code ? code.textContent.trim() : '',
@@ -153,6 +157,9 @@ const check = (ok, label, detail = '') => {
     }
   })
   check(m.hasStatus && m.statusOn && m.statusText.includes('已发布'), '状态卡显示「已发布」（一眼看出发没发）', m.statusText)
+  check(m.statText.includes('7 次') && m.statText.includes('2026-10-06'),
+    '状态卡带回收信号「已被提问 N 次 · 最近 …」（发出去之后至少知道有没有人用）', m.statText)
+  check(m.statH > 0 && m.statH < 40, '访问量是一行小字，不把状态卡撑高', `h=${m.statH}`)
   check(m.avatarInTitle, '弹窗标题带智能体头像（品牌标 SVG）')
   check(m.tabs.length === 3 && m.activeTab === '分享链接', '三种分发形态收进页签，默认停在分享链接', m.tabs.join('/'))
   check(m.codeText.includes('/s/tok-abc123'), '分享链接页签给出真实链接', m.codeText)
@@ -232,6 +239,8 @@ const check = (ok, label, detail = '') => {
   const chipAfter = await page.evaluate(() =>
     [...document.querySelectorAll('.ap-card .ap-chip')].some(c => c.textContent.trim() === '已发布'))
   check(!chipAfter, '弹窗里停用发布后，卡片「已发布」标记即时消失')
+  const statAfterOff = await page.evaluate(() => !!document.querySelector('.pub-status-stat'))
+  check(!statAfterOff, '停用后不再显示访问量（这条链接已经接不到提问了）')
 
   await browser.close()
   console.log(bad ? `\n${bad} 项不符` : '\n全部通过')

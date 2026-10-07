@@ -42,14 +42,43 @@ const SHARED = {
 }
 const AGENT = { name: '客服助手', description: '回答产品与订单问题', icon: '📦', isBuiltin: false }
 
+// 游客多会话：一个访客在同一链接下可以有多段对话（列表 + 各自历史）
+const SESSIONS = [
+  { id: 's-share-1', title: '你好', updateTime: '2026-10-07T10:20:00', messageCount: 2 },
+  { id: 's-share-0', title: '退款要几天到账', updateTime: '2026-10-06T09:00:00', messageCount: 4 }
+]
+const HISTORIES = {
+  's-share-1': [{ role: 'user', content: '你好' }, { role: 'ai', content: '你好呀，有什么可以帮你？' }],
+  's-share-0': [{ role: 'user', content: '退款要几天到账' }, { role: 'ai', content: '一般 1-3 个工作日到账。' }]
+}
+
 function serveStatic (page) {
-  return page.route('**/*', route => {
+  // cap：把浏览器发出去的游客请求回传给断言（新对话必须清空 sessionId；清除必须真的发删除）
+  const cap = { chatBodies: [], deletes: [] }
+  page.route('**/*', route => {
     const u = new URL(route.request().url())
     const json = data => route.fulfill({ status: 200, contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ success: true, data }) })
     // 免登录页不走 /auth/me；分享接口按 token 给 mock
     if (u.pathname === '/api/ai/share/session/tok-1') return json(SHARED)
     if (u.pathname === '/api/ai/share/tok-2/info') return json(AGENT)
+    if (u.pathname === '/api/ai/share/tok-2/sessions') {
+      if (route.request().method() === 'DELETE') {
+        cap.deletes.push(u.pathname + u.search)
+        return json({ deleted: SESSIONS.length })
+      }
+      return json({ items: SESSIONS })
+    }
+    if (u.pathname === '/api/ai/share/tok-2/history') {
+      return json(HISTORIES[u.searchParams.get('sessionId')] || [])
+    }
+    // tok-4：会话列表接口 500。断言失败必须显式报错并可重试，不能显示成"还没有历史对话"
+    if (u.pathname === '/api/ai/share/tok-4/sessions') {
+      return route.fulfill({ status: 500, contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ success: false, msg: '历史对话加载失败' }) })
+    }
+    if (u.pathname === '/api/ai/share/tok-4/info') return json(AGENT)
     // 游客流式对话 mock（两个 token 各测一个场景）。
     // 存在意义是**抓阶段提示重复渲染**：真实 SSE 会连发多条 stage，而模板曾同时渲染
     // 「气泡内 m.stage」与「底部 sending && lastAiStage」两个同源节点 ⇒ 同一句话出现两次。
@@ -57,6 +86,7 @@ function serveStatic (page) {
     //           sending 仍是 true ⇒ 页面冻结在「进行中」，正好采样重复渲染。
     //   tok-2 = 完整流：验证结束后阶段提示已撤掉、行数不重复。
     if (u.pathname === '/api/ai/share/tok-3/chat' || u.pathname === '/api/ai/share/tok-2/chat') {
+      try { cap.chatBodies.push(JSON.parse(route.request().postData() || '{}')) } catch (e) { /* 非 JSON 请求体 */ }
       const tok3 = u.pathname.includes('tok-3')
       const frames = [
         'data: ' + JSON.stringify({ type: 'stage', content: '正在检索资料…' }) + '\n\n',
@@ -80,6 +110,7 @@ function serveStatic (page) {
       route.fulfill({ status: 200, body: buf, headers: { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' } })
     } catch (e) { route.abort() }
   })
+  return cap
 }
 
 let bad = 0
@@ -96,7 +127,7 @@ const check = (ok, label, detail = '') => {
     userAgent: 'Mozilla/5.0 (Linux; Android 15; V2318A) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
   })
   const page = await ctx.newPage()
-  await serveStatic(page)
+  const cap = serveStatic(page)
   const errors = []
   page.on('pageerror', e => errors.push(String(e.message)))
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
@@ -214,6 +245,142 @@ const check = (ok, label, detail = '') => {
   check(contrast && contrast.user && contrast.user !== contrast.page,
     '用户气泡底色与页面底色可区分（灰底 + 浅灰气泡 = 隐形）', JSON.stringify(contrast))
 
+  // ---- 游客多会话：聊完一段能开第二段，也能切回上一段 ----
+  // 此前分享页把一个 sessionId 长期钉在 localStorage，同一浏览器永远只在那一条会话里追加：
+  // 上下文越滚越长（每轮带最近 20 轮），之前那段也回不去。建会话后端一直支持
+  // （sessionId 传空即新建，见 ShareController.chat），缺的是前端"清空指针 + 找回旧会话"的入口。
+  const tools = await page.evaluate(() => {
+    const e = document.querySelector('.sc-tool-hist')
+    const b = e ? e.getBoundingClientRect() : null
+    return {
+      hist: !!e,
+      newDisabled: document.querySelector('.sc-tool-new') ? document.querySelector('.sc-tool-new').disabled : true,
+      hitH: b ? Math.round(b.height) : 0,
+      stored: localStorage.getItem('share_session_tok-2')
+    }
+  })
+  check(tools.hist && !tools.newDisabled, '聊过一轮后「新对话」可用（此前页面上没有任何建会话入口）')
+  check(tools.stored === 's-share-1', '首轮 done 的 sessionId 已记忆（刷新能接着聊）', String(tools.stored))
+  check(tools.hitH >= 28, '历史对话按钮可点区域够高', `h=${tools.hitH}`)
+
+  await page.click('.sc-tool-new')
+  await page.waitForTimeout(300)
+  const afterNew = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.sc-row').length,
+    hero: !!document.querySelector('.sc-welcome'),
+    stored: localStorage.getItem('share_session_tok-2')
+  }))
+  check(afterNew.rows === 0 && afterNew.hero && !afterNew.stored,
+    '新对话：清空页面并放弃旧会话指针（回到空态，而不是接着往旧对话后面追加）', JSON.stringify(afterNew))
+
+  await page.fill('.sc-textarea', '第二段的问题')
+  await page.click('.sc-send')
+  await page.waitForTimeout(1200)
+  const lastBody = cap.chatBodies[cap.chatBodies.length - 1] || {}
+  check(lastBody.sessionId === '', '新对话首条消息不带旧 sessionId（后端据此开第二段）', JSON.stringify(lastBody.sessionId))
+
+  await page.click('.sc-tool-hist')
+  await page.waitForTimeout(800)
+  const pop = await page.evaluate(() => ({
+    n: document.querySelectorAll('.sc-hist-item').length,
+    titles: [...document.querySelectorAll('.sc-hist-title')].map(e => e.textContent.trim()),
+    metas: [...document.querySelectorAll('.sc-hist-meta')].map(e => e.textContent.trim()),
+    empty: !!document.querySelector('.sc-hist-empty'),
+    err: !!document.querySelector('.sc-hist-err')
+  }))
+  check(pop.n === 2 && !pop.empty && !pop.err, '历史对话列出自己的两段会话', JSON.stringify(pop.titles))
+  check(pop.metas.some(t => /今天 \d{2}:\d{2}/.test(t)) && pop.metas.some(t => /4 条/.test(t)),
+    '会话行带时间与条数（游客就靠这两个认出是哪一段）', JSON.stringify(pop.metas))
+
+  await page.locator('.sc-hist-item').nth(1).click()
+  await page.waitForTimeout(900)
+  const switched = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.sc-row').length,
+    first: (document.querySelector('.sc-bubble.user') || {}).textContent || '',
+    stored: localStorage.getItem('share_session_tok-2'),
+    // 面板收起不能断"节点不存在"——antd 默认不销毁浮层节点，收起后它只是零高
+    popOpen: (() => { const e = document.querySelector('.sc-hist'); return !!e && e.getBoundingClientRect().height > 0 })()
+  }))
+  check(switched.rows === 2 && switched.first.includes('退款要几天'),
+    '切回上一段：正文换成那一段的消息', `rows=${switched.rows} first=${switched.first}`)
+  check(switched.stored === 's-share-0' && !switched.popOpen,
+    '切换后指针跟着走并收起面板', String(switched.stored))
+
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1000)
+  const restored = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.sc-row').length,
+    first: (document.querySelector('.sc-bubble.user') || {}).textContent || ''
+  }))
+  check(restored.rows === 2 && restored.first.includes('退款要几天'),
+    '刷新后回到切换后的那一段（不是最早记住的那段）', JSON.stringify(restored))
+
+  // 失败必须显式报错并可重试：显示成空列表会被读成"我之前那段没保存"
+  await page.goto(ORIGIN + '/s/tok-4', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.click('.sc-tool-hist')
+  await page.waitForTimeout(800)
+  const failed = await page.evaluate(() => ({
+    err: (document.querySelector('.sc-hist-err') || {}).textContent || '',
+    empty: !!document.querySelector('.sc-hist-empty')
+  }))
+  check(/加载失败/.test(failed.err) && !failed.empty,
+    '会话列表拉取失败：报错 + 重试入口（不许伪装成"还没有历史对话"）', failed.err)
+
+  // ---- 清除我的对话记录（公用电脑上的收尾动作）----
+  // 这段是这次加"历史列表"必然带出来的反面：记录能被下一一个人点开了，就必须能一次抹掉。
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.click('.sc-tool-hist')
+  await page.waitForTimeout(800)
+  const beforeClear = await page.evaluate(() => ({
+    clear: !!document.querySelector('.sc-hist-clear'),
+    yes: !!document.querySelector('.sc-hist-yes')
+  }))
+  check(beforeClear.clear && !beforeClear.yes, '历史面板底部有「清除我的对话记录」')
+  await page.click('.sc-hist-clear')
+  await page.waitForTimeout(300)
+  const asked = await page.evaluate(() => ({
+    ask: (document.querySelector('.sc-hist-ask') || {}).textContent || '',
+    yes: !!document.querySelector('.sc-hist-yes'),
+    sent: 0
+  }))
+  check(asked.yes && /找不回/.test(asked.ask),
+    '清除先就地二次确认（一按就删掉全部记录太危险）', asked.ask)
+  await page.click('.sc-hist-yes')
+  await page.waitForTimeout(900)
+  const cleared = await page.evaluate(() => ({
+    stored: localStorage.getItem('share_session_tok-2'),
+    rows: document.querySelectorAll('.sc-row').length,
+    hero: !!document.querySelector('.sc-welcome'),
+    popOpen: (() => { const e = document.querySelector('.sc-hist'); return !!e && e.getBoundingClientRect().height > 0 })()
+  }))
+  check(cap.deletes.length === 1 && cap.deletes[0].startsWith('/api/ai/share/tok-2/sessions')
+    && /visitorId=/.test(cap.deletes[0]),
+    '确认后才真的发删除（带访客标识，服务端按 uid+智能体圈定范围）', JSON.stringify(cap.deletes))
+  check(!cleared.stored && cleared.rows === 0 && cleared.hero && !cleared.popOpen,
+    '清除后：当前线程清空回到空态、指针作废、面板收起', JSON.stringify(cleared))
+
+  // 嵌入紧凑模式没有头部，会话工具必须还在（收成一行小条）
+  await page.goto(ORIGIN + '/s/tok-2?embed=1', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  const emb = await page.evaluate(() => {
+    const head = document.querySelector('.sc-head')
+    const label = document.querySelector('.sc-tool-t')
+    return {
+      mini: !!head && head.classList.contains('mini'),
+      tools: document.querySelectorAll('.sc-tool').length,
+      brand: !!document.querySelector('.sc-brand'),
+      name: !!document.querySelector('.sc-name'),
+      headH: head ? Math.round(head.getBoundingClientRect().height) : 0,
+      labelDisplay: label ? getComputedStyle(label).display : ''
+    }
+  })
+  check(emb.mini && emb.tools === 2 && !emb.brand && !emb.name,
+    '嵌入模式保留会话工具（小条，不带头部信息）', JSON.stringify(emb))
+  check(emb.labelDisplay === 'none' && emb.headH > 0 && emb.headH <= 56,
+    '窄屏会话按钮收成图标（不挤掉智能体名称）', `h=${emb.headH} label=${emb.labelDisplay}`)
+
   // 进行中（只收到 stage、还没正文）：阶段提示**全页只能有一条**。
   // tok-3 的 mock 只发 stage 帧，响应体结束后前端 pump() 走 done 分支只 settle 不改 sending
   // ⇒ 页面稳定停在「进行中」，可重复采样，不怕时序抖动。
@@ -260,7 +427,7 @@ const check = (ok, label, detail = '') => {
   // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
   const dpage = await ctx.newPage()
   await dpage.setViewportSize({ width: 1280, height: 800 })
-  await serveStatic(dpage)
+  serveStatic(dpage)
   await dpage.goto(ORIGIN + '/shared/tok-1', { waitUntil: 'networkidle' })
   await dpage.waitForTimeout(900)
   const dsh = await dpage.evaluate(() => {
@@ -271,6 +438,9 @@ const check = (ok, label, detail = '') => {
   })
   check(dsh.headW >= 700 && dsh.headW <= 820, '桌面只读分享页保持 820px 居中栏', `w=${dsh.headW}`)
   check(dsh.artH > 0 && dsh.artH < 44, '桌面产物卡保持紧凑行（44px 热区仅触屏）', `h=${dsh.artH}`)
+  // 上面的多会话用例把会话指针写进了 localStorage（同一浏览器上下文共享），
+  // 不清掉就会恢复成有消息的线程，量不到空态排版。
+  await dpage.evaluate(() => { try { localStorage.clear() } catch (e) { /* ignore */ } })
   await dpage.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
   await dpage.waitForTimeout(900)
   const dsc = await dpage.evaluate(() => {

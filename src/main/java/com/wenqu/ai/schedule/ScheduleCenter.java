@@ -180,12 +180,17 @@ public class ScheduleCenter {
                 () -> false,
                 () -> configService.reload(),
                 "暂停后若 Redis 订阅断线，其他实例收不到配置变更广播，期间改过的配置会静默保持旧值直到重启。正常情况下订阅即时生效、暂停无感知，仅在订阅异常时暴露。");
-        // 过期会话/消息物理清理：硬删逻辑删除标记超保留期的会话与其消息（保留期即撤销窗口；间隔/保留期配置化）
-        register("过期会话/消息清理", "硬删逻辑删除标记超保留期的会话与其消息（保留期 cleanup.sessionRetentionDays 即撤销窗口）",
+        // 过期数据清理：① 硬删已软删且超保留期的会话/消息/已停用分享（保留期即撤销窗口）；
+        // ② 回收闲置超期的**访客**会话——分享页与 MCP 端点产生的会话没有主人会去删，不回收就只增不减
+        register("过期会话/消息清理", "硬删已软删且超保留期的会话/消息/已停用分享；并回收闲置超期的访客会话",
                 "cleanup.sessionCleanupIntervalMs",
                 () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
                 () -> false,
-                () -> sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30)));
+                () -> {
+                    sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30));
+                    sessionService.purgeStaleVisitorSessions(
+                            configService.getInt("cleanup.visitorIdleDays", ConfigDefaults.VISITOR_SESSION_IDLE_DAYS));
+                });
         // 产物超期清理：删超期产物的文件与记录（保留期/间隔配置化；保留期 ≤0 = 不清理）。
         // 产物按用户归属持久化，不清理就会随使用无限增长——与聊天图片清理同一口径。
         register("产物超期清理", "删除超过保留期的产物文件与记录（保留期 artifact.retentionDays，≤0 = 不清理）",
@@ -390,7 +395,7 @@ public class ScheduleCenter {
             Map.entry("聊天图片目录清理", List.of("images.chatRetentionMillis")),
             Map.entry("聊天附件超期清理", List.of("chat.uploadRetentionHours")),
             Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
-            Map.entry("过期会话/消息清理", List.of("cleanup.sessionRetentionDays")),
+            Map.entry("过期会话/消息清理", List.of("cleanup.sessionRetentionDays", "cleanup.visitorIdleDays")),
             Map.entry("产物超期清理", List.of("artifact.retentionDays")),
             Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs")),
             Map.entry("文档解析队列扫描", List.of("parse.queue.capacity", "parse.concurrency",

@@ -335,6 +335,26 @@ public class SessionService {
         return info;
     }
 
+    /**
+     * 游客分享页的历史会话：按访客 uid + 智能体取最近若干条（只含有消息的）。
+     * <p>
+     * 不按 uid 一把列出：访客 uid 是浏览器级的（同一浏览器打开多个分享链接共用一个 uid），
+     * 不带 agentId 过滤会把别个智能体的会话标题也暴露出来。
+     * 单页取满即止、不做游标——一个访客在某个智能体下的会话数量由手动点击天然有界。
+     */
+    public List<SessionInfo> listSessionsForAgent(String userId, String agentId, int limit) {
+        if (agentId == null || agentId.isBlank()) return List.of();
+        LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
+        q.eq(Session::getUserId, normalizeUser(userId))
+                .eq(Session::getAgentId, agentId)
+                .gt(Session::getMessageCount, 0)
+                .orderByDesc(Session::getUpdateTime)
+                .orderByDesc(Session::getId)
+                // limit 已收敛进 1~100 的整数，无注入面
+                .last("LIMIT " + Math.max(1, Math.min(limit, 100)));
+        return sessionMapper.selectList(q).stream().map(this::toInfo).toList();
+    }
+
     // ---------- 游标编解码：Base64url("epochMillis|会话ID")，解码失败一律 400（fail-loud，不给静默重启翻页） ----------
 
     private static final Base64.Encoder CURSOR_ENC = Base64.getUrlEncoder().withoutPadding();
@@ -424,6 +444,36 @@ public class SessionService {
         return keyword.replace("\\", "\\\\")
                 .replace("%", "\\%")
                 .replace("_", "\\_");
+    }
+
+    /**
+     * 清除某访客在某个智能体下的全部会话（分享页「清除我的对话记录」），含还没说过话的空会话。
+     * <p>
+     * 待删范围只在 SQL 里按 (user_id, agent_id) 圈定，<b>不接受调用方传入会话 ID 列表</b>：
+     * 游客身份是客户端自报的（visitorId 存 localStorage），能圈定的范围必须严格等于
+     * "这个访客在这个智能体名下的"，否则一次请求就能捎带上别人的会话。
+     * 逐条走 {@link #deleteSession} 是为了复用它已经做的两件事：停用该会话对外的分享、清 Redis 里的消息缓存。
+     *
+     * @return 删除的会话数
+     */
+    public int deleteSessionsOfVisitor(String userId, String agentId) {
+        if (agentId == null || agentId.isBlank()) return 0;
+        final String uid = normalizeUser(userId);
+        LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
+        q.select(Session::getId)
+                .eq(Session::getUserId, uid)
+                .eq(Session::getAgentId, agentId);
+        List<String> ids = sessionMapper.selectList(q).stream().map(Session::getId).toList();
+        int ok = 0;
+        for (String id : ids) {
+            try {
+                deleteSession(uid, id);
+                ok++;
+            } catch (Exception e) {
+                log.warn("[SHARE] 游客清除会话失败 session={}: {}", id, e.getMessage());
+            }
+        }
+        return ok;
     }
 
     /**
@@ -1585,5 +1635,63 @@ public class SessionService {
                     + "（保留 {} 天，截止 {}）", sessions, messages, shares, retentionDays, cutoff);
         }
         return stat;
+    }
+
+    /** 游客会话回收的单批量与轮次上限（一轮最多 2000 条，跑不完下次接着跑） */
+    private static final int VISITOR_SWEEP_BATCH = 200;
+    private static final int VISITOR_SWEEP_ROUNDS = 10;
+
+    /**
+     * 游客会话闲置回收（与 {@link #purgeExpired} 挂在同一个周期任务上）：
+     * 把闲置超过 idleDays 的分享页/MCP 访客会话连同消息一起软删。
+     * <p>
+     * 为什么单独一条口径：这类会话<b>没有人能去删它</b>——访客侧刚有"清除我的对话记录"，
+     * 但访客不会每次都去点（尤其公用电脑上的临时一问），发布者侧也不看这些会话。
+     * 不回收就是只增不减；而它们存的是"以发布者身份检索到的内容"，留得越久，
+     * 一条被转发出去的链接能被翻出的历史信息越多。
+     * <p>
+     * 与 {@link #purgeExpired} 的区别必须分清：那边硬删的是**已软删**的行（撤销窗口到期），
+     * 这里软删的是**仍活跃**的行，判据是会话的最后活跃时间（update_time）。
+     * uid 前缀严格限定访客池，真实用户的会话一条都不碰；软删后仍走 purgeExpired 的保留期，
+     * 也就是说访客会话被回收后还有 {@code cleanup.sessionRetentionDays} 天可以被捞回来。
+     *
+     * @param idleDays 闲置天数（<=0 表示停用该回收）
+     * @return 回收的会话数
+     */
+    public int purgeStaleVisitorSessions(int idleDays) {
+        if (idleDays <= 0) return 0;
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(idleDays);
+        int total = 0;
+        for (int round = 0; round < VISITOR_SWEEP_ROUNDS; round++) {
+            LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
+            q.select(Session::getId)
+                    .lt(Session::getUpdateTime, cutoff)
+                    .and(w -> w.likeRight(Session::getUserId, AgentShareService.VISITOR_UID_PREFIX)
+                            .or().likeRight(Session::getUserId, McpServerService.MCP_VISITOR_UID_PREFIX))
+                    .orderByAsc(Session::getUpdateTime)
+                    // batch 是本类的常量，无注入面
+                    .last("LIMIT " + VISITOR_SWEEP_BATCH);
+            List<String> ids = sessionMapper.selectList(q).stream().map(Session::getId).toList();
+            if (ids.isEmpty()) break;
+            try {
+                // @TableLogic 下 delete(wrapper) 即软删；先消息后会话，中途失败最多留下"列表看不到的孤儿消息"
+                messageMapper.delete(new LambdaQueryWrapper<Message>().in(Message::getSessionId, ids));
+                sessionMapper.delete(new LambdaQueryWrapper<Session>().in(Session::getId, ids));
+            } catch (Exception e) {
+                log.warn("[CLEANUP] 游客会话回收失败（本批 {} 条）: {}", ids.size(), e.getMessage());
+                break;
+            }
+            try {
+                redisTemplate.delete(ids.stream().map(id -> KEY_PREFIX + id).toList());
+            } catch (Exception e) {
+                log.warn("[CLEANUP] 游客会话 Redis 缓存清理失败: {}", e.getMessage());
+            }
+            total += ids.size();
+            if (ids.size() < VISITOR_SWEEP_BATCH) break;
+        }
+        if (total > 0) {
+            log.info("[CLEANUP] 游客会话闲置回收 {} 段（闲置超过 {} 天，截止 {}）", total, idleDays, cutoff);
+        }
+        return total;
     }
 }

@@ -191,17 +191,22 @@ public class AgentController {
         return ResultJson.ok("共享范围已保存");
     }
 
-    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, token, modelRef}；未发布返回 enabled=false（仅可管理者可见）")
+    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, token, modelRef, visitCount, lastVisitAt}；"
+            + "未发布返回 enabled=false（仅可管理者可见）")
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
         if (share == null) return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false));
-        return ResultJson.ok(Map.of(
-                "enabled", share.getEnabled() != null && share.getEnabled() == 1,
-                "mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1,
-                "token", share.getToken() == null ? "" : share.getToken(),
-                "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("enabled", share.getEnabled() != null && share.getEnabled() == 1);
+        out.put("mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1);
+        out.put("token", share.getToken() == null ? "" : share.getToken());
+        out.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
+        // 发布出去之后唯一能看到的反馈：被问过几次、最近一次是什么时候（会话内容不对发布者开放）
+        out.put("visitCount", share.getVisitCount() == null ? 0 : share.getVisitCount());
+        out.put("lastVisitAt", share.getLastVisitAt());
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, modelRef}——开启后 /s/{token} 免登录可对话；"

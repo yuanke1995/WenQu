@@ -361,6 +361,7 @@ public class ConfigService {
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
+        d.put("cleanup.visitorIdleDays", String.valueOf(ConfigDefaults.VISITOR_SESSION_IDLE_DAYS)); // 访客会话闲置回收天数
         d.put("artifact.retentionDays", String.valueOf(ConfigDefaults.ARTIFACT_RETENTION_DAYS));                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
         d.put("schedule.runLogRetentionDays", "7");            // 定时任务执行日志保留天数（超期物理删除）

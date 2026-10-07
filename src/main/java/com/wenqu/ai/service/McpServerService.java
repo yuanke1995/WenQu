@@ -73,8 +73,12 @@ public class McpServerService {
     /** 平台级入口路径（不带 token）：完整对外地址为 {origin}/ai/mcp */
     public static final String PLATFORM_ENDPOINT = "/mcp";
 
-    /** MCP 访客会话 uid 前缀（非真实用户；SessionService 按 owner 精确匹配天然隔离） */
-    private static final String MCP_VISITOR_UID_PREFIX = "mcp-visitor:";
+    /**
+     * MCP 访客会话 uid 前缀（非真实用户；SessionService 按 owner 精确匹配天然隔离）。
+     * public 是为了让 {@code SessionService} 的闲置回收能按同一前缀圈定这批会话——
+     * 它们没有主人可删（外部客户端只持 token），不回收就只增不减。
+     */
+    public static final String MCP_VISITOR_UID_PREFIX = "mcp-visitor:";
     /** 传输上下文 key：分享 token */
     private static final String CTX_TOKEN = "wenqu.mcp.token";
     /** 传输上下文 key：客户端 IP（限频用） */

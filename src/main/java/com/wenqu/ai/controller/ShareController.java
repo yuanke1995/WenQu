@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -36,7 +37,8 @@ import java.util.Map;
  *   <li>身份：检索可见性与个人默认模型按发布者执行（发布即授权）；</li>
  *   <li>能力：RagService 游客模式只暴露知识检索与内置工具，沙盒/产物/MCP/技能不暴露；</li>
  *   <li>会话：游客 uid = "share-visitor:{客户端随机ID}"，SessionService 按 owner 精确匹配，
- *       游客只能读写自己的会话，也不会出现在任何登录用户的会话列表里。</li>
+ *       游客只能读写自己的会话，也不会出现在任何登录用户的会话列表里。
+ *       清除同样只按 (uid, 智能体) 在 SQL 里圈定，不接受调用方传会话 ID。</li>
  * </ul>
  *
  * @author yuanke
@@ -141,6 +143,30 @@ public class ShareController {
         // （首轮能看到图，因为 SSE 下发时已签过）。
         imageUrlSigner.signMessageMedia(history);
         return ResultJson.ok(history);
+    }
+
+    @Operation(summary = "游客历史会话", description = "列出该访客在此分享链接下的会话（按访客 uid + 智能体过滤，只返回自己的）")
+    @GetMapping("/{token}/sessions")
+    public ResultJson sessions(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "访客 ID") @RequestParam("visitorId") String visitorId) {
+        var ctx = agentShareService.resolveGuest(token);
+        return ResultJson.ok(Map.of("items", sessionService.listSessionsForAgent(
+                AgentShareService.visitorUid(visitorId), ctx.agent().getId(), 50)));
+    }
+
+    @Operation(summary = "清除游客会话", description = "删除该访客在此分享链接下的全部会话（公用电脑上的收尾动作；只作用于自己 uid 名下的数据）")
+    @DeleteMapping("/{token}/sessions")
+    public ResultJson clearSessions(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "访客 ID") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        var ctx = agentShareService.resolveGuest(token);
+        int deleted = sessionService.deleteSessionsOfVisitor(
+                AgentShareService.visitorUid(visitorId), ctx.agent().getId());
+        log.info("[AUDIT] 游客清除会话 ip={} agent={} 会话数={}",
+                clientIp(httpRequest), ctx.agent().getId(), deleted);
+        return ResultJson.ok(Map.of("deleted", deleted));
     }
 
     @Operation(summary = "游客对话", description = "免登录流式问答（SSE）：按发布者身份检索、游客受限工具集；按 IP 限频")

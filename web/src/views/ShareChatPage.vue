@@ -1,12 +1,56 @@
 <template>
   <div class="sc-page" :class="{ embed: isEmbed }">
-    <header v-if="!isEmbed" class="sc-head">
-      <div class="sc-avatar"><AgentAvatar :agent="info" :size="36" /></div>
-      <div class="sc-head-t">
-        <div class="sc-name">{{ info.name || '智能体对话' }}</div>
-        <div v-if="info.description" class="sc-desc">{{ info.description }}</div>
+    <header class="sc-head" :class="{ mini: isEmbed }">
+      <template v-if="!isEmbed">
+        <div class="sc-avatar"><AgentAvatar :agent="info" :size="36" /></div>
+        <div class="sc-head-t">
+          <div class="sc-name">{{ info.name || '智能体对话' }}</div>
+          <div v-if="info.description" class="sc-desc">{{ info.description }}</div>
+        </div>
+      </template>
+      <!-- 会话工具：游客一份链接下可以有多段对话（后端 sessionId 传空即建新会话）。
+           embed 紧凑模式没有头部，这里同样渲染，靠 .mini 收成一行小条 -->
+      <div class="sc-tools">
+        <a-popover v-model:open="histOpen" trigger="click" placement="bottomRight" :width="280">
+          <template #content>
+            <div class="sc-hist">
+              <div v-if="histErr" class="sc-hist-err">
+                <span>{{ histErr }}</span>
+                <button class="sc-hist-retry" type="button" @click="loadSessions">重试</button>
+              </div>
+              <div v-else-if="histLoading && !sessions.length" class="sc-hist-empty">加载中…</div>
+              <div v-else-if="!sessions.length" class="sc-hist-empty">还没有历史对话</div>
+              <button v-for="s in sessions" :key="s.id" type="button"
+                      class="sc-hist-item" :class="{ cur: s.id === sessionId }"
+                      :disabled="sending" @click="openSession(s.id)">
+                <span class="sc-hist-title">{{ s.title || '新对话' }}</span>
+                <span class="sc-hist-meta">{{ timeText(s.updateTime) }}<template v-if="s.messageCount"> · {{ s.messageCount }} 条</template></span>
+              </button>
+              <!-- 公用电脑上的收尾动作：问完把自己的记录抹掉。删的是服务端的数据，文案不许写成"仅清本机缓存"。
+                   二次确认就地换掉这一行，不用 a-popconfirm——它会把触发元素包进一层 span，在浮层里铺不满。 -->
+              <div v-if="sessions.length && !histErr" class="sc-hist-foot">
+                <button v-if="!askClear" class="sc-hist-clear" type="button" :disabled="sending" @click="askClear = true">
+                  清除我的对话记录
+                </button>
+                <template v-else>
+                  <span class="sc-hist-ask">清除后这些对话就找不回了</span>
+                  <button class="sc-hist-yes" type="button" @click="clearSessions">清除</button>
+                  <button class="sc-hist-no" type="button" @click="askClear = false">取消</button>
+                </template>
+              </div>
+            </div>
+          </template>
+          <button class="sc-tool sc-tool-hist" type="button" title="历史对话" :disabled="sending" @click="loadSessions">
+            <history-outlined /><span class="sc-tool-t">历史对话</span>
+          </button>
+        </a-popover>
+        <!-- 当前这段还没说过话就不必再开一段（避免点一下把进行中的对话清空） -->
+        <button class="sc-tool sc-tool-new" type="button" title="开始一段新对话"
+                :disabled="sending || !messages.length" @click="newSession">
+          <plus-outlined /><span class="sc-tool-t">新对话</span>
+        </button>
       </div>
-      <a href="/" target="_blank" rel="noopener" class="sc-brand" title="由问渠 WenQu 提供">
+      <a v-if="!isEmbed" href="/" target="_blank" rel="noopener" class="sc-brand" title="由问渠 WenQu 提供">
         <BrandMark :size="18" />
         <span>问渠 WenQu</span>
       </a>
@@ -86,8 +130,8 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
-import { SendOutlined, StopOutlined, CaretRightOutlined } from '@ant-design/icons-vue'
-import { getShareInfo, getShareHistory, sendShareMessage } from '../api'
+import { SendOutlined, StopOutlined, CaretRightOutlined, HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage } from '../api'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import BrandMark from '../components/BrandMark.vue'
 // 正文与浮层与主聊天页同源：图片、引用角标、来源弹窗、灯箱都走同一套，不再各写一份
@@ -104,8 +148,15 @@ const info = ref({ name: '', description: '', icon: '', isBuiltin: false })
 const messages = ref([])
 const draft = ref('')
 const sending = ref(false)
+// 历史消息加载中（首屏恢复与切换会话共用）：空态必须在它结束后才渲染，否则加载过程看起来像"没聊过"
+const loading = ref(false)
 const listEl = ref(null)
-let sessionId = ''
+const sessionId = ref('')
+const sessions = ref([])
+const histOpen = ref(false)
+const histLoading = ref(false)
+const histErr = ref('')
+const askClear = ref(false)
 let controller = null
 
 const visitorId = () => {
@@ -119,13 +170,104 @@ const visitorId = () => {
   } catch (e) { return 'v' + Date.now() }
 }
 
+/** 当前这段会话的指针（只存这一个，其余靠后端按访客 uid + 智能体列出）；传空=不落盘并清掉 */
+function rememberSession (id) {
+  sessionId.value = id || ''
+  try {
+    if (id) localStorage.setItem('share_session_' + token.value, id)
+    else localStorage.removeItem('share_session_' + token.value)
+  } catch (e) { /* 隐私模式下 localStorage 不可用，只是刷新后不记忆，不影响对话 */ }
+}
+
+/** 历史消息 → 页面消息（首屏恢复与切换会话同一份口径） */
+const mapHistory = rows => (Array.isArray(rows) ? rows : [])
+  .filter(m => m && m.content)
+  .map(m => ({
+    role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
+    // 图片与引用随消息一起落库（后端 toMessageMap 同源输出），刷新后不必重问一遍才有图
+    images: Array.isArray(m.images) ? m.images : [],
+    sources: Array.isArray(m.sources) ? m.sources : [],
+    srcOpen: true
+  }))
+
+/** 会话行的时间标签：今天带时分（一天内多段对话靠时间区分），更早给相对/日期标签 */
+function timeText (v) {
+  const d = Array.isArray(v) ? new Date(v[0], (v[1] || 1) - 1, v[2] || 1, v[3] || 0, v[4] || 0)
+    : (v ? new Date(v) : null)
+  if (!d || isNaN(d.getTime())) return ''
+  const now = new Date()
+  const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const t = d.getTime()
+  if (t >= t0) return '今天 ' + d.toTimeString().slice(0, 5)
+  if (t >= t0 - 86400000) return '昨天'
+  if (t >= t0 - 6 * 86400000) return '本周'
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+/** 拉自己的历史会话列表。失败必须显式报错并可重试——显示成空列表会被读成"之前那段没保存" */
+async function loadSessions () {
+  if (histLoading.value) return
+  histLoading.value = true
+  histErr.value = ''
+  askClear.value = false
+  try {
+    const r = await listShareSessions(token.value, visitorId())
+    sessions.value = (r.data && r.data.items) || []
+  } catch (e) {
+    histErr.value = e.message || '历史对话加载失败'
+  } finally {
+    histLoading.value = false
+  }
+}
+
+async function openSession (id) {
+  if (sending.value || id === sessionId.value) { histOpen.value = false; return }
+  histOpen.value = false
+  rememberSession(id)
+  messages.value = []
+  loading.value = true
+  try {
+    const r = await getShareHistory(token.value, id, visitorId())
+    messages.value = mapHistory(r.data)
+  } catch (e) {
+    message.error(e.message || '这段对话加载失败')
+  } finally {
+    loading.value = false
+    scrollBottom()
+  }
+}
+
+/** 开一段新对话：只清指针与页面，会话仍由后端在首条消息时创建（不会攒出空会话） */
+function newSession () {
+  if (sending.value || !messages.value.length) return
+  rememberSession('')
+  messages.value = []
+}
+
+/** 清除自己在该链接下的全部对话（服务端删数据，不是只清本机缓存）；成功后当前线程一并清空 */
+async function clearSessions () {
+  if (sending.value) return
+  try {
+    const r = await clearShareSessions(token.value, visitorId())
+    const n = (r.data && r.data.deleted) || 0
+    sessions.value = []
+    askClear.value = false
+    rememberSession('')
+    messages.value = []
+    histOpen.value = false
+    message.success(n ? '已清除 ' + n + ' 段对话' : '已清除')
+  } catch (e) {
+    message.error(e.message || '清除失败，请重试')
+  }
+}
+
 const scrollBottom = () => nextTick(() => {
   if (listEl.value) listEl.value.scrollTop = listEl.value.scrollHeight
 })
 
 onMounted(async () => {
   // 访客会话绑定到 token（不同分享互不串会话）
-  try { sessionId = localStorage.getItem('share_session_' + token.value) || '' } catch (e) { sessionId = '' }
+  try { sessionId.value = localStorage.getItem('share_session_' + token.value) || '' } catch (e) { sessionId.value = '' }
   try {
     const r = await getShareInfo(token.value)
     if (r && r.success !== false) info.value = r.data || {}
@@ -134,22 +276,16 @@ onMounted(async () => {
     return
   }
   // 刷新恢复：有会话则拉最近历史（只能取到自己的会话，后端按访客 uid 校验）
-  if (sessionId) {
+  if (sessionId.value) {
+    loading.value = true
     try {
-      const r = await getShareHistory(token.value, sessionId, visitorId())
-      if (r && r.success !== false && Array.isArray(r.data) && r.data.length) {
-        messages.value = r.data
-          .filter(m => m && m.content)
-          .map(m => ({
-            role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
-            // 图片与引用随消息一起落库（后端 toMessageMap 同源输出），刷新后不必重问一遍才有图
-            images: Array.isArray(m.images) ? m.images : [],
-            sources: Array.isArray(m.sources) ? m.sources : [],
-            srcOpen: true
-          }))
-        scrollBottom()
-      }
-    } catch (e) { /* 历史失败不阻塞对话 */ }
+      const r = await getShareHistory(token.value, sessionId.value, visitorId())
+      messages.value = mapHistory(r.data)
+      // 取不到消息说明这个指针不属于当前访客（换浏览器/访客标识被清）——留着它每次提问都会被
+      // 后端按归属判 403，且此时页面是空态、没有入口可清，必须就地放弃、当新对话开。
+      if (!messages.value.length) rememberSession('')
+      scrollBottom()
+    } catch (e) { /* 历史失败不阻塞对话 */ } finally { loading.value = false }
   }
 })
 
@@ -167,7 +303,7 @@ function send () {
   sending.value = true
   scrollBottom()
   controller = new AbortController()
-  sendShareMessage(token.value, { sessionId, visitorId: visitorId(), message: text }, {
+  sendShareMessage(token.value, { sessionId: sessionId.value, visitorId: visitorId(), message: text }, {
     signal: controller.signal,
     onStage: s => { ai.stage = s; scrollBottom() },
     onToken: t => {
@@ -195,10 +331,7 @@ function send () {
         if (typeof p.finalContent === 'string' && p.finalContent !== '') ai.content = p.finalContent
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复
-      if (d && d.sessionId) {
-        sessionId = d.sessionId
-        try { localStorage.setItem('share_session_' + token.value, sessionId) } catch (e) { /* ignore */ }
-      }
+      if (d && d.sessionId) rememberSession(d.sessionId)
       scrollBottom()
     },
     onError: msg => {
@@ -257,6 +390,65 @@ function stop () {
   padding: 5px 10px; border-radius: 999px; border: 1px solid var(--app-border);
 }
 .sc-brand:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+
+/* ---------- 会话工具（历史对话 / 新对话）---------- */
+.sc-tools { flex: none; display: flex; align-items: center; gap: 6px; }
+.sc-tool {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--app-border);
+  background: transparent; color: var(--app-text2); cursor: pointer;
+  font-size: 12.5px; font-family: inherit; line-height: 1.4;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.sc-tool:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.sc-tool:disabled { color: var(--app-text3); cursor: not-allowed; opacity: .55; }
+/* embed 紧凑模式：头部只剩这一行工具，右对齐收成小条 */
+.sc-head.mini { justify-content: flex-end; padding: 6px 10px; }
+
+/* 历史对话面板：节点由本页渲染（teleport 后 scoped 属性仍在），只出自己的列表样式 */
+.sc-hist { max-height: 320px; overflow-y: auto; }
+.sc-hist-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  padding: 8px 10px; border: none; border-radius: 8px; background: transparent;
+  cursor: pointer; font-family: inherit; color: var(--app-text);
+}
+.sc-hist-item:hover:not(:disabled) { background: var(--app-panel-2); }
+.sc-hist-item.cur { background: var(--app-accent-weak); }
+.sc-hist-item:disabled { cursor: not-allowed; opacity: .6; }
+.sc-hist-title {
+  font-size: 13px; line-height: 1.45; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sc-hist-meta { font-size: 11.5px; color: var(--app-text3); }
+.sc-hist-empty { padding: 12px 10px; font-size: 12.5px; color: var(--app-text3); text-align: center; }
+.sc-hist-err {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 6px; font-size: 12.5px; color: var(--app-danger-text);
+}
+.sc-hist-retry {
+  flex: none; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--app-danger-border);
+  background: var(--app-danger-weak); color: var(--app-danger-text); cursor: pointer;
+  font-size: 12px; font-family: inherit;
+}
+/* 清除入口：列表底部一条分隔 + 危险色整行按钮；点下去就地换成"问句 + 清除/取消" */
+.sc-hist-foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--app-border);
+}
+.sc-hist-clear {
+  flex: 1; min-width: 0; padding: 6px 8px; border: none; border-radius: 8px;
+  background: transparent; color: var(--app-danger-text); cursor: pointer;
+  font-size: 12.5px; font-family: inherit; text-align: center;
+}
+.sc-hist-clear:hover:not(:disabled) { background: var(--app-danger-weak); }
+.sc-hist-clear:disabled { opacity: .55; cursor: not-allowed; }
+.sc-hist-ask { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); }
+.sc-hist-yes, .sc-hist-no {
+  flex: none; padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.sc-hist-yes { border: 1px solid var(--app-danger-border); background: var(--app-danger-weak); color: var(--app-danger-text); }
+.sc-hist-no { border: 1px solid var(--app-border); background: transparent; color: var(--app-text2); }
 
 /* ---------- 消息区：与 ChatPage 同一套设计语言 ----------
    之前分享页自创了另一套（用户蓝底 + AI 白底带边框 + 消息侧挂头像），
@@ -382,6 +574,9 @@ function stop () {
   .sc-desc { -webkit-line-clamp: 1; }
   .sc-brand span { display: none; }
   .sc-brand { padding: 5px 7px; }
+  /* 会话工具收成图标（窄屏头部要给名称留位），热区补到 34px */
+  .sc-tool-t { display: none; }
+  .sc-tool { padding: 7px 9px; font-size: 14px; }
   .sc-list { padding: 14px 12px 8px; overscroll-behavior-y: contain; }
   .sc-row { margin-bottom: 14px; }
   .sc-welcome { padding: 40px 8px 24px; }
