@@ -323,7 +323,11 @@ public class DynamicOpenAiChatModel implements ChatModel {
                 .apiKey(apiKey)
                 // 归一化后 path 恒非空（含默认值），显式设置等价 Spring AI 默认行为；
                 // GLM(/v4)、方舟(/v3)、千帆(/v2) 等非 /v1 网关由此支持热切换
-                .completionsPath(completionsPath);
+                .completionsPath(completionsPath)
+                // 网关共享 HTTP 客户端（连接超时/读超时/流式路径说明见 GatewayHttpClients）：
+                // 默认降级实例无任何超时，网关挂起时调用线程无限等待
+                .webClientBuilder(com.wenqu.ai.config.GatewayHttpClients.webClientBuilder())
+                .restClientBuilder(com.wenqu.ai.config.GatewayHttpClients.restClientBuilder());
         OpenAiChatModel.Builder builder = OpenAiChatModel.builder()
                 .openAiApi(apiBuilder.build())
                 // 空 default options：模型名/温度等均由 per-request options 提供（RagService 三处调用均已显式传入）

@@ -38,7 +38,7 @@ services:
       MYSQL_DATABASE: ${DB_NAME:-wenqu_ai}
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
       TZ: Asia/Shanghai
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --max_connections=${MYSQL_MAX_CONNECTIONS:-500}
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -71,8 +71,13 @@ services:
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME:-wenqu_ai}
       DB_USERNAME: ${DB_USERNAME:-root}
-      # JVM 内存（容器内存限制的 60~75%；如 deploy 时 --memory=2g 建议 -Xmx1400m）
-      JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx1400m}
+      # JVM 内存：按 8C16G 单机（本 compose 全家桶同机）估算——app 堆 6g，其余留给
+      # MySQL(≈2g)/Meili(≈1g)/Redis(≈1g)/操作系统。小内存机器务必显式覆盖（如 --memory=2g
+      # 容器建议 -Xmx1400m）。DB_POOL_MAX=40 时 MySQL max_connections 同步上调（见上方 mysql 服务）
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx6g}
+      # 连接池（与 application.yml 默认值一致，单机部署可在此覆盖）
+      DB_POOL_MAX: ${DB_POOL_MAX:-40}
+      REDIS_POOL_MAX: ${REDIS_POOL_MAX:-64}
       # 可选
       REDIS_HOST: redis-stack
       REDIS_PORT: "6379"
@@ -87,6 +92,8 @@ services:
       AI_MEILI_INDEX: ${AI_MEILI_INDEX:-ai-doc-chunks}
     volumes:
       - app-data:/app/data
+    # app 容器内存上限：防堆外/元空间增长挤占同机中间件；堆 6g + 堆外余量 ≈ 8g
+    mem_limit: ${APP_MEM_LIMIT:-8g}
     depends_on:
       mysql:
         condition: service_healthy

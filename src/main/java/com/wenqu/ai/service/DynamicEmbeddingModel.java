@@ -159,7 +159,11 @@ public class DynamicEmbeddingModel {
         OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
-                .embeddingsPath(embeddingsPath);
+                .embeddingsPath(embeddingsPath)
+                // 网关共享 HTTP 客户端（连接/读超时，见 GatewayHttpClients）：嵌入是实体调用，
+                // 无读超时时网关挂起会让索引线程无限等待
+                .webClientBuilder(com.wenqu.ai.config.GatewayHttpClients.webClientBuilder())
+                .restClientBuilder(com.wenqu.ai.config.GatewayHttpClients.restClientBuilder());
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
                 .model(model)
                 .build();
@@ -184,6 +188,8 @@ public class DynamicEmbeddingModel {
                 .baseUrl(np[0])
                 .apiKey(apiKey == null ? "" : apiKey)
                 .embeddingsPath(np[1])
+                .webClientBuilder(com.wenqu.ai.config.GatewayHttpClients.webClientBuilder())
+                .restClientBuilder(com.wenqu.ai.config.GatewayHttpClients.restClientBuilder())
                 .build();
         OpenAiEmbeddingModel probeModel = new OpenAiEmbeddingModel(api, MetadataMode.EMBED,
                 OpenAiEmbeddingOptions.builder().model(model).build(), new RetryTemplate(),

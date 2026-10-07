@@ -15,8 +15,8 @@ spring:
   # 文件上传物理上限（防内存攻击；业务上限由 c_ai_config 的 upload.maxFileSize 控制，保存即生效）
   servlet:
     multipart:
-      max-file-size: 1024MB
-      max-request-size: 1100MB
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:256MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:260MB}
 
   # 数据库（独立库；主机/端口/库名环境变量化以支持容器部署，密码必须通过 DB_PASSWORD 提供，缺失启动即失败）
   datasource:
@@ -26,6 +26,14 @@ spring:
     url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:wenqu_ai}?useUnicode=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&nullCatalogMeansCurrent=true
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD}
+    # 连接池显式配置：默认 maximum-pool-size=10 是百级并发的第一个数据库瓶颈——每请求一次
+    # 用户身份查询 + 每轮十几次短读写 + 每次 LLM 调用一条用量台账写。connection-timeout 调短：
+    # 与其排队 30s 后雪崩，不如 10s 快速失败让上层引导重试。MySQL 侧需同步上调 max_connections
+    # （默认 151，见 docker-compose）
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:40}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: ${DB_POOL_TIMEOUT_MS:10000}
 
   # 启动时自动执行 schema.sql 建表（CREATE TABLE IF NOT EXISTS，重复执行安全）
   sql:
@@ -40,6 +48,15 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DB:0}
+      # Jedis 池显式配置：默认 max-active=8 且 max-wait=-1（无限阻塞等待）——百级并发下 8 个连接
+      # 被限流计数/会话历史/配置刷新抢空，借不到连接的请求线程会无限期挂起，连 Tomcat 线程一起拖住。
+      # max-wait 调短为快速失败；订阅（配置/供应商广播）走裸连接不占池
+      jedis:
+        pool:
+          max-active: ${REDIS_POOL_MAX:64}
+          max-idle: ${REDIS_POOL_MAX_IDLE:32}
+          min-idle: ${REDIS_POOL_MIN_IDLE:8}
+          max-wait: ${REDIS_POOL_WAIT_MS:2000}
 
   ai:
     # 模型密钥不在 yml/环境变量留明文：问答/向量客户端由 DynamicOpenAiChatModel/DynamicEmbeddingModel
