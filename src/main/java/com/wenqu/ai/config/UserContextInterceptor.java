@@ -27,6 +27,19 @@ public class UserContextInterceptor implements HandlerInterceptor {
     /** 请求属性名：本次请求已通过登录令牌认证 */
     public static final String ATTR_AUTHENTICATED = "ai.authenticated";
 
+    /**
+     * 用户档案 60s 进程内缓存：每个 /api/** 请求都会走 {@code selectById}（JWT 是本地校验无 IO，
+     * 用户行是唯一每请求必查的数据库热点）。TTL 内的禁用/角色变更最迟 60s 生效——管理动作的
+     * 可接受延迟；负结果（不存在/查询异常）不缓存，瞬态故障不放大成 401。
+     * 容量上界 = 登录过的不同 uid 数（过期条目惰性失效），企业规模下可忽略。
+     */
+    private record CachedUser(User user, long expireAt) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, CachedUser> USER_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long USER_CACHE_TTL_MS = 60_000;
+
     private final UserMapper userMapper;
     private final AuthService authService;
     private final ObjectMapper objectMapper;
@@ -64,8 +77,16 @@ public class UserContextInterceptor implements HandlerInterceptor {
 
     private User safeLoad(String uid) {
         if (uid == null || uid.isBlank()) return null;
+        CachedUser cached = USER_CACHE.get(uid);
+        if (cached != null && cached.expireAt() > System.currentTimeMillis()) {
+            return cached.user();
+        }
         try {
-            return userMapper.selectById(uid);
+            User u = userMapper.selectById(uid);
+            if (u != null) {
+                USER_CACHE.put(uid, new CachedUser(u, System.currentTimeMillis() + USER_CACHE_TTL_MS));
+            }
+            return u;
         } catch (Exception ignored) {
             // 用户表未就绪/查询异常都不应阻断请求：降级为匿名可见范围
             return null;

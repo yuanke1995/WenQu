@@ -341,15 +341,19 @@ public class RagService {
     /** 站内通知：工具审批待决（tool.approval）通知发起人。旁路语义 */
     private final NotificationService notificationService;
 
-    /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积） */
-    private final ExecutorService rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
+    /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
+     *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
+     *  （≤8s），固定 2 线程在百级并发下排队到超时、改写静默降级为原句——不报错但召回质量塌方 */
+    private ThreadPoolExecutor rewriteExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "rewrite");
         t.setDaemon(true);
         return t;
     });
 
-    /** 历史压缩专用线程池：与改写池分开（同轮可能先压缩再改写，共用会互相排队拉长首字时延） */
-    private final ExecutorService compressExecutor = Executors.newSingleThreadExecutor(r -> {
+    /** 历史压缩专用线程池：与改写池分开（同轮可能先压缩再改写，共用会互相排队拉长首字时延）。
+     *  线程数随 chat.pipelineThreads 联动（syncPipelineSize）：压缩是偶发的长 LLM 调用（≤20s），
+     *  排队只延迟压缩不影响本轮可答性，给流水线并发的四分之一即可 */
+    private ThreadPoolExecutor compressExecutor = (ThreadPoolExecutor) Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "history-compress");
         t.setDaemon(true);
         return t;
@@ -364,12 +368,14 @@ public class RagService {
         syncPipelineSize();
     }
 
-    /** 提交前同步流水线线程数（chat.pipelineThreads，DB 配置保存即生效） */
+    /** 提交前同步流水线线程数（chat.pipelineThreads，DB 配置保存即生效）。
+     *  默认 32：8 线程 + 64 队列在百级并发下第 73 个起直接「系统繁忙」，且深度思考轮占线程
+     *  可达 50s——32/200 是 8C16G 单机 100 并发生成目标的起点，压测后可在设置页继续上调 */
     private void syncPipelineSize() {
-        int n = Math.max(2, configService.getInt("chat.pipelineThreads", 8));
+        int n = Math.max(2, configService.getInt("chat.pipelineThreads", 32));
         if (pipelineExecutor == null) {
             pipelineExecutor = new ThreadPoolExecutor(n, n, 0L, TimeUnit.MILLISECONDS,
-                    new ArrayBlockingQueue<>(64), r -> {
+                    new ArrayBlockingQueue<>(200), r -> {
                 Thread t = new Thread(r, "chat-pipeline");
                 t.setDaemon(true);
                 return t;
@@ -380,6 +386,18 @@ public class RagService {
             pipelineExecutor.setMaximumPoolSize(n);
             log.info("[Chat] 问答流水线线程数调整为 {}", n);
         }
+        // 辅助池联动：改写=每轮一次的短调用给一半流水线并发，压缩=偶发长调用给四分之一。
+        // 不联动的话，流水线扩到百级而辅助池固定 2/1，改写与压缩成片超时静默降级
+        resizePool(rewriteExecutor, Math.max(4, n / 2));
+        resizePool(compressExecutor, Math.max(2, n / 4));
+    }
+
+    /** 有界线程池安全调容：全程维持 max ≥ core 的不变量（先抬 max、core 归位后再收 max） */
+    private static void resizePool(java.util.concurrent.ThreadPoolExecutor pool, int n) {
+        if (n <= 0 || n == pool.getCorePoolSize()) return;
+        pool.setMaximumPoolSize(Math.max(pool.getMaximumPoolSize(), n));
+        pool.setCorePoolSize(n);
+        pool.setMaximumPoolSize(n);
     }
 
     @jakarta.annotation.PreDestroy
@@ -584,6 +602,15 @@ public class RagService {
         // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
         // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
         final boolean useDeepThink = deepThink;
+        // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
+        // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑
+        // 与 askUser 等待期同样占坑——等待作答时再发新消息正是要挡的交错。限频/归属校验已在上游。
+        if (TURN_IN_FLIGHT.putIfAbsent(sessionId, Boolean.TRUE) != null) {
+            log.warn("[FAIL-LOUD] 同会话并发问答被拒: session={}", sessionId);
+            sendSseEvent(emitter, "error", "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息", sessionId);
+            completeEmitter(emitter);
+            return;
+        }
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
@@ -617,6 +644,7 @@ public class RagService {
                         agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
                         historyRefs, reasoningLevel, requestedContextWindow, editVariantGroup);
                 } finally {
+                    TURN_IN_FLIGHT.remove(sessionId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
@@ -625,6 +653,8 @@ public class RagService {
                 }
             });
         } catch (RejectedExecutionException e) {
+            // 任务未入队即拒绝：轮级互斥标记须同步放掉，否则该会话从此被永久挡在门外
+            TURN_IN_FLIGHT.remove(sessionId);
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
             log.warn("[FAIL-LOUD] 问答流水线繁忙，拒绝请求（排队 {}）: session={}", queued, sessionId);
@@ -1955,10 +1985,21 @@ public class RagService {
     /** 心跳间隔 15s：小于常见中间代理 60s 读超时与前端 120s 空闲看门狗，留足余量。 */
     private static final long TOOL_HEARTBEAT_INTERVAL_MS = 15_000;
 
-    /** 心跳调度线程（全进程共享一个，守护线程不阻塞退出）。 */
+    /** SSE 心跳调度池（2 线程，守护）：仅供 15s keepalive 注释行下发。与看门狗分池——心跳是
+     *  高频周期任务（百级并发 = 每 15s 约两百次 send），看门狗是整轮截断的安全网：同队时一个
+     *  慢客户端卡住的 send 会连看门狗一起停摆，全平台的截断机制失效 */
     private static final java.util.concurrent.ScheduledExecutorService TOOL_HEARTBEAT_POOL =
+            java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
+                Thread t = new Thread(r, "sse-keepalive");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 整轮存活看门狗（独立单线程，与心跳分池见上）：检查本身无 IO。到点的截断收尾虽有阻塞
+     *  send，但失联客户端快速抛错、健康客户端 send 极短，独占线程不与两百次/15s 的心跳互相放大 */
+    private static final java.util.concurrent.ScheduledExecutorService TURN_WATCHDOG_POOL =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "tool-heartbeat");
+                Thread t = new Thread(r, "turn-watchdog");
                 t.setDaemon(true);
                 return t;
             });
@@ -2080,7 +2121,7 @@ public class RagService {
      */
     private java.util.concurrent.ScheduledFuture<?> startTurnWatchdog(SseEmitter emitter, String sessionId,
                                                                       TurnDeadline d) {
-        java.util.concurrent.ScheduledFuture<?> f = TOOL_HEARTBEAT_POOL.scheduleWithFixedDelay(() -> {
+        java.util.concurrent.ScheduledFuture<?> f = TURN_WATCHDOG_POOL.scheduleWithFixedDelay(() -> {
             long machineMs = d.machineMs();
             if (machineMs <= d.budgetMs) return;
             if (!d.fired.compareAndSet(false, true)) return;
@@ -2733,7 +2774,8 @@ public class RagService {
                 // IllegalStateException（Spring AI 1.1.8 实测坑）。
                 .toolCallbacks(toolCallbacks)
                 // 工具上下文：把当前会话 ID 与用户 ID 注入，供产物交付、沙盒等工具定位会话与归属。
-                // userId 必须随 toolContext 透传——工具回调跑在 Spring AI 响应式 I/O 线程上，
+                // userId 必须随 toolContext 透传——工具回调跑在 Reactor boundedElastic 线程上
+                // （Spring AI 1.1.8 ToolCallAdvisor 对阻塞工具执行 subscribeOn，不占网关连接线程），
                 // 读 RequestUser.uid()（ThreadLocal）跨线程失效会回落成 anonymous，导致沙盒建到 shared/anonymous。
                 // 另注入 askUser 执行器（闭包持有本轮会话态 st）：提问卡 SSE、阻塞等待、超时收尾都依赖它。
                 .toolContext(toolContext(st))
@@ -5477,6 +5519,11 @@ public class RagService {
 
     /** 活跃 SSE 通道的断开标记（emitter → 已断开）。仅内部查表用；发送失败即打标、完成回调即移除，不会长期滞留 */
     private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, java.util.concurrent.atomic.AtomicBoolean> ACTIVE_SSE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 会话轮级互斥标记：sessionId → 在跑。随轮进出（chat 入口/流水线 finally），进程重启即清空
+     *  （与挂起恢复管道同为内存态，语义一致） */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> TURN_IN_FLIGHT =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 工具执行审批挂起项：approvalId → 等待用户批准（内存态；进程重启/刷新页面即失效，超时自动拒绝） */

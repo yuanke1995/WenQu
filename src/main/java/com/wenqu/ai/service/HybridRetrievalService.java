@@ -254,12 +254,25 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 多路并行检索线程池（daemon，供深度思考多路检索用） */
-    private final ExecutorService multiSearchPool = Executors.newFixedThreadPool(4, r -> {
+     * 多路并行检索线程池（daemon，供深度思考多路检索用）。线程数随 chat.pipelineThreads 联动
+     * （searchMulti 入口对齐）：深度思考每轮最多并行 maxSubQueries 路，固定 4 线程在百级并发下
+     * 让多路检索退化成串行、整段撞 8s 总超时后只保留首路——多路召回名存实亡
+     */
+    private ThreadPoolExecutor multiSearchPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "multi-search");
         t.setDaemon(true);
         return t;
     });
+
+    /** 与 chat.pipelineThreads 对齐（每次多路检索前校一次，int 比较开销可忽略）：单路检索是
+     *  亚秒~秒级任务，给流水线同等并发即可让 N 路 × M 轮的任务波次摊平 */
+    private void syncMultiSearchSize() {
+        int n = Math.max(4, configService.getInt("chat.pipelineThreads", 32));
+        if (n == multiSearchPool.getCorePoolSize()) return;
+        multiSearchPool.setMaximumPoolSize(Math.max(multiSearchPool.getMaximumPoolSize(), n));
+        multiSearchPool.setCorePoolSize(n);
+        multiSearchPool.setMaximumPoolSize(n);
+    }
 
     /**
      * MySQL 关键词降级检索池：唯一用途是给阻塞式 LIKE 查询套上超时（keywordTimeoutMs）。
@@ -303,7 +316,7 @@ public class HybridRetrievalService {
      * 多路检索；{@code adaptiveTopK} 见 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
      * <p><b>多路的补采按路数收敛</b>：≤2 路开（每路补 1 次、最坏 topK 翻倍，总 KNN 成本 ≤4 倍，
      * 且多路本就为拆子问题取多样性，收益最大）；≥3 路不开——N 路同步放大 KNN 而
-     * {@code multiSearchPool} 仅 4 线程，成本乘路数后超时风险陡增，此时归并后的多路共识与
+     * {@code multiSearchPool} 线程有限（随 chat.pipelineThreads 联动，终归有上界），成本乘路数后超时风险陡增，此时归并后的多路共识与
      * 多样性收益已能覆盖名额损失。
      */
     public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag,
@@ -313,6 +326,7 @@ public class HybridRetrievalService {
         if (qs.size() <= 1) {
             return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds, adaptiveTopK);
         }
+        syncMultiSearchSize();
         try {
             // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
             // 必须在提交前取快照、在子线程内重放；否则多路并行检索静默退化为全局配置（库级/智能体级策略全丢）
