@@ -16,7 +16,7 @@ import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, snapshotVersion, applyVersion, toolCallsView, histItemDigest,
-         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions } from './projections'
+         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, PASTE_TEXT_BASE } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -538,9 +538,9 @@ const extOf = name => {
   return dot < 0 ? '' : name.slice(dot + 1).toLowerCase()
 }
 /** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去）；
- *  list 缺省挂主输入框，编辑卡复用时传自己的列表 */
-const uploadOneFile = async (f, list = pendingFiles) => {
-  const item = { name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '' }
+ *  list 缺省挂主输入框，编辑卡复用时传自己的列表；extra 是只给本地呈现用的附加字段（如粘贴文本的原文） */
+const uploadOneFile = async (f, list = pendingFiles, extra) => {
+  const item = { name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) }
   list.value.push(item)
   try {
     const r = await uploadChatAttachment(f)
@@ -561,7 +561,7 @@ const uploadOneFile = async (f, list = pendingFiles) => {
 const hasUploadingFile = () => pendingFiles.value.some(f => f.uploading)
 /** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致）；
  *  target 缺省挂主输入框，编辑卡复用时传 { images, files } 两个 ref 列表 */
-const addFiles = (files, target) => {
+const addFiles = (files, target, extra) => {
   const imgList = target?.images || pendingImages
   const fileList = target?.files || pendingFiles
   for (const f of files) {
@@ -577,10 +577,37 @@ const addFiles = (files, target) => {
       continue
     }
     if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${f.name}`); continue }
-    uploadOneFile(f, fileList)
+    uploadOneFile(f, fileList, extra)
   }
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
+// ==================== 长文本粘贴 →「粘贴的文本」附件 ====================
+// 整篇文档、大段日志塞进输入框既读不清也发不出去（问题正文有长度上限，超限直接报错）。
+// 超过阈值就把它包成一个 .txt 文件，走与「选择文件」完全相同的管线：卡片呈现、随本轮上传、
+// 内容进上下文。粘贴文本的原文只留在内存（卡片点开看全文用），落库的仍只有名称/类型/体积。
+const PASTE_TEXT_MIN_CHARS = 800
+/** 同一次可连续粘贴多段：重名时补序号，避免编辑卡按名称回填体积时串号 */
+const pasteNameOf = list => {
+  const used = new Set((list || []).map(f => f.name))
+  if (!used.has(`${PASTE_TEXT_BASE}.txt`)) return `${PASTE_TEXT_BASE}.txt`
+  let n = 2
+  while (used.has(`${PASTE_TEXT_BASE} ${n}.txt`)) n++
+  return `${PASTE_TEXT_BASE} ${n}.txt`
+}
+/** 输入框粘贴事件里取长文本：带图片的粘贴让给图片管线，短文本照常内联可编辑。
+ *  返回 true 表示这次粘贴已被消费（原文不再落进输入框），调用方按需要截断冒泡 */
+const takePastedText = (e, target) => {
+  const cd = e.clipboardData
+  if (!cd || Array.from(cd.files || []).some(f => f.type.startsWith('image/'))) return false
+  const raw = cd.getData('text/plain')
+  if (!raw || raw.length < PASTE_TEXT_MIN_CHARS) return false
+  const fileList = target?.files || pendingFiles
+  e.preventDefault()
+  addFiles([new File([raw], pasteNameOf(fileList.value), { type: 'text/plain' })], target,
+    { paste: true, text: raw })
+  message.info('粘贴的长文本已转为附件，点卡片可查看全文')
+  return true
+}
 // ==================== @ 引用（本轮显式指定知识库/文档/智能体） ====================
 // 语义：kb=本轮检索收窄到该库；doc=该文档内容块强制前置进上下文（不经检索、不受相关性门/去冗余约束）；
 //       agent=临时委派该智能体作答本轮（人设/知识库/工具整轮按它执行，会话绑定不变——落点在后端轮级覆盖）。
@@ -896,7 +923,7 @@ const send = () => {
     .map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
   const attsMeta = pendingFiles.value
     .filter(f => f.fileId && !f.error)
-    .map(f => ({ name: f.name, mime: f.mime, size: f.size }))
+    .map(f => ({ name: f.name, mime: f.mime, size: f.size, paste: !!f.paste, text: f.text }))
   const skills = [...pickedSkills.value]
   // @ 引用（本轮显式指定的知识库/文档）：与问题一起提交，服务端按可见性校验后收窄检索范围/强制前置
   const mentions = pendingMentions.value.map(m => ({ type: m.type, id: m.id, name: m.name, kbId: m.kbId || '' }))
@@ -1590,6 +1617,8 @@ const ready = async () => {
     // 图片与附件
     pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile,
+    // 长文本粘贴转附件
+    takePastedText,
     // @ 引用（本轮显式指定知识库/文档/智能体）
     mentionOpen, mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
     mentionHi, MAX_MENTIONS, isMentioned, toggleMention, removeMention, switchMentionTab,

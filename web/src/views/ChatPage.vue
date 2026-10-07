@@ -106,12 +106,23 @@
                      :alt="'上传图片' + (ui + 1)" @click="openPreviewFromMsg(m, ui)" @error="onImgError" />
               </div>
               <div v-if="m.role === 'user' && m.attachments && m.attachments.length" class="msg-files">
-                <span v-for="(a, fi) in m.attachments" :key="fi" class="msg-file"
-                      :title="(a.mime || '附件') + (a.size ? ' · ' + fmtSize(a.size) : '')">
-                  <paper-clip-outlined class="msg-file-ic" />
-                  <span class="msg-file-name">{{ a.name }}</span>
-                  <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
-                </span>
+                <template v-for="(a, fi) in m.attachments" :key="fi">
+                  <span v-if="isPastedText(a)" class="msg-file paste-card"
+                        :title="a.text ? '点击查看粘贴的全文' : '粘贴文本的正文未随历史记录保留'"
+                        @click="openPasteView(a)">
+                    <span class="paste-card-ic"><file-text-outlined /></span>
+                    <span class="paste-card-txt">
+                      <span class="paste-card-name">{{ pasteTitle(a.name) }}</span>
+                      <span class="paste-card-sub">{{ pasteSub(a) }}</span>
+                    </span>
+                  </span>
+                  <span v-else class="msg-file"
+                        :title="(a.mime || '附件') + (a.size ? ' · ' + fmtSize(a.size) : '')">
+                    <paper-clip-outlined class="msg-file-ic" />
+                    <span class="msg-file-name">{{ a.name }}</span>
+                    <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
+                  </span>
+                </template>
               </div>
               <!-- @ 引用（本轮显式指定的知识库/文档）：只对当轮生效，随内存消息展示 -->
               <div v-if="m.role === 'user' && m.mentions && m.mentions.length" class="msg-files">
@@ -434,14 +445,25 @@
                 </div>
               </div>
               <div v-if="editAtts.length" class="pending-files">
-                <div v-for="(f, fi) in editAtts" :key="fi" class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
-                  <file-text-outlined class="pending-file-ic" />
-                  <span class="pending-file-name">{{ f.name }}</span>
-                  <span v-if="f.uploading" class="pending-file-size">上传中…</span>
-                  <span v-else-if="f.error" class="pending-file-size">上传失败</span>
-                  <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
-                  <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
-                </div>
+                <template v-for="(f, fi) in editAtts" :key="fi">
+                  <div v-if="f.paste" class="pending-file paste-card" :class="{ err: !!f.error }"
+                       :title="f.error || '点击查看粘贴的全文'" @click="openPasteView(f)">
+                    <span class="paste-card-ic"><file-text-outlined /></span>
+                    <span class="paste-card-txt">
+                      <span class="paste-card-name">{{ pasteTitle(f.name) }}</span>
+                      <span class="paste-card-sub">{{ pasteSub(f) }}</span>
+                    </span>
+                    <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
+                  </div>
+                  <div v-else class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
+                    <file-text-outlined class="pending-file-ic" />
+                    <span class="pending-file-name">{{ f.name }}</span>
+                    <span v-if="f.uploading" class="pending-file-size">上传中…</span>
+                    <span v-else-if="f.error" class="pending-file-size">上传失败</span>
+                    <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
+                    <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
+                  </div>
+                </template>
               </div>
               <div v-if="editMentions.length" class="edit-mentions">
                 <span v-for="(mm, mi2) in editMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
@@ -486,14 +508,25 @@
       <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
         <div v-if="dragOver" class="drop-overlay">松开以添加图片或附件</div>
         <div v-if="pendingFiles.length" class="pending-files">
-          <div v-for="(f, fi) in pendingFiles" :key="fi" class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
-            <file-text-outlined class="pending-file-ic" />
-            <span class="pending-file-name">{{ f.name }}</span>
-            <span v-if="f.uploading" class="pending-file-size">上传中…</span>
-            <span v-else-if="f.error" class="pending-file-size">上传失败</span>
-            <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
-            <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
-          </div>
+          <template v-for="(f, fi) in pendingFiles" :key="fi">
+            <div v-if="f.paste" class="pending-file paste-card" :class="{ err: !!f.error }"
+                 :title="f.error || '点击查看粘贴的全文'" @click="openPasteView(f)">
+              <span class="paste-card-ic"><file-text-outlined /></span>
+              <span class="paste-card-txt">
+                <span class="paste-card-name">{{ pasteTitle(f.name) }}</span>
+                <span class="paste-card-sub">{{ pasteSub(f) }}</span>
+              </span>
+              <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
+            </div>
+            <div v-else class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
+              <file-text-outlined class="pending-file-ic" />
+              <span class="pending-file-name">{{ f.name }}</span>
+              <span v-if="f.uploading" class="pending-file-size">上传中…</span>
+              <span v-else-if="f.error" class="pending-file-size">上传失败</span>
+              <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
+              <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
+            </div>
+          </template>
         </div>
         <div v-if="pickedSkills.length" class="at-chips">
           <span v-for="n in pickedSkills" :key="n" class="at-chip skill-chip">
@@ -649,6 +682,7 @@
                         ? '问点什么？（@ 引用资料 · / 快捷命令）'
                         : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'"
                       :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
+                      @paste="onComposerPaste"
                       @keydown="onInputKeydown" @input="syncPanelQuery" @click="syncPanelQuery" />
           <!-- 工具条。窄屏加 as-mobile 类拿「flex-wrap:nowrap」约束 —— 否则模型名一变长
                （deepseek-flash），整条换行会把「思考」按钮压成竖排两字（图里的实际症状）。
@@ -1072,6 +1106,16 @@
       <pre class="csum-body">{{ compactSummaryText }}</pre>
     </a-modal>
 
+    <!-- 粘贴文本卡片点开看全文：正文只留在本轮内存里（随问答落库的是名称/体积），
+         所以刷新后回看历史卡片会明确提示不可预览，而不是点了没反应 -->
+    <a-modal v-model:open="pasteView.open" :title="pasteTitle(pasteView.name)" :footer="null" width="640px">
+      <div class="paste-view-bar">
+        <span class="paste-view-meta">{{ pasteView.text.length }} 字</span>
+        <button class="app-btn ghost" @click="copyText(pasteView.text, '已复制全文')"><copy-outlined /> 复制全文</button>
+      </div>
+      <pre class="csum-body">{{ pasteView.text }}</pre>
+    </a-modal>
+
     <!-- 图片灯箱：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="previewUrl" class="lightbox" @click="closeLightbox" @wheel.prevent="onWheel">
       <img :src="previewUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
@@ -1224,6 +1268,7 @@ import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, 
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
+         pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf } from '../chat/projections'
 
 const router = useRouter()
@@ -1804,6 +1849,19 @@ const onPasteImages = e => {
   e.preventDefault()
   addImageFiles(imgs)
 }
+// 输入框粘贴：整段长文本转成「粘贴的文本」附件（图片粘贴仍走上面的 window 级管线）。
+// 截断冒泡只为避开 window 级监听的重复处理，附件本身已由引擎入列
+const onComposerPaste = e => { if (takePastedText(e)) e.stopPropagation() }
+// 粘贴卡片点开看全文：原文只留在内存（待发送项与本轮消息），刷新后的历史卡片没有它
+const pasteView = reactive({ open: false, name: '', text: '' })
+const openPasteView = a => {
+  if (!a) return
+  if (!a.text) { message.info('这条粘贴文本的正文未随历史记录保留，无法回看'); return }
+  pasteView.name = a.name
+  pasteView.text = a.text
+  pasteView.open = true
+}
+/** 卡片标题/副标题口径见 chat/projections 的 pasteTitle / pasteSub（两壳共用） */
 const attachInput = ref(null)
 const pickAttachments = () => {
   addMenuOpen.value = false
@@ -2359,7 +2417,11 @@ const editMessage = mi => {
   editImgs.value = (m.images || []).map(u => ({ dataUrl: u }))
   // attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并成一份可编辑列表
   const metaByName = new Map((m.attachments || []).map(a => [a.name, a]))
-  editAtts.value = (m.attachData || []).map(a => ({ size: metaByName.get(a.name)?.size, uploading: false, error: '', ...a }))
+  editAtts.value = (m.attachData || []).map(a => {
+    const meta = metaByName.get(a.name) || {}
+    // paste/text 只在展示侧（本轮内存消息）有：不带回来编辑卡就退化成普通文件条，也点不开全文
+    return { size: meta.size, paste: isPastedText(meta), text: meta.text, uploading: false, error: '', ...a }
+  })
   editMentions.value = [...(m.mentions || [])]
   nextTick(() => { autosizeEditing(); editingRef.value?.focus() })
 }
@@ -2378,7 +2440,10 @@ const onEditAttachChange = e => {
 }
 const onEditPaste = e => {
   const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
-  if (!imgs.length) return
+  if (!imgs.length) {
+    if (takePastedText(e, { files: editAtts })) e.stopPropagation()
+    return
+  }
   e.preventDefault()
   e.stopPropagation()   // 截住冒泡：window 级粘贴监听会把图挂到主输入框去
   addImageFiles(imgs, editImgs)
@@ -2412,7 +2477,7 @@ const confirmEdit = () => {
   // 附件只带 fileId（与主输入框 send 同口径），没传完/失败的丢弃
   const okAtts = editAtts.value.filter(f => f.fileId && !f.error)
   const atts = okAtts.map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
-  const attsMeta = okAtts.map(f => ({ name: f.name, mime: f.mime, size: f.size }))
+  const attsMeta = okAtts.map(f => ({ name: f.name, mime: f.mime, size: f.size, paste: !!f.paste, text: f.text }))
   const imgsAll = editImgs.value.map(p => p.dataUrl)
   // 只有本会话的 data: 图能重发（历史回放的图只剩服务端 URL，与重新生成的口径一致）
   const imgs = imgsAll.filter(u => u.startsWith('data:'))
@@ -2508,7 +2573,7 @@ const {
   sessionRetrieval, ctxPct, ctxLevel,
   // 图片与附件
   pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
-  removePendingFile,
+  removePendingFile, takePastedText,
   // @ 引用
   mentionOpen, mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
   mentionHi, isMentioned, toggleMention, removeMention, switchMentionTab, loadMentionCandidates,
@@ -3425,6 +3490,23 @@ onMounted(async () => {
 .msg-file-ic { flex: none; color: var(--app-accent); font-size: 13px; }
 .msg-file-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msg-file-size { flex: none; font-size: 11px; opacity: .65; }
+
+/* 长文本粘贴卡片（待发送 / 编辑卡 / 气泡内共用）：图标块 + 标题与体积两行，点开看全文。
+   放在 .pending-file / .msg-file 之后，靠同权重后置覆盖它们的单行 chip 尺寸；背景仍随基础类走主题 */
+.paste-card {
+  display: flex; align-items: center; gap: 10px; max-width: 320px; padding: 8px 10px;
+  border-radius: 10px; cursor: pointer;
+}
+.paste-card-ic {
+  flex: none; width: 32px; height: 32px; border-radius: 8px; font-size: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-accent);
+}
+.paste-card-txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.paste-card-name { font-size: 13px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paste-card-sub { font-size: 11px; color: var(--app-text3); }
+.paste-view-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.paste-view-meta { font-size: 12px; color: var(--app-text3); }
 
 /* 状态栏：当前智能体卡片 */
 .rp-agent { display: flex; align-items: center; gap: 6px; }

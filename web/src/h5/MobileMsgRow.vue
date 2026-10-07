@@ -16,9 +16,18 @@
             <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
           </div>
           <div v-if="m.attachments && m.attachments.length" class="chips">
-            <span v-for="(a, ai) in m.attachments" :key="ai" class="chip chip-file">
-              <paper-clip-outlined />{{ a.name }}<em v-if="a.size"> · {{ fmtSize(a.size) }}</em>
-            </span>
+            <template v-for="(a, ai) in m.attachments" :key="ai">
+              <span v-if="isPastedText(a)" class="mp-card" @click.stop="$emit('paste-view', a)">
+                <file-text-outlined class="mp-ic" />
+                <span class="mp-txt">
+                  <span class="mp-name">{{ pasteTitle(a.name) }}</span>
+                  <span class="mp-sub">{{ pasteSub(a) }}</span>
+                </span>
+              </span>
+              <span v-else class="chip chip-file">
+                <paper-clip-outlined />{{ a.name }}<em v-if="a.size"> · {{ fmtSize(a.size) }}</em>
+              </span>
+            </template>
           </div>
           <div v-if="m.skills && m.skills.length" class="chips">
             <span v-for="s in m.skills" :key="s" class="chip chip-skill">技能 · {{ s }}</span>
@@ -277,7 +286,8 @@ import {
   busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fallbackDur, toolCallsView, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
-  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf
+  fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
+  pasteTitle, pasteSub, isPastedText
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -297,7 +307,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   variantSwitching: { type: Boolean, default: false }
 })
-const emit = defineEmits(['activate', 'preview', 'source', 'retry', 'edit', 'feedback', 'approve',
+const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
 // 富渲染：沙盒运行按钮需要会话作用域（与 PC 的 MD_RICH 同口径）
@@ -361,6 +371,20 @@ const onMdClick = e => {
 .chip { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); display: inline-flex; align-items: center; gap: 4px; }
 .chip-skill { background: var(--app-info-weak); border-color: var(--app-info-border); color: var(--app-accent); }
 .chip-file em { font-style: normal; color: var(--app-text3); }
+/* 长文本粘贴卡片：图标块 + 名称与体积/字数两行，点一下看全文（与输入区待发送卡片同形） */
+.mp-card {
+  display: flex; align-items: center; gap: 8px; max-width: 220px;
+  padding: 6px 10px; border-radius: 10px;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+}
+.mp-ic {
+  flex: none; width: 30px; height: 30px; border-radius: 7px; font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-accent);
+}
+.mp-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mp-name { font-size: 13px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-sub { font-size: 11px; color: var(--app-text3); }
 .u-actions, .ai-actions {
   display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
   justify-content: flex-end; padding: 0 2px;

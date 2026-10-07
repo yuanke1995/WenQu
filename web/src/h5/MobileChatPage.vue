@@ -87,6 +87,7 @@
         :variant-switching="variantSwitching"
         @activate="activeIdx = $event"
         @preview="openPreview"
+        @paste-view="openPasteView"
         @source="openSourceDetail"
         @retry="regenerate"
         @edit="startEdit"
@@ -123,9 +124,19 @@
           <img :src="p.dataUrl" alt="" @click="openPreview(pendingImages.map(x => x.dataUrl), i)" />
           <button class="m-chip-del" type="button" title="移除" @click="removePendingImage(i)">×</button>
         </span>
-        <span v-for="(f, i) in pendingFiles" :key="'f' + i" class="m-chip">
-          {{ f.uploading ? '上传中…' : f.name }}<button class="m-chip-del" type="button" title="移除" @click="removePendingFile(i)">×</button>
-        </span>
+        <template v-for="(f, i) in pendingFiles" :key="'f' + i">
+          <span v-if="f.paste" class="m-paste" @click="openPasteView(f)">
+            <file-text-outlined class="m-paste-ic" />
+            <span class="m-paste-txt">
+              <span class="m-paste-name">{{ pasteTitle(f.name) }}</span>
+              <span class="m-paste-sub">{{ pasteSub(f) }}</span>
+            </span>
+            <button class="m-chip-del" type="button" title="移除" @click.stop="removePendingFile(i)">×</button>
+          </span>
+          <span v-else class="m-chip">
+            {{ f.uploading ? '上传中…' : f.name }}<button class="m-chip-del" type="button" title="移除" @click="removePendingFile(i)">×</button>
+          </span>
+        </template>
         <span v-for="s in pickedSkills" :key="'s' + s" class="m-chip m-chip-skill">
           技能 · {{ s }}<button class="m-chip-del" type="button" title="移除" @click="toggleSkill(s)">×</button>
         </span>
@@ -184,6 +195,7 @@
           rows="1"
           placeholder="问点什么？"
           enterkeyhint="enter"
+          @paste="onComposerPaste"
           @input="autosize"
         ></textarea>
         <div class="m-tools">
@@ -266,6 +278,15 @@
       <pre class="mc-sum-body">{{ csumText }}</pre>
     </BottomSheet>
 
+    <!-- ==================== 粘贴文本全文（点粘贴卡片打开） ==================== -->
+    <BottomSheet :open="pasteView.open" :title="pasteTitle(pasteView.name)"
+                 :subtitle="pasteView.text.length + ' 字'" max-height="70dvh" @close="pasteView.open = false">
+      <pre class="mc-sum-body">{{ pasteView.text }}</pre>
+      <button class="m-paste-copy" type="button" @click="copyText(pasteView.text, '已复制全文')">
+        <copy-outlined /> 复制全文
+      </button>
+    </BottomSheet>
+
     <!-- ==================== 反馈 ==================== -->
     <BottomSheet :open="fb.open" :title="fb.rating === 1 ? '这条回答有帮助' : '这条回答没帮助'" max-height="60dvh" @close="fb.open = false">
       <textarea v-model="fb.text" class="m-fb-ta" rows="3" placeholder="补充说明（选填）：哪里好 / 哪里不对？"></textarea>
@@ -281,8 +302,9 @@ import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
-  BellOutlined, ExclamationCircleOutlined
+  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined
 } from '@ant-design/icons-vue'
+import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useNotifications } from '../chat/useNotifications'
@@ -378,6 +400,7 @@ const {
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
+  takePastedText,
   ignoreAsk,
   // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
   // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
@@ -504,6 +527,19 @@ const activeIdx = ref(null)
 const preview = reactive({ list: [], idx: 0 })
 const openPreview = (list, idx) => { preview.list = list || []; preview.idx = idx || 0 }
 const closePreview = () => { preview.list = []; preview.idx = 0 }
+
+// 输入框粘贴长文本 → 「粘贴的文本」附件（短粘贴照常内联，可继续编辑）
+const onComposerPaste = e => { takePastedText(e) }
+// 粘贴卡片点开看全文：正文只在内存里（随问答落库的是名称/体积），
+// 刷新后的历史卡片没有它 —— 明确说明，而不是点一下没反应
+const pasteView = reactive({ open: false, name: '', text: '' })
+const openPasteView = a => {
+  if (!a) return
+  if (!a.text) { message.info('这条粘贴文本的正文未随历史记录保留，无法回看'); return }
+  pasteView.name = a.name
+  pasteView.text = a.text
+  pasteView.open = true
+}
 
 const copyText = async (txt, okMsg = '已复制到剪贴板') => {
   if (!txt) { message.warning('没有可复制的内容'); return }
@@ -828,6 +864,25 @@ onUnmounted(() => {
   color: var(--app-text3); font-size: 15px; line-height: 1; touch-action: manipulation;
 }
 .m-chip-img .m-chip-del { position: absolute; top: -6px; right: -6px; background: var(--app-panel); box-shadow: var(--app-shadow-sm); }
+/* 长文本粘贴卡片：图标块 + 名称与体积/字数两行，点一下看全文（普通附件仍是单行 chip） */
+.m-paste {
+  display: flex; align-items: center; gap: 8px; max-width: 250px;
+  padding: 6px 2px 6px 8px; border-radius: 10px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border);
+}
+.m-paste-ic {
+  flex: none; width: 30px; height: 30px; border-radius: 7px; font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-accent);
+}
+.m-paste-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.m-paste-name { font-size: 13px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-paste-sub { font-size: 11px; color: var(--app-text3); }
+.m-paste-copy {
+  width: 100%; margin-top: 10px; min-height: 44px; border: 1px solid var(--app-border);
+  border-radius: 12px; background: var(--app-panel-2); color: var(--app-text); font-size: 14px;
+  touch-action: manipulation;
+}
 .m-input-card {
   border: 1px solid var(--app-border); border-radius: 14px; background: var(--app-panel-2);
   padding: 6px 8px 6px;

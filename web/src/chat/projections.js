@@ -593,6 +593,20 @@ const fmtSize = n => {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
   return (n / 1024 / 1024).toFixed(1) + ' MB'
 }
+/** 长文本粘贴转成的附件名（不带扩展名部分；实际文件名补 .txt）。
+ *  落库元信息只保留名称/类型/体积，所以刷新后靠这个前缀把卡片形态认回来 */
+const PASTE_TEXT_BASE = '粘贴的文本'
+/** 一条附件元信息是否来自长文本粘贴 */
+const isPastedText = a => !!a && (a.paste === true || String(a.name || '').startsWith(PASTE_TEXT_BASE))
+/** 粘贴文本卡片的标题：去掉 .txt 后缀（文件名就叫「粘贴的文本」，扩展名没有信息量） */
+const pasteTitle = name => String(name || '').replace(/\.txt$/i, '')
+/** 卡片副标题：体积 + 字数；上传中/失败时换成状态文案（两壳共用一份口径） */
+const pasteSub = f => {
+  if (!f) return ''
+  if (f.uploading) return '上传中…'
+  if (f.error) return '上传失败'
+  return [fmtSize(f.size), f.text ? f.text.length + ' 字' : ''].filter(Boolean).join(' · ')
+}
 const histItemTitle = m => String(m.content).replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
 const histItemDigest = histItemTitle
 const fmtMsgTime = ts => {
@@ -710,6 +724,7 @@ export {
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
+  pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions
 }
