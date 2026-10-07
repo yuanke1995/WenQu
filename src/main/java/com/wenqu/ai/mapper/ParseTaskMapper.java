@@ -81,4 +81,22 @@ public interface ParseTaskMapper extends BaseMapper<ParseTask> {
             + "sum(case when status = 1 then 1 else 0 end) as running, "
             + "sum(case when status = 4 then 1 else 0 end) as dead from c_ai_parse_task")
     java.util.Map<String, Object> queueStats();
+
+    /**
+     * 单库队列统计（文档管理页页头指标）：只看当前库的任务——全局口径会把别的库在跑的任务
+     * 显示在本库页头，用户读成「我上传的卡住了」。
+     *
+     * @param includeNullKb 默认库并上 kb_id 为空的历史任务（口径与文档列表 list(kbId) 的默认库语义一致）
+     */
+    @Select({"<script>",
+            "select sum(case when status = 0 or status = 3 then 1 else 0 end) as queued, ",
+            "sum(case when status = 1 then 1 else 0 end) as running, ",
+            "sum(case when status = 4 then 1 else 0 end) as dead ",
+            "from c_ai_parse_task where ",
+            "<choose>",
+            "<when test='includeNullKb'> (kb_id = #{kbId} or kb_id is null) </when>",
+            "<otherwise> kb_id = #{kbId} </otherwise>",
+            "</choose>",
+            "</script>"})
+    java.util.Map<String, Object> queueStatsByKb(@Param("kbId") String kbId, @Param("includeNullKb") boolean includeNullKb);
 }

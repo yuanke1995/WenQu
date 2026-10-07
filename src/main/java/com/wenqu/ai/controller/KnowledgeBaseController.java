@@ -212,7 +212,8 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"
-            + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权")
+            + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权；"
+            + "官方内置知识库不接受外部文档移入（内容随版本自动同步）")
     @PutMapping("/doc/{docId}")
     public ResultJson moveDoc(@PathVariable("docId") String docId, @RequestBody Map<String, Object> body) {
         Object kbId = body.get("kbId");
@@ -229,7 +230,14 @@ public class KnowledgeBaseController {
         // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按其库配置判定）
         requireManage(fromKbId == null ? null : kbService.get(fromKbId));
         String defId = kbService.defaultId(RequestUser.uid());
-        requireManage(toKbId == null ? kbService.get(defId) : kbService.get(toKbId));
+        KnowledgeBase toKb = toKbId == null ? kbService.get(defId) : kbService.get(toKbId);
+        // 官方内置库（问渠使用手册）：内容随版本自动同步，不接受外部文档移入。
+        // 必须单独拦：requireManage 对管理员放行内置库（那是给「改检索/解析配置」留的口），
+        // 不拦的话管理员一挪，外部文档就混进随版本同步的库、期间可被检索到。
+        if (toKb != null && toKb.getBuiltin() != null && toKb.getBuiltin() == 1) {
+            throw new BizException("「" + toKb.getName() + "」为官方内置知识库，内容由系统随版本同步，不接受文档移入");
+        }
+        requireManage(toKb);
         boolean ok = kbService.moveDoc(docId, toKbId, RequestUser.uid());
         if (ok) {
             documentService.migrateDocAsync(docId, fromKbId, toKbId);

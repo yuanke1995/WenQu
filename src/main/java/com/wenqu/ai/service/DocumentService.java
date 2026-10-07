@@ -1972,9 +1972,21 @@ public class DocumentService {
         processUpload(docId, doc.getFileName(), source, parser);
     }
 
-    /** 解析队列统计（前端展示「排队 N / 执行 M」） */
+    /** 解析队列统计（全平台口径） */
     public Map<String, Object> queueStats() {
         return parseQueue.queueStats();
+    }
+
+    /**
+     * 单库解析队列统计（文档管理页页头「排队 N / 执行 M」）：只看该库的任务。
+     * 全局口径下别的库在跑也会显示在本库页头，用户读成「我上传的卡住了」。
+     * 默认库口径与 {@link #list(String)} 一致：并上 kb_id 为空的历史文档任务。
+     */
+    public Map<String, Object> queueStats(String kbId) {
+        if (kbId == null || kbId.isBlank()) return parseQueue.queueStats();
+        com.wenqu.ai.model.KnowledgeBase kb = kbMapper.selectById(kbId);
+        boolean includeNullKb = kb != null && Integer.valueOf(1).equals(kb.getIsDefault());
+        return parseQueue.queueStats(kbId, includeNullKb);
     }
 
     /**

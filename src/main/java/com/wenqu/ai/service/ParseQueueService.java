@@ -395,25 +395,36 @@ public class ParseQueueService {
         return Math.max(60_000, configService.getInt("parse.taskTimeoutMs", 20 * 60_000));
     }
 
-    /** 队列统计（前端展示「排队 N / 执行 M」） */
+    /** 队列统计（全平台口径：入队日志/背压等内部用） */
     public Map<String, Object> queueStats() {
-        Map<String, Object> stats = new LinkedHashMap<>();
         try {
-            Map<String, Object> row = parseTaskMapper.queueStats();
-            long queued = num(row.get("queued"));
-            long running = num(row.get("running"));
-            stats.put("queued", queued);
-            stats.put("running", running);
-            stats.put("dead", num(row.get("dead")));
-            stats.put("capacity", capacity());
-            stats.put("executorActive", parseExecutor.getActiveCount());
-            stats.put("executorQueue", parseExecutor.getQueue().size());
+            return statsOf(parseTaskMapper.queueStats());
         } catch (Exception e) {
             log.warn("[PARSE-QUEUE] 队列统计失败: {}", e.getMessage());
-            stats.put("queued", 0L);
-            stats.put("running", 0L);
-            stats.put("dead", 0L);
-            stats.put("capacity", capacity());
+            return statsOf(null);
+        }
+    }
+
+    /** 单库队列统计（文档管理页页头展示用）：只看当前库的任务，别的库在跑不串台 */
+    public Map<String, Object> queueStats(String kbId, boolean includeNullKb) {
+        try {
+            return statsOf(parseTaskMapper.queueStatsByKb(kbId, includeNullKb));
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 单库队列统计失败（kbId={}）: {}", kbId, e.getMessage());
+            return statsOf(null);
+        }
+    }
+
+    /** 统计行 → 响应体；row 为 null 按全零降级（统计失败不阻断页面） */
+    private Map<String, Object> statsOf(Map<String, Object> row) {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("queued", row == null ? 0L : num(row.get("queued")));
+        stats.put("running", row == null ? 0L : num(row.get("running")));
+        stats.put("dead", row == null ? 0L : num(row.get("dead")));
+        stats.put("capacity", capacity());
+        if (row != null) {
+            stats.put("executorActive", parseExecutor.getActiveCount());
+            stats.put("executorQueue", parseExecutor.getQueue().size());
         }
         return stats;
     }

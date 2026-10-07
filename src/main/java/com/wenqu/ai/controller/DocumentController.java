@@ -182,10 +182,11 @@ public class DocumentController {
         return ResultJson.ok(results);
     }
 
-    @Operation(summary = "解析队列状态", description = "当前解析队列的排队数/执行数/终态数（前端展示「排队 N / 执行 M」，并对齐轮询）")
+    @Operation(summary = "解析队列状态", description = "当前解析队列的排队数/执行数/终态数（前端展示「排队 N / 执行 M」，并对齐轮询）；"
+            + "kbId 传知识库 ID 时只统计该库的任务（文档管理页页头用，默认库含 kb_id 为空的历史任务），不传=全平台")
     @GetMapping("/queue/stats")
-    public ResultJson queueStats() {
-        return ResultJson.ok(documentService.queueStats(), "解析队列状态");
+    public ResultJson queueStats(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
+        return ResultJson.ok(documentService.queueStats(kbId), "解析队列状态");
     }
 
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"

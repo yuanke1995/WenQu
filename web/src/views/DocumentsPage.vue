@@ -518,7 +518,7 @@ const dragDepth = ref(0)
 const selectedKeys = ref([])
 let pollTimer = null
 let pollTicks = 0
-/** 解析队列计数（后端 c_ai_parse_task 统计，非 table_rows 估算） */
+/** 解析队列计数（后端 c_ai_parse_task 统计，非 table_rows 估算）；按当前库过滤，别的库在跑不在本页显数 */
 const queueStats = ref({ queued: 0, running: 0, dead: 0 })
 const queueText = computed(() => {
   const q = queueStats.value
@@ -530,7 +530,7 @@ const queueText = computed(() => {
 })
 async function fetchQueueStats () {
   try {
-    const r = await getDocumentQueueStats()
+    const r = await getDocumentQueueStats(currentKbId.value || route.params.kbId)
     const d = r && r.success ? r.data : null
     if (d) {
       queueStats.value = {
@@ -575,8 +575,10 @@ onUnmounted(() => {
 // ==================== 知识库归属（文档属于哪个库，决定能被哪些助手检索到） ====================
 const kbases = ref([])
 const defaultKbId = computed(() => (kbases.value.find(k => k.isDefault === 1) || {}).id || '')
+/** 移动目标选项：官方内置库不出现（内容随版本同步，移进去也会被下次同步清掉，后端同样明确拒绝） */
 const kbSelectOptions = computed(() =>
-  kbases.value.map(k => ({ value: k.id, label: k.name + (k.docCount != null ? `（${k.docCount}）` : '') })))
+  kbases.value.filter(k => k.builtin !== 1)
+    .map(k => ({ value: k.id, label: k.name + (k.docCount != null ? `（${k.docCount}）` : '') })))
 /** 文档当前所属库：kb_id 为空即默认库（后端把"未指定"视作归入默认库） */
 const kbOf = d => d.kbId || defaultKbId.value
 async function fetchKbs () {
