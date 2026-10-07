@@ -457,7 +457,7 @@ public class BuiltinTools {
     public record AskQuestion(
             @ToolParam(description = "话题标签，2~6 字短语（如「晚餐选择」「住宿方案」），便于界面归组展示；可省略") String topic,
             @ToolParam(description = "要问用户的问题：一句话交代背景与要决定的事") String question,
-            @ToolParam(description = "候选选项，2~6 个，每项「关键词：一句话说明」；第一项视为推荐项") java.util.List<String> options) {
+            @ToolParam(description = "候选选项，2~3 个（界面固定为「3 个候选 + 1 行自由输入」，超出会被截断），每项「关键词：一句话说明」；第一项视为推荐项") java.util.List<String> options) {
     }
 
     /** askUser 执行器签名：一组问题（一卡多问） → 批量答案文本（每问一个答案，并行数组） */
@@ -469,7 +469,7 @@ public class BuiltinTools {
     /**
      * 向用户提出选择题并等待作答（人在回路），支持一卡多问：可一次传入多个问题（questions 数组），
      * 用户在同一张卡片内逐题翻页、一次性批量作答；只在必须由用户拍板才能继续时调用。
-     * 把每个问题最推荐的选项放在 options 第一位（用户超时/忽略未答时将按它默认执行，前端标注「推荐」）；
+     * 每题 2~3 个候选选项，把最推荐的放在 options 第一位（用户超时/忽略未答时将按它默认执行，前端标注「推荐」）；
      * 每个选项用「关键词：一句话说明」格式（如「火锅：热汤驱秋凉」），说明可省略；
      * 用户可点选候选，也可自由输入其他答案。也可沿用旧式单问题参数（question/options/topic），二者二选一。
      */
@@ -477,13 +477,14 @@ public class BuiltinTools {
             + "方案取舍、需求澄清、确认执行范围等；能自行判断或查资料解决的事项不要调用。"
             + "一卡多问：传 questions 数组（每项含 question、options，可选 topic），用户在同一张卡片内逐题翻页、一次性批量作答；"
             + "单次最多 6 个问题（超过会被拒绝，请合并问题或分批提问）；"
-            + "也可只传单个 question/options/topic（旧式，等价于一题一卡）。把每个问题最推荐的选项放在 options 第一位"
+            + "也可只传单个 question/options/topic（旧式，等价于一题一卡）。每题只给 2~3 个候选选项"
+            + "（卡片末行固定是自由输入，候选铺长了就不像选择题），把最推荐的放在 options 第一位"
             + "（用户超时/忽略未答时将按它默认执行，前端标注「推荐」）；每个选项用「关键词：一句话说明」格式，说明可省略；"
             + "用户可点选候选，也可自由输入其他答案。")
     public String askUser(
             @ToolParam(description = "多个问题（一卡多问）；与单问题参数二选一", required = false) java.util.List<AskQuestion> questions,
             @ToolParam(description = "【旧式】要问用户的问题：一句话交代背景与要决定的事", required = false) String question,
-            @ToolParam(description = "【旧式】候选选项，2~6 个，每项「关键词：一句话说明」；第一项视为推荐项", required = false) java.util.List<String> options,
+            @ToolParam(description = "【旧式】候选选项，2~3 个，每项「关键词：一句话说明」；第一项视为推荐项", required = false) java.util.List<String> options,
             @ToolParam(description = "【旧式】话题标签，2~6 字短语；可省略", required = false) String topic,
             ToolContext toolContext) {
         Object fn = toolContext == null ? null : toolContext.getContext().get(CTX_ASK);
