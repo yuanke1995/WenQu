@@ -187,10 +187,10 @@ public class ChatController {
             editVariantGroup = sessionService.prepareEditBranch(sessionId, editId);
         }
 
-        // 超时配置化（chat.sseTimeoutMs，默认 5 分钟）；超时由 RagService.onTimeout 先发 warn 再 dispose（fail-loud）
-        long sseTimeout = configService.getLong("chat.sseTimeoutMs");
-        if (sseTimeout <= 0) sseTimeout = 300000L;
-        SseEmitter emitter = new SseEmitter(sseTimeout);
+        // 不设容器级 SSE 超时：那是一条从请求开始一路走到头的墙钟，且 async 启动后不可续期——
+        // 人在回路的提问卡/审批等待会被算进去，用户在第二张卡上选完答案整轮已被掐断。
+        // 整轮截断改由 RagService 的存活看门狗按「机器耗时」判定（chat.sseTimeoutMs，人工等待不计入）。
+        SseEmitter emitter = new SseEmitter(0L);
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,

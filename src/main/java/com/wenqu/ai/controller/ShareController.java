@@ -53,7 +53,6 @@ public class ShareController {
     private final RagService ragService;
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
-    private final com.wenqu.ai.service.ConfigService configService;
     private final com.wenqu.ai.service.SessionShareService sessionShareService;
 
     /** 单条提问长度上限（与对话页同量级的防滥用口径） */
@@ -178,9 +177,8 @@ public class ShareController {
             }
         }
 
-        long sseTimeout = configService.getLong("chat.sseTimeoutMs");
-        if (sseTimeout <= 0) sseTimeout = 300000L;
-        SseEmitter emitter = new SseEmitter(sseTimeout);
+        // 游客对话同样不设容器级 SSE 超时：整轮截断由 RagService 的存活看门狗按机器耗时判定
+        SseEmitter emitter = new SseEmitter(0L);
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
         ragService.chat(sessionId, message.trim(), List.of(), List.of(), List.of(),
                 false, ctx.agent().getId(), modelRef, owner.getUid(), emitter, true);

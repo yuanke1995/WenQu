@@ -586,9 +586,25 @@ public class RagService {
         final boolean useDeepThink = deepThink;
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
-        emitter.onCompletion(() -> ACTIVE_SSE.remove(emitter));
-        emitter.onTimeout(() -> ACTIVE_SSE.remove(emitter));
-        emitter.onError(t -> ACTIVE_SSE.remove(emitter));
+        // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
+        // 收集型通道（定时任务/MCP/子智能体节点）不挂：它没有真实响应、节奏由调用方 awaitDone 控制。
+        if (!(emitter instanceof CollectingSseEmitter)) {
+            TurnDeadline deadline = new TurnDeadline(turnMachineBudgetMs());
+            TURN_DEADLINES.put(emitter, deadline);
+            startTurnWatchdog(emitter, sessionId, deadline);
+        }
+        emitter.onCompletion(() -> {
+            ACTIVE_SSE.remove(emitter);
+            stopTurnDeadline(emitter);
+        });
+        emitter.onTimeout(() -> {
+            ACTIVE_SSE.remove(emitter);
+            stopTurnDeadline(emitter);
+        });
+        emitter.onError(t -> {
+            ACTIVE_SSE.remove(emitter);
+            stopTurnDeadline(emitter);
+        });
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
@@ -1601,14 +1617,9 @@ public class RagService {
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
 
-            // 前端断开/超时时停止生成；超时先发 warn（fail-loud：回答被截断必须告知，不留静默半截）
+            // 前端断开/终态时停止生成。整轮截断（原「SSE 超时」）已由 startTurnWatchdog 承担：
+            // 容器级超时不可续期且会把人工答题时间算进去，emitter 不再设容器超时
             emitter.onCompletion(() -> st.disposeSafe());
-            emitter.onTimeout(() -> {
-                log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);
-                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
-                st.disposeSafe();
-                completeEmitter(emitter);
-            });
             emitter.onError(t -> st.disposeSafe());
 
         } catch (Exception e) {
@@ -1846,6 +1857,7 @@ public class RagService {
                                 sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
                                 log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
                                 boolean approved;
+                                beginHumanWait(st.emitter);   // 用户确认时间不计入整轮机器预算（见 TurnDeadline）
                                 try {
                                     approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
                                 } catch (java.util.concurrent.ExecutionException ee) {
@@ -1857,6 +1869,8 @@ public class RagService {
                             } catch (InterruptedException ie) {
                                     Thread.currentThread().interrupt();
                                     approved = false;
+                                } finally {
+                                    endHumanWait(st.emitter);
                                 }
                                 if (!approved) {
                                     recordToolStatus(st, name, toolInput, "error", "用户拒绝或确认超时，未执行",
@@ -1996,6 +2010,114 @@ public class RagService {
             f.cancel(false);
             st.heartbeat = null;
         }
+    }
+
+    // ==================== 整轮存活看门狗 ====================
+
+    /**
+     * 本轮耗时台账：整轮预算只计<b>机器</b>时间，人在回路的等待从中扣除。
+     * <p>背景：askUser 提问卡单卡允许等 5 分钟、工具审批 120s，而容器级 SSE 超时是<b>从请求开始
+     * 一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，实测发心跳也不复位）。
+     * 于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，
+     * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatController），
+     * 截断判定改由本台账 + {@link #startTurnWatchdog} 负责。
+     */
+    private static final class TurnDeadline {
+        final long startMs = System.currentTimeMillis();
+        final long budgetMs;
+        /** 已结束的人在回路等待累计（提问卡 + 工具审批阻塞时长），不计入预算 */
+        final java.util.concurrent.atomic.AtomicLong humanWaitMs = new java.util.concurrent.atomic.AtomicLong();
+        /** 进行中的等待：计数 + 起点。必须**边等边扣**——等完再补记的话，看门狗在用户答题那几分钟里
+         *  看到的还是整段墙钟，照样把正在作答的轮次掐了（2026-10-07 复测实测到） */
+        final java.util.concurrent.atomic.AtomicInteger openWaits = new java.util.concurrent.atomic.AtomicInteger();
+        volatile long waitBegin;
+        /** 只截断一次：到点后并发 tick 不重复发 warn/complete */
+        final java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        volatile java.util.concurrent.ScheduledFuture<?> watchdog;
+        /** 本轮流式状态（AnswerStreamState 构造时挂入）：到点停流与半程正文截断落库用；工作流轮为 null */
+        volatile AnswerStreamState state;
+
+        TurnDeadline(long budgetMs) {
+            this.budgetMs = budgetMs;
+        }
+
+        void beginWait() {
+            if (openWaits.getAndIncrement() == 0) waitBegin = System.currentTimeMillis();
+        }
+
+        void endWait() {
+            if (openWaits.decrementAndGet() <= 0) {
+                long b = waitBegin;
+                if (b > 0) humanWaitMs.addAndGet(System.currentTimeMillis() - b);
+                waitBegin = 0;
+            }
+        }
+
+        long machineMs() {
+            long w = humanWaitMs.get();
+            long b = waitBegin;
+            if (b > 0) w += System.currentTimeMillis() - b;
+            return System.currentTimeMillis() - startMs - w;
+        }
+    }
+
+    /** emitter → 本轮台账：与 ACTIVE_SSE 同生命周期（onCompletion/onError 或 forgetSseChannel 清） */
+    private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, TurnDeadline> TURN_DEADLINES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 整轮机器耗时预算（chat.sseTimeoutMs，默认 5 分钟） */
+    private long turnMachineBudgetMs() {
+        long t = configService.getLong("chat.sseTimeoutMs");
+        return t > 0 ? t : 300000L;
+    }
+
+    /**
+     * 整轮存活看门狗：每 {@link #TOOL_HEARTBEAT_INTERVAL_MS} 检查一次「墙钟 − 人工等待」是否越过预算。
+     * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到「回答超时已截断」），再 dispose 停流
+     * （半程正文按截断态落库）并 complete。失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身
+     * 超时，本看门狗只管「整轮做机器工作太久」。
+     */
+    private java.util.concurrent.ScheduledFuture<?> startTurnWatchdog(SseEmitter emitter, String sessionId,
+                                                                      TurnDeadline d) {
+        java.util.concurrent.ScheduledFuture<?> f = TOOL_HEARTBEAT_POOL.scheduleWithFixedDelay(() -> {
+            long machineMs = d.machineMs();
+            if (machineMs <= d.budgetMs) return;
+            if (!d.fired.compareAndSet(false, true)) return;
+            log.warn("[FAIL-LOUD] 本轮问答超时截断: session={} 机器耗时 {}ms / 预算 {}ms（人工等待 {}ms 不计入）",
+                    sessionId, machineMs, d.budgetMs, d.humanWaitMs.get());
+            try {
+                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
+                AnswerStreamState st = d.state;
+                if (st != null) st.disposeSafe();
+                completeEmitter(emitter);
+            } finally {
+                stopTurnDeadline(emitter);
+            }
+        }, TOOL_HEARTBEAT_INTERVAL_MS, TOOL_HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        d.watchdog = f;
+        return f;
+    }
+
+    /** 结束本轮台账：停看门狗并放掉 emitter 引用（终态/断连/收集型通道共用） */
+    private static void stopTurnDeadline(SseEmitter emitter) {
+        TurnDeadline d = TURN_DEADLINES.remove(emitter);
+        if (d != null && d.watchdog != null) {
+            d.watchdog.cancel(false);
+        }
+    }
+
+    /**
+     * 人在回路等待开始/结束（提问卡与工具审批的阻塞窗口）：这段墙钟不计入整轮机器预算。
+     * 未登记台账的通道（收集型）直接忽略。
+     */
+    private static void beginHumanWait(SseEmitter emitter) {
+        TurnDeadline d = TURN_DEADLINES.get(emitter);
+        if (d != null) d.beginWait();
+    }
+
+    private static void endHumanWait(SseEmitter emitter) {
+        TurnDeadline d = TURN_DEADLINES.get(emitter);
+        if (d != null) d.endWait();
     }
 
     /**
@@ -3335,6 +3457,9 @@ public class RagService {
             this.degradations = degradations;
             this.degradedCodes = degradedCodes;
             this.retrievedJson = retrievedJson;
+            // 挂进整轮台账：看门狗到点要停流并截断落库（收集型通道无台账，自然跳过）
+            TurnDeadline d = TURN_DEADLINES.get(emitter);
+            if (d != null) d.state = this;
         }
 
         void disposeSafe() {
@@ -5322,6 +5447,11 @@ public class RagService {
      *  下标对不上（模型会把第 N 个答案当成第 N+1 问的），且界面上会出现「有问无答」的残缺问。 */
     private static final int MAX_QUESTIONS_PER_CARD = 6;
 
+    /** askUser 单题候选上限：卡面固定「3 个候选 + 1 行自由输入」共 4 行，超过就不像选择题而像阅读理解。
+     *  模型给多了按前 N 个截断（第一项是推荐项，截掉的是次选），不整题丢弃——丢题会让答案数组与模型
+     *  传入的问题数对不上，界面上还会出现「有问无答」的残缺问。 */
+    private static final int MAX_ASK_OPTIONS = 3;
+
     /** askUser 提问卡等待上限（一卡多问需人工逐题作答，比工具审批宽）：固定 5 分钟。
      *  前端倒计时直接取 SSE 下发的 timeoutMs 显示，故与后端阻塞超时必须同源。 */
     private static final long ASK_TIMEOUT_MS = 5 * 60 * 1000L;
@@ -5358,17 +5488,18 @@ public class RagService {
             java.util.List<String> opts = new java.util.ArrayList<>();
             if (a.options() != null) {
                 for (String o : a.options()) {
+                    if (opts.size() >= MAX_ASK_OPTIONS) break;
                     if (o == null) continue;
                     String s = o.trim();
                     if (s.isEmpty() || opts.contains(s)) continue;
                     opts.add(s.length() > 200 ? s.substring(0, 200) : s);
                 }
             }
-            if (opts.size() < 2 || opts.size() > 6) continue; // 单题选项须 2~6，非法该题跳过
+            if (opts.size() < 2) continue; // 少于 2 个候选不构成选择题，非法该题跳过
             qs.add(new QItem(t, q, opts));
         }
         if (qs.isEmpty()) {
-            return "（无有效问题：每题须含非空的 question 与 2~6 个选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
+            return "（无有效问题：每题须含非空的 question 与 2~" + MAX_ASK_OPTIONS + " 个候选选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
         }
         if (qs.size() > MAX_QUESTIONS_PER_CARD) {
             return "（本次提问共 " + qs.size() + " 个问题，超过单卡上限 " + MAX_QUESTIONS_PER_CARD
@@ -5403,6 +5534,7 @@ public class RagService {
             sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId);
             log.info("[ASK] 等待用户批量作答: askId={} session={} n={}", askId, st.sessionId, qs.size());
             String answer;
+            beginHumanWait(st.emitter);   // 用户作答时间不计入整轮机器预算（见 TurnDeadline）
             try {
                 answer = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException te) {
@@ -5414,6 +5546,8 @@ public class RagService {
                 Thread.currentThread().interrupt();
                 markAskResolved(askId, "TIMEOUT", null, st.userId);
                 answer = "（本轮问答已被中止：请基于已有信息直接作答，不要再次提问。）";
+            } finally {
+                endHumanWait(st.emitter);
             }
             return answer;
         } finally {
@@ -5672,12 +5806,13 @@ public class RagService {
 
     /**
      * 清除某通道的断开标记登记。**无客户端的收集型通道**（定时执行智能体用的 CollectingSseEmitter）
-     * 用完必须主动调用：它不会触发 onCompletion（没有真实响应可完成），否则 ACTIVE_SSE 会一直
-     * 持有该 emitter 引用不放。
+     * 用完必须主动调用：它不会触发 onCompletion（没有真实响应可完成），否则 ACTIVE_SSE 与整轮台账
+     * 会一直持有该 emitter 引用不放（看门狗也停不下来）。
      */
     static void forgetSseChannel(SseEmitter emitter) {
         if (emitter != null) {
             ACTIVE_SSE.remove(emitter);
+            stopTurnDeadline(emitter);
         }
     }
 
@@ -5686,8 +5821,8 @@ public class RagService {
     }
 
     /**
-     * SSE 发送。返回 false = 客户端已断开（本次发送失败或此前已打标）；断开只记日志不抛错
-     * （fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
+     * SSE 发送。返回 false = 通道已不可用（客户端断开，或 emitter 已完成后仍在发送）；
+     * 失败只记日志不抛错（fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
      */
     private boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId) {
         java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
@@ -5700,10 +5835,22 @@ public class RagService {
                             ",\"sessionId\":\"" + sessionId + "\"}"));
             return true;
         } catch (IOException e) {
-            ACTIVE_SSE.computeIfAbsent(emitter, k -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
+            markSseDead(emitter);
             log.warn("[FAIL-LOUD] SSE 客户端断开 (type={}, session={}): {}", type, sessionId, e.getMessage());
             return false;
+        } catch (IllegalStateException e) {
+            // "ResponseBodyEmitter has already completed"：终态/截断之后仍有发送（如迟到的流增量）。
+            // 必须在这里咽掉——异常冒出会走 DispatcherServlet 的异步派发错误分支，
+            // 全局异常处理器再往 text/event-stream 里写 ResultJson，必然二次失败并刷屏。
+            markSseDead(emitter);
+            log.debug("[SSE] 通道已关闭，事件丢弃 (type={}, session={}): {}", type, sessionId, e.getMessage());
+            return false;
         }
+    }
+
+    private static void markSseDead(SseEmitter emitter) {
+        ACTIVE_SSE.computeIfAbsent(emitter,
+                k -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
     }
 
     private void completeEmitter(SseEmitter emitter) {
@@ -6129,12 +6276,6 @@ public class RagService {
             st.stageMs.putAll(stageMs);
             st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
             emitter.onCompletion(() -> st.disposeSafe());
-            emitter.onTimeout(() -> {
-                log.warn("[FAIL-LOUD] SSE 超时，回答被截断: session={}", sessionId);
-                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
-                st.disposeSafe();
-                completeEmitter(emitter);
-            });
             emitter.onError(t -> st.disposeSafe());
         } catch (Exception e) {
             log.error("No-knowledge chat error", e);

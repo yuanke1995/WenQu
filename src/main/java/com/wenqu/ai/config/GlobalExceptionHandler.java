@@ -2,6 +2,7 @@ package com.wenqu.ai.config;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -93,9 +94,28 @@ public class GlobalExceptionHandler {
      * 兜底：未知异常，不向客户端泄露内部信息
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ResultJson<Void>> handleUnknown(Exception e) {
+    public ResponseEntity<ResultJson<Void>> handleUnknown(Exception e, HttpServletResponse response) {
         log.error("系统异常", e);
+        // SSE 通道（或响应已提交）写不回 JSON：强行序列化必然再抛一次转换失败并刷屏，只记日志
+        if (isEventStream(response) || response.isCommitted()) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ResultJson.error(500, "系统繁忙，请稍后重试"));
+    }
+
+    /**
+     * 异步请求已失效（客户端断开后容器通知写失败）：没有响应可写，静默收尾。
+     * 落到上面的兜底会尝试往 text/event-stream 里写 ResultJson，必然二次失败。
+     */
+    @ExceptionHandler(org.springframework.web.context.request.async.AsyncRequestNotUsableException.class)
+    public void handleAsyncClientGone(org.springframework.web.context.request.async.AsyncRequestNotUsableException e) {
+        log.debug("客户端已断开，异步请求失效: {}", e.getMessage());
+    }
+
+    /** 响应是否为 SSE 流（Content-Type 由 handler 预设，异常分支上仍能读到） */
+    private static boolean isEventStream(HttpServletResponse response) {
+        String ct = response.getContentType();
+        return ct != null && ct.contains("text/event-stream");
     }
 }
