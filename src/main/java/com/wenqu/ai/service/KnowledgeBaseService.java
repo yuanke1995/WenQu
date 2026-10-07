@@ -423,7 +423,8 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * GraphRAG 抽取模型校验（库级，可空=回落全局）：非空时必须可解析、对库主可用、且为聊天类型。
+     * GraphRAG 抽取模型校验（库级，可空=回落全局）：非空时必须可解析、对库主可用、且为对话类型
+     * （chat/omni——全模态本质是对话模型，与 WorkflowEngine 的 chat 闸门同口径）。
      * 与 {@link #validateEmbeddingRef} 同口径（谁建库用谁的模型），差别在不强制必填。
      */
     public String validateGraphModelRef(String ref) {
@@ -433,7 +434,8 @@ public class KnowledgeBaseService {
             throw new com.wenqu.ai.common.BizException("GraphRAG 抽取模型无效或已被删除，请重新选择");
         }
         String type = modelRegistryService.referenceType(v);
-        if (type != null && !com.wenqu.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)) {
+        if (type != null && !com.wenqu.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)
+                && !com.wenqu.ai.service.ModelRegistryService.TYPE_OMNI.equals(type)) {
             throw new com.wenqu.ai.common.BizException("GraphRAG 抽取模型需为聊天类型（当前所选为 " + type + " 类型）");
         }
         return v;
@@ -464,7 +466,8 @@ public class KnowledgeBaseService {
                     + "（请在知识库编辑里选择你登记过的聊天模型）");
         }
         String type = modelRegistryService.referenceType(effective);
-        if (type != null && !com.wenqu.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)) {
+        if (type != null && !com.wenqu.ai.service.ModelRegistryService.TYPE_CHAT.equals(type)
+                && !com.wenqu.ai.service.ModelRegistryService.TYPE_OMNI.equals(type)) {
             throw new com.wenqu.ai.common.BizException("GraphRAG 抽取模型需为聊天类型（当前生效配置为 " + type + " 类型）");
         }
     }

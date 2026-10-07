@@ -77,7 +77,8 @@ import ProviderIcon from './ProviderIcon.vue'
  */
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  /** 类型过滤：单值（chat / vision / ocr / embedding / rerank）或逗号分隔多值（如 "vision,ocr"）（空=全部） */
+  /** 类型过滤：单值（chat / vision / ocr / embedding / rerank）或逗号分隔多值（如 "vision,ocr"）（空=全部）；
+   *  期望 chat 时全模态 omni 一并入选（全模态本质是对话模型） */
   type: { type: String, default: 'chat' },
   /** 「跟随全局」选项：label 用作未指定时触发器显示的文案（如当前生效模型名），下拉项固定显示「跟随全局」 */
   inheritLabel: { type: String, default: '' },
@@ -128,12 +129,15 @@ async function load(force = false) {
 function filter(data) {
   if (!props.type) return data
   // 支持逗号分隔多类型（如 "vision,ocr"：知识库图片描述模型两者皆可）；
-  // 期望含 vision 时放宽口径：具备图片理解能力的模型（visionCapable，「聊天+视觉」一体登记形态）同样入选
+  // 期望含 vision 时放宽口径：具备图片理解能力的模型（visionCapable，「聊天+视觉」一体登记形态）同样入选；
+  // 期望含 chat 时放行 omni（全模态本质是对话模型，仅多带视觉/音频）——与后端 available / referenceMatchesType 同口径
   const set = new Set(props.type.split(',').map(s => s.trim()).filter(Boolean))
   if (!set.size) return data
   const wantVision = set.has('vision')
+  const wantChat = set.has('chat')
   return data
-    .map(g => ({ ...g, models: g.models.filter(m => set.has(m.type) || (wantVision && m.visionCapable)) }))
+    .map(g => ({ ...g, models: g.models.filter(m =>
+      set.has(m.type) || (wantChat && m.type === 'omni') || (wantVision && m.visionCapable)) }))
     .filter(g => g.models.length)
 }
 

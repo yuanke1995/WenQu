@@ -407,16 +407,18 @@ public class ModelRegistryService {
     }
 
     /**
-     * 引用类型匹配（口径放宽）：期望 vision 时，vision/omni 类型或具备图片理解能力
-     * （visionCapable，含自动判定）的模型均通过；其余期望类型维持严格相等——
-     * 向量/重排/OCR 是能力性类型，混用会在运行时静默失效，不能放宽。
+     * 引用类型匹配（口径放宽）：期望 chat 时 omni 一并放行（全模态本质是对话模型，
+     * 可对话只是还带视觉/音频，与 WorkflowEngine 的 chat 闸门同口径）；
+     * 期望 vision 时，vision/omni 类型或具备图片理解能力（visionCapable，含自动判定）的模型均通过；
+     * 其余期望类型维持严格相等——向量/重排/OCR 是能力性类型，混用会在运行时静默失效，不能放宽。
      * 类型未登记（actual=null）照旧放行（遗留手填名兼容，与原口径一致）。
      */
     public boolean referenceMatchesType(String value, String expected) {
         String actual = referenceType(value);
         if (actual == null || expected == null || expected.equals(actual)) return true;
+        if (TYPE_OMNI.equals(actual)
+                && (TYPE_CHAT.equals(expected) || TYPE_VISION.equals(expected))) return true;
         if (!TYPE_VISION.equals(expected)) return false;
-        if (TYPE_OMNI.equals(actual)) return true;
         ModelRoute r = resolveReference(value);
         if (r == null) return false;
         ModelInfo mi = snap.modelIndex().get(r.providerId() + "/" + r.modelId());
@@ -803,7 +805,8 @@ public class ModelRegistryService {
             for (ModelInfo mi : snap.modelsOf(p.getId())) {
                 if (Integer.valueOf(0).equals(mi.getEnabled())) continue;
                 // type 支持逗号分隔多类型（如 "vision,ocr"，与前端 ModelSelect 的 type 契约一致）；
-                // 期望 vision 时放宽口径：具备图片理解能力的模型（visionCapable，可与聊天并存）同样入选
+                // 期望 vision 时放宽口径：具备图片理解能力的模型（visionCapable，可与聊天并存）同样入选；
+                // 期望 chat 时放行 omni：全模态本质是对话模型（另带视觉/音频），与 WorkflowEngine 的 chat 闸门同口径
                 if (type != null && !type.isBlank()) {
                     java.util.Set<String> wanted = new java.util.HashSet<>();
                     for (String t : type.split(",")) {
@@ -811,7 +814,8 @@ public class ModelRegistryService {
                         if (!s.isEmpty()) wanted.add(s);
                     }
                     if (!wanted.isEmpty() && !wanted.contains(mi.getModelType())
-                            && !(wanted.contains(TYPE_VISION) && visionCapable(mi))) continue;
+                            && !(wanted.contains(TYPE_VISION) && visionCapable(mi))
+                            && !(wanted.contains(TYPE_CHAT) && TYPE_OMNI.equals(mi.getModelType()))) continue;
                 }
                 Map<String, Object> m = new java.util.LinkedHashMap<>();
                 m.put("ref", p.getId() + "/" + mi.getModelId());

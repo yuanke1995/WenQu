@@ -1,7 +1,7 @@
 // ==================== 新手配置引导：共享状态（仿 utils/modelRef.js 模块级缓存模式） ====================
 // 两层清单，口径分开：
 //   【必配层】不配置就完全用不了的硬依赖（琥珀待办）：
-//     ① 添加聊天模型：/provider/available 存在 type=chat 的模型（含供应商登记）
+//     ① 添加聊天模型：/provider/available 存在对话类模型（type=chat，或全模态 omni——本质是对话模型）
 //     ② 设置默认聊天模型：/user/preference 的 defaultModel 非空且仍存在于可用 chat 模型列表
 //        （失效引用视为未设置——挂了不存在模型的引用，引导不该消失）
 //     ③ 添加向量模型：存在 type=embedding 的模型（建知识库硬依赖）
@@ -53,7 +53,7 @@ async function fetchOnce() {
     let embeddingCount = 0
     for (const g of groups || []) {
       for (const m of g.models || []) {
-        if (m.type === 'chat') chatModels.push({ ref: m.ref, displayName: m.displayName, providerName: g.name })
+        if (m.type === 'chat' || m.type === 'omni') chatModels.push({ ref: m.ref, displayName: m.displayName, providerName: g.name })
         else if (m.type === 'embedding') embeddingCount++
       }
     }

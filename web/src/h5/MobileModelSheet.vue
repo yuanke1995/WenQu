@@ -123,7 +123,8 @@ const {
 const pickAgentRow = id => { pickAgent(id); if (!agentLocked.value) emit('close') }
 
 // 模型下拉数据（与 ModelSelect 同源 /provider/available）：10s 模块级缓存，避免每次开 sheet 都打接口。
-// 过滤口径必须带 type=chat（与 PC 的 ModelSelect 一致）：不过滤会把 OCR/向量/重排模型也列成可聊模型。
+// 过滤口径必须带 type=chat（与 PC 的 ModelSelect 一致）：不过滤会把 OCR/向量/重排模型也列成可聊模型；
+// omni（全模态）本质是对话模型，与 PC 同口径一并计入可聊模型
 let cache = { ts: 0, data: [] }
 const groups = ref([])
 const loadingModels = ref(false)
@@ -133,7 +134,7 @@ const load = async () => {
   try {
     const data = await listAvailableModels('chat')
     groups.value = (Array.isArray(data) ? data : [])
-      .map(g => ({ ...g, models: (g.models || []).filter(m => m.type === 'chat') }))
+      .map(g => ({ ...g, models: (g.models || []).filter(m => m.type === 'chat' || m.type === 'omni') }))
       .filter(g => g.models.length)
     cache = { ts: Date.now(), data: groups.value }
   } catch (e) { groups.value = [] } finally { loadingModels.value = false }

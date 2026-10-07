@@ -45,10 +45,10 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.listProviders(RequestUser.uid(), RequestUser.role()));
     }
 
-    @Operation(summary = "可用模型清单", description = "登录即可用（无需管理员）：按归属过滤后，enabled 供应商下 enabled 模型按供应商分组，预先拼好引用串 ref=providerId/modelId；type 过滤（chat/vision/embedding/rerank），不含 baseUrl/apiKey")
+    @Operation(summary = "可用模型清单", description = "登录即可用（无需管理员）：按归属过滤后，enabled 供应商下 enabled 模型按供应商分组，预先拼好引用串 ref=providerId/modelId；type 过滤（chat/vision/embedding/rerank），期望 chat 时全模态 omni 一并入选（全模态本质是对话模型），不含 baseUrl/apiKey")
     @GetMapping("/available")
     public ResultJson available(
-            @Parameter(description = "模型类型过滤（空=全部；支持逗号分隔多类型，如 vision,ocr）") @RequestParam(value = "type", required = false) String type) {
+            @Parameter(description = "模型类型过滤（空=全部；支持逗号分隔多类型，如 vision,ocr；期望 chat 时 omni 一并入选）") @RequestParam(value = "type", required = false) String type) {
         return ResultJson.ok(modelRegistryService.available(type, RequestUser.uid(), RequestUser.role()));
     }
 
