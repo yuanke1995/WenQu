@@ -258,7 +258,8 @@ public class HybridRetrievalService {
      * （searchMulti 入口对齐）：深度思考每轮最多并行 maxSubQueries 路，固定 4 线程在百级并发下
      * 让多路检索退化成串行、整段撞 8s 总超时后只保留首路——多路召回名存实亡
      */
-    private ThreadPoolExecutor multiSearchPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(4, r -> {
+    private ThreadPoolExecutor multiSearchPool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(), r -> {
         Thread t = new Thread(r, "multi-search");
         t.setDaemon(true);
         return t;

@@ -54,7 +54,8 @@ public class SubAgentOrchestrator {
      *  固定 2 线程：超时路径必须 cancel(true) 中断底层 LLM 调用（WebClient block 可被 interrupt 唤醒），
      *  否则思考型模型的慢路由把池占满后，所有用户的委派路由都会超时回退全选 */
     private static final java.util.concurrent.ThreadPoolExecutor ROUTE_EXECUTOR =
-            (java.util.concurrent.ThreadPoolExecutor) java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
+            new java.util.concurrent.ThreadPoolExecutor(2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
                 Thread t = new Thread(r, "subagent-router");
                 t.setDaemon(true);
                 return t;

@@ -34,7 +34,8 @@ public class AgentDispatchService {
      *  固定 2 线程：超时路径必须 cancel(true) 中断底层 LLM 调用（WebClient block 可被 interrupt 唤醒），
      *  否则思考型模型的慢路由会把池占满，全平台派遣集体超时回落 */
     private static final java.util.concurrent.ThreadPoolExecutor DISPATCH_EXECUTOR =
-            (java.util.concurrent.ThreadPoolExecutor) java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
+            new java.util.concurrent.ThreadPoolExecutor(2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
                 Thread t = new Thread(r, "agent-dispatcher");
                 t.setDaemon(true);
                 return t;

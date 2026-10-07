@@ -31,6 +31,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -344,7 +345,8 @@ public class RagService {
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
      *  （≤8s），固定 2 线程在百级并发下排队到超时、改写静默降级为原句——不报错但召回质量塌方 */
-    private ThreadPoolExecutor rewriteExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(2, r -> {
+    private ThreadPoolExecutor rewriteExecutor = new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(), r -> {
         Thread t = new Thread(r, "rewrite");
         t.setDaemon(true);
         return t;
@@ -352,8 +354,10 @@ public class RagService {
 
     /** 历史压缩专用线程池：与改写池分开（同轮可能先压缩再改写，共用会互相排队拉长首字时延）。
      *  线程数随 chat.pipelineThreads 联动（syncPipelineSize）：压缩是偶发的长 LLM 调用（≤20s），
-     *  排队只延迟压缩不影响本轮可答性，给流水线并发的四分之一即可 */
-    private ThreadPoolExecutor compressExecutor = (ThreadPoolExecutor) Executors.newSingleThreadExecutor(r -> {
+     *  排队只延迟压缩不影响本轮可答性，给流水线并发的四分之一即可。
+     *  直接构造 ThreadPoolExecutor（Executors 工厂返回不可转型的包装类，调容需 setCore/Max） */
+    private ThreadPoolExecutor compressExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(), r -> {
         Thread t = new Thread(r, "history-compress");
         t.setDaemon(true);
         return t;
@@ -366,6 +370,30 @@ public class RagService {
     @jakarta.annotation.PostConstruct
     void initPipeline() {
         syncPipelineSize();
+        warmUpToolSchemas();
+    }
+
+    /**
+     * 启动期单线程预热工具 schema：@Tool 回调的 inputSchema 由 victools/Jackson 首次
+     * introspection 时生成，而 Jackson 对同一类型的并发首采会抛
+     * 「Conflicting property-based creators」（record 的 canonical 构造器被两个线程同时收集，
+     * 8091 百并发压测实测复现：重启后头一批并发问答随机「系统处理异常」）。
+     * 启动期串行生成一遍，Jackson 的 introspection 缓存填充后，后续并发生成只读缓存。
+     */
+    private void warmUpToolSchemas() {
+        try {
+            for (org.springframework.ai.tool.ToolCallback cb :
+                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
+                cb.getToolDefinition().inputSchema();
+            }
+            for (org.springframework.ai.tool.ToolCallback cb :
+                    org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)) {
+                cb.getToolDefinition().inputSchema();
+            }
+            log.info("[TOOL] 工具 schema 预热完成（规避并发首采竞态）");
+        } catch (Exception e) {
+            log.warn("[TOOL] 工具 schema 预热失败（不影响启动，仅并发首轮有竞态风险）: {}", e.getMessage());
+        }
     }
 
     /** 提交前同步流水线线程数（chat.pipelineThreads，DB 配置保存即生效）。
