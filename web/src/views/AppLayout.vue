@@ -79,7 +79,8 @@
             </button>
             <template v-if="collapsed || !groupHidden(g.label)">
             <div v-for="s in g.items" :key="s.id"
-               class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id) }"
+               class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: chatStreams.has(s.id) }"
+               :style="{ '--sess-i': sessRowOrdinal.get(s.id) ?? 0 }"
                :title="s.title" @click="batchMode && !collapsed ? toggleBatchSel(s.id) : openSession(s.id)">
             <span v-if="collapsed" class="sess-dot"></span>
             <template v-else>
@@ -364,6 +365,13 @@ const COUNT_KEYS = { 置顶: 'pinned', 今天: 'today', '7 天内': 'week', 更�
 const groupTotal = (label, loaded) => sessionStore.counts[COUNT_KEYS[label]] ?? loaded
 // 「查看更多 (N)」的 N：全量 - 已加载可展示数（两者同口径：仅统计有消息的会话）
 const sessRemaining = computed(() => Math.max(0, (sessionStore.total || 0) - visibleSessionList.value.length))
+// 会话行在列表里的全序下标：分组只分桶不改序，所以平铺下标就是它渲染成第几行
+// （生成中的会话按它取呼吸相位，见 .sess-item.running）
+const sessRowOrdinal = computed(() => {
+  const m = new Map()
+  visibleSessionList.value.forEach((s, i) => m.set(s.id, i))
+  return m
+})
 const isActive = p => route.path === p
 // 窄屏抽屉开合。不落 localStorage：抽屉是「当前这一秒的临时状态」，
 // 刷新后默认关着才是符合预期的（记住它会让下次进来莫名其妙开着一个遮罩）
@@ -763,6 +771,31 @@ onMounted(async () => {
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
 .sess-item.active .sess-dot { background: var(--app-accent); }
+/* 本机还在生成的会话（chatStreams 持有它的流）：标题在主色与次文本之间呼吸。
+   不用转圈图标：行右端是 hover 操作位、行首已排着置顶/分享标记，再插一个会打架；
+   也不用 background-clip 流光：那会让 text-overflow 的省略号一起透明，长标题看不出被截断。
+   只改 color，省略号与收藏星标跟着一起呼吸，深浅主题同源。
+   相位按行的全序下标错开（--sess-i 由模板注入，负延迟即从动画中段起步）：
+   同时在跑的会话是各自轮流亮，而不是整列一起眨眼。步长取 0.37s 而非整拍的 0.4s——
+   波长 1.6/0.37≈4.3 行，错开几行才撞一次相位，同列表里的两行几乎不会同步。 */
+.sess-item.running { --sess-pulse-delay: calc(var(--sess-i, 0) * -0.37s); }
+.sess-item.running .sess-title {
+  color: var(--app-accent);
+  animation: sess-running 1.6s ease-in-out infinite;
+  animation-delay: var(--sess-pulse-delay, 0s);
+}
+.sess-item.running .sess-dot {
+  background: var(--app-accent);
+  animation: sess-running-dot 1.6s ease-in-out infinite;
+  animation-delay: var(--sess-pulse-delay, 0s);
+}
+@keyframes sess-running { 0%, 100% { color: var(--app-text2); } 50% { color: var(--app-accent); } }
+@keyframes sess-running-dot { 0%, 100% { background: var(--app-text3); } 50% { background: var(--app-accent); } }
+@media (prefers-reduced-motion: reduce) {
+  /* 关动效时退化为常亮主色：状态还在，只是不闪 */
+  .sess-item.running .sess-title,
+  .sess-item.running .sess-dot { animation: none; }
+}
 .sess-del { color: var(--app-text3); opacity: 0; flex: none; margin-left: 4px; font-size: 12px; }
 .sess-item:hover .sess-del { opacity: 1; }
 .sess-del:hover { color: var(--app-danger); }
