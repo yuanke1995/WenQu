@@ -12,8 +12,20 @@ import { watch } from 'vue'
 import { themeState } from './theme'
 import { sandboxRun } from '../api.js'
 
-// 图片 URL 兼容（/ai/ 前缀走 /proxy；data:/http 原样）
-export const resolveImg = u => u.startsWith('data:') ? u : u.startsWith('http') ? u : '/proxy' + u.replace(/^\/ai/, '')
+// 媒体（文档图片/产物）URL 前缀，与后端返回的 /ai/** 路径配套：
+//   开发态：vite dev server 用 /proxy 转发到后端 context-path(/ai)，故需剥掉 /ai 再挂 /proxy；
+//   生产态：nginx 已有 location /ai/ 直通后端，路径原样可用。
+// 前缀由 VITE_MEDIA_BASE 决定（生产为空串＝原样返回），**不可无条件拼 /proxy**——
+// 那个前缀只存在于 vite dev server，线上 /proxy/images/** 会落进 SPA 回退返回 index.html，
+// 浏览器拿 HTML 当图片解码必然失败（症状：文档图片/产物一律"加载失败"，但签名并未过期）。
+const MEDIA_BASE = import.meta.env.VITE_MEDIA_BASE ?? ''
+
+// 图片 URL 兼容（data:/http 原样；相对路径按环境决定是否加前缀）
+export const resolveImg = u => {
+  if (!u) return u
+  if (u.startsWith('data:') || u.startsWith('http')) return u
+  return MEDIA_BASE ? MEDIA_BASE + u.replace(/^\/ai/, '') : u
+}
 
 // 图片加载兜底：加载失败替换为灰底占位图（签名过期/文件缺失等场景避免裂图）
 export const FALLBACK_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
