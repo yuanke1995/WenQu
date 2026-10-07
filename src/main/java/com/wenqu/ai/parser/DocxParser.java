@@ -450,10 +450,13 @@ public class DocxParser implements DocumentParser {
                 sem.acquire();
                 CompletableFuture<String> descFuture;
                 try {
+                    // 引用必须在提交线程（解析线程）捕获：模型引用是 ThreadLocal，
+                    // vision-desc 池线程直接读为空，会把「上传时指定/按库绑定」的模型当成未绑定而跳过描述
+                    String descRef = visionService.currentDescRef();
                     descFuture = CompletableFuture.supplyAsync(
                             () -> {
                                 try {
-                                    return visionService.describe(ci.bytes(), ci.ext());
+                                    return visionService.describeWithRef(ci.bytes(), ci.ext(), descRef);
                                 } finally {
                                     sem.release();
                                 }

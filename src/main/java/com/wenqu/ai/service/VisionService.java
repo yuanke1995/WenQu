@@ -56,6 +56,19 @@ public class VisionService {
     }
 
     /**
+     * 解析期「图片描述」引用的当前值（异步任务提交前在解析线程捕获用——ThreadLocal 不跨线程，
+     * 图片描述跑在 vision-desc 池线程，那里直接读必然是空）。
+     */
+    public String currentDescRef() {
+        return DESC_REF.get();
+    }
+
+    /** 显式引用版图片描述（异步任务用）：ref 由提交线程捕获后传入，其余逻辑同 {@link #describe(byte[], String)} */
+    public String describeWithRef(byte[] imageBytes, String ext, String ref) {
+        return describe(imageBytes, ext, configService.get("vision.prompt"), ref);
+    }
+
+    /**
      * 带引用的图片描述（内部）：ref 非空时解析该引用为视觉网关（解析期的知识库 visionRef）；
      * 空/解析失败 → 跳过描述（全局 vision.model 已退役，无运行时兜底）。
      * 先查内容寻址缓存（同图+同模型+同提示词直接复用上次结果，避免重解析重复调 VLM）；
