@@ -307,6 +307,20 @@ public class AgentService {
         return (a != null && readable(a)) ? a : null;
     }
 
+    /**
+     * 按 ID 直取，<b>刻意不套登录用户可读校验</b>：仅供分享 token 免登录通道
+     * （{@code AgentShareService.resolveGuest}，同时承载 /s/{token} 与 /ai/mcp/{token}）使用。
+     * <p>{@link #readable} 是「谁的资产对谁可见」的登录户口径，游客没有身份，套用后
+     * 未配置共享范围（2026-10 起默认＝私有）的智能体即使已发布，链接也一律判成「分享不存在」。
+     * 而发布端点已用 {@code canManage} 把关——能生成 token 的人本就有权公开该智能体，
+     * 所以这里的授权语义是「持 token 即已获发布者授权」（见 ShareController 类注释）。</p>
+     * <p>除分享通道外不要用本方法；需要可见性判定的地方一律用 {@link #get}。</p>
+     */
+    public Agent getForShare(String id) {
+        if (!StringUtils.hasText(id)) return null;
+        return mapper.selectById(id);
+    }
+
     /** 默认智能体（无则返回 null） */
     public Agent defaultAgent() {
         return mapper.selectOne(new LambdaQueryWrapper<Agent>()

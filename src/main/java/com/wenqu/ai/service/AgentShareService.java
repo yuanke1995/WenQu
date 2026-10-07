@@ -94,6 +94,8 @@ public class AgentShareService {
     /**
      * 游客解析：token → 可用的分享上下文。逐项 fail-loud：
      * 配置不存在/已停用 → 404（不泄露存在性）；智能体已删除 → 404；发布者档案缺失 → 404。
+     * <p>授权只由 token 与 enabled 决定，<b>不套登录用户的共享范围</b>（故取 {@code getForShare}）：
+     * 游客无身份，而「谁建归谁」下未配置共享的智能体对游客一律不可见，会把已发布的私有智能体误判成 404。</p>
      */
     public GuestContext resolveGuest(String token) {
         if (token == null || token.isBlank()) throw new BizException("分享链接无效");
@@ -103,7 +105,7 @@ public class AgentShareService {
         if (share == null || share.getEnabled() == null || share.getEnabled() != 1) {
             throw new BizException("分享不存在或已停止访问");
         }
-        Agent agent = agentService.get(share.getAgentId());
+        Agent agent = agentService.getForShare(share.getAgentId());
         if (agent == null) throw new BizException("分享不存在或已停止访问");
         User owner = share.getCreatedBy() == null ? null : userMapper.selectById(share.getCreatedBy());
         if (owner == null) throw new BizException("分享不存在或已停止访问");
