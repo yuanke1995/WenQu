@@ -50,9 +50,11 @@ public class SubAgentOrchestrator {
     /** 按子代理数缓存编译后的图（图结构随 N 变化；N 通常 2~4，缓存避免每轮重建） */
     private final Map<Integer, CompiledGraph> graphCache = new ConcurrentHashMap<>();
 
-    /** 委派路由专用线程池（带超时，避免路由模型卡住拖垮整轮问答；daemon 不阻碍 JVM 退出） */
-    private static final java.util.concurrent.ExecutorService ROUTE_EXECUTOR =
-            java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
+    /** 委派路由专用线程池（带超时，避免路由模型卡住拖垮整轮问答；daemon 不阻碍 JVM 退出）。
+     *  固定 2 线程：超时路径必须 cancel(true) 中断底层 LLM 调用（WebClient block 可被 interrupt 唤醒），
+     *  否则思考型模型的慢路由把池占满后，所有用户的委派路由都会超时回退全选 */
+    private static final java.util.concurrent.ThreadPoolExecutor ROUTE_EXECUTOR =
+            (java.util.concurrent.ThreadPoolExecutor) java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
                 Thread t = new Thread(r, "subagent-router");
                 t.setDaemon(true);
                 return t;
@@ -98,7 +100,7 @@ public class SubAgentOrchestrator {
             // 用量归属：路由调用跑在专属线程池（无请求上下文），把调用线程上的用户身份显式带进去，
             // 这笔开销才落在提问者的台账上（模型路由出口按 UsageAttr 记账）
             String billingUid = com.wenqu.ai.util.RequestUser.uid();
-            String out = java.util.concurrent.CompletableFuture
+            java.util.concurrent.CompletableFuture<String> routeFuture = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
                                 com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
@@ -116,8 +118,16 @@ public class SubAgentOrchestrator {
                         } finally {
                             com.wenqu.ai.util.UsageAttr.clear();
                         }
-                    }, ROUTE_EXECUTOR)
-                    .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }, ROUTE_EXECUTOR);
+            String out;
+            try {
+                out = routeFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                routeFuture.cancel(true);
+                log.warn("[SUBAGENT] 委派路由超时（{}ms），已中断底层调用并回退全部候选（{} 个，池活跃 {}/2）",
+                        timeoutMs, candidates.size(), ROUTE_EXECUTOR.getActiveCount(), ROUTE_EXECUTOR.getMaximumPoolSize());
+                return new RouteResult(candidates);
+            }
             return parseRouteResult(out, candidates);
         } catch (Exception e) {
             // CompletableFuture.get 的 ExecutionException 自身 message 常为 null，真因在 cause——透出真因，不吞

@@ -287,7 +287,7 @@ public class SessionService {
         });
         if (kw != null) {
             String esc = escapeLike(kw);
-            wrapper.and(w -> w.like(Session::getTitle, kw)
+            wrapper.and(w -> w.like(Session::getTitle, escapeLikeWildcard(kw))
                     .or().inSql(Session::getId,
                             "SELECT DISTINCT session_id FROM c_ai_message WHERE deleted=0 AND content LIKE '%"
                                     + esc + "%'"));
@@ -411,6 +411,17 @@ public class SessionService {
     private String escapeLike(String keyword) {
         return keyword.replace("\\", "\\\\")
                 .replace("'", "''")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
+    /**
+     * MP 参数化 {@code like()} 的通配符转义：只转 LIKE 元字符（% _ \），单引号由参数化处理——
+     * 复用 {@link #escapeLike} 的引号加大会改变语义（搜「'」变成搜「''」）。与 inSql 内容搜索
+     * 路径保持同一通配符口径。
+     */
+    private String escapeLikeWildcard(String keyword) {
+        return keyword.replace("\\", "\\\\")
                 .replace("%", "\\%")
                 .replace("_", "\\_");
     }

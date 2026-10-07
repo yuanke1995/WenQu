@@ -488,11 +488,13 @@ public class DocumentService {
                 continue;
             }
             if (code != 200) {
+                try { resp.body().close(); } catch (Exception ignored) { }
                 throw new BizException("网页返回 HTTP " + code + "（" + current.getHost() + "）");
             }
             String contentType = resp.headers().firstValue("Content-Type").orElse("");
             String lower = contentType.toLowerCase();
             if (!(lower.contains("text/html") || lower.contains("application/xhtml") || lower.contains("text/plain"))) {
+                try { resp.body().close(); } catch (Exception ignored) { }
                 throw new BizException("URL 返回的不是网页（Content-Type: " + contentType + "）");
             }
             return new FetchResult(current, readCapped(resp.body()), contentType);

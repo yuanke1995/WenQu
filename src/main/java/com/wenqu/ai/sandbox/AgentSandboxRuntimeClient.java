@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.Cleaner;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -346,7 +347,13 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
         }
     }
 
-    /** 分块读取沙盒文件流（对应 SDK {@code download_file} 的 {@code Iterator[bytes]}）。 */
+    /** 下载流的弃用兜底：迭代中途异常或调用方放弃迭代（如导出限长、上层 catch 吞错）时，
+     *  没有任何代码路径会再调 close()，HTTP 连接只能靠这里在对象不可达后释放 */
+    private static final Cleaner CLEANER = Cleaner.create();
+
+    /** 分块读取沙盒文件流（对应 SDK {@code download_file} 的 {@code Iterator[bytes]}）。
+     *  关闭三重保障：迭代自然耗尽即关（ChunkIterator.next）、读流异常先关再抛（ChunkIterator.readChunk）、
+     *  其余弃用路径由 {@link #CLEANER} 兜底。 */
     private static final class ChunkStream implements Iterable<byte[]> {
 
         private final InputStream stream;
@@ -354,6 +361,14 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
 
         ChunkStream(InputStream stream) {
             this.stream = stream;
+            // 动作只捕获构造参数（流引用），不得捕获 this——否则本对象永远不可达，兜底失效
+            CLEANER.register(this, () -> {
+                try {
+                    stream.close();
+                } catch (IOException ignored) {
+                    // best-effort close
+                }
+            });
         }
 
         @Override
@@ -408,6 +423,7 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
                 System.arraycopy(buffer, 0, trimmed, 0, read);
                 return trimmed;
             } catch (IOException exc) {
+                close();
                 throw new SandboxProvisionerException("failed to read sandbox file stream", exc);
             }
         }

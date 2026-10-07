@@ -30,9 +30,11 @@ public class AgentDispatchService {
     private final ConfigService configService;
     private final ChatClient chatClient;
 
-    /** 派遣路由专用线程池（带超时，避免路由模型卡住拖垮整轮问答；daemon 不阻碍 JVM 退出） */
-    private static final java.util.concurrent.ExecutorService DISPATCH_EXECUTOR =
-            java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
+    /** 派遣路由专用线程池（带超时，避免路由模型卡住拖垮整轮问答；daemon 不阻碍 JVM 退出）。
+     *  固定 2 线程：超时路径必须 cancel(true) 中断底层 LLM 调用（WebClient block 可被 interrupt 唤醒），
+     *  否则思考型模型的慢路由会把池占满，全平台派遣集体超时回落 */
+    private static final java.util.concurrent.ThreadPoolExecutor DISPATCH_EXECUTOR =
+            (java.util.concurrent.ThreadPoolExecutor) java.util.concurrent.Executors.newFixedThreadPool(2, r -> {
                 Thread t = new Thread(r, "agent-dispatcher");
                 t.setDaemon(true);
                 return t;
@@ -76,7 +78,7 @@ public class AgentDispatchService {
             // 用量归属：路由调用跑在专属线程池（无请求上下文），把 Dispatch 线程上的用户身份
             // 显式带进去，这笔开销才落在提问者的台账上（路由出口按 UsageAttr 记账）
             String uid = com.wenqu.ai.util.RequestUser.uid();
-            String out = java.util.concurrent.CompletableFuture
+            java.util.concurrent.CompletableFuture<String> routeFuture = java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
                                 com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : uid,
@@ -94,8 +96,16 @@ public class AgentDispatchService {
                         } finally {
                             com.wenqu.ai.util.UsageAttr.clear();
                         }
-                    }, DISPATCH_EXECUTOR)
-                    .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }, DISPATCH_EXECUTOR);
+            String out;
+            try {
+                out = routeFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                routeFuture.cancel(true);
+                log.warn("[DISPATCH] 路由超时（{}ms），已中断底层调用并回落默认智能体（{} 个候选，池活跃 {}/2）",
+                        timeoutMs, candidates.size(), DISPATCH_EXECUTOR.getActiveCount(), DISPATCH_EXECUTOR.getMaximumPoolSize());
+                return null;
+            }
             Agent picked = parseDispatchResult(out, candidates);
             if (picked == null) {
                 log.info("[DISPATCH] 路由判定无匹配智能体（{} 个候选），回落默认智能体", candidates.size());

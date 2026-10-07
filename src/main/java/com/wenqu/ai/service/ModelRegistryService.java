@@ -20,10 +20,13 @@ import redis.clients.jedis.JedisPubSub;
 
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -69,8 +72,11 @@ public class ModelRegistryService {
     public static final String TYPE_AUDIO = "audio";
     public static final String TYPE_OMNI = "omni";
     public static final String TYPE_OTHER = "other";
-    public static final List<String> TYPES = List.of(TYPE_CHAT, TYPE_VISION, TYPE_OCR, TYPE_EMBEDDING, TYPE_RERANK,
-            TYPE_AUDIO, TYPE_OMNI, TYPE_OTHER);
+    /** 合法类型集：LinkedHashSet 而非 List.of/Set.of——saveModels 对缺失字段做 contains(null) 探测，
+     *  不可变集合一律抛 NPE，这里必须容忍 null（返回 false 落默认 chat） */
+    public static final Set<String> TYPES = Collections.unmodifiableSet(new LinkedHashSet<>(
+            List.of(TYPE_CHAT, TYPE_VISION, TYPE_OCR, TYPE_EMBEDDING, TYPE_RERANK,
+                    TYPE_AUDIO, TYPE_OMNI, TYPE_OTHER)));
 
     private final ProviderMapper providerMapper;
     private final ModelInfoMapper modelMapper;
@@ -511,8 +517,10 @@ public class ModelRegistryService {
     public static final String THINK_NONE = "none";
     public static final String THINK_SWITCHABLE = "switchable";
     public static final String THINK_ALWAYS = "always";
-    public static final List<String> THINKING_LEVELS =
-            List.of(THINK_AUTO, THINK_NONE, THINK_SWITCHABLE, THINK_ALWAYS);
+    /** 同 TYPES：LinkedHashSet 容忍 saveModels 的 contains(null) 探测（缺失字段落 auto） */
+    public static final Set<String> THINKING_LEVELS =
+            Collections.unmodifiableSet(new LinkedHashSet<>(
+                    List.of(THINK_AUTO, THINK_NONE, THINK_SWITCHABLE, THINK_ALWAYS)));
 
     /** 恒思考模型的名称特征（DeepSeek-R1 / QwQ / OpenAI o 系 / 带 thinking 字样） */
     private static final List<String> ALWAYS_THINK_TOKENS = List.of("r1", "qwq", "thinking");
@@ -963,8 +971,9 @@ public class ModelRegistryService {
 
     /**
      * 批量保存供应商模型（全量同步语义）：入库/更新 incoming，删除该供应商下不在 incoming 中的登记。
-     * modelId 重复时保留首条。
+     * modelId 重复时保留首条。先删后插必须整体事务化：中途失败回滚，不留下半同步的模型清单。
      */
+    @org.springframework.transaction.annotation.Transactional
     public void saveModels(String providerId, List<Map<String, Object>> incoming) {
         Provider p = providerMapper.selectById(providerId);
         if (p == null) throw new IllegalArgumentException("供应商不存在");
@@ -1033,7 +1042,7 @@ public class ModelRegistryService {
             mi.setRemark(str(item.get("remark")));
             desired.add(mi);
         }
-        // 全量同步：模型登记是纯配置数据且量小，顺序写即可（中途失败重开弹窗重存即可恢复）
+        // 全量同步：模型登记是纯配置数据且量小，顺序写即可；整体包在事务里，中途失败全量回滚
         for (ModelInfo mi : modelMapper.selectList(new LambdaQueryWrapper<ModelInfo>().eq(ModelInfo::getProviderId, providerId))) {
             boolean keep = desired.stream().anyMatch(d -> d.getModelId().equals(mi.getModelId()));
             if (!keep) modelMapper.deleteById(mi.getId());
