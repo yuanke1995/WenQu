@@ -11,7 +11,7 @@
          出现在 H5 里（横屏时它还会以常驻栏形态直接摊在左侧）。 -->
     <aside v-if="!mobileShell" class="side" :class="{ collapsed: collapsed && !isNarrow, open: sideOpen }">
       <div class="side-logo">
-        <BrandMark :size="24" />
+        <BrandMark v-if="!collapsed" :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
         <!-- 侧栏的「形态操作」组：编辑 + 折叠，用容器整体靠右（.side-logo-ops margin-left:auto）。
              必须成组包起来，而不是各自 margin-left:auto —— 后者只推走了折叠按钮，
@@ -31,7 +31,7 @@
           </button>
         </div>
         <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
-          <menu-unfold-outlined v-if="collapsed" />
+          <BrandMark v-if="collapsed" :size="24" />
           <menu-fold-outlined v-else />
         </button>
       </div>
@@ -319,7 +319,7 @@ import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from 
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
-         MenuFoldOutlined, MenuUnfoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CompassOutlined,
+         MenuFoldOutlined, DeleteOutlined, DownloadOutlined, TeamOutlined, CompassOutlined,
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
@@ -903,9 +903,9 @@ onMounted(async () => {
 }
 .side.collapsed { width: 56px; }
 .side-logo { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
-/* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 隐藏 logo、按钮居中 */
+/* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 折叠态只渲染一个
+   按钮，图标即问渠品牌标（点击展开侧边栏），比裸的展开箭头更能表明"这是谁家的栏" */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
-.side.collapsed .side-logo svg { display: none; }
 /* 折叠态导航图标对齐到侧边栏中轴（实测导航图标左偏 4px） */
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
 /* 折叠态：底部改为竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
