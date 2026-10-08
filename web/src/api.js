@@ -98,7 +98,8 @@ const CHAT_EVENT_CB = {
   subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
   agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
   agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
-  plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled'
+  plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
+  plan_superseded: 'onPlanSuperseded'
 }
 
 /** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
@@ -822,13 +823,19 @@ export const listPendingAsks = sessionId =>
   request(`/ask-user/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
 /** 执行计划裁决（计划模式，人在回路）：批准可带编辑后的计划全文（空串=按模型原稿执行）；
- *  拒绝=本轮终止。仅本轮用户本人可裁决 */
+ *  拒绝（approved:false）=本轮终止。仅本轮用户本人可裁决 */
 export const resolvePlanApproval = (planApprovalId, approved, plan = '') =>
   request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ approved, plan }) })
 
+/** 执行计划「继续对话」取代：用户带着修改意见继续对话，本版计划作废（前端随后把那条意见作为
+ *  用户消息发出，新一轮按意见重做计划）。仅本轮用户本人可裁决 */
+export const supersedePlanApproval = planApprovalId =>
+  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true }) })
+
 /** 待批准计划（卡片恢复入口）：列本人该会话仍挂起的执行计划批准卡。
- *  返回 {items:[{planApprovalId,plan,timeoutMs,remainingMs,createdAt,expired,live}]}；
- *  live=false 表示唤醒句柄已随进程重启消失，批准送不到模型 */
+ *  返回 {items:[{planApprovalId,plan,versions:[{plan,feedback}],timeoutMs,remainingMs,createdAt,expired,live}]}；
+ *  versions=本轮退回重出的版本链（feedback=产出该版的用户意见）；live=false 表示唤醒句柄已随进程重启消失，
+ *  批准送不到模型 */
 export const listPendingPlans = sessionId =>
   request(`/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`)
 

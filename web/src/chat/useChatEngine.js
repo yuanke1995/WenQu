@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk,
-         listPendingAsks, resolvePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
+         listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -809,12 +809,9 @@ const switchSession = async sid => {
             time: m.createTime ? new Date(m.createTime).getTime() : null,
             artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
             toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
-            // 计划批准卡（随助手消息落库）：历史按轮重建气泡里的计划卡（已批准/未批准 + 计划正文），
+            // 计划批准卡（随助手消息落库）：历史按轮重建气泡里的计划卡（已批准/未批准 + 末版正文 + 修改记录），
             // 有多少轮计划就回显多少张。此前计划只活在实时流里，刷新/切会话后除「还在等确认」外全丢
-            planCard: (m.plan && typeof m.plan === 'object' && m.plan.plan)
-              ? { plan: String(m.plan.plan), status: m.plan.status === 'rejected' ? 'rejected' : 'approved',
-                  busy: false, editText: '' }
-              : null,
+            planCard: (m.plan && typeof m.plan === 'object' && m.plan.plan) ? planCardFromRecord(m.plan) : null,
             // 过程独白全文（随消息落库）：历史回显时间线 process 段的区间数据源（旧消息无此字段则为空）
             processText: typeof m.processText === 'string' ? m.processText : '',
             // Token 用量（随消息落库）：历史会话的「本次用量/会话累计」回看数据源（旧消息无此字段则为 null）
@@ -1033,17 +1030,19 @@ async function resolveApproval (m, approved) {
     if (m.approval) m.approval.busy = false
   }
 }
-/** 计划模式（人在回路）：裁决当前气泡挂起的执行计划——批准（按原稿或用户自定义稿）/取消本轮。
- *  customPlan 传非空串 = 用「自定义」输入框里的稿子批准（前端选项 2 的「执行」）；不传 = 按模型原稿批准
- *  （前端选项 1「确认」，选中即送）。取消 → 整轮终止，卡片定格「未批准」。
- *  恢复态卡（restored）：本设备没有这一轮的流，批准后回答在后台生成，靠 pollRestoredAnswer 轮询取回。 */
-async function submitPlanApproval (m, approved, customPlan = '') {
+/**
+ * 计划模式（人在回路）：裁决当前气泡挂起的执行计划——批准 / 取消本轮。
+ *  action='approve' 批准执行（后端仍兼容带改稿批准，前端不再提供该入口）；
+ *  action='cancel' 取消本轮，卡片定格「未批准」。
+ *  对计划不满意走 {@link continuePlanConversation}（带着意见继续对话，本版作废）。
+ *  恢复态卡（restored）：本设备没有这一轮的流，批准在后台进行，靠轮询取回结果。 */
+async function submitPlanApproval (m, action) {
   const c = m && m.planCard
   if (!c || c.busy || c.status !== 'pending') return
+  const approved = action === 'approve'
   c.busy = true
-  const edited = approved ? String(customPlan || '').trim() : ''
   try {
-    const r = await resolvePlanApproval(c.id, approved, edited)
+    const r = await resolvePlanApproval(c.id, approved)
     if (r && r.success === false) {
       message.warning(r.msg || '提交失败')
       c.busy = false
@@ -1052,7 +1051,6 @@ async function submitPlanApproval (m, approved, customPlan = '') {
       return
     }
     if (approved) {
-      if (edited) c.plan = edited
       c.status = 'approved'
       if (c.restored) {
         m.planCard = null
@@ -1069,6 +1067,46 @@ async function submitPlanApproval (m, approved, customPlan = '') {
     message.error(e.message || '提交失败')
     if (m.planCard) m.planCard.busy = false
   }
+}
+
+/** 旧轮收尾等待：后端先落「取代」收尾消息、前端再把意见作为新消息发出（落库顺序不乱）。
+ *  恢复态卡没有本轮的流可等，只给后端落库留一小段时间 */
+const planRoundSettled = m => new Promise(resolve => {
+  if (!m || m.restored) { setTimeout(resolve, 800); return }
+  if (!m.loading) { resolve(); return }
+  const t0 = Date.now()
+  const tick = () => { if (!m.loading || Date.now() - t0 > 5000) resolve(); else setTimeout(tick, 150) }
+  tick()
+})
+
+/**
+ * 计划「继续对话」（计划模式）：用户对当前计划不满意，把输入框里的意见作为一条正式用户消息发出——
+ * 本版计划先按「已被取代」作废（supersede），随后这条消息在**同一会话里继续对话**：完整新一轮
+ * （重新检索），模型带着上一版计划按意见产出修改后的计划卡。可反复，直到点「确认」才执行。
+ */
+async function continuePlanConversation (m, text) {
+  const c = m && m.planCard
+  if (!c || c.busy || c.status !== 'pending') return
+  const q = String(text || '').trim()
+  if (!q) { message.warning('先写下要改什么，再点「继续对话」'); return }
+  c.busy = true
+  try {
+    const r = await supersedePlanApproval(c.id)
+    if (r && r.success === false) { message.warning(r.msg || '提交失败'); c.busy = false; return }
+  } catch (e) {
+    message.error(e.message || '提交失败')
+    c.busy = false
+    return
+  }
+  c.editText = ''
+  await planRoundSettled(m)
+  // 旧轮已收尾（或恢复态给了落库时间）：把意见作为用户消息发出，继续同一会话的对话
+  const userMsg = reactive({ role: 'user', content: q, images: [], attachments: [], attachData: [],
+                            skills: [], mentions: [], historyRefs: [], deepThink: deepThinkOn.value,
+                            planMode: true, time: Date.now(), messageId: null })
+  messages.value.push(userMsg)
+  // 强制计划模式：本轮的目的就是按意见重做计划（后端据此再走计划闸门）
+  streamAnswer(q, [], null, messages.value.length === 1, 1, deepThinkOn.value, [], [], [], null, [], '', userMsg, true)
 }
 /** 智能体提问（一卡多问）：在某题上点选一个选项——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成） */
 function pickAskOption (m, page, oi) {
@@ -1167,6 +1205,31 @@ let restoredPoll = null
 const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll); restoredPoll = null } }
 
 /**
+ * 落库计划快照 → 气泡计划卡字段（历史回显与待批准卡重建共用）：
+ * plan=末版正文（卡片主体），versions=已产各版（不含末版，供「修改记录」逐版回看），feedback=产出末版的用户意见。
+ * 老消息无 versions 字段 → 退化为单版（与改动前一致）。
+ */
+const planCardFromRecord = (rec, statusOverride) => {
+  const all = (rec && Array.isArray(rec.versions) ? rec.versions : [])
+    .filter(v => v && typeof v.plan === 'string')
+  const st = rec && (rec.status === 'rejected' || rec.status === 'superseded') ? rec.status : 'approved'
+  const card = {
+    plan: '', status: statusOverride || st,
+    busy: false, editText: '', versions: [], feedback: '',
+    auto: !!(rec && rec.auto)   // 按消息意图自动开启（历史回显照常标「自动开启」）
+  }
+  if (all.length) {
+    const last = all[all.length - 1]
+    card.plan = last.plan
+    card.feedback = last.feedback || ''
+    card.versions = all.slice(0, -1).map(v => ({ plan: v.plan, feedback: v.feedback || '' }))
+  } else if (rec) {
+    card.plan = String(rec.plan || '')
+  }
+  return card
+}
+
+/**
  * 会话加载/切换后恢复待批准计划卡（计划模式，与提问卡恢复同一套语义）：计划已落库、等待批准期间
  * 断线不中止本轮，刷新/换设备后那根流水线线程还阻塞着，批准照样送得回去，回答转后台生成落库。
  * 只重建「未过期且唤醒句柄还在」的最新一张。
@@ -1196,11 +1259,8 @@ const hydratePendingPlans = async sid => {
     thinkLoading: false, stage: '等你批准执行计划，批准后回答才开始', time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', delegated: null })
   anchor.planCard = {
+    ...planCardFromRecord(item, 'pending'),
     id: item.planApprovalId,
-    plan: item.plan || '',
-    status: 'pending',
-    busy: false,
-    editText: '',   // 自定义输入框留空（placeholder 作提示）；批准时非空才作为修改稿送出
     restored: true,
     timeoutMs: Number(item.timeoutMs) || 0,
     deadline: item.remainingMs > 0 ? Date.now() + item.remainingMs : 0
@@ -1446,24 +1506,26 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     onPlanDelta: t => {
       // 计划模式：计划正文流式增量进计划卡（终版以 plan_approval 下发的落库稿为准）
-      if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '' }
+      if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
       const c = msg.planCard
       if (c.status !== 'drafting') return   // 已进入待批准态：迟到的增量丢弃（以权威稿为准）
       c.plan += t
       liveScroll()
     },
     onPlanApproval: payload => {
-      // 计划生成完毕：卡片转「待确认」，挂上裁决句柄与倒计时；确认/自定义/取消见 submitPlanApproval
+      // 计划生成完毕：卡片转「待确认」，挂上裁决句柄与倒计时；确认/继续对话/取消见 submitPlanApproval 一族
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!j || !j.planApprovalId) return
-        if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '' }
+        if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
         const c = msg.planCard
         c.id = j.planApprovalId
         c.plan = j.plan || c.plan        // 后端权威稿（已剥标签/护栏截断）覆盖流式累积
         c.timeoutMs = Number(j.timeoutMs) || 0
         c.deadline = c.timeoutMs > 0 ? Date.now() + c.timeoutMs : 0
         c.status = 'pending'
+        c.busy = false                   // 解锁裁决控件（防御：极端情况下残留的 busy 不卡死面板）
+        c.auto = !!j.auto                // 按消息意图自动开启（卡片标「自动开启」）
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1471,6 +1533,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 计划被拒/超时：卡片定格为「未批准」，整轮就此收束（后端不再发回答，done 也无正文）
       if (msg.planCard) { msg.planCard.status = 'rejected'; msg.planCard.busy = false }
       msg.planStopped = true
+      liveScroll()
+    },
+    onPlanSuperseded: () => {
+      // 用户对计划提出修改、继续对话：本版定格「已被取代」，整轮就此收束（新一轮将按意见重做计划）
+      if (msg.planCard) { msg.planCard.status = 'superseded'; msg.planCard.busy = false }
+      msg.planSuperseded = true
       liveScroll()
     },
     onImage: imgs2 => {
@@ -1601,8 +1669,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
         // 计划模式被拒/超时：done 载荷带 planCancelled（plan_cancelled 事件已置过，这里是双保险——
-        // 正文为空时收束语按「计划未批准」口径而不是「已停止生成」）
+        // 正文为空时收束语按「计划未批准」口径而不是「已停止生成」）；被「继续对话」取代同理由
+        // planSuperseded 走另一句收束语
         if (p.planCancelled) msg.planStopped = true
+        if (p.planSuperseded) msg.planSuperseded = true
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
@@ -1644,8 +1714,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
         if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
       } catch (e) { /* 旧版/停止生成：无负载 */ }
-      // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）
-      if (msg.content === '') msg.content = msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）'
+      // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）；
+      // 被「继续对话」取代的整轮：收束语按取代口径（计划卡停在「已被取代」态）
+      if (msg.content === '') msg.content = msg.planSuperseded ? '（你提出了修改，这版计划已被取代）'
+        : (msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）')
       msg.loading = false
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
       if (msg.ask) msg.ask = null
@@ -1875,7 +1947,7 @@ const ready = async () => {
     // 输入与发送
     text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
     // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
-    planModeOn, setPlanMode, submitPlanApproval, hydratePendingPlans,
+    planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

@@ -310,8 +310,9 @@
                   </div>
                 </div>
               </div>
-              <!-- 计划模式（人在回路）：执行计划卡——只读展示（流式产出 → 待确认 → 已批准/未批准）。
-                   确认/修改/取消在底部输入框区的计划确认栏（与提问卡同形，见 pendingPlan / planp-*）；
+              <!-- 计划模式（人在回路）：执行计划卡——只读展示（流式产出 → 待确认 → 已批准/未批准/已被取代）。
+                   确认/继续对话/取消在底部输入框区的计划确认栏（与提问卡同形，见 pendingPlan / planp-*）；
+                   长计划收成紧凑预览（渐隐 + 查看完整计划），历史遗留的多版计划收在「修改记录」折叠里；
                    刷新/换设备后由 hydratePendingPlans 按落库记录重建（restored 卡同样可裁决） -->
               <div v-if="m.planCard" class="plan-card" :class="'plan-' + m.planCard.status">
                 <div class="plan-card-head">
@@ -320,9 +321,39 @@
                   <span v-if="m.planCard.status === 'drafting'" class="plan-state st-drafting">生成中…</span>
                   <span v-else-if="m.planCard.status === 'pending'" class="plan-state st-pending">待确认</span>
                   <span v-else-if="m.planCard.status === 'approved'" class="plan-state st-ok">已批准</span>
+                  <span v-else-if="m.planCard.status === 'superseded'" class="plan-state st-superseded">已被取代</span>
                   <span v-else class="plan-state st-rejected">未批准 · 已停止本轮</span>
+                  <span v-if="m.planCard.auto" class="plan-auto-tag"
+                        title="你没开计划模式，但这条消息适合先出计划——本轮按意图自动开启，确认后才执行">自动开启</span>
+                  <button v-if="planChain(m.planCard).length > 1" type="button" class="plan-hist-toggle"
+                          :title="m.planCard.histOpen ? '收起修改记录' : '查看各版计划与你的修改意见'"
+                          @click="m.planCard.histOpen = !m.planCard.histOpen">
+                    已修改 {{ planChain(m.planCard).length - 1 }} 次
+                    <up-outlined v-if="m.planCard.histOpen" /><down-outlined v-else />
+                  </button>
                 </div>
-                <div v-if="m.planCard.status !== 'rejected'" class="md plan-body" v-html="renderMd(m.planCard.plan || '（计划为空）', [])"></div>
+                <div v-if="m.planCard.status !== 'rejected'" class="plan-wrap"
+                     :class="{ 'is-clamped': planNeedsFold(m.planCard.plan) && !m.planCard.open }">
+                  <div class="md plan-body" v-html="renderMd(m.planCard.plan || '（计划为空）', [])"></div>
+                  <button v-if="planNeedsFold(m.planCard.plan)" type="button" class="plan-more" @click="m.planCard.open = !m.planCard.open">
+                    {{ m.planCard.open ? '收起' : '查看完整计划' }}
+                  </button>
+                </div>
+                <!-- 修改记录：同轮内每次「退回重出」的版本链（v1 模型原稿 → 你的意见 → v2 …），默认收起不刷屏 -->
+                <div v-if="m.planCard.histOpen" class="plan-hist">
+                  <div v-for="(v, vi) in planChain(m.planCard)" :key="vi" class="plan-hist-item">
+                    <div v-if="v.feedback" class="plan-hist-fb">你的意见：{{ v.feedback }}</div>
+                    <div class="plan-hist-no">
+                      第 {{ vi + 1 }} 版{{ planVersionTag(m.planCard, vi, planChain(m.planCard).length) }}
+                    </div>
+                    <div class="plan-wrap" :class="{ 'is-clamped': planNeedsFold(v.plan) && !v.open }">
+                      <div class="md plan-body" v-html="renderMd(v.plan || '（计划为空）', [])"></div>
+                      <button v-if="planNeedsFold(v.plan)" type="button" class="plan-more" @click="v.open = !v.open">
+                        {{ v.open ? '收起' : '查看完整计划' }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
               <div v-if="m.approval" class="approval-card">
@@ -982,9 +1013,9 @@
           </div>
         </div>
         <!-- 计划确认栏：待批准时整块顶替打字框（模型在等裁决，此刻也没法发新消息），与提问面板同构——
-             编号选项：1. 确认（点即按原稿执行）2. 自定义（光输入框，留空、提示语在 placeholder，
-             非空才能点「执行」把自己的稿子作为批准版送出）；计划正文同时在气泡里只读展示。
-             底部「取消本轮」= 提问面板的「忽略」 -->
+             编号选项：1. 确认（点即按原稿执行）2. 继续对话（光输入框，写要改什么，非空才能送出）。
+             不满意就继续对话：意见作为一条用户消息发出，本版计划作废，模型接着对话按意见重做计划；
+             计划正文在气泡里只读展示。底部「取消」= 提问面板的「忽略」 -->
         <div v-else class="input-box planp-box">
           <div class="planp-head">
             <span class="planp-tag">执行计划</span>
@@ -996,7 +1027,7 @@
           </div>
           <div class="planp-opts">
             <button type="button" class="planp-opt" :disabled="curPlanCard.busy || planExpired"
-                    @click="submitPlanApproval(pendingPlan, true)">
+                    @click="submitPlanApproval(pendingPlan, 'approve')">
               <span class="planp-no">1.</span>
               <span class="planp-kw">确认</span>
               <span class="planp-rest">直接按此计划开始执行</span>
@@ -1004,18 +1035,18 @@
             <div class="planp-opt planp-custom-row">
               <span class="planp-no">2.</span>
               <div class="planp-custom">
-                <a-textarea v-model:value="curPlanCard.editText" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
+                <a-textarea v-model:value="curPlanCard.editText" :bordered="false" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
                             :disabled="curPlanCard.busy || planExpired"
-                            placeholder="直接修改计划，改完点「执行」" />
+                            placeholder="不满意就继续对话：写下要改什么…" />
               </div>
             </div>
           </div>
           <div class="planp-foot">
-            <span class="planp-hint"><info-circle-outlined /> 未处理将超时并停止本轮</span>
+            <span class="planp-hint"><info-circle-outlined /> 继续对话会按你的意见重做计划；「确认」才执行；未处理将超时并停止本轮</span>
             <span class="planp-actions">
-              <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, false)">取消本轮</button>
+              <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
               <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
-                      @click="submitPlanApproval(pendingPlan, true, curPlanCard.editText)">执行</button>
+                      @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
             </span>
           </div>
         </div>
@@ -1026,7 +1057,7 @@
       </div>
     </div>
 
-    <!-- 右侧状态栏（可收起）：运行控制 / 当前智能体 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示）
+    <!-- 右侧状态栏（可收起）：计划 / 运行控制 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示）
          宽窄两态共用这一份 DOM：宽屏由 panelOpen 控制（占位列），窄屏由 mPanelOpen 控制
          （浮层/底部 sheet，默认收起）。两态只靠 .as-sheet 类 + CSS 媒体查询区分。 -->
     <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow }">
@@ -1042,28 +1073,19 @@
           <span :class="{ on: panelScope === 'session' }" @click="panelScope = 'session'">会话</span>
         </span>
       </div>
-      <!-- 运行控制：运行中可停止（与发送键/ESC 同一 stop）；最近一轮失败可整轮重试（复用消息流 regenerate） -->
-      <div v-if="panelAi && (panelAi.loading || panelAi.failed)" class="rp-card rp-ctrl">
-        <button v-if="panelAi.loading" class="rp-ctrl-btn is-stop" @click="stop()"><pause-circle-outlined /> 停止生成</button>
-        <button v-else class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
+      <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡 -->
+      <div v-if="sessionPlans.length" class="rp-card">
+        <div class="rp-label">计划 · {{ sessionPlans.length }} 份</div>
+        <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="jumpToPlan(p.mi)"
+                :title="p.label">
+          <ordered-list-outlined class="rp-plan-ic" />
+          <span class="rp-plan-t">{{ p.label }}</span>
+          <span class="rp-plan-st" :class="'is-' + p.status">{{ planStateText(p.status) }}</span>
+        </button>
       </div>
-      <div class="rp-card">
-        <div class="rp-label">当前智能体</div>
-        <div class="rp-strong rp-agent">
-          <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="18" />
-          <robot-outlined v-else class="rp-agent-ic" />
-          <span>{{ currentAgentName }}</span>
-        </div>
-        <!-- 右栏模型行仅展示；上下文容量明细入口统一在输入框工具栏的容量圆环（悬浮弹出） -->
-        <div class="rp-row rp-agent-row rp-model-row">
-          <span>模型</span>
-          <span class="rp-val" :title="effectiveModel">
-            <ProviderIcon :icon="effectiveModelIcon" :name="effectiveModelProvider" :size="14" style="margin-right:4px" />
-            <span class="rp-val-text">{{ effectiveModelLabel || '—' }}</span>
-            <span v-if="modelSourceLabel" class="rp-tag">{{ modelSourceLabel }}</span>
-          </span>
-        </div>
-        <div class="rp-meta">深度思考 {{ deepThinkOn ? '已开启' : '已关闭' }} · 本会话 {{ roundCount }} 轮</div>
+      <!-- 运行控制：最近一轮失败可整轮重试（复用消息流 regenerate）；停止生成只在发送键/ESC 提供，右栏不重复 -->
+      <div v-if="panelAi && panelAi.failed" class="rp-card rp-ctrl">
+        <button class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
       </div>
       <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
       <div v-if="sessionArtifacts.length" class="rp-card">
@@ -1613,6 +1635,35 @@ const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
 // ===== 右栏统计口径切换（P0 #4）：本轮=最近完成轮明细；会话=全量累计（选择持久化） =====
 const panelScope = ref(localStorage.getItem('app_panel_scope') === 'session' ? 'session' : 'round')
 watch(panelScope, v => { try { localStorage.setItem('app_panel_scope', v) } catch (e) { /* 存储不可用忽略 */ } })
+// ===== 右栏「计划」：本会话每轮出过的计划各列一条（最新在前，点击定位到那一轮气泡） =====
+// 标签取该轮的用户问题——计划卡没有标题，问题最能认出是哪一份；状态口径与气泡里的计划卡一致
+const sessionPlans = computed(() => {
+  const out = []
+  const list = messages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (!m || m.role !== 'ai' || !m.planCard) continue
+    let label = ''
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = list[j]
+      if (prev && prev.role === 'user') { label = String(prev.content || '').replace(/\s+/g, ' ').trim(); break }
+    }
+    out.push({ mi: i, label: label || '（无提问）', status: m.planCard.status })
+  }
+  return out
+})
+const planStateText = st => ({
+  drafting: '生成中', pending: '待确认', approved: '已批准', superseded: '已被取代', rejected: '未批准'
+}[st] || st)
+const jumpToPlan = mi => {
+  const el = document.querySelector('.row[data-row-index="' + mi + '"]')
+  if (!el) return
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  el.classList.remove('plan-jump')
+  void el.offsetWidth
+  el.classList.add('plan-jump')
+  setTimeout(() => el.classList.remove('plan-jump'), 1500)
+}
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
 const DISCLAIMER_TEXT = `
@@ -2550,7 +2601,7 @@ const {
   // 输入与发送
   text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
-  planModeOn, setPlanMode, submitPlanApproval,
+  planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -2564,7 +2615,7 @@ const {
   currentSessionId, loading, messages, currentSessionTitle, roundCount,
   // 模型
   currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
-  effectiveModelProvider, modelSourceLabel, debugEntryVisible, debugDisplayVisible,
+  effectiveModelProvider, debugEntryVisible, debugDisplayVisible,
   // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可关可自定义）
   sampleQuestions,
   // 检索 / 用量 / 来源
@@ -2609,8 +2660,10 @@ const historyRefPreview = hr => {
 
 // ==================== 计划确认栏（替换聊天输入框） ====================
 // 待批准期间打字框整块顶替为确认栏（模型在等裁决，此刻也没法发新消息），与提问面板同构：
-// 编号选项 = 1. 确认（点即按原稿执行）/ 2. 自定义（计划预填在下方文本域里直接改，点「执行」送修改稿）；
-// 计划正文同时在气泡里只读展示。底部「取消本轮」= 提问面板的「忽略」。
+// 编号选项 = 1. 确认（点即按原稿执行）/ 2. 继续对话（写对计划的修改要求，非空才能送）。
+// 继续对话=意见作为一条用户消息发出（同一会话继续对话）：本版计划作废（已被取代），
+// 新一轮完整走一遍（重新检索），模型带着上一版计划按意见重做——可反复，直到「确认」才执行。
+// 计划正文同时在气泡里只读展示。底部「取消」= 提问面板的「忽略」。
 const pendingPlan = computed(() => {
   const list = messages.value
   for (let i = list.length - 1; i >= 0; i--) {
@@ -2640,6 +2693,28 @@ const planCountdownText = computed(() => {
   const s = Math.max(0, Math.ceil((c.deadline - planNow.value) / 1000))
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
 })
+// —— 修改记录（同轮内屡次退回重出的版本链）与长计划折叠 ——
+// 版本链 = 已被改掉的各版（c.versions，feedback=产出该版的意见）+ 当前版（c.plan 在卡片主体，链尾也列一份）
+const planChain = c => {
+  if (!c) return []
+  const list = Array.isArray(c.versions) ? c.versions.slice() : []
+  list.push({ plan: c.plan || '', feedback: c.feedback || '' })
+  return list
+}
+// 版本行尾标：首版=模型原稿；末版=终态/当前版；中间版不标
+const planVersionTag = (c, vi, total) => {
+  if (vi === 0) return ' · 模型原稿'
+  if (vi !== total - 1) return ''
+  if (c.status === 'approved') return ' · 已批准'
+  if (c.status === 'rejected') return ' · 未批准'
+  return ' · 当前版'
+}
+// 长计划紧凑预览（参考 zcode 形态：渐隐 + 「查看完整计划」）；短计划原样铺开、不出按钮
+const planNeedsFold = plan => {
+  const s = String(plan || '')
+  if (!s.trim()) return false
+  return s.split('\n').filter(x => x.trim()).length > 5 || s.length > 200
+}
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
@@ -3565,20 +3640,6 @@ onMounted(async () => {
 .paste-view-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .paste-view-meta { font-size: 12px; color: var(--app-text3); }
 
-/* 状态栏：当前智能体卡片 */
-.rp-agent { display: flex; align-items: center; gap: 6px; }
-.rp-agent-ic { font-size: 13px; color: var(--app-accent); flex: none; }
-.rp-agent-row { margin-top: 6px; align-items: baseline; flex-wrap: wrap; }
-.rp-val {
-  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
-  max-width: 100%; flex-wrap: wrap;
-  font-size: 12px; color: var(--app-text);
-}
-.rp-val-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-tag {
-  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; flex: none;
-  background: var(--app-accent-weak); color: var(--app-accent);
-}
 .send-btn {
   width: 30px; height: 30px; border-radius: 50%; border: none;
   background: var(--app-accent); color: #fff; font-size: 15px; cursor: pointer;
@@ -3642,6 +3703,23 @@ onMounted(async () => {
 .rp-art-all { margin-top: 4px; font-size: 11px; color: var(--app-accent); cursor: pointer; }
 .rp-art-all:hover { text-decoration: underline; }
 
+/* 右栏计划卡：本会话出过的计划列表（问题为标签 + 状态角标；点击定位到那一轮并闪一下） */
+.rp-plan-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  padding: 4px 6px; margin: 0 -6px; border: none; background: none; border-radius: 6px;
+  font-size: 12px; color: var(--app-text2); cursor: pointer;
+}
+.rp-plan-row:hover { background: var(--app-panel-2); }
+.rp-plan-row:hover .rp-plan-t { color: var(--app-accent); }
+.rp-plan-ic { flex: none; font-size: 12px; color: var(--app-text3); }
+.rp-plan-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-plan-st { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-plan-st.is-pending { color: var(--app-warn-text); }
+.rp-plan-st.is-approved { color: var(--app-ok); }
+/* 定位闪烁：跳过去的那一轮先亮一下（与引用角标 ref-flash 同一手法） */
+.row.plan-jump { animation: planJumpFlash 1.5s ease; }
+@keyframes planJumpFlash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
+
 /* 右栏统计口径切换 + 上下文占用条 */
 .rp-scope-row { display: flex; justify-content: flex-end; }
 .rp-scope { display: inline-flex; border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; background: var(--app-panel); }
@@ -3663,7 +3741,7 @@ onMounted(async () => {
 .rp-src-sub .rp-src-name { flex: 1; min-width: 0; }
 .rp-src-sub.hl { background: var(--app-accent-weak); border-radius: 4px; }
 
-/* 右栏运行控制（停止 / 重试本轮） */
+/* 右栏运行控制（重试本轮） */
 .rp-ctrl { display: flex; }
 .rp-ctrl-btn {
   flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
@@ -3671,8 +3749,6 @@ onMounted(async () => {
   background: var(--app-panel); color: var(--app-text2); font-size: 12px; cursor: pointer;
 }
 .rp-ctrl-btn:hover { color: var(--app-accent); border-color: var(--app-accent); }
-.rp-ctrl-btn.is-stop { color: var(--app-danger); border-color: var(--app-danger-border); }
-.rp-ctrl-btn.is-stop:hover { color: var(--app-danger); border-color: var(--app-danger); background: var(--app-danger-weak); }
 
 /* 检索调试面板 */
 .dbg-item { padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2); }
@@ -3698,14 +3774,45 @@ onMounted(async () => {
 .plan-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
 .plan-card.plan-approved { border-color: var(--app-ok-border, var(--app-border)); background: var(--app-panel); opacity: .92; }
 .plan-card.plan-rejected { border-color: var(--app-border); background: var(--app-panel); opacity: .75; }
+/* 已被取代（用户提出修改、继续对话后本版作废）：弱化收尾，但正文照常可读（它是修改记录的一部分） */
+.plan-card.plan-superseded { border-color: var(--app-border); background: var(--app-panel); opacity: .82; }
 .plan-card-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--app-warn-text); }
-.plan-card.plan-approved .plan-card-head, .plan-card.plan-rejected .plan-card-head { color: var(--app-text2); }
+.plan-card.plan-approved .plan-card-head, .plan-card.plan-rejected .plan-card-head,
+.plan-card.plan-superseded .plan-card-head { color: var(--app-text2); }
 .plan-state { font-weight: 500; font-size: 12px; }
 .plan-state.st-drafting { color: var(--app-text3); }
 .plan-state.st-pending { color: var(--app-warn-text); }
 .plan-state.st-ok { color: var(--app-ok); }
 .plan-state.st-rejected { color: var(--app-text3); }
+.plan-state.st-superseded { color: var(--app-text3); }
+/* 「按意图自动开启」角标：这条计划不是用户手动开出来的 */
+.plan-auto-tag { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
 .plan-body { margin-top: 8px; font-size: 13px; }
+/* 长计划紧凑预览（参考 zcode 形态）：限高 + 底部渐隐，居中「查看完整计划」展开/收起；
+   短计划不加限高、不出按钮，与改动前逐字一致 */
+.plan-wrap { position: relative; }
+.plan-wrap.is-clamped .plan-body {
+  max-height: 118px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 46%, transparent 96%);
+  mask-image: linear-gradient(to bottom, #000 46%, transparent 96%);
+}
+.plan-wrap.is-clamped .plan-more { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); }
+.plan-more { display: inline-flex; align-items: center; gap: 4px; margin: 8px auto 0; padding: 3px 12px;
+  border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-panel);
+  color: var(--app-text2); font-size: 12px; line-height: 1.4; cursor: pointer; }
+.plan-more:hover { color: var(--app-accent); border-color: var(--app-accent); }
+/* 「修改记录」折叠：卡头右侧入口 + 版本链（每版正文 + 产出它的意见），默认收起不刷屏 */
+.plan-hist-toggle { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border: 1px solid var(--app-border); border-radius: 999px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 11px; line-height: 1.5; cursor: pointer; }
+.plan-hist-toggle:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.plan-hist { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 8px; }
+.plan-hist-item { padding: 7px 9px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel); }
+.plan-hist-no { font-size: 12px; font-weight: 600; color: var(--app-text2); }
+.plan-hist-fb { font-size: 12px; color: var(--app-text2); background: var(--app-panel-2); border-radius: 5px; padding: 4px 8px; margin-bottom: 6px; word-break: break-word; }
+.plan-hist-item .plan-body { margin-top: 6px; font-size: 12.5px; }
+.plan-hist-item .plan-wrap.is-clamped .plan-body { max-height: 96px; }
 .plan-chip { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
 /* 「+」面板：计划模式开关行——持久模式用开关表达（行可点、开关可拨），
    开启态只变开关自身，不再整行变色/头像实心（那是「本轮勾选」的语汇）。
@@ -3756,8 +3863,9 @@ onMounted(async () => {
 .askp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 /* ==================== 计划确认栏（替换聊天输入框） ====================
-   待批准期间打字框整块顶替，与提问面板（askp-*）同形同节奏：编号选项（1. 确认 2. 自定义），
-   自定义项内嵌预填计划的文本域；底部提示 + 取消本轮/执行。 */
+   待批准期间打字框整块顶替，与提问面板（askp-*）同形同节奏：编号选项（1. 确认 2. 继续对话），
+   自定义项内嵌光文本域（写对计划的修改要求）；底部提示 + 取消/继续对话。
+   继续对话=把意见作为一条用户消息发出（同一会话继续），本版计划作废，新一轮按意见重做计划 */
 .planp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .planp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .planp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
@@ -3776,8 +3884,13 @@ onMounted(async () => {
    输入框留空，提示语全在 placeholder（与提问卡的自定义输入行同形：编号 + 光输入框） */
 .planp-custom-row { cursor: default; }
 .planp-custom-row:hover { background: none; }
-.planp-custom { flex: 1; min-width: 0; padding-top: 2px; }
-.planp-custom .ant-input { font-size: 13px; line-height: 1.6; }
+.planp-custom { flex: 1; min-width: 0; }
+/* 行内光文本域：与提问卡自定义输入行同形——文字（placeholder）与上行关键词同列、首行同基线；
+   去边框/内边距/最小高度（边框底色由 :bordered="false" 承担），高度交给 autoSize */
+.planp-custom .ant-input {
+  font-size: 13px; line-height: 1.55;
+  display: block; padding: 0; min-height: 0; resize: none;
+}
 .planp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .planp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .planp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }

@@ -375,21 +375,27 @@ public class ChatController {
                 ragService.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
-    @Operation(summary = "执行计划裁决（计划模式）", description = "批准/拒绝 plan_approval 事件下发的执行计划（人在回路）："
-            + "批准可带编辑后的计划全文（body {approved:true,plan:\"...\"}，plan 空串=按模型原稿执行），"
-            + "拒绝（approved:false）或超时=本轮终止。仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval"
-            + "（tool_name=planApproval，PENDING→终态），等待期间断开不中止本轮，刷新/换设备后仍可经 "
-            + "/plan-approval/pending 取回卡片继续裁决。")
+    @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："
+            + "批准可带编辑后的计划全文（body {approved:true,plan:\"...\"}，plan 空串=按模型原稿执行）；"
+            + "退回重出（body {revise:true,plan:\"修改意见\"}）＝用户不满意本版，同一轮内模型按意见产出下一版，"
+            + "可反复直到批准/拒绝/超时；继续对话（body {supersede:true}）＝用户带着修改意见继续对话，本版作废"
+            + "（前端随后把意见作为用户消息发出，新一轮按意见重做计划）；拒绝（approved:false）或超时=本轮终止。"
+            + "仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval（tool_name=planApproval，"
+            + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT），等待期间断开不中止本轮，"
+            + "刷新/换设备后仍可经 /plan-approval/pending 取回卡片（含版本链）继续裁决。")
     @PostMapping("/plan-approval/{planApprovalId}")
     public ResultJson resolvePlanApproval(
             @Parameter(description = "计划批准 ID（plan_approval 事件下发）") @PathVariable("planApprovalId") String planApprovalId,
             @RequestBody Map<String, Object> body) {
         boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        boolean revise = Boolean.TRUE.equals(body.get("revise"));
+        boolean supersede = Boolean.TRUE.equals(body.get("supersede"));
         Object p = body.get("plan");
         String plan = p == null ? null : String.valueOf(p);
-        boolean ok = ragService.resolvePlanApproval(planApprovalId, approved, plan, com.wenqu.ai.util.RequestUser.uid());
+        boolean ok = ragService.resolvePlanApproval(planApprovalId, approved, plan, revise, supersede, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("计划已处理或已失效（可能已超时）");
-        return ResultJson.ok(approved ? "已批准，按计划执行" : "已取消本轮");
+        return ResultJson.ok(supersede ? "本版计划已作废（继续对话见新计划）"
+                : (revise ? "已按你的意见修改计划" : (approved ? "已批准，按计划执行" : "已取消本轮")));
     }
 
     @Operation(summary = "待批准计划（恢复）", description = "按会话列本人仍挂在 PENDING 的执行计划批准卡，"

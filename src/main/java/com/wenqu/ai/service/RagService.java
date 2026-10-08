@@ -885,6 +885,11 @@ public class RagService {
             // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
             final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
                     scheduleKeepalive(emitter, "前置");
+            // 计划意图识别（按用户意图自动开启计划模式）：尽早启动、与图片/附件/检索并行跑，闸门前取结果。
+            // 计划开关已开时无需检测（本轮必走计划）；重新生成不检测——用户要的是重答，不是重出一份计划
+            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = startPlanIntentCheck(
+                    emitter, guestMode, planMode, regenerate, sessionId, question, resolvedModel,
+                    (userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty()));
             // 0. 用户上传图片，两条链路（图片理解只看当前聊天模型的能力位——个人默认视觉模型已下线）：
             //    ① 聊天模型自带图片理解（visionCapable，「聊天+视觉」一体登记形态）：原图随消息直发
             //       （buildAnswerStream 转 image_url 部件）——省一次视觉调用、不丢图细节；
@@ -1705,24 +1710,38 @@ public class RagService {
             // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
             st.stageMs.putAll(stageMs);
             // 计划模式（人在回路）：先产出执行计划等用户批准，批准后的计划注入本轮 system 再进生成。
-            // 挂起点在 st 创建之后：断线后台续跑/人工等待不计费/刷新恢复全部继承 askUser 的既有语义
-            if (planMode) {
+            // 挂起点在 st 创建之后：断线后台续跑/人工等待不计费/刷新恢复全部继承 askUser 的既有语义。
+            // 用户没开计划开关时，按消息意图自动开启：识别命中=本轮按计划模式走（卡片标「自动开启」）
+            boolean planRound = planMode;
+            if (!planRound && awaitPlanIntent(planIntentFuture)) {
+                planRound = true;
+                st.planAuto = true;
+                log.info("[PLAN] 意图识别命中，本轮自动开启计划模式: session={}", sessionId);
+            }
+            if (planRound) {
                 String planQuestion = question + (imgNote == null || imgNote.isBlank() ? "" : imgNote)
                         + (attachmentText.isBlank() ? ""
                         : "\n\n（用户上传了 " + preparedAtts.size() + " 个附件，其内容将在执行阶段提供）");
                 String gate = planApprovalGate(st, agent, rolePart, planQuestion, skills,
                         buildRefsDigest(sources), system);
                 if (gate == null) {
-                    // 拒绝/超时：整轮就此终止。plan_cancelled 让前端卡片定格「未批准」；随后必须补标准
-                    // done 收尾——SSE 读循环「流关闭且无 done」会按『连接被提前关闭』误报中断错
-                    // 拒绝轮没有流式回答可挂计划卡：先补落一条收尾助手消息（含 plan 快照，刷新后卡不丢）
-                    persistPlanRejected(st);
-                    sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                    // 拒绝/超时：整轮就此终止（plan_cancelled 让前端卡片定格「未批准」）；
+                    // 「继续对话」取代：本版作废（plan_superseded，随后用户那条意见消息会接上）。
+                    // 两者都要补标准 done 收尾——SSE 读循环「流关闭且无 done」会按『连接被提前关闭』误报中断错；
+                    // 收尾轮没有流式回答可挂计划卡：先补落一条收尾助手消息（含 plan 快照，刷新后卡不丢）
+                    if (st.planSuperseded) {
+                        persistPlanSuperseded(st);
+                        sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
+                    } else {
+                        persistPlanRejected(st);
+                        sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                    }
                     Map<String, Object> cancelled = new LinkedHashMap<>();
                     cancelled.put("sources", List.of());
                     cancelled.put("related", List.of());
                     cancelled.put("degradations", degradations);
-                    cancelled.put("planCancelled", true);
+                    if (st.planSuperseded) cancelled.put("planSuperseded", true);
+                    else cancelled.put("planCancelled", true);
                     sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
                     completeEmitter(emitter);
                     return;
@@ -2506,35 +2525,24 @@ public class RagService {
     }
 
     /**
-     * 中断兜底落库：客户端停止/断开/超时把生成流掐断（disposeSafe）时，把已流出的半程正文按截断态落库。
-     * 此前只有完整走完 doOnComplete 才落库，中断轮在历史里只剩问题——刷新/重进会话后「已生成的部分」
-     * 全部蒸发。与正常完成路径共用 answerPersistGate 幂等闸（CAS 先到先得，谁先落库谁赢）。
-     * 只落「已下发给前端」的内容（fullResponse 与 token 事件同源；尾部扣留的标签前缀缓冲不参与）；
-     * 引用自检/图片过滤/记忆提取/QA 日志均不再执行（那是完整轮的收尾语义），正文尾部追加截断标记，
+     * 中断/失败兜底落库：客户端停止/断开、看门狗截断、流错误把生成流掐断时，把已产出的半程内容
+     * 按截断态落库。此前只有完整走完 doOnComplete 才落库，中断轮在历史里只剩问题——刷新/重进会话后
+     * 「已生成的部分」全部蒸发（连用户盯着跑了五分钟的工具卡片与计划快照一起）。与正常完成路径
+     * 共用 answerPersistGate 幂等闸（CAS 先到先得，谁先落库谁赢）。
+     * 只落「已下发给前端」的正文（fullResponse 与 token 事件同源；尾部扣留的标签前缀缓冲不参与）；
+     * 引用自检/图片过滤/记忆提取/QA 日志均不再执行（那是完整轮的收尾语义），正文尾部追加标记，
      * 时间线仍按原始半程长度夹取（标记落在区间之外，前端 restore 后由尾段兜底渲染）。
-     * <p>「正文为空但已有工具记录」也算要落库（failLoud 参数控制）：工具失败/步骤上限这类轮的
-     * 价值全在工具卡片上，正文可能一个token 都没有——按原条件（正文非空）判会让整轮记录蒸发。
-     * <p>纯中断沿用旧行为（正文为空不落库）：客户端秒断的一轮既没正文也没工具，
-     * 落一条空消息只会污染历史。
-     */
-    private void persistPartialAnswer(AnswerStreamState st) {
-        persistPartialAnswer(st, TRUNCATION_SUFFIX, false);
-    }
-
-    /**
-     * 失败/中断兜底落库。
+     * <p>「正文为空但已有工具记录」同样落库：工具执行/计划确认这类轮的价值全在工具卡片与计划快照上，
+     * 正文可能一个 token 都没有——按「正文非空」判会让整轮记录蒸发。真正空轮（正文、工具记录
+     * 都为空，如客户端秒断）不落库：落一条空消息只会污染历史。
      *
-     * @param tailMarker 正文尾部追加的可见标记（截断态/ 失败态各自不同，均落在时间线区间之外）
-     * @param failLoud   是否在「正文为空但工具记录非空」时也落库。失败轮（工具抛异常冒泡、
-     *                   达到单轮工具步数上限）往往正文为空而工具卡片有料，此时必须落；
-     *                   纯中断且正文为空时沿用旧行为不落（历史只留问题）。
+     * @param tailMarker 正文尾部追加的可见标记（截断态/失败态各自不同，均落在时间线区间之外）
      */
-    private void persistPartialAnswer(AnswerStreamState st, String tailMarker, boolean failLoud) {
+    private void persistPartialAnswer(AnswerStreamState st, String tailMarker) {
         try {
             String answer = st.fullResponse.toString();
-            // 空轮不落库：正文、工具记录都为空时落了也是一条空消息，只污染历史。
-            // failLoud 只放宽「正文为空但有工具记录」这一种，不放宽「什么都没有」。
-            if (answer.isEmpty() && (!failLoud || st.toolCalls.isEmpty())) {
+            // 空轮不落库：正文、工具记录都为空时落了也是一条空消息，只污染历史
+            if (answer.isEmpty() && st.toolCalls.isEmpty()) {
                 return;
             }
             List<Map<String, Object>> sources = st.sources;
@@ -2588,8 +2596,8 @@ public class RagService {
             }
             // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
             artifactService.unregisterEmitter(st.sessionId);
-            log.info("[SSE] 中断/失败兜底：半程回答已落库 (session={}, chars={}, tools={}, failLoud={})",
-                    st.sessionId, answer.length(), toolCallSnapshot.size(), failLoud);
+            log.info("[SSE] 中断/失败兜底：半程回答已落库 (session={}, chars={}, tools={})",
+                    st.sessionId, answer.length(), toolCallSnapshot.size());
         } catch (Exception e) {
             // 兜底失败只记日志：管道已断无处下发错误，回退为现状「中断即丢失」
             log.warn("[SSE] 中断兜底落库失败 (session={}): {}", st.sessionId, e.getMessage());
@@ -3213,10 +3221,9 @@ public class RagService {
                     // （工具名、入参、失败原因、耗时），正文可能一个 token 都没有。此前错误路径
                     // 既不落库也不走 persistPartialAnswer，导致整条助手消息连同全部工具卡片在刷新/
                     // 重进会话后彻底蒸发——用户看到的只是「问题还在，回答说没了」。
-                    // failLoud=true：正文为空也落库（工具记录有料就值得留痕）。
                     // 与正常完成/中断兜底共用 answerPersistGate幂等闸，三条路径 CAS 先到先得。
                     if (st.answerPersistGate.compareAndSet(false, true)) {
-                        persistPartialAnswer(st, STREAM_ERROR_SUFFIX, true);
+                        persistPartialAnswer(st, STREAM_ERROR_SUFFIX);
                     }
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);
@@ -3772,6 +3779,10 @@ public class RagService {
          * ——刷新/切会话后按轮重建气泡计划卡（此前计划只活在实时流里，刷新即丢）。null=本轮未走计划模式。
          */
         volatile Map<String, Object> planRecord;
+        /** 计划被用户「继续对话」取代（gate 收尾按取代口径：不写「未批准」收束语，发 plan_superseded） */
+        volatile boolean planSuperseded;
+        /** 本轮计划是「按消息意图自动开启」（用户没开计划开关）：随计划快照落库，卡片标「自动开启」 */
+        volatile boolean planAuto;
         /**
          * 已装配的工具回调缓存（计划模式闸门先行装配时写入）：buildAnswerStream 直接复用，
          * 避免 MCP 工具集二次装配（外部 server 连接不重复建立）。null=未缓存，走原路径。
@@ -3842,13 +3853,16 @@ public class RagService {
             stopTurnDeadline(emitter);
             Disposable d = disposableRef.get();
             if (d != null) d.dispose();
-            // 中断兜底：已流出半程正文则按截断态落库，刷新/重进会话后已生成的部分仍在历史里
-            // （此前只有完整完成才落库，中断轮在历史里只剩问题）。与正常完成路径共用幂等闸
-            // （CAS 先到先得）；一个 token 都没流出时不落库，历史只留问题（同现状）。
+            // 中断兜底：按截断态落库，刷新/重进会话后已生成的部分仍在历史里（此前只有完整完成
+            // 才落库，中断轮在历史里只剩问题）。与正常完成路径共用幂等闸（CAS 先到先得）。
+            // 看门狗截断/断线多发生在工具循环里——正文可能一个 token 都没有，价值全在工具卡片
+            // 与计划快照上（用户盯着跑了五分钟的一场执行），只认正文非空会让这种轮整条蒸发，
+            // 用户看到的是「已输出的内容刷新后全没了」。真正空轮（无正文且无工具记录）由
+            // persistPartialAnswer 内部守卫拦住，不落空消息。
             // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
             // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
-            if (fullResponse.length() > 0 && answerPersistGate.compareAndSet(false, true)) {
-                persistPartialAnswer(this);
+            if (answerPersistGate.compareAndSet(false, true)) {
+                persistPartialAnswer(this, TRUNCATION_SUFFIX);
             }
         }
 
@@ -5957,10 +5971,20 @@ public class RagService {
 
     // ==================== 计划模式（人在回路：先出执行计划，批准后按计划执行） ====================
 
-    /** 计划批准挂起项：planApprovalId → 等待用户批准/编辑（内存态；进程重启后句柄消失，超时按未批准收尾）。
+    /** 计划批准挂起项：planApprovalId → 等待用户批准/退回重出（内存态；进程重启后句柄消失，超时按未批准收尾）。
      *  与工具审批/askUser 同一套挂起-恢复管道：内存 future 阻塞流水线线程 + DB 卡片记录 + SSE 卡 + 站内通知 */
     private record PendingPlan(String sessionId, String userId,
-                               java.util.concurrent.CompletableFuture<String> future) {
+                               java.util.concurrent.CompletableFuture<PlanDecision> future) {
+    }
+
+    /** 单版计划的用户裁决：approve=批准（plan 为批准版文本，可能沿 API 带过用户改稿）；
+     *  reject=取消本轮（plan/feedback 均为 null）；revise=退回让模型按 feedback 重出下一版；
+     *  supersede=用户带着修改意见继续对话（本版作废，新一轮会产出修改后的计划） */
+    private record PlanDecision(boolean approved, String plan, String reviseFeedback, boolean superseded) {
+        static PlanDecision approve(String plan) { return new PlanDecision(true, plan, null, false); }
+        static PlanDecision reject() { return new PlanDecision(false, null, null, false); }
+        static PlanDecision revise(String feedback) { return new PlanDecision(false, null, feedback, false); }
+        static PlanDecision supersede() { return new PlanDecision(false, null, null, true); }
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, PendingPlan> PENDING_PLANS =
@@ -5969,9 +5993,18 @@ public class RagService {
     /** 计划文本长度护栏：超限直接停收增量（计划是一份动作清单，写这么长一定是跑题了） */
     private static final int PLAN_MAX_CHARS = 6000;
 
-    /** 计划阶段结果：approvedPlan=批准后的计划（可能被用户编辑过）；generateFailed=true=计划生成失败
-     *  （已登记降级，调用方按普通模式继续）；approvedPlan==null 且 !generateFailed=拒绝/超时（整轮终止） */
-    private record PlanPhaseOutcome(String approvedPlan, boolean generateFailed) {
+    /** 计划阶段（单版）结果：plan=本版计划文本（生成失败为 null）；approved=true 表示用户已批准本版；
+     *  reviseFeedback 非 null=用户要修改本版（gate 据此带意见重出下一版）；
+     *  superseded=true=用户带着修改意见继续对话（本版作废，整轮收尾）；
+     *  generateFailed=true=计划生成失败（已登记降级，调用方按普通模式继续）；
+     *  三者皆否=拒绝/超时（整轮终止） */
+    private record PlanPhaseOutcome(String plan, boolean approved, boolean generateFailed, String reviseFeedback,
+                                    boolean superseded) {
+        static PlanPhaseOutcome of(String plan, boolean approved, String reviseFeedback) {
+            return new PlanPhaseOutcome(plan, approved, false, reviseFeedback, false);
+        }
+        static PlanPhaseOutcome failed() { return new PlanPhaseOutcome(null, false, true, null, false); }
+        static PlanPhaseOutcome superseded(String plan) { return new PlanPhaseOutcome(plan, false, false, null, true); }
     }
 
     /** 计划生成流式超时（chat.planGenTimeoutMs，默认 120s；阻塞流水线线程，必须有界） */
@@ -5986,11 +6019,97 @@ public class RagService {
         return t > 0 ? t : 600000L;
     }
 
+    // ==================== 计划意图识别（按用户意图自动开启计划模式） ====================
+
+    /** 意图识别专用线程池（与派遣路由同款：2 线程 + 超时 cancel(true) 中断底层调用；daemon 不阻 JVM 退出） */
+    private static final java.util.concurrent.ThreadPoolExecutor PLAN_INTENT_EXECUTOR =
+            new java.util.concurrent.ThreadPoolExecutor(2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
+                Thread t = new Thread(r, "plan-intent");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * 启动计划意图识别（与图片/附件/检索并行跑，闸门前取结果）：用户在计划开关之外没提计划时，
+     * 判断这条消息是否属于「值得先出执行计划再回答」的复杂任务（多步骤/有交付物/范围口径需确认）。
+     * 与闸门同口径跳过不适用的轮次：游客、无工具模型（计划本就降级）、收集型通道（定时任务/MCP/子智能体
+     * 没人能批准计划卡）、重新生成（用户要的是重答不是重出计划）。返回 null = 本轮不检测。
+     */
+    private java.util.concurrent.CompletableFuture<Boolean> startPlanIntentCheck(
+            SseEmitter emitter, boolean guestMode, boolean planMode, boolean regenerate,
+            String sessionId, String question, String model, boolean hasAttachments) {
+        if (planMode || guestMode || regenerate || emitter instanceof CollectingSseEmitter) return null;
+        if (!configService.getBoolean("chat.planAutoIntent", true)) return null;
+        if (model == null || !modelRegistryService.toolCapableOf(model)) return null;
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
+                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : uid, null, null, "planIntent"));
+            try {
+                String history = "";
+                try {
+                    history = buildHistoryText(sessionService.getRecentHistory(sessionId, 2));
+                } catch (Exception e) { /* 无上下文也能判 */ }
+                String prompt = "你是「计划模式」判断器。判断这条用户消息是否适合先产出一份执行计划、"
+                        + "经用户确认后再回答（计划模式＝先列出要做什么、分几步、每步用什么，用户批准后才动手）。\n"
+                        + "\n适合：任务需要多步完成（检索、计算、生成、整理等多环节）；要产出交付物（报告/方案/文件）；"
+                        + "范围、口径或方向需要用户拍板；做了不易回头。\n"
+                        + "不适合：简单问答、闲聊、单个事实查询、翻译润色改写、一句话就能答完的。\n"
+                        + (hasAttachments ? "（本条消息附带了文件或图片——通常意味着要把材料加工成某个产物，倾向适合。）\n" : "")
+                        + (history == null || history.isBlank() ? ""
+                        : "最近对话（辅助理解意图，如「继续」「改成 X」这类指代）：\n" + history + "\n")
+                        + "\n用户消息：" + question
+                        + "\n\n只回答 YES 或 NO，不要输出任何其他内容。";
+                // 与计划轮同口径的思考档处理：能关思考的方言下发关闭字段（思考与正文共享 max_tokens，
+                // 恒思考模型会把预算花在推理上、判定正文被挤空）；关不掉的多留一份输出预算
+                Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(model);
+                org.springframework.ai.openai.OpenAiChatOptions.Builder opts =
+                        org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                .model(model)
+                                .temperature(0.0)
+                                .maxTokens(thinkOff.isEmpty() ? 3072 : 128)
+                                .internalToolExecutionEnabled(false);
+                if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
+                String out = chatClient.prompt()
+                        .user(prompt)
+                        .options(opts.build())
+                        .call()
+                        .content();
+                boolean yes = out != null && out.trim().toUpperCase(java.util.Locale.ROOT).startsWith("YES");
+                log.info("[PLAN] 计划意图识别：{}（{} 字消息）", yes ? "适合" : "不适合", question.length());
+                return yes;
+            } catch (Exception e) {
+                log.info("[PLAN] 计划意图识别失败，本轮不自动开计划: {}", e.getMessage());
+                return false;
+            } finally {
+                com.wenqu.ai.util.UsageAttr.clear();
+            }
+        }, PLAN_INTENT_EXECUTOR);
+    }
+
+    /** 取意图识别结果（闸门前调用）：没跑完最多再等 1.5 秒——自动开启宁缺毋滥，不拖慢回答 */
+    private boolean awaitPlanIntent(java.util.concurrent.CompletableFuture<Boolean> f) {
+        if (f == null) return false;
+        try {
+            return Boolean.TRUE.equals(f.get(1500, java.util.concurrent.TimeUnit.MILLISECONDS));
+        } catch (java.util.concurrent.TimeoutException te) {
+            f.cancel(true);
+            log.info("[PLAN] 计划意图识别超时，本轮不自动开计划");
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * 计划模式闸门（runChat 主链路与无知识库分支共用）：装配本轮工具集 → 无工具/游客降级 →
-     * 产出执行计划 → 挂起等用户批准/编辑。批准后的计划由调用方注入执行轮 system。
+     * 产出执行计划 → 挂起等用户裁决。批准后的计划由调用方注入执行轮 system。
+     * <p>裁决含「退回重出」：用户不满意可带修改意见退回，模型在同一轮内重出下一版（v2/v3…），
+     * 反复直到确认/取消/超时。每版落一条批准记录（REVISED=被用户意见取代），版本链随本轮计划快照落库。
      *
-     * @return null=本轮应就此终止（用户拒绝/超时，调用方发 plan_cancelled 并收尾）；
+     * @return null=本轮应就此终止（用户拒绝/超时发 plan_cancelled、或「继续对话」取代发 plan_superseded，
+     *         由调用方按 {@link AnswerStreamState#planSuperseded} 分流收尾）；
      *         ""=降级为普通回答（无工具/游客/生成失败，降级提示已登记，不注入计划）；
      *         非 null=批准后的计划文本（调用方追加进 system）
      */
@@ -6017,16 +6136,73 @@ public class RagService {
                     "本轮没有启用的工具可执行，计划模式未生效，已按普通模式回答");
             return "";
         }
-        sendSseEvent(st.emitter, "stage", "正在制定计划…", st.sessionId);
-        PlanPhaseOutcome po = runPlanPhase(st, rolePart, planQuestion, skills, rawCbs, refsDigest);
-        if (po.approvedPlan() != null) {
-            String block = approvedPlanBlock(po.approvedPlan());
-            system.append(block);
-            // 容量计量：计划块与技能/摘要一样是注入段，并入 other 桶（done 的用量校准同源）
-            st.ctxParts.merge("other", TokenCounter.estimate(block), Integer::sum);
-            return po.approvedPlan();
+        // 版本链 [{plan, feedback}]：feedback=产出该版的用户意见（v1 为空串）
+        List<Map<String, Object>> versions = new java.util.ArrayList<>();
+        String feedback = null;   // 本版应遵循的用户意见（v1 为 null）
+        while (true) {
+            boolean first = versions.isEmpty() && feedback == null;
+            sendSseEvent(st.emitter, "stage",
+                    first ? "正在制定计划…" : "正在按你的意见修改计划…", st.sessionId);
+            PlanPhaseOutcome po = runPlanPhase(st, rolePart, planQuestion, skills, rawCbs, refsDigest,
+                    feedback, versions, first);
+            if (po.reviseFeedback() != null) {
+                // 用户退回本版：记账后带着意见重出下一版（站内通知只在首版发，修订不再提醒）
+                versions.add(planVersionEntry(po.plan(), feedback));
+                feedback = po.reviseFeedback();
+                continue;
+            }
+            if (po.superseded()) {
+                // 用户带着修改意见继续对话：本版作废（不是「未批准」——内容没被否定，是提出了修改）。
+                // 快照落 superseded，收尾（收尾助手消息 + plan_superseded 事件）见调用方
+                versions.add(planVersionEntry(po.plan(), feedback));
+                st.planRecord = planSnapshot(versions, "superseded", st.planAuto);
+                st.planSuperseded = true;
+                return null;
+            }
+            if (po.generateFailed()) {
+                // 修订轮生成失败：已有一版等待批准的计划，不能悄悄放弃用户诉求转普通回答——
+                // 也没有可裁决的卡可挂（旧卡已按 REVISED 收口），登记降级后按停止本轮收尾
+                if (!versions.isEmpty()) {
+                    st.planRecord = planSnapshot(versions, "rejected", st.planAuto);
+                    addDegradation(st.degradations, st.degradedCodes, "planReviseFailed",
+                            "按你的意见重出计划失败，本轮已停止（可重新发送）");
+                    return null;
+                }
+                return "";
+            }
+            versions.add(planVersionEntry(po.plan(), feedback));
+            if (po.approved()) {
+                st.planRecord = planSnapshot(versions, "approved", st.planAuto);
+                String block = approvedPlanBlock(po.plan());
+                system.append(block);
+                // 容量计量：计划块与技能/摘要一样是注入段，并入 other 桶（done 的用量校准同源）
+                st.ctxParts.merge("other", TokenCounter.estimate(block), Integer::sum);
+                return po.plan();
+            }
+            // 拒绝/超时：整轮终止（快照含各版计划，历史里这轮的「未批准」卡照常带修改记录）
+            st.planRecord = planSnapshot(versions, "rejected", st.planAuto);
+            return null;
         }
-        return po.generateFailed() ? "" : null;
+    }
+
+    /** 版本链条目：feedback=产出该版的用户意见（v1 为空串，前端按「你的意见」插在两版之间展示） */
+    private Map<String, Object> planVersionEntry(String plan, String feedback) {
+        Map<String, Object> v = new LinkedHashMap<>();
+        v.put("plan", plan == null ? "" : plan);
+        v.put("feedback", feedback == null ? "" : feedback);
+        return v;
+    }
+
+    /** 本轮计划快照（助手消息 plan 列）：plan=末版正文（卡片主体展示），versions=完整版本链（修改记录）；
+     *  auto=true=该计划按消息意图自动开启（用户没开计划开关），历史回显时卡片照常标「自动开启」 */
+    private Map<String, Object> planSnapshot(List<Map<String, Object>> versions, String status, boolean auto) {
+        Map<String, Object> rec = new LinkedHashMap<>();
+        Map<String, Object> last = versions.get(versions.size() - 1);
+        rec.put("plan", last.get("plan"));
+        rec.put("status", status);
+        rec.put("versions", new java.util.ArrayList<>(versions));
+        if (auto) rec.put("auto", true);
+        return rec;
     }
 
     /** 批准后的计划 → 执行轮 system 注入块 */
@@ -6062,22 +6238,33 @@ public class RagService {
     }
 
     /**
-     * 计划阶段执行体：一次无工具的流式模型调用产出计划文本（plan_delta 逐段下发，用户即时看到计划成形），
+     * 计划阶段（单版）执行体：一次无工具的流式模型调用产出计划文本（plan_delta 逐段下发，用户即时看到计划成形），
      * 流毕落库计划批准卡（c_ai_tool_approval，tool_name=planApproval）并阻塞等待用户裁决。
      * <p>等待语义与 askUser 相同：人工等待不计入整轮机器预算（beginHumanWait）；等待期间通道失效不中止
      * 本轮（卡片已落库，用户刷新/换设备后仍可批准，回答转后台续跑照常落库）；超时按未批准收尾。
      * <p>计划生成本身失败/超时/产出为空：不挂卡，登记降级后按普通模式继续——计划模式不能把本轮卡死。
+     *
+     * @param userFeedback 非 null=本版是用户退回后的修订版，按该意见重出（v1 为 null）
+     * @param versions     已产的版本链（修订版作为上一版上下文喂给模型）
+     * @param notify       是否发「执行计划待确认」站内通知（仅首版发，修订版用户就在会话里）
      */
     private PlanPhaseOutcome runPlanPhase(AnswerStreamState st, String rolePart, String planQuestion,
                                           List<String> skills,
                                           java.util.List<org.springframework.ai.tool.ToolCallback> callbacks,
-                                          String refsDigest) {
+                                          String refsDigest, String userFeedback,
+                                          List<Map<String, Object>> versions, boolean notify) {
         // ---- 1. 计划 prompt：角色段 + 计划指令 + 能力清单（与生成轮同口径装配的回调名与描述）----
         StringBuilder ps = new StringBuilder(rolePart == null ? "" : rolePart)
                 .append("\n\n【计划模式】用户为本轮开启了计划模式：请先产出一份执行计划供用户确认，暂时不要开始回答。\n")
                 .append("计划要求：\n")
-                .append("1. 用 Markdown 有序列表描述你回答这个问题打算怎么做：先做什么、每一步用什么能力、预期产出什么；\n")
-                .append("2. 只能计划使用下面列出的能力，不要出现清单之外的工具或动作：\n");
+                .append("1. 这是给用户审阅的「结果计划」：用 Markdown 有序列表说明成品将做成什么样——最终交付物是什么形态、"
+                        + "包含哪些部分、关键选择是什么（结构、内容范围、风格基调、呈现方式等），"
+                        + "用户看完就能判断是不是他要的东西；也可以说明会怎么让他看到它（如先给一版可预览的原型）；\n")
+                .append("2. 只写用户关心的结果：不写工具名、能力名、内部做法与执行细节；\n")
+                .append("3. 关键要素在出计划前已向用户确认过（若发生过提问，答案见「用户已确认的关键要素」）："
+                        + "不要再写「先与你确认…」这类步骤；仍有拿不准的细节按你的最佳判断定，"
+                        + "并在计划里点明这是你的选择，用户可以直接改；\n")
+                .append("4. 只能计划用下面列出的能力去做，不要出现清单之外的动作（清单仅供你核对可行性，名字不要写进计划）：\n");
         int listed = 0;
         for (org.springframework.ai.tool.ToolCallback cb : callbacks) {
             if (listed >= 15) {
@@ -6091,8 +6278,8 @@ public class RagService {
             ps.append("   - ").append(def.name()).append("：").append(desc).append("\n");
             listed++;
         }
-        ps.append("3. 若已检索的资料足以直接回答，计划可以只有一条（例如：基于已检索资料直接作答）；\n")
-                .append("4. 只输出计划本身（Markdown 列表），不要输出前言、解释或计划以外的任何内容，总长度控制在 10 行以内。");
+        ps.append("5. 事情简单或资料已足够时，计划可以只有一条（例如：直接产出结果）；\n")
+                .append("6. 只输出计划本身（Markdown 列表），不要输出前言、解释或计划以外的任何内容，总长度控制在 10 行以内。");
         StringBuilder pu = new StringBuilder(planQuestion == null ? "" : planQuestion);
         if (skills != null && !skills.isEmpty()) {
             pu.append("\n\n（用户本轮指定了技能：").append(String.join("、", skills))
@@ -6104,6 +6291,65 @@ public class RagService {
         String historyText = buildHistoryText(sessionService.getRecentHistory(st.sessionId, 2));
         if (!historyText.isEmpty()) {
             pu.append("\n\n对话历史：\n").append(historyText);
+        }
+        // 修订版（用户在等批界面退回并给了意见）：上一版计划 + 修改意见一起喂给模型重出——
+        // 用户也可能直接改写了计划全文，此时意见即改稿，按改稿重出（只做必要澄清，别丢用户的改动）
+        if (userFeedback != null) {
+            String prevPlan = "";
+            for (int i = versions.size() - 1; i >= 0; i--) {
+                Object p = versions.get(i).get("plan");
+                if (p != null && !String.valueOf(p).isBlank()) { prevPlan = String.valueOf(p); break; }
+            }
+            ps.append("\n\n【修订轮】本次不是首版计划：用户已看过上一版并提出了修改意见，"
+                    + "请按意见产出新的完整计划（仍是 Markdown 列表、10 行以内、只输出计划本身）；"
+                    + "与用户意见无关的部分保持原样，不要借机重写。");
+            pu.append("\n\n【上一版计划（用户要修改它）】\n").append(prevPlan)
+                    .append("\n\n【用户的修改意见】\n").append(userFeedback)
+                    .append("\n\n请产出修改后的新一版计划。");
+        } else {
+            // 「继续对话」轮（上一版计划被用户带着意见取代）：本轮问题就是对上一版提的修改要求，
+            // 把上一版计划带上，产出"修改后的计划"而不是从零重来
+            String prevSuperseded = findSupersededPlan(st.sessionId);
+            if (prevSuperseded != null) {
+                ps.append("\n\n【继续对话】用户对上一版执行计划提出了修改要求（见下方的用户消息），"
+                        + "请在他要改的基础上产出修改后的完整计划（仍是 Markdown 列表、10 行以内、只输出计划本身）；"
+                        + "与他意见无关的部分保持原样，不要借机重写。");
+                pu.append("\n\n【上一版计划（用户要改的是它）】\n").append(prevSuperseded);
+            }
+        }
+        // ---- 1.5 计划前的要素澄清（每轮计划的首版前问一次，同轮修订版不问）：模型拿不准才弹提问卡，
+        //          答完把确认结果并入计划依据——「先问 → 答 → 再出计划」的第一步；拿得准走 READY 不打扰。
+        //          收集型通道没人能作答（定时任务/MCP/子智能体），跳过。
+        // lambda 中引用需 effectively final，用容器承接
+        java.util.concurrent.atomic.AtomicBoolean clarifyAsked = new java.util.concurrent.atomic.AtomicBoolean();
+        if (versions.isEmpty() && userFeedback == null && !(st.emitter instanceof CollectingSseEmitter)) {
+            java.util.List<BuiltinTools.AskQuestion> clarifyQs = planClarifyQuestions(st, rolePart, pu.toString());
+            if (!clarifyQs.isEmpty()) {
+                clarifyAsked.set(true);
+                if (!st.detached) sendSseEvent(st.emitter, "stage", "正在确认关键要素…", st.sessionId);
+                // 提问卡走与执行期 askUser 完全相同的记录管道：start（时间线占位，前端对 askUser 的
+                // start 不渲染）+ 终态（前端据此撤下提问面板、问答记录卡落进 toolCalls 随消息持久化）。
+                // 不记录的话「提问面板撤下」永远不会触发（面板只在 askUser 工具终态或整轮结束时撤），
+                // 而计划轮要挂着等用户批准 ⇒ 提问面板会一直挡住计划卡与确认栏。
+                String askArgs = JSON.toJSONString(Map.of("questions", clarifyQs.stream().map(q -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("topic", q.topic());
+                    m.put("question", q.question());
+                    m.put("options", q.options());
+                    return m;
+                }).toList()));
+                long askStartAt = System.currentTimeMillis();
+                recordToolStatus(st, "askUser", askArgs, "start", null, 0, 1);
+                String clarified = doAskUserMulti(st, clarifyQs);
+                recordToolStatus(st, "askUser", askArgs, "done", clarified,
+                        System.currentTimeMillis() - askStartAt, 1);
+                String qa = formatClarifyAnswers(clarifyQs, clarified);
+                if (!qa.isBlank()) {
+                    pu.append("\n\n【用户已确认的关键要素】\n").append(qa);
+                }
+                pu.append("\n\n（未作答或未问到的关键点：按你的最佳判断给默认，并在计划里点明该处，用户可以直接改。）");
+                if (!st.detached) sendSseEvent(st.emitter, "stage", "正在制定计划…", st.sessionId);
+            }
         }
         // ---- 2. 调用选项：辅助调用口径——能关思考的方言下发关闭字段（思考与正文共享 max_tokens，
         //         默认开思考的模型会把预算花在推理上、计划正文被挤空）；关不掉的多留一份输出预算。
@@ -6117,7 +6363,11 @@ public class RagService {
         if (st.effectiveMaxOutput > 0 && st.effectiveMaxOutput < 3072) {
             opts.maxTokens(st.effectiveMaxOutput);
         }
-        // ---- 3. 流式生成：增量走 plan_delta（复用整轮流级心跳/看门狗；断开即弃，不挂卡）----
+        // ---- 3. 流式生成：增量走 plan_delta（复用整轮流级心跳/看门狗）----
+        // 通道失效时分两类：本轮刚问过用户（用户在等待期断线/换了设备，答案已送到）或正等人作答/已转后台
+        // 续跑 ⇒ 只丢事件、继续产出并挂卡（卡片落库，从「待批准计划」恢复）；其余照旧「断开即止损」中止本轮。
+        // 注意不能只靠 keepRunningWithoutChannel：答案送达时 askWaits 已归零，而断线往往到第一次发送
+        // 失败才被发现（等待期没有写入事件）——这个竞态窗口靠 clarifyAsked 兜住。
         StringBuilder planText = new StringBuilder();
         String billingUid = com.wenqu.ai.util.RequestUser.uid();
         try {
@@ -6135,8 +6385,12 @@ public class RagService {
                         }
                         if (!delta.isEmpty() && planText.length() <= PLAN_MAX_CHARS) {
                             planText.append(delta);
-                            if (!sendSseEvent(st.emitter, "plan_delta", delta, st.sessionId)) {
-                                throw new SseClientGoneException();
+                            if (!st.detached && !sendSseEvent(st.emitter, "plan_delta", delta, st.sessionId)) {
+                                if (clarifyAsked.get() || st.keepRunningWithoutChannel()) {
+                                    st.detached = true;   // 转后台续跑：此后只积累不发送
+                                } else {
+                                    throw new SseClientGoneException();
+                                }
                             }
                         }
                     })
@@ -6147,24 +6401,24 @@ public class RagService {
                     .blockLast(Duration.ofMillis(planGenTimeoutMs()));
         } catch (SseClientGoneException e) {
             log.info("[PLAN] 客户端断开，计划流终止: session={}", st.sessionId);
-            return new PlanPhaseOutcome(null, true);
+            return PlanPhaseOutcome.failed();
         } catch (Exception e) {
             log.warn("[FAIL-LOUD] 计划生成失败/超时，本轮降级为普通回答: session={} {}", st.sessionId, e.getMessage());
             addDegradation(st.degradations, st.degradedCodes, "planGenFailed",
                     "计划生成失败，本轮已按普通模式继续");
-            return new PlanPhaseOutcome(null, true);
+            return PlanPhaseOutcome.failed();
         }
         String draft = stripPlanNoise(planText.toString());
         if (draft.isBlank()) {
             log.warn("[FAIL-LOUD] 计划生成为空（正文 0 token），本轮降级为普通回答: session={}", st.sessionId);
             addDegradation(st.degradations, st.degradedCodes, "planGenFailed",
                     "计划生成为空，本轮已按普通模式继续");
-            return new PlanPhaseOutcome(null, true);
+            return PlanPhaseOutcome.failed();
         }
         // ---- 4. 挂起等批准：落库 + 内存句柄 + 站内通知 + SSE 卡（与 askUser 同一管道）----
         long timeout = planTimeoutMs();
         String planApprovalId = java.util.UUID.randomUUID().toString();
-        java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.CompletableFuture<PlanDecision> future = new java.util.concurrent.CompletableFuture<>();
         try {
             com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
             rec.setId(planApprovalId);
@@ -6179,19 +6433,22 @@ public class RagService {
             log.warn("[PLAN] 计划记录落库失败（不阻塞计划流程）: {}", e.getMessage());
         }
         PENDING_PLANS.put(planApprovalId, new PendingPlan(st.sessionId, st.userId, future));
-        try {
-            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
-                    "执行计划待确认",
-                    "模型为本轮产出了执行计划，请在会话中批准或修改后执行（超时未确认本轮将停止）。",
-                    "session", st.sessionId, "tool:" + planApprovalId, planApprovalId);
-        } catch (Exception e) {
-            log.warn("[PLAN] 计划通知写入失败（不阻塞计划流程）: {}", e.getMessage());
+        if (notify) {
+            try {
+                notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
+                        "执行计划待确认",
+                        "模型为本轮产出了执行计划，请在会话中批准或修改后执行（超时未确认本轮将停止）。",
+                        "session", st.sessionId, "tool:" + planApprovalId, planApprovalId);
+            } catch (Exception e) {
+                log.warn("[PLAN] 计划通知写入失败（不阻塞计划流程）: {}", e.getMessage());
+            }
         }
         try {
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("planApprovalId", planApprovalId);
             req.put("plan", draft);
             req.put("timeoutMs", timeout);
+            if (st.planAuto) req.put("auto", true);   // 按消息意图自动开启：卡片标「自动开启」
             // 卡片下发失败（连接已断）：本轮转后台续跑——卡片已落库，用户刷新/换设备后仍可批准，
             // 批准后的回答照常生成并落库（与 askUser 同语义）
             if (!sendSseEvent(st.emitter, "plan_approval", JSON.toJSONString(req), st.sessionId)) {
@@ -6200,36 +6457,155 @@ public class RagService {
             }
             log.info("[PLAN] 等待用户确认执行计划: id={} session={} 窗口={}ms 计划 {} 字",
                     planApprovalId, st.sessionId, timeout, draft.length());
-            String approved;
+            PlanDecision decision;
             st.planWaits.incrementAndGet();
             beginHumanWait(st.emitter);   // 用户裁决时间不计入整轮机器预算（见 TurnDeadline）
             try {
-                approved = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
+                decision = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException te) {
                 markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                approved = null;
+                decision = null;
                 log.warn("[PLAN] 计划批准超时，按未批准收尾: id={} session={}", planApprovalId, st.sessionId);
             } catch (java.util.concurrent.ExecutionException ee) {
                 markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                approved = null;
+                decision = null;
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                approved = null;
+                decision = null;
             } finally {
                 st.planWaits.decrementAndGet();
                 endHumanWait(st.emitter);
             }
-            // 落库快照（助手消息 plan 列，刷新/历史据此重建计划卡）：批准=最终稿（可能被用户编辑过），
-            // 拒绝/超时=模型原稿 + rejected。两处调用方（主链路/无知识库分支）落库时读它，另见 persistPlanRejected。
-            Map<String, Object> planRec = new LinkedHashMap<>();
-            planRec.put("plan", approved != null ? approved : draft);
-            planRec.put("status", approved != null ? "approved" : "rejected");
-            st.planRecord = planRec;
-            return new PlanPhaseOutcome(approved, false);
+            // 本版结果交回闸门（版本链快照由闸门统一组装，这里不再落 st.planRecord）
+            if (decision == null) return PlanPhaseOutcome.of(draft, false, null);                    // 超时=未批准
+            if (decision.reviseFeedback() != null) return PlanPhaseOutcome.of(draft, false, decision.reviseFeedback()); // 退回重出
+            if (decision.superseded()) return PlanPhaseOutcome.superseded(draft);                    // 继续对话：本版作废
+            if (!decision.approved()) return PlanPhaseOutcome.of(draft, false, null);                // 拒绝
+            String finalPlan = decision.plan() == null || decision.plan().isBlank() ? draft : decision.plan();
+            return PlanPhaseOutcome.of(finalPlan, true, null);                                       // 批准
         } finally {
             PENDING_PLANS.remove(planApprovalId);
         }
+    }
+
+    /**
+     * 计划前的要素澄清（首版计划前的一次小判定）：判断是否有「无法从资料与对话推断、必须由用户拍板」的
+     * 关键要素——有就先走提问卡问清、答完再出计划（「先问 → 答 → 再出计划」）；模型拿得准则输出 READY，
+     * 不打扰用户、直接出计划。上下文与计划轮同源：同一段角色提示词（判定者先知道自己是谁、产品是什么，
+     * 才不会有「你是做什么的」这类本可自答的问题）+ 同一段 user 文本；失败/超时/输出不可解析一律当
+     * READY——澄清是加分项，不能把计划轮卡住。
+     */
+    private java.util.List<BuiltinTools.AskQuestion> planClarifyQuestions(AnswerStreamState st, String rolePart,
+                                                                          String planContext) {
+        String instructions = (rolePart == null || rolePart.isBlank() ? "" : rolePart + "\n\n")
+                + "你是「计划前澄清」判断器：用户开启了计划模式，你即将给他一份「成品将做成什么样」的计划。"
+                + "先判断：有哪些关键要素，是「不确认就很可能做错方向」、又无法从用户消息 / 已检索资料 / "
+                + "对话历史 / 上一版计划里得到的？\n"
+                + "- 逐个自问：用户消息里已经给了吗？能从资料/历史里看出来吗？能先按默认做、在计划里标出让用户改吗？"
+                + "只要占一条，就不要问它；\n"
+                + "- 只问真正卡方向的关键取舍（面向谁、范围取舍、风格基调、交付形态这类），通常 1~2 个，最多 3 个；"
+                + "能不问就不问；全都能定就输出 READY；\n"
+                + "- 每个问题一句话交代背景与要决定的事；给 2~3 个具体候选（第一项是你推荐的），用户也可自由输入；\n"
+                + "- 只输出下面两种内容之一，不要任何解释：\n"
+                + "  无需提问：READY\n"
+                + "  需要提问：{\"questions\":[{\"topic\":\"话题\",\"question\":\"……\",\"options\":[\"……\",\"……\"]}]}";
+        // 与计划轮同口径的思考档处理：能关的关掉；这是小判定，生成封顶 20s，超时当 READY
+        Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(st.model);
+        OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder()
+                .model(st.model)
+                .temperature(0.0)
+                .maxTokens(thinkOff.isEmpty() ? 3072 : 1536)
+                .internalToolExecutionEnabled(false);
+        if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
+        StringBuilder out = new StringBuilder();
+        String billingUid = com.wenqu.ai.util.RequestUser.uid();
+        try {
+            chatClient.prompt()
+                    .system(instructions)
+                    .user(planContext)
+                    .options(opts.build())
+                    .stream()
+                    .chatResponse()
+                    .doOnNext(resp -> {
+                        if (resp.getResult() != null && resp.getResult().getOutput() != null
+                                && out.length() < 8000) {
+                            String t = resp.getResult().getOutput().getText();
+                            if (t != null) out.append(t);
+                        }
+                    })
+                    .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
+                            com.wenqu.ai.util.UsageAttr.of(
+                                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
+                                    st.sessionId, null, "chat")))
+                    .blockLast(Duration.ofMillis(Math.min(planGenTimeoutMs(), 20000L)));
+        } catch (Exception e) {
+            log.info("[PLAN] 要素澄清判定失败/超时，直接出计划: session={} {}", st.sessionId, e.getMessage());
+            return java.util.List.of();
+        }
+        return parseClarifyQuestions(out.toString());
+    }
+
+    /** 解析澄清判定输出：READY / 无 JSON / 解析失败 / 全部不合法都返回空表（=不用问）；问题按提问卡限制收敛
+     *  （最多 3 问、每题 2~MAX_ASK_OPTIONS 个候选），避免走到整卡拒绝那条路上去 */
+    private java.util.List<BuiltinTools.AskQuestion> parseClarifyQuestions(String raw) {
+        if (raw == null || raw.isBlank()) return java.util.List.of();
+        String s = raw.trim();
+        int a = s.indexOf('{');
+        int b = s.lastIndexOf('}');
+        if (a < 0 || b <= a) return java.util.List.of();
+        try {
+            JSONArray arr = JSON.parseObject(s.substring(a, b + 1)).getJSONArray("questions");
+            if (arr == null) return java.util.List.of();
+            java.util.List<BuiltinTools.AskQuestion> qs = new java.util.ArrayList<>();
+            for (int i = 0; i < arr.size() && qs.size() < 3; i++) {
+                JSONObject o = arr.getJSONObject(i);
+                if (o == null) continue;
+                String question = o.getString("question") == null ? "" : o.getString("question").trim();
+                if (question.isEmpty()) continue;
+                if (question.length() > 500) question = question.substring(0, 500);
+                String topic = o.getString("topic") == null ? "" : o.getString("topic").trim();
+                if (topic.length() > 16) topic = topic.substring(0, 16);
+                java.util.List<String> opts = new java.util.ArrayList<>();
+                JSONArray oa = o.getJSONArray("options");
+                if (oa != null) for (Object oo : oa) {
+                    if (opts.size() >= MAX_ASK_OPTIONS) break;
+                    String v = oo == null ? "" : String.valueOf(oo).trim();
+                    if (v.isEmpty() || opts.contains(v)) continue;
+                    opts.add(v.length() > 200 ? v.substring(0, 200) : v);
+                }
+                if (opts.size() < 2) continue;   // 少于 2 个候选不构成选择题（与提问卡口径一致）
+                qs.add(new BuiltinTools.AskQuestion(topic, question, opts));
+            }
+            return qs;
+        } catch (Exception e) {
+            log.info("[PLAN] 要素澄清输出不可解析，按无需提问处理: {}", e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /** 提问卡的批量答案 → 计划轮可读的问答块；未作答（忽略/超时/留空）的条目不列 */
+    private String formatClarifyAnswers(java.util.List<BuiltinTools.AskQuestion> qs, String answers) {
+        java.util.List<String> ans = new java.util.ArrayList<>();
+        if (qs.size() == 1) {
+            ans.add(answers == null ? "" : answers);
+        } else {
+            try {
+                for (Object o : JSON.parseArray(answers == null ? "[]" : answers)) {
+                    ans.add(o == null ? "" : String.valueOf(o));
+                }
+            } catch (Exception e) {
+                log.warn("[PLAN] 澄清答案解析失败，按未作答处理: {}", e.getMessage());
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < qs.size(); i++) {
+            String a = i < ans.size() ? ans.get(i).trim() : "";
+            if (a.isEmpty() || a.startsWith("（用户未回答这一题")) continue;
+            if (!sb.isEmpty()) sb.append("\n");
+            sb.append("- ").append(qs.get(i).question()).append("\n  用户选择：").append(a);
+        }
+        return sb.toString();
     }
 
     /** 计划正文降噪：剥掉 <process>/<related> 闭合块与首个未闭合开口之后的内容（计划轮没有工具，
@@ -6254,12 +6630,38 @@ public class RagService {
         }
     }
 
+    /** 上一版被「继续对话」取代的计划文本（新一轮按用户意见改它；没有则 null）：
+     *  只认「最近一条助手消息就是被取代的计划」——中间隔了别的回答就不挂上一版，避免把无关计划当底稿 */
+    private String findSupersededPlan(String sessionId) {
+        try {
+            List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId, 3);
+            if (recent == null) return null;
+            for (int i = recent.size() - 1; i >= 0; i--) {
+                Map<String, Object> m = recent.get(i);
+                if (m == null || !"assistant".equals(String.valueOf(m.get("role")))) continue;
+                Object planObj = m.get("plan");
+                if (!(planObj instanceof Map)) return null;
+                Map<?, ?> plan = (Map<?, ?>) planObj;
+                if (!"superseded".equals(String.valueOf(plan.get("status")))) return null;
+                Object p = plan.get("plan");
+                String text = p == null ? "" : String.valueOf(p);
+                return text.isBlank() ? null : text;
+            }
+        } catch (Exception e) {
+            log.warn("[PLAN] 读取上一版计划失败（本轮按首版出计划）: session={} {}", sessionId, e.getMessage());
+        }
+        return null;
+    }
+
     /**
      * 用户裁决执行计划（计划模式）：仅发起本轮问答的用户本人可裁决（uid 比对，与工具审批同口径）。
+     * revise=true 为退回重出（plan=用户的修改意见/改稿，同一轮内模型产出下一版，可反复）；
+     * supersede=true 为「继续对话」（用户带着修改意见继续对话，本版作废，新一轮按意见重做计划）；
      * approved=false 为拒绝（整轮终止）；approved=true 时 plan 为用户（可能编辑过的）批准版计划，
      * 空串回落模型原稿。返回 false 表示裁决没能送达（记录不存在/非本人/已收尾/句柄随进程重启消失）。
      */
-    public boolean resolvePlanApproval(String planApprovalId, boolean approved, String plan, String uid) {
+    public boolean resolvePlanApproval(String planApprovalId, boolean approved, String plan, boolean revise,
+                                       boolean supersede, String uid) {
         if (planApprovalId == null || planApprovalId.isBlank()) return false;
         com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(planApprovalId);
         if (rec == null || !"planApproval".equals(rec.getToolName())) return false;
@@ -6271,14 +6673,38 @@ public class RagService {
         PendingPlan p = PENDING_PLANS.get(planApprovalId);
         if (p == null) {
             // 唤醒句柄已不在（进程重启/多副本下那轮挂在别的实例）：终态照落，本轮无法续跑
-            markApprovalResolved(planApprovalId, approved ? "TIMEOUT" : "REJECTED", uid);
+            markApprovalResolved(planApprovalId, approved || revise || supersede ? "TIMEOUT" : "REJECTED", uid);
             log.info("[PLAN] 唤醒句柄已不在，本轮无法续跑: id={} session={}", planApprovalId, rec.getSessionId());
             return false;
         }
         if (!uid.equals(p.userId())) return false;
+        if (supersede) {
+            // 用户带着修改意见继续对话：本版作废（不是「未批准」——内容没被否定，是提出了修改）。
+            // 前端随后把那条意见作为用户消息发出，新一轮按意见产出修改后的计划
+            markApprovalResolved(planApprovalId, "SUPERSEDED", uid);
+            log.info("[PLAN] 用户带着修改意见继续对话，本版计划作废: id={} session={}", planApprovalId, rec.getSessionId());
+            return p.future().complete(PlanDecision.supersede());
+        }
+        if (revise) {
+            String feedback = plan == null ? "" : plan.trim();
+            if (feedback.isBlank()) return false;   // 空意见不能退回（前端也会拦）
+            // 本版被用户的修改意见取代：意见留审计（answer 列与 askUser 同语义），状态记 REVISED
+            try {
+                toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
+                        .eq(com.wenqu.ai.model.ToolApproval::getId, planApprovalId)
+                        .set(com.wenqu.ai.model.ToolApproval::getAnswer,
+                                feedback.length() > 8000 ? feedback.substring(0, 8000) : feedback));
+            } catch (Exception e) {
+                log.warn("[PLAN] 修改意见留审计失败（不阻塞退回）: {}", e.getMessage());
+            }
+            markApprovalResolved(planApprovalId, "REVISED", uid);
+            log.info("[PLAN] 用户要求修改计划，退回重出下一版: id={} session={} 意见 {} 字",
+                    planApprovalId, rec.getSessionId(), feedback.length());
+            return p.future().complete(PlanDecision.revise(feedback));
+        }
         if (!approved) {
             markApprovalResolved(planApprovalId, "REJECTED", uid);
-            return p.future().complete(null);
+            return p.future().complete(PlanDecision.reject());
         }
         String finalPlan = plan == null || plan.isBlank() ? parsePlanDraft(rec.getRequestArgs()) : plan.trim();
         // 批准版计划留审计（answer 列与 askUser 同语义：用户最终确认的内容）
@@ -6293,13 +6719,17 @@ public class RagService {
         markApprovalResolved(planApprovalId, "APPROVED", uid);
         log.info("[PLAN] 用户已批准执行计划: id={} session={} 编辑={}", planApprovalId, rec.getSessionId(),
                 plan != null && !plan.isBlank());
-        return p.future().complete(finalPlan);
+        return p.future().complete(PlanDecision.approve(finalPlan));
     }
 
     /**
-     * 待批准计划列表（卡片持久化后的恢复入口）：按会话取本人名下仍是 PENDING 的 planApproval 记录，
+     * 待批准计划列表（卡片持久化后的恢复入口）：按会话取本人名下仍挂在「上一轮计划」上的记录，
      * 供前端在会话加载/切换、或点开计划通知进入会话时重建批准卡。
-     * {@code live=false} 表示唤醒句柄已不在（进程重启/多副本），批准送不到模型，前端按「本轮已结束」提示。
+     * <p>版本链重建：自最新记录往前，直到遇到两版之间的终态（APPROVED/REJECTED/TIMEOUT）为止——
+     * 这一串 PENDING/REVISED 就是本轮（同一轮内退回重出）的计划各版；链尾不是 PENDING 说明正在重出中，不重建。
+     * 返回 items：最新一条（含 {@code planApprovalId/plan/timeoutMs/remainingMs/createdAt/expired/live}）
+     * 加 {@code versions:[{plan,feedback}]} 版本链；{@code live=false} 表示唤醒句柄已不在
+     * （进程重启/多副本），批准送不到模型，前端按「本轮已结束」提示。
      */
     public java.util.List<java.util.Map<String, Object>> listPendingPlans(String sessionId, String uid) {
         java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
@@ -6311,26 +6741,51 @@ public class RagService {
                             .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
                             .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
                             .eq(com.wenqu.ai.model.ToolApproval::getToolName, "planApproval")
-                            .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
-                            .orderByAsc(com.wenqu.ai.model.ToolApproval::getCreatedAt));
+                            .orderByDesc(com.wenqu.ai.model.ToolApproval::getCreatedAt)
+                            .last("LIMIT 30"));
+            if (rows.isEmpty()) return out;
+            // 自最新往前收集本轮版本链（PENDING/REVISED 继续、遇到终态即止）。
+            // 最近一条已是终态（批准/取代/拒绝/超时，绝大多数会话进来看的就是这种情况）⇒ 链为空，
+            // 没有待批计划可重建——必须先判空再取 last：getLast() 对空链抛 NoSuchElementException
+            // （message 为 null），每次切进会话都会刷「待批准计划查询失败 …: null」的误导性警告
+            java.util.LinkedList<com.wenqu.ai.model.ToolApproval> chain = new java.util.LinkedList<>();
             for (com.wenqu.ai.model.ToolApproval rec : rows) {
+                String s = rec.getStatus();
+                if ("PENDING".equals(s) || "REVISED".equals(s)) chain.addFirst(rec);
+                else break;
+            }
+            if (chain.isEmpty()) return out;
+            com.wenqu.ai.model.ToolApproval last = chain.getLast();
+            // 链尾必须是 PENDING（可裁决）才重建；还是 REVISED = 正在按意见重出下一页，等它生成完再取
+            if (!"PENDING".equals(last.getStatus())) return out;
+            long createdMs = last.getCreatedAt() == null ? 0L
+                    : last.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+            long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
+            // 已过期但还没被超时路径收尾（收尾需要流水线线程醒一次）：不再当作可批卡片重建
+            if (remaining <= 0) return out;
+            // 各版 = 该版计划文本 + 产出该版的用户意见（前一版被 REVISED 时记在它的 answer 列；v1 无意见）
+            java.util.List<Map<String, Object>> versions = new java.util.ArrayList<>();
+            String producedBy = "";
+            for (com.wenqu.ai.model.ToolApproval rec : chain) {
                 String plan = parsePlanDraft(rec.getRequestArgs());
                 if (plan.isBlank()) continue;
-                long createdMs = rec.getCreatedAt() == null ? 0L
-                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("planApprovalId", rec.getId());
-                item.put("plan", plan);
-                item.put("timeoutMs", window);
-                item.put("remainingMs", remaining);
-                item.put("createdAt", createdMs);
-                // 已过期但还没被超时路径收尾（收尾需要流水线线程醒一次）：不再当作可批卡片重建
-                item.put("expired", remaining <= 0);
-                item.put("live", PENDING_PLANS.containsKey(rec.getId()));
-                out.add(item);
-                if (out.size() >= 5) break; // 一轮一张卡，5 条封顶纯属防御
+                Map<String, Object> v = new LinkedHashMap<>();
+                v.put("plan", plan);
+                v.put("feedback", producedBy);
+                versions.add(v);
+                producedBy = "REVISED".equals(rec.getStatus()) && rec.getAnswer() != null ? rec.getAnswer() : "";
             }
+            if (versions.isEmpty()) return out;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("planApprovalId", last.getId());
+            item.put("plan", versions.get(versions.size() - 1).get("plan"));
+            item.put("versions", versions);
+            item.put("timeoutMs", window);
+            item.put("remainingMs", remaining);
+            item.put("createdAt", createdMs);
+            item.put("expired", false);
+            item.put("live", PENDING_PLANS.containsKey(last.getId()));
+            out.add(item);
         } catch (Exception e) {
             log.warn("[PLAN] 待批准计划查询失败 session={}: {}", sessionId, e.getMessage());
         }
@@ -6343,17 +6798,48 @@ public class RagService {
     }
 
     /**
-     * 计划被拒/超时的收尾落库：本轮没有流式回答（gate==null 直接终止，不会走 buildAnswerStream 的落库），
-     * 补一条助手消息（正文=前端同款收束语 + plan 快照），刷新/历史里这轮的「未批准」计划卡原样回显——
-     * 不落则历史只剩一条孤零零的用户提问，计划也随刷新消失。
+     * 计划被拒/超时的收尾落库：本轮没有流式回答（gate==null 直接终止，不会走 buildAnswerStream 的落库）。
      */
     private void persistPlanRejected(AnswerStreamState st) {
+        persistPlanCloseout(st, "（计划未批准，本轮已停止）", "拒绝");
+    }
+
+    /**
+     * 「继续对话」取代的收尾落库：与拒绝轮同构，但正文与卡片终态是「已被取代」而不是「未批准」——
+     * 用户并没有否定计划内容，只是提出了修改；新一轮会按他的意见产出修改后的计划。
+     */
+    private void persistPlanSuperseded(AnswerStreamState st) {
+        persistPlanCloseout(st, "（你提出了修改，这版计划已被取代）", "取代");
+    }
+
+    /**
+     * 计划收尾轮（未批准 / 已被取代）的兜底落库：正文=前端同款收束语 + plan 快照 + 本轮执行快照。
+     * <p>执行快照（提问卡问答、工具卡片、过程独白、时间线）必须一并落：这些在实时气泡里是用户
+     * 看得见的「已输出的内容」（如计划前的那张问答记录卡），只落收束语会让它们刷新后整块消失，
+     * 而计划卡本身也随刷新蒸发——历史只剩一条孤零零的用户提问。
+     * <p>answerPersistGate 先到先得：占住闸位也宣告本轮已收尾，通道断开兜底（disposeSafe）与
+     * 看门狗不再对同一轮补落第二条。
+     */
+    private void persistPlanCloseout(AnswerStreamState st, String content, String phase) {
+        if (!st.answerPersistGate.compareAndSet(false, true)) return;   // 已有终态路径落过库
         try {
-            sessionService.appendMessage(st.sessionId, "assistant", "（计划未批准，本轮已停止）",
-                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+            List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
+            List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
+            String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
+            // 时间线按收束语长度夹取：计划轮的正文只可能是收束语（无回答流），工具/过程段照常保留
+            List<Map<String, Object>> timelineSnapshot =
+                    buildTimelineSnapshot(st, content, toolCallSnapshot.size(), sessionArtifacts.size());
+            String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
+            String processText = st.processResponse.toString();
+            sessionService.appendMessage(st.sessionId, "assistant", content,
+                    null, null, st.thinkingHolder[0], st.retrievedJson,
+                    sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
+                    toolCallsJson, null, null, timelineJson, processText.isEmpty() ? null : processText,
+                    st.agentId, st.agentName, st.model,
+                    null, null, null,
                     planRecordJson(st));
         } catch (Exception e) {
-            log.warn("[PLAN] 拒绝轮收尾落库失败 (session={}): {}", st.sessionId, e.getMessage());
+            log.warn("[PLAN] {}轮收尾落库失败 (session={}): {}", phase, st.sessionId, e.getMessage());
         }
     }
 
@@ -7169,6 +7655,12 @@ public class RagService {
                                     String userMessageId, Agent delegatedAgent, boolean planMode,
                                     List<String> skills) {
         try {
+            // 计划意图识别（按用户意图自动开启计划模式）：与主链路同口径；本分支无检索可争抢，
+            // 识别在闸门前串行取结果（宁缺毋滥，最多让本轮多等 awaitPlanIntent 的上限）
+            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = startPlanIntentCheck(
+                    emitter, guestMode, planMode,
+                    replaceMessageId != null && !replaceMessageId.isBlank(),
+                    sessionId, question, resolvedModel, attachmentText != null && !attachmentText.isBlank());
             // 角色段（与主链路同源）+ 明确告知模型本轮无参考资料、按自身知识作答；
             // 例外：用户 @ 了文档（mentionText 非空）时有参考资料，引用规则按主链路口径放开
             boolean hasMention = mentionText != null && !mentionText.isBlank();
@@ -7247,23 +7739,36 @@ public class RagService {
             // 生效最大输出（模型管理中该模型声明的值）：buildAnswerStream 的 max_tokens 与触顶判定共用
             st.effectiveMaxOutput = effectiveMaxOutputOf(resolvedModel);
             st.stageMs.putAll(stageMs);
-            // 计划模式（人在回路）：与主链路同一段钩子（本分支没有检索资料，计划输入不含资料清单）
-            if (planMode) {
+            // 计划模式（人在回路）：与主链路同一段钩子（本分支没有检索资料，计划输入不含资料清单）；
+            // 未开计划开关时同样按消息意图自动开启（识别命中=本轮按计划模式走，卡片标「自动开启」）
+            boolean planRound = planMode;
+            if (!planRound && awaitPlanIntent(planIntentFuture)) {
+                planRound = true;
+                st.planAuto = true;
+                log.info("[PLAN] 意图识别命中，本轮自动开启计划模式（无知识库分支）: session={}", sessionId);
+            }
+            if (planRound) {
                 String planQuestion = question + (imgNote == null || imgNote.isBlank() ? "" : imgNote)
                         + (attachmentText == null || attachmentText.isBlank() ? ""
                         : "\n\n（用户上传了附件，其内容将在执行阶段提供）");
                 String gate = planApprovalGate(st, agent, resolveSystemPrompt(agent), planQuestion, skills,
                         null, system);
                 if (gate == null) {
-                    // 同主链路：plan_cancelled 定格卡片 + 标准 done 收尾（防「连接被提前关闭」误报）
-                    // 同主链路：拒绝/超时轮先补落收尾助手消息（含 plan 快照），再 plan_cancelled 定格卡片 + 标准 done
-                    persistPlanRejected(st);
-                    sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                    // 同主链路：拒绝/超时=未批准定格；「继续对话」取代=本版作废；均先补落收尾助手消息
+                    // （含 plan 快照）再发对应事件 + 标准 done（防「连接被提前关闭」误报）
+                    if (st.planSuperseded) {
+                        persistPlanSuperseded(st);
+                        sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
+                    } else {
+                        persistPlanRejected(st);
+                        sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                    }
                     Map<String, Object> cancelled = new LinkedHashMap<>();
                     cancelled.put("sources", List.of());
                     cancelled.put("related", List.of());
                     cancelled.put("degradations", degradations);
-                    cancelled.put("planCancelled", true);
+                    if (st.planSuperseded) cancelled.put("planSuperseded", true);
+                    else cancelled.put("planCancelled", true);
                     sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
                     completeEmitter(emitter);
                     return;
