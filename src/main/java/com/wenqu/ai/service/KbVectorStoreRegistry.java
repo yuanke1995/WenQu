@@ -107,9 +107,18 @@ public class KbVectorStoreRegistry {
      * 不区分这两个会误判成「字段齐了=召回就正常」。
      */
     public Map<String, Object> diagnose(String kbId) {
-        String index = kbIndexName(kbId);
+        // 与 storeForKb() 对齐：kbId 先 trim。否则调用方传入的空格/换行会被原样拼进索引名，
+        // 查到的是「不存在的索引」——hasAllGateFields/ftInfo 全部异常兜底成 false/-1，
+        // 返回「schema 未就绪 / 0 文档 / 检查 Redis 权限」的假象，误导运维去 rebuild 或查 Redis ACL。
+        String effective = kbId == null ? "" : kbId.trim();
+        if (effective.isBlank()) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("error", "kbId 为空");
+            return out;
+        }
+        String index = kbIndexName(effective);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("kbId", kbId);
+        out.put("kbId", effective);
         out.put("index", index);
         out.put("aclMode", "late-binding（文档级 ACL 实时查库，向量只存 kbId 库门）");
         out.put("gateFields", "docId,kbId");

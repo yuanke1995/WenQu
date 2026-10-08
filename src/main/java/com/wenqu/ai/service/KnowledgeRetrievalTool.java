@@ -2,10 +2,12 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.HybridRetrievalService.Hit;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -20,6 +22,7 @@ import java.util.List;
  *
  * @author yuanke
  */
+@Slf4j
 @Component
 public class KnowledgeRetrievalTool {
 
@@ -130,19 +133,30 @@ public class KnowledgeRetrievalTool {
         int limit = topK == null ? cap : Math.max(1, Math.min(topK, cap));
         // 范围与主链路对齐：向量路按库界检索（kbIds），命中再按文档范围后过滤（docIds，含空集合 fail-closed）
         KbScope scope = KB_SCOPE.get();
+        // 透传诊断：此前工具传 null，向量/关键词路失败与库门下推失败完全不可见，
+        // 排查「工具空结果但主链路 @ 引用能拿到」时只能盲猜。现在把诊断带进来并打各阶段计数日志。
+        HybridRetrievalService.RetrievalDiag diag = new HybridRetrievalService.RetrievalDiag();
         List<Hit> hits;
         try {
             // adaptiveTopK=true：与主链路同口径，权限剔掉的名额由补采补回（工具结果直接进模型上下文，
             // 召回不足会表现为「知识库里明明有却答不出来」）
-            hits = hybridRetrievalService.search(query.trim(), null,
+            hits = hybridRetrievalService.search(query.trim(), diag,
                     scope == null ? null : scope.kbIds(), true);
         } catch (Exception e) {
             return "知识库检索失败：" + e.getMessage();
         }
+        log.info("[TOOL-DIAG] searchKnowledge query=\"{}\" 融合召回 {} 条；向量路失败={} 关键词路失败={} 库门下推失败={} scopeKbIds={} scopeDocIds={}",
+                query.trim(), hits == null ? 0 : hits.size(),
+                diag.isVectorFailed(), diag.isKeywordFailed(),
+                diag.aclPushdownError() != null, scope == null ? null : scope.kbIds(),
+                scope == null ? null : scope.docIds());
         if (scope != null && scope.docIds() != null) {
+            int before = hits.size();
             hits = hits.stream()
                     .filter(h -> h.docId() != null && scope.docIds().contains(h.docId()))
                     .toList();
+            log.info("[TOOL-DIAG] docId 后过滤：{} → {} 条（scope.docIds={}）", before, hits.size(),
+                    scope.docIds());
         }
         // 补重排（强制窗口）：search() 只出融合分，本工具此前从未重排，相关分门发生在两个分值域上——
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，
@@ -157,15 +171,25 @@ public class KnowledgeRetrievalTool {
         double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
         double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
         if (hits != null && (minRerankGate > 0 || minFusionGate > 0)) {
+            int before = hits.size();
             hits = hits.stream().filter(h -> {
                 if (rerankActive && h.rerankScore() == null) return false;
                 double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
                 double gate = h.rerankScore() != null ? minRerankGate : minFusionGate;
                 return gate <= 0 || rankScore >= gate;
             }).toList();
+            log.info("[TOOL-DIAG] 重排/融合分门（rerankActive={} minRerank={} minFusion={}）：{} → {} 条",
+                    rerankActive, minRerankGate, minFusionGate, before, hits.size());
         }
         if (hits == null || hits.isEmpty()) {
-            return "未在知识库中检索到相关内容";
+            // 透出诊断原因，避免「工具空结果」只能盲猜：向量/关键词路是否失败、库门下推是否失败
+            StringBuilder why = new StringBuilder("未在知识库中检索到相关内容");
+            List<String> reasons = new ArrayList<>();
+            if (diag.isVectorFailed()) reasons.add("向量路失败" + (diag.lastError() != null ? "(" + diag.lastError() + ")" : ""));
+            if (diag.isKeywordFailed()) reasons.add("关键词路降级/失败");
+            if (diag.aclPushdownError() != null) reasons.add("库门下推失败(" + diag.aclPushdownError() + ")");
+            if (!reasons.isEmpty()) why.append("（").append(String.join("；", reasons)).append("）");
+            return why.toString();
         }
         // 注册模式（流式问答）：命中块注册进当前回答的来源列表续编引用编号，
         // 文本用【引用N】并提示模型按编号标注 → 前端角标悬浮/引用弹窗可溯源；
