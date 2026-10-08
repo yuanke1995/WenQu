@@ -134,8 +134,9 @@ public class SandboxTools {
         return clip(sb.toString());
     }
 
-    @Tool(name = "write_file", description = "在沙盒内**创建**一个新文件并写入内容（父目录自动创建）。"
-            + "注意：文件已存在时会失败——修改已有文件请改用 edit_file。只能在用户数据根目录下写。")
+    @Tool(name = "write_file", description = "在沙盒内创建新文件或整体替换已有文件（父目录自动创建）。"
+            + "只在新建或整文件重写时使用；局部修改优先用 edit_file，更省且不会误伤其余内容。"
+            + "只能在用户数据根目录下写。")
     public String write_file(
             @ToolParam(description = "沙盒内的绝对路径，如 /home/gem/user-data/calc.py") String path,
             @ToolParam(description = "文件内容（纯文本）") String content,

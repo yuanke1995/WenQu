@@ -42,6 +42,8 @@ import java.util.HexFormat;
  *       {@link #getFileType} 取代（未知扩展名默认 text；已知音视频/归档/可执行扩展名判 binary）。</li>
  *   <li>参考实现 {@code grep} 委托 deepagents 基类扫描；本工程以 {@link #superGrep} 提供等价进程内实现
  *       （find_files + 读 + 正则），能力差异仅在于实现位置。</li>
+ *   <li>{@code write} 由 create-only（已存在报错）改为<b>创建或整体替换</b>——对齐 deepagents 现行
+ *       {@code write_file} 语义（上游 issue #3731；对应错误文案已随该分支移除），理由见方法注释。</li>
  * </ul>
  */
 /**
@@ -838,6 +840,15 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         }
     }
 
+    /**
+     * 写入文本文件：不存在则创建，已存在则<b>整体替换</b>（create-or-overwrite）。
+     *
+     * <p>这是对移植源的一处语义校正：原先的 create-only（「File ... already exists」报错）会让模型
+     * 「整文件重写」退化为 edit_file 全量贴原文、或 execute rm 后重写，白耗轮次且易失败；
+     * deepagents 上游 issue #3731 同题，现行 write_file 已定为「Creates the file if it does not
+     * exist; replaces it entirely if it does」，此处对齐。局部修改仍由工具描述与手册引导走
+     * {@link #edit}。
+     */
     public WriteResult write(String file_path, String content) {
         String normalized;
         try {
@@ -851,12 +862,6 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         if (content == null || !(content instanceof String)) {
             return new WriteResult(
                     "Error: write() only supports text content; use upload_files() for binary data", null);
-        }
-        try {
-            readBinary(normalized);
-            return new WriteResult("Error: File '" + file_path + "' already exists", null);
-        } catch (RuntimeException ignore) {
-            // 文件不存在 → 允许写入
         }
         try {
             ensureParentDirectory(normalized);
@@ -878,15 +883,11 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 引擎内部文件放置（覆盖语义，不受 user-data 可写根限制）——供 WorkflowEngine code 节点放置
      * 执行脚本与上游数据注入文件（容器本地 /tmp）。
      *
-     * <p>与 {@link #write(String, String)} 的两处差异都是<b>刻意的</b>：
-     * <ul>
-     *   <li><b>可写根守卫不适用</b>：write() 的 user-data 守卫是用户工具面（write_file）的产品语义
-     *       ——「用户文件进 user-data 工作区」；而沙盒 execute 本就持完整 shell 权限，对引擎内部
-     *       /tmp 放置套这个守卫不会更安全，只会把失败伪装成执行期的 {@code can't open file}（exit=2，
-     *       2026-09-30 实测踩坑：provisioner 日志零 file/write 请求、runtime 实测接受 /tmp 写入）。</li>
-     *   <li><b>覆盖而非创建</b>：/tmp/wf_inputs.json 是固定契约路径，容器按 scope 跨运行复用，
-     *       create-only 会让后续运行写入失败或读到上一个 run 的陈旧注入。</li>
-     * </ul>
+     * <p>与 {@link #write(String, String)} 的关键差异是<b>刻意的</b>：write() 的 user-data 守卫是用户
+     * 工具面（write_file）的产品语义——「用户文件进 user-data 工作区」；而沙盒 execute 本就持完整
+     * shell 权限，对引擎内部 /tmp 放置套这个守卫不会更安全，只会把失败伪装成执行期的
+     * {@code can't open file}（exit=2，2026-09-30 实测踩坑：provisioner 日志零 file/write 请求、
+     * runtime 实测接受 /tmp 写入）。
      * 失败直接抛异常（fail-loud）：引擎写入是执行的前置条件，静默失败会把错误推迟到执行期，
      * 排查成本远高于在写入点报错。
      */
