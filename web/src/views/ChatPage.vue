@@ -123,7 +123,7 @@
                   </span>
                 </template>
               </div>
-              <!-- @ 引用（本轮显式指定的知识库/文档）：只对当轮生效，随内存消息展示 -->
+              <!-- @ 引用（本轮显式指定的知识库/文档/智能体）：消息级常驻标注，刷新/历史回显均保留 -->
               <div v-if="m.role === 'user' && m.mentions && m.mentions.length" class="msg-files">
                 <span v-for="(mm, mi) in m.mentions" :key="mi" class="msg-file"
                       :title="mm.type === 'kb' ? '引用的知识库（本轮检索范围）'
@@ -132,6 +132,14 @@
                   <robot-outlined v-else-if="mm.type === 'agent'" class="msg-file-ic" />
                   <file-text-outlined v-else class="msg-file-ic" />
                   <span class="msg-file-name">{{ mm.name || mm.id }}</span>
+                </span>
+              </div>
+              <!-- # 历史问答引用（本轮显式挑选的会话历史）：消息级常驻标注，刷新/历史回显均保留 -->
+              <div v-if="m.role === 'user' && m.historyRefs && m.historyRefs.length" class="msg-files">
+                <span v-for="(hr, hi) in m.historyRefs" :key="hi" class="msg-file"
+                      :title="'引用的历史问答（' + (hr.role === 'assistant' ? '回答' : '提问') + '）：' + (hr.content || '')">
+                  <history-outlined class="msg-file-ic" />
+                  <span class="msg-file-name">{{ historyRefPreview(hr) }}</span>
                 </span>
               </div>
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
@@ -2478,6 +2486,14 @@ const {
 
 // 空态引导用：本轮 @ 引用的资料名（副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
+
+// # 历史问答引用气泡预览（历史回显用）：截断内容做 chip 文案
+const historyRefPreview = hr => {
+  const c = (hr && hr.content) || ''
+  const plain = c.replace(/\s+/g, ' ').trim()
+  if (!plain) return '历史问答'
+  return plain.length > 20 ? plain.slice(0, 20) + '…' : plain
+}
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；

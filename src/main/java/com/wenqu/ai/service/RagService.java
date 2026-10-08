@@ -907,10 +907,14 @@ public class RagService {
             String userMessageId = null;
             if (!regenerate) {
                 List<String> earlyImgUrls = userImgs.stream().map(UserImageService.UserImage::url).toList();
+                // @ / # 引用随用户消息常驻落库（此前仅轮级注入、刷新后丢失）；其余中间列本轮不写，保持原语义
                 userMessageId = sessionService.appendMessage(sessionId, "user", question,
                         earlyImgUrls.isEmpty() ? null : earlyImgUrls, null,
                         null, null, null, null,
-                        attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta));
+                        attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta),
+                        null, null, null, null, null, null, null,
+                        mentions != null && !mentions.isEmpty() ? JSON.toJSONString(mentions) : null,
+                        historyRefs != null && !historyRefs.isEmpty() ? JSON.toJSONString(historyRefs) : null);
                 // 编辑重发：新用户消息挂上被替换旧分支的版本组键（appendMessage 不为此扩参，落库返回后补挂）
                 if (userMessageId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
                     sessionService.setMessageVariant(userMessageId, editVariantGroup);
@@ -3300,7 +3304,8 @@ public class RagService {
                                 agent == null ? null : agent.getName(),
                                 st.model,
                                 // 相关推荐随消息落库：此前只随 done 下发，刷新后「接下来可以」整块消失
-                                related.isEmpty() ? null : JSON.toJSONString(related));
+                                related.isEmpty() ? null : JSON.toJSONString(related),
+                                null, null);   // 助手消息无 @ / # 引用（引用仅用户消息携带），占位保持主方法签名一致
                         // 新回答挂上被替换旧回答的版本组键：组内版本序列即 ‹ n/N › 切换数据源
                         if (replaceGroup != null && messageId != null) {
                             sessionService.setMessageVariant(messageId, replaceGroup);

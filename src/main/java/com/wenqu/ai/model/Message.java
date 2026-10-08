@@ -95,6 +95,19 @@ public class Message {
      */
     private String variantTail;
 
+    /**
+     * @ 引用（用户显式 @ 的知识库/文档/智能体）：用户消息常驻标注，刷新/历史回显均保留。
+     * 此前仅作轮级上下文注入、不落库，导致刷新后 @ 引用从记录消失、重新生成悄悄丢引用——本列修复该问题。
+     * JSON 数组字符串：[{type:'kb'|'doc'|'agent', id, name, kbId}]（type=doc 时 kbId 由服务端回填）。
+     */
+    private String mentions;
+
+    /**
+     * # 历史引用（用户从本会话历史显式挑选的问答）：用户消息常驻标注，刷新/历史回显均保留。
+     * JSON 数组字符串：[{messageId, role, content}]（role/content 由服务端按库回填，不采信客户端传值）。
+     */
+    private String historyRefs;
+
     private LocalDateTime createTime;
 
     @TableLogic

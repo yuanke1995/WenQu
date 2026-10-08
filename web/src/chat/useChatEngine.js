@@ -754,6 +754,10 @@ const switchSession = async sid => {
             sources: Array.isArray(m.sources) ? m.sources : [],
             // 「接下来可以」推荐（随消息落库后回显）：此前恒为空数组，刷新后推荐整块消失
             related: Array.isArray(m.related) ? m.related : [],
+            // @ 引用（随用户消息常驻落库）：刷新/历史回显保留引用标注，重新生成/编辑重发据此原样带出
+            mentions: Array.isArray(m.mentions) ? m.mentions : [],
+            // # 历史引用（同上）
+            historyRefs: Array.isArray(m.historyRefs) ? m.historyRefs : [],
             thinking: m.thinking || '',
             thinkOpen: false,
             time: m.createTime ? new Date(m.createTime).getTime() : null,

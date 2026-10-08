@@ -66,12 +66,48 @@ const sourceLine = (s, i) => s.origin === 'WEB'
 /** 落盘为 .md。移动端不一定吃得下这条路（见 h5/MobileRefSheet.vue 的导出双通道），故单独露出 */
 export const saveMd = built => { if (built) downloadMd(built.md, built.fileName) }
 
+/** 兼容字段：可能被解析成数组，也可能仍是后端 JSON 字符串（旧数据/异常路径） */
+const asArray = v => {
+  if (Array.isArray(v)) return v
+  if (typeof v === 'string' && v.trim()) {
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : [] } catch { return [] }
+  }
+  return []
+}
+
+const mentionTypeLabel = t => t === 'kb' ? '知识库' : t === 'agent' ? '智能体' : '文档'
+
+/**
+ * 用户消息的引用标注块（@ 资料 / # 历史问答），消息级常驻、刷新/历史回显均保留。
+ * 返回若干行（带尾部空行）或空数组；仅在该用户消息确实带引用时插入。
+ */
+const refBlock = m => {
+  if (!m) return []
+  const ms = asArray(m.mentions)
+  const hs = asArray(m.historyRefs)
+  if (!ms.length && !hs.length) return []
+  const parts = []
+  for (const x of ms) {
+    const label = mentionTypeLabel(x && x.type) || '引用'
+    parts.push('@' + label + '「' + (x && (x.name || x.id) || '') + '」')
+  }
+  for (const h of hs) {
+    const roleLabel = h && h.role === 'assistant' ? '回答' : (h && h.role === 'user' ? '提问' : '历史')
+    const c = (h && h.content || '').replace(/\s+/g, ' ').trim()
+    const digest = c.length > 24 ? c.slice(0, 24) + '…' : c
+    parts.push('#历史' + roleLabel + (digest ? '「' + digest + '」' : ''))
+  }
+  return ['> **引用标注（@资料 / #历史问答）** ' + parts.join(' · '), '']
+}
+
 /** 拼装该轮问答的 Markdown：返回 { md, fileName }，无可导出内容返回 null */
 export const buildAnswerMd = async ({ answer, question, title }) => {
   if (!answer || !answer.content) { message.warning('该回答无可导出内容'); return null }
   const imgs = Array.isArray(answer.images) ? answer.images : []
   const parts = [`# ${title || 'AI回答'}\n`]
   if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
+  // @ 引用 / # 历史问答（用户消息携带，消息级常驻）
+  parts.push(...refBlock(question))
   const body = await embedMdImages(answer.content.trim(), imgs)
   parts.push('## 回答\n' + body + '\n')
   if (answer.sources && answer.sources.length) {
@@ -110,6 +146,8 @@ export const buildSessionMd = async (sid, title) => {
           const uri = await imgToDataUri(uims[k])
           if (uri) parts.push(`![用户图片${k + 1}](${uri})`, '')
         }
+        // @ 引用 / # 历史问答（用户消息携带，消息级常驻）
+        parts.push(...refBlock(m))
       } else {
         const body = await embedMdImages((m.content || '').trim(), Array.isArray(m.images) ? m.images : [])
         parts.push('**回答**', '', body, '')

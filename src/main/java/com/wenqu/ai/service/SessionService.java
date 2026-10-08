@@ -787,7 +787,7 @@ public class SessionService {
                                 String attachments, String tokens, String timeline, String processText,
                                 String agentId, String agentName, String model) {
         return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, null);
+                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, null, null, null);
     }
 
     /**
@@ -798,11 +798,13 @@ public class SessionService {
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls,
                                 String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName, String model, String related) {
+                                String agentId, String agentName, String model, String related,
+                                String mentions, String historyRefs) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related);
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
+                    mentions, historyRefs);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -814,7 +816,8 @@ public class SessionService {
         }
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related);
+                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
+                    mentions, historyRefs);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -892,6 +895,18 @@ public class SessionService {
             if (model != null && !model.isBlank()) {
                 redisMsg.put("model", model);       // 生效模型（与 tokens 同口径随降级缓存携带）
             }
+            if (mentions != null && !mentions.isBlank()) {
+                try {
+                    redisMsg.put("mentions", JSON.parseArray(mentions, Map.class)); // @ 引用（降级缓存也带，补写 MySQL 后不丢）
+                } catch (Exception ignored) {
+                }
+            }
+            if (historyRefs != null && !historyRefs.isBlank()) {
+                try {
+                    redisMsg.put("historyRefs", JSON.parseArray(historyRefs, Map.class)); // # 历史引用（同上）
+                } catch (Exception ignored) {
+                }
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -912,7 +927,7 @@ public class SessionService {
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
                                  String processText, String agentId, String agentName, String model,
-                                 String related) {
+                                 String related, String mentions, String historyRefs) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -949,6 +964,8 @@ public class SessionService {
             msg.setProcessText(processText);
             msg.setAgentId(agentId);
             msg.setAgentName(agentName);
+            msg.setMentions(mentions);         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
+            msg.setHistoryRefs(historyRefs);   // # 历史引用（同上）
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -1453,6 +1470,22 @@ public class SessionService {
                 // attachments 解析失败忽略
             }
         }
+        // @ 引用（用户消息常驻标注）：刷新/历史回显保留，前端气泡渲染 chip
+        if (m.getMentions() != null && !m.getMentions().isBlank()) {
+            try {
+                map.put("mentions", JSON.parseArray(m.getMentions(), Map.class));
+            } catch (Exception e) {
+                // mentions 解析失败忽略
+            }
+        }
+        // # 历史引用（用户消息常驻标注）：同上
+        if (m.getHistoryRefs() != null && !m.getHistoryRefs().isBlank()) {
+            try {
+                map.put("historyRefs", JSON.parseArray(m.getHistoryRefs(), Map.class));
+            } catch (Exception e) {
+                // historyRefs 解析失败忽略
+            }
+        }
         return map;
     }
 
@@ -1562,6 +1595,14 @@ public class SessionService {
                     Object sourcesObj = m.get("sources");
                     if (sourcesObj != null) {
                         msg.setSources(JSON.toJSONString(sourcesObj));
+                    }
+                    Object mentionsObj = m.get("mentions");
+                    if (mentionsObj != null) {
+                        msg.setMentions(JSON.toJSONString(mentionsObj)); // @ 引用（Redis 降级消息补写 MySQL 时带回）
+                    }
+                    Object historyRefsObj = m.get("historyRefs");
+                    if (historyRefsObj != null) {
+                        msg.setHistoryRefs(JSON.toJSONString(historyRefsObj)); // # 历史引用（同上）
                     }
                     Object retrievedObj = m.get("retrieved");
                     if (retrievedObj != null) {

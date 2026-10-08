@@ -226,6 +226,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `agent_name`  VARCHAR(100) DEFAULT NULL COMMENT '本轮智能体名称快照（智能体改名/删除后历史消息仍可展示原名称）',
     `variant_group` VARCHAR(64) DEFAULT NULL COMMENT '分支版本组键（编辑重发/重新生成的同一位置各版本共用一个组；NULL=不属于任何版本组）',
     `variant_tail` TEXT         DEFAULT NULL COMMENT '该版本被替换时刻的可见尾部消息ID快照（JSON数组，含本条），切回分支时按此恢复；sessionRetentionDays 物理清理后恢复返回 0',
+    `mentions`     TEXT         DEFAULT NULL COMMENT '@ 引用 (JSON数组字符串: [{type,id,name,kbId}])；用户消息常驻标注，刷新/历史回显均保留',
+    `history_refs` TEXT         DEFAULT NULL COMMENT '# 历史引用 (JSON数组字符串: [{messageId,role,content}])；用户消息常驻标注，刷新/历史回显均保留',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `deleted`     INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
