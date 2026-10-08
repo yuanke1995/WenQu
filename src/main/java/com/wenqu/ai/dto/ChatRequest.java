@@ -104,6 +104,11 @@ public class ChatRequest {
     @Schema(description = "是否深度思考（思考流式展示 + 多路检索增强）", example = "false")
     private boolean deepThink;
 
+    @Schema(description = "计划模式（人在回路）：true=模型先只产出一份执行计划（计划轮不执行任何工具，"
+            + "流式 plan_delta 下发），经 plan_approval 事件交用户批准/编辑后再按计划进入正式回答轮；"
+            + "拒绝或超时=本轮终止。本轮没有启用的工具时自动降级为普通回答（登记降级提示）")
+    private boolean planMode;
+
     @Schema(description = "本轮思考强度档位：low/medium/high/xhigh/max；须为生效模型在模型库登记的「支持档位」之一"
             + "（前端只在模型支持的档位里给出可选项）。空=用模型登记的默认档位。非法值一律忽略并回退默认档位，"
             + "不静默改写用户选择。")

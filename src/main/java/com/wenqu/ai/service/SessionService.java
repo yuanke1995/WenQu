@@ -800,11 +800,26 @@ public class SessionService {
                                 String attachments, String tokens, String timeline, String processText,
                                 String agentId, String agentName, String model, String related,
                                 String mentions, String historyRefs) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
+                mentions, historyRefs, null);
+    }
+
+    /**
+     * 追加消息（含计划批准卡）：plan 为 JSON（{plan,status}，计划模式本轮的执行计划与裁决结果）。
+     * 落库意义：计划卡此前只活在实时流里——刷新/切会话后所有已批准/未批准的计划卡全部消失，
+     * 只剩「还在等确认」的那张能从批准记录重建；随助手消息落库后每轮计划各留一张。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText,
+                                String agentId, String agentName, String model, String related,
+                                String mentions, String historyRefs, String plan) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
                     toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs);
+                    mentions, historyRefs, plan);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -817,7 +832,7 @@ public class SessionService {
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
                     toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs);
+                    mentions, historyRefs, plan);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -907,6 +922,12 @@ public class SessionService {
                 } catch (Exception ignored) {
                 }
             }
+            if (plan != null && !plan.isBlank()) {
+                try {
+                    redisMsg.put("plan", JSON.parse(plan)); // 计划批准卡（降级缓存也带，补写 MySQL 后计划不丢）
+                } catch (Exception ignored) {
+                }
+            }
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -927,7 +948,7 @@ public class SessionService {
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
                                  String processText, String agentId, String agentName, String model,
-                                 String related, String mentions, String historyRefs) {
+                                 String related, String mentions, String historyRefs, String plan) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -966,6 +987,7 @@ public class SessionService {
             msg.setAgentName(agentName);
             msg.setMentions(mentions);         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
             msg.setHistoryRefs(historyRefs);   // # 历史引用（同上）
+            msg.setPlan(plan);                 // 计划批准卡（刷新/历史按轮重建执行计划卡）
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -1442,6 +1464,13 @@ public class SessionService {
                 // toolCalls 解析失败忽略
             }
         }
+        if (m.getPlan() != null && !m.getPlan().isBlank()) {
+            try {
+                map.put("plan", JSON.parse(m.getPlan())); // 计划批准卡（历史回显：每轮计划各留一张，前端重建气泡计划卡）
+            } catch (Exception e) {
+                // plan 解析失败忽略
+            }
+        }
         if (m.getTokens() != null && !m.getTokens().isBlank()) {
             try {
                 map.put("tokens", JSON.parse(m.getTokens())); // Token 用量（历史回看「本次用量/会话累计」）
@@ -1603,6 +1632,10 @@ public class SessionService {
                     Object historyRefsObj = m.get("historyRefs");
                     if (historyRefsObj != null) {
                         msg.setHistoryRefs(JSON.toJSONString(historyRefsObj)); // # 历史引用（同上）
+                    }
+                    Object planObj = m.get("plan");
+                    if (planObj != null) {
+                        msg.setPlan(JSON.toJSONString(planObj)); // 计划批准卡（Redis 降级消息补写 MySQL 时带回）
                     }
                     Object retrievedObj = m.get("retrieved");
                     if (retrievedObj != null) {

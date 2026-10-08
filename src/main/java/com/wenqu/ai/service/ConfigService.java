@@ -336,6 +336,8 @@ public class ConfigService {
         // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
+        d.put("chat.planGenTimeoutMs", "120000");          // 计划模式：计划生成流式超时(ms)，失败/为空降级为普通回答
+        d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关；统管调试显示含降级提示）

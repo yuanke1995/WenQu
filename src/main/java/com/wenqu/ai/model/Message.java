@@ -108,6 +108,13 @@ public class Message {
      */
     private String historyRefs;
 
+    /**
+     * 计划批准卡 (JSON: {plan,status})：计划模式（人在回路）本轮的执行计划与裁决结果随助手消息落库，
+     * 刷新/历史回显按轮重建气泡里的计划卡（此前计划只活在实时流里，刷新即丢、只留得住最新一张待确认）。
+     * status=approved（plan 为可能被用户编辑过的批准稿）/ rejected（plan 为模型原稿）；NULL=本轮未走计划模式。
+     */
+    private String plan;
+
     private LocalDateTime createTime;
 
     @TableLogic

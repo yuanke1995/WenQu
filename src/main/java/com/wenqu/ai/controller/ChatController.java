@@ -195,7 +195,8 @@ public class ChatController {
         ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
                 request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
                 false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs,
-                request.getReasoningLevel(), request.getContextWindow(), editVariantGroup);
+                request.getReasoningLevel(), request.getContextWindow(), editVariantGroup,
+                request.isPlanMode());
         return emitter;
     }
 
@@ -360,6 +361,34 @@ public class ChatController {
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
                 ragService.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+    }
+
+    @Operation(summary = "执行计划裁决（计划模式）", description = "批准/拒绝 plan_approval 事件下发的执行计划（人在回路）："
+            + "批准可带编辑后的计划全文（body {approved:true,plan:\"...\"}，plan 空串=按模型原稿执行），"
+            + "拒绝（approved:false）或超时=本轮终止。仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval"
+            + "（tool_name=planApproval，PENDING→终态），等待期间断开不中止本轮，刷新/换设备后仍可经 "
+            + "/plan-approval/pending 取回卡片继续裁决。")
+    @PostMapping("/plan-approval/{planApprovalId}")
+    public ResultJson resolvePlanApproval(
+            @Parameter(description = "计划批准 ID（plan_approval 事件下发）") @PathVariable("planApprovalId") String planApprovalId,
+            @RequestBody Map<String, Object> body) {
+        boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        Object p = body.get("plan");
+        String plan = p == null ? null : String.valueOf(p);
+        boolean ok = ragService.resolvePlanApproval(planApprovalId, approved, plan, com.wenqu.ai.util.RequestUser.uid());
+        if (!ok) return ResultJson.error("计划已处理或已失效（可能已超时）");
+        return ResultJson.ok(approved ? "已批准，按计划执行" : "已取消本轮");
+    }
+
+    @Operation(summary = "待批准计划（恢复）", description = "按会话列本人仍挂在 PENDING 的执行计划批准卡，"
+            + "供前端在会话加载/切换与点开 tool.approval 通知时重建卡片。返回 items："
+            + "{planApprovalId,plan,timeoutMs,remainingMs,createdAt,expired,live}；live=false 表示唤醒句柄已不在"
+            + "（进程重启），批准送不到模型。")
+    @GetMapping("/plan-approval/pending")
+    public ResultJson listPendingPlans(
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        return ResultJson.ok(java.util.Map.of("items",
+                ragService.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"

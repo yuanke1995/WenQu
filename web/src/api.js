@@ -97,7 +97,8 @@ const CHAT_EVENT_CB = {
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
   subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
   agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
-  agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser'
+  agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
+  plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled'
 }
 
 /** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
@@ -136,7 +137,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     // 新增事件只改那张表。这里只留本函数收尾要用的两个。
     onDone, onError,
     deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null, editMessageId = ''
+    contextWindow = null, editMessageId = '', planMode = false
   } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
@@ -194,6 +195,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     headers: authHeaders(),
     body: JSON.stringify({
       sessionId, question, images, deepThink,
+      // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
+      planMode: planMode || undefined,
       // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
       reasoningLevel: reasoningLevel || '',
       // 上下文窗口档位（token）：仅在模型登记了「最小窗口~窗口」区间时由界面给出，空=用模型登记上限
@@ -810,6 +813,17 @@ export const ignoreAgentAsk = askId =>
  *  live=false 表示唤醒句柄已随进程重启消失，作答送不到智能体 */
 export const listPendingAsks = sessionId =>
   request(`/ask-user/pending?sessionId=${encodeURIComponent(sessionId)}`)
+
+/** 执行计划裁决（计划模式，人在回路）：批准可带编辑后的计划全文（空串=按模型原稿执行）；
+ *  拒绝=本轮终止。仅本轮用户本人可裁决 */
+export const resolvePlanApproval = (planApprovalId, approved, plan = '') =>
+  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ approved, plan }) })
+
+/** 待批准计划（卡片恢复入口）：列本人该会话仍挂起的执行计划批准卡。
+ *  返回 {items:[{planApprovalId,plan,timeoutMs,remainingMs,createdAt,expired,live}]}；
+ *  live=false 表示唤醒句柄已随进程重启消失，批准送不到模型 */
+export const listPendingPlans = sessionId =>
+  request(`/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>

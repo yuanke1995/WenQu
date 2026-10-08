@@ -310,6 +310,20 @@
                   </div>
                 </div>
               </div>
+              <!-- 计划模式（人在回路）：执行计划卡——只读展示（流式产出 → 待确认 → 已批准/未批准）。
+                   确认/修改/取消在底部输入框区的计划确认栏（与提问卡同形，见 pendingPlan / planp-*）；
+                   刷新/换设备后由 hydratePendingPlans 按落库记录重建（restored 卡同样可裁决） -->
+              <div v-if="m.planCard" class="plan-card" :class="'plan-' + m.planCard.status">
+                <div class="plan-card-head">
+                  <ordered-list-outlined class="plan-card-ic" />
+                  <span class="plan-card-title">执行计划</span>
+                  <span v-if="m.planCard.status === 'drafting'" class="plan-state st-drafting">生成中…</span>
+                  <span v-else-if="m.planCard.status === 'pending'" class="plan-state st-pending">待确认</span>
+                  <span v-else-if="m.planCard.status === 'approved'" class="plan-state st-ok">已批准</span>
+                  <span v-else class="plan-state st-rejected">未批准 · 已停止本轮</span>
+                </div>
+                <div v-if="m.planCard.status !== 'rejected'" class="md plan-body" v-html="renderMd(m.planCard.plan || '（计划为空）', [])"></div>
+              </div>
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
               <div v-if="m.approval" class="approval-card">
                 <div class="approval-title" :title="toolDesc(m.approval.tool)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
@@ -560,6 +574,14 @@
             <span class="at-chip-del" title="移除该技能" @click="toggleSkill(n)">×</span>
           </span>
         </div>
+        <div v-if="planModeOn" class="at-chips">
+          <span class="at-chip plan-chip" title="每轮先产出执行计划，等你批准或修改后才开始回答">
+            <ordered-list-outlined class="at-chip-ic" />
+            <span class="at-chip-name">计划模式</span>
+            <span class="at-chip-del" title="关闭计划模式" @click="setPlanMode(false)">×</span>
+          </span>
+          <span class="at-chips-note">每轮先出计划等确认</span>
+        </div>
         <div v-if="pendingMentions.length" class="at-chips">
           <span v-for="(mm, mi) in pendingMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
                 :class="'mention-' + mm.type"
@@ -588,7 +610,7 @@
             <span class="pending-del" @click.stop="removePendingImage(pi)">×</span>
           </div>
         </div>
-        <div v-if="!pendingAsk" class="input-box">
+        <div v-if="!pendingAsk && !pendingPlan" class="input-box">
           <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
@@ -748,6 +770,23 @@
               </div>
               <div class="mention-foot">选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）</div>
             </template>
+            <!-- 计划模式：入口开关（持久化）。开启后每轮先产出执行计划，由用户批准/修改/取消后才正式回答。
+                 持久模式用开关表达（不套技能/历史那种「本轮勾选」的语汇）：行可点、开关可拨，
+                 开启态只变开关自身，不再整行变色/头像实心——那套是「列表里挑中了」的语义 -->
+            <template v-else-if="addTab === 'plan'">
+              <div class="mention-list">
+                <div class="mention-item plan-switch-row" @click="setPlanMode(!planModeOn)">
+                  <span class="mention-ava"><ordered-list-outlined /></span>
+                  <div class="mention-text">
+                    <span class="mention-name">计划模式</span>
+                    <span class="mention-desc">每轮先出执行计划，你批准或修改后才开始回答</span>
+                  </div>
+                  <span class="plan-switch-wrap" @click.stop>
+                    <a-switch :checked="planModeOn" size="small" @change="setPlanMode" />
+                  </span>
+                </div>
+              </div>
+            </template>
             <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同源同一份候选 -->
             <template v-else-if="addTab === 'hist'">
               <div class="add-filter-row">
@@ -856,8 +895,8 @@
                   </div>
                 </template>
               </a-dropdown>
-              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length }"
-                      title="添加：附件 / 技能 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
+              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length || planModeOn }"
+                      title="添加：附件 / 技能 / 计划模式 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
                 <plus-outlined />
               </button>
             </div>
@@ -904,7 +943,7 @@
         <!-- 智能体提问面板：当前会话有挂起提问时完全替换聊天输入框（模型在等答案，输入框此时不可用）。
              样式对齐「编号选项 + 自定义输入末项 + 键盘导航 + 忽略/提交」的提问卡；答复后面板撤下、
              输入框回归，问答记录以工具卡形态留在气泡原位 -->
-        <div v-else class="input-box askp-box" @keydown="onAskPanelKeydown">
+        <div v-else-if="pendingAsk" class="input-box askp-box" @keydown="onAskPanelKeydown">
           <div class="askp-head">
             <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
             <span class="askp-q">{{ curAsk.question }}</span>
@@ -939,6 +978,44 @@
             <span class="askp-actions">
               <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
               <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
+            </span>
+          </div>
+        </div>
+        <!-- 计划确认栏：待批准时整块顶替打字框（模型在等裁决，此刻也没法发新消息），与提问面板同构——
+             编号选项：1. 确认（点即按原稿执行）2. 自定义（光输入框，留空、提示语在 placeholder，
+             非空才能点「执行」把自己的稿子作为批准版送出）；计划正文同时在气泡里只读展示。
+             底部「取消本轮」= 提问面板的「忽略」 -->
+        <div v-else class="input-box planp-box">
+          <div class="planp-head">
+            <span class="planp-tag">执行计划</span>
+            <span v-if="planExpired" class="planp-state warn">已超时，本轮将停止</span>
+            <span v-else class="planp-state">待确认</span>
+            <span v-if="planCountdownText" class="planp-timer" :class="{ warn: planExpired }">
+              <clock-circle-outlined /> {{ planCountdownText }}
+            </span>
+          </div>
+          <div class="planp-opts">
+            <button type="button" class="planp-opt" :disabled="curPlanCard.busy || planExpired"
+                    @click="submitPlanApproval(pendingPlan, true)">
+              <span class="planp-no">1.</span>
+              <span class="planp-kw">确认</span>
+              <span class="planp-rest">直接按此计划开始执行</span>
+            </button>
+            <div class="planp-opt planp-custom-row">
+              <span class="planp-no">2.</span>
+              <div class="planp-custom">
+                <a-textarea v-model:value="curPlanCard.editText" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
+                            :disabled="curPlanCard.busy || planExpired"
+                            placeholder="直接修改计划，改完点「执行」" />
+              </div>
+            </div>
+          </div>
+          <div class="planp-foot">
+            <span class="planp-hint"><info-circle-outlined /> 未处理将超时并停止本轮</span>
+            <span class="planp-actions">
+              <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, false)">取消本轮</button>
+              <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+                      @click="submitPlanApproval(pendingPlan, true, curPlanCard.editText)">执行</button>
             </span>
           </div>
         </div>
@@ -1274,8 +1351,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
-         AppstoreOutlined, PictureOutlined,
-         CheckCircleOutlined } from '@ant-design/icons-vue'
+         AppstoreOutlined, PictureOutlined, ClockCircleOutlined,
+         OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
@@ -2062,6 +2139,7 @@ const addHistCandidates = computed(() => histListOf(addHistQuery.value))
 const ADD_TABS = [
   { key: 'file', label: '附件', icon: PaperClipOutlined, count: () => pendingFiles.value.length + pendingImages.value.length },
   { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => pickedSkills.value.length },
+  { key: 'plan', label: '计划', icon: OrderedListOutlined, count: () => planModeOn.value ? 1 : 0 },
   { key: 'hist', label: '历史', icon: HistoryOutlined, count: () => pendingHistoryRefs.value.length },
   { key: 'cmd', label: '命令', icon: ThunderboltOutlined, count: () => 0 }
 ]
@@ -2471,6 +2549,8 @@ const updateTailSpacer = () => {
 const {
   // 输入与发送
   text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+  // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
+  planModeOn, setPlanMode, submitPlanApproval,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -2506,6 +2586,9 @@ const {
   compactNotice, compactContext
 } = useChatEngine({
   chatPath: '/chat',
+  // 计划模式（人在回路）只在 PC 壳开放入口：移动壳没有计划卡 UI，引擎侧按此开关兜底拦下
+  // （localStorage 桌面/移动同源共享，防止桌面开的开关让移动端发出没人能批准的计划问答）
+  planModeEnabled: true,
   scrollFollow: () => nextTick(() => { updateTailSpacer(); scroll() }),
   scrollForce: () => nextTick(() => { updateTailSpacer(); scrollForce() }),
   scrollSoft: () => scroll(),
@@ -2523,6 +2606,40 @@ const historyRefPreview = hr => {
   if (!plain) return '历史问答'
   return plain.length > 20 ? plain.slice(0, 20) + '…' : plain
 }
+
+// ==================== 计划确认栏（替换聊天输入框） ====================
+// 待批准期间打字框整块顶替为确认栏（模型在等裁决，此刻也没法发新消息），与提问面板同构：
+// 编号选项 = 1. 确认（点即按原稿执行）/ 2. 自定义（计划预填在下方文本域里直接改，点「执行」送修改稿）；
+// 计划正文同时在气泡里只读展示。底部「取消本轮」= 提问面板的「忽略」。
+const pendingPlan = computed(() => {
+  const list = messages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m && m.role === 'ai' && m.planCard && m.planCard.status === 'pending') return m
+  }
+  return null
+})
+const curPlanCard = computed(() => pendingPlan.value?.planCard || null)
+// 倒计时心跳（仅待确认卡挂 deadline 时走表，与提问卡的 askNow 同一套节奏）
+const planNow = ref(Date.now())
+let planTimer = null
+watch(() => messages.value.some(m => m.planCard && m.planCard.status === 'pending' && m.planCard.deadline), v => {
+  if (v && !planTimer) planTimer = setInterval(() => { planNow.value = Date.now() }, 1000)
+  if (!v && planTimer) { clearInterval(planTimer); planTimer = null }
+})
+onUnmounted(() => { if (planTimer) clearInterval(planTimer) })
+// 已过 deadline（后端超时收尾的 plan_cancelled 马上到）：操作锁住，避免批准必然失败的那一下
+const planExpired = computed(() => {
+  const c = curPlanCard.value
+  return !!(c && c.deadline && planNow.value >= c.deadline)
+})
+// 倒计时文本（内部用：planNow 触发重算；格式与提问卡一致 mm:ss）
+const planCountdownText = computed(() => {
+  const c = curPlanCard.value
+  if (!c || !c.deadline) return ''
+  const s = Math.max(0, Math.ceil((c.deadline - planNow.value) / 1000))
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
+})
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
@@ -3574,6 +3691,28 @@ onMounted(async () => {
 
 /* 工具审批恢复横幅（通知 → 会话，重建刷新丢失的 SSE 审批卡） */
 .approval-recovery { margin: 10px 0 0; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 720px; }
+
+/* ==================== 计划模式：执行计划卡 ==================== */
+/* 生命周期能从卡片自身状态读出来：drafting 生成中（蓝）→ pending 待确认（琥珀，同审批卡语义）
+   → approved 已批准（绿）/ rejected 未批准（灰弱化收尾） */
+.plan-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
+.plan-card.plan-approved { border-color: var(--app-ok-border, var(--app-border)); background: var(--app-panel); opacity: .92; }
+.plan-card.plan-rejected { border-color: var(--app-border); background: var(--app-panel); opacity: .75; }
+.plan-card-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--app-warn-text); }
+.plan-card.plan-approved .plan-card-head, .plan-card.plan-rejected .plan-card-head { color: var(--app-text2); }
+.plan-state { font-weight: 500; font-size: 12px; }
+.plan-state.st-drafting { color: var(--app-text3); }
+.plan-state.st-pending { color: var(--app-warn-text); }
+.plan-state.st-ok { color: var(--app-ok); }
+.plan-state.st-rejected { color: var(--app-text3); }
+.plan-body { margin-top: 8px; font-size: 13px; }
+.plan-chip { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
+/* 「+」面板：计划模式开关行——持久模式用开关表达（行可点、开关可拨），
+   开启态只变开关自身，不再整行变色/头像实心（那是「本轮勾选」的语汇）。
+   开关外包一层 span 挡冒泡：a-switch 的 click 是组件事件（payload 非 DOM 事件），
+   直接挂 @click.stop 会抛 stopPropagation is not a function，也让行点击与开关点击互相抵消 */
+.plan-switch-wrap { flex: none; display: inline-flex; }
+
 .ar-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
 .ar-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; }
 .ar-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
@@ -3615,6 +3754,33 @@ onMounted(async () => {
 .askp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .askp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .askp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* ==================== 计划确认栏（替换聊天输入框） ====================
+   待批准期间打字框整块顶替，与提问面板（askp-*）同形同节奏：编号选项（1. 确认 2. 自定义），
+   自定义项内嵌预填计划的文本域；底部提示 + 取消本轮/执行。 */
+.planp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.planp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.planp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
+.planp-state { font-size: 12px; color: var(--app-text2); }
+.planp-state.warn { color: var(--app-warn); }
+.planp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.planp-timer.warn { color: var(--app-warn); }
+.planp-opts { display: flex; flex-direction: column; gap: 2px; }
+.planp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 8px; font-size: 13px; line-height: 1.55; color: var(--app-text); cursor: pointer; }
+.planp-opt:hover { background: var(--app-panel-2); }
+.planp-opt:disabled { opacity: 0.55; cursor: default; }
+.planp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.planp-kw { font-weight: 600; }
+.planp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
+/* 自定义项整行不可点（只有输入框可编辑）：去掉悬停反馈，避免读成「点这行就选中」。
+   输入框留空，提示语全在 placeholder（与提问卡的自定义输入行同形：编号 + 光输入框） */
+.planp-custom-row { cursor: default; }
+.planp-custom-row:hover { background: none; }
+.planp-custom { flex: 1; min-width: 0; padding-top: 2px; }
+.planp-custom .ant-input { font-size: 13px; line-height: 1.6; }
+.planp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.planp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
+.planp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ar-status.ar-err { color: var(--app-danger); }
 
 /* ==================== 响应式：窄屏适配 ====================
