@@ -147,6 +147,14 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* 标题栏里标题右侧的说明文字（供应商/知识库/技能/MCP 等页共用）。
    此前只有系统设置页在 scoped 里定义，其它页用它时无样式、按正文黑字渲染，与设计不一致。 */
 .head-hint-plain { font-size: 12px; color: var(--app-text3); background: transparent; border: none; }
+/* 页头里的这一行：单行 + 溢出省略。页头是 flex 单行、右侧按钮组 flex:none 不让位，
+   若允许换行，长文案会被挤成竖排的一条（曾出现「走」「护」独占一行）。
+   省略掉的内容由各页的 title 悬浮提示补回。
+   作用域必须限定在页头直系子元素——同一个类还被空状态卡片与弹窗复用（如工作流空态、
+   定时任务空态），那些地方文字本来就该自然换行。 */
+.app-page-head > .head-hint-plain {
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .app-page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
 
 /* 白卡片 */

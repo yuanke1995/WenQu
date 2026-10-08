@@ -5,7 +5,7 @@
       <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">模型供应商</h1>
       <span class="head-count">共 <b>{{ list.length }}</b> 个供应商 · 已启用 <b>{{ enabledCount }}</b> · 模型 <b>{{ modelTotal }}</b> 个</span>
-      <span class="head-hint-plain">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。你新建的供应商只有你能看到和使用</span>
+      <span class="head-hint-plain" title="OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。你新建的供应商只有你能看到和使用">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记。你新建的供应商只有你能看到和使用</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>

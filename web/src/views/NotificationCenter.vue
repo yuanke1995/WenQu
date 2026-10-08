@@ -2,7 +2,7 @@
   <div class="app-page notif-center">
     <div class="app-page-head">
       <h1 class="app-page-title">通知中心</h1>
-      <span class="head-hint-plain">解析/工作流/网页源刷新/定时任务/审批等异步事件的归档与处理</span>
+      <span class="head-hint-plain" title="解析/工作流/网页源刷新/定时任务/审批等异步事件的归档与处理">解析/工作流/网页源刷新/定时任务/审批等异步事件的归档与处理</span>
       <!-- 筛选 + 操作区 -->
       <div class="nc-tools">
         <a-select v-model:value="typeFilter" class="nc-select" :options="typeOptions" @change="applyFilter" />

@@ -6,7 +6,7 @@
     <div class="app-page-head">
       <button class="app-btn ghost small" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
       <h1 class="app-page-title">运行历史{{ name ? ' · ' + name : '' }}</h1>
-      <span class="head-hint-plain">每次运行锁定当时的 DSL 快照；点开单条可看节点级输入输出与耗时</span>
+      <span class="head-hint-plain" title="每次运行锁定当时的 DSL 快照；点开单条可看节点级输入输出与耗时">每次运行锁定当时的 DSL 快照；点开单条可看节点级输入输出与耗时</span>
       <button class="app-btn ghost small" style="margin-left:auto" :disabled="loading" @click="load">
         <reload-outlined /> 刷新
       </button>

@@ -11,7 +11,7 @@
         共 <b>{{ totalCount }}</b> 个 · 已发布 <b>{{ publishedCount }}</b> · 草稿 <b>{{ draftCount }}</b>
         <template v-if="shared.length"> · 共享给我的 <b>{{ shared.length }}</b> 个</template>
       </span>
-      <span class="head-hint-plain">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
+      <span class="head-hint-plain" title="把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器">把「检索 → LLM → 条件 → 输出」画成一张图：DSL 是唯一真源，画布只是编辑器</span>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
       <button class="app-btn" style="margin-left:auto" @click="openTemplates">
         <appstore-outlined /> 模板库

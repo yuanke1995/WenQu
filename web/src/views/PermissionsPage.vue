@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">权限管理</h3>
-      <span class="head-hint-plain">接口按菜单归属分组；勾选菜单会一并授权名下接口，未授权的接口调用将返回 403</span>
+      <span class="head-hint-plain" title="接口按菜单归属分组；勾选菜单会一并授权名下接口，未授权的接口调用将返回 403">接口按菜单归属分组；勾选菜单会一并授权名下接口，未授权的接口调用将返回 403</span>
     </div>
 
     <!-- 页签式 Tab：与「智能体工作台」同一形态。此处只承载导航，内容用下方共用卡片按 tab 渲染；

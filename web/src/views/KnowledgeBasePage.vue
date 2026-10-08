@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">知识库</h3>
-      <span class="head-hint-plain">文档的容器：检索按库隔离，向量/检索/解析参数随库（留空继承全局模板）</span>
+      <span class="head-hint-plain" title="文档的容器：检索按库隔离，向量/检索/解析参数随库（留空继承全局模板）">文档的容器：检索按库隔离，向量/检索/解析参数随库（留空继承全局模板）</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建知识库
       </button>

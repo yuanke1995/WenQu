@@ -10,7 +10,7 @@
         共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
         <span v-if="checkedAt" class="head-dim">· 更新于 {{ checkedAt }}</span>
       </span>
-      <span class="head-hint-plain">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己</span>
+      <span class="head-hint-plain" title="接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己</span>
       <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 重连 + 添加 + 批量区（分隔线独立成区） -->
       <div class="head-r">
         <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或地址">
