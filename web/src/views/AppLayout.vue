@@ -49,8 +49,7 @@
              不进侧栏）；hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
         <template v-for="m in (showNavEditor ? navEditRows : navMenus)" :key="m.id">
-          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮。
-               判 showNavEditor（含 !collapsed）而非裸 navEditing：折叠态图标条容不下这些控件 -->
+          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮 -->
           <div v-if="showNavEditor"
                class="nav-edit-row"
                :class="{ off: m.hidden, dragging: editDragId === m.id, over: editOverId === m.id }"
@@ -100,7 +99,7 @@
                           ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
               <button class="nav-edit-btn ghost" :disabled="navEditSaving">恢复默认</button>
             </a-popconfirm>
-            <!-- 主操作给实心：未改动时是禁用态（灰），一眼能看出「现在按了没反应」是有意的 -->
+            <!-- 主操作给实心：未改动时是禁用态，一眼能看出「现在按了没反应」是有意的 -->
             <button class="nav-edit-btn primary"
                     :disabled="navEditSaving || !navEditDirty" @click="saveNavLayout">
               {{ navEditSaving ? '保存中' : '保存' }}
@@ -399,18 +398,18 @@ const editSig = () => navEditRows.value.map(r => `${r.id}:${r.hidden ? 0 : 1}`).
 const navEditDirty = computed(() => editSig() !== navEditBase.value)
 /**
  * 是否真的渲染编辑器 = 在编辑态 **且** 侧栏展开。折叠态下 56px 图标条容不下带文字和开关的
- * 行（实测会横向溢出），所以模板一律判这个派生值而不是裸 navEditing。
- * 主路径是 toggleFold 里调 exitNavEdit 清状态；这里是模板层第二道保险，
+ * 行（实测会溢出），所以模板一律判这个派生值而不是裸 navEditing。
+ * 主路径是 toggleFold 里调 exitNavEdit 把状态清掉；这里是模板层的第二道保险，
  * 防的是将来有别处直接改 collapsed 而绕过那条联动。
  */
 const showNavEditor = computed(() => navEditing.value && !collapsed.value)
 
 /**
  * 退出编辑态并丢弃未保存草稿。navMenus 始终是服务端算出的权威结果、从未被本地改过，
- * 所以清掉草稿状态就等于回到编辑前的样子，**不需要**重拉 /auth/me
+ * 所以只要清掉草稿状态就等于回到编辑前的样子，**不需要**重拉 /auth/me
  * （重拉反而会覆盖用户刚看到的默认态，观感上像"我的改动自己消失了"）。
  *
- * 复用场景：点编辑按钮退出、**折叠侧栏**（见 toggleFold）、保存成功、恢复默认。
+ * 复用场景：点编辑按钮退出、**折叠侧栏**（见 toggleFold）。
  */
 function exitNavEdit () {
   navEditing.value = false
@@ -539,9 +538,9 @@ const toggleFold = () => {
   collapsed.value = !collapsed.value
   localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0')
   // 收起时顺带结束侧栏编辑：折叠是用户明确表示「收起这列」，编辑态跟着一起结束。
-  // 不修的话编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
-  // 带文字和开关的行在图标条里必然横向溢出（2026-10-08 用户截图：开关悬在条外、
-  // 「恢复默认」文字糊成一团）。未保存草稿直接丢弃，语义同「点编辑按钮退出」。
+  // 不这么做的话，编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
+  // 带文字和开关的行在图标条里必然溢出（实测：开关悬在条外、「恢复默认」文字糊成一团）。
+  // 未保存的草稿直接丢弃，语义同「点编辑按钮退出」。
   if (collapsed.value) exitNavEdit()
 }
 
@@ -918,8 +917,8 @@ onMounted(async () => {
    落在单个按钮上只会推走那一个，另一个留在品牌名旁（实测返工过一次）。 */
 .side-logo-ops { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .side-logo-ops .app-icon-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
+/* auto 由 .side-logo-ops 承担（展开态才渲染该容器），折叠态下无右侧元素可推 */
 .fold { margin-left: 0; }
-.side.collapsed .fold { margin-left: 0; }
 
 /* 编辑态行：与 .nav-item 同宽同高，肉眼只多出把手和开关 */
 .nav-edit-row {
@@ -941,11 +940,14 @@ onMounted(async () => {
 .nav-edit-name { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 操作条：单行按钮，不额外占高度（两行式会把侧栏顶高 43px、连带会话列表整体下移）；
-   提示语降为 title。white-space:nowrap 是硬要求：一换行按钮就变竖排单字（200px 实测过）。 */
-.nav-edit-bar { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+/* 操作条：单行按钮，接替入口行、与它等高 ⇒ 进/出编辑态侧栏总高不变，
+   下方会话列表不会被顶下去（提示语降为 title，不占垂直空间）。
+   white-space:nowrap 是硬要求：一换行按钮就变竖排单字（200px 侧栏实测过）。 */
+.nav-edit-bar {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 4px; padding: 0;
+}
 .nav-edit-ops { display: flex; align-items: center; gap: 6px; width: 100%; }
-/* white-space:nowrap 是硬要求：一旦换行按钮就变竖排单字 */
 .nav-edit-btn {
   flex: 1 1 0; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
