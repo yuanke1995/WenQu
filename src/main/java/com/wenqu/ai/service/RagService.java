@@ -266,6 +266,13 @@ public class RagService {
     /** 中断兜底落库时追加在正文尾部的截断标记：刷新/历史可见的 fail-loud 提示。
      *  落在时间线区间之外，前端 restore 后由尾段兜底渲染成独立的引用块 */
     private static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
+    /**
+     * 整轮失败（模型流抛异常 / 工具失败冒泡）时追加在正文尾部的标注。
+     * 与 TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
+     * 工具卡片已经记录了失败原因，这行只交代正文本身的完整性，刷新后仍在。
+     */
+    private static final String STREAM_ERROR_SUFFIX =
+            "\n\n> ⚠️ 本轮回答未能完成，以上为已生成的部分（失败的工具调用记录见下方）";
     /** 网关 finish_reason=length（输出达长度上限）时的用户可见标注：正文尾部直书，刷新后仍在 */
     private static final String LENGTH_TRUNCATED_SUFFIX =
             "\n\n> ⏹ 回答写到长度上限被截断，可让我接着说完，或重新生成";
@@ -1942,12 +1949,28 @@ public class RagService {
                         // 流式输出接线：execute 增强一份 toolContext，注入「本工具输出增量回调」（闭包持有工具名）。
                         // SandboxTools 检测到回调即走流式执行（后台脱离+轮询），增量经 recordToolOutput 转 SSE；
                         // 其余工具/无流上下文按原上下文透传，行为不变。
+                        // 基础设施故障回调（CTX_INFRA_ERROR_SINK）对全部沙盒工具注入：沙盒不可用时工具
+                        // 不抛异常（抛出去会掐断整轮流、连带已生成正文与全部工具记录一起落空），而是把
+                        // 失败文本回给模型 + 经此回调上报，让本条记录落成 error 而不是绿色对勾的 done。
                         org.springframework.ai.chat.model.ToolContext effectiveCtx = toolContext;
-                        if (SandboxTools.STREAMING_TOOL_NAME.equals(name) && toolContext != null) {
+                        // 沙盒工具判定（决定要不要注入故障上报回调）：与 sandboxTool 无关的工具
+                        // 保持原行为，effectiveCtx 原样透传。
+                        boolean sandboxTool = SandboxTools.TOOL_NAMES.contains(name);
+                        // 基础设施故障信箱：本次调用独占的 AtomicReference（局部变量，同名工具并发
+                        // 调用也各持各的，不会串号）。工具执行期被填充，call 返回后据此定status。
+                        java.util.concurrent.atomic.AtomicReference<String> infraError = null;
+                        if (toolContext != null && (SandboxTools.STREAMING_TOOL_NAME.equals(name) || sandboxTool)) {
                             java.util.Map<String, Object> enhanced = new java.util.HashMap<>(toolContext.getContext());
-                            enhanced.put(SandboxTools.CTX_OUTPUT_SINK,
-                                    (java.util.function.Consumer<String>) delta -> recordToolOutput(st, name, delta));
-                            effectiveCtx = new org.springframework.ai.chat.model.ToolContext(enhanced);
+                            if (SandboxTools.STREAMING_TOOL_NAME.equals(name)) {
+                                enhanced.put(SandboxTools.CTX_OUTPUT_SINK,
+                                        (java.util.function.Consumer<String>) delta -> recordToolOutput(st, name, delta));
+                            }
+                            if (sandboxTool) {
+                                infraError = new java.util.concurrent.atomic.AtomicReference<>();
+                                enhanced.put(SandboxTools.CTX_INFRA_ERROR_SINK,
+                                        (java.util.function.Consumer<String>) infraError::set);
+                                effectiveCtx = new org.springframework.ai.chat.model.ToolContext(enhanced);
+                            }
                         }
                         // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
                         // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
@@ -1988,8 +2011,17 @@ public class RagService {
                             if (mcpTool) {
                                 result = st.registerMcpCitations(name, result);
                             }
-                            recordToolStatus(st, name, toolInput, "done", result,
-                                    System.currentTimeMillis() - begin, attempts[0]);
+                            // 沙盒基础设施故障（provisioner 不可达等）：工具把失败文本回给了模型、
+                            // 没抛异常，但这条记录必须落成 error——否则「沙盒压根没通」在聊天区
+                            // 显示为绿色对勾的「成功」，与「命令跑了退出码非 0」混为一谈。
+                            String infra = infraError == null ? null : infraError.get();
+                            if (infra != null && !infra.isBlank()) {
+                                recordToolStatus(st, name, toolInput, "error", infra,
+                                        System.currentTimeMillis() - begin, attempts[0]);
+                            } else {
+                                recordToolStatus(st, name, toolInput, "done", result,
+                                        System.currentTimeMillis() - begin, attempts[0]);
+                            }
                             return result;
                         } catch (Exception e) {
                             recordToolStatus(st, name, toolInput, "error", e.getMessage(),
@@ -2404,10 +2436,31 @@ public class RagService {
      * 只落「已下发给前端」的内容（fullResponse 与 token 事件同源；尾部扣留的标签前缀缓冲不参与）；
      * 引用自检/图片过滤/记忆提取/QA 日志均不再执行（那是完整轮的收尾语义），正文尾部追加截断标记，
      * 时间线仍按原始半程长度夹取（标记落在区间之外，前端 restore 后由尾段兜底渲染）。
+     * <p>「正文为空但已有工具记录」也算要落库（failLoud 参数控制）：工具失败/步骤上限这类轮的
+     * 价值全在工具卡片上，正文可能一个token 都没有——按原条件（正文非空）判会让整轮记录蒸发。
+     * <p>纯中断沿用旧行为（正文为空不落库）：客户端秒断的一轮既没正文也没工具，
+     * 落一条空消息只会污染历史。
      */
     private void persistPartialAnswer(AnswerStreamState st) {
+        persistPartialAnswer(st, TRUNCATION_SUFFIX, false);
+    }
+
+    /**
+     * 失败/中断兜底落库。
+     *
+     * @param tailMarker 正文尾部追加的可见标记（截断态/ 失败态各自不同，均落在时间线区间之外）
+     * @param failLoud   是否在「正文为空但工具记录非空」时也落库。失败轮（工具抛异常冒泡、
+     *                   达到单轮工具步数上限）往往正文为空而工具卡片有料，此时必须落；
+     *                   纯中断且正文为空时沿用旧行为不落（历史只留问题）。
+     */
+    private void persistPartialAnswer(AnswerStreamState st, String tailMarker, boolean failLoud) {
         try {
             String answer = st.fullResponse.toString();
+            // 空轮不落库：正文、工具记录都为空时落了也是一条空消息，只污染历史。
+            // failLoud 只放宽「正文为空但有工具记录」这一种，不放宽「什么都没有」。
+            if (answer.isEmpty() && (!failLoud || st.toolCalls.isEmpty())) {
+                return;
+            }
             List<Map<String, Object>> sources = st.sources;
             List<String> finalImgs = new ArrayList<>(st.imgIndex.values());
             String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
@@ -2445,7 +2498,7 @@ public class RagService {
             if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
                 replaceGroup = sessionService.beginAnswerReplace(st.replaceMessageId);
             }
-            String partialMessageId = sessionService.appendMessage(st.sessionId, "assistant", answer + TRUNCATION_SUFFIX,
+            String partialMessageId = sessionService.appendMessage(st.sessionId, "assistant", answer + tailMarker,
                     finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
                     sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
                     toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
@@ -2456,7 +2509,8 @@ public class RagService {
             }
             // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
             artifactService.unregisterEmitter(st.sessionId);
-            log.info("[SSE] 中断兜底：半程回答已按截断态落库 (session={}, chars={})", st.sessionId, answer.length());
+            log.info("[SSE] 中断/失败兜底：半程回答已落库 (session={}, chars={}, tools={}, failLoud={})",
+                    st.sessionId, answer.length(), toolCallSnapshot.size(), failLoud);
         } catch (Exception e) {
             // 兜底失败只记日志：管道已断无处下发错误，回退为现状「中断即丢失」
             log.warn("[SSE] 中断兜底落库失败 (session={}): {}", st.sessionId, e.getMessage());
@@ -3033,6 +3087,15 @@ public class RagService {
                             ModelQuotaGuard.isQuotaExhausted(error) ? "modelQuotaExhausted" : "streamError",
                             "msg", "模型输出中断：" + msg));
                     sendSseEvent(emitter, "error", msg, st.sessionId);
+                    // 失败兜底落库：工具失败/超出单轮步数上限这类轮次，诊断信息全在工具记录里
+                    // （工具名、入参、失败原因、耗时），正文可能一个 token 都没有。此前错误路径
+                    // 既不落库也不走 persistPartialAnswer，导致整条助手消息连同全部工具卡片在刷新/
+                    // 重进会话后彻底蒸发——用户看到的只是「问题还在，回答说没了」。
+                    // failLoud=true：正文为空也落库（工具记录有料就值得留痕）。
+                    // 与正常完成/中断兜底共用 answerPersistGate幂等闸，三条路径 CAS 先到先得。
+                    if (st.answerPersistGate.compareAndSet(false, true)) {
+                        persistPartialAnswer(st, STREAM_ERROR_SUFFIX, true);
+                    }
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);
                     completeEmitter(emitter);
@@ -3421,7 +3484,7 @@ public class RagService {
         final StringBuilder emitBuf = new StringBuilder();
         final AtomicInteger retried = new AtomicInteger();
         final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
-        /** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
+/** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
         final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 本轮回答时间线：正文区间段 {kind:'text',from,to} 与工具/产物下标段 {kind:'tool'|'artifact',i} 按发生
          *  顺序排列。随消息落库并在 done 下发，供刷新/历史会话还原「正文与工具卡片交错」的过程视图——

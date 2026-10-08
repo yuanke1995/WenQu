@@ -584,8 +584,9 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             }
             return new ExecuteResponse(output, exitCode, truncated);
         } catch (RuntimeException exc) {
+            // infraError=true：异常来自「连不上/调用沙盒失败」这层，而非命令本身跑失败
             System.err.println("Sandbox execute failed for thread " + threadId + ": " + exc);
-            return new ExecuteResponse("Error: " + exc, 1, false);
+            return new ExecuteResponse("Error: " + exc, 1, false, true);
         }
     }
 
@@ -623,7 +624,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + logPath + " " + exitPath
                     + " " + okPath + " && echo READY");
             if (prep.exitCode() == null || prep.exitCode() != 0) {
-                return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false);
+                return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false, true);
             }
             // ② 后台启动：花括号组后台化，组内先跑命令（2>&1 合并）、再写退出码标记；组输出进 log。
             //    启动成功判据 = ok 标记文件落盘（echo BG_OK > ok），不判 stdout 文本：
@@ -634,7 +635,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             SandboxRuntimeClient.SandboxExecResult launch = client.execCommand(wrapped, null, false);
             if (!waitForMarker(client, okPath, 5000)) {
                 String launchOut = launch.output() == null ? "" : launch.output().strip();
-                return new ExecuteResponse("Error: 沙盒后台执行启动失败: " + launchOut, 1, false);
+                return new ExecuteResponse("Error: 沙盒后台执行启动失败: " + launchOut, 1, false, true);
             }
             // ③ 轮询：追增量 → 回调；exit 标记出现即完成；总时长受 timeout（缺省 commandTimeoutSeconds）约束
             StringBuilder all = new StringBuilder();
@@ -677,7 +678,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             return new ExecuteResponse(output, exitCode, truncated);
         } catch (RuntimeException exc) {
             System.err.println("Sandbox streaming execute failed for thread " + threadId + ": " + exc);
-            return new ExecuteResponse("Error: " + exc, 1, false);
+            return new ExecuteResponse("Error: " + exc, 1, false, true);
         }
     }
 
@@ -1777,11 +1778,25 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         public final String output;
         public final Integer exitCode;
         public final boolean truncated;
+        /**
+         * 本次失败是「基础设施故障」而非「命令本身执行失败」：连接不上沙盒 / 鉴权被拒 /
+         * provisioner 不可达等。两者都是 exitCode=1 + 文本，但语义完全不同——
+         * 前者重试与改命令都无意义（要让运维把 provisioner 拉起来），后者是正常的业务结果
+         * （命令跑了、退出码非 0，模型据此调整即可）。
+         * <p>工具层据此把记录状态记成 error 而非 done，失败在聊天区一眼可见（否则失败轮
+         * 会显示成绿色对勾的"成功"，排查时极难发现沙盒压根没通）。
+         */
+        public final boolean infraError;
 
         public ExecuteResponse(String output, Integer exitCode, boolean truncated) {
+            this(output, exitCode, truncated, false);
+        }
+
+        public ExecuteResponse(String output, Integer exitCode, boolean truncated, boolean infraError) {
             this.output = output;
             this.exitCode = exitCode;
             this.truncated = truncated;
+            this.infraError = infraError;
         }
 
         public String output() {
@@ -1794,6 +1809,10 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
         public boolean truncated() {
             return truncated;
+        }
+
+        public boolean infraError() {
+            return infraError;
         }
     }
 

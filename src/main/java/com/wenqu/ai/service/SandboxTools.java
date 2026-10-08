@@ -35,8 +35,26 @@ public class SandboxTools {
 
     /** toolContext 里「工具输出增量回调」的键（Consumer&lt;String&gt;，RagService 注入 → SSE tool_output 实时下发）。 */
     public static final String CTX_OUTPUT_SINK = "wq_tool_output_sink";
+    /**
+     * toolContext 里「基础设施故障上报」的键（Consumer&lt;String&gt;，RagService 注入）。
+     * <p>沙盒不可用（provisioner 没起 / 连不上 / 鉴权被拒）时，工具**不抛异常**——抛出去会掐断
+     * 整轮流、让已生成的正文与全部工具记录一起落空。工具照常把失败文本返回给模型让它自行调整，
+     * 同时经此回调把「这次失败是基础设施层、不是命令本身跑失败」告诉 RagService，
+     * 让工具记录落成 status=error（红色失败）而不是 status=done（绿色对勾）。
+     * <p>不这么做的后果：命令退出码非 0（业务失败）与沙盒压根没通（基础设施故障）都是
+     * "exitCode=1 +一段文本"，记录一律显示成功，排查时完全看不出沙盒没通。
+     */
+    public static final String CTX_INFRA_ERROR_SINK = "wq_tool_infra_error_sink";
     /** 支持流式输出的工具名（RagService 按 name 判定是否注入输出回调）。 */
     public static final String STREAMING_TOOL_NAME = "execute";
+    /**
+     * 本组件注册的全部工具名（RagService 判定「是否沙盒工具」用，决定要不要注入
+     * CTX_INFRA_ERROR_SINK）。刻意列全而非用前缀匹配：工具名是 @Tool 显式声明的字符串，
+     * 改名时编译期就会暴露这里的漏项风险（新增工具忘记加入 → 基础设施故障仍显示为成功），
+     * 而前缀匹配会在重构时静默失配。
+     */
+    public static final java.util.Set<String> TOOL_NAMES = java.util.Set.of(
+            "execute", "read_file", "write_file", "edit_file", "ls", "deliver_artifact");
 
     private final SandboxService sandboxService;
     private final ArtifactService artifactService;
@@ -54,7 +72,9 @@ public class SandboxTools {
             @ToolParam(description = "要执行的 shell 命令，如 python3 -c \"print(1+1)\" 或 ls -la") String command,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         if (command == null || command.isBlank()) {
             return "命令不能为空";
         }
@@ -64,6 +84,12 @@ public class SandboxTools {
         ProvisionerSandboxBackend.ExecuteResponse result = sink != null
                 ? backend.executeStreaming(command, null, sink)
                 : backend.execute(command);
+        // 基础设施故障（provisioner 不可达/ 鉴权失败）：文本照常回给模型，但额外上报让记录落成
+        // status=error（见 CTX_INFRA_ERROR_SINK 注释）。注意与「命令退出码非 0」区分开：
+        // 后者是正常业务结果，改命令即可，不该显示成失败。
+        if (result.infraError) {
+            reportInfra(toolContext, result.output);
+        }
         StringBuilder sb = new StringBuilder();
         if (result.exitCode != null && result.exitCode != 0) {
             sb.append("退出码 ").append(result.exitCode).append('\n');
@@ -84,11 +110,13 @@ public class SandboxTools {
             @ToolParam(description = "最多读取的行数（留空默认 2000 行）", required = false) Integer limit,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         int start = offset == null || offset <= 0 ? 0 : offset - 1;
         ProvisionerSandboxBackend.ReadResult result = backend.read(path, start, limit);
         if (result.error != null) {
-            return "读取失败：" + result.error;
+            return reportFsError(toolContext, "读取失败：" + result.error);
         }
         if (result.noLinesRequested) {
             return "（limit ≤ 0，未读取任何行）";
@@ -113,10 +141,12 @@ public class SandboxTools {
             @ToolParam(description = "文件内容（纯文本）") String content,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         ProvisionerSandboxBackend.WriteResult result = backend.write(path, content == null ? "" : content);
         if (result.error != null) {
-            return "写入失败：" + result.error;
+            return reportFsError(toolContext, "写入失败：" + result.error);
         }
         int bytes = content == null ? 0 : content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
         return "已写入 " + result.path + "（" + bytes + " 字节）";
@@ -131,14 +161,16 @@ public class SandboxTools {
             @ToolParam(description = "是否替换全部匹配（默认只替换第一处）", required = false) Boolean replaceAll,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         if (oldString == null || oldString.isEmpty()) {
             return "old_string 不能为空";
         }
         ProvisionerSandboxBackend.EditResult result =
                 backend.edit(path, oldString, newString == null ? "" : newString, Boolean.TRUE.equals(replaceAll));
         if (result.error != null) {
-            return "编辑失败：" + result.error;
+            return reportFsError(toolContext, "编辑失败：" + result.error);
         }
         return "已编辑 " + result.path + "（替换 " + result.occurrences + " 处）";
     }
@@ -149,10 +181,12 @@ public class SandboxTools {
             @ToolParam(description = "沙盒内的绝对路径（目录或文件）") String dir,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         SandboxFsBackend.LsResult result = backend.ls(dir);
         if (result.hasError()) {
-            return "列举失败：" + result.error;
+            return reportFsError(toolContext, "列举失败：" + result.error);
         }
         if (result.entries == null || result.entries.isEmpty()) {
             return "（空目录）";
@@ -183,7 +217,9 @@ public class SandboxTools {
             @ToolParam(description = "给用户的产物说明（简短，说明这是什么）", required = false) String description,
             ToolContext toolContext) {
         ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) return NO_CONTEXT;
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
         String sessionId = sessionId(toolContext);
         if (sessionId == null || sessionId.isBlank()) {
             return "无法定位当前会话，产物交付失败";
@@ -196,7 +232,7 @@ public class SandboxTools {
         java.util.List<SandboxFsBackend.DownloadResult> results = backend.downloadFiles(java.util.List.of(p));
         SandboxFsBackend.DownloadResult r = results == null || results.isEmpty() ? null : results.get(0);
         if (r == null || r.hasError() || r.content == null || r.content.length == 0) {
-            return "读取沙盒文件失败：" + (r == null ? "文件不存在" : r.error);
+            return reportFsError(toolContext, "读取沙盒文件失败：" + (r == null ? "文件不存在" : r.error));
         }
         String name = filename == null || filename.isBlank() ? p.substring(p.lastIndexOf('/') + 1) : filename;
         try {
@@ -204,7 +240,7 @@ public class SandboxTools {
             artifactService.publish(sessionId, "artifact", com.alibaba.fastjson2.JSON.toJSONString(info));
             return "已交付产物：" + info.get("filename") + "（" + r.content.length + " 字节） 访问地址：" + info.get("url");
         } catch (IllegalArgumentException | IllegalStateException e) {
-            return "产物交付失败：" + e.getMessage();
+            return reportFsError(toolContext, "产物交付失败：" + e.getMessage());
         }
     }
 
@@ -220,6 +256,40 @@ public class SandboxTools {
     private java.util.function.Consumer<String> outputSink(ToolContext toolContext) {
         if (toolContext == null) return null;
         Object v = toolContext.getContext().get(CTX_OUTPUT_SINK);
+        return v instanceof java.util.function.Consumer ? (java.util.function.Consumer<String>) v : null;
+    }
+
+    /**
+     * 上报失败并原样返回文案给模型（沙盒不可用 / 执行失败共用此出口）。
+     * <p>失败文本必须照常回给模型——它据此调整下一步（改命令、改路径，或如实告知用户）。
+     * 但必须同时上报，否则这条记录会显示成绿色对勾的「成功」：排查时完全看不出沙盒压根没通。
+     */
+    private String reportInfra(ToolContext toolContext, String message) {
+        java.util.function.Consumer<String> sink = infraErrorSink(toolContext);
+        if (sink != null) {
+            try {
+                sink.accept(message);
+            } catch (Exception e) {
+                log.debug("[SANDBOX] 工具失败上报失败（不影响工具返回）: {}", e.getMessage());
+            }
+        }
+        return message;
+    }
+
+    /**
+     * 文件类工具（读/写/编辑/列举/交付）的失败上报：与 {@link #reportInfra} 同机制。
+     * <p>这些失败未必都是基础设施问题（路径非法、文件已存在同样算失败），此处统一按失败记——
+     * 「文件没写进去」在工具记录里就该显示为失败，而不是一条看起来成功的普通输出。
+     */
+    private String reportFsError(ToolContext toolContext, String message) {
+        return reportInfra(toolContext, message);
+    }
+
+    /** 取基础设施故障上报回调（RagService 注入；缺省 null = 无问答流上下文，只返回文本不落状态）。 */
+    @SuppressWarnings("unchecked")
+    private java.util.function.Consumer<String> infraErrorSink(ToolContext toolContext) {
+        if (toolContext == null) return null;
+        Object v = toolContext.getContext().get(CTX_INFRA_ERROR_SINK);
         return v instanceof java.util.function.Consumer ? (java.util.function.Consumer<String>) v : null;
     }
 
