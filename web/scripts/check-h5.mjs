@@ -162,5 +162,33 @@ const check = (ok, label, detail = '') => {
   }
 }
 
+// ---- ⑧ 时间线渲染构件必须 PC/H5 同构（过程簇这一层最容易只改一端） ----
+// 背景：连续「独白+工具」收成过程簇（clusterize）时，簇头、簇内标题改名（执行过程→过程说明）、
+// 折叠态判定（clusterOpen）在两端各有一份实现。漏改一端 ⇒移动端要么不聚簇、要么文案父子同名套娃，
+// 而静态编译全绿（只少一个 v-else-if 分支而已），只有真机翻聊天记录才发现。
+{
+  const pc = stripComments(read('src/views/ChatPage.vue'))
+  const h5 = stripComments(read('src/h5/MobileMsgRow.vue'))
+  for (const [label, s] of [['PC', pc], ['移动端', h5]]) {
+    check(/seg\.kind === 'cluster'/.test(s), `${label} 渲染过程簇头（cluster 分支存在）`)
+    check(/timelineRows\(m\)/.test(s), `${label} 用timelineRows 摊平渲染（非旧 timelineView）`)
+    check(/inCluster\s*\?\s*'过程说明'\s*:\s*'执行过程'/.test(s),
+      `${label} 簇内独白段改称「过程说明」（防父子同名套娃）`)
+    check(/toggleCluster\(m,\s*seg\)/.test(s), `${label} 簇头可点开/收起`)
+    check(/clusterProcCount\(seg\)/.test(s), `${label} 纯独白簇有退化文案（N 段说明）`)
+  }
+  // 聚簇边界：不得跨正文段打包，也不得给单段套壳（否则单个工具组要点两次）
+  const pj = read('src/chat/projections.js')
+  const cz = stripComments(pj).match(/const clusterize = out => \{[\s\S]*?\n\}/)
+  check(!!cz, 'clusterize 实现可定位')
+  if (cz) {
+    const src = cz[0]
+    check(/seg\.kind === 'process'\s*\|\|\s*seg\.kind === 'group'/.test(src),
+      '只把 process/group 段纳入游程（text 段天然断簇）')
+    check(/run\.length === 1\s*\)\s*res\.push\(run\[0\]\)/.test(src),
+      '单段不包壳（run.length === 1 直通）')
+  }
+}
+
 console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
 process.exit(bad ? 1 : 0)

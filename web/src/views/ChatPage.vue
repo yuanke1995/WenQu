@@ -158,20 +158,34 @@
                 <div v-show="m.thinkOpen" class="think-body"><AnswerBody :content="m.thinking" :streaming="m.thinkLoading" /></div>
               </div>
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
-                <template v-for="(seg, si) in timelineView(m)" :key="si">
+                <template v-for="(seg, si) in timelineRows(m)" :key="si">
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
-                  <!-- 过程独白段：区间指向 m.processText（与正文分流），「深度思考」标题行常驻、内容可折叠 -->
-                  <div v-else-if="seg.kind === 'process'" class="tl-process-block">
+                  <!-- 过程簇头：连续的「独白+工具」收成一行。展开后其内各段由 timelineRows 摊平接着渲染，
+                       内部结构与展开前完全一致（时序零损失）；纯独白簇（无工具）退化为「N 段说明」 -->
+                  <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
+                    <button class="tl-cluster-bar" type="button" @click="toggleCluster(m, seg)">
+                      <loading-outlined v-if="clusterRunning(seg)" spin class="tool-ic tool-ic-run" />
+                      <close-circle-outlined v-else-if="clusterHasError(seg)" class="tool-ic tool-ic-err" />
+                      <check-outlined v-else class="tool-ic tool-ic-ok" />
+                      <span v-if="clusterTools(seg).length">已执行 {{ clusterTools(seg).length }} 个操作</span>
+                      <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
+                      <span class="tool-dur">· {{ clusterDur(seg) }}</span>
+                      <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
+                    </button>
+                  </div>
+                  <!-- 过程独白段：区间指向 m.processText（与正文分流），标题行常驻、内容可折叠。
+                       在簇内改称「过程说明」——父子同名会读成套娃（簇头「已执行 N 个操作」/「执行过程」） -->
+                  <div v-else-if="seg.kind === 'process'" class="tl-process-block" :class="{ inCluster: seg.inCluster }">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
-                      <span class="tl-process-title">执行过程</span>
+                      <span class="tl-process-title">{{ seg.inCluster ? '过程说明' : '执行过程' }}</span>
                       <span class="tl-caret" :class="{ open: procOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
-                  <div v-else class="tl-group">
+                  <div v-else class="tl-group" :class="{ inCluster: seg.inCluster }">
                     <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
@@ -1293,7 +1307,8 @@ import { useChatSearch } from '../chat/useChatSearch'
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
-         procOpen, toggleProc, procSlice, timelineView, toolBrief, prettyIo, liveOutput, groupRunning,
+         procOpen, toggleProc, procSlice, timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
+         clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
@@ -2836,6 +2851,19 @@ onMounted(async () => {
 .tl-process-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
 .tl-process-title { font-weight: 500; color: var(--app-text2); }
 .tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+/* 过程簇头：把连续的「独白+工具」收成一行（此前一轮过程会散成 6 行折叠头）。
+   展开后其内各段由 timelineRows 摊平接着渲染，视觉上是一棵树、DOM 上是同级兄弟。 */
+.tl-cluster { margin: 3px 0; }
+.tl-cluster-bar {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
+  padding: 3px 9px; font-size: 12px; color: var(--app-text2); text-align: left;
+  background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 8px;
+  cursor: pointer; user-select: none;
+}
+.tl-cluster-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
+.tl-cluster-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 簇内段左缩进一格：展开后能看出「这些行同属上面那个簇」，层级关系一眼可辨 */
+.tl-process-block.inCluster, .tl-group.inCluster { margin-left: 12px; }
 .tl-group { margin: 3px 0; }
 .tl-group-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;

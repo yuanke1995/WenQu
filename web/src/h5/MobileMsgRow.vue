@@ -76,19 +76,30 @@
 
         <!-- 时间线：正文与过程/工具按到达顺序交错 -->
         <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index">
-          <template v-for="(seg, si) in timelineView(m)" :key="si">
+          <template v-for="(seg, si) in timelineRows(m)" :key="si">
             <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-            <div v-else-if="seg.kind === 'process'" class="card proc-card">
+            <div v-else-if="seg.kind === 'cluster'" class="card proc-cluster" :class="{ open: clusterOpen(m, seg) }">
+              <button class="card-head" type="button" @click.stop="toggleCluster(m, seg)">
+                <span v-if="clusterRunning(seg)" class="spinner"></span>
+                <check-outlined v-else-if="!clusterHasError(seg)" class="ic-ok" />
+                <close-circle-outlined v-else class="ic-err" />
+                <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ clusterTools(seg).length }} 个操作</span>
+                <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
+                <span class="card-dim">· {{ clusterDur(seg) }}</span>
+                <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
+              </button>
+            </div>
+            <div v-else-if="seg.kind === 'process'" class="card proc-card" :class="{ inCluster: seg.inCluster }">
               <button class="card-head" type="button" @click.stop="toggleProc(m, seg)">
-                <span class="card-title">执行过程</span>
+                <span class="card-title">{{ seg.inCluster ? '过程说明' : '执行过程' }}</span>
                 <caret-right-outlined class="caret" :class="{ open: procOpen(m, seg) }" />
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
             </div>
-            <div v-else-if="seg.kind === 'group'" class="tl-group">
+            <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster }">
               <button v-if="seg.tools.length > 1" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
@@ -290,7 +301,8 @@ import { resolveImg } from '../utils/markdown'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
-  busyOf, hasTimelineBlocks, timelineView, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
+  busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
+  clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fallbackDur, toolCallsView, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
@@ -435,7 +447,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .ic-ok { color: var(--app-ok); }
 .ic-err { color: var(--app-danger); }
 .ic-accent { color: var(--app-accent); }
+/* 过程簇：连续的「独白+工具」收成一张卡（PC 端同构，见 ChatPage.vue .tl-cluster）。
+   展开后其内各段由 timelineRows 摊平接着渲染，这里只给簇内段左缩进一格做出层级。 */
+.proc-cluster { background: var(--app-panel); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
+.proc-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
 .tl-group-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 2px; }
 .tool-card .card-head { padding: 8px 10px; }
 .tool-brief { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--app-text3); background: transparent; overflow: hidden; text-overflow: ellipsis; max-width: 40%; white-space: nowrap; }

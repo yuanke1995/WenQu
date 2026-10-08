@@ -223,6 +223,83 @@ const toggleProc = (m, seg) => {
   m._procOpen[seg.from] = !procOpen(m, seg)
 }
 
+// ==================== 过程簇（连续过程/工具的二次折叠） ====================
+/* 为什么需要这一层：模型一轮里常是「独白→工具→独白→工具」交替，而 timelineView 遇 process 段
+ * 就flushGroup（独白天然切断工具分组，时序要如实保留），于是一轮过程被切成 2N 个折叠头
+ * （实测「如何设计一个表单」这条回答出了 6 行：执行过程/2 个操作/执行过程/3 个操作/…）。
+ * 这里在视图层补一道**后置聚簇**：把 out 里连续的 process/group 段包成 cluster，簇内原序完整保留，
+ * 展开态与聚簇前逐段渲染完全一致（时序零损失），折叠态由 2N 行收敛为 1 行。
+ *
+ * 判定边界（两条都不能越）：
+ *   ① 只在「游程内不含任何 text 段」时成立——即这一段过程与正文无交错、纯属执行细节；
+ *      任何一段正文都断簇，否则会把「说完一段→查一下→接着说」的交错节奏一并压平。
+ *   ② 只有一段时不包——否则单个工具组会被套上两层壳，白白多一次点击。
+ *
+ * 簇键用序号 c{N}（N = res.length）。序号稳定性论证：时间线只追加不重排，text 段到来时
+ * 已 flush 的簇其 res 下标不会变动，新簇一律追加在尾部，故历史键不会错位到别的簇上。
+ * （对比用 from 做键不成立：工具段与独白段的下标来自两套独立空间。）*/
+const clusterize = out => {
+  const res = []
+  let run = []
+  const flush = () => {
+    if (!run.length) return
+    if (run.length === 1) res.push(run[0])
+    else res.push({ kind: 'cluster', segs: run, key: 'c' + res.length })
+    run = []
+  }
+  for (const seg of out) {
+    if (seg && (seg.kind === 'process' || seg.kind === 'group')) { run.push(seg); continue }
+    flush()
+    res.push(seg)
+  }
+  flush()
+  return res
+}
+
+/** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
+ *  与 procOpen / thinkOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
+const markGrowingCluster = view => {
+  const last = view[view.length - 1]
+  if (last && last.kind === 'cluster') last.grow = true
+  return view
+}
+
+const clusterOpen = (m, cl) => {
+  const marked = m && m._clOpen ? m._clOpen[cl.key] : undefined
+  if (marked === true) return true
+  if (marked === false) return false
+  return !!(m && m.loading && cl.grow)
+}
+const toggleCluster = (m, cl) => {
+  if (!m) return
+  if (!m._clOpen) m._clOpen = {}
+  m._clOpen[cl.key] = !clusterOpen(m, cl)
+}
+
+/** 簇内工具（跨多个 group 汇总）：头部的操作数/耗时与状态图标都从这里派生，与 groupDur 同口径 */
+const clusterTools = cl => {
+  const out = []
+  for (const s of cl?.segs || []) if (s && s.kind === 'group' && s.tools) out.push(...s.tools)
+  return out
+}
+const clusterRunning = cl => clusterTools(cl).some(t => t.status === 'start')
+const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
+const clusterDur = cl => durOfTools(clusterTools(cl))
+/** 簇内独白段数：只在簇里一个工具都没有时外露（那时它是唯一可报的信息量） */
+const clusterProcCount = cl => (cl?.segs || []).filter(s => s && s.kind === 'process').length
+
+/** 渲染行= timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
+ *  用「摊平 + 原分支复用」而不是在模板里嵌套 v-for，是为了不复制一份工具组/独白渲染代码——
+ *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。 */
+const timelineRows = m => {
+  const out = []
+  for (const s of timelineView(m)) {
+    out.push(s)
+    if (s.kind === 'cluster' && clusterOpen(m, s)) for (const inner of s.segs) out.push({ ...inner, inCluster: true })
+  }
+  return out
+}
+
 // 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
 // 原样入通道）：段的起点都是块边界（flush 锚点），显示时剥掉段首换行，免得灰字块顶部空一行；
 // 只动显示，不碰区间下标，段内的模型自身换行/空行照常保留。
@@ -347,7 +424,7 @@ const timelineView = m => {
   flushMerge()
   flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
-  return out
+  return markGrowingCluster(clusterize(out))
 }
 
 // ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
@@ -385,14 +462,17 @@ const liveOutput = t => {
 }
 const groupRunning = g => g.tools.some(t => t.status === 'start')
 const groupHasError = g => g.tools.some(t => t.status === 'error')
-const groupDur = g => {
+// 一组工具的累计耗时（运行中的按实时 tick 计，其余用终态值）。过程簇跨多个 group 汇总，
+// 与 groupDur 共用这一份口径——两处各写一遍必然出现「簇头耗时 ≠ 内部各组之和」。
+const durOfTools = tools => {
   let ms = 0, running = false
-  for (const t of g.tools) {
+  for (const t of tools) {
     if (t.status === 'start') { running = true; if (t.startAt) ms += Math.max(0, nowTick.value - t.startAt) }
     else ms += t.elapsedMs || 0
   }
   return toolDuration(ms) + (running ? '…' : '')
 }
+const groupDur = g => durOfTools(g.tools)
 const fallbackDur = m => toolDuration(toolCallsView(m.toolCalls).reduce((s, t) => s + (t.elapsedMs || 0), 0))
 
 /** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
@@ -722,7 +802,8 @@ export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
   toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
-  restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, TOOL_BRIEF_KEYS, oneLine,
+  restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
+  clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
   retrievalLineTitle,
