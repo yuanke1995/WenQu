@@ -89,6 +89,10 @@ PERSISTENT_SANDBOX_MOUNT_ROOTS = (
     "/home/gem/user-data",
     "/home/gem/projects",
 )
+# 沙盒容器内运行时用户（镜像约定 gem 1000:1000；k8s 初始化脚本 normalize() 同值）。
+# 会话工作区目录必须归它所有，否则 Linux 宿主上沙盒写文件报 Permission denied。
+SANDBOX_RUNTIME_UID = 1000
+SANDBOX_RUNTIME_GID = 1000
 SANDBOX_READY_INITIAL_DELAY_SECONDS = 0.05
 SANDBOX_READY_MAX_DELAY_SECONDS = 1.0
 SANDBOX_READY_BACKOFF_MULTIPLIER = 2.0
@@ -690,6 +694,31 @@ class LocalContainerProvisionerBackend:
             / thread_id
         )
 
+    def _prepare_session_workspace(self, uid: str, thread_id: str) -> None:
+        """确保会话工作区存在、无 symlink 组件，并把属主交给沙盒内运行时用户。
+
+        属主校正是 Linux 宿主的必需品：目录由 provisioner（root）创建，而沙盒内文件
+        服务以 uid 1000 运行——root:root 0755 的目录对其不可写，写文件报
+        Permission denied [Errno 13]（2026-10-08 线上实测；macOS Docker Desktop 虚拟化
+        权限，本机复现不出）。口径对齐 k8s 初始化脚本 normalize()：1000:1000 + 0700。
+        每次 create 都跑：新建时建目录，复用旧沙盒时顺带把历史上被 root 创建的老目录
+        chown 回来（自愈）。
+        """
+        parts = ("shared", uid, "workspace", "sessions", thread_id)
+        self._ensure_directory_within(self._user_data_container_path, parts)
+        self._validate_directory_without_symlinks(
+            self._user_data_container_path, parts, label="session workspace"
+        )
+        target = self._user_data_container_path
+        for part in parts:
+            target = target / part
+        fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchown(fd, SANDBOX_RUNTIME_UID, SANDBOX_RUNTIME_GID)
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+
     @staticmethod
     def _validate_directory_without_symlinks(
         root: Path, parts: tuple[str, ...], *, label: str
@@ -1049,6 +1078,9 @@ class LocalContainerProvisionerBackend:
                     )
                     self.delete(sandbox_id)
                     existing = None
+            # 复用与新建两条路都要准备会话工作区：新目录要建 + 定属主，老目录在此自愈。
+            if not ephemeral_storage:
+                self._prepare_session_workspace(safe_uid, safe_thread_id)
             if existing is not None:
                 self._ensure_network(sandbox_id)
                 if existing.status == "running":
@@ -1080,17 +1112,8 @@ class LocalContainerProvisionerBackend:
             user_skills = None
             if not ephemeral_storage:
                 self._ensure_directory_within(
-                    self._user_data_container_path,
-                    ("shared", safe_uid, "workspace", "sessions", safe_thread_id),
-                )
-                self._ensure_directory_within(
                     self._skill_projections_container_path,
                     (safe_uid,),
-                )
-                self._validate_directory_without_symlinks(
-                    self._user_data_container_path,
-                    ("shared", safe_uid, "workspace", "sessions", safe_thread_id),
-                    label="session workspace",
                 )
                 self._validate_directory_without_symlinks(
                     self._skill_projections_container_path,
