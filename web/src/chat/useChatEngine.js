@@ -772,7 +772,7 @@ const switchSession = async sid => {
   // 否则选择器会显示个人默认，而后端仍按会话已存模型作答，界面与真实不符
   if (sid && !(sid in modelMap.value)) {
     getSessionModelApi(sid).then(r => {
-      // 迟到的响应不覆盖本地已改的选择（用户在这期间又切了模型）
+      // 迟到的响应不覆盖界面上已改的选择（用户在这期间又切了模型）
       if (r && r.success && !(sid in modelMap.value)) {
         modelMap.value = { ...modelMap.value, [sid]: r.data?.model || '' }
       }
@@ -1315,7 +1315,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在思考中…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
+  // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底

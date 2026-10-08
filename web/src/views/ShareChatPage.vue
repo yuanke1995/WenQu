@@ -70,15 +70,15 @@
           <div v-if="m.role === 'user'" class="sc-bubble user">{{ m.content }}</div>
           <!-- AI：无气泡，正文直接排（ChatPage .bubble.ai 是 transparent + padding:0） -->
           <div v-else class="sc-bubble ai">
-            <!-- 还没出正文时只留一行带呼吸点的提示，不画任何框 -->
+            <!-- 还没出正文时只留一行带呼吸点的提示，不画任何框（文案两档，与主聊天页同源） -->
             <div v-if="!m.content" class="sc-typing">
-              <span class="sc-pulse" /><span>{{ m.stage || '正在思考…' }}</span>
+              <span class="sc-pulse" /><span>{{ stageLabel(m.stage) || '正在检索资料…' }}</span>
             </div>
             <template v-else>
               <AnswerBody :content="m.content" :images="m.images" :sources="m.sources"
                           :msg-index="i" :streaming="!!m.loading" />
               <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注 -->
-              <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ m.stage }}</div>
+              <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ stageLabel(m.stage) }}</div>
               <!-- 引用来源：与主聊天页同一份 sourceName 口径，点开的是同一个来源弹窗 -->
               <div v-if="m.sources && m.sources.length" class="sc-srcs">
                 <button class="sc-srcs-head" type="button" @click="m.srcOpen = !m.srcOpen">
@@ -138,7 +138,7 @@ import BrandMark from '../components/BrandMark.vue'
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 import { openSource } from '../chat/answerViewer'
-import { sourceName } from '../chat/projections'
+import { sourceName, stageLabel } from '../chat/projections'
 
 const route = useRoute()
 const token = computed(() => String(route.params.token || ''))

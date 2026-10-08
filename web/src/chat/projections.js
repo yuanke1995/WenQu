@@ -168,10 +168,18 @@ const busyOf = m => {
   // 深度思考面板只有 thinking 非空才渲染（v-if m.thinking）：让位条件与之对齐，
   // 否则 thinkLoading=true 而面板未渲染时进度行同样凭空消失（与 subRunning 同类坑）
   if (m.thinkLoading && m.thinking) return null       // 深度思考面板自己会转圈
-  if (m.stage) return { text: m.stage }           // 后端阶段文案（理解/检索/生成）
+  if (m.stage) return { text: stageLabel(m.stage) }   // 后端阶段文案（两档，映射见 stageLabel）
   if (m.content) return { spin: true }            // 正文续写中：一个转圈足够
   return { text: '正在生成回答…' }                // 工具已回、正文未出（含多轮工具之间的空档）
 }
+
+// ==================== 阶段文案（两档收敛） ====================
+// 一轮回答的进度行只讲两档：准备期统一「正在检索资料…」，生成期「正在生成回答…」。
+// 「正在理解问题…」并入检索档——它只占 ~1 秒，独立换词带来的是闪烁而不是信息
+// （理解/改写/路由的细节由工具卡、检索行等具体构件表达）。
+// 计划模式、执行工作流是独立模式的进程文案，原样保留不并档。
+const STAGE_LABELS = { '正在理解问题…': '正在检索资料…' }
+const stageLabel = s => (s ? (STAGE_LABELS[s] || s) : '')
 
 // ==================== 时间线（正文与工具交错渲染） ====================
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
@@ -800,7 +808,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
-  toolDuration, toolRunning, subRunning, busyOf, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
