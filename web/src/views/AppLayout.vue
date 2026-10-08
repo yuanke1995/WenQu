@@ -83,16 +83,22 @@
           <i v-if="pendingCount > 0" class="nav-dot"></i>
         </button>
 
-        <!-- 编辑态操作条：与菜单行同处导航组，收尾就在脚下，不需要另找「保存」在哪 -->
+        <!-- 编辑态操作条：与菜单行同处导航组，收尾就在脚下，不需要另找「保存」在哪。
+             两行布局：上行提示（单行省略），下行按钮 —— 侧栏只有 200px，三样横排
+             必然把「恢复默认/保存」压成竖排（实测过，很难看）。按钮不换行是硬要求。 -->
         <div v-if="navEditing" class="nav-edit-bar">
-          <span class="nav-edit-tip">拖动排序，开关控制显隐</span>
-          <a-popconfirm title="恢复到系统默认顺序，并把隐藏项全部显示出来，确定？"
-                        ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
-            <button class="app-link-btn" :disabled="navEditSaving">恢复默认</button>
-          </a-popconfirm>
-          <button class="app-link-btn" :disabled="navEditSaving || !navEditDirty" @click="saveNavLayout">
-            {{ navEditSaving ? '保存中…' : '保存' }}
-          </button>
+          <p class="nav-edit-tip">拖动排序 · 开关控制显隐</p>
+          <div class="nav-edit-ops">
+            <a-popconfirm title="恢复到系统默认顺序，并把隐藏项全部显示出来，确定？"
+                          ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
+              <button class="nav-edit-btn ghost" :disabled="navEditSaving">恢复默认</button>
+            </a-popconfirm>
+            <!-- 主操作给实心：未改动时是禁用态（灰），一眼能看出「现在按了没反应」是有意的 -->
+            <button class="nav-edit-btn primary"
+                    :disabled="navEditSaving || !navEditDirty" @click="saveNavLayout">
+              {{ navEditSaving ? '保存中' : '保存' }}
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -900,17 +906,45 @@ onMounted(async () => {
 .nav-edit-row.off { opacity: .5; }
 .nav-edit-row.dragging { opacity: .35; cursor: grabbing; }
 .nav-edit-row.over { border-color: var(--app-accent); box-shadow: inset 0 0 0 1px var(--app-accent); }
-.nav-edit-grip { flex: none; font-size: 11px; line-height: 1; color: var(--app-text3); letter-spacing: -2px; }
+/* 把手：默认浅灰，hover 整行时加深 —— 平时不抢眼，但要让人看出这行能拖 */
+.nav-edit-grip {
+  flex: none; font-size: 11px; line-height: 1; letter-spacing: -2px;
+  color: var(--app-text3); opacity: .55; transition: opacity .12s, color .12s;
+}
+.nav-edit-row:hover .nav-edit-grip { opacity: 1; color: var(--app-text2); }
 .nav-edit-ic { flex: none; font-size: 14px; color: var(--app-text2); }
 .nav-edit-name { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 操作条：收尾就在导航组脚下，不另找「保存」按钮 */
+/* 操作条：两行——提示一行（省略号），按钮一行。侧栏 200px 放不下三样横排，
+   之前硬挤的结果是「恢复默认/保存」被压成竖排单字，行高暴涨且很难看 */
 .nav-edit-bar {
-  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px;
-  border-top: 1px solid var(--app-border);
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 6px; padding: 8px 8px 2px; border-top: 1px solid var(--app-border);
 }
-.nav-edit-tip { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--app-text3); line-height: 1.4; }
+.nav-edit-tip {
+  margin: 0; font-size: 11px; color: var(--app-text3); line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nav-edit-ops { display: flex; align-items: center; gap: 6px; }
+/* white-space:nowrap 是硬要求：一旦换行按钮就变竖排单字 */
+.nav-edit-btn {
+  flex: 1 1 0; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--app-border); border-radius: 6px;
+  padding: 5px 6px; font-size: 12px; line-height: 1.2;
+  cursor: pointer; white-space: nowrap; background: transparent; color: var(--app-text2);
+}
+.nav-edit-btn:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent); }
+.nav-edit-btn.primary { background: var(--app-accent); border-color: var(--app-accent); color: #fff; }
+.nav-edit-btn.primary:hover:not(:disabled) { background: #4a80ef; color: #fff; }
+.nav-edit-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 禁用的主按钮不涂实心底色：浅蓝实心看着像"能点但没反应"，
+   改成虚线边 + 弱化文字才读得出「此刻按不了」 */
+.nav-edit-btn.primary:disabled {
+  background: transparent; border-style: dashed; border-color: var(--app-border);
+  color: var(--app-text3); opacity: 1;
+}
 
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
 /* 分组标题（renderAs=group）：不可点、无 hover，仅视觉归类。
