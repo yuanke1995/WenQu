@@ -100,6 +100,25 @@ public class KnowledgeRetrievalTool {
         REFLECTIVE.remove();
     }
 
+    /**
+     * 诊断用：读取 RequestUser 的身份属性（ThreadLocal）。
+     *工具跑在 boundedElastic 弹性线程上，若身份上下文未随轮次传播过来，这里会是 null/异常，
+     * 而 {@code HybridRetrievalService.loadVisibleKbIds()} 恰好依赖同一ThreadLocal，
+     * 取空后会 fail-closed 直接返回「不发起任何向量检索」——正是「工具恒空且耗时仅十几毫秒」的成因。
+     */
+    private static Object safeUserAttr(String attr) {
+        try {
+            return switch (attr) {
+                case "uid" -> com.wenqu.ai.util.RequestUser.uid();
+                case "dept" -> com.wenqu.ai.util.RequestUser.departmentId();
+                case "role" -> com.wenqu.ai.util.RequestUser.role();
+                default -> null;
+            };
+        } catch (Exception e) {
+            return "<" + attr + "读取异常>";
+        }
+    }
+
     private final HybridRetrievalService hybridRetrievalService;
     private final ConfigService configService;
     private final RerankService rerankService;
@@ -137,6 +156,12 @@ public class KnowledgeRetrievalTool {
         // 排查「工具空结果但主链路 @ 引用能拿到」时只能盲猜。现在把诊断带进来并打各阶段计数日志。
         HybridRetrievalService.RetrievalDiag diag = new HybridRetrievalService.RetrievalDiag();
         List<Hit> hits;
+        // 检索耗时一并记录：融合召回恒为 0 且耗时只有十几毫秒，说明根本没发起embedding 网络调用，
+        // 疑似工具线程（boundedElastic-*）丢失 RequestUser ThreadLocal → loadVisibleKbIds() 取空
+        // → resolveVectorStores() fail-closed 返回 List.of()。这两个值用来一眼区分「召回不到」
+        // 与「压根没查」（uid=null / 耗时极短 / 有失败标记）。
+        long t0 = System.currentTimeMillis();
+        Object uid = safeUserAttr("uid");
         try {
             // adaptiveTopK=true：与主链路同口径，权限剔掉的名额由补采补回（工具结果直接进模型上下文，
             // 召回不足会表现为「知识库里明明有却答不出来」）
@@ -145,11 +170,14 @@ public class KnowledgeRetrievalTool {
         } catch (Exception e) {
             return "知识库检索失败：" + e.getMessage();
         }
-        log.info("[TOOL-DIAG] searchKnowledge query=\"{}\" 融合召回 {} 条；向量路失败={} 关键词路失败={} 库门下推失败={} scopeKbIds={} scopeDocIds={}",
-                query.trim(), hits == null ? 0 : hits.size(),
-                diag.isVectorFailed(), diag.isKeywordFailed(),
-                diag.aclPushdownError() != null, scope == null ? null : scope.kbIds(),
-                scope == null ? null : scope.docIds());
+        log.info("[TOOL-DIAG] searchKnowledge query=\"{}\" 融合召回 {} 条耗时 {}ms；uid={} dept={} role={} thread={} 向量路失败={}({}) 关键词路失败={} 库门下推失败={} scopeKbIds={} scopeDocIds数={}",
+                query.trim(), hits == null ? 0 : hits.size(), System.currentTimeMillis() - t0,
+                uid, safeUserAttr("dept"), safeUserAttr("role"),
+                Thread.currentThread().getName(),
+                diag.isVectorFailed(), diag.lastError(),
+                diag.isKeywordFailed(), diag.aclPushdownError(),
+                scope == null ? null : scope.kbIds(),
+                scope == null || scope.docIds() == null ? null : scope.docIds().size());
         if (scope != null && scope.docIds() != null) {
             int before = hits.size();
             hits = hits.stream()
