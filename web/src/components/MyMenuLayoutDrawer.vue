@@ -100,7 +100,13 @@ const ICONS = {
 }
 const iconOf = n => ICONS[n] || FileOutlined
 
+// 本地镜像 props.open：a-drawer 需要可写绑定（v-model:open / 点遮罩要能置 false），
+// 但**不能直接用 props.open** —— props 只读，写它无效；也不能名字撞车写 `const open = ref(false)`
+// 就完事，那是个独立的 ref，父组件传 true 时它仍是 false ⇒ 抽屉永远不显示、
+// 表现为「点四宫格没反应」（数据其实请求了，watch 也跑了，就是不显示）。
+// 两个方向都要同步：props→本地（父组件置位）、本地→props（抽屉内部关闭时向上抛）。
 const open = ref(false)
+watch(() => props.open, v => { open.value = v })
 const loading = ref(false)
 const saving = ref(false)
 /** 草稿行：{ id, name, icon, hidden } */
@@ -241,6 +247,10 @@ async function resetDefault () {
   finally { saving.value = false }
 }
 
+// 关闭出口只有一个：模板上的 @close="close"（a-drawer 点遮罩/按 Esc/点 × 都会走这里）→ emit('close')
+// → 父组件 menuLayoutOpen=false → 上面的 props watch 把本地 open 同步回 false。
+// 不要在这里再加 watch(open) emit：同一语义两个出口，父状态与抽屉状态会在一帧内来回打，
+// 排查时看起来像「关了又开」。单向数据流：父 → 本地 → 抽屉；抽屉 → 父 只经 @close。
 const close = () => emit('close')
 </script>
 
