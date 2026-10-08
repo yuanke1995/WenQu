@@ -1644,10 +1644,24 @@ const retestTextarea = () => {
   const rt = textareaRef.value && textareaRef.value.resizableTextArea
   if (rt && rt.instance && typeof rt.instance.resize === 'function') rt.instance.resize()
 }
+/* 消息区滚动条槽宽实测 → 写入 --chat-sbw，供 .input 右内边距补偿。
+   .messages 是滚动容器、.input 不是，两侧可用宽度天然差一个槽宽，居中基准因此错开半个槽
+   —— 表现为「聊天区域和输入框没对齐」。macOS 覆盖式滚动条槽宽为 0（无需补偿），
+   Windows/Linux 常规滚动条约 8~15px。必须在挂载后测量：首次布局前 clientWidth 尚未稳定。
+   平台/缩放变化时槽宽可能变，故监听 resize 重测。 */
+const syncScrollbarGutter = () => {
+  const el = box.value
+  if (!el) return
+  const gutter = el.offsetWidth - el.clientWidth
+  const host = el.closest('.chat2') || document.documentElement
+  const next = gutter > 0 ? gutter + 'px' : '0px'
+  if (host.style.getPropertyValue('--chat-sbw') !== next) host.style.setProperty('--chat-sbw', next)
+}
 const onWindowResize = () => {
   updateTailSpacer()
   if (stickToBottom.value) scroll()
   if (isNarrow.value) nextTick(retestTextarea)
+  syncScrollbarGutter()
 }
 // 转屏：iOS Safari 从横屏转竖屏时不保证触发 resize 到正确值，单独补一次
 const onOrientationChange = () => { setTimeout(onWindowResize, 120) }
@@ -2667,11 +2681,21 @@ onMounted(async () => {
   document.addEventListener('pointerdown', onDocPointerDown)
   refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
   await ready()
+  // ready 后会话已加载、消息区进入稳态布局，此时测出的滚动条槽宽才准
+  nextTick(syncScrollbarGutter)
 })
 </script>
 
 <style scoped>
-.chat2 { display: flex; height: 100%; min-width: 0; background: var(--app-panel); position: relative; }
+/* --chat-col：消息列与输入卡片共用的居中列宽。两侧必须同宽同基准，否则宽屏下
+   两条竖边对不齐（.msg-block 与 .input-box 各写一个 max-width，改一处忘另一处就会漂）。
+   --chat-sbw：消息区滚动条实测槽宽（onMounted 起由 syncScrollbarGutter 写入）。
+   .messages 是滚动容器、.input 不是，两侧可用宽度天然差一个槽宽 → 居中基准错开半个滚动条。
+   两侧内边距都按它补偿，差值归零。 */
+.chat2 {
+  --chat-col: 860px; --chat-sbw: 0px;
+  display: flex; height: 100%; min-width: 0; background: var(--app-panel); position: relative;
+}
 .chat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chat-head {
   display: flex; align-items: center; gap: 12px; padding: 10px 20px;
@@ -2725,7 +2749,7 @@ onMounted(async () => {
 }
 .head-quiet-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 
-.messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; }
+.messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; scrollbar-gutter: stable; }
 .welcome { text-align: center; padding: 72px 20px 40px; }
 /* 品牌标 = BrandMark 组件（自带圆角与品牌渐变），留出与标题的间距 */
 .welcome-mark { display: block; margin: 0 auto; }
@@ -2767,7 +2791,13 @@ onMounted(async () => {
 }
 
 .row { display: flex; flex-wrap: wrap; margin-bottom: 20px; justify-content: center; }
-.msg-block { position: relative; display: flex; flex-direction: column; min-width: 0; max-width: min(94%, 860px); width: 100%; }
+.msg-block {
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  /* 上限与 .input-box 同为 --chat-col。原来这里是 min(94%, 860px)：窄屏时 94% 生效，
+     消息列比输入卡片窄一截，两侧竖边再次错开。横向留白已由 .messages 的 padding 负责，
+     这里只需与输入卡片同宽即可（容器不够宽时 width:100% 自然收敛）。 */
+  max-width: var(--chat-col); width: 100%;
+}
 .msg-block.user { align-items: flex-end; }
 .msg-block.ai { align-items: flex-start; }
 .bubble { width: 100%; line-height: 1.65; }
@@ -2777,7 +2807,8 @@ onMounted(async () => {
 
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg-img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; border: 1px solid var(--app-border); cursor: zoom-in; }
-.pending-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: 860px; }
+/* 宽度与 .msg-block / .input-box 同源（--chat-col），否则三处各写 860 极易漂移 */
+.pending-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }
 .pending-img { position: relative; }
 .pending-img img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--app-border); cursor: zoom-in; }
 .pending-del { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
@@ -3089,15 +3120,21 @@ onMounted(async () => {
 }
 .jump-latest:hover { border-color: var(--app-border-strong); box-shadow: var(--app-shadow); }
 
-.input { position: relative; padding: 10px 32px 14px; flex: none; }
+.input {
+  position: relative; flex: none;
+  /* 右内边距额外补一个滚动条槽宽：.messages 常驻槽（scrollbar-gutter: stable）比 .input 少一截，
+     不补则消息列的居中基准比输入卡片左移半个槽 → 两侧竖边错开，肉眼可见。
+     槽宽由 syncScrollbarGutter 实测写入 --chat-sbw（macOS 覆盖式滚动条为 0，Windows/Linux 为 8~15px）。 */
+  padding: 10px calc(32px + var(--chat-sbw)) 14px 32px;
+}
 .drop-overlay {
-  position: absolute; inset: 6px 32px; z-index: 6; pointer-events: none;
+  position: absolute; inset: 6px calc(32px + var(--chat-sbw)) 6px 32px; z-index: 6; pointer-events: none;
   background: rgba(46,107,230,.06); border: 2px dashed var(--app-accent); border-radius: 14px;
   display: flex; align-items: center; justify-content: center;
   color: var(--app-accent); font-size: 14px; font-weight: 500;
 }
 .input-box {
-  position: relative; max-width: 860px; margin: 0 auto;
+  position: relative; max-width: var(--chat-col); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);
   padding: 10px 12px 8px;
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
@@ -3109,7 +3146,7 @@ onMounted(async () => {
 }
 /* 已选引用标签：输入卡片正上方一行，与卡片同宽居中——缺 max-width 会贴窗口左缘，宽屏下像「跑出输入区」；
    × 可整体移除（@ 引用与技能 chip 共用） */
-.at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; max-width: 860px; margin: 0 auto; }
+.at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; max-width: var(--chat-col); margin: 0 auto; }
 .at-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 260px;
   padding: 2px 6px; border-radius: 6px; font-size: 12px;
@@ -3335,7 +3372,7 @@ onMounted(async () => {
 .skill-ava { font-size: 12px; font-weight: 600; }
 
 /* 待发送附件条 + 技能选中标签 */
-.pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: 860px; }
+.pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }
 .pending-file.err { background: var(--app-danger-weak); border-color: var(--app-danger-border); color: var(--app-danger-text); }
 .pending-file {
   display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
@@ -3562,17 +3599,19 @@ onMounted(async () => {
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
   /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
-     下面 768 块用 padding 简写重置了这一条 —— 窄屏下 FAB 已在窄屏隐藏（见 app.css），
-     不需要再让位 */
-  .input { padding-right: 56px; }
+     让位量在 .input 的右内边距上叠加（含滚动条槽），不能再单独覆盖 padding-right，
+     否则会把上面为对齐做的补偿冲掉。 */
+  .input { padding-right: calc(56px + var(--chat-sbw)); }
   /* 拖拽高亮框跟随卡片右缘（与 .input 同侧内边距） */
-  .drop-overlay { right: 56px; }
+  .drop-overlay { right: calc(56px + var(--chat-sbw)); }
 }
 @media (max-width: 768px) {
   /* 内边距从 32px 收到 10px，与 .chat-head 的横向节奏一致 */
   .messages { padding: 10px 10px 6px; overscroll-behavior-y: contain; }
-  /* padding 用简写：同时重置 1200 块的 padding-right:56px（窄屏 FAB 已隐藏） */
-  .input { padding: 8px 10px calc(10px + var(--sab, 0px)); }
+  /* padding 用简写：同时重置 1200 块的 padding-right:56px（窄屏 FAB 已隐藏）。
+     简写会把滚动条槽一起抹掉，所以再用长写补回来 —— 否则窄屏又不对齐。 */
+  .input { padding: 8px calc(10px + var(--chat-sbw)) calc(10px + var(--sab, 0px)) 10px; }
+  .drop-overlay { right: calc(10px + var(--chat-sbw)); left: 10px; }
   .chat-head { padding: 6px 10px; padding-top: calc(6px + var(--sat, 0px)); gap: 6px; }
   .chat-title { max-width: 42%; }
   .head-tip { display: none; }
