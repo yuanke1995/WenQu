@@ -1833,6 +1833,17 @@ public class RagService {
         }
         // 记录本轮"有副作用"的工具名单（沙盒/MCP）：智能体 toolApprovalMode=ask 时执行前需用户确认
         st.sensitiveToolNames = sensitiveTools;
+        // DSML 剥离白名单：本轮真实下发的工具名（小写）。部分模型在 Function Calling 之外还会把
+        // 工具调用以 <searchKnowledge><parameter …></parameter></searchKnowledge> 的 DSML 文本再输出
+        // 一遍（工具卡片已由 native tool_calls 生成，文本那份是重复产物），不剥离会原样漏给用户。
+        // 排除与 HTML/XML 标准标签同名的工具（MCP 工具名由外部 server 自定，可能叫 link/form/table）：
+        // 那类名字按标签剥会误伤模型正常写的 HTML/XML 正文，宁可漏剥离也不能吃掉用户内容。
+        st.dsmlToolNamesLc = callbacks.stream()
+                .map(cb -> cb.getToolDefinition().name())
+                .filter(java.util.Objects::nonNull)
+                .map(n -> n.toLowerCase())
+                .filter(n -> !HTML_TAG_NAMES.contains(n))
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         // 可观测性：本次问答暴露了哪些工具（空则不打印；模型调不调用由模型决策，但"挂了什么"要可见）
         if (!callbacks.isEmpty()) {
             String names = callbacks.stream()
@@ -2940,6 +2951,32 @@ public class RagService {
                     // （process 的未闭合开口已切到 openBody 增量通道，head 里只剩半截开始标签这类残留）
                     boolean unclosedRelated = containsUnclosedRelated(head);
                     boolean unclosedProcess = containsUnclosedProcess(head);
+                    // 未闭合的 DSML 工具调用块：与 related/process 同策略——继续缓冲等闭合，
+                    // 闭合后整块丢弃。模型把工具调用以文本再写一遍时，开标签与参数值先到、
+                    // 闭合标签后到，不等闭合就发会把半截标签漏进正文。
+                    boolean unclosedDsml = containsUnclosedDsml(bufStr, st.dsmlToolNamesLc);
+                    if (unclosedDsml && !unclosedRelated && !unclosedProcess) {
+                        // 只可能是 DSML 未闭合：整批继续缓冲等闭合标签到达（与 related/process 同款等待）
+                        if (bufStr.length() > 3000) {
+                            // 模型压根不写闭合标签（输出触顶截断在闭合之前）：开口起整段丢弃，
+                            // 否则裸露的 <searchKnowledge> 与参数值会一路落屏——按原文发正文等于把协议噪声泄给用户
+                            String trimmed = dropUnclosedDsmlTail(bufStr, st.dsmlToolNamesLc);
+                            if (!trimmed.equals(bufStr)) {
+                                addDegradation(st.degradations, st.degradedCodes, "toolTextMalformed",
+                                        "模型以文本形式输出了未闭合的工具调用，已从回答中移除");
+                            }
+                            st.emitBuf.setLength(0);
+                            if (!trimmed.isEmpty()) {
+                                st.fullResponse.append(trimmed);
+                                if (!sendSseEvent(emitter, "token", trimmed, st.sessionId)
+                                        && !st.keepRunningWithoutChannel()) {
+                                    st.disposeSafe();
+                                    return;
+                                }
+                            }
+                        }
+                        return;
+                    }
                     if (unclosedRelated || unclosedProcess) {
                         if (bufStr.length() > 3000) {
                             st.emitBuf.setLength(0);
@@ -2994,6 +3031,22 @@ public class RagService {
                         st.relatedBlock.append(rm.group(1)).append("\n");
                     }
                     clean = clean.replaceAll("<related>[\\s\\S]*?</related>", "");
+                    // 剥离模型以文本形式重复输出的工具调用（DSML）：工具卡片已由 native 链路渲染，
+                    // 这份是重复产物，留着就以标签字样漏进正文。放在 related 之后、扣留之前，
+                    // 保证扣留窗口看到的已是清洗过的文本。
+                    if (!st.dsmlToolNamesLc.isEmpty()) {
+                        String dsmlClean = stripDsmlToolText(clean, st.dsmlToolNamesLc);
+                        if (!dsmlClean.equals(clean)) {
+                            if (!st.dsmlStrippedNoted) {
+                                st.dsmlStrippedNoted = true;
+                                addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                                        "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
+                                log.warn("[TOOL-TEXT] 模型以 DSML 文本重复输出工具调用，已剥离: model={} sid={}",
+                                        st.model, st.sessionId);
+                            }
+                            clean = dsmlClean;
+                        }
+                    }
                     // 未闭合开口的增量：扣留可能是 </process> 真前缀的尾巴，其余立即下发。首块剥前导空白
                     // （模型写 "<process>\n内容"，不剥则灰字块顶部空一行），其后原样追加（段内换行属模型内容）
                     String emitProc = "";
@@ -3160,6 +3213,20 @@ public class RagService {
                                 rest = rest.substring(0, lt);
                             }
                         }
+                        // 收尾兜底再剥一次 DSML：跨 token 切分导致主路径扣留窗口没兜住的整块
+                        // （闭合标签恰好落在缓冲被扣留、下一 token 才补齐的场景）
+                        if (!st.dsmlToolNamesLc.isEmpty()) {
+                            String dsmlRest = dropUnclosedDsmlTail(
+                                    stripDsmlToolText(rest, st.dsmlToolNamesLc), st.dsmlToolNamesLc);
+                            if (!dsmlRest.equals(rest)) {
+                                if (!st.dsmlStrippedNoted) {
+                                    st.dsmlStrippedNoted = true;
+                                    addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                                            "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
+                                }
+                                rest = dsmlRest;
+                            }
+                        }
                         if (!rest.isEmpty()) {
                             st.fullResponse.append(rest);
                             sendSseEvent(emitter, "token", rest, st.sessionId);
@@ -3179,6 +3246,23 @@ public class RagService {
                         related = extractRelated(st.fullResponse);
                     }
                     String answer = st.fullResponse.toString();
+                    // 终态兜底：整轮再剥一次 DSML 工具调用文本。流式主路径已逐批剥离，
+                    // 这里覆盖非流式/异常路径与跨 token 边界残留——工具卡片已展示同一内容，
+                    // 残留标签纯属噪声，落到用户眼前就是截图里那种裸露的 <searchknowledge>。
+                    if (!st.dsmlToolNamesLc.isEmpty()) {
+                        String dsmlAnswer = dropUnclosedDsmlTail(
+                                stripDsmlToolText(answer, st.dsmlToolNamesLc), st.dsmlToolNamesLc);
+                        if (!dsmlAnswer.equals(answer)) {
+                            if (!st.dsmlStrippedNoted) {
+                                st.dsmlStrippedNoted = true;
+                                addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                                        "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
+                            }
+                            log.warn("[TOOL-TEXT] 终态兜底剥离 DSML 工具调用文本 {} 字: session={}",
+                                    answer.length() - dsmlAnswer.length(), st.sessionId);
+                            answer = dsmlAnswer;
+                        }
+                    }
                     // 护栏：模型把正文写进 <related> 时，"剥离推荐块"等于把回答吃掉——实测出现过
                     // 回答只剩开头 28 字、其余整段落进推荐块（推荐块此前不随消息落库，刷新后彻底消失）。
                     // 推荐位只放短句，超长条目按正文并回回答。
@@ -3538,6 +3622,14 @@ public class RagService {
         volatile java.util.Set<String> sensitiveToolNames = java.util.Set.of();
         /** 本轮接入的 MCP 工具名单（enabledToolCallbacks 装配时回填）：结果注册引用来源用 */
         volatile java.util.Set<String> mcpToolNames = java.util.Set.of();
+        /**
+         * 本轮生效工具名（小写）：剥离模型误吐的 DSML 工具调用文本的白名单。
+         * 只认本轮真实下发的工具名——按通用 XML 规则剥会把模型正常写的 HTML/XML 正文
+         * （技术问答里代码块尤其常见）当噪声吃掉，白名单匹配则天然不误伤。
+         */
+        volatile java.util.Set<String> dsmlToolNamesLc = java.util.Set.of();
+        /** DSML 文本剥离是否已提示过降级（同一轮只提示一次，避免刷屏） */
+        volatile boolean dsmlStrippedNoted;
         /** 本轮已注册的 MCP 引用条数（上限 tool.mcpCiteMaxRefs，防引用面板被单轮刷屏） */
         final java.util.concurrent.atomic.AtomicInteger mcpCiteCount = new java.util.concurrent.atomic.AtomicInteger();
         /** 本轮 askUser 已提问次数（上限 MAX_ASKS_PER_TURN）：多轮澄清合法，刷屏循环不合法 */
@@ -4117,6 +4209,117 @@ public class RagService {
         if (lt < 0) return false;
         String tail = s.substring(lt);
         return tail.length() < "</process>".length() && "</process>".startsWith(tail);
+    }
+
+    // ==================== DSML 工具调用文本剥离 ====================
+    // 部分模型在 native tool_calls 之外，还会把同一次工具调用以 DSML 文本再写一遍正文：
+    //   <searchKnowledge><parameter name="query">…</parameter></searchKnowledge>
+    // 工具卡片已经由 native 链路渲染过，这份文本是纯重复产物，不剥离就会以标签字样漏给用户
+    // （线上症状：正文里出现 <searchknowledge> / </parameter> 等裸露标签）。
+    // 只按「本轮真实下发的工具名」匹配，不做通用 XML 剥离——技术问答里模型正常写的
+    // HTML/XML 正文（尤其代码块内的标签）不能被吃掉。
+
+    /** 参数标签（DSML 的参数承载形式），整体含开闭：<parameter …>…</parameter> */
+    private static final Pattern dsmlParamPattern =
+            Pattern.compile("<parameter\\b[^>]*>[\\s\\S]*?</parameter>", Pattern.CASE_INSENSITIVE);
+    /** 残缺参数标签：未闭合的开口与跨 token 切碎的闭合（输出触顶截断时常见） */
+    private static final Pattern dsmlParamLoosePattern =
+            Pattern.compile("</?parameter\\b[^>]*>?", Pattern.CASE_INSENSITIVE);
+    /**
+     * HTML/XML 常见标准标签名（小写）：与工具名同名时不做 DSML 剥离。
+     * MCP 工具名由外部 server 自定，可能撞上这些名字——按标签剥会吃掉模型正常写的正文。
+     * 这些名字本来也不像 DSML 工具名（DSML 惯例是驼峰），排除掉对实际剥离效果无损失。
+     */
+    private static final java.util.Set<String> HTML_TAG_NAMES = java.util.Set.of(
+            "a", "b", "br", "div", "p", "span", "link", "meta", "form", "input", "button",
+            "table", "tr", "td", "th", "thead", "tbody", "ul", "ol", "li", "dl", "dt", "dd",
+            "h1", "h2", "h3", "h4", "h5", "h6", "img", "code", "pre", "section", "article",
+            "header", "footer", "nav", "aside", "main", "style", "script", "title", "head",
+            "body", "html", "label", "select", "option", "textarea", "iframe", "video", "audio",
+            "canvas", "svg", "path", "g", "text", "circle", "rect", "defs", "use", "symbol");
+
+    /**
+     * 剥离正文里的 DSML 工具调用文本（按本轮工具名白名单，忽略大小写）。
+     * 分两轮：先整块（<tool …>…</tool>）后参数标签，避免块内多个 parameter 时残留标签字样。
+     *
+     * @param s     待清洗文本（一批 token 或收尾缓冲）
+     * @param names 本轮工具名小写集合；空集合直接原样返回（无工具的纯对话不受影响）
+     * @return 清洗后的文本
+     */
+    static String stripDsmlToolText(String s, java.util.Set<String> names) {
+        if (s == null || s.isEmpty() || names == null || names.isEmpty()) return s;
+        String out = s;
+        // 整块：<tool>…</tool>。工具名逐个转义后拼正则（MCP 工具名可能含正则元字符）
+        for (String n : names) {
+            String q = java.util.regex.Pattern.quote(n);
+            out = out.replaceAll("(?i)<" + q + "\\b[^>]*>[\\s\\S]*?</" + q + "\\s*>", "");
+            // 未闭合的开口（截断在 </tool> 之前）：开口起整段丢弃，否则标签与参数值会露屏
+            int lt = indexOfIgnoreCase(out, "<" + n);
+            if (lt >= 0) {
+                // 确认是标签开口而非正文里的同名片段（如 "<searchknowledge 很有用"）
+                int gt = out.indexOf('>', lt);
+                if (gt < 0 || gt - lt <= 1 + n.length() + 1) out = out.substring(0, lt);
+            }
+        }
+        out = dsmlParamPattern.matcher(out).replaceAll("");
+        out = dsmlParamLoosePattern.matcher(out).replaceAll("");
+        return out;
+    }
+
+    /** 忽略大小写查找子串下标，找不到返回 -1 */
+    private static int indexOfIgnoreCase(String s, String needle) {
+        return s.toLowerCase().indexOf(needle.toLowerCase());
+    }
+
+    /**
+     * 丢弃首个未闭合 DSML 工具调用块自开口起的全部内容（截断兜底）：
+     * 返回首个未闭合开口之前的前缀。若没有未闭合块则原样返回。
+     */
+    static String dropUnclosedDsmlTail(String s, java.util.Set<String> names) {
+        if (s == null || s.isEmpty() || names == null || names.isEmpty()) return s;
+        String low = s.toLowerCase();
+        int cut = -1;
+        for (String n : names) {
+            int oi = low.indexOf("<" + n);
+            while (oi >= 0) {
+                int after = oi + 1 + n.length();
+                boolean boundary = after >= low.length();
+                if (!boundary) {
+                    char c = low.charAt(after);
+                    boundary = !Character.isLetterOrDigit(c) && c != '_';
+                }
+                if (boundary && low.indexOf("</" + n, oi) < 0) {
+                    cut = cut < 0 ? oi : Math.min(cut, oi);
+                    break;
+                }
+                oi = low.indexOf("<" + n, oi + 1);
+            }
+        }
+        return cut < 0 ? s : s.substring(0, cut);
+    }
+
+    /**
+     * 文本里是否存在未闭合的 DSML 工具调用块（含跨 token 切分的标签片段）。
+     * 用于流式缓冲：出现这种块要继续缓冲等它闭合，闭合后整块丢弃——
+     * 否则闭合标签到达前已经把开口和参数值当正文发出去了（正文里出现半截标签）。
+     */
+    static boolean containsUnclosedDsml(String s, java.util.Set<String> names) {
+        if (s == null || s.isEmpty() || names == null || names.isEmpty()) return false;
+        String low = s.toLowerCase();
+        for (String n : names) {
+            String open = "<" + n;
+            String close = "</" + n;
+            int oi = low.indexOf(open);
+            if (oi < 0) continue;
+            // 开口后必须紧跟标签边界（空白 / > / /），否则是正文里的同名片段
+            int after = oi + open.length();
+            if (after < low.length()) {
+                char c = low.charAt(after);
+                if (Character.isLetterOrDigit(c) || c == '_') continue;
+            }
+            if (low.indexOf(close, oi) < 0) return true;
+        }
+        return false;
     }
 
     /**
