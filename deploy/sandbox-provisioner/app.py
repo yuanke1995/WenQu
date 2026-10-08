@@ -672,8 +672,23 @@ class LocalContainerProvisionerBackend:
     def _user_skills_host_path(self, uid: str) -> Path:
         return Path(self._skill_projections_host_path) / uid
 
-    def _shared_workspace_host_path(self, uid: str) -> Path:
-        return Path(self._user_data_host_path) / "shared" / uid / "workspace"
+    def _session_workspace_host_path(self, uid: str, thread_id: str) -> Path:
+        """单个会话沙盒的宿主工作区：shared/{uid}/workspace/sessions/{thread_id}。
+
+        与蓝本的刻意差异（问渠 fork）：蓝本把整个 per-uid workspace 挂给该用户的
+        所有沙盒，同一用户的多个会话互相可见、可互相覆盖；问渠沙盒本就按会话创建
+        （sandbox_id 由 uid+thread 派生），工作区同样下沉到会话——每个会话只能看到
+        自己的目录，从挂载层杜绝跨会话读写。老布局散落在 workspace 根下的文件
+        不再进入任何会话（存量由运维清理）。
+        """
+        return (
+            Path(self._user_data_host_path)
+            / "shared"
+            / uid
+            / "workspace"
+            / "sessions"
+            / thread_id
+        )
 
     @staticmethod
     def _validate_directory_without_symlinks(
@@ -733,9 +748,12 @@ class LocalContainerProvisionerBackend:
         self,
         container,
         uid: str,
+        thread_id: str,
     ) -> bool:
         expected_mounts = {
-            "/home/gem/user-data": str(self._shared_workspace_host_path(uid)),
+            "/home/gem/user-data": str(
+                self._session_workspace_host_path(uid, thread_id)
+            ),
         }
         actual_mounts = {
             str((mount.get("Destination") or "").rstrip("/")): str(
@@ -1021,7 +1039,9 @@ class LocalContainerProvisionerBackend:
                     self.delete(sandbox_id)
                     existing = None
                 elif not ephemeral_storage and not (
-                    self._has_expected_user_data_mounts(existing, safe_uid)
+                    self._has_expected_user_data_mounts(
+                        existing, safe_uid, safe_thread_id
+                    )
                 ):
                     logger.info(
                         "Recreating sandbox %s because user-data mounts are stale",
@@ -1056,12 +1076,12 @@ class LocalContainerProvisionerBackend:
                         exc,
                     )
 
-            shared_workspace = None
+            session_workspace = None
             user_skills = None
             if not ephemeral_storage:
                 self._ensure_directory_within(
                     self._user_data_container_path,
-                    ("shared", safe_uid, "workspace"),
+                    ("shared", safe_uid, "workspace", "sessions", safe_thread_id),
                 )
                 self._ensure_directory_within(
                     self._skill_projections_container_path,
@@ -1069,19 +1089,26 @@ class LocalContainerProvisionerBackend:
                 )
                 self._validate_directory_without_symlinks(
                     self._user_data_container_path,
-                    ("shared", safe_uid, "workspace"),
-                    label="user workspace",
+                    ("shared", safe_uid, "workspace", "sessions", safe_thread_id),
+                    label="session workspace",
                 )
                 self._validate_directory_without_symlinks(
                     self._skill_projections_container_path,
                     (safe_uid,),
                     label="skill projection",
                 )
-                shared_workspace = self._shared_workspace_host_path(safe_uid)
+                session_workspace = self._session_workspace_host_path(
+                    safe_uid, safe_thread_id
+                )
                 user_skills = self._user_skills_host_path(safe_uid)
-            if safe_workdir_path and shared_workspace is not None:
+            if safe_workdir_path and session_workspace is not None:
                 self._validate_directory_without_symlinks(
-                    self._user_data_container_path / "shared" / safe_uid / "workspace",
+                    self._user_data_container_path
+                    / "shared"
+                    / safe_uid
+                    / "workspace"
+                    / "sessions"
+                    / safe_thread_id,
                     PurePosixPath(safe_workdir_path).parts,
                     label="workdir_path",
                 )
@@ -1112,8 +1139,8 @@ class LocalContainerProvisionerBackend:
                     "bind": "/home/gem/skills",
                     "mode": "ro",
                 }
-            if not ephemeral_storage and shared_workspace is not None:
-                run_kwargs["volumes"][str(shared_workspace)] = {
+            if not ephemeral_storage and session_workspace is not None:
+                run_kwargs["volumes"][str(session_workspace)] = {
                     "bind": "/home/gem/user-data",
                     "mode": "rw",
                 }
@@ -1215,7 +1242,7 @@ class LocalContainerProvisionerBackend:
                 )
             return None
         if not ephemeral_storage and not self._has_expected_user_data_mounts(
-            container, safe_uid
+            container, safe_uid, thread_id
         ):
             logger.info(
                 "Discarding stale sandbox %s with unexpected user-data mounts",
@@ -1335,6 +1362,10 @@ class KubernetesProvisionerBackend:
             init_command = None
             data_mounts = []
         else:
+            # 未对齐（显式标注）：k8s 后端仍挂 per-uid workspace，未跟进问渠的会话级下沉
+            # （docker 后端已挂 shared/{uid}/workspace/sessions/{thread_id}）。本环境与
+            # 生产均走 docker 后端；将来 k8s 部署出现时按同口径补齐（含 init 脚本的
+            # 目录创建与 ownership marker）。
             workspace_subpath = f"shared/{uid}/workspace"
             init_command = kubernetes_storage_init_script(uid, workdir_path)
             data_mounts = [
@@ -1507,6 +1538,7 @@ class KubernetesProvisionerBackend:
             return False
         if actual_claims.get("skills-data") != self._skill_pvc:
             return False
+        # 注意：k8s 后端未对齐会话级工作区（见 _build_pod_spec 的显式标注）
         expected_mounts = {
             "/home/gem/user-data": ("user-data", f"shared/{uid}/workspace"),
             "/home/gem/skills": ("skills-data", f"skill-projections/{uid}"),
