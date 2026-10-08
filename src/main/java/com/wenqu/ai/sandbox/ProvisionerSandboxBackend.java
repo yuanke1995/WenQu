@@ -609,6 +609,11 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 退出码写 exit 标记文件；本方法按行轮询 log 追增量，每片经 {@code outputListener} 实时回调
      * （上层转 SSE {@code tool_output} 事件），返回值仍是完整的 {@link ExecuteResponse}（output=全文）。
      *
+     * <p>命令原文先落盘成脚本、以 {@code /bin/bash <脚本>} 执行——绝不把命令拼进 shell 包装串：
+     * 拼接会改写命令末行，heredoc 终止符被 {@code " ; }"} 尾缀破坏后 shell 会一直等续行输入、
+     * 挂到超时（2026-10-08 线上实测：{@code python3 - <<'EOF' …} 180s 不返回）。落盘执行让
+     * heredoc/多行/引号原样保真。
+     *
      * <p>为什么不直接流式：runtime（all-in-one-sandbox 镜像）的 {@code /v1/shell/exec} 是同步一次性
      * 返回（async 模式的 wait 也仅在 completed 时给 output），无流式端点；而「后台脱离 + 读文件」
      * 只依赖 shell 的 POSIX 语义与既有的按行读文件端点，镜像零改动。与同步 {@link #execute} 的差异
@@ -619,20 +624,27 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         try {
             SandboxRuntimeClient client = getClient();
             String streamId = UUID.randomUUID().toString().replace("-", "");
+            String cmdPath = STREAM_DIR + "/" + streamId + ".sh";
             String logPath = STREAM_DIR + "/" + streamId + ".log";
             String exitPath = STREAM_DIR + "/" + streamId + ".exit";
             String okPath = STREAM_DIR + "/" + streamId + ".ok";
             // ① 同步准备：建目录、清同名残留（顺带确认沙盒可用，失败即返回错误——不静默降级到同步执行）
-            ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + logPath + " " + exitPath
-                    + " " + okPath + " && echo READY");
+            ExecuteResponse prep = execute("mkdir -p " + STREAM_DIR + " && rm -f " + cmdPath + " " + logPath
+                    + " " + exitPath + " " + okPath + " && echo READY");
             if (prep.exitCode() == null || prep.exitCode() != 0) {
                 return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false, true);
+            }
+            // ①′ 命令原文落盘为脚本（heredoc/多行/引号保真；理由见方法注释）
+            SandboxRuntimeClient.SandboxWriteResult wrote = client.writeFile(cmdPath, command);
+            if (!wrote.success()) {
+                return new ExecuteResponse("Error: 沙盒命令脚本落盘失败: "
+                        + (wrote.message() == null ? "unknown error" : wrote.message()), 1, false, true);
             }
             // ② 后台启动：花括号组后台化，组内先跑命令（2>&1 合并）、再写退出码标记；组输出进 log。
             //    启动成功判据 = ok 标记文件落盘（echo BG_OK > ok），不判 stdout 文本：
             //    runtime 的 exec 用带 job control 的 shell，秒级命令的完成通知（[1]+ Done …）
             //    会在 BG_OK 之后混进同一响应，任何文本前后缀匹配都会被噪音击穿（09-28 实测回归）。
-            String wrapped = "{ { " + command + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath
+            String wrapped = "{ { /bin/bash " + cmdPath + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath
                     + " 2>&1 & echo BG_OK > " + okPath;
             SandboxRuntimeClient.SandboxExecResult launch = client.execCommand(wrapped, null, false);
             if (!waitForMarker(client, okPath, 5000)) {
@@ -666,7 +678,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             }
             // ④ 收尾：最后追平一次（命令已结束，进行中的尾行按完整行收掉），清理临时文件
             linesRead = drainLines(client, logPath, linesRead, all, outputListener, true);
-            cleanupStream(client, logPath, exitPath, okPath);
+            cleanupStream(client, cmdPath, logPath, exitPath, okPath);
             String output = all.toString();
             boolean truncated = false;
             byte[] encoded = output.getBytes(StandardCharsets.UTF_8);
@@ -764,10 +776,10 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         return false;
     }
 
-    /** 清理流式临时文件（best-effort：清理失败不影响结果，残留随沙盒回收清理）。 */
-    private void cleanupStream(SandboxRuntimeClient client, String logPath, String exitPath, String okPath) {
+    /** 清理流式临时文件（命令脚本/日志/标记；best-effort：清理失败不影响结果，残留随沙盒回收清理）。 */
+    private void cleanupStream(SandboxRuntimeClient client, String cmdPath, String logPath, String exitPath, String okPath) {
         try {
-            client.execCommand("rm -f " + logPath + " " + exitPath + " " + okPath, Duration.ofSeconds(10), false);
+            client.execCommand("rm -f " + cmdPath + " " + logPath + " " + exitPath + " " + okPath, Duration.ofSeconds(10), false);
         } catch (RuntimeException ignore) {
             // best-effort cleanup
         }
