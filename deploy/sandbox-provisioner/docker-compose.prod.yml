@@ -1,0 +1,36 @@
+# 线上部署覆盖层：把 provisioner 接入主 compose 的 Docker 网络。
+#
+# 为什么要覆盖：线上是 Docker Compose 全栈，app 跑在容器里。app 容器内的
+# 127.0.0.1 指向 app 容器自己，不是宿主机——所以设置页「沙盒 → provisioner
+# 服务地址」不能填默认值 http://127.0.0.1:8002，探测会在 GET /health 阶段
+# 直接 Connection refused（显示「不可达 3ms」，与令牌无关）。
+#
+# 用法（在 deploy/sandbox-provisioner/ 下）：
+#   1. 先用基础文件起一次，确定主 compose 的网络名：
+#        docker network ls | grep -E 'wenqu|WenQu'
+#      网络名 = 主 compose 所在目录名 + _default（compose 未声明 name 时）。
+#      下文假定为 wenqu_default，实际以你的为准。
+#   2. cp .env.example .env 填令牌（.env 已 gitignore）
+#   3. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 校验跨容器连通（两条都要 200）：
+#   docker exec wen-qu curl -s http://sandbox-provisioner:8002/health
+#   curl -s http://127.0.0.1:8002/health
+# 然后在设置页「沙盒」把地址改成 http://sandbox-provisioner:8002 点测试连接。
+services:
+  sandbox-provisioner:
+    # 基础文件里是 http://127.0.0.1:8002，那是本机直跑的取值。线上 app 在容器里，
+    # 这个值决定 provisioner 返回给 API 的 proxy 地址（sandbox_proxy_url），必须换成
+    # app 容器真能连上的服务名，否则 API 侧拿到不可达地址。
+    environment:
+      PROVISIONER_PUBLIC_URL: http://sandbox-provisioner:8002
+
+    # 主 compose 的网络，external 表示由主 compose 创建与持有，本文件不重复定义。
+    # 网络名不对时 compose 会报 "network ... not found"，用 docker network ls 核对。
+    networks:
+      - wenqu-main
+
+networks:
+  wenqu-main:
+    external: true
+    name: ${WENQU_MAIN_NETWORK:-wenqu_default}
