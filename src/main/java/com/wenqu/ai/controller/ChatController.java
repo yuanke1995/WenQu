@@ -169,6 +169,18 @@ public class ChatController {
         // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
         modelRegistryService.assertUsable(request.getModel(), userId, RequestUser.role());
 
+        // 会话级模型覆盖落库（聊天页手动切换即存，刷新/换端后选择不丢）：只有请求显式携带才写——
+        // 清除选择（跟随个人默认）由 PUT /session/{id}/model 在切换时处理；游客/定时任务/工作流等
+        // 旁路调用不经过这里，不会把各自的配置模型误存成会话覆盖。引用须可解析：存进会话的值若失效，
+        // 后续每轮都会在回答期报错（与上面 PUT 端点同口径）
+        if (request.getModel() != null && !request.getModel().isBlank()) {
+            String modelRef = request.getModel().trim();
+            if (modelRef.contains("/") && modelRegistryService.resolveReference(modelRef) == null) {
+                throw new BizException("模型引用无效或已被删除，请重新选择");
+            }
+            sessionService.updateModel(userId, sessionId, modelRef);
+        }
+
         // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
         // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
         List<ChatRequest.Mention> mentions = validateMentions(request.getMentions(), httpRequest);
@@ -445,6 +457,39 @@ public class ChatController {
         return ResultJson.ok("操作成功");
     }
 
+    @Operation(summary = "读取会话模型",
+            description = "返回该会话已存的模型覆盖（空串=跟随个人默认）。聊天页切到列表未加载的会话"
+                    + "（通知/分享深链进老会话）时按需拉取，保证选择器显示与实际作答模型一致")
+    @GetMapping("/session/{sessionId}/model")
+    public ResultJson getSessionModel(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            HttpServletRequest httpRequest) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        return ResultJson.ok(Map.of("model", sessionService.sessionModelOf(sessionId)));
+    }
+
+    @Operation(summary = "切换会话模型",
+            description = "设置会话级模型覆盖（聊天页选择器切换即存，刷新/换端/重新生成后仍保留）；"
+                    + "model 传空串 = 清除覆盖，回到跟随个人默认。校验会话归属与模型可用性")
+    @PutMapping("/session/{sessionId}/model")
+    public ResultJson setSessionModel(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest) {
+        String userId = RequestUser.uid();
+        String model = body == null || body.get("model") == null ? "" : String.valueOf(body.get("model")).trim();
+        if (!model.isBlank()) {
+            // 与 /chat 同口径的 fail-loud：普通用户只能存自己可用的模型；引用须在模型库可解析
+            // （否则存进会话后每轮回答期才报错，用户无从定位）。遗留裸模型名不做解析校验
+            modelRegistryService.assertUsable(model, userId, RequestUser.role());
+            if (model.contains("/") && modelRegistryService.resolveReference(model) == null) {
+                throw new BizException("模型引用无效或已被删除，请重新选择");
+            }
+        }
+        sessionService.updateModel(userId, sessionId, model);
+        return ResultJson.ok("操作成功");
+    }
+
     @Operation(summary = "会话历史", description = "获取指定会话的完整对话历史（含图片与引用来源；校验会话归属）")
     @GetMapping("/session/{sessionId}")
     public ResultJson getHistory(
@@ -492,10 +537,14 @@ public class ChatController {
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
         Object modelArg = body == null ? null : body.get("model");
         Object instrArg = body == null ? null : body.get("instruction");
-        // 模型解析顺序与会话当轮一致（前端选的会话模型 > 个人默认）；都没有时 fail-loud 引导配置，
+        // 请求未显式指定时回落会话已存覆盖（刷新后本地选择清空也能压对模型）。
+        // 模型解析顺序与会话当轮一致（请求指定 > 会话已存覆盖 > 个人默认）；都没有时 fail-loud 引导配置，
         // 而不是发空 model 到网关
-        String resolvedModel = ragService.resolveChatModel(userId,
-                modelArg == null ? null : String.valueOf(modelArg));
+        String requestedModel = modelArg == null ? null : String.valueOf(modelArg);
+        if (requestedModel == null || requestedModel.isBlank()) {
+            requestedModel = sessionService.sessionModelOf(sessionId);
+        }
+        String resolvedModel = ragService.resolveChatModel(userId, requestedModel);
         if (resolvedModel.isBlank()) {
             throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
         }

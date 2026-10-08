@@ -52,6 +52,12 @@ public class Session {
     /** 绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称） */
     private String agentName;
 
+    /**
+     * 会话级模型覆盖（聊天页手动切换模型时写入，引用 providerId/modelId 或遗留模型名）。
+     * NULL=未切换过（跟随个人默认）。与智能体绑定不同：模型可随时切回，后续轮次均以会话已存覆盖优先。
+     */
+    private String model;
+
     /** 滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过） */
     private String historySummary;
 

@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk,
-         listPendingAsks, resolvePlanApproval, listPendingPlans,
+         listPendingAsks, resolvePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -335,8 +335,29 @@ const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && 
 const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
 const currentOverrideModel = computed({
   get: () => modelMap.value[currentSessionId.value] || '',
-  set: v => { modelMap.value = { ...modelMap.value, [currentSessionId.value]: v || '' } }
+  set: v => {
+    const val = v || ''
+    const sid = currentSessionId.value
+    modelMap.value = { ...modelMap.value, [sid]: val }
+    // 切换即落库（会话级模型覆盖，刷新/换端后仍保留；清除=空串回个人默认）。
+    // 失败要提醒：静默吞掉的话用户以为已记住，刷新后选择丢失无从排查。
+    // 会话尚无 ID（极端时序）只记本地，等首问随载荷落库
+    if (sid) updateSessionModelApi(sid, val).catch(e => message.error(`会话模型保存失败：${e?.message || '请稍后重试'}`))
+  }
 })
+/** 会话列表 → modelMap 回填（seed-once：本地已有的选择不动——切换已即时落库，避免慢响应竞态把 UI 回退） */
+const seedSessionModels = () => {
+  const patch = {}
+  for (const s of sessionStore.list) {
+    if (s && s.id && !(s.id in modelMap.value)) patch[s.id] = s.model || ''
+  }
+  if (Object.keys(patch).length) modelMap.value = { ...modelMap.value, ...patch }
+}
+// 监听列表本身，而不是在挂载流程里调一次：会话列表由侧栏（AppLayout）与聊天页各自触发加载，
+// 并发时 loadSessions 的加载代次守卫会丢弃较早的一次（列表还没写入），挂载时点读到的可能是空列表。
+// deep 兼顾「查看更多」的 push 增量；immediate 兼顾列表在引擎初始化前就已加载的情形。
+// seed 幂等且只做字典合并，列表每次变动重跑无副作用。
+watch(() => sessionStore.list, seedSessionModels, { deep: true, immediate: true })
 const userDefaultModel = ref('')    // 个人默认模型（个人设置，后端 /user/preference）
 const modelIndex = ref({})          // 引用 → { displayName, providerName, icon }（展示映射）
 
@@ -746,6 +767,17 @@ let sessionRecovering = false
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
+  // 该会话已存的模型覆盖：列表已加载的会话由 sessionStore.list 的 watch 回填；
+  // 列表外的会话（通知/分享深链进老会话，或侧栏尚未翻到）在这里按需拉一次——
+  // 否则选择器会显示个人默认，而后端仍按会话已存模型作答，界面与真实不符
+  if (sid && !(sid in modelMap.value)) {
+    getSessionModelApi(sid).then(r => {
+      // 迟到的响应不覆盖本地已改的选择（用户在这期间又切了模型）
+      if (r && r.success && !(sid in modelMap.value)) {
+        modelMap.value = { ...modelMap.value, [sid]: r.data?.model || '' }
+      }
+    }).catch(() => {})
+  }
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上。
   // 必须保留兄弟参数：?approval=<id>（工具审批通知深链）直接写 query:{sid} 会被抹掉，
   // 恢复横幅能否出现变成异步时序的侥幸（fetch 先回才亮），刷新后则永久丢失。

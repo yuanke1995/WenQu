@@ -332,6 +332,7 @@ public class SessionService {
             info.setAgentId(s.getAgentId());
             info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
         }
+        info.setModel(s.getModel() == null ? "" : s.getModel());
         return info;
     }
 
@@ -1050,6 +1051,37 @@ public class SessionService {
 
     /** 会话级智能体绑定快照（agentId 空串 = 已决定不绑定智能体） */
     public record AgentBinding(String agentId, String agentName) {
+    }
+
+    /**
+     * 会话级模型覆盖（聊天页切换模型即存，刷新/换端后选择不丢）。
+     * model 空白 = 清除覆盖回到跟随个人默认；非空去空白、限长 190（与 c_ai_message.model 列同宽）。
+     * 引用值的有效性（可解析/可用）由控制器先行 fail-loud 校验，这里只管归属与落库。
+     */
+    public void updateModel(String userId, String sessionId, String model) {
+        assertOwned(sessionId, userId);
+        String m = model == null ? "" : model.trim();
+        if (m.length() > 190) throw new com.wenqu.ai.common.BizException("模型引用过长");
+        // 清除覆盖要显式 SET null：updateById 默认忽略 null 字段（置空清不掉，见 bindAgent 同款约束）
+        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId)
+                .set(Session::getModel, m.isEmpty() ? null : m));
+    }
+
+    /**
+     * 读取会话已存的模型覆盖（聊天轮请求未显式携带时的回落依据）。无覆盖/会话不存在/查询失败返回空串。
+     */
+    public String sessionModelOf(String sessionId) {
+        try {
+            Session s = sessionMapper.selectOne(new LambdaQueryWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .select(Session::getModel)
+                    .last("LIMIT 1"));
+            return s == null || s.getModel() == null ? "" : s.getModel();
+        } catch (Exception e) {
+            log.warn("读取会话模型覆盖失败 (session={}): {}", sessionId, e.getMessage());
+            return "";
+        }
     }
 
     /**

@@ -122,7 +122,8 @@ public class ChatRequest {
             + "其他非空值=该轮问答按该智能体的提示词/工具/知识库范围执行；空=继承全局配置")
     private String agentId;
 
-    @Schema(description = "会话级模型覆盖（引用 providerId/modelId 或遗留模型名；仅用户在聊天页手动切换时传，空=个人默认，全局兜底已退役）")
+    @Schema(description = "会话级模型覆盖（引用 providerId/modelId 或遗留模型名；仅用户在聊天页手动切换时传，"
+            + "显式携带会落库到会话、后续轮次刷新/换端仍生效；空=沿用会话已存覆盖，无则个人默认，全局兜底已退役）")
     private String model;
 
     @Schema(description = "重新生成/自动重试标记：true=该问题的用户消息已随上一轮请求即时落库，后端跳过重复落库（防重发产生重复历史行）")

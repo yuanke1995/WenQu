@@ -32,4 +32,6 @@ public class SessionInfo {
     private String agentId;
     @Schema(description = "绑定时的智能体名称快照")
     private String agentName;
+    @Schema(description = "会话级模型覆盖（聊天页切换过模型才有值，引用或遗留名；空=跟随个人默认）。前端据此恢复该会话的模型选择")
+    private String model;
 }

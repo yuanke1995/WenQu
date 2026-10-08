@@ -729,9 +729,14 @@ public class RagService {
         long startTime = System.currentTimeMillis();
         // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
-        // 本轮生效模型（会话覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用；
+        // 本轮生效模型（请求覆盖 > 会话已存覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用。
+        // 请求未带覆盖时回落会话已存值：聊天页切换模型已由 /chat 落库，老标签页/重新生成等不发 model 的轮次
+        // 沿用用户此前切的选择（刷新/换端不丢）。覆盖的落库在 ChatController 同步段——这里只读不写：
+        // 游客分享（会话归访客、身份是发布者）/定时任务（任务级模型）/工作流等旁路调用不带「手动切换」语义，不能改写会话。
+        final String effectiveOverride = modelOverride != null && !modelOverride.isBlank()
+                ? modelOverride.trim() : sessionService.sessionModelOf(sessionId);
         // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
-        final String resolvedModel = resolveModel(modelOverride, prefUser);
+        final String resolvedModel = resolveModel(effectiveOverride, prefUser);
         if (resolvedModel.isBlank()) {
             log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
             sendSseEvent(emitter, "error",

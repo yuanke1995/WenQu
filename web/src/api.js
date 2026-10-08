@@ -321,6 +321,13 @@ export const favoriteSession = (sid, favorite) =>
 export const renameSessionApi = (sid, title) =>
   request(`/session/${sid}/rename`, { method: 'PUT', body: JSON.stringify({ title }) })
 
+/** 会话级模型覆盖（聊天页切换模型即存；model 传空串=清除覆盖回到个人默认） */
+export const updateSessionModelApi = (sid, model) =>
+  request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ model }) })
+
+/** 读取会话已存的模型覆盖（切到列表未加载的会话时按需恢复选择器） */
+export const getSessionModelApi = sid => request(`/session/${sid}/model`)
+
 /** 删除会话（MySQL 软删除 + Redis 清理） */
 export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })
 

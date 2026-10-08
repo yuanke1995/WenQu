@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `is_favorite`   INT          DEFAULT 0 COMMENT '收藏: 0=否, 1=是',
     `agent_id`      VARCHAR(50)  DEFAULT NULL COMMENT '会话级绑定的智能体（首问时锁定：显式选择或自动派遣结果；NULL=尚未绑定，空串=显式不用智能体走全局配置）',
     `agent_name`    VARCHAR(100) DEFAULT NULL COMMENT '绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称）',
+    `model`         VARCHAR(190) DEFAULT NULL COMMENT '会话级模型覆盖（聊天页手动切换模型时写入，引用或遗留名；NULL=跟随个人默认）',
     `history_summary`   MEDIUMTEXT DEFAULT NULL COMMENT '滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过）',
     `summary_until_seq` BIGINT     DEFAULT 0 COMMENT '摘要已覆盖的最大消息 sequence（该序号及更早的原样历史已被摘要吸收，压缩时增量合并）',
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
