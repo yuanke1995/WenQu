@@ -139,8 +139,11 @@ onMounted(async () => {
 .sh-list { width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 18px; }
 .sh-row { display: flex; }
 .sh-row.user { justify-content: flex-end; }
-.sh-bubble { max-width: 88%; font-size: 14px; line-height: 1.75; }
+.sh-bubble { font-size: 14px; line-height: 1.75; }
 .sh-bubble.user {
+  /* 88% 只给用户气泡（长问句留出左侧留白）。曾经写在 .sh-bubble 上，
+     把 AI 卡也一并卡到 88% —— 用户气泡贴右、回答卡却短一截，右边缘对不齐。 */
+  max-width: 88%;
   background: var(--app-accent); color: #fff; padding: 9px 13px; border-radius: 12px 12px 2px 12px;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -187,7 +190,7 @@ onMounted(async () => {
   .sh-head { margin-bottom: 14px; }
   .sh-title { font-size: 17px; }
   .sh-list { gap: 12px; }
-  .sh-bubble { max-width: 92%; }
+  .sh-bubble.user { max-width: 92%; }
   .sh-bubble.ai { padding: 10px 12px; }
   /* 产物行是分享页的主要交互目标，放到 44px 触摸热区；文件名仍单行省略不换行 */
   .sh-art { padding: 11px 10px; }

@@ -150,7 +150,11 @@ const check = (ok, label, detail = '') => {
       srcN: document.querySelectorAll('.sh-src-item').length,
       webLink: !!document.querySelector('.sh-src-link'),
       brandH: brand ? Math.round(brand.getBoundingClientRect().height) : 0,
-      inLayout, scrollW: de.scrollWidth, clientW: de.clientWidth
+      inLayout, scrollW: de.scrollWidth, clientW: de.clientWidth,
+      // 右边缘对齐：用户气泡贴右、回答卡却短一截（.sh-bubble 上的 max-width 误伤 AI 侧）
+      colRight: Math.round(document.querySelector('.sh-list').getBoundingClientRect().right),
+      aiRight: Math.round(document.querySelector('.sh-bubble.ai').getBoundingClientRect().right),
+      userRight: Math.round(document.querySelector('.sh-bubble.user').getBoundingClientRect().right)
     }
   })
   check(sh.title.includes('季度复盘'), '只读分享页标题渲染', sh.title)
@@ -161,6 +165,12 @@ const check = (ok, label, detail = '') => {
   check(sh.brandH >= 44, '页脚品牌链接触摸热区 ≥44px', `h=${sh.brandH}`)
   check(!sh.inLayout, 'pageFlow 生效：不进 AppLayout 外壳（否则 100vh 截断滚不动）')
   check(sh.scrollW <= sh.clientW + 1, '只读分享页无横向溢出', `scrollW=${sh.scrollW} clientW=${sh.clientW}`)
+  // 2026-10 用户截图报「回答区域没对齐」：AI 回答卡的右边缘与用户气泡/标题栏差 98px。
+  // 根因是 .sh-bubble 上的 max-width: 88%（本意只约束用户气泡）把 width:100% 的 AI 卡也卡窄了。
+  // AI 卡右边缘必须与用户气泡右边缘、居中栏右边缘三者重合（1px 容差给取整）。
+  check(Math.abs(sh.userRight - sh.colRight) <= 1 && Math.abs(sh.aiRight - sh.colRight) <= 1,
+    '回答卡右边缘与用户气泡/居中栏对齐（.sh-bubble 的 max-width 只约束用户侧）',
+    `col=${sh.colRight} ai=${sh.aiRight} user=${sh.userRight}`)
 
   // ---- /s/:token（智能体对话分享，可续聊）----
   await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
