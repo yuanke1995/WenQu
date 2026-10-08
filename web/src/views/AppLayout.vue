@@ -48,9 +48,10 @@
              renderAs：sidebar=可点入口；group=分组标题（不可点）；tab=页内 Tab（宿主页渲染，
              不进侧栏）；hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
-        <template v-for="m in (navEditing ? navEditRows : navMenus)" :key="m.id">
-          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮 -->
-          <div v-if="navEditing"
+        <template v-for="m in (showNavEditor ? navEditRows : navMenus)" :key="m.id">
+          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮。
+               判 showNavEditor（含 !collapsed）而非裸 navEditing：折叠态图标条容不下这些控件 -->
+          <div v-if="showNavEditor"
                class="nav-edit-row"
                :class="{ off: m.hidden, dragging: editDragId === m.id, over: editOverId === m.id }"
                draggable="true"
@@ -93,7 +94,7 @@
              单行按钮、不额外占高度；提示语从常驻文案降为 title ——
              两行式版本会把侧栏顶高 43px、连带下方会话列表整体下移，
              而行内的拖拽把手与开关本身已自解释，不必常驻。 -->
-        <div v-if="navEditing" class="nav-edit-bar" title="拖动行可调整顺序，开关控制显隐">
+        <div v-if="showNavEditor" class="nav-edit-bar" title="拖动行可调整顺序，开关控制显隐">
           <div class="nav-edit-ops">
             <a-popconfirm title="恢复到系统默认顺序，并把隐藏项全部显示出来，确定？"
                           ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
@@ -396,14 +397,29 @@ const navEditSaving = ref(false)
 
 const editSig = () => navEditRows.value.map(r => `${r.id}:${r.hidden ? 0 : 1}`).join('|')
 const navEditDirty = computed(() => editSig() !== navEditBase.value)
+/**
+ * 是否真的渲染编辑器 = 在编辑态 **且** 侧栏展开。折叠态下 56px 图标条容不下带文字和开关的
+ * 行（实测会横向溢出），所以模板一律判这个派生值而不是裸 navEditing。
+ * 主路径是 toggleFold 里调 exitNavEdit 清状态；这里是模板层第二道保险，
+ * 防的是将来有别处直接改 collapsed 而绕过那条联动。
+ */
+const showNavEditor = computed(() => navEditing.value && !collapsed.value)
+
+/**
+ * 退出编辑态并丢弃未保存草稿。navMenus 始终是服务端算出的权威结果、从未被本地改过，
+ * 所以清掉草稿状态就等于回到编辑前的样子，**不需要**重拉 /auth/me
+ * （重拉反而会覆盖用户刚看到的默认态，观感上像"我的改动自己消失了"）。
+ *
+ * 复用场景：点编辑按钮退出、**折叠侧栏**（见 toggleFold）、保存成功、恢复默认。
+ */
+function exitNavEdit () {
+  navEditing.value = false
+  navEditRows.value = []
+  navEditBase.value = ''
+}
 
 async function toggleNavEdit () {
-  if (navEditing.value) {
-    // 退出编辑：丢弃未保存草稿，navMenus 始终是服务端算出的权威结果，从未被本地改过
-    navEditing.value = false
-    navEditRows.value = []
-    return
-  }
+  if (navEditing.value) { exitNavEdit(); return }
   loadingNavEdit()
   navEditing.value = true
 }
@@ -447,9 +463,7 @@ async function saveNavLayout () {
     })
     if (res && res.success) {
       message.success('侧栏已更新')
-      navEditBase.value = editSig()
-      navEditing.value = false
-      navEditRows.value = []
+      exitNavEdit()
       await reloadMenus()   // 重拉生效：菜单树 + 偏好都在 /auth/me 一个响应里
     } else message.error((res && res.msg) || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
@@ -462,8 +476,7 @@ async function resetNavDefault () {
     const res = await saveMyMenuLayout({ reset: true })
     if (res && res.success) {
       message.success('已恢复默认侧栏')
-      navEditing.value = false
-      navEditRows.value = []
+      exitNavEdit()
       await reloadMenus()
     } else message.error((res && res.msg) || '恢复失败')
   } catch (e) { message.error(e.message || '恢复失败') }
@@ -525,6 +538,11 @@ const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
 const toggleFold = () => {
   collapsed.value = !collapsed.value
   localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0')
+  // 收起时顺带结束侧栏编辑：折叠是用户明确表示「收起这列」，编辑态跟着一起结束。
+  // 不修的话编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
+  // 带文字和开关的行在图标条里必然横向溢出（2026-10-08 用户截图：开关悬在条外、
+  // 「恢复默认」文字糊成一团）。未保存草稿直接丢弃，语义同「点编辑按钮退出」。
+  if (collapsed.value) exitNavEdit()
 }
 
 const visibleSessionList = computed(visibleSessions)
