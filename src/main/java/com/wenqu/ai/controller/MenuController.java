@@ -90,23 +90,19 @@ public class MenuController {
     }
 
     @Operation(summary = "我的侧栏布局读取",
-            description = "返回本人偏好 {order:[menuId…],hidden:[menuId…]}；customized=false 表示走菜单表默认。"
-                    + "order 为 null 表示未自定义顺序（前端按 /auth/me 下发的原序展示）")
+            description = "返回 {customized, order:[menuId…], hidden:[menuId…], menus:[侧栏可调项全集]}。"
+                    + "customized=false 表示走菜单表默认；menus 是**未施加个人偏好**的 sidebar/group 顶级项"
+                    + "（含已被自己隐藏的），抽屉据此渲染开关行——侧栏实际渲染的 /auth/me menus 里没有隐藏项")
     @GetMapping("/my-layout")
     public ResultJson myLayout() {
         User u = userMapper.selectById(RequestUser.uid());
+        String prefJson = u == null ? null : u.getMenuPref();
+        MenuService.MenuPref p = menuService.parsePref(prefJson);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("customized", u != null && u.getMenuPref() != null && !u.getMenuPref().isBlank());
-        if (u != null && u.getMenuPref() != null && !u.getMenuPref().isBlank()) {
-            try {
-                MenuService.MenuPref p = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readValue(u.getMenuPref(), MenuService.MenuPref.class);
-                out.put("order", p.order);
-                out.put("hidden", p.hidden);
-            } catch (Exception ignored) {
-                // 脏数据不外泄细节，前端按 customized=false 走默认
-            }
-        }
+        out.put("customized", p != null);
+        out.put("menus", menuService.adjustableSidebarMenus(RequestUser.role()));
+        out.put("order", p == null ? List.of() : p.order);
+        out.put("hidden", p == null ? List.of() : p.hidden);
         return ResultJson.ok(out);
     }
 

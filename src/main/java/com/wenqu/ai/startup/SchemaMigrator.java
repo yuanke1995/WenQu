@@ -32,7 +32,12 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Component
-@Order(100)   // 先于依赖新表的启动任务：先补齐结构再补数据
+// @Order(0) —— 必须**最早**跑，不是"较早"：本类存在的唯一目的就是让后续启动任务能操作新列/新表。
+// 历史事故（2026-10-08）：本类曾是 @Order(100) 而 RbacSeedRunner 是 @Order(1)，种子先跑 →
+// 存量库缺 render_as 列时 seed() 第一条 selectList 就 SQLSyntaxErrorException，
+// 6 个内置 Tab 菜单一条没种、user 角色补绑整段没跑，表现为「智能体页没有可用的功能 Tab」。
+// 任何给已有表加列的改动都会踩这个坑，故取 0：ApplicationRunner 之间不存在需要更早的先决条件。
+@Order(0)
 public class SchemaMigrator implements ApplicationRunner {
 
     private static final Pattern CREATE_TABLE = Pattern.compile(

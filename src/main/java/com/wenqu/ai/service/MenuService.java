@@ -163,6 +163,25 @@ public class MenuService {
     }
 
     /**
+     * 解析偏好 JSON 供 /menu/my-layout 回显（与 {@link #applyPref} 同口径，避免控制器另建 ObjectMapper）。
+     * 返回 null 表示「未自定义或脏数据」，由调用方按 customized=false 处理。
+     */
+    public MenuPref parsePref(String prefJson) {
+        if (prefJson == null || prefJson.isBlank()) return null;
+        try {
+            MenuPref p = PREF_MAPPER.readValue(prefJson, MenuPref.class);
+            if (p == null) return null;
+            // order/hidden 归一为空列表而非 null：调用方直接遍历，不用到处判空
+            if (p.order == null) p.order = List.of();
+            if (p.hidden == null) p.hidden = List.of();
+            return p;
+        } catch (Exception e) {
+            log.warn("[MENU] 个人侧栏偏好解析失败，按默认下发：{}", e.toString());
+            return null;
+        }
+    }
+
+    /**
      * 供 /auth/me 用的便捷入口：按当前用户（uid + role）下发菜单，自动叠加其个人偏好。
      * 偏好列不存在/为空/坏JSON 时静默退化为菜单表默认。
      */
@@ -173,6 +192,25 @@ public class MenuService {
             pref = u == null ? null : u.getMenuPref();
         }
         return visibleMenusFor(role, pref);
+    }
+
+    /**
+     * 「我的侧栏布局」抽屉的行清单：<b>不施加个人偏好</b>的侧栏可调项全集。
+     * <p>
+     * 为什么不直接用 {@code /auth/me} 的 menus：那份已按个人偏好剔除 hidden —— 用户隐藏过的菜单
+     * 会从列表里消失，于是抽屉再也无法把它打开回来（只剩「恢复默认」整组重置一条路）。
+     * 抽屉要的是「我能调的开关清单」，含已关闭的开关，与侧栏实际渲染结果是两件事。
+     * <p>
+     * 可见性仍只由 RBAC 决定（这里传 null 偏好，集合与授权菜单完全一致），
+     * 范围同样只取 sidebar/group 顶级项 —— tab 由宿主页渲染、hidden 是纯权限容器，两者不进侧栏。
+     */
+    public List<Map<String, Object>> adjustableSidebarMenus(String role) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> m : visibleMenusFor(role, null)) {
+            String ra = m.get("renderAs") == null ? "sidebar" : String.valueOf(m.get("renderAs"));
+            if ("sidebar".equals(ra) || "group".equals(ra)) out.add(m);
+        }
+        return out;
     }
 
     // ==================== 个人偏好读写 ====================

@@ -84,7 +84,11 @@ import { getMyMenuLayout, saveMyMenuLayout } from '../api'
 
 const props = defineProps({
   open: Boolean,
-  /** /auth/me 下发的可见菜单（顶层平铺，已按角色过滤、已生效个人偏好） */
+  /**
+   * /auth/me 下发的可见菜单（顶层平铺）。**只作降级数据源**：正常路径用 GET /menu/my-layout
+   * 返回的 menus 全集（不含个人偏好剔除），否则用户隐藏过的菜单会从这一份里消失，
+   * 抽屉里再也开不回来。接口失败时才回退到这里。
+   */
   menus: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['close', 'saved'])
@@ -112,13 +116,17 @@ watch(() => props.open, async v => {
   if (!v) return
   loading.value = true
   try {
-    // 拉一次服务端偏好，与当前可见菜单取交集：
-    // 偏好里的 id 可能已失效（菜单被删/角色变更），此处自然丢弃
+    // 行清单取服务端下发的「未施加个人偏好的可调项全集」——含自己已隐藏的，才能开关回来。
+    // hidden 只用于标记开关初值；失效 id（菜单已删/授权被收回）自然不出现在行里。
     const r = await getMyMenuLayout()
-    const hidden = new Set((r && r.data && r.data.hidden) || [])
-    rows.value = (props.menus || []).map(m => ({
+    const data = (r && r.data) || {}
+    const src = Array.isArray(data.menus) && data.menus.length ? data.menus : (props.menus || [])
+    const hidden = new Set(data.hidden || [])
+    rows.value = src.map(m => ({
       id: m.id, name: m.name, icon: m.icon, hidden: hidden.has(m.id)
     }))
+    // customized=false 时服务端 order 为空；此时用菜单表默认序（即 src 的原序）即可
+    if (Array.isArray(data.order) && data.order.length) applySavedOrder(data.order)
     base.value = sig(rows.value)
   } catch (e) {
     message.error(e.message || '读取个人布局失败')
@@ -126,6 +134,15 @@ watch(() => props.open, async v => {
     base.value = ''
   } finally { loading.value = false }
 })
+
+/** 把已保存的顺序套到当前行清单上：order 里没有的（新增菜单/已删）按现状留在原位追加 */
+function applySavedOrder (order) {
+  const rank = new Map(order.map((id, i) => [id, i]))
+  rows.value = rows.value
+    .map((r, i) => ({ r, k: rank.has(r.id) ? rank.get(r.id) : Number.MAX_SAFE_INTEGER - (rows.value.length - i) }))
+    .sort((a, b) => a.k - b.k)
+    .map(x => x.r)
+}
 
 function move (i, dir) {
   const j = i + dir
@@ -192,7 +209,8 @@ function splice (from, to) {
 async function save () {
   saving.value = true
   try {
-    // order 只传「可见的」+ hidden 传隐藏的；两者互斥表达，隐藏项留在 order 里也无妨
+    // order 传全量行 id（含隐藏项）：后端 applyPref 只按 order 排顶级列表、hidden 另做剔除，
+    // 隐藏项留在 order 里才能保住它被重排到的那一位；后端会按角色白名单过滤陌生 id。
     const res = await saveMyMenuLayout({
       order: rows.value.map(r => r.id),
       hidden: rows.value.filter(r => r.hidden).map(r => r.id)
@@ -203,14 +221,18 @@ async function save () {
   finally { saving.value = false }
 }
 
-/** 恢复默认：服务端把列置 null，前端按 props.menus 原序重置草稿并关闭 */
+/** 恢复默认：服务端把列置 null，前端按「可调项全集」重置草稿（全显示、原序）并关闭 */
 async function resetDefault () {
   saving.value = true
   try {
     const res = await saveMyMenuLayout({ reset: true })
     if (res && res.success) {
       message.success('已恢复默认')
-      rows.value = (props.menus || []).map(m => ({ id: m.id, name: m.name, icon: m.icon, hidden: false }))
+      // 重新拉一次：拿服务端权威的可调项全集，避免用已被本地隐藏过滤过的 props.menus 重置
+      const r = await getMyMenuLayout()
+      const src = (r && r.data && Array.isArray(r.data.menus) && r.data.menus.length)
+        ? r.data.menus : (props.menus || [])
+      rows.value = src.map(m => ({ id: m.id, name: m.name, icon: m.icon, hidden: false }))
       base.value = sig(rows.value)
       emit('saved')
       emit('close')

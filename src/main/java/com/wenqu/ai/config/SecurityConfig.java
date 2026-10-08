@@ -89,6 +89,12 @@ public class SecurityConfig implements WebMvcConfigurer {
         // GET /ask-user/pending 是卡片恢复入口（会话加载时取自己的待答提问），同样只按 uid 过滤。
         if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/ask-user")
                 || path.startsWith("/api/ai/ask-user/"))) return true;
+        // 执行计划裁决（计划模式，人在回路）：POST /plan-approval/{id} 与上两条同口径——归属由
+        // resolvePlanApproval 按"裁决人 uid == 发起轮次用户"严格校验；等待窗口默认 10 分钟，
+        // 放行保证等待期间 JWT 过期能拿到干净的「已失效」错误。GET /plan-approval/pending 是
+        // 卡片恢复入口（会话加载时取自己的待批准计划），同样只按 uid 过滤。
+        if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/plan-approval")
+                || path.startsWith("/api/ai/plan-approval/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;
         // 登录相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）
@@ -110,6 +116,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isProviderSelfEndpoint(method, path)) return true;
         // 个人偏好（本人默认模型 + 记忆开关）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
+        // 我的侧栏布局（个人资产）：读改自己的菜单顺序/显隐，归属一律取登录 uid（MenuController 内），
+        // 只重排/隐藏「本人已有」的菜单（保存时按角色白名单过滤），与 /user/preference 同口径故全员可用。
+        // 必须显式放行：/api/ai/menu/** 整体是权限管理页的管理端点，未放行时普通用户点侧栏齿轮直接 403
+        // （管理员靠 isAdminCode 直通，故只在非管理员账号上暴露）。
+        if (path.equals("/api/ai/menu/my-layout")) return true;
         // 个人对话偏好（相关建议条数等，schema personal 字段）：
         // 只读写本人的 c_ai_user_config（uid 取登录态），键限定为 schema 标记 personal 的字段
         if (path.equals("/api/ai/user/settings")) return true;
