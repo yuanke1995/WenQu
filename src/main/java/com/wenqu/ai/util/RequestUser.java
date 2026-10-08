@@ -55,4 +55,45 @@ public final class RequestUser {
     public static boolean superadmin() {
         return "superadmin".equals(role());
     }
+
+    /**
+     * 身份快照（跨线程传递用）。
+     * <p>
+     * <b>为什么需要</b>：本类用<b>裸 {@link ThreadLocal}</b>，只在装载它的线程可见。项目里凡是
+     * 「换线程执行用户态逻辑」的地方都会丢失身份并回落 {@link #ANONYMOUS}，而 {@code anonymous}
+     * 不是一个安全的降级值——检索层 {@code loadVisibleKbIds()} 会判它「什么都读不到」，
+     * 于是<b>在主链路明明召回到、换个线程就恒空</b>（线上实测：{@code searchKnowledge} 在
+     * {@code boundedElastic-*} 工具线程里 {@code uid=anonymous} →库门永假 → 融合召回 0）。
+     * 同一坑已踩多次（{@code SubAgentOrchestrator} 分支检索也为此打了局部补丁），故在此提供
+     * 通用快照/恢复，由调用点在<b>线程切换之前</b>捕获、切换之后恢复。
+     */
+    public record Snapshot(String uid, String departmentId, String role) {
+    }
+
+    /** 捕获当前身份快照（应在提交异步任务<b>之前</b>调用，此时身份还可见） */
+    public static Snapshot snapshot() {
+        RequestUser u = CURRENT.get();
+        return u == null ? new Snapshot(ANONYMOUS, null, "user")
+                : new Snapshot(u.uid, u.departmentId, u.role);
+    }
+
+    /** 在<b>新线程里</b>恢复身份；返回的 AutoCloseable 用于 finally 复原，避免污染线程池里后续复用该线程的任务 */
+    public static AutoCloseable restore(Snapshot s) {
+        if (s == null) return () -> { };
+        RequestUser prev = CURRENT.get();
+        CURRENT.set(new RequestUser(s.uid(), s.departmentId(), s.role()));
+        return () -> {
+            if (prev == null) CURRENT.remove();
+            else CURRENT.set(prev);
+        };
+    }
+
+    /** 以快照身份执行并自动复原（用于同步包裹一段跨线程调用） */
+    public static <T> T callAs(Snapshot s, java.util.function.Supplier<T> action) {
+        try (AutoCloseable ignored = restore(s)) {
+            return action.get();
+        } catch (Exception e) {
+            throw new IllegalStateException("恢复用户身份失败", e);
+        }
+    }
 }

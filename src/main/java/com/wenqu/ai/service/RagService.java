@@ -1850,6 +1850,11 @@ public class RagService {
      */
     private org.springframework.ai.tool.ToolCallback[] instrumentTools(
             java.util.List<org.springframework.ai.tool.ToolCallback> rawTools, AnswerStreamState st) {
+        // 身份快照在此处（入口线程）捕获：instrumentTools 由问答流水线在 chat-pipeline 线程调用，
+        // 此时 RequestUser 可见。工具实际执行在 boundedElastic 线程，必须靠这个快照把身份带过去
+        // （见 callWithRetry）。放在执行点捕获是无效的——那里已经在弹性线程上，只会拿到 anonymous。
+        final com.wenqu.ai.util.RequestUser.Snapshot identity =
+                com.wenqu.ai.util.RequestUser.snapshot();
         List<org.springframework.ai.tool.ToolCallback> wrapped = new ArrayList<>(rawTools.size());
         for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
             wrapped.add(new org.springframework.ai.tool.ToolCallback() {
@@ -2007,7 +2012,7 @@ public class RagService {
                         boolean mcpTool = st.mcpToolNames.contains(name);
                         try {
                             int[] attempts = {0};
-                            String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts);
+                            String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts, identity);
                             if (mcpTool) {
                                 result = st.registerMcpCitations(name, result);
                             }
@@ -2248,7 +2253,15 @@ public class RagService {
      */
     private String callWithRetry(org.springframework.ai.tool.ToolCallback cb, String toolInput,
                                  org.springframework.ai.chat.model.ToolContext toolContext,
-                                 String name, int[] attempts) {
+                                 String name, int[] attempts,
+                                 com.wenqu.ai.util.RequestUser.Snapshot identity) {
+        // 工具执行发生在 Reactor boundedElastic 线程（Spring AI ToolCallAdvisor 对阻塞工具 subscribeOn），
+        // 而 RequestUser 用裸 ThreadLocal 只在入口线程可见 → 工具内读身份会回落 anonymous。
+        // 对检索类工具这不是安全降级而是功能损坏：loadVisibleKbIds() 判 anonymous 为「什么都读不到」
+        // → 库门表达式恒假 → 融合召回 0（线上实测：主链路命中 31 块，工具侧恒空并耗尽 15 步工具预算）。
+        // identity 由 instrumentTools 在入口线程捕获后传入——不能在执行点临时 snapshot()，
+        // 那里已经在弹性线程上、捕获到的只会是 anonymous（实测修复无效）。
+        // 统一恢复：一次覆盖全部工具（检索/沙盒/MCP/工作流），避免逐工具打补丁。
         RuntimeException last = null;
         for (int i = 0; i < 2; i++) {
             if (i > 0) {
@@ -2262,7 +2275,8 @@ public class RagService {
                 }
             }
             attempts[0]++;
-            try {
+            // restore() 返回的句柄用于 finally 复原：弹性线程会被复用，不清理会污染后续任务的身份
+            try (AutoCloseable ignored = com.wenqu.ai.util.RequestUser.restore(identity)) {
                 return cb.call(toolInput, toolContext);
             } catch (Exception e) {
                 last = e instanceof RuntimeException ? (RuntimeException) e : new IllegalStateException(e);
