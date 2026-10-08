@@ -203,12 +203,23 @@ public class MenuService {
      * <p>
      * 可见性仍只由 RBAC 决定（这里传 null 偏好，集合与授权菜单完全一致），
      * 范围同样只取 sidebar/group 顶级项 —— tab 由宿主页渲染、hidden 是纯权限容器，两者不进侧栏。
+     * <p>
+     * 返回的是<b>只含平铺字段的新节点</b>，不带 children：抽屉是开关清单，读到 children
+     * 只会让「智能体」带着 6 个 Tab 子节点进响应（实测普通用户响应里就有）。直接复用
+     * visibleMenusFor 的节点会把子树一起带出去，故逐字段重建。
      */
     public List<Map<String, Object>> adjustableSidebarMenus(String role) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> m : visibleMenusFor(role, null)) {
             String ra = m.get("renderAs") == null ? "sidebar" : String.valueOf(m.get("renderAs"));
-            if ("sidebar".equals(ra) || "group".equals(ra)) out.add(m);
+            if (!"sidebar".equals(ra) && !"group".equals(ra)) continue;
+            Map<String, Object> flat = new LinkedHashMap<>();
+            flat.put("id", m.get("id"));
+            flat.put("name", m.get("name"));
+            flat.put("icon", m.get("icon"));
+            flat.put("path", m.get("path"));
+            flat.put("renderAs", ra);
+            out.add(flat);
         }
         return out;
     }
