@@ -142,7 +142,19 @@ const askUserView = t => {
   }
   return { topic, question, options, answer: askAnswerLabel(raw) }
 }
-const toolDuration = ms => (ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')
+/** 耗时文案：<1s 用 ms，1~60s 留一位小数，≥60s 换成「3m46s」，≥60m 再换成「1h2m」——226.0s 这种长小数读不出量级 */
+const toolDuration = ms => {
+  if (ms < 1000) return ms + 'ms'
+  const tenths = Math.round(ms / 100)
+  if (tenths < 600) return (tenths / 10).toFixed(1) + 's'
+  const secs = Math.round(tenths / 10)
+  if (secs < 3600) {
+    const s = secs % 60
+    return Math.floor(secs / 60) + 'm' + (s ? s + 's' : '')
+  }
+  const m = Math.round(secs / 60) % 60
+  return Math.floor(Math.round(secs / 60) / 60) + 'h' + (m ? m + 'm' : '')
+}
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
 // 是否有「正在运行且可见」的编排分支。必须带 delegated 条件：编排卡片（subagentCard）只渲染
@@ -514,7 +526,7 @@ const ensureTick = () => {
 }
 // 组件卸载时停表（纯模块挂不了 onUnmounted，由消费方在 onUnmounted 里调用）
 const stopTick = () => { if (tickTimer) { clearInterval(tickTimer); tickTimer = null } }
-const liveToolDur = startAt => Math.max(0, Math.round((nowTick.value - startAt) / 1000)) + 's'
+const liveToolDur = startAt => toolDuration(Math.max(0, nowTick.value - startAt))
 // 精确检索工具实际使用的检索词（模型可主动改词做二次检索，与主链路 retrieved 的词不同源）。
 // 从 toolCalls 终态记录的 args 派生：实时路径 start 记录带 args（done 合并后保留），历史恢复是 done 记录带 args，两路都覆盖
 const toolSearchQueries = m => {
@@ -606,7 +618,7 @@ const fmtWindow = n => {
 // ============ 子智能体编排卡片（仅委派模式显示） ============
 // 多视角模式（delegated=false）的分支只是把原问题换个问法，属实现细节，不展示；
 // 只有主智能体委派了真实子智能体（有名字、有职责）时，卡片才有信息价值。
-const fmtDuration = ms => ms == null ? '—' : (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms')
+const fmtDuration = ms => ms == null ? '—' : toolDuration(ms)
 function subagentCard (m) {
   const all = (m && Array.isArray(m.subagents)) ? m.subagents : []
   // 只要有任一分支标记了委派，就按委派模式渲染（后端按整轮是否委派置位，全部分支一致）
