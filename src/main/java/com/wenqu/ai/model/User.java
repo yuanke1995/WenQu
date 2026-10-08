@@ -63,6 +63,12 @@ public class User {
      *  清空（回落昵称首字）需将列置 null，故更新走 LambdaUpdateWrapper 字符串 set，绕过 MP 默认 NOT_NULL 跳过 null 的策略 */
     private String avatar;
 
+    /** 个人侧栏偏好 JSON：{@code {"order":[menuId…],"hidden":[menuId…]}}。
+     *  <p>只重排/隐藏「本人有权看到」的菜单 —— 可见集合仍由角色 RBAC 决定（{@code c_ai_role_menu}），
+     *  这里只做个人口味，不能用来越权看到未授权菜单。空=未自定义，走菜单表默认顺序与显隐。
+     *  <p>清空（恢复默认）需将列置 null，故更新走字符串 set，绕过 MP 默认 NOT_NULL 跳过 null 的策略。</p> */
+    private String menuPref;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

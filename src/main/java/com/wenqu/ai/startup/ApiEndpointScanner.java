@@ -110,31 +110,31 @@ public class ApiEndpointScanner implements ApplicationRunner {
      * 不参与鉴权。未收录的 Controller（登录/通知/个人资产等）不归属，接口进「其他接口」分组。</p>
      */
     private static final Map<String, List<String>> DEFAULT_MENUS = Map.ofEntries(
-            Map.entry("Agent", List.of("menu-agents")),
+            Map.entry("Agent", List.of("menu-agents-tab-agents")),
             Map.entry("ApiEndpoint", List.of("menu-permissions")),
             Map.entry("ApiKey", List.of("menu-settings")),
             Map.entry("Artifact", List.of("menu-artifacts")),
             Map.entry("Chat", List.of("menu-chat")),
             Map.entry("Config", List.of("menu-settings")),
-            Map.entry("Credential", List.of("menu-agents")),
+            Map.entry("Credential", List.of("menu-agents-tab-providers")),
             Map.entry("Department", List.of("menu-members", "menu-permissions")),
             Map.entry("Document", List.of("menu-knowledge")),
             Map.entry("Evaluation", List.of("menu-evaluation")),
             Map.entry("Graph", List.of("menu-knowledge")),
             Map.entry("Knowledge", List.of("menu-knowledge")),
             Map.entry("KnowledgeBase", List.of("menu-knowledge")),
-            Map.entry("Mcp", List.of("menu-agents")),
+            Map.entry("Mcp", List.of("menu-agents-tab-mcp")),
             Map.entry("Menu", List.of("menu-permissions")),
             Map.entry("Ocr", List.of("menu-settings")),
-            Map.entry("Provider", List.of("menu-agents")),
+            Map.entry("Provider", List.of("menu-agents-tab-providers")),
             Map.entry("Qa", List.of("menu-dashboard")),
             Map.entry("RetrievalDebug", List.of("menu-evaluation")),
             Map.entry("Role", List.of("menu-permissions")),
-            Map.entry("Schedule", List.of("menu-agents")),
-            Map.entry("ScheduledJob", List.of("menu-agents")),
+            Map.entry("Schedule", List.of("menu-agents-tab-scheduled")),
+            Map.entry("ScheduledJob", List.of("menu-agents-tab-scheduled")),
             Map.entry("SearchIndex", List.of("menu-settings")),
-            Map.entry("Share", List.of("menu-agents")),
-            Map.entry("Skill", List.of("menu-agents")),
+            Map.entry("Share", List.of("menu-agents-tab-agents")),
+            Map.entry("Skill", List.of("menu-agents-tab-skills")),
             Map.entry("ToolInventory", List.of("menu-settings")),
             Map.entry("Trace", List.of("menu-dashboard")),
             Map.entry("UsageStats", List.of("menu-stats")),
@@ -179,6 +179,12 @@ public class ApiEndpointScanner implements ApplicationRunner {
         // 默认菜单归属的前提数据：现存菜单 id（退役/删除的菜单不可再建归属）与已有归属的接口 id（幂等判定）
         Set<String> validMenuIds = menuMapper.selectList(null).stream().map(Menu::getId).collect(Collectors.toSet());
         Set<String> boundApiIds = new HashSet<>(menuApiMapper.boundApiIds());
+        // Tab 拆分迁移的前提数据：apiId → 当前归属菜单列表（判定「归属恰好还是旧默认」）
+        Map<String, List<String>> legacyOwners = new HashMap<>();
+        for (Map<String, Object> row : menuApiMapper.all()) {
+            legacyOwners.computeIfAbsent(String.valueOf(row.get("api_id")), k -> new ArrayList<>())
+                    .add(String.valueOf(row.get("menu_id")));
+        }
 
         Map<RequestMappingInfo, HandlerMethod> handlerMethods = requestMappingHandlerMapping.getHandlerMethods();
         int added = 0, total = 0;
@@ -192,6 +198,8 @@ public class ApiEndpointScanner implements ApplicationRunner {
         // 默认菜单归属：新登记接口 → 插入成功后绑定；零归属内置接口 → 循环结束后幂等补齐
         Map<String, List<String>> newApiMenus = new HashMap<>();
         Map<String, List<String>> backfillMenus = new HashMap<>();
+        // Tab 拆分迁移（2026-10-08）：归属恰好还是旧默认 menu-agents 的内置接口 → 迁到对应 Tab 菜单
+        Map<String, List<String>> remapMenus = new HashMap<>();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> e : handlerMethods.entrySet()) {
             RequestMappingInfo info = e.getKey();
             HandlerMethod hm = e.getValue();
@@ -212,6 +220,15 @@ public class ApiEndpointScanner implements ApplicationRunner {
                         // 幂等补齐：内置接口、当前零归属、命中默认对照 → 待绑定（已有任一归属则不动，尊重管理员调整）
                         if (!defMenus.isEmpty() && isBuiltin(existed) && !boundApiIds.contains(existed.getId())) {
                             backfillMenus.putIfAbsent(existed.getId(), defMenus);
+                        }
+                        // Tab 拆分迁移：内置 + 当前归属恰好是旧默认 menu-agents 单归属 + 新默认已细化 → 重绑。
+                        // 判据刻意收窄：管理员调过的（归属≠旧默认或多归属）一律不动；迁移后归属=新默认，
+                        // 下次启动条件不再成立，天然幂等。归属不参与鉴权，迁移零风险。
+                        else if (!defMenus.isEmpty() && isBuiltin(existed) && !defMenus.contains("menu-agents")) {
+                            List<String> cur = legacyOwners.get(existed.getId());
+                            if (cur != null && cur.size() == 1 && "menu-agents".equals(cur.get(0))) {
+                                remapMenus.put(existed.getId(), defMenus);
+                            }
                         }
                         continue;
                     }
@@ -247,8 +264,17 @@ public class ApiEndpointScanner implements ApplicationRunner {
                 backfilled += menuApiMapper.bind(menuId, e.getKey());
             }
         }
+        int remapped = 0;
+        for (Map.Entry<String, List<String>> e : remapMenus.entrySet()) {
+            menuApiMapper.unbindByApi(e.getKey());
+            for (String menuId : e.getValue()) {
+                menuApiMapper.bind(menuId, e.getKey());
+            }
+            remapped++;
+        }
         if (added > 0) roleService.invalidateApiPatterns();
         if (backfilled > 0) log.info("[ApiScan] 默认菜单归属补齐：{} 个存量接口（此前零归属）", backfillMenus.size());
+        if (remapped > 0) log.info("[ApiScan] Tab 拆分迁移：{} 个内置接口归属从 menu-agents 细化到对应 Tab 菜单", remapped);
         log.info("[ApiScan] 接口扫描完成：命中 {} 个端点，新登记 {} 个，默认菜单归属 {} 条", total, added, bound);
     }
 

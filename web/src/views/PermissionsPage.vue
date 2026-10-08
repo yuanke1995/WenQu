@@ -45,6 +45,11 @@
                   <span class="rb-name">{{ record.name }}</span>
                   <span v-if="record.builtin === 1" class="app-pill builtin">内置</span>
                   <span v-if="record.visible === 0" class="app-pill warn">隐藏</span>
+                  <!-- 渲染位置：sidebar 是默认态不加噪，其余三类必须可见——
+                       尤其 tab 型不出现在侧栏，权限页里不标出来就成了「看不见的菜单」 -->
+                  <span v-if="(record.renderAs || 'sidebar') === 'tab'" class="app-pill rb-ra">Tab</span>
+                  <span v-else-if="(record.renderAs || 'sidebar') === 'group'" class="app-pill rb-ra">分组</span>
+                  <span v-else-if="(record.renderAs || 'sidebar') === 'hidden'" class="app-pill rb-ra">容器</span>
                 </span>
               </template>
             </a-table-column>
@@ -186,6 +191,21 @@
           <a-tree-select v-model:value="menuForm.parentId" allow-clear tree-default-expand-all
                          placeholder="空 = 顶级菜单" style="width:100%"
                          :tree-data="parentTreeData" :field-names="{ label: 'name', value: 'id', children: 'children' }" />
+          <div v-if="menuForm.renderAs === 'tab'" class="form-tip">
+            Tab 型必须挂在宿主页面（如「智能体」）名下，且路径填 <code>/agents?tab=key</code> 形式。
+          </div>
+        </a-form-item>
+        <a-form-item label="渲染位置">
+          <a-radio-group v-model:value="menuForm.renderAs" button-style="solid" size="small">
+            <a-radio-button value="sidebar">侧栏入口</a-radio-button>
+            <a-radio-button value="tab">页内 Tab</a-radio-button>
+            <a-radio-button value="group">分组标题</a-radio-button>
+            <a-radio-button value="hidden">仅权限</a-radio-button>
+          </a-radio-group>
+          <div class="form-tip">
+            侧栏入口=左侧导航可点项；页内 Tab=宿主页面顶部的标签页（可单独授权）；
+            分组标题=侧栏里不可点的小标题；仅权限=不出现在任何界面，只作为接口归属的容器。
+          </div>
         </a-form-item>
         <a-form-item label="菜单名称">
           <a-input v-model:value="menuForm.name" maxlength="50" placeholder="如 数据看板" />
@@ -437,10 +457,10 @@ const countText = computed(() =>
 const menuModal = ref(false)
 const menuForm = ref(blankMenu())
 const menuVisible = ref(true)
-function blankMenu () { return { id: '', parentId: undefined, name: '', icon: undefined, path: '', sort: 0 } }
+function blankMenu () { return { id: '', parentId: undefined, name: '', icon: undefined, path: '', sort: 0, renderAs: 'sidebar' } }
 function openMenuCreate () { menuForm.value = blankMenu(); menuVisible.value = true; menuModal.value = true }
 function openMenuEdit (r) {
-  menuForm.value = { id: r.id, parentId: r.parentId || undefined, name: r.name || '', icon: r.icon || undefined, path: r.path || '', sort: r.sortOrder ?? 0 }
+  menuForm.value = { id: r.id, parentId: r.parentId || undefined, name: r.name || '', icon: r.icon || undefined, path: r.path || '', sort: r.sortOrder ?? 0, renderAs: r.renderAs || 'sidebar' }
   menuVisible.value = r.visible !== 0
   menuModal.value = true
 }
@@ -458,7 +478,7 @@ async function saveMenu () {
   if (!String(f.name || '').trim()) { message.warning('请填写菜单名称'); return }
   saving.value = true
   try {
-    const body = { parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '', sortOrder: f.sort, visible: menuVisible.value ? 1 : 0 }
+    const body = { parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '', sortOrder: f.sort, visible: menuVisible.value ? 1 : 0, renderAs: f.renderAs || 'sidebar' }
     const r = f.id ? await updateMenu(f.id, body) : await createMenu(body)
     if (r.success) { message.success('已保存'); menuModal.value = false; await refresh('menus') }
     else message.error(r.msg || '保存失败')
@@ -925,5 +945,6 @@ watch(tab, t => {
 .drawer-empty { padding: 24px 0; text-align: center; font-size: 12px; color: var(--app-text3); }
 
 .app-pill.builtin { color: var(--app-accent); background: var(--app-accent-weak); }
+.app-pill.rb-ra { color: #7c3aed; background: #f1eafd; }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
 </style>

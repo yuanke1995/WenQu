@@ -448,6 +448,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     -- default_vision_model 已随「聊天图片理解只看模型能力位」下线（存量库该列无害保留）
     `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录。唯一索引：一个 sub 只能绑一个账号，防冒用）',
+    `menu_pref`    TEXT        DEFAULT NULL COMMENT '个人侧栏偏好 JSON：{"order":[menuId...],"hidden":[menuId...]}。仅重排/隐藏「本人有权看到」的菜单，不越权；空=未自定义（走菜单表默认顺序与显隐）',
     `avatar`       VARCHAR(512) DEFAULT NULL COMMENT '用户头像：空=昵称首字；emoji=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -598,7 +599,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_menu` (
     `parent_id`   VARCHAR(50)  DEFAULT NULL COMMENT '父菜单ID（空=顶级）',
     `name`        VARCHAR(50)  NOT NULL COMMENT '菜单名称',
     `icon`        VARCHAR(50)  DEFAULT NULL COMMENT '图标名（@ant-design/icons-vue 组件名，如 SettingOutlined）',
-    `path`        VARCHAR(200) DEFAULT NULL COMMENT '前端路由路径（如 /members）',
+    `path`        VARCHAR(200) DEFAULT NULL COMMENT '前端路由路径（如 /members）。tab 型可空（跳转由父页 ?tab= 承担）；group 型必须为空',
+    `render_as`   VARCHAR(10)  DEFAULT 'sidebar' COMMENT '渲染位置: sidebar=侧栏入口(默认) | tab=父页内Tab(须有parent_id) | group=侧栏分组标题(不可点) | hidden=纯权限容器(任何UI不渲染)',
     `sort_order`  INT          DEFAULT 0 COMMENT '排序（小在前）',
     `visible`     INT          DEFAULT 1 COMMENT '是否显示: 1=显示, 0=隐藏（隐藏后不进侧边栏，仍可作权限归属）',
     `builtin`     INT          DEFAULT 0 COMMENT '内置菜单: 1=预置不可删除',

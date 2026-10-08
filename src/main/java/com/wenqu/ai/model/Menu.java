@@ -33,8 +33,20 @@ public class Menu {
     /** 图标名（@ant-design/icons-vue 组件名，如 SettingOutlined；空=默认图标） */
     private String icon;
 
-    /** 前端路由路径（如 /members） */
+    /** 前端路由路径（如 /members）。tab 型可空（跳转由父页 ?tab= 承担）；group 型必须为空 */
     private String path;
+
+    /**
+     * 渲染位置：一条菜单记录不再假设只活在侧栏里，由该字段声明它在哪渲染。
+     * <ul>
+     *   <li>{@code sidebar} — 侧栏可点入口（历史默认值，存量行缺列时按此理解）；</li>
+     *   <li>{@code tab} — 父页面内的 Tab 项（必须有 parentId；不出现在侧栏）；</li>
+     *   <li>{@code group} — 侧栏分组标题（不可点、无 path，纯视觉归类）；</li>
+     *   <li>{@code hidden} — 纯权限容器（接口归属/角色绑定的挂载点，任何 UI 不渲染）。</li>
+     * </ul>
+     * 权限语义四种完全一致：可见性仍由 visible + 角色绑定决定，渲染位置只管「画在哪」。
+     */
+    private String renderAs;
 
     /** 排序（小在前） */
     private Integer sortOrder;

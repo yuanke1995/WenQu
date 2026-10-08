@@ -24,15 +24,20 @@
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
         </button>
-        <!-- 导航由 /auth/me 下发的菜单树渲染（RBAC：按角色绑定下发，权限管理页维护）；
+        <!-- 导航由 /auth/me 下发的菜单树渲染。renderAs 决定渲染位置：
+             sidebar=可点入口；group=分组标题（不可点）；tab=父页内Tab（侧栏排除，由宿主页渲染）；
+             hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
-        <button v-for="m in navMenus" :key="m.id" class="nav-item"
-                :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="menuTitle(m)">
-          <component :is="iconOf(m.icon)" />
-          <span v-if="!collapsed">{{ m.name }}</span>
-          <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
-          <i v-if="menuPending(m)" class="nav-dot"></i>
-        </button>
+        <template v-for="m in navMenus" :key="m.id">
+          <div v-if="m.renderAs === 'group'" class="nav-group">{{ m.name }}</div>
+          <button v-else class="nav-item"
+                  :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="menuTitle(m)">
+            <component :is="iconOf(m.icon)" />
+            <span v-if="!collapsed">{{ m.name }}</span>
+            <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
+            <i v-if="menuPending(m)" class="nav-dot"></i>
+          </button>
+        </template>
 
         <!-- 配置引导入口（导航组末尾——辅助层功能不占 logo 下的黄金位，必配的醒目性
              由菜单「待配置」tag 与对话页欢迎卡承担）：
@@ -193,6 +198,13 @@
             </a-tooltip>
           </a-badge>
         </a-popover>
+        <!-- 我的侧栏布局：个人口味（重排 + 隐藏自己可见的菜单），与角色权限无关。
+             放底部用户区而非权限管理页 —— 自己的侧栏自己排，管理员无从代劳也不必代劳 -->
+        <a-tooltip :title="collapsed ? '我的侧栏布局' : ''" placement="right">
+          <button class="app-icon-btn" @click="menuLayoutOpen = true">
+            <appstore-outlined />
+          </button>
+        </a-tooltip>
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
             <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色），替代原先的灯泡 -->
@@ -210,6 +222,10 @@
         </a-tooltip>
       </div>
     </aside>
+
+    <!-- 我的侧栏布局抽屉（纯个人偏好：重排 + 隐藏自己可见的菜单，不影响他人） -->
+    <MyMenuLayoutDrawer :open="menuLayoutOpen" :menus="navMenus"
+                        @close="menuLayoutOpen = false" @saved="reloadMenus" />
 
     <!-- 配置引导抽屉：常驻入口点开，清单含向量模型项（scope=all）；跳转前由组件 emit close 关闭 -->
     <a-drawer v-model:open="guideOpen" placement="left" :width="400" title="配置引导">
@@ -278,6 +294,7 @@ import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
+import MyMenuLayoutDrawer from '../components/MyMenuLayoutDrawer.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -306,6 +323,21 @@ const ICONS = {
 const iconOf = name => ICONS[name] || FileOutlined
 // ensureAuth 填充的是模块级缓存（非响应式），故挂载后显式赋值
 const navMenus = ref([])
+/** 我的侧栏布局抽屉开关（个人偏好，独立于角色权限） */
+const menuLayoutOpen = ref(false)
+
+/**
+ * 布局保存后重拉 /auth/me：菜单树与个人偏好都在这个响应里，重拉即生效。
+ * 不本地改 navMenus —— 那样会与服务端算出的结果漂移（下次刷新又变回去），
+ * 看起来保存了其实没保存。
+ */
+async function reloadMenus () {
+  const info = await ensureAuth(true)
+  // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器
+  // group 无 path 也保留（title 渲染用 name）；menuPending/menuTitle 对无 path 菜单天然安全（只特判 /chat 与 /knowledge）
+  navMenus.value = ((info && info.menus) || [])
+    .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
+}
 
 // 侧边栏折叠（持久化）
 const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
@@ -649,7 +681,10 @@ const goNotifCenter = () => { notifOpen.value = false; router.push('/notificatio
 onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
-  navMenus.value = ((info && info.menus) || []).filter(m => m && m.path)
+  // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器
+  // group 无 path 也保留（title 渲染用 name）；menuPending/menuTitle 对无 path 菜单天然安全（只特判 /chat 与 /knowledge）
+  navMenus.value = ((info && info.menus) || [])
+    .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
   loadSessions()
   refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
   // 通知未读轮询与 focus/visibility 刷新由 useNotifications 自持（首拉 + 30s 定时 + 卸载清理）
@@ -684,6 +719,13 @@ onMounted(async () => {
 .side.collapsed .fold { margin-left: 0; }
 
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
+/* 分组标题（renderAs=group）：不可点、无 hover，仅视觉归类。
+   折叠态缩成一条细线——标题只剩占位会让图标条更乱，藏掉更干净 */
+.nav-group {
+  margin: 8px 9px 2px; padding: 0; font-size: 11px; color: var(--app-text3);
+  letter-spacing: .05em; white-space: nowrap; user-select: none;
+}
+.side.collapsed .nav-group { height: 1px; margin: 6px 8px; padding: 0; overflow: hidden; background: var(--app-border); }
 .nav-item {
   display: flex; align-items: center; gap: 9px; border: none; background: transparent;
   padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--app-text2);

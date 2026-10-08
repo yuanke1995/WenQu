@@ -65,6 +65,26 @@ public class RbacSeedRunner implements ApplicationRunner {
     );
 
     /**
+     * 内置 Tab 菜单（renderAs=tab）：id / 名称 / path / 排序 / 父菜单。
+     * <p>
+     * 2026-10-08 把「智能体工作台」硬编码的 6 个页内 Tab 收编进菜单表 —— Tab 变成真菜单后，
+     * 每个可独立授权（此前一个 menu-agents 绑定 = 6 个 Tab 全有或全无），顺序与增减也由数据驱动。
+     * 组件映射（tabKey → Vue 组件）仍在 AgentsHubPage.vue 里：菜单管「有哪些/叫什么/什么顺序」，
+     * 代码管「渲染成什么」，两者职责不同，不要试图把组件类名塞进菜单表。
+     * <p>path 存完整跳转 {@code /agents?tab=key} —— 与 sidebar 型「path=点击后去哪」语义完全一致；
+     * 宿主页从 path 的 query 解析 tabKey 映射组件。URL 与既有链接（/agents?tab=skills）零变化。
+     * icon 留空（Tab 条本就是纯文字）。
+     */
+    private static final List<String[]> BUILTIN_TAB_MENUS = List.of(
+            new String[]{"menu-agents-tab-providers", "模型供应商", "/agents?tab=providers", "10", "menu-agents"},
+            new String[]{"menu-agents-tab-agents", "智能体", "/agents?tab=agents", "20", "menu-agents"},
+            new String[]{"menu-agents-tab-skills", "技能 Skills", "/agents?tab=skills", "30", "menu-agents"},
+            new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
+            new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
+            new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"}
+    );
+
+    /**
      * 已退役的内置菜单：入口已迁移（帮助中心 → 前端右下角全局悬浮按钮，见 HelpFab.vue），
      * 种子清单剔除后存量库需按 id 连行清理（菜单 + 角色绑定），否则老库侧边栏仍会显示。
      */
@@ -72,7 +92,10 @@ public class RbacSeedRunner implements ApplicationRunner {
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
-            List.of("menu-chat", "menu-agents", "menu-knowledge", "menu-artifacts", "menu-stats");
+            List.of("menu-chat", "menu-agents", "menu-knowledge", "menu-artifacts", "menu-stats",
+                    // 智能体的 6 个 Tab：拆分前「能进智能体 = 6 个 Tab 全有」，拆分后按项绑定保持行为不变
+                    "menu-agents-tab-providers", "menu-agents-tab-agents", "menu-agents-tab-skills",
+                    "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled");
 
     private final RoleMapper roleMapper;
     private final MenuMapper menuMapper;
@@ -138,6 +161,29 @@ public class RbacSeedRunner implements ApplicationRunner {
         if (menuAdded > 0) {
             seeded = true;
             log.info("[RbacSeed] 已补齐 {} 个内置菜单（共 {} 个）", menuAdded, BUILTIN_MENUS.size());
+        }
+        // 内置 Tab 菜单：与侧栏菜单同一补齐语义（按 id 补缺失，存在的不动）。
+        // 父菜单（menu-agents）一定先于本循环存在于 BUILTIN_MENUS，无需再验父存在性。
+        int tabAdded = 0;
+        for (String[] d : BUILTIN_TAB_MENUS) {
+            if (existingMenuIds.contains(d[0])) continue;
+            Menu m = new Menu();
+            m.setId(d[0]);
+            m.setName(d[1]);
+            m.setPath(d[2]);
+            m.setParentId(d[4]);
+            m.setRenderAs("tab");
+            m.setSortOrder(Integer.valueOf(d[3]));
+            m.setVisible(1);
+            m.setBuiltin(1);
+            m.setCreateTime(now);
+            menuMapper.insert(m);
+            existingMenuIds.add(d[0]);
+            tabAdded++;
+        }
+        if (tabAdded > 0) {
+            seeded = true;
+            log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单（智能体工作台）", tabAdded);
         }
         // user 角色基础菜单：按项补齐（此前是「全空才灌」，见方法注释）。
         // 已绑定的项不重复写，故对管理员的既有绑定零影响。

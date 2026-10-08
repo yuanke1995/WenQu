@@ -2,8 +2,11 @@ package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
+import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Menu;
+import com.wenqu.ai.model.User;
 import com.wenqu.ai.service.MenuService;
+import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,6 +20,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,6 +38,7 @@ import java.util.Map;
 public class MenuController {
 
     private final MenuService menuService;
+    private final UserMapper userMapper;
 
     /** 从 Map body 取字符串（缺失/空串归一为 null） */
     private static String str(Map<String, Object> body, String key) {
@@ -57,19 +64,21 @@ public class MenuController {
         return ResultJson.ok(menuService.list());
     }
 
-    @Operation(summary = "新建菜单", description = "body: parentId(可选)/name(必填)/icon/path/sortOrder/visible(1显0隐)")
+    @Operation(summary = "新建菜单",
+            description = "body: parentId(可选)/name(必填)/icon/path/sortOrder/visible(1显0隐)/renderAs(sidebar|tab|group|hidden)。"
+                    + "tab 型必须指定父菜单；group 型不可配路径")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         Menu m = menuService.create(str(body, "parentId"), str(body, "name"), str(body, "icon"),
-                str(body, "path"), intOrNull(body, "sortOrder"), intOrNull(body, "visible"));
+                str(body, "path"), intOrNull(body, "sortOrder"), intOrNull(body, "visible"), str(body, "renderAs"));
         return ResultJson.ok(m, "已创建");
     }
 
-    @Operation(summary = "编辑菜单", description = "仅更新 body 中出现的字段；父级变更做环检测")
+    @Operation(summary = "编辑菜单", description = "仅更新 body 中出现的字段；父级变更做环检测；renderAs 组合校验在合并后的最终态上做")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         menuService.update(id, str(body, "parentId"), str(body, "name"), str(body, "icon"),
-                str(body, "path"), intOrNull(body, "sortOrder"), intOrNull(body, "visible"));
+                str(body, "path"), intOrNull(body, "sortOrder"), intOrNull(body, "visible"), str(body, "renderAs"));
         return ResultJson.ok("已保存");
     }
 
@@ -78,5 +87,48 @@ public class MenuController {
     public ResultJson delete(@Parameter(description = "菜单 ID") @PathVariable("id") String id) {
         menuService.delete(id);
         return ResultJson.ok("已删除");
+    }
+
+    @Operation(summary = "我的侧栏布局读取",
+            description = "返回本人偏好 {order:[menuId…],hidden:[menuId…]}；customized=false 表示走菜单表默认。"
+                    + "order 为 null 表示未自定义顺序（前端按 /auth/me 下发的原序展示）")
+    @GetMapping("/my-layout")
+    public ResultJson myLayout() {
+        User u = userMapper.selectById(RequestUser.uid());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("customized", u != null && u.getMenuPref() != null && !u.getMenuPref().isBlank());
+        if (u != null && u.getMenuPref() != null && !u.getMenuPref().isBlank()) {
+            try {
+                MenuService.MenuPref p = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(u.getMenuPref(), MenuService.MenuPref.class);
+                out.put("order", p.order);
+                out.put("hidden", p.hidden);
+            } catch (Exception ignored) {
+                // 脏数据不外泄细节，前端按 customized=false 走默认
+            }
+        }
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "我的侧栏布局保存",
+            description = "body: { order:[menuId…], hidden:[menuId…], reset?:true }。"
+                    + "只接受本人有权看到的菜单（越权/已删除的 id 静默丢弃）；"
+                    + "reset=true 恢复默认顺序与全部显示。纯个人偏好，不改变其他人侧栏")
+    @PutMapping("/my-layout")
+    public ResultJson saveMyLayout(@RequestBody Map<String, Object> body) {
+        menuService.saveMyPref(RequestUser.uid(), strList(body.get("order")),
+                strList(body.get("hidden")), Boolean.TRUE.equals(body.get("reset")));
+        return ResultJson.ok("已保存");
+    }
+
+    /** List&lt;?&gt; → 去空去重的字符串列表；非 List 返回 null（=不修改该字段） */
+    private static List<String> strList(Object v) {
+        if (!(v instanceof List<?> list)) return null;
+        List<String> out = new ArrayList<>();
+        for (Object o : list) {
+            String s = o == null ? null : String.valueOf(o).trim();
+            if (s != null && !s.isEmpty()) out.add(s);
+        }
+        return out;
     }
 }

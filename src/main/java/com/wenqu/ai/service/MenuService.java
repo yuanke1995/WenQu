@@ -1,11 +1,15 @@
 package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;
 import com.wenqu.ai.mapper.RoleMenuMapper;
+import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Menu;
+import com.wenqu.ai.model.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +41,10 @@ public class MenuService {
     private final RoleMenuMapper roleMenuMapper;
     private final MenuApiMapper menuApiMapper;
     private final RoleService roleService;
+    private final UserMapper userMapper;
+
+    /** 偏好 JSON 解析专用：字段名固定、类型固定，不受全局 ObjectMapper 配置影响 */
+    private static final ObjectMapper PREF_MAPPER = new ObjectMapper();
 
     // ==================== 下发（/auth/me 热路径） ====================
 
@@ -44,6 +53,20 @@ public class MenuService {
      * 输出为 LinkedHashMap 列表（Jackson 直接序列化）。
      */
     public List<Map<String, Object>> visibleMenusFor(String role) {
+        return visibleMenusFor(role, null);
+    }
+
+    /**
+     * 个人偏好版：{@code prefJson} 为空/解析失败时行为与 {@link #visibleMenusFor(String)} 一致。
+     * <p>
+     * <b>越权防护（关键）</b>：偏好只在「RBAC 授权结果」之后生效 —— 先按角色算出可见集合，
+     * 再在集合内按个人 order 重排、剔除 hidden。偏好里出现未授权菜单的 id 一律忽略，
+     * 因此无法借此看到未授权菜单。<b>RBAC 是唯一的可见性来源，个人偏好只做二次过滤。</b>
+     * <p>
+     * <b>容错</b>：偏好脏数据（JSON 坏、id 已删除、角色变更后授权收回）一律静默忽略：
+     * order 里失效的 id 跳过、剩余按菜单表原序补后，绝不丢菜单或清空侧栏。
+     */
+    public List<Map<String, Object>> visibleMenusFor(String role, String prefJson) {
         List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
                 .eq(Menu::getVisible, 1)
                 .orderByAsc(Menu::getSortOrder)
@@ -74,12 +97,139 @@ public class MenuService {
             boolean root = pid == null || !nodes.containsKey(pid);
             if (root) roots.add(id);
         }
+        // 个人偏好：重排 + 隐藏（只作用于上面算出的授权可见集合）
+        applyPref(roots, nodes, childrenOf, prefJson);
+
         List<Map<String, Object>> out = new ArrayList<>();
         for (String rootId : roots) {
             Map<String, Object> node = buildBranch(rootId, nodes, childrenOf, allowed);
             if (node != null) out.add(node);
         }
         return out;
+    }
+
+    /**
+     * 施加个人偏好到顶级 id 列表（原地重排 + 剔除）：
+     * <ul>
+     *   <li>hidden 中的 id 从 roots 移除；其直接子级上提为顶级（父被隐藏不应连带子级消失）；</li>
+     *   <li>order 中不在 roots 的 id 忽略（未授权 / 已隐藏 / 已删除），其余按 order 排、剩余补后；</li>
+     *   <li>解析失败 → 不施加，走菜单表默认。</li>
+     * </ul>
+     */
+    private void applyPref(List<String> roots, Map<String, Map<String, Object>> nodes,
+                           Map<String, List<String>> childrenOf, String prefJson) {
+        if (prefJson == null || prefJson.isBlank()) return;
+        MenuPref pref;
+        try {
+            pref = PREF_MAPPER.readValue(prefJson, MenuPref.class);
+        } catch (Exception e) {
+            log.warn("[MENU] 个人侧栏偏好解析失败，按默认下发：{}", e.toString());
+            return;
+        }
+        if (pref == null) return;
+
+        if (pref.hidden != null && !pref.hidden.isEmpty()) {
+            for (String id : pref.hidden) {
+                if (id == null || !roots.remove(id)) continue;
+                // 子级上提：仅 sidebar/group 型（tab 的宿主被隐藏时 Tab 跟着消失——
+                // 用户隐藏「智能体」入口绝不是想让 6 个 Tab 爬上侧栏；hidden 容器同理）
+                for (String kid : childrenOf.getOrDefault(id, List.of())) {
+                    Map<String, Object> node = nodes.get(kid);
+                    String kidRa = node == null || node.get("renderAs") == null
+                            ? "sidebar" : String.valueOf(node.get("renderAs"));
+                    if (("sidebar".equals(kidRa) || "group".equals(kidRa)) && !roots.contains(kid)) {
+                        roots.add(kid);
+                    }
+                }
+            }
+        }
+        if (pref.order != null && !pref.order.isEmpty()) {
+            List<String> reordered = new ArrayList<>();
+            for (String id : pref.order) {
+                if (id != null && roots.contains(id) && !reordered.contains(id)) reordered.add(id);
+            }
+            for (String id : roots) {
+                if (!reordered.contains(id)) reordered.add(id);
+            }
+            roots.clear();
+            roots.addAll(reordered);
+        }
+    }
+
+    /** 个人侧栏偏好载荷：{@code {"order":[id…],"hidden":[id…]}} */
+    public static class MenuPref {
+        public List<String> order;
+        public List<String> hidden;
+    }
+
+    /**
+     * 供 /auth/me 用的便捷入口：按当前用户（uid + role）下发菜单，自动叠加其个人偏好。
+     * 偏好列不存在/为空/坏JSON 时静默退化为菜单表默认。
+     */
+    public List<Map<String, Object>> menusForUser(String uid, String role) {
+        String pref = null;
+        if (uid != null && !uid.isBlank()) {
+            User u = userMapper.selectById(uid);
+            pref = u == null ? null : u.getMenuPref();
+        }
+        return visibleMenusFor(role, pref);
+    }
+
+    // ==================== 个人偏好读写 ====================
+
+    /**
+     * 保存本人侧栏偏好。只允许操作「本人有权看到」的菜单 —— order/hidden 里的陌生 id
+     * （含未授权菜单、被删除菜单）直接丢弃，不入库，避免偏好成为越权探测通道。
+     *
+     * @param reset true=恢复默认（列置 null）
+     */
+    @Transactional
+    public void saveMyPref(String uid, List<String> order, List<String> hidden, boolean reset) {
+        User u = userMapper.selectById(uid);
+        if (u == null) throw new BizException("用户不存在");
+        LambdaUpdateWrapper<User> set = new LambdaUpdateWrapper<User>().eq(User::getUid, uid);
+        if (reset) {
+            // 置 null 恢复默认：MP 默认 NOT_NULL 策略会跳过 null 字段，须用 UpdateWrapper 显式 set
+            userMapper.update(null, set.set(User::getMenuPref, null));
+            log.info("[AUDIT] 用户 {} 恢复默认侧栏布局", uid);
+            return;
+        }
+        // 白名单：当前角色可见的菜单 id（RBAC 结果，管理员级 = 全部 visible）
+        Set<String> visible = visibleMenuIdsOf(u.getRole());
+        MenuPref pref = new MenuPref();
+        pref.order = sanitize(order, visible);
+        pref.hidden = sanitize(hidden, visible);
+        if (pref.order.isEmpty() && pref.hidden.isEmpty()) {
+            // 与默认无异，直接置 null 省掉一次无意义的 JSON
+            userMapper.update(null, set.set(User::getMenuPref, null));
+            return;
+        }
+        userMapper.update(null, set.set(User::getMenuPref, writeJson(pref)));
+        log.info("[AUDIT] 用户 {} 保存侧栏布局：重排 {} 项，隐藏 {} 项", uid, pref.order.size(), pref.hidden.size());
+    }
+
+    private static List<String> sanitize(List<String> ids, Set<String> visible) {
+        if (ids == null) return List.of();
+        return ids.stream().filter(id -> id != null && visible.contains(id)).distinct().toList();
+    }
+
+    private static String writeJson(Object o) {
+        try {
+            return PREF_MAPPER.writeValueAsString(o);
+        } catch (Exception e) {
+            throw new BizException("保存失败：偏好序列化异常");
+        }
+    }
+
+    /** 当前角色可见的菜单 id 集合（visible=1 ∩ 角色授权；管理员级 = 全部 visible） */
+    public Set<String> visibleMenuIdsOf(String role) {
+        List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
+                .eq(Menu::getVisible, 1).select(Menu::getId));
+        Set<String> ids = new LinkedHashSet<>();
+        for (Menu m : all) ids.add(m.getId());
+        if (roleService.isAdminCode(role)) return ids;
+        ids.retainAll(new HashSet<>(roleService.menuIdsOf(role)));
+        return ids;
     }
 
     /** 递归构建分支：无授权（allowed 判定）且无可见子 → 剪掉返回 null */
@@ -106,6 +256,7 @@ public class MenuService {
         n.put("path", m.getPath());
         n.put("sortOrder", m.getSortOrder());
         n.put("visible", m.getVisible());
+        n.put("renderAs", m.getRenderAs() == null ? "sidebar" : m.getRenderAs());
         n.put("builtin", m.getBuiltin());
         return n;
     }
@@ -124,26 +275,36 @@ public class MenuService {
     }
 
     @Transactional
-    public Menu create(String parentId, String name, String icon, String path, Integer sortOrder, Integer visible) {
+    public Menu create(String parentId, String name, String icon, String path, Integer sortOrder, Integer visible, String renderAs) {
         String n = normalizeName(name);
+        String ra = normalizeRenderAs(renderAs);
+        // tab 必须有宿主：没有父菜单的 tab 无处渲染，属于配置错误而非「顶级 tab」
         String p = validateParent(parentId, null);
+        if ("tab".equals(ra)) {
+            if (p == null) throw new BizException("Tab 型菜单必须指定父菜单（页内 Tab 需要宿主页面）");
+            if (trimOrNull(path) == null) throw new BizException("Tab 型菜单必须配置跳转路径（如 /agents?tab=xxx）");
+        }
+        if ("group".equals(ra) && trimOrNull(path) != null) {
+            throw new BizException("分组标题不可点击，不能配置路径");
+        }
         ensurePathUnique(path, null);
         Menu m = new Menu();
         m.setParentId(p);
         m.setName(n);
         m.setIcon(trimOrNull(icon));
         m.setPath(trimOrNull(path));
+        m.setRenderAs(ra);
         m.setSortOrder(sortOrder == null ? 0 : sortOrder);
         m.setVisible(visible == null || visible == 1 ? 1 : 0);
         m.setBuiltin(0);
         menuMapper.insert(m);
-        log.info("[AUDIT] 新建菜单 id={} name={} path={}", m.getId(), n, m.getPath());
+        log.info("[AUDIT] 新建菜单 id={} name={} path={} renderAs={}", m.getId(), n, m.getPath(), ra);
         return m;
     }
 
     @Transactional
     public void update(String id, String parentId, String name, String icon, String path,
-                       Integer sortOrder, Integer visible) {
+                       Integer sortOrder, Integer visible, String renderAs) {
         Menu m = menuMapper.selectById(id);
         if (m == null) throw new BizException("菜单不存在");
         if (name != null) m.setName(normalizeName(name));
@@ -158,8 +319,42 @@ public class MenuService {
             if (visible != 0 && visible != 1) throw new BizException("非法可见性");
             m.setVisible(visible);
         }
+        // renderAs 的字段级校验在「合并后的最终态」上做：单独把 tab 改成 group（残留 path）、
+        // 或单独清 parentId（tab 失去宿主）都会产生非法组合，逐字段校验拦不住
+        if (renderAs != null) m.setRenderAs(normalizeRenderAs(renderAs));
+        validateRenderState(m);
         menuMapper.updateById(m);
-        log.info("[AUDIT] 编辑菜单 id={} name={}", id, m.getName());
+        log.info("[AUDIT] 编辑菜单 id={} name={} renderAs={}", id, m.getName(), m.getRenderAs());
+    }
+
+    /**
+     * 渲染位置归一：空值回落 sidebar（存量行/未传时保持历史行为），非法值 fail-loud。
+     * 取值即前端渲染分支的枚举，多一个错别字就多一个「菜单静默消失」的悬案，必须当场报错。
+     */
+    private static String normalizeRenderAs(String renderAs) {
+        String ra = trimOrNull(renderAs);
+        if (ra == null) return "sidebar";
+        if (!List.of("sidebar", "tab", "group", "hidden").contains(ra)) {
+            throw new BizException("非法渲染位置（sidebar/tab/group/hidden）");
+        }
+        return ra;
+    }
+
+    /** 渲染位置与父子/path 的组合校验（create 组装完与 update 改完各跑一次） */
+    private void validateRenderState(Menu m) {
+        String ra = m.getRenderAs() == null ? "sidebar" : m.getRenderAs();
+        if ("tab".equals(ra)) {
+            if (trimOrNull(m.getParentId()) == null) {
+                throw new BizException("Tab 型菜单必须指定父菜单（页内 Tab 需要宿主页面）");
+            }
+            // path 是宿主页组件映射的桥梁（/agents?tab=xxx → tabKey），没有它 Tab 渲染不出来
+            if (trimOrNull(m.getPath()) == null) {
+                throw new BizException("Tab 型菜单必须配置跳转路径（如 /agents?tab=xxx）");
+            }
+        }
+        if ("group".equals(ra) && trimOrNull(m.getPath()) != null) {
+            throw new BizException("分组标题不可点击，不能配置路径");
+        }
     }
 
     /** 删除菜单：内置不可删；有子菜单不可删；级联清角色绑定与接口归属 */
