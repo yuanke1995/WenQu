@@ -13,6 +13,17 @@
       <div class="side-logo">
         <BrandMark :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
+        <!-- 侧栏编辑：菜单项就地变成可拖拽行 + 显隐开关，不另开面板。
+             放在 logo 行紧挨折叠按钮而非底部那排（通知/主题/退出）：底部是全局动作区，
+             「改这列菜单」是侧栏自身的形态操作，与折叠同属一类，语义上该在一起。
+             折叠态不出现：56px 图标条里既无文字可排也无开关可拨，功能在那里不可用。 -->
+        <button v-if="!collapsed" class="app-icon-btn side-edit-btn"
+                :class="{ on: navEditing }"
+                :title="navEditing ? '完成侧栏编辑' : '编辑侧栏（调整顺序与显示）'"
+                @click="toggleNavEdit">
+          <check-outlined v-if="navEditing" />
+          <unordered-list-outlined v-else />
+        </button>
         <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
           <menu-unfold-outlined v-if="collapsed" />
           <menu-fold-outlined v-else />
@@ -20,16 +31,35 @@
       </div>
 
       <nav class="side-nav">
-        <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="newChat" title="新建对话">
+        <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="navEditing ? null : newChat()" title="新建对话">
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
         </button>
-        <!-- 导航由 /auth/me 下发的菜单树渲染。renderAs 决定渲染位置：
-             sidebar=可点入口；group=分组标题（不可点）；tab=父页内Tab（侧栏排除，由宿主页渲染）；
-             hidden=纯权限容器（任何 UI 不渲染）。
+        <!-- 导航数据源：编辑态取 navEditRows（my-layout 的**全集**，含被自己隐藏的），
+             非编辑态取 navMenus（/auth/me，已剔除 hidden 的实际渲染集）。
+             两者不能混用 —— 用 navMenus 渲染编辑行会让「已隐藏项」从清单里消失，
+             开关再也打不回来（抽屉版已踩过一次，换实现后又复现了一次）。
+             renderAs：sidebar=可点入口；group=分组标题（不可点）；tab=页内 Tab（宿主页渲染，
+             不进侧栏）；hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
-        <template v-for="m in navMenus" :key="m.id">
-          <div v-if="m.renderAs === 'group'" class="nav-group">{{ m.name }}</div>
+        <template v-for="m in (navEditing ? navEditRows : navMenus)" :key="m.id">
+          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮 -->
+          <div v-if="navEditing"
+               class="nav-edit-row"
+               :class="{ off: m.hidden, dragging: editDragId === m.id, over: editOverId === m.id }"
+               draggable="true"
+               @dragstart="onEditDragStart(m.id, $event)"
+               @dragover.prevent="onEditDragOver(m.id, $event)"
+               @drop.prevent="onEditDrop(m.id, $event)"
+               @dragend="onEditDragEnd"
+               @dragleave="onEditDragLeave(m.id)">
+            <span class="nav-edit-grip" aria-hidden="true">⋮⋮</span>
+            <component :is="iconOf(m.icon)" class="nav-edit-ic" />
+            <span class="nav-edit-name">{{ m.name }}</span>
+            <a-switch size="small" :checked="!m.hidden"
+                       @mousedown.stop @click.stop @change="toggleHidden(m.id, $event)" />
+          </div>
+          <div v-else-if="m.renderAs === 'group'" class="nav-group">{{ m.name }}</div>
           <button v-else class="nav-item"
                   :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="menuTitle(m)">
             <component :is="iconOf(m.icon)" />
@@ -52,6 +82,18 @@
           <span v-else-if="!collapsed" class="guide-count muted">{{ advPendingCount }} 项可选</span>
           <i v-if="pendingCount > 0" class="nav-dot"></i>
         </button>
+
+        <!-- 编辑态操作条：与菜单行同处导航组，收尾就在脚下，不需要另找「保存」在哪 -->
+        <div v-if="navEditing" class="nav-edit-bar">
+          <span class="nav-edit-tip">拖动排序，开关控制显隐</span>
+          <a-popconfirm title="恢复到系统默认顺序，并把隐藏项全部显示出来，确定？"
+                        ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
+            <button class="app-link-btn" :disabled="navEditSaving">恢复默认</button>
+          </a-popconfirm>
+          <button class="app-link-btn" :disabled="navEditSaving || !navEditDirty" @click="saveNavLayout">
+            {{ navEditSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
       </nav>
 
       <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）；右端内嵌批量管理入口 -->
@@ -198,13 +240,8 @@
             </a-tooltip>
           </a-badge>
         </a-popover>
-        <!-- 我的侧栏布局：个人口味（重排 + 隐藏自己可见的菜单），与角色权限无关。
-             放底部用户区而非权限管理页 —— 自己的侧栏自己排，管理员无从代劳也不必代劳 -->
-        <a-tooltip :title="collapsed ? '我的侧栏布局' : ''" placement="right">
-          <button class="app-icon-btn" @click="menuLayoutOpen = true">
-            <appstore-outlined />
-          </button>
-        </a-tooltip>
+        <!-- 我的侧栏布局的入口已移到 logo 行（紧挨折叠按钮）：改的是这列菜单本身，
+             属侧栏自身的形态操作，不该混在底部这排「通知/主题/退出」的全局动作里 -->
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
             <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色），替代原先的灯泡 -->
@@ -222,10 +259,6 @@
         </a-tooltip>
       </div>
     </aside>
-
-    <!-- 我的侧栏布局抽屉（纯个人偏好：重排 + 隐藏自己可见的菜单，不影响他人） -->
-    <MyMenuLayoutDrawer :open="menuLayoutOpen" :menus="navMenus"
-                        @close="menuLayoutOpen = false" @saved="reloadMenus" />
 
     <!-- 配置引导抽屉：常驻入口点开，清单含向量模型项（scope=all）；跳转前由组件 emit close 关闭 -->
     <a-drawer v-model:open="guideOpen" placement="left" :width="400" title="配置引导">
@@ -277,8 +310,9 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
-         RightOutlined, BellOutlined } from '@ant-design/icons-vue'
-import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi } from '../api'
+         RightOutlined, BellOutlined, UnorderedListOutlined } from '@ant-design/icons-vue'
+import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
+         getMyMenuLayout, saveMyMenuLayout } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
@@ -294,7 +328,6 @@ import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
-import MyMenuLayoutDrawer from '../components/MyMenuLayoutDrawer.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -323,8 +356,6 @@ const ICONS = {
 const iconOf = name => ICONS[name] || FileOutlined
 // ensureAuth 填充的是模块级缓存（非响应式），故挂载后显式赋值
 const navMenus = ref([])
-/** 我的侧栏布局抽屉开关（个人偏好，独立于角色权限） */
-const menuLayoutOpen = ref(false)
 
 /**
  * 布局保存后重拉 /auth/me：菜单树与个人偏好都在这个响应里，重拉即生效。
@@ -338,6 +369,144 @@ async function reloadMenus () {
   navMenus.value = ((info && info.menus) || [])
     .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
 }
+
+// ==================== 侧栏就地编辑（个人偏好，独立于角色权限） ====================
+// 入口在 logo 行（紧挨折叠按钮），不另开面板：改的就是这列菜单，就地改最省心智。
+// 可见性口径与权限是两件事 —— 谁能**看到**哪些菜单 = RBAC；我把看到的**怎么排、藏哪几个** = 这里。
+//
+// 草稿模型：进入编辑时拉一次服务端状态存进 editRows（权威值），改动只落草稿，
+// 点「保存」才提交；点编辑按钮再次退出则丢弃草稿（不重拉 —— 重拉会把未保存的改动覆盖成服务端值，
+// 视觉上像"我的改动自己消失了"）。
+const navEditing = ref(false)
+const navEditRows = ref([])          // [{ id, name, icon, renderAs, hidden }] 草稿
+const navEditBase = ref('')          // 进入编辑时的原始签名，用于算脏
+const navEditSaving = ref(false)
+
+const editSig = () => navEditRows.value.map(r => `${r.id}:${r.hidden ? 0 : 1}`).join('|')
+const navEditDirty = computed(() => editSig() !== navEditBase.value)
+
+async function toggleNavEdit () {
+  if (navEditing.value) {
+    // 退出编辑：丢弃未保存草稿，navMenus 始终是服务端算出的权威结果，从未被本地改过
+    navEditing.value = false
+    navEditRows.value = []
+    return
+  }
+  loadingNavEdit()
+  navEditing.value = true
+}
+
+/** 进入编辑时载入可调项全集（含已被自己隐藏的——否则开关就再也打不回来） */
+async function loadingNavEdit () {
+  const r = await getMyMenuLayout()
+  const data = (r && r.data) || {}
+  const hidden = new Set(data.hidden || [])
+  // 行数据取服务端全集（menu_pref 未剔除 hidden）；失败才回退 /auth/me 的 menus
+  const src = Array.isArray(data.menus) && data.menus.length
+    ? data.menus
+    : navMenus.value.filter(m => m.renderAs !== 'tab' && m.renderAs !== 'hidden')
+  navEditRows.value = src.map(m => ({
+    id: m.id, name: m.name, icon: m.icon, renderAs: m.renderAs || 'sidebar', hidden: hidden.has(m.id)
+  }))
+  // 已有偏好时把顺序套回来（用户保存过的 order 对应服务端下发的排列，
+  // 而 my-layout 的 menus 是「未施加偏好」的原始表序）
+  if (Array.isArray(data.order) && data.order.length) {
+    const rank = new Map(data.order.map((id, i) => [id, i]))
+    navEditRows.value = navEditRows.value
+      .map((r, i) => ({ r, k: rank.has(r.id) ? rank.get(r.id) : Number.MAX_SAFE_INTEGER - (navEditRows.value.length - i) }))
+      .sort((a, b) => a.k - b.k)
+      .map(x => x.r)
+  }
+  navEditBase.value = editSig()
+}
+
+/** 开关回调给的是「新的 checked」，草稿存的是 hidden（取反） */
+function toggleHidden (id, checked) {
+  const r = navEditRows.value.find(x => x.id === id)
+  if (r) r.hidden = !checked
+}
+
+async function saveNavLayout () {
+  navEditSaving.value = true
+  try {
+    const res = await saveMyMenuLayout({
+      order: navEditRows.value.map(r => r.id),
+      hidden: navEditRows.value.filter(r => r.hidden).map(r => r.id)
+    })
+    if (res && res.success) {
+      message.success('侧栏已更新')
+      navEditBase.value = editSig()
+      navEditing.value = false
+      navEditRows.value = []
+      await reloadMenus()   // 重拉生效：菜单树 + 偏好都在 /auth/me 一个响应里
+    } else message.error((res && res.msg) || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
+  finally { navEditSaving.value = false }
+}
+
+async function resetNavDefault () {
+  navEditSaving.value = true
+  try {
+    const res = await saveMyMenuLayout({ reset: true })
+    if (res && res.success) {
+      message.success('已恢复默认侧栏')
+      navEditing.value = false
+      navEditRows.value = []
+      await reloadMenus()
+    } else message.error((res && res.msg) || '恢复失败')
+  } catch (e) { message.error(e.message || '恢复失败') }
+  finally { navEditSaving.value = false }
+}
+
+/* ---------------- 拖拽排序（原生 HTML5 DnD，仅同级内重排） ----------------
+ * 三个必须处理的点（与抽屉版同源，抽屉已下线，逻辑迁到这里）：
+ * 1. 拖拽源存 id 而非下标 —— 每次越过一行都 swap 一次，源行会随数组移动，固定下标会算错位置；
+ * 2. dragover 必须 preventDefault，否则浏览器拒绝 drop；
+ * 3. 拨开关的手势会被父行 dragstart 吃掉（点击即启动拖拽）⇒ 开关上 @mousedown.stop 掐断起点。
+ * 刻意不做「拖到别的父节点下」：跨级改的是菜单树结构，而树参与 RBAC 授权判定，
+ * 把结构调整混进「调整口味」的手势里太易误操作 —— 跨级请用编辑菜单弹窗的父级选择。 */
+const editDragId = ref(null)
+const editOverId = ref(null)
+
+function onEditDragStart (id, ev) {
+  editDragId.value = id
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move'
+    // Firefox 要求 setData 才会真正启动拖拽；纯文本 payload 即可（不会真的用它）
+    try { ev.dataTransfer.setData('text/plain', id) } catch (e) { /* ignore */ }
+  }
+}
+function onEditDragOver (id, ev) {
+  if (!editDragId.value) return
+  ev.dataTransfer.dropEffect = 'move'
+  if (editOverId.value !== id) editOverId.value = id
+  // 悬停越过中线即换位：拖动项实时让位，视觉上「跟着手走」
+  const rect = ev.currentTarget.getBoundingClientRect()
+  const crossed = ev.clientY > rect.top + rect.height / 2
+  const to = moveEdit(editDragId.value, id, crossed)
+  if (to) { editDragId.value = to.id; editOverId.value = to.id }
+}
+/** 把 from 移到 to 之前（after=false）或之后（after=true）；返回落位后的 id */
+function moveEdit (fromId, toId, after) {
+  if (fromId === toId) return null
+  const list = navEditRows.value
+  const fi = list.findIndex(r => r.id === fromId)
+  if (fi < 0) return null
+  const [item] = list.splice(fi, 1)
+  let ti = list.findIndex(r => r.id === toId)
+  if (ti < 0) { list.splice(fi, 0, item); return null }
+  if (after) ti++
+  list.splice(ti, 0, item)
+  return { id: fromId }
+}
+function onEditDrop (toId) {
+  if (editDragId.value && editDragId.value !== toId) {
+    // drop 已由 dragover 实时换位，这里只需收尾
+  }
+  onEditDragEnd()
+}
+function onEditDragLeave (id) { if (editOverId.value === id) editOverId.value = null }
+function onEditDragEnd () { editDragId.value = null; editOverId.value = null }
 
 // 侧边栏折叠（持久化）
 const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
@@ -715,8 +884,33 @@ onMounted(async () => {
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
+/* 编辑入口紧挨折叠按钮：两个都是「侧栏自身」的形态操作，margin-left:auto 只让折叠靠右 */
+.side-edit-btn { flex: none; }
+.side-edit-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
 .fold { margin-left: auto; }
 .side.collapsed .fold { margin-left: 0; }
+
+/* 编辑态行：与 .nav-item 同宽同高，肉眼只多出把手和开关 */
+.nav-edit-row {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px;
+  cursor: grab; user-select: none;
+  border: 1px solid transparent;
+}
+.nav-edit-row:hover { background: var(--app-panel-2); }
+.nav-edit-row.off { opacity: .5; }
+.nav-edit-row.dragging { opacity: .35; cursor: grabbing; }
+.nav-edit-row.over { border-color: var(--app-accent); box-shadow: inset 0 0 0 1px var(--app-accent); }
+.nav-edit-grip { flex: none; font-size: 11px; line-height: 1; color: var(--app-text3); letter-spacing: -2px; }
+.nav-edit-ic { flex: none; font-size: 14px; color: var(--app-text2); }
+.nav-edit-name { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 操作条：收尾就在导航组脚下，不另找「保存」按钮 */
+.nav-edit-bar {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px;
+  border-top: 1px solid var(--app-border);
+}
+.nav-edit-tip { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--app-text3); line-height: 1.4; }
 
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
 /* 分组标题（renderAs=group）：不可点、无 hover，仅视觉归类。
