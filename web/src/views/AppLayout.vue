@@ -13,17 +13,23 @@
       <div class="side-logo">
         <BrandMark :size="24" />
         <span v-if="!collapsed" class="logo-name">问渠</span>
-        <!-- 侧栏编辑：菜单项就地变成可拖拽行 + 显隐开关，不另开面板。
-             放在 logo 行紧挨折叠按钮而非底部那排（通知/主题/退出）：底部是全局动作区，
-             「改这列菜单」是侧栏自身的形态操作，与折叠同属一类，语义上该在一起。
+        <!-- 侧栏的「形态操作」组：编辑 + 折叠，用容器整体靠右（.side-logo-ops margin-left:auto）。
+             必须成组包起来，而不是各自 margin-left:auto —— 后者只推走了折叠按钮，
+             编辑按钮留在「问渠」旁、像品牌名的后缀（2026-10-08 实测踩过：注释写「紧挨折叠
+             按钮」而效果不符，返工过一次）。成组后两者真正相邻且不与品牌名抢位。
+             编辑放这里而非底部那排（通知/主题/退出）：那是全局动作区；
+             「改这列菜单」是侧栏自身的形态操作，与折叠同属一类。
+             也曾试过放导航组末尾：混在菜单列表里像第 11 个功能入口，用户会预期点了跳页
+             （实际是切换形态），且紧贴「搜索会话」视觉上像搜索框的附属按钮。
              折叠态不出现：56px 图标条里既无文字可排也无开关可拨，功能在那里不可用。 -->
-        <button v-if="!collapsed" class="app-icon-btn side-edit-btn"
-                :class="{ on: navEditing }"
-                :title="navEditing ? '完成侧栏编辑' : '编辑侧栏（调整顺序与显示）'"
-                @click="toggleNavEdit">
-          <check-outlined v-if="navEditing" />
-          <unordered-list-outlined v-else />
-        </button>
+        <div v-if="!collapsed" class="side-logo-ops">
+          <button class="app-icon-btn" :class="{ on: navEditing }"
+                  :title="navEditing ? '完成侧栏编辑' : '编辑侧栏（调整顺序与显示）'"
+                  @click="toggleNavEdit">
+            <check-outlined v-if="navEditing" />
+            <unordered-list-outlined v-else />
+          </button>
+        </div>
         <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
           <menu-unfold-outlined v-if="collapsed" />
           <menu-fold-outlined v-else />
@@ -83,11 +89,11 @@
           <i v-if="pendingCount > 0" class="nav-dot"></i>
         </button>
 
-        <!-- 编辑态操作条：与菜单行同处导航组，收尾就在脚下，不需要另找「保存」在哪。
-             两行布局：上行提示（单行省略），下行按钮 —— 侧栏只有 200px，三样横排
-             必然把「恢复默认/保存」压成竖排（实测过，很难看）。按钮不换行是硬要求。 -->
-        <div v-if="navEditing" class="nav-edit-bar">
-          <p class="nav-edit-tip">拖动排序 · 开关控制显隐</p>
+        <!-- 编辑态操作条：只在编辑态出现（入口在 logo 行，见 .side-logo-ops）。
+             单行按钮、不额外占高度；提示语从常驻文案降为 title ——
+             两行式版本会把侧栏顶高 43px、连带下方会话列表整体下移，
+             而行内的拖拽把手与开关本身已自解释，不必常驻。 -->
+        <div v-if="navEditing" class="nav-edit-bar" title="拖动行可调整顺序，开关控制显隐">
           <div class="nav-edit-ops">
             <a-popconfirm title="恢复到系统默认顺序，并把隐藏项全部显示出来，确定？"
                           ok-text="恢复" cancel-text="取消" @confirm="resetNavDefault">
@@ -890,10 +896,11 @@ onMounted(async () => {
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
-/* 编辑入口紧挨折叠按钮：两个都是「侧栏自身」的形态操作，margin-left:auto 只让折叠靠右 */
-.side-edit-btn { flex: none; }
-.side-edit-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
-.fold { margin-left: auto; }
+/* 形态操作组：编辑 + 折叠 整体靠右，两者相邻。margin-left:auto 必须落在**容器**上——
+   落在单个按钮上只会推走那一个，另一个留在品牌名旁（实测返工过一次）。 */
+.side-logo-ops { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.side-logo-ops .app-icon-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
+.fold { margin-left: 0; }
 .side.collapsed .fold { margin-left: 0; }
 
 /* 编辑态行：与 .nav-item 同宽同高，肉眼只多出把手和开关 */
@@ -916,17 +923,10 @@ onMounted(async () => {
 .nav-edit-name { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 操作条：两行——提示一行（省略号），按钮一行。侧栏 200px 放不下三样横排，
-   之前硬挤的结果是「恢复默认/保存」被压成竖排单字，行高暴涨且很难看 */
-.nav-edit-bar {
-  display: flex; flex-direction: column; gap: 6px;
-  margin-top: 6px; padding: 8px 8px 2px; border-top: 1px solid var(--app-border);
-}
-.nav-edit-tip {
-  margin: 0; font-size: 11px; color: var(--app-text3); line-height: 1.4;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.nav-edit-ops { display: flex; align-items: center; gap: 6px; }
+/* 操作条：单行按钮，不额外占高度（两行式会把侧栏顶高 43px、连带会话列表整体下移）；
+   提示语降为 title。white-space:nowrap 是硬要求：一换行按钮就变竖排单字（200px 实测过）。 */
+.nav-edit-bar { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.nav-edit-ops { display: flex; align-items: center; gap: 6px; width: 100%; }
 /* white-space:nowrap 是硬要求：一旦换行按钮就变竖排单字 */
 .nav-edit-btn {
   flex: 1 1 0; min-width: 0;
