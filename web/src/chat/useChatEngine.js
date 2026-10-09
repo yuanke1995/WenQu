@@ -833,6 +833,8 @@ const switchSession = async sid => {
             mentions: Array.isArray(m.mentions) ? m.mentions : [],
             // # 历史引用（同上）
             historyRefs: Array.isArray(m.historyRefs) ? m.historyRefs : [],
+            // 本轮终止原因（叫停且该轮没产出回答时记在用户提问上）：刷新后据此在问题下补一行说明
+            endReason: m.endReason || '',
             thinking: m.thinking || '',
             thinkOpen: false,
             time: m.createTime ? new Date(m.createTime).getTime() : null,

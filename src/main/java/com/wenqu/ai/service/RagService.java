@@ -271,6 +271,8 @@ public class RagService {
      * 这是用户按下的停止——历史里要能看出「这一轮是我让它停的」，而不是「回答自己断了」。
      */
     private static final String STOP_SUFFIX = "\n\n> ⏹ 已停止本轮，以上为已生成的部分";
+    /** 思考留痕下限（字）：深度思考动辄上千字，少于这个数说明刚起步就被停，不值得占一条回答 */
+    private static final int STOP_THINKING_TRACE_MIN_CHARS = 120;
     /**
      * 整轮失败（模型流抛异常 / 工具失败冒泡）时追加在正文尾部的标注。
      * 与 TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
@@ -712,6 +714,9 @@ public class RagService {
                     // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就
                     // 返回了，生成与工具循环此后跑在响应式线程上，这里摘会让「停止本轮」找不到正在出字
                     // 的那一轮。摘除统一挂在 AnswerStreamState#claimTerminal()（本轮真收尾那一刻）。
+                    // 反过来，前置阶段叫停的轮次要等检查点才退场，所以「这一问没有回答」的标记
+                    // 只能在本线程走到底时打——早一步判会抢在落库之前，晚一步这里已经出不来了。
+                    if (turnStopRequested(sessionId)) sessionService.markTurnStopped(sessionId);
                     TURN_IN_FLIGHT.remove(sessionId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -752,6 +757,8 @@ public class RagService {
             h.stopped().set(true);
             sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮（尚未进入生成流）");
             completeEmitter(h.emitter());
+            // 不在这里给那一问打终止标记：本轮此刻还没真正退场（思考/检索线程要等下一个检查点才断），
+            // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
             log.info("[SSE] 用户停止本轮（前置阶段）: session={}", sessionId);
             return true;
         }
@@ -780,6 +787,10 @@ public class RagService {
         completeEmitter(st.emitter);
         // 解开人在回路的阻塞等待（放最后：正文已按停止态落库，线程再往下走时幂等闸已占住，不会二次落库）
         releaseHumanWaits(sessionId);
+        // 本轮若一条回答都没落下（正文/工具卡/思考全空），把终止事实记回那一问；
+        // 判据就是「该问之后有没有 assistant 消息」，所以放在解开等待之后——被叫停的计划轮会补落一张
+        // 收尾消息，那时这里自然不标（有 assistant 行）。极端竞态下可能多标一行安静提示，不影响正确性
+        sessionService.markTurnStopped(sessionId);
         log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
                 sessionId, st.fullResponse.length(), st.toolStepCount.get(),
                 st.detached ? "已断开(后台)" : "在线");
@@ -2718,7 +2729,13 @@ public class RagService {
      * 要到生成阶段才构造——思考阶段没有那个状态可借。
      */
     private void persistThinkingOnlyOnStop(String sessionId, String thinking) {
-        if (thinking == null || thinking.isBlank()) return;
+        // 留痕下限：思考刚起步就被停（几个字）时落库，得到的是一条读不出任何东西的气泡——
+        // 那种情况交给问题上的「本轮已停止」说明，不造空回答
+        if (thinking == null || thinking.strip().length() < STOP_THINKING_TRACE_MIN_CHARS) {
+            log.info("[SSE] 停止时思考不足 {} 字，不留痕（由问题上的终止标记交代）: session={}",
+                    STOP_THINKING_TRACE_MIN_CHARS, sessionId);
+            return;
+        }
         try {
             sessionService.appendMessage(sessionId, "assistant", STOP_SUFFIX.trim(), List.of(), null, thinking);
         } catch (Exception e) {

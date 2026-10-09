@@ -1007,6 +1007,25 @@ public class SessionService {
     }
 
     /**
+     * 用户叫停且本轮什么都没产出时，把终止原因记在**那一问**上（{@code end_reason=stopped}），
+     * 前端在问题下方渲染一行安静的「本轮已停止 · 未产生回答」。
+     * <p>为什么不落一条「已停止」的空回答气泡：仓库既有口径是空的回答留在对话里比不留更碍眼
+     * （分享页的停止处理同款理由）；而「这一问没有回答」本就是那一问的事实，记在它身上最贴合。
+     * <p>本轮已产出过内容（半程正文、只有工具卡、只有思考）时不标——那些已有 assistant 消息带
+     * 「⏹ 已停止本轮」可看，再在问上标一次是重复信息。
+     */
+    public void markTurnStopped(String sessionId) {
+        try {
+            Message last = messageMapper.selectLastUserMessage(sessionId);
+            if (last == null) return;
+            if (messageMapper.countAssistantAfter(sessionId, last.getSequence()) > 0) return;
+            messageMapper.updateEndReason(last.getId(), "stopped");
+        } catch (Exception e) {
+            log.warn("[STOP] 标记本轮终止原因失败: session={} {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
      * 会话级智能体绑定（首问锁定）：仅当会话尚未绑定（agent_id IS NULL）时写入，已绑定则原样不动
      * ——这正是「一次锁定、全程一致」的实现点：后续轮次即使请求里带了别的 agentId 也不再改变本会话。
      * <p>
@@ -1450,6 +1469,10 @@ public class SessionService {
         map.put("messageId", m.getId()); // 与 SSE done 事件字段名一致，供前端反馈/导出等操作
         map.put("sequence", m.getSequence()); // 消息序号（历史压缩的摘要覆盖点推进用）
         map.put("createTime", m.getCreateTime()); // 气泡下方时间展示
+        // 本轮终止原因（记在用户提问上）：前端据此在问题下方显示「本轮已停止 · 未产生回答」
+        if (m.getEndReason() != null && !m.getEndReason().isBlank()) {
+            map.put("endReason", m.getEndReason());
+        }
         // 智能体归属（随消息落库的当轮快照）：历史回显「这条是谁答的」；无值表示本轮未使用智能体
         if (m.getAgentId() != null && !m.getAgentId().isBlank()) {
             map.put("agentId", m.getAgentId());

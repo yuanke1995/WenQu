@@ -115,6 +115,14 @@ public class Message {
      */
     private String plan;
 
+    /**
+     * 本轮终止原因（记在**用户提问**上）：{@code stopped}=用户叫停且本轮没产出任何回答。
+     * <p>为什么记在问上而不是落一条「已停止」的空回答：仓库既有口径是空的回答留在对话里比不留更碍眼
+     * （分享页同款处理）；而「这一问没有回答」本就是那一问的事实。半程回答/只有工具卡的轮次不走这里
+     * ——那些已经有 assistant 消息带着「⏹ 已停止本轮」标记可看。
+     */
+    private String endReason;
+
     private LocalDateTime createTime;
 
     @TableLogic

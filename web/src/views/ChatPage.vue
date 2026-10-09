@@ -482,6 +482,11 @@
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
+            <!-- 叫停且本轮没产出任何回答：终止事实记在「这一问」上（不造一条空回答气泡），刷新/换端从库里带回 -->
+            <div v-if="m.role === 'user' && m.endReason === 'stopped'" class="msg-stopped"
+                 title="已按你的要求停止这一轮，智能体没有产出回答">
+              <pause-circle-outlined /> 本轮已停止 · 未产生回答
+            </div>
             <div v-if="m.role === 'user'" class="msg-edit-row">
               <!-- 编辑重发的分支切换器：这一问有多个版本（历史编辑留下的旧分支）可来回切 -->
               <div v-if="m.variantCount > 1" class="ver-switch"
@@ -3348,6 +3353,12 @@ onMounted(async () => {
 .ver-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ver-idx { font-variant-numeric: tabular-nums; }
 .fb-row :deep(.fb-active) { color: var(--app-accent); }
+/* 本轮被叫停且没产出回答：跟在问题下方一行安静说明（与时间戳同一弱化口径），
+   不造空回答气泡——「这一问没有回答」是那一问的事实，不是一条回答的内容 */
+.msg-stopped {
+  display: flex; align-items: center; gap: 4px; justify-content: flex-end;
+  margin-top: 2px; font-size: 11px; color: var(--app-text3); user-select: none;
+}
 .msg-edit-row {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; height: 24px; z-index: 1;
   display: flex; align-items: center; justify-content: flex-end; gap: 6px;

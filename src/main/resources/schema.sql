@@ -230,6 +230,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `mentions`     TEXT         DEFAULT NULL COMMENT '@ 引用 (JSON数组字符串: [{type,id,name,kbId}])；用户消息常驻标注，刷新/历史回显均保留',
     `history_refs` TEXT         DEFAULT NULL COMMENT '# 历史引用 (JSON数组字符串: [{messageId,role,content}])；用户消息常驻标注，刷新/历史回显均保留',
     `plan`        TEXT         DEFAULT NULL COMMENT '计划批准卡 (JSON: {plan,status=approved|rejected})；助手消息落库，刷新/历史按轮重建执行计划卡；NULL=本轮未走计划模式',
+    `end_reason`  VARCHAR(16)  DEFAULT NULL COMMENT '本轮终止原因（记在**用户提问**上）：stopped=用户叫停且本轮没产出任何回答。刻意不落一条「已停止」的空回答——空的回答留在对话里比不留更碍眼；「这一问没有回答」本就是那一问的事实',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `deleted`     INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',

@@ -29,6 +29,20 @@ public interface MessageMapper extends BaseMapper<Message> {
                                        @Param("seq") int seq,
                                        @Param("role") String role);
 
+    /** 该会话最后一问（叫停时用它定位「本轮」的那条用户消息） */
+    @Select("SELECT * FROM c_ai_message WHERE session_id = #{sessionId} AND role = 'user' AND deleted = 0 " +
+            "ORDER BY sequence DESC LIMIT 1")
+    Message selectLastUserMessage(@Param("sessionId") String sessionId);
+
+    /** 该问之后是否已有助手消息：有则本轮产出过内容（半程正文/工具卡），不需要在问上补终止说明 */
+    @Select("SELECT COUNT(1) FROM c_ai_message WHERE session_id = #{sessionId} AND role = 'assistant' " +
+            "AND deleted = 0 AND sequence > #{seq}")
+    int countAssistantAfter(@Param("sessionId") String sessionId, @Param("seq") int seq);
+
+    /** 给某一问写终止原因（stopped=用户叫停且本轮无回答） */
+    @Update("UPDATE c_ai_message SET end_reason = #{reason} WHERE id = #{id}")
+    int updateEndReason(@Param("id") String id, @Param("reason") String reason);
+
     /** 恢复单条软删除消息（撤销删除用） */
     @Update("UPDATE c_ai_message SET deleted = 0 WHERE id = #{id}")
     int restoreById(@Param("id") String id);

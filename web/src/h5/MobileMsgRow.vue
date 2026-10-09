@@ -36,6 +36,10 @@
             <span v-for="(mm, mi) in m.mentions" :key="mi" class="chip chip-mention">{{ mm.name || mm.id }}</span>
           </div>
         </div>
+        <!-- 叫停且本轮没产出回答：说明记在「这一问」上，与 PC 端同一口径（不造空回答气泡） -->
+        <div v-if="m.endReason === 'stopped'" class="u-stopped">
+          <pause-circle-outlined /> 本轮已停止 · 未产生回答
+        </div>
         <div v-if="showActions" class="u-actions">
           <div v-if="m.variantCount > 1" class="ver-switch">
             <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click.stop="$emit('switch-version', index, -1)">‹</button>
@@ -290,7 +294,7 @@ import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
-  QuestionCircleOutlined, CheckCircleOutlined
+  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import AnswerBody from '../components/AnswerBody.vue'
@@ -386,6 +390,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .u-actions, .ai-actions {
   display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
   justify-content: flex-end; padding: 0 2px;
+}
+/* 本轮被叫停且没产出回答：问题下方一行安静说明（与时间戳同一弱化口径） */
+.u-stopped {
+  display: flex; align-items: center; gap: 4px; justify-content: flex-end;
+  margin-top: 2px; font-size: 11px; color: var(--app-text3); user-select: none;
 }
 .ai-actions { justify-content: flex-start; }
 .act-btn {
