@@ -24,9 +24,11 @@
              折叠态不出现：56px 图标条里既无文字可排也无开关可拨，功能在那里不可用。 -->
         <div v-if="!collapsed" class="side-logo-ops">
           <button class="app-icon-btn" :class="{ on: navEditing }"
+                  :disabled="navEditLoading"
                   :title="navEditing ? '完成侧栏编辑' : '编辑侧栏（调整顺序与显示）'"
                   @click="toggleNavEdit">
-            <check-outlined v-if="navEditing" />
+            <a-spin v-if="navEditLoading" :spinning="true" size="small" />
+            <check-outlined v-else-if="navEditing" />
             <unordered-list-outlined v-else />
           </button>
         </div>
@@ -36,7 +38,7 @@
         </button>
       </div>
 
-      <nav class="side-nav">
+      <nav class="side-nav" ref="navEl" @transitionend="onFlipEnd">
         <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="navEditing ? null : newChat()" title="新建对话">
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
@@ -49,21 +51,18 @@
              不进侧栏）；hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
         <template v-for="m in (showNavEditor ? navEditRows : navMenus)" :key="m.id">
-          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮 -->
+          <!-- 编辑态：整行是编辑控件（拖拽把手 + 显隐开关），不再是导航按钮。
+               data-id 是 FLIP 量位置与落点判定的唯一依据，必须挂在行根元素上。 -->
           <div v-if="showNavEditor"
                class="nav-edit-row"
-               :class="{ off: m.hidden, dragging: editDragId === m.id, over: editOverId === m.id }"
-               draggable="true"
-               @dragstart="onEditDragStart(m.id, $event)"
-               @dragover.prevent="onEditDragOver(m.id, $event)"
-               @drop.prevent="onEditDrop(m.id, $event)"
-               @dragend="onEditDragEnd"
-               @dragleave="onEditDragLeave(m.id)">
+               :data-id="m.id"
+               :class="{ off: m.hidden, dragging: editDragId === m.id }"
+               @pointerdown="onEditPointerDown(m.id, $event)">
             <span class="nav-edit-grip" aria-hidden="true">⋮⋮</span>
             <component :is="iconOf(m.icon)" class="nav-edit-ic" />
             <span class="nav-edit-name">{{ m.name }}</span>
             <a-switch size="small" :checked="!m.hidden"
-                       @mousedown.stop @click.stop @change="toggleHidden(m.id, $event)" />
+                       @pointerdown.stop @click.stop @change="toggleHidden(m.id, $event)" />
           </div>
           <div v-else-if="m.renderAs === 'group'" class="nav-group">{{ m.name }}</div>
           <button v-else class="nav-item"
@@ -277,6 +276,19 @@
       <SetupGuide scope="all" variant="plain" @close="guideOpen = false" />
     </a-drawer>
 
+    <!-- 拖拽幽灵行：fixed 定位贴指针，走 transform 合成层。放 body 上是因为
+         .side 有 overflow:hidden（折叠/窄屏抽屉态要裁），留在侧栏内幽灵会被切掉一角。
+         editDragId 复位即销毁，与占位行的区别是它半透明浮着、原行留虚线框占位。 -->
+    <teleport to="body">
+      <div v-if="dragRow && ghostBox"
+           class="nav-edit-ghost"
+           :style="{ left: ghostBox.left + 'px', width: ghostBox.width + 'px', transform: `translateY(${ghostTop}px)` }">
+        <span class="nav-edit-grip" aria-hidden="true">⋮⋮</span>
+        <component :is="iconOf(dragRow.icon)" class="nav-edit-ic" />
+        <span class="nav-edit-name">{{ dragRow.name }}</span>
+      </div>
+    </teleport>
+
     <!-- 抽屉遮罩：窄屏点它关闭侧栏。放在 aside 之后（z-index 更低），保证点击穿透到遮罩而非抽屉 -->
     <div v-if="!mobileShell && isNarrow && sideOpen" class="side-mask" @click="sideOpen = false"></div>
 
@@ -314,7 +326,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartOutlined, SettingOutlined, ExperimentOutlined,
@@ -393,6 +405,7 @@ const navEditing = ref(false)
 const navEditRows = ref([])          // [{ id, name, icon, renderAs, hidden }] 草稿
 const navEditBase = ref('')          // 进入编辑时的原始签名，用于算脏
 const navEditSaving = ref(false)
+const navEditLoading = ref(false)
 
 const editSig = () => navEditRows.value.map(r => `${r.id}:${r.hidden ? 0 : 1}`).join('|')
 const navEditDirty = computed(() => editSig() !== navEditBase.value)
@@ -419,7 +432,11 @@ function exitNavEdit () {
 
 async function toggleNavEdit () {
   if (navEditing.value) { exitNavEdit(); return }
-  loadingNavEdit()
+  // 必须**等数据到位再切形态**：早一步就渲染出一个空编辑器，
+  // navEditRows 还是[] ⇒ 整列菜单瞬间塌成一行、接口回来后又撑开 —— 视觉上就是「闪一下」。
+  // 期间按钮置loading，既挡住连点也让这段等待有交代。
+  navEditLoading.value = true
+  try { await loadingNavEdit() } finally { navEditLoading.value = false }
   navEditing.value = true
 }
 
@@ -462,8 +479,11 @@ async function saveNavLayout () {
     })
     if (res && res.success) {
       message.success('侧栏已更新')
+      // 先重拉再退编辑态：反过来做的话，退编辑瞬间渲染的是**旧顺序**的 navMenus，
+      // 等接口回来才换成新顺序 —— 顺序先倒退一次再跳回来，就是保存后那一下「闪」。
+      // 菜单树与偏好都在 /auth/me 一个响应里，重拉即生效。
+      await reloadMenus()
       exitNavEdit()
-      await reloadMenus()   // 重拉生效：菜单树 + 偏好都在 /auth/me 一个响应里
     } else message.error((res && res.msg) || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { navEditSaving.value = false }
@@ -475,62 +495,149 @@ async function resetNavDefault () {
     const res = await saveMyMenuLayout({ reset: true })
     if (res && res.success) {
       message.success('已恢复默认侧栏')
-      exitNavEdit()
       await reloadMenus()
+      exitNavEdit()
     } else message.error((res && res.msg) || '恢复失败')
   } catch (e) { message.error(e.message || '恢复失败') }
   finally { navEditSaving.value = false }
 }
 
-/* ---------------- 拖拽排序（原生 HTML5 DnD，仅同级内重排） ----------------
- * 三个必须处理的点（与抽屉版同源，抽屉已下线，逻辑迁到这里）：
- * 1. 拖拽源存 id 而非下标 —— 每次越过一行都 swap 一次，源行会随数组移动，固定下标会算错位置；
- * 2. dragover 必须 preventDefault，否则浏览器拒绝 drop；
- * 3. 拨开关的手势会被父行 dragstart 吃掉（点击即启动拖拽）⇒ 开关上 @mousedown.stop 掐断起点。
- * 刻意不做「拖到别的父节点下」：跨级改的是菜单树结构，而树参与 RBAC 授权判定，
- * 把结构调整混进「调整口味」的手势里太易误操作 —— 跨级请用编辑菜单弹窗的父级选择。 */
+/* ---------------- 拖拽排序 ----------------
+ * 为什么不用原生 HTML5 DnD：
+ * 1. 拖影是浏览器在 dragstart 拍的**静态快照**，行在脚下让位后快照不会更新 ——
+ *    屏幕上同时出现「快照」和「真实行」两份，一个跟着鼠标、一个在被重排，
+ *    视觉上就是拖拽过程中的「闪一下」（首版就是这么写的，实测很明显）；
+ * 2. dragover 每帧触发数次，每次越过中线就 splice 一次数组，列表反复重排，
+ *    而且没有过渡 ⇒ 位移是瞬跳而非滑动。
+ * 改为指针事件自绘：一个 fixed 的幽灵行跟手（transform 合成层，不触发布局），
+ * 原行留作虚线占位，其他行用 FLIP（先量后移，差值补transform 再放行）滑到新位。
+ * 三点注意：
+ * 1. 阈值 4px 才起拖 —— 否则一次普通点击会被判成拖拽（抖一下就取消，用户观感更差）；
+ * 2. 监听挂window 而非元素：指针移出侧栏、或在松手前划出浏览器窗口也不丢事件；
+ * 3. 开关上 @pointerdown.stop 掐断起点，否则拨开关会顺带把行拖走。 */
 const editDragId = ref(null)
-const editOverId = ref(null)
+const ghostTop = ref(0)       // 幽灵行 top（fixed，跟指针）
+const ghostBox = ref(null)    // { left, width } 按下瞬间量，用于幽灵行对齐原行
+const navEl = ref(null)
+let grabOffset = 0            // 指针按下点距行顶的距离：抓住哪一块就按哪一块拖
+let dragging = false
 
-function onEditDragStart (id, ev) {
+/** id → 行元素（编辑态才存在，用于量位置） */
+function rowEl (id) {
+  if (!navEl.value) return null
+  return navEl.value.querySelector(`.nav-edit-row[data-id="${id}"]`)
+}
+/** 拖动行当前所在位置（数组重排会带着它跑，落点判定必须用实时位置而非按下时的） */
+function dragRowTop () {
+  const el = rowEl(editDragId.value)
+  return el ? el.getBoundingClientRect().top : 0
+}
+
+function onEditPointerDown (id, ev) {
+  if (ev.button != null && ev.button !== 0) return
+  const el = rowEl(id)
+  if (!el) return
+  grabOffset = ev.clientY - el.getBoundingClientRect().top
   editDragId.value = id
-  if (ev.dataTransfer) {
-    ev.dataTransfer.effectAllowed = 'move'
-    // Firefox 要求 setData 才会真正启动拖拽；纯文本 payload 即可（不会真的用它）
-    try { ev.dataTransfer.setData('text/plain', id) } catch (e) { /* ignore */ }
-  }
+  dragging = false
+  ghostBox.value = { left: el.getBoundingClientRect().left, width: el.getBoundingClientRect().width }
+  window.addEventListener('pointermove', onEditPointerMove)
+  window.addEventListener('pointerup', onEditPointerUp)
+  window.addEventListener('pointercancel', onEditPointerUp)
 }
-function onEditDragOver (id, ev) {
+function onEditPointerMove (ev) {
   if (!editDragId.value) return
-  ev.dataTransfer.dropEffect = 'move'
-  if (editOverId.value !== id) editOverId.value = id
-  // 悬停越过中线即换位：拖动项实时让位，视觉上「跟着手走」
-  const rect = ev.currentTarget.getBoundingClientRect()
-  const crossed = ev.clientY > rect.top + rect.height / 2
-  const to = moveEdit(editDragId.value, id, crossed)
-  if (to) { editDragId.value = to.id; editOverId.value = to.id }
+  // 未达阈值前不动手：普通点击不该被拖拽取消动作搅一下
+  if (!dragging && Math.abs(ev.clientY - (dragRowTop() + grabOffset)) < 4) return
+  dragging = true
+  ghostTop.value = ev.clientY - grabOffset
+  reorderToPointer(ev.clientY)
 }
-/** 把 from 移到 to 之前（after=false）或之后（after=true）；返回落位后的 id */
-function moveEdit (fromId, toId, after) {
-  if (fromId === toId) return null
+function onEditPointerUp () {
+  window.removeEventListener('pointermove', onEditPointerMove)
+  window.removeEventListener('pointerup', onEditPointerUp)
+  window.removeEventListener('pointercancel', onEditPointerUp)
+  editDragId.value = null
+  ghostBox.value = null
+  dragging = false
+  // 兜底：动画中途松手/被cancel 时清掉残留的transform，否则下次 FLIP 会带着旧偏移起跑
+  clearFlipOffsets()
+}
+onUnmounted(onEditPointerUp)
+
+/**
+ * 落点判定：第一个「中线在指针下方」的非拖动行之前；都不在则排到末尾。
+ * 以中线为界而不是行顶/行底 —— 行高与指针命中区不对称，用顶/底会让「拖过一半」
+ * 的手感明显偏早或偏晚。逐行量getBoundingClientRect（含正在滑动的动画位置），
+ * 因此动画进行中也不会跳。
+ */
+function reorderToPointer (y) {
   const list = navEditRows.value
-  const fi = list.findIndex(r => r.id === fromId)
-  if (fi < 0) return null
-  const [item] = list.splice(fi, 1)
-  let ti = list.findIndex(r => r.id === toId)
-  if (ti < 0) { list.splice(fi, 0, item); return null }
-  if (after) ti++
-  list.splice(ti, 0, item)
-  return { id: fromId }
-}
-function onEditDrop (toId) {
-  if (editDragId.value && editDragId.value !== toId) {
-    // drop 已由 dragover 实时换位，这里只需收尾
+  const fi = list.findIndex(r => r.id === editDragId.value)
+  if (fi < 0) return
+  const rest = list.filter(r => r.id !== editDragId.value)
+  let idx = rest.length
+  for (let i = 0; i < rest.length; i++) {
+    const el = rowEl(rest[i].id)
+    if (!el) continue
+    const r = el.getBoundingClientRect()
+    if (y < r.top + r.height / 2) { idx = i; break }
   }
-  onEditDragEnd()
+  const next = rest.slice(0, idx).concat([list[fi]], rest.slice(idx))
+  // 位置没变就别动数组：一次赋值就是一次 patch，dragover 级别的高频调用下这是主要开销来源
+  if (next.every((r, i) => r.id === list[i].id)) return
+  const before = captureRects()
+  navEditRows.value = next
+  playFlip(before)
 }
-function onEditDragLeave (id) { if (editOverId.value === id) editOverId.value = null }
-function onEditDragEnd () { editDragId.value = null; editOverId.value = null }
+
+/** FLIP：量下移动前的各行 top */
+function captureRects () {
+  const map = new Map()
+  if (!navEl.value) return map
+  navEl.value.querySelectorAll('.nav-edit-row').forEach(el => {
+    map.set(el.dataset.id, el.getBoundingClientRect().top)
+  })
+  return map
+}
+/**
+ * FLIP 的 F/L：补transform 让行「先留在原处」，再放行让它滑到新位。
+ * 强制读一次 offsetHeight 触发重排——不打断这个节奏，补上的 transform 会被
+ * 连同新位置一起算掉，动画就退化成瞬移（等于没做）。
+ * 拖动行自己不走 FLIP（它由指针直接驱动，且dragging 类禁用 transition）。
+ */
+function playFlip (before) {
+  nextTick(() => {
+    if (!navEl.value) return
+    navEl.value.querySelectorAll('.nav-edit-row').forEach(el => {
+      const b = before.get(el.dataset.id)
+      if (b == null) return
+      const dy = b - el.getBoundingClientRect().top
+      if (!dy) return
+      el.style.transition = 'none'
+      el.style.transform = `translateY(${dy}px)`
+      void el.offsetHeight
+      el.style.transition = ''
+      el.style.transform = ''
+    })
+  })
+}
+function onFlipEnd (e) {
+  if (e.target && e.target.style) {
+    e.target.style.transform = ''
+    e.target.style.transition = ''
+  }
+}
+function clearFlipOffsets () {
+  if (!navEl.value) return
+  navEl.value.querySelectorAll('.nav-edit-row').forEach(el => {
+    if (el.style.transform) { el.style.transform = ''; el.style.transition = '' }
+  })
+}
+
+/** 幽灵行数据：与占位行同源，改名/显隐立刻反映在指针下 */
+const dragRow = computed(() =>
+  editDragId.value ? navEditRows.value.find(r => r.id === editDragId.value) || null : null)
 
 // 侧边栏折叠（持久化）
 const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
@@ -925,11 +1032,22 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px;
   cursor: grab; user-select: none;
   border: 1px solid transparent;
+  /* 让位动画（FLIP 脚本写 transform，这里只给过渡）。占位行 .dragging 关掉——
+     它由指针直接驱动，再叠一层过渡会跟手变成"追着手指跑"的滞后感。 */
+  transition: transform .16s cubic-bezier(.2, .8, .25, 1), background .15s, opacity .15s, border-color .15s;
+  touch-action: none;  /* 触屏：否则 pointermove 会被滚动手势吃掉，拖不动 */
 }
 .nav-edit-row:hover { background: var(--app-panel-2); }
 .nav-edit-row.off { opacity: .5; }
-.nav-edit-row.dragging { opacity: .35; cursor: grabbing; }
-.nav-edit-row.over { border-color: var(--app-accent); box-shadow: inset 0 0 0 1px var(--app-accent); }
+/* 拖起后原行留作虚线占位：高度不能塌，否则上下行会补跳一段（列表看起来"抽动"）。
+   内容整体降透明，让用户明确"拿起来的是幽灵，原位是坑"。 */
+.nav-edit-row.dragging {
+  cursor: grabbing;
+  border-style: dashed; border-color: var(--app-accent);
+  background: var(--app-accent-weak);
+  transition: background .15s, opacity .15s, border-color .15s;
+  opacity: .45;
+}
 /* 把手：默认浅灰，hover 整行时加深 —— 平时不抢眼，但要让人看出这行能拖 */
 .nav-edit-grip {
   flex: none; font-size: 11px; line-height: 1; letter-spacing: -2px;
@@ -1203,6 +1321,31 @@ onMounted(async () => {
 <!-- 站内通知面板样式：popover 内容 teleport 到 body，scoped 特性丢失，必须用非 scoped 块；
      全部类挂在 .notif-popover 下防全局泄漏 -->
 <style>
+/* 拖拽幽灵行：teleport 到 body，视觉规格必须与 .nav-edit-row 逐项对齐
+   （padding/gap/字号/图标尺寸），否则「拿起来的那份」在手上会变形。
+   变量走同一套主题变量，明暗主题自动跟随。
+   pointer-events:none 是必须的：幽灵压着指针，不让事件穿透就会挡住下面所有行，
+   拖到列表外时pointermove 直接断流。 */
+.nav-edit-ghost {
+  position: fixed; top: 0; left: 0; z-index: 3000;
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-radius: 8px; pointer-events: none;
+  background: var(--app-panel); border: 1px solid var(--app-accent);
+  box-shadow: var(--app-shadow-lg, 0 6px 20px rgba(0, 0, 0, .16));
+  opacity: .96; user-select: none;
+  transition: none;              /* 幽灵自己由指针驱动，任何过渡都会变成滞后 */
+  will-change: transform;
+}
+.nav-edit-ghost .nav-edit-grip {
+  flex: none; font-size: 11px; line-height: 1; letter-spacing: -2px;
+  color: var(--app-text3); opacity: .55;
+}
+.nav-edit-ghost .nav-edit-ic { flex: none; font-size: 14px; color: var(--app-text2); }
+.nav-edit-ghost .nav-edit-name {
+  flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .notif-popover .ant-popover-inner { padding: 10px; border-radius: var(--app-radius); }
 .notif-popover .notif-panel { width: 320px; }
 .notif-popover .notif-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; border-bottom: 1px solid var(--app-border); }
