@@ -260,11 +260,6 @@
           <button v-for="(q, qi) in m.related" :key="qi" class="related-tag" type="button" @click.stop="$emit('ask', q)">{{ q }}</button>
         </div>
 
-        <!-- 失败重试行 -->
-        <div v-if="m.failed && !m.loading" class="retry-row">
-          <button class="btn-ghost" :disabled="loading" @click.stop="$emit('retry', index)"><reload-outlined /> 重试</button>
-        </div>
-
         <!-- 操作行：选中态或最新一条可见（触屏没有 hover） -->
         <div v-if="showActions" class="ai-actions">
           <div v-if="(m.versions && m.versions.length > 1) || m.variantCount > 1" class="ver-switch">
@@ -506,7 +501,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 
 .related { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-tag { border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-accent); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-height: 34px; touch-action: manipulation; }
-.retry-row { display: flex; }
 
 .ver-switch { display: inline-flex; align-items: center; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; margin-right: 4px; }
 .ver-btn { width: 34px; height: 34px; border: none; background: var(--app-panel); color: var(--app-text2); font-size: 16px; touch-action: manipulation; }

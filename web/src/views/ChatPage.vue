@@ -449,9 +449,6 @@
                 <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
               </div>
             </div>
-            <div v-if="m.role === 'ai' && m.failed && !m.loading" class="retry-row">
-              <button class="app-btn ghost" :disabled="loading" @click="regenerate(i)"><reload-outlined /> 重试</button>
-            </div>
             <div v-if="m.role === 'ai' && !m.loading && (m.messageId || m.time)" class="fb-row">
               <!-- 重新生成的多版本切换器：本会话内用内存版本（versions）即时切换；
                    刷新后/编辑重发用持久分支（variantCount）走后端切换，旧版本按保留期留存 -->
@@ -3298,7 +3295,6 @@ onMounted(async () => {
 .ver-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ver-idx { font-variant-numeric: tabular-nums; }
 .fb-row :deep(.fb-active) { color: var(--app-accent); }
-.retry-row { margin-top: 8px; }
 .msg-edit-row {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; height: 24px; z-index: 1;
   display: flex; align-items: center; justify-content: flex-end; gap: 6px;
