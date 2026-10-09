@@ -357,6 +357,8 @@ public class RagService {
     private final NotificationService notificationService;
     /** 会话事件账本：结构性事件按写入顺序留痕（工具/人在回路/编排/轮终态/停止）。旁路语义，不进模型输入 */
     private final SessionEventService sessionEventService;
+    /** 任务清单工具（writeTodo）：整表覆盖会话当前清单，写入器经工具上下文注入本轮 */
+    private final TodoService todoService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -486,7 +488,8 @@ public class RagService {
                       com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
                       com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
                       NotificationService notificationService,
-                      SessionEventService sessionEventService) {
+                      SessionEventService sessionEventService,
+                      TodoService todoService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -523,6 +526,7 @@ public class RagService {
         this.knowledgeMapper = knowledgeMapper;
         this.notificationService = notificationService;
         this.sessionEventService = sessionEventService;
+        this.todoService = todoService;
     }
 
     /**
@@ -1941,6 +1945,13 @@ public class RagService {
         if (toolOn(agent, "tool.artifact.enabled", agent == null ? null : agent.getToolArtifact())) {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
+        }
+        // 任务清单工具（tool.todo.enabled，默认关）：多步任务把「总共几件事、做到第几件」变成可见条目。
+        // 默认关是刻意的——它给每轮多一个工具、也多一份维护负担，一次性问答用不上。
+        // 智能体级三态覆盖本轮没做（要加 c_ai_agent 列），现在只有全局一档。
+        if (configService.getBoolean("tool.todo.enabled")) {
+            callbacks.addAll(java.util.Arrays.asList(
+                    org.springframework.ai.support.ToolCallbacks.from(todoService)));
         }
         // 联网搜索工具（webSearch.enabled 控制，默认关；游客分支在上方已 return，天然不对匿名访客暴露）：
         // 命中结果注册进本轮引用体系（与知识库来源共用 [N] 编号空间），这是"可溯源的联网"的前提——
@@ -7513,6 +7524,17 @@ public class RagService {
         ctx.put(PresentArtifactTool.CTX_USER_ID, st.userId);
         ctx.put(BuiltinTools.CTX_ASK,
                 (BuiltinTools.AskFn) qs -> doAskUserMulti(st, qs));
+        // 任务清单写入器：整表落库 + 实时 SSE + 账本留痕（回给模型的文本由 TodoService 组装，
+        // 让模型看见"归一/截断了什么"，而不是以为原样写进去了）
+        ctx.put(TodoService.CTX_TODO, (TodoService.WriteFn) items -> {
+            TodoService.Normalized n = todoService.normalize(items);
+            if (!n.ok()) return "错误：清单没有有效条目，每项都要写一句可验收的动作。";
+            String doc = todoService.docJson(st.turnId, n.items());
+            todoService.save(st.sessionId, doc);
+            sessionEventService.append(st.sessionId, st.userId, st.turnId, "todo", doc);
+            sendSseEvent(st.emitter, "todo", doc, st.sessionId);
+            return todoService.describe(n);
+        });
         return ctx;
     }
 

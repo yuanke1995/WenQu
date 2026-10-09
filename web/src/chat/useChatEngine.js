@@ -10,7 +10,7 @@ import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
-         listKnowledgeBases, listDocuments, uploadChatAttachment,
+         listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
@@ -793,6 +793,14 @@ const removeHistoryRef = i => pendingHistoryRefs.value.splice(i, 1)
 // ==================== 会话 ====================
 // 失效会话回退防重入：回退链路（autoPick 选中的会话）再失败时不级联触发
 let sessionRecovering = false
+/**
+ * 各会话当前任务清单：sid → {turnId, items:[{content,status}], updatedAt}。
+ * 实时由 SSE 的 todo 事件写入，切会话/刷新按需回捞（后端整表覆盖，只存最新一份）。
+ */
+const todosMap = ref({})
+const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || null)
+function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
+
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
@@ -805,6 +813,12 @@ const switchSession = async sid => {
       if (r && r.success && !(sid in modelMap.value)) {
         modelMap.value = { ...modelMap.value, [sid]: r.data?.model || '' }
       }
+    }).catch(() => {})
+  }
+  // 任务清单：该会话没拉过才捞一次（右栏卡据此回显；正在跑的那轮由 todo 事件实时覆盖）
+  if (sid && !(sid in todosMap.value)) {
+    getSessionTodosApi(sid).then(r => {
+      if (r && r.success && r.data?.todos && !(sid in todosMap.value)) setTodos(sid, r.data.todos)
     }).catch(() => {})
   }
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上。
@@ -1519,6 +1533,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (Array.isArray(arr) && arr.length) msg.plan = arr
       } catch (e) { /* 忽略 */ }
     },
+    onTodo: payload => {
+      // 任务清单整表快照（writeTodo 每次传完整清单）：按会话存，切走再回来仍是最后那份
+      try {
+        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (j && Array.isArray(j.items)) setTodos(sid, j)
+      } catch (e) { /* 载荷异常：保留上一份，不清空界面 */ }
+    },
     onUsage: payload => {
       // 用量预下发（usage 事件，生成一开始就到）：prompt 侧估算先行点亮容量圆环/明细卡；
       // done 下发的实测 tokens 仍是终值（落库/累计/输出侧都只认它），此处只挂流式中的估算视图
@@ -2155,7 +2176,7 @@ if (typeof window !== 'undefined') {
     // 检索 / 用量 / 来源 / 上下文容量
     lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,
-    sessionTokens, sessionTokensLabel, sessionRetrieval, ctxPct, ctxLevel,
+    sessionTokens, sessionTokensLabel, sessionRetrieval, ctxPct, ctxLevel, sessionTodos,
     // 图片与附件
     pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile,

@@ -1007,6 +1007,32 @@ public class SessionService {
     }
 
     /**
+     * 写入会话当前任务清单（整表覆盖，只留最新一份）。
+     * <p>清单表达"现在还剩几步"，不是历史；历次写入由会话事件账本留痕。
+     */
+    public void saveTodos(String sessionId, String todosJson) {
+        try {
+            Session s = new Session();
+            s.setId(sessionId);
+            s.setTodos(todosJson);
+            sessionMapper.updateById(s);
+        } catch (Exception e) {
+            log.warn("[TODO] 任务清单落库失败: session={} {}", sessionId, e.getMessage());
+        }
+    }
+
+    /** 读本会话当前任务清单（JSON 字符串；无清单返回 null）。归属校验由调用方按 uid 做 */
+    public String todosOf(String sessionId) {
+        try {
+            Session s = sessionMapper.selectById(sessionId);
+            return s == null ? null : s.getTodos();
+        } catch (Exception e) {
+            log.warn("[TODO] 任务清单读取失败: session={} {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 用户叫停且本轮什么都没产出时，把终止原因记在**那一问**上（{@code end_reason=stopped}），
      * 前端在问题下方渲染一行安静的「本轮已停止 · 未产生回答」。
      * <p>为什么不落一条「已停止」的空回答气泡：仓库既有口径是空的回答留在对话里比不留更碍眼

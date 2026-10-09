@@ -63,4 +63,11 @@ public class Session {
 
     /** 摘要已覆盖的最大消息 sequence（该序号及更早的原样历史已被摘要吸收，压缩时增量合并） */
     private Long summaryUntilSeq;
+
+    /**
+     * 会话当前任务清单（JSON：{@code {turnId,items:[{content,status}],updatedAt}}）。
+     * <p>整表覆盖、只留最新一份：清单表达的是"现在还剩几步"，不是历史；历次写入由
+     * {@code c_ai_session_event} 的 todo 事件留痕。NULL=本会话没有清单。
+     */
+    private String todos;
 }

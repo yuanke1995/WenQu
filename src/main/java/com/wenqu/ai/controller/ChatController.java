@@ -524,6 +524,19 @@ public class ChatController {
         return ResultJson.ok("操作成功");
     }
 
+    @Operation(summary = "任务清单", description = "取本会话当前任务清单（writeTodo 整表覆盖的那一份）：返回 "
+            + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后右栏「任务清单」卡据此回显；"
+            + "校验会话归属。")
+    @GetMapping("/session/{sessionId}/todos")
+    public ResultJson getSessionTodos(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        String doc = sessionService.todosOf(sessionId);
+        java.util.Map<String, Object> out = new java.util.HashMap<>();
+        out.put("todos", doc == null || doc.isBlank() ? null : com.alibaba.fastjson.JSON.parse(doc));
+        return ResultJson.ok(out);
+    }
+
     @Operation(summary = "会话历史", description = "获取指定会话的完整对话历史（含图片与引用来源；校验会话归属）")
     @GetMapping("/session/{sessionId}")
     public ResultJson getHistory(

@@ -99,7 +99,7 @@ const CHAT_EVENT_CB = {
   agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
   agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
-  plan_superseded: 'onPlanSuperseded'
+  plan_superseded: 'onPlanSuperseded', todo: 'onTodo'
 }
 
 /** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
@@ -819,6 +819,11 @@ export const steerChatTurn = (sessionId, text) =>
  *  的语义是后台继续跑完。返回 {stopped}，false=该会话此刻并没有在跑的轮。仅本轮发起者本人可停 */
 export const stopChatTurn = sessionId =>
   request('/chat/stop', { method: 'POST', body: JSON.stringify({ sessionId }) })
+
+/** 会话当前任务清单（writeTodo 整表覆盖的那一份）：切会话/刷新后右栏「任务清单」卡据此回显。
+ *  返回 {todos:{turnId,items:[{content,status}],updatedAt}} 或 null */
+export const getSessionTodosApi = sessionId =>
+  request(`/session/${encodeURIComponent(sessionId)}/todos`)
 
 /** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
 export const approveToolCall = (approvalId, approved) =>

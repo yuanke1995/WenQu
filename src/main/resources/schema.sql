@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `model`         VARCHAR(190) DEFAULT NULL COMMENT '会话级模型覆盖（聊天页手动切换模型时写入，引用或遗留名；NULL=跟随个人默认）',
     `history_summary`   MEDIUMTEXT DEFAULT NULL COMMENT '滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过）',
     `summary_until_seq` BIGINT     DEFAULT 0 COMMENT '摘要已覆盖的最大消息 sequence（该序号及更早的原样历史已被摘要吸收，压缩时增量合并）',
+    `todos`        TEXT         DEFAULT NULL COMMENT '会话当前任务清单 (JSON: {turnId,items:[{content,status}],updatedAt})；整表覆盖，只留最新一份——清单是"现在还剩几步"的状态，不是历史；历史写入由 c_ai_session_event 留痕；NULL=本会话没有清单',
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`       INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',

@@ -1097,6 +1097,22 @@
       <div v-if="panelAi && panelAi.failed" class="rp-card rp-ctrl">
         <button class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
       </div>
+      <!-- 任务清单：本会话最近一次 writeTodo 的整表快照（有清单才显示，与产物/计划卡同规则）。
+           放在信息卡首位：工具卡只能看出「做过什么」，看不出「还差几步」——后者才是长任务里
+           用户真正要瞄一眼的东西 -->
+      <div v-if="sessionTodos && sessionTodos.items && sessionTodos.items.length" class="rp-card rp-todo">
+        <button type="button" class="rp-card-head rp-todo-head" @click="todoOpen = !todoOpen">
+          <span class="rp-label">任务清单</span>
+          <span class="rp-todo-progress">{{ todoDone }}/{{ sessionTodos.items.length }}</span>
+          <caret-right-outlined class="tl-caret" :class="{ open: todoOpen }" />
+        </button>
+        <div v-if="todoOpen" class="rp-todo-list">
+          <div v-for="(t, ti) in sessionTodos.items" :key="ti" class="rp-todo-item" :class="t.status">
+            <span class="rp-todo-box">{{ t.status === 'done' ? '✓' : t.status === 'doing' ? '▸' : '' }}</span>
+            <span class="rp-todo-txt">{{ t.content }}</span>
+          </div>
+        </div>
+      </div>
       <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
@@ -2689,7 +2705,7 @@ const {
   sampleQuestions,
   // 检索 / 用量 / 来源
   lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
-  ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel,
+  ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
   sessionRetrieval, ctxPct, ctxLevel,
   // 图片与附件
   pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
@@ -2715,6 +2731,10 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// 右栏「任务清单」卡：有清单就默认展开（用户开这个功能就是为了看见还剩几步，收着没意义）
+const todoOpen = ref(true)
+const todoDone = computed(() => (sessionTodos.value?.items || []).filter(i => i.status === 'done').length)
 
 // ===== 右栏「计划」折叠态 =====
 // **必须声明在 useChatEngine 解构之后**：下面的 watch 会立即求值 sessionPlans 的 getter，
@@ -3833,6 +3853,18 @@ onMounted(async () => {
 .rp-plan-row:hover { background: var(--app-panel-2); }
 .rp-plan-row:hover .rp-plan-t { color: var(--app-accent); }
 .rp-plan-ic { flex: none; font-size: 12px; color: var(--app-text3); }
+/* 右栏任务清单卡：进度比条目先说话（「3/7」一眼看出还剩几步），条目状态用方框符号而不是颜色，
+   暗色主题下颜色对比不稳 */
+.rp-todo-head { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; cursor: pointer; }
+.rp-todo-progress { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--app-text3); }
+.rp-todo-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.rp-todo-item { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5; }
+.rp-todo-box { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--app-border); border-radius: 4px; font-size: 10px; line-height: 12px; text-align: center; color: var(--app-panel); }
+.rp-todo-item.done .rp-todo-box { background: var(--app-ok); border-color: var(--app-ok); }
+.rp-todo-item.done .rp-todo-txt { color: var(--app-text3); text-decoration: line-through; }
+.rp-todo-item.doing .rp-todo-box { border-color: var(--app-accent); color: var(--app-accent); }
+.rp-todo-item.doing .rp-todo-txt { color: var(--app-accent); }
+.rp-todo-txt { min-width: 0; word-break: break-word; }
 .rp-plan-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-plan-st { flex: none; font-size: 11px; color: var(--app-text3); }
 .rp-plan-st.is-pending { color: var(--app-warn-text); }

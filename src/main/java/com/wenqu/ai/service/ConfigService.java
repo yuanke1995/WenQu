@@ -416,6 +416,7 @@ public class ConfigService {
         d.put("tool.knowledgeRetrieval.enabled", "true");  // 知识库精确检索工具开关（需总开关开启）
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
         d.put("tool.artifact.enabled", "true");            // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
+        d.put("tool.todo.enabled", "false");               // 任务清单工具开关（默认关：多步任务才用得上，开着会给每轮多一个工具）
         d.put("tool.builtin.enabled", "true");             // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
         d.put("tool.mcpCiteEnabled", "true");              // MCP 工具结果注册引用来源（结果文本带 http(s) URL 才注册；默认开）
         d.put("tool.mcpCiteMaxRefs", "10");                // MCP 引用注册单轮上限（隐藏参数，DB 可调；无设置页字段）
