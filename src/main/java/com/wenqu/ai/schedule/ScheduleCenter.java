@@ -87,6 +87,8 @@ public class ScheduleCenter {
     private final RetrievalEvaluationService evalService;
     private final SessionService sessionService;
     private final ArtifactService artifactService;
+    /** 会话事件账本的超期清理（挂在「过期会话/消息清理」同一周期上） */
+    private final com.wenqu.ai.service.SessionEventService sessionEventService;
     private final ScheduledJobService scheduledJobService;
     private final SandboxService sandboxService;
     private final DocumentService documentService;
@@ -108,6 +110,7 @@ public class ScheduleCenter {
                           KeywordIndexService keywordIndexService,
                           UserImageService userImageService, RetrievalEvaluationService evalService,
                           SessionService sessionService, ArtifactService artifactService,
+                          com.wenqu.ai.service.SessionEventService sessionEventService,
                           ScheduledJobService scheduledJobService,
                           SandboxService sandboxService,
                           DocumentService documentService,
@@ -124,6 +127,7 @@ public class ScheduleCenter {
         this.evalService = evalService;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
+        this.sessionEventService = sessionEventService;
         this.scheduledJobService = scheduledJobService;
         this.sandboxService = sandboxService;
         this.documentService = documentService;
@@ -181,8 +185,9 @@ public class ScheduleCenter {
                 () -> configService.reload(),
                 "暂停后若 Redis 订阅断线，其他实例收不到配置变更广播，期间改过的配置会静默保持旧值直到重启。正常情况下订阅即时生效、暂停无感知，仅在订阅异常时暴露。");
         // 过期数据清理：① 硬删已软删且超保留期的会话/消息/已停用分享（保留期即撤销窗口）；
-        // ② 回收闲置超期的**访客**会话——分享页与 MCP 端点产生的会话没有主人会去删，不回收就只增不减
-        register("过期会话/消息清理", "硬删已软删且超保留期的会话/消息/已停用分享；并回收闲置超期的访客会话",
+        // ② 回收闲置超期的**访客**会话——分享页与 MCP 端点产生的会话没有主人会去删，不回收就只增不减；
+        // ③ 超期的会话事件账本（一轮十几条，比会话表长得更快，同样只增不减）
+        register("过期会话/消息清理", "硬删已软删且超保留期的会话/消息/已停用分享；回收闲置超期的访客会话；清理超期会话事件账本",
                 "cleanup.sessionCleanupIntervalMs",
                 () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
                 () -> false,
@@ -190,6 +195,7 @@ public class ScheduleCenter {
                     sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30));
                     sessionService.purgeStaleVisitorSessions(
                             configService.getInt("cleanup.visitorIdleDays", ConfigDefaults.VISITOR_SESSION_IDLE_DAYS));
+                    sessionEventService.purgeExpired(configService.getInt("cleanup.sessionEventRetentionDays", 30));
                 });
         // 产物超期清理：删超期产物的文件与记录（保留期/间隔配置化；保留期 ≤0 = 不清理）。
         // 产物按用户归属持久化，不清理就会随使用无限增长——与聊天图片清理同一口径。

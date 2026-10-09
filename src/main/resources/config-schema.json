@@ -1910,6 +1910,24 @@
       "tier": 3
     },
     {
+      "backendKey": "cleanup.sessionEventRetentionDays",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "sessionEventRetentionDays",
+      "path": "cleanup.sessionEventRetentionDays",
+      "label": "事件账本保留天数",
+      "type": "number",
+      "tips": "sessionEventRetentionDays",
+      "def": 30,
+      "min": 0,
+      "max": 3650,
+      "step": 1,
+      "width": 200,
+      "note": "每轮的过程记录（工具步与耗时、审批/提问/计划三张卡、产物、子智能体编排、停止与失败）保留天数（默认 30），超期由同一个清理任务删除——账本一轮十几条，比会话表长得更快。0 = 不清理，会一直增长",
+      "tier": 3
+    },
+    {
       "backendKey": "cleanup.visitorIdleDays",
       "panel": "maintenance",
       "section": 3,
@@ -4053,6 +4071,7 @@
     "chatImgRetention": "聊天上传图片的保留时长（ms）。超过该时长且无引用的聊天图片会被清理，防止磁盘无限增长；默认 604800000（7 天）。",
     "sessionCleanupInterval": "会话清理任务间隔（ms，≤0=暂停）。默认 86400000（每天）扫描并删除超期会话。",
     "sessionRetentionDays": "会话保留天数：最后一次活跃超过该天数的会话将被删除（含消息）。默认 30 天；调大可保留更久，代价是存储与查询变慢。",
+    "sessionEventRetentionDays": "事件账本保留天数：每轮问答的过程记录（工具步与耗时、审批/提问/计划卡、产物、子智能体编排、停止与失败）超过该天数即由清理任务删除。默认 30 天。这些记录不参与回答，只是让你事后能看清「这一轮是怎么跑出来的」；0 = 不清理，会一直增长。",
     "visitorIdleDays": "访客对话保留天数：公开分享链接（/s/{token}）与 MCP 端点产生的对话，距最后一次提问超过该天数即回收。这类会话由浏览器里的随机访客标识持有，换浏览器/清缓存就没人能再删它，所以由清理任务按闲置时长收回。默认 30 天，填 0 或负数=不回收（会一直堆在库里）。",
     "keywordFailCooldown": "关键词引擎失败冷却（ms）：Meilisearch 调用失败（超时/鉴权错误/服务不可用）后，冷却期内不再探测与调用，关键词路直接走 MySQL LIKE 兜底，避免每个请求都撞一次失败。默认 60000。",
     "keywordMaxTerms": "关键词主词元数量上限：jieba 分词后取多少个主词元参与关键词召回。词元越多召回面越广但 SQL/索引查询更重；长问句被截断时可适当调大。默认 6。",

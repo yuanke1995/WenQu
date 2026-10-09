@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.SessionEventMapper;
 import com.wenqu.ai.model.SessionEvent;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +51,27 @@ public class SessionEventService {
             sessionEventMapper.insert(event);
         } catch (Exception e) {
             log.warn("[EVENT] 会话事件落库失败（不影响问答）: type={} session={} {}", type, sessionId, e.getMessage());
+        }
+    }
+
+    /**
+     * 删除超过保留期的事件（≤0 = 不清理）。
+     * <p>账本比会话表长得快——一轮十几条，只写不删迟早吃掉存储；与「过期会话/消息清理」挂同一个周期任务。
+     * 会话被硬删后其事件会留到保留期结束（不做联表级联删）：这些行按 session_id 归属，
+     * 保留期一过同样消失，代价只是窗口期内多存一段已删会话的过程记录。
+     */
+    public int purgeExpired(int retentionDays) {
+        if (retentionDays <= 0) return 0;
+        try {
+            int n = sessionEventMapper.delete(new LambdaQueryWrapper<SessionEvent>()
+                    .lt(SessionEvent::getCreatedAt, LocalDateTime.now().minusDays(retentionDays)));
+            if (n > 0) {
+                log.info("[CLEANUP] 超期会话事件已清理 {} 条（保留 {} 天）", n, retentionDays);
+            }
+            return n;
+        } catch (Exception e) {
+            log.warn("[CLEANUP] 超期会话事件清理失败: {}", e.getMessage());
+            return 0;
         }
     }
 }

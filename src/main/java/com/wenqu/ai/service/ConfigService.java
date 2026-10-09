@@ -289,6 +289,7 @@ public class ConfigService {
         d.put("retrieval.minContextScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));  // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
         d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
         d.put("retrieval.queryRewriteEnabled", "true");    // 多轮查询改写：检索前用对话模型做指代消解（仅多轮触发，失败按原句检索）
+        d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
@@ -341,6 +342,7 @@ public class ConfigService {
         d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
+        d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关；统管调试显示含降级提示）
         // 空态示例问题（对话页新会话空态的引导卡，点一下即按这条提问）：体验项 → schema 标 personal，
         // 个人设置可覆盖成自己的或关掉；生效值 = 个人值 > 系统全局，经 /config/public 下发给两套对话页。
@@ -364,6 +366,7 @@ public class ConfigService {
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
+        d.put("cleanup.sessionEventRetentionDays", "30");      // 会话事件账本保留天数（≤0=不清理；与上一条同一清理周期）
         d.put("cleanup.visitorIdleDays", String.valueOf(ConfigDefaults.VISITOR_SESSION_IDLE_DAYS)); // 访客会话闲置回收天数
         d.put("artifact.retentionDays", String.valueOf(ConfigDefaults.ARTIFACT_RETENTION_DAYS));                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
