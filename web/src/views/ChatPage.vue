@@ -643,6 +643,21 @@
           </div>
         </div>
         <div v-if="!pendingAsk && !pendingPlan" class="input-box">
+          <!-- 待插话条目：生成中按发送先挂在这里（不直接送达），点「插话」才随下一个工具步送出。
+               送出前可改可删；送出后只留状态——后端队列没有撤回接口，给个假删除是骗人 -->
+          <div v-if="steersPending.length" class="steer-list">
+            <div v-for="(s, si) in steersPending" :key="si" class="steer-item" :class="{ done: s.sent || s.deferred }">
+              <span class="steer-ic">↳</span>
+              <span class="steer-txt">{{ s.text }}</span>
+              <span v-if="steerExtras(s)" class="steer-extra">{{ steerExtras(s) }}</span>
+              <span v-if="s.deferred" class="steer-state">本轮结束后自动发出</span>
+              <span v-else-if="s.sent" class="steer-state">已插入 · 随下一个工具步生效</span>
+              <button v-else class="steer-act primary" title="纯文字随下一个工具步送达模型；带材料的这轮塞不进去，改为本轮结束自动发出"
+                      @click="insertSteer(si)">插话</button>
+              <button v-if="!s.sent && !s.deferred" class="steer-act" title="取回输入框改" @click="editSteer(si)"><edit-outlined /></button>
+              <button v-if="!s.sent && !s.deferred" class="steer-act" title="丢弃这条" @click="dropSteer(si)"><delete-outlined /></button>
+            </div>
+          </div>
           <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
@@ -858,11 +873,8 @@
               <div class="mention-foot">模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行　|　也可在输入框输入 / 唤起</div>
             </template>
           </div>
-          <a-textarea ref="textareaRef" v-model:value="text"
-                      :placeholder="isNarrow
-                        ? '问点什么？（@ 引用资料 · / 快捷命令）'
-                        : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'"
-                      :disabled="loading" :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
+          <a-textarea ref="textareaRef" v-model:value="text" :placeholder="composerPlaceholder"
+                      :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @paste="onComposerPaste"
                       @keydown="onInputKeydown" @input="syncPanelQuery" @click="syncPanelQuery" />
           <!-- 工具条。窄屏加 as-mobile 类拿「flex-wrap:nowrap」约束 —— 否则模型名一变长
@@ -961,11 +973,15 @@
               <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
                            :placeholder="effectiveModelLabel || '选择模型'"
                            :compact="isNarrow"
-                           :width="190" :disabled="loading"
+                           :width="190"
                            @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
-            <!-- 两段式停止：生成中第一次 Esc 只「上膛」（按钮切成 esc 键帽，2s 内不按回落），再按一次才停；点击仍是立即停 -->
-            <button v-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
+            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「挂一条待插话」（不是打断当前这一步）；
+                 没字 → 才是停止本轮。两段式 Esc 停止照旧（第一次上膛、第二次才停；点击仍是立即停） -->
+            <button v-if="loading && canSend" class="send-btn"
+                    title="挂一条待插话（Enter 同效；点条目上的「插话」才随下一个工具步送出）"
+                    @click="sendNow"><arrow-up-outlined /></button>
+            <button v-else-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
               <span v-if="escArmed" class="esc-cap">esc</span>
               <pause-circle-outlined v-else />
             </button>
@@ -1786,6 +1802,29 @@ const disarmEsc = () => {
   clearTimeout(escArmTimer)
 }
 const stopNow = () => { disarmEsc(); stop() }
+/** 主输入框占位文案：生成中不再禁用输入，所以文案要改口说清"这句是插话、按下去先挂着"；
+ *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
+const composerPlaceholder = computed(() => {
+  if (loading.value) {
+    return isNarrow.value
+      ? '补一句方向（先挂到上方待插话）'
+      : '补一句方向（Enter 先挂到上方待插话，点「插话」才送出）'
+  }
+  return isNarrow.value
+    ? '问点什么？（@ 引用资料 · / 快捷命令）'
+    : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'
+})
+/** 待插话条目的载荷摘要（与正常提问一样可以带材料，这里只把"带了什么"标出来） */
+function steerExtras (s) {
+  const bits = []
+  if (s.images?.length) bits.push(`${s.images.length} 张图`)
+  if (s.atts?.length) bits.push(`+${s.atts.length} 个附件`)
+  if (s.skills?.length) bits.push(`技能 ×${s.skills.length}`)
+  if (s.mentions?.length) bits.push(`@ ${s.mentions.length}`)
+  if (s.historyRefs?.length) bits.push(`# ${s.historyRefs.length}`)
+  if (s.planMode) bits.push('计划模式')
+  return bits.join(' · ')
+}
 const onGlobalKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return
   if (previewUrl.value && ['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
@@ -1856,7 +1895,8 @@ const openPreviewFromMsg = (m, index) => {
 const dragOver = ref(false)
 let dragDepth = 0
 const onDragEnter = e => {
-  if (!loading.value && Array.from(e.dataTransfer?.types || []).includes('Files')) {
+  // 生成中也允许拖进来：插话与正常提问同权，材料可以带着（带材料的整条等本轮结束自动发出）
+  if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
     dragDepth++
     dragOver.value = true
   }
@@ -1865,12 +1905,11 @@ const onDragLeave = () => { if (--dragDepth <= 0) { dragDepth = 0; dragOver.valu
 const onDropFiles = e => {
   dragDepth = 0
   dragOver.value = false
-  if (loading.value) return
   addFiles(Array.from(e.dataTransfer?.files || []))
 }
 const onPasteImages = e => {
   const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
-  if (!imgs.length || loading.value) return
+  if (!imgs.length) return
   e.preventDefault()
   addImageFiles(imgs)
 }
@@ -2628,7 +2667,8 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+  text, canSend, send, stop, steersPending, insertSteer, editSteer, dropSteer,
+  streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   // 思考能力 / 档位（悬浮面板消费）
@@ -3412,6 +3452,28 @@ onMounted(async () => {
   display: flex; align-items: center; justify-content: center;
   color: var(--app-accent); font-size: 14px; font-weight: 500;
 }
+/* 待插话条目（输入框上方）：一条一行，右侧「插话 / 编辑 / 删除」。
+   刻意压在输入框之上而不是消息流里——它是"这轮还没说出去的话"，不是会话内容 */
+.steer-list {
+  display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px;
+}
+.steer-item {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 4px 6px 4px 10px; border-radius: 10px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-border); font-size: 13px;
+}
+.steer-item.done { background: transparent; }
+.steer-ic { color: var(--app-text3); flex: none; }
+.steer-txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steer-extra { flex: none; font-size: 11px; color: var(--app-text3); }
+.steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
+.steer-act {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
+  padding: 2px 8px; font-size: 12px; color: var(--app-text); cursor: pointer;
+}
+.steer-act:hover { background: var(--app-accent-weak); }
+.steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
 .input-box {
   position: relative; max-width: var(--chat-col); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);

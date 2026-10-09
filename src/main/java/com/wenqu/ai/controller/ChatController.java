@@ -329,6 +329,21 @@ public class ChatController {
         return ResultJson.ok(java.util.Map.of("stopped", stopped));
     }
 
+    @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：插话随**下一个工具步**的"
+            + "结果送达模型——工具循环由框架持有，做不到掐掉正在执行的这一步。本轮收尾前仍未送出的，会随 done"
+            + " 事件回落由前端自动作为下一句发出，不会静默丢话。单轮最多 3 条、单条 800 字；"
+            + "没有在跑的轮 / 不是本人的轮 / 超出上限时返回 accepted=false，前端按普通消息发送即可。")
+    @PostMapping("/chat/steer")
+    public ResultJson steerChatTurn(@RequestBody Map<String, String> body) {
+        String sessionId = body == null ? null : body.get("sessionId");
+        String text = body == null ? null : body.get("text");
+        if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
+            return ResultJson.error("缺少会话 ID 或插话内容");
+        }
+        boolean accepted = ragService.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
+        return ResultJson.ok(java.util.Map.of("accepted", accepted));
+    }
+
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
             + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
     @PostMapping("/tool-approval/{approvalId}")

@@ -83,6 +83,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 停止本轮（问答链路控制）：POST /chat/stop——归属由 RagService.stopTurn 按
         // 「停止人 uid == 发起本轮 uid」严格校验，别人停不动；不放行则普通用户点停止直接 403
         if ("POST".equals(method) && path.equals("/api/ai/chat/stop")) return true;
+        // 运行中插话：POST /chat/steer——归属同样由 RagService.steerTurn 按「发起人 uid == 插话人 uid」校验
+        if ("POST".equals(method) && path.equals("/api/ai/chat/steer")) return true;
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")

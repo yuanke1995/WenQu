@@ -114,7 +114,13 @@ const check = (ok, label, detail = '') => {
   // 智能体胶囊窄屏只留头像
   check(/v-if="!isNarrow" class="agent-pill-name"/.test(c), '智能体名称窄屏隐藏（只留头像）')
   // placeholder：键盘快捷键提示对触屏无意义且占 3 行
-  check(/:placeholder="isNarrow/.test(c), 'placeholder 窄屏换短版（去掉 Enter/Shift+Enter 提示）')
+  // placeholder：键盘快捷键提示对触屏无意义且占 3 行。表达式已从模板挪进
+  // composerPlaceholder computed（生成中要换文案），断言随之改判结果而不是写法：
+  // 窄屏分支里不许出现 Shift+Enter
+  const ph = (c.match(/const composerPlaceholder = computed\(\(\) => \{[\s\S]*?\n\}\)/) || [''])[0]
+  check(/:placeholder="composerPlaceholder"/.test(c) && !!ph
+    && !/isNarrow\.value\s*\?\s*'[^']*Shift\+Enter/.test(ph),
+    'placeholder 窄屏换短版（去掉 Enter/Shift+Enter 提示）')
 }
 
 // ---- ④ mobile.js 顶层执行：matchMedia 缺失必须降级，不能白屏 ----

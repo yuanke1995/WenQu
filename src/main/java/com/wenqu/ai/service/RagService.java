@@ -1842,6 +1842,8 @@ public class RagService {
                     cancelled.put("degradations", degradations);
                     if (st.planSuperseded) cancelled.put("planSuperseded", true);
                     else cancelled.put("planCancelled", true);
+                    // 计划被拒/超时这条 done 也必须挂插话：漏了它，插进的话就在这个分支里静默消失
+                    attachLeftoverSteers(cancelled, st, sessionId);
                     sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
                     completeEmitter(emitter);
                     return;
@@ -2222,7 +2224,11 @@ public class RagService {
                                 recordToolStatus(st, name, toolInput, "done", result,
                                         System.currentTimeMillis() - begin, attempts[0]);
                             }
-                            return result;
+                            // 用户中途插话随这一步的结果一起送达模型：循环的消息列表由框架持有，
+                            // 工具返回值是我们唯一能干净影响下一轮输入的位置。附在**尾部**而不是开头
+                            // ——MCP 工具可能回严格 JSON，前置会把结构打断，尾部既保结构又读得到
+                            String steered = drainSteers(st);
+                            return steered.isEmpty() ? result : result + "\n\n" + steered.trim();
                         } catch (Exception e) {
                             recordToolStatus(st, name, toolInput, "error", e.getMessage(),
                                     System.currentTimeMillis() - begin, 0);
@@ -3749,6 +3755,9 @@ public class RagService {
                         donePayload.put("delegatedAgentName",
                                 st.delegatedAgentName == null ? "" : st.delegatedAgentName);
                     }
+                    // 本轮收尾仍有没赶上的插话（模型这轮没再调工具就直接答完了）：交回前端自动作为
+                    // 下一句发出，与计划「继续对话」同一条通路——用户说过的话不许静默丢掉
+                    attachLeftoverSteers(donePayload, st, st.sessionId);
                     sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
                     completeEmitter(emitter);
                     // 本轮收尾：显式回收台账（断线后台续跑的轮在通道断开回调里被故意留着，重复回收无害）
@@ -3974,6 +3983,13 @@ public class RagService {
         }
 
         /**
+         * 收尾时仍未送达的插话：{@link #claimTerminal()} 摘把手之前先把队列转存到这里，
+         * 否则 done 组装时把手已不在，没赶上的插话就静默消失了（实测踩过：模型不再调工具直接答完，
+         * 插话既没送达也没续发）。
+         */
+        final List<String> leftoverSteers = new ArrayList<>();
+
+        /**
          * 占住「本轮已收尾」闸位，并同时摘掉会话轮次登记（{@link #TURN_STATES} / {@link #TURN_HANDLES}）。
          * <p>摘登记必须挂在这里而不是流水线线程的 finally：{@code runChat} 在 {@code subscribe} 之后
          * 立刻就返回了，生成与工具循环此后跑在响应式线程上——finally 一摘，正在出字的轮就从轮次表里
@@ -3984,6 +4000,9 @@ public class RagService {
         boolean claimTerminal() {
             boolean claimed = answerPersistGate.compareAndSet(false, true);
             if (claimed) {
+                // 先把没送达的插话转存进本轮，再摘把手：done 载荷要在把手消失后仍拿得到它们
+                String s;
+                while ((s = handle.steers().poll()) != null) leftoverSteers.add(s);
                 TURN_HANDLES.remove(sessionId, handle);
                 TURN_STATES.remove(sessionId, this);
             }
@@ -6138,14 +6157,93 @@ public class RagService {
      * 与「有 turn_id 的行」两截，回放时拼不回去。
      */
     private record TurnHandle(String turnId, String userId, SseEmitter emitter,
-                              java.util.concurrent.atomic.AtomicBoolean stopped) {
+                              java.util.concurrent.atomic.AtomicBoolean stopped,
+                              java.util.concurrent.ConcurrentLinkedQueue<String> steers) {
         TurnHandle(String turnId, String userId, SseEmitter emitter) {
-            this(turnId, userId, emitter, new java.util.concurrent.atomic.AtomicBoolean(false));
+            this(turnId, userId, emitter, new java.util.concurrent.atomic.AtomicBoolean(false),
+                    new java.util.concurrent.ConcurrentLinkedQueue<>());
         }
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, TurnHandle> TURN_HANDLES =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见。
+     * <p>能力边界要说清：工具循环由 Spring AI 的 ToolCallAdvisor 持有，我们不持有，所以做不到
+     * 「掐掉当前这一步立刻改方向」——插话在**下一个工具步**随工具结果送达模型。本轮自然收尾前
+     * 还没被消费的，随 {@code done} 回落给前端自动作为下一句发出（与计划「继续对话」同一条通路），
+     * 绝不静默丢话。
+     */
+    public boolean steerTurn(String sessionId, String userId, String text) {
+        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
+        if (h == null || text == null || text.isBlank() || h.stopped().get()) return false;
+        if (userId == null || !userId.equals(h.userId())) {
+            log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: session={} uid={}", sessionId, userId);
+            return false;
+        }
+        // 单轮插话上限：防把这里当成第二个输入框连发刷屏（超出即拒，前端按普通消息发）
+        if (h.steers().size() >= MAX_STEERS_PER_TURN) return false;
+        String clean = text.strip();
+        h.steers().add(clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean);
+        sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", clean);
+        log.info("[STEER] 插话已入队（下一个工具步生效）: session={} 字数={}", sessionId, clean.length());
+        return true;
+    }
+
+    /** 单轮插话条数上限 / 单条字数上限（超出按普通消息发更合适） */
+    private static final int MAX_STEERS_PER_TURN = 3;
+    private static final int STEER_MAX_CHARS = 800;
+
+    /**
+     * 取走待送达的插话并拼成一段提示（无插话返回空串）。附在工具结果**尾部**送达。
+     */
+    private static String drainSteers(AnswerStreamState st) {
+        List<String> pending = drainSteersList(st);
+        if (pending.isEmpty()) return "";
+        // 送达留痕：库里的工具摘要与账本记的都是**附加前**的结果，不加这行日志就无从判断
+        // 模型到底看没看到这句插话（"回答没变"可能只是模型没采纳，而不是没送达）
+        log.info("[STEER] 已随工具结果送达模型: session={} 条数={} 字数={}",
+                st.sessionId, pending.size(), pending.stream().mapToInt(String::length).sum());
+        StringBuilder sb = new StringBuilder();
+        for (String s : pending) sb.append("【用户中途补充】").append(s).append('\n');
+        return sb.toString();
+    }
+
+    /** 取走（并清空）该轮尚未送达的插话 */
+    private static List<String> drainSteersList(AnswerStreamState st) {
+        return drainSteersOf(st.sessionId);
+    }
+
+    /** 同上，按会话取（无流状态的分支也用这一条） */
+    private static List<String> drainSteersOf(String sessionId) {
+        TurnHandle h = TURN_HANDLES.get(sessionId);
+        if (h == null || h.steers().isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        String s;
+        while ((s = h.steers().poll()) != null) out.add(s);
+        return out;
+    }
+
+    /**
+     * 本轮收尾前把没送达的插话挂进 done 载荷，交回前端自动作为下一句发出。
+     * <p><b>每一条 done 都要挂</b>——正常答完、被停、计划被拒/超时、无知识库分支都算。漏一条，
+     * 用户说过的话就在那个分支里静默消失，而"不许静默丢话"是插话机制的底线。
+     */
+    private static void attachLeftoverSteers(Map<String, Object> donePayload, AnswerStreamState st, String sessionId) {
+        List<String> out = new ArrayList<>();
+        if (st != null) {
+            out.addAll(st.leftoverSteers);       // 摘把手时转存下来的
+            out.addAll(drainSteersOf(sessionId)); // 把手还在（未经 claimTerminal 的收尾路径）
+        } else {
+            out.addAll(drainSteersOf(sessionId));
+        }
+        out.removeIf(s -> s == null || s.isBlank());
+        if (!out.isEmpty()) {
+            donePayload.put("pendingSteers", out);
+            log.info("[STEER] 未随工具步送达，交回前端续发: session={} 条数={}", sessionId, out.size());
+        }
+    }
 
     /**
      * 本轮是否已被用户叫停。深度思考与检索阶段还没有 {@link AnswerStreamState}（它在流式生成前才构造），
@@ -7801,6 +7899,8 @@ public class RagService {
                 donePayload.put("delegatedAgentId", delegatedAgent.getId());
                 donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
             }
+            // 没赶上的插话同样交回前端（本分支没有流状态，把手还在就直接取）
+            attachLeftoverSteers(donePayload, null, sessionId);
             sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
             completeEmitter(emitter);
             // 记忆提取：工作流节点用的是自己的模型，这里按「用户个人默认聊天模型」提取长期记忆
@@ -8026,6 +8126,8 @@ public class RagService {
                     cancelled.put("degradations", degradations);
                     if (st.planSuperseded) cancelled.put("planSuperseded", true);
                     else cancelled.put("planCancelled", true);
+                    // 计划被拒/超时这条 done 也必须挂插话：漏了它，插进的话就在这个分支里静默消失
+                    attachLeftoverSteers(cancelled, st, sessionId);
                     sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
                     completeEmitter(emitter);
                     return;

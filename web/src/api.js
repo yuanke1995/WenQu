@@ -808,6 +808,12 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
 
+/** 运行中插话（steer）：本轮还在跑时补一句方向。插话随**下一个工具步**送达模型（工具循环由框架
+ *  持有，掐不断正在执行的这一步）；本轮收尾前没送出的会随 done 回落、由前端自动作为下一句发出。
+ *  返回 {accepted}，false=没有在跑的轮 / 超限（单轮 3 条、单条 800 字），调用方按普通消息发送即可 */
+export const steerChatTurn = (sessionId, text) =>
+  request('/chat/steer', { method: 'POST', body: JSON.stringify({ sessionId, text }) })
+
 /** 服务端停止本轮：真停——掐断生成流、后续工具不再执行、已生成内容按「已停止本轮」落库，并解开正在
  *  等的人工裁决（审批/提问/计划），使该会话立刻能发下一问。与 abort 本地通道不同：通道断开在等人作答时
  *  的语义是后台继续跑完。返回 {stopped}，false=该会话此刻并没有在跑的轮。仅本轮发起者本人可停 */

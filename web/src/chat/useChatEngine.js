@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn,
+         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
@@ -1021,7 +1021,21 @@ const send = () => {
   const mentions = pendingMentions.value.map(m => ({ type: m.type, id: m.id, name: m.name, kbId: m.kbId || '' }))
   // # 历史引用（本轮显式指定的会话历史问答）：只带 messageId，内容由服务端按会话归属查库回填
   const historyRefs = pendingHistoryRefs.value.map(h => ({ messageId: h.messageId }))
-  if ((!q && !imgs.length && !atts.length) || loading.value) return
+  if (!q && !imgs.length && !atts.length) return
+  // 生成中再发一句 = 挂一条待插话（输入框上方，点「插话」才送出）。主输入框不再因跑着而禁用：
+  // 想改方向不该被迫先停止本轮。载荷与正常提问完全同权（图片/附件/技能/@/#/模型/思考/计划模式）
+  if (loading.value) {
+    text.value = ''
+    hooks.closePanels?.()
+    stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
+                 deepThink: deepThinkOn.value, planMode: planModeOn.value })
+    pendingImages.value = []
+    pendingFiles.value = []
+    pickedSkills.value = []
+    pendingMentions.value = []
+    pendingHistoryRefs.value = []
+    return
+  }
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
   if (!effectiveModel.value) {
     message.warning('未指定模型：请在右上角选择模型，或在个人设置/智能体中配置默认模型')
@@ -1707,6 +1721,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // planSuperseded 走另一句收束语
         if (p.planCancelled) msg.planStopped = true
         if (p.planSuperseded) msg.planSuperseded = true
+        // 待插话结算：本轮收尾（答完/被停/失败）时结算一次——纯文字没赶上工具步的由后端回
+        // pendingSteers，带材料的本来就排在本地等这一刻。用户说过的话不许静默丢掉，
+        // 这是插话机制的底线，比"能不能立刻改方向"更重要
+        setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
@@ -1897,6 +1915,119 @@ const stop = () => {
     st.abort.abort()  // abort → api.js 按正常结束回调 onDone（气泡收尾为「已停止生成」）
   }
 }
+
+/**
+ * 运行中插话：本轮还在跑时补一句方向，随**下一个工具步**送达模型。
+ * 工具循环由后端框架持有，掐不断正在执行的那一步——所以这不是"打断"，是"赶在下一次工具结果里说到"。
+ * @returns false=没有在跑的轮 / 超出单轮限额，调用方按普通消息发送即可
+ */
+const steer = async (q) => {
+  const sid = currentSessionId.value
+  const text = String(q || '').trim()
+  if (!sid || !text) return false
+  try {
+    const r = await steerChatTurn(sid, text)
+    return !!(r && r.data && r.data.accepted)
+  } catch (e) {
+    message.warning(e?.message || '插话没送出去')
+    return false
+  }
+}
+
+/**
+ * 输入框上方的待插话条目。载荷与正常提问完全同权（图片/附件/技能/@ 引用/# 历史引用/思考/计划模式）。
+ *
+ * 送达时机由**载荷**决定，不是我们偷懒：
+ * - 纯文字 → 点「插话」即送后端，随下一个工具步附进工具结果送达模型（这轮的提示词还在长，
+ *   但工具返回值是我们唯一能干净插话进去的口子）。
+ * - 带材料（图片/附件/技能/@/#/计划模式）→ 正在跑的这轮**塞不进去**：这些都要在请求构建期展开成
+ *   上下文（图片走视觉、附件走解析、技能与引用进系统提示词），那一次请求早就发出去了。
+ *   所以这条标成 deferred，本轮一结束就按原载荷自动开新一轮发出——材料不会丢，只是生效在下一轮。
+ *
+ * 没送出前可改可删；送出后不给删除按钮（后端队列没有撤回接口，装了个假的是骗人）。
+ * 不进消息流、不参与导出与重新生成。
+ */
+const steersPending = ref([])
+
+/** 带材料的插话只能等本轮结束按新一轮发出（这轮的上下文已经定型） */
+function steerNeedsNextRound (s) {
+  return !!(s && (s.images?.length || s.atts?.length || s.skills?.length
+          || s.mentions?.length || s.historyRefs?.length || s.planMode))
+}
+
+/** 生成中按发送：把这一条挂到输入框上方（不立即送达，留出反悔和改口的余地） */
+function stageSteer (payload) {
+  const content = String(payload?.text || '').trim()
+  if (!content) return
+  steersPending.value = [...steersPending.value, { ...payload, text: content, sent: false, deferred: false }]
+}
+
+/** 点条目上的「插话」：纯文字送后端随下一个工具步生效；带材料的改成本轮结束后自动发出 */
+async function insertSteer (i) {
+  const item = steersPending.value[i]
+  if (!item || item.sent || item.deferred) return
+  if (steerNeedsNextRound(item)) {
+    steersPending.value = steersPending.value.map((x, xi) => (xi === i ? { ...x, deferred: true } : x))
+    message.info('这条带着材料，本轮上下文已定型——这轮一结束就自动发出')
+    return
+  }
+  if (await steer(item.text)) {
+    steersPending.value = steersPending.value.map((x, xi) => (xi === i ? { ...x, sent: true } : x))
+    return
+  }
+  // 没在跑的轮 / 超出单轮限额：退回输入框，别让用户重打一遍
+  const back = item.text
+  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+  text.value = back
+  message.warning('这轮没能插话，内容已放回输入框')
+}
+
+/** 点「编辑」：取回输入框改（只有还没送出的能改） */
+function editSteer (i) {
+  const item = steersPending.value[i]
+  if (!item || item.sent || item.deferred) return
+  text.value = item.text
+  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+}
+
+/** 点「删除」：丢弃这条还没送出的插话 */
+function dropSteer (i) {
+  const item = steersPending.value[i]
+  if (!item || item.sent || item.deferred) return
+  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+}
+
+/** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路） */
+function sendSteerRound (s) {
+  const userMsg = reactive({ role: 'user', content: s.text, images: s.images || [],
+                        attachments: s.attsMeta || [], attachData: s.atts || [],
+                        skills: s.skills || [], mentions: s.mentions || [], historyRefs: s.historyRefs || [],
+                        deepThink: !!s.deepThink, planMode: !!s.planMode, time: Date.now(), messageId: null })
+  messages.value.push(userMsg)
+  streamAnswer(s.text, s.images || [], null, messages.value.length === 1, 1, !!s.deepThink,
+               s.atts || [], s.skills || [], s.mentions || [], null, s.historyRefs || '', '', userMsg, !!s.planMode)
+}
+
+/**
+ * 本轮收尾时结算待插话：一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派
+ * ——done 会再次走到这里，直到队列清空。
+ * @param backendLeft 后端回来的"进了队列但没赶上工具步"的纯文字插话
+ */
+function flushPendingSteers (backendLeft = []) {
+  // 还留在后端的交回未送达状态（它可能还带着材料，按原载荷发才不丢东西）
+  for (const t of backendLeft) {
+    const hit = steersPending.value.find(s => s.text === t)
+    if (hit) hit.sent = false
+    else steersPending.value = [...steersPending.value, { text: t, sent: false, deferred: false }]
+  }
+  // 已送达并已被消费的（仍是 sent 状态）随本轮退场
+  steersPending.value = steersPending.value.filter(s => !s.sent)
+  if (loading.value) return   // 已经有人在跑了（用户抢先发了新消息）：留着，下轮结束再结算
+  const next = steersPending.value.find(s => !s.sent)
+  if (!next) return
+  steersPending.value = steersPending.value.filter(s => s !== next)
+  sendSteerRound(next)
+}
 // ==================== 手动压缩会话上下文（/compact） ====================
 // 与「按阈值自动压缩」共用同一套摘要机制（后端 RagService.compactSession），差别是显式发起：
 // 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 轮外全部并入摘要」。
@@ -2000,7 +2131,7 @@ if (typeof window !== 'undefined') {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+    text, canSend, send, stop, steersPending, insertSteer, editSteer, dropSteer, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
     // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 思考能力 / 档位
