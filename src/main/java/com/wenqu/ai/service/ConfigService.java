@@ -495,6 +495,7 @@ public class ConfigService {
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）
         d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
+        d.put("trace.sessionEventEnabled", "true");         // 会话事件账本：每轮结构过程按写入顺序留痕（默认开；关掉后一行不写，问答行为不变）
         d.put("trace.sampleRandomDaily", "20");            // P1：每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
         // graphrag.modelRef 已退役（2026-10）：GraphRAG 抽取回落库主个人默认聊天模型（User.defaultModel），

@@ -353,6 +353,8 @@ public class RagService {
     private final com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper;
     /** 站内通知：工具审批待决（tool.approval）通知发起人。旁路语义 */
     private final NotificationService notificationService;
+    /** 会话事件账本：结构性事件按写入顺序留痕（工具/人在回路/编排/轮终态/停止）。旁路语义，不进模型输入 */
+    private final SessionEventService sessionEventService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -481,7 +483,8 @@ public class RagService {
                       org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
                       com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
                       com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
-                      NotificationService notificationService) {
+                      NotificationService notificationService,
+                      SessionEventService sessionEventService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -517,6 +520,7 @@ public class RagService {
         this.toolApprovalMapper = toolApprovalMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.notificationService = notificationService;
+        this.sessionEventService = sessionEventService;
     }
 
     /**
@@ -669,6 +673,9 @@ public class RagService {
             completeEmitter(emitter);
             return;
         }
+        // 本轮身份从这一刻起可用（早于流状态构造）：账本的每条事件都挂得到同一个 turnId
+        TURN_HANDLES.put(sessionId, new TurnHandle(
+                java.util.UUID.randomUUID().toString().replace("-", ""), userId));
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
@@ -702,6 +709,9 @@ public class RagService {
                         agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
                         historyRefs, reasoningLevel, requestedContextWindow, editVariantGroup, planMode);
                 } finally {
+                    // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就
+                    // 返回了，生成与工具循环此后跑在响应式线程上，这里摘会让「停止本轮」找不到正在出字
+                    // 的那一轮。摘除统一挂在 AnswerStreamState#claimTerminal()（本轮真收尾那一刻）。
                     TURN_IN_FLIGHT.remove(sessionId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -712,6 +722,7 @@ public class RagService {
             });
         } catch (RejectedExecutionException e) {
             // 任务未入队即拒绝：轮级互斥标记须同步放掉，否则该会话从此被永久挡在门外
+            TURN_HANDLES.remove(sessionId);
             TURN_IN_FLIGHT.remove(sessionId);
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
@@ -739,8 +750,22 @@ public class RagService {
             log.warn("[FAIL-LOUD] 停止本轮被拒（非本人轮次）: session={} uid={}", sessionId, userId);
             return false;
         }
+        if (st.settled()) {
+            // 已经收过尾的轮次（登记残留一拍）：按「没有在跑的轮」答复，并顺手摘掉这条陈旧登记，
+            // 不给一次并不存在的停止记账
+            TURN_STATES.remove(sessionId, st);
+            return false;
+        }
         st.userStopped = true;
+        // 账本先记停止本身：disposeSafe 会把通道与心跳一并收掉，之后再想还原「是谁、在什么进度上
+        // 叫停的这一轮」就没有依据了
+        sessionEventService.append(sessionId, st.userId, st.turnId, "stop",
+                "用户停止本轮：正文=" + st.fullResponse.length() + "字 工具步=" + st.toolStepCount.get()
+                        + (st.detached ? " 通道=已断开(后台续跑)" : " 通道=在线"));
         st.disposeSafe();
+        // 关闭通道：disposeSafe 只掐上游、不 complete emitter——从另一台设备或直接用接口叫停时，
+        // 正开着这个会话的页面会一直挂在「正在生成」里，直到前端 120s 空闲看门狗才自己收束。
+        completeEmitter(st.emitter);
         // 解开人在回路的阻塞等待（放最后：正文已按停止态落库，线程再往下走时幂等闸已占住，不会二次落库）
         releaseHumanWaits(sessionId);
         log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
@@ -2599,8 +2624,12 @@ public class RagService {
     private void persistPartialAnswer(AnswerStreamState st, String tailMarker) {
         try {
             String answer = st.fullResponse.toString();
-            // 空轮不落库：正文、工具记录都为空时落了也是一条空消息，只污染历史
-            if (answer.isEmpty() && st.toolCalls.isEmpty()) {
+            // 空轮不落库：正文、工具记录、过程独白、已完成的思考全空时，落了也是一条空消息，只污染历史。
+            // 思考要算进来——深度思考收尾后、正文首字之前被掐的轮（断线/看门狗/用户停止都在这窗口），
+            // 那一轮并非「什么都没发生」：刷新后至少留得住它想过什么。
+            String thinkingSoFar = st.thinkingHolder[0];
+            if (answer.isEmpty() && st.toolCalls.isEmpty() && st.processResponse.length() == 0
+                    && (thinkingSoFar == null || thinkingSoFar.isBlank())) {
                 return;
             }
             List<Map<String, Object>> sources = st.sources;
@@ -2805,6 +2834,9 @@ public class RagService {
         } catch (Exception e) {
             log.debug("[TOOL-STATUS] SSE 下发失败（客户端可能已断开）: {}", e.getMessage());
         }
+        // 账本留痕：工具步的「何时开始/结束、耗时、成败」是一轮执行轨迹的主干。载荷用 SSE 那份短摘要
+        // ——终态全文（8KB）已随消息落库，账本不重复存大字段；start 也记，回放才看得出每步的起点。
+        sessionEventService.append(st.sessionId, st.userId, st.turnId, "tool", JSON.toJSONString(rec));
     }
 
     /**
@@ -3280,7 +3312,7 @@ public class RagService {
                     // 既不落库也不走 persistPartialAnswer，导致整条助手消息连同全部工具卡片在刷新/
                     // 重进会话后彻底蒸发——用户看到的只是「问题还在，回答说没了」。
                     // 与正常完成/中断兜底共用 answerPersistGate幂等闸，三条路径 CAS 先到先得。
-                    if (st.answerPersistGate.compareAndSet(false, true)) {
+                    if (st.claimTerminal()) {
                         persistPartialAnswer(st, STREAM_ERROR_SUFFIX);
                     }
                     // 终态：停整轮流级心跳（error 路径）
@@ -3562,7 +3594,7 @@ public class RagService {
                     // SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条。CAS 失败说明
                     // 截断版已入库，此处放弃落库（messageId 为空，done 照常下发，反馈按钮退化为不可用）
                     String messageId = null;
-                    if (st.answerPersistGate.compareAndSet(false, true)) {
+                    if (st.claimTerminal()) {
                         // 重新生成：先软删被替换的旧回答再写新回答。放在落库这一刻而不是请求开始——
                         // 本轮失败时旧回答仍在，用户不会两头空；不删则历史里同一问题会出现两条答案。
                         // 旧回答软删时登记分支版本组（组键挂到新回答），多版本可跨刷新切换
@@ -3687,6 +3719,16 @@ public class RagService {
         final String question;
         /** 本轮所属用户 uid：技能/MCP 都是个人资产，取工具与取技能时只认它 */
         final String userId;
+        /**
+         * 本轮身份把手（turnId + userId 的来源）：沿用 {@code chat()} 入口发的那一个；
+         * 非 chat 入口（手动压缩等）没有把手，自造一个、也自己摘。
+         */
+        final TurnHandle handle;
+        /**
+         * 本轮唯一 ID。计划卡、子智能体编排、检索统计这些事件都早于本状态构造，
+         * 共用同一个 ID 才拼得回一条完整轨迹。
+         */
+        final String turnId;
         final SseEmitter emitter;
         final Map<Integer, String> imgIndex;
         final Map<Integer, String> imgDescIndex;
@@ -3879,6 +3921,23 @@ public class RagService {
             return answerPersistGate.get();
         }
 
+        /**
+         * 占住「本轮已收尾」闸位，并同时摘掉会话轮次登记（{@link #TURN_STATES} / {@link #TURN_HANDLES}）。
+         * <p>摘登记必须挂在这里而不是流水线线程的 finally：{@code runChat} 在 {@code subscribe} 之后
+         * 立刻就返回了，生成与工具循环此后跑在响应式线程上——finally 一摘，正在出字的轮就从轮次表里
+         * 消失，「停止本轮」再也找不到它，账本的归属也会断。谁先占闸谁负责摘，两条终态路径共用。
+         *
+         * @return true=本次占位成功（调用方应当落库）；false=已有别的终态路径收过尾
+         */
+        boolean claimTerminal() {
+            boolean claimed = answerPersistGate.compareAndSet(false, true);
+            if (claimed) {
+                TURN_HANDLES.remove(sessionId, handle);
+                TURN_STATES.remove(sessionId, this);
+            }
+            return claimed;
+        }
+
         /** 本轮智能体归属快照（buildAnswerStream 回填）：中断兜底落库时 appendMessage 需要，彼时已拿不到闭包里的 agent */
         volatile String agentId;
         volatile String agentName;
@@ -3909,6 +3968,14 @@ public class RagService {
             // 挂进整轮台账：看门狗到点要停流并截断落库（收集型通道无台账，自然跳过）
             TurnDeadline d = TURN_DEADLINES.get(emitter);
             if (d != null) d.state = this;
+            TurnHandle h = TURN_HANDLES.get(sessionId);
+            if (h == null) {
+                // 非 chat 入口（手动压缩等）：自造把手，收尾时由 claimTerminal 按值摘掉
+                h = new TurnHandle(java.util.UUID.randomUUID().toString().replace("-", ""), userId);
+                TURN_HANDLES.put(sessionId, h);
+            }
+            this.handle = h;
+            this.turnId = h.turnId();
             // 登记进会话轮次表：服务端「停止本轮」按 sessionId 找到它（摘除见 chat 流水线 finally 与落库收尾）
             TURN_STATES.put(sessionId, this);
         }
@@ -3929,7 +3996,7 @@ public class RagService {
             // persistPartialAnswer 内部守卫拦住，不落空消息。
             // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
             // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
-            if (answerPersistGate.compareAndSet(false, true)) {
+            if (claimTerminal()) {
                 persistPartialAnswer(this, userStopped ? STOP_SUFFIX : TRUNCATION_SUFFIX);
             }
         }
@@ -6004,6 +6071,29 @@ public class RagService {
     private static final java.util.concurrent.ConcurrentHashMap<String, AnswerStreamState> TURN_STATES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 本轮身份把手：sessionId → (turnId, userId)，在 {@code chat()} 抢到轮级互斥的那一刻就建好。
+     * <p>比 {@link #TURN_STATES} 早得多也必须早：计划卡、子智能体编排、检索统计这些事件发生在
+     * {@link AnswerStreamState} 构造之前，只靠状态表归因会把同一轮的轨迹劈成「无 turn_id 的孤儿行」
+     * 与「有 turn_id 的行」两截，回放时拼不回去。
+     */
+    private record TurnHandle(String turnId, String userId) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, TurnHandle> TURN_HANDLES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 会话事件账本收录的「结构性事件」白名单（其余 SSE 类型不落账本）。
+     * <p>刻意不含 {@code done}：轮终态快照本就随助手消息落库（正文/时间线/工具列表/用量），
+     * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
+     * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
+     */
+    private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
+            "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
+            "artifact", "subagent", "subagent_route", "agent_dispatched", "agent_delegated", "agent_bound",
+            "retrieved", "usage", "error", "warn");
+
     /** 工具执行审批挂起项：approvalId → 等待用户批准（内存态；进程重启/刷新页面即失效，超时自动拒绝） */
     private record PendingApproval(String sessionId, String userId, String toolName,
                                    java.util.concurrent.CompletableFuture<Boolean> future) {
@@ -6898,7 +6988,7 @@ public class RagService {
      * 看门狗不再对同一轮补落第二条。
      */
     private void persistPlanCloseout(AnswerStreamState st, String content, String phase) {
-        if (!st.answerPersistGate.compareAndSet(false, true)) return;   // 已有终态路径落过库
+        if (!st.claimTerminal()) return;   // 已有终态路径落过库
         try {
             List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
             List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
@@ -7360,6 +7450,14 @@ public class RagService {
      * 失败只记日志不抛错（fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
      */
     private boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId) {
+        // 账本按「事件是否发生」记，不按「是否送达」记：断线转后台续跑的那一轮，恰恰是最需要事后回放的
+        // 过程（卡片、编排、裁决都在那一刻之后产生，而通道已经没了）。只收结构性事件
+        // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
+        if (LEDGER_SSE_TYPES.contains(type)) {
+            TurnHandle handle = sessionId == null ? null : TURN_HANDLES.get(sessionId);
+            sessionEventService.append(sessionId, handle == null ? null : handle.userId(),
+                    handle == null ? null : handle.turnId(), type, content);
+        }
         java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
         if (dead != null && dead.get()) return false;
         try {

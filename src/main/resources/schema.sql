@@ -954,3 +954,23 @@ CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     KEY `idx_ul_time` (`create_time`),
     KEY `idx_ul_model_time` (`model`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推理用量台账：所有经多供应商路由的 LLM 调用在唯一出口统一记账（个人统计/对账的唯一数据源）';
+
+-- ============================================
+-- 2026-10-09: 会话事件账本（agent 运行时的可回溯底座）
+-- 只记「结构性事件」——工具开始/终态、人在回路三张卡、产物、子智能体编排、轮终态与用户停止。
+-- 正文与 token/thinking/plan_delta 增量**不进本表**（那些仍在消息表，进表只会把账本写爆又没信息量）。
+-- 一期只服务回放与审计，不参与模型输入；接入历史投影切换前，事件表必须继续保持这个边界。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID（自增即全局写入顺序，回放按它排序）',
+    `session_id` VARCHAR(50)  NOT NULL COMMENT '归属会话',
+    `user_id`    VARCHAR(64)  DEFAULT NULL COMMENT '发起本轮的用户（数据按人隔离，仅本人可见）',
+    `turn_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮唯一ID（一轮的多条事件按它聚成一条轨迹）',
+    `type`       VARCHAR(32)  NOT NULL COMMENT '事件类型: tool/approval/ask_user/plan/artifact/subagent/agent/done/error/stop…',
+    `payload`    TEXT         DEFAULT NULL COMMENT '事件载荷摘要（工具名/状态/耗时/入参截断，上限 4000 字符）',
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '发生时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_se_session_turn` (`session_id`, `turn_id`),
+    KEY `idx_se_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话事件账本（结构性事件，服务过程回放与审计；旁路写入，失败不影响问答）';
