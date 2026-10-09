@@ -229,10 +229,9 @@
                   </div>
                 </template>
               </div>
-              <!-- streaming（打字光标）仅在正文已有内容时挂：检索/等待阶段正文为空，光标会孤悬成一块 -->
               <AnswerBody v-else :content="m.content" :images="m.images" :sources="m.sources" :msg-index="i"
                           runnable :session-id="currentSessionId"
-                          :streaming="m.loading && !m.failed && !!(m.content && m.content.trim())" />
+                          :streaming="m.loading && !m.failed" />
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>

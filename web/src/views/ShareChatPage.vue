@@ -353,7 +353,7 @@ function stop () {
   // 但那是空的回答，留在对话里比不留更碍眼；用户点了停止，要的就是"没这条"。
   const cur = messages.value[messages.value.length - 1]
   if (cur && cur.role === 'assistant' && !cur.content) messages.value.pop()
-  // 已出正文的那条要撤掉打字光标：否则停止后正文末尾永远闪著「在出字」
+  // 已出正文的那条要撤掉 loading：否则这一轮永远停在流式态，正文里的图表不会被补画
   else if (cur && cur.role === 'assistant') cur.loading = false
   scrollBottom()
 }

@@ -190,14 +190,6 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
    chat/answerViewer.js），主聊天页与两个分享页共用一份，所以样式也必须留在全局——
    放进某个页面的 scoped 块里，另外两页就是「能点但没样式」的裸状态。 */
 
-/* 流式打字光标：贴在正文末尾（.md::after），长回答中段能看出"在出字"而不是卡住了 */
-.md.streaming::after {
-  content: '▍';
-  color: var(--app-accent);
-  animation: caret-blink 1s steps(2, start) infinite;
-}
-@keyframes caret-blink { 50% { opacity: 0; } }
-
 /* 角标 ↔ 右栏来源联动：hover 常驻底色，从右栏点进来的一次闪烁定位 */
 .md .ref-sup.ref-hl { background: var(--app-accent-weak); border-radius: 3px; }
 .md .ref-sup.ref-flash { animation: ref-flash 1.5s ease; }

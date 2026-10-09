@@ -2,7 +2,7 @@
   <!-- 一段回答正文。class="md" 与 data-msg-index 都留在这里：
        md.css 靠 .md 命中排版，页面的「右栏来源 ↔ 正文角标」联动靠 data-msg-index 反查 DOM。
        外部传入的 class（如时间线段的 tl-text）由 Vue 的属性透传落到本根元素上，不用另开入口。 -->
-  <div ref="rootEl" class="md" :class="{ streaming }"
+  <div ref="rootEl" class="md"
        :data-msg-index="msgIndex >= 0 ? msgIndex : undefined"
        v-html="html" @click="onClick" @mouseover="onHover" @mouseleave="scheduleCloseRefTip" />
 </template>
@@ -29,7 +29,7 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
   /** 整条消息的序号（-1 = 不参与页面级角标联动） */
   msgIndex: { type: Number, default: -1 },
-  /** 正在流式输出：挂打字光标，且**不补画 mermaid**（半截围栏必画失败） */
+  /** 正在流式输出：**不补画 mermaid**（半截围栏必画失败） */
   streaming: { type: Boolean, default: false },
   /**
    * true（默认）：点角标/图片走共用浮层（chat/answerViewer 的来源弹窗与灯箱），悬浮出角标卡。

@@ -141,7 +141,7 @@
         <AnswerBody v-else-if="m.content || !m.loading" class="bubble-md" :content="m.content || ''"
                     :images="m.images" :sources="m.sources" :msg-index="index"
                     runnable :session-id="sessionId"
-                    :streaming="m.loading && !m.failed && !!(m.content && m.content.trim())"
+                    :streaming="m.loading && !m.failed"
                     :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
 
         <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
@@ -413,12 +413,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   border-radius: 4px 14px 14px 14px; padding: 10px 12px;
   font-size: 15px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere;
 }
-.bubble-md.streaming::after {
-  content: ''; display: inline-block; width: 7px; height: 15px; margin-left: 3px;
-  background: var(--app-accent); vertical-align: -2px; animation: mblink 1s step-end infinite;
-}
-@keyframes mblink { 50% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .bubble-md.streaming::after { animation: none; } }
 .tl-text { min-width: 0; }
 
 /* 折叠卡（思考 / 执行过程 / 工具 / 检索 / 编排） */
