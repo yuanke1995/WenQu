@@ -675,7 +675,7 @@ public class RagService {
         }
         // 本轮身份从这一刻起可用（早于流状态构造）：账本的每条事件都挂得到同一个 turnId
         TURN_HANDLES.put(sessionId, new TurnHandle(
-                java.util.UUID.randomUUID().toString().replace("-", ""), userId));
+                java.util.UUID.randomUUID().toString().replace("-", ""), userId, emitter));
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
@@ -744,7 +744,17 @@ public class RagService {
      */
     public boolean stopTurn(String sessionId, String userId) {
         AnswerStreamState st = sessionId == null ? null : TURN_STATES.get(sessionId);
-        if (st == null) return false;
+        if (st == null) {
+            // 还没有流状态（深度思考/检索阶段）：置把手标志 + 关通道，思考流的下一个增量按
+            // 「本轮已中止」退出，各前置检查点同样短路，不再往下检索与生成
+            TurnHandle h = TURN_HANDLES.get(sessionId);
+            if (h == null || userId == null || !userId.equals(h.userId())) return false;
+            h.stopped().set(true);
+            sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮（尚未进入生成流）");
+            completeEmitter(h.emitter());
+            log.info("[SSE] 用户停止本轮（前置阶段）: session={}", sessionId);
+            return true;
+        }
         // 归属：与 resolveApproval/resolveAsk 同口径——只认发起本轮的那个 uid，别人停不动
         if (userId == null || !userId.equals(st.userId)) {
             log.warn("[FAIL-LOUD] 停止本轮被拒（非本人轮次）: session={} uid={}", sessionId, userId);
@@ -757,6 +767,8 @@ public class RagService {
             return false;
         }
         st.userStopped = true;
+        // 把手标志同步置位：前置阶段与各检查点认的是把手，流状态只覆盖生成阶段
+        st.handle.stopped().set(true);
         // 账本先记停止本身：disposeSafe 会把通道与心跳一并收掉，之后再想还原「是谁、在什么进度上
         // 叫停的这一轮」就没有依据了
         sessionEventService.append(sessionId, st.userId, st.turnId, "stop",
@@ -1071,9 +1083,9 @@ public class RagService {
             // 日志记录用（final 副本，lambda 中引用需要 effectively final）
             final String queryForLog = retrievalQuery;
 
-            // 客户端断开短路（图片视觉处理/改写期间断开已在此打标）：思考与检索都是成本操作，不再发起
-            if (clientDisconnected(emitter)) {
-                log.info("[SSE] 客户端断开，终止本轮问答（检索前）: session={}", sessionId);
+            // 断开或用户叫停短路（图片视觉处理/改写期间断开已在此打标）：思考与检索都是成本操作，不再发起
+            if (turnAborted(sessionId, emitter)) {
+                log.info("[SSE] 客户端断开或已停止，终止本轮问答（检索前）: session={}", sessionId);
                 return;
             }
 
@@ -1183,9 +1195,9 @@ public class RagService {
                     addDegradation(degradations, degradedCodes, "deepThinkDegraded", "深度思考未完成，已转为普通回答");
                 }
             }
-            // 深度思考期间断开（thinking 发送失败即中止思考流并打标）：降级路径同样不再继续检索
-            if (clientDisconnected(emitter)) {
-                log.info("[SSE] 客户端断开，终止本轮问答（思考后）: session={}", sessionId);
+            // 深度思考期间断开/叫停（thinking 发送失败或下一个增量撞上停止标志即中止思考流）：降级路径同样不再继续检索
+            if (turnAborted(sessionId, emitter)) {
+                log.info("[SSE] 客户端断开或已停止，终止本轮问答（思考后）: session={}", sessionId);
                 return;
             }
             // 降级/未开启深度思考：走普通单路检索
@@ -1729,8 +1741,8 @@ public class RagService {
 
             // 5. 异步流式生成（缓冲过滤 <related> 块：跨 token 分割也能正确剥离，前端不会看到标签原文）
             // 生成前最后一道短路检查：流式回答是最长成本段，断开即不再发起（生成中断开由 doOnNext 发送失败取消订阅）
-            if (clientDisconnected(emitter)) {
-                log.info("[SSE] 客户端断开，终止本轮问答（生成前）: session={}", sessionId);
+            if (turnAborted(sessionId, emitter)) {
+                log.info("[SSE] 客户端断开或已停止，终止本轮问答（生成前）: session={}", sessionId);
                 return;
             }
             sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
@@ -2688,6 +2700,21 @@ public class RagService {
         } catch (Exception e) {
             // 兜底失败只记日志：管道已断无处下发错误，回退为现状「中断即丢失」
             log.warn("[SSE] 中断兜底落库失败 (session={}): {}", st.sessionId, e.getMessage());
+        }
+    }
+
+    /**
+     * 思考阶段被用户叫停的留痕：这一轮既没有正文也没有工具记录，什么都不落的话历史里只剩一句提问，
+     * 用户读到的是「我发了个问题，没回答」而不是「我让它停了」。落一条只带思考与停止标记的消息。
+     * <p>为什么单开一条：{@link #persistPartialAnswer} 挂在流状态上，而 {@link AnswerStreamState}
+     * 要到生成阶段才构造——思考阶段没有那个状态可借。
+     */
+    private void persistThinkingOnlyOnStop(String sessionId, String thinking) {
+        if (thinking == null || thinking.isBlank()) return;
+        try {
+            sessionService.appendMessage(sessionId, "assistant", STOP_SUFFIX.trim(), List.of(), null, thinking);
+        } catch (Exception e) {
+            log.warn("[SSE] 停止留痕落库失败（不影响已停止的本轮）: session={} {}", sessionId, e.getMessage());
         }
     }
 
@@ -3971,7 +3998,7 @@ public class RagService {
             TurnHandle h = TURN_HANDLES.get(sessionId);
             if (h == null) {
                 // 非 chat 入口（手动压缩等）：自造把手，收尾时由 claimTerminal 按值摘掉
-                h = new TurnHandle(java.util.UUID.randomUUID().toString().replace("-", ""), userId);
+                h = new TurnHandle(java.util.UUID.randomUUID().toString().replace("-", ""), userId, emitter);
                 TURN_HANDLES.put(sessionId, h);
             }
             this.handle = h;
@@ -5935,8 +5962,11 @@ public class RagService {
                                 throw new ThinkingCappedException();
                             }
                             thinking.append(delta);
-                            // 客户端断开：抛异常中止同步消费（blockLast），省余下思考输出；调用方检查点兜底不再检索
-                            if (!sendSseEvent(emitter, "thinking", delta, sessionId)) {
+                            // 客户端断开或用户叫停：抛异常中止同步消费（blockLast），省余下思考输出，
+                            // 调用方检查点兜底不再检索。停止要先于发送判——通道 complete 后发送未必立刻失败
+                            // （容器缓冲区还在），那样会白烧掉一截思考 token
+                            if (turnStopRequested(sessionId)
+                                    || !sendSseEvent(emitter, "thinking", delta, sessionId)) {
                                 throw new SseClientGoneException();
                             }
                         }
@@ -5949,9 +5979,14 @@ public class RagService {
 
             return finishDeepThinking(thinking.toString(), question, sessionId, emitter, true);
         } catch (SseClientGoneException e) {
-            log.info("[SSE] 客户端断开，深度思考终止: session={}", sessionId);
-            return new DeepThinkResult(false, stripSearchBlock(thinking.toString(), "search"),
-                    question, List.of(), "disconnected");
+            String partialThinking = stripSearchBlock(thinking.toString(), "search");
+            boolean stoppedByUser = turnStopRequested(sessionId);
+            log.info("[SSE] {}，深度思考终止: session={} 已思考={}字",
+                    stoppedByUser ? "用户停止本轮" : "客户端断开", sessionId, partialThinking.length());
+            if (stoppedByUser) {
+                persistThinkingOnlyOnStop(sessionId, partialThinking);
+            }
+            return new DeepThinkResult(false, partialThinking, question, List.of(), "disconnected");
         } catch (ThinkingCappedException e) {
             // 思考长度达上限：用已收集内容继续（可能提取到计划则 ok，否则由调用方用思考词元增强降级）
             log.info("[DEEP-THINK] 思考长度达上限截断（{} 字），用已收集内容继续", thinking.length());
@@ -6077,11 +6112,33 @@ public class RagService {
      * {@link AnswerStreamState} 构造之前，只靠状态表归因会把同一轮的轨迹劈成「无 turn_id 的孤儿行」
      * 与「有 turn_id 的行」两截，回放时拼不回去。
      */
-    private record TurnHandle(String turnId, String userId) {
+    private record TurnHandle(String turnId, String userId, SseEmitter emitter,
+                              java.util.concurrent.atomic.AtomicBoolean stopped) {
+        TurnHandle(String turnId, String userId, SseEmitter emitter) {
+            this(turnId, userId, emitter, new java.util.concurrent.atomic.AtomicBoolean(false));
+        }
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, TurnHandle> TURN_HANDLES =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 本轮是否已被用户叫停。深度思考与检索阶段还没有 {@link AnswerStreamState}（它在流式生成前才构造），
+     * 那段时间的停止只能靠把手上的标志——所以标志独立于状态表存在。
+     */
+    private static boolean turnStopRequested(String sessionId) {
+        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
+        return h != null && h.stopped().get();
+    }
+
+    /**
+     * 本轮还要不要往下跑：客户端已断开，或用户已叫停。
+     * <p>两者都必须一起判——{@code complete()} 会走 onCompletion 把断开标记整条摘掉，
+     * 只看 {@link #clientDisconnected} 的话，被服务端叫停的轮会穿过检查点继续去检索、生成。
+     */
+    private boolean turnAborted(String sessionId, SseEmitter emitter) {
+        return clientDisconnected(emitter) || turnStopRequested(sessionId);
+    }
 
     /**
      * 会话事件账本收录的「结构性事件」白名单（其余 SSE 类型不落账本）。
@@ -7884,8 +7941,8 @@ public class RagService {
             }
             String user = userQuestion.toString();
 
-            if (clientDisconnected(emitter)) {
-                log.info("[SSE] 客户端断开，终止本轮问答（无知识库分支，生成前）: session={}", sessionId);
+            if (turnAborted(sessionId, emitter)) {
+                log.info("[SSE] 客户端断开或已停止，终止本轮问答（无知识库分支，生成前）: session={}", sessionId);
                 return;
             }
             sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
