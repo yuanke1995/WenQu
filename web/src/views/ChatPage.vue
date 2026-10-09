@@ -1003,6 +1003,11 @@
           <div class="askp-foot">
             <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；没答的题不替你选</span>
             <span class="askp-actions">
+              <!-- 停止 ≠ 忽略：忽略是「这一题我不答，你自行继续」，停止是「整轮叫停」。
+                   面板顶替了打字框，停止键（在发送位上）此时不存在，故在面板内给一个同义入口 -->
+              <button class="app-btn ghost small p-stop" type="button"
+                      title="叫停整轮：不再执行任何工具，已生成的内容按「已停止本轮」保留。与「忽略」不同——忽略会让智能体带着「你没答」继续作答"
+                      @click="stopNow">停止本轮</button>
               <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
               <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
             </span>
@@ -1040,6 +1045,10 @@
           <div class="planp-foot">
             <span class="planp-hint"><info-circle-outlined /> 继续对话会按你的意见重做计划；「确认」才执行；未处理将超时并停止本轮</span>
             <span class="planp-actions">
+              <!-- 与提问面板同形：面板顶替打字框时，停止入口只能放在面板里 -->
+              <button class="app-btn ghost small p-stop" type="button"
+                      title="叫停整轮：不再执行任何工具。与「取消」不同——取消是「不批准这一版计划」，卡片会定格「未批准」"
+                      @click="stopNow">停止本轮</button>
               <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
               <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
                       @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
@@ -3944,6 +3953,10 @@ onMounted(async () => {
 .planp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .planp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .planp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+/* 面板内的「停止本轮」（提问/计划两面板共用）：与发送位停止键同一危险弱化口径，但做成静默描边——
+   面板的主行动是「回答 / 批准」，停止是退出路径，不该抢视觉焦点 */
+.p-stop { color: var(--app-danger-text); border-color: var(--app-danger-border); }
+.p-stop:hover:not(:disabled) { background: var(--app-danger-weak); border-color: var(--app-danger-border); }
 .ar-status.ar-err { color: var(--app-danger); }
 
 /* ==================== 响应式：窄屏适配 ====================
