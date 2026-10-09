@@ -139,7 +139,10 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Trace", List.of("menu-dashboard")),
             Map.entry("UsageStats", List.of("menu-stats")),
             Map.entry("User", List.of("menu-members")),
-            Map.entry("Workflow", List.of("menu-agents")));
+            // 工作流 Tab：管理端 CRUD（Workflow）与开放接口（WorkflowApi，API Key 触发）同属该 Tab。
+            // 存量归属是父级 menu-agents，启动期 remap 分支会自动迁到 Tab 菜单，无需手工改库。
+            Map.entry("Workflow", List.of("menu-agents-tab-workflow")),
+            Map.entry("WorkflowApi", List.of("menu-agents-tab-workflow")));
 
     /**
      * 显式构造而非 {@code @RequiredArgsConstructor}：
