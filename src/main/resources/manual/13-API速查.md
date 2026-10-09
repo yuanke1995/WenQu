@@ -25,7 +25,8 @@
 | `GET/POST /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务与立即触发 |
 | `GET/POST/PUT/DELETE /api/ai/workflow*` | 工作流 CRUD / 校验 / 发布 / 版本 / 回滚 |
 | `POST /api/ai/v1/workflows/{id}/run` | 对外工作流触发（`X-Api-Key`，仅已发布版本） |
-| `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表/删除（下载走签名 URL） |
+| `GET /api/ai/artifact/list`、`DELETE /api/ai/artifact/{id}`、`POST /api/ai/artifact/batch-delete` | 我的产物：列表 / 删除 / 批量删除（下载走签名 URL） |
+| `POST /api/ai/artifact/refresh-sign` | 按产物 id 换发新鲜签名下载地址（签名 1 小时过期，对话页长时间停留后需换发；入参为 id 而非 url，归属逐条校验，取不回的静默跳过） |
 | `GET/POST /api/ai/api-key*` | 对外 API Key：列表/签发（明文仅一次）/吊销/MCP 授权 |
 | `GET /api/ai/manual/documents`、`GET /api/ai/manual/documents/{id}/content` | 内置手册：篇目列表 / 单篇内容（帮助中心数据源） |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |

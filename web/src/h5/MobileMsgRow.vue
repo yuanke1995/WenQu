@@ -197,7 +197,7 @@
 
         <!-- 产物 -->
         <div v-if="m.artifacts && m.artifacts.length" class="artifacts">
-          <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact" :href="resolveImg(a.url)" :download="a.filename" target="_blank">
+          <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact" :href="resolveImg(a.url)" :download="a.filename">
             <file-text-outlined /><span class="artifact-name">{{ a.filename }}</span><download-outlined class="artifact-dl" />
           </a>
         </div>

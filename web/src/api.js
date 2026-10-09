@@ -365,6 +365,11 @@ export const getKbParamTips = () => request('/kb/param-tips')
 export const listArtifacts = keyword =>
   request('/artifact/list' + (keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''))
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
+// 换发产物签名：产物签名 1 小时过期，对话页卡片上的 URL 是 SSE 下发/历史接口里那一份「签好就不变」的，
+// 页面开久后点下载必然 401（「我的产物」页因每次进页面都重签而始终正常）。渲染卡片前调它换一批新签名。
+// 入参是产物 id 而非 url：避免前端能构造任意路径让服务端签名。取不回的（不存在/已删/无权/文件已清理）静默跳过。
+export const refreshArtifactSigns = ids =>
+  request('/artifact/refresh-sign', { method: 'POST', body: JSON.stringify({ ids: ids || [] }) })
 // 批量删除：逐条校验归属，返回 { deleted, skipped }（skipped = 不存在/无权的 id）
 export const deleteArtifactsBatch = ids =>
   request('/artifact/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })

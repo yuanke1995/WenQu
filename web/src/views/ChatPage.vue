@@ -369,7 +369,7 @@
               <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
-                   :href="resolveImg(a.url)" :download="a.filename" target="_blank" :title="'下载 ' + a.filename">
+                   :href="resolveImg(a.url)" :download="a.filename" :title="'下载 ' + a.filename">
                   <file-text-outlined class="artifact-icon" />
                   <span class="artifact-name">{{ a.filename }}</span>
                   <span v-if="a.description" class="artifact-desc">{{ a.description }}</span>
@@ -1062,79 +1062,15 @@
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
-      <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
-      <div class="rp-scope-row">
-        <span class="rp-scope">
-          <span :class="{ on: panelScope === 'round' }" @click="panelScope = 'round'">本轮</span>
-          <span :class="{ on: panelScope === 'session' }" @click="panelScope = 'session'">会话</span>
-        </span>
-      </div>
-      <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡 -->
-      <div v-if="sessionPlans.length" class="rp-card">
-        <div class="rp-label">计划 · {{ sessionPlans.length }} 份</div>
-        <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="jumpToPlan(p.mi)"
-                :title="p.label">
-          <ordered-list-outlined class="rp-plan-ic" />
-          <span class="rp-plan-t">{{ p.label }}</span>
-          <span class="rp-plan-st" :class="'is-' + p.status">{{ planStateText(p.status) }}</span>
-        </button>
-      </div>
-      <!-- 运行控制：最近一轮失败可整轮重试（复用消息流 regenerate）；停止生成只在发送键/ESC 提供，右栏不重复 -->
+      <!-- 运行控制：最近一轮失败可整轮重试（复用消息流 regenerate）；停止生成只在发送键/ESC 提供，右栏不重复。
+           失败态提到首位：右栏其余卡都是只读信息，不该挡在一个待操作的动作前面。 -->
       <div v-if="panelAi && panelAi.failed" class="rp-card rp-ctrl">
         <button class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
       </div>
-      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
-      <div v-if="sessionArtifacts.length" class="rp-card">
-        <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
-        <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
-           :href="resolveImg(a.url)" :download="a.filename" target="_blank"
-           :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
-          <file-text-outlined class="rp-art-ic" />
-          <span class="rp-art-name">{{ a.filename }}</span>
-          <download-outlined class="rp-art-dl" />
-        </a>
-        <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
-      </div>
-      <template v-if="panelScope === 'round'">
-        <div class="rp-card">
-          <div class="rp-label">最近一次检索</div>
-          <template v-if="lastRetrieved || lastSources.length">
-            <div class="rp-row"><span v-if="lastRetrieved?.keywords > 0">检索词 {{ lastRetrieved.keywords }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span><span v-if="!(lastRetrieved?.keywords > 0) && (lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">未提取到关键词（纯向量召回）</span><span v-if="!(lastRetrieved?.keywords > 0) && !(lastRetrieved?.refs ?? lastSources.length)" class="rp-dim">本轮未检索到相关资料</span></div>
-            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
-            <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
-            <template v-if="toolSearchQueries(lastAi).length">
-              <div class="rp-divider"></div>
-              <div class="rp-tool-label">精确检索（模型主动补充）</div>
-              <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
-            </template>
-          </template>
-          <div v-else class="rp-dim">本轮尚无检索记录</div>
-        </div>
-        <!-- 本次用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
-        <div v-if="lastTokens" class="rp-card">
-          <div class="rp-label">本次用量{{ lastTokens.outputIsReal ? '（网关实测）' : '（估算）' }}</div>
-          <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
-          <!-- 上下文占用条：context/budget，逼近预算变警告色（>80% 警告 / >95% 危险） -->
-          <div v-if="lastTokens.budget > 0" class="rp-ctx-bar" :title="'上下文占用 ' + ctxPct + '%'">
-            <span class="rp-ctx-fill" :class="ctxLevel" :style="{ width: ctxPct + '%' }"></span>
-          </div>
-          <div class="rp-row" :style="lastTokens.budget > 0 ? 'margin-top:5px' : ''"><span>上下文 {{ fmtTokens(lastTokens.context) }}<template v-if="lastTokens.budget > 0">（{{ ctxPct }}%）</template></span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
-          <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template></div>
-        </div>
-      </template>
-      <!-- 会话视图：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
-      <div v-else class="rp-card">
-        <div class="rp-label">会话汇总</div>
-        <div class="rp-strong">{{ sessionTokensLabel }}</div>
-        <div v-if="sessionTokens.rounds" class="rp-meta">输出 {{ fmtTokens(sessionTokens.output) }} · 按已记录 {{ sessionTokens.rounds }}/{{ roundCount }} 轮累计</div>
-        <div v-else-if="roundCount" class="rp-meta">恢复的历史轮次不含用量记录</div>
-        <div v-else class="rp-meta">发送问题后统计</div>
-        <div class="rp-divider"></div>
-        <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span v-if="sessionArtifacts.length > 0" class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
-        <div v-if="sessionRetrieval.rounds > 0" class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮<template v-if="sessionRetrieval.refs > 0"> · 引用 {{ sessionRetrieval.refs }} 段</template></span><span v-if="sessionRetrieval.search > 0" class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
-        <div v-if="sessionRetrieval.tools > 0" class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
-      </div>
-      <!-- 引用来源：有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则） -->
+      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
+           原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
+           正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
+           有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则）。 -->
       <div v-if="groupedSources.length" class="rp-card">
         <div class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</div>
         <div v-for="g in groupedSources" :key="g.key" class="rp-group">
@@ -1160,6 +1096,89 @@
                 <span v-if="debugDisplayVisible && fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
+      <div v-if="sessionArtifacts.length" class="rp-card">
+        <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
+        <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
+           :href="resolveImg(a.url)" :download="a.filename"
+           :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
+          <file-text-outlined class="rp-art-ic" />
+          <span class="rp-art-name">{{ a.filename }}</span>
+          <download-outlined class="rp-art-dl" />
+        </a>
+        <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
+      </div>
+      <!-- 检索与用量合并成一张卡、两态互斥（v-if/v-else）：
+           两者原本被拆成两张卡夹在「来源」和「汇总」之间，但它们服务的都是同一个问题——「这轮为什么这么答、花了多少」。
+           合并后口径切换器贴到卡内标题行，只作用于它真正管辖的内容，不再独占栏首让人误以为整栏都跟着切。 -->
+      <div class="rp-card">
+        <div class="rp-card-head">
+          <span class="rp-label rp-label-h">{{ panelScope === 'round' ? '本轮检索与用量' : '会话汇总' }}</span>
+          <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
+          <span class="rp-scope">
+            <span :class="{ on: panelScope === 'round' }" @click="panelScope = 'round'">本轮</span>
+            <span :class="{ on: panelScope === 'session' }" @click="panelScope = 'session'">会话</span>
+          </span>
+        </div>
+        <template v-if="panelScope === 'round'">
+          <template v-if="lastRetrieved || lastSources.length">
+            <div class="rp-row"><span v-if="lastRetrieved?.keywords > 0">检索词 {{ lastRetrieved.keywords }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span><span v-if="!(lastRetrieved?.keywords > 0) && (lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">未提取到关键词（纯向量召回）</span><span v-if="!(lastRetrieved?.keywords > 0) && !(lastRetrieved?.refs ?? lastSources.length)" class="rp-dim">本轮未检索到相关资料</span></div>
+            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
+            <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
+            <template v-if="toolSearchQueries(lastAi).length">
+              <div class="rp-divider"></div>
+              <div class="rp-tool-label">精确检索（模型主动补充）</div>
+              <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
+            </template>
+          </template>
+          <div v-else class="rp-dim">本轮尚无检索记录</div>
+          <!-- 用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
+          <template v-if="lastTokens">
+            <div class="rp-divider"></div>
+            <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
+            <!-- 上下文占用条：context/budget，逼近预算变警告色（>80% 警告 / >95% 危险） -->
+            <div v-if="lastTokens.budget > 0" class="rp-ctx-bar" :title="'上下文占用 ' + ctxPct + '%'">
+              <span class="rp-ctx-fill" :class="ctxLevel" :style="{ width: ctxPct + '%' }"></span>
+            </div>
+            <div class="rp-row" :style="lastTokens.budget > 0 ? 'margin-top:5px' : ''"><span>上下文 {{ fmtTokens(lastTokens.context) }}<template v-if="lastTokens.budget > 0">（{{ ctxPct }}%）</template></span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
+            <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template><template v-if="!lastTokens.outputIsReal"> · 估算值</template></div>
+          </template>
+        </template>
+        <!-- 会话态：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
+        <template v-else>
+          <div class="rp-strong">{{ sessionTokensLabel }}</div>
+          <div v-if="sessionTokens.rounds" class="rp-meta">输出 {{ fmtTokens(sessionTokens.output) }} · 按已记录 {{ sessionTokens.rounds }}/{{ roundCount }} 轮累计</div>
+          <div v-else-if="roundCount" class="rp-meta">恢复的历史轮次不含用量记录</div>
+          <div v-else class="rp-meta">发送问题后统计</div>
+          <div class="rp-divider"></div>
+          <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span v-if="sessionArtifacts.length > 0" class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
+          <div v-if="sessionRetrieval.rounds > 0" class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮<template v-if="sessionRetrieval.refs > 0"> · 引用 {{ sessionRetrieval.refs }} 段</template></span><span v-if="sessionRetrieval.search > 0" class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
+          <div v-if="sessionRetrieval.tools > 0" class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
+        </template>
+      </div>
+      <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
+           默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
+           更不该把上面几张交互卡挤出首屏。有待确认的计划时自动展开，避免「计划要批」这件事被藏住。 -->
+      <div v-if="sessionPlans.length" class="rp-card">
+        <button type="button" class="rp-card-head rp-plan-head" @click="planOpen = !planOpen"
+                :title="planOpen ? '收起计划' : '展开计划'">
+          <span class="rp-label rp-label-h">计划 · {{ sessionPlans.length }} 份</span>
+          <span class="rp-plan-badge" :class="{ 'is-pending': sessionPlans.some(p => p.status === 'pending') }">
+            {{ planHeadText }}
+          </span>
+          <caret-right-outlined class="tl-caret" :class="{ open: planOpen }" />
+        </button>
+        <div class="rp-group-body" :class="{ open: planOpen }">
+          <div class="rp-group-body-in">
+            <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="jumpToPlan(p.mi)"
+                    :title="p.label">
+              <ordered-list-outlined class="rp-plan-ic" />
+              <span class="rp-plan-t">{{ p.label }}</span>
+              <span class="rp-plan-st" :class="'is-' + p.status">{{ planStateText(p.status) }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -2643,6 +2662,31 @@ const {
   focusInput
 })
 
+// ===== 右栏「计划」折叠态 =====
+// **必须声明在 useChatEngine 解构之后**：下面的 watch 会立即求值 sessionPlans 的 getter，
+// 而 sessionPlans 依赖引擎解构出的 messages。若这段排在解构之前，getter 会在
+// messages 的 const 还未初始化时被调用，抛 TDZ「Cannot access 'S' before initialization」
+// （表现为 ChatPage 渲染函数内报错）。
+// 原先 sessionPlans 独占一格时无事，正因为没有任何东西在 setup 阶段急切读它；
+// 加了这个 watch 才暴露出来。
+//
+// 计划卡默认折叠（沉底），但**有待确认计划时自动展开**：
+// 计划模式在等人批准，藏起来等于让「模型在等你裁决」这件事消失在侧栏底部——
+// 这是少数「折叠起来会出事」的状态，故用 watch 顶开而非让用户自己发现。
+const planOpen = ref(false)
+const planHeadText = computed(() => {
+  const list = sessionPlans.value
+  if (list.some(p => p.status === 'pending')) return '待确认'
+  if (list.some(p => p.status === 'drafting')) return '生成中'
+  return list[0] ? planStateText(list[0].status) : ''
+})
+watch(() => sessionPlans.value.map(p => p.status).join(','),
+  (cur, prev) => {
+    // 只在「出现了待确认/生成中」时自动展开；用户手动收起后不反复弹回（除非状态真的又变成待确认）
+    if (cur === prev) return
+    if (/pending|drafting/.test(cur)) planOpen.value = true
+  })
+
 // 空态引导用：本轮 @ 引用的资料名（副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
 
@@ -3716,10 +3760,21 @@ onMounted(async () => {
 @keyframes planJumpFlash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
 
 /* 右栏统计口径切换 + 上下文占用条 */
-.rp-scope-row { display: flex; justify-content: flex-end; }
+/* 口径切换器现在贴在「检索与用量」卡的标题行右侧（不再独占栏首） */
+.rp-card-head { display: flex; align-items: center; gap: 6px; }
+.rp-card-head .rp-label-h { margin-bottom: 0; }
+.rp-card-head .rp-scope { margin-left: auto; flex: none; }
 .rp-scope { display: inline-flex; border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; background: var(--app-panel); }
 .rp-scope span { padding: 3px 10px; font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .rp-scope span.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
+/* 计划卡头：整行可点开合，摘要徽标在中间，箭头在尾 */
+.rp-plan-head { width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
+.rp-plan-head:hover .rp-label-h { color: var(--app-text2); }
+.rp-plan-badge {
+  flex: 1; min-width: 0; font-size: 11px; color: var(--app-text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+}
+.rp-plan-badge.is-pending { color: var(--app-warn-text); font-weight: 500; }
 .rp-ctx-bar { height: 6px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; margin-top: 6px; }
 .rp-ctx-fill { display: block; height: 100%; background: var(--app-accent); transition: width .3s; }
 .rp-ctx-fill.warn { background: #d9861f; }

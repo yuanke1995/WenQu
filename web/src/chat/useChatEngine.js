@@ -3,14 +3,15 @@
 // 发送与 SSE 流式回答、审批、重新生成与分支切换。与视图的接缝全部收在 hooks 里
 // （滚动、收面板、聚焦），PC 端由 ChatPage 按原行为传参；移动壳可传自己的落点
 // （如 '/m/chat'）与滚动实现复用同一套引擎。纯函数/常量见 ./projections.js。
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn,
          listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
-         listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
+         listKnowledgeBases, listDocuments, uploadChatAttachment,
+         refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
@@ -495,6 +496,34 @@ const sessionArtifacts = computed(() => {
   }
   return out
 })
+
+// ==================== 产物签名换发 ====================
+// 产物下载 URL 带 HMAC 签名，有效期 1 小时（images.authExpireSeconds）。SSE 下发与历史接口
+// 给的那份 URL「签好就不变」，页面开久后点下载必然 401「图片链接无效或已过期」——而同一文件在
+// 「我的产物」页正常，因为那个列表每次进页面都现场重签。这里在会话产物出现/切换时换一批新鲜签名，
+// 就地改写各消息里 artifact 的 url（保持对象引用不变，视图自动更新）。
+// 入参用产物 id 而非 url：服务端只给库里归属自己的产物重签，前端无法构造任意路径。
+let refreshSeq = 0
+const refreshArtifactSigns = async () => {
+  const seq = ++refreshSeq
+  // 收集本会话全部产物（按 id 去重；无 id 的历史遗留条目跳过）
+  const byId = new Map()
+  for (const m of messages.value) {
+    if (m.role !== 'ai' || !Array.isArray(m.artifacts)) continue
+    for (const a of m.artifacts) if (a && a.id && a.url) byId.set(a.id, a)
+  }
+  if (!byId.size) return
+  try {
+    const res = await refreshArtifactSignsApi([...byId.keys()])
+    // 请求期间可能又切了会话、又出了新产物，丢弃过期结果，避免把 A 会话的签名写进 B 会话
+    if (seq !== refreshSeq) return
+    const rows = Array.isArray(res?.data) ? res.data : []
+    for (const r of rows) {
+      const a = byId.get(r?.id)
+      if (a && r.url) a.url = r.url
+    }
+  } catch (e) { /* 换签失败静默降级：仍可沿用旧签名，不阻断浏览 */ }
+}
 // 会话累计 tokens：只累加消息里真实记录的用量（tokens 随 done 事件下发、未落库，
 // 历史恢复的轮没有该字段——不计入，也不冒充 0）
 const sessionTokens = computed(() => {
@@ -857,6 +886,9 @@ const switchSession = async sid => {
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
       messages.value = list
+      // 产物换发新鲜签名（fire-and-forget）：历史接口给的 URL 签好就不变，1 小时后过期即 401。
+      // 进会话/切会话都换一次，避免"打开页面久了产物点不动"
+      refreshArtifactSigns()
       // 提问卡恢复（fire-and-forget）：等待作答期间断线不再中止本轮，所以刷新/换设备后进来仍能把那张卡答完
       if (!st || !st.msg.ask) hydratePendingAsk(sid)
       // 计划批准卡恢复（同上）：计划等待期间断线不中止本轮，刷新/换设备后仍能批准（回答转后台生成落库）
@@ -1945,6 +1977,23 @@ const ready = async () => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
   }).catch(() => {})
   loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
+}
+
+// 产物签名定时续签：签名有效期 1 小时，切会话/历史恢复时换过一次只覆盖「刚进来」的那批；
+// 页面连续开着不动（排查问题、投屏演示、跑长任务）超过一小时后，卡片上的 URL 又会全部过期。
+// 每 30 分钟换一次，留足冗余；无产物时定时器空转（首行 byId 为空直接返回，不发请求）。
+// 标签页隐藏时跳过——不可见的页面不需要能下载，省掉无谓请求。
+let signTimer = null
+const stopSignTimer = () => { if (signTimer) { window.clearInterval(signTimer); signTimer = null } }
+if (typeof window !== 'undefined') {
+  signTimer = window.setInterval(() => {
+    if (document.visibilityState === 'hidden') return
+    refreshArtifactSigns()
+  }, 30 * 60 * 1000)
+  // 视图卸载时清掉，避免定时器随会话累积（引擎每进一次聊天页就 new 一个）。
+  // onUnmounted 必须在 setup 的同步执行期注册才有当前实例上下文，所以包一层 try：
+  // 引擎也可能被非组件场景调用，此时退化成由 ready 前的分支自行清理。
+  try { onUnmounted(stopSignTimer) } catch (e) { /* 无当前实例：定时器随页面存活，可接受 */ }
 }
 
   return {

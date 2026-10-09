@@ -22,7 +22,9 @@
           <AnswerBody :content="m.content" :images="m.images" :citations="false" />
           <!-- 产物：模型为本轮问题生成的文件，本就是这段对话的一部分，跟着分享出去。
                下载地址不来自响应里的 url（那是被 1 小时签名保护的地址，分享链接却能挂很久），
-               而是按 token 现场换——见下方 artifactHref。 -->
+               而是按 token 现场换——见下方 artifactHref。
+               这里保留 target="_blank"：下载地址是 /share/** 接口（按 seq 取回，不受签名过期影响），
+               与登录态对话页的 /ai/artifacts/** 签名直链不同，新标签打开更稳妥。 -->
           <div v-if="m.artifacts && m.artifacts.length" class="sh-art-list">
             <a v-for="(a, ai) in m.artifacts" :key="ai" class="sh-art"
                :href="artifactHref(a)" :download="a.filename" target="_blank" rel="noopener"

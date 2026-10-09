@@ -63,7 +63,7 @@
       <!-- ---- 产物 ---- -->
       <template v-if="artifacts.length">
         <div class="rs-section">本会话产物<span class="rs-n">{{ artifacts.length }}</span></div>
-        <a v-for="(a, i) in artifacts" :key="i" class="rs-art" :href="a.url" :download="a.filename" target="_blank">
+        <a v-for="(a, i) in artifacts" :key="i" class="rs-art" :href="a.url" :download="a.filename">
           <file-text-outlined class="rs-ic" />
           <span class="rs-art-name">{{ a.filename }}</span>
           <download-outlined class="rs-ic" />
