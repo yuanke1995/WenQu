@@ -267,6 +267,11 @@ public class RagService {
      *  落在时间线区间之外，前端 restore 后由尾段兜底渲染成独立的引用块 */
     private static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
     /**
+     * 用户主动叫停本轮时追加在正文尾部的标记。与 TRUNCATION_SUFFIX 区分：那是通道断开/看门狗掐的，
+     * 这是用户按下的停止——历史里要能看出「这一轮是我让它停的」，而不是「回答自己断了」。
+     */
+    private static final String STOP_SUFFIX = "\n\n> ⏹ 已停止本轮，以上为已生成的部分";
+    /**
      * 整轮失败（模型流抛异常 / 工具失败冒泡）时追加在正文尾部的标注。
      * 与 TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
      * 工具卡片已经记录了失败原因，这行只交代正文本身的完整性，刷新后仍在。
@@ -714,6 +719,52 @@ public class RagService {
             sendSseEvent(emitter, "error", "系统繁忙（当前排队 " + queued + " 个请求），请稍后重试", sessionId);
             completeEmitter(emitter);
         }
+    }
+
+    /**
+     * 服务端停止本轮：按会话找到正在跑的轮次，掐断生成流、把已生成内容按「已停止」落库、解开正在等人
+     * 裁决的挂起项，让流水线线程立刻退出并释放会话轮级互斥（下一问马上能发，不必等审批/提问超时）。
+     * <p>不依赖 SSE 通道是否还在：前端 abort 只断开连接，通道断开在「正等人作答」的语义下是
+     * <b>继续后台跑完</b>（见 {@link AnswerStreamState#keepRunningWithoutChannel}），那不是用户按下停止
+     * 想要的意思；换设备打开同一会话时也没有通道可断。故单独一条按 sessionId 的服务端路径。
+     * <p>正在执行中的那一个工具调用无法半途掐死（沙盒命令已在容器里跑），它在下一步闸口被拦住。
+     *
+     * @return true=确实停掉了一轮；false=该会话没有在跑的轮，或这不是本人的轮（越权 fail-loud 拒绝）
+     */
+    public boolean stopTurn(String sessionId, String userId) {
+        AnswerStreamState st = sessionId == null ? null : TURN_STATES.get(sessionId);
+        if (st == null) return false;
+        // 归属：与 resolveApproval/resolveAsk 同口径——只认发起本轮的那个 uid，别人停不动
+        if (userId == null || !userId.equals(st.userId)) {
+            log.warn("[FAIL-LOUD] 停止本轮被拒（非本人轮次）: session={} uid={}", sessionId, userId);
+            return false;
+        }
+        st.userStopped = true;
+        st.disposeSafe();
+        // 解开人在回路的阻塞等待（放最后：正文已按停止态落库，线程再往下走时幂等闸已占住，不会二次落库）
+        releaseHumanWaits(sessionId);
+        log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
+                sessionId, st.fullResponse.length(), st.toolStepCount.get(),
+                st.detached ? "已断开(后台)" : "在线");
+        return true;
+    }
+
+    /**
+     * 放弃该会话所有挂在人身上的等待：审批按拒绝、提问按中止（走既有 ExecutionException 分支，
+     * 回给模型「用户中止了本轮回答」）、计划按未批准终止本轮。这些 future 不解开，流水线线程会一直
+     * 挂在 {@code future.get(timeout)} 上，会话互斥要等到超时才释放——「停了还不能马上问下一句」。
+     */
+    private void releaseHumanWaits(String sessionId) {
+        PENDING_APPROVALS.values().stream()
+                .filter(p -> sessionId.equals(p.sessionId()))
+                .forEach(p -> p.future().complete(false));
+        PENDING_ASKS.values().stream()
+                .filter(p -> sessionId.equals(p.sessionId()))
+                .forEach(p -> p.future().completeExceptionally(
+                        new java.util.concurrent.CancellationException("用户已停止本轮")));
+        PENDING_PLANS.values().stream()
+                .filter(p -> sessionId.equals(p.sessionId()))
+                .forEach(p -> p.future().complete(PlanDecision.reject()));
     }
 
     /**
@@ -1952,6 +2003,13 @@ public class RagService {
                 @Override
                 public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
                     String name = cb.getToolDefinition().name();                    long begin = System.currentTimeMillis();
+                    // 用户已叫停本轮：一步工具都不再执行（副作用工具尤其不能放行——沙盒命令会真的跑），
+                    // 也让正在等的模型轮次尽快拿到终态而不是继续往下调。
+                    if (st.userStopped) {
+                        recordToolStatus(st, name, toolInput, "error", "本轮已被用户停止",
+                                System.currentTimeMillis() - begin, 0);
+                        return "{\"error\":\"本轮已被用户停止，不再执行任何工具。\"}";
+                    }
                     // 单轮步数上限：防模型陷入"调工具→不满意→再调"的失控循环烧 token。
                     // 达到上限返回错误结果并要求模型直接作答（fail-safe 而不是无限放行）。
                     if (st.maxToolSteps > 0 && st.toolStepCount.get() >= st.maxToolSteps) {
@@ -3795,6 +3853,14 @@ public class RagService {
         volatile boolean detached;
 
         /**
+         * 用户按下「停止本轮」：置位后不再执行任何工具步（含副作用工具），生成流被掐断，
+         * 半程正文按 {@link #STOP_SUFFIX} 落库。
+         * <p>与 {@link #detached} 分开是因为口径相反：断线时「人在等答复」要把本轮留在后台跑完，
+         * 而用户叫停是<b>明确要它停</b>——正挂在审批/提问/计划等待上的轮同样必须停下。
+         */
+        volatile boolean userStopped;
+
+        /**
          * 通道已失效（客户端断开 / emitter 完成 / 发送失败）时问一句：本轮还要不要继续跑？
          * <p>正在等用户作答、或早已转入后台续跑 ⇒ 置 {@link #detached} 返回 true：事件丢弃但不掐流，
          * 用户答完后回答照常生成并落库；其余情形返回 false，由调用方照常规中止本轮并落半程正文
@@ -3843,6 +3909,8 @@ public class RagService {
             // 挂进整轮台账：看门狗到点要停流并截断落库（收集型通道无台账，自然跳过）
             TurnDeadline d = TURN_DEADLINES.get(emitter);
             if (d != null) d.state = this;
+            // 登记进会话轮次表：服务端「停止本轮」按 sessionId 找到它（摘除见 chat 流水线 finally 与落库收尾）
+            TURN_STATES.put(sessionId, this);
         }
 
         void disposeSafe() {
@@ -3862,7 +3930,7 @@ public class RagService {
             // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
             // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
             if (answerPersistGate.compareAndSet(false, true)) {
-                persistPartialAnswer(this, TRUNCATION_SUFFIX);
+                persistPartialAnswer(this, userStopped ? STOP_SUFFIX : TRUNCATION_SUFFIX);
             }
         }
 
@@ -5925,6 +5993,15 @@ public class RagService {
     /** 会话轮级互斥标记：sessionId → 在跑。随轮进出（chat 入口/流水线 finally），进程重启即清空
      *  （与挂起恢复管道同为内存态，语义一致） */
     private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> TURN_IN_FLIGHT =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 会话在跑轮次的流状态：sessionId → AnswerStreamState，供服务端「停止本轮」按会话定位。
+     * <p>刻意不复用 {@link #TURN_IN_FLIGHT} 的布尔标记，也不靠 SSE 通道反查：要能叫停的轮次里，
+     * 有一类通道早就断了（断线后台续跑）、还有一类正挂在等人裁决上（审批/提问/计划等待），
+     * 这两种都不是「连接还在」能表达的。随轮进出（状态构造登记 / 流水线 finally 摘除），进程重启即清空。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, AnswerStreamState> TURN_STATES =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 工具执行审批挂起项：approvalId → 等待用户批准（内存态；进程重启/刷新页面即失效，超时自动拒绝） */

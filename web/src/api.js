@@ -803,6 +803,12 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
 
+/** 服务端停止本轮：真停——掐断生成流、后续工具不再执行、已生成内容按「已停止本轮」落库，并解开正在
+ *  等的人工裁决（审批/提问/计划），使该会话立刻能发下一问。与 abort 本地通道不同：通道断开在等人作答时
+ *  的语义是后台继续跑完。返回 {stopped}，false=该会话此刻并没有在跑的轮。仅本轮发起者本人可停 */
+export const stopChatTurn = sessionId =>
+  request('/chat/stop', { method: 'POST', body: JSON.stringify({ sessionId }) })
+
 /** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
 export const approveToolCall = (approvalId, approved) =>
   request(`/tool-approval/${encodeURIComponent(approvalId)}`, { method: 'POST', body: JSON.stringify({ approved }) })

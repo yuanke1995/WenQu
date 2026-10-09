@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk,
+         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn,
          listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
@@ -1855,7 +1855,11 @@ const stop = () => {
   // 只停当前会话的流；其它会话的后台流不受影响
   const st = chatStreams.get(currentSessionId.value)
   if (st) {
-    chatStreams.delete(currentSessionId.value)
+    const sid = currentSessionId.value
+    chatStreams.delete(sid)
+    // 先请服务端真停：abort 只断本地通道，而通道断开在「正等你作答 / 批准计划」那一轮的语义是
+    // **转后台把本轮跑完**，还占着会话互斥直到人工等待超时（表现：按了停止，下一问发不出去、额度照烧）。
+    stopChatTurn(sid).catch(() => message.warning('服务端没能停止本轮，它可能仍在后台跑完'))
     st.abort.abort()  // abort → api.js 按正常结束回调 onDone（气泡收尾为「已停止生成」）
   }
 }

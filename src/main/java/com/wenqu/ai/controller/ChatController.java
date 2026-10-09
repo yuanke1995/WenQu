@@ -316,6 +316,19 @@ public class ChatController {
         return out.isEmpty() ? null : out;
     }
 
+    @Operation(summary = "停止本轮", description = "服务端停止该会话正在运行的这一轮（生成中、工具执行中、"
+            + "正等审批/作答/批准计划都能停）：掐断生成流、不再执行后续工具、已生成内容按「已停止本轮」落库，"
+            + "并解开正在等待的人工裁决，使会话立刻可以发下一问。与前端断开连接不同——断开在等人作答时"
+            + "的语义是后台继续跑完，这里是要它真的停。仅本轮发起者本人可停；没有在跑的轮或不是本人的轮"
+            + "返回 stopped=false。")
+    @PostMapping("/chat/stop")
+    public ResultJson stopChatTurn(@RequestBody Map<String, String> body) {
+        String sessionId = body == null ? null : body.get("sessionId");
+        if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
+        boolean stopped = ragService.stopTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid());
+        return ResultJson.ok(java.util.Map.of("stopped", stopped));
+    }
+
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
             + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
     @PostMapping("/tool-approval/{approvalId}")

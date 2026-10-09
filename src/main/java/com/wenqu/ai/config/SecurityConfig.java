@@ -80,6 +80,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
         // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatController 内处理）
         if ("POST".equals(method) && path.equals("/api/ai/chat/attachment")) return true;
+        // 停止本轮（问答链路控制）：POST /chat/stop——归属由 RagService.stopTurn 按
+        // 「停止人 uid == 发起本轮 uid」严格校验，别人停不动；不放行则普通用户点停止直接 403
+        if ("POST".equals(method) && path.equals("/api/ai/chat/stop")) return true;
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
