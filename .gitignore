@@ -1,40 +1,54 @@
+# ===== 依赖与构建产物 =====
 node_modules/
 dist/
 target/
 *.log
+
+# ===== IDE / 编辑器 =====
 .idea/
 *.iml
 .vscode/
 .DS_Store
-# 运行时产物与本地敏感配置
-data/
-config/application-local.yml
+__pycache__/
+
+# ===== 本地敏感配置 =====
+# .env.example 是模板（含占位符），必须保留跟踪，故用精确匹配而非 .env*
 .env
 .env.local
 .env.*.local
-__pycache__/
+config/application-local.yml
+# 注：deploy/sandbox-provisioner/.env 等子目录的本地覆盖项由该目录自己的 .gitignore 管，
+# 不在此处重复声明；sandbox.env 是 docker-compose 挂载进容器的部署输入，需保持跟踪。
+
+# ===== 运行时数据与本地资料 =====
+# data/ 是知识库语料（图片/PDF 解析产物，体积大）；data.ms/ 是运行时状态库（LMDB）。
+# 两个名字相近但语义完全不同，容易误改，这里显式区分。
+/data/
+/data.ms/
+# 个人自学记录：纯私人笔记，不入库（体积小也入库会污染开源仓库的文档面）。
+# 部署手册等正式文档随仓走，需要更完整的部署说明见 docs/deployment-guide.html。
+/docs/自学记录.csv
+/docs/自学记录.tsv
+/dumps/
+/dump/
+/user-data/
+/skill-projections/
+
+# ===== AI 工具链本地目录 =====
 /.workbuddy/
 /.qoder/
 /.pyenv/
 /.zcode/
 /.md/
 /.vite/
-# npm 在仓库根误生成的锁文件（前端锁文件在 web/ 内管理）；web/package-lock.json 因历史原因已被跟踪，不受此规则影响
-package-lock.json
-/data.ms/auth/data.mdb
-/data.ms/indexes/b59230e2-ffa9-48cc-b1be-574663dc302a/data.mdb
-/data.ms/tasks/data.mdb
-/data.ms/instance-uid
-/data.ms/auth/lock.mdb
-/data.ms/indexes/b59230e2-ffa9-48cc-b1be-574663dc302a/lock.mdb
-/data.ms/tasks/lock.mdb
-/data.ms/VERSION
-/docs/*
-!/docs/web-search-design.md
-/dump/
 /.zcodeignore
-/dumps/
-/skill-projections/
-/user-data/
+
+# ===== npm 误生成物 =====
+# 根目录无前端依赖，npm 误生成的空壳锁文件不入库；
+# 前端锁文件在 web/package-lock.json，由上面的 node_modules/ 规则区分目录后正常跟踪。
+/package-lock.json
+
+# ===== 部署与运维脚本的本地运行时数据 =====
 /deploy/sandbox-provisioner/data.ms/
 /scripts/mac/data.ms/
+/scripts/win/data.ms/
