@@ -54,6 +54,28 @@ public class ArtifactController {
         }
     }
 
+    /** 批量换发签名请求体 */
+    public record RefreshSignReq(List<String> ids) {
+    }
+
+    /**
+     * 按产物 id 批量换发新鲜签名地址（对话页下载用）。
+     * <p>产物签名有效期只有 1 小时（{@code images.authExpireSeconds}），对话页的卡片 URL
+     * 是SSE 下发 / 历史接口里那一份签好就不变的，页面开久后点下载必然 401；
+     * 「我的产物」页因每次进页面都重新签而始终正常。渲染卡片前调本方法换一批新签名即可根治。
+     * <p>入参是id 而非 url：避免开放「给任意路径签名」的能力（那会把产物鉴权降级成万能签名器，
+     * 可签出他人产物与文档截图）。归属逐条校验，取不回的静默跳过，前端无需处理部分失败。
+     */
+    @Operation(summary = "换发产物签名", description = "按产物 id 返回带新鲜签名的下载地址（签名 1 小时过期，"
+            + "对话页长时间停留后需换发）；取不回的（不存在/已删/无权/文件已清理）直接跳过")
+    @PostMapping("/refresh-sign")
+    public ResultJson refreshSign(@RequestBody RefreshSignReq req) {
+        if (req == null || req.ids() == null || req.ids().isEmpty()) {
+            return ResultJson.error("缺少产物 id");
+        }
+        return ResultJson.ok(artifactService.refreshSignatures(RequestUser.uid(), req.ids()));
+    }
+
     /** 批量删除请求体 */
     public record BatchDeleteReq(List<String> ids) {
     }

@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -263,6 +264,45 @@ public class ArtifactService {
             throw new IllegalArgumentException("无权访问他人的产物");
         }
         return row;
+    }
+
+    /**
+     * 按产物 id 批量换发**新鲜签名**的下载地址（对话页专用）。
+     * <p><b>为什么需要</b>：签名 URL 有效期 {@code images.authExpireSeconds} 只有 1 小时，
+     * 而产物页每次进页面都调{@link #list} 现场重签、永远拿到新地址；对话页的卡片却用的是
+     * SSE 下发 / 历史接口里那一份**签好就不变**的 URL —— 页面开着超过一小时后再点，
+     * {@code ImageAuthInterceptor} 判 expire 过期直接 401，表现为「对话里的产物下载不下来」，
+     * 同一文件在「我的产物」页却正常。前端在渲染卡片前调本方法换一批新签名即可根治。
+     * <p><b>为什么以 id 为入参而不是 url</b>：以 url 为入参等于开放"给任意路径签名"的能力，
+     * 会把产物鉴权降级成万能签名器（可签出别人的产物、甚至 images 下的文档截图）。
+     * 以 id 为入参则归属校验天然在库里，且逐条fail-closed。
+     * <p><b>口径</b>：逐条按 uid 校验归属，取不回的（不存在/已删/超期清理/无权）直接跳过，
+     * 不报错也不返回——前端无需处理部分失败，签名是「尽力刷新」而非交付必需。
+     *
+     * @param ids 产物 id 列表（去重、去空）
+     * @return 能取回的产物视图：{id, filename, url（已签名）}；顺序与入参一致
+     */
+    public List<Map<String, Object>> refreshSignatures(String uid, List<String> ids) {
+        if (uid == null || uid.isBlank() || ids == null || ids.isEmpty()) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String id : ids) {
+            if (id == null || id.isBlank() || !seen.add(id)) continue;
+            Artifact row = null;
+            try {
+                row = getOwned(id, uid); // 归属不符抛 IllegalArgumentException
+            } catch (IllegalArgumentException e) {
+                continue; // 别人的产物：静默跳过，不泄露其存在性
+            }
+            // 文件已不在磁盘（超期清理只删了文件、或部署换机丢了卷）：给链接也是必然 404，跳过
+            if (row == null || !Files.isRegularFile(baseDir().resolve(row.getObjectKey()).normalize())) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", row.getId());
+            m.put("filename", row.getFilename());
+            m.put("url", imageUrlSigner.signUrl("/ai/" + row.getObjectKey()));
+            out.add(m);
+        }
+        return out;
     }
 
     /**

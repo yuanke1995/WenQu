@@ -370,7 +370,7 @@
               <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
-                   :href="resolveImg(a.url)" :download="a.filename" target="_blank" :title="'下载 ' + a.filename">
+                   :href="resolveImg(a.url)" :download="a.filename" :title="'下载 ' + a.filename">
                   <file-text-outlined class="artifact-icon" />
                   <span class="artifact-name">{{ a.filename }}</span>
                   <span v-if="a.description" class="artifact-desc">{{ a.description }}</span>
@@ -1107,7 +1107,7 @@
       <div v-if="sessionArtifacts.length" class="rp-card">
         <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
         <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
-           :href="resolveImg(a.url)" :download="a.filename" target="_blank"
+           :href="resolveImg(a.url)" :download="a.filename"
            :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
           <file-text-outlined class="rp-art-ic" />
           <span class="rp-art-name">{{ a.filename }}</span>

@@ -47,16 +47,45 @@ public class ImageUrlSigner {
      * 例如 /ai/images/{docId}/0.png → /ai/images/{docId}/0.png?expire=1785...&sig=xxxx
      * 签名基准为去掉 query 的路径（与拦截器 request.getRequestURI() 一致）：
      * 原 URL 若自带参数也能通过鉴权，否则签出的 URL 会被拦截器判 401
+     * <p><b>已带签名时先剥旧参数再重签</b>：签名是一次性凭据，对同一个 URL 换发（对话页长时间
+     * 停留后调 {@code /artifact/refresh-sign}）时若直接追加，query 会堆成
+     * {@code ?expire=..&sig=..&expire=..&sig=..}——{@code getParameter} 只取第一个，
+     * 于是永远验的是那个已过期的旧签名，卡片依旧 401。故先剥掉 {@code expire}/{@code sig} 再签。
      */
     public String signUrl(String url) {
         if (!isEnabled()) {
             return url;
         }
         long expire = Instant.now().getEpochSecond() + properties.getImages().getAuthExpireSeconds();
+        // 签名基准 = 纯路径（剥掉**整个** query）。必须是纯路径：拦截器验签时拿到的是
+        // request.getRequestURI()，它按定义不含 query；若把业务参数也算进基准，带参文件
+        // （…?v=2）的签名永远对不上拦截器的路径，直接 401。
         int q = url == null ? -1 : url.indexOf('?');
         String sigBase = q > 0 ? url.substring(0, q) : url;
         String sig = sign(sigBase, expire);
-        return url + (q > 0 ? "&" : "?") + "expire=" + expire + "&sig=" + sig;
+        // 输出保留业务参数（只剥掉旧的 expire/sig），再把新签名追加到末尾。
+        // 拼接符按**清理后**的串判断：原串带签名参数时它必有 '?'，但清理后可能已无 query，
+        // 硬拼 '?' 会得到 "…csv?expire=.."（重复）或"…csv&expire=.."（参数接到路径后）的畸形串。
+        String clean = stripAuthParams(url);
+        String joiner = clean.indexOf('?') >= 0 ? "&" : "?";
+        return clean + joiner + "expire=" + expire + "&sig=" + sig;
+    }
+
+    /** 剥掉 URL 上的签名参数（expire/sig），其余业务查询参数原样保留；null/空原样返回 */
+    private String stripAuthParams(String url) {
+        if (url == null) return null;
+        int q = url.indexOf('?');
+        if (q < 0) return url;
+        StringBuilder sb = new StringBuilder(url.substring(0, q));
+        for (String part : url.substring(q + 1).split("&")) {
+            if (part.isEmpty()) continue;
+            int eq = part.indexOf('=');
+            String k = eq > 0 ? part.substring(0, eq) : part;
+            // 对齐拦截器 getParameter("expire"/"sig") 的取参语义：只认真这两个键
+            if ("expire".equals(k) || "sig".equals(k)) continue;
+            sb.append(sb.indexOf("?") >= 0 ? '&' : '?').append(part);
+        }
+        return sb.toString();
     }
 
     /**
