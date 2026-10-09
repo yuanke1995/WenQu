@@ -797,8 +797,9 @@ public class RagService {
                 .forEach(p -> p.future().complete(false));
         PENDING_ASKS.values().stream()
                 .filter(p -> sessionId.equals(p.sessionId()))
-                .forEach(p -> p.future().completeExceptionally(
-                        new java.util.concurrent.CancellationException("用户已停止本轮")));
+                // 刻意不用 CancellationException：CompletableFuture.get() 对它有特殊分支——原样直抛、
+                // 不包成 ExecutionException，会绕过提问等待处既有的「用户中止本轮」兜底，冒成系统异常
+                .forEach(p -> p.future().completeExceptionally(new IllegalStateException("用户已停止本轮")));
         PENDING_PLANS.values().stream()
                 .filter(p -> sessionId.equals(p.sessionId()))
                 .forEach(p -> p.future().complete(PlanDecision.reject()));
@@ -1843,6 +1844,13 @@ public class RagService {
             emitter.onError(t -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
 
         } catch (Exception e) {
+            if (turnStopRequested(sessionId)) {
+                // 用户叫停后，被解开的等待与被掐断的流会以异常形态冒到这里——这是预期收场，
+                // 不能报「系统处理异常」（那等于把用户的操作说成平台故障）
+                log.info("[SSE] 本轮已被用户停止，收尾异常按预期吞掉: session={} {}", sessionId, e.getMessage());
+                completeEmitter(emitter);
+                return;
+            }
             log.error("Chat error", e);
             sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
             completeEmitter(emitter);
