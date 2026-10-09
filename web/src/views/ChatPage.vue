@@ -1674,22 +1674,6 @@ const sessionPlans = computed(() => {
 const planStateText = st => ({
   drafting: '生成中', pending: '待确认', approved: '已批准', superseded: '已被取代', rejected: '未批准'
 }[st] || st)
-// 计划卡默认折叠（沉底），但**有待确认计划时自动展开**：
-// 计划模式在等人批准，藏起来等于让「模型在等你裁决」这件事消失在侧栏底部——
-// 这是少数「折叠起来会出事」的状态，故用 watch 顶开而非让用户自己发现。
-const planOpen = ref(false)
-const planHeadText = computed(() => {
-  const list = sessionPlans.value
-  if (list.some(p => p.status === 'pending')) return '待确认'
-  if (list.some(p => p.status === 'drafting')) return '生成中'
-  return list[0] ? planStateText(list[0].status) : ''
-})
-watch(() => sessionPlans.value.map(p => p.status).join(','),
-  (cur, prev) => {
-    // 只在「出现了待确认/生成中」时自动展开；用户手动收起后不反复弹回（除非状态真的又变成待确认）
-    if (cur === prev) return
-    if (/pending|drafting/.test(cur)) planOpen.value = true
-  })
 const jumpToPlan = mi => {
   const el = document.querySelector('.row[data-row-index="' + mi + '"]')
   if (!el) return
@@ -2681,6 +2665,31 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// ===== 右栏「计划」折叠态 =====
+// **必须声明在 useChatEngine 解构之后**：下面的 watch 会立即求值 sessionPlans 的 getter，
+// 而 sessionPlans 依赖引擎解构出的 messages。若这段排在解构之前，getter 会在
+// messages 的 const 还未初始化时被调用，抛 TDZ「Cannot access 'S' before initialization」
+// （表现为 ChatPage 渲染函数内报错）。
+// 原先 sessionPlans 独占一格时无事，正因为没有任何东西在 setup 阶段急切读它；
+// 加了这个 watch 才暴露出来。
+//
+// 计划卡默认折叠（沉底），但**有待确认计划时自动展开**：
+// 计划模式在等人批准，藏起来等于让「模型在等你裁决」这件事消失在侧栏底部——
+// 这是少数「折叠起来会出事」的状态，故用 watch 顶开而非让用户自己发现。
+const planOpen = ref(false)
+const planHeadText = computed(() => {
+  const list = sessionPlans.value
+  if (list.some(p => p.status === 'pending')) return '待确认'
+  if (list.some(p => p.status === 'drafting')) return '生成中'
+  return list[0] ? planStateText(list[0].status) : ''
+})
+watch(() => sessionPlans.value.map(p => p.status).join(','),
+  (cur, prev) => {
+    // 只在「出现了待确认/生成中」时自动展开；用户手动收起后不反复弹回（除非状态真的又变成待确认）
+    if (cur === prev) return
+    if (/pending|drafting/.test(cur)) planOpen.value = true
+  })
 
 // 空态引导用：本轮 @ 引用的资料名（副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
