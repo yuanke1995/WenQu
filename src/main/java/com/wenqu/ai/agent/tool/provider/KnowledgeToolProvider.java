@@ -51,8 +51,12 @@ public class KnowledgeToolProvider implements ToolFamilyProvider {
      * 不再要求 tool.knowledgeRetrieval.enabled 子开关（与迁移前装配处同一语义）。
      */
     @Override
+    public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
+        return mc.reflectiveRetrieval() || ToolFamilyProvider.super.exposes(d, mc);
+    }
+
+    @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        return mountFiltered(mc, d -> mc.reflectiveRetrieval()
-                || mc.gateOnFor(family(), d.gateKey()));
+        return mountFiltered(mc, d -> exposes(d, mc));
     }
 }

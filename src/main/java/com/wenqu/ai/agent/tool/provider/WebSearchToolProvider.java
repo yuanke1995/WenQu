@@ -54,6 +54,6 @@ public class WebSearchToolProvider implements ToolFamilyProvider {
      */
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        return mountFiltered(mc, d -> mc.gateOnFor(family(), d.gateKey()));
+        return mountFiltered(mc, d -> exposes(d, mc));
     }
 }

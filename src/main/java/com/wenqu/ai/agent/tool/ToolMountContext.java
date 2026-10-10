@@ -33,10 +33,25 @@ public interface ToolMountContext {
     boolean gateOn(String gateKey);
 
     /**
+     * 工具总闸 {@code tool.enabled}。
+     * <p>放进 {@link #gateOnFor} 而不是让每个 provider 各查一遍：装配处有一条「总闸关→一个都不挂」的
+     * 提前返回，但提示词侧的能力分工段是直接问「这个工具本轮挂不挂」的。总闸不在这条判据里，
+     * 就会出现「关着总闸时提示词还在教模型用 askUser」。
+     */
+    boolean masterOn();
+
+    /**
      * 智能体级三态覆盖：1=强制挂、0=强制不挂、null=跟随全局。
-     * <p>映射到 c_ai_agent 的哪一列由问答侧决定（那是业务实体的知识，不该放进通用装配层）。
+     * <p>映射到 c_ai_agent 的哪一列由问答侧决定（那是业务实体，不该被通用装配层认识）。
      */
     Integer agentFlag(ToolFamily family);
+
+    /**
+     * 智能体对本族「具体项」的选择：null=未指定（本族全挂），空集=显式一个都不用。
+     * <p>与 {@link #agentFlag} 是两道独立的闸：三态决定「这一族开不开」，白名单决定「这一族里挂哪几个」。
+     * 内置工具、技能、MCP 都有这一层，其余族没有（返回 null）。
+     */
+    java.util.Set<String> agentSelection(ToolFamily family);
 
     /**
      * 该工具对本轮请求方是否可见：免登录分享会话只允许描述符显式声明 {@code guestAllowed} 的能力。
@@ -48,11 +63,19 @@ public interface ToolMountContext {
     }
 
     /**
-     * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关（与迁移前 {@code toolOn} 同语义）。
+     * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关（与迁移前 {@code toolOn} 同语义）；
+     * 总闸关着时恒为否（见 {@link #masterOn()}）。
      */
     default boolean gateOnFor(ToolFamily family, String gateKey) {
+        if (!masterOn()) return false;
         Integer flag = agentFlag(family);
         if (flag != null) return flag == 1;
         return gateOn(gateKey);
+    }
+
+    /** 本工具是否在智能体本轮选中的「具体项」里（未指定=全都要，与 {@link #agentSelection} 同语义） */
+    default boolean selectedByAgent(ToolFamily family, String toolName) {
+        java.util.Set<String> only = agentSelection(family);
+        return only == null || (toolName != null && only.contains(toolName));
     }
 }

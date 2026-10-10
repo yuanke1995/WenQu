@@ -4,7 +4,9 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.TodoService;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -40,5 +42,16 @@ public class TodoToolProvider implements ToolFamilyProvider {
         return List.of(new ToolDescriptor("writeTodo", ToolFamily.TODO,
                 "任务清单", "整理任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
                 SideEffect.READ, "tool.todo.enabled", false, false, null));
+    }
+
+    /**
+     * 没有智能体级三态（要加 c_ai_agent 列），只有全局一档；对匿名访客不挂由描述符
+     * {@code guestAllowed=false} 拦住。
+     * <p>这条判据同时被提示词的「人机协同三入口」段查询（清单卡那一行写不写），
+     * 所以问答侧不再自己抄一份 {@code todoToolExposed}。
+     */
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, d -> exposes(d, mc));
     }
 }

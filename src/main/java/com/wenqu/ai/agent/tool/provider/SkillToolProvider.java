@@ -4,8 +4,10 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.SkillService;
 import com.wenqu.ai.service.SkillTools;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -43,5 +45,15 @@ public class SkillToolProvider implements ToolFamilyProvider {
         return List.of(new ToolDescriptor("readSkill", ToolFamily.SKILL,
                 "读取技能", "读取技能说明", "按需加载某个技能的详细说明",
                 SideEffect.READ, "tool.enabled", false, false, null));
+    }
+
+    /**
+     * 技能是**个人资产**：工具实例按本轮用户现造，读正文时只在这个人的范围里找。
+     * <p>刻意不用 {@link #holder()} 那个实例——那是启动核对用的占位 uid，拿它执行会把
+     * 「谁的技能」读成「占位账号的技能」，属于跨账户读取。
+     */
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, new SkillTools(skillService, mc.userId()), d -> exposes(d, mc));
     }
 }

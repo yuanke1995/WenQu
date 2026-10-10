@@ -104,6 +104,27 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 > **仍未真机验**：游客分享路径（要一个 share token），那条改动是代码路径推演；审批闸的 ask 分支仍未跑到。
 > 下一刀：内置/产物/技能/清单四族挂载；沙盒与 MCP 两族最后迁（MCP 要把降级提示与 `st.mcpToolNames` 一起带进 provider）。
 
+> **P1 第三刀（2026-10-10，同日）**：**内置 / 产物 / 技能 / 任务清单四族挂载**迁完，装配处的 if 链只剩
+> 沙盒与 MCP 两段。这一刀多出来的不是"又搬了四段代码"，而是把**判据的所有权**收归 provider：
+> `ToolFamilyProvider.exposes(descriptor, mc)` 成为唯一实现，问答侧提示词的「人机协同三入口」段与
+> 「已批准计划落成清单」那句提示改为查 `ToolRegistry.exposes / anyExposed`——原先那两处各揣着一份
+> `builtinToolExposed` / `todoToolExposed` 私有判据，与装配那份一共三份拷贝，改一处就出现
+> 「提示词教模型用某个工具、工具表里却没有它」。`ToolMountContext` 补两样：`masterOn()`（总闸折进
+> `gateOnFor`——装配处原本有一条「总闸关→一个都不挂」的提前返回，但提示词侧是直接问「这工具挂不挂」的，
+> 总闸不在这条判据里就会有关着闸还在教模型用 askUser 那种事）与 `agentSelection(family)`（智能体
+> 「具体项」白名单；与三态是两道独立闸：三态管这一族开不开，白名单管挂哪几个）。
+> 技能族必须**按本轮用户现造工具实例**：`holder()` 那个是启动核对用的占位 uid，拿它执行会把
+> 「谁的技能」读成「占位账号的技能」，属跨账户读取。装配循环改用 `providersInFamilyOrder()`——
+> Spring 的 bean 列表顺序跟类扫描走、不保证稳定，而「本次启用 N 个工具」这条日志是排障时逐字对着看的。
+> 顺带删掉 `RagService` 里因此变成死注入的 `webSearchTools` / `presentArtifactTool` 两个字段。
+> 真机复测（本机 8090）：挂载集合与迁移前逐字相同（27 个工具）、去重守卫零触发、启动零 ERROR；
+> 一轮里内置(hash) + 清单(writeTodo×2) + 知识检索(searchKnowledge) 三族跨 boundedElastic-5/6/7/8
+> 四条池化线程并发执行，引用仍正常注册（【引用1】）。
+> 仍未迁：沙盒、MCP（MCP 要把降级提示与 mcpToolNames 一起带进 provider，形状和前几族不一样）。
+> 仍未做：ChatCommand、工作流 mcpBody/skillBody 两条裸调旁路、游客 share 路径的真机验证、
+> 技能目录注入那侧的 `skillOn(agent)` 与迁移后的挂载判据仍有一条差异（它缺全局档，只看智能体三态、
+> 否则恒注入——总闸关掉时会出现「目录注入了、readSkill 没挂」，要不要合掉是个产品口径决定，没擅动）。
+
 ### ★★ P2 · 权限档位与安全
 
 借的机制：`SandboxExecutionPolicy` × `ApprovalPolicy` × `ctx.permissionPresets` + 单调 `ToolGuard`。

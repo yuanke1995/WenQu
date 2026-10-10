@@ -40,6 +40,8 @@ public class ToolRegistry {
      * 描述符里就又是一个「改一处忘另一处」的副本，清单页直接读运行时注册结果即可。
      */
     private final Map<String, String> modelDescriptions = new LinkedHashMap<>();
+    /** 族 → 提供方（一条族只有一个提供方；装配顺序与「这条族归谁判」都查它） */
+    private final Map<ToolFamily, ToolFamilyProvider> providerByFamily = new LinkedHashMap<>();
 
     public ToolRegistry(List<ToolFamilyProvider> providers) {
         this.providers = providers == null ? List.of() : providers;
@@ -48,6 +50,13 @@ public class ToolRegistry {
     @PostConstruct
     void init() {
         for (ToolFamilyProvider p : providers) {
+            ToolFamilyProvider sameFamily = providerByFamily.put(p.family(), p);
+            if (sameFamily != null) {
+                // 一族两个提供方 = 装配时后挂的覆盖先挂的，与同名工具一个性质：模型看到的开关归属会变
+                throw new IllegalStateException("[TOOL-REGISTRY] 族 " + p.family().code()
+                        + " 有两个提供方：" + sameFamily.getClass().getSimpleName()
+                        + " 与 " + p.getClass().getSimpleName());
+            }
             List<ToolDescriptor> ds = p.descriptors();
             if (ds == null || ds.isEmpty()) continue;
             for (ToolDescriptor d : ds) {
@@ -152,5 +161,39 @@ public class ToolRegistry {
      */
     public List<ToolFamilyProvider> providers() {
         return List.copyOf(providers);
+    }
+
+    /**
+     * 按 {@link ToolFamily} 声明顺序排的提供方（装配循环用这个而不是 {@link #providers()}）。
+     * <p>Spring 注入的 bean 列表顺序跟类扫描结果走，不保证稳定；工具表顺序虽然不影响语义，但
+     * 「本次启用 N 个工具」这条日志是排障时对着看的，顺序每次变会让人怀疑是不是装配改了。
+     */
+    public List<ToolFamilyProvider> providersInFamilyOrder() {
+        List<ToolFamilyProvider> out = new ArrayList<>();
+        for (ToolFamily f : ToolFamily.values()) {
+            ToolFamilyProvider p = providerByFamily.get(f);
+            if (p != null) out.add(p);
+        }
+        return out;
+    }
+
+    /**
+     * 这个工具本轮挂不挂（供提示词侧的能力分工段查询，与装配循环共用同一份判据）。
+     * <p>未登记的工具名返回 false——它压根不在模型的工具表里，提示词不该提它。
+     */
+    public boolean exposes(ToolFamily family, String toolName, ToolMountContext mc) {
+        ToolFamilyProvider p = providerByFamily.get(family);
+        ToolDescriptor d = byName.get(toolName);
+        return p != null && d != null && d.family() == family && p.exposes(d, mc) && mc.visibleToThisTurn(d);
+    }
+
+    /** 本族本轮是否至少有一个工具挂得上（族级判据：任务清单这种一族一工具的入口用它，调用方不必知道工具名） */
+    public boolean anyExposed(ToolFamily family, ToolMountContext mc) {
+        ToolFamilyProvider p = providerByFamily.get(family);
+        if (p == null) return false;
+        for (ToolDescriptor d : p.descriptors()) {
+            if (p.exposes(d, mc) && mc.visibleToThisTurn(d)) return true;
+        }
+        return false;
     }
 }

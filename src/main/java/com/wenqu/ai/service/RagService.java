@@ -332,11 +332,9 @@ public class RagService {
     /** 用户表（个人默认模型解析） */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
-    private final PresentArtifactTool presentArtifactTool;
     /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认开） */
     private final BuiltinTools builtinTools;
     /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
-    private final WebSearchTools webSearchTools;
     /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
     private final SandboxTools sandboxTools;
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
@@ -494,9 +492,7 @@ public class RagService {
                       KeywordExtractor keywordExtractor,
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       ArtifactService artifactService,
-                      PresentArtifactTool presentArtifactTool,
                       BuiltinTools builtinTools,
-                      WebSearchTools webSearchTools,
                       SandboxTools sandboxTools,
                       SkillService skillService,
                       ChatAttachmentService chatAttachmentService,
@@ -535,9 +531,7 @@ public class RagService {
         this.keywordExtractor = keywordExtractor;
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.artifactService = artifactService;
-        this.presentArtifactTool = presentArtifactTool;
         this.builtinTools = builtinTools;
-        this.webSearchTools = webSearchTools;
         this.sandboxTools = sandboxTools;
         this.skillService = skillService;
         this.chatAttachmentService = chatAttachmentService;
@@ -1961,26 +1955,18 @@ public class RagService {
             st.sensitiveToolNames = sensitiveTools;
             return callbacks;
         }
-        // 已迁到注册中心的族（绞杀式中）：挂不挂由各族自己判，装配处不再抄判据。检索-反思循环的强制
-        // 暴露、智能体三态覆盖、游客可见性分别落在 provider 与描述符的 guestAllowed 上——迁移前这几条
-        // 在游客分支与常规分支各抄了一份，于是「管理员收紧一处」时另一处照旧放行。
+        // 挂不挂由各族自己判（绞杀式中）：内置/检索/联网/产物/技能/任务清单六族已迁到注册中心，
+        // 装配处只剩「问每个族本轮要挂什么」。检索-反思循环的强制暴露、智能体三态覆盖、
+        // 具体项白名单（agent.builtinTools）、游客可见性都落在 provider 与描述符的 guestAllowed 上——
+        // 迁移前这几条在游客分支与常规分支各抄了一份，于是「管理员收紧一处」时另一处照旧放行。
         ToolMountContext mc = toolMountContext(agent, userId, st);
-        for (ToolFamilyProvider p : toolRegistry.providers()) {
+        for (ToolFamilyProvider p : toolRegistry.providersInFamilyOrder()) {
             callbacks.addAll(p.callbacks(mc));
         }
-        // 内置工具族（尚未迁移）：具体项筛选——agent.builtinTools 为 null → 挂全部内置工具；否则只挂
-        // 选中的那几个（按工具名匹配）。判据与提示词里的三入口分工段共用 builtinToolExposed，避免
-        // 「教了模型、工具却没挂上」。这一族对匿名访客同样开放，原先两条分支各写了一遍完全相同的
-        // 循环，现在提到公共段。
-        for (org.springframework.ai.tool.ToolCallback cb :
-                org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
-            if (builtinToolExposed(agent, cb.getToolDefinition().name())) {
-                callbacks.add(cb);
-            }
-        }
-        // 游客分享会话（公开链接 /s/{token}）：能力白名单到此为止。下面的技能/产物/任务清单/沙盒/MCP
-        // 都是身份敏感能力——产物归属发布者、沙盒按 uid 派生容器、技能与 MCP 是个人资产，一律不对
-        // 匿名访客暴露。联网搜索不再归这条分支管：它已迁到注册中心，由描述符 guestAllowed=false 拦住。
+        // 游客分享会话（公开链接 /s/{token}）：能力白名单到此为止。已迁的六族由描述符自己拦
+        // （技能/产物/任务清单/联网对匿名访客不挂，知识检索与内置挂）；下面沙盒与 MCP 两族还没迁，
+        // 所以仍靠这条提前返回挡住——它们同属身份敏感能力（沙盒按 uid 派生容器、MCP 是个人资产），
+        // 迁完即可把这条分支删掉。
         if (st.guestMode) {
             // 保留一条可 grep 的游客标记（原来那句「受限模式」日志在这里断了，只留公共日志会看不出
             // 这一轮是匿名访客跑的）
@@ -1988,26 +1974,9 @@ public class RagService {
             finishMounts(callbacks, sensitiveTools, st);
             return callbacks;
         }
-        // 技能取回工具（Skills 渐进披露的取回端）：智能体未指定时按本人是否有可用技能判定。
-        // 技能无全局开关了（谁装谁用、停用由本人控），工具实例按本次问答用户创建——技能是个人资产，不能跨账户读取。
-        boolean skillToolOn = (agent != null && agent.getToolSkill() != null)
-                ? agent.getToolSkill() == 1
-                : configService.getBoolean("tool.enabled");
-        if (skillToolOn) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(new SkillTools(skillService, userId))));
-        }
-        if (toolOn(agent, "tool.artifact.enabled", agent == null ? null : agent.getToolArtifact())) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(presentArtifactTool)));
-        }
-        // 任务清单工具（tool.todo.enabled，默认关）：多步任务把「总共几件事、做到第几件」变成可见条目。
-        // 默认关是刻意的——它给每轮多一个工具、也多一份维护负担，一次性问答用不上。
-        // 智能体级三态覆盖本轮没做（要加 c_ai_agent 列），现在只有全局一档。
-        if (todoToolExposed(st.guestMode)) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(todoService)));
-        }
+        // 技能/产物/任务清单三族已迁到注册中心（SkillToolProvider / ArtifactToolProvider /
+        // TodoToolProvider）：技能工具实例按本轮用户现造（个人资产，不能跨账户读），产物与清单的
+        // 游客收窄看描述符。这里原有的三段 if 链随迁移删除，别再抄回来。
         // 联网搜索族已迁到注册中心（WebSearchToolProvider）：挂不挂看两级开关、游客可见性看描述符
         // guestAllowed=false、审批归属看 webSearch.requireApproval。这里曾有一份同名工具的挂载分支，
         // 2026-10-10 迁移时漏删，被装配收尾的去重守卫以 ERROR 喊出（[TOOL] 同名工具被重复挂载）。
@@ -2126,20 +2095,30 @@ public class RagService {
      * 否则下一族想加开关时得先改通用层。
      */
     private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
+        return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval);
+    }
+
+    /**
+     * 本轮的工具装配判据上下文。
+     * <p>提示词侧（能力分工段、已批准计划落成清单的那句提示）也走这里问「这个工具本轮挂不挂」——
+     * 两处必须同一份判据，否则会出现「提示词教模型用某个工具，工具表里却没有它」。
+     * 提示词侧用不到 userId（只问判据、不装配回调），传空串即可；技能族按人装配那条路径只有问答流水线会走。
+     */
+    private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
         return new ToolMountContext() {
             @Override
             public String userId() {
-                return userId;
+                return userId == null ? "" : userId;
             }
 
             @Override
             public boolean guestMode() {
-                return st.guestMode;
+                return guestMode;
             }
 
             @Override
             public boolean reflectiveRetrieval() {
-                return st.reflectiveRetrieval;
+                return reflective;
             }
 
             @Override
@@ -2148,9 +2127,29 @@ public class RagService {
             }
 
             @Override
+            public boolean masterOn() {
+                return configService.getBoolean("tool.enabled");
+            }
+
+            @Override
             public Integer agentFlag(ToolFamily family) {
                 return agentFlagFor(family, agent);
             }
+
+            @Override
+            public java.util.Set<String> agentSelection(ToolFamily family) {
+                return agentSelectionFor(family, agent);
+            }
+        };
+    }
+
+    /** 族 → 智能体的「具体项」选择（null=未指定，本族全挂）；只有内置与 MCP 有这一层 */
+    private java.util.Set<String> agentSelectionFor(ToolFamily family, Agent agent) {
+        if (agent == null) return null;
+        return switch (family) {
+            case BUILTIN -> scopeOf(agent.getBuiltinTools());
+            case MCP -> scopeOf(agent.getMcps());
+            default -> null;
         };
     }
 
@@ -5199,34 +5198,34 @@ public class RagService {
     }
 
     /**
-     * 内置工具本轮是否真的挂得上：全局/智能体三态开关 + 智能体的「具体项白名单」两道都过才算。
-     * <p>挂载（enabledToolCallbacks）与提示词里的能力分工段共用这一判据——否则会出现「提示词教模型用某个
-     * 工具，工具表里却没有它」，模型只会对着不存在的能力空转。
+     * 内置工具本轮是否真的挂得上：本族开关（全局/智能体三态）+ 智能体的「具体项白名单」两道都过才算。
+     * <p>判据本体在 {@code BuiltinToolProvider.exposes}，这里只是问答侧的查询口——装配与提示词
+     * 共用同一份，否则会出现「提示词教模型用某个工具，工具表里却没有它」，模型只会对着不存在的能力空转。
      */
-    private boolean builtinToolExposed(Agent agent, String name) {
-        if (!configService.getBoolean("tool.enabled")) return false;
-        if (!toolOn(agent, "tool.builtin.enabled", agent == null ? null : agent.getToolBuiltin())) return false;
-        Set<String> only = agent == null ? null : scopeOf(agent.getBuiltinTools());
-        return only == null || only.contains(name);
+    private boolean builtinExposed(boolean guestMode, Agent agent, String name) {
+        return toolRegistry.exposes(ToolFamily.BUILTIN, name, mountContext(agent, "", guestMode, false));
     }
 
-    /** 任务清单工具本轮是否真的挂得上：游客分支在挂载它之前就 return 了，因此对匿名访客恒为否 */
-    private boolean todoToolExposed(boolean guestMode) {
-        return !guestMode && configService.getBoolean("tool.enabled")
-                && configService.getBoolean("tool.todo.enabled");
+    /**
+     * 任务清单工具本轮是否真的挂得上：总闸 + tool.todo.enabled，对匿名访客恒为否
+     * （游客收窄那条写在描述符的 guestAllowed 上，不在这里另判一遍）。
+     */
+    private boolean todoExposed(boolean guestMode, Agent agent) {
+        return toolRegistry.anyExposed(ToolFamily.TODO, mountContext(agent, "", guestMode, false));
     }
 
     /**
      * 人机协同三入口（计划卡 / 任务清单 / 提问卡）的分工指引段。
      * <p>为什么要有它：三者都在「把决定权交回用户」，工具描述各说各话时模型会乱选——实测里多步任务
      * 默认用 askUser 连环反问「我按 X 做行不行」，而不是直接开工并建一张进度清单。
-     * <p>每一行只在对应入口本轮真用得上时才写（判据与 {@link #enabledToolCallbacks} 共用上面两个方法）：
+     * <p>每一行只在对应入口本轮真用得上时才写（判据与 {@link #enabledToolCallbacks} 同源：都问
+     * {@code ToolRegistry}，实现在各族 provider 里）：
      * 计划卡对游客、无工具的收集型通道、不支持 Function Calling 的模型永不出现，写了就是让它等一张不会来的卡。
      * 三个入口都不可用时返回空串，对本轮提示词零影响。
      */
     private String humanLoopGuide(boolean guestMode, Agent agent, String model, SseEmitter emitter) {
-        boolean todoOn = todoToolExposed(guestMode);
-        boolean askOn = builtinToolExposed(agent, "askUser");
+        boolean todoOn = todoExposed(guestMode, agent);
+        boolean askOn = builtinExposed(guestMode, agent, "askUser");
         boolean planOn = !guestMode && configService.getBoolean("tool.enabled")
                 && !(emitter instanceof CollectingSseEmitter)
                 && modelRegistryService.toolCapableOf(model);
@@ -6895,7 +6894,7 @@ public class RagService {
             versions.add(planVersionEntry(po.plan(), feedback));
             if (po.approved()) {
                 st.planRecord = planSnapshot(versions, "approved", st.planAuto);
-                String block = approvedPlanBlock(po.plan(), todoToolExposed(st.guestMode));
+                String block = approvedPlanBlock(po.plan(), todoExposed(st.guestMode, agent));
                 system.append(block);
                 // 容量计量：计划块与技能/摘要一样是注入段，并入 other 桶（done 的用量校准同源）
                 st.ctxParts.merge("other", TokenCounter.estimate(block), Integer::sum);

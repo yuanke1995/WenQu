@@ -4,7 +4,9 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.BuiltinTools;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -57,5 +59,21 @@ public class BuiltinToolProvider implements ToolFamilyProvider {
     private static ToolDescriptor desc(String name, String label, String cardLabel, String cardHint) {
         return new ToolDescriptor(name, ToolFamily.BUILTIN, label, cardLabel, cardHint,
                 SideEffect.PURE, "tool.builtin.enabled", true, false, null);
+    }
+
+    /**
+     * 两道闸都要过：本族开关（全局 {@code tool.builtin.enabled} 或智能体三态）+ 智能体的
+     * 「具体项」白名单（agent.builtinTools：null=全挂，否则只挂选中的那几个）。
+     * <p>askUser 也在白名单里跟着走——这条判据同时被提示词的「人机协同三入口」段查询：
+     * 提问卡没被选中时那一行不该写给模型，否则模型会对着不存在的工具连环空转。
+     */
+    @Override
+    public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
+        return ToolFamilyProvider.super.exposes(d, mc) && mc.selectedByAgent(family(), d.name());
+    }
+
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, d -> exposes(d, mc));
     }
 }
