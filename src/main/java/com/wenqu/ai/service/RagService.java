@@ -1317,10 +1317,10 @@ public class RagService {
             int partMemoryEnd = system.length();
             // 技能（Skills）渐进披露：只放「技能名 + 描述」清单，正文由模型按需 readSkill 取回。
             // 清单为空的段落不追加（没装技能时对提示词零影响）；注入的是本用户自己的技能。
-            if (skillOn(agent)) {
+            if (skillExposed(guestMode, agent, userId)) {
                 // 智能体级筛选：skills 为 null → 注入全部启用技能；空串 → 一个都不注入；逗号串 → 只注入这些。
-                // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
-                // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
+                // 能不能注入由 skillExposed 判（与 readSkill 的挂载同一份判据，实现在 SkillToolProvider），
+                // 不会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
                 Set<String> skillRefs = agent == null ? null : scopeOf(agent.getSkills());
                 ResourceRefs.Scope skillScope = ResourceRefs.resolve(skillRefs, userId);
                 Set<String> onlySkills = skillScope.names();
@@ -5126,13 +5126,17 @@ public class RagService {
     }
 
     /**
-     * 技能开关三态解析（区别于 {@code ToolMountContext.gateOnFor}）：技能现在是**个人资产**，没有全局「总开关」——
-     * 用户装了技能就是要用的，是否停用由用户在自己的技能列表里决定（见 SkillService.setDisabled）。
-     * 因此智能体未显式指定时一律注入；只有智能体显式设了 0/1 才覆盖。
+     * 技能目录本轮该不该注入：判据与 {@code readSkill} 的挂载<b>同源</b>（问 {@code ToolRegistry}，
+     * 实现只在 {@code SkillToolProvider.exposes} 一处）。
+     * <p>这里此前是自有一套：技能是**个人资产**、没有族级全局开关（用户装了就是要用，停用由本人在
+     * 技能列表里决定），所以旧写法在智能体未显式指定时<b>恒注入</b>。后果是两种错配——
+     * ① 工具总闸 {@code tool.enabled} 关着时，提示词里列着技能清单、模型却没有取正文的工具；
+     * ② 免登录访客同样注入清单，而访客会话压根不挂 {@code readSkill}。
+     * 那段注释自己写了「要与挂载保持一致」，代码却没做到；合到同一判据后两种情况都不存在
+     * （总闸关着不注入，访客因 {@code guestAllowed=false} 也不注入）。
      */
-    private boolean skillOn(Agent agent) {
-        if (agent != null && agent.getToolSkill() != null) return agent.getToolSkill() == 1;
-        return true;
+    private boolean skillExposed(boolean guestMode, Agent agent, String userId) {
+        return toolRegistry.anyExposed(ToolFamily.SKILL, mountContext(agent, userId, guestMode, false));
     }
 
     /**
