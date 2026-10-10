@@ -261,13 +261,13 @@ public class McpServerService {
             if (!kbId.isEmpty() && !visibleKbIds().contains(kbId)) {
                 return toolError("kbId 不存在或不在可见范围内（用 wenqu_list_knowledge_bases 查看）");
             }
-            try {
-                // 工具范围与主链路同语义：ThreadLocal 限定本线程的检索库界（finally 必清，池化线程会复用）
-                KnowledgeRetrievalTool.setKbScope(kbId.isEmpty() ? null : List.of(kbId), null);
-                return ok(knowledgeRetrievalTool.searchKnowledge(query, topK));
-            } finally {
-                KnowledgeRetrievalTool.clearKbScope();
-            }
+            // 检索范围显式传参。此前这里是 KnowledgeRetrievalTool.setKbScope(...) + finally clear 那对
+            // ThreadLocal：免登录对外端点跑在池化线程上，漏清一次就把上一个人的库界留给下一个人
+            // ——那是越权读库，不是显示错乱。P1 seam 化后工具不再持有跨调用的可变状态。
+            KnowledgeRetrievalTool.KbScope scope = new KnowledgeRetrievalTool.KbScope(
+                    kbId.isEmpty() ? null : List.of(kbId), null);
+            // 注册器传 null：对外调用没有「本轮回答」可注册引用，结果保持旧【片段N】格式（与迁移前一致）
+            return ok(knowledgeRetrievalTool.searchKnowledge(query, topK, scope, null, false));
         });
     }
 

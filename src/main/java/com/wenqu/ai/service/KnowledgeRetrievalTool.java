@@ -55,8 +55,16 @@ public class KnowledgeRetrievalTool {
         record Registration(int ref, java.util.List<Integer> imageSeqs) {}
     }
 
-    /** 工具执行线程内有效（Spring AI 同步执行工具回调），用完即清，避免跨会话串号 */
-    private static final ThreadLocal<SourceRegistrar> REGISTRAR = new ThreadLocal<>();
+    /**
+     * toolContext 键：本轮引用来源注册器（值为 {@link SourceRegistrar}）。
+     * <p>P1 迁移前这里是两个类级 ThreadLocal（{@code setSourceRegistrar} / {@code setKbScope} +
+     * finally clear）。它依赖两个不体面的前提：① setter 与工具执行在同一个线程上同步发生；
+     * ② 每次 set 都配得上一次 clear。①在新版 Spring AI 允许工具并行执行时不成立；②只要有一条
+     * 异常路径漏清，池化线程就把上一轮的注册器带给下一个会话——引用编号会注册进别人的回答里，
+     * 用户看到的是「我引用了不存在的出处」。现在落点装进本次调用独占的上下文，作用域=这一次调用，
+     * 没有跨调用的可变状态可漏清。
+     */
+    public static final String CTX_SOURCE_REGISTRAR = "wenqu.knowledge.sourceRegistrar";
 
     /**
      * 工具检索范围（与主链路同库界，2026-09-26 库隔离修复）：智能体绑定了知识库时，
@@ -66,38 +74,31 @@ public class KnowledgeRetrievalTool {
      */
     public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {}
 
-    private static final ThreadLocal<KbScope> KB_SCOPE = new ThreadLocal<>();
+    /** toolContext 键：本轮检索范围（值为 {@link KbScope}，null=不限） */
+    public static final String CTX_KB_SCOPE = "wenqu.knowledge.scope";
 
     /**
-     * 检索-反思循环开关（Agentic RAG，按轮注入用完即清）：开启时工具结果尾部附「证据充分性自评」约束，
-     * 引导模型判断证据是否足够、不足则换关键词/换角度再检索，足够才作答——把「搜一次答一次」
-     * 升级为自主多轮检索（Deep Research 形态）。只在 retrieval.reflectiveRetrieval 命中的轮次置位，
-     * 普通轮次工具行为不变（模型仍可按需调用，但结果不带自评约束，避免诱导过度检索）。
+     * toolContext 键：本轮是否处于检索-反思循环（值为 Boolean）。
+     * <p>开启时工具结果尾部附「证据充分性自评」约束，引导模型判断证据是否足够、不足则换关键词/
+     * 换角度再检索，足够才作答——把「搜一次答一次」升级为自主多轮检索（Deep Research 形态）。
+     * 只在 retrieval.reflectiveRetrieval 命中的轮次注入，普通轮次不带这段（避免诱导过度检索）。
      */
-    private static final ThreadLocal<Boolean> REFLECTIVE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    public static final String CTX_REFLECTIVE = "wenqu.knowledge.reflective";
 
-    public static void setSourceRegistrar(SourceRegistrar r) {
-        REGISTRAR.set(r);
+    /** 从本次调用的上下文取注册器（无上下文=非流式直接调用，退回不注册引用的旧行为） */
+    private static SourceRegistrar registrarOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_SOURCE_REGISTRAR);
+        return v instanceof SourceRegistrar r ? r : null;
     }
 
-    public static void clearSourceRegistrar() {
-        REGISTRAR.remove();
+    private static KbScope scopeOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_KB_SCOPE);
+        return v instanceof KbScope s ? s : null;
     }
 
-    public static void setKbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {
-        KB_SCOPE.set(new KbScope(kbIds, docIds));
-    }
-
-    public static void clearKbScope() {
-        KB_SCOPE.remove();
-    }
-
-    public static void setReflective(boolean reflective) {
-        REFLECTIVE.set(reflective);
-    }
-
-    public static void clearReflective() {
-        REFLECTIVE.remove();
+    private static boolean reflectiveOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_REFLECTIVE);
+        return Boolean.TRUE.equals(v);
     }
 
     /**
@@ -141,7 +142,21 @@ public class KnowledgeRetrievalTool {
     @Tool(description = "精确检索知识库，返回与查询相关的知识片段（含章节路径、标题、正文）。当现有信息不足以回答、或需要核对知识库中具体功能/字段/步骤/报错处理时调用。")
     public String searchKnowledge(
             @ToolParam(description = "检索知识库的关键词或短语，越精准越好，可含功能名/字段名/操作对象") String query,
-            @ToolParam(description = "返回结果条数（1~5，默认 5）") Integer topK) {
+            @ToolParam(description = "返回结果条数（1~5，默认 5）") Integer topK,
+            org.springframework.ai.chat.model.ToolContext toolContext) {
+        // 本轮的落点（引用注册器 / 检索范围 / 反思循环标记）全部来自本次调用的上下文，
+        // 由问答侧的 ToolEnrichment 按次注入——工具不再读任何跨调用的静态状态
+        return searchKnowledge(query, topK, scopeOf(toolContext), registrarOf(toolContext), reflectiveOf(toolContext));
+    }
+
+    /**
+     * 显式入参版本：非流式调用方（对外 MCP server 的平台工具）走这条，检索范围由调用方自己给。
+     * <p>迁移前它靠 {@code KnowledgeRetrievalTool.setKbScope(...)} + finally clear 那对静态方法设置范围，
+     * 池化线程漏清就把上一个调用者的库界留给下一个调用者——对免登录对外端点来说这是越权读库，
+     * 现在只能显式传，没有「忘了传还留着上次的」这种状态可留。
+     */
+    public String searchKnowledge(String query, Integer topK, KbScope scope,
+                                  SourceRegistrar registrar, boolean reflective) {
 
         if (query == null || query.isBlank()) {
             return "查询关键词不能为空";
@@ -151,7 +166,6 @@ public class KnowledgeRetrievalTool {
         int cap = Math.max(1, Math.min(MAX_HITS, configService.getInt("tool.knowledgeRetrieval.maxHits", MAX_HITS)));
         int limit = topK == null ? cap : Math.max(1, Math.min(topK, cap));
         // 范围与主链路对齐：向量路按库界检索（kbIds），命中再按文档范围后过滤（docIds，含空集合 fail-closed）
-        KbScope scope = KB_SCOPE.get();
         // 透传诊断：此前工具传 null，向量/关键词路失败与库门下推失败完全不可见，
         // 排查「工具空结果但主链路 @ 引用能拿到」时只能盲猜。现在把诊断带进来并打各阶段计数日志。
         HybridRetrievalService.RetrievalDiag diag = new HybridRetrievalService.RetrievalDiag();
@@ -224,7 +238,6 @@ public class KnowledgeRetrievalTool {
         // 来源图片并入全局图片编号体系后在块尾附「本段相关截图」清单（[图片N：描述]），
         // 模型按清单在正文真实位置引用编号 → 前端 images[N-1] 映射出真实截图；
         // 非注册模式（无流上下文，如直接调用）：保持旧【片段N】格式
-        SourceRegistrar registrar = REGISTRAR.get();
         // 重排没执行 = 引用门退化到融合分门（minFusionScore，默认 0.5）：词面重叠的弱相关块更容易注册进引用面板。
         // 此前工具链路对此完全静默（主链路 rerankIfNeeded 有提示，但只在主链路有命中时才登记），
         // 用户看到一堆与问题不相关的引用却没有任何说明。这里按同一口径登记可见降级。
@@ -272,7 +285,7 @@ public class KnowledgeRetrievalTool {
         }
         // 检索-反思循环轮次：结果尾部附充分性自评约束——模型据此决定「再检索」还是「作答」，
         // 而不是拿到首轮结果就匆忙下笔。只约束措辞不改行为：上限仍由 agent.maxToolSteps 兜底
-        if (registrar != null && REFLECTIVE.get()) {
+        if (registrar != null && reflective) {
             sb.append("\n\n【证据充分性自评】回答前请先判断以上证据是否足以完整回答当前问题："
                     + "仍有关键缺口（结论/数值/步骤缺失，或资料之间矛盾）→ 换关键词或换角度"
                     + "（同义说法、具体字段名、报错原文、拆出的子问题）再次调用本工具；"

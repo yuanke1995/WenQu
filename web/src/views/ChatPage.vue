@@ -236,7 +236,7 @@
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                          <span class="tool-name" :title="toolDesc(t.name)">{{ toolLabel(t.name) }}</span>
+                          <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                           <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
@@ -321,7 +321,7 @@
                       <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                       <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                       <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                      <span class="tool-name" :title="toolDesc(t.name)">{{ toolLabel(t.name) }}</span>
+                      <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                       <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
@@ -398,7 +398,7 @@
               </div>
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
               <div v-if="m.approval" class="approval-card">
-                <div class="approval-title" :title="toolDesc(m.approval.tool)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
+                <div class="approval-title" :title="toolDesc(m.approval.tool, m.approval.hint)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
                 <pre v-if="m.approval.args" class="approval-args">{{ m.approval.args }}</pre>
                 <div class="approval-actions">
                   <button class="app-btn small" :disabled="m.approval.busy" @click="resolveApproval(m, true)">批准执行</button>

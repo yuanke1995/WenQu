@@ -16,8 +16,10 @@ import java.util.List;
  * **结果必须进引用体系**：命中注册为引用来源并续编 [N]（与主链路、知识检索工具共用同一编号空间），
  * 模型按编号标注后才能溯源；不注册而让模型引用，等于放行无出处的断言，与问渠的可溯源性冲突。
  * <p>
- * 线程模型：注册器走 ThreadLocal（与 KnowledgeRetrievalTool 同范式）——Spring AI 同步执行工具回调，
- * 工具对象是**全局单例**，用实例字段会跨会话串号。
+ * 线程模型：本轮落点（配额、引用注册、降级）经 {@code ToolContext} 随本次调用传入，工具对象自身
+ * 不持有任何跨调用的可变状态。迁移前这里是一对静态 ThreadLocal（setSink / clearSink），
+ * 注释自陈「否则跨会话串号」——它靠时间窗而不是作用域保证正确性，漏清一次就把上一轮的落点
+ * 留给下一个会话。见 P1 seam 化：docs/agent-runtime-gap-2026q4.md §三 P1。
  *
  * @author yuanke
  */
@@ -32,7 +34,7 @@ public class WebSearchTools {
 
     /**
      * 本轮问答的落点：注册引用来源 + 扣减单轮配额 + 记录降级提示。
-     * 由 RagService 在流式问答期间注入（ThreadLocal），非流式直接调用时为 null。
+     * 由问答侧经 {@code ToolContext} 随本次调用传入（见 {@link #CTX_SINK}），非流式直接调用时为 null。
      */
     public interface WebSearchSink {
         /** 扣减一次本轮搜索配额；false=已达 webSearch.maxCallsPerTurn，本次调用应拒绝 */
@@ -45,14 +47,15 @@ public class WebSearchTools {
         void degrade(String code, String message);
     }
 
-    private static final ThreadLocal<WebSearchSink> SINK = new ThreadLocal<>();
+    /**
+     * toolContext 键：本次调用的落点（值为 {@link WebSearchSink}，即问答侧那一轮的引用注册器/配额计）。
+     * <p>非流式直接调用（无上下文）时为 null：照样能搜，只是结果不进引用体系、不扣本轮配额。
+     */
+    public static final String CTX_SINK = "wenqu.websearch.sink";
 
-    public static void setSink(WebSearchSink s) {
-        SINK.set(s);
-    }
-
-    public static void clearSink() {
-        SINK.remove();
+    private static WebSearchSink sinkOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_SINK);
+        return v instanceof WebSearchSink s ? s : null;
     }
 
     private final WebSearchService webSearchService;
@@ -76,12 +79,17 @@ public class WebSearchTools {
             + "不要用它回答知识库已覆盖的内容，也不要凭记忆编造搜索结果。")
     public String webSearch(
             @ToolParam(description = "搜索关键词或短句，像在搜索引擎里那样写，不要写完整句子") String query,
-            @ToolParam(description = "返回结果条数（1~5，默认取系统配置）", required = false) Integer maxResults) {
+            @ToolParam(description = "返回结果条数（1~5，默认取系统配置）", required = false) Integer maxResults,
+            org.springframework.ai.chat.model.ToolContext toolContext) {
+        return webSearch(query, maxResults, sinkOf(toolContext));
+    }
+
+    /** 显式传落点的版本（无引用体系的调用方传 null） */
+    public String webSearch(String query, Integer maxResults, WebSearchSink sink) {
 
         if (query == null || query.isBlank()) {
             return "搜索词不能为空";
         }
-        WebSearchSink sink = SINK.get();
         if (sink != null && !sink.tryConsumeQuota()) {
             return "已达到本轮联网搜索次数上限，不再执行搜索。请基于已有信息直接给出最终回答，"
                     + "并如实说明这部分内容未经过联网核实。";

@@ -1379,7 +1379,7 @@ const hydratePendingApprovals = async sid => {
   // timeoutMs 传「还剩多少」而不是整窗：卡片那行「未处理将在 N 秒后按拒绝处理」直接读它，
   // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
   st.msg.approval = {
-    id: item.approvalId, tool: item.tool, args: item.args,
+    id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
     timeoutMs: Number(item.remainingMs) || 0, busy: false, restored: true
   }
   hooks.scrollForce?.()
@@ -1739,7 +1739,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        msg.approval = { id: j.approvalId, tool: j.tool, args: j.args, timeoutMs: j.timeoutMs, busy: false }
+        msg.approval = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args, timeoutMs: j.timeoutMs, busy: false }
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },

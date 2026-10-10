@@ -1,5 +1,12 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.tool.ToolApprover;
+import com.wenqu.ai.agent.tool.ToolEnrichment;
+import com.wenqu.ai.agent.tool.ToolFamily;
+import com.wenqu.ai.agent.tool.ToolInvocation;
+import com.wenqu.ai.agent.tool.ToolPipelineFactory;
+import com.wenqu.ai.agent.tool.ToolRegistry;
+import com.wenqu.ai.agent.tool.ToolTurnContext;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
@@ -369,6 +376,13 @@ public class RagService {
      * 「查看完整输出」按需读回——此前是截断即丢，尾部少了多少、少了什么，用户与排障的人都看不到。
      */
     private final ToolSpillService toolSpillService;
+    /**
+     * 工具调用管线（P1 seam 化）：守卫链（叫停/预算/审批）→ 上下文注入 → 执行 → 观测 → 插话附送。
+     * 迁移前这一整段是 instrumentTools 里的匿名内部类，于是工作流与技能的裸调路径无从复用同一批闸。
+     */
+    private final ToolPipelineFactory toolPipeline;
+    /** 工具注册中心：中文名、副作用等级、是否需要审批的单一真源（装配与卡片展示都读它） */
+    private final ToolRegistry toolRegistry;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -501,7 +515,9 @@ public class RagService {
                       SessionEventService sessionEventService,
                       TodoService todoService,
                       ChatRunBus chatRunBus,
-                      ToolSpillService toolSpillService) {
+                      ToolSpillService toolSpillService,
+                      ToolPipelineFactory toolPipeline,
+                      ToolRegistry toolRegistry) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -541,6 +557,8 @@ public class RagService {
         this.todoService = todoService;
         this.chatRunBus = chatRunBus;
         this.toolSpillService = toolSpillService;
+        this.toolPipeline = toolPipeline;
+        this.toolRegistry = toolRegistry;
     }
 
     /**
@@ -1993,20 +2011,13 @@ public class RagService {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(todoService)));
         }
-        // 联网搜索工具（webSearch.enabled 控制，默认关；游客分支在上方已 return，天然不对匿名访客暴露）：
-        // 命中结果注册进本轮引用体系（与知识库来源共用 [N] 编号空间），这是"可溯源的联网"的前提——
-        // 不注册而让模型引用，等于放行无出处的断言。
-        // 审批归属由 webSearch.requireApproval 决定（默认 false=自动执行）：它会把用户输入发到外网并产生
-        // 外部计费，语义上和沙盒/MCP 同级，因此**保留**纳入 sensitiveTools 的开关，但不默认强制 ask
-        // （否则每次搜索都要点确认，联网体验不可用；需要收紧时由管理员开这一项）。
+        // 审批归属由注册中心的描述符声明决定（webSearch.requireApproval，默认 false=自动执行）：它会把
+        // 用户输入发到外网并产生外部计费，语义上和沙盒/MCP 同级，因此保留纳入审批名单的开关，
+        // 但不默认强制 ask（否则每次搜索都要点确认，联网体验不可用；需要收紧时由管理员开这一项）。
         if (toolOn(agent, "webSearch.enabled", agent == null ? null : agent.getToolWebsearch())) {
-            boolean requireApproval = configService.getBoolean("webSearch.requireApproval");
             for (org.springframework.ai.tool.ToolCallback cb :
                     org.springframework.ai.support.ToolCallbacks.from(webSearchTools)) {
                 callbacks.add(cb);
-                if (requireApproval) {
-                    sensitiveTools.add(cb.getToolDefinition().name());
-                }
             }
         }
         // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
@@ -2019,7 +2030,6 @@ public class RagService {
             for (org.springframework.ai.tool.ToolCallback cb :
                     org.springframework.ai.support.ToolCallbacks.from(sandboxTools)) {
                 callbacks.add(cb);
-                sensitiveTools.add(cb.getToolDefinition().name());
             }
         }
         // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
@@ -2053,12 +2063,23 @@ public class RagService {
                 for (org.springframework.ai.tool.ToolCallback cb : mcpClientService.toolCallbacks(userId, onlyMcp)) {
                     callbacks.add(cb);
                     String toolName = cb.getToolDefinition().name();
-                    sensitiveTools.add(toolName);
                     mcpNames.add(toolName);
                 }
                 st.mcpToolNames = java.util.Set.copyOf(mcpNames);
             } catch (Exception e) {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
+            }
+        }
+        // 本轮「有副作用工具」名单由注册中心的描述符判定，不再在装配处逐个 add：
+        // 沙盒族恒需确认、联网搜索看 webSearch.requireApproval、内置/检索/产物/技能/清单不需要；
+        // **没在注册中心登记的工具一律需要确认**（当前即 MCP 外部工具）——外部 server 的工具名前缀是
+        // 用户自己起的 clientInfo 名，靠命名规律识别会漏，漏一次的结果是跳过审批，不是少问一句。
+        // 此前这条规则在装配处 add 一遍、清单页硬编码一遍、前端再抄一遍，三份各自演进的直接后果
+        // 是新工具的审批属性看不出来、中文名丢失。
+        for (org.springframework.ai.tool.ToolCallback cb : callbacks) {
+            String n = cb.getToolDefinition().name();
+            if (toolRegistry.requiresApproval(n, configService::getBoolean)) {
+                sensitiveTools.add(n);
             }
         }
         // 记录本轮"有副作用"的工具名单（沙盒/MCP）：智能体 toolApprovalMode=ask 时执行前需用户确认
@@ -2085,220 +2106,266 @@ public class RagService {
     }
 
     /**
-     * 工具调用过程追踪：把启用列表里的 ToolCallback 包一层（call 前后发 tool_status SSE（start/done/error）
-     * 并记录耗时与结果摘要），供 done 事件汇总与历史持久化（工具调用状态展示）。
-     * 返回 ToolCallback[]（供 ChatClient .toolCallbacks() 使用）。
+     * 工具调用管线接入口（P1 seam 化第一刀）。
+     * <p>
+     * 迁移前这里是两百行匿名内部类：叫停闸、步数闸、审批等待、上下文注入、状态观测、插话附送全部
+     * 内联，并且直读 AnswerStreamState 的私有字段——于是工作流的 mcp/skill 节点想复用其中任何一道闸
+     * 都无从下手（那两条路现在是 {@code target.call(json)} 裸调，绕开审批、绕开预算、绕开工具卡与
+     * 事件账本）。守卫链与管线本体已迁到 {@code com.wenqu.ai.agent.tool}，这里只剩一份
+     * 「本轮问答状态 → 工具执行层契约」的适配。
+     * <p>
+     * 本期只接问答流水线这一条装配路径，行为与迁移前逐项对齐；其余旁路留待后续族迁移时接同一条管线。
      */
     private org.springframework.ai.tool.ToolCallback[] instrumentTools(
             java.util.List<org.springframework.ai.tool.ToolCallback> rawTools, AnswerStreamState st) {
-        // 身份快照在此处（入口线程）捕获：instrumentTools 由问答流水线在 chat-pipeline 线程调用，
-        // 此时 RequestUser 可见。工具实际执行在 boundedElastic 线程，必须靠这个快照把身份带过去
-        // （见 callWithRetry）。放在执行点捕获是无效的——那里已经在弹性线程上，只会拿到 anonymous。
-        final com.wenqu.ai.util.RequestUser.Snapshot identity =
-                com.wenqu.ai.util.RequestUser.snapshot();
-        List<org.springframework.ai.tool.ToolCallback> wrapped = new ArrayList<>(rawTools.size());
-        for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
-            wrapped.add(new org.springframework.ai.tool.ToolCallback() {
-                @Override
-                public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
-                    return cb.getToolDefinition();
-                }
+        return toolPipeline.wrap(rawTools, toolTurnContext(st));
+    }
 
-                @Override
-                public String call(String toolInput) {
-                    return cb.call(toolInput);
-                }
+    /**
+     * 本轮的工具执行上下文：把 AnswerStreamState 的问答态映射成 {@link ToolTurnContext} 声明的
+     * 十余件事。
+     * <p>
+     * <b>身份快照在本方法（入口线程）捕获</b>：工具实际执行在 Reactor boundedElastic 线程上，
+     * RequestUser 是流水线线程装载的 ThreadLocal，跨线程读不到会回落 anonymous——对检索类工具
+     * 这不是安全降级而是功能损坏（库门恒假 → 召回 0 并耗尽工具预算，线上实测过）。
+     * 放在执行点捕获同样无效，那里已经在弹性线程上。见 {@link #callWithRetry}。
+     */
+    private ToolTurnContext toolTurnContext(AnswerStreamState st) {
+        final com.wenqu.ai.util.RequestUser.Snapshot identity = com.wenqu.ai.util.RequestUser.snapshot();
+        // 本轮基础上下文：会话/用户归属 + askUser 执行器 + 任务清单写入器 + 大输出外溢信箱
+        final Map<String, Object> baseCtx = java.util.Collections.unmodifiableMap(toolContext(st));
+        // 按族的上下文注入：本轮落点随本次调用传递，工具侧不再读任何跨调用的静态状态
+        // （迁移前这三处分别是 setSourceRegistrar/setKbScope/setReflective、setSink，
+        //  以及沙盒那两个 per-call 回调——全部收进这里，作用域=本次调用）
+        final Map<ToolFamily, ToolEnrichment> enrichments = Map.of(
+                ToolFamily.KNOWLEDGE, inv -> {
+                    Map<String, Object> m = new java.util.HashMap<>();
+                    // 引用注册器：命中块注册进当前流 sources 续编引用编号，工具文本改【引用N】提示
+                    // 模型按编号标注，前端角标悬浮/引用弹窗因此可溯源
+                    m.put(KnowledgeRetrievalTool.CTX_SOURCE_REGISTRAR, new KnowledgeRetrievalTool.SourceRegistrar() {
+                        @Override
+                        public KnowledgeRetrievalTool.SourceRegistrar.Registration register(
+                                HybridRetrievalService.Hit h, String snippet) {
+                            return st.registerToolSource(h, snippet);
+                        }
 
-                @Override
-                public String call(String toolInput, org.springframework.ai.chat.model.ToolContext toolContext) {
-                    String name = cb.getToolDefinition().name();                    long begin = System.currentTimeMillis();
-                    // 用户已叫停本轮：一步工具都不再执行（副作用工具尤其不能放行——沙盒命令会真的跑），
-                    // 也让正在等的模型轮次尽快拿到终态而不是继续往下调。
-                    if (st.userStopped) {
-                        recordToolStatus(st, name, toolInput, "error", "本轮已被用户停止",
-                                System.currentTimeMillis() - begin, 0);
-                        return "{\"error\":\"本轮已被用户停止，不再执行任何工具。\"}";
-                    }
-                    // 单轮步数上限：防模型陷入"调工具→不满意→再调"的失控循环烧 token。
-                    // 达到上限返回错误结果并要求模型直接作答（fail-safe 而不是无限放行）。
-                    if (st.maxToolSteps > 0 && st.toolStepCount.get() >= st.maxToolSteps) {
-                        recordToolStatus(st, name, toolInput, "error", "已达单轮工具调用步数上限(" + st.maxToolSteps + ")",
-                                System.currentTimeMillis() - begin, 0);
-                        log.warn("[TOOL] 达到单轮步数上限({})，拒绝继续调用: tool={} session={}",
-                                st.maxToolSteps, name, st.sessionId);
-                        return "{\"error\":\"已达到本轮工具调用步数上限(" + st.maxToolSteps + ")，不再执行工具调用。"
-                                + "请基于已有信息直接给出最终回答。\"}";
-                    }
-                    st.toolStepCount.incrementAndGet();
-                    // 心跳已升级为整轮流级（buildAnswerStream 启动、终态路径停止）：覆盖「工具执行」
-                    // 与「工具结束→最终回答首 token」两段静默区，这里不再逐工具启停。
-                    {
-                        // 人在回路审批：有副作用工具（沙盒/MCP）+ 智能体 ask 模式 → 暂停等待用户确认。
-                        // 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；拒绝/超时以错误结果回给模型，
-                        // 让它基于已有信息继续而不是无限重试。游客会话本就不暴露这类工具，天然不进此分支。
-                        if (st.sensitiveToolNames.contains(name) && "ask".equalsIgnoreCase(st.toolApprovalMode)) {
-                            long approvalTimeout = approvalTimeoutMs();
-                            String approvalId = java.util.UUID.randomUUID().toString();
-                            java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
-                            // 落库审批记录（持久化 + 审计；内存 future 仍负责阻塞工具线程，不可省）
-                            try {
-                                com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
-                                rec.setId(approvalId);
-                                rec.setSessionId(st.sessionId);
-                                rec.setUserId(st.userId);
-                                rec.setToolName(name);
-                                rec.setStatus("PENDING");
-                                String argsSummary = toolInput == null ? "" : (toolInput.length() > 2000 ? toolInput.substring(0, 2000) : toolInput);
-                                rec.setRequestArgs(argsSummary);
-                                rec.setCreatedAt(java.time.LocalDateTime.now());
-                                toolApprovalMapper.insert(rec);
-                            } catch (Exception e) {
-                                log.warn("[TOOL] 审批记录落库失败（不阻塞审批流程）: {}", e.getMessage());
-                            }
-                            PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
-                            // 审批待决站内通知（旁路）：SSE 只能触达正开着这个会话页的人，人不在页面时
-                            // 铃铛是唯一可感知面。超时/裁决后通知不撤（留在列表里作审计痕迹，点了即已读）。
-                            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
-                                    "工具执行待确认：" + name,
-                                    "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
-                                    "session", st.sessionId, "tool:" + approvalId, approvalId);
-                            try {
-                                Map<String, Object> req = new LinkedHashMap<>();
-                                req.put("approvalId", approvalId);
-                                req.put("tool", name);
-                                String args = toolInput == null ? "" : toolInput;
-                                req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
-                                req.put("timeoutMs", approvalTimeout);
-                                sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
-                                log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
-                                boolean approved;
-                                beginHumanWait(st.emitter);   // 用户确认时间不计入整轮机器预算（见 TurnDeadline）
-                                try {
-                                    approved = future.get(approvalTimeout, java.util.concurrent.TimeUnit.MILLISECONDS);
-                                } catch (java.util.concurrent.ExecutionException ee) {
-                                    approved = false;
-                            } catch (java.util.concurrent.TimeoutException te) {
-                                approved = false;
-                                markApprovalResolved(approvalId, "TIMEOUT", st.userId);
-                                log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
-                            } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    approved = false;
-                                } finally {
-                                    endHumanWait(st.emitter);
-                                }
-                                if (!approved) {
-                                    recordToolStatus(st, name, toolInput, "error", "用户拒绝或确认超时，未执行",
-                                            System.currentTimeMillis() - begin, 0);
-                                    return "{\"error\":\"该工具调用未被用户批准（拒绝或确认超时），未执行。"
-                                            + "请基于已有信息继续回答，不要重复尝试调用该工具。\"}";
-                                }
-                                log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
-                            } finally {
-                                PENDING_APPROVALS.remove(approvalId);
-                            }
+                        @Override
+                        public void degrade(String code, String msg) {
+                            // 工具链路（重排不可用等）可写回本轮 degradations，与主链路同一份列表、同一展示位
+                            addDegradation(st.degradations, st.degradedCodes, code, msg);
                         }
-                        recordToolStatus(st, name, toolInput, "start", null, 0, 1);
-                        // 流式输出接线：execute 增强一份 toolContext，注入「本工具输出增量回调」（闭包持有工具名）。
-                        // SandboxTools 检测到回调即走流式执行（后台脱离+轮询），增量经 recordToolOutput 转 SSE；
-                        // 其余工具/无流上下文按原上下文透传，行为不变。
-                        // 基础设施故障回调（CTX_INFRA_ERROR_SINK）对全部沙盒工具注入：沙盒不可用时工具
-                        // 不抛异常（抛出去会掐断整轮流、连带已生成正文与全部工具记录一起落空），而是把
-                        // 失败文本回给模型 + 经此回调上报，让本条记录落成 error 而不是绿色对勾的 done。
-                        org.springframework.ai.chat.model.ToolContext effectiveCtx = toolContext;
-                        // 沙盒工具判定（决定要不要注入故障上报回调）：与 sandboxTool 无关的工具
-                        // 保持原行为，effectiveCtx 原样透传。
-                        boolean sandboxTool = SandboxTools.TOOL_NAMES.contains(name);
-                        // 基础设施故障信箱：本次调用独占的 AtomicReference（局部变量，同名工具并发
-                        // 调用也各持各的，不会串号）。工具执行期被填充，call 返回后据此定status。
-                        java.util.concurrent.atomic.AtomicReference<String> infraError = null;
-                        if (toolContext != null && (SandboxTools.STREAMING_TOOL_NAME.equals(name) || sandboxTool)) {
-                            java.util.Map<String, Object> enhanced = new java.util.HashMap<>(toolContext.getContext());
-                            if (SandboxTools.STREAMING_TOOL_NAME.equals(name)) {
-                                enhanced.put(SandboxTools.CTX_OUTPUT_SINK,
-                                        (java.util.function.Consumer<String>) delta -> recordToolOutput(st, name, delta));
-                            }
-                            if (sandboxTool) {
-                                infraError = new java.util.concurrent.atomic.AtomicReference<>();
-                                enhanced.put(SandboxTools.CTX_INFRA_ERROR_SINK,
-                                        (java.util.function.Consumer<String>) infraError::set);
-                                effectiveCtx = new org.springframework.ai.chat.model.ToolContext(enhanced);
-                            }
-                        }
-                        // 精确检索工具：注入来源注册器——命中块注册进当前流 sources 续编引用编号，
-                        // 工具文本改【引用N】提示模型按编号标注，前端角标悬浮/引用弹窗因此可溯源；
-                        // 同步注入本轮检索范围——工具与主链路同库界，不得越过智能体知识库绑定检索
-                        boolean kbTool = "searchKnowledge".equals(name);
-                        if (kbTool) {
-                            // 注册器带 degrade 通道：工具链路（重排不可用等）可写回本轮 degradations，
-                            // 与主链路 addDegradation 同一份列表、同一展示位
-                            KnowledgeRetrievalTool.setSourceRegistrar(
-                                    new KnowledgeRetrievalTool.SourceRegistrar() {
-                                        @Override
-                                        public KnowledgeRetrievalTool.SourceRegistrar.Registration register(
-                                                HybridRetrievalService.Hit h, String snippet) {
-                                            return st.registerToolSource(h, snippet);
-                                        }
+                    });
+                    // 检索范围：工具与主链路同库界，不得越过智能体知识库绑定去检索其他库
+                    m.put(KnowledgeRetrievalTool.CTX_KB_SCOPE,
+                            new KnowledgeRetrievalTool.KbScope(st.toolScopeKbIds, st.toolScopeDocIds));
+                    m.put(KnowledgeRetrievalTool.CTX_REFLECTIVE, st.reflectiveRetrieval);
+                    return m;
+                },
+                ToolFamily.WEBSEARCH, inv -> Map.of(WebSearchTools.CTX_SINK, st),
+                ToolFamily.SANDBOX, inv -> {
+                    Map<String, Object> m = new java.util.HashMap<>();
+                    // 输出增量回调：execute 检测到它即走流式执行（后台脱离+轮询），增量经
+                    // recordToolOutput 转 SSE，前端「看着它跑」
+                    if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName())) {
+                        m.put(SandboxTools.CTX_OUTPUT_SINK,
+                                (java.util.function.Consumer<String>) delta ->
+                                        recordToolOutput(st, inv.toolName(), delta));
+                    }
+                    // 基础设施故障信箱对全部沙盒工具注入：沙盒不可用时工具不抛异常（抛出会掐断整轮流、
+                    // 连带已生成正文与全部工具记录一起落空），而是把失败文本回给模型 + 经此信箱上报，
+                    // 让这条记录落成 error 而不是绿色对勾的 done。信箱挂在本次调用上，同名工具并发也各是各的
+                    m.put(SandboxTools.CTX_INFRA_ERROR_SINK,
+                            (java.util.function.Consumer<String>) msg -> inv.recordFailure(msg));
+                    return m;
+                });
+        return new ToolTurnContext() {
+            @Override
+            public String sessionId() {
+                return st.sessionId;
+            }
 
-                                        @Override
-                                        public void degrade(String code, String msg) {
-                                            addDegradation(st.degradations, st.degradedCodes, code, msg);
-                                        }
-                                    });
-                            KnowledgeRetrievalTool.setKbScope(st.toolScopeKbIds, st.toolScopeDocIds);
-                            // 检索-反思循环轮次：工具结果尾部附「证据充分性自评」约束（按轮注入，finally 清理）
-                            KnowledgeRetrievalTool.setReflective(st.reflectiveRetrieval);
-                        }
-                        // 联网搜索工具：注入本轮落点（配额扣减 + 引用注册 + 降级提示）。
-                        // 工具对象是全局单例，落点必须按轮注入并即时清理，否则跨会话串号。
-                        boolean webTool = WebSearchTools.TOOL_NAME.equals(name);
-                        if (webTool) {
-                            WebSearchTools.setSink(st);
-                        }
-                        // MCP 外部工具：结果注册引用来源（tool.mcpCiteEnabled）——模型依据 MCP 内容
-                        // 作答时正文才有可点溯源的 [N]，否则是悬空角标（引用面板无对应条目）。
-                        boolean mcpTool = st.mcpToolNames.contains(name);
-                        try {
-                            int[] attempts = {0};
-                            String result = callWithRetry(cb, toolInput, effectiveCtx, name, attempts, identity);
-                            if (mcpTool) {
-                                result = st.registerMcpCitations(name, result);
-                            }
-                            // 沙盒基础设施故障（provisioner 不可达等）：工具把失败文本回给了模型、
-                            // 没抛异常，但这条记录必须落成 error——否则「沙盒压根没通」在聊天区
-                            // 显示为绿色对勾的「成功」，与「命令跑了退出码非 0」混为一谈。
-                            String infra = infraError == null ? null : infraError.get();
-                            if (infra != null && !infra.isBlank()) {
-                                recordToolStatus(st, name, toolInput, "error", infra,
-                                        System.currentTimeMillis() - begin, attempts[0]);
-                            } else {
-                                recordToolStatus(st, name, toolInput, "done", result,
-                                        System.currentTimeMillis() - begin, attempts[0]);
-                            }
-                            // 用户中途插话随这一步的结果一起送达模型：循环的消息列表由框架持有，
-                            // 工具返回值是我们唯一能干净影响下一轮输入的位置。附在**尾部**而不是开头
-                            // ——MCP 工具可能回严格 JSON，前置会把结构打断，尾部既保结构又读得到
-                            String steered = drainSteers(st);
-                            return steered.isEmpty() ? result : result + "\n\n" + steered.trim();
-                        } catch (Exception e) {
-                            recordToolStatus(st, name, toolInput, "error", e.getMessage(),
-                                    System.currentTimeMillis() - begin, 0);
-                            throw e;
-                        } finally {
-                            if (kbTool) {
-                                KnowledgeRetrievalTool.clearSourceRegistrar();
-                                KnowledgeRetrievalTool.clearKbScope();
-                                KnowledgeRetrievalTool.clearReflective();
-                            }
-                            if (webTool) {
-                                WebSearchTools.clearSink();
-                            }
-                        }
-                    }
+            @Override
+            public String userId() {
+                return st.userId;
+            }
+
+            @Override
+            public String turnId() {
+                return st.turnId;
+            }
+
+            @Override
+            public boolean userStopped() {
+                return st.userStopped;
+            }
+
+            @Override
+            public int maxToolSteps() {
+                return st.maxToolSteps;
+            }
+
+            @Override
+            public int stepsTaken() {
+                return st.toolStepCount.get();
+            }
+
+            @Override
+            public void takeStep() {
+                st.toolStepCount.incrementAndGet();
+            }
+
+            @Override
+            public String approvalMode() {
+                return st.toolApprovalMode;
+            }
+
+            @Override
+            public boolean requiresApproval(String toolName) {
+                return st.sensitiveToolNames != null && st.sensitiveToolNames.contains(toolName);
+            }
+
+            @Override
+            public long approvalTimeoutMs() {
+                return approvalTimeoutMs();
+            }
+
+            @Override
+            public ToolApprover approver() {
+                return (inv, timeoutMs) -> requestToolApproval(st, inv, timeoutMs);
+            }
+
+            @Override
+            public Map<String, Object> baseToolContext() {
+                return baseCtx;
+            }
+
+            @Override
+            public Map<ToolFamily, ToolEnrichment> enrichments() {
+                return enrichments;
+            }
+
+            @Override
+            public String execute(org.springframework.ai.tool.ToolCallback raw, String arguments,
+                                  Map<String, Object> context, ToolInvocation inv, int[] attemptsOut) {
+                return callWithRetry(raw, arguments,
+                        new org.springframework.ai.chat.model.ToolContext(context),
+                        inv.toolName(), attemptsOut, identity);
+            }
+
+            @Override
+            public void observe(ToolInvocation inv, String status, String resultOrError) {
+                boolean starting = "start".equals(status);
+                recordToolStatus(st, inv.toolName(), inv.arguments(), status, resultOrError,
+                        starting ? 0 : inv.elapsedMillis(), starting ? 1 : inv.attempts());
+            }
+
+            @Override
+            public void onOutput(ToolInvocation inv, String delta) {
+                recordToolOutput(st, inv.toolName(), delta);
+            }
+
+            @Override
+            public String decorateResult(ToolInvocation inv, String result) {
+                // MCP 外部工具结果注册引用来源（tool.mcpCiteEnabled）：模型依据 MCP 内容作答时正文才有
+                // 可点溯源的 [N]，否则是悬空角标（引用面板无对应条目）
+                if (st.mcpToolNames != null && st.mcpToolNames.contains(inv.toolName())) {
+                    return st.registerMcpCitations(inv.toolName(), result);
                 }
-            });
+                return result;
+            }
+
+            @Override
+            public String appendSteers(ToolInvocation inv, String result) {
+                String steered = drainSteers(st);
+                return steered.isEmpty() ? result : result + "\n\n" + steered.trim();
+            }
+        };
+    }
+
+    /**
+     * 有副作用工具的执行确认（人在回路的问人那一段：落库审计、站内通知、SSE 审批卡、阻塞等待）。
+     * <p>
+     * 定性交给 {@link ToolApprover.Outcome}，不再是一个 boolean：拒绝、超时、无人可确认在迁移前都
+     * 收敛成同一个 false，于是「审批卡没人点」与「用户点了拒绝」在日志和文案里分不开，
+     * 用户读到的是一句含糊的「未批准」。
+     * <p>
+     * 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；超时/拒绝都<b>不代用户批准</b>，
+     * 由守卫把原因回给模型，让它基于已有信息继续而不是反复重试。
+     */
+    private ToolApprover.Outcome requestToolApproval(AnswerStreamState st, ToolInvocation inv, long timeoutMs) {
+        String name = inv.toolName();
+        String toolInput = inv.arguments();
+        String approvalId = inv.callId();
+        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+        // 落库审批记录（持久化 + 审计；内存 future 仍负责阻塞工具线程，不可省）
+        try {
+            com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
+            rec.setId(approvalId);
+            rec.setSessionId(st.sessionId);
+            rec.setUserId(st.userId);
+            rec.setToolName(name);
+            rec.setStatus("PENDING");
+            String argsSummary = toolInput == null ? "" : (toolInput.length() > 2000 ? toolInput.substring(0, 2000) : toolInput);
+            rec.setRequestArgs(argsSummary);
+            rec.setCreatedAt(java.time.LocalDateTime.now());
+            toolApprovalMapper.insert(rec);
+        } catch (Exception e) {
+            log.warn("[TOOL] 审批记录落库失败（不阻塞审批流程）: {}", e.getMessage());
         }
-        return wrapped.toArray(new org.springframework.ai.tool.ToolCallback[0]);
+        PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
+        // 审批待决站内通知（旁路）：SSE 只能触达正开着这个会话页的人，人不在页面时铃铛是唯一可感知面。
+        // 超时/裁决后通知不撤（留在列表里作审计痕迹，点了即已读）。
+        notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
+                "工具执行待确认：" + name,
+                "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
+                "session", st.sessionId, "tool:" + approvalId, approvalId);
+        try {
+            Map<String, Object> req = new LinkedHashMap<>();
+            req.put("approvalId", approvalId);
+            req.put("tool", name);
+            // 中文名来自注册中心：审批卡上写「execute」用户看不懂，而前端那份手抄映射对 MCP 动态
+            // 工具和无声明工具一律失效，下发之后前端只兜底、不再是唯一来源
+            putToolDisplayName(req, name);
+            String args = toolInput == null ? "" : toolInput;
+            req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
+            req.put("timeoutMs", timeoutMs);
+            sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
+            log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
+            boolean approved;
+            ToolApprover.Outcome timeoutOutcome = ToolApprover.Outcome.TIMED_OUT;
+            beginHumanWait(st.emitter);   // 用户确认时间不计入整轮机器预算（见 TurnDeadline）
+            try {
+                approved = future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.ExecutionException ee) {
+                approved = false;
+                timeoutOutcome = ToolApprover.Outcome.REJECTED;
+            } catch (java.util.concurrent.TimeoutException te) {
+                approved = false;
+                markApprovalResolved(approvalId, "TIMEOUT", st.userId);
+                log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                approved = false;
+                timeoutOutcome = ToolApprover.Outcome.CANCELLED;
+            } finally {
+                endHumanWait(st.emitter);
+            }
+            if (!approved) {
+                return timeoutOutcome;
+            }
+            log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
+            return ToolApprover.Outcome.ALLOWED;
+        } finally {
+            PENDING_APPROVALS.remove(approvalId);
+        }
+    }
+
+    /** 工具展示名下发：卡片名与悬停说明都取注册中心，未知工具（MCP 动态名）不下发空字段，前端用自己那份兜底 */
+    private void putToolDisplayName(Map<String, Object> payload, String name) {
+        String label = toolRegistry.displayLabel(name);
+        if (label != null) payload.put("label", label);
+        String hint = toolRegistry.cardHint(name);
+        if (hint != null) payload.put("hint", hint);
     }
 
     // ==================== 工具执行心跳 ====================
@@ -2971,6 +3038,9 @@ public class RagService {
                                   String status, String resultOrError, long elapsedMs, int attempts) {
         Map<String, Object> rec = new LinkedHashMap<>();
         rec.put("name", name);
+        // 展示名与悬停说明随后端下发：工具卡上写「execute」用户读不懂，而前端那份手抄映射
+        // 对 MCP 动态工具与新增工具一律失效（writeTodo 上线时清单与卡片都只剩英文名）
+        putToolDisplayName(rec, name);
         rec.put("status", status);
         rec.put("elapsedMs", elapsedMs);
         if (attempts > 1) {
@@ -7677,6 +7747,9 @@ public class RagService {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("approvalId", rec.getId());
                 item.put("tool", rec.getToolName());
+                // 展示名与实时审批卡同源（注册中心）：恢复出来的卡片若只给英文名，用户在同一张卡上
+                // 会先看到「运行命令」、刷新后看到「execute」
+                putToolDisplayName(item, rec.getToolName());
                 item.put("args", rec.getRequestArgs() == null ? "" : rec.getRequestArgs());
                 item.put("timeoutMs", window);
                 item.put("remainingMs", remaining);

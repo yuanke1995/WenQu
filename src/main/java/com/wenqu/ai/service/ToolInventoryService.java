@@ -1,10 +1,10 @@
 package com.wenqu.ai.service;
 
-import com.wenqu.ai.service.websearch.WebSearchTools;
+import com.wenqu.ai.agent.tool.ToolDescriptor;
+import com.wenqu.ai.agent.tool.ToolFamily;
+import com.wenqu.ai.agent.tool.ToolRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.support.ToolCallbacks;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -15,13 +15,17 @@ import java.util.Map;
 /**
  * 工具清单（管理员的「本平台有哪些工具」总览）。
  * <p>
- * 数据来源是**运行时注册的 @Tool 定义**（ToolCallbacks.from(...) 反射拿 name/description），
- * 不是硬编码清单——以后加新工具族，这里自动多一行，不会出现「代码里有、清单里没有」的漂移。
- * 中文名映射是唯一需要手维护的部分（@Tool description 是给模型看的英文指令风格，管理界面要中文）。
+ * 数据来源是 {@link ToolRegistry}：工具名、中文名、开关归属、是否算有副作用，都由各工具族的
+ * {@code ToolFamilyProvider} 声明一次，这里只负责按族展示。迁移前这个类自己维护一张中文名表
+ * 与一份硬编码的 sensitive 集合，与装配处（{@code RagService.enabledToolCallbacks}）、前端两处
+ * 各抄各的——新工具上线时清单里只剩英文名（writeTodo 就漏过），改一个开关要同步三处。
  * <p>
- * 与「内置工具可选项」（前端 AgentsPage 的 BUILTIN_TOOL_OPTIONS）的关系：那边是**智能体配置时**
- * 的多选框选项（内置族一个族一项），这边是**全景清单**（含所有族 + 开关状态），二者口径不同、
- * 各自维护；新增内置工具时两处都要补中文名。
+ * 模型可见的 description 仍然是反射出来的（{@code @Tool} 注解原文），不另存一份：
+ * 那是喂给模型的提示，抄进清单就成了第四份副本。
+ * <p>
+ * 与「内置工具可选项」（前端 AgentsPage 的 BUILTIN_TOOL_OPTIONS）的关系不变：那边是智能体配置时
+ * 的多选框选项，这边是全景清单，口径不同；<b>但 AgentsPage 那份仍是前端手抄</b>——它是登录用户
+ * 都要读的，而本接口按既定口径不开普通用户洞（见 ToolInventoryController 注释），留给后续统一。
  *
  * @author yuanke
  */
@@ -31,39 +35,7 @@ import java.util.Map;
 public class ToolInventoryService {
 
     private final ConfigService configService;
-    private final KnowledgeRetrievalTool knowledgeRetrievalTool;
-    private final BuiltinTools builtinTools;
-    private final PresentArtifactTool presentArtifactTool;
-    private final SandboxTools sandboxTools;
-    private final WebSearchTools webSearchTools;
-    private final SkillService skillService;
-
-    /** 工具中文名（key=@Tool 方法名）。与前端 AgentsPage 的 BUILTIN_TOOL_OPTIONS 保持同步 */
-    private static final Map<String, String> LABELS = new LinkedHashMap<>();
-
-    static {
-        LABELS.put("searchKnowledge", "知识库精确检索");
-        LABELS.put("calculate", "算术计算");
-        LABELS.put("currentDateTime", "当前日期时间");
-        LABELS.put("daysBetween", "日期相差天数");
-        LABELS.put("addDays", "日期推算");
-        LABELS.put("randomNumber", "随机数");
-        LABELS.put("uuid", "生成 UUID");
-        LABELS.put("unitConvert", "单位换算");
-        LABELS.put("textStats", "文本统计");
-        LABELS.put("base64", "Base64 编解码");
-        LABELS.put("hash", "哈希计算");
-        LABELS.put("askUser", "向用户提问（人在回路）");
-        LABELS.put("presentArtifact", "生成文件产物");
-        LABELS.put("readSkill", "读取技能");
-        LABELS.put("execute", "执行沙盒命令");
-        LABELS.put("read_file", "读取沙盒文件");
-        LABELS.put("write_file", "写入沙盒文件");
-        LABELS.put("edit_file", "编辑沙盒文件");
-        LABELS.put("ls", "查看沙盒目录");
-        LABELS.put("deliver_artifact", "交付沙盒产物");
-        LABELS.put("webSearch", "联网搜索");
-    }
+    private final ToolRegistry registry;
 
     /**
      * 汇总当前全部已注册工具。
@@ -72,55 +44,56 @@ public class ToolInventoryService {
      */
     public List<Map<String, Object>> inventory() {
         List<Map<String, Object>> out = new ArrayList<>();
-        // 顺序即展示顺序：高频无害在前，敏感在后。
-        // 注意：这里传**原始 bean**，由 group() 内部统一 ToolCallbacks.from() 转换——
-        // 不能在外面先 from() 再传：转出来的 MethodToolCallback 上没有 @Tool 注解，
-        // group 里再 from() 会抛 "No @Tool annotated methods found"（2026-10-01 实际踩过）
-        out.add(group("builtin", "内置高频工具", "tool.builtin.enabled", builtinTools));
-        out.add(group("knowledge", "知识库精确检索", "tool.knowledgeRetrieval.enabled", knowledgeRetrievalTool));
-        out.add(group("websearch", "联网搜索", "webSearch.enabled", webSearchTools));
-        out.add(group("artifact", "产物交付", "tool.artifact.enabled", presentArtifactTool));
-        out.add(group("skill", "技能（Skills）", "tool.enabled", new SkillTools(skillService, "inventory")));
-        out.add(group("sandbox", "沙盒执行", "tool.sandbox.enabled", sandboxTools));
-        // MCP 没有静态清单（按用户登记动态接入），给一条说明行
-        Map<String, Object> mcp = new LinkedHashMap<>();
-        mcp.put("family", "mcp");
-        mcp.put("familyLabel", "MCP 外部工具");
-        mcp.put("globalKey", null);
-        mcp.put("enabled", configService.getBoolean("tool.enabled"));
-        mcp.put("tools", List.of(Map.of(
-                "name", "(按用户动态接入)",
-                "label", "用户登记的 MCP Server 工具",
-                "description", "每个用户在「MCP 服务」面板登记自己的 server，工具以 w_q_ 前缀动态合入，无静态清单",
-                "sensitive", true)));
-        out.add(mcp);
+        boolean master = configService.getBoolean("tool.enabled");
+        // 枚举顺序即展示顺序：高频无害在前，敏感在后
+        for (ToolFamily family : ToolFamily.values()) {
+            List<ToolDescriptor> ds = registry.ofFamily(family);
+            if (ds.isEmpty()) {
+                if (family == ToolFamily.MCP) out.add(mcpNoticeRow(master));
+                continue;
+            }
+            String globalKey = ds.stream().map(ToolDescriptor::gateKey)
+                    .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+            List<Map<String, Object>> tools = new ArrayList<>();
+            for (ToolDescriptor d : ds) {
+                Map<String, Object> t = new LinkedHashMap<>();
+                t.put("name", d.name());
+                t.put("label", d.label());
+                t.put("description", orEmpty(registry.modelDescription(d.name())));
+                t.put("sensitive", d.requiresApproval(configService::getBoolean));
+                // 副作用等级：P2 按档位收紧时要用它区分「只读」与「变更」，先在清单里可见
+                t.put("sideEffect", d.sideEffect().name().toLowerCase());
+                tools.add(t);
+            }
+            Map<String, Object> g = new LinkedHashMap<>();
+            g.put("family", family.code());
+            g.put("familyLabel", family.familyLabel());
+            g.put("globalKey", globalKey);
+            // 工具总闸关着时所有族都不可用；族开关再决定本族是否挂上
+            g.put("enabled", master && (globalKey == null || configService.getBoolean(globalKey)));
+            g.put("tools", tools);
+            out.add(g);
+        }
         return out;
     }
 
-    private Map<String, Object> group(String family, String familyLabel, String globalKey,
-                                      Object... toolHolders) {
-        List<Map<String, Object>> tools = new ArrayList<>();
-        java.util.Set<String> sensitive = java.util.Set.of("execute", "read_file", "write_file", "edit_file", "ls",
-                "deliver_artifact");
-        for (Object holder : toolHolders) {
-            for (ToolCallback cb : ToolCallbacks.from(holder)) {
-                var def = cb.getToolDefinition();
-                Map<String, Object> t = new LinkedHashMap<>();
-                t.put("name", def.name());
-                t.put("label", LABELS.getOrDefault(def.name(), def.name()));
-                t.put("description", def.description());
-                t.put("sensitive", sensitive.contains(def.name()));
-                tools.add(t);
-            }
-        }
-        Map<String, Object> g = new LinkedHashMap<>();
-        g.put("family", family);
-        g.put("familyLabel", familyLabel);
-        g.put("globalKey", globalKey);
-        // 工具总闸关着时所有族都不可用；族开关再决定本族是否挂上
-        boolean master = configService.getBoolean("tool.enabled");
-        g.put("enabled", master && (globalKey == null || configService.getBoolean(globalKey)));
-        g.put("tools", tools);
-        return g;
+    /** MCP 没有静态清单（按用户登记动态接入），给一条说明行 */
+    private Map<String, Object> mcpNoticeRow(boolean master) {
+        Map<String, Object> mcp = new LinkedHashMap<>();
+        mcp.put("family", ToolFamily.MCP.code());
+        mcp.put("familyLabel", ToolFamily.MCP.familyLabel());
+        mcp.put("globalKey", null);
+        mcp.put("enabled", master);
+        mcp.put("tools", List.of(Map.of(
+                "name", "(按用户动态接入)",
+                "label", "用户登记的 MCP Server 工具",
+                "description", "每个用户在「MCP 服务」面板登记自己的 server，工具以 wen_qu_ 前缀动态合入，无静态清单",
+                "sensitive", true,
+                "sideEffect", "external")));
+        return mcp;
+    }
+
+    private static String orEmpty(String s) {
+        return s == null ? "" : s;
     }
 }

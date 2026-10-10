@@ -5,10 +5,11 @@
 // 组件卸载时由消费方在 onUnmounted 里调 stopTick() 收尾。
 import { ref } from 'vue'
 import { chatStreams } from '../views/store'
-// 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档），
-// 内置工具与后端 ToolInventoryService.LABELS 同源但口径更口语；MCP 工具名是用户登记的
-// server 动态合入的（带 clientInfo 前缀），只映射常用 server 的常用工具（context7 / deepwiki），
-// 未映射的去掉前缀原样展示，不臆造翻译。
+// 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档）。
+// P1 seam 化之后**首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的
+// 描述符），下面的两张表退为兜底——历史消息里没有 label、免登录分享页的旧记录、以及 MCP 动态工具
+// 仍要靠本地映射。新增工具不再需要在这里补一行就能显示中文名（writeTodo 当时漏在清单里只有英文名，
+// 就是这个手抄机制的代价）。
 const TOOL_LABELS = {
   searchKnowledge: '查知识库资料',
   presentArtifact: '生成文件',
@@ -83,13 +84,15 @@ const bareToolName = n => {
   const pre = MCP_CLIENT_PREFIXES.find(p => n.startsWith(p))
   return pre ? n.slice(pre.length) : n
 }
-const toolLabel = n => {
+const toolLabel = (n, label) => {
+  // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底
+  if (label) return label
   if (TOOL_LABELS[n]) return TOOL_LABELS[n]
   // MCP 工具记录名带 clientInfo 前缀：先去前缀再试一次映射，未映射的展示裸名
   const bare = bareToolName(n)
   return TOOL_LABELS[bare] || bare
 }
-const toolDesc = n => TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || ''
+const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
 const toolCallsView = list => {
   if (!Array.isArray(list)) return []
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))

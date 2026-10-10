@@ -122,7 +122,7 @@
                     <span v-if="t.status === 'start'" class="spinner"></span>
                     <check-outlined v-else-if="t.status === 'done'" class="ic-ok" />
                     <close-circle-outlined v-else class="ic-err" />
-                    <span class="card-title">{{ toolLabel(t.name) }}</span>
+                    <span class="card-title">{{ toolLabel(t.name, t.label) }}</span>
                     <code v-if="toolBrief(t)" class="tool-brief">{{ toolBrief(t) }}</code>
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="t.status === 'start' && t.startAt" class="card-dim">{{ liveToolDur(t.startAt) }}</span>
@@ -179,7 +179,7 @@
                 <check-outlined v-if="t.status === 'done'" class="ic-ok" />
                 <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
                 <span v-else class="spinner"></span>
-                <span class="tool-line-name">{{ toolLabel(t.name) }}</span>
+                <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
                 <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
               </div>
             </template>
@@ -201,7 +201,7 @@
 
         <!-- 工具审批（人在回路） -->
         <div v-if="m.approval" class="approval">
-          <div class="approval-title"><exclamation-circle-outlined /> 请求执行工具「{{ toolLabel(m.approval.tool) }}」</div>
+          <div class="approval-title"><exclamation-circle-outlined /> 请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
           <pre v-if="m.approval.args" class="io-pre">{{ m.approval.args }}</pre>
           <div class="approval-actions">
             <button class="btn-primary" :disabled="m.approval.busy" @click.stop="$emit('approve', m, true)">批准执行</button>
