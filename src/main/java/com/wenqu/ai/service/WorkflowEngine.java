@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.CompileConfig;
@@ -1055,8 +1056,11 @@ public class WorkflowEngine {
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 withReplay(ctx, () -> {
-                    ragService.chat(sessionId, prompt, List.of(), List.of(), List.of(), false,
-                            agentId, modelRef, ctx.uid, sink, false);
+                    ragService.chat(ChatCommand.builder()
+                            .sessionId(sessionId).question(prompt).userId(ctx.uid)
+                            .userImages(List.of()).attachments(List.of()).skills(List.of())
+                            .agentId(agentId).modelOverride(modelRef)
+                            .build(), sink);
                     return null;
                 });
                 if (!sink.awaitDone(timeoutMs)) {
@@ -1169,6 +1173,9 @@ public class WorkflowEngine {
             Map<String, Object> trace = new LinkedHashMap<>();
             trace.put("skills", loaded);
             trace.put("chars", text.length());
+            // 与 mcp 节点同一口径的旁路声明：这里直接读 SkillService，不经 readSkill 工具回调，
+            // 所以聊天守卫链（步数预算/工具卡/账本）都不适用——技能节点的留痕就是这条 trace。
+            trace.put("guardBypass", "chat-guard-chain");
             return new NodeOut(Map.of("text", text, "skills", loaded), null, null, trace);
         };
     }
@@ -1217,6 +1224,14 @@ public class WorkflowEngine {
             trace.put("tool", tool);
             trace.put("args", args);
             trace.put("result", result);
+            // 显式声明本节点走的是聊天守卫链之外的直调路径（P1 收口判据要求旁路可见，见
+            // docs/agent-runtime-gap-2026q4.md §三 P1）。这里刻意**不**接 RagService 那条守卫链：
+            // ①画布的审批是独立的 approval 节点（挂起-快照-重放），把「按工具逐个问人」的聊天审批
+            //    套上来会让每个 MCP 节点都等一张没人点的卡，等于打断在跑的画布；
+            // ②留痕已由 node_traces 承担（args/result 全量入库），账本那张表是会话轮次维度的，
+            //    与工作流 run 维度不同源。
+            // P2 的权限档位要作用到画布时，接入口在这里（而不是往 call 上再叠 if）。
+            trace.put("guardBypass", "chat-guard-chain");
             return new NodeOut(Map.of("result", result, "server", server, "tool", tool), null, null, trace);
         };
     }
