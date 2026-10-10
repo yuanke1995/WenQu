@@ -684,6 +684,10 @@ const loadToolCatalog = async () => {
     const list = (r && r.success && Array.isArray(r.data)) ? r.data : null
     if (!list) { toolCatalogError.value = true; return }
     toolCatalogError.value = false
+    // askUser（向用户提问）刻意留在可选项里。旧那张手抄表没有它，结果不是「提问卡不受影响」，
+    // 而是「只要智能体用了『指定内置工具』模式，提问卡就永远打不开」——因为挂载判据按选中名单过滤，
+    // 名单里给不出一个选不到的项。后端名册按族给全，配置面与挂载判据就此对齐；
+    // 存量智能体的已存名单不变（仍不含 askUser），要不要给它开提问卡由用户自己勾。
     builtinOptions.value = list.filter(t => t.family === 'builtin')
       .map(t => ({ value: t.name, label: t.label || t.cardLabel || t.name }))
   } catch (e) { toolCatalogError.value = true }

@@ -220,13 +220,35 @@ public class SecurityConfig implements WebMvcConfigurer {
     /**
      * 智能体的自建自管端点。刻意排除：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选，
      * 仅管理员）；{@code /available}（本就公开，且在更早的白名单分支已放行）。
+     * <p><b>按方法逐条列，不用不区分方法的通配。</b>原来这条是
+     * {@code path.matches("/api/ai/agent/[^/]+")} 一把抓，任何方法（POST/PUT/DELETE）落在
+     * 「/api/ai/agent/任意单段」上都算自建自管端点——今天没有对应的写路由所以没暴露成问题，
+     * 但它等于给以后新增的单段写端点默认放行给全体登录用户。这在本仓库是有过教训的形状：
+     * {@code /document/vector-diagnose}、{@code /document/rebuild-kb} 就必须显式排除，
+     * 否则「看着像同一段」就被漏掉自动放行了（见 isKbOrDocEndpoint 的注释）。
+     * <p>PUT/DELETE 的 {@code /api/ai/agent/{id}} 仍按形状放行：id 是不透明串、无法枚举，
+     * 归属判定在服务层（创建者或共享 manage 命中，看不见的智能体当不存在）。
      */
     private static boolean isAgentSelfEndpoint(String method, String path) {
-        if (path == null) return false;
-        return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
-                || path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share")
-                || path.matches("/api/ai/agent/[^/]+/publish")
-                || path.matches("/api/ai/agent/[^/]+/(versions|rollback)");
+        if (path == null || method == null) return false;
+        switch (method) {
+            case "GET":
+                return path.equals("/api/ai/agent/list") || path.equals("/api/ai/agent/sub")
+                        // 能力名册（内置工具中文名唯一来源，登录用户配置智能体时要读）
+                        || path.equals("/api/ai/agent/tool-catalog")
+                        || path.matches("/api/ai/agent/[^/]+/versions")
+                        || path.matches("/api/ai/agent/[^/]+/publish");
+            case "POST":
+                return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/batch-delete")
+                        || path.matches("/api/ai/agent/[^/]+/rollback")
+                        || path.matches("/api/ai/agent/[^/]+/publish");
+            case "PUT":
+                return path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/share");
+            case "DELETE":
+                return path.matches("/api/ai/agent/[^/]+") || path.matches("/api/ai/agent/[^/]+/publish");
+            default:
+                return false;
+        }
     }
 
     /**
