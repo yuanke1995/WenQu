@@ -29,17 +29,31 @@ public enum ToolFamily {
     SKILL("skill", "技能（Skills）"),
     /** 任务清单（writeTodo） */
     TODO("todo", "任务清单"),
-    /** 沙盒执行（隔离容器里的命令与文件读写） */
-    SANDBOX("sandbox", "沙盒执行"),
-    /** MCP 外部工具：按用户登记动态合入，没有静态清单 */
-    MCP("mcp", "MCP 外部工具");
+    /** 沙盒执行（隔离容器里的命令与文件读写）；审批 off 档整族不挂 */
+    SANDBOX("sandbox", "沙盒执行", true),
+    /** MCP 外部工具：按用户登记动态合入，没有静态清单；审批 off 档整族不挂 */
+    MCP("mcp", "MCP 外部工具", true);
 
     private final String code;
     private final String familyLabel;
+    /**
+     * 「工具执行确认=off（禁用）」时整族不挂。
+     * <p>这条闸本来写在装配处的两处 {@code !approvalOff &&} 上，是族级事实而不是工具级事实：
+     * 沙盒与 MCP 在 off 档下整族不给（前者真在容器里跑命令、后者是外部 server 的任意工具），
+     * 而联网搜索<b>刻意不受 off 管辖</b>——它启停由自身开关决定，纳入审批
+     * （webSearch.requireApproval）后只有 ask 会拦；把它也算进 off 档会把联网整个关掉，
+     * 与设置页和手册的承诺不一致。
+     */
+    private final boolean blockedWhenApprovalOff;
 
-    ToolFamily(String code, String familyLabel) {
+    ToolFamily(String code, String familyLabel, boolean blockedWhenApprovalOff) {
         this.code = code;
         this.familyLabel = familyLabel;
+        this.blockedWhenApprovalOff = blockedWhenApprovalOff;
+    }
+
+    ToolFamily(String code, String familyLabel) {
+        this(code, familyLabel, false);
     }
 
     public String code() {
@@ -48,6 +62,10 @@ public enum ToolFamily {
 
     public String familyLabel() {
         return familyLabel;
+    }
+
+    public boolean blockedWhenApprovalOff() {
+        return blockedWhenApprovalOff;
     }
 
     /** MCP 工具名由外部 server 自定，按名归属族时的兜底判定（前缀由 McpClientService 生成） */

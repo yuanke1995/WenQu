@@ -52,7 +52,7 @@ public interface ToolFamilyProvider {
      * 所以问答侧那两处提示词判据现在都来问这里。
      */
     default boolean exposes(ToolDescriptor d, ToolMountContext mc) {
-        return mc.gateOnFor(family(), d.gateKey());
+        return mc.approvalPolicyAllows(family()) && mc.gateOnFor(family(), d.gateKey());
     }
 
     /**

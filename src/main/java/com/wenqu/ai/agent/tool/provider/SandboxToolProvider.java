@@ -4,7 +4,9 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.SandboxTools;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -51,5 +53,17 @@ public class SandboxToolProvider implements ToolFamilyProvider {
     private static ToolDescriptor d(String name, String label, String cardLabel, String cardHint, SideEffect se) {
         return new ToolDescriptor(name, ToolFamily.SANDBOX, label, cardLabel, cardHint,
                 se, "tool.sandbox.enabled", false, true, null);
+    }
+
+    /**
+     * 三族之外的最后一族开关：{@code tool.sandbox.enabled} 全局一档，暂无智能体级三态
+     * （c_ai_agent 未建 toolSandbox 列，见 SandboxTools 类注释）——沙盒本身按会话隔离，
+     * 工具一旦启用对该智能体的所有会话可用。
+     * <p>审批档位=off 时整族不挂由 {@code ToolFamily.SANDBOX.blockedWhenApprovalOff()} 统一管，
+     * 不再写在装配处的 if 里。
+     */
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, d -> exposes(d, mc));
     }
 }

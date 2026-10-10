@@ -54,15 +54,6 @@ public interface ToolMountContext {
     java.util.Set<String> agentSelection(ToolFamily family);
 
     /**
-     * 该工具对本轮请求方是否可见：免登录分享会话只允许描述符显式声明 {@code guestAllowed} 的能力。
-     * <p>游客的收窄口径从「装配处再抄一份分支」变成「描述符上的一个字段」——这条差别要在收紧开关时
-     * 才显形：以前只改常规分支，游客分支照旧放行。
-     */
-    default boolean visibleToThisTurn(ToolDescriptor descriptor) {
-        return !guestMode() || (descriptor != null && descriptor.guestAllowed());
-    }
-
-    /**
      * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关（与迁移前 {@code toolOn} 同语义）；
      * 总闸关着时恒为否（见 {@link #masterOn()}）。
      */
@@ -72,6 +63,34 @@ public interface ToolMountContext {
         if (flag != null) return flag == 1;
         return gateOn(gateKey);
     }
+
+    /**
+     * 该工具对本轮请求方是否可见：免登录分享会话只允许描述符显式声明 {@code guestAllowed} 的能力。
+     * <p>游客的收窄口径从「装配处再抄一份分支」变成「描述符上的一个字段」——这条差别要在收紧开关时
+     * 才显形：以前只改常规分支，游客分支照旧放行。
+     */
+    default boolean visibleToThisTurn(ToolDescriptor descriptor) {
+        return !guestMode() || (descriptor != null && descriptor.guestAllowed());
+    }
+
+    /**
+     * 本族是否在「工具执行确认=off」档下被整族禁掉（沙盒与 MCP 是，联网搜索刻意不是）。
+     * <p>迁移前这条写在装配处两处 {@code !approvalOff &&} 上，看着像两个 if，其实是同一条平台策略
+     * 作用在两个族上——策略归属见 {@link ToolFamily#blockedWhenApprovalOff()}。
+     */
+    default boolean approvalPolicyAllows(ToolFamily family) {
+        return !(family.blockedWhenApprovalOff() && approvalOff());
+    }
+
+    /** 智能体的「工具执行确认」档位是否为 off（禁用有副作用能力） */
+    boolean approvalOff();
+
+    /**
+     * 登记一条本轮可见降级（fail-loud：让用户看见「为什么这个能力没生效」，而不是静默少挂一个工具）。
+     * <p>MCP 与技能的具体项引用会用到：智能体指定了别人的服务、或指定了自己没登记的服务，
+     * 都要说出来。不说，「智能体挂了这个外部工具」就静默变成「什么都没挂」。
+     */
+    void degrade(String code, String message);
 
     /** 本工具是否在智能体本轮选中的「具体项」里（未指定=全都要，与 {@link #agentSelection} 同语义） */
     default boolean selectedByAgent(ToolFamily family, String toolName) {

@@ -125,6 +125,29 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 > 技能目录注入那侧的 `skillOn(agent)` 与迁移后的挂载判据仍有一条差异（它缺全局档，只看智能体三态、
 > 否则恒注入——总闸关掉时会出现「目录注入了、readSkill 没挂」，要不要合掉是个产品口径决定，没擅动）。
 
+> **P1 第四刀（2026-10-10，同日）**：**沙盒与 MCP 两族挂载**迁完——`enabledToolCallbacks` 里
+> **一族的 if 都不剩了**，八族全部由 provider 装配。两处形状与前几族不同，照抄会错：
+> ① 审批=off 的整族禁用是**族级**事实，落在 `ToolFamily.blockedWhenApprovalOff`（沙盒/MCP 为真，
+>    **联网搜索刻意不是**——它启停由自身开关决定，纳入 off 档会把整个联网关掉，与设置页和手册的
+>    承诺不一致）；判据合进 `ToolFamilyProvider.exposes` 的默认实现，装配处那两处
+>    `!approvalOff &&` 从此没有对应代码。
+> ② MCP 没有静态清单（工具由用户登记的 server 动态合入），所以 `descriptors()` 为空、
+>    `holder()` 为 null；它的审批属性靠 `ToolRegistry.requiresApproval` 对「未登记工具名」一律 true
+>    来 fail-closed 兜住，而不是某个描述符上的字段。「本轮哪些工具来自 MCP」这个状态
+>    （`st.mcpToolNames`，MCP 结果注册引用来源要用）**由装配循环按族收集**，不让 provider 反向写
+>    问答侧的状态对象；个人资产引用的归属解析从 `RagService` 私有静态方法升为
+>    `ResourceRefs`（技能与 MCP 同构，provider 侧要用就不能留在问答侧）。
+> 真机复测（本机 8090）：27 个工具与迁移前逐字相同、去重守卫零触发、启动与运行期零 ERROR；
+> MCP 两个 server 连上后动态合入 5 个工具（context7 2 + deepwiki 3）并真的执行
+> （`w_q_resolve_library_id`、`w_q_query_docs` 各拿到真实文档内容）；沙盒 `execute` 跑通
+> `echo seam-probe-sandbox`，输出增量与基础设施故障信箱仍是按次注入。
+> **一条只有间接证据**：「MCP 结果注册引用来源」——答案里出现 [1]–[4] 四个编号，但我没能打开
+> 那一轮的引用面板确认其中哪几条来自 MCP（面板入口在接流后的会话头部会消失），
+> 而 `registerMcpCitations` 的载荷尾部被 160 字节日志截断看不到。配置 `tool.mcpCiteEnabled` 默认开、
+> 代码路径除「名单改为按族收集」外未变，判定为未受影响，但下次要拿直接证据。
+> **P1 剩余**：`ChatCommand`（十个重载）、工作流 `mcpBody`/`skillBody` 两条裸调旁路接守卫、
+> 游客 share 路径真机验证、`AgentsPage` 那份中文名手抄、`skillOn` 与挂载判据那条差异的口径决定。
+
 ### ★★ P2 · 权限档位与安全
 
 借的机制：`SandboxExecutionPolicy` × `ApprovalPolicy` × `ctx.permissionPresets` + 单调 `ToolGuard`。

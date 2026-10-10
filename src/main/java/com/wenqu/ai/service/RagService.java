@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.tool.ResourceRefs;
 import com.wenqu.ai.agent.tool.ToolApprover;
 import com.wenqu.ai.agent.tool.ToolEnrichment;
 import com.wenqu.ai.agent.tool.ToolFamily;
@@ -321,7 +322,6 @@ public class RagService {
     /** 产物交付服务（会话 emitter 注册表 + 文件落盘 + SSE 下发） */
     private final ArtifactService artifactService;
     /** MCP 客户端服务（外部 MCP server 工具接入；按用户隔离连接池，各人连各人的服务） */
-    private final McpClientService mcpClientService;
 
     /** 知识库服务：解析「智能体关联的知识库 → 允许检索的文档集合」，检索按库隔离 */
     private final KnowledgeBaseService knowledgeBaseService;
@@ -336,7 +336,6 @@ public class RagService {
     private final BuiltinTools builtinTools;
     /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
     /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
-    private final SandboxTools sandboxTools;
     /** 技能（Skills）：清单注入 system prompt + readSkill 工具的服务端（技能为个人资产，按 uid 取） */
     private final SkillService skillService;
     /** 个人配置覆盖（个人设置 → 对话偏好）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
@@ -493,13 +492,11 @@ public class RagService {
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       ArtifactService artifactService,
                       BuiltinTools builtinTools,
-                      SandboxTools sandboxTools,
                       SkillService skillService,
                       ChatAttachmentService chatAttachmentService,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
                       AgentDispatchService agentDispatchService,
-                      McpClientService mcpClientService,
                       KnowledgeBaseService knowledgeBaseService,
                       RoleService roleService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
@@ -532,13 +529,11 @@ public class RagService {
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.artifactService = artifactService;
         this.builtinTools = builtinTools;
-        this.sandboxTools = sandboxTools;
         this.skillService = skillService;
         this.chatAttachmentService = chatAttachmentService;
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
         this.agentDispatchService = agentDispatchService;
-        this.mcpClientService = mcpClientService;
         this.knowledgeBaseService = knowledgeBaseService;
         this.roleService = roleService;
         this.userMapper = userMapper;
@@ -1416,7 +1411,7 @@ public class RagService {
                 // 注入条件同时跟随 toolSkill 三态，与 enabledToolCallbacks 里 readSkill 的开关保持一致，
                 // 否则会出现「清单里列出了技能、却没有读它的工具」的矛盾状态。
                 Set<String> skillRefs = agent == null ? null : scopeOf(agent.getSkills());
-                RefScope skillScope = resolveRefs(skillRefs, userId);
+                ResourceRefs.Scope skillScope = ResourceRefs.resolve(skillRefs, userId);
                 Set<String> onlySkills = skillScope.names();
                 // fail-loud：智能体的「指定技能」是引用而非普通名字——
                 // ①引用指向别人的个人技能：直接不可用（个人资产不外借），绝不拿当前用户的同名技能顶替；
@@ -1960,75 +1955,26 @@ public class RagService {
         // 具体项白名单（agent.builtinTools）、游客可见性都落在 provider 与描述符的 guestAllowed 上——
         // 迁移前这几条在游客分支与常规分支各抄了一份，于是「管理员收紧一处」时另一处照旧放行。
         ToolMountContext mc = toolMountContext(agent, userId, st);
+        java.util.Set<String> mcpNames = new java.util.HashSet<>();
         for (ToolFamilyProvider p : toolRegistry.providersInFamilyOrder()) {
-            callbacks.addAll(p.callbacks(mc));
+            java.util.List<org.springframework.ai.tool.ToolCallback> mounted = p.callbacks(mc);
+            // 「本轮哪些工具来自 MCP」在这里按族收集（MCP 结果要注册引用来源，tool.mcpCiteEnabled），
+            // 不让 provider 反向写问答侧的状态对象
+            if (p.family() == ToolFamily.MCP) {
+                for (org.springframework.ai.tool.ToolCallback cb : mounted) {
+                    mcpNames.add(cb.getToolDefinition().name());
+                }
+            }
+            callbacks.addAll(mounted);
         }
-        // 游客分享会话（公开链接 /s/{token}）：能力白名单到此为止。已迁的六族由描述符自己拦
-        // （技能/产物/任务清单/联网对匿名访客不挂，知识检索与内置挂）；下面沙盒与 MCP 两族还没迁，
-        // 所以仍靠这条提前返回挡住——它们同属身份敏感能力（沙盒按 uid 派生容器、MCP 是个人资产），
-        // 迁完即可把这条分支删掉。
+        if (!mcpNames.isEmpty()) st.mcpToolNames = java.util.Set.copyOf(mcpNames);
+        // 八族全部由 provider 装配（P1 seam 化的装配面到此收口）：游客收窄看描述符 guestAllowed、
+        // 审批=off 的整族禁用看 ToolFamily.blockedWhenApprovalOff、开关归属与具体项白名单看各族 exposes，
+        // MCP 的个人资产语义看 McpToolProvider。这里不再留任何一族的 if——迁移时最贵的错就是
+        // 「provider 加一段、老分支忘删」（第二刀实际发生过 webSearch 双挂，靠去重守卫喊出来）。
         if (st.guestMode) {
-            // 保留一条可 grep 的游客标记（原来那句「受限模式」日志在这里断了，只留公共日志会看不出
-            // 这一轮是匿名访客跑的）
-            log.info("[TOOL] 游客分享会话受限模式：只挂无身份敏感能力（知识检索/内置）");
-            finishMounts(callbacks, sensitiveTools, st);
-            return callbacks;
-        }
-        // 技能/产物/任务清单三族已迁到注册中心（SkillToolProvider / ArtifactToolProvider /
-        // TodoToolProvider）：技能工具实例按本轮用户现造（个人资产，不能跨账户读），产物与清单的
-        // 游客收窄看描述符。这里原有的三段 if 链随迁移删除，别再抄回来。
-        // 联网搜索族已迁到注册中心（WebSearchToolProvider）：挂不挂看两级开关、游客可见性看描述符
-        // guestAllowed=false、审批归属看 webSearch.requireApproval。这里曾有一份同名工具的挂载分支，
-        // 2026-10-10 迁移时漏删，被装配收尾的去重守卫以 ERROR 喊出（[TOOL] 同名工具被重复挂载）。
-        // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
-        // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。
-        // 联网搜索不受 off 管辖：启停由自身开关决定，纳入审批（webSearch.requireApproval）后仅 ask 会拦截。
-        boolean approvalOff = agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
-        // 沙盒工具（隔离执行环境）：tool.sandbox.enabled 控制；暂无智能体级三态覆盖（toolSandbox 列未加，
-        // 见 SandboxTools 类注释）——沙盒本身按会话隔离，工具一旦启用对所有会话可用
-        if (!approvalOff && toolOn(agent, "tool.sandbox.enabled", null)) {
-            for (org.springframework.ai.tool.ToolCallback cb :
-                    org.springframework.ai.support.ToolCallbacks.from(sandboxTools)) {
-                callbacks.add(cb);
-            }
-        }
-        // MCP 外部工具（工具生态层）：连的是**当前用户**登记的 server（连接池按 uid 分池），失败自动跳过
-        if (!approvalOff && (agent == null || agent.getToolMcp() == null || agent.getToolMcp() == 1)) {
-            // 具体项筛选：agent.mcps 为 null → 用该用户全部已启用 server；否则只取选中的那几个
-            Set<String> mcpRefs = agent == null ? null : scopeOf(agent.getMcps());
-            RefScope mcpScope = resolveRefs(mcpRefs, userId);
-            Set<String> onlyMcp = mcpScope.names();
-            // 与技能同理（MCP Server 是个人资产、按引用精确绑定）：
-            // 别人的服务不顶替、自己没登记的要说出来，否则"智能体挂了这个外部工具"会静默变成"什么都没挂"。
-            // 空集合=显式不使用，不算缺失。判定用引用集合（理由同技能：只指定了别人的服务时也要提示）。
-            if (mcpRefs != null && !mcpRefs.isEmpty()) {
-                if (!mcpScope.notMine().isEmpty()) {
-                    addDegradation(st.degradations, st.degradedCodes, "agentMcpNotMine",
-                            "智能体指定的 MCP 服务 " + String.join("、", mcpScope.notMine())
-                                    + " 属于其他用户（MCP 是个人资产），对你不可用");
-                }
-                Set<String> haveMcp = mcpClientService.serverNames(userId);
-                List<String> missMcp = (onlyMcp == null ? Set.<String>of() : onlyMcp).stream()
-                        .filter(n -> !haveMcp.contains(n)).toList();
-                if (!missMcp.isEmpty()) {
-                    addDegradation(st.degradations, st.degradedCodes, "agentMcpUnavailable",
-                            "智能体指定的 MCP 服务 " + String.join("、", missMcp)
-                                    + " 你未登记或已停用（MCP 是个人资产），本轮未接入");
-                    log.warn("[MCP] uid={} 智能体 {} 指定的服务未命中: {}", userId,
-                            agent == null ? "-" : agent.getId(), missMcp);
-                }
-            }
-            try {
-                java.util.Set<String> mcpNames = new java.util.HashSet<>();
-                for (org.springframework.ai.tool.ToolCallback cb : mcpClientService.toolCallbacks(userId, onlyMcp)) {
-                    callbacks.add(cb);
-                    String toolName = cb.getToolDefinition().name();
-                    mcpNames.add(toolName);
-                }
-                st.mcpToolNames = java.util.Set.copyOf(mcpNames);
-            } catch (Exception e) {
-                log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
-            }
+            // 保留一条可 grep 的游客标记（只挂了什么由下一行那条公共日志逐字列出）
+            log.info("[TOOL] 游客分享会话：只挂描述符声明 guestAllowed 的能力");
         }
         finishMounts(callbacks, sensitiveTools, st);
         return callbacks;
@@ -2095,16 +2041,24 @@ public class RagService {
      * 否则下一族想加开关时得先改通用层。
      */
     private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
-        return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval);
+        return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval,
+                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message));
     }
 
     /**
      * 本轮的工具装配判据上下文。
      * <p>提示词侧（能力分工段、已批准计划落成清单的那句提示）也走这里问「这个工具本轮挂不挂」——
      * 两处必须同一份判据，否则会出现「提示词教模型用某个工具，工具表里却没有它」。
-     * 提示词侧用不到 userId（只问判据、不装配回调），传空串即可；技能族按人装配那条路径只有问答流水线会走。
+     * <p>提示词侧只问判据、不装配回调：userId 传空串不影响任何判据，降级出口用 no-op
+     * （今天只有 MCP 族会报降级，而它只在装配回调时被调用）。
      */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
+        return mountContext(agent, userId, guestMode, reflective, (code, message) -> {
+        });
+    }
+
+    private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective,
+                                          java.util.function.BiConsumer<String, String> degradationSink) {
         return new ToolMountContext() {
             @Override
             public String userId() {
@@ -2139,6 +2093,18 @@ public class RagService {
             @Override
             public java.util.Set<String> agentSelection(ToolFamily family) {
                 return agentSelectionFor(family, agent);
+            }
+
+            @Override
+            public boolean approvalOff() {
+                // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
+                // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。联网搜索不受本档管辖（族上未标）。
+                return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
+            }
+
+            @Override
+            public void degrade(String code, String message) {
+                degradationSink.accept(code, message);
             }
         };
     }
@@ -5191,11 +5157,6 @@ public class RagService {
         return hasOwn ? agent.getSystemPrompt() : properties.getSystemPrompt();
     }
 
-    /** 工具开关三态解析：智能体显式设了 1/0 则强制覆盖，否则继承全局开关 */
-    private boolean toolOn(Agent agent, String globalKey, Integer agentFlag) {
-        if (agent != null && agentFlag != null) return agentFlag == 1;
-        return configService.getBoolean(globalKey);
-    }
 
     /**
      * 内置工具本轮是否真的挂得上：本族开关（全局/智能体三态）+ 智能体的「具体项白名单」两道都过才算。
@@ -5254,7 +5215,7 @@ public class RagService {
     }
 
     /**
-     * 技能开关三态解析（区别于 toolOn）：技能现在是**个人资产**，没有全局「总开关」——
+     * 技能开关三态解析（区别于 {@code ToolMountContext.gateOnFor}）：技能现在是**个人资产**，没有全局「总开关」——
      * 用户装了技能就是要用的，是否停用由用户在自己的技能列表里决定（见 SkillService.setDisabled）。
      * 因此智能体未显式指定时一律注入；只有智能体显式设了 0/1 才覆盖。
      */
@@ -5311,46 +5272,6 @@ public class RagService {
                 .collect(Collectors.toSet());
     }
 
-    /**
-     * 智能体上「个人资源引用」的解析结果。
-     *
-     * @param names   参与匹配的资源名（归属当前用户，或内置/裸名这类"人人都有"的引用）
-     * @param notMine 明确属于**其他人**的引用（个人资产不外借，直接判不可用，不再拿同名资源顶上）
-     */
-    private record RefScope(Set<String> names, List<String> notMine) {
-    }
-
-    /**
-     * 解析智能体上的个人资源引用（技能 / MCP 同构）。
-     * <p>
-     * 技能与 MCP 都是**个人资产**，而智能体是公共对象，裸名字不是全局唯一键——
-     * 只按名字匹配会出现「使用者装了同名但内容不同的资源，被当成管理员指定的那个来用」（张冠李戴）。
-     * 因此引用分两种形态：
-     * <ul>
-     *   <li>{@code {uid}/{name}}：精确绑定某个人的资源。归属人是当前用户 → 参与匹配；
-     *       不是 → 直接判不可用（不拿当前用户的同名资源顶替）。</li>
-     *   <li>裸 {@code name}：存量配置的弱匹配（按名字在当前用户自己的资源里找）；
-     *       内置技能也走这条——它随版本分发、人人都有，按名字匹配才是对的。</li>
-     * </ul>
-     */
-    private static RefScope resolveRefs(Set<String> refs, String uid) {
-        if (refs == null) return new RefScope(null, List.of());
-        Set<String> names = new LinkedHashSet<>();
-        List<String> notMine = new ArrayList<>();
-        for (String r : refs) {
-            int slash = r.indexOf('/');
-            if (slash < 0) {
-                names.add(r);            // 裸名：内置技能 / 存量配置
-                continue;
-            }
-            String owner = r.substring(0, slash).trim();
-            String name = r.substring(slash + 1).trim();
-            if (name.isEmpty()) continue;
-            if (owner.isEmpty() || owner.equals(uid)) names.add(name);
-            else notMine.add(name);      // 别人的个人资产：不可用
-        }
-        return new RefScope(names, notMine);
-    }
 
     /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */
     private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId) {
