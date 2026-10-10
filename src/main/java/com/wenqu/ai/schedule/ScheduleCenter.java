@@ -96,6 +96,8 @@ public class ScheduleCenter {
     private final com.wenqu.ai.service.TraceService traceService;
     private final com.wenqu.ai.service.ParseQueueService parseQueueService;
     private final com.wenqu.ai.service.ChatUploadService chatUploadService;
+    /** 工具大输出外溢原文的超期清理（磁盘侧文件，与聊天附件同一棵 data 目录树） */
+    private final com.wenqu.ai.service.ToolSpillService toolSpillService;
     private final com.wenqu.ai.service.NotificationService notificationService;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
 
@@ -118,6 +120,7 @@ public class ScheduleCenter {
                           com.wenqu.ai.service.TraceService traceService,
                           com.wenqu.ai.service.ParseQueueService parseQueueService,
                           com.wenqu.ai.service.ChatUploadService chatUploadService,
+                          com.wenqu.ai.service.ToolSpillService toolSpillService,
                           com.wenqu.ai.service.NotificationService notificationService,
                           ScheduleRunLogMapper scheduleRunLogMapper) {
         this.configService = configService;
@@ -135,6 +138,7 @@ public class ScheduleCenter {
         this.traceService = traceService;
         this.parseQueueService = parseQueueService;
         this.chatUploadService = chatUploadService;
+        this.toolSpillService = toolSpillService;
         this.notificationService = notificationService;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
     }
@@ -167,6 +171,14 @@ public class ScheduleCenter {
                 () -> configService.getInt("chat.uploadCleanupIntervalMs", 3_600_000),
                 () -> false,
                 () -> chatUploadService.cleanupExpired());
+        // 工具外溢原文超期清理：超过展示上限的工具原文整份落盘供「查看完整输出」读回，
+        // 保留期（cleanup.toolSpillRetentionDays，默认 7 天，≤0 不清理）过后随元信息一起删——
+        // 这些是排障用的副本，不是用户资产，留着只会吃磁盘
+        register("工具外溢原文清理", "删除超过保留期的工具大输出外溢原文（保留期 cleanup.toolSpillRetentionDays，≤0 = 不清理）",
+                "tool.spillCleanupIntervalMs",
+                () -> configService.getInt("tool.spillCleanupIntervalMs", 3_600_000),
+                () -> false,
+                () -> toolSpillService.purgeExpired());
 
         // 检索质量自动体检：按线上参数跑评估集并与上期对比（间隔 eval.autoIntervalMs，默认每日；≤0 停用）。
         // 评估集为空自动跳过并记录（生成评估集后无需重启即生效）；下滑结论落在 eval.lastReport 供看板红绿灯

@@ -223,7 +223,8 @@ public class ConfigService {
         // 键既无 DB 行又无 defaults 时 get() 返回空串，而 Boolean.parseBoolean("") 是 **false 且不抛异常**，
         // 兜底链走不到第二级，"默认开的开关"会静默变成关（trace.sessionEventEnabled 同款坑）。
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
-        d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
+        d.put("chat.detachGraceMs", "180000");
+        d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，

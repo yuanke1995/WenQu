@@ -40,6 +40,10 @@
         <div v-if="m.endReason === 'stopped'" class="u-stopped">
           <pause-circle-outlined /> 本轮已停止 · 未产生回答
         </div>
+        <!-- 断线超过宽限被系统收束：不是用户点停的，文案与图标都要区分开 -->
+        <div v-if="m.endReason === 'interrupted'" class="u-stopped">
+          <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
+        </div>
         <div v-if="showActions" class="u-actions">
           <div v-if="m.variantCount > 1" class="ver-switch">
             <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click.stop="$emit('switch-version', index, -1)">‹</button>
@@ -128,12 +132,19 @@
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <div v-show="t._open" class="card-body">
-                    <template v-if="t.args"><div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre></template>
+                    <template v-if="t.args">
+                      <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre>
+                      <ToolSpillButton v-if="t.argsSpillId" :id="t.argsSpillId" :tool="t.name" kind="入参" />
+                    </template>
                     <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
                       <div class="io-label">{{ t.status === 'start' ? '实时输出' : (t.result ? '输出' : '输出（执行期）') }}</div>
                       <pre class="io-pre" :class="{ live: t.status === 'start' }">{{ liveOutput(t) }}</pre>
+                      <ToolSpillButton v-if="t.spillId" :id="t.spillId" :tool="t.name" kind="输出" />
                     </template>
-                    <template v-if="t.error"><div class="io-label">错误</div><pre class="io-pre io-err">{{ t.error }}</pre></template>
+                    <template v-if="t.error">
+                      <div class="io-label">错误</div><pre class="io-pre io-err">{{ t.error }}</pre>
+                      <ToolSpillButton v-if="t.spillId" :id="t.spillId" :tool="t.name" kind="输出" />
+                    </template>
                   </div>
                 </div>
               </div>
@@ -308,6 +319,7 @@ import {
   pasteTitle, pasteSub, isPastedText
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import ToolSpillButton from '../components/ToolSpillButton.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
 const props = defineProps({

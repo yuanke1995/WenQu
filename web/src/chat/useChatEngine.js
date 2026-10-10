@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
-         listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
+         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
@@ -914,6 +914,8 @@ const switchSession = async sid => {
       if (!live || !live.msg.ask) hydratePendingAsk(sid)
       // 计划批准卡恢复（同上）：计划等待期间断线不中止本轮，刷新/换设备后仍能批准（回答转后台生成落库）
       if (!live || !live.msg.planCard) hydratePendingPlans(sid)
+      // 工具审批卡恢复：接流形态下这是第四张卡——本轮豁免宽限一直等人批准，卡片看不见就成了「莫名不动」
+      if (live && !live.msg.approval) hydratePendingApprovals(sid)
       // 先按新列表重算尾随留白、等它落屏再贴底：落点是本轮问题置顶
       //（列表短于一屏时留白为 0，落点即内容底）
       hooks.scrollForce?.()
@@ -1349,6 +1351,35 @@ const hydratePendingPlans = async sid => {
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', delegated: null })
   anchor.planCard = card
   messages.value = [...list, anchor]
+  hooks.scrollForce?.()
+}
+
+/**
+ * 会话加载/接流后恢复「等你批准执行」的审批卡（与提问卡、计划卡同一套人在回路恢复口径）。
+ * 审批只有 120 秒时限、此前只在实时流里下发过一次：刷新或换设备接回这一轮时看不见那张卡，
+ * 而本轮又豁免断线宽限、会一直等——用户读到的就是「智能体莫名其妙不动了」。
+ * 只重建**未过期且唤醒句柄还在**（live）的最新一张，并挂在当前那一轮的气泡上：
+ * 本轮气泡已经存在（实时流或刚接回来的流），不再补占位泡；没有本轮气泡就说明这一轮没在跑，什么都不做。
+ */
+const hydratePendingApprovals = async sid => {
+  if (!sid) return
+  const st = chatStreams.get(sid)
+  if (!st || !st.msg || st.msg.approval) return
+  let items
+  try {
+    const r = await listPendingApprovals(sid)
+    items = (r && r.data && Array.isArray(r.data.items)) ? r.data.items : []
+  } catch (e) { return }   // 拉不动不提示：审批自己有超时兜底，不该打断正常浏览
+  if (currentSessionId.value !== sid) return   // 快速切会话：晚到响应不覆盖当前视图
+  const alive = items.filter(x => x && x.live && x.approvalId)
+  if (!alive.length) return
+  const item = alive[alive.length - 1]
+  // timeoutMs 传「还剩多少」而不是整窗：卡片那行「未处理将在 N 秒后按拒绝处理」直接读它，
+  // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
+  st.msg.approval = {
+    id: item.approvalId, tool: item.tool, args: item.args,
+    timeoutMs: Number(item.remainingMs) || 0, busy: false, restored: true
+  }
   hooks.scrollForce?.()
 }
 
@@ -1999,7 +2030,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           return
         }
         resumeRetryOf.set(sid, tries)
-        setTimeout(() => { if (currentSessionId.value === sid) attachRunningTurn(sid, msg) }, 1500)
+        setTimeout(async () => {
+          if (currentSessionId.value !== sid) return
+          // 接不上（这一轮刚好收尾了/服务重启了）必须收尾：这颗气泡是接流来的，本地没有别的
+          // 路径会把它从 loading 里放出来——不接住就是一颗永久转圈的泡，用户只能刷新
+          const attached = await attachRunningTurn(sid, msg)
+          if (!attached) finishResumedShell(msg, null, sid)
+        }, 1500)
         return
       }
       // 错误不再整体替换正文：flushNow 保留已流出的半程内容与时间线，挂独立错误卡

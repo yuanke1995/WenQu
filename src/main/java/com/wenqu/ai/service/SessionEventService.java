@@ -55,6 +55,28 @@ public class SessionEventService {
     }
 
     /**
+     * 读一个会话最近的事件（过程回放的取数）：按写入顺序<b>倒序</b>取，调用方再自行分组/翻正。
+     * <p>归属只认 {@code user_id}——账本按人隔离，别人的会话查不到（连「有没有事件」都不告诉）。
+     * 一期这张表只写不读，界面上「这一轮怎么跑出来的」只能靠通知与产物倒推；有了读口才能做回放。
+     */
+    public java.util.List<SessionEvent> listRecent(String sessionId, String userId, int limit) {
+        if (sessionId == null || sessionId.isBlank() || userId == null || userId.isBlank()) {
+            return java.util.List.of();
+        }
+        int cap = limit <= 0 ? 200 : Math.min(limit, 500);
+        try {
+            return sessionEventMapper.selectList(new LambdaQueryWrapper<SessionEvent>()
+                    .eq(SessionEvent::getSessionId, sessionId)
+                    .eq(SessionEvent::getUserId, userId)
+                    .orderByDesc(SessionEvent::getId)
+                    .last("limit " + cap));
+        } catch (Exception e) {
+            log.warn("[EVENT] 会话事件读取失败 session={}: {}", sessionId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /**
      * 删除超过保留期的事件（≤0 = 不清理）。
      * <p>账本比会话表长得快——一轮十几条，只写不删迟早吃掉存储；与「过期会话/消息清理」挂同一个周期任务。
      * 会话被硬删后其事件会留到保留期结束（不做联表级联删）：这些行按 session_id 归属，

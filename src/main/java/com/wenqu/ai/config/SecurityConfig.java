@@ -92,9 +92,15 @@ public class SecurityConfig implements WebMvcConfigurer {
             return true;
         }
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
-        // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
-        if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")
+        // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝。
+        // GET 同样放行：GET /tool-approval/{id} 是铃铛通知的深链恢复入口、GET /tool-approval/pending 是
+        // 会话加载/断线接回时重建审批卡的入口（控制器内都按 uid 过滤）。此前只放了 POST，普通用户点铃铛
+        // 恢复审批卡会撞 403（管理员靠直通看不出来），接流补上审批卡恢复时一并修掉。
+        if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/tool-approval")
                 || path.startsWith("/api/ai/tool-approval/"))) return true;
+        // 工具完整输出（外溢原文按需读回）：GET /tool-output/{spillId}——归属在 ToolSpillService.read 内
+        // 按登录 uid 校验（目录按 uid 哈希 + meta 二次核对），别人的 id 读不到内容
+        if ("GET".equals(method) && path.startsWith("/api/ai/tool-output")) return true;
         // 智能体提问（人在回路）：POST /ask-user/{id} 同口径——归属由 resolveAsk 按 uid 严格校验；
         // 放行是为了等答复超 120s 后 JWT 过期的场景也能拿到干净的"已失效"错误而不是 401 强登出。
         // GET /ask-user/pending 是卡片恢复入口（会话加载时取自己的待答提问），同样只按 uid 过滤。

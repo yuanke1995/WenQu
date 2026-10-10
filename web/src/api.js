@@ -1238,3 +1238,14 @@ export const notificationSavePreferences = mutedTypes => request('/notification/
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
 // （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）
 export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
+
+// 会话内待批准的工具执行审批（与 /ask-user/pending、/plan-approval/pending 同口径）：
+// 刷新或断线接回这一轮时重建那张 120 秒时限的审批卡，否则本轮豁免宽限一直等而界面什么都看不见
+export const listPendingApprovals = sid => request(`/tool-approval/pending?sessionId=${encodeURIComponent(sid)}`)
+
+// 读回一条被外溢存储的工具完整原文（仅归属人可读；超过保留期就没了）
+export const getToolOutput = spillId => request(`/tool-output/${encodeURIComponent(spillId)}`)
+
+// 会话事件账本（过程回放）：按轮列出这一会话的执行轨迹（工具步与耗时、三张卡、产物、编排、停止与失败）
+export const getSessionEvents = (sid, turns = 5) =>
+  request(`/session/${encodeURIComponent(sid)}/events?turns=${encodeURIComponent(turns)}`, { silentForbidden: true })

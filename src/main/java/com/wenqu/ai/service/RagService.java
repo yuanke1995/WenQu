@@ -364,6 +364,11 @@ public class RagService {
      * 观众走光不掐本轮（宽限到点才按中断收束），迟到的观众先拿快照再接增量。详见 {@link ChatRunBus}。
      */
     private final ChatRunBus chatRunBus;
+    /**
+     * 工具大输出外溢：超过展示上限的原文整份落盘，卡片只留预览 + spillId，
+     * 「查看完整输出」按需读回——此前是截断即丢，尾部少了多少、少了什么，用户与排障的人都看不到。
+     */
+    private final ToolSpillService toolSpillService;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -495,7 +500,8 @@ public class RagService {
                       NotificationService notificationService,
                       SessionEventService sessionEventService,
                       TodoService todoService,
-                      ChatRunBus chatRunBus) {
+                      ChatRunBus chatRunBus,
+                      ToolSpillService toolSpillService) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -534,6 +540,7 @@ public class RagService {
         this.sessionEventService = sessionEventService;
         this.todoService = todoService;
         this.chatRunBus = chatRunBus;
+        this.toolSpillService = toolSpillService;
     }
 
     /**
@@ -741,9 +748,13 @@ public class RagService {
                     // 反过来，前置阶段叫停的轮次要等检查点才退场，所以「这一问没有回答」的标记
                     // 只能在本线程走到底时打——早一步判会抢在落库之前，晚一步这里已经出不来了。
                     // 断线宽限到点的中止也在这一并判：那条路径由总线线程 dispose，把手当场就没了，
-                    // 只看 turnStopRequested 会漏打标记，用户下次进来读到的是「问出去了却什么都没有」的空档
-                    boolean bareAborted = BARE_ABORTS.remove(sessionId, turnId);
-                    if (bareAborted || turnStopRequested(sessionId)) sessionService.markTurnStopped(sessionId);
+                    // 只看 turnStopRequested 会漏打标记，用户下次进来读到的是「问出去了却什么都没有」的空档。
+                    // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他
+                    if (BARE_ABORTS.remove(sessionId, turnId)) {
+                        sessionService.markTurnStopped(sessionId, "interrupted");
+                    } else if (turnStopRequested(sessionId)) {
+                        sessionService.markTurnStopped(sessionId, "stopped");
+                    }
                     TURN_IN_FLIGHT.remove(sessionId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
@@ -817,7 +828,10 @@ public class RagService {
         // 本轮若一条回答都没落下（正文/工具卡/思考全空），把终止事实记回那一问；
         // 判据就是「该问之后有没有 assistant 消息」，所以放在解开等待之后——被叫停的计划轮会补落一张
         // 收尾消息，那时这里自然不标（有 assistant 行）。极端竞态下可能多标一行安静提示，不影响正确性
-        sessionService.markTurnStopped(sessionId);
+        sessionService.markTurnStopped(sessionId, "stopped");
+        // 总线立刻收摊：巡检最多要 5 秒才回收，那几秒里另一台设备接上的流既收不到 done 也等不到关闭，
+        // 只会「还在转」并自己重试三次——用户点的是停止，别的窗口该马上停下来
+        chatRunBus.finish(sessionId);
         log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
                 sessionId, st.fullResponse.length(), st.toolStepCount.get(),
                 st.detached ? "已断开(后台)" : "在线");
@@ -2527,6 +2541,27 @@ public class RagService {
     private static final int TOOL_IO_SSE_BRIEF = 200;
     /** 终态记录（done 汇总 + 随消息持久化）保存的全文上限：前端工具卡片展开查看完整入参/输出 */
     private static final int TOOL_IO_MAX = 8 * 1024;
+    /** 原文已外溢成功时挂在预览尾部的说明（前端据此显示「查看完整输出」，这句只兜住展开前的一眼） */
+    private static final String SPILL_SUFFIX = "\n\n…（以上为预览，完整输出可点卡片下方「查看完整输出」读回）";
+
+    /** 取出工具侧上报的外溢标识（按工具名匹配最早那条未消费的；没有返回 null） */
+    private static String takeToolSpill(AnswerStreamState st, String name) {
+        for (java.util.Iterator<String> it = st.toolSpills.iterator(); it.hasNext(); ) {
+            String e = it.next();
+            int bar = e.indexOf('|');
+            if (bar > 0 && name.equals(e.substring(0, bar))) {
+                it.remove();
+                return e.substring(bar + 1);
+            }
+        }
+        return null;
+    }
+
+    /** 超出展示上限<b>又没能留住原文</b>（外溢开关关闭或落盘失败）时的实话：说清楚少了多少，别装作完整 */
+    private static String spillNote(String text) {
+        if (text == null || text.length() <= TOOL_IO_MAX) return "";
+        return "\n\n…（其余 " + (text.length() - TOOL_IO_MAX) + " 字未显示，且原文未能留存，请缩小范围重跑）";
+    }
 
     /**
      * 哪些工具的 SSE 实时副本必须带完整入参/结果（不受 {@link #TOOL_IO_SSE_BRIEF} 截断）。
@@ -2956,9 +2991,23 @@ public class RagService {
             // 终态记录升级为全文（上限 8KB）：done 汇总与落库都用它，前端卡片展开可见完整入参/输出，
             // 历史恢复同样可展开（实时 SSE 副本保持短摘要，两者字段同名、前端合并时全文覆盖摘要）
             Map<String, Object> full = new LinkedHashMap<>(rec);
-            full.put("args", truncBrief(input, TOOL_IO_MAX));
+            // 超过上限的那一段不再「截断即丢」：整份原文外溢到磁盘，卡片留 spillId 供「查看完整输出」按需读回。
+            // 写失败退回原样截断（旁路语义，绝不影响本轮问答）
+            String argsSpillId = input != null && input.length() > TOOL_IO_MAX
+                    ? toolSpillService.spill(st.sessionId, st.userId, name, input) : null;
+            full.put("args", truncBrief(input, TOOL_IO_MAX)
+                    + (argsSpillId == null ? spillNote(input) : SPILL_SUFFIX));
+            if (argsSpillId != null) full.put("argsSpillId", argsSpillId);
             if (resultOrError != null) {
-                full.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, TOOL_IO_MAX));
+                String key = status.equals("error") ? "error" : "result";
+                // 工具侧截断时已留存过就用它那一份（那才是全文）；否则由这层的上限补一份
+                String spillId = takeToolSpill(st, name);
+                if (spillId == null && resultOrError.length() > TOOL_IO_MAX) {
+                    spillId = toolSpillService.spill(st.sessionId, st.userId, name, resultOrError);
+                }
+                full.put(key, truncBrief(resultOrError, TOOL_IO_MAX)
+                        + (spillId == null ? spillNote(resultOrError) : SPILL_SUFFIX));
+                if (spillId != null) full.put("spillId", spillId);
             }
             st.toolCalls.add(full);
         }
@@ -4046,6 +4095,14 @@ public class RagService {
          * 但生成继续走完并按正常路径完整落库——用户回到本会话就能看到答案。
          */
         volatile boolean detached;
+        /**
+         * 工具侧（沙盒那层截断之前）已经外溢留存的登记，条目形如 {@code execute|<spillId>}。
+         * <p>为什么在工具里发起而不是在这里补：只有它知道完整原文长什么样——问答侧拿到的已经是被截过的
+         * 文本，在这层再截一次只是二次丢失。工具经 {@link #toolContext} 注入的能力落盘并上报，
+         * 这里只接住、把「查看完整输出」挂到对应那张卡片上（不重复落盘，也不把 id 塞进模型看到的文本）。
+         */
+        final java.util.concurrent.ConcurrentLinkedQueue<String> toolSpills =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
 
         /**
          * 用户按下「停止本轮」：置位后不再执行任何工具步（含副作用工具），生成流被掐断，
@@ -7567,6 +7624,50 @@ public class RagService {
         return out;
     }
 
+    /**
+     * 待批准的工具执行审批列表（与 {@link #listPendingAsks}、{@code /plan-approval/pending} 同一套恢复口径）：
+     * 按会话取本人名下仍是 PENDING 的审批记录（排除提问卡与计划卡共用的那两类 tool_name）。
+     * <p>为什么必须有这条：审批卡此前只有「实时 SSE 下发」和「知道 approvalId 才能查」两条路，
+     * 于是刷新或换设备接回这一轮时，<b>正卡在「等你批准执行」上的那一张完全看不见</b>——而这一轮又豁免
+     * 断线宽限、会一直等下去，用户读到的就是「智能体莫名其妙不动了」。铃铛深链能救，但前提是他去点了铃铛。
+     * <p>{@code live=false} 同提问卡语义：记录还在但唤醒句柄已不在（进程重启/多副本挂在别的实例），
+     * 批准送不回模型，前端按已失效处理而不是给一个静默失败的按钮。
+     */
+    public java.util.List<java.util.Map<String, Object>> listPendingApprovals(String sessionId, String uid) {
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
+        long window = approvalTimeoutMs();
+        try {
+            java.util.List<com.wenqu.ai.model.ToolApproval> rows = toolApprovalMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.ToolApproval>()
+                            .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
+                            .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
+                            .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
+                            .notIn(com.wenqu.ai.model.ToolApproval::getToolName, "askUser", "planApproval")
+                            .orderByAsc(com.wenqu.ai.model.ToolApproval::getCreatedAt));
+            for (com.wenqu.ai.model.ToolApproval rec : rows) {
+                long createdMs = rec.getCreatedAt() == null ? 0L
+                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                // 审批窗口只有 120s（比提问/计划短得多）：过期就别再重建一张点了没反应的卡
+                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
+                if (remaining <= 0) continue;
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("approvalId", rec.getId());
+                item.put("tool", rec.getToolName());
+                item.put("args", rec.getRequestArgs() == null ? "" : rec.getRequestArgs());
+                item.put("timeoutMs", window);
+                item.put("remainingMs", remaining);
+                item.put("createdAt", createdMs);
+                item.put("live", PENDING_APPROVALS.containsKey(rec.getId()));
+                out.add(item);
+                if (out.size() >= 5) break;   // 一步只挂一张卡，5 条纯属防御
+            }
+        } catch (Exception e) {
+            log.warn("[TOOL] 待批准审批查询失败 session={}: {}", sessionId, e.getMessage());
+        }
+        return out;
+    }
+
 
     /**
      * 用户忽略提问（提问面板「忽略」按钮）：不作答，立刻让本轮带着「用户没答这一题」继续推进
@@ -7695,6 +7796,12 @@ public class RagService {
             sendSseEvent(st.emitter, "todo", doc, st.sessionId);
             return todoService.describe(n);
         });
+        // 工具大输出外溢：沙盒那层截断前把整份原文交给我们落盘，卡片给「查看完整输出」按需读回。
+        // 经上下文注入而不是全局单例——工具在弹性线程上并发跑，单例的归属会串到别人的轮上
+        ctx.put(SandboxTools.CTX_SPILL, (java.util.function.BiFunction<String, String, String>)
+                (toolName, text) -> toolSpillService.spill(st.sessionId, st.userId, toolName, text));
+        ctx.put(SandboxTools.CTX_SPILL_REPORT, (java.util.function.BiConsumer<String, String>)
+                (toolName, spillId) -> st.toolSpills.offer(toolName + "|" + spillId));
         return ctx;
     }
 
@@ -7884,7 +7991,12 @@ public class RagService {
      */
     public Map<String, Object> runStatus(String sessionId, String userId) {
         ChatRunBus.Run run = chatRunBus.running(sessionId);
-        boolean mine = run != null && userId != null && userId.equals(run.userId);
+        // 只看「Run 还在」不够：本轮落库收尾到总线关闭之间有一拍（落库＋done 组装那几十到几百毫秒），
+        // 其间探测会说「在跑」，而接流拿到的快照是 running:false —— 前端就会在「探测→接流→收掉→再探测」
+        // 上空转几轮，界面上是气泡一闪一闪。判据与快照同源：流状态已占闸（settled）就不算在跑。
+        AnswerStreamState st = run == null ? null : TURN_STATES.get(sessionId);
+        boolean settled = st != null && st.settled();
+        boolean mine = run != null && !settled && userId != null && userId.equals(run.userId);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("running", mine);
         if (mine) {
@@ -8003,6 +8115,9 @@ public class RagService {
         if (st == null) {
             TurnHandle h = TURN_HANDLES.get(sessionId);
             if (h == null) return true;   // 本轮早没了，总线直接关
+            // 前置阶段（改写/检索/思考/计划编排）没有流状态，中止只能靠把手的标志；
+            // 同样记一笔，让流水线线程走到到底时写「已中断」而不是「已停止」
+            BARE_ABORTS.put(sessionId, h.turnId());
             h.stopped().set(true);
             completeEmitter(h.emitter());
             return true;
@@ -8019,7 +8134,51 @@ public class RagService {
         BARE_ABORTS.put(sessionId, st.turnId);
         st.disposeSafe();
         completeEmitter(st.emitter);
+        // 解掉可能还挂着的人工等待：提问/计划在上面已经豁免（那种轮不该被宽限掐），走到这里说明
+        // 卡着的是**工具执行审批**——它的线程阻塞在 future.get(approvalTimeoutMs) 上，不解开就把
+        // 会话互斥一起占满 120 秒，用户「明明没人在跑却问不出下一句」，正是停止功能要消灭的那类事。
+        releaseHumanWaits(sessionId);
         return true;
+    }
+
+    /**
+     * 会话事件账本的<b>分轮回放</b>（{@code GET /session/{id}/events} 的实现）。
+     * <p>按会话取最近 200 条（写入序倒序）→ 按 turnId 分组（最新轮在前）→ 组内翻回发生顺序。
+     * 载荷只给 240 字摘要：这一份是给人回看「这一轮怎么跑出来的」，不是把原文再存一遍——
+     * 完整工具输出走 {@link ToolSpillService} 那套按需读回。
+     * <p>账本不参与模型输入（刻意边界，见 {@link SessionEventService}），读口也不改变这一点。
+     */
+    public Map<String, Object> listSessionEvents(String sessionId, String uid, Integer turns) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int wantTurns = turns == null || turns <= 0 ? 5 : Math.min(turns, 20);
+        java.util.List<com.wenqu.ai.model.SessionEvent> rows = sessionEventService.listRecent(sessionId, uid, 200);
+        java.util.LinkedHashMap<String, java.util.List<Map<String, Object>>> groups = new java.util.LinkedHashMap<>();
+        for (com.wenqu.ai.model.SessionEvent ev : rows) {
+            String tid = ev.getTurnId() == null ? "" : ev.getTurnId();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", ev.getId());
+            item.put("type", ev.getType());
+            item.put("at", ev.getCreatedAt() == null ? 0L
+                    : ev.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+            String p = ev.getPayload() == null ? "" : ev.getPayload();
+            item.put("summary", p.length() > 240 ? p.substring(0, 240) + "…" : p);
+            groups.computeIfAbsent(tid, k -> new java.util.ArrayList<>()).add(item);
+        }
+        java.util.List<Map<String, Object>> turnsOut = new java.util.ArrayList<>();
+        for (var g : groups.entrySet()) {
+            java.util.Collections.reverse(g.getValue());   // 组内回到发生顺序
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("turnId", g.getKey());
+            t.put("startedAt", g.getValue().isEmpty() ? 0L : g.getValue().get(0).get("at"));
+            t.put("endedAt", g.getValue().isEmpty() ? 0L : g.getValue().get(g.getValue().size() - 1).get("at"));
+            t.put("count", g.getValue().size());
+            t.put("events", g.getValue());
+            turnsOut.add(t);
+            if (turnsOut.size() >= wantTurns) break;
+        }
+        out.put("turns", turnsOut);
+        out.put("scanned", rows.size());
+        return out;
     }
 
     /** 直接往一条通道送一帧（不经总线：接流的第一帧快照本身） */

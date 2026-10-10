@@ -56,6 +56,8 @@ public class ChatController {
     private final RateLimitService rateLimitService;
     private final QaLogService qaLogService;
     private final AdminGuard adminGuard;
+    /** 工具大输出外溢原文（卡片「查看完整输出」按需读回，仅归属人可读） */
+    private final com.wenqu.ai.service.ToolSpillService toolSpillService;
     private final AuthService authService;
     private final com.wenqu.ai.service.MenuService menuService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
@@ -387,6 +389,13 @@ public class ChatController {
 
     @Operation(summary = "工具审批记录（恢复）", description = "按审批 ID 取本人的审批记录（tool.approval 通知点击后重建审批卡用）；" +
             "不存在/非本人返回 null。内存态可能已失效（进程重启/超时），此时记录状态为终态，卡片提示已处理。")
+    @GetMapping("/tool-approval/pending")
+    public ResultJson listPendingToolApprovals(
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        return ResultJson.ok(java.util.Map.of("items",
+                ragService.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+    }
+
     @GetMapping("/tool-approval/{approvalId}")
     public ResultJson getToolApproval(
             @Parameter(description = "审批请求 ID") @PathVariable("approvalId") String approvalId) {
@@ -430,6 +439,27 @@ public class ChatController {
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
                 ragService.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+    }
+
+    @Operation(summary = "工具完整输出（外溢原文读回）", description = "读回一条被外溢存储的工具原文（沙盒输出、读到的整份文件等）。"
+            + "工具卡片超过展示上限时不再「截断即丢」：完整原文落盘，卡片留 spillId，这里按需读回。"
+            + "归属只认发起人本人（目录按 uid 哈希 + meta 二次校验），非本人/已过期清理/未开启外溢一律报错而不是回空壳。")
+    @GetMapping("/tool-output/{spillId}")
+    public ResultJson getToolOutput(
+            @Parameter(description = "外溢标识（工具卡片 spillId / argsSpillId）") @PathVariable("spillId") String spillId) {
+        java.util.Map<String, Object> out = toolSpillService.read(spillId, com.wenqu.ai.util.RequestUser.uid());
+        if (out == null) return ResultJson.error("这份原文不存在、已过期清理，或不属于你");
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "会话事件账本（过程回放）", description = "按会话读 c_ai_session_event：这一轮怎么跑出来的——工具步的起止与耗时、"
+            + "人在回路三张卡、产物、子智能体编排、停止与失败，按写入顺序分轮列出（仅本人，默认最近 5 轮、上限 200 条）。"
+            + "账本只服务事后回看与审计，不参与模型输入；正文与逐字增量不在这里（那些随消息落库）。")
+    @GetMapping("/session/{sessionId}/events")
+    public ResultJson listSessionEvents(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @Parameter(description = "最多返回几轮（默认 5，上限 20）") @RequestParam(value = "turns", required = false) Integer turns) {
+        return ResultJson.ok(ragService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns));
     }
 
     @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："

@@ -509,6 +509,10 @@ const mergeDoneToolCalls = (m, doneCalls) => {
       if (d.error) live.error = d.error
       if (d.attempts != null) live.attempts = d.attempts
       if (d.result != null) live.result = d.result
+      // 外溢留存标识必须跟着搬：实时流里的 tool_status 只是短摘要副本（不带 spillId），
+      // 全文是 done 这份才有——漏搬的后果是「历史刷新后卡片有『查看完整输出』、当场没有」
+      if (d.spillId) live.spillId = d.spillId
+      if (d.argsSpillId) live.argsSpillId = d.argsSpillId
     } else {
       list.push({ ...d })
     }

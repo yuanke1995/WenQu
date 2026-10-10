@@ -1033,19 +1033,21 @@ public class SessionService {
     }
 
     /**
-     * 用户叫停且本轮什么都没产出时，把终止原因记在**那一问**上（{@code end_reason=stopped}），
-     * 前端在问题下方渲染一行安静的「本轮已停止 · 未产生回答」。
+     * 用户叫停且本轮什么都没产出时，把终止原因记在**那一问**上，前端在问题下方渲染一行安静的说明。
      * <p>为什么不落一条「已停止」的空回答气泡：仓库既有口径是空的回答留在对话里比不留更碍眼
      * （分享页的停止处理同款理由）；而「这一问没有回答」本就是那一问的事实，记在它身上最贴合。
      * <p>本轮已产出过内容（半程正文、只有工具卡、只有思考）时不标——那些已有 assistant 消息带
      * 「⏹ 已停止本轮」可看，再在问上标一次是重复信息。
+     *
+     * @param reason {@code stopped}=用户主动叫停；{@code interrupted}=断线超过宽限、这一轮被系统按中断收束。
+     *               两者文案必须不同：后者不是用户做的事，写成「已按你的要求停止」是把系统的决定算在人头上
      */
-    public void markTurnStopped(String sessionId) {
+    public void markTurnStopped(String sessionId, String reason) {
         try {
             Message last = messageMapper.selectLastUserMessage(sessionId);
             if (last == null) return;
             if (messageMapper.countAssistantAfter(sessionId, last.getSequence()) > 0) return;
-            messageMapper.updateEndReason(last.getId(), "stopped");
+            messageMapper.updateEndReason(last.getId(), reason == null || reason.isBlank() ? "stopped" : reason);
         } catch (Exception e) {
             log.warn("[STOP] 标记本轮终止原因失败: session={} {}", sessionId, e.getMessage());
         }

@@ -45,6 +45,15 @@ public class SandboxTools {
      * "exitCode=1 +一段文本"，记录一律显示成功，排查时完全看不出沙盒没通。
      */
     public static final String CTX_INFRA_ERROR_SINK = "wq_tool_infra_error_sink";
+
+    /**
+     * 输出被截断时把<b>整份原文</b>外溢留存的能力：(工具名, 原文) → spillId，由问答侧经 ToolContext 注入。
+     * <p>走上下文而不是全局单例：留存要按「哪一轮的哪个工具」归属，工具执行在弹性线程上并发跑，
+     * setter 式单例会串号（与 P1 要修掉的那对 setSourceRegistrar/setSink 同病灶）。
+     */
+    public static final String CTX_SPILL = "wq_tool_spill";
+    /** 留存成功后的上报（工具名, spillId）：问答侧据此把「查看完整输出」挂到对应那张工具卡上 */
+    public static final String CTX_SPILL_REPORT = "wq_tool_spill_report";
     /** 支持流式输出的工具名（RagService 按 name 判定是否注入输出回调）。 */
     public static final String STREAMING_TOOL_NAME = "execute";
     /**
@@ -99,7 +108,7 @@ public class SandboxTools {
         if (result.truncated) {
             sb.append("\n…（输出过长已截断）");
         }
-        return clip(sb.toString());
+        return clip(sb.toString(), "execute", toolContext);
     }
 
     @Tool(name = "read_file", description = "读取沙盒内某个文本文件的内容（支持 offset/limit 按行读取）。"
@@ -131,7 +140,7 @@ public class SandboxTools {
             sb.append("\n…（本次读到第 ").append(result.endLine)
               .append(" 行，可能还有更多；可继续用 offset=").append(result.endLine + 1).append(" 读取）");
         }
-        return clip(sb.toString());
+        return clip(sb.toString(), "read_file", toolContext);
     }
 
     @Tool(name = "write_file", description = "在沙盒内创建新文件或整体替换已有文件（父目录自动创建）。"
@@ -198,7 +207,7 @@ public class SandboxTools {
             sb.append(entry.isDir ? "" : (entry.size == null ? "" : entry.size + "B")).append('\t');
             sb.append(entry.path).append('\n');
         }
-        return clip(sb.toString());
+        return clip(sb.toString(), "ls", toolContext);
     }
 
     /**
@@ -321,10 +330,49 @@ public class SandboxTools {
         return sandboxService.backend(sessionId, uid);
     }
 
-    /** 兜底截断：backend 已按字节限制过命令输出，这里再按字符限制一次（读文件/列目录没走那条路）。 */
-    private static String clip(String text) {
+    /**
+     * 兜底截断：backend 已按字节限制过命令输出，这里再按字符限制一次（读文件/列目录没走那条路）。
+     * <p>被截掉那一段不再静默丢掉：问答侧注入了留存能力时，把<b>整份原文</b>交出去落盘并上报 spillId，
+     * 用户拿到的是「预览 + 可查看完整输出」；没有留存能力（非问答链路、或写盘失败）就写明丢了多少钱字，
+     * 而不是留一句「已截断」让人以为那就是全部。
+     */
+    private static String clip(String text, String toolName, ToolContext toolContext) {
         if (text == null) return "";
         if (text.length() <= TOOL_OUTPUT_CHARS) return text;
-        return text.substring(0, TOOL_OUTPUT_CHARS) + "\n…（内容过长已截断）";
+        java.util.function.BiFunction<String, String, String> spill = ctxFn(toolContext, CTX_SPILL);
+        String spillId = spill == null ? null : safeSpill(spill, toolName, text);
+        if (spillId != null) {
+            java.util.function.BiConsumer<String, String> report = ctxFn(toolContext, CTX_SPILL_REPORT);
+            if (report != null) {
+                try {
+                    report.accept(toolName, spillId);
+                } catch (Exception ignored) {
+                    // 上报失败不影响回给模型的文本（卡片少一个续读入口，原文仍在盘上）
+                }
+            }
+            return text.substring(0, TOOL_OUTPUT_CHARS)
+                    + "\n…（输出过长，只展示前 " + TOOL_OUTPUT_CHARS + " 字；完整 " + text.length()
+                    + " 字已留存，可从本轮工具卡片「查看完整输出」读回）";
+        }
+        return text.substring(0, TOOL_OUTPUT_CHARS)
+                + "\n…（内容过长已截断，另有 " + (text.length() - TOOL_OUTPUT_CHARS) + " 字未能留存）";
+    }
+
+    /** 取上下文里注入的能力（问答侧经 ToolContext 传的函数）；不在上下文里就返回 null 走降级路径 */
+    @SuppressWarnings("unchecked")
+    private static <T> T ctxFn(ToolContext toolContext, String key) {
+        if (toolContext == null || toolContext.getContext() == null) return null;
+        Object v = toolContext.getContext().get(key);
+        return v == null ? null : (T) v;
+    }
+
+    /** 留存是旁路：它抛任何异常都不该让这次工具调用跟着失败 */
+    private static String safeSpill(java.util.function.BiFunction<String, String, String> spill,
+                                    String toolName, String text) {
+        try {
+            return spill.apply(toolName, text);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
