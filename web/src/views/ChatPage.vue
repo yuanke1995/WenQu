@@ -19,7 +19,7 @@
           </button>
           <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
           <button class="head-quiet-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
-                  @click="openEvents">过程</button>
+                  @click="openEvents()">过程</button>
         </div>
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
@@ -27,15 +27,18 @@
 
       <!-- 执行过程（事件账本）：按轮列出这一会话跑过什么——工具步与耗时、审批/提问/计划三张卡、
            产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障 -->
-      <a-modal v-model:open="eventsOpen" title="执行过程（事件账本）" width="min(880px, 94vw)" :footer="null">
+      <a-modal v-model:open="eventsOpen" :title="eventsTitle" width="min(880px, 94vw)" :footer="null">
         <div v-if="eventsLoading" class="ev-tip">正在读取…</div>
         <div v-else-if="eventsErr" class="ev-tip">{{ eventsErr }}</div>
         <div v-else-if="!eventsTurns.length" class="ev-tip">
-          这个会话还没有过程记录（账本按天保留，超期会被清理）。
+          <template v-if="eventsTurn">这一轮没有过程记录：账本按天保留，超期会被清理；
+            更早的轮次（账本上线之前跑的）本来也没有留痕。</template>
+          <template v-else>这个会话还没有过程记录（账本按天保留，超期会被清理）。</template>
         </div>
         <div v-else>
           <div class="ev-tip">
-            共 {{ eventsTurns.length }} 轮 · 只列最近若干轮，按发生顺序。点开每一轮看它跑了哪些步。
+            <template v-if="eventsTurn">这一轮共 {{ eventsTurns[0].count }} 条，按发生顺序。</template>
+            <template v-else>共 {{ eventsTurns.length }} 轮 · 只列最近若干轮，按发生顺序。点开每一轮看它跑了哪些步。</template>
           </div>
           <div v-for="t in eventsTurns" :key="t.turnId" class="ev-turn">
             <button class="ev-head" type="button" @click="toggleTurn(t)">
@@ -510,6 +513,7 @@
                       <!-- 加入评测集 = 差评回流固化到检索评测集（/api/ai/eval 仅管理员可用），属调参排障动作：
                            与「检索调试」同一开关（chat.retrievalDebugEnabled）控制，不给普通用户露出必 403 的入口 -->
                       <a-menu-item v-if="debugEntryVisible && m.sources && m.sources.length" key="addEval"><dislike-outlined style="margin-right:8px" />加入评测集</a-menu-item>
+                      <a-menu-item v-if="m.turnId" key="events"><history-outlined style="margin-right:8px" />看这一轮的过程</a-menu-item>
                       <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
@@ -1706,7 +1710,10 @@ const eventsOpen = ref(false)
 const eventsLoading = ref(false)
 const eventsErr = ref('')
 const eventsTurns = ref([])
-let eventsSid = ''
+// 非空=只看这一轮（气泡上的「过程」带进来的 turnId）；空=会话级最近几轮
+const eventsTurn = ref('')
+const eventsTitle = computed(() => eventsTurn.value ? '执行过程 · 这一轮' : '执行过程（事件账本）')
+let eventsKey = ''
 const EV_TYPE_LABEL = {
   tool: '工具', approval: '工具审批', ask_user: '提问卡', plan: '本轮步骤',
   plan_approval: '计划待批准', plan_cancelled: '计划未批准', plan_superseded: '计划被取代',
@@ -1733,24 +1740,32 @@ function evTypeSummary (t) {
   for (const e of (t.events || [])) counts[e.type] = (counts[e.type] || 0) + 1
   return Object.keys(counts).slice(0, 5).map(k => evTypeLabel(k) + (counts[k] > 1 ? '×' + counts[k] : '')).join(' · ')
 }
-async function openEvents () {
+async function openEvents (turnId) {
+  // 两种看法共用一个面板：不带参数=会话级「最近几轮跑了什么」，
+  // 带气泡的 turnId=只看这一条回答「是怎么跑出来的」
+  const turn = typeof turnId === 'string' ? turnId : ''
+  eventsTurn.value = turn
   eventsOpen.value = true
   const sid = currentSessionId.value
   if (!sid) { eventsErr.value = '还没有选中会话'; eventsTurns.value = []; return }
-  if (eventsSid === sid && (eventsTurns.value.length || eventsErr.value)) return   // 同会话开过就用手里这份
-  eventsSid = sid
+  const key = sid + '|' + turn
+  if (eventsKey === key && (eventsTurns.value.length || eventsErr.value)) return   // 同一份开过就用手里这份
+  eventsKey = key
   eventsLoading.value = true
   eventsErr.value = ''
   eventsTurns.value = []
   try {
-    const r = await getSessionEvents(sid, 8)
-    if (eventsSid !== sid) return                 // 快速切会话：晚到响应不覆盖当前视图
-    eventsTurns.value = (r && r.data && Array.isArray(r.data.turns)) ? r.data.turns : []
+    const r = await getSessionEvents(sid, 8, turn)
+    if (eventsKey !== key) return                 // 快速切会话/切轮：晚到响应不覆盖当前视图
+    const turns = (r && r.data && Array.isArray(r.data.turns)) ? r.data.turns : []
+    // 按轮进来只有一条，直接摊开——用户点的就是这一轮的过程，不该再多点一下
+    if (turn) turns.forEach(t => { t._open = true })
+    eventsTurns.value = turns
   } catch (e) {
-    if (eventsSid !== sid) return
+    if (eventsKey !== key) return
     eventsErr.value = '过程记录读取失败：' + (e?.message || '网络异常')
   } finally {
-    if (eventsSid === sid) eventsLoading.value = false
+    if (eventsKey === key) eventsLoading.value = false
   }
 }
 function toggleTurn (t) { t._open = !t._open }
@@ -2528,6 +2543,8 @@ const onMoreAction = (key, mi) => {
   else if (key === 'addEval') addToEval(mi)
   else if (key === 'deleteRound') deleteRound(mi)
   else if (key === 'export') exportRound(mi)
+  // 逐气泡的过程回放：会话级「过程」列最近几轮，这里按消息行的 turnId 只看这一条回答那一轮
+  else if (key === 'events') openEvents(messages.value[mi]?.turnId)
 }
 /** 差评回流一键固化：本轮「问题 → 引用的知识块」追加进检索评测集（后端按问题去重） */
 const addToEval = async mi => {

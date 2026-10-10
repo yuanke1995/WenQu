@@ -868,6 +868,9 @@ public class RagService {
                          List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
                          Integer requestedContextWindow, String editVariantGroup, boolean planMode) {
         long startTime = System.currentTimeMillis();
+        // 本轮身份：取自 chat() 入口登记的把手（runChat 全程都在这一轮里跑，把手到真收尾才摘），
+        // 随消息落库挂上——逐气泡的「过程」按它取这一轮的事件账本
+        final String turnId = turnIdOf(sessionId);
         // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
         // 本轮生效模型（请求覆盖 > 会话已存覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用。
@@ -1094,7 +1097,10 @@ public class RagService {
                         attachmentsMeta.isEmpty() ? null : JSON.toJSONString(attachmentsMeta),
                         null, null, null, null, null, null, null,
                         mentions != null && !mentions.isEmpty() ? JSON.toJSONString(mentions) : null,
-                        historyRefs != null && !historyRefs.isEmpty() ? JSON.toJSONString(historyRefs) : null);
+                        historyRefs != null && !historyRefs.isEmpty() ? JSON.toJSONString(historyRefs) : null,
+                        null,                       // 计划卡只在助手消息上，用户提问没有
+                        // 本轮身份：一问一答共用一个 turnId，逐气泡「过程」按它取这一轮的账本事件
+                        turnId);
                 // 编辑重发：新用户消息挂上被替换旧分支的版本组键（appendMessage 不为此扩参，落库返回后补挂）
                 if (userMessageId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
                     sessionService.setMessageVariant(userMessageId, editVariantGroup);
@@ -2836,7 +2842,7 @@ public class RagService {
                     processText.isEmpty() ? null : processText,
                     st.agentId, st.agentName, st.model,
                     null, null, null,   // related / mentions / historyRefs：中断兜底沿用原有口径不带
-                    planRecordJson(st));
+                    planRecordJson(st), st.turnId);
             if (replaceGroup != null && partialMessageId != null) {
                 sessionService.setMessageVariant(partialMessageId, replaceGroup);
             }
@@ -2855,8 +2861,10 @@ public class RagService {
      * 用户读到的是「我发了个问题，没回答」而不是「我让它停了」。落一条只带思考与停止标记的消息。
      * <p>为什么单开一条：{@link #persistPartialAnswer} 挂在流状态上，而 {@link AnswerStreamState}
      * 要到生成阶段才构造——思考阶段没有那个状态可借。
+     *
+     * @param turnId 本轮身份（调用点从把手取，见 {@link #turnIdOf}）：带上它这条留痕才回得去那一轮的账本
      */
-    private void persistThinkingOnlyOnStop(String sessionId, String thinking) {
+    private void persistThinkingOnlyOnStop(String sessionId, String thinking, String turnId) {
         // 留痕下限：思考刚起步就被停（几个字）时落库，得到的是一条读不出任何东西的气泡——
         // 那种情况交给问题上的「本轮已停止」说明，不造空回答
         if (thinking == null || thinking.strip().length() < STOP_THINKING_TRACE_MIN_CHARS) {
@@ -2865,7 +2873,7 @@ public class RagService {
             return;
         }
         try {
-            sessionService.appendMessage(sessionId, "assistant", STOP_SUFFIX.trim(), List.of(), null, thinking);
+            sessionService.appendMessageWithTurn(sessionId, "assistant", STOP_SUFFIX.trim(), thinking, turnId);
         } catch (Exception e) {
             log.warn("[SSE] 停止留痕落库失败（不影响已停止的本轮）: session={} {}", sessionId, e.getMessage());
         }
@@ -3819,7 +3827,9 @@ public class RagService {
                                 // 助手消息无 @ / # 引用（引用仅用户消息携带），占位保持主方法签名一致
                                 null, null,
                                 // 计划批准卡随行落库：刷新/历史按轮重建气泡计划卡（此前只活在实时流里）
-                                planRecordJson(st));
+                                planRecordJson(st),
+                                // 本轮身份：账本事件按 turnId 分组，消息带上它，气泡才能直接回看自己那一轮的过程
+                                st.turnId);
                         // 新回答挂上被替换旧回答的版本组键：组内版本序列即 ‹ n/N › 切换数据源
                         if (replaceGroup != null && messageId != null) {
                             sessionService.setMessageVariant(messageId, replaceGroup);
@@ -3839,6 +3849,9 @@ public class RagService {
                     donePayload.put("sources", imageUrlSigner.signSourceImages(sources));
                     donePayload.put("related", related);
                     donePayload.put("messageId", messageId);
+                    // 本轮身份（与刚落库消息行的 turn_id 同源）：当轮气泡立刻能按轮回看过程，
+                    // 不必刷新等历史回填——「过程」入口不该是刷新后才有的东西
+                    donePayload.put("turnId", st.turnId);
                     // 本轮用户消息 ID（regenerate 时为 null，沿用上一轮请求已入库的消息）：
                     // 编辑重发后前端给新用户消息挂分支切换器、支持再次编辑
                     if (st.userMessageId != null && !st.userMessageId.isBlank()) {
@@ -6237,7 +6250,7 @@ public class RagService {
             log.info("[SSE] {}，深度思考终止: session={} 已思考={}字",
                     stoppedByUser ? "用户停止本轮" : "客户端断开", sessionId, partialThinking.length());
             if (stoppedByUser) {
-                persistThinkingOnlyOnStop(sessionId, partialThinking);
+                persistThinkingOnlyOnStop(sessionId, partialThinking, turnIdOf(sessionId));
             }
             return new DeepThinkResult(false, partialThinking, question, List.of(), "disconnected");
         } catch (ThinkingCappedException e) {
@@ -6376,6 +6389,16 @@ public class RagService {
 
     private static final java.util.concurrent.ConcurrentHashMap<String, TurnHandle> TURN_HANDLES =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 本轮 turnId（消息落库时挂的关联键）：取自 {@code chat()} 入口登记的把手。
+     * <p>把手已随终态摘除时返回 null——这条消息就没有过程可回放，前端按「本行无过程记录」处理，
+     * 不去猜一个别的轮的 id（猜错是比缺失更坏的账本）。
+     */
+    private String turnIdOf(String sessionId) {
+        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
+        return h == null ? null : h.turnId();
+    }
 
     /**
      * 被「断线宽限到点」掐掉的轮次登记（sessionId → turnId）。
@@ -7412,7 +7435,7 @@ public class RagService {
                     toolCallsJson, null, null, timelineJson, processText.isEmpty() ? null : processText,
                     st.agentId, st.agentName, st.model,
                     null, null, null,
-                    planRecordJson(st));
+                    planRecordJson(st), st.turnId);
         } catch (Exception e) {
             log.warn("[PLAN] {}轮收尾落库失败 (session={}): {}", phase, st.sessionId, e.getMessage());
         }
@@ -8082,6 +8105,8 @@ public class RagService {
         }
         snap.put("running", true);
         snap.put("phase", "generating");
+        // 本轮身份：接回的那颗气泡同样要能按轮回看过程（与 done/落库同源，不是新造一个 id）
+        snap.put("turnId", st.turnId);
         snap.put("content", content);
         snap.put("processText", st.processResponse.toString());
         snap.put("thinking", st.thinkingHolder[0]);
@@ -8144,41 +8169,66 @@ public class RagService {
     /**
      * 会话事件账本的<b>分轮回放</b>（{@code GET /session/{id}/events} 的实现）。
      * <p>按会话取最近 200 条（写入序倒序）→ 按 turnId 分组（最新轮在前）→ 组内翻回发生顺序。
+     * <p>带 {@code turn} 时改为<b>只看那一轮</b>（逐气泡「过程」的取数，按消息行的 turnId 精确取，正序）：
+     * 会话级列表回答「这几轮跑了什么」，按轮回答「这一条回答怎么跑出来的」。
      * 载荷只给 240 字摘要：这一份是给人回看「这一轮怎么跑出来的」，不是把原文再存一遍——
      * 完整工具输出走 {@link ToolSpillService} 那套按需读回。
      * <p>账本不参与模型输入（刻意边界，见 {@link SessionEventService}），读口也不改变这一点。
      */
-    public Map<String, Object> listSessionEvents(String sessionId, String uid, Integer turns) {
+    public Map<String, Object> listSessionEvents(String sessionId, String uid, Integer turns, String turn) {
         Map<String, Object> out = new LinkedHashMap<>();
+        // 按轮回放（逐气泡「过程」）：消息行带着 turnId，直接取那一轮、按发生顺序返回，
+        // 不必先扫会话最近 200 条再分组——用户点的是这一条回答，不是整个会话
+        if (turn != null && !turn.isBlank()) {
+            java.util.List<Map<String, Object>> events = new java.util.ArrayList<>();
+            for (com.wenqu.ai.model.SessionEvent ev : sessionEventService.listByTurn(sessionId, uid, turn, 200)) {
+                events.add(eventItem(ev));
+            }
+            out.put("turn", turn);
+            out.put("turns", events.isEmpty() ? List.of()
+                    : List.of(turnGroup(turn, events)));
+            out.put("scanned", events.size());
+            return out;
+        }
         int wantTurns = turns == null || turns <= 0 ? 5 : Math.min(turns, 20);
         java.util.List<com.wenqu.ai.model.SessionEvent> rows = sessionEventService.listRecent(sessionId, uid, 200);
         java.util.LinkedHashMap<String, java.util.List<Map<String, Object>>> groups = new java.util.LinkedHashMap<>();
         for (com.wenqu.ai.model.SessionEvent ev : rows) {
             String tid = ev.getTurnId() == null ? "" : ev.getTurnId();
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("id", ev.getId());
-            item.put("type", ev.getType());
-            item.put("at", ev.getCreatedAt() == null ? 0L
-                    : ev.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
-            String p = ev.getPayload() == null ? "" : ev.getPayload();
-            item.put("summary", p.length() > 240 ? p.substring(0, 240) + "…" : p);
-            groups.computeIfAbsent(tid, k -> new java.util.ArrayList<>()).add(item);
+            groups.computeIfAbsent(tid, k -> new java.util.ArrayList<>()).add(eventItem(ev));
         }
         java.util.List<Map<String, Object>> turnsOut = new java.util.ArrayList<>();
         for (var g : groups.entrySet()) {
             java.util.Collections.reverse(g.getValue());   // 组内回到发生顺序
-            Map<String, Object> t = new LinkedHashMap<>();
-            t.put("turnId", g.getKey());
-            t.put("startedAt", g.getValue().isEmpty() ? 0L : g.getValue().get(0).get("at"));
-            t.put("endedAt", g.getValue().isEmpty() ? 0L : g.getValue().get(g.getValue().size() - 1).get("at"));
-            t.put("count", g.getValue().size());
-            t.put("events", g.getValue());
-            turnsOut.add(t);
+            turnsOut.add(turnGroup(g.getKey(), g.getValue()));
             if (turnsOut.size() >= wantTurns) break;
         }
         out.put("turns", turnsOut);
         out.put("scanned", rows.size());
         return out;
+    }
+
+    /** 账本行 → 回放条目（id/类型/时间 + ≤240 字摘要） */
+    private Map<String, Object> eventItem(com.wenqu.ai.model.SessionEvent ev) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", ev.getId());
+        item.put("type", ev.getType());
+        item.put("at", ev.getCreatedAt() == null ? 0L
+                : ev.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+        String p = ev.getPayload() == null ? "" : ev.getPayload();
+        item.put("summary", p.length() > 240 ? p.substring(0, 240) + "…" : p);
+        return item;
+    }
+
+    /** 一组事件 → 一轮（起止时间取首末事件） */
+    private Map<String, Object> turnGroup(String turnId, java.util.List<Map<String, Object>> events) {
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("turnId", turnId);
+        t.put("startedAt", events.isEmpty() ? 0L : events.get(0).get("at"));
+        t.put("endedAt", events.isEmpty() ? 0L : events.get(events.size() - 1).get("at"));
+        t.put("count", events.size());
+        t.put("events", events);
+        return t;
     }
 
     /** 直接往一条通道送一帧（不经总线：接流的第一帧快照本身） */
@@ -8335,11 +8385,15 @@ public class RagService {
                                  String replaceMessageId, String editVariantGroup, Agent delegatedAgent) {
         sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
+        // 本轮身份（把手在 chat() 入口已登记，工作流分支同样走那一条轮）：问答两侧都挂它，
+        // 逐气泡「过程」才取得到本轮的账本事件
+        final String workflowTurnId = turnIdOf(sessionId);
         java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
         try {
             String workflowUserMsgId = null;
             if (!regenerate) {
-                workflowUserMsgId = sessionService.appendMessage(sessionId, "user", question, null, null, null, null, null, null, null);
+                workflowUserMsgId = sessionService.appendMessageWithTurn(sessionId, "user", question,
+                        null, workflowTurnId);
                 // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与主链路同口径）
                 if (workflowUserMsgId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
                     sessionService.setMessageVariant(workflowUserMsgId, editVariantGroup);
@@ -8383,7 +8437,9 @@ public class RagService {
             String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
                     workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
                     null, JSON.toJSONString(tokens), null, null,
-                    agent.getId(), agent.getName());
+                    agent.getId(), agent.getName(),
+                    // model / related / mentions / historyRefs / plan：工作流分支不带这些维度（此前也无落库点）
+                    null, null, null, null, null, workflowTurnId);
             if (replaceGroup != null && messageId != null) {
                 sessionService.setMessageVariant(messageId, replaceGroup);
             }
@@ -8394,6 +8450,7 @@ public class RagService {
             donePayload.put("sources", List.of());
             donePayload.put("related", List.of());
             donePayload.put("messageId", messageId);
+            donePayload.put("turnId", workflowTurnId);   // 本轮身份：与消息行同源，当轮气泡即可按轮回看过程
             // 本轮用户消息 ID（编辑重发后前端给新用户消息挂分支切换器；regenerate 时为 null 不下发）
             if (workflowUserMsgId != null && !workflowUserMsgId.isBlank()) {
                 donePayload.put("userMessageId", workflowUserMsgId);

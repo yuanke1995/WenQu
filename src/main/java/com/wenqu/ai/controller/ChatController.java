@@ -454,12 +454,14 @@ public class ChatController {
 
     @Operation(summary = "会话事件账本（过程回放）", description = "按会话读 c_ai_session_event：这一轮怎么跑出来的——工具步的起止与耗时、"
             + "人在回路三张卡、产物、子智能体编排、停止与失败，按写入顺序分轮列出（仅本人，默认最近 5 轮、上限 200 条）。"
+            + "带 turn=<消息的 turnId> 时只返回那一轮（对话页逐气泡「过程」的取数）。"
             + "账本只服务事后回看与审计，不参与模型输入；正文与逐字增量不在这里（那些随消息落库）。")
     @GetMapping("/session/{sessionId}/events")
     public ResultJson listSessionEvents(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
-            @Parameter(description = "最多返回几轮（默认 5，上限 20）") @RequestParam(value = "turns", required = false) Integer turns) {
-        return ResultJson.ok(ragService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns));
+            @Parameter(description = "最多返回几轮（默认 5，上限 20；带 turn 时无效）") @RequestParam(value = "turns", required = false) Integer turns,
+            @Parameter(description = "只看这一轮（消息行的 turnId；留空=按会话分轮列出）") @RequestParam(value = "turn", required = false) String turn) {
+        return ResultJson.ok(ragService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns, turn));
     }
 
     @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："

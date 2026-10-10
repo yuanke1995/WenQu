@@ -816,11 +816,26 @@ public class SessionService {
                                 String attachments, String tokens, String timeline, String processText,
                                 String agentId, String agentName, String model, String related,
                                 String mentions, String historyRefs, String plan) {
+        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
+                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
+                mentions, historyRefs, plan, null);
+    }
+
+    /**
+     * 追加消息（含本轮身份）：turnId 与 {@code c_ai_session_event.turn_id} 同源，是「这条回答的过程在哪一轮」的关联键。
+     * <p>不带它的代价：过程回放只能整会话列一堆轮次，点不到「这一条回答怎么跑出来的」；
+     * 而账本本身按轮存着，缺的只是消息侧那半只钥匙。写入方（RagService）手里一直有 turnId，落库时递过来即可。
+     */
+    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
+                                String thinking, String retrieved, String artifacts, String toolCalls,
+                                String attachments, String tokens, String timeline, String processText,
+                                String agentId, String agentName, String model, String related,
+                                String mentions, String historyRefs, String plan, String turnId) {
         // 1. MySQL 持久化
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
                     toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs, plan);
+                    mentions, historyRefs, plan, turnId);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -833,7 +848,7 @@ public class SessionService {
         try {
             return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
                     toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs, plan);
+                    mentions, historyRefs, plan, turnId);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -844,6 +859,9 @@ public class SessionService {
             redisMsg.put("role", role);
             redisMsg.put("content", content);
             redisMsg.put("mysqlPending", true);
+            if (turnId != null && !turnId.isBlank()) {
+                redisMsg.put("turnId", turnId); // 本轮身份（降级缓存也带，补写 MySQL 后过程回放不断线）
+            }
             // 降级消息自带全局唯一 msgId：补写 MySQL 时按 id 幂等（同一消息不重复插；
             // 且不再被"与历史消息同文"误判为重复——用户复读完全相同的问题也各自补写，不丢失）
             redisMsg.put("msgId", UUID.randomUUID().toString().replace("-", ""));
@@ -941,6 +959,17 @@ public class SessionService {
     }
 
     /**
+     * 追加消息（只带正文/思考与本轮身份）：给「没有工具、产物、时间线」的轻量留痕消息用
+     * （思考阶段被叫停的留痕、工作流直答的提问行）。
+     * <p>为什么不直接调全参重载：那条链是为了让每个落库点都能带齐自己的列，摊开调用点要写十几个 null，
+     * 而这些 null 的语义就是「本类消息没有这些维度」——写在服务层一处比写在每个调用点清楚。
+     */
+    public String appendMessageWithTurn(String sessionId, String role, String content, String thinking, String turnId) {
+        return appendMessage(sessionId, role, content, List.of(), null, thinking,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, turnId);
+    }
+
+    /**
      * 事务内写 MySQL 一条消息：锁会话行（不存在则补建占位后重取锁）串行化同会话并发写 →
      * 序号取物理 max+1（含软删行，删除轮次后不复用，撤销按 seq-1 配对可靠）→ 插入 → 同步会话计数/首问标题。
      * 任一失败抛异常回滚，由调用方决定降级。
@@ -949,7 +978,8 @@ public class SessionService {
                                  String sources, String thinking, String retrieved, String artifacts,
                                  String toolCalls, String attachments, String tokens, String timeline,
                                  String processText, String agentId, String agentName, String model,
-                                 String related, String mentions, String historyRefs, String plan) {
+                                 String related, String mentions, String historyRefs, String plan,
+                                 String turnId) {
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -989,6 +1019,9 @@ public class SessionService {
             msg.setMentions(mentions);         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
             msg.setHistoryRefs(historyRefs);   // # 历史引用（同上）
             msg.setPlan(plan);                 // 计划批准卡（刷新/历史按轮重建执行计划卡）
+            // 本轮身份：与 c_ai_session_event.turn_id 同源，逐气泡「过程」按它取本行那一轮的账本。
+            // 空串归一成 NULL——列语义是「没有关联键」，不留一个既查不到东西又占位的空串
+            msg.setTurnId(turnId == null || turnId.isBlank() ? null : turnId);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -1497,6 +1530,10 @@ public class SessionService {
         map.put("messageId", m.getId()); // 与 SSE done 事件字段名一致，供前端反馈/导出等操作
         map.put("sequence", m.getSequence()); // 消息序号（历史压缩的摘要覆盖点推进用）
         map.put("createTime", m.getCreateTime()); // 气泡下方时间展示
+        // 本轮身份：前端据此挂逐气泡「过程」入口（按轮取事件账本）；存量为 NULL=这一轮没有过程记录
+        if (m.getTurnId() != null && !m.getTurnId().isBlank()) {
+            map.put("turnId", m.getTurnId());
+        }
         // 本轮终止原因（记在用户提问上）：前端据此在问题下方显示「本轮已停止 · 未产生回答」
         if (m.getEndReason() != null && !m.getEndReason().isBlank()) {
             map.put("endReason", m.getEndReason());
@@ -1723,6 +1760,11 @@ public class SessionService {
                     Object retrievedObj = m.get("retrieved");
                     if (retrievedObj != null) {
                         msg.setRetrieved(String.valueOf(retrievedObj));
+                    }
+                    Object turnIdObj = m.get("turnId");
+                    if (turnIdObj != null) {
+                        String tid = String.valueOf(turnIdObj);
+                        msg.setTurnId(tid.isBlank() ? null : tid); // 本轮身份（Redis 降级消息补写 MySQL 后过程回放仍定位到轮）
                     }
                     msg.setSequence(++seq);
                     messageMapper.insert(msg);

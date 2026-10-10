@@ -45,6 +45,8 @@ public class ConfigSchemaService {
     private final Map<String, Field> byKey = new LinkedHashMap<>();
     private final Map<String, String> tips;
     private final List<String> corePaths;
+    /** type=switch 且 def=true 的 backendKey（「默认开」的开关；启动自检据此发现没落库也没登记默认值的键） */
+    private final List<String> defaultOnSwitches;
     /** 后端键 → 中文说明（原 EDITABLE 的 value，落库进 c_ai_config.remark） */
     private final Map<String, String> help;
 
@@ -128,8 +130,17 @@ public class ConfigSchemaService {
         }
         this.rawFields = List.copyOf(raws);
         this.fields = List.copyOf(fs);
-        log.info("[Config] 配置字段定义已加载：{} 面板 / {} 字段（可编辑 {} 项）",
-                panels.size(), fields.size(), byKey.size());
+        // 「默认开」的开关清单（type=switch 且 def=true）：供 ConfigService 启动自检比对。
+        // 从原始字段定义取而非 Field 记录——def 是表单默认值属性，没有进 Field。
+        List<String> ons = new ArrayList<>();
+        for (JSONObject j : raws) {
+            if ("switch".equals(j.getString("type")) && Boolean.TRUE.equals(j.getBoolean("def"))) {
+                ons.add(j.getString("backendKey"));
+            }
+        }
+        this.defaultOnSwitches = List.copyOf(ons);
+        log.info("[Config] 配置字段定义已加载：{} 面板 / {} 字段（可编辑 {} 项，默认开的开关 {} 个）",
+                panels.size(), fields.size(), byKey.size(), ons.size());
     }
 
     private static Double dbl(JSONObject j, String k) {
@@ -140,6 +151,15 @@ public class ConfigSchemaService {
     /** 是否可编辑（替代原 EDITABLE 白名单） */
     public boolean isEditable(String key) {
         return byKey.containsKey(key);
+    }
+
+    /**
+     * 「默认开」的开关键清单（type=switch 且 def=true）。
+     * <p>用途只有一个：启动自检。这类键若既没有配置行、也没在 {@code ConfigService.defaults()} 登记默认值，
+     * 读到的就是关——界面写着「默认开」而行为是关，是新增开关最静默的一种错法。
+     */
+    public List<String> defaultOnSwitchKeys() {
+        return defaultOnSwitches;
     }
 
     /** 分层：1 必需 / 2 调优 / 3 工程排障（替代原 TIER；未定义按 2） */

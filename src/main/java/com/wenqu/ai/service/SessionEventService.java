@@ -77,6 +77,32 @@ public class SessionEventService {
     }
 
     /**
+     * 读<b>某一轮</b>的事件（按写入顺序<b>正序</b>，即发生顺序）：逐气泡「过程」的取数口径。
+     * <p>与 {@link #listRecent} 的分工：那个是「这个会话最近跑过哪几轮」的会话级回放，
+     * 这个是「这一条回答是怎么跑出来的」——消息行带着 turnId，按它精确取本行的那一轮，
+     * 不用先扫 200 条再分组（用户点的是这一条，不是整个会话）。
+     * <p>归属同样只认 {@code user_id}：别人的轮次查不到，也不告诉查不查得到。
+     */
+    public java.util.List<SessionEvent> listByTurn(String sessionId, String userId, String turnId, int limit) {
+        if (sessionId == null || sessionId.isBlank() || userId == null || userId.isBlank()
+                || turnId == null || turnId.isBlank()) {
+            return java.util.List.of();
+        }
+        int cap = limit <= 0 ? 200 : Math.min(limit, 500);
+        try {
+            return sessionEventMapper.selectList(new LambdaQueryWrapper<SessionEvent>()
+                    .eq(SessionEvent::getSessionId, sessionId)
+                    .eq(SessionEvent::getUserId, userId)
+                    .eq(SessionEvent::getTurnId, turnId)
+                    .orderByAsc(SessionEvent::getId)
+                    .last("limit " + cap));
+        } catch (Exception e) {
+            log.warn("[EVENT] 按轮读取会话事件失败 session={} turn={}: {}", sessionId, turnId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /**
      * 删除超过保留期的事件（≤0 = 不清理）。
      * <p>账本比会话表长得快——一轮十几条，只写不删迟早吃掉存储；与「过期会话/消息清理」挂同一个周期任务。
      * 会话被硬删后其事件会留到保留期结束（不做联表级联删）：这些行按 session_id 归属，

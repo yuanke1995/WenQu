@@ -837,6 +837,8 @@ const switchSession = async sid => {
             role: m.role === 'user' ? 'user' : 'ai',
             content: String(m.content || ''),
             messageId: m.messageId || m.id || null,
+            // 本轮身份（随消息落库）：气泡「过程」按它取这一轮的事件账本；存量消息无此字段则无入口
+            turnId: typeof m.turnId === 'string' ? m.turnId : '',
             fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
             images: Array.isArray(m.images) ? m.images : [],
             attachments: Array.isArray(m.attachments) ? m.attachments : [],
@@ -1545,6 +1547,8 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (Array.isArray(snap.subagentBranches) && snap.subagentBranches.length) msg.subagents = snap.subagentBranches
   if (snap.subagentRoute) msg.subagentRoute = snap.subagentRoute
   if (typeof snap.model === 'string' && snap.model) msg.model = snap.model
+  // 本轮身份（快照与落库/done 同源）：接回来的气泡也要有「看这一轮的过程」，不许刷新才有
+  if (typeof snap.turnId === 'string' && snap.turnId) msg.turnId = snap.turnId
   if (snap.agentName) msg.agentName = snap.agentName
   if (snap.agentId) msg.agentId = snap.agentId
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
@@ -1929,6 +1933,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
+        // 本轮身份：done 带回的 turnId 与刚落库的消息行同源——「过程」入口不该是刷新后才有的东西
+        if (p.turnId) msg.turnId = String(p.turnId)
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
         // 会话级绑定：首问后本会话即锁定智能体（agentLocked 由后端下发，含"绑定为不使用智能体"）。
         // 本地镜像先于会话列表刷新生效，输入区立刻切到锁定态（切换=新会话）

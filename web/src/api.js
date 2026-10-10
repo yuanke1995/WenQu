@@ -1247,5 +1247,13 @@ export const listPendingApprovals = sid => request(`/tool-approval/pending?sessi
 export const getToolOutput = spillId => request(`/tool-output/${encodeURIComponent(spillId)}`)
 
 // 会话事件账本（过程回放）：按轮列出这一会话的执行轨迹（工具步与耗时、三张卡、产物、编排、停止与失败）
-export const getSessionEvents = (sid, turns = 5) =>
-  request(`/session/${encodeURIComponent(sid)}/events?turns=${encodeURIComponent(turns)}`, { silentForbidden: true })
+/**
+ * 会话事件账本（过程回放）。
+ * @param sid 会话 ID
+ * @param turns 会话级：最多返回几轮（默认 5，上限 20）
+ * @param turn 按轮回放：只取这一轮（消息行的 turnId）。带上它时 turns 无效——
+ *             逐气泡的「过程」点的是这一条回答，不是整个会话
+ */
+export const getSessionEvents = (sid, turns = 5, turn = '') =>
+  request(`/session/${encodeURIComponent(sid)}/events?turns=${encodeURIComponent(turns)}`
+    + (turn ? `&turn=${encodeURIComponent(turn)}` : ''), { silentForbidden: true })

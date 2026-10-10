@@ -15,6 +15,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPubSub;
 
 import java.util.Collection;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -88,7 +89,36 @@ public class ConfigService {
         // 存量明文密钥（历史版本明文入库的 *.apiKey）自动迁移为 RSA 密文
         migratePlainSecrets();
         startRedisConfigSync();
+        auditDefaultOnSwitches();
         log.info("模型配置加载完成，共 {} 项", cache.size());
+    }
+
+    /**
+     * 启动自检：schema 里声明「默认开」的开关（type=switch + def=true）有没有落点。
+     * <p>为什么查这个：这类键若既无配置行、也未在 {@link #defaults()} 登记，读到的就是关——
+     * 设置页写着开、行为是关，而且不报错（{@code chat.resumeEnabled} 上线时就是这么整条静默不生效，
+     * 排查时最先怀疑的是代码而不是配置读取）。ensureDefaults 会把 defaults() 的键全部灌成配置行，
+     * 所以「无配置行」等价于「两处都没登记」。
+     * <p>只告警、不自动补一行：补行会把「忘了登记」变成「这是管理员设的值」，掩盖问题而不是暴露它。
+     */
+    private void auditDefaultOnSwitches() {
+        try {
+            List<String> missing = new ArrayList<>();
+            Map<String, String> seeds = defaults();
+            for (String key : schema.defaultOnSwitchKeys()) {
+                if (cache.get(key) == null && !seeds.containsKey(key)) {
+                    missing.add(key);
+                }
+            }
+            if (missing.isEmpty()) {
+                return;
+            }
+            log.warn("[Config][自检] {} 个「默认开」的开关既无配置行也未在 defaults() 登记，读到按关闭处理"
+                    + "（确认调用方用的是 getBoolean(key, true)，否则整条特性静默不生效）: {}",
+                    missing.size(), missing);
+        } catch (Exception e) {
+            log.warn("[Config][自检] 默认开开关自检失败（不影响启动）: {}", e.getMessage());
+        }
     }
 
     /**
@@ -219,12 +249,13 @@ public class ConfigService {
         // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
         d.put("chat.planAutoIntent", "true");               // 按消息意图自动开计划模式（用户没开开关时，判断本轮是否适合先出执行计划；与检索并行的短判定，超时/失败按不开）
-        // 断线重连接流（P0）：默认开。必须在这里登记而不是只靠 getBoolean(key, true) 的形参——
-        // 键既无 DB 行又无 defaults 时 get() 返回空串，而 Boolean.parseBoolean("") 是 **false 且不抛异常**，
-        // 兜底链走不到第二级，"默认开的开关"会静默变成关（trace.sessionEventEnabled 同款坑）。
+        // 断线重连接流（P0）：默认开。这里登记=让它成为**配置行**（设置页可关、可改），
+        // 与调用方 getBoolean("chat.resumeEnabled", true) 的形参默认值互为双保险——
+        // 历史上形参默认值不可靠（Boolean.parseBoolean("") 返回 false 且不抛异常，兜底链走不到第二级，
+        // 「默认开的开关」在键未入库时静默变关），该坑已在 getOrDefaultParsed 修掉并加启动自检点名。
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
-        d.put("chat.detachGraceMs", "180000");
-        d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
+        d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
+        d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
@@ -708,14 +739,30 @@ public class ConfigService {
      * 仅 defaults() 也未注册该 key 时落到中性值。
      */
     private <T> T getOrDefaultParsed(String key, java.util.function.Function<String, T> parser, T neutral) {
+        String raw = null;
         try {
-            return parser.apply(get(key).trim());
+            raw = get(key);
         } catch (Exception ignored) {
-            // 值缺失/非数字 → 走下方权威默认
+            // 读取本身异常（解密/覆盖层出错）按缺失处理，照样走兜底链
+        }
+        // 空值必须在解析**之前**短路：Boolean.parseBoolean("") 返回 false 且不抛异常，兜底链永远走不到
+        // 第二级——「默认开的开关」在键未入库时会静默变成关（chat.resumeEnabled 就是这么整条特性没生效，
+        // 当时只能靠把它登记进 defaults() 绕开）。数值解析抛异常才落到兜底，效果相同，故统一在此处理。
+        if (raw != null && !raw.isBlank()) {
+            try {
+                return parser.apply(raw.trim());
+            } catch (Exception ignored) {
+                // 值非法 → 走权威默认
+            }
+        }
+        // 个人专属键没有全局层（见 get() 的隔离闸）：空值即终态，不得再拿 defaults() 的种子顶上，
+        // 否则"管理员的模型被全平台使用"会从这条兜底漏回来
+        if (schema.isPersonalOnly(key)) {
+            return neutral;
         }
         String seed = defaults().get(key);
         try {
-            return seed == null ? neutral : parser.apply(seed.trim());
+            return seed == null || seed.isBlank() ? neutral : parser.apply(seed.trim());
         } catch (Exception e) {
             return neutral;
         }
@@ -763,14 +810,20 @@ public class ConfigService {
         }
     }
 
+    /**
+     * 读取布尔开关（无显式默认值）。
+     * <p>注意：本方法对「既无配置行、也未在 {@link #defaults()} 登记」的键返回 <b>false</b>。
+     * 默认应开启的开关请用 {@link #getBoolean(String, boolean)} 显式给出默认值，或在 defaults() 登记；
+     * 启动时 {@link #auditDefaultOnSwitches()} 会把漏登记的「默认开」键点名告警。
+     */
     public boolean getBoolean(String key) {
         return getOrDefaultParsed(key, Boolean::parseBoolean, false);
     }
 
     /**
-     * 带默认值的布尔读取（与 {@link #getInt(String, int)} 同模式）。
-     * <p>为什么需要：{@link #getBoolean(String)} 在键未配置时返回 false，对「默认应开启」的新增开关
-     * 会静默变成关闭（该键尚未入库时永远读不到）。故新增开关一律用本方法显式给出默认值。
+     * 读取布尔开关，键缺失/空值/非法时用调用方给的默认值。
+     * <p>新增「默认开」的开关一律用本方法（与 {@link #getInt(String, int)} 同模式）：
+     * 只靠 {@link #defaults()} 登记也能生效，但登记点离使用点越远越容易漏，形参默认值是就地声明。
      */
     public boolean getBoolean(String key, boolean def) {
         return getOrDefaultParsed(key, Boolean::parseBoolean, def);
