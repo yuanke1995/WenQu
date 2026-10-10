@@ -264,7 +264,10 @@
                             size="small" style="width:100%"
                             :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
                   <div v-if="!optionsOf(c).length" class="ap-pick-empty">
-                    当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}
+                    <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
+                      工具名册加载失败 —— <button class="app-btn ghost small" @click="loadToolCatalog">重试</button>
+                    </template>
+                    <template v-else>当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}</template>
                   </div>
                 </div>
               </div>
@@ -585,7 +588,7 @@ import {
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
-         listSkills, getMcpStatus, listSubAgents, updateAgentShare, getKbParamDefaults,
+         listSkills, getMcpStatus, listSubAgents, getToolCatalog, updateAgentShare, getKbParamDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
@@ -635,20 +638,10 @@ const SEG_MULTI = [
   { label: '指定', value: 'pick' },
   { label: '不使用', value: 'none' }
 ]
-// 内置工具可选项（value 与后端 BuiltinTools 的 @Tool 方法名一致，按名匹配注册；
-// 中文名与后端 ToolInventoryService.LABELS 保持同步——新增工具两处都要补）
-const BUILTIN_TOOL_OPTIONS = [
-  { value: 'calculate', label: '算术计算' },
-  { value: 'currentDateTime', label: '当前日期时间' },
-  { value: 'daysBetween', label: '日期相差天数' },
-  { value: 'addDays', label: '日期推算' },
-  { value: 'randomNumber', label: '随机数' },
-  { value: 'uuid', label: '生成 UUID' },
-  { value: 'unitConvert', label: '单位换算' },
-  { value: 'textStats', label: '文本统计' },
-  { value: 'base64', label: 'Base64 编解码' },
-  { value: 'hash', label: '哈希计算' }
-]
+// 内置工具可选项**来自后端能力名册**（GET /agent/tool-catalog，工具注册中心的描述符）。
+// 这里以前手抄一张同名的表：后端每加一个 @Tool 就得同步改这里，漏改的表现是配置页里
+// 那个工具只剩英文名、或选了却不生效——中文名现在有唯一来源，这份复制删掉了。
+// 拉不到时不再退回旧常量（退回会让人以为名册就是这些），而是显式报错 + 重试入口。
 
 // 图标可选集（与后端 c_ai_agent.icon 口径一致）：''=默认机器人图标；'wenqu'=问渠品牌标；其余 emoji 原样存库、原样渲染
 const ICON_OPTIONS = [
@@ -682,7 +675,19 @@ const cfg = ref(null)
 const isAdmin = ref(isAdminSync())
 
 // 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
-const builtinOptions = ref(BUILTIN_TOOL_OPTIONS)
+const builtinOptions = ref([])
+// 名册加载失败标记：拉不动时不能给一个空下拉就完事（用户会读成「平台就这些工具」）
+const toolCatalogError = ref(false)
+const loadToolCatalog = async () => {
+  try {
+    const r = await getToolCatalog()
+    const list = (r && r.success && Array.isArray(r.data)) ? r.data : null
+    if (!list) { toolCatalogError.value = true; return }
+    toolCatalogError.value = false
+    builtinOptions.value = list.filter(t => t.family === 'builtin')
+      .map(t => ({ value: t.name, label: t.label || t.cardLabel || t.name }))
+  } catch (e) { toolCatalogError.value = true }
+}
 const skillOptions = ref([])
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
@@ -1155,7 +1160,9 @@ const reload = async () => {
     const [ar, dr, sr, mr, xr, pd, wr] = await Promise.all([
       listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents(), getKbParamDefaults(),
       // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
-      listWorkflows().catch(() => null)
+      listWorkflows().catch(() => null),
+      // 能力名册：结果自己写进 builtinOptions / toolCatalogError，失败不阻断本页其余加载
+      loadToolCatalog()
     ])
     // /workflow/list 的 data 是分栏对象 { mine:[], shared:[] }（非数组），必须摊平再用，
     // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine/shared 解）

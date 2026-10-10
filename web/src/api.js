@@ -683,6 +683,9 @@ export const listAvailableAgents = () => request('/agent/available')
 export const listAvailableSkills = () => request('/skill/available')
 export const listAgents = () => request('/agent/list')
 export const listSubAgents = () => request('/agent/sub')
+/** 能力名册（登录用户可读）：智能体配置页的「指定内置工具」可选项从这里来，
+ *  中文名以工具注册中心为唯一来源，不再前端手抄一张表 */
+export const getToolCatalog = () => request('/agent/tool-catalog')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })

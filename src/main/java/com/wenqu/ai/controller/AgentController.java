@@ -45,6 +45,8 @@ public class AgentController {
     private final AgentService agentService;
     private final com.wenqu.ai.service.AgentShareService agentShareService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
+    /** 工具注册中心的对外读口（能力名册）：智能体配置页的工具可选项从这里来，不再前端手抄 */
+    private final com.wenqu.ai.service.ToolInventoryService toolInventoryService;
 
     /**
      * 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中；内置「问渠」为管理员级可配置）。
@@ -88,6 +90,21 @@ public class AgentController {
     @GetMapping("/sub")
     public ResultJson subAgents() {
         return ResultJson.ok(agentService.subAgents());
+    }
+
+    /**
+     * 能力名册（智能体配置页用）：平台已声明工具的 family/name/中文名，登录用户可读。
+     * <p>为什么挂在这里而不是管理员的 {@code /api/ai/tools}：配置智能体是普通用户也在做的事，
+     * 而那份全景清单带全局开关键与 enabled 状态，按既定口径不开洞。这个位置落在
+     * {@code SecurityConfig.isAgentSelfEndpoint} 已放行的智能体自助端点分支里，不新增通配规则。
+     * <p>它消灭的是第三份工具中文名手抄（前端 AgentsPage 自己那张内置工具选项表）：
+     * 后端加一个 @Tool 就得同步改前端，漏改的表现是配置页里那个工具只剩英文名或根本看不见。
+     */
+    @Operation(summary = "能力名册", description = "返回平台已声明工具的 family/familyLabel/name/label/cardLabel，"
+            + "供智能体配置页生成「指定内置工具」的可选项（中文名以工具注册中心为唯一来源）")
+    @GetMapping("/tool-catalog")
+    public ResultJson toolCatalog() {
+        return ResultJson.ok(toolInventoryService.agentCatalog());
     }
 
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"

@@ -93,6 +93,32 @@ public class ToolInventoryService {
         return mcp;
     }
 
+    /**
+     * 登录用户可读的能力名册（智能体配置页「指定内置工具」的可选项就从这里来）。
+     * <p>与 {@link #inventory()} 的字段差别是有意的：那份给管理员看全景，带全局开关键与 enabled 状态；
+     * 这份只出名字与展示字段——普通用户不需要知道平台的开关长什么样，少给一个字段就少一处
+     * 可以被拿去猜配置的面。
+     * <p>访问控制沿用既有口径：端点挂在 {@code /api/ai/agent/tool-catalog}，落在
+     * {@code SecurityConfig.isAgentSelfEndpoint} 已放行的「智能体自助端点」分支里
+     * （那条规则按既有形状匹配一段路径），**不新增通配规则、也不给管理员视图
+     * {@code /api/ai/tools} 开普通用户洞**（后者按既定口径刻意不开）。
+     * <p>它存在的理由是消灭第三份手抄：前端 AgentsPage 原来自己维护一张内置工具中文名表，
+     * 后端加一个内置工具就得同时改两处，漏一处的表现是「配置页里看不见这个工具的名字」。
+     */
+    public List<Map<String, Object>> agentCatalog() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ToolDescriptor d : registry.all()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("family", d.family().code());
+            m.put("familyLabel", d.family().familyLabel());
+            m.put("name", d.name());
+            m.put("label", d.label());
+            m.put("cardLabel", d.cardLabel());
+            out.add(m);
+        }
+        return out;
+    }
+
     private static String orEmpty(String s) {
         return s == null ? "" : s;
     }
