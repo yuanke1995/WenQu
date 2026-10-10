@@ -62,10 +62,11 @@ public class PermissionPolicyResolver {
      * @param agentPresetCode   智能体存的档位码（null/空=未设置，跟随平台默认）
      * @param agentApprovalMode 智能体的工具执行确认设置（auto/ask/off；空白=未设置，用档位的建议值）
      * @param guestMode         免登录分享会话
-     * @param onClamp           档位被平台上限钳制时的上报出口（问答侧传本轮降级列表；不需要就传 no-op）
+     * @param agentToolDeny     智能体的按名工具黑名单（逗号串；null/空=不禁用任何具体工具）
+     * @param onClamp           档位被上限钳制时的上报出口（问答侧传本轮降级列表；不需要就传 no-op）
      */
     public ExecutionPolicy resolve(String agentPresetCode, String agentApprovalMode, boolean guestMode,
-                                   BiConsumer<String, String> onClamp) {
+                                   String agentToolDeny, BiConsumer<String, String> onClamp) {
         PermissionPreset preset = requestedPreset(agentPresetCode);
         PermissionPreset platMax = platformCeiling();
         // 问答流水线线程已装载个人覆盖（ConfigService.putUserOverrides），这里直接 get 就读得到本人值
@@ -86,7 +87,8 @@ public class PermissionPolicyResolver {
                             + "」，本轮按上限执行（沙盒" + ceiling.sandboxMode().label() + "）");
             preset = ceiling;
         }
-        return ExecutionPolicy.of(preset, agentApprovalMode, configService.get("sandbox.virtualPathPrefix"));
+        return ExecutionPolicy.of(preset, agentApprovalMode,
+                configService.get("sandbox.virtualPathPrefix"), agentToolDeny);
     }
 
     /** 智能体请求的档位：未设置→平台默认；写了认不出的值→回落平台默认并报警（绝不回落到最高档） */

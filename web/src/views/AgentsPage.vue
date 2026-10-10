@@ -272,6 +272,26 @@
                 </div>
               </div>
             </div>
+            <!-- 工具黑名单（P2）：在「会挂上的那些」里点名拿掉几个，其余照旧 -->
+            <div class="ap-cap">
+              <span class="ap-cap-ic"><stop-outlined /></span>
+              <div class="ap-cap-l">
+                <div class="ap-cap-name">禁用指定工具</div>
+                <div class="ap-cap-desc">
+                  与上面「指定内置工具」是反方向：白名单要把用的那几个逐个勾全（平台新增工具时那份名单
+                  不会自动跟上），这里只写要去掉的一两个，其余照旧。被禁的工具不进模型的工具表——
+                  不是点了被拒，是本轮不提供。外部 MCP 工具可直接填名字。
+                </div>
+                <div v-if="toolCatalogError" class="ap-pick-empty">
+                  工具名册加载失败 —— <button class="app-btn ghost small" @click="loadToolCatalog">重试</button>
+                </div>
+              </div>
+            </div>
+            <div class="ap-cap-pick">
+              <a-select v-model:value="form.toolDeny" mode="tags" :options="denyOptions" allow-clear
+                        size="small" style="width:100%" :max-tag-count="6"
+                        placeholder="不禁用任何工具（可下拉选，或直接输入外部工具名）" />
+            </div>
             <!-- 权限档位（P2）：把「沙盒能改动多少东西」与「要不要逐项问用户」捆成一句话的选择 -->
             <div class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
               <span class="ap-cap-ic"><safety-outlined /></span>
@@ -602,6 +622,7 @@ import {
   ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
   SafetyOutlined, PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
+  StopOutlined,
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
@@ -693,6 +714,8 @@ const isAdmin = ref(isAdminSync())
 
 // 多实例能力的可选项：内置工具（前端常量）/ 技能 / MCP Server（后两者来自接口）
 const builtinOptions = ref([])
+// 工具黑名单选项（名册全族，含检索/联网/产物/技能/清单/沙盒；外部 MCP 工具靠手输）
+const denyOptions = ref([])
 // 名册加载失败标记：拉不动时不能给一个空下拉就完事（用户会读成「平台就这些工具」）
 const toolCatalogError = ref(false)
 const loadToolCatalog = async () => {
@@ -707,6 +730,13 @@ const loadToolCatalog = async () => {
     // 存量智能体的已存名单不变（仍不含 askUser），要不要给它开提问卡由用户自己勾。
     builtinOptions.value = list.filter(t => t.family === 'builtin')
       .map(t => ({ value: t.name, label: t.label || t.cardLabel || t.name }))
+    // 工具黑名单的选项=名册<b>全族</b>（族名做前缀：不同族可能有同名工具，裸英文名分不清）。
+    // 外部 MCP 工具没有静态声明、进不了名册，所以控件用 tags 模式允许手输名字——
+    // 后端保存时会逐个核对名字存在（认不出直接拒），手输错不会静默不生效。
+    denyOptions.value = list.map(t => ({
+      value: t.name,
+      label: (t.familyLabel ? t.familyLabel + ' · ' : '') + (t.label || t.cardLabel || t.name)
+    }))
   } catch (e) { toolCatalogError.value = true }
 }
 // 权限档位可选项（来自 /agent/permission-presets）：档位表由后端 PermissionPreset 下发，这里不抄第二份——
@@ -756,6 +786,8 @@ const blankForm = () => ({
   toolApprovalMode: 'auto',
   // 权限档位：null=跟随平台默认档（agent.permissionPreset.default）；可选项来自 /agent/permission-presets
   permissionPreset: null,
+  // 工具黑名单：本轮要拿掉的具体工具名（多选，选项=能力名册全族）；空=不禁用
+  toolDeny: [],
   // 单轮工具调用步数上限：null=跟随全局当前值（agent.maxToolSteps）；0=不限制
   maxToolSteps: null,
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
@@ -1301,6 +1333,7 @@ const openEdit = a => {
     toolWebsearch: triStr(a.toolWebsearch),
     toolApprovalMode: a.toolApprovalMode || 'auto',
     permissionPreset: a.permissionPreset || null,
+    toolDeny: splitList(a.toolDeny),
     maxToolSteps: a.maxToolSteps == null ? null : Number(a.maxToolSteps),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
@@ -1422,6 +1455,8 @@ const save = async () => {
     // 权限档位：留空 → null（= 跟随平台默认档，不是「关闭档位」）；必须始终带上这个键，
     // 否则清空档位时后端收不到字段、旧值原地留着（后端按 body 出现的字段才写列）
     permissionPreset: f.permissionPreset || null,
+    // 工具黑名单：始终带这个键（清空后要能落回 null，后端按 body 出现的字段才写列）
+    toolDeny: (f.toolDeny || []).join(','),
     maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,

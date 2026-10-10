@@ -1976,7 +1976,9 @@ public class RagService {
         return permissionPolicyResolver.resolve(
                 agent == null ? null : agent.getPermissionPreset(),
                 agent == null ? null : agent.getToolApprovalMode(),
-                guestMode, onClamp);
+                guestMode,
+                agent == null ? null : agent.getToolDeny(),
+                onClamp);
     }
 
     /**

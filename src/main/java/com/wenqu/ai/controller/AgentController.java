@@ -128,6 +128,7 @@ public class AgentController {
             + "description/model/systemPrompt/knowledgeScope/"
             + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
             + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
+            + "toolDeny(按名禁用的工具，逗号分隔；省略或空=不禁用)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
             + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
     @PostMapping

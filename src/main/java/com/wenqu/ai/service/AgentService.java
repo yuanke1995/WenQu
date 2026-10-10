@@ -77,6 +77,8 @@ public class AgentService {
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final RoleService roleService;
+    /** 工具注册中心：保存工具黑名单时逐个核对名字真存在（认不出直接拒，与权限档位码同口径） */
+    private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
@@ -102,6 +104,7 @@ public class AgentService {
         m.put("toolWebsearch", "联网搜索");
         m.put("toolApprovalMode", "工具审批模式");
         m.put("permissionPreset", "权限档位");
+        m.put("toolDeny", "工具黑名单");
         m.put("maxToolSteps", "工具步数上限");
         m.put("skills", "技能范围");
         m.put("mcps", "MCP 范围");
@@ -436,6 +439,8 @@ public class AgentService {
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
         if (b.containsKey("permissionPreset")) uw.set(Agent::getPermissionPreset, a.getPermissionPreset());
+        // 工具黑名单（P2；null/空=不禁用任何具体工具）
+        if (b.containsKey("toolDeny")) uw.set(Agent::getToolDeny, a.getToolDeny());
         // 单轮工具步数上限（null=继承全局）
         if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
         if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
@@ -558,6 +563,34 @@ public class AgentService {
                             + "（可选 research / standard / autonomous，留空=跟随平台默认档）");
                 }
                 a.setPermissionPreset(p.code());
+            }
+        }
+        // 工具黑名单（P2）：逐个核对名字在注册中心里存在。存一个拼错的名字不会报错、只会静默不生效——
+        // 「我明明禁了 webSearch，它怎么还在被调用」这种问题从界面上完全看不出来，所以在写入口就拒。
+        // 只核对静态声明的工具：MCP 动态工具的名字由外部 server 自定、本来不在注册中心，
+        // 那族允许存任意名字（运行时按名逐字匹配剔除）。
+        if (body.containsKey("toolDeny")) {
+            Object rawDeny = body.get("toolDeny");
+            String text = rawDeny == null ? null : String.valueOf(rawDeny).trim();
+            if (text == null || text.isEmpty()) {
+                a.setToolDeny(null);
+            } else {
+                List<String> names = new ArrayList<>();
+                List<String> unknown = new ArrayList<>();
+                for (String part : text.split(",")) {
+                    String n = part.trim();
+                    if (n.isEmpty()) continue;
+                    if (names.contains(n)) continue;   // 重复项去重，不报错（同一条禁两次没有第二种语义）
+                    if (toolRegistry.find(n).isEmpty() && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(n)) {
+                        unknown.add(n);
+                    }
+                    names.add(n);
+                }
+                if (!unknown.isEmpty()) {
+                    throw new com.wenqu.ai.common.BizException("工具黑名单里有平台不认识的名字："
+                            + String.join("、", unknown) + "（工具名以配置页下拉为准；外部 MCP 工具可直接按名填写）");
+                }
+                a.setToolDeny(names.isEmpty() ? null : String.join(",", names));
             }
         }
         // 单轮工具步数上限（NULL=继承全局；0=不限制；N=上限。负数归一 null）
@@ -800,6 +833,7 @@ public class AgentService {
         uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
+        uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));
         uw.set(Agent::getMaxToolSteps, asInt(cfg.get("maxToolSteps")));
         uw.set(Agent::getSkills, raw(cfg.get("skills")));
         uw.set(Agent::getMcps, raw(cfg.get("mcps")));

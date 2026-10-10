@@ -58,23 +58,13 @@ public class SandboxToolProvider implements ToolFamilyProvider {
     }
 
     /**
-     * 本族的档位裁剪点：只读档下写类工具与 execute 不进模型的工具表（判据是描述符的 {@code SideEffect}，
-     * 见类注释）。
-     * <p>装配与执行两侧读同一份 {@link ToolMountContext#permissionPolicy()}：守卫侧
-     * （{@code PermissionGuard}）拦的正是这里不收的那些。分成两套判据的错配形态最难查——
-     * 「挂着的被拦、没挂的反能跑」。
-     */
-    @Override
-    public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
-        return ToolFamilyProvider.super.exposes(d, mc) && mc.policyAllows(d);
-    }
-
-    /**
      * 三族之外的最后一族开关：{@code tool.sandbox.enabled} 全局一档，暂无智能体级三态
      * （c_ai_agent 未建 toolSandbox 列，见 SandboxTools 类注释）——沙盒本身按会话隔离，
      * 工具一旦启用对该智能体的所有会话可用。
      * <p>审批档位=off 时整族不挂由 {@code ToolFamily.SANDBOX.blockedWhenApprovalOff()} 统一管，
-     * 不再写在装配处的 if 里。
+     * 不再写在装配处的 if 里。<b>权限档位的裁剪也不在本族</b>：只读档下写类工具与 execute 不进工具表
+     * 这条判据在 {@code ExecutionPolicy.allowsTool}（按描述符的 SideEffect），由装配样板统一过——
+     * 它是跨族的，抄进本族就成了第二份真源，改档位时必漏。
      */
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {

@@ -61,6 +61,16 @@ public interface ToolFamilyProvider {
      * <p>反射不出描述符的回调（说明声明与实现已经漂移）直接跳过——启动核对已经把它记成 ERROR，
      * 这里不再让它静默进模型的工具表。
      */
+    /**
+     * 通用装配样板：把 {@code holder} 反射出的回调逐个对上自己的描述符，
+     * 过了 {@code eligible} 与<b>本轮权限判据</b>的才挂上。
+     * <p>权限判据（{@link ToolMountContext#policyAllows}）放在这里而不是各族的 {@code exposes} 里，
+     * 是因为它是<b>跨族的</b>：档位裁剪与按名黑名单对任何族都要生效，而 {@code exposes} 有族级例外
+     * （检索-反思循环那一轮强制暴露检索工具，走的是 {@code mc.reflectiveRetrieval() || super.exposes(...)}）——
+     * 放进默认实现会被那条 {@code ||} 整个绕过，表现就是「管理员点名禁掉的工具在反思轮照样挂上」。
+     * <p>反射不出描述符的回调（说明声明与实现已经漂移）直接跳过——启动核对已经把它记成 ERROR，
+     * 这里不再让它静默进模型的工具表。
+     */
     default java.util.List<org.springframework.ai.tool.ToolCallback> mountFiltered(
             ToolMountContext mc, Object holder, java.util.function.Predicate<ToolDescriptor> eligible) {
         if (holder == null || mc == null) return java.util.List.of();
@@ -70,7 +80,7 @@ public interface ToolFamilyProvider {
             String n = cb.getToolDefinition().name();
             ToolDescriptor d = ds.stream().filter(x -> n.equals(x.name())).findFirst().orElse(null);
             if (d == null) continue;
-            if (mc.visibleToThisTurn(d) && eligible.test(d)) out.add(cb);
+            if (mc.visibleToThisTurn(d) && mc.policyAllows(d) && eligible.test(d)) out.add(cb);
         }
         return out;
     }

@@ -181,10 +181,18 @@ public class ToolRegistry {
      * 这个工具本轮挂不挂（供提示词侧的能力分工段查询，与装配循环共用同一份判据）。
      * <p>未登记的工具名返回 false——它压根不在模型的工具表里，提示词不该提它。
      */
+    /**
+     * 这个工具本轮挂不挂（供提示词侧的能力分工段查询，与装配循环共用同一份判据）。
+     * <p>未登记的工具名返回 false——它压根不在模型的工具表里，提示词不该提它。
+     * <p>权限判据（档位裁剪 + 按名黑名单）在这里过一道，与 {@code ToolFamilyProvider.mountFiltered}
+     * 那处同一条 {@link ToolMountContext#policyAllows}：提示词侧漏掉它，就会写出「教模型用某个工具、
+     * 工具表里却没有它」。
+     */
     public boolean exposes(ToolFamily family, String toolName, ToolMountContext mc) {
         ToolFamilyProvider p = providerByFamily.get(family);
         ToolDescriptor d = byName.get(toolName);
-        return p != null && d != null && d.family() == family && p.exposes(d, mc) && mc.visibleToThisTurn(d);
+        return p != null && d != null && d.family() == family && p.exposes(d, mc)
+                && mc.visibleToThisTurn(d) && mc.policyAllows(d);
     }
 
     /** 本族本轮是否至少有一个工具挂得上（族级判据：任务清单这种一族一工具的入口用它，调用方不必知道工具名） */
@@ -192,7 +200,7 @@ public class ToolRegistry {
         ToolFamilyProvider p = providerByFamily.get(family);
         if (p == null) return false;
         for (ToolDescriptor d : p.descriptors()) {
-            if (p.exposes(d, mc) && mc.visibleToThisTurn(d)) return true;
+            if (p.exposes(d, mc) && mc.visibleToThisTurn(d) && mc.policyAllows(d)) return true;
         }
         return false;
     }

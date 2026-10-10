@@ -105,6 +105,17 @@ public interface ToolMountContext {
     }
 
     /**
+     * 这个名字是否被本轮点名禁用（按名黑名单走这条，档位裁剪走 {@link #policyAllows}）。
+     * <p>MCP 那族必须用它：动态工具没有静态描述符，{@code policyAllows(null)} 一律放行，
+     * 于是"禁掉某个外部服务里的那一个工具"只能按名字判——名字由外部 server 自定，
+     * 平台不猜它的性质，只按用户写下的名字逐字匹配。
+     */
+    default boolean deniesTool(String toolName) {
+        var policy = permissionPolicy();
+        return policy != null && policy.denies(toolName);
+    }
+
+    /**
      * 登记一条本轮可见降级（fail-loud：让用户看见「为什么这个能力没生效」，而不是静默少挂一个工具）。
      * <p>MCP 与技能的具体项引用会用到：智能体指定了别人的服务、或指定了自己没登记的服务，
      * 都要说出来。不说，「智能体挂了这个外部工具」就静默变成「什么都没挂」。
