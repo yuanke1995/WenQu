@@ -144,4 +144,13 @@ public class ToolRegistry {
     public List<ToolDescriptor> ofFamily(ToolFamily family) {
         return List.copyOf(byFamily.getOrDefault(family, List.of()));
     }
+
+    /**
+     * 各族提供方（装配循环用）。
+     * <p>装配处只负责「问每个族本轮要挂什么」，不再自己抄判据；没迁移的族 {@code callbacks()}
+     * 返回空列表，仍由问答侧的老分支挂载——绞杀式的过渡态就长这样，一族迁完删一段老代码。
+     */
+    public List<ToolFamilyProvider> providers() {
+        return List.copyOf(providers);
+    }
 }

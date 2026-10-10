@@ -4,7 +4,9 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.websearch.WebSearchTools;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -43,5 +45,15 @@ public class WebSearchToolProvider implements ToolFamilyProvider {
         return List.of(new ToolDescriptor(WebSearchTools.TOOL_NAME, ToolFamily.WEBSEARCH,
                 "联网搜索", "联网搜索", "上网搜索相关资料，结果会作为引用来源",
                 SideEffect.EXTERNAL, "webSearch.enabled", false, false, "webSearch.requireApproval"));
+    }
+
+    /**
+     * 挂不挂只看两级开关（全局 webSearch.enabled + 智能体三态）；对匿名访客不暴露由描述符的
+     * {@code guestAllowed=false} 决定——迁移前这条靠「游客分支提前 return 掉了联网」实现，
+     * 于是「联网到底给不给游客」这件事在两份代码里各有答案。
+     */
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, d -> mc.gateOnFor(family(), d.gateKey()));
     }
 }

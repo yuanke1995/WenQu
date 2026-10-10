@@ -89,6 +89,21 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 > 前端 `AgentsPage.BUILTIN_TOOL_OPTIONS` 那份手抄仍在（它要登录用户都读，而 `/api/ai/tools` 按既定口径不开普通用户洞）；
 > MCP 动态工具名没有中文来源（前端剥前缀兜底），要等 P4 的 resources/命名一起收。
 
+> **P1 第二刀（2026-10-10，同日）**：**检索 + 联网两族的挂载**迁到注册中心——`ToolMountContext`
+> （userId / 游客 / reflective / 全局开关 / `agentFlag(family)` 三态）+ `ToolFamilyProvider.callbacks(mc)`
+> （默认返回空 = 本族还没迁，这就是绞杀态的开关）+ `mountFiltered` 样板。收益：
+> `guestAllowed` 这个字段终于有了消费方（联网族「不给游客」不再是「游客分支提前 return 掉了」的副作用），
+> 知识检索与内置工具在游客/常规两条分支的整份复制消掉，收尾（审批名单 + DSML 白名单 + 挂载日志）提成
+> `finishMounts` 两条路径共用——顺带暴露并修掉一个老差异：**游客会话原先连 DSML 剥离白名单都没拿到**
+> （复制分支时漏带的，不是设计）。`族 → c_ai_agent 列` 的映射留在问答侧，通用层不认识业务实体。
+> 收尾里的同名工具去重 + ERROR 当场抓到东西：第一版把 `webSearch` 的 provider 分支和残留老分支各挂了一次
+> （症状是模型工具表里两个同名项，Spring 不报错、各厂商行为不一，从回答里几乎看不出成因）。
+> 真机补验（本机 8090）：27 个工具、无重复；`webSearch.enabled` 在本机实际是开的，于是第一刀没跑到的那条
+> per-invocation 注入路径有了证据——联网工具挂载一次、执行经新管线，provider 报错时经 `sink.degrade`
+> 把「联网搜索不可用」写进运行状态面板（degrade 只在 sink 非空时才调，这条降级出现即证明上下文注入到位）。
+> **仍未真机验**：游客分享路径（要一个 share token），那条改动是代码路径推演；审批闸的 ask 分支仍未跑到。
+> 下一刀：内置/产物/技能/清单四族挂载；沙盒与 MCP 两族最后迁（MCP 要把降级提示与 `st.mcpToolNames` 一起带进 provider）。
+
 ### ★★ P2 · 权限档位与安全
 
 借的机制：`SandboxExecutionPolicy` × `ApprovalPolicy` × `ctx.permissionPresets` + 单调 `ToolGuard`。

@@ -30,4 +30,34 @@ public interface ToolFamilyProvider {
     default Object holder() {
         return null;
     }
+
+    /**
+     * 本轮该挂本族的哪些工具。默认空 = 本族还没迁到注册中心装配，仍由问答侧的老 if 链挂载（绞杀式中）。
+     * <p>实现里只写「本族自己的挂不挂判据」，游客可见性、三态覆盖、开关归属都由
+     * {@link ToolMountContext} 与描述符供用，装配处不再抄一份。
+     */
+    default java.util.List<org.springframework.ai.tool.ToolCallback> callbacks(ToolMountContext mc) {
+        return java.util.List.of();
+    }
+
+    /**
+     * 通用装配样板：把 {@link #holder()} 反射出的回调逐个对上自己的描述符，
+     * 过了 {@code eligible} 且本轮可见的才挂上。
+     * <p>反射不出描述符的回调（说明声明与实现已经漂移）直接跳过——启动核对已经把它记成 ERROR，
+     * 这里不再让它静默进模型的工具表。
+     */
+    default java.util.List<org.springframework.ai.tool.ToolCallback> mountFiltered(
+            ToolMountContext mc, java.util.function.Predicate<ToolDescriptor> eligible) {
+        Object holder = holder();
+        if (holder == null || mc == null) return java.util.List.of();
+        java.util.List<ToolDescriptor> ds = descriptors();
+        java.util.List<org.springframework.ai.tool.ToolCallback> out = new java.util.ArrayList<>();
+        for (org.springframework.ai.tool.ToolCallback cb : org.springframework.ai.support.ToolCallbacks.from(holder)) {
+            String n = cb.getToolDefinition().name();
+            ToolDescriptor d = ds.stream().filter(x -> n.equals(x.name())).findFirst().orElse(null);
+            if (d == null) continue;
+            if (mc.visibleToThisTurn(d) && eligible.test(d)) out.add(cb);
+        }
+        return out;
+    }
 }

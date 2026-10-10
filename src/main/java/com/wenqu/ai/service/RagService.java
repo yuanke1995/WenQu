@@ -3,7 +3,9 @@ package com.wenqu.ai.service;
 import com.wenqu.ai.agent.tool.ToolApprover;
 import com.wenqu.ai.agent.tool.ToolEnrichment;
 import com.wenqu.ai.agent.tool.ToolFamily;
+import com.wenqu.ai.agent.tool.ToolFamilyProvider;
 import com.wenqu.ai.agent.tool.ToolInvocation;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.agent.tool.ToolPipelineFactory;
 import com.wenqu.ai.agent.tool.ToolRegistry;
 import com.wenqu.ai.agent.tool.ToolTurnContext;
@@ -1959,37 +1961,32 @@ public class RagService {
             st.sensitiveToolNames = sensitiveTools;
             return callbacks;
         }
-        // 游客分享会话（公开链接 /s/{token}）：能力白名单收窄——只保留知识精确检索与内置工具
-        // （计算器/时间等无副作用项）。沙盒/产物/MCP/技能执行都是身份敏感能力：产物归属发布者、
-        // 沙盒按 uid 派生容器、MCP/技能是个人资产，一律不对匿名访客暴露。
-        if (st.guestMode) {
-            // 检索-反思循环（reflectiveRetrieval）轮次强制暴露知识检索工具：该模式本身就是
-            // "模型自主多轮检索"的显式开启，不再要求 tool.knowledgeRetrieval.enabled 子开关
-            if (st.reflectiveRetrieval || toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
-                callbacks.addAll(java.util.Arrays.asList(
-                        org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
-            }
-            for (org.springframework.ai.tool.ToolCallback cb :
-                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
-                if (builtinToolExposed(agent, cb.getToolDefinition().name())) {
-                    callbacks.add(cb);
-                }
-            }
-            log.info("[TOOL] 游客分享会话受限模式：启用 {} 个工具（知识检索/内置）", callbacks.size());
-            return callbacks;
+        // 已迁到注册中心的族（绞杀式中）：挂不挂由各族自己判，装配处不再抄判据。检索-反思循环的强制
+        // 暴露、智能体三态覆盖、游客可见性分别落在 provider 与描述符的 guestAllowed 上——迁移前这几条
+        // 在游客分支与常规分支各抄了一份，于是「管理员收紧一处」时另一处照旧放行。
+        ToolMountContext mc = toolMountContext(agent, userId, st);
+        for (ToolFamilyProvider p : toolRegistry.providers()) {
+            callbacks.addAll(p.callbacks(mc));
         }
-        // 同上：检索-反思循环轮次强制暴露（游客分支与常规分支同一语义）
-        if (st.reflectiveRetrieval || toolOn(agent, "tool.knowledgeRetrieval.enabled", agent == null ? null : agent.getToolKnowledge())) {
-            callbacks.addAll(java.util.Arrays.asList(
-                    org.springframework.ai.support.ToolCallbacks.from(knowledgeRetrievalTool)));
-        }
-        // 具体项筛选：agent.builtinTools 为 null → 挂全部内置工具；否则只挂选中的那几个（按工具名匹配）。
-        // 判据与提示词里的三入口分工段共用 builtinToolExposed，避免「教了模型、工具却没挂上」。
+        // 内置工具族（尚未迁移）：具体项筛选——agent.builtinTools 为 null → 挂全部内置工具；否则只挂
+        // 选中的那几个（按工具名匹配）。判据与提示词里的三入口分工段共用 builtinToolExposed，避免
+        // 「教了模型、工具却没挂上」。这一族对匿名访客同样开放，原先两条分支各写了一遍完全相同的
+        // 循环，现在提到公共段。
         for (org.springframework.ai.tool.ToolCallback cb :
                 org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
             if (builtinToolExposed(agent, cb.getToolDefinition().name())) {
                 callbacks.add(cb);
             }
+        }
+        // 游客分享会话（公开链接 /s/{token}）：能力白名单到此为止。下面的技能/产物/任务清单/沙盒/MCP
+        // 都是身份敏感能力——产物归属发布者、沙盒按 uid 派生容器、技能与 MCP 是个人资产，一律不对
+        // 匿名访客暴露。联网搜索不再归这条分支管：它已迁到注册中心，由描述符 guestAllowed=false 拦住。
+        if (st.guestMode) {
+            // 保留一条可 grep 的游客标记（原来那句「受限模式」日志在这里断了，只留公共日志会看不出
+            // 这一轮是匿名访客跑的）
+            log.info("[TOOL] 游客分享会话受限模式：只挂无身份敏感能力（知识检索/内置）");
+            finishMounts(callbacks, sensitiveTools, st);
+            return callbacks;
         }
         // 技能取回工具（Skills 渐进披露的取回端）：智能体未指定时按本人是否有可用技能判定。
         // 技能无全局开关了（谁装谁用、停用由本人控），工具实例按本次问答用户创建——技能是个人资产，不能跨账户读取。
@@ -2011,15 +2008,9 @@ public class RagService {
             callbacks.addAll(java.util.Arrays.asList(
                     org.springframework.ai.support.ToolCallbacks.from(todoService)));
         }
-        // 审批归属由注册中心的描述符声明决定（webSearch.requireApproval，默认 false=自动执行）：它会把
-        // 用户输入发到外网并产生外部计费，语义上和沙盒/MCP 同级，因此保留纳入审批名单的开关，
-        // 但不默认强制 ask（否则每次搜索都要点确认，联网体验不可用；需要收紧时由管理员开这一项）。
-        if (toolOn(agent, "webSearch.enabled", agent == null ? null : agent.getToolWebsearch())) {
-            for (org.springframework.ai.tool.ToolCallback cb :
-                    org.springframework.ai.support.ToolCallbacks.from(webSearchTools)) {
-                callbacks.add(cb);
-            }
-        }
+        // 联网搜索族已迁到注册中心（WebSearchToolProvider）：挂不挂看两级开关、游客可见性看描述符
+        // guestAllowed=false、审批归属看 webSearch.requireApproval。这里曾有一份同名工具的挂载分支，
+        // 2026-10-10 迁移时漏删，被装配收尾的去重守卫以 ERROR 喊出（[TOOL] 同名工具被重复挂载）。
         // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
         // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。
         // 联网搜索不受 off 管辖：启停由自身开关决定，纳入审批（webSearch.requireApproval）后仅 ask 会拦截。
@@ -2070,6 +2061,31 @@ public class RagService {
                 log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             }
         }
+        finishMounts(callbacks, sensitiveTools, st);
+        return callbacks;
+    }
+
+    /**
+     * 装配收尾（游客与常规两条路径共用；迁移前收尾只在常规路径跑、游客分支自己 log 一句就 return，
+     * 于是游客拿不到 DSML 剥离白名单——那条差异不是设计，是复制分支时漏带的）。
+     * 做三件事：同名工具去重、本轮审批名单、DSML 剥离白名单 + 挂载日志。
+     * <p>去重是族迁移期的安全网：一族同时被 provider 和残留的老分支挂上时，模型的工具表里会出现两个
+     * 同名项——Spring 不报错、各厂商行为不一，症状是「模型偶尔对着同一个工具反复调」，从回答里几乎
+     * 看不出成因，所以宁可在这里喊出来。
+     */
+    private void finishMounts(java.util.List<org.springframework.ai.tool.ToolCallback> callbacks,
+                              java.util.Set<String> sensitiveTools, AnswerStreamState st) {
+        java.util.Set<String> seenNames = new java.util.LinkedHashSet<>();
+        java.util.List<String> duplicated = new ArrayList<>(1);
+        callbacks.removeIf(cb -> {
+            String n = cb.getToolDefinition().name();
+            if (seenNames.add(n)) return false;
+            duplicated.add(n);
+            return true;
+        });
+        if (!duplicated.isEmpty()) {
+            log.error("[TOOL] 同名工具被重复挂载，已去重（族迁移期装配口径重叠，请把老分支删干净）: {}", duplicated);
+        }
         // 本轮「有副作用工具」名单由注册中心的描述符判定，不再在装配处逐个 add：
         // 沙盒族恒需确认、联网搜索看 webSearch.requireApproval、内置/检索/产物/技能/清单不需要；
         // **没在注册中心登记的工具一律需要确认**（当前即 MCP 外部工具）——外部 server 的工具名前缀是
@@ -2102,7 +2118,54 @@ public class RagService {
                     .collect(java.util.stream.Collectors.joining(", "));
             log.info("[TOOL] 本次启用 {} 个工具: [{}]", callbacks.size(), names);
         }
-        return callbacks;
+    }
+
+    /**
+     * 本轮的工具装配上下文：把智能体配置、全局开关与游客态交给各族自己判挂不挂。
+     * <p>「族 → c_ai_agent 的哪一列」这条映射留在问答侧：Agent 是业务实体，通用装配层不该认识它，
+     * 否则下一族想加开关时得先改通用层。
+     */
+    private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
+        return new ToolMountContext() {
+            @Override
+            public String userId() {
+                return userId;
+            }
+
+            @Override
+            public boolean guestMode() {
+                return st.guestMode;
+            }
+
+            @Override
+            public boolean reflectiveRetrieval() {
+                return st.reflectiveRetrieval;
+            }
+
+            @Override
+            public boolean gateOn(String gateKey) {
+                return configService.getBoolean(gateKey);
+            }
+
+            @Override
+            public Integer agentFlag(ToolFamily family) {
+                return agentFlagFor(family, agent);
+            }
+        };
+    }
+
+    /** 族 → 智能体级三态列（null = 本族没有智能体级开关，跟随全局） */
+    private Integer agentFlagFor(ToolFamily family, Agent agent) {
+        if (agent == null) return null;
+        return switch (family) {
+            case BUILTIN -> agent.getToolBuiltin();
+            case KNOWLEDGE -> agent.getToolKnowledge();
+            case WEBSEARCH -> agent.getToolWebsearch();
+            case ARTIFACT -> agent.getToolArtifact();
+            case SKILL -> agent.getToolSkill();
+            case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
+            case TODO, MCP -> null;
+        };
     }
 
     /**

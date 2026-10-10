@@ -4,7 +4,9 @@ import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
+import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -42,5 +44,15 @@ public class KnowledgeToolProvider implements ToolFamilyProvider {
         return List.of(new ToolDescriptor("searchKnowledge", ToolFamily.KNOWLEDGE,
                 "知识库精确检索", "查知识库资料", "在你上传的知识库里检索相关资料片段",
                 SideEffect.READ, "tool.knowledgeRetrieval.enabled", true, false, null));
+    }
+
+    /**
+     * 检索-反思循环轮次强制暴露：那个模式本身就是「模型自主多轮检索」的显式开启，
+     * 不再要求 tool.knowledgeRetrieval.enabled 子开关（与迁移前装配处同一语义）。
+     */
+    @Override
+    public List<ToolCallback> callbacks(ToolMountContext mc) {
+        return mountFiltered(mc, d -> mc.reflectiveRetrieval()
+                || mc.gateOnFor(family(), d.gateKey()));
     }
 }
