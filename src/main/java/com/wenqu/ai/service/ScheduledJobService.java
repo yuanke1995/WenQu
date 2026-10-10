@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.ScheduledJobMapper;
@@ -264,9 +265,11 @@ public class ScheduledJobService {
             int timeoutMs = Math.max(30_000, configService.getInt("scheduled.timeoutMs", 300_000));
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
-                ragService.chat(sessionId, job.getPrompt(), null, null, null,
-                        Integer.valueOf(1).equals(job.getDeepThink()),
-                        job.getAgentId(), job.getModelRef(), job.getUid(), sink);
+                ragService.chat(ChatCommand.builder()
+                        .sessionId(sessionId).question(job.getPrompt()).userId(job.getUid())
+                        .deepThink(Integer.valueOf(1).equals(job.getDeepThink()))
+                        .agentId(job.getAgentId()).modelOverride(job.getModelRef())
+                        .build(), sink);
                 if (!sink.awaitDone(timeoutMs)) {
                     throw new IllegalStateException("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
                 }

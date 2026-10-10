@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.agent.tool.ResourceRefs;
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.tool.ToolApprover;
 import com.wenqu.ai.agent.tool.ToolEnrichment;
 import com.wenqu.ai.agent.tool.ToolFamily;
@@ -554,142 +555,35 @@ public class RagService {
 
     /**
      * 处理用户问题（可含上传图片与附件），通过 SSE 流式返回。
-     * deepThink=true 时先流式输出思考过程（thinking 事件），提取检索计划后多路检索再回答。
-     * attachments 为文档类附件（服务端解析为文本注入本轮上下文）；skills 为用户本轮主动选用的技能名（全文注入 system prompt）。
-     * modelOverride 为聊天页的会话级模型覆盖（引用或遗留名，仅用户手动切换时传）；userId 用于解析个人默认模型。
-     * 整条流水线在独立线程池执行（重活不占 Tomcat 请求线程），控制器返回后 SSE 由流水线线程驱动。
+     * <p>P1 seam 化：这里原本是 10 个 telescoping 重载层层委托（10 参一路加到 19 参），
+     * 现收成 {@link ChatCommand} 一个入参对象。加能力不再动调用方，相邻同类型实参写反也不再
+     * 只能靠人眼拦（见 ChatCommand 类注释）。
+     * <p>{@code emitter} 刻意不进命令对象：它是这一轮的<b>出口</b>而不是内容——工作流子 agent 用
+     * CollectingSseEmitter，定时任务与对外 MCP 端点各有自己的收集通道，与「问了什么」正交；
+     * 混进同一个列表就会出现第 11 个重载。整条流水线在独立线程池执行（重活不占 Tomcat 请求线程）。
      */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter) {
-        chat(sessionId, question, userImages, attachments, skills, deepThink,
-                agentId, modelOverride, userId, emitter, false, false);
-    }
+    public void chat(ChatCommand cmd, SseEmitter emitter) {
+        // 解包成本轮内的局部名：流水线体量大（互斥登记、总线开轮、状态构造、异步提交），
+        // 逐处改成 cmd.getX() 的收益是零、风险是把一个位置写错的 bug 埋进八千行里
+        final String sessionId = cmd.getSessionId();
+        final String question = cmd.getQuestion();
+        final List<String> userImages = cmd.getUserImages();
+        final List<ChatRequest.Attachment> attachments = cmd.getAttachments();
+        final List<String> skills = cmd.getSkills();
+        final List<ChatRequest.Mention> mentions = cmd.getMentions();
+        final List<ChatRequest.HistoryRef> historyRefs = cmd.getHistoryRefs();
+        final boolean deepThink = cmd.isDeepThink();
+        final String agentId = cmd.getAgentId();
+        final String modelOverride = cmd.getModelOverride();
+        final String userId = cmd.getUserId();
+        final String reasoningLevel = cmd.getReasoningLevel();
+        final Integer requestedContextWindow = cmd.getRequestedContextWindow();
+        final boolean guestMode = cmd.isGuestMode();
+        final boolean regenerate = cmd.isRegenerate();
+        final String replaceMessageId = cmd.getReplaceMessageId();
+        final String editVariantGroup = cmd.getEditVariantGroup();
+        final boolean planMode = cmd.isPlanMode();
 
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter, boolean guestMode) {
-        chat(sessionId, question, userImages, attachments, skills, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, false);
-    }
-
-    /**
-     * @param regenerate 重新生成/自动重试的重发标记：该问题的用户消息已随上一轮请求**即时落库**（见 runChat 0.3），
-     *                   true 时跳过开始期的用户消息落库，避免重发产生重复历史行
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate) {
-        chat(sessionId, question, userImages, attachments, skills, null, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate);
-    }
-
-    /**
-     * @param mentions 输入框 @ 引用（**已由控制器完成可见性校验**——这里不再鉴权，只按语义用）：
-     *                 kb=本轮检索收窄到这些库；doc=该文档的块不经检索直接前置进上下文
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate) {
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, null);
-    }
-
-    /**
-     * @param replaceMessageId 重新生成时被替换的旧回答消息 ID：落库前软删它，历史里只留最新一版
-     *                         （不传则新回答与旧回答并存，刷新后同一问题出现两条答案）
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId) {
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId, null);
-    }
-
-    /**
-     * @param historyRefs 输入框 # 引用的会话历史消息（**已由控制器完成归属校验并按库回填内容**——
-     *                    这里不再校验，只负责把内容前置进本轮上下文）
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId,
-                     List<ChatRequest.HistoryRef> historyRefs) {
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                historyRefs, null);
-    }
-
-    /**
-     * @param reasoningLevel 本轮思考强度档位（low/medium/high/xhigh/max）：用户在本轮显式选的档位。
-     *                      优先级高于模型登记的默认档位；非法/不在模型支持档位内 → 回落模型默认档位
-     *                      （前端只给支持档位，后端仍做归一，避免手改请求下发越级档位）。
-     *                      null/空=沿用模型登记的默认档位。
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId,
-                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel) {
-        // 程序化调用（定时任务/工作流/MCP/分享页）没有用户窗口档位概念：窗口一律走模型登记上限/全局默认
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                historyRefs, reasoningLevel, null);
-    }
-
-    /**
-     * @param requestedContextWindow 本轮上下文窗口 token（聊天页档位所选）：仅当生效模型登记了
-     *                               「最小窗口~窗口」区间时生效，越界值收敛到区间内；null 或模型未登记区间
-     *                               = 用模型登记窗口（默认上限），行为与未传一致。
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId,
-                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
-                     Integer requestedContextWindow) {
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                historyRefs, reasoningLevel, requestedContextWindow, null);
-    }
-
-    /**
-     * @param editVariantGroup 编辑重发：被编辑消息所在分支的版本组键（控制器同步段 prepareEditBranch 产出）。
-     *                         新用户消息落库后挂同一组，与被替换的旧分支构成可切换的版本序列；null=普通问答
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId,
-                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
-                     Integer requestedContextWindow, String editVariantGroup) {
-        // 程序化调用（定时任务/工作流/MCP/分享页）没有计划模式概念：一律普通回答
-        chat(sessionId, question, userImages, attachments, skills, mentions, deepThink,
-                agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                historyRefs, reasoningLevel, requestedContextWindow, editVariantGroup, false);
-    }
-
-    /**
-     * @param planMode 计划模式（人在回路）：true=先产出执行计划（计划轮不执行任何工具）交用户批准/编辑，
-     *                 批准后的计划注入执行轮 system 再正式回答；拒绝/超时=本轮终止。
-     *                 本轮没有启用工具、或工作流驱动/游客会话时自动降级为普通回答（登记降级提示）。
-     */
-    public void chat(String sessionId, String question, List<String> userImages,
-                     List<ChatRequest.Attachment> attachments, List<String> skills,
-                     List<ChatRequest.Mention> mentions, boolean deepThink,
-                     String agentId, String modelOverride, String userId, SseEmitter emitter,
-                     boolean guestMode, boolean regenerate, String replaceMessageId,
-                     List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
-                     Integer requestedContextWindow, String editVariantGroup, boolean planMode) {
         // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
         // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
         final boolean useDeepThink = deepThink;
@@ -747,9 +641,7 @@ public class RagService {
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
                 try {
-                runChat(sessionId, question, userImages, attachments, skills, mentions, useDeepThink,
-                        agentId, modelOverride, userId, emitter, guestMode, regenerate, replaceMessageId,
-                        historyRefs, reasoningLevel, requestedContextWindow, editVariantGroup, planMode);
+                runChat(cmd, emitter, useDeepThink);
                 } finally {
                     // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就
                     // 返回了，生成与工具循环此后跑在响应式线程上，这里摘会让「停止本轮」找不到正在出字
@@ -869,13 +761,32 @@ public class RagService {
     /**
      * 问答流水线主体（独立线程执行）：图片/附件处理 → 改写 → 检索/深度思考 → 上下文构建 → LLM 流式输出
      */
-    private void runChat(String sessionId, String question, List<String> userImages,
-                         List<ChatRequest.Attachment> attachments, List<String> skills,
-                         List<ChatRequest.Mention> mentions, boolean deepThink,
-                         String agentId, String modelOverride, String userId, SseEmitter emitter,
-                         boolean guestMode, boolean regenerate, String replaceMessageId,
-                         List<ChatRequest.HistoryRef> historyRefs, String reasoningLevel,
-                         Integer requestedContextWindow, String editVariantGroup, boolean planMode) {
+    /**
+     * 本轮真正跑起来的那一段。入参同样是 {@link ChatCommand}（外加本轮裁决出的 deepThink——
+     * 它由用户开关与模型能力在本轮入口共同决定，不回写命令对象，避免「命令」被流水线改脏）。
+     */
+    private void runChat(ChatCommand cmd, SseEmitter emitter, boolean deepThink) {
+        // 解包成本轮内的局部名：流水线体量大（互斥登记、总线开轮、状态构造、异步提交），
+        // 逐处改成 cmd.getX() 的收益是零、风险是把一个位置写错的 bug 埋进八千行里
+        final String sessionId = cmd.getSessionId();
+        final String question = cmd.getQuestion();
+        final List<String> userImages = cmd.getUserImages();
+        final List<ChatRequest.Attachment> attachments = cmd.getAttachments();
+        final List<String> skills = cmd.getSkills();
+        final List<ChatRequest.Mention> mentions = cmd.getMentions();
+        final List<ChatRequest.HistoryRef> historyRefs = cmd.getHistoryRefs();
+        final String agentId = cmd.getAgentId();
+        final String modelOverride = cmd.getModelOverride();
+        final String userId = cmd.getUserId();
+        final String reasoningLevel = cmd.getReasoningLevel();
+        final Integer requestedContextWindow = cmd.getRequestedContextWindow();
+        final boolean guestMode = cmd.isGuestMode();
+        final boolean regenerate = cmd.isRegenerate();
+        final String replaceMessageId = cmd.getReplaceMessageId();
+        final String editVariantGroup = cmd.getEditVariantGroup();
+        final boolean planMode = cmd.isPlanMode();
+        // deepThink 不从这里解包：它是本轮入口裁决后的值（用户开关 + 模型能力），比命令里那份更晚
+
         long startTime = System.currentTimeMillis();
         // 本轮身份：取自 chat() 入口登记的把手（runChat 全程都在这一轮里跑，把手到真收尾才摘），
         // 随消息落库挂上——逐气泡的「过程」按它取这一轮的事件账本

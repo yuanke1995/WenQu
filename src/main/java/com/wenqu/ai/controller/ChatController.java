@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AdminGuard;
 import com.wenqu.ai.dto.ChatRequest;
@@ -206,11 +207,17 @@ public class ChatController {
         // 整轮截断改由 RagService 的存活看门狗按「机器耗时」判定（chat.sseTimeoutMs，人工等待不计入）。
         SseEmitter emitter = new SseEmitter(0L);
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
-        ragService.chat(sessionId, question, images, attachments, request.getSkills(), mentions,
-                request.isDeepThink(), request.getAgentId(), request.getModel(), userId, emitter,
-                false, request.isRegenerate(), request.getReplaceMessageId(), historyRefs,
-                request.getReasoningLevel(), request.getContextWindow(), editVariantGroup,
-                request.isPlanMode());
+        ragService.chat(ChatCommand.builder()
+                .sessionId(sessionId).question(question).userId(userId)
+                .userImages(images).attachments(attachments).skills(request.getSkills())
+                .mentions(mentions).historyRefs(historyRefs)
+                .deepThink(request.isDeepThink()).agentId(request.getAgentId())
+                .modelOverride(request.getModel())
+                .regenerate(request.isRegenerate()).replaceMessageId(request.getReplaceMessageId())
+                .reasoningLevel(request.getReasoningLevel())
+                .requestedContextWindow(request.getContextWindow())
+                .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())
+                .build(), emitter);
         return emitter;
     }
 

@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.common.BizException;
@@ -314,8 +315,11 @@ public class McpServerService {
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 // 非游客模式：身份与网页问答完全一致（智能体、个人技能、个人 MCP、工具开关等按本人配置）
-                ragService.chat(sid, question, List.of(), List.of(), List.of(),
-                        false, agentId.isEmpty() ? null : agentId, "", key.getCreatedBy(), sink, false);
+                ragService.chat(ChatCommand.builder()
+                        .sessionId(sid).question(question).userId(key.getCreatedBy())
+                        .userImages(List.of()).attachments(List.of()).skills(List.of())
+                        .agentId(agentId.isEmpty() ? null : agentId).modelOverride("")
+                        .build(), sink);
                 if (!sink.awaitDone(timeoutMs)) {
                     return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
                 }
@@ -468,8 +472,11 @@ public class McpServerService {
         CollectingSseEmitter sink = new CollectingSseEmitter();
         try {
             // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载
-            ragService.chat(sessionId, question, List.of(), List.of(), List.of(),
-                    false, r.agent().getId(), r.modelRef(), r.owner().getUid(), sink, true);
+            ragService.chat(ChatCommand.builder()
+                    .sessionId(sessionId).question(question).userId(r.owner().getUid())
+                    .userImages(List.of()).attachments(List.of()).skills(List.of())
+                    .agentId(r.agent().getId()).modelOverride(r.modelRef()).guestMode(true)
+                    .build(), sink);
             if (!sink.awaitDone(timeoutMs)) {
                 return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
             }

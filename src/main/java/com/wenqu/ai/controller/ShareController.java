@@ -1,5 +1,6 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.AgentShare;
@@ -212,8 +213,11 @@ public class ShareController {
         // 游客对话同样不设容器级 SSE 超时：整轮截断由 RagService 的存活看门狗按机器耗时判定
         SseEmitter emitter = new SseEmitter(0L);
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
-        ragService.chat(sessionId, message.trim(), List.of(), List.of(), List.of(),
-                false, ctx.agent().getId(), modelRef, owner.getUid(), emitter, true);
+        ragService.chat(ChatCommand.builder()
+                .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
+                .userImages(List.of()).attachments(List.of()).skills(List.of())
+                .agentId(ctx.agent().getId()).modelOverride(modelRef).guestMode(true)
+                .build(), emitter);
         agentShareService.incrementVisit(ctx.share().getId());
         log.info("[AUDIT] 游客对话 ip={} agent={} session={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId);

@@ -145,8 +145,36 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 > 那一轮的引用面板确认其中哪几条来自 MCP（面板入口在接流后的会话头部会消失），
 > 而 `registerMcpCitations` 的载荷尾部被 160 字节日志截断看不到。配置 `tool.mcpCiteEnabled` 默认开、
 > 代码路径除「名单改为按族收集」外未变，判定为未受影响，但下次要拿直接证据。
-> **P1 剩余**：`ChatCommand`（十个重载）、工作流 `mcpBody`/`skillBody` 两条裸调旁路接守卫、
-> 游客 share 路径真机验证、`AgentsPage` 那份中文名手抄、`skillOn` 与挂载判据那条差异的口径决定。
+> **（直接证据已补，同日）**：那一轮面板显示「参考 4 段资料」，其中 [3][4] 的内容是 Spring AI 的
+> ToolCallingAdvisor 循环与 returnDirect 语义、并带 docs.spring 链接——本轮只有 MCP 结果里有这些，
+> 即外部工具结果确实注册进了引用体系。
+> **P1 剩余（截至第四刀）**：`ChatCommand`、工作流两条裸调旁路、游客 share 路径真机验证、
+> `AgentsPage` 那份中文名手抄、`skillOn` 与挂载判据那条差异的口径决定。
+
+> **P1 第五刀（2026-10-10，同日）**：**`chat()` 的十个 telescoping 重载收成 `ChatCommand`**——
+> P1 的三件事（描述符真源 / 注册中心与守卫链 / 命令对象）到此齐。`com.wenqu.ai.agent.chat.ChatCommand`
+> 18 个字段 + `@Builder`；`chat(ChatCommand, SseEmitter)` 与 `runChat(ChatCommand, SseEmitter, deepThink)`
+> 各留一段同名局部变量解包——流水线体量大（互斥登记、总线开轮、状态构造、异步提交），
+> 逐处改成 `cmd.getX()` 的收益是零、风险是把一个写错位置的东西埋进八千行里。两个设计点：
+> ① **`SseEmitter` 刻意不进命令对象**：它是这一轮的*出口*不是内容（工作流子 agent 用
+>    CollectingSseEmitter，定时任务与对外 MCP 端点各有自己的收集通道），混进同一个参数列表
+>    就会出现第 11 个重载；② **不做默认值归一化**：今天有的调用方传 null、有的传空列表，
+>    而 null（未提供）与空集合（明确不提供）在下游语义不同，构造时统一会把这个区别抹掉。
+> 六个外部调用点全改为具名 builder（ChatController / ShareController / WorkflowEngine.subagentBody /
+> McpServerService 两处 / ScheduledJobService），后台三处原本传 `List.of()` 的逐项写回、不靠推断。
+> 这组参数里最容易出事的是 `regenerate + replaceMessageId + editVariantGroup`（相邻同类型实参，
+> 老签名写反编译器不拦），现在同名字段一一对应，读一遍即可验完。
+> 真机：主链路问答正常（工具挂载、searchKnowledge 带范围与身份、引用注册【引用7】、引用自检、
+> 零新增 ERROR）。
+> **一处判断更正（做「旁路」那项时读到代码才看清）**：工作流的 `mcpBody`/`skillBody` **不是漏了审批**——
+> 画布有独立的 approval 节点（挂起-快照-短路重放）和自己的 `node_traces` 落库（args/result 全量）。
+> 把「按工具逐个问人」的聊天审批套上去，会让每个 MCP 节点等一张没人点的卡，等于打断在跑的画布。
+> 所以这一项只做**旁路可见**：两条节点 trace 里写 `guardBypass=chat-guard-chain`，注释里说清为什么不接、
+> 以及 P2 的权限档位要作用到画布时接入口在哪（这正是原文档「此期保持无守卫，只留 bypassGuard 标记」
+> 那条判断的依据，我当时把它写成了「安全洞」）。
+> **P1 收尾剩余**：游客 share 路径真机验证、`AgentsPage` 那份中文名手抄（要一次端点口径决定）、
+> `skillOn` 与挂载判据那条差异的口径决定。`ChatCommand` 到位后，P3a（子智能体真全循环）才有接口：
+> 分支继承父轮上下文、depth 硬顶与逐层预算递减都走命令对象加字段。
 
 ### ★★ P2 · 权限档位与安全
 
