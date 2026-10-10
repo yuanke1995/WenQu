@@ -6,10 +6,14 @@ import java.security.NoSuchAlgorithmException;
 import java.util.regex.Pattern;
 
 /**
- * 沙盒路径工具（对应问渠新栈 {@code com.wenqu.wenqu.workspace.WorkspacePaths} 的两个方法）。
+ * 沙盒路径工具（对应问渠新栈 {@code com.wenqu.wenqu.workspace.WorkspacePaths} 的那几个纯函数）。
  * <p>
- * 只搬沙盒链路真正用到的那两个函数：{@code workspaceUidDirname}（传给 provisioner 的 uid 参数，
- * 必须是路径安全的目录名）与 {@code normalizeWorkdirPath}（workdir 的相对路径校验）。
+ * 最初只搬两个：{@code uidDirname}（传给 provisioner 的 uid 参数，必须是路径安全的目录名）与
+ * {@code normalizeWorkdirPath}（workdir 的相对路径校验）。2026-10 P2 权限档位又收进来两个绝对路径判据
+ * （{@code normalizeAbsolutePath} / {@code isSameOrChild}），因为它们同时被沙盒工具执行前的写入收束
+ * 和 backend 的路径校验用——两处各写一份的话，「浏览面板认为的越界」与「工具执行认为的越界」就不是
+ * 同一个边界，那种不一致的表现是用户看着文件在、工具却说写不进去。
+ * <p>
  * 新栈的 {@code PosixPathLite} 在本工程无对应物，故 {@code asPosix()} 那一层用「已校验的原始串」等价表达
  * ——校验已经把绝对路径、反斜杠、协议前缀、空段、.{@code .} 段全部拒掉，剩下的就是规范 POSIX 相对路径。
  *
@@ -55,6 +59,43 @@ public final class SandboxPaths {
             }
         }
         return raw;
+    }
+
+    /**
+     * 规范化沙盒内的绝对路径（对应 {@code ProvisionerSandboxBackend.normalizePath}，实现搬到此处供两侧共用）。
+     *
+     * @throws IllegalArgumentException 空路径 / 非绝对路径 / {@code ..} 回溯
+     */
+    public static String normalizeAbsolutePath(String path) {
+        String raw = path == null ? "" : path.strip();
+        if (raw.isEmpty()) {
+            throw new IllegalArgumentException("path is required");
+        }
+        if (!raw.startsWith("/")) {
+            throw new IllegalArgumentException("path must start with /");
+        }
+        for (String part : raw.split("/")) {
+            if ("..".equals(part)) {
+                throw new IllegalArgumentException("path traversal is not allowed");
+            }
+        }
+        return raw;
+    }
+
+    /**
+     * candidate 是否为 ancestor 自身或其后裔（对应 {@code _is_same_or_child}）。
+     * <p>P2 的写入收束用它：{@code workspace-write} 档下沙盒写类工具的 path 必须落在会话工作区根内。
+     * 两侧共用一份实现，否则「浏览面板判的越界」和「工具执行判的越界」迟早不是同一个边界。
+     */
+    public static boolean isSameOrChild(String candidate, String ancestor) {
+        String root = ancestor == null ? "" : ancestor.replaceAll("/+$", "");
+        if (root.isEmpty()) {
+            root = "/";
+        }
+        if ("/".equals(root)) {
+            return "/".equals(candidate) || candidate.startsWith("/");
+        }
+        return candidate.equals(root) || candidate.startsWith(root + "/");
     }
 
     /** SHA-256 十六进制（小写）；本工程其它地方无此工具，故随本类携带。 */

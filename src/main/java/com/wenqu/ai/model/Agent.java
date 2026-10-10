@@ -93,6 +93,17 @@ public class Agent {
     private String toolApprovalMode;
 
     /**
+     * 权限档位（P2）：把「沙盒能干什么」与「要不要逐项确认」两根旋钮捆成一个具名预设。
+     * {@code research}=只读调研 {@code standard}=常规（默认）{@code autonomous}=全自主。
+     * <p>NULL=跟随平台默认档（{@code agent.permissionPreset.default}）；选得比平台上限
+     * （{@code agent.permissionPreset.max}）高时，本轮按上限执行并在过程面板给出降级提示。
+     * <p>与 {@link #toolApprovalMode} 的分工：本字段是<b>能力上限</b>（哪些工具会进模型的工具表），
+     * 审批模式是<b>逐项问不问</b>。智能体显式设过审批模式时以它为准，没设过才用档位的建议值——
+     * 常规档不附建议值，所以未选档的存量智能体两件事都没变。
+     */
+    private String permissionPreset;
+
+    /**
      * 单轮工具调用步数上限（全部工具合计）：NULL=用全局 agent.maxToolSteps；0=不限制。
      * 防模型陷入"调用工具→不满意→再调用"的失控循环烧 token；达到上限后模型收到
      * 错误结果并被要求直接给出最终回答。

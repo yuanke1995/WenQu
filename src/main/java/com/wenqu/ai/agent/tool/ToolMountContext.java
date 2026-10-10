@@ -86,6 +86,25 @@ public interface ToolMountContext {
     boolean approvalOff();
 
     /**
+     * 本轮的权限档位策略（P2）。
+     * <p>默认 null = 本轮没有档位判定，装配不做能力面裁剪（保持迁移前形态）。问答侧从
+     * {@code PermissionPolicyResolver} 取值后填这里，于是「挂不挂」与「执行时被不被拒」读同一份策略。
+     */
+    default com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
+        return null;
+    }
+
+    /**
+     * 档位是否允许这个工具出现在模型的工具表里。
+     * <p>收紧发生在装配（模型看不见），而不是执行（点了被拒）：被档位禁掉的能力要与不存在不可区分，
+     * 否则模型会反复尝试一个它本来不该知道的操作，白烧步数预算与 token。
+     */
+    default boolean policyAllows(ToolDescriptor d) {
+        var policy = permissionPolicy();
+        return policy == null || policy.allowsTool(d);
+    }
+
+    /**
      * 登记一条本轮可见降级（fail-loud：让用户看见「为什么这个能力没生效」，而不是静默少挂一个工具）。
      * <p>MCP 与技能的具体项引用会用到：智能体指定了别人的服务、或指定了自己没登记的服务，
      * 都要说出来。不说，「智能体挂了这个外部工具」就静默变成「什么都没挂」。

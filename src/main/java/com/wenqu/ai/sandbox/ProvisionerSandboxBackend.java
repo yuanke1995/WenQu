@@ -96,6 +96,8 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     private final String workdirPath;
     private final boolean inheritEnv;
     private final boolean createIfMissing;
+    /** P2 权限档位 danger-full-access：true 时写类工具不再限定在工作区根内（见 writableRoots） */
+    private final boolean unrestrictedWrites;
     private final int commandTimeoutSeconds;
     private final int maxOutputBytes;
 
@@ -110,7 +112,24 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             String workdirPath,
             boolean createIfMissing,
             boolean inheritEnv) {
+        this(provider, threadId, uid, workdirPath, createIfMissing, inheritEnv, false);
+    }
+
+    /**
+     * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：写类工具不再限定在工作区根内。
+     *                           默认 false=只可写 {@code userDataRoot}（引入档位前后的形态都由这条守住）。
+     *                           档位是<b>本轮</b>属性，所以它经构造参数进来而不是读全局配置——同一会话两轮可以不同档。
+     */
+    public ProvisionerSandboxBackend(
+            ProvisionerSandboxProvider provider,
+            String threadId,
+            String uid,
+            String workdirPath,
+            boolean createIfMissing,
+            boolean inheritEnv,
+            boolean unrestrictedWrites) {
         this.provider = provider;
+        this.unrestrictedWrites = unrestrictedWrites;
         this.threadId = threadId == null ? "" : threadId.strip();
         if (this.threadId.isEmpty()) {
             throw new IllegalArgumentException("thread_id is required for ProvisionerSandboxBackend");
@@ -131,31 +150,12 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     // ==================== 路径 / 权限纯逻辑 ====================
 
     static String normalizePath(String path) {
-        String raw = path == null ? "" : path.strip();
-        if (raw.isEmpty()) {
-            throw new IllegalArgumentException("path is required");
-        }
-        if (!raw.startsWith("/")) {
-            throw new IllegalArgumentException("path must start with /");
-        }
-        for (String part : raw.split("/")) {
-            if ("..".equals(part)) {
-                throw new IllegalArgumentException("path traversal is not allowed");
-            }
-        }
-        return raw;
+        return SandboxPaths.normalizeAbsolutePath(path);
     }
 
     /** candidate 是否为 ancestor 自身或其后裔（对应 _is_same_or_child）。 */
     static boolean isSameOrChild(String candidate, String ancestor) {
-        String root = ancestor.replaceAll("/+$", "");
-        if (root.isEmpty()) {
-            root = "/";
-        }
-        if ("/".equals(root)) {
-            return "/".equals(candidate) || candidate.startsWith("/");
-        }
-        return candidate.equals(root) || candidate.startsWith(root + "/");
+        return SandboxPaths.isSameOrChild(candidate, ancestor);
     }
 
     static boolean pathOverlapsRoot(String path, String root) {
@@ -185,7 +185,9 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     }
 
     private List<String> writableRoots() {
-        return List.of(userDataRoot);
+        // 全自主档放开到容器根：/home/gem 之下的其它目录（~/.cache、pip 的 site-packages 等）
+        // 也在同一个会话级容器里，不是别人的空间
+        return unrestrictedWrites ? List.of("/") : List.of(userDataRoot);
     }
 
     private boolean canReadPath(String path) {

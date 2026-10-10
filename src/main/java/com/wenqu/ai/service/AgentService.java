@@ -101,6 +101,7 @@ public class AgentService {
         m.put("toolMcp", "MCP 外部工具");
         m.put("toolWebsearch", "联网搜索");
         m.put("toolApprovalMode", "工具审批模式");
+        m.put("permissionPreset", "权限档位");
         m.put("maxToolSteps", "工具步数上限");
         m.put("skills", "技能范围");
         m.put("mcps", "MCP 范围");
@@ -433,6 +434,8 @@ public class AgentService {
         if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
         // 工具执行审批三态（auto/ask/off；null=auto）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
+        // 权限档位（P2；null=跟随平台默认档）
+        if (b.containsKey("permissionPreset")) uw.set(Agent::getPermissionPreset, a.getPermissionPreset());
         // 单轮工具步数上限（null=继承全局）
         if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
         if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
@@ -539,6 +542,23 @@ public class AgentService {
         if (body.containsKey("toolApprovalMode")) {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
             a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
+        }
+        // 权限档位（P2）：null/空=跟随平台默认档；认不出的值直接拒绝——静默归 null 等于把「写错了的
+        // 全自主」变成「其实没设」，配置页上看着有值、跑的是平台默认，那种漂移没人能从界面上看出来
+        if (body.containsKey("permissionPreset")) {
+            String rawPreset = body.get("permissionPreset") == null
+                    ? null : String.valueOf(body.get("permissionPreset")).trim();
+            if (rawPreset == null || rawPreset.isEmpty()) {
+                a.setPermissionPreset(null);
+            } else {
+                com.wenqu.ai.agent.permission.PermissionPreset p =
+                        com.wenqu.ai.agent.permission.PermissionPreset.fromCode(rawPreset);
+                if (p == null) {
+                    throw new com.wenqu.ai.common.BizException("权限档位无法识别：" + rawPreset
+                            + "（可选 research / standard / autonomous，留空=跟随平台默认档）");
+                }
+                a.setPermissionPreset(p.code());
+            }
         }
         // 单轮工具步数上限（NULL=继承全局；0=不限制；N=上限。负数归一 null）
         // 注意：不能用 toTri——它是三态解析器（任何非零数字都归一成 1），会把 15 存成 1，
@@ -779,6 +799,7 @@ public class AgentService {
         uw.set(Agent::getToolMcp, asInt(cfg.get("toolMcp")));
         uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
+        uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
         uw.set(Agent::getMaxToolSteps, asInt(cfg.get("maxToolSteps")));
         uw.set(Agent::getSkills, raw(cfg.get("skills")));
         uw.set(Agent::getMcps, raw(cfg.get("mcps")));

@@ -14,10 +14,12 @@ import java.util.List;
 /**
  * 沙盒执行族。
  * <p>
- * 六个工具全部 requiresApproval=true，**包括只读的 read_file 与 ls**：这是照迁移前的行为如实记录
- * （装配处把整族回调一律计入有副作用名单），不是我的判断。把 read_file 标成 SideEffect.READ
- * 正是为了让 P2 能把它分开——只读档（read-only）下「查看沙盒里生成了什么」不该也要点确认，
- * 但那是 P2 按档位收紧时要动的口径，本次一刀不改行为。
+ * 六个工具全部 requiresApproval=true：这是照迁移前的行为如实记录（装配处把整族回调一律计入有副作用
+ * 名单）。{@code SideEffect} 的 READ/MUTATE 之分从 P2 起<b>真的参与裁剪</b>了：只读档（read-only）下
+ * 只留 read_file 与 ls，execute 与三个写类工具不进模型的工具表——不是「点了被拒」，是看不见。
+ * <p>
+ * execute 在只读档必须一起摘掉：容器没有任何按档位收束命令的机制（provisioner 建容器时不接档位），
+ * 「能跑命令」就等于「能写文件」，留着它再逐条拒绝就是静默透传。
  */
 @Component
 public class SandboxToolProvider implements ToolFamilyProvider {
@@ -53,6 +55,18 @@ public class SandboxToolProvider implements ToolFamilyProvider {
     private static ToolDescriptor d(String name, String label, String cardLabel, String cardHint, SideEffect se) {
         return new ToolDescriptor(name, ToolFamily.SANDBOX, label, cardLabel, cardHint,
                 se, "tool.sandbox.enabled", false, true, null);
+    }
+
+    /**
+     * 本族的档位裁剪点：只读档下写类工具与 execute 不进模型的工具表（判据是描述符的 {@code SideEffect}，
+     * 见类注释）。
+     * <p>装配与执行两侧读同一份 {@link ToolMountContext#permissionPolicy()}：守卫侧
+     * （{@code PermissionGuard}）拦的正是这里不收的那些。分成两套判据的错配形态最难查——
+     * 「挂着的被拦、没挂的反能跑」。
+     */
+    @Override
+    public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
+        return ToolFamilyProvider.super.exposes(d, mc) && mc.policyAllows(d);
     }
 
     /**

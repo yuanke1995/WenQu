@@ -47,6 +47,8 @@ public class AgentController {
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
     /** 工具注册中心的对外读口（能力名册）：智能体配置页的工具可选项从这里来，不再前端手抄 */
     private final com.wenqu.ai.service.ToolInventoryService toolInventoryService;
+    /** 权限档位（P2）名册：配置页的档位选项与「管理员有没有放开这一档」从这里来，不在前端抄第二份 */
+    private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
 
     /**
      * 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中；内置「问渠」为管理员级可配置）。
@@ -107,9 +109,24 @@ public class AgentController {
         return ResultJson.ok(toolInventoryService.agentCatalog());
     }
 
+    /**
+     * 权限档位名册（P2，智能体配置页的档位选项从这里来）。
+     * <p>与 {@code /tool-catalog} 同一条访问控制：路径落在 {@code SecurityConfig.isAgentSelfEndpoint}
+     * 已放行的「一段路径」分支里，不新增规则。
+     * <p>为什么由后端下发而不是前端写死三个档位：档位列表要随平台上限变化（管理员收紧后哪些档可选），
+     * 前端抄一份的话「管理员禁了全自主、配置页还让人选」就会出现选了不生效且没有任何提示的界面。
+     */
+    @Operation(summary = "权限档位名册", description = "返回可选档位：code/label/summary/沙盒执行档/审批建议值，"
+            + "以及该档当前是否可用（available）与被平台上限禁掉的原因（unavailableReason）")
+    @GetMapping("/permission-presets")
+    public ResultJson permissionPresets() {
+        return ResultJson.ok(permissionPolicyResolver.catalog());
+    }
+
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"
             + "description/model/systemPrompt/knowledgeScope/"
             + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
+            + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
             + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
     @PostMapping

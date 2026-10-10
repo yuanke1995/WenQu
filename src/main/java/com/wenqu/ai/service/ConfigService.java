@@ -514,6 +514,11 @@ public class ConfigService {
         d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
         d.put("sandbox.cleanupIntervalMs", String.valueOf(ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS));             // 空闲回收扫描间隔（ms，≤0=暂停）
         d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
+        // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
+        // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
+        // 上限默认放到最高档=不钳制（存量智能体行为逐字不变），管理员收紧后选得更高的档位按上限执行。
+        d.put("agent.permissionPreset.default", "standard");      // 智能体未选档时的平台默认档
+        d.put("agent.permissionPreset.max", "autonomous");        // 平台允许的最高档（收紧处）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数

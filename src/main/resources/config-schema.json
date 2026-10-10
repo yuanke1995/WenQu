@@ -59,7 +59,8 @@
       "title": "工具调用（Function Calling）",
       "sections": [
         "总开关",
-        "子工具（需总开关开启）"
+        "子工具（需总开关开启）",
+        "权限档位（沙盒能力上限与逐项确认）"
       ]
     },
     {
@@ -1649,6 +1650,64 @@
       "def": true,
       "note": "开启后模型可调用已注册的 @Tool 工具（默认开）",
       "core": true,
+      "tier": 2
+    },
+    {
+      "backendKey": "agent.permissionPreset.default",
+      "panel": "tool",
+      "section": 2,
+      "group": "agent",
+      "key": "permissionPreset.default",
+      "path": "agent.permissionPreset.default",
+      "label": "智能体默认权限档位",
+      "type": "select",
+      "tips": "toolPermissionPresetDefault",
+      "def": "standard",
+      "width": 300,
+      "options": [
+        {
+          "value": "research",
+          "label": "research（只读调研：沙盒只留读文件与列目录，命令执行与写入不进工具表）"
+        },
+        {
+          "value": "standard",
+          "label": "standard（常规：沙盒能跑命令、能写自己的工作区）"
+        },
+        {
+          "value": "autonomous",
+          "label": "autonomous（全自主：路径不收束、不逐项确认）"
+        }
+      ],
+      "note": "智能体没自己选档位时用它。存量智能体都没选，所以默认档保持当前行为（standard=常规）。",
+      "tier": 2
+    },
+    {
+      "backendKey": "agent.permissionPreset.max",
+      "panel": "tool",
+      "section": 2,
+      "group": "agent",
+      "key": "permissionPreset.max",
+      "path": "agent.permissionPreset.max",
+      "label": "平台允许的最高档位",
+      "type": "select",
+      "tips": "toolPermissionPresetMax",
+      "def": "autonomous",
+      "width": 300,
+      "options": [
+        {
+          "value": "research",
+          "label": "research（只读调研：沙盒只留读文件与列目录，命令执行与写入不进工具表）"
+        },
+        {
+          "value": "standard",
+          "label": "standard（常规：沙盒能跑命令、能写自己的工作区）"
+        },
+        {
+          "value": "autonomous",
+          "label": "autonomous（全自主：路径不收束、不逐项确认）"
+        }
+      ],
+      "note": "管理员收紧处：智能体选了更高的档位，本轮按上限执行（被禁的能力不进模型的工具表，不是点了被拒）。留到 research 即全平台禁掉沙盒写入。",
       "tier": 2
     },
     {
@@ -4314,7 +4373,9 @@
     "notificationRetention": "站内通知（解析完成/失败、工作流失败/超时/待审核、网页源刷新失败）的保留天数：超期物理删除，不区分已读未读。通知指向的运行记录与解析任务本身也有各自的保留期，通知活得比它们久没有回溯价值。",
     "notificationCleanupInterval": "站内通知清理任务的运行间隔（毫秒，默认每日）。≤0 = 暂停清理任务（通知会持续累积，不建议）。",
     "agentVersionKeep": "智能体每次保存都会留下一份配置快照，可查看与上一版的字段级差异、一键回滚。本项控制每个智能体保留多少份（按时间从早往晚删）；回滚本身也会生成一条新版本记录。",
-    "keywordReconcile": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移；不调用任何模型、不消耗额度。差异超过 max(1000, 有效块/3) 时转全量重建"
+    "keywordReconcile": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移；不调用任何模型、不消耗额度。差异超过 max(1000, 有效块/3) 时转全量重建",
+    "toolPermissionPresetDefault": "权限档位把两根旋钮捆成一句人话：沙盒里能干什么（只读 / 可写工作区 / 不受限）与要不要逐项确认。选 research 后沙盒的命令执行与写类工具不会进入模型的工具表——模型看不见这个能力，而不是调用了被拒绝；这一步的收窄同时省下对应的提示词篇幅与试错轮次。本项管「智能体没自己选档位时用哪一档」，问渠默认 standard，与引入档位之前的行为逐字相同。",
+    "toolPermissionPresetMax": "平台上限：智能体选的档位高于它时，本轮按上限执行，并在回答的过程面板给出降级提示。这是管理员收紧的落点——收紧之后模型连「有这个能力」都看不到。放到 autonomous 即不额外限制（沙盒本身仍在隔离容器内，且工具执行确认仍按各智能体自己的设置）。收紧到 research 会让全部智能体失去命令执行与沙盒写入，正在依赖沙盒任务的智能体会当场改变行为，建议先改个别智能体验证。"
   },
   "corePaths": [
     "vision.enabled",

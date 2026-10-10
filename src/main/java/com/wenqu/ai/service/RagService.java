@@ -383,6 +383,12 @@ public class RagService {
     private final ToolPipelineFactory toolPipeline;
     /** 工具注册中心：中文名、副作用等级、是否需要审批的单一真源（装配与卡片展示都读它） */
     private final ToolRegistry toolRegistry;
+    /**
+     * 权限档位解析（P2）：沙盒执行档 × 工具执行确认捆成的具名预设，加上平台默认与管理员上限。
+     * <p>本轮只解析一次并落在 {@code AnswerStreamState} 上，装配侧与守卫侧读同一份——两处各算一次
+     * 就会漂出「工具表里没收、执行时却放得过去」这类反向错配。
+     */
+    private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -513,7 +519,8 @@ public class RagService {
                       ChatRunBus chatRunBus,
                       ToolSpillService toolSpillService,
                       ToolPipelineFactory toolPipeline,
-                      ToolRegistry toolRegistry) {
+                      ToolRegistry toolRegistry,
+                      com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -551,6 +558,7 @@ public class RagService {
         this.toolSpillService = toolSpillService;
         this.toolPipeline = toolPipeline;
         this.toolRegistry = toolRegistry;
+        this.permissionPolicyResolver = permissionPolicyResolver;
     }
 
     /**
@@ -1743,7 +1751,7 @@ public class RagService {
             st.userMessageId = userMessageId; // 本轮用户消息 ID（编辑重发后前端挂切换器/再编辑用）
             st.delegatedAgentId = delegatedRound ? delegatedAgent.getId() : null; // §4 轮级委派归属（随 done 下发）
             st.delegatedAgentName = delegatedRound ? delegatedAgent.getName() : null;
-            st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
+            applyPermissionTier(agent, st); // 权限档位（P2）：沙盒执行档 + 生效的工具执行确认档位
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
@@ -1947,13 +1955,39 @@ public class RagService {
     }
 
     /**
+     * 开轮解析本轮权限档位（P2）：一次算完，落 {@code AnswerStreamState} 供装配与守卫共读。
+     * <p>审批模式在这里一并改写：智能体显式设过就以它为准，没设过才用档位的建议值
+     * （常规档的建议值是 null=不动它，所以未选档的存量智能体这一行与改动前逐字相同）。
+     */
+    private void applyPermissionTier(Agent agent, AnswerStreamState st) {
+        st.permissionPolicy = resolvePermissionPolicy(agent, st.guestMode,
+                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message));
+        st.toolApprovalMode = st.permissionPolicy.approvalMode();
+        log.info("[PERM] 本轮权限档位: {} session={}", st.permissionPolicy.describe(), st.sessionId);
+    }
+
+    /**
+     * 档位解析（装配判据与执行守卫的唯一入口）。
+     * <p>「档位 → 智能体的哪一列」这条映射留在问答侧，与 {@link #agentFlagFor} 同一口径：
+     * 通用策略层不该认识业务实体。
+     */
+    private com.wenqu.ai.agent.permission.ExecutionPolicy resolvePermissionPolicy(
+            Agent agent, boolean guestMode, java.util.function.BiConsumer<String, String> onClamp) {
+        return permissionPolicyResolver.resolve(
+                agent == null ? null : agent.getPermissionPreset(),
+                agent == null ? null : agent.getToolApprovalMode(),
+                guestMode, onClamp);
+    }
+
+    /**
      * 本轮的工具装配上下文：把智能体配置、全局开关与游客态交给各族自己判挂不挂。
      * <p>「族 → c_ai_agent 的哪一列」这条映射留在问答侧：Agent 是业务实体，通用装配层不该认识它，
      * 否则下一族想加开关时得先改通用层。
      */
     private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
         return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval,
-                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message));
+                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message),
+                st.permissionPolicy);
     }
 
     /**
@@ -1965,11 +1999,16 @@ public class RagService {
      */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
         return mountContext(agent, userId, guestMode, reflective, (code, message) -> {
-        });
+        }, null);
     }
 
+    /**
+     * @param turnPolicy 本轮已解析的权限档位（问答侧传 {@code st.permissionPolicy}，与守卫读同一份）；
+     *                   null = 现算（提示词侧那条路径没有本轮状态对象）
+     */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective,
-                                          java.util.function.BiConsumer<String, String> degradationSink) {
+                                          java.util.function.BiConsumer<String, String> degradationSink,
+                                          com.wenqu.ai.agent.permission.ExecutionPolicy turnPolicy) {
         return new ToolMountContext() {
             @Override
             public String userId() {
@@ -2011,6 +2050,12 @@ public class RagService {
                 // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
                 // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。联网搜索不受本档管辖（族上未标）。
                 return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
+            }
+
+            @Override
+            public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
+                if (turnPolicy != null) return turnPolicy;
+                return resolvePermissionPolicy(agent, guestMode, degradationSink);
             }
 
             @Override
@@ -2103,6 +2148,9 @@ public class RagService {
                 ToolFamily.WEBSEARCH, inv -> Map.of(WebSearchTools.CTX_SINK, st),
                 ToolFamily.SANDBOX, inv -> {
                     Map<String, Object> m = new java.util.HashMap<>();
+                    // 本轮权限档位（P2）：沙盒工具据此判定这次写入是否落在允许区内。走上下文而不是让
+                    // 工具去查配置——档位是「这一轮」的属性，同一会话的两轮可以不同档
+                    m.put(SandboxTools.CTX_SANDBOX_POLICY, st.permissionPolicy);
                     // 输出增量回调：execute 检测到它即走流式执行（后台脱离+轮询），增量经
                     // recordToolOutput 转 SSE，前端「看着它跑」
                     if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName())) {
@@ -2171,6 +2219,11 @@ public class RagService {
             @Override
             public ToolApprover approver() {
                 return (inv, timeoutMs) -> requestToolApproval(st, inv, timeoutMs);
+            }
+
+            @Override
+            public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
+                return st.permissionPolicy;
             }
 
             @Override
@@ -4023,8 +4076,14 @@ public class RagService {
         final java.util.concurrent.atomic.AtomicInteger mcpCiteCount = new java.util.concurrent.atomic.AtomicInteger();
         /** 本轮 askUser 已提问次数（上限 MAX_ASKS_PER_TURN）：多轮澄清合法，刷屏循环不合法 */
         final java.util.concurrent.atomic.AtomicInteger askCount = new java.util.concurrent.atomic.AtomicInteger();
-        /** 工具执行审批模式（本轮智能体的 toolApprovalMode；null=auto） */
+        /** 工具执行审批模式（本轮生效值：智能体显式设置优先，未设置落到权限档位的建议值；null=auto） */
         volatile String toolApprovalMode;
+        /**
+         * 本轮权限档位策略（P2，开轮解析一次）：装配侧与守卫侧共用这一份。
+         * <p>刻意不在两处各算各的：档位禁用某工具时，装配要让它从模型的工具表里消失，守卫要拦住绕过
+         * 装配的调用——两份判据一旦漂移，就会出现「挂着的被拦、没挂的反能跑」。
+         */
+        volatile com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy;
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
         volatile int maxToolSteps;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
@@ -8645,7 +8704,7 @@ public class RagService {
             st.userMessageId = userMessageId; // 本轮用户消息 ID（随 done 下发，编辑重发后前端挂切换器）
             st.delegatedAgentId = delegatedAgent != null ? delegatedAgent.getId() : null; // §4 轮级委派归属
             st.delegatedAgentName = delegatedAgent != null ? delegatedAgent.getName() : null;
-            st.toolApprovalMode = agent == null ? null : agent.getToolApprovalMode(); // 有副作用工具审批模式
+            applyPermissionTier(agent, st); // 权限档位（P2）：与主链路同一份解析，无检索分支不另算
             st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
             st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
             st.contextTokens = 0;

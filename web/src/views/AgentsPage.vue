@@ -272,8 +272,25 @@
                 </div>
               </div>
             </div>
-            <!-- 有副作用工具（沙盒/MCP）执行审批（人在回路） -->
+            <!-- 权限档位（P2）：把「沙盒能改动多少东西」与「要不要逐项问用户」捆成一句话的选择 -->
             <div class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
+              <span class="ap-cap-ic"><safety-outlined /></span>
+              <div class="ap-cap-l">
+                <div class="ap-cap-name">权限档位</div>
+                <div class="ap-cap-desc">
+                  定这个智能体能改动多少东西。选「只读调研」时，它连「能执行命令」这件事都看不到——
+                  不是点了被拒，是本轮不提供这个能力。留空跟随平台默认档。
+                </div>
+                <div v-if="presetError" class="ap-pick-empty">
+                  权限档位名册加载失败 —— <button class="app-btn ghost small" @click="loadPermissionPresets">重试</button>
+                </div>
+                <div v-else-if="presetHint()" class="ap-cap-desc">{{ presetHint() }}</div>
+              </div>
+              <a-select v-model:value="form.permissionPreset" size="small" style="width:140px" allow-clear
+                        :options="presetOptions" placeholder="跟随平台默认" />
+            </div>
+            <!-- 有副作用工具（沙盒/MCP）执行审批（人在回路） -->
+            <div class="ap-cap">
               <span class="ap-cap-ic"><safety-outlined /></span>
               <div class="ap-cap-l">
                 <div class="ap-cap-name">工具执行确认</div>
@@ -588,7 +605,7 @@ import {
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
-         listSkills, getMcpStatus, listSubAgents, getToolCatalog, updateAgentShare, getKbParamDefaults,
+         listSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare, getKbParamDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
@@ -692,6 +709,30 @@ const loadToolCatalog = async () => {
       .map(t => ({ value: t.name, label: t.label || t.cardLabel || t.name }))
   } catch (e) { toolCatalogError.value = true }
 }
+// 权限档位可选项（来自 /agent/permission-presets）：档位表由后端 PermissionPreset 下发，这里不抄第二份——
+// 抄了就等于界面上能选一个后端不给的档位（管理员收紧后正是这种情形，表现是「选了不生效且没任何提示」）。
+// 被上限禁掉的档位照样列出但置灰并给原因：「这一档管理员没开」与「平台没这档」对用户是两件事。
+const presetOptions = ref([])
+const presetError = ref(false)
+const loadPermissionPresets = async () => {
+  try {
+    const r = await getPermissionPresets()
+    const list = (r && r.success && Array.isArray(r.data)) ? r.data : null
+    if (!list) { presetError.value = true; return }
+    presetError.value = false
+    presetOptions.value = list.map(p => ({
+      value: p.code,
+      label: p.label,
+      disabled: p.available === false,
+      title: p.available === false ? p.unavailableReason : p.summary
+    }))
+  } catch (e) { presetError.value = true }
+}
+// 当前选中的档位说明（后端下发的那句 summary，不在前端另写一份）
+const presetHint = () => {
+  const p = presetOptions.value.find(x => x.value === form.value.permissionPreset)
+  return p ? (p.title || '') : ''
+}
 const skillOptions = ref([])
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
@@ -713,6 +754,8 @@ const blankForm = () => ({
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
   // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: 'auto',
+  // 权限档位：null=跟随平台默认档（agent.permissionPreset.default）；可选项来自 /agent/permission-presets
+  permissionPreset: null,
   // 单轮工具调用步数上限：null=跟随全局当前值（agent.maxToolSteps）；0=不限制
   maxToolSteps: null,
   // 多实例能力：模式（inherit/none/pick）+ 选「指定」时的具体项
@@ -1166,7 +1209,9 @@ const reload = async () => {
       // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
       listWorkflows().catch(() => null),
       // 能力名册：结果自己写进 builtinOptions / toolCatalogError，失败不阻断本页其余加载
-      loadToolCatalog()
+      loadToolCatalog(),
+      // 权限档位名册：同上，失败写 presetError，界面上给重试入口
+      loadPermissionPresets()
     ])
     // /workflow/list 的 data 是分栏对象 { mine:[], shared:[] }（非数组），必须摊平再用，
     // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine/shared 解）
@@ -1255,6 +1300,7 @@ const openEdit = a => {
     toolMcp: triStr(a.toolMcp),
     toolWebsearch: triStr(a.toolWebsearch),
     toolApprovalMode: a.toolApprovalMode || 'auto',
+    permissionPreset: a.permissionPreset || null,
     maxToolSteps: a.maxToolSteps == null ? null : Number(a.maxToolSteps),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
@@ -1373,6 +1419,9 @@ const save = async () => {
     toolArtifact: tri(f.toolArtifact),
     toolWebsearch: tri(f.toolWebsearch),
     toolApprovalMode: f.toolApprovalMode || 'auto',
+    // 权限档位：留空 → null（= 跟随平台默认档，不是「关闭档位」）；必须始终带上这个键，
+    // 否则清空档位时后端收不到字段、旧值原地留着（后端按 body 出现的字段才写列）
+    permissionPreset: f.permissionPreset || null,
     maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
     isDefault: f.isDefault ? 1 : 0,
     isSubagent: f.isSubagent ? 1 : 0,

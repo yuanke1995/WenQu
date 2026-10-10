@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.SandboxFsBackend;
+import com.wenqu.ai.sandbox.SandboxPaths;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
@@ -45,6 +46,15 @@ public class SandboxTools {
      * "exitCode=1 +一段文本"，记录一律显示成功，排查时完全看不出沙盒没通。
      */
     public static final String CTX_INFRA_ERROR_SINK = "wq_tool_infra_error_sink";
+
+    /**
+     * toolContext 里「本轮权限档位」的键（{@link com.wenqu.ai.agent.permission.ExecutionPolicy}，
+     * 由问答侧经沙盒族的上下文注入器带进来）。
+     * <p>档位是<b>这一轮</b>的属性（同一会话两轮可以不同档），所以只能走上下文，不能让工具去读配置：
+     * 读配置拿到的是平台默认档，智能体选了只读也会被绕过。
+     * <p>缺失按拒绝处理（见 {@link #writeDenial}）——受限策略下「判不出就放行」就是静默透传。
+     */
+    public static final String CTX_SANDBOX_POLICY = "wq_sandbox_policy";
 
     /**
      * 输出被截断时把<b>整份原文</b>外溢留存的能力：(工具名, 原文) → spillId，由问答侧经 ToolContext 注入。
@@ -150,6 +160,11 @@ public class SandboxTools {
             @ToolParam(description = "沙盒内的绝对路径，如 /home/gem/user-data/calc.py") String path,
             @ToolParam(description = "文件内容（纯文本）") String content,
             ToolContext toolContext) {
+        // 权限档位先判，再碰容器：越界的写入不该把沙盒建起来（backend() 是懒创建的）
+        String denial = writeDenial(toolContext, path);
+        if (denial != null) {
+            return reportFsError(toolContext, denial);
+        }
         ProvisionerSandboxBackend backend = backend(toolContext);
         if (backend == null) {
             return reportInfra(toolContext, NO_CONTEXT);
@@ -170,6 +185,10 @@ public class SandboxTools {
             @ToolParam(description = "替换后的新文本") String newString,
             @ToolParam(description = "是否替换全部匹配（默认只替换第一处）", required = false) Boolean replaceAll,
             ToolContext toolContext) {
+        String denial = writeDenial(toolContext, path);
+        if (denial != null) {
+            return reportFsError(toolContext, denial);
+        }
         ProvisionerSandboxBackend backend = backend(toolContext);
         if (backend == null) {
             return reportInfra(toolContext, NO_CONTEXT);
@@ -212,7 +231,7 @@ public class SandboxTools {
 
     /**
      * 沙盒文件 → 我的产物（交付语义，模型显式调用；不做轮末自动扫描——那会把临时文件全灌进产物页）。
-     * 路径限定用户数据根（skills 投影只读且非产物，拒绝）；扩展名白名单放宽到沙盒典型输出，
+     * 路径由本轮权限档位判据收束（与 write/edit 同一份判据）；扩展名白名单放宽到沙盒典型输出，
      * 大小上限 1MB（与文本产物一致）。交付后走产物卡片 SSE 实时推送，前端/产物页零改动。
      */
     @Tool(name = "deliver_artifact", description = "把沙盒里生成的文件交付为正式产物（进入用户的「我的产物」，"
@@ -226,6 +245,12 @@ public class SandboxTools {
             @ToolParam(description = "产物文件名（含扩展名；留空则沿用沙盒内原文件名）", required = false) String filename,
             @ToolParam(description = "给用户的产物说明（简短，说明这是什么）", required = false) String description,
             ToolContext toolContext) {
+        String p = path == null ? "" : path.strip();
+        // 交付路径走与 write/edit 同一份档位判据（此前这里手写了一遍 root 前缀比较，是同一件事的第二份拷贝）
+        String denial = writeDenial(toolContext, p);
+        if (denial != null) {
+            return reportFsError(toolContext, denial);
+        }
         ProvisionerSandboxBackend backend = backend(toolContext);
         if (backend == null) {
             return reportInfra(toolContext, NO_CONTEXT);
@@ -233,11 +258,6 @@ public class SandboxTools {
         String sessionId = sessionId(toolContext);
         if (sessionId == null || sessionId.isBlank()) {
             return "无法定位当前会话，产物交付失败";
-        }
-        String p = path == null ? "" : path.strip();
-        String root = sandboxService.userDataRoot();
-        if (!p.startsWith(root + "/") && !p.equals(root)) {
-            return "只能交付用户数据目录（" + root + "）下的文件";
         }
         java.util.List<SandboxFsBackend.DownloadResult> results = backend.downloadFiles(java.util.List.of(p));
         SandboxFsBackend.DownloadResult r = results == null || results.isEmpty() ? null : results.get(0);
@@ -305,6 +325,45 @@ public class SandboxTools {
 
     // ==================== 内部 ====================
 
+    /**
+     * 写入前的权限档位判据（P2）：返回 null 表示放行，否则返回给模型看的拒绝理由。
+     * <p>三种拒绝的措辞刻意不同，因为模型该做的下一步不同：只读档要它<b>别再试写</b>（换工具也没用，
+     * 换路径更没用）；越界要它<b>换个路径重试</b>（把允许区写清楚）；缺档位要说这是平台判定缺失，
+     * 不是用户的限制，免得模型对着用户道歉或反复重试。
+     * <p>缺档位按拒绝处理（fail-closed）：受限策略下「判不出就放行」就是静默透传，那是权限系统
+     * 唯一不可接受的失效形态——用户以为选了只读，文件却写成了。
+     */
+    private String writeDenial(ToolContext toolContext, String path) {
+        com.wenqu.ai.agent.permission.ExecutionPolicy policy = sandboxPolicy(toolContext);
+        if (policy == null) {
+            log.warn("[FAIL-LOUD] 沙盒写入缺少本轮权限档位，按拒绝处理（装配侧漏注入 CTX_SANDBOX_POLICY？）");
+            return "沙盒写入未执行：本轮缺少权限档位判定，不要重试写入；请把要写的内容告知用户。";
+        }
+        String normalized;
+        try {
+            normalized = SandboxPaths.normalizeAbsolutePath(path);
+        } catch (IllegalArgumentException e) {
+            return "路径不合法：" + e.getMessage() + "（需要沙盒内的绝对路径）";
+        }
+        if (policy.permitsWritePath(normalized)) return null;
+        if (!policy.sandboxMode().writable()) {
+            return "沙盒写入未执行：本轮权限档位为「" + policy.preset().label() + "」（"
+                    + policy.sandboxMode().label() + "），这一档不允许在沙盒里创建或修改文件。"
+                    + "请基于沙盒里已有的文件继续，或把内容直接写在回答里，不要重复尝试写入。";
+        }
+        String root = policy.writableRoot() == null || policy.writableRoot().isBlank()
+                ? "(平台未配置 sandbox.virtualPathPrefix，本轮不放行任何写入)" : policy.writableRoot();
+        return "沙盒写入未执行：本轮档位「" + policy.preset().label() + "」只允许写在会话工作区 " + root
+                + " 之内，当前路径越界。请把路径改到该目录下再试。";
+    }
+
+    /** 取本轮权限档位（问答侧经沙盒族上下文注入）；不在上下文里返回 null，由 {@link #writeDenial} 按拒绝处理 */
+    private com.wenqu.ai.agent.permission.ExecutionPolicy sandboxPolicy(ToolContext toolContext) {
+        if (toolContext == null || toolContext.getContext() == null) return null;
+        Object v = toolContext.getContext().get(CTX_SANDBOX_POLICY);
+        return v instanceof com.wenqu.ai.agent.permission.ExecutionPolicy p ? p : null;
+    }
+
     /** 沙盒不可用时的统一文案：把「没配好」与「没会话上下文」分开说，否则报错无从下手。 */
     private static final String NO_CONTEXT = "沙盒不可用：缺少会话或用户上下文，请刷新页面后重试";
 
@@ -327,7 +386,17 @@ public class SandboxTools {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
-        return sandboxService.backend(sessionId, uid);
+        return sandboxService.backend(sessionId, uid, writesUnrestricted(toolContext));
+    }
+
+    /**
+     * 本轮档位是否放开沙盒内的写入位置（P2 的 danger-full-access）。
+     * <p>沙盒的文件写入边界本来就落在 {@code ProvisionerSandboxBackend.writableRoots()} 那一层，
+     * 档位不传到这里就只是界面上的一个标签——只读档靠不挂工具收紧，全自主档靠这个参数放开边界。
+     */
+    private boolean writesUnrestricted(ToolContext toolContext) {
+        com.wenqu.ai.agent.permission.ExecutionPolicy policy = sandboxPolicy(toolContext);
+        return policy != null && policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS;
     }
 
     /**

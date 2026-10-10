@@ -686,6 +686,9 @@ export const listSubAgents = () => request('/agent/sub')
 /** 能力名册（登录用户可读）：智能体配置页的「指定内置工具」可选项从这里来，
  *  中文名以工具注册中心为唯一来源，不再前端手抄一张表 */
 export const getToolCatalog = () => request('/agent/tool-catalog')
+/** 权限档位名册（登录用户可读）：配置页的档位选项、以及「管理员有没有放开这一档」从这里来，
+ *  前端不抄第二份档位表（抄了就等于界面上能选一个后端不给的档位） */
+export const getPermissionPresets = () => request('/agent/permission-presets')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })

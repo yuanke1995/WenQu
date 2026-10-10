@@ -56,6 +56,17 @@ public interface ToolTurnContext {
     /** 审批通道；null = 本轮没有人可应答（后台续跑、工作流节点、定时任务） */
     ToolApprover approver();
 
+    // ==================== 权限档位 ====================
+
+    /**
+     * 本轮生效的权限档位（P2）。默认 null = 本轮无档位判定，守卫不做档位裁剪。
+     * <p>与装配侧 {@link ToolMountContext#permissionPolicy()} 必须是<b>同一份</b>对象：档位禁用的工具
+     * 在工具表里消失，若执行侧另算一份，就会出现「挂着的被拦、没挂的反而能跑」这种最难查的错配。
+     */
+    default com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
+        return null;
+    }
+
     // ==================== 上下文注入 ====================
 
     /** 本轮已装配的基础工具上下文（会话/用户归属、askUser 执行器、任务清单写入器、大输出外溢） */
