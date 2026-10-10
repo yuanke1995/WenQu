@@ -85,6 +85,12 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && path.equals("/api/ai/chat/stop")) return true;
         // 运行中插话：POST /chat/steer——归属同样由 RagService.steerTurn 按「发起人 uid == 插话人 uid」校验
         if ("POST".equals(method) && path.equals("/api/ai/chat/steer")) return true;
+        // 断线重连接流：GET /chat/run（探测）+ GET /chat/resume（接流）——归属由 RagService 按
+        // 「接流人 uid == 发起本轮 uid」严格校验，别人的轮既看不到有没有在跑、也接不走。
+        // 不放行则普通用户刷新页面后接不上自己那一轮（只有管理员能重连，等于这功能对多数用户是坏的）
+        if ("GET".equals(method) && (path.equals("/api/ai/chat/run") || path.equals("/api/ai/chat/resume"))) {
+            return true;
+        }
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝
         if ("POST".equals(method) && (path.equals("/api/ai/tool-approval")

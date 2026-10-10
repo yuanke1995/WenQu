@@ -99,7 +99,7 @@ const CHAT_EVENT_CB = {
   agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
   agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
-  plan_superseded: 'onPlanSuperseded', todo: 'onTodo'
+  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot'
 }
 
 /** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
@@ -117,29 +117,27 @@ function parseChatEvent (line) {
 /**
  * 把一条非终止事件派发给 handlers 上对应的回调（回调没传即忽略——分享页就不关心工具卡与审批）。
  * handlers 直接复用调用方的 options 对象：本表的值就是其中的回调键名，不再另立一份映射字面量。
+ * 第二个参数是整条事件：文本增量带 pos（该增量应用后的权威字符数），接流的用户要靠它丢掉快照已含的那一片。
  */
 function dispatchChatEvent (d, handlers) {
   const name = CHAT_EVENT_CB[d.type]
   if (!name) { console.warn('[SSE] 未识别事件类型:', d.type); return false }
-  if (typeof handlers[name] === 'function') handlers[name](d.content == null ? '' : d.content)
+  if (typeof handlers[name] === 'function') {
+    handlers[name](d.content == null ? '' : d.content, d)
+  }
   return true
 }
 
 /**
- * 流式聊天（SSE）
- * signal 用于停止生成（外部 AbortController.abort()）
- * deepThink=true 时后端先流式输出思考过程（thinking / thinking_done 事件）
- * idleTimeoutMs：读流空闲看门狗——服务端排队/挂起超过该时长未推任何数据即中断并报错（默认 120s），
+ * SSE 读流内核（发起问答与断线接流共用一条读流逻辑）。
+ * <p>{@code start(signal)} 由调用方给出、返回 fetch 的 Promise；内核只管三件事：
+ * 空闲看门狗（含页面隐藏时停表）、终态闸门（一条流最多收尾一次）、逐行解析派发。
+ * signal 用于停止生成（外部 AbortController.abort()）；
+ * idleTimeoutMs：服务端排队/挂起超过该时长未推任何数据即中断并报错（默认 120s），
  * 避免 UI 永久转圈；收到任意数据自动重置计时。
  */
-export function sendQuestion(sessionId, question, images = [], opts = {}) {
-  const {
-    // on* 回调不逐个解构：非终止事件由 dispatchChatEvent 按 CHAT_EVENT_CB 直接从 opts 取，
-    // 新增事件只改那张表。这里只留本函数收尾要用的两个。
-    onDone, onError,
-    deepThink = false, reasoningLevel = '', signal, idleTimeoutMs = 120000, agentId = '', model = '', attachments = [], skills = [], mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null, editMessageId = '', planMode = false
-  } = opts
+function streamChatSse (start, opts) {
+  const { onDone, onError, signal, idleTimeoutMs = 120000 } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
 
   const inner = new AbortController()
@@ -180,8 +178,8 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
   //                    所以「重试」= 重新生成本轮，后端会软删那条截态回答并挂进同一版本组。
   //   'aborted'     —— 用户主动停止（signal abort），属正常结束。
   //   其他/未传      —— 业务错误（4xx/5xx、模型报错等）。
-  // ⚠️ 刻意**不做**自动重连：后端 SseEmitter 是一次性单向通道，无事件序号、无 resume 端点，
-  //    重连只能重发整个 POST /chat → 后端视为一轮全新问答 → 重复落库 + 重复计费。
+  // 断线重连：内核本身**不自动重发**——重发整个 POST /chat 会被后端当成一轮全新问答（重复落库+重复计费）。
+  // 接流走 resumeChat() 那条通道：后端一轮的执行已与连接解耦（ChatRunBus），它按事件序号只送快照之后的增量。
   const end = (err, kind) => {
     if (ended) return
     ended = true
@@ -191,34 +189,7 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     else onDone(donePayload)
   }
 
-  fetch(`${BASE}/chat`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({
-      sessionId, question, images, deepThink,
-      // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
-      planMode: planMode || undefined,
-      // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
-      reasoningLevel: reasoningLevel || '',
-      // 上下文窗口档位（token）：仅在模型登记了「最小窗口~窗口」区间时由界面给出，空=用模型登记上限
-      contextWindow: contextWindow || undefined,
-      agentId: agentId || '', model: model || '',
-      // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
-      regenerate: regenerate || undefined,
-      // 重新生成时被替换的旧回答消息 ID：新回答落库前先软删它，历史里只留最新一版
-      replaceMessageId: replaceMessageId || undefined,
-      // 编辑重发：被编辑的用户消息 ID。后端把该消息起的旧分支软删留档（可切换回看），编辑内容作为新分支重新生成
-      editMessageId: editMessageId || undefined,
-      // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
-      attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
-      skills: Array.isArray(skills) && skills.length ? skills : undefined,
-      // 输入框 @ 引用（[{type:'kb'|'doc'|'agent', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容、agent 临时委派本轮作答（服务端校验可见性）
-      mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
-      // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
-      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
-    }),
-    signal: inner.signal
-  }).then(res => {
+  start(inner.signal).then(res => {
     if (!res.ok) {
       if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
       res.json().then(d => end(d?.msg || '请求失败: ' + res.status)).catch(() => end('请求失败: ' + res.status))
@@ -261,6 +232,66 @@ export function sendQuestion(sessionId, question, images = [], opts = {}) {
     else end('请求失败: ' + e.message, 'interrupted')
   })
 }
+
+/**
+ * 流式聊天（SSE）：发起一轮问答。
+ * signal 用于停止生成（外部 AbortController.abort()）
+ * deepThink=true 时后端先流式输出思考过程（thinking / thinking_done 事件）
+ */
+export function sendQuestion (sessionId, question, images = [], opts = {}) {
+  const {
+    // on* 回调不逐个解构：非终止事件由 dispatchChatSse 内核按 CHAT_EVENT_CB 直接从 opts 取，
+    // 新增事件只改那张表。这里只解构请求体要用的字段。
+    deepThink = false, reasoningLevel = '', agentId = '', model = '', attachments = [], skills = [],
+    mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
+    contextWindow = null, editMessageId = '', planMode = false
+  } = opts
+  return streamChatSse(signal => fetch(`${BASE}/chat`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      sessionId, question, images, deepThink,
+      // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
+      planMode: planMode || undefined,
+      // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
+      reasoningLevel: reasoningLevel || '',
+      // 上下文窗口档位（token）：仅在模型登记了「最小窗口~窗口」区间时由界面给出，空=用模型登记上限
+      contextWindow: contextWindow || undefined,
+      agentId: agentId || '', model: model || '',
+      // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
+      regenerate: regenerate || undefined,
+      // 重新生成时被替换的旧回答消息 ID：新回答落库前先软删它，历史里只留最新一版
+      replaceMessageId: replaceMessageId || undefined,
+      // 编辑重发：被编辑的用户消息 ID。后端把该消息起的旧分支软删留档（可切换回看），编辑内容作为新分支重新生成
+      editMessageId: editMessageId || undefined,
+      // 文档类附件（[{name,mime,data}]，data 为 dataURL，服务端解析文本注入上下文）与本轮指定技能名
+      attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
+      skills: Array.isArray(skills) && skills.length ? skills : undefined,
+      // 输入框 @ 引用（[{type:'kb'|'doc'|'agent', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容、agent 临时委派本轮作答（服务端校验可见性）
+      mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
+      // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
+      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
+    }),
+    signal
+  }), opts)
+}
+
+/**
+ * 断线重连接流：把这条新通道挂到该会话<b>正在跑的那一轮</b>上（后端 ChatRunBus 扇出）。
+ * 第一帧是 snapshot（本轮已产出的正文/过程独白/思考/工具卡片/时间线/引用/产物/计划/任务清单，
+ * 外加阶段文案这类状态事件的最后一份），此后只送快照之后的增量事件，收尾照常规走 done/error。
+ * 没有正在跑的轮、或那一轮不是本人发起的，后端送 snapshot{running:false} 后立即关闭——
+ * 调用方据此走普通的历史回显，不会留下一个空转的进行中气泡。
+ */
+export function resumeChat (sessionId, opts = {}) {
+  return streamChatSse(signal => fetch(
+    `${BASE}/chat/resume?sessionId=${encodeURIComponent(sessionId)}`,
+    { method: 'GET', headers: authHeaders(), signal }
+  ), opts)
+}
+
+/** 探测：该会话是否还有一轮在跑（有才值得开一条接流通道，省一次「什么都没有」的流） */
+export const getChatRun = sid => request(`/chat/run?sessionId=${encodeURIComponent(sid)}`, { timeout: 8000 })
 
 /** 新建会话 */
 export const newSession = () => request('/session/new', { method: 'POST' })

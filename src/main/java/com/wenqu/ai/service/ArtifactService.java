@@ -72,6 +72,8 @@ public class ArtifactService {
     private final ArtifactMapper artifactMapper;
     private final SessionMapper sessionMapper;
     private final ConfigService configService;
+    /** 运行总线：产物事件也要扇给「接流回来的观众」，直发原发起通道在断线后就送不到了 */
+    private final ChatRunBus chatRunBus;
 
     /** 会话级 emitter 注册表：问答开始时登记，结束清理；供工具在流式执行中实时下发产物事件 */
     private static final ConcurrentHashMap<String, SseEmitter> EMITTERS = new ConcurrentHashMap<>();
@@ -85,12 +87,13 @@ public class ArtifactService {
 
     public ArtifactService(AppProperties properties, ImageUrlSigner imageUrlSigner,
                            ArtifactMapper artifactMapper, SessionMapper sessionMapper,
-                           ConfigService configService) {
+                           ConfigService configService, ChatRunBus chatRunBus) {
         this.properties = properties;
         this.imageUrlSigner = imageUrlSigner;
         this.artifactMapper = artifactMapper;
         this.sessionMapper = sessionMapper;
         this.configService = configService;
+        this.chatRunBus = chatRunBus;
     }
 
     /** 问答开始时登记：sessionId → emitter（用于工具实时下发 artifact 事件） */
@@ -439,6 +442,9 @@ public class ArtifactService {
      */
     public void publish(String sessionId, String eventType, String payload) {
         if (sessionId == null) return;
+        // 总线优先：本轮的执行与那条通道已经解耦，产物卡片要送到「此刻挂着的每个观众」——
+        // 只发登记时那条 emitter，刷新/换设备接流回来的人会缺一整段产物（done 才补上，中间像丢了东西）
+        if (chatRunBus.publishToSession(sessionId, eventType, payload)) return;
         SseEmitter emitter = EMITTERS.get(sessionId);
         if (emitter == null) return;
         try {

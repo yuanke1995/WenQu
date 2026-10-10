@@ -344,6 +344,35 @@ public class ChatController {
         return ResultJson.ok(java.util.Map.of("accepted", accepted));
     }
 
+    @Operation(summary = "断线重连·探测", description = "问这个会话是否还有一轮正在跑（只在内存里判，服务重启后没有）。"
+            + "running=true 时前端再开一条 GET /chat/resume 接回这一轮。归属只认发起本轮的那个 uid："
+            + "别人的会话既查不到有没有在跑，也接不走。")
+    @GetMapping("/chat/run")
+    public ResultJson chatRunStatus(
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
+        return ResultJson.ok(ragService.runStatus(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid()));
+    }
+
+    @Operation(summary = "断线重连接流", description = "把一条新的 SSE 通道挂到该会话正在跑的这一轮上："
+            + "先送一条 snapshot 事件（到此刻为止已产出的正文/过程独白/思考/工具卡片/时间线/引用/产物/计划，"
+            + "外加阶段文案与任务清单这类状态事件的最后一份），此后只送快照之后的增量事件，本轮收尾照常规送 done/error。"
+            + "文本增量带 pos（该增量应用后的正文字符数）供前端去重。没有在跑、或不是本人发起的轮，"
+            + "送 snapshot{running:false} 后立即关闭，前端按历史回显即可。")
+    @ApiResponse(responseCode = "200", description = "SSE 流式响应",
+            content = @Content(mediaType = "text/event-stream"))
+    @GetMapping("/chat/resume")
+    public SseEmitter resumeChatTurn(
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        SseEmitter emitter = new SseEmitter(0L);
+        if (sessionId == null || sessionId.isBlank()) {
+            emitter.complete();
+            return emitter;
+        }
+        ragService.resumeTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), emitter);
+        return emitter;
+    }
+
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
             + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
     @PostMapping("/tool-approval/{approvalId}")

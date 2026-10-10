@@ -219,6 +219,11 @@ public class ConfigService {
         // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
         d.put("chat.planAutoIntent", "true");               // 按消息意图自动开计划模式（用户没开开关时，判断本轮是否适合先出执行计划；与检索并行的短判定，超时/失败按不开）
+        // 断线重连接流（P0）：默认开。必须在这里登记而不是只靠 getBoolean(key, true) 的形参——
+        // 键既无 DB 行又无 defaults 时 get() 返回空串，而 Boolean.parseBoolean("") 是 **false 且不抛异常**，
+        // 兜底链走不到第二级，"默认开的开关"会静默变成关（trace.sessionEventEnabled 同款坑）。
+        d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
+        d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，

@@ -7,7 +7,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { sendQuestion, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
+import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
@@ -905,10 +905,15 @@ const switchSession = async sid => {
       // 产物换发新鲜签名（fire-and-forget）：历史接口给的 URL 签好就不变，1 小时后过期即 401。
       // 进会话/切会话都换一次，避免"打开页面久了产物点不动"
       refreshArtifactSigns()
+      // 断线重连接流：这个会话若还有一轮在跑（刷新前自己发的、或另一台设备上发的），把它接回来，
+      // 用户看到的是「过程继续长出来」而不是等落库。必须先探再恢复卡片——待作答的提问卡要挂在
+      // 这颗接回来的气泡上，否则同一轮会出现两颗进行中气泡
+      if (!st) await attachRunningTurn(sid)
+      const live = chatStreams.get(sid)
       // 提问卡恢复（fire-and-forget）：等待作答期间断线不再中止本轮，所以刷新/换设备后进来仍能把那张卡答完
-      if (!st || !st.msg.ask) hydratePendingAsk(sid)
+      if (!live || !live.msg.ask) hydratePendingAsk(sid)
       // 计划批准卡恢复（同上）：计划等待期间断线不中止本轮，刷新/换设备后仍能批准（回答转后台生成落库）
-      if (!st || !st.msg.planCard) hydratePendingPlans(sid)
+      if (!live || !live.msg.planCard) hydratePendingPlans(sid)
       // 先按新列表重算尾随留白、等它落屏再贴底：落点是本轮问题置顶
       //（列表短于一屏时留白为 0，落点即内容底）
       hooks.scrollForce?.()
@@ -1076,13 +1081,15 @@ const send = () => {
 }
 /** 工具执行审批：批准/拒绝当前气泡挂起的工具请求；后端以错误结果回给模型继续回答 */
 async function resolveApproval (m, approved) {
-  if (!m.approval || m.approval.busy) return
-  m.approval.busy = true
+  // 与 ignoreAsk 同理：等待响应期间本轮的审批终态事件可能已把 m.approval 清空，卡片引用先落本地
+  const a = m && m.approval
+  if (!a || a.busy) return
+  a.busy = true
   try {
-    const r = await approveToolCall(m.approval.id, approved)
+    const r = await approveToolCall(a.id, approved)
     if (r && r.success === false) {
       message.warning(r.msg || '审批提交失败')
-      m.approval.busy = false
+      a.busy = false
       return
     }
     m.approval = null
@@ -1250,6 +1257,13 @@ const hydratePendingAsk = async sid => {
     return
   }
   const item = alive[alive.length - 1]
+  // 本轮气泡已经在界面上（本设备的实时流，或刚接回来的那条流）：卡直接挂它，不再补占位泡——
+  // 同一轮出现两颗「进行中」气泡是错的
+  if (st && st.msg) {
+    mountAskCard(st.msg, { ...item, restored: true }, item.remainingMs)
+    hooks.scrollForce?.()
+    return
+  }
   const list = messages.value
   // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你作答」的占位泡，
   // 答题面板照旧挂底部；答完轮询到新回答后整个列表按历史重载，占位泡随之消失
@@ -1313,6 +1327,19 @@ const hydratePendingPlans = async sid => {
     return
   }
   const item = alive[alive.length - 1]
+  const card = {
+    ...planCardFromRecord(item, 'pending'),
+    id: item.planApprovalId,
+    restored: true,
+    timeoutMs: Number(item.timeoutMs) || 0,
+    deadline: item.remainingMs > 0 ? Date.now() + item.remainingMs : 0
+  }
+  // 本轮气泡已经在界面上（本设备的实时流，或刚接回来的那条流）：卡直接挂它，不再补占位泡
+  if (st && st.msg) {
+    st.msg.planCard = card
+    hooks.scrollForce?.()
+    return
+  }
   const list = messages.value
   // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你批准」的占位泡，
   // 批准卡挂上；批准后轮询到新回答，整个列表按历史重载，占位泡随之消失
@@ -1320,13 +1347,7 @@ const hydratePendingPlans = async sid => {
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
     thinkLoading: false, stage: '等你批准执行计划，批准后回答才开始', time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', delegated: null })
-  anchor.planCard = {
-    ...planCardFromRecord(item, 'pending'),
-    id: item.planApprovalId,
-    restored: true,
-    timeoutMs: Number(item.timeoutMs) || 0,
-    deadline: item.remainingMs > 0 ? Date.now() + item.remainingMs : 0
-  }
+  anchor.planCard = card
   messages.value = [...list, anchor]
   hooks.scrollForce?.()
 }
@@ -1399,32 +1420,138 @@ async function askSubmitAll (m) {
 }
 /** 忽略智能体提问：不作答，让模型带着「这一题用户没回答」继续推进（与超时同语义） */
 async function ignoreAsk (m) {
-  if (!m.ask || m.ask.busy) return
-  m.ask.busy = true
+  // 卡片引用先落本地：这一调用是阻塞等待，响应回来时本轮的 askUser 终态事件多半已把 m.ask 清空
+  //（用户点「忽略」正是让模型立刻继续，终态来得最快），直接读 m.ask 会在 await 之后取到 null
+  const a = m && m.ask
+  if (!a || a.busy) return
+  a.busy = true
   try {
-    const r = await ignoreAgentAsk(m.ask.id)
+    const r = await ignoreAgentAsk(a.id)
     if (r && r.success === false) {
       message.warning(r.msg || '操作失败')
-      m.ask.busy = false
-      if (m.ask.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      a.busy = false
+      if (a.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
-    if (m.ask.restored) {
+    if (a.restored) {
       m.ask = null
       m.stage = '回答生成中，稍后自动刷新…'
       pollRestoredAnswer(currentSessionId.value, m)
       return
     }
-    m.ask.answered = '（已忽略）'
+    a.answered = '（已忽略）'
     hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '操作失败')
     if (m.ask) m.ask.busy = false
   }
 }
+/**
+ * 接流气泡的收场：这一轮其实已经没了（服务端刚好收尾、服务重启、或通道再也接不上）时用它。
+ * 不许留一颗转圈的气泡骗用户「还在跑」——摘掉登记、收掉进行中态，并按历史重显真实结果。
+ */
+const finishResumedShell = (msg, st, sid, reload = true) => {
+  if (st && chatStreams.get(sid) === st) chatStreams.delete(sid)
+  if (msg) { msg.loading = false; msg.retrying = false }
+  if (reload && currentSessionId.value === sid) switchSession(sid)
+}
+
+/** 接流的重连计数（按会话；接上即归零）。用法见 streamAnswer 的 onError 分支 */
+const resumeRetryOf = new Map()
+
+/**
+ * 接回该会话正在跑的这一轮（P0 断线重连接流的入口）。
+ * <p>先探一下（GET /chat/run，服务端按内存里的运行登记回答，很便宜）——确有在跑的轮才开那条接流通道，
+ * 免得每次切会话都拖一条「什么都没有」的流。reuseMsg 是通道断了要再接时沿用的那颗气泡
+ * （内容由下一帧快照重铺，不靠本地残影）。
+ *
+ * @returns 是否真的发起了接流
+ */
+const attachRunningTurn = async (sid, reuseMsg) => {
+  if (!sid) return false
+  if (chatStreams.has(sid)) return false      // 本设备已有这一轮的流（自己发的，或已经接上的）
+  let running = false
+  try {
+    const r = await getChatRun(sid)
+    running = !!(r && r.data && r.data.running)
+  } catch (e) {
+    return false      // 探测失败不烦用户：这一轮按历史回显，下次进会话仍会再探
+  }
+  if (!running || currentSessionId.value !== sid) return false
+  streamAnswer('', [], reuseMsg || null, false, 0, false, [], [], [], null, [], '', null, false, true)
+  return true
+}
+
+/**
+ * 接流首片的重复判别。服务端给 token/process 这类逐字增量带上 pos=「这条增量应用后的权威字符数」。
+ * 快照与增量之间唯一可能的接缝是：正文已经进了服务端缓冲、事件号还没推进的那一条——它既在快照里、
+ * 又会被发给刚接上的观众。pos 大于本地长度才该追加，否则整片丢弃（或截到 pos 为止）。
+ * 真丢了片（pos 比本地+本片还长）不在这儿补：done 带权威全文与落库时间线，那一刻全部归零。
+ */
+const dropResumedOverlap = (have, delta, ev) => {
+  const pos = ev && typeof ev.pos === 'number' ? ev.pos : -1
+  if (pos < 0 || have.length + delta.length <= pos) return delta
+  if (have.length >= pos) return ''
+  return delta.slice(0, pos - have.length)
+}
+
+/**
+ * 接流第一帧（snapshot）铺进气泡：把服务端这一轮已经产出的东西一次给全，之后的增量与实时流
+ * 走同一套回调——观感与「从头一直看着这一轮」等价，差的只是没看见前面逐字流出来的过程。
+ * 只认快照里有的字段（缺=那一段还没跑到），空值不覆盖界面已有内容。
+ * 待作答的提问卡/待批准的计划卡不在这里造：它们的时限与答案记录以库为准，由会话加载那两条恢复入口
+ * 挂到这颗气泡上（那里才有剩余毫秒数与「唤醒句柄还在不在」）。
+ */
+const applyTurnSnapshot = (msg, snap, sid) => {
+  if (!snap || snap.running !== true) return false
+  msg.content = typeof snap.content === 'string' ? snap.content : ''
+  if (typeof snap.processText === 'string' && snap.processText) msg.processText = snap.processText
+  if (typeof snap.thinking === 'string' && snap.thinking) { msg.thinking = snap.thinking; msg.thinkLoading = false }
+  if (Array.isArray(snap.toolCalls)) msg.toolCalls = snap.toolCalls
+  if (Array.isArray(snap.artifacts) && snap.artifacts.length) msg.artifacts = snap.artifacts
+  if (Array.isArray(snap.images) && snap.images.length) msg.images = snap.images
+  if (Array.isArray(snap.sources) && snap.sources.length) msg.sources = snap.sources
+  if (Array.isArray(snap.subagentBranches) && snap.subagentBranches.length) msg.subagents = snap.subagentBranches
+  if (snap.subagentRoute) msg.subagentRoute = snap.subagentRoute
+  if (typeof snap.model === 'string' && snap.model) msg.model = snap.model
+  if (snap.agentName) msg.agentName = snap.agentName
+  if (snap.agentId) msg.agentId = snap.agentId
+  if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
+  // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
+  if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
+  // 状态型事件的最后一份（本轮步骤/检索状态/用量预估/任务清单/阶段文案）按普通事件同一口径解析
+  const ev = snap.events || {}
+  if (ev.plan) {
+    try { const arr = JSON.parse(ev.plan); if (Array.isArray(arr) && arr.length) msg.plan = arr } catch (e) { /* 载荷异常：保留已有 */ }
+  }
+  if (ev.retrieved) {
+    try {
+      const j = JSON.parse(ev.retrieved)
+      msg.retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
+    } catch (e) { /* 忽略 */ }
+  }
+  if (ev.usage) {
+    try { const j = JSON.parse(ev.usage); if (j && typeof j === 'object') msg.tokensPreview = j } catch (e) { /* 忽略 */ }
+  }
+  if (ev.todo) {
+    try { const j = JSON.parse(ev.todo); if (j && Array.isArray(j.items)) setTodos(sid, j) } catch (e) { /* 忽略 */ }
+  }
+  // 阶段文案是瞬时的进度提示：接流时若本轮已经有正文、或还有没跑完的工具步，那条「正在…」早已过期，
+  // 按实时流的同一口径清掉（工具卡片自己会表达进度）。正在等人工裁决时，后端会在快照之后补发一条
+  // 准确的 stage，那条才该显示
+  const inFlight = (msg.toolCalls || []).some(x => x.status === 'start')
+  if (ev.stage && !msg.content && !inFlight) msg.stage = ev.stage
+  return true
+}
+
+/**
+ * 收一轮问答的流。resume=true 时这一轮不是本地发起的：接的是服务端还在跑的那一轮
+ * （见 attachRunningTurn），此时不发 POST /chat，改开 GET /chat/resume 通道，
+ * 正文与工具卡片等由第一帧 snapshot 补齐、之后与实时流走同一套回调。
+ */
 const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
                       attachments = [], skills = [], mentions = [], prev = null, historyRefs = [],
-                      editMessageId = '', editUserMsg = null, planMode = false) => {
+                      editMessageId = '', editUserMsg = null, planMode = false, resume = false) => {
   // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
@@ -1438,7 +1565,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
   // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -1476,8 +1603,23 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 包一层：flushNow 现带 keepScroll 形参，避免把定时器回调的实参当成它
     flushTimer = setTimeout(() => flushNow(), 120)
   }
-  sendQuestion(sid, question, imgs, {
+  const handlers = {
     signal: abort.signal,
+    onSnapshot: payload => {
+      // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
+      let snap = null
+      try { snap = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { snap = null }
+      if (!applyTurnSnapshot(msg, snap, sid)) {
+        // 这一轮其实已经收尾（或压根不在跑/不是本人的）：这颗空气泡不该留下，按历史重显真实结果
+        finishResumedShell(msg, st, sid, false)
+        return
+      }
+      full = msg.content || ''
+      flushedLen = full.length
+      gotToken = full.length > 0
+      resumeRetryOf.delete(sid)   // 接上了：重连计数归零（这一轮的通道之后断了还有三次机会）
+      liveScroll()
+    },
     deepThink,
     // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
     planMode: planMode || false,
@@ -1513,16 +1655,18 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (j.thinking) msg.thinking = j.thinking
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: t => { gotToken = true; full += t; flushSoon(); msg.stage = ''; msg.thinkLoading = false },
-    onProcess: t => {
+    onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.stage = ''; msg.thinkLoading = false },
+    onProcess: (t, ev) => {
       // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）。
       // 后端按 token 增量下发，这里逐条追加即成流式。先 flushNow 落屏节流中的正文：正文 token 走
       // 120ms 节流而过程事件即时到达，不先刷正文，过程段会被记在尚未落屏的正文之前——实时视图里
       // 灰字块跳到正文上方（done 用落库版时间线校正后又会跳回去，一来一回正是「块突然出现又移位」）
       flushNow(false)
-      const prevLen = (msg.processText || '').length
-      msg.processText = (msg.processText || '') + t
-      extendTimelineProcess(msg, prevLen, msg.processText.length)
+      const have = msg.processText || ''
+      const add = dropResumedOverlap(have, t, ev)
+      if (!add) return                       // 接流时这一片已被快照覆盖
+      msg.processText = have + add
+      extendTimelineProcess(msg, have.length, msg.processText.length)
       liveScroll()
     },
     onStage: s => { msg.stage = s; liveScroll() },
@@ -1635,6 +1779,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (t.status === 'start') {
           // askUser 的「进行中」由提问卡（m.ask）表达，不渲染通用工具卡——否则一问两卡
           if (t.name === 'askUser') return
+          // 幂等兜底：同一次调用可能被快照与增量各给一遍（后端按事件序号过滤，这里再守一道）。
+          // 重复的 start 会多出一颗转圈卡片，要等 done 才被终态盖掉——刷新那一刻最容易撞见
+          if (msg.toolCalls.some(x => x.status === 'start' && x.name === t.name && (x.args || '') === (t.args || ''))) return
           const rec = { ...t, startAt: Date.now() }
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
@@ -1744,8 +1891,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (p.planSuperseded) msg.planSuperseded = true
         // 待插话结算：本轮收尾（答完/被停/失败）时结算一次——纯文字没赶上工具步的由后端回
         // pendingSteers，带材料的本来就排在本地等这一刻。用户说过的话不许静默丢掉，
-        // 这是插话机制的底线，比"能不能立刻改方向"更重要
-        setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
+        // 这是插话机制的底线，比"能不能立刻改方向"更重要。
+        // 接来的那条流不结算：那些插话是**发起设备**上的人说的，由它自己续发；
+        // 在这台只来「看一眼」的设备上自动发出去，等于替别人又问了一遍
+        if (!resume) setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
@@ -1838,6 +1987,21 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }, 2500)
         return
       }
+      if (resume && kind === 'interrupted') {
+        // 接来的通道断了 ≠ 这一轮失败了：服务端那一轮多半还在跑（宽限期内没停）。
+        // 报「本轮失败」是假消息（用户会重新生成，而后端那一份照样跑完、两份答案打架）——
+        // 改为静默再接（按会话计数、最多三次、接上即归零），实在接不上就收掉气泡按历史重显
+        if (chatStreams.get(sid) === st) chatStreams.delete(sid)
+        const tries = (resumeRetryOf.get(sid) || 0) + 1
+        if (tries > 3) {
+          resumeRetryOf.delete(sid)
+          finishResumedShell(msg, st, sid)
+          return
+        }
+        resumeRetryOf.set(sid, tries)
+        setTimeout(() => { if (currentSessionId.value === sid) attachRunningTurn(sid, msg) }, 1500)
+        return
+      }
       // 错误不再整体替换正文：flushNow 保留已流出的半程内容与时间线，挂独立错误卡
       // （分类文案 + 重新生成 + 异常详情折叠，对齐主流产品的失败态；此前「😅+裸异常」写进气泡
       //  会冲掉半程内容，长回答生成到 90% 失败时全部丢失）
@@ -1854,7 +2018,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 同上：已上翻看历史的会话原地停留（错误卡与「重新生成」在回答末尾，回到底部按钮足够引导）
       liveScroll()
     }
-  })
+  }
+  // 传输分岔：本地发起的轮发 POST /chat；接流只开一条 GET /chat/resume 挂到服务端那一轮上，
+  // 事件派发与 done/error 收尾两条路径完全共用（这是刻意的设计——两套 UI 语义不许分叉）
+  if (resume) resumeChat(sid, handlers)
+  else sendQuestion(sid, question, imgs, handlers)
 }
 const switchVersion = (mi, delta) => {
   const m = messages.value[mi]
@@ -2193,6 +2361,8 @@ if (typeof window !== 'undefined') {
     switchSession, creatingSession, createNewSession, autoPick, handleDeleteSession,
     // 提问卡恢复（切换会话自动跑；通知深链落到当前会话时页面可再点名一次）
     hydratePendingAsk,
+    // 断线重连接流（切换会话自动跑；网络恢复或从后台回到前台时页面可再点名一次）
+    attachRunningTurn,
     // 手动压缩上下文（/compact：PC 斜杠命令与移动端模型面板共用）
     compacting, compactNotice, compactContext,
     // 重新生成 / 分支切换 / 挂载初始化
