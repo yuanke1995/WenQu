@@ -518,7 +518,10 @@ public class ConfigService {
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
         // 上限默认放到最高档=不钳制（存量智能体行为逐字不变），管理员收紧后选得更高的档位按上限执行。
         d.put("agent.permissionPreset.default", "standard");      // 智能体未选档时的平台默认档
-        d.put("agent.permissionPreset.max", "autonomous");        // 平台允许的最高档（收紧处）
+        d.put("agent.permissionPreset.max", "autonomous");        // 平台允许的最高档（管理员收紧处）
+        // 个人上限（schema personal 标记 → 个人设置页可覆盖，存 c_ai_user_config）：
+        // 生效上限=平台上限与个人上限取低者，所以成员只能往下收、不能靠它绕过管理员的收紧
+        d.put("agent.permissionPreset.personalMax", "autonomous"); // 个人最高档（默认不额外收紧）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数

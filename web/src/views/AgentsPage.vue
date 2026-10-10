@@ -279,7 +279,7 @@
                 <div class="ap-cap-name">权限档位</div>
                 <div class="ap-cap-desc">
                   定这个智能体能改动多少东西。选「只读调研」时，它连「能执行命令」这件事都看不到——
-                  不是点了被拒，是本轮不提供这个能力。留空跟随平台默认档。
+                  不是点了被拒，是本轮不提供这个能力。留空=跟随默认档，且不会超过你或管理员设的上限。
                 </div>
                 <div v-if="presetError" class="ap-pick-empty">
                   权限档位名册加载失败 —— <button class="app-btn ghost small" @click="loadPermissionPresets">重试</button>

@@ -1711,6 +1711,36 @@
       "tier": 2
     },
     {
+      "backendKey": "agent.permissionPreset.personalMax",
+      "panel": "tool",
+      "section": 2,
+      "group": "agent",
+      "key": "permissionPreset.personalMax",
+      "path": "agent.permissionPreset.personalMax",
+      "label": "我个人这一轮的最高档位",
+      "type": "select",
+      "tips": "toolPermissionPresetPersonalMax",
+      "def": "autonomous",
+      "width": 300,
+      "options": [
+        {
+          "value": "research",
+          "label": "research（只读调研）"
+        },
+        {
+          "value": "standard",
+          "label": "standard（常规）"
+        },
+        {
+          "value": "autonomous",
+          "label": "autonomous（不额外收紧）"
+        }
+      ],
+      "personal": true,
+      "note": "只能往下收：与平台上限取低者生效。收到「只读调研」后，你用的任何智能体（含别人建的、它自己选了全自主的）都不会在你账号下执行命令或改文件。",
+      "tier": 2
+    },
+    {
       "backendKey": "tool.knowledgeRetrieval.enabled",
       "panel": "tool",
       "section": 1,
@@ -4375,7 +4405,8 @@
     "agentVersionKeep": "智能体每次保存都会留下一份配置快照，可查看与上一版的字段级差异、一键回滚。本项控制每个智能体保留多少份（按时间从早往晚删）；回滚本身也会生成一条新版本记录。",
     "keywordReconcile": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移；不调用任何模型、不消耗额度。差异超过 max(1000, 有效块/3) 时转全量重建",
     "toolPermissionPresetDefault": "权限档位把两根旋钮捆成一句人话：沙盒里能干什么（只读 / 可写工作区 / 不受限）与要不要逐项确认。选 research 后沙盒的命令执行与写类工具不会进入模型的工具表——模型看不见这个能力，而不是调用了被拒绝；这一步的收窄同时省下对应的提示词篇幅与试错轮次。本项管「智能体没自己选档位时用哪一档」，问渠默认 standard，与引入档位之前的行为逐字相同。",
-    "toolPermissionPresetMax": "平台上限：智能体选的档位高于它时，本轮按上限执行，并在回答的过程面板给出降级提示。这是管理员收紧的落点——收紧之后模型连「有这个能力」都看不到。放到 autonomous 即不额外限制（沙盒本身仍在隔离容器内，且工具执行确认仍按各智能体自己的设置）。收紧到 research 会让全部智能体失去命令执行与沙盒写入，正在依赖沙盒任务的智能体会当场改变行为，建议先改个别智能体验证。"
+    "toolPermissionPresetMax": "平台上限：智能体选的档位高于它时，本轮按上限执行，并在回答的过程面板给出降级提示。这是管理员收紧的落点——收紧之后模型连「有这个能力」都看不到。放到 autonomous 即不额外限制（沙盒本身仍在隔离容器内，且工具执行确认仍按各智能体自己的设置）。收紧到 research 会让全部智能体失去命令执行与沙盒写入，正在依赖沙盒任务的智能体会当场改变行为，建议先改个别智能体验证。",
+    "toolPermissionPresetPersonalMax": "成员自我约束用的档位上限，存在个人配置里，只影响你自己发起的问答。生效上限取「平台上限」与「这里」的较低者——所以它不能用来绕过管理员的收紧，只能更紧。典型用法：不希望任何智能体在自己的账号里跑命令或改沙盒文件时选「只读调研」；选「不额外收紧」表示只跟随平台上限。智能体自己选了更高的档位时，本轮按这里的上限执行。"
   },
   "corePaths": [
     "vision.enabled",
