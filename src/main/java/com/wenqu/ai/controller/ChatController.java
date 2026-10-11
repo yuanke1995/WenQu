@@ -217,6 +217,7 @@ public class ChatController {
                 .reasoningLevel(request.getReasoningLevel())
                 .requestedContextWindow(request.getContextWindow())
                 .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())
+                .fromSteer(request.isFromSteer())
                 .build(), emitter);
         return emitter;
     }

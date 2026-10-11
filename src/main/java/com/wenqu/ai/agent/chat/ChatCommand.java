@@ -77,6 +77,13 @@ public final class ChatCommand {
     final String editVariantGroup;
     /** 计划模式：先出计划卡、批准后执行 */
     final boolean planMode;
+    /**
+     * 本轮是**插话续发**：用户在这轮回答跑到一半时补了一句方向，它没赶上工具步、随 done 回落成新一轮。
+     * <p>为什么必须显式带标记：作为新一轮发出去时，模型只看到一条孤零零的新用户消息，会当成
+     * 「用户又问了一遍」重新起题（实测短问答必现，模型会复述「你消息里的 X 这一段…」）。
+     * 那条上下文声明由 {@code decorateSteerQuestion} 统一拼在问题前面。
+     */
+    final boolean fromSteer;
 
     /**
      * 本轮由谁派出（P3a 子智能体真全循环）：0 = 用户在对话里发起的轮，≥1 = 第 N 层子智能体分支。

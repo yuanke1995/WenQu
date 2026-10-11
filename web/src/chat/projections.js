@@ -441,7 +441,9 @@ const timelineView = m => {
       // 那一行里（藏起来等于没显示）。这里断组，clusterize 那边它天然也不在游程白名单里，簇随之断开。
       flushMerge()
       flushGroup()
-      if (seg.text) out.push({ kind: 'steer', text: seg.text })
+      // sent 必须一起透传：后端段是**送达时**才写的，带上它才有「已插入 · 模型会在下一步看到」；
+      // 丢了它这条插话就是一句没头没尾的话，用户看不出自己补的方向到底送出去没有
+      if (seg.text) out.push({ kind: 'steer', text: seg.text, sent: !!seg.sent })
       continue
     }
     if (seg.kind === 'tool') {
@@ -470,23 +472,23 @@ const timelineView = m => {
   flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
   const view = markGrowingCluster(clusterize(out))
-  // 还没落进时间线的插话（本设备挂着的那几条）排在最后：送达前它就是"最新的一句话"，
-  // 送达后由上面的 steer 段接管原位显示，done 结算时这半截本地条目随之退场。
-  // 放在 markGrowingCluster 之后而不是 out 里：尾随的一行不该让正在长的过程簇丢掉自动展开标记。
+  // 本地插话条目排在最后：送达前它就是"最新的一句话"，送达后由上面的 steer 段接管原位显示，
+  // done 结算时这半截本地条目随之退场。放在 markGrowingCluster 之后而不是 out 里：
+  // 尾随的一行不该让正在长的过程簇丢掉自动展开标记。
   const hasDelivered = tl.some(s => s && s.kind === 'steer')
   for (let idx = 0; idx < (m.steers || []).length; idx++) {
     const s = m.steers[idx]
     if (!s || !s.text) continue
     if (s.sent && hasDelivered) continue   // 已交回后端且留痕已就位：不重复挂一条
     view.push({
-      kind: 'steer', text: s.text, pending: true, sent: !!s.sent, deferred: !!s.deferred,
+      kind: 'steer', text: s.text, sent: !!s.sent, deferred: !!s.deferred,
       extra: steerExtras(s), idx
     })
   }
   return view
 }
 
-/** 待插话的载荷摘要（与正常提问同权，可以带材料）：只把"带了什么"标出来 */
+/** 插话的载荷摘要（与正常提问同权，可以带材料）：只把"带了什么"标出来 */
 const steerExtras = s => {
   if (!s) return ''
   const bits = []

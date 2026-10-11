@@ -136,4 +136,9 @@ public class ChatRequest {
     @Schema(description = "编辑重发：被编辑的用户消息 ID（须属于当前会话）。服务端把该消息及其后的旧分支"
             + "整体软删留档（可切换回看），编辑后的内容作为新分支重新生成")
     private String editMessageId;
+
+    @Schema(description = "插话续发标记：true=这句话是用户在上一轮回答跑到一半时补的方向，"
+            + "不是一次新提问。服务端据此在问题前加一句上下文声明。不带这个标记，"
+            + "模型会把插话当成用户又问了一遍（短问答场景必现），插话的语义就废了")
+    private boolean fromSteer;
 }

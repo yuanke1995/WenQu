@@ -151,6 +151,11 @@
                   <span class="msg-file-name">{{ historyRefPreview(hr) }}</span>
                 </span>
               </div>
+              <!-- 插话续发：这句话是用户在上一轮跑着时补的方向，没赶上工具步、随 done 回落成新一轮发出来的。
+                       不标的话它和一条普通提问长得一模一样，用户回头看历史会以为自己在那一刻新问了一次 -->
+              <div v-if="m.role === 'user' && m.fromSteer" class="msg-steer-tag">
+                <login-outlined /> 插话 · 接上一轮的回答
+              </div>
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
               <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
               <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
@@ -194,27 +199,17 @@
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
-                  <!-- 插话：本轮跑着的时候用户补的那一句方向。送达过的（后端段）留在它实际生效的那个
-                       位置，刷新后同源回显；还没送达的（本地条目）带「插话/编辑/删除」三个动作。
+                  <!-- 插话：本轮跑着的时候用户补的那一句方向。按下发送即送达，所以这里**没有再点一次确认**
+                       的按钮**——此前那个 12px 的「插话」小控件把绝大多数用户卡在"以为没发出去"上。
+                       送达过的（后端段）留在它实际生效的位置，刷新后同源回显；
                        刻意不进折叠簇、不并工具组——藏进「已执行 N 个操作」那一行等于没显示 -->
                   <div v-else-if="seg.kind === 'steer'" class="tl-steer" :class="{ pending: seg.pending }">
                     <span class="tl-steer-ic">↳</span>
                     <span class="tl-steer-tag">插话</span>
                     <span class="tl-steer-txt">{{ seg.text }}</span>
                     <span v-if="seg.extra" class="tl-steer-extra">{{ seg.extra }}</span>
-                    <span v-if="seg.deferred" class="tl-steer-state">本轮结束后自动发出</span>
-                    <span v-else-if="seg.sent" class="tl-steer-state">已插入 · 随下一个工具步生效</span>
-                    <template v-else-if="seg.pending">
-                      <button class="tl-steer-act primary" type="button"
-                              title="纯文字随下一个工具步送达模型；带材料的这轮塞不进去，改为本轮结束自动发出"
-                              @click="insertSteer(m, seg.idx)">插话</button>
-                      <button class="tl-steer-act" type="button" title="取回输入框改" @click="editSteer(m, seg.idx)">
-                        <edit-outlined />
-                      </button>
-                      <button class="tl-steer-act" type="button" title="丢弃这条" @click="dropSteer(m, seg.idx)">
-                        <delete-outlined />
-                      </button>
-                    </template>
+                    <span v-if="seg.deferred" class="tl-steer-state">这轮答完就自动接着发</span>
+                    <span v-else-if="seg.sent" class="tl-steer-state">已插入 · 模型会在下一步看到</span>
                   </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group" :class="{ inCluster: seg.inCluster }">
@@ -1068,10 +1063,10 @@
                            :width="190"
                            @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
-            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「挂一条插话」（不是打断当前这一步）；
+            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「插话」（不是打断当前这一步）；
                  没字 → 才是停止本轮。两段式 Esc 停止照旧（第一次上膛、第二次才停；点击仍是立即停） -->
             <button v-if="loading && canSend" class="send-btn"
-                    title="挂一条插话（Enter 同效；挂在正在回答的这条里，点「插话」才随下一个工具步送出）"
+                    title="插话（Enter 同效）：立刻告诉模型你想调整的方向，它会在下一步看到"
                     @click="sendNow"><arrow-up-outlined /></button>
             <button v-else-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
               <span v-if="escArmed" class="esc-cap">esc</span>
@@ -1527,7 +1522,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, PictureOutlined, ClockCircleOutlined,
-         OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
+         OrderedListOutlined, CheckCircleOutlined, LoginOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
@@ -1928,13 +1923,14 @@ const disarmEsc = () => {
   clearTimeout(escArmTimer)
 }
 const stopNow = () => { disarmEsc(); stop() }
-/** 主输入框占位文案：生成中不再禁用输入，所以文案要改口说清"这句是插话、按下去先挂着"；
+/** 主输入框占位文案：生成中不再禁用输入，所以文案要改口说清"这句是插话、按下去就送出"。
+ *  不再解释"要点插话按钮才送出"——那个中间层已经去掉了，占位符只需说明这是什么、什么时候生效。
  *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
 const composerPlaceholder = computed(() => {
   if (loading.value) {
     return isNarrow.value
-      ? '补一句方向（挂到这条回答里）'
-      : '补一句方向（Enter 挂到这条回答里，点「插话」才送出）'
+      ? '补一句方向（发出后模型下一步就会看到）'
+      : '补一句方向（Enter 发出，模型在下一步就会看到）'
   }
   return isNarrow.value
     ? '问点什么？（@ 引用资料 · / 快捷命令）'
@@ -2784,7 +2780,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, insertSteer, editSteer, dropSteer,
+  text, canSend, send, stop,
   streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
@@ -3603,13 +3599,13 @@ onMounted(async () => {
 }
 /* 插话行（挂在气泡的时间线里，不在输入框上方）：左边一道竖线把它和工具卡区分开，
    读起来是"用户在执行过程中插了一句"。不另设 max-width——气泡内卡片跟消息列同宽（同 plan-card 口径），
-   fit-content 只让短句不铺满整行。待送达的那条抢眼（要点它才送得出去），已送达的那条是记录、弱化。 */
+   fit-content 只让短句不铺满整行。按下即送达，所以只有「已插入/稍后自动发」两种记录态，
+   没有需要主色抢眼的待确认态（那个 .pending 高亮随待发送层一起去掉了）。 */
 .tl-steer {
   display: flex; align-items: center; gap: 8px; min-width: 0; width: fit-content; max-width: 100%;
   margin: 4px 0; padding: 3px 10px 3px 9px; font-size: 13px;
   border-left: 2px solid var(--app-border); color: var(--app-text2);
 }
-.tl-steer.pending { border-left-color: var(--app-accent); background: var(--app-accent-weak); border-radius: 0 8px 8px 0; }
 .tl-steer-ic { color: var(--app-text3); flex: none; }
 .tl-steer-tag {
   flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px;
@@ -3617,13 +3613,6 @@ onMounted(async () => {
 }
 .tl-steer-txt { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
 .tl-steer-extra, .tl-steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
-.tl-steer-act {
-  flex: none; display: inline-flex; align-items: center; gap: 4px;
-  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
-  padding: 2px 8px; font-size: 12px; color: var(--app-text); cursor: pointer;
-}
-.tl-steer-act:hover { background: var(--app-panel-2); }
-.tl-steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
 .input-box {
   position: relative; max-width: var(--chat-col); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);
@@ -3885,6 +3874,12 @@ onMounted(async () => {
 
 /* 气泡内附件标签（历史回显） */
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+/* 插话续发标记：随这条用户气泡一起走，弱化到不抢内容（这是个说明，不是主行动点） */
+.msg-steer-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px;
+  padding: 1px 7px; border-radius: 6px; font-size: 11px;
+  color: var(--app-text3); border: 1px dashed var(--app-border);
+}
 .msg-file {
   display: inline-flex; align-items: center; gap: 5px; max-width: 260px;
   padding: 4px 8px; border-radius: 8px; font-size: 12px;

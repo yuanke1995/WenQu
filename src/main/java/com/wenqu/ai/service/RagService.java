@@ -602,6 +602,7 @@ public class RagService {
         final String replaceMessageId = cmd.getReplaceMessageId();
         final String editVariantGroup = cmd.getEditVariantGroup();
         final boolean planMode = cmd.isPlanMode();
+        final boolean fromSteer = cmd.isFromSteer();
 
         // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
         // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
@@ -807,6 +808,8 @@ public class RagService {
         final String replaceMessageId = cmd.getReplaceMessageId();
         final String editVariantGroup = cmd.getEditVariantGroup();
         final boolean planMode = cmd.isPlanMode();
+        // 插话续发：用户补在上一轮跑着时的方向，随 done 回落成新一轮发出来。默认 false 时行为逐字不变
+        final boolean fromSteer = cmd.isFromSteer();
         // deepThink 不从这里解包：它是本轮入口裁决后的值（用户开关 + 模型能力），比命令里那份更晚
         // P3a 子智能体分支的三件事：深度、父轮交代、父会话。全是默认值（0/null/null）时本轮就是
         // 用户在对话里直接发起的那一轮，行为与引入这些字段之前逐字相同。
@@ -1073,7 +1076,7 @@ public class RagService {
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
-                        userMessageId, delegatedRound ? delegatedAgent : null, planMode, skills, subagentDepth);
+                        userMessageId, delegatedRound ? delegatedAgent : null, planMode, skills, subagentDepth, fromSteer);
                 return;
             }
 
@@ -1464,7 +1467,7 @@ public class RagService {
 
             // 图片说明拼入问题（仅"模型不支持读图"时有值：诚实说明图片不可见，防模型瞎猜；
             // 直读时无文本，图片本体以 image_url 部件随消息下发）
-            StringBuilder userQuestion = new StringBuilder(question);
+            StringBuilder userQuestion = steerAwareQuestion(question, fromSteer);
             if (!imgNote.isBlank()) {
                 userQuestion.append(imgNote);
             }
@@ -7599,6 +7602,10 @@ public class RagService {
                 Map<String, Object> seg = new LinkedHashMap<>();
                 seg.put("kind", "steer");
                 seg.put("text", s);
+                // sent 必须落进段里：这些段是**送达之后**才写的（写在这里就是随工具结果送达的那一刻）。
+                // 不带它，投影层读 s.sent 拿不到值，「已插入 · 模型会在下一步看到」那行状态字整个不渲染——
+                // 而刷新/换设备/断线重连看到的正是这些段（本地条目早退了），症状是"刷新后插话变成一条没头没尾的话"
+                seg.put("sent", true);
                 st.timeline.add(seg);
             }
         }
@@ -9766,6 +9773,23 @@ public class RagService {
     }
 
     /**
+     * 插话续发的用户消息前缀：把「这句话是对上一轮回答的补充」讲清楚，别让模型当成一次新提问。
+     * <p>不做这件事的实测后果（短问答必现，模型不调工具时插话必然赶不上工具步）：
+     * 用户插话「答案是巴黎吗」，模型当成新问题起题，回答里会写「你消息里的『答案是巴黎吗』这一段，
+     * 在当前会话的知识库里没有对应资料」——用户看到的是"我补的方向被当成在问知识库"。
+     *
+     * <p>写进<b>用户消息</b>而不是 system prompt：这条声明必须和那句话贴在同一条消息里，
+     * 混进 system 会和几十行角色设定挤在一起，注意力权重被摊薄。
+     */
+    private static StringBuilder steerAwareQuestion(String question, boolean fromSteer) {
+        if (!fromSteer) return new StringBuilder(question);
+        return new StringBuilder(
+                "（下面是用户在上一轮回答生成过程中补充的方向，不是新的提问。"
+                        + "请顺着这个方向调整上一轮的回答，不要重新起题，也不要把它当作在检索资料。）\n")
+                .append(question);
+    }
+
+    /**
      * 「不使用知识库」分支（智能体 knowledgeDisabled=1）：纯角色对话，不跑改写/深度思考/检索/子代理编排。
      * 与闲聊分支的差异：① 多轮历史照常注入；② 用户手动 @ 的文档仍取块前置（手动指定优先于智能体配置）；
      * ③ 图片按能力位处理：模型支持读图时原图随消息直发（media 部件），不支持时注入不可见说明（不参与检索）。
@@ -9781,7 +9805,7 @@ public class RagService {
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel, boolean guestMode, String replaceMessageId,
                                     String userMessageId, Agent delegatedAgent, boolean planMode,
-                                    List<String> skills, int subagentDepth) {
+                                    List<String> skills, int subagentDepth, boolean fromSteer) {
         // 与主链路同一个判据：深度 > 0 就是子智能体分支（人在回路工具不挂、步数预算递减）
         final boolean branchTurn = subagentDepth > 0;
         try {
@@ -9824,7 +9848,7 @@ public class RagService {
             }
 
             // 拼装用户消息：问题 + 图片说明（仅"模型不支持读图"时有值）+ 附件内容
-            StringBuilder userQuestion = new StringBuilder(question);
+            StringBuilder userQuestion = steerAwareQuestion(question, fromSteer);
             if (imgNote != null && !imgNote.isBlank()) {
                 userQuestion.append(imgNote);
             }

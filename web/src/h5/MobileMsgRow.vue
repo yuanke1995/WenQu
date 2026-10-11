@@ -11,6 +11,8 @@
       <!-- ==================== 用户消息 ==================== -->
       <template v-if="m.role === 'user'">
         <div class="ububble">
+          <!-- 插话续发标记：这句话是用户补在上一轮跑着时的方向，不是那一刻新问的一次（PC 端同构） -->
+          <div v-if="m.fromSteer" class="u-steer-tag">插话 · 接上一轮的回答</div>
           <div v-if="m.content" class="u-text">{{ m.content }}</div>
           <div v-if="m.images && m.images.length" class="u-imgs">
             <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
@@ -108,21 +110,16 @@
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
             </div>
-            <!-- 插话：本轮跑着的时候用户补的那一句方向。挂在时间线里、刻意不进折叠簇——
-                 藏进「已执行 N 个操作」那一行等于没显示。待送达的带三个动作，已送达的只留记录 -->
+            <!-- 插话：本轮跑着的时候用户补的那一句方向。按下发送即送达，不再要用户点一次行内按钮
+                 （触屏上那个小按钮更难点中，正是"以为没发出去"的重灾区）。
+                 藏在「已执行 N 个操作」那一行等于没显示，所以刻意不进折叠簇 -->
             <div v-else-if="seg.kind === 'steer'" class="card steer-row" :class="{ pending: seg.pending }">
               <span class="steer-ic">↳</span>
               <span class="steer-tag">插话</span>
               <span class="steer-txt">{{ seg.text }}</span>
               <span v-if="seg.extra" class="steer-extra">{{ seg.extra }}</span>
-              <span v-if="seg.deferred" class="steer-state">本轮结束后自动发出</span>
-              <span v-else-if="seg.sent" class="steer-state">已插入 · 随下一个工具步生效</span>
-              <template v-else-if="seg.pending">
-                <button class="steer-act primary" type="button"
-                        @click.stop="steerAct('insertSteer', seg.idx)">插话</button>
-                <button class="steer-act" type="button" @click.stop="steerAct('editSteer', seg.idx)">改一下</button>
-                <button class="steer-act" type="button" @click.stop="steerAct('dropSteer', seg.idx)">丢弃</button>
-              </template>
+              <span v-if="seg.deferred" class="steer-state">这轮答完就自动接着发</span>
+              <span v-else-if="seg.sent" class="steer-state">已插入 · 模型会在下一步看到</span>
             </div>
             <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster }">
               <button v-if="seg.tools.length > 1" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
@@ -408,9 +405,6 @@ const showAgentTag = computed(() => {
 // 查不到时 agentBadgeOf 返回 null → AgentAvatar 落回默认机器人，与改动前一致
 const engine = inject('wqChat', null)
 const badgeOf = (agentId, agentName) => agentBadgeOf(engine?.agentList?.value, agentId, agentName)
-// 插话行的三个动作直接接引擎（与 badgeOf 同一份 inject）：绕一层 emit 会让 PC/H5 各写一遍
-// 同一条状态流转，两份必然漂移
-const steerAct = (fn, idx) => engine?.[fn]?.(props.m, idx)
 
 const onRowTap = () => { if (!props.active) emit('activate', props.index) }
 
@@ -440,6 +434,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   padding: 10px 12px;
 }
 .u-text { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.6; }
+/* 插话续发标记：弱化到不抢内容（说明，不是主行动点） */
+.u-steer-tag {
+  display: inline-block; margin-bottom: 4px; padding: 1px 6px; border-radius: 6px;
+  font-size: 11px; color: var(--app-text3); border: 1px dashed var(--app-border);
+}
 .u-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .u-imgs img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
@@ -524,22 +523,16 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .proc-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
 /* 插话行：用户在这轮跑着的时候补的一句，左边一道竖线把它和工具卡分开（PC 端同构，见 .tl-steer）。
-   触屏没有 hover，动作一律写成字；只有待送达的那条亮主色（那才是要他点的） */
+   按下即送达，所以只有记录态、没有待确认的主色态（那个 pending 高亮随待发送层一起去掉了） */
 .steer-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px;
   background: transparent; border: 0; border-left: 2px solid var(--app-border);
   border-radius: 4px 10px 10px 4px; font-size: 13px; color: var(--app-text2);
 }
-.steer-row.pending { border-left-color: var(--app-accent); background: var(--app-accent-weak); color: var(--app-text); }
 .steer-ic { color: var(--app-text3); }
 .steer-tag { font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--app-border); color: var(--app-text3); }
 .steer-txt { flex: 1 1 120px; min-width: 0; word-break: break-word; }
 .steer-extra, .steer-state { font-size: 11px; color: var(--app-text3); }
-.steer-act {
-  flex: none; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
-  padding: 6px 12px; font-size: 12px; color: var(--app-text);
-}
-.steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); font-weight: 500; }
 .tl-group-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 2px; }
 .tool-card .card-head { padding: 8px 10px; }
 .tool-brief { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--app-text3); background: transparent; overflow: hidden; text-overflow: ellipsis; max-width: 40%; white-space: nowrap; }
