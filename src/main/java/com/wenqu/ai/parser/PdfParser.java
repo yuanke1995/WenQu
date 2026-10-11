@@ -151,7 +151,10 @@ public class PdfParser implements DocumentParser {
                                        DocumentParser.ParseProgress cb) throws Exception {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
-        String pageTitle = "第 1 页";
+        // 标题取「本块开始时已生效的章节名」，不是「最近见到的章节名」：新节标题行往往就落在
+        // 新缓冲的第一片里，先更新再冲刷会把上一节的内容标成下一节
+        // （实测踩过：含第 275 条「故意毁坏公私财物」的块被标成「第一节 扰乱公共秩序罪」）
+        String bufferTitle = "第 1 页";
         String sectionTitle = null;
 
         // File 模式随机访问加载：内存从 O(文件大小) 降为准 O(页数)，大 PDF 不再全量驻留堆
@@ -168,16 +171,18 @@ public class PdfParser implements DocumentParser {
                 // 按段落→句→字符硬切（兜底 embedding token 上限，与版面路径同一套边界语义）
                 for (String piece : text.length() > maxSize
                         ? DocxParser.splitByBoundaries(text, maxSize) : List.of(text)) {
+                    if (pageBuffer.length() > 0 && pageBuffer.length() + piece.length() > maxSize) {
+                        chunks.add(new Chunk(bufferTitle, pageBuffer.toString().trim(), List.of()));
+                        pageBuffer.setLength(0);
+                    }
                     String seen = sectionTitleOf(piece);
                     if (seen != null) sectionTitle = seen;
-                    if (pageBuffer.length() + piece.length() > maxSize && pageBuffer.length() > 0) {
-                        chunks.add(new Chunk(sectionTitle != null ? sectionTitle : pageTitle,
-                                pageBuffer.toString().trim(), List.of()));
-                        pageBuffer.setLength(0);
+                    if (pageBuffer.length() == 0) {
+                        // 新开一块才重定标题：延续中的块保持它自己的归属
+                        bufferTitle = sectionTitle != null ? sectionTitle : "第 " + page + " 页";
                     }
                     if (pageBuffer.length() > 0) pageBuffer.append("\n");
                     pageBuffer.append(piece);
-                    pageTitle = "第 " + page + " 页";
                 }
             }
 
@@ -194,8 +199,7 @@ public class PdfParser implements DocumentParser {
                             + "（视觉模型可能不可用或返回空），请检查知识库绑定的图片描述模型后重新解析");
                 }
             } else if (pageBuffer.length() > 0) {
-                chunks.add(new Chunk(sectionTitle != null ? sectionTitle : pageTitle,
-                        pageBuffer.toString().trim(), List.of()));
+                chunks.add(new Chunk(bufferTitle, pageBuffer.toString().trim(), List.of()));
             }
         }
         return chunks;
