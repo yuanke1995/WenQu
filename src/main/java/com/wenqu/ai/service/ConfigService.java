@@ -522,6 +522,10 @@ public class ConfigService {
         // 个人上限（schema personal 标记 → 个人设置页可覆盖，存 c_ai_user_config）：
         // 生效上限=平台上限与个人上限取低者，所以成员只能往下收、不能靠它绕过管理员的收紧
         d.put("agent.permissionPreset.personalMax", "autonomous"); // 个人最高档（默认不额外收紧）
+        // 平台级工具黑名单（逗号分隔工具名）：管理员一次性停掉某一个工具，不用逐个智能体改。
+        // 族级开关（tool.websearch.enabled 等）粒度太粗——关一族会连带关掉同族其它能力；
+        // 智能体级黑名单又要求每个智能体都改一遍。这一项补的是中间那一档。
+        d.put("tool.deny", "");                                 // 平台禁用工具名单（空=不禁）
         d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
         d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
         d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
@@ -530,6 +534,14 @@ public class ConfigService {
         d.put("agent.digestMaxChars", "1500");             // 要点段总字符预算（超限截断；supervisor 模式作为压缩目标）
         d.put("agent.aggregateMarkFailed", "true");        // 失败分支在要点段显式占位（让主模型知道该视角无资料）
         d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
+        // ---------- 子智能体分支的执行形态（P3a）----------
+        // 默认 digest = 引入本档之前的行为逐字相同（只并行检索 + 一次短调用提炼要点，不跑工具循环）。
+        // full 那一档才是"分支里真有一个完整智能体在跑"，按子智能体逐个开，代价是每支都等于一轮问答。
+        d.put("agent.subagentMode", "digest");             // 平台默认档（子智能体没自己选时用它）
+        d.put("agent.subagentMaxDepth", "2");              // 嵌套深度硬顶（1=只允许派一层，父派子就不再往下派）
+        d.put("agent.maxParallelSubAgents", "4");          // 并行分支上限（原来硬编码 4，委派名单也按它截断）
+        d.put("agent.subagentTimeoutMs", "240000");        // 单条全循环分支的等待上限（ms；超时按失败降级）
+        d.put("agent.subagentBriefChars", "1200");         // 传给分支的父轮上下文字符预算（逐层递减）
         d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）

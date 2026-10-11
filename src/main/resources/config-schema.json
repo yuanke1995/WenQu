@@ -1711,6 +1711,21 @@
       "tier": 2
     },
     {
+      "backendKey": "tool.deny",
+      "panel": "tool",
+      "section": 2,
+      "group": "tool",
+      "key": "deny",
+      "path": "tool.deny",
+      "label": "平台停用工具名单",
+      "type": "text",
+      "tips": "toolDenyGlobal",
+      "def": "",
+      "width": 420,
+      "note": "逗号分隔的工具名；这些工具对全平台不挂（智能体自己怎么设都不生效）",
+      "tier": 2
+    },
+    {
       "backendKey": "agent.permissionPreset.personalMax",
       "panel": "tool",
       "section": 2,
@@ -2660,6 +2675,107 @@
           "20 秒"
         ]
       ]
+    },
+    {
+      "backendKey": "agent.subagentMode",
+      "panel": "agent",
+      "section": 0,
+      "group": "agent",
+      "key": "subagentMode",
+      "path": "agent.subagentMode",
+      "label": "分支执行方式",
+      "type": "select",
+      "tips": "agentSubagentMode",
+      "def": "digest",
+      "options": [
+        {
+          "value": "digest",
+          "label": "digest（检索要点）"
+        },
+        {
+          "value": "full",
+          "label": "full（全循环）"
+        }
+      ],
+      "note": "子智能体没自己选时的默认跑法：digest=只并行检索并提炼要点（一次检索+一次短调用）；full=分支里真跑一轮完整问答（自己的知识库范围、工具、技能、沙盒、产物都生效）。默认 digest，与引入本项之前逐字相同",
+      "vif": "agent.enabled",
+      "tier": 2
+    },
+    {
+      "backendKey": "agent.maxParallelSubAgents",
+      "panel": "agent",
+      "section": 0,
+      "group": "agent",
+      "key": "maxParallelSubAgents",
+      "path": "agent.maxParallelSubAgents",
+      "label": "并行分支上限",
+      "type": "number",
+      "tips": "agentMaxParallelSubAgents",
+      "def": 4,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "width": 160,
+      "note": "一次最多同时咨询几个子智能体，超出部分不派（委派名单也按它截断）。full 档下每一支都等于一轮完整问答，这个数就是问答流水线的并发占用",
+      "vif": "agent.enabled",
+      "tier": 2
+    },
+    {
+      "backendKey": "agent.subagentMaxDepth",
+      "panel": "agent",
+      "section": 0,
+      "group": "agent",
+      "key": "subagentMaxDepth",
+      "path": "agent.subagentMaxDepth",
+      "label": "嵌套深度上限",
+      "type": "number",
+      "tips": "agentSubagentMaxDepth",
+      "def": 2,
+      "min": 1,
+      "max": 3,
+      "step": 1,
+      "width": 160,
+      "note": "子智能体再往下派孙智能体的层数硬顶（1=只派一层）。到顶后不再跑全循环，回落检索要点——分支并发是乘法，没有这一层闸，配置成环的子智能体会把线程池和额度一起吃满",
+      "vif": "agent.enabled",
+      "tier": 3
+    },
+    {
+      "backendKey": "agent.subagentTimeoutMs",
+      "panel": "agent",
+      "section": 0,
+      "group": "agent",
+      "key": "subagentTimeoutMs",
+      "path": "agent.subagentTimeoutMs",
+      "label": "单支等待上限(ms)",
+      "type": "number",
+      "tips": "agentSubagentTimeout",
+      "def": 240000,
+      "min": 15000,
+      "max": 900000,
+      "step": 15000,
+      "width": 200,
+      "note": "一条全循环分支最多等多久（下限 15 秒）。超时按这一支失败处理：主链路照常作答，并在回报里说明这一支没结果，不会拖住整轮",
+      "vif": "agent.enabled",
+      "tier": 3
+    },
+    {
+      "backendKey": "agent.subagentBriefChars",
+      "panel": "agent",
+      "section": 0,
+      "group": "agent",
+      "key": "subagentBriefChars",
+      "path": "agent.subagentBriefChars",
+      "label": "父轮上下文预算(字)",
+      "type": "number",
+      "tips": "agentSubagentBriefChars",
+      "def": 1200,
+      "min": 200,
+      "max": 6000,
+      "step": 100,
+      "width": 200,
+      "note": "派分支时带过去的父轮问题与最近对话的字符上限，让子智能体接得住「接着上面那步做」这类说法。每往下一层减半（孙辈只有一半预算）",
+      "vif": "agent.enabled",
+      "tier": 3
     },
     {
       "panel": "skills",
@@ -4338,6 +4454,11 @@
     "agentAutoRoute": "主智能体挂了多个子智能体时，先由模型判断「这个问题该咨询谁」，只并行咨询选中的助手。好处：避免把无关角色（如问表单操作却去查法律）也跑一遍，省掉多余检索与要点提炼开销，编排卡片也不会被 0 命中的角色占满。代价：判定本身多一次模型调用（约 1~2 秒）。关闭则每轮全部并行。",
     "agentDispatchNarrowScope": "按需委派挑出子集后，把主检索范围收窄到「主智能体绑定库 ∪ 被选中助手的库」，无关库的内容不再进入上下文与引用（治「问劳动法却混进刑法条款」这类跨库噪声的根源）。<b>默认关</b>：路由判错时被收窄掉的库不会参与主检索（该库相关资料将召不回，且用户无感知）——这是收窄的固有代价，故仅在「各智能体职责与库划分清晰」时开启。安全边界：路由全量回退（失败/超时/按需委派关闭）、被选中助手都未绑定库时，自动保持原范围不收窄；路由判定本身耗时不增加（与检索的先后顺序对调，串行总时长不变）。与「最低相关分」配合使用效果最佳：收窄治范围、分数治噪声。",
     "agentRouteTimeout": "挑选助手的最长等待时间。超时、调用失败或结果无法解析时，自动回退为「全部候选都咨询」——宁可多跑也不漏掉能力，不影响正常问答。",
+    "agentSubagentMode": "被委派时这一支怎么跑。检索要点=分支直接查库再提炼 2~3 条要点，快且便宜，但那个子智能体自己的工具、技能、沙盒都不参与，它只能「交资料」。全循环=分支跑一轮完整问答，子智能体按自己的配置查库、写代码、交付产物，能独立办完一件事，代价是每一支都等于一次问答的时间与花费。单个子智能体可以在自己的配置页上覆盖这里，所以「只给某几个能干活的角色」放开是全流程里最省的做法。",
+    "agentMaxParallelSubAgents": "一轮里最多同时派几条分支。以前这个数是写死的 4，委派名单也按 4 截断——配了 6 个助手只跑前 4 个。现在按这里：设小能压住峰值并发与额度，设大要注意全循环档下每条分支都占一条问答流水线线程。",
+    "agentSubagentMaxDepth": "子智能体再往下派孙智能体的层数上限。全循环让分支自己也能编排，好处是能分层派活，风险是配置成环时（A 派 B、B 又派 A）会一层层乘下去，没有报错，只表现为额度与线程池被吃满。到了上限就不再往下派，那一支回落成检索要点。默认 2 已经足够表达「主智能体 → 专家 → 该专家再问一个资料角色」。",
+    "agentSubagentTimeout": "一条全循环分支最多等多久。分支里那个智能体可能在跑一段慢命令，所以这个值要大于你预计它干活的时间；超时后这一支按失败降级——主链路仍会作答，并在回报里明确说这一支没结果。",
+    "agentSubagentBriefChars": "派分支时带过去的父轮上下文长度（用户的问题加最近几轮对话）。有了它，「把上面那段再核一遍」这类说法子智能体才接得住，不必主智能体把前情复述一遍。每往下一层减半，避免孙辈拿着整段历史再往下派。",
     "agentAutoDispatch": "对话页选「自动派遣」时的总开关：每轮消息由当轮生效模型按各智能体的名称+描述挑选最合适的角色（失败回落默认智能体）。关闭后「自动派遣」等同使用默认智能体。",
     "skillRemoteAllowedHosts": "从 URL 安装技能时允许的来源域名（逗号分隔，**精确匹配 host**、不做后缀匹配——所以 www 这类子域要单独列出）。GitHub 必须用 raw 链接，故默认含 raw.githubusercontent.com。留空即关闭远程安装：个人仍能用内置技能与自己编写的技能，只是不能再从网上下载。",
     "artifactRetention": "模型生成的可下载文件（Markdown/CSV/JSON/HTML 产物）的保留天数：超期后文件与记录一起删除。产物按**用户**归属保存（会话被清理也不影响取回），所以保留期就是用户能回溯下载的时间窗口。0 = 永不自动清理。",
@@ -4406,7 +4527,8 @@
     "keywordReconcile": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移；不调用任何模型、不消耗额度。差异超过 max(1000, 有效块/3) 时转全量重建",
     "toolPermissionPresetDefault": "权限档位把两根旋钮捆成一句人话：沙盒里能干什么（只读 / 可写工作区 / 不受限）与要不要逐项确认。选 research 后沙盒的命令执行与写类工具不会进入模型的工具表——模型看不见这个能力，而不是调用了被拒绝；这一步的收窄同时省下对应的提示词篇幅与试错轮次。本项管「智能体没自己选档位时用哪一档」，问渠默认 standard，与引入档位之前的行为逐字相同。",
     "toolPermissionPresetMax": "平台上限：智能体选的档位高于它时，本轮按上限执行，并在回答的过程面板给出降级提示。这是管理员收紧的落点——收紧之后模型连「有这个能力」都看不到。放到 autonomous 即不额外限制（沙盒本身仍在隔离容器内，且工具执行确认仍按各智能体自己的设置）。收紧到 research 会让全部智能体失去命令执行与沙盒写入，正在依赖沙盒任务的智能体会当场改变行为，建议先改个别智能体验证。",
-    "toolPermissionPresetPersonalMax": "成员自我约束用的档位上限，存在个人配置里，只影响你自己发起的问答。生效上限取「平台上限」与「这里」的较低者——所以它不能用来绕过管理员的收紧，只能更紧。典型用法：不希望任何智能体在自己的账号里跑命令或改沙盒文件时选「只读调研」；选「不额外收紧」表示只跟随平台上限。智能体自己选了更高的档位时，本轮按这里的上限执行。"
+    "toolPermissionPresetPersonalMax": "成员自我约束用的档位上限，存在个人配置里，只影响你自己发起的问答。生效上限取「平台上限」与「这里」的较低者——所以它不能用来绕过管理员的收紧，只能更紧。典型用法：不希望任何智能体在自己的账号里跑命令或改沙盒文件时选「只读调研」；选「不额外收紧」表示只跟随平台上限。智能体自己选了更高的档位时，本轮按这里的上限执行。",
+    "toolDenyGlobal": "一次性停掉某几个工具，不用逐个智能体改。粒度介于两者之间：族级开关（如 tool.websearch.enabled）关的是整族，会连带关掉同族其余能力；智能体级黑名单又要把每个智能体都改一遍。写在这里的名字对全平台不挂——模型的工具表里不会出现它，提示词里也不再提它。注意这是自由文本，名字写错只会静默不生效，所以启动时会核对并在校验失败时打 ERROR 日志。"
   },
   "corePaths": [
     "vision.enabled",

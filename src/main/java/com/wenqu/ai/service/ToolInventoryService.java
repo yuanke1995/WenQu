@@ -107,6 +107,9 @@ public class ToolInventoryService {
      */
     public List<Map<String, Object>> agentCatalog() {
         List<Map<String, Object>> out = new ArrayList<>();
+        // 平台停用名单（tool.deny）：配置页的「禁用指定工具」据此把已被平台停掉的项标出来，
+        // 否则管理员会看到"我能选它"而它其实全局不挂了——那种界面与事实不一致最难排查。
+        java.util.Set<String> platformDenied = deniedByName(configService.get("tool.deny"));
         for (ToolDescriptor d : registry.all()) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("family", d.family().code());
@@ -114,9 +117,22 @@ public class ToolInventoryService {
             m.put("name", d.name());
             m.put("label", d.label());
             m.put("cardLabel", d.cardLabel());
+            m.put("platformDenied", platformDenied.contains(d.name()));
             out.add(m);
         }
         return out;
+    }
+
+    /** 逗号名单 → 名字集合（与执行侧同一份解析口径：去空白、忽略空项） */
+    static java.util.Set<String> deniedByName(String csv) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (csv != null) {
+            for (String part : csv.split(",")) {
+                String t = part.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+        }
+        return java.util.Set.copyOf(out);
     }
 
     private static String orEmpty(String s) {

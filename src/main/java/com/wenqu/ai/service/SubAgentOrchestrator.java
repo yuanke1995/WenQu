@@ -1,5 +1,9 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.subagent.BranchMode;
+import com.wenqu.ai.agent.subagent.BranchReport;
+import com.wenqu.ai.agent.subagent.BranchRequest;
+import com.wenqu.ai.agent.subagent.BranchRunner;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
@@ -29,6 +33,18 @@ import java.util.function.Consumer;
  * <p>落点：**多视角并行检索**。把一个问题拆成 N 个视角的子查询（全句语义视角 / 关键词精确视角 /
  * 长问题再拆子句），每个视角交给一个子代理（SubAgent）并行执行「检索 + 提炼要点」，
  * 再由汇总节点合并——解决单路检索在复杂问题上"召回不全"的问题。
+ *
+ * <p>P3a 起，被委派的子智能体有两种跑法（每个子智能体自己选，见 {@code agent.subagentMode} 与
+ * {@code c_ai_agent.subagent_mode}）：
+ * <ul>
+ *   <li><b>digest（检索要点）</b>：本类原本那条路——分支直接调混合检索 + 一次短 LLM 提炼。
+ *       它快、便宜，但子智能体的工具/技能/沙盒/产物一概不参与；多视角检索用它更省；</li>
+ *   <li><b>full（真全循环）</b>：分支跑一整轮完整问答（{@code BranchRunner} 交给问答管线，
+ *       自己的知识库范围、工具、技能、沙盒都按它本人的配置生效），于是"派它去把这份报表跑出来"
+ *       才真的成立。代价是每条分支等于一次问答的时延与花费，所以它<b>按子智能体逐个开</b>，
+ *       并且受嵌套深度上限与单支超时两道闸约束（见 {@link #modeOf}）。</li>
+ * </ul>
+ * 平台默认档是 digest：不配置时行为与本类引入 P3a 之前逐字相同。
  *
  * <p>为什么用图而不是自己开线程：并行分支的调度、fan-in 汇聚、状态合并由框架负责；
  * 后续要加"条件分支（资料不足才补充检索）""人工审批"这类控制流时，图是现成的扩展点。
@@ -190,34 +206,77 @@ public class SubAgentOrchestrator {
     /**
      * 编排结果。
      *
-     * @param hits       全部子代理命中（已跨代理去重，保序）
-     * @param digestText 各子代理的要点汇总（可为空串：未开启提炼或全部失败）
+     * @param hits       全部子代理命中（已跨代理去重，保序）——全循环分支里就是它这一轮实际参考过的资料，
+     *                   并进主链路同一套 [N] 编号空间
+     * @param digestText 各子代理的要点汇总（可为空串：未开启提炼或全部失败；全循环分支不走这一段）
      * @param agents     实际执行的子代理数
      * @param elapsedMs  总耗时（用于日志/评估对比单路检索）
      * @param branches   各分支最终状态（供编排视图渲染/持久化）：
-     *                    {id, name, status, hits, elapsedMs, delegated, digest, description}
+     *                    {id, name, status, hits, elapsedMs, delegated, digest, description, mode, steps, answerPreview}
+     * @param fulls      全循环分支的完整回报（按分支下标），供问答侧把里面的 [N]/[图片N] 续编成父轮编号
+     *                    ——digest 分支为空，主链路那段文本继续走 {@code digestText}
      */
     public record Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs,
-                          List<Map<String, Object>> branches) {
+                          List<Map<String, Object>> branches, List<FullBranch> fulls) {
         public Outcome(List<HybridRetrievalService.Hit> hits, String digestText, int agents, long elapsedMs) {
-            this(hits, digestText, agents, elapsedMs, List.of());
+            this(hits, digestText, agents, elapsedMs, List.of(), List.of());
         }
+    }
+
+    /**
+     * 一条全循环分支的最终回报（带分支归属，问答侧据此把子轮编号映射到父轮编号）。
+     *
+     * @param idx    分支下标（与 {@code branches} 里的 id 对齐）
+     * @param name   分支显示名（子智能体名）
+     * @param report 回报本体（回答正文仍是<b>子轮自己的编号</b>，引用与图片的真身在 report 的两份表里）
+     */
+    public record FullBranch(int idx, String name, BranchReport report) {
+    }
+
+    /**
+     * 本轮分支执行的入参（P3a：与 {@code ChatCommand} 同一个理由——这些字段全是同类型字符串，
+     * 位置写错编译器不拦，而分支跑在并行线程上，错了的表现是"拿着父会话 id 去问自己的问题"）。
+     *
+     * @param question        用户问题（委派模式下各分支都用原问题）
+     * @param subAgents       主智能体委派的子智能体（null/空 = 走多视角策略）
+     * @param onBranch        分支进度回调（可为 null）
+     * @param resolvedModel   主链路本轮已解析的生效模型（辅助调用与分支都复用它，不重新裁决）
+     * @param depth           本轮处于第几层（0 = 用户在对话里发起的那一轮；&ge;1 是子智能体分支）
+     * @param parentSessionId 父会话 id（分支的临时会话要往哪儿收养产物）
+     * @param parentTurnId    父轮 id
+     * @param userId          分支的归属用户（可见性、个人资产、台账都按他）
+     * @param parentBrief     父轮上下文摘要（问题 + 最近对话，预算已按深度裁剪；可为空）
+     * @param guestMode       免登录分享会话：分支不放开全循环（没有观众，也不给沙盒/MCP）
+     * @param runner          全循环分支的执行器；null = 本轮不允许全循环（老调用方、评估链路）
+     */
+    public record BranchSpec(String question, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
+                             String resolvedModel, int depth, String parentSessionId, String parentTurnId,
+                             String userId, String parentBrief, boolean guestMode, BranchRunner runner) {
     }
 
     /**
      * 分支进度事件（编排视图实时展示用）：status ∈ running | done | failed。
      * name 为分支显示名（委派=子智能体名，多视角=视角描述）；hits 为该分支本次命中块数；
-     * description 为"派它去干嘛"的任务描述；digest 为要点结果（仅 done 时有值）。
+     * description 为"派它去干嘛"的任务描述；digest 为要点结果（仅 done 时有值）；
+     * mode 为该分支的执行形态（digest|full，让用户看得见"这一支是交资料还是真干活"）；
+     * steps 为全循环分支实际跑的工具步数（digest 分支恒 0）。
      */
     public record BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated,
-                              String description, String digest) {
+                              String description, String digest, String mode, int steps) {
+        public BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated,
+                           String description, String digest) {
+            this(idx, name, status, hits, elapsedMs, delegated, description, digest, BranchMode.DIGEST.code(), 0);
+        }
+
         public BranchEvent(int idx, String name, String status, int hits, long elapsedMs, boolean delegated) {
-            this(idx, name, status, hits, elapsedMs, delegated, "", "");
+            this(idx, name, status, hits, elapsedMs, delegated, "", "", BranchMode.DIGEST.code(), 0);
         }
     }
 
     /** 单轮执行上下文：图节点在编译期绑定，运行期参数经 ThreadLocal 传入（与 KnowledgeRetrievalTool 同模式） */
     private static final class RunCtx {
+        /** 本轮分支执行入参（问题/候选/回调/深度/归属/执行器全在这里，不再摊成构造参数） */
+        final BranchSpec spec;
         final String question;
         final List<String> subQueries;
         /** 主智能体委派的子智能体（null/空 = 走原有的多视角策略） */
@@ -225,6 +284,8 @@ public class SubAgentOrchestrator {
         final List<HybridRetrievalService.Hit> collected = new ArrayList<>();
         final Set<String> seenKids = new LinkedHashSet<>();
         final List<String> digests = new ArrayList<>();
+        /** 全循环分支的完整回报（保序，按分支下标）；问答侧用它把子轮编号续编成父轮编号 */
+        final List<FullBranch> fulls = new ArrayList<>();
         /** 分支进度回调（可为 null：不需要实时推送时传 null，如评估/调试场景） */
         final Consumer<BranchEvent> onBranch;
         /** 分支最终状态（保序，供 Outcome.branches 与编排视图持久化） */
@@ -233,6 +294,12 @@ public class SubAgentOrchestrator {
         final boolean delegated;
         /** 主链路已解析的本轮生效模型（会话覆盖 > 个人默认），供要点提炼等辅助调用复用 */
         final String resolvedModel;
+        /**
+         * 各分支的执行形态（下标对齐 subAgents）。装配在 {@code run} 入口一次算完：
+         * 档位、深度上限、是否分享会话这三条判据都跟线程无关，逐分支重复问一遍反而会让同一轮的
+         * 分支在不同线程上判出不一致的结果。
+         */
+        final List<BranchMode> modes = new ArrayList<>();
         /**
          * 创建上下文时父线程（问答流水线）的检索参数覆盖快照（全局 &lt; 知识库 &lt; 智能体的合并结果）。
          * <p>并行分支由框架用 {@code Schedulers.parallel()} 调度，ThreadLocal 不跨线程继承 ⇒ 必须在
@@ -253,29 +320,32 @@ public class SubAgentOrchestrator {
         final String identityDept;
         final String identityRole;
 
-        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
-               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
-               String billingUid) {
-            this(question, subQueries, subAgents, onBranch, resolvedModel, baseOverrides, baseUserOverrides,
-                    billingUid, null, null, null);
-        }
-
-        RunCtx(String question, List<String> subQueries, List<Agent> subAgents, Consumer<BranchEvent> onBranch,
-               String resolvedModel, Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
-               String billingUid, String identityUid, String identityDept, String identityRole) {
-            this.question = question;
+        RunCtx(BranchSpec spec, List<String> subQueries, Map<String, String> baseOverrides,
+               Map<String, String> baseUserOverrides, String billingUid, String identityUid,
+               String identityDept, String identityRole) {
+            this.spec = spec;
+            this.question = spec.question();
             this.subQueries = subQueries;
-            this.subAgents = subAgents;
-            this.onBranch = onBranch;
+            this.subAgents = spec.subAgents();
+            this.onBranch = spec.onBranch();
             this.t0 = System.currentTimeMillis();
-            this.delegated = subAgents != null && !subAgents.isEmpty();
-            this.resolvedModel = resolvedModel;
+            this.delegated = spec.subAgents() != null && !spec.subAgents().isEmpty();
+            this.resolvedModel = spec.resolvedModel();
             this.baseOverrides = baseOverrides == null ? Map.of() : baseOverrides;
             this.baseUserOverrides = baseUserOverrides == null ? Map.of() : baseUserOverrides;
             this.billingUid = billingUid;
             this.identityUid = identityUid;
             this.identityDept = identityDept;
             this.identityRole = identityRole;
+        }
+
+        /** 本轮分支里是否有全循环分支（有则整轮换用专属线程池跑，见 {@link #FULL_EXECUTOR} 注释） */
+        boolean anyFull() {
+            return modes.contains(BranchMode.FULL);
+        }
+
+        BranchMode modeOf(int idx) {
+            return idx < modes.size() ? modes.get(idx) : BranchMode.DIGEST;
         }
 
         /** 分支名：委派=子智能体名，多视角=该视角的查询描述 */
@@ -345,17 +415,24 @@ public class SubAgentOrchestrator {
     }
 
     /**
-     * 并行编排入口；任何异常都不抛出（编排是增强项，失败应降级为单路检索，不能影响问答）
-     *
-     * @param subAgents 主智能体委派的子智能体。为 null 或空时走原有的多视角策略；
-     *                  非空时按子智能体数并行——每个子智能体用自己的知识库范围检索、按自己的角色提示词提炼
-     * @param onBranch  分支进度回调（编排视图实时展示；可为 null）
+     * 并行编排入口（老签名，恒走「检索 + 要点提炼」那条轻量分支）。
+     * <p>保留给评估/调试这类不需要全循环的调用方：{@code runner} 传 null 就等于宣告
+     * "本轮不许往下派完整问答"，于是档位无论怎么配都只会跑 digest——回滚面只剩这一个参数。
      */
     public Outcome run(String question, List<Agent> subAgents, Consumer<BranchEvent> onBranch, String resolvedModel) {
-        boolean delegated = subAgents != null && !subAgents.isEmpty();
+        return run(new BranchSpec(question, subAgents, onBranch, resolvedModel, 0, null, null,
+                null, null, false, null));
+    }
+
+    /**
+     * 并行编排入口；任何异常都不抛出（编排是增强项，失败应降级为单路检索，不能影响问答）
+     */
+    public Outcome run(BranchSpec spec) {
+        boolean delegated = spec.subAgents() != null && !spec.subAgents().isEmpty();
+        int maxParallel = maxParallelBranches();
         int agents = delegated
-                ? Math.min(subAgents.size(), 4)
-                : Math.max(2, Math.min(4, configService.getInt("agent.subAgents", 2)));
+                ? Math.min(spec.subAgents().size(), maxParallel)
+                : Math.max(2, Math.min(maxParallel, configService.getInt("agent.subAgents", 2)));
         long t0 = System.currentTimeMillis();
         // 归属 uid 只在入口线程（问答流水线）可见，RunCtx 带进分支线程供辅助调用记账
         String entryUid = com.wenqu.ai.util.RequestUser.uid();
@@ -365,24 +442,40 @@ public class SubAgentOrchestrator {
         String entryDept = com.wenqu.ai.util.RequestUser.departmentId();
         String entryRole = com.wenqu.ai.util.RequestUser.role();
         boolean anonymous = com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(entryUid);
-        RunCtx ctx = new RunCtx(question, planSubQueries(question, agents), subAgents, onBranch, resolvedModel,
+        RunCtx ctx = new RunCtx(spec, planSubQueries(spec.question(), agents),
                 configService.currentOverrides(), configService.currentUserOverrides(),
                 anonymous ? null : entryUid,
                 anonymous ? null : entryUid, entryDept, entryRole);
+        // 各分支的执行形态在入口一次判完（同一份档位与深度判据，避免并发线程各判各的）
+        for (int i = 0; i < agents; i++) ctx.modes.add(modeOf(spec, i));
+        int fullCount = 0;
+        for (BranchMode m : ctx.modes) if (m == BranchMode.FULL) fullCount++;
+        if (delegated) {
+            log.info("[SUBAGENT] 分支执行方式：{} 支全循环 / {} 支检索要点（深度 {}，嵌套上限 {}，并行上限 {}）",
+                    fullCount, agents - fullCount, spec.depth(), maxDepth(), maxParallel);
+        }
         // 上下文注册到注册表，state 里只带可安全序列化的 id（框架会序列化 state，见 CTX_KEY 注释）
         String ctxId = java.util.UUID.randomUUID().toString();
         CTX_REGISTRY.put(ctxId, ctx);
         try {
-            CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
-            Map<String, Object> inputs = new HashMap<>();
-            inputs.put("question", question);
-            inputs.put(CTX_KEY, ctxId);
-            Optional<OverAllState> result = graph.invoke(inputs);
-            result.ifPresent(s -> s.value("digestText").ifPresent(v -> {
-                // 仅当分支未产出要点时才收 merge 节点的文本；空串不收（否则"要点 1 条"实为空内容的假象）
-                String text = String.valueOf(v);
-                if (ctx.digests.isEmpty() && text != null && !text.isBlank()) ctx.digests.add(text);
-            }));
+            if (ctx.anyFull()) {
+                // 有全循环分支 ⇒ 整轮换到分支专属线程池跑（不再用图）：全循环分支要等一整轮问答，
+                // 挂在框架的 Schedulers.parallel() 上会把 reactor 的共享并行池占死，
+                // 连累同一 JVM 里其它流的并行算子（见 FULL_EXECUTOR 注释）。
+                // digest 分支在同一条路上照旧跑 runAgent，两种形态能混在一轮里。
+                runBranchesOnExecutor(ctx, agents);
+            } else {
+                CompiledGraph graph = graphCache.computeIfAbsent(agents, this::buildGraph);
+                Map<String, Object> inputs = new HashMap<>();
+                inputs.put("question", spec.question());
+                inputs.put(CTX_KEY, ctxId);
+                Optional<OverAllState> result = graph.invoke(inputs);
+                result.ifPresent(s -> s.value("digestText").ifPresent(v -> {
+                    // 仅当分支未产出要点时才收 merge 节点的文本；空串不收（否则"要点 1 条"实为空内容的假象）
+                    String text = String.valueOf(v);
+                    if (ctx.digests.isEmpty() && text != null && !text.isBlank()) ctx.digests.add(text);
+                }));
+            }
             long ms = System.currentTimeMillis() - t0;
             // rerank 聚合：各分支命中合并后按重排分（无重排分回退相关分）降序——
             // 主链路按顺序做价值驱动填充，排序后高分块优先占用上下文预算，低分块不再挤占。
@@ -393,17 +486,266 @@ public class SubAgentOrchestrator {
                         .reversed());
                 log.info("[SUBAGENT] rerank 聚合：{} 块按重排分降序合并", ctx.collected.size());
             }
-            String digestText = aggregate(ctx, resolvedModel);
-            log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，耗时 {}ms",
-                    delegated ? "子智能体委派" : "多视角", agents, ctx.collected.size(), ctx.digests.size(), ms);
+            String digestText = aggregate(ctx, spec.resolvedModel());
+            log.info("[SUBAGENT] 并行编排完成（{}）：{} 个分支，命中 {} 块（去重后），要点 {} 条，全循环回报 {} 条，耗时 {}ms",
+                    delegated ? "子智能体委派" : "多视角", agents, ctx.collected.size(), ctx.digests.size(),
+                    ctx.fulls.size(), ms);
             return new Outcome(List.copyOf(ctx.collected), digestText, agents, ms,
-                    List.copyOf(ctx.branches));
+                    List.copyOf(ctx.branches), List.copyOf(ctx.fulls));
         } catch (Exception e) {
             log.warn("[SUBAGENT] 并行编排失败（降级为单路检索）: {}", e.getMessage());
-            return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0, List.copyOf(ctx.branches));
+            return new Outcome(List.of(), "", 0, System.currentTimeMillis() - t0,
+                    List.copyOf(ctx.branches), List.copyOf(ctx.fulls));
         } finally {
             CTX_REGISTRY.remove(ctxId);
         }
+    }
+
+    // ==================== P3a：全循环分支 ====================
+
+    /**
+     * 分支专属线程池（全循环分支等待整轮问答用）。
+     * <p>为什么不用 Spring AI Alibaba 的那张图（digest 分支仍在图上跑）：图把并行节点调度在
+     * {@code Schedulers.parallel()} 上，那是 reactor 全 JVM 共享的固定并行池（线程数=CPU 核数）。
+     * 检索+提炼是百毫秒级，占一占无所谓；全循环分支要等一整轮问答（几十秒），几条分支就能把
+     * 那个池占满，被连累的是同进程里所有用 parallel scheduler 的流——这不是"慢一点"，是无关功能跟着堵。
+     * <p>容量按 {@code agent.maxParallelSubAgents}：分支数就是这个池的大小，多出来的分支排队等前一条收工，
+     * 而排队时间同样计入单支超时（超时按失败降级，不会无声卡住）。池随配置联动扩容，见 {@link #syncFullPoolSize}。
+     */
+    private static final java.util.concurrent.ThreadPoolExecutor FULL_EXECUTOR =
+            new java.util.concurrent.ThreadPoolExecutor(1, 1, 30L, java.util.concurrent.TimeUnit.SECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
+                Thread t = new Thread(r, "subagent-branch");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 并行分支上限（原来硬编码 4，委派名单也按 4 截断；现在配置项管，1~8） */
+    private int maxParallelBranches() {
+        return Math.max(1, Math.min(8, configService.getInt("agent.maxParallelSubAgents", 4)));
+    }
+
+    /** 嵌套深度硬顶（默认 2）：到顶后不再往下派全循环，那一支回落成检索要点 */
+    private int maxDepth() {
+        return Math.max(1, configService.getInt("agent.subagentMaxDepth", 2));
+    }
+
+    /** 单条全循环分支的等待上限（下限 15s，避免配成 0 让分支必判失败） */
+    private long branchTimeoutMs() {
+        return Math.max(15_000L, configService.getLong("agent.subagentTimeoutMs", 240000L));
+    }
+
+    /**
+     * 这一支怎么跑：档位（子智能体自己选的 &gt; 平台默认档）之上还压着三条否决——
+     * <ul>
+     *   <li><b>没有执行器</b>（老签名调用、评估链路）：本轮压根不允许派完整问答；</li>
+     *   <li><b>深度到顶</b>：分支自己也能编排，配置成环时并发是乘法往下长，且不报错、只表现为额度被吃满，
+     *       所以这一层必须由平台拦；</li>
+     *   <li><b>免登录分享会话</b>：访客那一轮没有观众、也不挂沙盒与 MCP，派一条完整问答出去
+     *       只会得到一条没人看的挂起分支。</li>
+     * </ul>
+     */
+    private BranchMode modeOf(BranchSpec spec, int idx) {
+        if (spec.runner() == null || spec.subAgents() == null || idx >= spec.subAgents().size()) {
+            return BranchMode.DIGEST;
+        }
+        if (spec.depth() >= maxDepth()) return BranchMode.DIGEST;
+        if (spec.guestMode()) return BranchMode.DIGEST;
+        Agent sub = spec.subAgents().get(idx);
+        BranchMode platformDefault = BranchMode.of(configService.get("agent.subagentMode"), BranchMode.DIGEST);
+        return BranchMode.of(sub == null ? null : sub.getSubagentMode(), platformDefault);
+    }
+
+    /**
+     * 在分支专属池上并行跑完所有分支（fan-in 由 {@code allOf} 承担），并给整体等待加一道兜底闸。
+     * <p>超时兜底是必需的而不是可选的：分支内部的超时管的是"子轮回答不出来"，管不到
+     * "问答流水线线程池被排满、子轮根本没开始跑"那种情况——没有这道闸，父轮会无限期挂在
+     * {@code join()} 上，用户看到的是整轮卡死且没有任何报错。
+     */
+    private void runBranchesOnExecutor(RunCtx ctx, int agents) {
+        syncFullPoolSize(Math.max(agents, maxParallelBranches()));
+        List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
+        for (int i = 0; i < agents; i++) {
+            final int idx = i;
+            futures.add(java.util.concurrent.CompletableFuture.runAsync(
+                    () -> runWithOverrides(ctx, () -> runBranch(idx, ctx)), FULL_EXECUTOR));
+        }
+        long slack = 15_000L;
+        long overall = branchTimeoutMs() + slack;
+        try {
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0]))
+                    .get(overall, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException te) {
+            // 只报还没汇合的那几支：已完成的分支状态已由 runBranch 自己写过，不能覆成失败
+            int stuck = 0;
+            for (int i = 0; i < futures.size(); i++) {
+                if (!futures.get(i).isDone()) {
+                    futures.get(i).cancel(true);
+                    stuck++;
+                    markBranchTimeout(ctx, i);
+                }
+            }
+            log.warn("[FAIL-LOUD] 分支整体等待超时（{}ms，{} 支未汇合，池活跃 {}/{}）——未汇合按失败降级",
+                    overall, stuck, FULL_EXECUTOR.getActiveCount(), FULL_EXECUTOR.getMaximumPoolSize());
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            for (java.util.concurrent.CompletableFuture<Void> f : futures) f.cancel(true);
+            log.warn("[SUBAGENT] 分支等待被中断（父轮已退场），未汇合分支按失败处理");
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            // runBranch 内部已吞掉分支异常，走到这里说明是调度层的问题，必须留线索不能静默
+            log.warn("[SUBAGENT] 分支并行调度异常（已完成的分支结果保留）: {}", cause.toString());
+        }
+    }
+
+    /** 超时/中断后补一条分支终态（编排视图不能留着"正在跑"的那张卡） */
+    private void markBranchTimeout(RunCtx ctx, int idx) {
+        long ms = System.currentTimeMillis() - ctx.t0;
+        String name = ctx.branchName(idx);
+        ctx.emit(new BranchEvent(idx, name, "failed", 0, ms, ctx.delegated, "", "",
+                ctx.modeOf(idx).code(), 0));
+        Map<String, Object> branch = new LinkedHashMap<>();
+        branch.put("id", idx);
+        branch.put("name", name);
+        branch.put("status", "failed");
+        branch.put("hits", 0);
+        branch.put("elapsedMs", ms);
+        branch.put("delegated", ctx.delegated);
+        branch.put("digest", "");
+        branch.put("description", "分支整体等待超时，未返回结果");
+        branch.put("mode", ctx.modeOf(idx).code());
+        branch.put("steps", 0);
+        synchronized (ctx) {
+            ctx.branches.add(branch);
+        }
+    }
+
+    /** 线程数随 agent.maxParallelSubAgents 联动（维持 max ≥ core 的不变量，先抬 max 再归位 core） */
+    private static void syncFullPoolSize(int n) {
+        if (n <= 0 || n == FULL_EXECUTOR.getCorePoolSize()) return;
+        FULL_EXECUTOR.setMaximumPoolSize(Math.max(FULL_EXECUTOR.getMaximumPoolSize(), n));
+        FULL_EXECUTOR.setCorePoolSize(n);
+        FULL_EXECUTOR.setMaximumPoolSize(n);
+        log.info("[SUBAGENT] 分支线程池调整为 {} 线程", n);
+    }
+
+    /** 一条分支的派发点：按本轮判好的档位走全循环或检索要点 */
+    private void runBranch(int idx, RunCtx ctx) {
+        if (ctx.modeOf(idx) == BranchMode.FULL) {
+            runFullAgent(idx, ctx);
+        } else {
+            runAgent(idx, ctx);
+        }
+    }
+
+    /**
+     * 全循环分支：把这一支交回问答管线跑完整一轮，回收回报。
+     * <p>与 digest 分支的分工：本方法只负责"派出去、等回来、把状态写成编排视图认的形状"。
+     * 会话、超时、产物收养、编号都在 {@code BranchRunner} 的实现（RagService）里——那里才有
+     * 本轮的会话服务与引用列表，编排器无从介入，硬要在此处编号就会把问答侧的知识抄一份到编排侧。
+     * <p>失败不抛：回报状态写成 failed/timeout，主链路照常作答，并在要点段留一行占位
+     * （沿用 {@code agent.aggregateMarkFailed} 那条"失败要看得见"的口径）。
+     */
+    private void runFullAgent(int idx, RunCtx ctx) {
+        Agent sub = ctx.subAgents != null && idx < ctx.subAgents.size() ? ctx.subAgents.get(idx) : null;
+        String name = ctx.branchName(idx);
+        if (sub == null || ctx.spec.runner() == null) {
+            // 判据与执行必须一致：档位判成 full 却没得可跑，宁可按 digest 跑完也不能空转一支
+            runAgent(idx, ctx);
+            return;
+        }
+        long start = System.currentTimeMillis();
+        ctx.emit(new BranchEvent(idx, name, "running", 0, start - ctx.t0, ctx.delegated,
+                fullBranchDescription(sub, ctx.question), "", BranchMode.FULL.code(), 0));
+        BranchRequest req = new BranchRequest(ctx.spec.parentSessionId(), ctx.spec.parentTurnId(),
+                sub.getId(), name, ctx.question, ctx.spec.parentBrief(), ctx.spec.depth() + 1,
+                ctx.spec.userId(), ctx.resolvedModel, ctx.spec.guestMode(), branchTimeoutMs());
+        BranchReport report;
+        try {
+            report = ctx.spec.runner().run(req);
+        } catch (Exception e) {
+            // Runner 的契约是不外抛；真抛了说明实现破了契约，这里兜住并留线索（不能让整轮编排跟着炸）
+            log.warn("[SUBAGENT] 全循环分支执行器异常（按失败降级）: {}", e.toString());
+            report = BranchReport.failed(BranchReport.FAILED, e.toString(), System.currentTimeMillis() - start);
+        }
+        long ms = System.currentTimeMillis() - start;
+        boolean ok = report.usable();
+        List<HybridRetrievalService.Hit> fresh = new ArrayList<>();
+        if (ok) {
+            // 子轮实际参考过的资料并进主链路的命中池（与 digest 分支同一条去重规则）：
+            // 这是父轮能给出可点开引用的前提——只把子轮的结论抄进上下文，用户就得到一个指不回资料的回答。
+            int topK = Math.max(1, configService.getInt("agent.topKPerAgent", 3));
+            synchronized (ctx) {
+                int added = 0;
+                for (Map<String, Object> s : report.sourcesOrEmpty()) {
+                    HybridRetrievalService.Hit h = hitFromChildSource(s);
+                    if (h == null || h.knowledgeId() == null || !ctx.seenKids.add(h.knowledgeId())) continue;
+                    ctx.collected.add(h);
+                    fresh.add(h);
+                    if (++added >= topK) break;
+                }
+                ctx.fulls.add(new FullBranch(idx, name, report));
+            }
+        }
+        String preview = ok ? RunCtx.truncate(report.answerOrEmpty().replaceAll("\\s+", " ").trim(), 120) : "";
+        ctx.emit(new BranchEvent(idx, name, ok ? "done" : "failed", fresh.size(), ms, ctx.delegated,
+                fullBranchDescription(sub, ctx.question), preview, BranchMode.FULL.code(), report.toolSteps()));
+        Map<String, Object> branch = new LinkedHashMap<>();
+        branch.put("id", idx);
+        branch.put("name", name);
+        branch.put("status", ok ? "done" : "failed");
+        branch.put("hits", fresh.size());
+        branch.put("elapsedMs", ms);
+        branch.put("delegated", ctx.delegated);
+        branch.put("digest", preview);
+        branch.put("description", fullBranchDescription(sub, ctx.question));
+        // 编排视图用它区分两种分支：全循环那一支显示"跑了 N 步工具 + 交付了什么"，而不是"命中几块"
+        branch.put("mode", BranchMode.FULL.code());
+        branch.put("steps", report.toolSteps());
+        if (!report.artifactFilesOrEmpty().isEmpty()) branch.put("artifacts", report.artifactFilesOrEmpty());
+        if (!ok && report.error() != null) branch.put("error", report.error());
+        synchronized (ctx) {
+            ctx.branches.add(branch);
+        }
+    }
+
+    /**
+     * 子轮的引用来源 → 主链路可用的命中块。
+     * <p>{@code content} 取子轮的 snippet（父轮的上下文填充段本就按片段窗口截取，拿不到整块也不影响
+     * 引用展示）；{@code chunkIndex}/{@code titlePath} 子轮没下发，置空即可——主链路只有相邻块合并用得到它们。
+     */
+    @SuppressWarnings("unchecked")
+    private static HybridRetrievalService.Hit hitFromChildSource(Map<String, Object> src) {
+        if (src == null) return null;
+        String kid = str(src.get("knowledgeId"));
+        if (kid == null || kid.isBlank()) return null;
+        List<String> images = src.get("images") instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList() : List.of();
+        double score = num(src.get("score"), 0.0);
+        Double rerank = src.get("rerankScore") == null ? null
+                : Double.valueOf(String.valueOf(src.get("rerankScore")));
+        return new HybridRetrievalService.Hit(kid, str(src.get("docId")), str(src.get("title")),
+                str(src.get("snippet")), images, score, null, null, rerank);
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private static double num(Object v, double fallback) {
+        if (v == null) return fallback;
+        try {
+            return Double.parseDouble(String.valueOf(v));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** 全循环分支的任务描述：委派语按"它去做这件事"来写，而不是"按它检索" */
+    private static String fullBranchDescription(Agent sub, String question) {
+        String d = sub == null || sub.getDescription() == null ? "" : sub.getDescription().trim();
+        if (!d.isEmpty()) return d.length() > 60 ? d.substring(0, 60) + "…" : d;
+        return "由「" + (sub == null ? "子智能体" : sub.getName()) + "」完整办一遍：" + RunCtx.truncate(question, 30);
     }
 
     /**

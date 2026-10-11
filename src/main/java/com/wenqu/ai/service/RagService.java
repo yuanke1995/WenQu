@@ -2,6 +2,9 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.agent.tool.ResourceRefs;
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.agent.subagent.BranchReport;
+import com.wenqu.ai.agent.subagent.BranchRequest;
+import com.wenqu.ai.agent.subagent.BranchRunner;
 import com.wenqu.ai.agent.tool.ToolApprover;
 import com.wenqu.ai.agent.tool.ToolEnrichment;
 import com.wenqu.ai.agent.tool.ToolFamily;
@@ -794,6 +797,16 @@ public class RagService {
         final String editVariantGroup = cmd.getEditVariantGroup();
         final boolean planMode = cmd.isPlanMode();
         // deepThink 不从这里解包：它是本轮入口裁决后的值（用户开关 + 模型能力），比命令里那份更晚
+        // P3a 子智能体分支的三件事：深度、父轮交代、父会话。全是默认值（0/null/null）时本轮就是
+        // 用户在对话里直接发起的那一轮，行为与引入这些字段之前逐字相同。
+        final int subagentDepth = cmd.getSubagentDepth();
+        final boolean branchTurn = cmd.branchTurn();
+        final String parentBrief = cmd.getParentBrief();
+        final String parentSessionId = cmd.getParentSessionId();
+        if (branchTurn) {
+            log.info("[SUBAGENT] 本轮是子智能体分支: 深度={} 父会话={} 本会话={} 摘要={}字",
+                    subagentDepth, parentSessionId, sessionId, parentBrief == null ? 0 : parentBrief.length());
+        }
 
         long startTime = System.currentTimeMillis();
         // 本轮身份：取自 chat() 入口登记的把手（runChat 全程都在这一轮里跑，把手到真收尾才摘），
@@ -1049,7 +1062,7 @@ public class RagService {
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
-                        userMessageId, delegatedRound ? delegatedAgent : null, planMode, skills);
+                        userMessageId, delegatedRound ? delegatedAgent : null, planMode, skills, subagentDepth);
                 return;
             }
 
@@ -1231,7 +1244,8 @@ public class RagService {
                         "重排本轮未返回相关性分数：上下文与引用按融合分筛选，相关性可能偏低");
             }
 
-            // SubAgent 并行编排（4.3，默认关）：多视角并行检索 + 要点提炼。
+            // SubAgent 并行编排（4.3，默认关）：多视角并行检索 + 要点提炼；P3a 起被委派的子智能体
+            // 可以按档位跑「真全循环」（整轮问答，见 SubAgentOrchestrator 类注释）。
             // 放在检索之后、system 构建之前——子代理命中要并入上下文，要点要注入 system。
             // 增强项：编排内部已把所有异常降级为空结果，失败不影响主链路
             SubAgentOrchestrator.Outcome subOutcome = null;
@@ -1247,13 +1261,27 @@ public class RagService {
                     m.put("delegated", branch.delegated());
                     m.put("description", branch.description());
                     m.put("digest", branch.digest());
+                    // 执行形态与工具步数：让用户看得见"这一支是交资料还是真干活"（digest 恒 steps=0）
+                    m.put("mode", branch.mode());
+                    m.put("steps", branch.steps());
                     sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
                 };
-                if (subCandidates.isEmpty()) {
+                // 全循环分支的执行器（P3a）：把分支交回这条管线自己跑。刻意按轮回传而不是注入一个 bean，
+                // 见 BranchRunner 接口注释。
+                BranchRunner runner = branchRunner(sessionId, turnId, userId, guestMode);
+                if (subCandidates.isEmpty() && branchTurn) {
+                    // 分支轮不再展开「多视角并行检索」：这一支本身就是父轮扇出来的一条分支，
+                    // 再展开一层就是乘数成本（真机实测每支多 4~6 秒与两次提炼调用），
+                    // 而分支要做的事是"把这件事办完"，不是把父轮的检索再猜一遍视角。
+                    // 它自己**显式挂了**子智能体时照样往下派（受深度硬顶约束），所以只跳这一条隐式多视角。
+                    log.info("[SUBAGENT] 分支轮跳过隐式多视角编排（乘数成本），本支只做主检索 + 工具循环");
+                } else if (subCandidates.isEmpty()) {
                     // 未挂子智能体 → 原有的「多视角并行检索」
                     // 阶段文案统一：并行检索只是检索的一种实现（分支进度由 subagent 事件承载）
                     sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
-                    subOutcome = subAgentOrchestrator.run(question, null, onBranch, resolvedModel);
+                    subOutcome = subAgentOrchestrator.run(new SubAgentOrchestrator.BranchSpec(
+                            question, null, onBranch, resolvedModel, subagentDepth, sessionId, turnId,
+                            userId, null, guestMode, runner));
                 } else {
                     // 挂了子智能体 → 路由已在检索前完成（见 0.5 段的 subagent_route 事件），此处直接按挑选结果并行咨询；
                     // 全量为空=路由判定无需咨询任何助手（问题与各助手职责均不匹配），跳过编排
@@ -1263,7 +1291,9 @@ public class RagService {
                     } else {
                         // 阶段文案统一：子智能体也是检索路数之一（咨询了哪几个由 subagent 事件承载）
                         sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
-                        subOutcome = subAgentOrchestrator.run(question, delegated, onBranch, resolvedModel);
+                        subOutcome = subAgentOrchestrator.run(new SubAgentOrchestrator.BranchSpec(
+                                question, delegated, onBranch, resolvedModel, subagentDepth, sessionId, turnId,
+                                userId, branchBrief(sessionId, question, subagentDepth), guestMode, runner));
                     }
                 }
                 if (subOutcome != null && !subOutcome.hits().isEmpty()) {
@@ -1300,6 +1330,16 @@ public class RagService {
                             + "可给出完整操作路径与配置说明。"
                     : "\n\n【使用者身份】本轮提问者是普通成员（没有管理端权限）：涉及系统设置、模型供应商、成员与权限、部署运维、API Key 等管理端内容时，"
                             + "说明该能力属于管理端、由管理员配置，不要展开管理端操作步骤；只回答他在使用侧能做什么（如提问、上传资料、选用智能体等）。");
+            // 父轮交代（P3a 分支继承父历史）：主智能体派活时只传后半句是跑不动的——
+            // "把上面那段写成脚本"里没有"上面那段"，分支就只能检索到一堆无关东西，回报回来是废的。
+            // 同时把"这一轮没有人可问"说在前面：提问卡与任务清单的工具在分支轮压根不挂
+            // （判据见 ToolMountContext#turnAllows），不说明的话模型会写出"我先问你一个问题"却没有工具可用。
+            if (branchTurn && parentBrief != null && !parentBrief.isBlank()) {
+                system.append("\n\n【上游交代】你是被主智能体派出来办这件事的子智能体，它那边的上下文如下")
+                        .append("（用来理解要做什么，不要把它的原话抄进你的回报）：\n").append(parentBrief)
+                        .append("\n这一轮没有用户可以对话：缺信息就按资料里最合理的默认做完，")
+                        .append("把你的假设写在结论里，不要停下来等回答。");
+            }
             // 检索-反思循环（Agentic RAG）：首轮检索结果之外授权模型自主多轮检索——工具已强制暴露
             // （enabledToolCallbacks），这里只补「何时该再检索、何时该停」的判定规则
             if (reflectiveRetrieval) {
@@ -1311,7 +1351,7 @@ public class RagService {
                         + "不得凭常识编造。每次检索结果会附「证据充分性自评」提示，按其指引决定再检索还是作答。");
             }
             // 人机协同三入口（计划卡/任务清单/提问卡）的分工指引：与无知识库分支共用同一装配（见 humanLoopGuide）
-            system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter));
+            system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter, branchTurn));
             system
                     .append(relatedPromptLine());
             // 容量计量分段标记：按 StringBuilder 位置切出各段，供容量面板分类展示（系统提示词/记忆/技能/其他）
@@ -1377,6 +1417,23 @@ public class RagService {
             if (subOutcome != null && !subOutcome.digestText().isBlank()) {
                 system.append("\n\n【并行检索要点】\n").append(subOutcome.digestText());
                 stageMs.put("subagent", subOutcome.elapsedMs());
+            }
+            // 全循环分支的回报段（P3a）：这一段里的引用与图片编号此刻还是<b>子轮自己的</b>，
+            // 先以 ⟦b<支>:r<号>⟧ / ⟦b<支>:i<号>⟧ 占位入位（长度与最终形态接近，所以能按现长计入预算），
+            // 等主链路资料填充完、父轮编号定了，再就地替换（见 resolveBranchReportRefs）。
+            // 为什么不能直接拼子轮原文：子轮的 [3] 与父轮的 [3] 指的是两份不同资料，
+            // 拼起来就是一个指向错误来源的引用——用户点开看到的是别处的内容。
+            int subReportStart = -1;
+            int subReportEnd = -1;
+            if (subOutcome != null && !subOutcome.fulls().isEmpty()) {
+                String reports = branchReportsText(subOutcome.fulls());
+                if (!reports.isBlank()) {
+                    system.append("\n\n【子智能体回报】以下是它替你办完的一件事，其中结论的来源已并入本轮参考资料：\n")
+                            .append(reports);
+                    subReportStart = system.length() - reports.length();
+                    subReportEnd = system.length();
+                    stageMs.put("subagent", subOutcome.elapsedMs());
+                }
             }
             int partOtherEnd = system.length();
 
@@ -1711,6 +1768,19 @@ public class RagService {
             // 检索 + 重排 + 上下文填充全部完成（生成前的最后一个阶段）
             stageMs.put("retrieve", System.currentTimeMillis() - startTime);
 
+            // 全循环分支的编号回填（P3a）：此刻父轮引用表已定稿，把回报段里的子轮编号换成父轮的，
+            // 并把父轮资料表里确实没有的那几块注册进来（origin=SUBAGENT），让"子智能体查到的"也能点开看来源。
+            // 放在这里而不是编排处：编排时父轮编号还不存在，先编必然撞号。
+            if (subReportStart >= 0 && subOutcome != null) {
+                String resolved = resolveBranchReportRefs(system.substring(subReportStart, subReportEnd),
+                        subOutcome.fulls(), sources, imgIndex, imgDescIndex, fileNameMap, scopeDocIds,
+                        degradations, degradedCodes);
+                system.replace(subReportStart, subReportEnd, resolved);
+                partOtherEnd = system.length();   // 容量面板的「其他」段边界随替换长度移动
+                log.info("[SUBAGENT] 回报段编号回填完成：父轮引用 {} 条，长度 {}→{}",
+                        sources.size(), subReportEnd - subReportStart, resolved.length());
+            }
+
             // 3.5 检索状态行（豆包式，回答上方常驻）：搜索 N 个关键词，参考 M 段资料
             // 只展示主词元（jieba 有效词），2-gram/4-gram 子词元仅参与召回、不展示给用户
             List<String> searchTerms = keywordExtractor.extractMain(retrievalQuery);
@@ -1752,7 +1822,8 @@ public class RagService {
             st.delegatedAgentId = delegatedRound ? delegatedAgent.getId() : null; // §4 轮级委派归属（随 done 下发）
             st.delegatedAgentName = delegatedRound ? delegatedAgent.getName() : null;
             applyPermissionTier(agent, st); // 权限档位（P2）：沙盒执行档 + 生效的工具执行确认档位
-            st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
+            st.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（智能体覆盖 > 全局；分支逐层减半）
+            st.branchTurn = branchTurn;   // 子智能体分支：「要有人在场」的工具不挂（见 ToolMountContext#turnAllows）
             st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
             st.contextTokens = usedTokens + fixedTokens;
@@ -1987,7 +2058,7 @@ public class RagService {
      * 否则下一族想加开关时得先改通用层。
      */
     private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
-        return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval,
+        return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval, st.branchTurn,
                 (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message),
                 st.permissionPolicy);
     }
@@ -2000,15 +2071,18 @@ public class RagService {
      * （今天只有 MCP 族会报降级，而它只在装配回调时被调用）。
      */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
-        return mountContext(agent, userId, guestMode, reflective, (code, message) -> {
+        return mountContext(agent, userId, guestMode, reflective, false, (code, message) -> {
         }, null);
     }
 
     /**
      * @param turnPolicy 本轮已解析的权限档位（问答侧传 {@code st.permissionPolicy}，与守卫读同一份）；
      *                   null = 现算（提示词侧那条路径没有本轮状态对象）
+     * @param branchTurn 本轮是否为子智能体分支（P3a）：分支里「要有人在场」的工具（提问卡、任务清单）
+     *                   不进工具表，判据与装配同一条 {@link ToolMountContext#turnAllows}
      */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective,
+                                          boolean branchTurn,
                                           java.util.function.BiConsumer<String, String> degradationSink,
                                           com.wenqu.ai.agent.permission.ExecutionPolicy turnPolicy) {
         return new ToolMountContext() {
@@ -2020,6 +2094,11 @@ public class RagService {
             @Override
             public boolean guestMode() {
                 return guestMode;
+            }
+
+            @Override
+            public boolean branchTurn() {
+                return branchTurn;
             }
 
             @Override
@@ -2052,6 +2131,11 @@ public class RagService {
                 // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
                 // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。联网搜索不受本档管辖（族上未标）。
                 return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
+            }
+
+            @Override
+            public boolean approvalAsk() {
+                return agent != null && "ask".equalsIgnoreCase(agent.getToolApprovalMode());
             }
 
             @Override
@@ -2220,6 +2304,11 @@ public class RagService {
 
             @Override
             public ToolApprover approver() {
+                // 子智能体分支（P3a）没有可应答通道：那条临时会话没人开着，审批卡发不出去、
+                // 铃铛会指向一条跑完就删的会话，而工具线程要白等 chat.approvalTimeoutMs（默认 120s）。
+                // 返回 null 走的正是 ApprovalGate 已写明的「问不到就直接拒，理由写明无人可确认」那条，
+                // 覆盖装配挡不住的 MCP 动态工具（它们没有静态描述符，族级裁剪够不着名字）。
+                if (st.branchTurn) return null;
                 return (inv, timeoutMs) -> requestToolApproval(st, inv, timeoutMs);
             }
 
@@ -3321,7 +3410,11 @@ public class RagService {
                 // 向上游透传（ThreadLocal 在 netty 事件循环线程不可见），由 DynamicOpenAiChatModel
                 // 在路由出口写台账。工具调用循环的每一轮同属本次问答，走同一份归属。
                 .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
-                        com.wenqu.ai.util.UsageAttr.of(st.userId, st.sessionId, null, "chat")))
+                        // 归属 kind：子智能体分支记 subagent（P3a）。台账按 uid 记账本来就落在同一个人头上，
+                        // 这里区分的是"这个人自己问的"与"他派出去的智能体问的"——排查一轮为什么这么贵时，
+                        // 得能看出钱花在分支上而不是主轮上。
+                        com.wenqu.ai.util.UsageAttr.of(st.userId, st.sessionId, null,
+                                st.branchTurn ? "subagent" : "chat")))
                 .map(resp -> {
                     org.springframework.ai.chat.metadata.Usage usage = resp.getMetadata() == null
                             ? null : resp.getMetadata().getUsage();
@@ -4088,6 +4181,12 @@ public class RagService {
         volatile com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy;
         /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
         volatile int maxToolSteps;
+        /**
+         * 本轮是否为子智能体分支（P3a）：装配判据（{@code ToolMountContext#turnAllows}）据此
+         * 不收「要有人在场」的工具（提问卡等人点、任务清单给人看，而分支那条会话没有观众）。
+         * 判据本体在描述符的 {@code viewerRequired} 上，这里只把"这是分支"那个事实带到装配处。
+         */
+        volatile boolean branchTurn;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露
@@ -5135,16 +5234,23 @@ public class RagService {
      * <p>判据本体在 {@code BuiltinToolProvider.exposes}，这里只是问答侧的查询口——装配与提示词
      * 共用同一份，否则会出现「提示词教模型用某个工具，工具表里却没有它」，模型只会对着不存在的能力空转。
      */
-    private boolean builtinExposed(boolean guestMode, Agent agent, String name) {
-        return toolRegistry.exposes(ToolFamily.BUILTIN, name, mountContext(agent, "", guestMode, false));
+    private boolean builtinExposed(boolean guestMode, Agent agent, String name, boolean branchTurn) {
+        return toolRegistry.exposes(ToolFamily.BUILTIN, name,
+                mountContext(agent, "", guestMode, false, branchTurn, (code, message) -> {
+                }, null));
     }
 
     /**
      * 任务清单工具本轮是否真的挂得上：总闸 + tool.todo.enabled，对匿名访客恒为否
      * （游客收窄那条写在描述符的 guestAllowed 上，不在这里另判一遍）。
+     * <p>子智能体分支（branchTurn=true）这里判不出来也不该在这儿判——清单的
+     * {@code viewerRequired=true} 让 {@link ToolMountContext#turnAllows} 把它收掉，
+     * 与装配那处是同一条判据（在此再写一个 {@code !branchTurn} 就是第二份真源，迟早漂移）。
      */
-    private boolean todoExposed(boolean guestMode, Agent agent) {
-        return toolRegistry.anyExposed(ToolFamily.TODO, mountContext(agent, "", guestMode, false));
+    private boolean todoExposed(boolean guestMode, Agent agent, boolean branchTurn) {
+        return toolRegistry.anyExposed(ToolFamily.TODO,
+                mountContext(agent, "", guestMode, false, branchTurn, (code, message) -> {
+                }, null));
     }
 
     /**
@@ -5155,10 +5261,14 @@ public class RagService {
      * {@code ToolRegistry}，实现在各族 provider 里）：
      * 计划卡对游客、无工具的收集型通道、不支持 Function Calling 的模型永不出现，写了就是让它等一张不会来的卡。
      * 三个入口都不可用时返回空串，对本轮提示词零影响。
+     * <p>子智能体分支（{@code branchTurn}）走的是同一份判据：提问卡与任务清单的
+     * {@code viewerRequired} 让它们在分支轮不挂，于是这一整段在分支里自然为空——
+     * 不需要在此另写一条"分支不写三入口"的分支。
      */
-    private String humanLoopGuide(boolean guestMode, Agent agent, String model, SseEmitter emitter) {
-        boolean todoOn = todoExposed(guestMode, agent);
-        boolean askOn = builtinExposed(guestMode, agent, "askUser");
+    private String humanLoopGuide(boolean guestMode, Agent agent, String model, SseEmitter emitter,
+                                  boolean branchTurn) {
+        boolean todoOn = todoExposed(guestMode, agent, branchTurn);
+        boolean askOn = builtinExposed(guestMode, agent, "askUser", branchTurn);
         boolean planOn = !guestMode && configService.getBoolean("tool.enabled")
                 && !(emitter instanceof CollectingSseEmitter)
                 && modelRegistryService.toolCapableOf(model);
@@ -5224,11 +5334,411 @@ public class RagService {
             }
             subs.add(s);
         }
-        if (subs.size() > 4) {
-            log.warn("[AGENT] 委派子智能体 {} 个，超出并行上限，仅取前 4 个", subs.size());
-            return subs.subList(0, 4);
+        if (subs.size() > maxParallelBranches()) {
+            log.warn("[AGENT] 委派子智能体 {} 个，超出并行上限 {}，仅取前 {} 个",
+                    subs.size(), maxParallelBranches(), maxParallelBranches());
+            return subs.subList(0, maxParallelBranches());
         }
         return subs;
+    }
+
+    /** 并行分支上限（与编排器同一条判据，两处都读 {@code agent.maxParallelSubAgents}） */
+    private int maxParallelBranches() {
+        return Math.max(1, Math.min(8, configService.getInt("agent.maxParallelSubAgents", 4)));
+    }
+
+    // ==================== P3a：子智能体真全循环 ====================
+
+    /**
+     * 派分支时带过去的父轮上下文（对标 DeepSeek Harness 的 fork-in-process：分支继承父历史）。
+     * <p>不做这件事的代价很具体：主智能体问"上面那份流程里第三步是什么，把它写成脚本"，分支只拿到
+     * 后半句，检索不到任何东西，回报回来是废的——委派越常见，这个缺口越像 bug。
+     * <p>预算<b>逐层递减</b>（{@code agent.subagentBriefChars / depth}）：孙辈不需要整段父历史，
+     * 层数一深就变成每层都重复搬一遍全文，那是纯成本。
+     * <p>历史取不到（{@code getRecentHistory} 明确返回 null=读失败）时只带问题，不谎称"没有历史"。
+     */
+    private String branchBrief(String sessionId, String question, int depth) {
+        int nextDepth = depth + 1;
+        int budget = Math.max(200, configService.getInt("agent.subagentBriefChars", 1200) / nextDepth);
+        StringBuilder sb = new StringBuilder();
+        sb.append("用户最初的问题：").append(truncateForBrief(question, budget));
+        try {
+            List<Map<String, Object>> history = sessionService.getRecentHistory(sessionId, 3);
+            if (history == null) {
+                log.warn("[SUBAGENT] 父轮历史读取失败（分支只带问题，不带上下文）session={}", sessionId);
+            } else if (!history.isEmpty()) {
+                // 最近一轮通常是本问题自己（刚即时落库），倒序取、跳过它，才拿到真正的前情
+                List<String> lines = new ArrayList<>();
+                for (int i = history.size() - 1; i >= 0 && lines.size() < 4; i--) {
+                    Map<String, Object> m = history.get(i);
+                    String content = m.get("content") == null ? "" : String.valueOf(m.get("content")).trim();
+                    if (content.isBlank()) continue;
+                    String role = String.valueOf(m.getOrDefault("role", ""));
+                    if (content.equals(question == null ? "" : question.trim())) continue;
+                    lines.add(("user".equalsIgnoreCase(role) ? "问：" : "答：") + truncateForBrief(content, 220));
+                }
+                if (!lines.isEmpty()) {
+                    sb.append("\n此前的对话（从新到旧）：\n");
+                    for (String line : lines) sb.append("- ").append(line).append("\n");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[SUBAGENT] 父轮上下文整理失败（分支只带问题）: {}", e.getMessage());
+        }
+        String brief = sb.toString().trim();
+        return brief.length() > budget ? brief.substring(0, budget) : brief;
+    }
+
+    private static String truncateForBrief(String s, int max) {
+        if (s == null) return "";
+        String t = s.replaceAll("\\s+", " ").trim();
+        return t.length() > max ? t.substring(0, max) + "…" : t;
+    }
+
+    /**
+     * 全循环分支的执行器（{@link BranchRunner} 的实现，按轮回传）。
+     * <p>形状与工作流的 subagent 节点同一条通路（临时会话 + 收集型通道 + 完整 {@code chat} 管线），
+     * 区别在归属：这一条要<b>继承父轮</b>的深度与上下文、要把产物收养进父会话、并且失败绝不能外抛——
+     * 分支是增强项，一支炸了不能让用户这一轮整个报错。
+     * <p>为什么用临时会话：{@code chat()} 的轮级互斥 {@code TURN_IN_FLIGHT} 按会话加锁，
+     * 借父会话就是父轮自己撞自己的坑（派出去立刻失败）；而分支之间用不同会话天然并行、
+     * 彼此不互斥。临时会话跑完即删（软删可审计），不污染会话列表。
+     */
+    private BranchRunner branchRunner(String parentSessionId, String parentTurnId, String userId,
+                                      boolean guestMode) {
+        return req -> {
+            long start = System.currentTimeMillis();
+            String childSession = null;
+            CollectingSseEmitter sink = new CollectingSseEmitter();
+            try {
+                childSession = sessionService.createSession(req.userId());
+                chat(ChatCommand.builder()
+                        .sessionId(childSession)
+                        .question(req.question())
+                        .userId(req.userId())
+                        .userImages(List.of())
+                        .attachments(List.of())
+                        .skills(List.of())
+                        .agentId(req.childAgentId())
+                        .modelOverride(req.modelRef())
+                        .guestMode(guestMode)
+                        .subagentDepth(req.depth())
+                        .parentBrief(req.parentBrief())
+                        .parentSessionId(req.parentSessionId())
+                        .build(), sink);
+                if (!sink.awaitDone(req.timeoutMs())) {
+                    // 超时必须把那一支叫停：它还在流水线里跑，而父轮已经不等它了。
+                    // 不叫停的后果是"删了一条还在被写的会话"+"一条线程被派出去的任务占住"，
+                    // 并发几轮之后问答池就被没人等的分支填满。
+                    stopTurn(childSession, req.userId());
+                    return BranchReport.failed(BranchReport.TIMEOUT,
+                            "分支超时（" + req.timeoutMs() / 1000 + " 秒）", System.currentTimeMillis() - start);
+                }
+                if (sink.lastError() != null && !sink.lastError().isBlank()) {
+                    return BranchReport.failed(BranchReport.FAILED, sink.lastError(),
+                            System.currentTimeMillis() - start);
+                }
+                String answer = sink.answer() == null ? "" : sink.answer().strip();
+                if (answer.isBlank()) {
+                    return BranchReport.failed(BranchReport.FAILED, "子智能体未产生回答",
+                            System.currentTimeMillis() - start);
+                }
+                // 子轮的引用/图片表是父轮续编编号的依据（done 载荷里那份是<b>已签名</b>的展示副本，
+                // 存进回报前先把签名参数剥掉，回到与主链路一致的原始 URL）
+                List<Map<String, Object>> childSources = new ArrayList<>();
+                List<String> childImages = new ArrayList<>();
+                int steps = 0;
+                try {
+                    // done 的 content 在 sendSseEvent 里是被当**字符串**再序列化一次的（外层 {"content":"{...}"}），
+                    // 所以这里要解两层：直接 parseObject 会在内层引号处报 illegal input（真机实测踩到，
+                    // 表现是引用与工具步数静默为 0，只有日志能看出来）
+                    Object parsed = sink.donePayload() == null ? null : com.alibaba.fastjson2.JSON.parse(sink.donePayload());
+                    if (parsed instanceof String s) parsed = com.alibaba.fastjson2.JSON.parse(s);
+                    com.alibaba.fastjson2.JSONObject done = parsed instanceof com.alibaba.fastjson2.JSONObject o ? o : null;
+                    if (done != null) {
+                        com.alibaba.fastjson2.JSONArray ss = done.getJSONArray("sources");
+                        if (ss != null) {
+                            for (int i = 0; i < ss.size(); i++) {
+                                com.alibaba.fastjson2.JSONObject o = ss.getJSONObject(i);
+                                if (o == null) continue;
+                                Map<String, Object> m = new LinkedHashMap<>(o);
+                                m.put("images", rawUrlsOf(o.getList("images", String.class)));
+                                childSources.add(m);
+                            }
+                        }
+                        childImages = rawUrlsOf(done.getList("finalImages", String.class));
+                        com.alibaba.fastjson2.JSONArray tc = done.getJSONArray("toolCalls");
+                        steps = tc == null ? 0 : tc.size();
+                    }
+                } catch (Exception e) {
+                    log.warn("[SUBAGENT] 分支回报解析失败（正文照常带回，引用与图片不续编）: {}", e.getMessage());
+                }
+                // 产物收养：子轮交付的东西归到父会话，用户在父轮里就点得到（跑完即删的临时会话留不住它）
+                List<String> artifactFiles = new ArrayList<>();
+                try {
+                    for (Map<String, Object> a : artifactService.adoptFromSession(childSession, parentSessionId)) {
+                        Object f = a.get("filename");
+                        if (f != null) artifactFiles.add(String.valueOf(f));
+                    }
+                } catch (Exception e) {
+                    log.warn("[SUBAGENT] 分支产物收养失败（回答仍有效，产物留在子会话）: {}", e.getMessage());
+                }
+                long ms = System.currentTimeMillis() - start;
+                log.info("[SUBAGENT] 全循环分支完成 {}：正文 {}字 引用 {} 条 工具步 {} 产物 {} 个 耗时 {}ms",
+                        req.describe(), answer.length(), childSources.size(), steps, artifactFiles.size(), ms);
+                return new BranchReport(BranchReport.DONE, answer, List.copyOf(childSources),
+                        List.copyOf(childImages), steps, List.copyOf(artifactFiles), ms, null);
+            } catch (Exception e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                log.warn("[SUBAGENT] 全循环分支异常（按失败降级，不影响主链路）{}: {}",
+                        req.describe(), cause.toString());
+                return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start);
+            } finally {
+                // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
+                forgetSseChannel(sink);
+                if (childSession != null) {
+                    try {
+                        sessionService.deleteSession(req.userId(), childSession);
+                    } catch (Exception ignored) {
+                        // 删失败只多留一条临时会话，不影响回答；硬抛会把已跑完的分支报成失败
+                    }
+                }
+            }
+        };
+    }
+
+    /** 展示层签名 URL → 原始 URL（与库内/上下文里存的那份同源，才能与主链路的编号表对上） */
+    private static List<String> rawUrlsOf(List<String> urls) {
+        if (urls == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String u : urls) {
+            if (u == null || u.isBlank()) continue;
+            int q = u.indexOf('?');
+            out.add(q > 0 ? u.substring(0, q) : u);
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * 回报段文本（占位形态）：每条分支一段，正文里的引用/图片先写成 {@code ⟦b<支>:r<号>⟧}。
+     * <p>预算：全部回报共享 {@code agent.digestMaxChars}，按支数均分——一支写完一篇文章把
+     * 主链路的上下文挤光，用户看到的就不是主智能体的回答而是它的拼接稿。
+     * <p>失败分支照样留一行（沿用要点段那条「失败要看得见」的口径）：不写，主模型会把
+     * "这一支没结果"当成"这件事不用做"。
+     */
+    private String branchReportsText(List<SubAgentOrchestrator.FullBranch> fulls) {
+        int per = Math.max(300, configService.getInt("agent.digestMaxChars", 1500) / Math.max(1, fulls.size()));
+        StringBuilder sb = new StringBuilder();
+        for (SubAgentOrchestrator.FullBranch fb : fulls) {
+            BranchReport r = fb.report();
+            if (sb.length() > 0) sb.append("\n");
+            if (!r.usable()) {
+                sb.append("· 【").append(fb.name()).append("】未办成（")
+                        .append(BranchReport.TIMEOUT.equals(r.status()) ? "超时" : "失败").append("：")
+                        .append(truncateForBrief(r.error() == null ? "无详情" : r.error(), 60)).append("）\n");
+                continue;
+            }
+            sb.append("· 【").append(fb.name()).append("】");
+            if (!r.artifactFilesOrEmpty().isEmpty()) {
+                sb.append("已交付：").append(String.join("、", r.artifactFilesOrEmpty())).append("；");
+            }
+            sb.append(r.toolSteps() > 0 ? "用了 " + r.toolSteps() + " 步工具：\n" : "结论：\n");
+            sb.append(placeholderize(r, fb.idx(), per)).append("\n");
+        }
+        return sb.toString().strip();
+    }
+
+    /**
+     * 把子轮正文里的 {@code [N]} / {@code [图片N]} 换成占位记号，等父轮编号定稿后回填。
+     * <p>只认子轮真发过的编号（超出其引用数/图片数的编号是模型编的，直接去掉——与主链路对
+     * 模型越界编号的处理同口径，不能让分支里的假引用比主链路更好混）。
+     */
+    private static String placeholderize(BranchReport r, int branchIdx, int budget) {
+        String text = r.answerOrEmpty().replaceAll("\\s+", " ").strip();
+        if (text.length() > budget) {
+            log.warn("[SUBAGENT] 分支回报超预算已截断：{} 字 > {} 字（分支 {}）", text.length(), budget, branchIdx);
+            text = text.substring(0, budget) + "…";
+        }
+        int maxRef = r.sourcesOrEmpty().size();
+        int maxImg = r.imagesOrEmpty().size();
+        Matcher cm = Pattern.compile("\\[(\\d{1,3})]").matcher(text);
+        StringBuffer cited = new StringBuffer();
+        while (cm.find()) {
+            int n = Integer.parseInt(cm.group(1));
+            cm.appendReplacement(cited, n >= 1 && n <= maxRef
+                    ? Matcher.quoteReplacement("⟦b" + branchIdx + ":r" + n + "⟧") : "");
+        }
+        // appendTail 必须有：只调 appendReplacement 时，最后一段（以及一处都没命中时的整段正文）
+        // 不会进 StringBuffer——那等于把子智能体的回报悄悄吞成空串，界面上是"派了，什么都没有"
+        cm.appendTail(cited);
+        cm = Pattern.compile("\\[图片(\\d{1,3})]").matcher(cited.toString());
+        StringBuffer imgs = new StringBuffer();
+        while (cm.find()) {
+            int n = Integer.parseInt(cm.group(1));
+            cm.appendReplacement(imgs, n >= 1 && n <= maxImg
+                    ? Matcher.quoteReplacement("⟦b" + branchIdx + ":i" + n + "⟧") : "");
+        }
+        cm.appendTail(imgs);
+        return imgs.toString();
+    }
+
+    /**
+     * 回填父轮编号（P3a 的"引用继承"落点）。
+     * <ul>
+     *   <li>子轮引用过的块<b>多数已在父轮参考资料里</b>（分支命中的那些本就并进了主链路填充）——
+     *       按 knowledgeId 复用父轮已有编号，绝不重复注册同号；</li>
+     *   <li>父轮没带上的（分支自己调检索工具命中、没进主链路的）补注册为新来源，origin=SUBAGENT，
+     *       续在父轮编号尾部——用户点得开，才算"分支的结论有出处"；</li>
+     *   <li>超出本轮资料范围（智能体库范围之外）的那几块<b>不注册</b>：只把编号摘掉并在段末说明。
+     *       范围是智能体配置的能力边界，不能因为"分支跑在另一个会话里"就把本该看不到的资料
+     *       顺带引到主轮来；</li>
+     *   <li>图片按 URL 归并：同一张图在父子两轮共用一个编号，否则回答里会出现两张同一截图。</li>
+     * </ul>
+     */
+    private String resolveBranchReportRefs(String section, List<SubAgentOrchestrator.FullBranch> fulls,
+                                           List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
+                                           Map<Integer, String> imgDescIndex, Map<String, String> fileNameMap,
+                                           Set<String> scopeDocIds, List<Map<String, String>> degradations,
+                                           Set<String> degradedCodes) {
+        Map<Integer, Map<Integer, Integer>> refMap = new HashMap<>();     // 支 → (子引用号 → 父号)
+        Map<Integer, Map<Integer, Integer>> imgMap = new HashMap<>();     // 支 → (子图片号 → 父图片号)
+        int dropped = 0;
+        for (SubAgentOrchestrator.FullBranch fb : fulls) {
+            BranchReport r = fb.report();
+            if (!r.usable()) continue;
+            Map<Integer, Integer> rm = new HashMap<>();
+            Map<Integer, Integer> im = new HashMap<>();
+            // 本轮被接受的那些来源里的图片 URL：图片编号只从这些里续编。
+            // 不加这道限制就会把"父轮范围外那块资料上的截图"编进父轮图片表——正文里的编号摘掉了，
+            // 图却仍然随 image 事件下发给了前端，等于绕过了上面那条范围判定。
+            Set<String> acceptedImgUrls = new HashSet<>();
+            for (Map<String, Object> src : r.sourcesOrEmpty()) {
+                Integer childRef = intOf(src.get("ref"));
+                if (childRef == null) continue;
+                String kid = src.get("knowledgeId") == null ? null : String.valueOf(src.get("knowledgeId"));
+                String docId = src.get("docId") == null ? null : String.valueOf(src.get("docId"));
+                if (kid == null || kid.isBlank()) continue;
+                Integer parent = findSourceRef(sources, kid);
+                if (parent == null) {
+                    if (scopeDocIds != null && (docId == null || !scopeDocIds.contains(docId))) {
+                        dropped++;
+                        continue;   // 范围外：宁可不编号，也不把父轮不该用的资料引出来
+                    }
+                    parent = registerBranchSource(src, sources, imgIndex, imgDescIndex, fileNameMap, fb.name());
+                }
+                if (parent == null) continue;
+                rm.put(childRef, parent);
+                if (src.get("images") instanceof List<?> l) {
+                    for (Object u : l) if (u != null) acceptedImgUrls.add(String.valueOf(u));
+                }
+            }
+            List<String> childImgs = r.imagesOrEmpty();
+            for (int i = 0; i < childImgs.size(); i++) {
+                String url = childImgs.get(i);
+                if (url == null || !acceptedImgUrls.contains(url)) continue;
+                Integer seq = parentImageSeq(url, imgIndex, imgDescIndex);
+                if (seq != null) im.put(i + 1, seq);   // 子轮 [图片1] = 下标 0
+            }
+            refMap.put(fb.idx(), rm);
+            imgMap.put(fb.idx(), im);
+        }
+        String out = fillTokens(section, refMap, imgMap);
+        if (dropped > 0) {
+            out = out + "\n（注：该分支有 " + dropped + " 处引用超出本轮资料范围，未编号，回答时不要引用它们。）";
+            addDegradation(degradations, degradedCodes, "subagentSourceOutOfScope",
+                    "子智能体回报中有 " + dropped + " 处资料不在本轮检索范围内，未作为引用");
+            log.warn("[SUBAGENT] 分支回报中 {} 处引用超出本轮资料范围（未编号）", dropped);
+        }
+        return out;
+    }
+
+    /** 把占位记号换成父轮编号；换不到（对应资料没进来）的一律摘掉，不留一个指不回来源的编号 */
+    private static String fillTokens(String text, Map<Integer, Map<Integer, Integer>> refMap,
+                                     Map<Integer, Map<Integer, Integer>> imgMap) {
+        Matcher m = Pattern.compile("⟦b(\\d+):([ri])(\\d{1,4})⟧").matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            int branch = Integer.parseInt(m.group(1));
+            int n = Integer.parseInt(m.group(3));
+            Map<Integer, Integer> map = "r".equals(m.group(2)) ? refMap.get(branch) : imgMap.get(branch);
+            Integer mapped = map == null ? null : map.get(n);
+            String rep = mapped == null ? ""
+                    : ("r".equals(m.group(2)) ? "[" + mapped + "]" : "[图片" + mapped + "]");
+            m.appendReplacement(sb, Matcher.quoteReplacement(rep));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /** 父轮引用表里是否已有这一块（按 knowledgeId，与主链路填充的判重同一口径） */
+    private static Integer findSourceRef(List<Map<String, Object>> sources, String knowledgeId) {
+        for (Map<String, Object> s : sources) {
+            if (s == null || knowledgeId == null) continue;
+            if (knowledgeId.equals(String.valueOf(s.get("knowledgeId")))) {
+                return intOf(s.get("ref"));
+            }
+        }
+        return null;
+    }
+
+    /** 子轮来源补注册进父轮：续编号、带原文片段与图片，origin=SUBAGENT 供前端标出来路 */
+    private Integer registerBranchSource(Map<String, Object> src, List<Map<String, Object>> sources,
+                                         Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
+                                         Map<String, String> fileNameMap, String agentName) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        int ref = sources.size() + 1;
+        entry.put("ref", ref);
+        entry.put("knowledgeId", src.get("knowledgeId"));
+        entry.put("docId", src.get("docId"));
+        String docId = src.get("docId") == null ? null : String.valueOf(src.get("docId"));
+        String fileName = fileNameMap == null || docId == null ? null : fileNameMap.get(docId);
+        if (fileName == null && docId != null && !docId.isBlank() && documentMetaCache != null) {
+            fileName = documentMetaCache.getFileNames(Set.of(docId)).get(docId);
+        }
+        entry.put("fileName", fileName);
+        entry.put("title", src.get("title"));
+        entry.put("snippet", src.get("snippet"));
+        List<String> images = src.get("images") instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList() : List.of();
+        entry.put("images", images);
+        entry.put("origin", "SUBAGENT");
+        entry.put("agent", agentName);
+        Object score = src.get("score");
+        if (score != null) {
+            try {
+                entry.put("score", Math.round(Double.parseDouble(String.valueOf(score)) * 1000) / 1000.0);
+            } catch (NumberFormatException ignored) {
+                // 子轮没给分数就不写一个假分数
+            }
+        }
+        sources.add(entry);
+        for (String url : images) {
+            parentImageSeq(url, imgIndex, imgDescIndex);
+        }
+        return ref;
+    }
+
+    /** 图片按原始 URL 归并进父轮编号表；没有则续编一个（描述未知留空，图片相关性校验对空描述放行） */
+    private static Integer parentImageSeq(String rawUrl, Map<Integer, String> imgIndex,
+                                          Map<Integer, String> imgDescIndex) {
+        if (rawUrl == null || rawUrl.isBlank()) return null;
+        for (Map.Entry<Integer, String> e : imgIndex.entrySet()) {
+            if (rawUrl.equals(e.getValue())) return e.getKey();
+        }
+        int seq = imgIndex.size() + 1;
+        imgIndex.put(seq, rawUrl);
+        imgDescIndex.put(seq, "");
+        return seq;
+    }
+
+    private static Integer intOf(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.intValue();
+        try {
+            return Integer.valueOf(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**
@@ -6791,7 +7301,7 @@ public class RagService {
             versions.add(planVersionEntry(po.plan(), feedback));
             if (po.approved()) {
                 st.planRecord = planSnapshot(versions, "approved", st.planAuto);
-                String block = approvedPlanBlock(po.plan(), todoExposed(st.guestMode, agent));
+                String block = approvedPlanBlock(po.plan(), todoExposed(st.guestMode, agent, st.branchTurn));
                 system.append(block);
                 // 容量计量：计划块与技能/摘要一样是注入段，并入 other 桶（done 的用量校准同源）
                 st.ctxParts.merge("other", TokenCounter.estimate(block), Integer::sum);
@@ -7940,11 +8450,24 @@ public class RagService {
         return t > 0 ? t : 120000L;
     }
 
-    /** 单轮工具步数上限：智能体覆盖（null=继承全局；0=不限制；负数按继承处理） */
-    private int resolveMaxToolSteps(Agent agent) {
+    /**
+     * 单轮工具步数上限：智能体覆盖（null=继承全局；0=不限制；负数按继承处理）。
+     * <p>子智能体分支（{@code depth} &ge; 1）按层<b>减半</b>，并留一个下限 3：
+     * 一条分支能调的工具数是父轮并发乘数的一部分——父轮派 4 支、每支不限步数，一轮就是一场
+     * 没人看着的工具循环。减半是"越深的层越该做一件小事"这个直觉的机器可读版本；
+     * 下限 3 防的是基础值很小或层数很深时 {@code >>} 直接算出 0——而 0 在本平台语义是<b>不限制</b>，
+     * 递减递减出不限制是最坏的结果。
+     * <p>基础值为 0（智能体显式"不限制"）时分支不跟随：那只有人工盯着的会话里才安全，
+     * 分支按全局档减半处理，宁可少跑也不放飞。
+     */
+    private int resolveMaxToolSteps(Agent agent, int depth) {
         Integer v = agent == null ? null : agent.getMaxToolSteps();
-        if (v == null || v < 0) v = configService.getInt("agent.maxToolSteps", 15);
-        return Math.max(0, v);
+        int global = configService.getInt("agent.maxToolSteps", 15);
+        boolean unlimited = v != null && v == 0;
+        int base = (v == null || v < 0) ? global : v;
+        if (depth <= 0) return Math.max(0, base);
+        if (unlimited) base = Math.max(1, global);
+        return Math.max(3, base >> depth);
     }
 
     /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */
@@ -8627,7 +9150,9 @@ public class RagService {
                                     Set<String> degradedCodes, Agent agent, Map<String, Long> stageMs,
                                     String resolvedModel, boolean guestMode, String replaceMessageId,
                                     String userMessageId, Agent delegatedAgent, boolean planMode,
-                                    List<String> skills) {
+                                    List<String> skills, int subagentDepth) {
+        // 与主链路同一个判据：深度 > 0 就是子智能体分支（人在回路工具不挂、步数预算递减）
+        final boolean branchTurn = subagentDepth > 0;
         try {
             // 计划意图识别（按用户意图自动开启计划模式）：与主链路同口径；本分支无检索可争抢，
             // 识别在闸门前串行取结果（宁缺毋滥，最多让本轮多等 awaitPlanIntent 的上限）
@@ -8646,7 +9171,7 @@ public class RagService {
                             : "本助手未启用知识库检索。请基于你自身的知识与对话上下文直接回答，"
                               + "不要输出 [N] 来源标注（本轮没有参考资料）。");
             // 人机协同三入口：无知识库分支同样挂着 writeTodo/askUser，缺这段就会和主链路行为不一致
-            system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter));
+            system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter, branchTurn));
             // 用户长期记忆（与主链路同口径；游客分享会话不注入）
             if (!guestMode) {
                 String memoryText = userMemoryService.injectText(userId, question);
@@ -8707,7 +9232,8 @@ public class RagService {
             st.delegatedAgentId = delegatedAgent != null ? delegatedAgent.getId() : null; // §4 轮级委派归属
             st.delegatedAgentName = delegatedAgent != null ? delegatedAgent.getName() : null;
             applyPermissionTier(agent, st); // 权限档位（P2）：与主链路同一份解析，无检索分支不另算
-            st.maxToolSteps = resolveMaxToolSteps(agent); // 单轮工具步数上限（智能体覆盖 > 全局）
+            st.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（分支逐层减半，见该方法注释）
+            st.branchTurn = branchTurn;   // 子智能体分支：「要有人在场」的工具不挂
             st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
             st.contextTokens = 0;
             st.budgetTokens = 0;

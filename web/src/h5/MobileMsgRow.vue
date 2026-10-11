@@ -260,8 +260,15 @@
                 <check-outlined v-else-if="b.status === 'done'" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
                 <span class="sa-name">{{ b.name }}</span>
-                <span v-if="b.status === 'done'" class="card-dim">{{ b.hits }} 块 · {{ fmtDuration(b.elapsedMs) }}</span>
+                <!-- 全循环分支（P3a）：这一支是自己把事办了一遍（用了工具），不是多一路检索 -->
+                <span v-if="b.mode === 'full'" class="sa-mode">全循环</span>
+                <span v-if="b.status === 'done'" class="card-dim">
+                  <template v-if="b.mode === 'full'">{{ b.steps ? `跑了 ${b.steps} 步工具 · ` : '已办完 · ' }}</template>
+                  <template v-else>{{ b.hits }} 块 · </template>
+                  {{ fmtDuration(b.elapsedMs) }}
+                </span>
               </div>
+              <div v-if="b.artifacts && b.artifacts.length" class="card-dim">已交付：{{ b.artifacts.join('、') }}</div>
               <div v-if="b.description" class="card-dim">{{ b.description }}</div>
               <div class="sa-bar"><div class="sa-fill" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
               <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
@@ -516,6 +523,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .sa-row { padding: 8px 0; border-top: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 4px; }
 .sa-line { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .sa-name { font-weight: 500; }
+/* 全循环分支标记：与状态色分开，只说明"这一支跑了活"，不改动原有状态语义 */
+.sa-mode { font-size: 10px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--app-accent-weak); color: var(--app-accent); }
 .sa-bar { height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
 .sa-fill { height: 100%; background: var(--app-accent); }
 .sa-digest { font-size: 12px; color: var(--app-text3); }

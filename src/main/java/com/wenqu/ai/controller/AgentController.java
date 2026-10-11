@@ -88,7 +88,8 @@ public class AgentController {
         return ResultJson.ok(agentService.available());
     }
 
-    @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description），供主智能体配置页勾选允许委派的对象")
+    @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description/"
+            + "subagentMode 这一支实际怎么跑 + subagentModeInherited 是否跟随平台默认），供主智能体配置页勾选允许委派的对象")
     @GetMapping("/sub")
     public ResultJson subAgents() {
         return ResultJson.ok(agentService.subAgents());
@@ -130,7 +131,8 @@ public class AgentController {
             + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
             + "toolDeny(按名禁用的工具，逗号分隔；省略或空=不禁用)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
-            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
+            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/"
+            + "subagentMode(被委派时怎么跑 digest=检索要点 full=全循环，省略=跟随平台默认 agent.subagentMode)/isDefault；创建者=当前用户")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(agentService.create(body));

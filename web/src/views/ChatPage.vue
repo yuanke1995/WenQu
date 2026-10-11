@@ -469,12 +469,19 @@
                         <close-circle-outlined v-else class="sa-err" />
                       </span>
                       <span class="subagent-name">{{ b.name }}</span>
+                      <!-- 全循环分支（P3a）标出来：它不是"多一路检索"，而是自己把这件事办了一遍 -->
+                      <span v-if="b.mode === 'full'" class="sa-mode-tag">全循环</span>
                       <span class="sa-status-tag" :class="'st-' + (b.status || 'running')">
                         {{ b.status === 'running' ? '运行中' : (b.status === 'done' ? '已完成' : '失败') }}
                       </span>
-                      <span v-if="b.status === 'done'" class="subagent-hits">{{ b.hits }} 块 · {{ fmtDuration(b.elapsedMs) }}</span>
+                      <span v-if="b.status === 'done'" class="subagent-hits">
+                        <template v-if="b.mode === 'full'">{{ b.steps ? `跑了 ${b.steps} 步工具 · ` : '已办完 · ' }}</template>
+                        <template v-else>{{ b.hits }} 块 · </template>
+                        {{ fmtDuration(b.elapsedMs) }}
+                      </span>
                     </div>
                     <div v-if="b.description" class="sa-desc">{{ b.description }}</div>
+                    <div v-if="b.artifacts && b.artifacts.length" class="sa-desc">已交付：{{ b.artifacts.join('、') }}</div>
                     <div v-if="subagentCard(m).reasons[b.name]" class="sa-reason">派它：{{ subagentCard(m).reasons[b.name] }}</div>
                     <div class="sa-bar"><div class="sa-bar-fill" :class="'st-' + (b.status || 'running')" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
                     <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
@@ -3496,6 +3503,11 @@ onMounted(async () => {
 .sa-status-tag.st-running { background: var(--app-accent-weak); color: var(--app-accent); }
 .sa-status-tag.st-done { background: var(--app-ok-weak); color: var(--app-ok); }
 .sa-status-tag.st-failed { background: var(--app-danger-weak); color: var(--app-danger); }
+/* 全循环分支标记（P3a）：与状态标签区分开——状态说的是成没成，这一枚说的是这一支跑了多少活 */
+.sa-mode-tag {
+  font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 4px; flex: none;
+  border: 1px solid var(--app-accent-weak); color: var(--app-accent);
+}
 .subagent-hits { margin-left: auto; font-size: 11px; color: var(--app-text3); }
 /* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
 .sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }

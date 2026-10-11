@@ -41,7 +41,11 @@ public class TodoToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("writeTodo", ToolFamily.TODO,
                 "任务清单", "整理任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
-                SideEffect.READ, "tool.todo.enabled", false, false, null));
+                SideEffect.READ, "tool.todo.enabled", false, false, null,
+                // viewerRequired=true：清单是给正在看这一轮的人看的进度板。子智能体分支（P3a）跑在
+                // 一条没有观众、跑完即删的临时会话里，写进去的清单谁都看不到，故分支轮不挂——
+                // 判据落在描述符字段上而不是装配处再抄一个 if（见 ToolDescriptor#viewerRequired）
+                true));
     }
 
     /**

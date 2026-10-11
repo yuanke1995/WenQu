@@ -335,17 +335,33 @@
               <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
                               style="width:120px" :placeholder="`全局 ${globalMaxToolSteps}`" />
             </div>
+            <!-- 子智能体才有这一项：它决定的是「别人派它去做事时，它是交资料还是把事办完」 -->
+            <div v-if="form.isSubagent" class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
+              <span class="ap-cap-ic"><apartment-outlined /></span>
+              <div class="ap-cap-l">
+                <div class="ap-cap-name">被委派时怎么做</div>
+                <div class="ap-cap-desc">
+                  <b>检索要点</b>：它只查资料、把要点交回来——快也省，但它自己的工具、技能、沙盒都不参与。
+                  <b>全循环</b>：它像一次完整对话那样把这件事办完——用自己的知识库范围查、用自己的工具与沙盒做，
+                  能交付文件与产物；代价是每派一次就等于跑一轮问答，更慢也更花费。
+                  留空=跟随系统设置的默认<span v-if="branchModeDefaultLabel">（当前为「{{ branchModeDefaultLabel }}」）</span>。
+                  被委派的那一支不会向人提问，也不会建任务清单——缺信息它按资料里最合理的做法完成，并把假设写进结论。
+                </div>
+              </div>
+              <a-select v-model:value="form.subagentMode" size="small" style="width:140px" allow-clear
+                        :options="branchModeOptions" placeholder="跟随系统默认" />
+            </div>
           </section>
 
           <section class="app-card" v-if="!form.isSubagent">
             <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />子智能体委派</h2>
             <p class="ap-block-hint">
-              选中后，复杂问题会并行交给这些子智能体各自检索——各按自己的知识库范围与角色视角，再汇总作答。
-              不选则沿用系统的多视角并行检索。
+              选中后，复杂问题会并行交给这些子智能体各自处理，再汇总作答——各按自己的知识库范围与角色视角。
+              不选则沿用系统的多视角并行检索。名字后面标了它被派出去时会怎么做（交要点 / 全循环）。
             </p>
             <a-select v-model:value="form.subAgentIds" mode="multiple" :options="subOptions" allow-clear
                       show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                      :placeholder="subOptions.length ? '选择允许委派的子智能体（最多 4 个）'
+                      :placeholder="subOptions.length ? '选择允许委派的子智能体（并行条数在系统设置里调）'
                         : '还没有子智能体——先在列表新建一个「用途 = 子智能体」的条目'" />
             <!-- M5：委派编排一键转工作流（保存后转换的是已保存的委派关系） -->
             <div v-if="(form.subAgentIds || []).length" class="ap-block-hint" style="margin:8px 0 0;display:flex;align-items:center;gap:10px">
@@ -736,6 +752,10 @@ const loadToolCatalog = async () => {
     denyOptions.value = list.map(t => ({
       value: t.name,
       label: (t.familyLabel ? t.familyLabel + ' · ' : '') + (t.label || t.cardLabel || t.name)
+        + (t.platformDenied ? '（平台已停用）' : ''),
+      // 平台停用名单里的项标出来但不禁选：管理员仍可能想在自己的智能体上再显式记一笔（无副作用），
+      // 而"它全局已经不挂了"这件事必须看得见——看不见就会去猜"为什么这个工具怎么都不出现"。
+      title: t.platformDenied ? '平台已在「系统设置 → 工具调用 → 平台停用工具名单」里停用它，本智能体无需重复设置' : ''
     }))
   } catch (e) { toolCatalogError.value = true }
 }
@@ -767,6 +787,21 @@ const skillOptions = ref([])
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
 const subOptions = ref([])
+// 被委派时的执行方式（P3a）：两个值都是平台固定的形态，没有"管理员收紧"这类可用性变化，
+// 所以不像权限档位那样拉端点——那端点存在是因为可选项会随上限变，这里不会。
+const BRANCH_MODE_LABELS = { digest: '交要点', full: '全循环' }
+const branchModeOptions = [
+  { value: 'digest', label: '检索要点（交资料）' },
+  { value: 'full', label: '全循环（把事办完）' }
+]
+const branchModeDefaultLabel = computed(() => {
+  // 配置快照只有管理员读得到（与「全局开/关」提示同一口径）：拿不到就说"跟随系统默认"，
+  // 不拿一个猜测值冒充当前默认——写死 digest 会在管理员已把默认改成全循环时谎报
+  const m = rawOf(['agent', 'subagentMode'])
+  if (m === 'full') return '全循环'
+  if (m === 'digest') return '检索要点'
+  return ''
+})
 /** M4：工作流列表与可绑定选项（只列已发布版本） */
 const workflowRows = ref([])
 const workflowOptions = ref([])
@@ -796,6 +831,8 @@ const blankForm = () => ({
   mcpMode: 'inherit', mcps: [],
   // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
   isSubagent: 0, subAgentIds: [],
+  // 被委派时怎么做（P3a）：null=跟随系统默认（agent.subagentMode）
+  subagentMode: null,
   // 检索参数覆盖：留空 = 继承全局「系统设置 → 检索设置」；非空的项才写入 queryParams
   qp: blankQp(), qpRerank: 'inherit',
   // M4：绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
@@ -1278,9 +1315,15 @@ const reload = async () => {
         label: s.name + (s.connected ? '' : '（未连接）')
       }))
     }
-    // 可委派的子智能体
+    // 可委派的子智能体：名字后面带上它被派出去会怎么跑（交要点/全循环），
+    // 勾定时就能看出"派出去的是拿资料的还是干活的"，不用一个个点进配置页
     if (xr && xr.success && Array.isArray(xr.data)) {
-      subOptions.value = xr.data.map(s => ({ value: s.id, label: s.name }))
+      subOptions.value = xr.data.map(s => ({
+        value: s.id,
+        label: s.name + (BRANCH_MODE_LABELS[s.subagentMode]
+          ? ` · ${BRANCH_MODE_LABELS[s.subagentMode]}${s.subagentModeInherited ? '(默认)' : ''}`
+          : '')
+      }))
     }
     // M4：可绑定的工作流（只列已发布的——绑定未发布会在后端被拒，不如下拉里就不给）
     workflowOptions.value = workflowRows.value
@@ -1340,6 +1383,7 @@ const openEdit = a => {
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
     isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
+    subagentMode: a.subagentMode || null,
     // M4：绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
     workflowId: a.workflowId || null,
     ...(() => { const r = parseQueryParams(a.queryParams); return { qp: r.qp, qpRerank: r.rr } })()
@@ -1462,6 +1506,8 @@ const save = async () => {
     isSubagent: f.isSubagent ? 1 : 0,
     // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
     subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(','),
+    // 被委派时怎么做：主智能体没有这一项（它直接作答），切回主智能体时要显式清空而不是留着旧值
+    subagentMode: f.isSubagent ? (f.subagentMode || null) : null,
     // 检索参数覆盖：留空项不写入 → 继承全局；全空 → 空串 → 后端存 null
     queryParams: buildQueryParams(f.qp, f.qpRerank),
     // 工作流绑定：空/未选 → 空串（后端归一为 null = 解绑）；非空必须是已发布工作流（后端校验）

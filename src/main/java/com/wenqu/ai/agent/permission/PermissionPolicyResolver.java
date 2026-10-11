@@ -45,15 +45,26 @@ public class PermissionPolicyResolver {
      * 智能体里跑命令/改文件"，包括别人建的、显式选了全自主的那些。
      */
     public static final String KEY_PERSONAL_MAX = "agent.permissionPreset.personalMax";
+    /**
+     * 平台级工具黑名单（逗号分隔工具名）：管理员一次性停掉某一个工具用的。
+     * <p>为什么不是族级开关就够：{@code tool.websearch.enabled} 那一档关的是整族，
+     * 想停掉其中一个工具会连带关掉同族其余能力；而智能体级黑名单又要把每个智能体都改一遍。
+     * <p>刻意<b>不</b>做成个人可覆盖：个人能放宽自己的黑名单，就等于绕过管理员的停用。
+     */
+    public static final String KEY_DENY = "tool.deny";
 
     private final ConfigService configService;
     /** 个人覆盖值（请求线程没有 putUserOverrides，名册要显式按 uid 合并，见 {@link #catalog(String)}） */
     private final com.wenqu.ai.service.UserConfigService userConfigService;
+    /** 工具注册中心：仅用于启动期核对平台停用名单里的名字存在（见 {@link #checkPlatformDeny()}） */
+    private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
 
     public PermissionPolicyResolver(ConfigService configService,
-                                    com.wenqu.ai.service.UserConfigService userConfigService) {
+                                    com.wenqu.ai.service.UserConfigService userConfigService,
+                                    com.wenqu.ai.agent.tool.ToolRegistry toolRegistry) {
         this.configService = configService;
         this.userConfigService = userConfigService;
+        this.toolRegistry = toolRegistry;
     }
 
     /**
@@ -88,7 +99,47 @@ public class PermissionPolicyResolver {
             preset = ceiling;
         }
         return ExecutionPolicy.of(preset, agentApprovalMode,
-                configService.get("sandbox.virtualPathPrefix"), agentToolDeny);
+                configService.get("sandbox.virtualPathPrefix"),
+                // 平台停用名单与智能体自己的黑名单取并集：前者是"这个工具平台先停一停"，
+                // 后者是"这个智能体不用它"，两条互不覆盖——成员不能靠删自己那条把平台停用的召回来
+                mergeDeny(configService.get(KEY_DENY), agentToolDeny));
+    }
+
+    /** 两份逗号名单取并集（保序去重：平台在前，便于日志里看出哪条是平台停的） */
+    static String mergeDeny(String platformDeny, String agentDeny) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (String csv : new String[]{platformDeny, agentDeny}) {
+            if (csv == null) continue;
+            for (String part : csv.split(",")) {
+                String t = part.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+        }
+        return String.join(",", out);
+    }
+
+    /**
+     * 启动期核对平台停用名单里的名字真存在。
+     * <p>设置页那一项是自由文本，写错一个字母的表现是"我明明停了它，模型还在调"——没有任何报错。
+     * 智能体级黑名单在保存时就拒（{@code AgentService.toEntity}），平台级没有那个入口，所以在启动补一道。
+     * 只喊不拦：一个笔误不该让整个平台起不来。
+     */
+    @jakarta.annotation.PostConstruct
+    void checkPlatformDeny() {
+        String csv = configService.get(KEY_DENY);
+        if (csv == null || csv.isBlank()) return;
+        List<String> unknown = new ArrayList<>();
+        for (String n : csv.split(",")) {
+            String t = n.trim();
+            if (t.isEmpty()) continue;
+            if (toolRegistry.find(t).isEmpty() && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(t)) {
+                unknown.add(t);
+            }
+        }
+        if (!unknown.isEmpty()) {
+            log.error("[PERM] 配置项 {} 里有平台不认识的工具名（这些停用动作不会生效，请改正）: {}",
+                    KEY_DENY, String.join("、", unknown));
+        }
     }
 
     /** 智能体请求的档位：未设置→平台默认；写了认不出的值→回落平台默认并报警（绝不回落到最高档） */

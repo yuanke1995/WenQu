@@ -78,6 +78,33 @@ public final class ChatCommand {
     /** 计划模式：先出计划卡、批准后执行 */
     final boolean planMode;
 
+    /**
+     * 本轮由谁派出（P3a 子智能体真全循环）：0 = 用户在对话里发起的轮，≥1 = 第 N 层子智能体分支。
+     * <p>这个数在流水线里管三件事，而且必须同源：
+     * <ul>
+     *   <li><b>还能不能再往下派</b>——分支自己也有子智能体时，到顶（{@code agent.subagentMaxDepth}）
+     *       就不再往下跑全循环，否则父派子、子派孙，一层层并发乘下去，没有任何一处会报错，只会把
+     *       流水线线程池与额度吃满；</li>
+     *   <li><b>预算逐层递减</b>——工具步数按层减半（见 {@code resolveMaxToolSteps}）；</li>
+     *   <li><b>成本归属</b>——&gt;0 时台账记 {@code kind=subagent}，账能查到是谁派出去的开销；
+     *       人在回路那几件（提问卡/任务清单）不再挂载：没有人在看那条临时会话，问了也没人答。</li>
+     * </ul>
+     * 默认 0：所有既有调用方（网页问答、分享、定时任务、工作流节点）行为逐字不变。
+     */
+    final int subagentDepth;
+    /**
+     * 父轮交代给这一支的上下文（继承父历史，对标 fork-in-process）：父轮问题 + 最近若干轮对话，
+     * 字符预算已按深度裁剪。仅 {@link #subagentDepth} &gt; 0 时有值；null/空 = 不带。
+     */
+    final String parentBrief;
+    /** 派出这一支的父会话 id（日志关联用；产物收养在分支执行器内直接按它落，不经本字段传递语义） */
+    final String parentSessionId;
+
+    /** 是否处于子智能体分支里（{@link #subagentDepth} &gt; 0 的唯一判定点，别在调用方各写一遍） */
+    public boolean branchTurn() {
+        return subagentDepth > 0;
+    }
+
     /** 只带最小三要素的命令（后台续跑、子 agent、定时任务这类没有前端请求体的调用方用） */
     public static ChatCommandBuilder of(String sessionId, String question, String userId) {
         return builder().sessionId(sessionId).question(question).userId(userId);

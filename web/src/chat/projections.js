@@ -634,7 +634,13 @@ function subagentCard (m) {
   const done = branches.filter(b => b.status === 'done').length
   const running = branches.some(b => b.status === 'running')
   const total = branches.length
-  const title = running ? `并行咨询 ${total} 个子智能体…` : `已咨询 ${total} 个子智能体`
+  // 全循环分支（P3a）：这一支不是"查了资料交回来"，而是自己把事办了一遍（用了工具、可能交付了产物）。
+  // 标题要点明这件事，否则用户看到"已咨询 2 个子智能体"会以为只是多路检索，
+  // 也就不会预期这一支可能要几十秒。
+  const full = branches.filter(b => b.mode === 'full').length
+  const title = running
+    ? `并行咨询 ${total} 个子智能体${full ? `（${full} 个在执行任务）` : ''}…`
+    : `已咨询 ${total} 个子智能体${full ? `，${full} 个办完了各自的任务` : ''}`
   // 按需委派信息：从 N 个候选中挑了 M 个（让"挑选过程"可见，解释为什么只有这几个角色）
   const rt = m.subagentRoute
   const routeNote = (rt && rt.candidates > rt.picked)

@@ -24,6 +24,16 @@ public interface ToolMountContext {
     boolean guestMode();
 
     /**
+     * 本轮是不是<b>子智能体分支</b>（P3a 全循环：父轮派出去、跑在一条临时会话里的那一轮）。
+     * <p>默认 false = 用户在对话里直接发起的轮，行为与引入本字段之前逐字相同。它为的是把一件
+     * 只有分支才有的事实说清楚：<b>没有人在看那条会话</b>，所以「要等人点」的能力在分支里
+     * 不是不能用，是会把这一支挂到超时——于是装配时就不该给它。
+     */
+    default boolean branchTurn() {
+        return false;
+    }
+
+    /**
      * 本轮是否处于检索-反思循环（Agentic RAG）。这一族有特殊待遇是刻意的：该模式本身就是
      * 「模型自主多轮检索」的显式开启，不再要求 tool.knowledgeRetrieval.enabled 子开关。
      */
@@ -79,11 +89,20 @@ public interface ToolMountContext {
      * 作用在两个族上——策略归属见 {@link ToolFamily#blockedWhenApprovalOff()}。
      */
     default boolean approvalPolicyAllows(ToolFamily family) {
-        return !(family.blockedWhenApprovalOff() && approvalOff());
+        if (!family.blockedWhenApprovalOff()) return true;
+        if (approvalOff()) return false;
+        // 分支轮 + 「执行前确认」= 这一族不给：没有人能批那张卡，挂上去只会让这一支在审批等待里
+        // 耗尽整支超时。与 off 档同一处置口径——要拦的能力让模型看不见，而不是给了再等一个不会来的答复。
+        return !(branchTurn() && approvalAsk());
     }
 
     /** 智能体的「工具执行确认」档位是否为 off（禁用有副作用能力） */
     boolean approvalOff();
+
+    /** 智能体的「工具执行确认」档位是否为 ask（每次执行前等人的答复） */
+    default boolean approvalAsk() {
+        return false;
+    }
 
     /**
      * 本轮的权限档位策略（P2）。
@@ -113,6 +132,19 @@ public interface ToolMountContext {
     default boolean deniesTool(String toolName) {
         var policy = permissionPolicy();
         return policy != null && policy.denies(toolName);
+    }
+
+    /**
+     * 这件工具本轮开不开——<b>跨族判据的唯一汇聚点</b>，装配与提示词两侧都问它。
+     * <p>落在这一层而不是各族的 {@code exposes} 里，理由与 P2 那条黑名单相同：判据按族写就迟早
+     * 漏掉没重写 {@code exposes} 的那几族（检索族还因「反思轮强制暴露」直接 {@code ||} 掉了默认实现）。
+     * <p>分支轮（{@link #branchTurn()}）不收 {@code viewerRequired} 的工具：提问卡在没人看的临时会话里
+     * 只会把这一支挂到超时，任务清单写进去也没有人读——与其挂上去等一件永远不会发生的事，
+     * 不如让模型压根看不到这个能力（与档位裁剪同一条「收窄要与不存在不可区分」的口径）。
+     */
+    default boolean turnAllows(ToolDescriptor d) {
+        if (!policyAllows(d)) return false;
+        return !branchTurn() || d == null || !d.viewerRequired();
     }
 
     /**

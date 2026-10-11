@@ -1,7 +1,9 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigDefaults;
+import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.SessionMapper;
@@ -22,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -145,6 +148,70 @@ public class ArtifactService {
     /** 当前会话是否仍在线（emitter 未被移除） */
     public boolean isSessionActive(String sessionId) {
         return sessionId != null && EMITTERS.containsKey(sessionId);
+    }
+
+    /**
+     * 把一个会话的产物收编到另一个会话（P3a 子智能体分支）。
+     * <p>为什么需要：全循环分支跑在<b>一条用完即删的临时会话</b>里（{@code chat()} 的轮级互斥按会话加锁，
+     * 分支不能借父会话）。于是分支交付的产物按子会话落库、按子会话登记实时下发——子会话一删，
+     * 用户手上只剩一句"已经生成好了"的文件，点开却是 404 的签名路径。收编就是把这三处一起改到父会话：
+     * 库里的 session_id、内存里的会话产物清单、以及父轮 done 事件里那份汇总。
+     * <p>实时 {@code artifact} 事件按父会话补发一次；父轮此刻还没登记 emitter（编排发生在生成流之前），
+     * 发不出去也不报错——done 汇总那一份兜底，界面上产物卡片一定出现，只是不插在时间线中段。
+     *
+     * @return 收编的产物清单（含文件名与已签名 URL，供回报段展示"这一支交付了什么"）
+     */
+    public List<Map<String, Object>> adoptFromSession(String fromSessionId, String toSessionId) {
+        if (fromSessionId == null || fromSessionId.isBlank()
+                || toSessionId == null || toSessionId.isBlank()
+                || fromSessionId.equals(toSessionId)) {
+            return List.of();
+        }
+        List<Artifact> rows = artifactMapper.selectList(new LambdaQueryWrapper<Artifact>()
+                .eq(Artifact::getSessionId, fromSessionId)
+                .eq(Artifact::getDeleted, 0)
+                .orderByAsc(Artifact::getCreateTime));
+        if (rows.isEmpty()) return List.of();
+        int retentionDays = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
+        List<Map<String, Object>> fromList = SESSION_ARTIFACTS.remove(fromSessionId);
+        List<Map<String, Object>> toList = SESSION_ARTIFACTS.computeIfAbsent(toSessionId,
+                k -> Collections.synchronizedList(new ArrayList<>()));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Artifact row : rows) {
+            artifactMapper.update(null, new LambdaUpdateWrapper<Artifact>()
+                    .eq(Artifact::getId, row.getId())
+                    .set(Artifact::getSessionId, toSessionId));
+            // 内存清单按 id 搬过去（保留原始 URL，下发时再签）；搬不到（例如写入时不在问答链路内）
+            // 就按库里的行重建一份——宁可多算一次，也不让产物从父轮的汇总里静默消失
+            Map<String, Object> entry = null;
+            if (fromList != null) {
+                synchronized (fromList) {
+                    for (Iterator<Map<String, Object>> it = fromList.iterator(); it.hasNext(); ) {
+                        Map<String, Object> e = it.next();
+                        if (row.getId().equals(String.valueOf(e.get("id")))) {
+                            entry = e;
+                            it.remove();
+                            break;
+                        }
+                    }
+                }
+            }
+            if (entry == null) {
+                entry = new LinkedHashMap<>();
+                entry.put("id", row.getId());
+                entry.put("url", "/ai/" + row.getObjectKey());
+                entry.put("filename", row.getFilename());
+                entry.put("ext", row.getExt());
+                entry.put("size", row.getSize());
+                entry.put("description", row.getDescription() == null ? "" : row.getDescription());
+            }
+            toList.add(entry);
+            Map<String, Object> info = toDto(row, retentionDays);
+            out.add(info);
+            publish(toSessionId, "artifact", JSON.toJSONString(info));
+        }
+        log.info("[ARTIFACT] 产物收编 {} 个：{} → {}", out.size(), fromSessionId, toSessionId);
+        return out;
     }
 
     /**

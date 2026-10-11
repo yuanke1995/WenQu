@@ -27,6 +27,10 @@ import java.util.function.Predicate;
  * @param guestAllowed     免登录分享会话（游客）是否可见
  * @param requiresApproval 是否属于「有副作用工具」（审批模式 ask 时执行前要用户点确认）；静态取值
  * @param approvalGateKey  非 null 时改用该配置项决定是否需要审批（联网搜索的 webSearch.requireApproval）
+ * @param viewerRequired   这件能力<b>要有正在看这一轮的人</b>才成立：提问卡等人点、任务清单写进会话给人看。
+ *                        它和 {@code sideEffect} 是两个轴——askUser 不改世界（PURE），但没有人的那一轮
+ *                        它只会阻塞到超时；子智能体分支（P3a）跑的是一条没有观众、跑完即删的临时会话，
+ *                        所以这类工具在分支轮<b>不挂</b>，而不是挂上去等一张永远不会来的卡。
  * @author yuanke
  */
 public record ToolDescriptor(
@@ -39,7 +43,16 @@ public record ToolDescriptor(
         String gateKey,
         boolean guestAllowed,
         boolean requiresApproval,
-        String approvalGateKey) {
+        String approvalGateKey,
+        boolean viewerRequired) {
+
+    /** 既有声明的便捷构造：没有特别说明就是「不需要有人在场」（引入 viewerRequired 前的形态） */
+    public ToolDescriptor(String name, ToolFamily family, String label, String cardLabel, String cardHint,
+                          SideEffect sideEffect, String gateKey, boolean guestAllowed, boolean requiresApproval,
+                          String approvalGateKey) {
+        this(name, family, label, cardLabel, cardHint, sideEffect, gateKey, guestAllowed, requiresApproval,
+                approvalGateKey, false);
+    }
 
     /** 需要审批的判定：配了 approvalGateKey 的按配置走（联网搜索），否则用静态取值（沙盒恒真、内置恒假） */
     public boolean requiresApproval(Predicate<String> configOn) {
