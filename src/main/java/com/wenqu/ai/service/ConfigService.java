@@ -513,6 +513,16 @@ public class ConfigService {
         d.put("sandbox.deleteTimeoutSeconds", "120");             // 删除沙盒的超时（秒）
         d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
         d.put("sandbox.cleanupIntervalMs", String.valueOf(ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS));             // 空闲回收扫描间隔（ms，≤0=暂停）
+        // 沙盒里的脚本要回调平台工具（P3b run_code）时的回程地址。容器各自挂在自己的 bridge 网络上，
+        // 本机实测 host.docker.internal 可解析且能打到应用端口；生产的拓扑不同，所以这项必须显式配置。
+        // 留空 = 不提供子调用（run_code 会明确说"回调地址没配"，而不是让脚本每次都超时）。
+        d.put("sandbox.callbackBaseUrl", "http://host.docker.internal:8090/ai");
+        // ---------- 沙盒脚本（P3b：一次做完一批同类活）----------
+        d.put("tool.runcode.enabled", "false");             // 默认关：能力形态变化，由管理员决定谁先开
+        d.put("tool.runcode.maxSubCalls", "50");            // 单次运行的子调用总上限（脚本扇出去的工具调用次数）
+        d.put("tool.runcode.maxParallel", "8");             // 脚本内并发上限（生成模块里的信号量，也防打爆平台线程池）
+        d.put("tool.runcode.timeoutSeconds", "120");        // 单次脚本运行上限（沙盒命令超时）
+        d.put("tool.runcode.subCallTimeoutMs", "60000");    // 单个子调用的等待上限（脚本侧 HTTP 超时）
         d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
         // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。

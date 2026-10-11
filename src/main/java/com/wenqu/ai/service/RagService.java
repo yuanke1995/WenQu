@@ -392,6 +392,12 @@ public class RagService {
      * 就会漂出「工具表里没收、执行时却放得过去」这类反向错配。
      */
     private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
+    /**
+     * run_code 的一次性运行凭据（P3b）。
+     * <p>问答侧只在一个地方用它：用户叫停本轮时把这条轮还没撤的凭据一并撤掉。凭据的作用域本来就是
+     * "这一次运行"，人已经不想要这一轮了，脚本却还能继续回调平台，那是多出来的一个窗口。
+     */
+    private final com.wenqu.ai.agent.runcode.RunTokenRegistry runTokens;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -523,7 +529,8 @@ public class RagService {
                       ToolSpillService toolSpillService,
                       ToolPipelineFactory toolPipeline,
                       ToolRegistry toolRegistry,
-                      com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver) {
+                      com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver,
+                      com.wenqu.ai.agent.runcode.RunTokenRegistry runTokens) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -562,6 +569,7 @@ public class RagService {
         this.toolPipeline = toolPipeline;
         this.toolRegistry = toolRegistry;
         this.permissionPolicyResolver = permissionPolicyResolver;
+        this.runTokens = runTokens;
     }
 
     /**
@@ -726,6 +734,9 @@ public class RagService {
         st.userStopped = true;
         // 把手标志同步置位：前置阶段与各检查点认的是把手，流状态只覆盖生成阶段
         st.handle.stopped().set(true);
+        // 叫停即撤这一轮还没用完的沙盒回调凭据（P3b）：人不想要这一轮了，脚本不该还留着一条回程。
+        // 守卫链本身也会按 userStopped 拒掉后续子调用，这里是把"已发出的凭据"这件事一并收掉
+        runTokens.revokeByTurn(st.turnId);
         // 账本先记停止本身：disposeSafe 会把通道与心跳一并收掉，之后再想还原「是谁、在什么进度上
         // 叫停的这一轮」就没有依据了
         sessionEventService.append(sessionId, st.userId, st.turnId, "stop",
@@ -2191,6 +2202,249 @@ public class RagService {
         return toolPipeline.wrap(rawTools, toolTurnContext(st));
     }
 
+    // ==================== P3b：沙盒脚本的子调用回程 ====================
+
+    /**
+     * 为本轮准备「脚本子调用」的管线（P3b）。
+     * <p>
+     * 只在真挂了 {@code run_code} 时构建，其余轮次一个对象都不多造（默认关的功能不该给每轮加开销）。
+     * <p><b>为什么要再包一条</b>：脚本里的子调用必须与模型直调走<b>同一条守卫链</b>（叫停、权限档位、
+     * 引用登记、工具卡片），绕过去就不是"少几次模型往返"而是"少一层管控"。但<b>不能共用同一份步数预算</b>：
+     * 一段扇出 30 份资料的脚本会把 15 步的模型预算一次吃光，主模型随后就没工具可用了——那正是 P3b
+     * 要解决的问题本身。所以这条管线与本轮同源，只换预算那一项（{@code maxToolSteps}/{@code takeStep}
+     * 走本轮的子调用计数，上限是 {@code tool.runcode.maxSubCalls}）。
+     */
+    private void prepareSubCallPipeline(AnswerStreamState st,
+                                        java.util.List<org.springframework.ai.tool.ToolCallback> rawTools,
+                                        ToolTurnContext turnCtx) {
+        boolean runCodeMounted = rawTools.stream().anyMatch(
+                cb -> cb.getToolDefinition() != null
+                        && SandboxTools.RUN_CODE_TOOL_NAME.equals(cb.getToolDefinition().name()));
+        if (!runCodeMounted) return;
+        java.util.List<org.springframework.ai.tool.ToolCallback> subRaw = new ArrayList<>();
+        for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
+            String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
+            if (n == null || SandboxTools.RUN_CODE_TOOL_NAME.equals(n)) continue;
+            // 「要有人在场」的工具不给脚本：askUser 在脚本里既没人答、又会把整段运行挂住——
+            // 判据与本轮装配同一条（描述符 viewerRequired），不在这里再抄一份名字表
+            com.wenqu.ai.agent.tool.ToolDescriptor d = toolRegistry.find(n).orElse(null);
+            if (d != null && d.viewerRequired()) continue;
+            subRaw.add(cb);
+        }
+        if (subRaw.isEmpty()) {
+            log.info("[P3B] 本轮挂了 run_code 但没有可子调用的工具，脚本只能用 Python 自己算");
+            return;
+        }
+        st.subCallTools = new java.util.LinkedHashMap<>();
+        for (org.springframework.ai.tool.ToolCallback cb : toolPipeline.wrap(subRaw, subCallTurnContext(st, turnCtx))) {
+            String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
+            if (n != null) st.subCallTools.put(n, cb);
+        }
+        log.info("[P3B] 本轮子调用通道就绪：{} 个工具，上限 {} 次",
+                st.subCallTools.size(), configService.getInt("tool.runcode.maxSubCalls", 50));
+    }
+
+    /** 本轮 run_code 的子调用入口（按轮闭包；容器侧只看到一次 HTTP 回调） */
+    private com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(AnswerStreamState st) {
+        return new com.wenqu.ai.agent.runcode.RunCodeBridge() {
+            @Override
+            public String sessionId() {
+                return st.sessionId;
+            }
+
+            @Override
+            public String turnId() {
+                return st.turnId;
+            }
+
+            @Override
+            public String userId() {
+                return st.userId;
+            }
+
+            @Override
+            public java.util.List<com.wenqu.ai.agent.runcode.RunCodeBridge.Spec> callableSpecs() {
+                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.subCallTools;
+                if (map == null) return List.of();
+                List<Spec> out = new ArrayList<>();
+                for (org.springframework.ai.tool.ToolCallback cb : map.values()) {
+                    out.add(specOf(cb));
+                }
+                return out;
+            }
+
+            @Override
+            public String invoke(String tool, String argsJson) {
+                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.subCallTools;
+                org.springframework.ai.tool.ToolCallback cb = map == null ? null : map.get(tool);
+                if (cb == null) {
+                    throw new com.wenqu.ai.agent.runcode.RunLimitException(
+                            "本轮没有挂载工具「" + tool + "」，脚本调不到模型也用不了的能力");
+                }
+                String args = argsJson == null || argsJson.isBlank() ? "{}" : argsJson;
+                // 守卫在包装回调内部：这一句就是「再过一遍叫停闸/权限闸/引用登记」的地方。
+                // 工具自己抛的业务异常照常向上传，由回调控制器转成 ok=false（脚本看得懂字段）
+                return cb.call(args);
+            }
+
+            @Override
+            public int maxSubCalls() {
+                return Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
+            }
+
+            @Override
+            public long subCallTimeoutMs() {
+                return Math.max(5_000L, configService.getLong("tool.runcode.subCallTimeoutMs", 60_000L));
+            }
+
+            @Override
+            public int callsUsed() {
+                return st.subCallCount.get();
+            }
+        };
+    }
+
+    /** 工具回调 → Python 客户端的一节（参数名与说明都取自它自己的 inputSchema，脚本侧不必猜） */
+    private com.wenqu.ai.agent.runcode.RunCodeBridge.Spec specOf(
+            org.springframework.ai.tool.ToolCallback cb) {
+        org.springframework.ai.tool.definition.ToolDefinition def = cb.getToolDefinition();
+        String name = def == null ? "" : def.name();
+        String label = toolRegistry.find(name).map(com.wenqu.ai.agent.tool.ToolDescriptor::displayLabel)
+                .orElse(name);
+        List<String> params = new ArrayList<>();
+        Map<String, String> docs = new LinkedHashMap<>();
+        List<String> required = new ArrayList<>();
+        try {
+            JSONObject schema = def == null || def.inputSchema() == null
+                    ? null : JSON.parseObject(def.inputSchema());
+            JSONObject props = schema == null ? null : schema.getJSONObject("properties");
+            if (props != null) {
+                for (String k : props.keySet()) {
+                    params.add(k);
+                    JSONObject p = props.getJSONObject(k);
+                    if (p != null && p.getString("description") != null) docs.put(k, p.getString("description"));
+                }
+            }
+            JSONArray req = schema == null ? null : schema.getJSONArray("required");
+            if (req != null) for (Object o : req) if (o != null) required.add(String.valueOf(o));
+        } catch (Exception e) {
+            // schema 解析失败不影响这次子调用能用什么：退化成"只给 call_tool，参数由模型自己按工具说明传"
+            log.warn("[P3B] 工具 {} 的入参 schema 解析失败（脚本侧只走 call_tool）: {}", name, e.getMessage());
+        }
+        return new com.wenqu.ai.agent.runcode.RunCodeBridge.Spec(name, label, List.copyOf(params),
+                Map.copyOf(docs), List.copyOf(required));
+    }
+
+    /**
+     * 子调用的本轮上下文：除预算那三项，其余全部转发给本轮那份。
+     * <p>刻意<b>不</b>重算身份：{@code toolTurnContext(st)} 在流水线入口线程捕获了 RequestUser 快照，
+     * 子调用来自 Tomcat 线程、那里根本没有这个 ThreadLocal——转发（而不是新建）是唯一正确的做法，
+     * 也是 P1 那条「身份快照必须在入口线程捕获」结论的复用。
+     */
+    private ToolTurnContext subCallTurnContext(AnswerStreamState st, ToolTurnContext base) {
+        final int maxSub = Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
+        return new ToolTurnContext() {
+            @Override
+            public String sessionId() {
+                return base.sessionId();
+            }
+
+            @Override
+            public String userId() {
+                return base.userId();
+            }
+
+            @Override
+            public String turnId() {
+                return base.turnId();
+            }
+
+            @Override
+            public boolean userStopped() {
+                return base.userStopped();
+            }
+
+            @Override
+            public int maxToolSteps() {
+                // 子调用有自己的一摞预算，不吃模型的单轮步数（见 prepareSubCallPipeline 注释）
+                return maxSub;
+            }
+
+            @Override
+            public int stepsTaken() {
+                return st.subCallCount.get();
+            }
+
+            @Override
+            public void takeStep() {
+                st.subCallCount.incrementAndGet();
+            }
+
+            @Override
+            public String approvalMode() {
+                return base.approvalMode();
+            }
+
+            @Override
+            public boolean requiresApproval(String toolName) {
+                return base.requiresApproval(toolName);
+            }
+
+            @Override
+            public long approvalTimeoutMs() {
+                return base.approvalTimeoutMs();
+            }
+
+            @Override
+            public com.wenqu.ai.agent.tool.ToolApprover approver() {
+                return base.approver();
+            }
+
+            @Override
+            public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
+                return base.permissionPolicy();
+            }
+
+            @Override
+            public Map<String, Object> baseToolContext() {
+                return base.baseToolContext();
+            }
+
+            @Override
+            public Map<ToolFamily, ToolEnrichment> enrichments() {
+                return base.enrichments();
+            }
+
+            @Override
+            public String execute(org.springframework.ai.tool.ToolCallback raw, String arguments,
+                                  Map<String, Object> context, ToolInvocation inv, int[] attemptsOut) {
+                return base.execute(raw, arguments, context, inv, attemptsOut);
+            }
+
+            @Override
+            public void observe(ToolInvocation inv, String status, String resultOrError) {
+                base.observe(inv, status, resultOrError);
+            }
+
+            @Override
+            public void onOutput(ToolInvocation inv, String delta) {
+                base.onOutput(inv, delta);
+            }
+
+            @Override
+            public String decorateResult(ToolInvocation inv, String result) {
+                return base.decorateResult(inv, result);
+            }
+
+            @Override
+            public String appendSteers(ToolInvocation inv, String result) {
+                // 插话是给"正在出字的这一轮"的，脚本的一条子调用不是它的受众：附在这里会让
+                // 一句"换个方向"混进 Python 的返回值里，模型下一步看到的是一段脏 JSON
+                return result;
+            }
+        };
+    }
+
     /**
      * 本轮的工具执行上下文：把 AnswerStreamState 的问答态映射成 {@link ToolTurnContext} 声明的
      * 十余件事。
@@ -2237,6 +2491,11 @@ public class RagService {
                     // 本轮权限档位（P2）：沙盒工具据此判定这次写入是否落在允许区内。走上下文而不是让
                     // 工具去查配置——档位是「这一轮」的属性，同一会话的两轮可以不同档
                     m.put(SandboxTools.CTX_SANDBOX_POLICY, st.permissionPolicy);
+                    // run_code 的子调用回程（P3b）：只在这一轮真挂了 run_code 时才有内容，
+                    // 且必须在执行侧现取——本轮的可调用清单在 st.subCallTools 里，装配期还没建好
+                    if (SandboxTools.RUN_CODE_TOOL_NAME.equals(inv.toolName())) {
+                        m.put(SandboxTools.CTX_RUN_CODE_BRIDGE, runCodeBridge(st));
+                    }
                     // 输出增量回调：execute 检测到它即走流式执行（后台脱离+轮询），增量经
                     // recordToolOutput 转 SSE，前端「看着它跑」
                     if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName())) {
@@ -3279,9 +3538,13 @@ public class RagService {
         // 整轮流级心跳：从这里到终态（complete/error/dispose）全程保活，覆盖工具执行
         // 与「工具结束→最终回答首 token」两段静默盲区（重试重建流时幂等复用）
         startRunHeartbeat(st);
-        org.springframework.ai.tool.ToolCallback[] toolCallbacks =
-                instrumentTools(st.enabledCallbacks != null
-                        ? st.enabledCallbacks : enabledToolCallbacks(agent, st.userId, st), st);
+        java.util.List<org.springframework.ai.tool.ToolCallback> rawToolCallbacks =
+                st.enabledCallbacks != null ? st.enabledCallbacks : enabledToolCallbacks(agent, st.userId, st);
+        // 一份本轮上下文，两条管线：主链路用包装后的回调给模型，脚本子调用用同一条上下文再包一条
+        // （身份快照只能在这条线程上取——流水线入口才有 RequestUser，子调用到达时在 Tomcat 线程）
+        ToolTurnContext turnCtx = toolTurnContext(st);
+        org.springframework.ai.tool.ToolCallback[] toolCallbacks = toolPipeline.wrap(rawToolCallbacks, turnCtx);
+        prepareSubCallPipeline(st, rawToolCallbacks, turnCtx);
         // 模型不支持 Function Calling 时不下发 tools：部分网关收到 tools 字段直接 400（fail-loud，不静默）。
         // 登记为用户可见降级事件——工具是智能体配置带来的，用不了要让人知道原因。
         if (toolCallbacks.length > 0 && !modelRegistryService.toolCapableOf(st.model)) {
@@ -4187,6 +4450,14 @@ public class RagService {
          * 判据本体在描述符的 {@code viewerRequired} 上，这里只把"这是分支"那个事实带到装配处。
          */
         volatile boolean branchTurn;
+        /**
+         * 本轮可被沙盒脚本子调用的工具（P3b）：名字 → <b>已过守卫链包装</b>的回调。
+         * <p>只在挂了 run_code 时构建；null = 本轮没有这条通道（脚本里的回调一律拒）。
+         * 用 Map 而不是列表：容器侧按工具名找函数，名字重复时后挂的覆盖前面的比"两个都能调"清楚。
+         */
+        volatile java.util.Map<String, org.springframework.ai.tool.ToolCallback> subCallTools;
+        /** 本轮已发生的子调用次数（子调用的独立预算计数，不进模型的单轮步数） */
+        final java.util.concurrent.atomic.AtomicInteger subCallCount = new java.util.concurrent.atomic.AtomicInteger();
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露

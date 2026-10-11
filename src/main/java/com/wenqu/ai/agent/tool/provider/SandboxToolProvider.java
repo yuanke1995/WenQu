@@ -49,7 +49,35 @@ public class SandboxToolProvider implements ToolFamilyProvider {
                 d("edit_file", "编辑沙盒文件", "编辑文件", "在云端沙盒里修改文件内容", SideEffect.MUTATE),
                 d("ls", "查看沙盒目录", "查看文件列表", "列出云端沙盒里某个目录下的文件", SideEffect.READ),
                 d("deliver_artifact", "交付沙盒产物", "保存生成的文件",
-                        "把云端沙盒里生成的文件存进会话，可查看下载", SideEffect.MUTATE));
+                        "把云端沙盒里生成的文件存进会话，可查看下载", SideEffect.MUTATE),
+                new ToolDescriptor("run_code", ToolFamily.SANDBOX,
+                        "沙盒脚本（一次做完一批）", "运行脚本",
+                        "在云端沙盒里跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来",
+                        SideEffect.MUTATE, "tool.runcode.enabled", false, true, null));
+    }
+
+    /**
+     * 本族自己的挂不挂判据；{@code run_code} 在此多两道闸。
+     * <p>第一道是它自己的开关 {@code tool.runcode.enabled}（默认关）：这是个能力形态变化而不是 bug 修复，
+     * 上了就该由管理员决定谁先吃螃蟹。
+     * <p>第二道是<b>「工具执行确认=每次问我」时不给</b>。理由不是麻烦，是语义：脚本里的子调用要逐个过
+     * 审批闸，一次扇出 20 次读取就是 20 张卡，而人点第一张卡时并不能预见后面 19 次要读什么——
+     * "逐项确认"这个承诺在脚本形态下兑现不了。与其给一个会把人淹掉的能力，不如不提供：
+     * 要跑脚本请先选自动执行，要逐项确认就回到逐个调工具（那时每次调用都是看得见的）。
+     * <p>档位裁剪（只读档不给写类工具）不在这里：那是跨族判据，走 {@code ExecutionPolicy.allowsTool}。
+     */
+    @Override
+    public boolean exposes(ToolDescriptor d, com.wenqu.ai.agent.tool.ToolMountContext mc) {
+        if (d != null && "run_code".equals(d.name()) && !runCodeAllowed(mc)) return false;
+        return ToolFamilyProvider.super.exposes(d, mc);
+    }
+
+    private static boolean runCodeAllowed(com.wenqu.ai.agent.tool.ToolMountContext mc) {
+        if (!mc.gateOn("tool.runcode.enabled")) return false;
+        com.wenqu.ai.agent.permission.ExecutionPolicy p = mc.permissionPolicy();
+        // 生效审批档以本轮解析出来的策略为准（智能体没设过时它来自档位建议值）——直接问 agent 列会漏掉那种情况
+        String approval = p != null ? p.approvalMode() : (mc.approvalAsk() ? "ask" : "auto");
+        return !"ask".equalsIgnoreCase(approval == null ? "auto" : approval.trim());
     }
 
     private static ToolDescriptor d(String name, String label, String cardLabel, String cardHint, SideEffect se) {

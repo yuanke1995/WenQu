@@ -264,6 +264,18 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
+     * 沙盒脚本回调（P3a/P3b 的 {@code run_code}）：容器里没有、也不该有用户的登录令牌，
+     * 它带的是一次性的<b>运行凭据</b>——发于本次 {@code run_code}、随运行结束撤销，只能调本轮
+     * 已挂载的工具（名单在控制器里核，执行一律走守卫链）。
+     * <p>所以这里免的是"登录门禁"这一层，不是免鉴权：凭据认不出来就是 401。
+     * <p>与游客分享同一形态（token 即凭据），但作用面更小：分享 token 指向一个智能体的问答能力，
+     * 这枚凭据指向"某个正在跑的用户这一轮"，且过期即废、不可续用、不落库。
+     */
+    private static boolean isSandboxCallbackEndpoint(String method, String path) {
+        return "POST".equals(method) && "/api/ai/sandbox/tool-call".equals(path);
+    }
+
+    /**
      * 模型供应商的自助端点（普通用户可访问）。
      * <p>
      * 覆盖：列表 / 新建（{@code /provider}）、单个的改删与启停、单个的模型登记、
@@ -315,10 +327,11 @@ public class SecurityConfig implements WebMvcConfigurer {
                 apiKeyService.touchLastUsed(rec.getId());
                 return true;
             }
-            // 2. 登录门禁：require-login=true 时，除登录引导端点与游客分享端点外必须持有效登录令牌
+            // 2. 登录门禁：require-login=true 时，除登录引导端点、游客分享端点与沙盒脚本回调外必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));
             if (properties.getAuth().isRequireLogin() && !authenticated
-                    && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)) {
+                    && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
+                    && !isSandboxCallbackEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(

@@ -64,8 +64,17 @@ public class SandboxTools {
     public static final String CTX_SPILL = "wq_tool_spill";
     /** 留存成功后的上报（工具名, spillId）：问答侧据此把「查看完整输出」挂到对应那张工具卡上 */
     public static final String CTX_SPILL_REPORT = "wq_tool_spill_report";
+    /**
+     * toolContext 里「本轮子调用回程」的键（{@link com.wenqu.ai.agent.runcode.RunCodeBridge}，P3b）。
+     * <p>{@code run_code} 生成的 Python 客户端要把脚本里的每次工具调用打回平台，而"打回哪儿、能调哪些、
+     * 这轮还剩几次额度"全是本轮的事——所以经上下文注入，与沙盒档位、spill 信箱同一条路子。
+     * 缺这个键时 run_code 直接拒（不是"那就不带工具、纯算"）：模型看到的能力与实际给的不能两样。
+     */
+    public static final String CTX_RUN_CODE_BRIDGE = "wq_runcode_bridge";
     /** 支持流式输出的工具名（RagService 按 name 判定是否注入输出回调）。 */
     public static final String STREAMING_TOOL_NAME = "execute";
+    /** 脚本型工具名（P3b）：RagService 判定是否注入子调用回程用 */
+    public static final String RUN_CODE_TOOL_NAME = "run_code";
     /**
      * 本组件注册的全部工具名（RagService 判定「是否沙盒工具」用，决定要不要注入
      * CTX_INFRA_ERROR_SINK）。刻意列全而非用前缀匹配：工具名是 @Tool 显式声明的字符串，
@@ -73,14 +82,17 @@ public class SandboxTools {
      * 而前缀匹配会在重构时静默失配。
      */
     public static final java.util.Set<String> TOOL_NAMES = java.util.Set.of(
-            "execute", "read_file", "write_file", "edit_file", "ls", "deliver_artifact");
+            "execute", "read_file", "write_file", "edit_file", "ls", "deliver_artifact", RUN_CODE_TOOL_NAME);
 
     private final SandboxService sandboxService;
     private final ArtifactService artifactService;
+    private final com.wenqu.ai.agent.runcode.RunCodeService runCodeService;
 
-    public SandboxTools(SandboxService sandboxService, ArtifactService artifactService) {
+    public SandboxTools(SandboxService sandboxService, ArtifactService artifactService,
+                        com.wenqu.ai.agent.runcode.RunCodeService runCodeService) {
         this.sandboxService = sandboxService;
         this.artifactService = artifactService;
+        this.runCodeService = runCodeService;
     }
 
     @Tool(name = "execute", description = "在隔离沙盒（Linux 容器）中执行 shell 命令，返回标准输出与退出码。"
@@ -272,6 +284,49 @@ public class SandboxTools {
         } catch (IllegalArgumentException | IllegalStateException e) {
             return reportFsError(toolContext, "产物交付失败：" + e.getMessage());
         }
+    }
+
+    /**
+     * 沙盒里跑一段脚本（P3b）。工具本身只做"该不该给"的判定与落点解析，运行编排在
+     * {@link com.wenqu.ai.agent.runcode.RunCodeService}：生成 Python 客户端、发一次性运行凭据、
+     * 执行、回收。
+     * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进会话工作区），所以只读档压根
+     * 挂不上这个工具（{@code SideEffect.MUTATE} 被档位裁掉），全自主档也不给它越过工作区的能力。
+     */
+    @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段 Python 3 脚本，用来把<b>多件同类的活一次做完</b>："
+            + "批量读取/转换文件、逐份汇总很多资料、复杂计算与生成文件。"
+            + "脚本里可以 import wenqu_tools（本轮自动提供），里面每个函数就是本轮你已经挂上的那个工具"
+            + "（read_file、searchKnowledge、webSearch 等），调用照常受平台的权限与预算约束。"
+            + "硬性约束：只有 print 出来的内容会回到对话里，返回值不会自动出现；请只 print 结论与关键数字，"
+            + "不要把整份资料打出来（那和直接调工具没区别）。"
+            + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是扇出与循环。"
+            + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
+    public String run_code(
+            @ToolParam(description = "Python 3 脚本正文。可以 `import wenqu_tools as wq` 使用本轮工具；"
+                    + "结果请用 print 输出（stdout 会被带回）") String script,
+            ToolContext toolContext) {
+        com.wenqu.ai.agent.runcode.RunCodeBridge bridge = ctxFn(toolContext, CTX_RUN_CODE_BRIDGE);
+        if (bridge == null) {
+            return reportInfra(toolContext, "run_code 未执行：本轮没有可用的子调用回程"
+                    + "（平台未配置沙盒回调地址，或本轮没有可交给脚本的工具）。"
+                    + "请改用已有的工具逐项完成。");
+        }
+        // 与 write/edit 同一条档位判据：脚本与客户端要写进会话工作区
+        String denial = writeDenial(toolContext, runCodeService.workDir() + "/main.py");
+        if (denial != null) {
+            return reportFsError(toolContext, denial);
+        }
+        ProvisionerSandboxBackend backend = backend(toolContext);
+        if (backend == null) {
+            return reportInfra(toolContext, NO_CONTEXT);
+        }
+        String out = runCodeService.run(bridge, backend, script, outputSink(toolContext));
+        if (out != null && out.startsWith("沙盒不可用")) {
+            // 运行失败的原因在文本里已经说清了（给模型看），但基础设施故障必须另外报一次，
+            // 否则这条工具记录会显示成绿色对勾——排查的人看不出是容器没起来还是脚本写错了
+            reportInfra(toolContext, out);
+        }
+        return clip(out == null ? "" : out, RUN_CODE_TOOL_NAME, toolContext);
     }
 
     /** 从 toolContext 取会话 id（与 {@link #backend(ToolContext)} 同键，供产物归属使用）。 */
