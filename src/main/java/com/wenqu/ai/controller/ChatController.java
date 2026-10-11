@@ -340,8 +340,9 @@ public class ChatController {
     }
 
     @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：插话随**下一个工具步**的"
-            + "结果送达模型——工具循环由框架持有，做不到掐掉正在执行的这一步。本轮收尾前仍未送出的，会随 done"
-            + " 事件回落由前端自动作为下一句发出，不会静默丢话。单轮最多 3 条、单条 800 字；"
+            + "结果送达模型——工具循环由框架持有，做不到掐掉正在执行的这一步。它同时被落成一条普通用户消息"
+            + "（用户按了发送、话是自己说的，历史里就该长成用户消息的样子），返回的 messageId 供前端挂到那颗气泡上。"
+            + "本轮收尾前仍未送出的，会随 done 事件回落由前端作为同一句话续发。单轮最多 3 条、单条 800 字；"
             + "没有在跑的轮 / 不是本人的轮 / 超出上限时返回 accepted=false，前端按普通消息发送即可。")
     @PostMapping("/chat/steer")
     public ResultJson steerChatTurn(@RequestBody Map<String, String> body) {
@@ -350,8 +351,9 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
-        boolean accepted = ragService.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
-        return ResultJson.ok(java.util.Map.of("accepted", accepted));
+        String messageId = ragService.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
+        return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
+                "messageId", messageId == null ? "" : messageId));
     }
 
     @Operation(summary = "断线重连·探测", description = "问这个会话是否还有一轮正在跑（只在内存里判，服务重启后没有）。"

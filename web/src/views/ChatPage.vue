@@ -151,11 +151,6 @@
                   <span class="msg-file-name">{{ historyRefPreview(hr) }}</span>
                 </span>
               </div>
-              <!-- 插话续发：这句话是用户在上一轮跑着时补的方向，没赶上工具步、随 done 回落成新一轮发出来的。
-                       不标的话它和一条普通提问长得一模一样，用户回头看历史会以为自己在那一刻新问了一次 -->
-              <div v-if="m.role === 'user' && m.fromSteer" class="msg-steer-tag">
-                <login-outlined /> 插话 · 接上一轮的回答
-              </div>
               <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
               <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
               <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
@@ -198,18 +193,6 @@
                       <span class="tl-caret" :class="{ open: procOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
-                  </div>
-                  <!-- 插话：本轮跑着的时候用户补的那一句方向。按下发送即送达，所以这里**没有再点一次确认**
-                       的按钮**——此前那个 12px 的「插话」小控件把绝大多数用户卡在"以为没发出去"上。
-                       送达过的（后端段）留在它实际生效的位置，刷新后同源回显；
-                       刻意不进折叠簇、不并工具组——藏进「已执行 N 个操作」那一行等于没显示 -->
-                  <div v-else-if="seg.kind === 'steer'" class="tl-steer" :class="{ pending: seg.pending }">
-                    <span class="tl-steer-ic">↳</span>
-                    <span class="tl-steer-tag">插话</span>
-                    <span class="tl-steer-txt">{{ seg.text }}</span>
-                    <span v-if="seg.extra" class="tl-steer-extra">{{ seg.extra }}</span>
-                    <span v-if="seg.deferred" class="tl-steer-state">这轮答完就自动接着发</span>
-                    <span v-else-if="seg.sent" class="tl-steer-state">已插入 · 模型会在下一步看到</span>
                   </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group" :class="{ inCluster: seg.inCluster }">
@@ -737,6 +720,31 @@
             <span class="at-chip-del" title="移除该引用" @click="removeHistoryRef(hi)">×</span>
           </span>
           <span class="at-chips-note">历史引用只对本轮生效</span>
+        </div>
+        <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型。
+             没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
+             拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
+             刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
+        <div v-if="steerQueue.length" class="steer-queue">
+          <div v-for="(it, qi) in steerQueue" :key="qi" class="steer-item"
+               :class="{ sending: it.sending, deferred: it.deferred, dragging: steerDragIdx === qi }"
+               draggable="true"
+               @dragstart="onSteerDragStart(qi, $event)"
+               @dragover.prevent="onSteerDragOver(qi)"
+               @dragend="onSteerDragEnd"
+               @drop.prevent="onSteerDrop">
+            <span class="steer-grip" title="拖动调整顺序">⠿</span>
+            <span class="steer-txt">{{ it.text }}</span>
+            <span v-if="steerExtras(it)" class="steer-extra">{{ steerExtras(it) }}</span>
+            <span v-if="it.deferred" class="steer-state">本轮结束后自动发出</span>
+            <span v-else-if="it.sending" class="steer-state">发送中…</span>
+            <template v-else>
+              <button class="steer-act primary" type="button" title="立刻发给模型（纯文字随下一个工具步生效）"
+                      @click="sendSteer(it)">立即发送</button>
+              <button class="steer-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
+              <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
+            </template>
+          </div>
         </div>
         <div v-if="pendingImages.length" class="pending-imgs">
           <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
@@ -1522,7 +1530,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, PictureOutlined, ClockCircleOutlined,
-         OrderedListOutlined, CheckCircleOutlined, LoginOutlined } from '@ant-design/icons-vue'
+         OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
@@ -2389,6 +2397,40 @@ const runCmdFromAddPanel = c => {
 }
 /** 发送前收起「+」面板：它浮在输入区上方，留着会挡住回答 */
 const sendNow = () => { closeAddPanel(); send() }
+
+// ==================== 插话队列的拖动排序 ====================
+// 队列顺序有意义：收尾结算按它依次发出，用户排的先后就是进模型的先后。
+// 用原生 HTML5 拖拽（队列里最多几条，不值得为此引一个 dnd 库）。
+// 落点记录在 steerDragOver：dragOver 阶段才知道鼠标压在哪一条上，drop 时用它算目标下标
+// （dataTransfer 读不到实时位置，只能这么传）。
+const steerDragIdx = ref(-1)
+const steerDragOver = ref(-1)
+const onSteerDragStart = (i, e) => {
+  steerDragIdx.value = i
+  // 不设 dataTransfer 时 Firefox 不触发 drag；设个占位让拖拽在所有浏览器都成立
+  try { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move' } catch (err) { /* 忽略 */ }
+}
+const onSteerDragOver = i => { steerDragOver.value = i }
+const onSteerDragEnd = () => { steerDragIdx.value = -1; steerDragOver.value = -1 }
+const onSteerDrop = () => {
+  const from = steerDragIdx.value
+  const to = steerDragOver.value
+  if (from >= 0 && to >= 0 && from !== to) moveSteer(from, to)
+  onSteerDragEnd()
+}
+
+/** 插话载荷摘要：只把「带了什么」标出来（与气泡里那版同口径，队列里也要看得见带了材料） */
+function steerExtras (s) {
+  if (!s) return ''
+  const bits = []
+  if (s.images?.length) bits.push(`${s.images.length} 张图`)
+  if (s.atts?.length) bits.push(`+${s.atts.length} 个附件`)
+  if (s.skills?.length) bits.push(`技能 ×${s.skills.length}`)
+  if (s.mentions?.length) bits.push(`@ ${s.mentions.length}`)
+  if (s.historyRefs?.length) bits.push(`# ${s.historyRefs.length}`)
+  if (s.planMode) bits.push('计划模式')
+  return bits.join(' · ')
+}
 // ==================== 会话内查找（Ctrl/⌘+F） ====================
 // 逻辑主体在 src/chat/useChatSearch.js：移动壳顶栏的查找入口用同一份。
 // 两端靠消息行的 [data-row-index] 契约对齐（PC 内联模板与 MobileMsgRow 均已带），
@@ -2780,7 +2822,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop,
+  text, canSend, send, stop, steerQueue, sendSteer, editSteer, dropSteer, moveSteer,
   streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
@@ -3597,22 +3639,33 @@ onMounted(async () => {
   display: flex; align-items: center; justify-content: center;
   color: var(--app-accent); font-size: 14px; font-weight: 500;
 }
-/* 插话行（挂在气泡的时间线里，不在输入框上方）：左边一道竖线把它和工具卡区分开，
-   读起来是"用户在执行过程中插了一句"。不另设 max-width——气泡内卡片跟消息列同宽（同 plan-card 口径），
-   fit-content 只让短句不铺满整行。按下即送达，所以只有「已插入/稍后自动发」两种记录态，
-   没有需要主色抢眼的待确认态（那个 .pending 高亮随待发送层一起去掉了）。 */
-.tl-steer {
-  display: flex; align-items: center; gap: 8px; min-width: 0; width: fit-content; max-width: 100%;
-  margin: 4px 0; padding: 3px 10px 3px 9px; font-size: 13px;
-  border-left: 2px solid var(--app-border); color: var(--app-text2);
+/* 插话队列（输入框正上方）：生成中按发送先落到这里排队，点「立即发送」才真发给模型。
+   没点之前是纯本地的，所以「删除/修改」是白拿的反悔窗口；拖动可排序。
+   与 @引用/技能 chip 同一带、同宽居中——它是"还没发出去的话"，视觉上属于输入区而不是消息流。 */
+.steer-queue {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 2px 4px 6px; max-width: var(--chat-col); margin: 0 auto;
 }
-.tl-steer-ic { color: var(--app-text3); flex: none; }
-.tl-steer-tag {
-  flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px;
-  border: 1px solid var(--app-border); color: var(--app-text3);
+.steer-item {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 5px 8px 5px 6px; font-size: 13px; color: var(--app-text);
+  border: 1px solid var(--app-accent); border-radius: 10px;
+  background: var(--app-accent-weak);
 }
-.tl-steer-txt { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
-.tl-steer-extra, .tl-steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
+.steer-item.deferred { border-color: var(--app-border); background: var(--app-panel); color: var(--app-text2); }
+.steer-item.sending { opacity: .6; }
+.steer-item.dragging { opacity: .4; }
+.steer-grip { flex: none; cursor: grab; color: var(--app-text3); font-size: 13px; line-height: 1; }
+.steer-grip:active { cursor: grabbing; }
+.steer-txt { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.steer-extra, .steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
+.steer-act {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
+  padding: 2px 8px; font-size: 12px; color: var(--app-text); cursor: pointer;
+}
+.steer-act:hover { background: var(--app-panel-2); }
+.steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
 .input-box {
   position: relative; max-width: var(--chat-col); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);
@@ -3874,12 +3927,6 @@ onMounted(async () => {
 
 /* 气泡内附件标签（历史回显） */
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-/* 插话续发标记：随这条用户气泡一起走，弱化到不抢内容（这是个说明，不是主行动点） */
-.msg-steer-tag {
-  display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px;
-  padding: 1px 7px; border-radius: 6px; font-size: 11px;
-  color: var(--app-text3); border: 1px dashed var(--app-border);
-}
 .msg-file {
   display: inline-flex; align-items: center; gap: 5px; max-width: 260px;
   padding: 4px 8px; border-radius: 8px; font-size: 12px;

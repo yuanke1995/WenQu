@@ -7548,23 +7548,34 @@ public class RagService {
      * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见。
      * <p>能力边界要说清：工具循环由 Spring AI 的 ToolCallAdvisor 持有，我们不持有，所以做不到
      * 「掐掉当前这一步立刻改方向」——插话在**下一个工具步**随工具结果送达模型。本轮自然收尾前
-     * 还没被消费的，随 {@code done} 回落给前端自动作为下一句发出（与计划「继续对话」同一条通路），
+     * 还没被消费的，随 {@code done} 回落给前端作为同一句话续发（与计划「继续对话」同一条通路），
      * 绝不静默丢话。
+     * <p><b>落库为一条普通用户消息</b>：用户按了发送、话是自己说的，界面与历史里它就该长成用户消息
+     * 的样子（前端据此推一条气泡；刷新后由历史接口按同一个 ID 回显同一条）。不引入任何标记列——
+     * 它不需要"身份"，它本来就是一条用户消息；也没必要新开端点，"没发出去"的东西留在前端队列里即可。
+     *
+     * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 超限返回 null
      */
-    public boolean steerTurn(String sessionId, String userId, String text) {
+    public String steerTurn(String sessionId, String userId, String text) {
         TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
-        if (h == null || text == null || text.isBlank() || h.stopped().get()) return false;
+        if (h == null || text == null || text.isBlank() || h.stopped().get()) return null;
         if (userId == null || !userId.equals(h.userId())) {
             log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: session={} uid={}", sessionId, userId);
-            return false;
+            return null;
         }
         // 单轮插话上限：防把这里当成第二个输入框连发刷屏（超出即拒，前端按普通消息发）
-        if (h.steers().size() >= MAX_STEERS_PER_TURN) return false;
+        if (h.steers().size() >= MAX_STEERS_PER_TURN) return null;
         String clean = text.strip();
-        h.steers().add(clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean);
-        sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", clean);
-        log.info("[STEER] 插话已入队（下一个工具步生效）: session={} 字数={}", sessionId, clean.length());
-        return true;
+        String capped = clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean;
+        // 与正常提问同一口径落库（role=user、同一 turnId）：先落库再入队，这样前端拿到 ID 就能
+        // 立刻推出一颗带 ID 的气泡，刷新后回显的是同一条而不是两条
+        String messageId = sessionService.appendMessage(sessionId, "user", capped, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, h.turnId());
+        h.steers().add(capped);
+        sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", capped);
+        log.info("[STEER] 插话已入队（下一个工具步生效）: session={} 字数={} msgId={}",
+                sessionId, capped.length(), messageId);
+        return messageId;
     }
 
     /** 单轮插话条数上限 / 单条字数上限（超出按普通消息发更合适） */
@@ -7581,34 +7592,9 @@ public class RagService {
         // 模型到底看没看到这句插话（"回答没变"可能只是模型没采纳，而不是没送达）
         log.info("[STEER] 已随工具结果送达模型: session={} 条数={} 字数={}",
                 st.sessionId, pending.size(), pending.stream().mapToInt(String::length).sum());
-        pushTimelineSteers(st, pending);
         StringBuilder sb = new StringBuilder();
         for (String s : pending) sb.append("【用户中途补充】").append(s).append('\n');
         return sb.toString();
-    }
-
-    /**
-     * 插话送达留痕：每条插话作为一个时间线段，就地插在携带它的那张工具卡之后。
-     * <p>此前插话只在发起设备的输入框上方挂一条「已插入」，本轮一结束连痕迹都没了——用户说过的那句
-     * 方向只存在于当时那个工具返回值里，刷新/换设备/断线重连都回不来。段与工具卡同源（timelineJson），
-     * 实时视图与刷新后视图因此是同一份位置。
-     */
-    private void pushTimelineSteers(AnswerStreamState st, List<String> steers) {
-        flushTimelineText(st, st.fullResponse.length());
-        flushTimelineProcess(st, st.processResponse.length());
-        synchronized (st.timeline) {
-            for (String s : steers) {
-                if (s == null || s.isBlank()) continue;
-                Map<String, Object> seg = new LinkedHashMap<>();
-                seg.put("kind", "steer");
-                seg.put("text", s);
-                // sent 必须落进段里：这些段是**送达之后**才写的（写在这里就是随工具结果送达的那一刻）。
-                // 不带它，投影层读 s.sent 拿不到值，「已插入 · 模型会在下一步看到」那行状态字整个不渲染——
-                // 而刷新/换设备/断线重连看到的正是这些段（本地条目早退了），症状是"刷新后插话变成一条没头没尾的话"
-                seg.put("sent", true);
-                st.timeline.add(seg);
-            }
-        }
     }
 
     /** 取走（并清空）该轮尚未送达的插话 */
