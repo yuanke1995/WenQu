@@ -4065,7 +4065,7 @@ onMounted(async () => {
 /* ==================== 计划模式：执行计划卡 ==================== */
 /* 生命周期能从卡片自身状态读出来：drafting 生成中（蓝）→ pending 待确认（琥珀，同审批卡语义）
    → approved 已批准（绿）/ rejected 未批准（灰弱化收尾） */
-.plan-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
+.plan-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; }
 .plan-card.plan-approved { border-color: var(--app-ok-border, var(--app-border)); background: var(--app-panel); opacity: .92; }
 .plan-card.plan-rejected { border-color: var(--app-border); background: var(--app-panel); opacity: .75; }
 /* 已被取代（用户提出修改、继续对话后本版作废）：弱化收尾，但正文照常可读（它是修改记录的一部分） */
@@ -4092,7 +4092,9 @@ onMounted(async () => {
   mask-image: linear-gradient(to bottom, #000 46%, transparent 96%);
 }
 .plan-wrap.is-clamped .plan-more { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); }
-.plan-more { display: inline-flex; align-items: center; gap: 4px; margin: 8px auto 0; padding: 3px 12px;
+/* 展开态的按钮留在正文下方同处居中：inline-flex 是行内级盒，margin:auto 不生效，
+   会和收起态（绝对定位居中）错开一个身位，故用 flex + fit-content 变块级盒 */
+.plan-more { display: flex; width: fit-content; align-items: center; gap: 4px; margin: 8px auto 0; padding: 3px 12px;
   border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-panel);
   color: var(--app-text2); font-size: 12px; line-height: 1.4; cursor: pointer; }
 .plan-more:hover { color: var(--app-accent); border-color: var(--app-accent); }
