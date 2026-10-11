@@ -295,7 +295,14 @@ public class ParseQueueService {
         } else {
             try {
                 int backoff = parseTaskMapper.markRetryable(taskId, msg, backoffSeconds(taskId));
-                log.warn("[PARSE-QUEUE] 任务可重试 task={} doc={}: {}（下次退避 {}s）", taskId, docId, msg, backoff);
+                if (isDead(taskId)) {
+                    // markRetryable 的 SQL 在 attempt 触顶时把行直接翻成 dead —— 这一刻它就是终态失败。
+                    // 不补通知的话「重试耗尽」是队列里唯一不吭一声的失败口径（fatal 分支才有铃铛与批量告警）
+                    notifyParseOutcome(docId, msg);
+                    log.warn("[PARSE-QUEUE] 任务重试耗尽转终态 task={} doc={}: {}", taskId, docId, msg);
+                } else {
+                    log.warn("[PARSE-QUEUE] 任务可重试 task={} doc={}: {}（下次退避 {}s）", taskId, docId, msg, backoff);
+                }
             } catch (Exception inner) {
                 // markRetryable 本身失败（例如 attempt 达上限转 dead 的分支写错）→ 直接记终态，不让任务悬空
                 log.error("[PARSE-QUEUE] 任务失败且无法记录退避 task={} doc={}: {}", taskId, docId, inner.getMessage());
@@ -317,6 +324,12 @@ public class ParseQueueService {
         int n = (attempt == null || attempt < 1 ? 1 : attempt);
         long backoff = (long) base * (1L << Math.min(n - 1, 6));
         return (int) Math.min(MAX_BACKOFF_SEC, backoff);
+    }
+
+    /** 任务是否已转终态失败（attempt 触顶后 markRetryable 会直接把行翻成 dead） */
+    private boolean isDead(String taskId) {
+        ParseTask t = parseTaskMapper.selectById(taskId);
+        return t != null && t.getStatus() != null && t.getStatus() == ParseTask.STATUS_DEAD;
     }
 
     /** 终态判定：明确的格式/内容错误不重试；其余（超时/IO/OOM/上游 5xx）一律走退避重试 */

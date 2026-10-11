@@ -1958,18 +1958,39 @@ public class DocumentService {
     public void runParseTask(String taskId, String docId) throws Exception {
         AiDocument doc = documentMapper.selectById(docId);
         if (doc == null) {
-            throw new BizException("文档不存在，无法解析");
+            throw new ParseFatalException("文档不存在，无法解析");
         }
         Path source = sourceFile(docId, doc.getFileName());
         if (!Files.exists(source)) {
-            throw new BizException("源文件缺失，无法解析（请重新上传：" + doc.getFileName() + "）");
+            throw preflightFailure(doc, "源文件缺失，无法解析（请重新上传：" + doc.getFileName() + "）");
         }
         DocumentParser parser = parsers.stream().filter(p -> p.supports(doc.getFileType()))
                 .findFirst().orElse(null);
         if (parser == null) {
-            throw new ParseFatalException("不支持的文件格式: ." + doc.getFileType());
+            throw preflightFailure(doc, "不支持的文件格式: ." + doc.getFileType());
         }
         processUpload(docId, doc.getFileName(), source, parser);
+    }
+
+    /**
+     * 预检失败的收口：这类问题重跑不会自愈，判终态（不占退避重试）并把文档从「解析中」落回可读状态。
+     * <p>
+     * 回写必须在这里做而不是等 {@code processUpload} 的 catch：预检在那个 try 之前，失败时够不着它的
+     * 回退逻辑，文档行会一直停在 status=2 —— 前端读成「永远已入队」，且重解析被 {@code tryLockParsing}
+     * 的 CAS 永久拒绝（只剩删除能点）。状态口径与 processUpload 的失败分支一致：有旧块回退生效、无旧块置失败。
+     */
+    private ParseFatalException preflightFailure(AiDocument doc, String msg) {
+        boolean hasOldChunks = knowledgeMapper.selectCount(
+                new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, doc.getId())) > 0;
+        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getId, doc.getId())
+                .eq(AiDocument::getStatus, 2)   // 只收自己刚置的「解析中」，不覆盖用户在这期间的停用/弃用
+                .set(AiDocument::getStatus, hasOldChunks ? 0 : 3)
+                .set(AiDocument::getFailReason, truncate(hasOldChunks ? "重解析失败，已保留上一版内容: " + msg : msg))
+                .set(AiDocument::getParseProgress, 0)
+                .set(AiDocument::getParseDesc, hasOldChunks ? "解析失败(已回退旧内容)" : "解析失败"));
+        progressGuard.remove(doc.getId());
+        return new ParseFatalException(msg);
     }
 
     /** 解析队列统计（全平台口径） */
