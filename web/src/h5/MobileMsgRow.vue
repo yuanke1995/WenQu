@@ -94,7 +94,7 @@
                 <span v-if="clusterRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!clusterHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
-                <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ clusterTools(seg).length }} 个操作</span>
+                <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                 <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
                 <span class="card-dim">· {{ clusterDur(seg) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
@@ -112,7 +112,7 @@
                 <span v-if="groupRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
-                <span class="card-title">执行了 {{ seg.tools.length }} 个操作</span>
+                <span class="card-title">执行了 {{ executedCount(seg.tools) }} 个操作</span>
                 <span class="card-dim">· {{ groupDur(seg) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
@@ -182,7 +182,7 @@
             <span v-if="toolRunning(m)" class="spinner"></span>
             <check-outlined v-else-if="!m.toolCalls.some(t => t.status === 'error')" class="ic-ok" />
             <close-circle-outlined v-else class="ic-err" />
-            <span class="card-title">执行了 {{ toolCallsView(m.toolCalls).length }} 个操作</span>
+            <span class="card-title">执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
             <span class="card-dim">· {{ fallbackDur(m) }}</span>
             <caret-right-outlined class="caret" :class="{ open: m._fbOpen }" />
           </button>
@@ -339,7 +339,7 @@ import {
   busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
-  fallbackDur, toolCallsView, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
+  fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText
 } from '../chat/projections'

@@ -2462,6 +2462,11 @@ public class RagService {
      */
     private ToolTurnContext toolTurnContext(AnswerStreamState st) {
         final com.wenqu.ai.util.RequestUser.Snapshot identity = com.wenqu.ai.util.RequestUser.snapshot();
+        // 本轮检索参数覆盖（库级 + 智能体级）与个人配置覆盖装在同一个 ThreadLocal 盲区里：
+        // 不带进工具线程，配置页上那份 retrieval.* 对 searchKnowledge 一律静默失效，
+        // 实测表现是「主链路命中并引用、工具侧恒空」——两份参数同一个会话。
+        final Map<String, String> cfgOverrides = configService.currentOverrides();
+        final Map<String, String> userOverrides = configService.currentUserOverrides();
         // 本轮基础上下文：会话/用户归属 + askUser 执行器 + 任务清单写入器 + 大输出外溢信箱
         final Map<String, Object> baseCtx = java.util.Collections.unmodifiableMap(toolContext(st));
         // 按族的上下文注入：本轮落点随本次调用传递，工具侧不再读任何跨调用的静态状态
@@ -2597,14 +2602,14 @@ public class RagService {
                                   Map<String, Object> context, ToolInvocation inv, int[] attemptsOut) {
                 return callWithRetry(raw, arguments,
                         new org.springframework.ai.chat.model.ToolContext(context),
-                        inv.toolName(), attemptsOut, identity);
+                        inv.toolName(), attemptsOut, identity, cfgOverrides, userOverrides);
             }
 
             @Override
             public void observe(ToolInvocation inv, String status, String resultOrError) {
                 boolean starting = "start".equals(status);
                 recordToolStatus(st, inv.toolName(), inv.arguments(), status, resultOrError,
-                        starting ? 0 : inv.elapsedMillis(), starting ? 1 : inv.attempts());
+                        starting ? 0 : inv.elapsedMillis(), starting ? 1 : inv.attempts(), inv.denied());
             }
 
             @Override
@@ -2927,13 +2932,16 @@ public class RagService {
     private String callWithRetry(org.springframework.ai.tool.ToolCallback cb, String toolInput,
                                  org.springframework.ai.chat.model.ToolContext toolContext,
                                  String name, int[] attempts,
-                                 com.wenqu.ai.util.RequestUser.Snapshot identity) {
+                                 com.wenqu.ai.util.RequestUser.Snapshot identity,
+                                 Map<String, String> overrides, Map<String, String> userOverrides) {
         // 工具执行发生在 Reactor boundedElastic 线程（Spring AI ToolCallAdvisor 对阻塞工具 subscribeOn），
         // 而 RequestUser 用裸 ThreadLocal 只在入口线程可见 → 工具内读身份会回落 anonymous。
         // 对检索类工具这不是安全降级而是功能损坏：loadVisibleKbIds() 判 anonymous 为「什么都读不到」
         // → 库门表达式恒假 → 融合召回 0（线上实测：主链路命中 31 块，工具侧恒空并耗尽 15 步工具预算）。
         // identity 由 instrumentTools 在入口线程捕获后传入——不能在执行点临时 snapshot()，
         // 那里已经在弹性线程上、捕获到的只会是 anonymous（实测修复无效）。
+        // 本轮配置覆盖同样要带过来：ConfigService 的 OVERRIDE/USER_OVERRIDE 也是入口线程的 ThreadLocal，
+        // 不带进来工具就按全局参数检索，于是「主链路按 0.6 关键词权重命中、工具按 0.2 把它压出重排窗口」。
         // 统一恢复：一次覆盖全部工具（检索/沙盒/MCP/工作流），避免逐工具打补丁。
         RuntimeException last = null;
         for (int i = 0; i < 2; i++) {
@@ -2950,7 +2958,20 @@ public class RagService {
             attempts[0]++;
             // restore() 返回的句柄用于 finally 复原：弹性线程会被复用，不清理会污染后续任务的身份
             try (AutoCloseable ignored = com.wenqu.ai.util.RequestUser.restore(identity)) {
-                return cb.call(toolInput, toolContext);
+                // 配置覆盖同样要复原成「进入前的那一份」——putOverrides 是合并语义，
+                // 所以先 clear 再装回 prev，直接 putOverrides(prev) 会把本轮的键留给下一个任务
+                Map<String, String> prev = configService.currentOverrides();
+                Map<String, String> prevUser = configService.currentUserOverrides();
+                configService.putOverrides(overrides);
+                configService.putUserOverrides(userOverrides);
+                try {
+                    return cb.call(toolInput, toolContext);
+                } finally {
+                    configService.clearOverride();
+                    configService.clearUserOverrides();
+                    if (!prev.isEmpty()) configService.putOverrides(prev);
+                    if (!prevUser.isEmpty()) configService.putUserOverrides(prevUser);
+                }
             } catch (Exception e) {
                 last = e instanceof RuntimeException ? (RuntimeException) e : new IllegalStateException(e);
             }
@@ -3403,7 +3424,8 @@ public class RagService {
     private static final int SUB_CALL_CARD_ROWS = 40;
 
     private void recordToolStatus(AnswerStreamState st, String name, String input,
-                                  String status, String resultOrError, long elapsedMs, int attempts) {
+                                  String status, String resultOrError, long elapsedMs, int attempts,
+                                  boolean denied) {
         Map<String, Object> rec = new LinkedHashMap<>();
         rec.put("name", name);
         // 展示名与悬停说明随后端下发：工具卡上写「execute」用户读不懂，而前端那份手抄映射
@@ -3411,6 +3433,8 @@ public class RagService {
         putToolDisplayName(rec, name);
         rec.put("status", status);
         rec.put("elapsedMs", elapsedMs);
+        // 被守卫在执行前挡下：卡片照常留一行（失败要看得见），但这条不计入「跑了 N 步工具」
+        if (denied) rec.put("denied", true);
         if (attempts > 1) {
             rec.put("attempts", attempts); // 自动重试后成功：前端显示「重试 N 次」
         }
@@ -5786,8 +5810,15 @@ public class RagService {
                             }
                         }
                         childImages = rawUrlsOf(done.getList("finalImages", String.class));
+                        // 「这一支跑了 N 步工具」只数真执行过的：被守卫挡下的那几次工具体一次没跑，
+                        // 按台账条数算会把"平台只让它试了 4 次"读成"它试了 8 次还没找到"
                         com.alibaba.fastjson2.JSONArray tc = done.getJSONArray("toolCalls");
-                        steps = tc == null ? 0 : tc.size();
+                        if (tc != null) {
+                            for (int i = 0; i < tc.size(); i++) {
+                                com.alibaba.fastjson2.JSONObject o = tc.getJSONObject(i);
+                                if (o != null && !o.getBooleanValue("denied")) steps++;
+                            }
+                        }
                     }
                 } catch (Exception e) {
                     log.warn("[SUBAGENT] 分支回报解析失败（正文照常带回，引用与图片不续编）: {}", e.getMessage());
@@ -7789,10 +7820,10 @@ public class RagService {
                     return m;
                 }).toList()));
                 long askStartAt = System.currentTimeMillis();
-                recordToolStatus(st, "askUser", askArgs, "start", null, 0, 1);
+                recordToolStatus(st, "askUser", askArgs, "start", null, 0, 1, false);
                 String clarified = doAskUserMulti(st, clarifyQs);
                 recordToolStatus(st, "askUser", askArgs, "done", clarified,
-                        System.currentTimeMillis() - askStartAt, 1);
+                        System.currentTimeMillis() - askStartAt, 1, false);
                 String qa = formatClarifyAnswers(clarifyQs, clarified);
                 if (!qa.isBlank()) {
                     pu.append("\n\n【用户已确认的关键要素】\n").append(qa);

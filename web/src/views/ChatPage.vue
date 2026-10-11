@@ -205,7 +205,7 @@
                       <loading-outlined v-if="clusterRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="clusterHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
-                      <span v-if="clusterTools(seg).length">已执行 {{ clusterTools(seg).length }} 个操作</span>
+                      <span v-if="clusterTools(seg).length">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                       <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
                       <span class="tool-dur">· {{ clusterDur(seg) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
@@ -226,7 +226,7 @@
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
-                      <span>执行了 {{ seg.tools.length }} 个操作</span>
+                      <span>执行了 {{ executedCount(seg.tools) }} 个操作</span>
                       <span class="tool-dur">· {{ groupDur(seg) }}</span>
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
@@ -327,7 +327,7 @@
                   <loading-outlined v-if="toolRunning(m)" spin class="tool-ic tool-ic-run" />
                   <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
                   <check-outlined v-else class="tool-ic tool-ic-ok" />
-                  <span>执行了 {{ toolCallsView(m.toolCalls).length }} 个操作</span>
+                  <span>执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
                   <span class="tool-dur">· {{ fallbackDur(m) }}</span>
                   <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
                 </button>
@@ -1558,7 +1558,7 @@ import { useChatSearch } from '../chat/useChatSearch'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
-import { toolLabel, toolDesc, toolCallsView, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
+import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,

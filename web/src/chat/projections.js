@@ -97,6 +97,11 @@ const toolCallsView = list => {
   if (!Array.isArray(list)) return []
   return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
 }
+/** 「执行了 N 个操作」的计数口径：只数真执行过的。
+ *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
+ *  卡片仍留一行说明为什么没跑，但计入操作数会把「平台只让它试了 4 次」读成「它试了 8 次还没找到」。
+ *  分支卡上的「跑了 N 步工具」在后端按同一口径统计（RagService 读 toolCalls 时跳过 denied）。 */
+const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t && !t.denied).length
 // ==================== askUser（向用户提问）问答记录 ====================
 // 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；
 // result=批量答案：多问题为与问题下标对齐的 JSON 数组字符串，单问题退化为纯文本
@@ -832,7 +837,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   })
   .filter(Boolean)
 export {
-  TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView,
+  TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,

@@ -32,6 +32,12 @@ public final class ToolInvocation {
 
     /** 自动重试次数（首次成功=1）；由执行方回填，观测层据此显示「重试 N 次」 */
     private volatile int attempts = 1;
+    /**
+     * 被守卫在执行前挡下（步数预算用尽、本轮已叫停、权限档位不允许）。
+     * <p>与「执行了但失败」必须分得开：前者一次模型调用都没发生、工具体也没跑，把它算进
+     * 「这一支跑了 N 步工具」会让编排卡读起来像"试了 N 次都不行"，而实际是平台只让它试了几次。
+     */
+    private volatile boolean denied;
     /** 首个失败上报即定性（单调：后续上报不覆盖），见 {@link #recordFailure(String)} */
     private volatile String failureNote;
 
@@ -72,6 +78,14 @@ public final class ToolInvocation {
 
     public void attempts(int n) {
         this.attempts = Math.max(1, n);
+    }
+
+    public boolean denied() {
+        return denied;
+    }
+
+    public void denied(boolean denied) {
+        this.denied = denied;
     }
 
     public Map<String, Object> attributes() {

@@ -98,6 +98,7 @@ public class ToolPipelineFactory {
             for (ToolGuard guard : guards) {
                 ToolGuard.Denial denial = guard.deny(inv, turn);
                 if (denial != null) {
+                    inv.denied(true);   // 工具体一次没跑：与「跑了但失败」在账本上分开定性
                     turn.observe(inv, "start", null);
                     turn.observe(inv, "error", denial.userSummary());
                     return denial.modelPayload();
