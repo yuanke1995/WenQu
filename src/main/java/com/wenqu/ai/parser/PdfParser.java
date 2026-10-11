@@ -118,11 +118,41 @@ public class PdfParser implements DocumentParser {
     }
 
     /** none 路径：文本层抽取 + 扫描件视觉兜底（与历史行为完全一致） */
+    /**
+     * 文本层里的结构标题行：法典/法规类 PDF 把「第X编/章/节」直接写成一行，这就是它们唯一的结构元数据。
+     * <p>认下来当标题，因为标题不是装饰：它进引用卡的显示名，也进重排模型的文档串
+     * （{@code RerankService} 按 {@code title + "\n" + content} 打分）。用「第 12 页」占这个位置
+     * 等于白送一个零信息前缀，而「第五章 侵犯财产罪」本身就是强相关信号。
+     * <p>只认整行且限长（≤30 字）：正文里以「本节规定……」开头的长句不该被升成标题。
+     */
+    private static final java.util.regex.Pattern SECTION_TITLE = java.util.regex.Pattern.compile(
+            "^第[一二三四五六七八九十百千零〇]{1,6}[编章节](\\s*\\S.{0,28})?$");
+
+    /** 标题行内部再出现第二个「第X编/章/节」即判为多栏粘连（如「第一节 调 查第二节 决 定」），不当标题 */
+    private static final java.util.regex.Pattern SECTION_TOKEN = java.util.regex.Pattern.compile(
+            "第[一二三四五六七八九十百千零〇]{1,6}[编章节]");
+
+    /** 取这段文本里最后一个结构标题行；没有返回 null（调用方沿用上一个标题，跨页/跨块不丢） */
+    private static String sectionTitleOf(String piece) {
+        String last = null;
+        for (String line : piece.split("\n")) {
+            String t = line.trim();
+            if (!SECTION_TITLE.matcher(t).matches()) continue;
+            java.util.regex.Matcher m = SECTION_TOKEN.matcher(t);
+            int tokens = 0;
+            while (m.find()) tokens++;
+            if (tokens > 1) continue;   // 版面横排把两节挤成一行：宁可退回页码，也不给用户一个看不懂的引用标题
+            last = t;
+        }
+        return last;
+    }
+
     private List<Chunk> textLayerParse(java.nio.file.Path file, String fileName, int maxSize,
                                        DocumentParser.ParseProgress cb) throws Exception {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
         String pageTitle = "第 1 页";
+        String sectionTitle = null;
 
         // File 模式随机访问加载：内存从 O(文件大小) 降为准 O(页数)，大 PDF 不再全量驻留堆
         try (PDDocument doc = Loader.loadPDF(file.toFile())) {
@@ -138,8 +168,11 @@ public class PdfParser implements DocumentParser {
                 // 按段落→句→字符硬切（兜底 embedding token 上限，与版面路径同一套边界语义）
                 for (String piece : text.length() > maxSize
                         ? DocxParser.splitByBoundaries(text, maxSize) : List.of(text)) {
+                    String seen = sectionTitleOf(piece);
+                    if (seen != null) sectionTitle = seen;
                     if (pageBuffer.length() + piece.length() > maxSize && pageBuffer.length() > 0) {
-                        chunks.add(new Chunk(pageTitle, pageBuffer.toString().trim(), List.of()));
+                        chunks.add(new Chunk(sectionTitle != null ? sectionTitle : pageTitle,
+                                pageBuffer.toString().trim(), List.of()));
                         pageBuffer.setLength(0);
                     }
                     if (pageBuffer.length() > 0) pageBuffer.append("\n");
@@ -161,7 +194,8 @@ public class PdfParser implements DocumentParser {
                             + "（视觉模型可能不可用或返回空），请检查知识库绑定的图片描述模型后重新解析");
                 }
             } else if (pageBuffer.length() > 0) {
-                chunks.add(new Chunk(pageTitle, pageBuffer.toString().trim(), List.of()));
+                chunks.add(new Chunk(sectionTitle != null ? sectionTitle : pageTitle,
+                        pageBuffer.toString().trim(), List.of()));
             }
         }
         return chunks;
