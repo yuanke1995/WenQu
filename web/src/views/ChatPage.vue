@@ -26,37 +26,10 @@
       <MobileChatHead v-if="isNarrow" :share-active="shareActive" @search="openSearch" @share="openShare" @panel="togglePanel" />
 
       <!-- 执行过程（事件账本）：按轮列出这一会话跑过什么——工具步与耗时、审批/提问/计划三张卡、
-           产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障 -->
+           产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障。
+           取数与渲染在共用组件里（移动壳的底部 sheet 用同一份，不各写一遍） -->
       <a-modal v-model:open="eventsOpen" :title="eventsTitle" width="min(880px, 94vw)" :footer="null">
-        <div v-if="eventsLoading" class="ev-tip">正在读取…</div>
-        <div v-else-if="eventsErr" class="ev-tip">{{ eventsErr }}</div>
-        <div v-else-if="!eventsTurns.length" class="ev-tip">
-          <template v-if="eventsTurn">这一轮没有过程记录：账本按天保留，超期会被清理；
-            更早的轮次（账本上线之前跑的）本来也没有留痕。</template>
-          <template v-else>这个会话还没有过程记录（账本按天保留，超期会被清理）。</template>
-        </div>
-        <div v-else>
-          <div class="ev-tip">
-            <template v-if="eventsTurn">这一轮共 {{ eventsTurns[0].count }} 条，按发生顺序。</template>
-            <template v-else>共 {{ eventsTurns.length }} 轮 · 只列最近若干轮，按发生顺序。点开每一轮看它跑了哪些步。</template>
-          </div>
-          <div v-for="t in eventsTurns" :key="t.turnId" class="ev-turn">
-            <button class="ev-head" type="button" @click="toggleTurn(t)">
-              <caret-right-outlined class="ev-caret" :class="{ open: t._open }" />
-              <span class="ev-time">{{ fmtEvTime(t.startedAt) }}</span>
-              <span class="ev-count">{{ t.count }} 条</span>
-              <span v-if="t.endedAt > t.startedAt" class="ev-dur">{{ ((t.endedAt - t.startedAt) / 1000).toFixed(1) }}s</span>
-              <span class="ev-types">{{ evTypeSummary(t) }}</span>
-            </button>
-            <div v-if="t._open" class="ev-list">
-              <div v-for="e in t.events" :key="e.id" class="ev-row">
-                <span class="ev-type">{{ evTypeLabel(e.type) }}</span>
-                <span class="ev-at">{{ fmtEvClock(e.at) }}</span>
-                <span class="ev-sum" :title="e.summary">{{ e.summary }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <SessionEventsPanel :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurn" />
       </a-modal>
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
@@ -1549,7 +1522,6 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          AppstoreOutlined, PictureOutlined, ClockCircleOutlined,
          OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
-         getSessionEvents,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { loadSessions, sessionStore } from './store'
@@ -1570,6 +1542,7 @@ import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
+import SessionEventsPanel from '../components/SessionEventsPanel.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
@@ -1771,69 +1744,17 @@ const togglePanel = () => {
 // ==================== 执行过程（事件账本回放） ====================
 // 「这一轮是怎么跑出来的」此前只有两种看法：正开着页面时看实时过程簇，或事后翻通知/产物倒推。
 // 账本（c_ai_session_event）落地后按写入顺序可枚举了，这里给它一个读口——按轮展开，只给摘要。
+// 取数与渲染都在共用组件 SessionEventsPanel 里（移动壳的底部 sheet 用的就是同一份，不各写一遍）。
 const eventsOpen = ref(false)
-const eventsLoading = ref(false)
-const eventsErr = ref('')
-const eventsTurns = ref([])
 // 非空=只看这一轮（气泡上的「过程」带进来的 turnId）；空=会话级最近几轮
 const eventsTurn = ref('')
 const eventsTitle = computed(() => eventsTurn.value ? '执行过程 · 这一轮' : '执行过程（事件账本）')
-let eventsKey = ''
-const EV_TYPE_LABEL = {
-  tool: '工具', approval: '工具审批', ask_user: '提问卡', plan: '本轮步骤',
-  plan_approval: '计划待批准', plan_cancelled: '计划未批准', plan_superseded: '计划被取代',
-  artifact: '产物', subagent: '子智能体', subagent_route: '派遣路由',
-  agent: '智能体', agent_bound: '绑定智能体', agent_dispatched: '自动派遣', agent_delegated: '委派作答',
-  retrieved: '检索', usage: '用量', todo: '任务清单', error: '失败', warn: '提醒',
-  stop: '用户停止', detach: '断线中止', done: '本轮结束'
-}
-const evTypeLabel = t => EV_TYPE_LABEL[t] || t
-const pad2 = n => (n < 10 ? '0' + n : '' + n)
-function fmtEvTime (ms) {
-  if (!ms) return '—'
-  const d = new Date(ms)
-  return `${d.getMonth() + 1}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-}
-function fmtEvClock (ms) {
-  if (!ms) return ''
-  const d = new Date(ms)
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
-}
-/** 折叠头的一行小计：工具×6 · 检索 · 产物（让人不展开也知道这轮跑了什么量级） */
-function evTypeSummary (t) {
-  const counts = {}
-  for (const e of (t.events || [])) counts[e.type] = (counts[e.type] || 0) + 1
-  return Object.keys(counts).slice(0, 5).map(k => evTypeLabel(k) + (counts[k] > 1 ? '×' + counts[k] : '')).join(' · ')
-}
-async function openEvents (turnId) {
+function openEvents (turnId) {
   // 两种看法共用一个面板：不带参数=会话级「最近几轮跑了什么」，
   // 带气泡的 turnId=只看这一条回答「是怎么跑出来的」
-  const turn = typeof turnId === 'string' ? turnId : ''
-  eventsTurn.value = turn
+  eventsTurn.value = typeof turnId === 'string' ? turnId : ''
   eventsOpen.value = true
-  const sid = currentSessionId.value
-  if (!sid) { eventsErr.value = '还没有选中会话'; eventsTurns.value = []; return }
-  const key = sid + '|' + turn
-  if (eventsKey === key && (eventsTurns.value.length || eventsErr.value)) return   // 同一份开过就用手里这份
-  eventsKey = key
-  eventsLoading.value = true
-  eventsErr.value = ''
-  eventsTurns.value = []
-  try {
-    const r = await getSessionEvents(sid, 8, turn)
-    if (eventsKey !== key) return                 // 快速切会话/切轮：晚到响应不覆盖当前视图
-    const turns = (r && r.data && Array.isArray(r.data.turns)) ? r.data.turns : []
-    // 按轮进来只有一条，直接摊开——用户点的就是这一轮的过程，不该再多点一下
-    if (turn) turns.forEach(t => { t._open = true })
-    eventsTurns.value = turns
-  } catch (e) {
-    if (eventsKey !== key) return
-    eventsErr.value = '过程记录读取失败：' + (e?.message || '网络异常')
-  } finally {
-    if (eventsKey === key) eventsLoading.value = false
-  }
 }
-function toggleTurn (t) { t._open = !t._open }
 // 分组展开态（key → 开/合，默认展开）：**必须存在 computed 外的响应式容器**——
 // computed 每次求值都重建分组对象，直接 g.open = !g.open 改的是非响应式临时对象，
 // 点击既不触发重渲染、状态也会随重建被冲掉（「收缩不生效」的根因）。
@@ -3395,29 +3316,7 @@ onMounted(async () => {
 }
 .tl-io-err { color: var(--app-danger); }
 .tl-io.live { border: 1px solid color-mix(in srgb, var(--app-accent) 35%, transparent); background: var(--app-accent-weak); }
-/* 执行过程（事件账本）：一轮一行，展开按序列出事件摘要 */
-.ev-tip { font-size: 12px; color: var(--app-text-secondary); margin-bottom: 8px; line-height: 1.6; }
-.ev-turn { border: 1px solid var(--app-border); border-radius: 8px; margin-bottom: 6px; overflow: hidden; }
-.ev-head {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
-  border: 0; background: transparent; cursor: pointer; text-align: left;
-  font-size: 12px; color: var(--app-text);
-}
-.ev-head:hover { background: var(--app-bg); }
-.ev-caret { transition: transform .15s; color: var(--app-text-secondary); }
-.ev-caret.open { transform: rotate(90deg); }
-.ev-time { font-variant-numeric: tabular-nums; }
-.ev-count { color: var(--app-text-secondary); }
-.ev-dur { color: var(--app-accent); font-variant-numeric: tabular-nums; }
-.ev-types { margin-left: auto; color: var(--app-text-secondary); font-size: 11px; }
-.ev-list { border-top: 1px solid var(--app-border); padding: 4px 10px 8px; }
-.ev-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px; }
-.ev-type { flex: 0 0 74px; color: var(--app-accent); }
-.ev-at { flex: 0 0 62px; color: var(--app-text-secondary); font-variant-numeric: tabular-nums; }
-.ev-sum {
-  flex: 1; min-width: 0; color: var(--app-text); word-break: break-all;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
+/* 执行过程（事件账本）的样式随组件走：web/src/components/SessionEventsPanel.vue */
 .tool-ic { font-size: 13px; }
 .tool-ic-run { color: var(--app-accent); }
 .tool-ic-ok { color: var(--app-ok); }

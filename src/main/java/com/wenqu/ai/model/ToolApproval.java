@@ -31,6 +31,14 @@ public class ToolApproval {
     /** 发起该轮问答的用户（仅本人可裁决） */
     private String userId;
 
+    /**
+     * 归属轮次（与 {@code c_ai_message.turn_id} 同源）：断线重连恢复卡片时靠它把卡挂回**它自己那一轮**
+     * 的气泡，而不是笼统挂到最后一条助手气泡。
+     * <p>可为 NULL：这一列补上之前的存量记录，以及工作流画布的审批（那是 run 的身份，不是问答轮次）。
+     * 前端遇到 NULL 按原口径处理，不猜轮次。
+     */
+    private String turnId;
+
     /** 待审批工具名（沙盒/MCP） */
     private String toolName;
 

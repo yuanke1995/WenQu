@@ -726,7 +726,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `id`           VARCHAR(50)   NOT NULL COMMENT '审批请求ID（UUID，与 SSE approval_required 事件一致）',
     `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '归属会话',
     `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
-    `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '待审批工具名（沙盒/MCP）',
+    `turn_id`      VARCHAR(64)   DEFAULT NULL COMMENT '归属轮次（与 c_ai_message.turn_id 同源）：断线重连时把卡片挂回它自己那一轮；补列前的存量记录与工作流画布的审批为 NULL（没有问答轮次可言），前端按原口径处理不猜轮次',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT',
     `request_args` VARCHAR(2000) DEFAULT NULL COMMENT '工具入参摘要（截断 2000 字符，审计回溯用；提问类记录存 {question,options} JSON）',
     `answer`       VARCHAR(2000) DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时/忽略不代答时落给模型的「未作答」说明',

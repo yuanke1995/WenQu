@@ -1,5 +1,5 @@
 <template>
-  <!-- 单轮操作（消息行「⋯」入口）：导出这轮问答 / 加入评测集 / 检索调试 / 删除本轮。
+  <!-- 单轮操作（消息行「⋯」入口）：导出这轮问答 / 加入评测集 / 检索调试 / 看这一轮的过程 / 删除本轮。
        PC 是消息操作行上的 a-dropdown；触屏没有 hover，收进底部 sheet。
        两项排障动作（评测/调试）沿用 PC 的同一开关 chat.retrievalDebugEnabled（debugEntryVisible），
        不给普通用户露出必 403 的入口。 -->
@@ -51,6 +51,11 @@
       <button v-if="debugEntryVisible" class="rd-btn" type="button" @click="openDebug">
         <bug-outlined /><span>检索调试</span>
       </button>
+      <!-- 逐轮回放：PC 是气泡「更多 → 看这一轮的过程」，触屏收在这里。
+           没有 turnId 的回答（账本上线之前跑的）不给入口——按时间猜轮次会把别的轮次摊开，比不显示更坏 -->
+      <button v-if="m && m.turnId" class="rd-btn" type="button" @click="$emit('events', m.turnId)">
+        <history-outlined /><span>看这一轮的过程</span>
+      </button>
       <button class="rd-btn danger" type="button" @click="doDelete">
         <delete-outlined /><span>删除本轮对话</span>
       </button>
@@ -62,7 +67,7 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { BugOutlined, CopyOutlined, DeleteOutlined, DislikeOutlined, DownloadOutlined, FileMarkdownOutlined } from '@ant-design/icons-vue'
+import { BugOutlined, CopyOutlined, DeleteOutlined, DislikeOutlined, DownloadOutlined, FileMarkdownOutlined, HistoryOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { buildAnswerMd, saveMd } from '../views/exportMd'
 import { addEvalCase, debugRetrieval, deleteMessageGroup } from '../api'
@@ -74,7 +79,7 @@ const props = defineProps({
   /** 目标 AI 消息在 messages 里的下标 */
   index: { type: Number, default: -1 }
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'events'])
 
 const engine = inject('wqChat')
 const { messages, currentSessionTitle, debugEntryVisible } = engine

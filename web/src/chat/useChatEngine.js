@@ -1235,6 +1235,29 @@ function mountAskCard (m, j, remainingMs) {
 }
 
 /**
+ * 恢复出来的卡片挂到哪条气泡——按记录带的 turnId 认（一问一答共用一个 id，与 c_ai_message 同源）。
+ * 此前一律挂「这台设备手上的那一轮」，于是更早一轮的待决卡会挂到最新的气泡上：
+ * 用户答的是上一轮的题，屏幕上指的却是这一轮，裁决送得回去但看着是错的。
+ *   - 这台设备有在跑的流，且它要么没有轮身份（本轮助手消息还没落库，实时气泡拿不到 turnId），
+ *     要么正是这一轮 → 挂它；轮身份未知时不另造气泡，宁可照旧挂；
+ *   - 明确不是这一轮 → 去找那一轮已落库的气泡；找不到返回 null，调用方补占位泡并盖上 turnId，
+ *     下次恢复仍回到同一颗（不叠第二颗）。
+ */
+const msgByTurn = turnId => {
+  if (!turnId) return null
+  const list = messages.value || []
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m && (m.role === 'ai' || m.role === 'assistant') && m.turnId === turnId) return m
+  }
+  return null
+}
+const cardTargetFor = (st, turnId) => {
+  if (st && st.msg && (!turnId || !st.msg.turnId || st.msg.turnId === turnId)) return st.msg
+  return msgByTurn(turnId)
+}
+
+/**
  * 会话加载/切换后恢复待答提问卡：提问已落库、等待期间断线不中止本轮，所以刷新页面或换设备后
  * 那根工具线程还阻塞着，答案照样送得回去。只重建「未过期且唤醒句柄还在」的最新一张——
  * 同一轮连问几卡时，早先那张已随工具终态落成气泡里的问答记录。
@@ -1261,10 +1284,11 @@ const hydratePendingAsk = async sid => {
     return
   }
   const item = alive[alive.length - 1]
-  // 本轮气泡已经在界面上（本设备的实时流，或刚接回来的那条流）：卡直接挂它，不再补占位泡——
-  // 同一轮出现两颗「进行中」气泡是错的
-  if (st && st.msg) {
-    mountAskCard(st.msg, { ...item, restored: true }, item.remainingMs)
+  // 挂回它自己那一轮：本轮气泡已经在界面上就挂它，更早的一轮就去找那一轮的气泡
+  const target = cardTargetFor(st, item.turnId)
+  if (target && target.ask) return   // 这张卡已经挂着了（上一次恢复建的占位泡也在内）
+  if (target) {
+    mountAskCard(target, { ...item, restored: true }, item.remainingMs)
     hooks.scrollForce?.()
     return
   }
@@ -1274,7 +1298,8 @@ const hydratePendingAsk = async sid => {
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
     thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
-    toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null })
+    toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
+    turnId: item.turnId || '' })
   mountAskCard(anchor, { ...item, restored: true }, item.remainingMs)
   messages.value = [...list, anchor]
   hooks.scrollForce?.()
@@ -1338,9 +1363,11 @@ const hydratePendingPlans = async sid => {
     timeoutMs: Number(item.timeoutMs) || 0,
     deadline: item.remainingMs > 0 ? Date.now() + item.remainingMs : 0
   }
-  // 本轮气泡已经在界面上（本设备的实时流，或刚接回来的那条流）：卡直接挂它，不再补占位泡
-  if (st && st.msg) {
-    st.msg.planCard = card
+  // 挂回它自己那一轮（与提问卡同一判据）
+  const target = cardTargetFor(st, item.turnId)
+  if (target && target.planCard) return   // 这张卡已经挂着了
+  if (target) {
+    target.planCard = card
     hooks.scrollForce?.()
     return
   }
@@ -1350,7 +1377,8 @@ const hydratePendingPlans = async sid => {
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
     thinkLoading: false, stage: '等你批准执行计划，批准后回答才开始', time: Date.now(), artifacts: [],
-    toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', delegated: null })
+    toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
+    delegated: null, turnId: item.turnId || '' })
   anchor.planCard = card
   messages.value = [...list, anchor]
   hooks.scrollForce?.()
@@ -1360,13 +1388,13 @@ const hydratePendingPlans = async sid => {
  * 会话加载/接流后恢复「等你批准执行」的审批卡（与提问卡、计划卡同一套人在回路恢复口径）。
  * 审批只有 120 秒时限、此前只在实时流里下发过一次：刷新或换设备接回这一轮时看不见那张卡，
  * 而本轮又豁免断线宽限、会一直等——用户读到的就是「智能体莫名其妙不动了」。
- * 只重建**未过期且唤醒句柄还在**（live）的最新一张，并挂在当前那一轮的气泡上：
- * 本轮气泡已经存在（实时流或刚接回来的流），不再补占位泡；没有本轮气泡就说明这一轮没在跑，什么都不做。
+ * 只重建**未过期且唤醒句柄还在**（live）的最新一张，并按记录带的 turnId 挂回它自己那一轮的气泡：
+ * 那一轮在这台设备的视图里还没有气泡时补占位泡（live 就代表它真的卡在审批上，不挂等于看不见）。
  */
 const hydratePendingApprovals = async sid => {
   if (!sid) return
   const st = chatStreams.get(sid)
-  if (!st || !st.msg || st.msg.approval) return
+  if (st && st.msg && st.msg.approval) return   // 实时卡还挂在这一轮上，不重复挂
   let items
   try {
     const r = await listPendingApprovals(sid)
@@ -1378,10 +1406,27 @@ const hydratePendingApprovals = async sid => {
   const item = alive[alive.length - 1]
   // timeoutMs 传「还剩多少」而不是整窗：卡片那行「未处理将在 N 秒后按拒绝处理」直接读它，
   // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
-  st.msg.approval = {
+  const card = {
     id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
     timeoutMs: Number(item.remainingMs) || 0, busy: false, restored: true
   }
+  const target = cardTargetFor(st, item.turnId)
+  if (target && target.approval) return   // 这张卡已经挂着了
+  if (target) {
+    target.approval = card
+    hooks.scrollForce?.()
+    return
+  }
+  // 这一轮在这台设备的视图里没有气泡（在别的设备上跑、或本轮的助手消息还没落库）：
+  // 补一个「等你批准执行」的占位泡。那一轮是真的卡在审批上（live=唤醒句柄还在），
+  // 什么都不挂就是用户读到的「智能体莫名其妙不动了」
+  const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
+    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+    thinkLoading: false, stage: '等你批准执行，批准后这一轮才继续', time: Date.now(), artifacts: [],
+    toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null,
+    model: '', delegated: null, approval: null, turnId: item.turnId || '' })
+  anchor.approval = card
+  messages.value = [...messages.value, anchor]
   hooks.scrollForce?.()
 }
 

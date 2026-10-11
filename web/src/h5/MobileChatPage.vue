@@ -16,6 +16,11 @@
       <button class="m-bar-btn" type="button" title="在本会话中查找" @click="openSearch">
         <search-outlined />
       </button>
+      <!-- 过程回放：PC 的头部「过程」按钮在移动壳的同位入口。账本只服务事后回看，
+           放顶栏而不是收进会话 sheet——「这一轮为什么这么答」是排障动作，不该多跳两层 -->
+      <button class="m-bar-btn" type="button" title="看这个会话是怎么跑出来的" @click="openEvents()">
+        <history-outlined />
+      </button>
       <button class="m-bar-btn" type="button" title="新建对话" @click="createNewSession()">
         <plus-outlined />
       </button>
@@ -230,7 +235,11 @@
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
-    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" />
+    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
+    <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
+         取数与渲染与 PC 共用 SessionEventsPanel，两端不许各写一遍 -->
+    <MobileEventsSheet :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurnId"
+                       @close="eventsOpen = false" />
 
     <!-- ==================== 来源详情 ==================== -->
     <BottomSheet :open="src.visible" :title="src.title" max-height="72dvh" @close="src.visible = false">
@@ -304,7 +313,7 @@ import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
-  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined
+  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -323,6 +332,7 @@ import MobileAttachSheet from './MobileAttachSheet.vue'
 import MobileRefSheet from './MobileRefSheet.vue'
 import MobileNotifSheet from './MobileNotifSheet.vue'
 import MobileRoundSheet from './MobileRoundSheet.vue'
+import MobileEventsSheet from './MobileEventsSheet.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 import SetupGuide from '../components/SetupGuide.vue'
@@ -572,6 +582,17 @@ const onGoPage = path => { closeSheets(); router.push(path).catch(() => {}) }
 // 单轮操作（消息操作行的「⋯」）：先标选中（操作行保持可见，看得出在操作哪一条），再开 sheet。
 // 目标下标记在 roundIdx 上、sheet 只读它——不读 activeIdx：sheet 关掉后用户上翻，选中态变化不该影响已关闭的 sheet
 const openRound = i => { activeIdx.value = i; roundIdx.value = i; roundOpen.value = true }
+
+// ==================== 过程回放（事件账本） ====================
+// 顶栏入口=这个会话最近几轮跑了什么；单轮 sheet 的入口=只看那一轮（带消息的 turnId）。
+// 从单轮过来先收掉操作 sheet：两层面板叠着没有意义，用户此刻要看的是过程不是操作项
+const eventsOpen = ref(false)
+const eventsTurnId = ref('')
+const openEvents = turnId => {
+  eventsTurnId.value = typeof turnId === 'string' ? turnId : ''
+  eventsOpen.value = true
+}
+const openRoundEvents = turnId => { roundOpen.value = false; openEvents(turnId) }
 
 // ==================== 会话内查找 ====================
 // 与 PC 的 Ctrl/⌘+F 是同一份实现（src/chat/useChatSearch.js）：行契约统一为 [data-row-index]

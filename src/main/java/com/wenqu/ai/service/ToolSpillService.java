@@ -30,6 +30,10 @@ import java.util.regex.Pattern;
  * 预览加一个 {@code spillId}，卡片给「查看完整输出」按需读回来（读取按人隔离：id 是 32 位 hex，
  * 归属写在同名 {@code .json} 里，非本人一律查不到）。写失败退回原样截断——这是旁路，绝不影响问答。
  *
+ * <p>占用的磁盘由两道治理收住：保留期（{@code cleanup.toolSpillRetentionDays}）删过期的，
+ * 每人配额（{@code tool.spillMaxMbPerUser}）在写入后把该用户目录压回上限内、按落盘时间淘汰最旧的。
+ * 被淘汰只影响「查看完整输出」能否读回原文，卡片上的预览与这一轮的结论不受影响。
+ *
  * <p>刻意不做（基础版的边界，别当成已经做完）：
  * <ul>
  *   <li><b>模型侧的输出上限不动</b>（沙盒 262144 字节、工具侧截断进上下文那一段）——那是上下文预算问题，
@@ -52,6 +56,8 @@ public class ToolSpillService {
     private static final int MAX_STORED_CHARS = 4 * 1024 * 1024;
     /** 读回给前端的体积上限：气泡里贴几 MB 文本浏览器会卡，超出按 outOfBand 说明 */
     private static final int MAX_READ_CHARS = 512 * 1024;
+    /** 每人配额默认值（MB）：与业务上传上限同一量级，够排障用又不至于让一个账号吃穿磁盘 */
+    private static final int DEFAULT_QUOTA_MB = 200;
 
     private final AppProperties properties;
     private final ConfigService configService;
@@ -88,6 +94,7 @@ public class ToolSpillService {
             meta.put("outOfBand", clipped);
             meta.put("at", System.currentTimeMillis());
             Files.writeString(dir.resolve(id + ".json"), meta.toJSONString(), StandardCharsets.UTF_8);
+            enforceQuota(dir, id);
             return id;
         } catch (Exception e) {
             log.warn("[SPILL] 工具原文外溢失败（退回截断展示）: tool={} {}", toolName, e.getMessage());
@@ -134,11 +141,19 @@ public class ToolSpillService {
         if (!Files.isDirectory(root)) return 0;
         int removed = 0;
         List<Path> doomed = new ArrayList<>();
+        List<Path> orphanMeta = new ArrayList<>();
         try (var dirs = Files.list(root)) {
             for (Path userDir : dirs.filter(Files::isDirectory).toList()) {
                 try (var files = Files.list(userDir)) {
                     for (Path f : files.toList()) {
-                        if (f.getFileName().toString().endsWith(".json")) continue;   // 元信息随原文一起删
+                        String name = f.getFileName().toString();
+                        if (name.endsWith(".json")) {
+                            // 孤儿元信息：此前删除把 meta 拼成了「x.txt.json」，而写的是「x.json」——
+                            // 也就是说保留期清理一直在留孤儿。原文没了一份 json 就没有任何读口，
+                            // 这里顺手把旧账一次结清（新的删除已由 deleteWithMeta 走对名字）
+                            if (isOrphanMeta(f)) orphanMeta.add(f);
+                            continue;
+                        }
                         if (Files.getLastModifiedTime(f).toMillis() > deadline) continue;
                         doomed.add(f);
                     }
@@ -150,16 +165,103 @@ public class ToolSpillService {
         }
         for (Path f : doomed) {
             try {
-                String name = f.getFileName().toString();
-                Files.deleteIfExists(f);
-                Files.deleteIfExists(f.resolveSibling(name + ".json"));
+                deleteWithMeta(f);
                 removed++;
             } catch (Exception ignored) {
                 // 单个删不掉不影响其余（下轮再试）
             }
         }
-        if (removed > 0) log.info("[SPILL] 已清理过期工具外溢原文 {} 份（保留 {} 天）", removed, days);
+        for (Path f : orphanMeta) {
+            try {
+                if (Files.deleteIfExists(f)) removed++;
+            } catch (Exception ignored) {
+                // 同上
+            }
+        }
+        if (removed > 0) log.info("[SPILL] 已清理过期工具外溢原文 {} 份（保留 {} 天，含历史遗留的孤儿元信息 {} 份）",
+                removed, days, orphanMeta.size());
         return removed;
+    }
+
+    /** meta 有没有对应的原文：没有就是历史删除漏下的孤儿 */
+    private static boolean isOrphanMeta(Path metaFile) {
+        String name = metaFile.getFileName().toString();
+        Path txt = metaFile.resolveSibling(name.substring(0, name.length() - ".json".length()) + ".txt");
+        return !Files.exists(txt);
+    }
+
+    /** 每人配额（MB）：0 或负数 = 不限量，与保留天数的「0 = 不清理」同一口径 */
+    public int quotaMb() {
+        return configService.getInt("tool.spillMaxMbPerUser", DEFAULT_QUOTA_MB);
+    }
+
+    /**
+     * 写入后把该用户目录压回配额内：按落盘时间从最旧的开始淘汰。
+     * <p>刚写入的那一份不参与淘汰——单份原文就可能大过整份配额，删掉它等于让这条能力对白开。
+     * 淘汰只发生在排障副本上：卡片上的预览、这一轮的结论、消息本身都不受影响，
+     * 只是那份原文再也读不回来（读口按「不存在」处理）。
+     */
+    private void enforceQuota(Path dir, String keepId) {
+        int mb = quotaMb();
+        if (mb <= 0) return;
+        long limit = mb * 1024L * 1024L;
+        List<Path> texts;
+        try (var files = Files.list(dir)) {
+            texts = files.filter(p -> p.getFileName().toString().endsWith(".txt")).toList();
+        } catch (Exception e) {
+            log.warn("[SPILL] 配额检查读目录失败（下轮写入再试）: {}", e.getMessage());
+            return;
+        }
+        long total = 0;
+        for (Path p : texts) total += sizeOrZero(p);
+        if (total <= limit) return;
+        List<Path> oldestFirst = texts.stream()
+                .filter(p -> !p.getFileName().toString().equals(keepId + ".txt"))
+                .sorted(java.util.Comparator.comparingLong(ToolSpillService::mtimeOrZero))
+                .toList();
+        int removed = 0;
+        for (Path p : oldestFirst) {
+            if (total <= limit) break;
+            long size = sizeOrZero(p);
+            try {
+                deleteWithMeta(p);
+                total -= size;
+                removed++;
+            } catch (Exception ignored) {
+                // 单个删不掉不影响其余（下轮写入再试）
+            }
+        }
+        if (removed > 0) {
+            log.info("[SPILL] 超出每人配额：上限 {}MB，淘汰最旧原文 {} 份（目录 {}）", mb, removed, dir.getFileName());
+        }
+    }
+
+    /** 原文与同名元信息一起删。meta 是「同一个 basename 换 .json 后缀」，不是 {@code x.txt.json} */
+    private static void deleteWithMeta(Path file) throws java.io.IOException {
+        Files.deleteIfExists(file);
+        Files.deleteIfExists(metaOf(file));
+    }
+
+    private static Path metaOf(Path txtFile) {
+        String name = txtFile.getFileName().toString();
+        return txtFile.resolveSibling(name.substring(0, name.length() - ".txt".length()) + ".json");
+    }
+
+    /** 清理任务与本类的淘汰会并发碰到同一个文件，读不到就当 0（宁可少删一轮，不抛穿出去） */
+    private static long sizeOrZero(Path file) {
+        try {
+            return Files.size(file);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static long mtimeOrZero(Path file) {
+        try {
+            return Files.getLastModifiedTime(file).toMillis();
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     /** 总开关：关掉后不再外溢，卡片回到「截断展示」，已落的原文仍可读直到保留期结束 */

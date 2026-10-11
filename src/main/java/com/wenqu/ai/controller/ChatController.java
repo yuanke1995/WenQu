@@ -455,7 +455,7 @@ public class ChatController {
     public ResultJson getToolOutput(
             @Parameter(description = "外溢标识（工具卡片 spillId / argsSpillId）") @PathVariable("spillId") String spillId) {
         java.util.Map<String, Object> out = toolSpillService.read(spillId, com.wenqu.ai.util.RequestUser.uid());
-        if (out == null) return ResultJson.error("这份原文不存在、已过期清理，或不属于你");
+        if (out == null) return ResultJson.error("这份原文不存在、已被清理（超保留期或超每人配额），或不属于你");
         return ResultJson.ok(out);
     }
 

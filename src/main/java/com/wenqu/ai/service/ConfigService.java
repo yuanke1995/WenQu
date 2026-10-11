@@ -256,6 +256,11 @@ public class ConfigService {
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
         d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
         d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）
+        d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
+        // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，
+        // 漏登记的表现是设置页改完重开仍显示表单默认值（看着像「改了没生效」，实际库里已生效）
+        d.put("tool.spillCleanupIntervalMs", "3600000");     // 外溢原文超期清理扫描间隔(ms)
+        d.put("cleanup.toolSpillRetentionDays", "7");        // 外溢原文保留天数（≤0=不清理）
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，

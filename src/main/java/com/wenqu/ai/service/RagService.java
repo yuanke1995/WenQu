@@ -2590,7 +2590,9 @@ public class RagService {
 
             @Override
             public long approvalTimeoutMs() {
-                return approvalTimeoutMs();
+                // 必须显式指向外层服务方法：匿名类里裸写 approvalTimeoutMs() 解析到的是本方法自己，
+                // 审批闸一读等待上限就无限递归把工具线程栈打爆（ApprovalGate 调它即在「每次问我」档必炸）
+                return RagService.this.approvalTimeoutMs();
             }
 
             @Override
@@ -2677,6 +2679,7 @@ public class RagService {
             rec.setId(approvalId);
             rec.setSessionId(st.sessionId);
             rec.setUserId(st.userId);
+            rec.setTurnId(st.turnId);
             rec.setToolName(name);
             rec.setStatus("PENDING");
             String argsSummary = toolInput == null ? "" : (toolInput.length() > 2000 ? toolInput.substring(0, 2000) : toolInput);
@@ -8144,6 +8147,7 @@ public class RagService {
             rec.setId(planApprovalId);
             rec.setSessionId(st.sessionId);
             rec.setUserId(st.userId);
+            rec.setTurnId(st.turnId);
             rec.setToolName("planApproval");
             rec.setStatus("PENDING");
             rec.setRequestArgs(JSON.toJSONString(java.util.Map.of("plan", draft)));
@@ -8504,6 +8508,8 @@ public class RagService {
             if (versions.isEmpty()) return out;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("planApprovalId", last.getId());
+            // 归属轮次：与提问卡、审批卡同一口径
+            item.put("turnId", last.getTurnId() == null ? "" : last.getTurnId());
             item.put("plan", versions.get(versions.size() - 1).get("plan"));
             item.put("versions", versions);
             item.put("timeoutMs", window);
@@ -8623,6 +8629,7 @@ public class RagService {
             rec.setId(askId);
             rec.setSessionId(st.sessionId);
             rec.setUserId(st.userId);
+            rec.setTurnId(st.turnId);
             rec.setToolName("askUser");
             rec.setStatus("PENDING");
             rec.setRequestArgs(askArgsJson(qs));
@@ -8759,6 +8766,8 @@ public class RagService {
                 long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("askId", rec.getId());
+                // 归属轮次：恢复出来的卡片要挂回它自己那一轮的气泡（NULL=补列前的存量，前端按原口径处理）
+                item.put("turnId", rec.getTurnId() == null ? "" : rec.getTurnId());
                 item.put("questions", qs.stream().map(this::askQuestionToMap).toList());
                 item.put("timeoutMs", window);
                 item.put("remainingMs", remaining);
@@ -8804,6 +8813,8 @@ public class RagService {
                 if (remaining <= 0) continue;
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("approvalId", rec.getId());
+                // 归属轮次：与提问卡同一口径，恢复时挂回自己那一轮而不是最后一条助手气泡
+                item.put("turnId", rec.getTurnId() == null ? "" : rec.getTurnId());
                 item.put("tool", rec.getToolName());
                 // 展示名与实时审批卡同源（注册中心）：恢复出来的卡片若只给英文名，用户在同一张卡上
                 // 会先看到「运行命令」、刷新后看到「execute」

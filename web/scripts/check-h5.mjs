@@ -196,5 +196,27 @@ const check = (ok, label, detail = '') => {
   }
 }
 
+// ---- ⑨ 过程回放（事件账本）：两端共用一份，移动壳不许没有 ----
+// 背景：逐轮回放落地时只做了 PC（头部「过程」+ 气泡「看这一轮的过程」），移动壳整条入口缺席，
+// 而静态检查全绿——少的是一个按钮和一层 sheet，编译不出来。这类「一端有、一端压根没入口」
+// 靠断言钉住：渲染与取数只允许有一份实现（components/SessionEventsPanel.vue），两端都只装配它。
+{
+  const pc = stripComments(read('src/views/ChatPage.vue'))
+  const h5 = stripComments(read('src/h5/MobileChatPage.vue'))
+  const sheet = read('src/h5/MobileEventsSheet.vue')
+  const round = stripComments(read('src/h5/MobileRoundSheet.vue'))
+  const panel = read('src/components/SessionEventsPanel.vue')
+  check(/SessionEventsPanel/.test(pc), 'PC 壳装配共用面板（不再自带取数）')
+  check(!/getSessionEvents\(/.test(pc), 'PC 壳不直接叫账本端点（取数只在面板里）')
+  check(/MobileEventsSheet/.test(h5) && /openEvents\(/.test(h5), '移动壳有会话级过程入口')
+  check(/SessionEventsPanel/.test(sheet), '移动壳的过程 sheet 复用同一面板')
+  check(/\$emit\('events', m\.turnId\)/.test(round) && /v-if="m && m\.turnId"/.test(round),
+    '单轮过程入口存在且只在有 turnId 时露出（无记录的不猜轮次）')
+  // 取数触发条件：sheet 用 v-if 渲染内容，面板是在 open 已为 true 时才挂上来的——
+  // 没有 immediate 就永远不请求，症状是「打开就是空态：这个会话还没有过程记录」
+  check(/immediate: true/.test(panel), '面板挂载即取数（sheet 的 v-if 形态）')
+  check(/过程记录读取失败/.test(panel) && /ev-retry/.test(panel), '面板失败要说出来并给重试（不许静默空态）')
+}
+
 console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
 process.exit(bad ? 1 : 0)
