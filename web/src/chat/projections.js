@@ -205,13 +205,20 @@ const stageLabel = s => (s ? (STAGE_LABELS[s] || s) : '')
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
 //   {kind:'text', from, to} → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
 //   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
+//   {kind:'steer', text}    → 运行中插话的送达留痕（就地插在携带它的那张工具卡之后）。
 // 渲染经 timelineView(m) 生成视图：连续工具合并为折叠组，正文保持段落连续。
 // 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复时由 restoreTimeline 重建，
 // 刷新后仍是「正文—工具—正文」的交错过程视图；旧消息无 timeline 才走底部汇总兜底。
 // data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
 
-/** 是否值得按时间线渲染：有工具段/产物段/过程段才有交错意义（纯正文段与整段渲染等价） */
-const hasTimelineBlocks = m => Array.isArray(m?.timeline) && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact' || s.kind === 'process'))
+/** 是否值得按时间线渲染：有工具段/产物段/过程段/插话段才有交错意义（纯正文段与整段渲染等价）。
+ *  本地待插话（m.steers，还没落进时间线）也算——否则「只补了一句方向、这轮没调工具」的气泡
+ *  会走整段渲染分支，那句话根本没地方显示。 */
+const hasTimelineBlocks = m => {
+  if (Array.isArray(m?.steers) && m.steers.length) return true
+  return Array.isArray(m?.timeline)
+    && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact' || s.kind === 'process' || s.kind === 'steer'))
+}
 
 const extendTimelineText = (m, from, to) => {
   if (!m) return
@@ -370,6 +377,8 @@ const restoreTimeline = (m, segs) => {
       if (t) out.push({ kind: 'tool', i: Number(s.i) || 0, tool: t })
     } else if (s.kind === 'artifact') {
       out.push({ kind: 'artifact', i: Number(s.i) || 0 })
+    } else if (s.kind === 'steer') {
+      out.push({ kind: 'steer', text: String(s.text || '') })
     }
   }
   return out
@@ -427,6 +436,14 @@ const timelineView = m => {
       // 产物不再按生成时刻就地渲染（统一沉底展示）：跳过该段，且不打断工具组/合并窗口
       continue
     }
+    if (seg.kind === 'steer') {
+      // 插话留痕是「用户说过的话」，不是执行细节——既不能并进工具组，也不能被折进「已执行 N 个操作」
+      // 那一行里（藏起来等于没显示）。这里断组，clusterize 那边它天然也不在游程白名单里，簇随之断开。
+      flushMerge()
+      flushGroup()
+      if (seg.text) out.push({ kind: 'steer', text: seg.text })
+      continue
+    }
     if (seg.kind === 'tool') {
       if (!seg.tool) continue
       if (mergeFrom >= 0) { absorbed.push(seg.tool); continue }
@@ -452,7 +469,34 @@ const timelineView = m => {
   flushMerge()
   flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
-  return markGrowingCluster(clusterize(out))
+  const view = markGrowingCluster(clusterize(out))
+  // 还没落进时间线的插话（本设备挂着的那几条）排在最后：送达前它就是"最新的一句话"，
+  // 送达后由上面的 steer 段接管原位显示，done 结算时这半截本地条目随之退场。
+  // 放在 markGrowingCluster 之后而不是 out 里：尾随的一行不该让正在长的过程簇丢掉自动展开标记。
+  const hasDelivered = tl.some(s => s && s.kind === 'steer')
+  for (let idx = 0; idx < (m.steers || []).length; idx++) {
+    const s = m.steers[idx]
+    if (!s || !s.text) continue
+    if (s.sent && hasDelivered) continue   // 已交回后端且留痕已就位：不重复挂一条
+    view.push({
+      kind: 'steer', text: s.text, pending: true, sent: !!s.sent, deferred: !!s.deferred,
+      extra: steerExtras(s), idx
+    })
+  }
+  return view
+}
+
+/** 待插话的载荷摘要（与正常提问同权，可以带材料）：只把"带了什么"标出来 */
+const steerExtras = s => {
+  if (!s) return ''
+  const bits = []
+  if (s.images?.length) bits.push(`${s.images.length} 张图`)
+  if (s.atts?.length) bits.push(`+${s.atts.length} 个附件`)
+  if (s.skills?.length) bits.push(`技能 ×${s.skills.length}`)
+  if (s.mentions?.length) bits.push(`@ ${s.mentions.length}`)
+  if (s.historyRefs?.length) bits.push(`# ${s.historyRefs.length}`)
+  if (s.planMode) bits.push('计划模式')
+  return bits.join(' · ')
 }
 
 // ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----

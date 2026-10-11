@@ -7571,16 +7571,37 @@ public class RagService {
     /**
      * 取走待送达的插话并拼成一段提示（无插话返回空串）。附在工具结果**尾部**送达。
      */
-    private static String drainSteers(AnswerStreamState st) {
+    private String drainSteers(AnswerStreamState st) {
         List<String> pending = drainSteersList(st);
         if (pending.isEmpty()) return "";
         // 送达留痕：库里的工具摘要与账本记的都是**附加前**的结果，不加这行日志就无从判断
         // 模型到底看没看到这句插话（"回答没变"可能只是模型没采纳，而不是没送达）
         log.info("[STEER] 已随工具结果送达模型: session={} 条数={} 字数={}",
                 st.sessionId, pending.size(), pending.stream().mapToInt(String::length).sum());
+        pushTimelineSteers(st, pending);
         StringBuilder sb = new StringBuilder();
         for (String s : pending) sb.append("【用户中途补充】").append(s).append('\n');
         return sb.toString();
+    }
+
+    /**
+     * 插话送达留痕：每条插话作为一个时间线段，就地插在携带它的那张工具卡之后。
+     * <p>此前插话只在发起设备的输入框上方挂一条「已插入」，本轮一结束连痕迹都没了——用户说过的那句
+     * 方向只存在于当时那个工具返回值里，刷新/换设备/断线重连都回不来。段与工具卡同源（timelineJson），
+     * 实时视图与刷新后视图因此是同一份位置。
+     */
+    private void pushTimelineSteers(AnswerStreamState st, List<String> steers) {
+        flushTimelineText(st, st.fullResponse.length());
+        flushTimelineProcess(st, st.processResponse.length());
+        synchronized (st.timeline) {
+            for (String s : steers) {
+                if (s == null || s.isBlank()) continue;
+                Map<String, Object> seg = new LinkedHashMap<>();
+                seg.put("kind", "steer");
+                seg.put("text", s);
+                st.timeline.add(seg);
+            }
+        }
     }
 
     /** 取走（并清空）该轮尚未送达的插话 */

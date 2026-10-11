@@ -194,6 +194,28 @@
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
+                  <!-- 插话：本轮跑着的时候用户补的那一句方向。送达过的（后端段）留在它实际生效的那个
+                       位置，刷新后同源回显；还没送达的（本地条目）带「插话/编辑/删除」三个动作。
+                       刻意不进折叠簇、不并工具组——藏进「已执行 N 个操作」那一行等于没显示 -->
+                  <div v-else-if="seg.kind === 'steer'" class="tl-steer" :class="{ pending: seg.pending }">
+                    <span class="tl-steer-ic">↳</span>
+                    <span class="tl-steer-tag">插话</span>
+                    <span class="tl-steer-txt">{{ seg.text }}</span>
+                    <span v-if="seg.extra" class="tl-steer-extra">{{ seg.extra }}</span>
+                    <span v-if="seg.deferred" class="tl-steer-state">本轮结束后自动发出</span>
+                    <span v-else-if="seg.sent" class="tl-steer-state">已插入 · 随下一个工具步生效</span>
+                    <template v-else-if="seg.pending">
+                      <button class="tl-steer-act primary" type="button"
+                              title="纯文字随下一个工具步送达模型；带材料的这轮塞不进去，改为本轮结束自动发出"
+                              @click="insertSteer(m, seg.idx)">插话</button>
+                      <button class="tl-steer-act" type="button" title="取回输入框改" @click="editSteer(m, seg.idx)">
+                        <edit-outlined />
+                      </button>
+                      <button class="tl-steer-act" type="button" title="丢弃这条" @click="dropSteer(m, seg.idx)">
+                        <delete-outlined />
+                      </button>
+                    </template>
+                  </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group" :class="{ inCluster: seg.inCluster }">
                     <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
@@ -728,21 +750,6 @@
           </div>
         </div>
         <div v-if="!pendingAsk && !pendingPlan" class="input-box">
-          <!-- 待插话条目：生成中按发送先挂在这里（不直接送达），点「插话」才随下一个工具步送出。
-               送出前可改可删；送出后只留状态——后端队列没有撤回接口，给个假删除是骗人 -->
-          <div v-if="steersPending.length" class="steer-list">
-            <div v-for="(s, si) in steersPending" :key="si" class="steer-item" :class="{ done: s.sent || s.deferred }">
-              <span class="steer-ic">↳</span>
-              <span class="steer-txt">{{ s.text }}</span>
-              <span v-if="steerExtras(s)" class="steer-extra">{{ steerExtras(s) }}</span>
-              <span v-if="s.deferred" class="steer-state">本轮结束后自动发出</span>
-              <span v-else-if="s.sent" class="steer-state">已插入 · 随下一个工具步生效</span>
-              <button v-else class="steer-act primary" title="纯文字随下一个工具步送达模型；带材料的这轮塞不进去，改为本轮结束自动发出"
-                      @click="insertSteer(si)">插话</button>
-              <button v-if="!s.sent && !s.deferred" class="steer-act" title="取回输入框改" @click="editSteer(si)"><edit-outlined /></button>
-              <button v-if="!s.sent && !s.deferred" class="steer-act" title="丢弃这条" @click="dropSteer(si)"><delete-outlined /></button>
-            </div>
-          </div>
           <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
           <div v-if="mentionOpen" class="mention-panel">
             <div class="mention-head">
@@ -1061,10 +1068,10 @@
                            :width="190"
                            @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
             </div>
-            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「挂一条待插话」（不是打断当前这一步）；
+            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「挂一条插话」（不是打断当前这一步）；
                  没字 → 才是停止本轮。两段式 Esc 停止照旧（第一次上膛、第二次才停；点击仍是立即停） -->
             <button v-if="loading && canSend" class="send-btn"
-                    title="挂一条待插话（Enter 同效；点条目上的「插话」才随下一个工具步送出）"
+                    title="挂一条插话（Enter 同效；挂在正在回答的这条里，点「插话」才随下一个工具步送出）"
                     @click="sendNow"><arrow-up-outlined /></button>
             <button v-else-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
               <span v-if="escArmed" class="esc-cap">esc</span>
@@ -1926,24 +1933,13 @@ const stopNow = () => { disarmEsc(); stop() }
 const composerPlaceholder = computed(() => {
   if (loading.value) {
     return isNarrow.value
-      ? '补一句方向（先挂到上方待插话）'
-      : '补一句方向（Enter 先挂到上方待插话，点「插话」才送出）'
+      ? '补一句方向（挂到这条回答里）'
+      : '补一句方向（Enter 挂到这条回答里，点「插话」才送出）'
   }
   return isNarrow.value
     ? '问点什么？（@ 引用资料 · / 快捷命令）'
     : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'
 })
-/** 待插话条目的载荷摘要（与正常提问一样可以带材料，这里只把"带了什么"标出来） */
-function steerExtras (s) {
-  const bits = []
-  if (s.images?.length) bits.push(`${s.images.length} 张图`)
-  if (s.atts?.length) bits.push(`+${s.atts.length} 个附件`)
-  if (s.skills?.length) bits.push(`技能 ×${s.skills.length}`)
-  if (s.mentions?.length) bits.push(`@ ${s.mentions.length}`)
-  if (s.historyRefs?.length) bits.push(`# ${s.historyRefs.length}`)
-  if (s.planMode) bits.push('计划模式')
-  return bits.join(' · ')
-}
 const onGlobalKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return
   if (previewUrl.value && ['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
@@ -2788,7 +2784,7 @@ const updateTailSpacer = () => {
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
-  text, canSend, send, stop, steersPending, insertSteer, editSteer, dropSteer,
+  text, canSend, send, stop, insertSteer, editSteer, dropSteer,
   streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
@@ -3605,28 +3601,29 @@ onMounted(async () => {
   display: flex; align-items: center; justify-content: center;
   color: var(--app-accent); font-size: 14px; font-weight: 500;
 }
-/* 待插话条目（输入框上方）：一条一行，右侧「插话 / 编辑 / 删除」。
-   刻意压在输入框之上而不是消息流里——它是"这轮还没说出去的话"，不是会话内容 */
-.steer-list {
-  display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px;
+/* 插话行（挂在气泡的时间线里，不在输入框上方）：左边一道竖线把它和工具卡区分开，
+   读起来是"用户在执行过程中插了一句"。不另设 max-width——气泡内卡片跟消息列同宽（同 plan-card 口径），
+   fit-content 只让短句不铺满整行。待送达的那条抢眼（要点它才送得出去），已送达的那条是记录、弱化。 */
+.tl-steer {
+  display: flex; align-items: center; gap: 8px; min-width: 0; width: fit-content; max-width: 100%;
+  margin: 4px 0; padding: 3px 10px 3px 9px; font-size: 13px;
+  border-left: 2px solid var(--app-border); color: var(--app-text2);
 }
-.steer-item {
-  display: flex; align-items: center; gap: 8px; min-width: 0;
-  padding: 4px 6px 4px 10px; border-radius: 10px;
-  background: var(--app-accent-weak); border: 1px solid var(--app-border); font-size: 13px;
+.tl-steer.pending { border-left-color: var(--app-accent); background: var(--app-accent-weak); border-radius: 0 8px 8px 0; }
+.tl-steer-ic { color: var(--app-text3); flex: none; }
+.tl-steer-tag {
+  flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px;
+  border: 1px solid var(--app-border); color: var(--app-text3);
 }
-.steer-item.done { background: transparent; }
-.steer-ic { color: var(--app-text3); flex: none; }
-.steer-txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.steer-extra { flex: none; font-size: 11px; color: var(--app-text3); }
-.steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
-.steer-act {
+.tl-steer-txt { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.tl-steer-extra, .tl-steer-state { flex: none; font-size: 11px; color: var(--app-text3); }
+.tl-steer-act {
   flex: none; display: inline-flex; align-items: center; gap: 4px;
   border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
   padding: 2px 8px; font-size: 12px; color: var(--app-text); cursor: pointer;
 }
-.steer-act:hover { background: var(--app-accent-weak); }
-.steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
+.tl-steer-act:hover { background: var(--app-panel-2); }
+.tl-steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
 .input-box {
   position: relative; max-width: var(--chat-col); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);

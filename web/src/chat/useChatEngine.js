@@ -1045,13 +1045,14 @@ const send = () => {
   // # 历史引用（本轮显式指定的会话历史问答）：只带 messageId，内容由服务端按会话归属查库回填
   const historyRefs = pendingHistoryRefs.value.map(h => ({ messageId: h.messageId }))
   if (!q && !imgs.length && !atts.length) return
-  // 生成中再发一句 = 挂一条待插话（输入框上方，点「插话」才送出）。主输入框不再因跑着而禁用：
-  // 想改方向不该被迫先停止本轮。载荷与正常提问完全同权（图片/附件/技能/@/#/模型/思考/计划模式）
+  // 生成中再发一句 = 挂一条插话（挂到正在回答的那颗气泡尾部，点「插话」才送出）。
+  // 主输入框不再因跑着而禁用：想改方向不该被迫先停止本轮。载荷与正常提问完全同权
+  // （图片/附件/技能/@/#/模型/思考/计划模式）
   if (loading.value) {
+    if (!stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
+                      deepThink: deepThinkOn.value, planMode: planModeOn.value })) return
     text.value = ''
     hooks.closePanels?.()
-    stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
-                 deepThink: deepThinkOn.value, planMode: planModeOn.value })
     pendingImages.value = []
     pendingFiles.value = []
     pickedSkills.value = []
@@ -1645,7 +1646,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
   // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], steers: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -2023,7 +2024,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 这是插话机制的底线，比"能不能立刻改方向"更重要。
         // 接来的那条流不结算：那些插话是**发起设备**上的人说的，由它自己续发；
         // 在这台只来「看一眼」的设备上自动发出去，等于替别人又问了一遍
-        if (!resume) setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
+        if (!resume) setTimeout(() => flushPendingSteers(msg, Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
@@ -2261,7 +2262,8 @@ const steer = async (q) => {
 }
 
 /**
- * 输入框上方的待插话条目。载荷与正常提问完全同权（图片/附件/技能/@ 引用/# 历史引用/思考/计划模式）。
+ * 待插话条目挂在**当前这颗 AI 气泡**上（投影层把它排进气泡时间线的尾部），不再是输入框上方的一列。
+ * 载荷与正常提问完全同权（图片/附件/技能/@ 引用/# 历史引用/思考/计划模式）。
  *
  * 送达时机由**载荷**决定，不是我们偷懒：
  * - 纯文字 → 点「插话」即送后端，随下一个工具步附进工具结果送达模型（这轮的提示词还在长，
@@ -2271,9 +2273,13 @@ const steer = async (q) => {
  *   所以这条标成 deferred，本轮一结束就按原载荷自动开新一轮发出——材料不会丢，只是生效在下一轮。
  *
  * 没送出前可改可删；送出后不给删除按钮（后端队列没有撤回接口，装了个假的是骗人）。
- * 不进消息流、不参与导出与重新生成。
+ * 送达的那句由后端记成一个时间线段、与工具卡同源落库，done/刷新/重连都按它生效的那个位置回显——
+ * 此前它只在输入框上方闪一下，本轮一结束连痕迹都没了，用户回头找不到自己说过的那句方向。
  */
-const steersPending = ref([])
+const steerHost = () => {
+  const st = chatStreams.get(currentSessionId.value)
+  return st && st.msg ? st.msg : null
+}
 
 /** 带材料的插话只能等本轮结束按新一轮发出（这轮的上下文已经定型） */
 function steerNeedsNextRound (s) {
@@ -2281,46 +2287,51 @@ function steerNeedsNextRound (s) {
           || s.mentions?.length || s.historyRefs?.length || s.planMode))
 }
 
-/** 生成中按发送：把这一条挂到输入框上方（不立即送达，留出反悔和改口的余地） */
+/** 生成中按发送：把这一条挂到正在回答的那颗气泡尾部（不立即送达，留出反悔和改口的余地）
+ *  @returns false=这一轮已经没有气泡可挂，调用方按普通消息发送即可（不许吞掉用户打的字） */
 function stageSteer (payload) {
   const content = String(payload?.text || '').trim()
-  if (!content) return
-  steersPending.value = [...steersPending.value, { ...payload, text: content, sent: false, deferred: false }]
+  if (!content) return false
+  const host = steerHost()
+  if (!host) return false
+  host.steers = [...(host.steers || []), { ...payload, text: content, sent: false, deferred: false }]
+  hooks.scrollForce?.()
+  return true
 }
 
 /** 点条目上的「插话」：纯文字送后端随下一个工具步生效；带材料的改成本轮结束后自动发出 */
-async function insertSteer (i) {
-  const item = steersPending.value[i]
+async function insertSteer (m, i) {
+  const item = m?.steers?.[i]
   if (!item || item.sent || item.deferred) return
   if (steerNeedsNextRound(item)) {
-    steersPending.value = steersPending.value.map((x, xi) => (xi === i ? { ...x, deferred: true } : x))
+    item.deferred = true
     message.info('这条带着材料，本轮上下文已定型——这轮一结束就自动发出')
     return
   }
   if (await steer(item.text)) {
-    steersPending.value = steersPending.value.map((x, xi) => (xi === i ? { ...x, sent: true } : x))
+    item.sent = true
     return
   }
   // 没在跑的轮 / 超出单轮限额：退回输入框，别让用户重打一遍
   const back = item.text
-  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+  m.steers = m.steers.filter((_, xi) => xi !== i)
   text.value = back
   message.warning('这轮没能插话，内容已放回输入框')
 }
 
 /** 点「编辑」：取回输入框改（只有还没送出的能改） */
-function editSteer (i) {
-  const item = steersPending.value[i]
+function editSteer (m, i) {
+  const item = m?.steers?.[i]
   if (!item || item.sent || item.deferred) return
   text.value = item.text
-  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+  m.steers = m.steers.filter((_, xi) => xi !== i)
 }
 
 /** 点「删除」：丢弃这条还没送出的插话 */
-function dropSteer (i) {
-  const item = steersPending.value[i]
+function dropSteer (m, i) {
+  const item = m?.steers?.[i]
   if (!item || item.sent || item.deferred) return
-  steersPending.value = steersPending.value.filter((_, xi) => xi !== i)
+  m.steers = m.steers.filter((_, xi) => xi !== i)
 }
 
 /** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路） */
@@ -2335,23 +2346,26 @@ function sendSteerRound (s) {
 }
 
 /**
- * 本轮收尾时结算待插话：一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派
+ * 本轮收尾时结算挂在这颗气泡上的插话：一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派
  * ——done 会再次走到这里，直到队列清空。
+ * @param host 本轮那颗 AI 气泡（待插话就挂在它上面）
  * @param backendLeft 后端回来的"进了队列但没赶上工具步"的纯文字插话
  */
-function flushPendingSteers (backendLeft = []) {
+function flushPendingSteers (host, backendLeft = []) {
+  if (!host) return
+  const rows = host.steers || []
   // 还留在后端的交回未送达状态（它可能还带着材料，按原载荷发才不丢东西）
   for (const t of backendLeft) {
-    const hit = steersPending.value.find(s => s.text === t)
+    const hit = rows.find(s => s.text === t)
     if (hit) hit.sent = false
-    else steersPending.value = [...steersPending.value, { text: t, sent: false, deferred: false }]
+    else rows.push({ text: t, sent: false, deferred: false })
   }
-  // 已送达并已被消费的（仍是 sent 状态）随本轮退场
-  steersPending.value = steersPending.value.filter(s => !s.sent)
+  // 已送达的随本轮退场：留痕已经由 done 的落库时间线接管（同一条不再挂两份）
+  host.steers = rows.filter(s => !s.sent)
   if (loading.value) return   // 已经有人在跑了（用户抢先发了新消息）：留着，下轮结束再结算
-  const next = steersPending.value.find(s => !s.sent)
+  const next = host.steers.find(s => !s.sent)
   if (!next) return
-  steersPending.value = steersPending.value.filter(s => s !== next)
+  host.steers = host.steers.filter(s => s !== next)
   sendSteerRound(next)
 }
 // ==================== 手动压缩会话上下文（/compact） ====================
@@ -2457,7 +2471,7 @@ if (typeof window !== 'undefined') {
 
   return {
     // 输入与发送
-    text, canSend, send, stop, steersPending, insertSteer, editSteer, dropSteer, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+    text, canSend, send, stop, insertSteer, editSteer, dropSteer, streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
     // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 思考能力 / 档位
