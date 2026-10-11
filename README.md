@@ -156,6 +156,11 @@ docker compose up -d
 # 再以 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME 指向外部库启动 app（或改 compose 环境变量）
 ```
 
+开发机上依赖服务已各自跑着、只想按需拉起可选服务（联网搜索 / 沙盒 / OCR）时，用
+`scripts/mac/dev-stack.sh [start|stop|restart|status|logs] [单元...]`（任意目录可执行，
+单元为 `mysql redis meili searxng sandbox ocr`）。它在数据已有归属时不会另起一份空实例
+（例如原生 redis-stack 占着 6379 就不去 compose 起 6380 那份空库），默认组不含 OCR。
+
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
 接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需先登录，在 Authorize 中填入 `Bearer <登录令牌>`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或经 nginx 反向代理。
