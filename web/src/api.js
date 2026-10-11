@@ -95,6 +95,7 @@ const CHAT_EVENT_CB = {
   retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
+  runcode_progress: 'onRunCodeProgress',
   subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
   agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
   agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',

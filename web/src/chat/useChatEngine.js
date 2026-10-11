@@ -1858,6 +1858,20 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         live.output = out
       } catch (e) { /* 忽略 */ }
     },
+    onRunCodeProgress: payload => {
+      // 脚本内的并发与额度（P3b 实时面板）：进度帧挂到"正在跑"的那张 run_code 卡上。
+      // 与 tool_output 同一条规矩——接流回来的观众手里没有这张卡（start 记录不入快照），
+      // 帧就丢弃，跑完后终态卡片自己带完整清单，不凭空造一张卡。
+      try {
+        const p = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!p || !p.fanOut) return
+        const list = msg.toolCalls
+        if (!Array.isArray(list)) return
+        const live = [...list].reverse().find(x => x.name === 'run_code' && x.status === 'start')
+        if (!live) return
+        live.fanOut = p.fanOut
+      } catch (e) { /* 忽略 */ }
+    },
     onSubagent: payload => {
       try {
         const b = typeof payload === 'string' ? JSON.parse(payload) : payload

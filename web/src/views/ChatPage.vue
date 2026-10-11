@@ -240,7 +240,7 @@
                           <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
-                      <span v-if="t.fanOut && t.fanOut.total" class="tool-dur">扇出 {{ t.fanOut.total }} 次</span>
+                      <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                           <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -251,17 +251,21 @@
                         <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
-                      <template v-if="t.fanOut && t.fanOut.total">
-                        <div class="tl-io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                      <template v-if="fanHasBoard(t.fanOut)">
+                        <div class="tl-io-label">{{ fanTitle(t.fanOut) }}</div>
                         <div class="fan-list">
-                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row"
+                               :class="{ err: s.status === 'error', run: s.status === 'start' }">
                             <span class="fan-idx">{{ si + 1 }}</span>
                             <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                            <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                            <span class="fan-dur">{{ fanRowState(s) }}</span>
                             <span class="fan-brief">{{ s.brief }}</span>
                           </div>
                           <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
                         </div>
+                        <!-- 额度与并发上限（P3b 实时面板）：跑着的时候看这条才知道"离撞上限还有多远"，
+                             终态那份也带着——刷新后同样能看出这一次占了几成预算 -->
+                        <div v-if="fanBudget(t.fanOut)" class="fan-budget">{{ fanBudget(t.fanOut) }}</div>
                       </template>
                           <template v-if="t.args">
                             <div class="tl-io-label">入参</div>
@@ -341,7 +345,7 @@
                       <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
-                      <span v-if="t.fanOut && t.fanOut.total" class="tool-dur">扇出 {{ t.fanOut.total }} 次</span>
+                      <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                       <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -352,17 +356,21 @@
                     <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
-                      <template v-if="t.fanOut && t.fanOut.total">
-                        <div class="tl-io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                      <template v-if="fanHasBoard(t.fanOut)">
+                        <div class="tl-io-label">{{ fanTitle(t.fanOut) }}</div>
                         <div class="fan-list">
-                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row"
+                               :class="{ err: s.status === 'error', run: s.status === 'start' }">
                             <span class="fan-idx">{{ si + 1 }}</span>
                             <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                            <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                            <span class="fan-dur">{{ fanRowState(s) }}</span>
                             <span class="fan-brief">{{ s.brief }}</span>
                           </div>
                           <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
                         </div>
+                        <!-- 额度与并发上限（P3b 实时面板）：跑着的时候看这条才知道"离撞上限还有多远"，
+                             终态那份也带着——刷新后同样能看出这一次占了几成预算 -->
+                        <div v-if="fanBudget(t.fanOut)" class="fan-budget">{{ fanBudget(t.fanOut) }}</div>
                       </template>
                       <template v-if="t.args">
                         <div class="tl-io-label">入参</div>
@@ -1562,6 +1570,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRu
          procOpen, toggleProc, procSlice, timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
+         fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
@@ -3548,13 +3557,18 @@ onMounted(async () => {
 .sa-more { margin-top: 4px; font-size: 11px; }
 /* 脚本扇出清单（P3b）：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
 .fan-list { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; font-size: 12px; }
-.fan-row { display: grid; grid-template-columns: 20px 96px 52px 1fr; gap: 6px; align-items: baseline; }
+.fan-row { display: grid; grid-template-columns: 20px 96px 60px 1fr; gap: 6px; align-items: baseline; }
 .fan-row.err .fan-name, .fan-row.err .fan-brief { color: var(--app-danger); }
 .fan-idx { color: var(--app-text3); font-variant-numeric: tabular-nums; text-align: right; }
 .fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .fan-brief { color: var(--app-text3); overflow-wrap: anywhere; }
 .fan-more { color: var(--app-text3); font-size: 11px; }
+/* 在途那条（实时面板）：还没有结果可摘要，用主色标出"正在跑"而不是留一行空白 */
+.fan-row.run .fan-name { color: var(--app-accent); }
+.fan-row.run .fan-dur { color: var(--app-accent); }
+/* 额度/并发上限/交付数一行（P3b 实时面板）：清单之下、入参之上，弱文本不抢正文 */
+.fan-budget { color: var(--app-text3); font-size: 11px; margin: 2px 0 8px; }
 /* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
 .sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
 .sa-bar { margin-top: 5px; height: 3px; border-radius: 2px; background: var(--app-border); overflow: hidden; }

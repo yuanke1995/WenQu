@@ -125,7 +125,7 @@
                     <span class="card-title">{{ toolLabel(t.name, t.label) }}</span>
                     <code v-if="toolBrief(t)" class="tool-brief">{{ toolBrief(t) }}</code>
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
-                    <span v-if="t.fanOut && t.fanOut.total" class="card-dim">扇出 {{ t.fanOut.total }} 次</span>
+                    <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="t.status === 'start' && t.startAt" class="card-dim">{{ liveToolDur(t.startAt) }}</span>
                     <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
@@ -134,17 +134,19 @@
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
-                    <template v-if="t.fanOut && t.fanOut.total">
-                      <div class="io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                    <template v-if="fanHasBoard(t.fanOut)">
+                      <div class="io-label">{{ fanTitle(t.fanOut) }}</div>
                       <div class="fan-list">
-                        <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                        <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row"
+                             :class="{ err: s.status === 'error', run: s.status === 'start' }">
                           <span class="fan-idx">{{ si + 1 }}</span>
                           <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                          <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                          <span class="fan-dur">{{ fanRowState(s) }}</span>
                           <span class="fan-brief">{{ s.brief }}</span>
                         </div>
                         <div v-if="t.fanOut.omitted" class="card-dim">另有 {{ t.fanOut.omitted }} 次未列出</div>
                       </div>
+                      <div v-if="fanBudget(t.fanOut)" class="fan-budget">{{ fanBudget(t.fanOut) }}</div>
                     </template>
                     <template v-if="t.args">
                       <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre>
@@ -194,7 +196,7 @@
                 <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
                 <span v-else class="spinner"></span>
                 <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
-                <span v-if="t.fanOut && t.fanOut.total" class="card-dim">扇出 {{ t.fanOut.total }} 次</span>
+                <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                 <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
               </div>
             </template>
@@ -339,6 +341,7 @@ import {
   busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
+  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
   fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText
@@ -548,8 +551,12 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .sa-digest { font-size: 12px; color: var(--app-text3); }
 /* 脚本扇出清单（P3b）与分支回报全文（P3a）：窄屏一行一次子调用，摘要自己换行 */
 .fan-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; font-size: 12px; }
-.fan-row { display: grid; grid-template-columns: 18px 84px 46px 1fr; gap: 6px; align-items: baseline; }
+.fan-row { display: grid; grid-template-columns: 18px 84px 56px 1fr; gap: 6px; align-items: baseline; }
 .fan-row.err .fan-name, .fan-row.err .fan-brief { color: var(--app-danger); }
+/* 在途那条（实时面板）：还没有结果可摘要，用主色标出"正在跑" */
+.fan-row.run .fan-name, .fan-row.run .fan-dur { color: var(--app-accent); }
+/* 额度/并发上限/交付数一行 */
+.fan-budget { color: var(--app-text3); font-size: 11px; margin: 3px 0 6px; }
 .fan-idx { color: var(--app-text3); text-align: right; font-variant-numeric: tabular-nums; }
 .fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }

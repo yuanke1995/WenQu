@@ -2225,6 +2225,14 @@ public class RagService {
         for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
             String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
             if (n == null || SandboxTools.RUN_CODE_TOOL_NAME.equals(n)) continue;
+            // 脚本里不再给 execute：嵌套的命令行调用会占用<b>容器自己那条 bash 会话</b>
+            // （外层脚本正是被那条会话跑起来的）。本机实测两轮：四路并发嵌套 execute 时服务端把四条
+            // 命令都跑完了、客户端只收回到两三条响应，剩下的连接永远等不到返回，整段脚本停在
+            // 第一次未回来的调用上，直到外层 120s 超时——现象是「脚本没输出」，排查的人只会以为是
+            // 回调坏了。平台侧加锁串行化能缓解（先后的命令各能回来）但排队一久仍会丢，
+            // 与其给一个看运气的通道，不如不给：命令行请用工具本身（模型直接调，串行且看得见）。
+            // 其余沙盒工具走文件 API（读写/列目录/交付），不碰那条会话，脚本里照常并发。
+            if (SandboxTools.STREAMING_TOOL_NAME.equals(n)) continue;
             // 「要有人在场」的工具不给脚本：askUser 在脚本里既没人答、又会把整段运行挂住——
             // 判据与本轮装配同一条（描述符 viewerRequired），不在这里再抄一份名字表
             com.wenqu.ai.agent.tool.ToolDescriptor d = toolRegistry.find(n).orElse(null);
@@ -2426,9 +2434,14 @@ public class RagService {
                 // 子调用不各开一张顶层卡片：一段脚本扇出 20 次就把过程区刷出 20 行，而它们本来就属于
                 // 同一次运行。改成记进 run_code 那张卡的「扇出清单」，点开看结构（这是过程下钻的落点）。
                 // 守卫链其它三道（叫停/步数/权限）与引用登记都照常走，只是不再各占一个操作位。
-                if (!"start".equals(status)) {
-                    recordSubCall(st, inv.toolName(), status, resultOrError, inv.elapsedMillis());
+                // <p>start 也过这里：在途那几条与"本轮额度还剩多少"只有起止两侧才知道。
+                // 这里只改计数、不发帧——发帧由面板 ticker 每秒合并一帧（见 RUN_PROGRESS_POOL）。
+                if ("start".equals(status)) {
+                    markSubCallInFlight(st, inv.toolName(), true);
+                    return;
                 }
+                recordSubCall(st, inv.toolName(), status, resultOrError, inv.elapsedMillis());
+                markSubCallInFlight(st, inv.toolName(), false);
             }
 
             @Override
@@ -2464,7 +2477,7 @@ public class RagService {
         final com.wenqu.ai.util.RequestUser.Snapshot identity = com.wenqu.ai.util.RequestUser.snapshot();
         // 本轮检索参数覆盖（库级 + 智能体级）与个人配置覆盖装在同一个 ThreadLocal 盲区里：
         // 不带进工具线程，配置页上那份 retrieval.* 对 searchKnowledge 一律静默失效，
-        // 实测表现是「主链路命中并引用、工具侧恒空」——两份参数同一个会话。
+        // 实测表现是「主链路命中并引用、工具侧恒空」——同一轮里两套检索参数，谁都没报错。
         final Map<String, String> cfgOverrides = configService.currentOverrides();
         final Map<String, String> userOverrides = configService.currentUserOverrides();
         // 本轮基础上下文：会话/用户归属 + askUser 执行器 + 任务清单写入器 + 大输出外溢信箱
@@ -2504,12 +2517,17 @@ public class RagService {
                     m.put(SandboxTools.CTX_SANDBOX_POLICY, st.permissionPolicy);
                     // run_code 的子调用回程（P3b）：只在这一轮真挂了 run_code 时才有内容，
                     // 且必须在执行侧现取——本轮的可调用清单在 st.subCallTools 里，装配期还没建好
-                    if (SandboxTools.RUN_CODE_TOOL_NAME.equals(inv.toolName())) {
+                    boolean runCode = SandboxTools.RUN_CODE_TOOL_NAME.equals(inv.toolName());
+                    if (runCode) startRunBoard(st);
+                    if (runCode) {
                         m.put(SandboxTools.CTX_RUN_CODE_BRIDGE, runCodeBridge(st));
                     }
                     // 输出增量回调：execute 检测到它即走流式执行（后台脱离+轮询），增量经
-                    // recordToolOutput 转 SSE，前端「看着它跑」
-                    if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName())) {
+                    // recordToolOutput 转 SSE，前端「看着它跑」。
+                    // <p>run_code 必须走同一条：它此前不在这份名单里，于是一段脚本从起跑到结束
+                    // 屏幕上一个字都没有——扇出 30 份资料时那就是两三分钟的纯转圈，
+                    // 用户的读法是"卡死了"，然后点停止把活儿掐掉。
+                    if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName()) || runCode) {
                         m.put(SandboxTools.CTX_OUTPUT_SINK,
                                 (java.util.function.Consumer<String>) delta ->
                                         recordToolOutput(st, inv.toolName(), delta));
@@ -2746,6 +2764,24 @@ public class RagService {
             });
 
     /**
+     * run_code 实时面板的下发线程（P3b）。与心跳/看门狗分池，理由与上面那条注释同源：
+     * 一次慢客户端的 send 不许连坐别人的心跳。
+     * <p><b>发送点刻意不在子调用线程上</b>：扇出六路时六个 Tomcat 线程同时往同一根 SSE 通道 send，
+     * 各自的 HTTP 响应被自己刚发的进度帧卡住，脚本就停在第 7 次调用之前直到整段运行超时
+     * （本机实测：6 路 execute 扇出，卡片停在「子调用 6 次」120s 不前进）。
+     * 现在子调用线程只置脏位，ticker 每秒最多合并成一帧。
+     */
+    private static final java.util.concurrent.ScheduledExecutorService RUN_PROGRESS_POOL =
+            java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
+                Thread t = new Thread(r, "runcode-progress");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 面板刷新间隔：1s 一跳，与卡片上那份实时耗时同拍，扇出再密也不会把通道刷成洪水 */
+    private static final long RUN_PROGRESS_INTERVAL_MS = 1000L;
+
+    /**
      * 按 15s 间隔向 emitter 发 SSE 注释行（":keepalive"）保活，返回句柄供停止/移交。
      * 发送失败（客户端已断开）自停，防任务泄漏。供 startRunHeartbeat 与 runChat 前置阶段共用。
      */
@@ -2785,6 +2821,10 @@ public class RagService {
             f.cancel(false);
             st.heartbeat = null;
         }
+        // 整轮收口时一并撤掉脚本面板的 ticker：中断/异常那几条路没有 run_code 终态记录，
+        // 只靠"终态自停"会留下一个每秒空转的周期任务
+        st.runBoardActive = false;
+        stopRunBoardTicker(st);
     }
 
     // ==================== 整轮存活看门狗 ====================
@@ -2940,8 +2980,9 @@ public class RagService {
         // → 库门表达式恒假 → 融合召回 0（线上实测：主链路命中 31 块，工具侧恒空并耗尽 15 步工具预算）。
         // identity 由 instrumentTools 在入口线程捕获后传入——不能在执行点临时 snapshot()，
         // 那里已经在弹性线程上、捕获到的只会是 anonymous（实测修复无效）。
-        // 本轮配置覆盖同样要带过来：ConfigService 的 OVERRIDE/USER_OVERRIDE 也是入口线程的 ThreadLocal，
-        // 不带进来工具就按全局参数检索，于是「主链路按 0.6 关键词权重命中、工具按 0.2 把它压出重排窗口」。
+        // 本轮检索参数覆盖（ConfigService 的 OVERRIDE/USER_OVERRIDE 两个 ThreadLocal）同一个盲区、
+        // 同一种损坏：库级/智能体级 retrieval.* 不带进来，工具就按全局参数检索，
+        // 于是「主链路按 0.6 关键词权重命中、工具按 0.2 把它压出重排窗口」——两份参数同一个会话。
         // 统一恢复：一次覆盖全部工具（检索/沙盒/MCP/工作流），避免逐工具打补丁。
         RuntimeException last = null;
         for (int i = 0; i < 2; i++) {
@@ -2958,7 +2999,7 @@ public class RagService {
             attempts[0]++;
             // restore() 返回的句柄用于 finally 复原：弹性线程会被复用，不清理会污染后续任务的身份
             try (AutoCloseable ignored = com.wenqu.ai.util.RequestUser.restore(identity)) {
-                // 配置覆盖同样要复原成「进入前的那一份」——putOverrides 是合并语义，
+                // 本轮配置覆盖同样要显式带过来，并复原成「进入前的那一份」——putOverrides 是合并语义，
                 // 所以先 clear 再装回 prev，直接 putOverrides(prev) 会把本轮的键留给下一个任务
                 Map<String, String> prev = configService.currentOverrides();
                 Map<String, String> prevUser = configService.currentUserOverrides();
@@ -3418,10 +3459,142 @@ public class RagService {
         synchronized (st.subCallLog) {
             st.subCallLog.add(row);
         }
+        st.subCallDirty.set(true);
     }
 
     /** 脚本子调用清单最多带这么多行进卡片（再多只报总数——清单本身不该比结果还长） */
     private static final int SUB_CALL_CARD_ROWS = 40;
+
+    /** 交付类子调用的工具名（扇出清单里数它，卡片才写得出"这段脚本交回了几个文件"） */
+    private static final String DELIVER_TOOL_NAME = "deliver_artifact";
+
+    /**
+     * 一次 run_code 起头：清掉上一段脚本的扇出清单与在途计数，并开一个每秒合并的下发 ticker。
+     * <p>清单的作用域是<b>一次运行</b>：同一轮里连跑两段脚本时，第二张卡片不该显示第一段做过的事。
+     * <p>刻意<b>不</b>复位 {@code subCallCount}：那是守卫按轮扣的预算，换一段脚本不会让额度回来，
+     * 面板上把它如实标成「本轮额度」。
+     */
+    private void startRunBoard(AnswerStreamState st) {
+        st.subCallLog.clear();
+        st.subCallRunning.clear();
+        st.subCallInFlight.set(0);
+        st.subCallDirty.set(true);
+        st.runBoardActive = true;
+        stopRunBoardTicker(st);
+        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.ScheduledFuture<?> f = RUN_PROGRESS_POOL.scheduleWithFixedDelay(() -> {
+            try {
+                if (!st.runBoardActive) {
+                    stopRunBoardTicker(st);
+                    return;
+                }
+                if (st.subCallDirty.compareAndSet(true, false)) publishRunProgress(st);
+            } catch (Exception e) {
+                log.debug("[P3B] 进度帧生成失败（不影响脚本执行）: {}", e.getMessage());
+            }
+        }, RUN_PROGRESS_INTERVAL_MS, RUN_PROGRESS_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        self.set(f);
+        st.runProgress = f;
+    }
+
+    /** 停掉本段脚本的面板 ticker（终态、自停、整轮收尾三条路都走这里，句柄只有一份） */
+    private static void stopRunBoardTicker(AnswerStreamState st) {
+        java.util.concurrent.ScheduledFuture<?> f = st.runProgress;
+        if (f != null) {
+            f.cancel(false);
+            st.runProgress = null;
+        }
+    }
+
+    /**
+     * 在途计数：start 加、终态减，并置脏位让 ticker 下一秒发一帧。
+     * <p>这里<b>不做任何 IO</b>：子调用线程忙着把 HTTP 响应送回去，面板由 ticker 代劳。
+     */
+    private static void markSubCallInFlight(AnswerStreamState st, String tool, boolean started) {
+        synchronized (st.subCallRunning) {
+            st.subCallDirty.set(true);
+            if (started) {
+                st.subCallInFlight.incrementAndGet();
+                st.subCallRunning.merge(tool == null ? "?" : tool, 1, Integer::sum);
+                return;
+            }
+            st.subCallInFlight.decrementAndGet();
+            String name = tool == null ? "?" : tool;
+            Integer left = st.subCallRunning.merge(name, -1, Integer::sum);
+            if (left == null || left <= 0) st.subCallRunning.remove(name);
+        }
+    }
+
+    /**
+     * 组一份扇出清单（run_code 卡片的看板数据）。
+     *
+     * @param live 实时帧额外带上在途那几条（它们还没有结果可摘要），终态那份只给已完成的
+     */
+    private Map<String, Object> buildFanOut(AnswerStreamState st, boolean live) {
+        List<Map<String, Object>> done = new ArrayList<>();
+        int delivered = 0;
+        synchronized (st.subCallLog) {
+            for (Map<String, Object> row : st.subCallLog) {
+                if (row == null) continue;
+                done.add(row);
+                if (DELIVER_TOOL_NAME.equals(row.get("name")) && "done".equals(row.get("status"))) delivered++;
+            }
+        }
+        List<Map<String, Object>> items = new ArrayList<>(done.size() + st.subCallRunning.size());
+        items.addAll(done.size() > SUB_CALL_CARD_ROWS ? done.subList(0, SUB_CALL_CARD_ROWS) : done);
+        if (live) {
+            synchronized (st.subCallRunning) {
+                for (Map.Entry<String, Integer> e : st.subCallRunning.entrySet()) {
+                    int n = Math.max(1, e.getValue() == null ? 1 : e.getValue());
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("name", e.getKey());
+                    row.put("status", "start");
+                    row.put("running", n);
+                    items.add(row);
+                }
+            }
+        }
+        Map<String, Object> fan = new LinkedHashMap<>();
+        fan.put("total", done.size());
+        fan.put("inFlight", Math.max(0, st.subCallInFlight.get()));
+        fan.put("items", items);
+        if (done.size() > SUB_CALL_CARD_ROWS) {
+            fan.put("omitted", done.size() - SUB_CALL_CARD_ROWS);
+        }
+        // 预算与并发上限：面板要能说出"这一次扇出离上限还有多远"，否则 12/50 和 12/12 看着一样
+        fan.put("used", st.subCallCount.get());
+        fan.put("max", Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50)));
+        fan.put("parallel", Math.max(1, configService.getInt("tool.runcode.maxParallel", 8)));
+        if (delivered > 0) fan.put("delivered", delivered);
+        return fan;
+    }
+
+    /**
+     * 下发一帧脚本运行进度（P3b 的实时面板）。
+     * <p>只走实时通道：不进 {@code toolCalls}、不进账本——这份数据的价值在"当场看得见"，
+     * 跑完后卡片自己带终态那份（随消息落库，刷新后仍点得开），两套真源只会对不上。
+     */
+    private void publishRunProgress(AnswerStreamState st) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("tool", SandboxTools.RUN_CODE_TOOL_NAME);
+        payload.put("fanOut", buildFanOut(st, true));
+        String json = JSON.toJSONString(payload);
+        boolean sent = false;
+        try {
+            sent = chatRunBus.publishRaw(st.emitter, "runcode_progress", json, st.sessionId);
+        } catch (Exception e) {
+            log.debug("[P3B] 进度帧走总线失败，改直发: {}", e.getMessage());
+        }
+        if (sent) return;
+        try {
+            st.emitter.send(SseEmitter.event().name("runcode_progress")
+                    .data("{\"type\":\"runcode_progress\",\"content\":" + json
+                            + ",\"sessionId\":\"" + st.sessionId + "\"}"));
+        } catch (Exception e) {
+            log.debug("[P3B] 进度帧下发失败（客户端可能已断开）: {}", e.getMessage());
+        }
+    }
 
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts,
@@ -3446,19 +3619,11 @@ public class RagService {
         }
         // run_code 的扇出清单（P3b 过程下钻）：一次运行内部调了哪些工具、各自多久、有没有被挡下。
         // 只带终态那一份，且随卡片一起落库——刷新后仍然点得开，不然这段结构只有实时看得到
-        if ("run_code".equals(name) && !"start".equals(status) && !st.subCallLog.isEmpty()) {
-            List<Map<String, Object>> log;
-            synchronized (st.subCallLog) {
-                log = new ArrayList<>(st.subCallLog);
-            }
-            Map<String, Object> fan = new LinkedHashMap<>();
-            fan.put("total", log.size());
-            fan.put("items", log.size() > SUB_CALL_CARD_ROWS
-                    ? log.subList(0, SUB_CALL_CARD_ROWS) : log);
-            if (log.size() > SUB_CALL_CARD_ROWS) {
-                fan.put("omitted", log.size() - SUB_CALL_CARD_ROWS);
-            }
-            rec.put("fanOut", fan);
+        if ("run_code".equals(name) && !"start".equals(status)) {
+            // 这一段脚本结束了：面板不再刷（终态那一份就挂在下面这条记录里，随消息落库）
+            st.runBoardActive = false;
+            stopRunBoardTicker(st);
+            if (!st.subCallLog.isEmpty()) rec.put("fanOut", buildFanOut(st, false));
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
         // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
@@ -4525,11 +4690,27 @@ public class RagService {
         /** 本轮已发生的子调用次数（子调用的独立预算计数，不进模型的单轮步数） */
         final java.util.concurrent.atomic.AtomicInteger subCallCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
-         * 本轮脚本的子调用清单（P3b 的过程下钻）：一条一次调用一行，随 run_code 那张卡片下发与落库。
+         * 本段脚本的子调用清单（P3b 的过程下钻）：一条一次调用一行，随 run_code 那张卡片下发与落库。
+         * <p>作用域是<b>一次运行</b>而不是本轮——{@link #startRunBoard} 在每次 run_code 起头清空它，
+         * 否则同一轮里的第二段脚本，卡片会显示成第一段做过的事。
          * <p>刻意不各开顶层卡片、也不进 {@code toolCalls}：那是"模型自己做的操作"的清单，
          * 一段脚本扇出的几十次调用混进去会把过程区刷成一堵墙，也让人看不出它们属于同一次运行。
          */
         final List<Map<String, Object>> subCallLog = java.util.Collections.synchronizedList(new ArrayList<>());
+        /**
+         * 本段脚本<b>正在途</b>的子调用数（P3b 实时面板）：start 加、终态减，随每次 run_code 起头复位。
+         * <p>只有起止两侧才知道这个数：终态清单里它永远是 0，而"在跑几条、并发上限多少"正是脚本跑着时
+         * 唯一看不见的东西。
+         */
+        final java.util.concurrent.atomic.AtomicInteger subCallInFlight = new java.util.concurrent.atomic.AtomicInteger();
+        /** 在途子调用按工具名的计数（同名并发合成一条「在跑×N」），终态即摘名 */
+        final Map<String, Integer> subCallRunning = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
+        /** 面板有变化待下发：子调用线程只置脏，实际 send 由 ticker 每秒合并一帧 */
+        final java.util.concurrent.atomic.AtomicBoolean subCallDirty = new java.util.concurrent.atomic.AtomicBoolean();
+        /** 本段脚本的面板 ticker 句柄（每次 run_code 起头新建，终态与整轮收尾取消） */
+        volatile java.util.concurrent.ScheduledFuture<?> runProgress;
+        /** 本段脚本还在跑：false 时 ticker 自停，不留一个空转的周期任务 */
+        volatile boolean runBoardActive;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露

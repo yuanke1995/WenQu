@@ -488,6 +488,32 @@ const liveOutput = t => {
   }
   return t.result != null ? t.result : (t.output || '')
 }
+/**
+ * run_code 的扇出看板（P3b）：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
+ * 所以这几条判据只写一遍，PC 与移动壳的模板都走它们。
+ * 字段：total 已完成条数、inFlight 在途条数、items 清单、omitted 未列出数、
+ * used/max 本轮额度、parallel 并发上限、delivered 脚本交回的产物数。
+ */
+const fanHasBoard = f => !!f && ((Number(f.total) || 0) > 0 || (Number(f.inFlight) || 0) > 0)
+const fanHead = t => {
+  const f = t.fanOut
+  if (!fanHasBoard(f)) return ''
+  if (t.status === 'start') {
+    const run = Number(f.inFlight) || 0
+    return `子调用 ${Number(f.total) || 0} 次${run ? ' · 在途 ' + run : ''}`
+  }
+  return `扇出 ${Number(f.total) || 0} 次`
+}
+const fanTitle = f => `扇出 ${Number(f.total) || 0} 次工具调用` +
+  ((Number(f.inFlight) || 0) > 0 ? `（还有 ${f.inFlight} 条在跑）` : '')
+const fanRowState = s => s.status === 'start' ? `在跑×${Number(s.running) || 1}` : toolDuration(s.elapsedMs)
+const fanBudget = f => {
+  if (!f || !f.max) return ''
+  const bits = [`本轮额度 ${Number(f.used) || 0}/${f.max}`]
+  if (f.parallel) bits.push(`并发上限 ${f.parallel}`)
+  if (f.delivered) bits.push(`交付 ${f.delivered} 个文件`)
+  return bits.join(' · ')
+}
 const groupRunning = g => g.tools.some(t => t.status === 'start')
 const groupHasError = g => g.tools.some(t => t.status === 'error')
 // 一组工具的累计耗时（运行中的按实时 tick 计，其余用终态值）。过程簇跨多个 group 汇总，
@@ -843,6 +869,7 @@ export {
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
+  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,

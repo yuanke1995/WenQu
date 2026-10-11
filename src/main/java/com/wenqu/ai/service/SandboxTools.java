@@ -303,6 +303,9 @@ public class SandboxTools {
             + "硬性约束：只有标准输出（print / console.log）会回到对话里，函数返回值不会自动出现；"
             + "请只打印结论与关键数字，不要把整份资料打出来（那和直接调工具没区别）。"
             + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是循环与扇出。"
+            + "扇出时注意：脚本里能并发调用的是检索、读写文件、列目录、交付产物、内置与联网这类工具；"
+            + "<b>execute（在脚本里再跑命令行）不提供</b>——沙盒里只有一条命令会话，外层脚本就挂在它上面，"
+            + "嵌套会互相卡住；要跑命令行请直接调 execute 工具。"
             + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
     public String run_code(
             @ToolParam(description = "脚本正文（Python 3 或 JavaScript/Node）。结果请打印到标准输出") String script,

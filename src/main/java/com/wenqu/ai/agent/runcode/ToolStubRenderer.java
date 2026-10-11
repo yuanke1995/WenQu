@@ -282,9 +282,14 @@ public class ToolStubRenderer {
 
     /** 供执行侧选择文件名与解释器 */
     public enum Lang {
-        /** Python 3：main.py + wenqu_tools.py */
-        PYTHON("python", "main.py", "wenqu_tools.py", "python3 main.py"),
-        /** JavaScript（Node）：main.js + wenqu_tools.js */
+        /**
+         * Python 3：main.py + wenqu_tools.py。
+         * <p>{@code -u} 不是加速而是必需：执行侧把输出重定向进日志文件再轮询增量，而 CPython 的
+         * stdout 面对<b>文件</b>是块缓冲的——不加 {@code -u} 时 print 会攒到进程退出才一次性出，
+         * 「实时输出」名存实亡（脚本跑两分钟屏幕上一个字都没有，正是这次要治的病）。
+         */
+        PYTHON("python", "main.py", "wenqu_tools.py", "python3 -u main.py"),
+        /** JavaScript（Node）：main.js + wenqu_tools.js（写文件描述符是同步的，无需额外开关） */
         JAVASCRIPT("javascript", "main.js", "wenqu_tools.js", "node main.js");
 
         private final String code;
