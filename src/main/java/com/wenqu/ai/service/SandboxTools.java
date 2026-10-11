@@ -293,17 +293,20 @@ public class SandboxTools {
      * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进会话工作区），所以只读档压根
      * 挂不上这个工具（{@code SideEffect.MUTATE} 被档位裁掉），全自主档也不给它越过工作区的能力。
      */
-    @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段 Python 3 脚本，用来把<b>多件同类的活一次做完</b>："
+    @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段脚本，用来把<b>多件同类的活一次做完</b>："
             + "批量读取/转换文件、逐份汇总很多资料、复杂计算与生成文件。"
-            + "脚本里可以 import wenqu_tools（本轮自动提供），里面每个函数就是本轮你已经挂上的那个工具"
-            + "（read_file、searchKnowledge、webSearch 等），调用照常受平台的权限与预算约束。"
-            + "硬性约束：只有 print 出来的内容会回到对话里，返回值不会自动出现；请只 print 结论与关键数字，"
-            + "不要把整份资料打出来（那和直接调工具没区别）。"
-            + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是扇出与循环。"
+            + "language 选 python（默认）或 javascript（Node）。"
+            + "脚本里可以直接用本轮已挂上的工具：Python 写 `import wenqu_tools as wq`，"
+            + "JavaScript 写 `const wq = require('./wenqu_tools')`；"
+            + "模块由平台按本轮工具表自动生成，本轮没挂的工具里面就没有那个函数，"
+            + "调用照常受平台的权限与预算约束。"
+            + "硬性约束：只有标准输出（print / console.log）会回到对话里，函数返回值不会自动出现；"
+            + "请只打印结论与关键数字，不要把整份资料打出来（那和直接调工具没区别）。"
+            + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是循环与扇出。"
             + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
     public String run_code(
-            @ToolParam(description = "Python 3 脚本正文。可以 `import wenqu_tools as wq` 使用本轮工具；"
-                    + "结果请用 print 输出（stdout 会被带回）") String script,
+            @ToolParam(description = "脚本正文（Python 3 或 JavaScript/Node）。结果请打印到标准输出") String script,
+            @ToolParam(description = "语言：python（默认）或 javascript", required = false) String language,
             ToolContext toolContext) {
         com.wenqu.ai.agent.runcode.RunCodeBridge bridge = ctxFn(toolContext, CTX_RUN_CODE_BRIDGE);
         if (bridge == null) {
@@ -311,8 +314,10 @@ public class SandboxTools {
                     + "（平台未配置沙盒回调地址，或本轮没有可交给脚本的工具）。"
                     + "请改用已有的工具逐项完成。");
         }
+        com.wenqu.ai.agent.runcode.ToolStubRenderer.Lang lang =
+                com.wenqu.ai.agent.runcode.ToolStubRenderer.Lang.of(language);
         // 与 write/edit 同一条档位判据：脚本与客户端要写进会话工作区
-        String denial = writeDenial(toolContext, runCodeService.workDir() + "/main.py");
+        String denial = writeDenial(toolContext, runCodeService.workDir() + "/" + lang.scriptFile());
         if (denial != null) {
             return reportFsError(toolContext, denial);
         }
@@ -320,7 +325,7 @@ public class SandboxTools {
         if (backend == null) {
             return reportInfra(toolContext, NO_CONTEXT);
         }
-        String out = runCodeService.run(bridge, backend, script, outputSink(toolContext));
+        String out = runCodeService.run(bridge, backend, script, lang, outputSink(toolContext));
         if (out != null && out.startsWith("沙盒不可用")) {
             // 运行失败的原因在文本里已经说清了（给模型看），但基础设施故障必须另外报一次，
             // 否则这条工具记录会显示成绿色对勾——排查的人看不出是容器没起来还是脚本写错了

@@ -75,7 +75,30 @@ public class UsageStatsService {
         out.put("heatmap", List.of());
         out.put("trend", Map.of("days", List.of(), "series", List.of()));
         out.put("models", List.of());
+        out.put("kinds", List.of());
         return out;
+    }
+
+    /**
+     * 用途（台账 kind）的用户可读名。
+     * <p>名字表放后端而不是前端抄一份：kind 是在记账出口写的，加一种用途时改这里编译器会提示，
+     * 而前端那份映射漏改的表现是页面上裸出一个英文码，看着像数据坏了。
+     * <p>认不出的 kind 原样透出（不并进「其他」）：新加的用途该被看见，而不是被一个兜底桶藏住。
+     */
+    static String kindLabel(String kind) {
+        if (kind == null || kind.isBlank()) return "对话问答";
+        return switch (kind) {
+            case "chat" -> "对话问答";
+            case "subagent" -> "子智能体分支";
+            case "think" -> "深度思考";
+            case "rewrite" -> "检索词改写";
+            case "compress" -> "对话历史压缩";
+            case "citecheck" -> "引用一致性自检";
+            case "memory" -> "长期记忆提取";
+            case "dispatch" -> "智能体自动派遣";
+            case "planIntent" -> "计划意图识别";
+            default -> kind;
+        };
     }
 
     /**
@@ -181,7 +204,21 @@ public class UsageStatsService {
                 .toList();
 
         Long longestSeconds = messageMapper.statLongestSessionSeconds(userId);
-
+        // ---- 按用途占比（近 N 日）：把"回答本身"与"为回答做的辅助调用"分开看 ----
+        // 为什么值得单独一栏：这些开销在对话里没有对应对象（用户看不到一条消息等于它们），却常占总量
+        // 两三成；有了这一栏，"我今天怎么花了这么多"才有可回答的形状，子智能体分支与脚本扇出的
+        // 成本归属也查得到（以前只落在库里的 kind 列，没有任何出口）。
+        List<Map<String, Object>> kinds = new ArrayList<>();
+        for (Map<String, Object> row : usageLogMapper.statKindTokens(userId,
+                today.minusDays(r - 1L).atStartOfDay())) {
+            String k = String.valueOf(row.get("k"));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", k);
+            m.put("label", kindLabel(k));
+            m.put("tokens", num(row.get("t")));
+            m.put("count", num(row.get("c")));
+            kinds.add(m);
+        }
         // ---- 费用（§13 Token 成本报表）：台账 tokens × 模型登记单价，Java 侧换算 ----
         // 全时段费用（统计卡口径）+ 区间内按模型费用（模型列表同窗口）；未登记单价的模型
         // 不计入费用，其 token 数单列（unpricedTokens）让「费用数字不完整」可见，而不是静默少算。
@@ -216,6 +253,7 @@ public class UsageStatsService {
         out.put("heatmap", heatmap);
         out.put("trend", trend);
         out.put("models", models);
+        out.put("kinds", kinds);
         return out;
     }
 

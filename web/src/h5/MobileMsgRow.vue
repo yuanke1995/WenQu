@@ -125,6 +125,7 @@
                     <span class="card-title">{{ toolLabel(t.name, t.label) }}</span>
                     <code v-if="toolBrief(t)" class="tool-brief">{{ toolBrief(t) }}</code>
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
+                    <span v-if="t.fanOut && t.fanOut.total" class="card-dim">扇出 {{ t.fanOut.total }} 次</span>
                     <span v-if="t.status === 'start' && t.startAt" class="card-dim">{{ liveToolDur(t.startAt) }}</span>
                     <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
@@ -132,6 +133,19 @@
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <div v-show="t._open" class="card-body">
+                    <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
+                    <template v-if="t.fanOut && t.fanOut.total">
+                      <div class="io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                      <div class="fan-list">
+                        <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                          <span class="fan-idx">{{ si + 1 }}</span>
+                          <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
+                          <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                          <span class="fan-brief">{{ s.brief }}</span>
+                        </div>
+                        <div v-if="t.fanOut.omitted" class="card-dim">另有 {{ t.fanOut.omitted }} 次未列出</div>
+                      </div>
+                    </template>
                     <template v-if="t.args">
                       <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre>
                       <ToolSpillButton v-if="t.argsSpillId" :id="t.argsSpillId" :tool="t.name" kind="入参" />
@@ -180,6 +194,7 @@
                 <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
                 <span v-else class="spinner"></span>
                 <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
+                <span v-if="t.fanOut && t.fanOut.total" class="card-dim">扇出 {{ t.fanOut.total }} 次</span>
                 <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
               </div>
             </template>
@@ -271,7 +286,10 @@
               <div v-if="b.artifacts && b.artifacts.length" class="card-dim">已交付：{{ b.artifacts.join('、') }}</div>
               <div v-if="b.description" class="card-dim">{{ b.description }}</div>
               <div class="sa-bar"><div class="sa-fill" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
-              <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
+              <div v-if="b.digest" class="sa-digest">{{ b._rp && b.report ? b.report : b.digest }}</div>
+              <!-- 全循环分支的回报全文下钻（P3a）：与 PC 同构，摘要之外还能看它到底交回了什么 -->
+              <button v-if="b.report && b.report !== b.digest" class="btn-ghost sa-more" type="button"
+                      @click.stop="b._rp = !b._rp">{{ b._rp ? '只看摘要' : '看它交回的全文' }}</button>
             </div>
           </div>
         </div>
@@ -528,6 +546,15 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .sa-bar { height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
 .sa-fill { height: 100%; background: var(--app-accent); }
 .sa-digest { font-size: 12px; color: var(--app-text3); }
+/* 脚本扇出清单（P3b）与分支回报全文（P3a）：窄屏一行一次子调用，摘要自己换行 */
+.fan-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; font-size: 12px; }
+.fan-row { display: grid; grid-template-columns: 18px 84px 46px 1fr; gap: 6px; align-items: baseline; }
+.fan-row.err .fan-name, .fan-row.err .fan-brief { color: var(--app-danger); }
+.fan-idx { color: var(--app-text3); text-align: right; font-variant-numeric: tabular-nums; }
+.fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.fan-brief { color: var(--app-text3); overflow-wrap: anywhere; }
+.sa-more { margin-top: 4px; font-size: 11px; }
 
 .related { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-tag { border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-accent); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-height: 34px; touch-action: manipulation; }

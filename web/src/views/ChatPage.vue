@@ -239,6 +239,8 @@
                           <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                           <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
+                      <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
+                      <span v-if="t.fanOut && t.fanOut.total" class="tool-dur">扇出 {{ t.fanOut.total }} 次</span>
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                           <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -247,6 +249,20 @@
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <div v-if="t._open" class="tl-card-body">
+                      <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
+                           子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
+                      <template v-if="t.fanOut && t.fanOut.total">
+                        <div class="tl-io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                        <div class="fan-list">
+                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                            <span class="fan-idx">{{ si + 1 }}</span>
+                            <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
+                            <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                            <span class="fan-brief">{{ s.brief }}</span>
+                          </div>
+                          <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
+                        </div>
+                      </template>
                           <template v-if="t.args">
                             <div class="tl-io-label">入参</div>
                             <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
@@ -324,6 +340,8 @@
                       <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                       <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
+                      <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
+                      <span v-if="t.fanOut && t.fanOut.total" class="tool-dur">扇出 {{ t.fanOut.total }} 次</span>
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                       <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -332,6 +350,20 @@
                     <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                     <div v-if="t._open" class="tl-card-body">
+                      <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
+                           子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
+                      <template v-if="t.fanOut && t.fanOut.total">
+                        <div class="tl-io-label">扇出 {{ t.fanOut.total }} 次工具调用</div>
+                        <div class="fan-list">
+                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row" :class="{ err: s.status === 'error' }">
+                            <span class="fan-idx">{{ si + 1 }}</span>
+                            <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
+                            <span class="fan-dur">{{ toolDuration(s.elapsedMs) }}</span>
+                            <span class="fan-brief">{{ s.brief }}</span>
+                          </div>
+                          <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
+                        </div>
+                      </template>
                       <template v-if="t.args">
                         <div class="tl-io-label">入参</div>
                         <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
@@ -484,7 +516,10 @@
                     <div v-if="b.artifacts && b.artifacts.length" class="sa-desc">已交付：{{ b.artifacts.join('、') }}</div>
                     <div v-if="subagentCard(m).reasons[b.name]" class="sa-reason">派它：{{ subagentCard(m).reasons[b.name] }}</div>
                     <div class="sa-bar"><div class="sa-bar-fill" :class="'st-' + (b.status || 'running')" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
-                    <div v-if="b.digest" class="sa-digest">{{ b.digest }}</div>
+                    <div v-if="b.digest" class="sa-digest">{{ b._rp && b.report ? b.report : b.digest }}</div>
+                    <!-- 全循环分支的回报全文下钻（P3a）：卡片那一行只是摘要，"它到底交回了什么"该就地能看到 -->
+                    <button v-if="b.report && b.report !== b.digest" class="app-btn ghost small sa-more" type="button"
+                            @click="b._rp = !b._rp">{{ b._rp ? '只看摘要' : '看它交回的全文' }}</button>
                   </div>
                 </div>
               </div>
@@ -3509,6 +3544,17 @@ onMounted(async () => {
   border: 1px solid var(--app-accent-weak); color: var(--app-accent);
 }
 .subagent-hits { margin-left: auto; font-size: 11px; color: var(--app-text3); }
+/* 分支回报全文下钻的小按钮（跟在摘要后面，不另起一行占版面） */
+.sa-more { margin-top: 4px; font-size: 11px; }
+/* 脚本扇出清单（P3b）：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
+.fan-list { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; font-size: 12px; }
+.fan-row { display: grid; grid-template-columns: 20px 96px 52px 1fr; gap: 6px; align-items: baseline; }
+.fan-row.err .fan-name, .fan-row.err .fan-brief { color: var(--app-danger); }
+.fan-idx { color: var(--app-text3); font-variant-numeric: tabular-nums; text-align: right; }
+.fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.fan-brief { color: var(--app-text3); overflow-wrap: anywhere; }
+.fan-more { color: var(--app-text3); font-size: 11px; }
 /* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
 .sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
 .sa-bar { margin-top: 5px; height: 3px; border-radius: 2px; background: var(--app-border); overflow: hidden; }

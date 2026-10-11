@@ -128,7 +128,204 @@ public class ToolStubRenderer {
             """;
 
     /**
-     * 生成模块源码。
+     * JavaScript（Node）侧的客户端骨架。
+     * <p>用 CommonJS 的 {@code module.exports}：脚本以 {@code main.js} 直接运行，同目录
+     * {@code require('./wenqu_tools')} 就能拿到，不需要 package.json 与 ESM 扩展名这些额外条件。
+     * <p>并发靠 Promise 队列而不是线程：Node 是单线程的，信号量在这里挡的是"同时在途的请求数"，
+     * 与 Python 那份挡"同时占用平台线程数"语义一致——两边扇出的规模才可比。
+     */
+    private static final String PREAMBLE_JS = """
+            // 由问渠平台按本轮已挂载的工具自动生成，不要手改这一份文件。
+            // 每个函数都是一次跨网络回调：子调用逐个走平台的守卫链（本轮叫停、权限档位、
+            // 引用登记），与模型直接调用同一条判据。凭据走 X-Run-Token 请求头。
+            // 用法：只有 console.log 出来的内容会回到对话里。
+            // 失败：便捷函数 reject Error；callTool() resolve {'ok','output','error'} 不抛。
+            'use strict';
+
+            const BASE = @BASE@;
+            const API_PATH = @API_PATH@;
+            const TOKEN = @TOKEN@;
+            const MAX_CALLS = @MAX_CALLS@;
+            const MAX_PARALLEL = @MAX_PARALLEL@;
+            const CALL_TIMEOUT = @CALL_TIMEOUT@;
+
+            let _used = 0;
+            let _active = 0;
+            const _queue = [];
+
+            class ToolError extends Error {}
+
+            async function _slot() {
+              if (_active >= MAX_PARALLEL) {
+                await new Promise(resolve => _queue.push(resolve));
+              }
+              _active += 1;
+            }
+
+            function _free() {
+              _active -= 1;
+              const next = _queue.shift();
+              if (next) next();
+            }
+
+            async function _post(tool, args) {
+              _used += 1;
+              if (_used > MAX_CALLS) {
+                return { ok: false, output: '', error: `本轮子调用上限 ${MAX_CALLS} 已用满，请改用已经取回的结果作答` };
+              }
+              const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT);
+              await _slot();
+              try {
+                const resp = await fetch(BASE + API_PATH, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-Run-Token': TOKEN },
+                  body: JSON.stringify({ tool, args: args || {} }),
+                  signal: ctrl.signal,
+                });
+                const payload = await resp.json().catch(() => null);
+                if (!payload) return { ok: false, output: '', error: `HTTP ${resp.status} 平台返回不可解析` };
+                if (!payload.success) {
+                  return { ok: false, output: '', error: String(payload.msg || '平台拒绝该子调用') };
+                }
+                const d = payload.data || {};
+                return { ok: !!d.ok, output: d.output || '', error: d.error || '' };
+              } catch (e) {
+                const name = e && e.name ? e.name : 'Error';
+                return { ok: false, output: '', error: `${name}: ${e && e.message ? e.message : e}` };
+              } finally {
+                clearTimeout(timer);
+                _free();
+              }
+            }
+
+            async function _require(tool, args) {
+              const r = await _post(tool, args);
+              if (!r.ok) throw new ToolError(`${tool}: ${r.error || '调用失败'}`);
+              return r.output;
+            }
+
+            // 按名字调用本轮已挂载的任意工具，返回 {'ok','output','error'}（不抛异常）
+            async function callTool(tool, args = {}) { return _post(tool, args); }
+
+            // 本轮已发生的子调用次数（含被拒的），便于脚本自己收手
+            function callsUsed() { return _used; }
+
+            """;
+
+    /** 生成 JavaScript（Node）模块 */
+    public String renderJs(List<RunCodeBridge.Spec> specs, String callbackBase, String token,
+                           int maxCalls, int maxParallel, long timeoutMs) {
+        String head = PREAMBLE_JS
+                .replace("@BASE@", lit(callbackBase))
+                .replace("@API_PATH@", lit(CALLBACK_PATH))
+                .replace("@TOKEN@", lit(token))
+                .replace("@MAX_CALLS@", String.valueOf(Math.max(1, maxCalls)))
+                .replace("@MAX_PARALLEL@", String.valueOf(Math.max(1, maxParallel)))
+                .replace("@CALL_TIMEOUT@", String.valueOf(Math.max(1000, timeoutMs)));
+        StringBuilder out = new StringBuilder(head);
+        Set<String> defined = new LinkedHashSet<>(List.of("callTool", "callsUsed"));
+        for (RunCodeBridge.Spec s : specs) {
+            appendJsFunction(out, s, defined);
+        }
+        out.append("module.exports = { callTool, callsUsed");
+        for (String n : defined) {
+            if ("callTool".equals(n) || "callsUsed".equals(n)) continue;
+            out.append(", ").append(n);
+        }
+        out.append(" };\n");
+        return out.toString();
+    }
+
+    /**
+     * JS 侧一个工具一个 async 函数：入参就是<b>一个对象</b>，键名与工具自己的参数名一致。
+     * <p>因此 JS 这边没有 Python 那个"关键字做形参"的问题（对象键可以是 from、class），
+     * 也就不需要改名与键映射——少一层映射就少一处可能错位的地方。
+     * <p>必填项只写进注释：漏传交给工具自己报（与 Python 那份同一个理由）。
+     */
+    private void appendJsFunction(StringBuilder out, RunCodeBridge.Spec s, Set<String> defined) {
+        if (s == null || s.name() == null || s.name().isBlank()) return;
+        String fn = jsIdent(s.name());
+        if (JS_RESERVED.contains(fn)) fn = fn + "_";
+        if (!defined.add(fn)) {
+            out.append("// 跳过 ").append(s.name()).append("：与已导出的函数同名，请用 callTool(\"")
+                    .append(s.name()).append("\", { ... })\n\n");
+            return;
+        }
+        out.append("// ").append(doc(s.cardLabel())).append("｜").append(doc(paramDoc(s,
+                s.required() == null ? List.of() : s.required()))).append('\n');
+        out.append("async function ").append(fn).append("(args = {}) {\n");
+        out.append("  return _require(\"").append(s.name()).append("\", args);\n");
+        out.append("}\n\n");
+    }
+
+    /** JS 标识符（数字不能作为首字符，其余与 Python 同规矩） */
+    static String jsIdent(String name) {
+        if (name == null || name.isBlank()) return "_";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean ok = (c == '_') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (i > 0 && c >= '0' && c <= '9');
+            sb.append(ok ? c : '_');
+        }
+        return sb.toString();
+    }
+
+    /** JavaScript 保留字（与 Python 关键字分开列：冲突面不同，合并一张表迟早漏项） */
+    private static final Set<String> JS_RESERVED = Set.of(
+            "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
+            "do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if",
+            "import", "in", "instanceof", "new", "null", "return", "super", "switch", "this",
+            "throw", "true", "try", "typeof", "var", "void", "while", "with", "yield", "let",
+            "static", "await", "arguments");
+
+    /** 供执行侧选择文件名与解释器 */
+    public enum Lang {
+        /** Python 3：main.py + wenqu_tools.py */
+        PYTHON("python", "main.py", "wenqu_tools.py", "python3 main.py"),
+        /** JavaScript（Node）：main.js + wenqu_tools.js */
+        JAVASCRIPT("javascript", "main.js", "wenqu_tools.js", "node main.js");
+
+        private final String code;
+        private final String scriptFile;
+        private final String stubFile;
+        private final String command;
+
+        Lang(String code, String scriptFile, String stubFile, String command) {
+            this.code = code;
+            this.scriptFile = scriptFile;
+            this.stubFile = stubFile;
+            this.command = command;
+        }
+
+        public String code() {
+            return code;
+        }
+
+        public String scriptFile() {
+            return scriptFile;
+        }
+
+        public String stubFile() {
+            return stubFile;
+        }
+
+        public String command() {
+            return command;
+        }
+
+        /** 认不出按 Python（默认语言），不猜第二种 */
+        public static Lang of(String v) {
+            if (v == null) return PYTHON;
+            String t = v.trim().toLowerCase(java.util.Locale.ROOT);
+            if (t.startsWith("js") || t.startsWith("node") || t.startsWith("javascript")) return JAVASCRIPT;
+            return PYTHON;
+        }
+    }
+
+    /**
+     * 生成 Python 模块。
      *
      * @param specs        本轮可子调用的工具（已排除 run_code 自己与要人在场的工具）
      * @param callbackBase 平台对外地址（容器可达，如 {@code http://host.docker.internal:8090/ai}）

@@ -2423,12 +2423,18 @@ public class RagService {
 
             @Override
             public void observe(ToolInvocation inv, String status, String resultOrError) {
-                base.observe(inv, status, resultOrError);
+                // 子调用不各开一张顶层卡片：一段脚本扇出 20 次就把过程区刷出 20 行，而它们本来就属于
+                // 同一次运行。改成记进 run_code 那张卡的「扇出清单」，点开看结构（这是过程下钻的落点）。
+                // 守卫链其它三道（叫停/步数/权限）与引用登记都照常走，只是不再各占一个操作位。
+                if (!"start".equals(status)) {
+                    recordSubCall(st, inv.toolName(), status, resultOrError, inv.elapsedMillis());
+                }
             }
 
             @Override
             public void onOutput(ToolInvocation inv, String delta) {
-                base.onOutput(inv, delta);
+                // 刻意不转发：脚本里再调 execute 时的逐行输出属于那次子调用，
+                // 顶层那张 run_code 卡已经在流式转发脚本自己的 stdout 了，两路一起推会互相打断
             }
 
             @Override
@@ -3376,6 +3382,26 @@ public class RagService {
     }
 
     /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
+    /**
+     * 记一条脚本子调用进 run_code 卡片的扇出清单（P3b 过程下钻）。
+     * <p>摘要取结果首行/失败原因前 80 字：够看出这一支在查什么、有没有被挡下，又不至于把卡片变成第二个输出区。
+     */
+    private static void recordSubCall(AnswerStreamState st, String tool, String status,
+                                      String resultOrError, long elapsedMs) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("name", tool);
+        row.put("status", status);
+        row.put("elapsedMs", elapsedMs);
+        String text = resultOrError == null ? "" : resultOrError.replaceAll("\\s+", " ").trim();
+        row.put("brief", text.length() > 80 ? text.substring(0, 80) + "…" : text);
+        synchronized (st.subCallLog) {
+            st.subCallLog.add(row);
+        }
+    }
+
+    /** 脚本子调用清单最多带这么多行进卡片（再多只报总数——清单本身不该比结果还长） */
+    private static final int SUB_CALL_CARD_ROWS = 40;
+
     private void recordToolStatus(AnswerStreamState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts) {
         Map<String, Object> rec = new LinkedHashMap<>();
@@ -3393,6 +3419,22 @@ public class RagService {
         rec.put("args", argsBrief);
         if (resultOrError != null) {
             rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, sseLimit));
+        }
+        // run_code 的扇出清单（P3b 过程下钻）：一次运行内部调了哪些工具、各自多久、有没有被挡下。
+        // 只带终态那一份，且随卡片一起落库——刷新后仍然点得开，不然这段结构只有实时看得到
+        if ("run_code".equals(name) && !"start".equals(status) && !st.subCallLog.isEmpty()) {
+            List<Map<String, Object>> log;
+            synchronized (st.subCallLog) {
+                log = new ArrayList<>(st.subCallLog);
+            }
+            Map<String, Object> fan = new LinkedHashMap<>();
+            fan.put("total", log.size());
+            fan.put("items", log.size() > SUB_CALL_CARD_ROWS
+                    ? log.subList(0, SUB_CALL_CARD_ROWS) : log);
+            if (log.size() > SUB_CALL_CARD_ROWS) {
+                fan.put("omitted", log.size() - SUB_CALL_CARD_ROWS);
+            }
+            rec.put("fanOut", fan);
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
         // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
@@ -4458,6 +4500,12 @@ public class RagService {
         volatile java.util.Map<String, org.springframework.ai.tool.ToolCallback> subCallTools;
         /** 本轮已发生的子调用次数（子调用的独立预算计数，不进模型的单轮步数） */
         final java.util.concurrent.atomic.AtomicInteger subCallCount = new java.util.concurrent.atomic.AtomicInteger();
+        /**
+         * 本轮脚本的子调用清单（P3b 的过程下钻）：一条一次调用一行，随 run_code 那张卡片下发与落库。
+         * <p>刻意不各开顶层卡片、也不进 {@code toolCalls}：那是"模型自己做的操作"的清单，
+         * 一段脚本扇出的几十次调用混进去会把过程区刷成一堵墙，也让人看不出它们属于同一次运行。
+         */
+        final List<Map<String, Object>> subCallLog = java.util.Collections.synchronizedList(new ArrayList<>());
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露

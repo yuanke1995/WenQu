@@ -95,6 +95,23 @@
           <a-empty v-else description="该时间范围内暂无用量数据" />
         </div>
       </div>
+
+      <!-- ==================== 按用途占比 ==================== -->
+      <div v-if="kindRows.length" class="app-card kind-card">
+        <div class="app-card-title">这些用量花在什么地方
+          <span class="card-sub">一次回答背后还有深度思考、检索词改写、历史压缩、引用自检、子智能体分支等辅助调用——它们没有对应的消息，所以单独列出来才看得见</span>
+        </div>
+        <div class="kind-grid">
+          <div v-for="k in kindRows" :key="k.kind" class="kind-row">
+            <div class="kind-main">
+              <div class="kind-name">{{ k.label }}</div>
+              <div class="kind-sub">{{ fmtTokens(k.tokens) }} tokens · {{ k.count }} 次</div>
+            </div>
+            <div class="kind-bar"><i :style="{ width: pctKind(k.tokens) + '%' }"></i></div>
+            <div class="kind-pct">{{ pctKind(k.tokens) }}%</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 热力图悬浮提示（单实例浮层：事件委托驱动，随鼠标即时显示；原生 title 有约 1s 延迟且样式不可控） -->
@@ -128,6 +145,14 @@ const heatmap = ref([])        // [{ date, tokens }] 稀疏日清单（近 365 �
 const trendDays = ref([])      // ['yyyy-MM-dd', ...]
 const trendSeries = ref([])    // [{ model, values[] }]
 const modelRows = ref([])      // [{ model, tokens, cost }]（近 N 日；cost=null=该模型未登记单价）
+const kindRows = ref([])       // [{ kind, label, tokens, count }]：回答本身 vs 为回答做的辅助调用
+// 用途占比的分母是"用途合计"，与模型占比各算各的：两个维度的总量本来就应相等，但历史数据里
+// 存在只有其中一个维度记了 kind 的行，混用分母会让某一栏的百分比看着不对账
+const pctKind = tokens => {
+  const total = kindRows.value.reduce((a, k) => a + (Number(k.tokens) || 0), 0)
+  const v = total > 0 ? ((Number(tokens) || 0) / total) * 100 : 0
+  return v >= 10 ? String(Math.round(v)) : v.toFixed(1)
+}
 const hasUnrecorded = computed(() => modelRows.value.some(m => m.model === '未记录'))
 // 有任一模型配置了价格才在列表里显示「未计价」标注——全员都没配价时整列都是噪声
 const hasAnyPrice = computed(() => modelRows.value.some(m => m.cost != null))
@@ -145,6 +170,7 @@ const load = async () => {
     trendDays.value = d.trend?.days || []
     trendSeries.value = d.trend?.series || []
     modelRows.value = d.models || []
+    kindRows.value = d.kinds || []
     await nextTick()
     renderCharts()
   } catch (e) {
@@ -576,4 +602,20 @@ onBeforeUnmount(() => {
 .legend-name { font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .legend-sub { font-size: 11px; color: var(--app-text3); margin-top: 2px; }
 .legend-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
+
+/* ==================== 按用途占比 ==================== */
+.kind-card { margin-top: 12px; padding: 12px 14px; }
+.kind-grid {
+  display: grid;
+  /* 两列排：一行放得下就两列，窄屏自动收回一列（不用固定断点值，交给 minmax 判定） */
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2px 24px;
+}
+.kind-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
+.kind-main { flex: none; width: 128px; min-width: 0; }
+.kind-name { font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kind-sub { font-size: 11px; color: var(--app-text3); margin-top: 2px; }
+.kind-bar { flex: 1; min-width: 0; height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
+.kind-bar i { display: block; height: 100%; background: var(--app-accent); border-radius: 3px; }
+.kind-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; width: 44px; text-align: right; }
 </style>

@@ -50,12 +50,13 @@ public class RunCodeService {
      *
      * @param bridge     本轮的子调用入口（按轮，见 {@link RunCodeBridge}）
      * @param backend    本轮的沙盒后端（由 {@code SandboxTools} 按 toolContext 解析，归属与档位都在那儿判过）
-     * @param script     模型写的 Python 脚本
+     * @param script     模型写的脚本正文
+     * @param lang       语言（python | javascript）——决定文件名、客户端模块格式与解释器命令
      * @param outputSink 实时输出回调（有则走流式执行，用户在工具卡上看得到它一行行出来）
      * @return 给模型看的运行结果文本（失败也是文本，不抛——抛出会掐断整轮流）
      */
     public String run(RunCodeBridge bridge, ProvisionerSandboxBackend backend, String script,
-                      Consumer<String> outputSink) {
+                      ToolStubRenderer.Lang lang, Consumer<String> outputSink) {
         if (backend == null) return "沙盒不可用：本轮没能拿到沙盒执行环境，run_code 未执行。";
         if (script == null || script.isBlank()) return "脚本不能为空。";
         if (script.length() > MAX_SCRIPT_CHARS) {
@@ -79,14 +80,18 @@ public class RunCodeService {
         String dir = workDir() + "/" + runId;
         String token = tokens.issue(bridge.sessionId(), bridge.turnId(), bridge.userId(), bridge, ttlMs);
         try {
-            String stub = stubs.render(bridge.callableSpecs(), base, token, maxCalls, maxParallel,
+            String stub = lang == ToolStubRenderer.Lang.JAVASCRIPT
+                    ? stubs.renderJs(bridge.callableSpecs(), base, token, maxCalls, maxParallel,
+                    bridge.subCallTimeoutMs())
+                    : stubs.render(bridge.callableSpecs(), base, token, maxCalls, maxParallel,
                     bridge.subCallTimeoutMs());
-            ProvisionerSandboxBackend.WriteResult w1 = backend.write(dir + "/wenqu_tools.py", stub);
+            ProvisionerSandboxBackend.WriteResult w1 = backend.write(dir + "/" + lang.stubFile(), stub);
             if (w1.error != null) return "写入工具客户端失败：" + w1.error + "（run_code 未执行）";
-            ProvisionerSandboxBackend.WriteResult w2 = backend.write(dir + "/main.py", script + "\n");
+            ProvisionerSandboxBackend.WriteResult w2 =
+                    backend.write(dir + "/" + lang.scriptFile(), script + "\n");
             if (w2.error != null) return "写入脚本失败：" + w2.error + "（run_code 未执行）";
 
-            String command = "cd " + dir + " && python3 main.py";
+            String command = "cd " + dir + " && " + lang.command();
             long t0 = System.currentTimeMillis();
             ProvisionerSandboxBackend.ExecuteResponse resp = outputSink != null
                     ? backend.executeStreaming(command, timeoutSeconds, outputSink)
@@ -99,7 +104,10 @@ public class RunCodeService {
                 out.append("退出码 ").append(resp.exitCode).append("（脚本可能未跑完）\n");
             }
             String stdout = nvl(resp.output);
-            out.append(stdout.isBlank() ? "(脚本没有任何 print 输出——结果只有 print 出来的东西才会回到对话里)" : stdout);
+            out.append(stdout.isBlank()
+                    ? "(脚本没有任何输出——只有 print/console.log 到标准输出的内容才会回到对话里，"
+                      + (lang == ToolStubRenderer.Lang.JAVASCRIPT ? "注意不是 return" : "注意不是函数返回值") + ")"
+                    : stdout);
             if (resp.truncated) out.append("\n…（输出过长已截断）");
             out.append("\n[运行 ] 耗时 ").append(ms).append("ms，子调用 ").append(bridge.callsUsed())
                     .append("/").append(maxCalls).append(" 次");

@@ -41,6 +41,19 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     List<String> statActiveDates(@Param("uid") String uid);
 
     /**
+     * 按用途（kind）聚合：回答之外的每一次辅助调用（深度思考、改写、压缩、引用自检、记忆提取、
+     * 按需派遣、子智能体分支）都单独记账，这里就是它们的出口。
+     * <p>kind 为空按 chat 归：那是引入归属字段之前的存量行，不该变成一个「未知用途」桶让人以为有问题。
+     */
+    @Select("<script>SELECT COALESCE(NULLIF(kind, ''), 'chat') AS k, SUM(total_tokens) AS t, COUNT(*) AS c "
+            + "FROM c_ai_usage_log "
+            + "WHERE uid = #{uid} "
+            + "<if test='since != null'>AND create_time &gt;= #{since}</if> "
+            + "GROUP BY k ORDER BY t DESC</script>")
+    List<Map<String, Object>> statKindTokens(@Param("uid") String uid,
+                                             @Param("since") LocalDateTime since);
+
+    /**
      * 用户×模型×日 token 明细（费用报表唯一数据源）：输入/输出分开聚合，
      * 费用 = Σ(输入×输入单价 + 输出×输出单价)，价格按模型登记在 Java 侧换算——
      * 不在 SQL 里 join c_ai_model：单价随登记随时可改，SQL 端固化快照会让历史费用跟着漂移。

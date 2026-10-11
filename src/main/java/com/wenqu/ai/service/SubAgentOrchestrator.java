@@ -704,6 +704,13 @@ public class SubAgentOrchestrator {
         branch.put("steps", report.toolSteps());
         if (!report.artifactFilesOrEmpty().isEmpty()) branch.put("artifacts", report.artifactFilesOrEmpty());
         if (!ok && report.error() != null) branch.put("error", report.error());
+        // 回报全文（编排卡片的下钻）：卡片那一行摘要只有 120 字，用户想知道"它到底交回了什么"
+        // 时不该去翻日志。上限 2000 字：这一份要随消息落库，全循环分支一次可以写几千字，
+        // 不设上限就是每条分支都在过程 JSON 里存一篇长文，历史越多的会话加载越慢
+        if (ok) {
+            String full = report.answerOrEmpty().replaceAll("[ \\t]+", " ").trim();
+            branch.put("report", full.length() > 2000 ? full.substring(0, 2000) + "…" : full);
+        }
         synchronized (ctx) {
             ctx.branches.add(branch);
         }
