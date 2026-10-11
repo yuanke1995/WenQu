@@ -46,6 +46,12 @@ public class CollectingSseEmitter extends SseEmitter {
     private volatile String lastError;
     private volatile String donePayload;
     private volatile boolean finished;
+    /**
+     * 过程事件的转发口（P3a 分支实时下钻）：分支那一轮没有浏览器通道，但它正在跑哪一步
+     * 是父轮卡片上唯一看不见的东西。登记后每帧过程事件（tool_status / tool_output / stage）
+     * 原样转给父轮通道一次，父轮侧只改事件名、不改内容——不在此处重新组装一份协议。
+     */
+    private volatile java.util.function.BiConsumer<String, String> forwarder;
 
     public CollectingSseEmitter() {
         super(0L);   // 不设 SSE 超时：节奏由调用方的 awaitDone 控制
@@ -61,6 +67,11 @@ public class CollectingSseEmitter extends SseEmitter {
         String text = raw.toString();
         frames.add(text);
         consume(text);
+    }
+
+    /** 登记过程事件转发口（由父轮的执行器调用；null=不转发，定时任务那条通路就是这个状态） */
+    public void forwardProcess(java.util.function.BiConsumer<String, String> listener) {
+        this.forwarder = listener;
     }
 
     /** 解析一帧：event 名 + data 里的 {type,content,...} */
@@ -84,8 +95,18 @@ public class CollectingSseEmitter extends SseEmitter {
                     donePayload = c == null ? null : JSON.toJSONString(c);
                     settle();
                 }
+                case "tool_status", "tool_output", "stage" -> {
+                    java.util.function.BiConsumer<String, String> f = forwarder;
+                    if (f != null) {
+                        try {
+                            f.accept(type, o.getString("content"));
+                        } catch (Exception ignored) {
+                            // 转发失败不影响分支自己那一轮（父轮通道可能已被观众关掉）
+                        }
+                    }
+                }
                 default -> {
-                    // stage / retrieved / image / artifact / tool_status / tool_output / subagent / warn 等过程事件：
+                    // retrieved / image / artifact / subagent / warn 等过程事件：
                     // 对"跑完一轮并落会话"没有额外用途（产物已落库、来源已写在消息里），只留在 frames
                 }
             }

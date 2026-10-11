@@ -208,6 +208,7 @@
                       <span v-if="clusterTools(seg).length">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                       <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
                       <span class="tool-dur">· {{ clusterDur(seg) }}</span>
+                      <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                   </div>
@@ -228,6 +229,7 @@
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span>执行了 {{ executedCount(seg.tools) }} 个操作</span>
                       <span class="tool-dur">· {{ groupDur(seg) }}</span>
+                      <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
                     <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
@@ -241,6 +243,7 @@
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
+                      <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                           <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                           <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -346,6 +349,7 @@
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
+                      <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                       <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
                       <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
@@ -519,6 +523,16 @@
                         <template v-else>{{ b.hits }} 块 · </template>
                         {{ fmtDuration(b.elapsedMs) }}
                       </span>
+                    </div>
+                    <!-- 这一支正在跑的第几步（P3a 刀2 实时下钻）：跑完就停在最后看到的这些行上 -->
+                    <div v-if="b.live && b.live.length" class="sa-live fan-list">
+                      <div v-for="(s, li) in b.live" :key="li" class="fan-row"
+                           :class="{ err: s.status === 'error', run: s.status === 'start' }">
+                        <span class="fan-idx">{{ li + 1 }}</span>
+                        <span class="fan-name">{{ s.stage || toolLabel(s.name, s.label) }}</span>
+                        <span class="fan-dur">{{ s.stage ? '' : fanRowState(s) }}</span>
+                        <span class="fan-brief">{{ s.out ? '…' + s.out.slice(-60) : '' }}</span>
+                      </div>
                     </div>
                     <div v-if="b.description" class="sa-desc">{{ b.description }}</div>
                     <div v-if="b.artifacts && b.artifacts.length" class="sa-desc">已交付：{{ b.artifacts.join('、') }}</div>
@@ -1570,7 +1584,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRu
          procOpen, toggleProc, procSlice, timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
-         fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
+         fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
@@ -3567,8 +3581,14 @@ onMounted(async () => {
 /* 在途那条（实时面板）：还没有结果可摘要，用主色标出"正在跑"而不是留一行空白 */
 .fan-row.run .fan-name { color: var(--app-accent); }
 .fan-row.run .fan-dur { color: var(--app-accent); }
+/* 分支实时步骤（P3a 刀2）：与扇出清单同构，复用 fan-* 那套排版 */
+.sa-live { margin: 2px 0 6px; }
 /* 额度/并发上限/交付数一行（P3b 实时面板）：清单之下、入参之上，弱文本不抢正文 */
 .fan-budget { color: var(--app-text3); font-size: 11px; margin: 2px 0 8px; }
+/* 运行未完成的那三种收尾（超时/沙盒故障/退出码非 0）：警示色，挂在卡片头上不点开也看得见 */
+.fan-run { color: var(--app-warn); font-size: 11px; }
+/* 并发水位总览：脚本跑着的时候挂在过程簇头上，一处看清"跑了多少、在途几条" */
+.run-board { color: var(--app-accent); font-size: 11px; }
 /* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
 .sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
 .sa-bar { margin-top: 5px; height: 3px; border-radius: 2px; background: var(--app-border); overflow: hidden; }

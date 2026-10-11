@@ -23,11 +23,13 @@ package com.wenqu.ai.agent.subagent;
  * @param modelRef        父轮本轮生效的模型引用（分支沿用同一套模型，不重新裁决）
  * @param guestMode       免登录分享会话：分支继承父轮的收窄口径
  * @param timeoutMs       这一支的等待上限（超时按失败处理，不拖垮父轮）
+ * @param branchIndex     这一支在编排视图里的序号（父轮卡片靠它把实时步骤归到正确那一行）
  * @author yuanke
  */
 public record BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
                             String childAgentName, String question, String parentBrief, int depth,
-                            String userId, String modelRef, boolean guestMode, long timeoutMs) {
+                            String userId, String modelRef, boolean guestMode, long timeoutMs,
+                            int branchIndex) {
 
     /** 日志与异常信息里的一行身份（哪个父会话的第几层哪一支） */
     public String describe() {

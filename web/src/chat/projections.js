@@ -507,6 +507,33 @@ const fanHead = t => {
 const fanTitle = f => `扇出 ${Number(f.total) || 0} 次工具调用` +
   ((Number(f.inFlight) || 0) > 0 ? `（还有 ${f.inFlight} 条在跑）` : '')
 const fanRowState = s => s.status === 'start' ? `在跑×${Number(s.running) || 1}` : toolDuration(s.elapsedMs)
+/**
+ * run_code 这次运行的收尾类型（P3b 刀4）：后端把结果结构化成 run{kind,exit,ms,calls,maxCalls,truncated}
+ * 挂在卡片上。正常结束不额外刷屏（卡片头已有耗时与扇出数），只把「没跑成」的三种说出来——
+ * 此前这三种都显示成绿色对勾，只有去读正文的人才知道脚本其实没跑完。
+ */
+const fanRun = t => {
+  const r = t.run
+  if (!r || r.kind === 'ok') return ''
+  if (r.kind === 'exit') return `退出码 ${r.exit}：脚本可能没跑完`
+  if (r.kind === 'timeout') return '追踪超时：脚本可能还在沙盒里跑'
+  if (r.kind === 'infra') return '沙盒不可用（不是脚本写错）'
+  return '运行未完成'
+}
+/**
+ * 并发水位总览（P3b 刀4-2）：脚本跑着的时候，不点开卡片也能看出跑了多少、在途几条。
+ * 数据来自实时进度帧（后端每秒合并一帧），落在消息级 runBoard 上，随本段脚本结束清空。
+ */
+const runBoardText = m => {
+  const f = m && m.runBoard
+  const total = Number(f && f.total) || 0
+  const run = Number(f && f.inFlight) || 0
+  if (!total && !run) return ''
+  const bits = [`子调用 ${total}/${Number(f.max) || '?'} 次`]
+  if (run) bits.push(`在途 ${run}`)
+  if (Number(f.delivered) > 0) bits.push(`交付 ${f.delivered} 个文件`)
+  return '脚本运行中 · ' + bits.join(' · ')
+}
 const fanBudget = f => {
   if (!f || !f.max) return ''
   const bits = [`本轮额度 ${Number(f.used) || 0}/${f.max}`]
@@ -547,6 +574,10 @@ const mergeDoneToolCalls = (m, doneCalls) => {
       // 全文是 done 这份才有——漏搬的后果是「历史刷新后卡片有『查看完整输出』、当场没有」
       if (d.spillId) live.spillId = d.spillId
       if (d.argsSpillId) live.argsSpillId = d.argsSpillId
+      // 扇出清单与运行结果只有终态那份才带全（实时进度帧只覆盖跑到那一刻）：漏搬的后果是
+      // 「当场看得见、刷新后反而没了」，而 kind=timeout/infra 这种收尾漏掉就等于把失败显示成成功
+      if (d.fanOut) live.fanOut = d.fanOut
+      if (d.run) live.run = d.run
     } else {
       list.push({ ...d })
     }
@@ -869,7 +900,7 @@ export {
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
-  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
+  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,

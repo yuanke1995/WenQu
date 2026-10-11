@@ -97,6 +97,7 @@
                 <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                 <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
                 <span class="card-dim">· {{ clusterDur(seg) }}</span>
+                <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
             </div>
@@ -114,6 +115,7 @@
                 <close-circle-outlined v-else class="ic-err" />
                 <span class="card-title">执行了 {{ executedCount(seg.tools) }} 个操作</span>
                 <span class="card-dim">· {{ groupDur(seg) }}</span>
+                <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
               <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body">
@@ -126,6 +128,7 @@
                     <code v-if="toolBrief(t)" class="tool-brief">{{ toolBrief(t) }}</code>
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
+                    <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                     <span v-if="t.status === 'start' && t.startAt" class="card-dim">{{ liveToolDur(t.startAt) }}</span>
                     <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
@@ -197,6 +200,7 @@
                 <span v-else class="spinner"></span>
                 <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
                 <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
+                    <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                 <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
               </div>
             </template>
@@ -285,6 +289,16 @@
                   {{ fmtDuration(b.elapsedMs) }}
                 </span>
               </div>
+              <!-- 这一支正在跑的第几步（P3a 刀2 实时下钻）：移动壳只留名字与状态，一屏装得下 -->
+              <div v-if="b.live && b.live.length" class="sa-live fan-list">
+                <div v-for="(s, li) in b.live" :key="li" class="fan-row"
+                     :class="{ err: s.status === 'error', run: s.status === 'start' }">
+                  <span class="fan-idx">{{ li + 1 }}</span>
+                  <span class="fan-name">{{ s.stage || toolLabel(s.name, s.label) }}</span>
+                  <span class="fan-dur">{{ s.stage ? '' : fanRowState(s) }}</span>
+                  <span class="fan-brief"></span>
+                </div>
+              </div>
               <div v-if="b.artifacts && b.artifacts.length" class="card-dim">已交付：{{ b.artifacts.join('、') }}</div>
               <div v-if="b.description" class="card-dim">{{ b.description }}</div>
               <div class="sa-bar"><div class="sa-fill" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
@@ -341,7 +355,7 @@ import {
   busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
-  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget,
+  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText
@@ -557,6 +571,10 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .fan-row.run .fan-name, .fan-row.run .fan-dur { color: var(--app-accent); }
 /* 额度/并发上限/交付数一行 */
 .fan-budget { color: var(--app-text3); font-size: 11px; margin: 3px 0 6px; }
+.fan-run { color: var(--app-warn); font-size: 11px; }
+/* 分支实时步骤（P3a 刀2）：与扇出清单同一套排版 */
+.sa-live { margin: 2px 0 4px; }
+.run-board { color: var(--app-accent); font-size: 11px; }
 .fan-idx { color: var(--app-text3); text-align: right; font-variant-numeric: tabular-nums; }
 .fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }

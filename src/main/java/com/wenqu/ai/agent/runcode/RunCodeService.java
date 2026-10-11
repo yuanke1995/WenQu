@@ -55,13 +55,13 @@ public class RunCodeService {
      * @param outputSink 实时输出回调（有则走流式执行，用户在工具卡上看得到它一行行出来）
      * @return 给模型看的运行结果文本（失败也是文本，不抛——抛出会掐断整轮流）
      */
-    public String run(RunCodeBridge bridge, ProvisionerSandboxBackend backend, String script,
-                      ToolStubRenderer.Lang lang, Consumer<String> outputSink) {
-        if (backend == null) return "沙盒不可用：本轮没能拿到沙盒执行环境，run_code 未执行。";
-        if (script == null || script.isBlank()) return "脚本不能为空。";
+    public Outcome run(RunCodeBridge bridge, ProvisionerSandboxBackend backend, String script,
+                       ToolStubRenderer.Lang lang, Consumer<String> outputSink) {
+        if (backend == null) return Outcome.infra("沙盒不可用：本轮没能拿到沙盒执行环境，run_code 未执行。");
+        if (script == null || script.isBlank()) return Outcome.text("脚本不能为空。");
         if (script.length() > MAX_SCRIPT_CHARS) {
-            return "脚本过长（" + script.length() + " 字 > " + MAX_SCRIPT_CHARS
-                    + "）。请拆成几段依次运行，或先把处理逻辑写成文件再执行那个文件。";
+            return Outcome.text("脚本过长（" + script.length() + " 字 > " + MAX_SCRIPT_CHARS
+                    + "）。请拆成几段依次运行，或先把处理逻辑写成文件再执行那个文件。");
         }
         int maxCalls = Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
         int maxParallel = Math.max(1, configService.getInt("tool.runcode.maxParallel", 8));
@@ -71,8 +71,8 @@ public class RunCodeService {
             // 没配可达地址时不猜：猜出来的 URL 在容器里十有八九连不上，表现为每个子调用超时，
             // 排查的人只会以为是工具坏了
             log.warn("[FAIL-LOUD] run_code 缺少 sandbox.callbackBaseUrl，本轮不提供子调用");
-            return "沙盒回调地址未配置（系统设置「沙盒 → 平台回调地址」），脚本里的子调用连不到平台。"
-                    + "请改用已有的工具逐步完成，或让管理员补这一项。";
+            return Outcome.text("沙盒回调地址未配置（系统设置「沙盒 → 平台回调地址」），脚本里的子调用连不到平台。"
+                    + "请改用已有的工具逐步完成，或让管理员补这一项。");
         }
         // 凭据 TTL = 脚本运行上限 + 富余：脚本卡住到点被沙盒杀掉，凭据也随之作废，不留一条活着的回程
         long ttlMs = timeoutSeconds * 1000L + 30_000L;
@@ -86,10 +86,10 @@ public class RunCodeService {
                     : stubs.render(bridge.callableSpecs(), base, token, maxCalls, maxParallel,
                     bridge.subCallTimeoutMs());
             ProvisionerSandboxBackend.WriteResult w1 = backend.write(dir + "/" + lang.stubFile(), stub);
-            if (w1.error != null) return "写入工具客户端失败：" + w1.error + "（run_code 未执行）";
+            if (w1.error != null) return Outcome.text("写入工具客户端失败：" + w1.error + "（run_code 未执行）");
             ProvisionerSandboxBackend.WriteResult w2 =
                     backend.write(dir + "/" + lang.scriptFile(), script + "\n");
-            if (w2.error != null) return "写入脚本失败：" + w2.error + "（run_code 未执行）";
+            if (w2.error != null) return Outcome.text("写入脚本失败：" + w2.error + "（run_code 未执行）");
 
             String command = "cd " + dir + " && " + lang.command();
             long t0 = System.currentTimeMillis();
@@ -103,12 +103,16 @@ public class RunCodeService {
             } else if (resp.exitCode != null && resp.exitCode != 0) {
                 out.append("退出码 ").append(resp.exitCode).append("（脚本可能未跑完）\n");
             }
+            // 「没拿到退出码」只有两种可能：沙盒压根没通，或追踪到点放弃、命令还在容器里跑。
+            // 这两件事以前只写在给模型的中文句子里，工具记录照样落成绿色对勾——现在分成字段给卡片。
+            boolean timedOut = !resp.infraError && resp.exitCode == null;
             String stdout = nvl(resp.output);
             out.append(stdout.isBlank()
                     ? "(脚本没有任何输出——只有 print/console.log 到标准输出的内容才会回到对话里，"
                       + (lang == ToolStubRenderer.Lang.JAVASCRIPT ? "注意不是 return" : "注意不是函数返回值") + ")"
                     : stdout);
             if (resp.truncated) out.append("\n…（输出过长已截断）");
+            if (timedOut) out.append("\n…（追踪超时，命令可能仍在沙盒里跑）");
             out.append("\n[运行 ] 耗时 ").append(ms).append("ms，子调用 ").append(bridge.callsUsed())
                     .append("/").append(maxCalls).append(" 次");
             if (resp.infraError) {
@@ -117,10 +121,12 @@ public class RunCodeService {
                 log.info("[P3B] run_code 完成 run={} exit={} 子调用 {} 次 耗时 {}ms",
                         runId, resp.exitCode, bridge.callsUsed(), ms);
             }
-            return out.toString();
+            return new Outcome(out.toString(), resp.exitCode, resp.infraError, timedOut,
+                    ms, bridge.callsUsed(), maxCalls, resp.truncated);
         } catch (Exception e) {
             log.warn("[P3B] run_code 执行异常 run={}: {}", runId, e.toString());
-            return "run_code 执行失败：" + (e.getMessage() == null ? e.toString() : e.getMessage());
+            return Outcome.text("run_code 执行失败："
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
         } finally {
             tokens.revoke(token);
             // 清掉本次的临时目录：里面那份 wenqu_tools.py 带着凭据，留在用户可见的工作区里
@@ -162,6 +168,37 @@ public class RunCodeService {
         String r = root == null || root.isBlank() ? "/home/gem/user-data" : root.trim();
         while (r.endsWith("/")) r = r.substring(0, r.length() - 1);
         return r + "/.wenqu-run";
+    }
+
+    /**
+     * 一次运行的结果：正文给模型看，其余字段给卡片看。
+     * <p>把「超时 / 沙盒不可用 / 退出码非 0」做成字段而不是句子：这三件事以前只体现在给模型的中文里，
+     * 工具记录一律落成成功态——「脚本没跑完」和「跑完了但没输出」在界面上长得一样；
+     * 而靠 {@code startsWith("沙盒不可用")} 反推，改一次文案就静默失效。
+     */
+    public record Outcome(String text, Integer exit, boolean infra, boolean timedOut,
+                          long ms, int calls, int maxCalls, boolean truncated) {
+
+        static Outcome text(String t) {
+            return new Outcome(t, null, false, false, 0, 0, 0, false);
+        }
+
+        static Outcome infra(String t) {
+            return new Outcome(t, null, true, false, 0, 0, 0, false);
+        }
+
+        /** 随 run_code 卡片落库的那一份（正文不在这里重复） */
+        public java.util.Map<String, Object> asCard() {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("kind", infra ? "infra" : timedOut ? "timeout"
+                    : exit != null && exit != 0 ? "exit" : "ok");
+            if (exit != null) m.put("exit", exit);
+            m.put("ms", ms);
+            m.put("calls", calls);
+            if (maxCalls > 0) m.put("maxCalls", maxCalls);
+            if (truncated) m.put("truncated", true);
+            return m;
+        }
     }
 
     private static String nvl(String s) {

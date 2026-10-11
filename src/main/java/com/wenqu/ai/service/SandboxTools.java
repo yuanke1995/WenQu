@@ -304,8 +304,8 @@ public class SandboxTools {
             + "请只打印结论与关键数字，不要把整份资料打出来（那和直接调工具没区别）。"
             + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是循环与扇出。"
             + "扇出时注意：脚本里能并发调用的是检索、读写文件、列目录、交付产物、内置与联网这类工具；"
-            + "<b>execute（在脚本里再跑命令行）不提供</b>——沙盒里只有一条命令会话，外层脚本就挂在它上面，"
-            + "嵌套会互相卡住；要跑命令行请直接调 execute 工具。"
+            + "<b>execute（在脚本里再跑命令行）不提供</b>——实测四条并发嵌套命令只有一部分能回到脚本，"
+            + "剩下的连接等不到返回，整段脚本停在上面；要跑命令行请直接调 execute 工具。"
             + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
     public String run_code(
             @ToolParam(description = "脚本正文（Python 3 或 JavaScript/Node）。结果请打印到标准输出") String script,
@@ -328,8 +328,12 @@ public class SandboxTools {
         if (backend == null) {
             return reportInfra(toolContext, NO_CONTEXT);
         }
-        String out = runCodeService.run(bridge, backend, script, lang, outputSink(toolContext));
-        if (out != null && out.startsWith("沙盒不可用")) {
+        com.wenqu.ai.agent.runcode.RunCodeService.Outcome outcome =
+                runCodeService.run(bridge, backend, script, lang, outputSink(toolContext));
+        String out = outcome.text();
+        // 运行结果的结构那份交给卡片（退出码/超时/沙盒故障），不再靠正文首句反推是哪种失败
+        bridge.recordRunOutcome(outcome);
+        if (outcome.infra()) {
             // 运行失败的原因在文本里已经说清了（给模型看），但基础设施故障必须另外报一次，
             // 否则这条工具记录会显示成绿色对勾——排查的人看不出是容器没起来还是脚本写错了
             reportInfra(toolContext, out);

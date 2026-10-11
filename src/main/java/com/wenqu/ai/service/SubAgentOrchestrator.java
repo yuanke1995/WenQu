@@ -659,7 +659,7 @@ public class SubAgentOrchestrator {
                 fullBranchDescription(sub, ctx.question), "", BranchMode.FULL.code(), 0));
         BranchRequest req = new BranchRequest(ctx.spec.parentSessionId(), ctx.spec.parentTurnId(),
                 sub.getId(), name, ctx.question, ctx.spec.parentBrief(), ctx.spec.depth() + 1,
-                ctx.spec.userId(), ctx.resolvedModel, ctx.spec.guestMode(), branchTimeoutMs());
+                ctx.spec.userId(), ctx.resolvedModel, ctx.spec.guestMode(), branchTimeoutMs(), idx);
         BranchReport report;
         try {
             report = ctx.spec.runner().run(req);

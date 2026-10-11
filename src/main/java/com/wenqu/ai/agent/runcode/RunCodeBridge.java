@@ -59,6 +59,14 @@ public interface RunCodeBridge {
     /** 单个子调用的等待上限（毫秒）：脚本里一个卡死的子调用不该把整段运行拖到沙盒命令超时 */
     long subCallTimeoutMs();
 
-    /** 本次运行已发生的子调用次数（含被拒的）——运行结束时说给模型听，它才知道自己扇出了多少 */
+    /** 本轮已发生的子调用次数（含被拒的）——说给模型听，它才知道自己扇出了多少；
+     *  守卫按轮扣额度，换一段脚本不会把额度还回来，所以面板上标的是「本轮额度」 */
     int callsUsed();
+
+    /**
+     * 把这次运行的结构化结果（退出码/超时/沙盒故障/耗时/子调用数）交回问答侧，
+     * 让它挂到 {@code run_code} 那张卡片上。默认不处理——卡片没有落点时不影响给模型的文本。
+     */
+    default void recordRunOutcome(com.wenqu.ai.agent.runcode.RunCodeService.Outcome outcome) {
+    }
 }

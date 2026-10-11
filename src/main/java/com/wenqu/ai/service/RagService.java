@@ -1279,7 +1279,7 @@ public class RagService {
                 };
                 // 全循环分支的执行器（P3a）：把分支交回这条管线自己跑。刻意按轮回传而不是注入一个 bean，
                 // 见 BranchRunner 接口注释。
-                BranchRunner runner = branchRunner(sessionId, turnId, userId, guestMode);
+                BranchRunner runner = branchRunner(sessionId, turnId, userId, guestMode, emitter);
                 if (subCandidates.isEmpty() && branchTurn) {
                     // 分支轮不再展开「多视角并行检索」：这一支本身就是父轮扇出来的一条分支，
                     // 再展开一层就是乘数成本（真机实测每支多 4~6 秒与两次提炼调用），
@@ -2225,13 +2225,11 @@ public class RagService {
         for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
             String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
             if (n == null || SandboxTools.RUN_CODE_TOOL_NAME.equals(n)) continue;
-            // 脚本里不再给 execute：嵌套的命令行调用会占用<b>容器自己那条 bash 会话</b>
-            // （外层脚本正是被那条会话跑起来的）。本机实测两轮：四路并发嵌套 execute 时服务端把四条
-            // 命令都跑完了、客户端只收回到两三条响应，剩下的连接永远等不到返回，整段脚本停在
-            // 第一次未回来的调用上，直到外层 120s 超时——现象是「脚本没输出」，排查的人只会以为是
-            // 回调坏了。平台侧加锁串行化能缓解（先后的命令各能回来）但排队一久仍会丢，
-            // 与其给一个看运气的通道，不如不给：命令行请用工具本身（模型直接调，串行且看得见）。
-            // 其余沙盒工具走文件 API（读写/列目录/交付），不碰那条会话，脚本里照常并发。
+            // 脚本里不给 execute（嵌套命令行）：刀4 用「平台侧回执日志」定位过——四路并发时
+            // 平台把四条响应都组装好并写回，容器里的脚本只收到部分，剩下的连接永远等不到返回；
+            // 改成流式响应 + 每 2s 写一个心跳空格更糟（一条都送不到）。丢在容器→宿主这条回程上，
+            // 本机环境无法从平台侧修好，所以切断入口：命令行请用工具本身（模型直调，看得见且走
+            // 平台自己的流式通道）。文件类（读写列目录交付）走文件 API、不碰那条会话，实测正常。
             if (SandboxTools.STREAMING_TOOL_NAME.equals(n)) continue;
             // 「要有人在场」的工具不给脚本：askUser 在脚本里既没人答、又会把整段运行挂住——
             // 判据与本轮装配同一条（描述符 viewerRequired），不在这里再抄一份名字表
@@ -2308,6 +2306,11 @@ public class RagService {
             @Override
             public int callsUsed() {
                 return st.subCallCount.get();
+            }
+
+            @Override
+            public void recordRunOutcome(com.wenqu.ai.agent.runcode.RunCodeService.Outcome outcome) {
+                st.runOutcome = outcome == null ? null : outcome.asCard();
             }
         };
     }
@@ -3624,6 +3627,12 @@ public class RagService {
             st.runBoardActive = false;
             stopRunBoardTicker(st);
             if (!st.subCallLog.isEmpty()) rec.put("fanOut", buildFanOut(st, false));
+            // 这一次运行到底是跑完了、超时了，还是沙盒压根没通——字段化随卡片落库，
+            // 刷新后仍然看得出来（正文里那句话只有读的人才知道它在说什么）
+            if (st.runOutcome != null) {
+                rec.put("run", st.runOutcome);
+                st.runOutcome = null;
+            }
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
         // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
@@ -4711,6 +4720,8 @@ public class RagService {
         volatile java.util.concurrent.ScheduledFuture<?> runProgress;
         /** 本段脚本还在跑：false 时 ticker 自停，不留一个空转的周期任务 */
         volatile boolean runBoardActive;
+        /** 本段脚本运行的结构化结果（退出码/超时/沙盒故障），随 run_code 终态卡片下发并落库 */
+        volatile Map<String, Object> runOutcome;
         final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
         /**
          * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露
@@ -5884,23 +5895,38 @@ public class RagService {
     private String branchBrief(String sessionId, String question, int depth) {
         int nextDepth = depth + 1;
         int budget = Math.max(200, configService.getInt("agent.subagentBriefChars", 1200) / nextDepth);
+        // 三档继承（agent.subagentBriefMode）：brief=最近 4 条、各截 220 字（本项引入前的行为，逐字不变）；
+        // recent=按配置的轮数带、每条放宽；full=尽量整条带、只在总预算处夹。
+        // 为什么默认还是 brief：分支是按支数乘成本的，「多带前情」在单支上是收益、在多支上是纯加钱，
+        // 而且带多了会把子智能体自己的知识库范围挤没——所以放开必须是显式选择。
+        String mode = configService.get("agent.subagentBriefMode");
+        mode = mode == null ? "brief" : mode.trim().toLowerCase();
+        boolean briefMode = !"recent".equals(mode) && !"full".equals(mode);
+        int turns = Math.max(2, configService.getInt("agent.subagentBriefTurns", 6));
+        // 一问一答算一轮，所以条数是轮数的两倍；full 不逐条截（保留换行与表格），只在末尾按预算夹
+        int maxLines = briefMode ? 4 : turns * 2;
+        int perLine = briefMode ? 220 : "recent".equals(mode) ? Math.max(320, budget / 3) : budget;
         StringBuilder sb = new StringBuilder();
         sb.append("用户最初的问题：").append(truncateForBrief(question, budget));
+        int lineCount = 0;
         try {
-            List<Map<String, Object>> history = sessionService.getRecentHistory(sessionId, 3);
+            List<Map<String, Object>> history = sessionService.getRecentHistory(sessionId, maxLines + 1);
             if (history == null) {
                 log.warn("[SUBAGENT] 父轮历史读取失败（分支只带问题，不带上下文）session={}", sessionId);
             } else if (!history.isEmpty()) {
                 // 最近一轮通常是本问题自己（刚即时落库），倒序取、跳过它，才拿到真正的前情
                 List<String> lines = new ArrayList<>();
-                for (int i = history.size() - 1; i >= 0 && lines.size() < 4; i--) {
+                for (int i = history.size() - 1; i >= 0 && lines.size() < maxLines; i--) {
                     Map<String, Object> m = history.get(i);
                     String content = m.get("content") == null ? "" : String.valueOf(m.get("content")).trim();
                     if (content.isBlank()) continue;
                     String role = String.valueOf(m.getOrDefault("role", ""));
                     if (content.equals(question == null ? "" : question.trim())) continue;
-                    lines.add(("user".equalsIgnoreCase(role) ? "问：" : "答：") + truncateForBrief(content, 220));
+                    String body = "full".equals(mode) ? clipForBrief(content, perLine)
+                            : truncateForBrief(content, perLine);
+                    lines.add(("user".equalsIgnoreCase(role) ? "问：" : "答：") + body);
                 }
+                lineCount = lines.size();
                 if (!lines.isEmpty()) {
                     sb.append("\n此前的对话（从新到旧）：\n");
                     for (String line : lines) sb.append("- ").append(line).append("\n");
@@ -5910,7 +5936,19 @@ public class RagService {
             log.warn("[SUBAGENT] 父轮上下文整理失败（分支只带问题）: {}", e.getMessage());
         }
         String brief = sb.toString().trim();
-        return brief.length() > budget ? brief.substring(0, budget) : brief;
+        if (brief.length() > budget) brief = brief.substring(0, budget);
+        // 每次派分支留一行：档位、预算、带了几条、成文多长。分支回报里那句「没随附原文」是真是假，
+        // 只有这一行能对得上——否则「继承档没生效」和「子智能体自己没读」在现场完全分不开
+        log.info("[SUBAGENT] 父轮交代：档={} 预算 {} 带 {} 条 成文 {} 字 session={}",
+                mode, budget, lineCount, brief.length(), sessionId);
+        return brief;
+    }
+
+    /** full 档用的夹取：只限长度，不动空白（表格与列表的换行就是内容，压成一行会把它读散） */
+    private static String clipForBrief(String s, int max) {
+        if (s == null) return "";
+        String t = s.trim();
+        return t.length() > max ? t.substring(0, max) + "…" : t;
     }
 
     private static String truncateForBrief(String s, int max) {
@@ -5929,11 +5967,31 @@ public class RagService {
      * 彼此不互斥。临时会话跑完即删（软删可审计），不污染会话列表。
      */
     private BranchRunner branchRunner(String parentSessionId, String parentTurnId, String userId,
-                                      boolean guestMode) {
+                                      boolean guestMode, SseEmitter parentEmitter) {
         return req -> {
             long start = System.currentTimeMillis();
             String childSession = null;
             CollectingSseEmitter sink = new CollectingSseEmitter();
+            // 分支的实时过程（P3a 刀2）：那一支在父轮卡片上原本只有「跑了 N 步工具」这个事后计数，
+            // 一支跑两三分钟时用户对着一个静止的数字等。这里把它自己那几路过程事件原样转给父轮通道，
+            // 事件名换成 subagent_step、带上分支序号，前端归到对应那一行下面（不重组协议、不改内容）。
+            // 只转不发完就没了：这份实时步骤不落库，刷新后看到的仍是步数与回报全文。
+            final int branchIndex = Math.max(0, req.branchIndex());
+            final boolean[] first = {false};
+            sink.forwardProcess((type, content) -> {
+                Map<String, Object> step = new LinkedHashMap<>();
+                step.put("i", branchIndex);
+                step.put("agent", req.childAgentName());
+                step.put("type", type);
+                step.put("content", content == null ? "" : content);
+                boolean sent = sendSseEvent(parentEmitter, "subagent_step", JSON.toJSONString(step), parentSessionId);
+                if (!first[0]) {
+                    // 只在首帧留一行：接通与否是"这一支有没有实时过程"的分水岭，而静默失败最难查
+                    first[0] = true;
+                    log.info("[SUBAGENT] 分支实时过程首帧：branch={} type={} 父轮接收={} session={}",
+                            branchIndex, type, sent, parentSessionId);
+                }
+            });
             try {
                 childSession = sessionService.createSession(req.userId());
                 chat(ChatCommand.builder()

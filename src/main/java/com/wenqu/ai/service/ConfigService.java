@@ -552,6 +552,10 @@ public class ConfigService {
         d.put("agent.maxParallelSubAgents", "4");          // 并行分支上限（原来硬编码 4，委派名单也按它截断）
         d.put("agent.subagentTimeoutMs", "240000");        // 单条全循环分支的等待上限（ms；超时按失败降级）
         d.put("agent.subagentBriefChars", "1200");         // 传给分支的父轮上下文字符预算（逐层递减）
+        // 分支到底能看见多少父轮前情：默认 brief 与引入本项之前逐字相同（最近 4 条、各截 220 字）。
+        // recent/full 是给「接着上面那段做」这类委派放开的眼界，代价是每支都多带一截历史进上下文。
+        d.put("agent.subagentBriefMode", "brief");        // brief|recent|full——派分支时带多少父轮历史
+        d.put("agent.subagentBriefTurns", "6");           // recent/full 档最多带最近几轮
         d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）

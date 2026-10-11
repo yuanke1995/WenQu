@@ -1827,6 +1827,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         } else {
           // askUser 已出终态（用户已答，或超时/忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡
           if (t.name === 'askUser' && msg.ask) msg.ask = null
+          if (t.name === 'run_code') msg.runBoard = null
           const list = msg.toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
           if (last) {
@@ -1870,6 +1871,40 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         const live = [...list].reverse().find(x => x.name === 'run_code' && x.status === 'start')
         if (!live) return
         live.fanOut = p.fanOut
+        // 同一份数据在消息上留一份（总览用）：一段脚本跑完由下面的终态清空，
+        // 免得过程区一直挂着「脚本运行中」
+        msg.runBoard = p.fanOut
+      } catch (e) { /* 忽略 */ }
+    },
+    onSubagentStep: payload => {
+      // 全循环分支的实时过程（P3a 刀2）：那一支自己那轮正在跑第几步，此前只有事后那个「跑了 N 步工具」。
+      // 分支按序号 i 归位（编排视图的 id 就是它），只增不删；实时态不落库，刷新后仍看步数与回报全文。
+      try {
+        const s = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!s || s.i == null) return
+        const list = msg.subagents || (msg.subagents = [])
+        const b = list.find(x => Number(x.id) === Number(s.i))
+        if (!b) return
+        let c = s.content
+        if (typeof c === 'string') {
+          try { c = JSON.parse(c) } catch (e) { c = { text: c } }
+        }
+        c = c || {}
+        const rows = b.live || (b.live = [])
+        if (s.type === 'tool_status') {
+          if (c.status === 'start') rows.push({ name: c.name || '', label: c.label || '', status: 'start', elapsedMs: 0, out: '' })
+          else {
+            const live = [...rows].reverse().find(r => r.status === 'start' && r.name === c.name)
+            if (live) { live.status = c.status || 'done'; live.elapsedMs = c.elapsedMs || 0 }
+            else rows.push({ name: c.name || '', label: c.label || '', status: c.status || 'done', elapsedMs: c.elapsedMs || 0, out: '' })
+          }
+        } else if (s.type === 'tool_output') {
+          const live = [...rows].reverse().find(r => r.status === 'start')
+          if (live) live.out = ((live.out || '') + (c.delta || '')).slice(-400)
+        } else if (c.text) {
+          rows.push({ status: 'stage', stage: String(c.text).slice(0, 60), name: '', elapsedMs: 0 })
+        }
+        if (rows.length > 30) rows.splice(0, rows.length - 30)
       } catch (e) { /* 忽略 */ }
     },
     onSubagent: payload => {
