@@ -131,7 +131,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
 import { SendOutlined, StopOutlined, CaretRightOutlined, HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage } from '../api'
+import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage, getShareRunStatus, resumeShareTurn, stopShareTurn } from '../api'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import BrandMark from '../components/BrandMark.vue'
 // 正文与浮层与主聊天页同源：图片、引用角标、来源弹窗、灯箱都走同一套，不再各写一份
@@ -235,6 +235,7 @@ async function openSession (id) {
     loading.value = false
     scrollBottom()
   }
+  attachRunning()
 }
 
 /** 开一段新对话：只清指针与页面，会话仍由后端在首条消息时创建（不会攒出空会话） */
@@ -286,6 +287,7 @@ onMounted(async () => {
       if (!messages.value.length) rememberSession('')
       scrollBottom()
     } catch (e) { /* 历史失败不阻塞对话 */ } finally { loading.value = false }
+    attachRunning()   // 刷新时这一轮可能还在跑（关掉页面它照旧继续），接回来给它长完
   }
 })
 
@@ -305,6 +307,16 @@ function send () {
   controller = new AbortController()
   sendShareMessage(token.value, { sessionId: sessionId.value, visitorId: visitorId(), message: text }, {
     signal: controller.signal,
+    ...shareStreamHandlers(ai)
+  })
+}
+
+/**
+ * 一轮问答的回调（发起与断线接流共用一份）：阶段文案、逐字正文、图片、收尾汇总。
+ * 抽出来是为了「接回来的这一轮」和「一直看着的这一轮」在屏幕上长得一样。
+ */
+function shareStreamHandlers (ai) {
+  return {
     onStage: s => { ai.stage = s; scrollBottom() },
     onToken: t => {
       if (ai.stage) ai.stage = ''   // 正文开始即撤掉阶段提示
@@ -342,10 +354,72 @@ function send () {
       else message.warning(msg || '本轮中断')
       scrollBottom()
     }
+  }
+}
+
+/**
+ * 刷新/切会话后接回正在跑的这一轮：先探测（没有就不开通道），有才挂一条新通道。
+ * <p>分享页原本只有「按历史回显」这一条恢复路径——正在生成的那一轮要等它落库后才看得见，
+ * 用户刷新后面对的是一个不动的界面，读成「卡住了」。
+ */
+const attaching = ref(false)
+async function attachRunning () {
+  const sid = sessionId.value
+  if (!sid || sending.value || attaching.value) return
+  attaching.value = true
+  let running = false
+  let snap = null
+  try {
+    const r = await getShareRunStatus(token.value, sid, visitorId())
+    running = !!(r && r.data && r.data.running)
+  } catch (e) { /* 探测失败不打扰：分享页首要还是能用，实在在跑的话下一次刷新再接 */ } finally { attaching.value = false }
+  if (!running) return
+  const ai = reactive({ role: 'assistant', content: '', stage: '', images: [], sources: [], srcOpen: true, loading: true })
+  messages.value.push(ai)
+  sending.value = true
+  scrollBottom()
+  controller = new AbortController()
+  resumeShareTurn(token.value, sid, visitorId(), {
+    signal: controller.signal,
+    ...shareStreamHandlers(ai),
+    // 快照：此刻为止的正文/图片/引用一次给全，之后只收快照之后的增量（序号去重在 api 内核里）
+    onSnapshot: payload => {
+      try {
+        snap = typeof payload === 'string' ? JSON.parse(payload) : payload
+      } catch (e) { snap = null }
+      if (!snap || snap.running === false) {
+        // 探测与接流之间那一轮正好收尾：按历史回显，别留一颗空转的气泡
+        sending.value = false
+        ai.loading = false
+        if (!ai.content) ai.content = ''
+        reloadHistoryQuietly()
+        return
+      }
+      if (typeof snap.content === 'string') ai.content = snap.content
+      if (Array.isArray(snap.images)) ai.images = snap.images
+      if (Array.isArray(snap.sources)) ai.sources = snap.sources
+      scrollBottom()
+    }
   })
 }
 
+/** 静默重载历史（接流落空时用：这一轮已经落库，按历史显示最准） */
+async function reloadHistoryQuietly () {
+  const sid = sessionId.value
+  if (!sid) return
+  try {
+    const r = await getShareHistory(token.value, sid, visitorId())
+    const list = mapHistory(r.data)
+    if (list.length) messages.value = list
+  } catch (e) { /* 历史拉不动就保持现状，别把已有内容清成空白 */ }
+}
+
 function stop () {
+  // 先叫停服务端那一轮：本轮已挂到运行总线上（为了刷新能接回来），
+  // 只 abort 前端这条通道会让它继续在后台跑满宽限期——用户按了停止却还在烧额度
+  if (sessionId.value) {
+    stopShareTurn(token.value, sessionId.value, visitorId()).catch(() => { /* 停不掉不算失败：那一轮可能刚结束 */ })
+  }
   if (controller) controller.abort()
   sending.value = false
   // 中断要把这一轮**整条撤掉**，不能只置 sending=false——那样「正在检索资料…」会永久

@@ -453,12 +453,35 @@ public class ChatController {
 
     @Operation(summary = "工具完整输出（外溢原文读回）", description = "读回一条被外溢存储的工具原文（沙盒输出、读到的整份文件等）。"
             + "工具卡片超过展示上限时不再「截断即丢」：完整原文落盘，卡片留 spillId，这里按需读回。"
+            + "三种看法：不带参数=从头一次给一段（512K 字符，响应里 next 是下一段偏移）；带 offset=按字符续读；"
+            + "带 line=按<b>行</b>窗口读（自动给命中行留上文，翻日志与检索跳读用它，一次最多 500 行）。"
+            + "整份找词用 /tool-output/{spillId}/search。"
             + "归属只认发起人本人（目录按 uid 哈希 + meta 二次校验），非本人/已过期清理/未开启外溢一律报错而不是回空壳。")
     @GetMapping("/tool-output/{spillId}")
     public ResultJson getToolOutput(
-            @Parameter(description = "外溢标识（工具卡片 spillId / argsSpillId）") @PathVariable("spillId") String spillId) {
-        java.util.Map<String, Object> out = toolSpillService.read(spillId, com.wenqu.ai.util.RequestUser.uid());
+            @Parameter(description = "外溢标识（工具卡片 spillId / argsSpillId）") @PathVariable("spillId") String spillId,
+            @Parameter(description = "从第几个字符开始读（默认 0）") @RequestParam(value = "offset", defaultValue = "0") Integer offset,
+            @Parameter(description = "本次最多读多少字符（默认与上限同为 512K）") @RequestParam(value = "limit", required = false) Integer limit,
+            @Parameter(description = "按行读：从第几行开始（1-based，给定时走行窗口）") @RequestParam(value = "line", required = false) Integer line,
+            @Parameter(description = "按行读：最多给几行（默认 200，上限 500）") @RequestParam(value = "lines", required = false) Integer lines) {
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        java.util.Map<String, Object> out = line != null && line > 0
+                ? toolSpillService.readLines(spillId, uid, line, lines == null ? 0 : lines)
+                : toolSpillService.read(spillId, uid, offset == null || offset < 0 ? 0 : offset,
+                        limit == null ? 0 : limit);
         if (out == null) return ResultJson.error("这份原文不存在、已被清理（超保留期或超每人配额），或不属于你");
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "工具完整输出·服务端检索", description = "在盘上那份<b>整份</b>留存原文里按行找关键字，返回命中行号与字符偏移"
+            + "（上限 200 条命中，超出用 limited=true 交代还有多少）。前端只筛已读回那一段时，"
+            + "「那句报错在 300 万字的日志里」永远筛不到——这条补齐「搜到 → 跳到那一段」。归属判据与读回同一条。")
+    @GetMapping("/tool-output/{spillId}/search")
+    public ResultJson searchToolOutput(
+            @Parameter(description = "外溢标识") @PathVariable("spillId") String spillId,
+            @Parameter(description = "关键字（整行包含匹配，忽略大小写）") @RequestParam("q") String q) {
+        java.util.Map<String, Object> out = toolSpillService.search(spillId, com.wenqu.ai.util.RequestUser.uid(), q);
+        if (out == null) return ResultJson.error("这份原文不存在、已被清理，或不属于你（关键字不能为空）");
         return ResultJson.ok(out);
     }
 
@@ -480,7 +503,7 @@ public class ChatController {
             + "可反复直到批准/拒绝/超时；继续对话（body {supersede:true}）＝用户带着修改意见继续对话，本版作废"
             + "（前端随后把意见作为用户消息发出，新一轮按意见重做计划）；拒绝（approved:false）或超时=本轮终止。"
             + "仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval（tool_name=planApproval，"
-            + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT），等待期间断开不中止本轮，"
+            + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT/STOPPED/INTERRUPTED），等待期间断开不中止本轮，"
             + "刷新/换设备后仍可经 /plan-approval/pending 取回卡片（含版本链）继续裁决。")
     @PostMapping("/plan-approval/{planApprovalId}")
     public ResultJson resolvePlanApproval(

@@ -791,6 +791,7 @@ public class WorkflowService {
         WorkflowRun run = newRun(row, t.dslText, "manual", p.uid(), null, t.version, t.dslSource, inputs);
         run.setStatus("queued");
         WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, null, null);
+        stream.beginRun(run.getId(), p.uid());   // 挂上运行总线：排队期就能订阅，中途刷新也接得回时间线
         ctx.setTraceSink(tr -> stream.publishTrace(run.getId(), tr));   // 节点完成即推
         runMapper.insert(run);
         submitAsync(run, ctx, row, dsl);
@@ -1069,6 +1070,7 @@ public class WorkflowService {
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
+        stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
         ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
         Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
@@ -1144,6 +1146,7 @@ public class WorkflowService {
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
+        stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
         ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整
         for (Map.Entry<String, Object> e : outputs.entrySet()) {

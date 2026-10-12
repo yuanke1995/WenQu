@@ -6,6 +6,7 @@ import com.wenqu.ai.config.AppProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,12 +35,16 @@ import java.util.regex.Pattern;
  * 每人配额（{@code tool.spillMaxMbPerUser}）在写入后把该用户目录压回上限内、按落盘时间淘汰最旧的。
  * 被淘汰只影响「查看完整输出」能否读回原文，卡片上的预览与这一轮的结论不受影响。
  *
- * <p>刻意不做（基础版的边界，别当成已经做完）：
+ * <p>读回侧的两句实话：一次最多给 {@value #MAX_READ_CHARS} 字符量级的<b>一段</b>（超出用 {@code next} 续读，
+ * 见 {@link #read(String, String, int, int)}），检索走 {@link #search(String, String, String)}——
+ * 它扫的是盘上那份<b>整份</b>原文，所以「那句报错在 300 万字的日志里」这种找法不依赖前端已经读到哪儿。
+ *
+ * <p>刻意不做（不是没做完）：
  * <ul>
- *   <li><b>模型侧的输出上限不动</b>（沙盒 262144 字节、工具侧截断进上下文那一段）——那是上下文预算问题，
+ *   <li><b>模型侧的输出上限不动</b>（沙盒那道帽、工具侧截断进上下文那一段）——那是上下文预算问题，
  *       归属「历史投影切换 / PTC」那条线，动它会改变模型看到的内容形状；本服务只管<b>给人看的那一份</b>；</li>
- *   <li>不做服务端检索/高亮（原表述里的「可搜」由前端在已读回的全文里做关键字过滤，够用且不引入索引）；</li>
- *   <li>不落数据库：原文可能几 MB，进库会把消息表拖肥，磁盘 + 保留期清理更合适。</li>
+ *   <li>不落数据库：原文可能几 MB，进库会把消息表拖肥，磁盘 + 保留期清理更合适；</li>
+ *   <li>不建倒排索引：一次扫描换一次「查那句报错」，量级够用（盘上有 4M 字符的落盘上限兜着）。</li>
  * </ul>
  *
  * @author yuanke
@@ -103,11 +108,21 @@ public class ToolSpillService {
     }
 
     /**
-     * 按 id 读回原文（仅归属人可读）。
+     * 按 id 读回原文（仅归属人可读），整份一次给到就读满 {@link #MAX_READ_CHARS}。
      *
      * @return {@code {tool,size,chars,content,truncated,outOfBand}}；不存在/非本人/开关关闭返回 null
      */
     public Map<String, Object> read(String id, String uid) {
+        return read(id, uid, 0, MAX_READ_CHARS);
+    }
+
+    /**
+     * 分段读回（仅归属人可读）：{@code offset} 是字符偏移，返回里的 {@code next} 给前端「继续读下一段」。
+     * <p>为什么要有这一段：{@link #read(String, String)} 一次最多 512K 字，超过就在 512K 处又截一次——
+     * 「查看完整输出」自己变成一个新的截断点，用户看得见「后面未包含」却没有第二个入口。
+     * 磁盘上那份是全的，这里只是把读口的分段能力接上。
+     */
+    public Map<String, Object> read(String id, String uid, int offset, int limit) {
         if (id == null || !ID.matcher(id).matches() || uid == null || uid.isBlank()) return null;
         try {
             Path file = dirOf(uid).resolve(id + ".txt");
@@ -116,18 +131,149 @@ public class ToolSpillService {
             JSONObject meta = JSON.parseObject(Files.readString(metaFile, StandardCharsets.UTF_8));
             if (meta == null || !uid.equals(meta.getString("uid"))) return null;   // 目录已按 uid 哈希隔离，这里再校验一次归属
             String content = Files.readString(file, StandardCharsets.UTF_8);
-            boolean overReadCap = content.length() > MAX_READ_CHARS;
+            int from = Math.max(0, Math.min(offset, content.length()));
+            int size = Math.max(1, Math.min(limit <= 0 ? MAX_READ_CHARS : limit, MAX_READ_CHARS));
+            int to = Math.min(content.length(), from + size);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("id", id);
             out.put("tool", meta.getString("tool") == null ? "" : meta.getString("tool"));
-            out.put("chars", meta.getIntValue("chars", content.length()));
-            out.put("size", content.length());
-            out.put("content", overReadCap ? content.substring(0, MAX_READ_CHARS) : content);
-            out.put("truncated", overReadCap);
+            out.put("chars", meta.getIntValue("chars", content.length()));      // 工具当时产出的整份字数（留存可能更短）
+            out.put("size", content.length());                                   // 盘上这份的字数
+            out.put("from", from);
+            out.put("to", to);
+            out.put("content", content.substring(from, to));
+            out.put("more", to < content.length());
+            out.put("next", to < content.length() ? to : -1);
+            // 兼容基础版的字段名：老前端按 truncated 理解「这一次没读全」
+            out.put("truncated", to < content.length());
             out.put("outOfBand", meta.getBooleanValue("outOfBand", false));
             return out;
         } catch (Exception e) {
             log.warn("[SPILL] 读取外溢原文失败 id={}: {}", id, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 检索命中上限（条）：一次给太多屏幕也放不下，剩下的靠「还有 N 处」这句话交代 */
+    private static final int MAX_SEARCH_HITS = 200;
+    /** 单条命中回给的行文本上限（字符）：命中行可能是一整坨压缩后的 JSON，按行给会撑爆弹窗 */
+    private static final int MAX_HIT_CHARS = 400;
+
+    /**
+     * 服务端检索（仅归属人可查）：在盘上那份<b>整份</b>原文里按行找关键字，返回命中行号与字符偏移。
+     * <p>为什么要在服务端做：前端只能筛「已经读回来的那一段」，而一次读回上限 512K 字——
+     * 一份 300 万字的日志里那句报错在第 280 万字处，前端筛什么都筛不到。行号 + 偏移让
+     * 「命中 → 跳到那一段」这条链路闭合。
+     *
+     * @return {@code {tool,size,q,total,matches:[{line,offset,text}],scanned,limited}}；不存在/非本人返回 null
+     */
+    public Map<String, Object> search(String id, String uid, String q) {
+        if (q == null || q.isBlank() || id == null || !ID.matcher(id).matches()
+                || uid == null || uid.isBlank()) return null;
+        Path file = dirOf(uid).resolve(id + ".txt");
+        Path metaFile = dirOf(uid).resolve(id + ".json");
+        if (!Files.isRegularFile(file) || !Files.isRegularFile(metaFile)) return null;
+        JSONObject meta;
+        try {
+            meta = JSON.parseObject(Files.readString(metaFile, StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            log.warn("[SPILL] 检索读元信息失败 id={}: {}", id, e.getMessage());
+            return null;
+        }
+        if (meta == null || !uid.equals(meta.getString("uid"))) return null;   // 与 read() 同一条归属判据
+        String needle = q.trim().toLowerCase(java.util.Locale.ROOT);
+        List<Map<String, Object>> hits = new ArrayList<>();
+        int total = 0;
+        long line = 0;
+        int offset = 0;
+        boolean limited = false;
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String row;
+            while ((row = reader.readLine()) != null) {
+                line++;
+                if (row.toLowerCase(java.util.Locale.ROOT).contains(needle)) {
+                    total++;
+                    if (hits.size() < MAX_SEARCH_HITS) {
+                        Map<String, Object> hit = new LinkedHashMap<>();
+                        hit.put("line", line);
+                        hit.put("offset", offset);
+                        hit.put("text", row.length() > MAX_HIT_CHARS ? row.substring(0, MAX_HIT_CHARS) + "…" : row);
+                        hits.add(hit);
+                    } else {
+                        limited = true;
+                    }
+                }
+                offset += row.length() + 1;   // +1 = 刚读掉的那个换行
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("tool", meta.getString("tool") == null ? "" : meta.getString("tool"));
+            out.put("chars", meta.getIntValue("chars", 0));
+            out.put("size", meta.getIntValue("stored", 0));
+            out.put("q", q.trim());
+            out.put("total", total);
+            out.put("lines", line);
+            out.put("matches", hits);
+            out.put("limited", limited);
+            out.put("outOfBand", meta.getBooleanValue("outOfBand", false));
+            return out;
+        } catch (Exception e) {
+            log.warn("[SPILL] 检索外溢原文失败 id={}: {}", id, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 一次给的行数上限：一屏读得完，也把弹窗的 DOM 控制在几百个节点里 */
+    private static final int MAX_WINDOW_LINES = 500;
+    /** 跳转时给命中行留的上文行数（命中行不至于贴在窗口顶上） */
+    private static final int CONTEXT_BEFORE_LINES = 20;
+
+    /**
+     * 按<b>行</b>窗口读回（仅归属人可读）：原文超过一次读回上限时，弹窗翻的是行段而不是字符段——
+     * 按字符跳「第 12,345 行」只能靠滚动条估位置，按行跳才落得准。
+     *
+     * @param startLine 1-based 起始行（会自动往前留上文，见 {@code before}）
+     * @param count     最多给几行（上限 {@value #MAX_WINDOW_LINES}）
+     * @return {@code {tool,fromLine,toLine,lines,total,totalLines,content,before}}；不存在/非本人返回 null
+     */
+    public Map<String, Object> readLines(String id, String uid, int startLine, int count) {
+        if (id == null || !ID.matcher(id).matches() || uid == null || uid.isBlank()) return null;
+        Path file = dirOf(uid).resolve(id + ".txt");
+        Path metaFile = dirOf(uid).resolve(id + ".json");
+        if (!Files.isRegularFile(file) || !Files.isRegularFile(metaFile)) return null;
+        int want = Math.max(1, Math.min(startLine, 1_000_000_000));
+        int take = Math.max(1, Math.min(count <= 0 ? 200 : count, MAX_WINDOW_LINES));
+        // 上文行数不能顶穿窗口本身：只要 6 行时留 20 行上文，窗口就整个落在命中行<b>之前</b>，
+        // 点命中跳过去看到的是隔壁几行而不是那一行（2026-10-12 真机抓到，探针用 50 行没覆盖到这条）
+        int before = Math.min(CONTEXT_BEFORE_LINES, (take - 1) / 2);
+        int from = Math.max(1, want - before);
+        int to = from + take - 1;
+        List<String> window = new ArrayList<>();
+        long totalLines = 0;
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String row;
+            long line = 0;
+            while ((row = reader.readLine()) != null) {
+                line++;
+                if (line >= from && line <= to) window.add(row);
+            }
+            totalLines = line;
+            JSONObject meta = JSON.parseObject(Files.readString(metaFile, StandardCharsets.UTF_8));
+            if (meta == null || !uid.equals(meta.getString("uid"))) return null;   // 与 read()/search() 同一条归属判据
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("tool", meta.getString("tool") == null ? "" : meta.getString("tool"));
+            out.put("chars", meta.getIntValue("chars", 0));
+            out.put("size", meta.getIntValue("stored", 0));
+            out.put("fromLine", window.isEmpty() ? 0 : from);
+            out.put("toLine", window.isEmpty() ? 0 : from + window.size() - 1);
+            out.put("lines", window.size());
+            out.put("total", totalLines);
+            out.put("totalLines", totalLines);
+            out.put("content", String.join("\n", window));
+            out.put("before", want - from);   // 命中行前面垫了几行上文（前端据此高亮与「贴顶但看得见上下文」）
+            out.put("outOfBand", meta.getBooleanValue("outOfBand", false));
+            return out;
+        } catch (Exception e) {
+            log.warn("[SPILL] 按行读回外溢原文失败 id={}: {}", id, e.getMessage());
             return null;
         }
     }

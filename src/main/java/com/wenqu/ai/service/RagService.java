@@ -285,6 +285,11 @@ public class RagService {
      * 这是用户按下的停止——历史里要能看出「这一轮是我让它停的」，而不是「回答自己断了」。
      */
     private static final String STOP_SUFFIX = "\n\n> ⏹ 已停止本轮，以上为已生成的部分";
+    /**
+     * 进程收尾（重启/部署/被容器杀掉）时追加的标记。第三种成因，必须与前两个分开：用户既没按停止、
+     * 连接也没断，是服务本身换了个进程——写成「已停止本轮」会让人以为是自己手滑停的。
+     */
+    private static final String RESTART_SUFFIX = "\n\n> ⏹ 服务在这一轮中途重启，以上为已生成的部分";
     /** 思考留痕下限（字）：深度思考动辄上千字，少于这个数说明刚起步就被停，不值得占一条回答 */
     private static final int STOP_THINKING_TRACE_MIN_CHARS = 120;
     /**
@@ -493,6 +498,42 @@ public class RagService {
         }
     }
 
+    /**
+     * 进程收尾：把还在跑的这一轮<b>已生成的半程正文</b>落库，别让它跟着进程一起蒸发。
+     * <p>为什么单列一刀：宽限中止、用户停止、流错误三条路都走 {@link #persistPartialAnswer}，只有重启不会——
+     * SIGTERM 一到就 {@code shutdownNow()}，那一轮的正文与工具卡全丢，用户回来只看见自己那句问题，
+     * 接流也只会回 {@code running:false}（把手是内存态）。这条不改变「跨进程续跑」的边界（跑一半的
+     * LLM 流接不回来），只是把已经产出的部分按中断口径留在历史里。
+     * <p>为什么走 ContextClosedEvent 而不是再加一个 @PreDestroy：同一个 bean 上多个 @PreDestroy
+     * 不保证顺序，而容器关闭事件先于所有 bean 销毁——这里必须抢在 {@code pipelineExecutor} 被掐之前读到
+     * 状态表，也抢在 DataSource 关掉之前写完。
+     */
+    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
+    void flushInFlightTurnsOnShutdown() {
+        if (TURN_STATES.isEmpty()) return;
+        int saved = 0;
+        for (AnswerStreamState st : List.copyOf(TURN_STATES.values())) {
+            String sid = st.sessionId;
+            try {
+                if (st.claimTerminal()) {
+                    persistPartialAnswer(st, RESTART_SUFFIX);
+                    saved++;
+                }
+                // 账本同样要留这一笔：事后回看「这一轮为什么只有半程」，不写会以为是自己断的线
+                sessionEventService.append(sid, st.userId, st.turnId, "stop",
+                        "进程收尾中止：正文 " + st.fullResponse.length() + " 字、工具步 "
+                                + st.toolStepCount.get() + " 步");
+                // 一条都没产出的轮：给那一问打上「中断」的终止原因，否则用户只看到一句孤零零的问题
+                sessionService.markTurnStopped(sid, "interrupted");
+                // 总线立刻收摊：接流的观众当场看到这一轮停了，而不是干等巡检
+                chatRunBus.finish(sid);
+            } catch (Exception e) {
+                log.warn("[SHUTDOWN] 半途正文留存失败 session={}: {}", sid, e.getMessage());
+            }
+        }
+        if (saved > 0) log.info("[SHUTDOWN] 进程收尾：{} 轮在跑的半程正文已按中断态落库", saved);
+    }
+
     public RagService(ChatClient chatClient,
                       SessionService sessionService,
                       AppProperties properties,
@@ -623,10 +664,15 @@ public class RagService {
         ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
         // 运行总线登记（P0 断线重连接流）：本轮的执行不再绑死在发起时那条通道上——刷新/换设备能接回来看它
         // 继续长出来，观众走光也只是「暂时没人看」，宽限（chat.detachGraceMs）到点才由总线回调按中断收束，
-        // 走的还是既有半程截断落库那条路。刻意不登记：游客分享会话（免登录、另有恢复语义）、
-        // 收集型通道（定时任务/MCP/工作流节点没有真实响应）、开关关闭（行为回到「断开即中止」）。
-        if (chatRunBus.enabled() && !guestMode && !(emitter instanceof CollectingSseEmitter)) {
-            chatRunBus.open(sessionId, turnId, userId, emitter,
+        // 走的还是既有半程截断落库那条路。刻意不登记：收集型通道（定时任务/MCP/工作流节点没有真实响应）、
+        // 开关关闭（行为回到「断开即中止」）。
+        // 游客分享会话<b>也登记</b>（2026-10-12 补全）：归属用的是访客自己的身份（share-visitor:{随机}）
+        // 而不是发布者——用发布者的 uid 挂归属，等于任何拿到分享链接的人都能接走别人会话的流。
+        // 访客身份缺失（老链接没带 visitorId）就退回不登记，照旧按历史回显，绝不退成「按发布者放行」。
+        final String runOwner = guestMode ? cmd.getGuestUid() : userId;
+        if (chatRunBus.enabled() && runOwner != null && !runOwner.isBlank()
+                && !(emitter instanceof CollectingSseEmitter)) {
+            chatRunBus.open(sessionId, turnId, runOwner, emitter,
                     () -> resumeSnapshot(sessionId, turnId),
                     () -> abortTurnWithoutViewer(sessionId),
                     () -> {
@@ -735,6 +781,8 @@ public class RagService {
         st.userStopped = true;
         // 把手标志同步置位：前置阶段与各检查点认的是把手，流状态只覆盖生成阶段
         st.handle.stopped().set(true);
+        // 先把挂在人身上的卡片落成终态，再掐流（disposeSafe 会中断等待线程，那时表里就没人了）
+        markHumanWaitsTerminal(sessionId, "STOPPED");
         // 叫停即撤这一轮还没用完的沙盒回调凭据（P3b）：人不想要这一轮了，脚本不该还留着一条回程。
         // 守卫链本身也会按 userStopped 拒掉后续子调用，这里是把"已发出的凭据"这件事一并收掉
         runTokens.revokeByTurn(st.turnId);
@@ -748,7 +796,7 @@ public class RagService {
         // 正开着这个会话的页面会一直挂在「正在生成」里，直到前端 120s 空闲看门狗才自己收束。
         completeEmitter(st.emitter);
         // 解开人在回路的阻塞等待（放最后：正文已按停止态落库，线程再往下走时幂等闸已占住，不会二次落库）
-        releaseHumanWaits(sessionId);
+        releaseHumanWaits(sessionId, "STOPPED");
         // 本轮若一条回答都没落下（正文/工具卡/思考全空），把终止事实记回那一问；
         // 判据就是「该问之后有没有 assistant 消息」，所以放在解开等待之后——被叫停的计划轮会补落一张
         // 收尾消息，那时这里自然不标（有 assistant 行）。极端竞态下可能多标一行安静提示，不影响正确性
@@ -766,19 +814,52 @@ public class RagService {
      * 放弃该会话所有挂在人身上的等待：审批按拒绝、提问按中止（走既有 ExecutionException 分支，
      * 回给模型「用户中止了本轮回答」）、计划按未批准终止本轮。这些 future 不解开，流水线线程会一直
      * 挂在 {@code future.get(timeout)} 上，会话互斥要等到超时才释放——「停了还不能马上问下一句」。
+     * <p>解开之前先把那几条卡片落成终态（{@code endReason}：用户叫停=STOPPED，无观众宽限中止=INTERRUPTED）。
+     * 以前只解 future 不落库：{@code complete(false)} / {@code complete(reject())} 让等待处的
+     * {@code TimeoutException} 分支变成不可达，那条记录就一直停在 PENDING——审计看不出这一轮是谁停的，
+     * 而且除了进程重启时的启动清理，再没人会把它收掉。两个 mark 都带「非 PENDING 即拒绝」的幂等闸，
+     * 所以流水线线程随后那一次 TIMEOUT 写入自然落空，先到先得。
      */
-    private void releaseHumanWaits(String sessionId) {
-        PENDING_APPROVALS.values().stream()
-                .filter(p -> sessionId.equals(p.sessionId()))
-                .forEach(p -> p.future().complete(false));
+    private void releaseHumanWaits(String sessionId, String endReason) {
+        String abortHint = "STOPPED".equals(endReason) ? "用户已停止本轮" : "本轮长时间无人查看，已中止";
+        PENDING_APPROVALS.entrySet().stream()
+                .filter(e -> sessionId.equals(e.getValue().sessionId()))
+                .forEach(e -> e.getValue().future().complete(false));
         PENDING_ASKS.values().stream()
                 .filter(p -> sessionId.equals(p.sessionId()))
                 // 刻意不用 CancellationException：CompletableFuture.get() 对它有特殊分支——原样直抛、
                 // 不包成 ExecutionException，会绕过提问等待处既有的「用户中止本轮」兜底，冒成系统异常
-                .forEach(p -> p.future().completeExceptionally(new IllegalStateException("用户已停止本轮")));
-        PENDING_PLANS.values().stream()
-                .filter(p -> sessionId.equals(p.sessionId()))
-                .forEach(p -> p.future().complete(PlanDecision.reject()));
+                .forEach(p -> p.future().completeExceptionally(new IllegalStateException(abortHint)));
+        PENDING_PLANS.entrySet().stream()
+                .filter(e -> sessionId.equals(e.getValue().sessionId()))
+                .forEach(e -> e.getValue().future().complete(PlanDecision.reject()));
+    }
+
+    /**
+     * 把这一轮挂在人身上的三张卡落成终态（{@code STOPPED}=用户叫停，{@code INTERRUPTED}=无人查看宽限中止）。
+     * <p><b>必须在掐流之前调</b>：{@code disposeSafe()} 会中断那根正阻塞在 {@code future.get()} 上的工具线程，
+     * 它走的是 {@code InterruptedException} 分支——既不落库、其 {@code finally} 还要把挂起项从表里摘掉。
+     * 放在掐流之后就变成对着空表落库，记录照旧停在 PENDING（2026-10-12 真机抓到：叫停返回成功，
+     * 而 {@code /tool-approval/pending} 仍把那条当待批，日志里先出「审批未通过 outcome=CANCELLED」再出解开）。
+     * <p>提问卡的答案留空：没答就是没答，不代答（与超时不代答同一条口径）。
+     */
+    private void markHumanWaitsTerminal(String sessionId, String endReason) {
+        int written = 0;
+        for (var e : PENDING_APPROVALS.entrySet()) {
+            if (!sessionId.equals(e.getValue().sessionId())) continue;
+            if (markApprovalResolved(e.getKey(), endReason, e.getValue().userId())) written++;
+        }
+        for (var e : PENDING_ASKS.entrySet()) {
+            if (!sessionId.equals(e.getValue().sessionId())) continue;
+            if (markAskResolved(e.getKey(), endReason, null, e.getValue().userId())) written++;
+        }
+        for (var e : PENDING_PLANS.entrySet()) {
+            if (!sessionId.equals(e.getValue().sessionId())) continue;
+            if (markApprovalResolved(e.getKey(), endReason, e.getValue().userId())) written++;
+        }
+        if (written > 0) {
+            log.info("[HITL] 人在回路卡片随本轮收尾落终态: session={} status={} 共 {} 条", sessionId, endReason, written);
+        }
     }
 
     /**
@@ -9330,6 +9411,8 @@ public class RagService {
         // 挂在人工裁决上的轮不许被宽限掐：等待期间「关掉页面它一直等你」是对用户承诺过的行为
         // （见配置项 askTimeoutMs 的说明），也不该由「没人看」这件事替用户做决定
         if (st.askWaits.get() > 0 || st.planWaits.get() > 0) return false;
+        // 同 stopTurn：卡片落终态要在掐流之前（掐流会把等待线程打断，那时挂起表已空）
+        markHumanWaitsTerminal(sessionId, "INTERRUPTED");
         sessionEventService.append(sessionId, st.userId, st.turnId, "detach",
                 "断线超过宽限，本轮按中断收束：正文=" + st.fullResponse.length() + "字 工具步="
                         + st.toolStepCount.get());
@@ -9341,7 +9424,8 @@ public class RagService {
         // 解掉可能还挂着的人工等待：提问/计划在上面已经豁免（那种轮不该被宽限掐），走到这里说明
         // 卡着的是**工具执行审批**——它的线程阻塞在 future.get(approvalTimeoutMs) 上，不解开就把
         // 会话互斥一起占满 120 秒，用户「明明没人在跑却问不出下一句」，正是停止功能要消灭的那类事。
-        releaseHumanWaits(sessionId);
+        // 终态写 INTERRUPTED 而不是 STOPPED：没有人点停止，是「无观众宽限到点」——审计要分得开这两种。
+        releaseHumanWaits(sessionId, "INTERRUPTED");
         return true;
     }
 
@@ -9396,6 +9480,20 @@ public class RagService {
                 : ev.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
         String p = ev.getPayload() == null ? "" : ev.getPayload();
         item.put("summary", p.length() > 240 ? p.substring(0, 240) + "…" : p);
+        // 工具行单独把「第几步、成没成、多久」拆出来：对照视图要靠它与回答里的工具卡对上号，
+        // 而摘要可能被 240 字正好切在 status 之前——那种情况下前端数不出第几步
+        if ("tool".equals(ev.getType())) {
+            try {
+                com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(p);
+                if (o != null) {
+                    item.put("name", o.getString("name"));
+                    item.put("status", o.getString("status"));
+                    if (o.get("elapsedMs") != null) item.put("elapsedMs", o.get("elapsedMs"));
+                }
+            } catch (Exception ignore) {
+                // 载荷不是 JSON（历史行或被截断）：照旧只给摘要，对照视图少一个编号而已
+            }
+        }
         return item;
     }
 

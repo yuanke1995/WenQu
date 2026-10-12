@@ -2,7 +2,9 @@
   <!-- 执行过程（事件账本）的移动壳：底部 sheet 装共用面板，取数与渲染不重写一份。
        两种看法共用：带 turnId=只看这一条回答跑过的步，不带=这个会话最近几轮跑了什么。 -->
   <BottomSheet :open="open" :title="title" :subtitle="subtitle" max-height="82dvh" @close="$emit('close')">
-    <SessionEventsPanel :open="open" :session-id="sessionId" :turn-id="turnId" />
+    <SessionEventsPanel :open="open" :session-id="sessionId" :turn-id="turnId"
+                        :message="message" :question="question" :viewer="false"
+                        @citation="src => $emit('citation', src)" @preview="(u, i) => $emit('preview', u, i)" />
   </BottomSheet>
 </template>
 
@@ -15,9 +17,12 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   sessionId: { type: String, default: '' },
   /** 非空=只看这一轮；空=按会话列出最近几轮 */
-  turnId: { type: String, default: '' }
+  turnId: { type: String, default: '' },
+  /** 对照视图的那一半（从单轮 sheet 进来才有）：这条回答与它的问题 */
+  message: { type: Object, default: null },
+  question: { type: String, default: '' }
 })
-defineEmits(['close'])
+defineEmits(['close', 'citation', 'preview'])
 
 const title = computed(() => props.turnId ? '执行过程 · 这一轮' : '执行过程（事件账本）')
 const subtitle = computed(() => props.turnId

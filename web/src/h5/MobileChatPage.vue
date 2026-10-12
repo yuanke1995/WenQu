@@ -158,6 +158,7 @@
       <div v-if="pendingAsk" class="m-input-card m-askp">
         <div class="m-askp-head">
           <span class="m-askp-tag">{{ mCurAsk.topic || '向用户提问' }}</span>
+          <span v-if="mAskQueueCount" class="m-askp-state">还有 {{ mAskQueueCount }} 张待答</span>
           <span class="m-askp-q">{{ mCurAsk.question }}</span>
           <span v-if="mAskExpired" class="m-askp-state warn">已超时</span>
           <span v-if="mAskCountdownText" class="m-askp-timer" :class="{ warn: mAskExpired }">{{ mAskCountdownText }}</span>
@@ -239,7 +240,8 @@
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
          取数与渲染与 PC 共用 SessionEventsPanel，两端不许各写一遍 -->
     <MobileEventsSheet :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurnId"
-                       @close="eventsOpen = false" />
+                       :message="eventsMsg" :question="eventsQuestion" @close="eventsOpen = false"
+                       @citation="openSourceDetail" @preview="openPreview" />
 
     <!-- ==================== 来源详情 ==================== -->
     <BottomSheet :open="src.visible" :title="src.title" max-height="72dvh" @close="src.visible = false">
@@ -436,6 +438,8 @@ const pendingAsk = computed(() => {
   }
   return null
 })
+// 排在当前卡之后的待答卡（与 PC 同一份队列语义：并行调用能同一轮挂出两张提问卡）
+const mAskQueueCount = computed(() => ((pendingAsk.value && pendingAsk.value.askQueue) || []).length)
 // 一卡多问：当前翻页 + 当前题 + 已答计数 + 超时倒计时
 const mAskPage = ref(0)
 const mCurAsk = computed(() => {
@@ -588,11 +592,27 @@ const openRound = i => { activeIdx.value = i; roundIdx.value = i; roundOpen.valu
 // 从单轮过来先收掉操作 sheet：两层面板叠着没有意义，用户此刻要看的是过程不是操作项
 const eventsOpen = ref(false)
 const eventsTurnId = ref('')
-const openEvents = turnId => {
+// 对照视图的那一半：从单轮 sheet 进来时带上了那条回答与它的问题
+const eventsMsg = ref(null)
+const eventsQuestion = ref('')
+const openEvents = (turnId, msg, question) => {
   eventsTurnId.value = typeof turnId === 'string' ? turnId : ''
+  eventsMsg.value = eventsTurnId.value ? (msg || null) : null
+  eventsQuestion.value = eventsTurnId.value ? (question || '') : ''
   eventsOpen.value = true
 }
-const openRoundEvents = turnId => { roundOpen.value = false; openEvents(turnId) }
+const openRoundEvents = turnId => {
+  roundOpen.value = false
+  const mi = roundIdx.value
+  const ai = messages.value[mi]
+  let q = ''
+  for (let i = mi - 1; i >= 0; i--) {
+    const r = messages.value[i]?.role
+    if (r === 'user') { q = messages.value[i].content || ''; break }
+    if (r === 'assistant' || r === 'ai') break
+  }
+  openEvents(turnId, ai, q)
+}
 
 // ==================== 会话内查找 ====================
 // 与 PC 的 Ctrl/⌘+F 是同一份实现（src/chat/useChatSearch.js）：行契约统一为 [data-row-index]

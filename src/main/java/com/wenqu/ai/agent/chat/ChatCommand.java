@@ -64,8 +64,14 @@ public final class ChatCommand {
     final String reasoningLevel;
     /** 前端请求的上下文窗口（与会话级覆盖、模型登记值一起裁决，见 resolveContextWindow） */
     final Integer requestedContextWindow;
-    /** 免登录分享会话（公开链接）：能力白名单收窄、不登记接流总线，另有恢复语义 */
+    /** 免登录分享会话（公开链接）：能力白名单收窄、另有恢复语义 */
     final boolean guestMode;
+    /**
+     * 这一轮的<b>访客身份</b>（{@code share-visitor:{客户端随机}}，仅 guestMode 有值）。
+     * <p>接流总线按它认归属，不能用 {@link #userId}——后者是<b>发布者</b>（免登录问答要按发布者的
+     * 资料可见性检索）。少了这一个，要么分享页接不上流，要么任何人都能接走别人会话的流。
+     */
+    final String guestUid;
     /**
      * 重新生成/自动重试的重发标记：该问题的用户消息已随上一轮<b>即时落库</b>，
      * true 时跳过开始期的用户消息落库，避免重发产生重复历史行。

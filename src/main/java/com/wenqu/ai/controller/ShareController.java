@@ -11,6 +11,8 @@ import com.wenqu.ai.service.RateLimitService;
 import com.wenqu.ai.service.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -215,13 +217,90 @@ public class ShareController {
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
         ragService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
+                // 接流归属用访客身份（不是发布者）：分享页刷新/换设备能把这一轮接回来，
+                // 而别人即便拿到同一个 token 也接不走不属于自己的会话
                 .userImages(List.of()).attachments(List.of()).skills(List.of())
                 .agentId(ctx.agent().getId()).modelOverride(modelRef).guestMode(true)
+                .guestUid(visitorUid)
                 .build(), emitter);
         agentShareService.incrementVisit(ctx.share().getId());
         log.info("[AUDIT] 游客对话 ip={} agent={} session={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId);
         return emitter;
+    }
+
+    @Operation(summary = "游客接流·探测", description = "问这个访客的会话是否还有一轮在跑（分享页刷新/换设备前问一句）。"
+            + "归属按访客身份（visitorId 派生）判，与 /share/{token}/history 同一条口径；"
+            + "会话不是这个访客的就报错，不在跑返回 running=false。")
+    @GetMapping("/{token}/chat/run")
+    public ResultJson guestRunStatus(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
+            return ResultJson.error("缺少会话 ID 或访客 ID");
+        }
+        agentShareService.resolveGuest(token);
+        rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        sessionService.assertOwned(sessionId.trim(), visitorUid);
+        return ResultJson.ok(ragService.runStatus(sessionId.trim(), visitorUid));
+    }
+
+    @Operation(summary = "游客接流", description = "把一条新的 SSE 通道挂到该访客这一会话正在跑的那一轮上："
+            + "先送 snapshot（此刻为止的正文/工具卡/计划/产物 + 状态事件最后一份），此后只送快照之后的增量。"
+            + "没有在跑、已收尾、或服务已重启（内存态把手不跨进程）→ snapshot{running:false} 后立即关闭。"
+            + "分享页原来只有「按历史回显」这一条恢复路径，刷新那一刻正在生成的回答会停住不动。")
+    @ApiResponse(responseCode = "200", description = "SSE 流式响应",
+            content = @Content(mediaType = "text/event-stream"))
+    @GetMapping("/{token}/chat/resume")
+    public SseEmitter guestResumeChatTurn(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        SseEmitter emitter = new SseEmitter(0L);
+        if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
+            emitter.complete();
+            return emitter;
+        }
+        try {
+            agentShareService.resolveGuest(token);
+            rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
+            String visitorUid = AgentShareService.visitorUid(visitorId);
+            sessionService.assertOwned(sessionId.trim(), visitorUid);
+            ragService.resumeTurn(sessionId.trim(), visitorUid, emitter);
+        } catch (Exception e) {
+            // 这条通道是免登录的：任何一关没过就送一份 running:false 的快照并关掉，
+            // 前端按历史回显——不能留一条挂着不走的 SSE 请求
+            ragService.resumeTurn(sessionId.trim(), null, emitter);
+        }
+        return emitter;
+    }
+
+    @Operation(summary = "游客停止本轮", description = "叫停该访客这一会话正在跑的这一轮：半程正文按停止态落库、"
+            + "会话互斥立刻释放，下一次提问不用等宽限。分享页的「停止」按钮必须打到服务端——"
+            + "本轮已接到运行总线上（为了断线能接回来），只 abort 前端 fetch 会让它继续在后台跑满宽限期。")
+    @PostMapping("/{token}/chat/stop")
+    public ResultJson guestStopChatTurn(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
+            return ResultJson.error("缺少会话 ID 或访客 ID");
+        }
+        var ctx = agentShareService.resolveGuest(token);
+        rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
+        // 归属按<b>访客</b>认（会话是这个访客建的，别人没有这个访客标识就过不去这道关），
+        // 过完之后才按发布者 uid 叫停——本轮在流水线里登记的身份是发布者（免登录问答按发布者检索）。
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        sessionService.assertOwned(sessionId.trim(), visitorUid);
+        boolean stopped = ragService.stopTurn(sessionId.trim(), ctx.owner().getUid());
+        log.info("[AUDIT] 游客停止本轮 ip={} agent={} session={} stopped={}",
+                clientIp(httpRequest), ctx.agent().getId(), sessionId, stopped);
+        return ResultJson.ok(stopped ? "已停止本轮" : "这一会话没有在跑的回答（可能刚结束）");
     }
 
     /** 客户端 IP（X-Forwarded-For 首段优先；与 ChatController 同口径） */

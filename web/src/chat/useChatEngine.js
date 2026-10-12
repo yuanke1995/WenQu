@@ -1201,12 +1201,12 @@ function commitAskCustom (m, page) {
   else if (a.sels[page] === len) a.sels[page] = null
 }
 /**
- * 把一张提问卡挂到消息上（SSE 实时下发与刷新/换设备后重建两条路共用）。
+ * 造一张提问卡（SSE 实时下发与刷新/换设备后重建共用这份形状）。
  * @param remainingMs 倒计时剩余毫秒；不传则按 j.timeoutMs 从此刻起算（实时路径没有时差）
  * j.restored=true 表示这张卡是从服务端待答记录重建的：本设备没有这一轮的流式通道，答完后回答在
  * 后台生成，要靠 pollRestoredAnswer 轮询历史取回。
  */
-function mountAskCard (m, j, remainingMs) {
+function buildAskCard (j, remainingMs) {
   let questions
   if (Array.isArray(j.questions) && j.questions.length) {
     questions = j.questions.map(x => ({
@@ -1222,7 +1222,7 @@ function mountAskCard (m, j, remainingMs) {
   }
   const n = questions.length
   const ms = Number(remainingMs != null ? remainingMs : j.timeoutMs) || 0
-  m.ask = {
+  return {
     id: j.askId,
     questions,
     timeoutMs: Number(j.timeoutMs) || 0,
@@ -1233,7 +1233,38 @@ function mountAskCard (m, j, remainingMs) {
     sels: new Array(n).fill(null),   // 每题已选选项下标（null=未答）
     customs: new Array(n).fill('')   // 每题自定义输入
   }
+}
+
+/** 把一张提问卡挂到气泡上（同一轮一张的位置；多张请走 attachAskCard 排队） */
+function mountAskCard (m, j, remainingMs) {
+  m.ask = buildAskCard(j, remainingMs)
   return m.ask
+}
+
+/**
+ * 挂一张待答卡，位置被占就排进队列。
+ * <p>为什么要队列：并行工具调用能在**同一轮**挂出两张提问卡（服务端按 askId 各自阻塞、各自可答），
+ * 而实时与恢复都只认「这一轮那一张」——第二张要么盖掉第一张，要么干脆不重建，
+ * 于是有一道题在屏幕上根本不存在，只能等它自己超时。排队 + 撤卡时顶上，两张都轮得到答。
+ * <p>去重按 askId：恢复会被反复触发（切会话、点开通知、答完一张再同步），同 id 不挂第二遍。
+ */
+function attachAskCard (m, j, remainingMs) {
+  if (!m || !j) return false
+  const id = j.askId
+  if (m.ask && m.ask.id === id) return false
+  const q = Array.isArray(m.askQueue) ? m.askQueue : []
+  if (id && q.some(x => x && x.id === id)) return false
+  const card = buildAskCard(j, remainingMs)
+  if (!m.ask) { m.ask = card } else { q.push(card); m.askQueue = q }
+  return true
+}
+
+/** 撤下当前卡，让排队的下一张顶上（面板仍是一张一答）；没有排队就什么也不留 */
+function retireAskCard (m) {
+  if (!m) return
+  m.ask = null
+  const q = Array.isArray(m.askQueue) ? m.askQueue : null
+  if (q && q.length) m.ask = q.shift()
 }
 
 /**
@@ -1267,7 +1298,6 @@ const cardTargetFor = (st, turnId) => {
 const hydratePendingAsk = async sid => {
   if (!sid) return
   const st = chatStreams.get(sid)
-  if (st && st.msg && st.msg.ask) return   // 实时卡还挂在这一轮上，不重复挂
   let items
   try {
     const r = await listPendingAsks(sid)
@@ -1285,26 +1315,33 @@ const hydratePendingAsk = async sid => {
     if (dead.length) message.warning('这一轮的提问已失效（服务已重启），回答没有继续生成')
     return
   }
-  const item = alive[alive.length - 1]
-  // 挂回它自己那一轮：本轮气泡已经在界面上就挂它，更早的一轮就去找那一轮的气泡
-  const target = cardTargetFor(st, item.turnId)
-  if (target && target.ask) return   // 这张卡已经挂着了（上一次恢复建的占位泡也在内）
-  if (target) {
-    mountAskCard(target, { ...item, restored: true }, item.remainingMs)
-    hooks.scrollForce?.()
-    return
+  let mounted = 0
+  // 每一张还挂着的卡都要建得出来：并行工具调用能在同一轮挂出两三项，只建末条的话
+  // 其余那几题在屏幕上不存在，答不了就只能等它自己超时
+  for (const item of alive) {
+    // 挂回它自己那一轮：本轮气泡已经在界面上就挂它，更早的一轮就去找那一轮的气泡
+    const target = cardTargetFor(st, item.turnId)
+    if (target) {
+      if (attachAskCard(target, { ...item, restored: true }, item.remainingMs)) mounted++
+      continue
+    }
+    // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你作答」的占位泡，
+    // 答题面板照旧挂底部；答完轮询到新回答后整个列表按历史重载，占位泡随之消失
+    const anchor = (item.turnId && msgByTurn(item.turnId)) || null
+    if (anchor) {
+      if (attachAskCard(anchor, { ...item, restored: true }, item.remainingMs)) mounted++
+      continue
+    }
+    const bubble = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
+      degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+      thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
+      toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
+      turnId: item.turnId || '' })
+    attachAskCard(bubble, { ...item, restored: true }, item.remainingMs)
+    messages.value = [...messages.value, bubble]
+    mounted++
   }
-  const list = messages.value
-  // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你作答」的占位泡，
-  // 答题面板照旧挂底部；答完轮询到新回答后整个列表按历史重载，占位泡随之消失
-  const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
-    thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
-    toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
-    turnId: item.turnId || '' })
-  mountAskCard(anchor, { ...item, restored: true }, item.remainingMs)
-  messages.value = [...list, anchor]
-  hooks.scrollForce?.()
+  if (mounted) hooks.scrollForce?.()
 }
 
 /** 恢复态轮询句柄（同一时刻只留一份：切会话/答完即停） */
@@ -1481,13 +1518,13 @@ async function askSubmitAll (m) {
       message.warning(r.msg || '回答提交失败')
       a.busy = false
       // 恢复态的卡：本轮已无人接收（超时/重启），留着只会让人反复提交，撤下并重载会话
-      if (a.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (a.restored) { retireAskCard(m); m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     a.answered = true
     if (a.restored) {
       // 本设备没有这一轮的流，终态事件不会来撤卡：自己撤下面板、把气泡交给后台生成并轮询取回
-      m.ask = null
+      retireAskCard(m)
       m.stage = '回答生成中，稍后自动刷新…'
       pollRestoredAnswer(currentSessionId.value, m)
       return
@@ -1510,11 +1547,11 @@ async function ignoreAsk (m) {
     if (r && r.success === false) {
       message.warning(r.msg || '操作失败')
       a.busy = false
-      if (a.restored) { m.ask = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (a.restored) { retireAskCard(m); m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     if (a.restored) {
-      m.ask = null
+      retireAskCard(m)
       m.stage = '回答生成中，稍后自动刷新…'
       pollRestoredAnswer(currentSessionId.value, m)
       return
@@ -1800,7 +1837,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 替换成提问面板；用户逐题翻页作答、一次性批量提交后模型继续走。
       // 每题 options 第一项是模型给的推荐项（仅提示用）——超时与忽略都不会替你选答案
       try {
-        mountAskCard(msg, typeof payload === 'string' ? JSON.parse(payload) : payload)
+        attachAskCard(msg, typeof payload === 'string' ? JSON.parse(payload) : payload)
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -1878,7 +1915,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           ensureTick()
         } else {
           // askUser 已出终态（用户已答，或超时/忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡
-          if (t.name === 'askUser' && msg.ask) msg.ask = null
+          if (t.name === 'askUser' && msg.ask) retireAskCard(msg)
           if (t.name === 'run_code') msg.runBoard = null
           const list = msg.toolCalls
           const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
@@ -2080,7 +2117,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         : (msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）')
       msg.loading = false
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
-      if (msg.ask) msg.ask = null
+      // 队列一起清：这一轮不会再有可答的卡了
+      msg.ask = null
+      msg.askQueue = []
       // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面

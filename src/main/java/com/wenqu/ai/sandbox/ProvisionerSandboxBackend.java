@@ -573,6 +573,11 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     // ==================== 执行 ====================
 
+    /**
+     * 交给上层留存的全文上限（字符）：留存侧本身落盘只留前 4M 字，再大拿着也只是把整块老生代占在这一轮上。
+     */
+    private static final int MAX_FULL_OUTPUT_CHARS = 6 * 1024 * 1024;
+
     public ExecuteResponse execute(String command, Integer timeout) {
         try {
             SandboxRuntimeClient client = getClient();
@@ -581,12 +586,14 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             String output = result.output() == null ? "" : result.output();
             Integer exitCode = result.exitCode();
             boolean truncated = false;
+            String fullOutput = null;
             byte[] encoded = output.getBytes(StandardCharsets.UTF_8);
             if (encoded.length > maxOutputBytes) {
+                fullOutput = output.length() <= MAX_FULL_OUTPUT_CHARS ? output : null;
                 output = new String(encoded, 0, maxOutputBytes, StandardCharsets.UTF_8);
                 truncated = true;
             }
-            return new ExecuteResponse(output, exitCode, truncated);
+            return new ExecuteResponse(output, exitCode, truncated, false, fullOutput);
         } catch (RuntimeException exc) {
             // infraError=true：异常来自「连不上/调用沙盒失败」这层，而非命令本身跑失败
             System.err.println("Sandbox execute failed for thread " + threadId + ": " + exc);
@@ -683,15 +690,20 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             cleanupStream(client, cmdPath, logPath, exitPath, okPath);
             String output = all.toString();
             boolean truncated = false;
+            String fullOutput = null;
             byte[] encoded = output.getBytes(StandardCharsets.UTF_8);
             if (encoded.length > maxOutputBytes) {
+                fullOutput = output.length() <= MAX_FULL_OUTPUT_CHARS ? output : null;
                 output = new String(encoded, encoded.length - maxOutputBytes, maxOutputBytes, StandardCharsets.UTF_8);
                 truncated = true;
             }
             if (timedOut) {
                 output = output + "\n…（等待超时（上限 " + timeoutSeconds + "s），已停止追踪；命令可能仍在沙盒内运行）";
+                if (fullOutput != null) {
+                    fullOutput = fullOutput + "\n…（等待超时（上限 " + timeoutSeconds + "s），已停止追踪；命令可能仍在沙盒内运行）";
+                }
             }
-            return new ExecuteResponse(output, exitCode, truncated);
+            return new ExecuteResponse(output, exitCode, truncated, false, fullOutput);
         } catch (RuntimeException exc) {
             System.err.println("Sandbox streaming execute failed for thread " + threadId + ": " + exc);
             return new ExecuteResponse("Error: " + exc, 1, false, true);
@@ -1794,6 +1806,13 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         public final Integer exitCode;
         public final boolean truncated;
         /**
+         * 砍<b>之前</b>的整份输出；没截断、或全文超过 {@code MAX_FULL_OUTPUT_CHARS} 时为 null。
+         * <p>{@link #output} 的口径历来不变（问答卡片与工作流节点都靠 {@code maxOutputBytes} 这道帽控体积），
+         * 这个字段只是把本来已经生成过的那份整文本多带一个引用出来，供上层落盘留存——
+         * 留存的钩子以前只能拿到砍过的那份，「查看完整输出」读回来的是残缺，根因就在这。
+         */
+        public final String fullOutput;
+        /**
          * 本次失败是「基础设施故障」而非「命令本身执行失败」：连接不上沙盒 / 鉴权被拒 /
          * provisioner 不可达等。两者都是 exitCode=1 + 文本，但语义完全不同——
          * 前者重试与改命令都无意义（要让运维把 provisioner 拉起来），后者是正常的业务结果
@@ -1808,14 +1827,24 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         }
 
         public ExecuteResponse(String output, Integer exitCode, boolean truncated, boolean infraError) {
+            this(output, exitCode, truncated, infraError, null);
+        }
+
+        public ExecuteResponse(String output, Integer exitCode, boolean truncated, boolean infraError,
+                              String fullOutput) {
             this.output = output;
             this.exitCode = exitCode;
             this.truncated = truncated;
             this.infraError = infraError;
+            this.fullOutput = fullOutput;
         }
 
         public String output() {
             return output;
+        }
+
+        public String fullOutput() {
+            return fullOutput;
         }
 
         public Integer exitCode() {

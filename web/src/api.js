@@ -103,6 +103,39 @@ const CHAT_EVENT_CB = {
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot'
 }
 
+/**
+ * 「这一帧要不要应用」的序号守卫（主链路与分享链路共用一条判据）。
+ * <p>总线给每帧带本轮单调 seq，接流首帧 snapshot 自带它已覆盖到第几号。此后任何 seq ≤ 水位的帧
+ * 都是重放（前端重试、同一轮二次接流、通知型事件与状态镜像撞车）——文本增量另有 pos 兜着，
+ * 而产物、编排步、人在回路卡片这类「应用一次就多一行」的事件只能靠这里收口。
+ * 不经总线的老帧没有 seq，不参与判断，照常派发。
+ */
+function makeSeqGuard (floorStart) {
+  let floor = Number.isFinite(floorStart) ? floorStart : -1
+  return d => {
+    if (d.type === 'snapshot') {
+      const n = readSnapshotSeq(d.content)
+      if (n != null && n > floor) floor = n
+      return true
+    }
+    if (Number.isFinite(d.seq)) {
+      if (d.seq <= floor) return false
+      floor = d.seq
+    }
+    return true
+  }
+}
+
+/** 快照里「已覆盖到第几号事件」——接流首帧自带的去重水位 */
+function readSnapshotSeq (content) {
+  if (!content) return null
+  try {
+    const s = typeof content === 'string' ? JSON.parse(content) : content
+    const n = Number(s && s.seq)
+    return Number.isFinite(n) ? n : null
+  } catch (e) { return null }
+}
+
 /** 解析一行 SSE `data:` → 事件对象；心跳注释行/非 JSON/无 type 一律返回 null */
 function parseChatEvent (line) {
   if (!line.startsWith('data:')) return null
@@ -200,6 +233,11 @@ function streamChatSse (start, opts) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    // 接流去重的水位：总线给每一帧都带本轮单调 seq，快照自带它已覆盖到第几号。
+    // 快照之后任何 seq ≤ 水位的帧都是重放（前端重试、二次接流、通知型事件与镜像撞车），
+    // 文本增量另有 pos 兜着，而产物/编排步/人在回路卡片这类「应用一次就多一行」的事件只能这样收。
+    // 不经总线的老帧没有 seq —— 不参与判断，照常派发。
+    const seqOk = makeSeqGuard(opts.seqFloor)
     const read = () => {
       reader.read().then(({ done, value }) => {
         // 流关闭但从未收到 done/error 事件：连接被中间层/服务端提前掐断，
@@ -215,6 +253,7 @@ function streamChatSse (start, opts) {
           if (!d) continue
           if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,finalImages,degradations,…} JSON 字符串
           if (d.type === 'error') { end(d.content); return }
+          if (!seqOk(d)) continue              // 快照已含过这条事件，重复应用会多出一行
           dispatchChatEvent(d, opts)
         }
         read()
@@ -459,6 +498,9 @@ export function subscribeWorkflowRun (workflowId, runId, onEvent, onError) {
     const decoder = new TextDecoder()
     let buffer = ''
     let eventName = ''
+    // 运行进度流已接进问答那条总线：帧形如 {type,content,seq}，快照自带它覆盖到第几号，
+    // 之后重放的那几条（刷新/二次订阅/重试撞上的）按同一个水位丢掉——判据与问答链路共用 makeSeqGuard
+    const seqOk = makeSeqGuard()
     const read = () => {
       reader.read().then(({ done, value }) => {
         if (done) { onEvent && onEvent('close', null); return }
@@ -472,9 +514,16 @@ export function subscribeWorkflowRun (workflowId, runId, onEvent, onError) {
           if (line.startsWith('event:')) { eventName = line.substring(6).trim(); continue }
           if (line.startsWith('data:')) {
             const txt = line.substring(5).trim()
-            let payload = null
-            try { payload = txt ? JSON.parse(txt) : null } catch (e) { payload = null }
-            onEvent && onEvent(eventName || 'message', payload)
+            let frame = null
+            try { frame = txt ? JSON.parse(txt) : null } catch (e) { frame = null }
+            if (!frame) { onEvent && onEvent(eventName || 'message', null); continue }
+            const enveloped = !!frame.type && Object.prototype.hasOwnProperty.call(frame, 'content')
+            if (enveloped) {
+              if (!seqOk(frame)) continue                  // 快照已含过这条，重复应用会亮两次
+              onEvent && onEvent(frame.type, frame.content)
+            } else {
+              onEvent && onEvent(eventName || 'message', frame)
+            }
           }
         }
         read()
@@ -732,11 +781,12 @@ export const clearShareSessions = (token, visitorId) =>
   request(`/share/${token}/sessions?visitorId=${encodeURIComponent(visitorId)}`, { method: 'DELETE' })
 
 /**
- * 游客流式对话（SSE，免登录）：token 即凭据；服务端按发布者身份检索、游客受限工具集。
- * 事件派发与登录态主链路共用 CHAT_EVENT_CB（图片/引用/工具状态等一律不再各认一份）；
- * 差别只在终止事件：done 的信封上带 sessionId（首轮由服务端建会话，前端要存下来续聊）。
+ * 分享链路的 SSE 读流内核（发起问答与断线接流共用）。
+ * <p>与主链路各留一份的原因是终止语义不同：这里的 done 信封带 sessionId（首轮由服务端建会话，
+ * 前端要存下来续聊），且不走 streamChatSse 的收尾闸门。事件派发与序号去重都复用同一套
+ * （CHAT_EVENT_CB / makeSeqGuard），新增事件不再需要改两处。
  */
-export function sendShareMessage(token, payload, opts = {}) {
+function streamShareSse (url, init, opts) {
   const { onDone, onError, signal, idleTimeoutMs = 120000 } = opts
   if (typeof onDone !== 'function' || typeof onError !== 'function') return
   const controller = new AbortController()
@@ -755,19 +805,15 @@ export function sendShareMessage(token, payload, opts = {}) {
     else if (idlePaused) { idlePaused = false; armIdle() }
   }
   document.addEventListener('visibilitychange', onVisibility)
-  // 统一收尾：摘监听 + 停表。分享链路有 5 个出口（HTTP 失败 / error 事件 / done 事件 /
+  // 统一收尾：摘监听 + 停表。分享链路有多个出口（HTTP 失败 / error 事件 / done 事件 /
   // 流读尽 / 读失败），逐个出口清监听必然漏（漏一个就是每次对话泄漏一个监听器）
   const settle = () => { clearTimeout(idleTimer); document.removeEventListener('visibilitychange', onVisibility) }
   if (signal) {
     if (signal.aborted) controller.abort()
     else signal.addEventListener('abort', () => controller.abort())
   }
-  fetch(`${BASE}/share/${encodeURIComponent(token)}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: controller.signal
-  }).then(res => {
+  const seqOk = makeSeqGuard(opts.seqFloor)
+  fetch(url, { ...init, signal: controller.signal }).then(res => {
     if (!res.ok || !res.body) {
       settle()
       res.json().then(d => onError(d?.msg || '请求失败: ' + res.status)).catch(() => onError('请求失败: ' + res.status))
@@ -782,6 +828,7 @@ export function sendShareMessage(token, payload, opts = {}) {
       armIdle()
       if (d.type === 'done') { settle(); onDone(d); return }
       if (d.type === 'error') { settle(); onError(d.content || '回答失败'); return }
+      if (!seqOk(d)) return
       dispatchChatEvent(d, opts)
     }
     const pump = () => reader.read().then(({ done, value }) => {
@@ -805,6 +852,40 @@ export function sendShareMessage(token, payload, opts = {}) {
     if (e.name === 'AbortError') onError('已停止生成')
     else onError(e.message || '网络错误')
   })
+}
+
+/**
+ * 游客流式对话（SSE，免登录）：token 即凭据；服务端按发布者身份检索、游客受限工具集。
+ * 事件派发与登录态主链路共用 CHAT_EVENT_CB（图片/引用/工具状态等一律不再各认一份）；
+ * 差别只在终止事件：done 的信封上带 sessionId（首轮由服务端建会话，前端要存下来续聊）。
+ */
+export function sendShareMessage (token, payload, opts = {}) {
+  return streamShareSse(`${BASE}/share/${encodeURIComponent(token)}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, opts)
+}
+
+/** 游客：叫停这一会话正在跑的这一轮（半程正文按停止态落库，不等宽限期） */
+export const stopShareTurn = (token, sessionId, visitorId) =>
+  request(`/share/${token}/chat/stop?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`, { method: 'POST' })
+
+/** 游客：这一会话是否还有一轮在跑（接流前先问一句，没有就不开通道） */
+export const getShareRunStatus = (token, sessionId, visitorId) =>
+  request(`/share/${token}/chat/run?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+
+/**
+ * 游客断线接流：与 sendShareMessage 同一套回调（onToken/onToolStatus/onSnapshot…），
+ * 首帧是 snapshot——正文/工具卡/计划/产物按此刻为止重建，此后只收快照之后的增量。
+ * 服务端没有在跑（含服务重启）会送 snapshot{running:false} 后关闭，调用方按历史回显即可。
+ */
+export function resumeShareTurn (token, sessionId, visitorId, opts = {}) {
+  return streamShareSse(
+    `${BASE}/share/${encodeURIComponent(token)}/chat/resume?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`,
+    { method: 'GET' },
+    opts
+  )
 }
 
 /** 聊天附件上传（onProgress 接收 0-100 百分比）：返回 {fileId,name,mime,size}，问答请求只带 fileId */
@@ -1250,8 +1331,15 @@ export const getToolApproval = id => request(`/tool-approval/${encodeURIComponen
 // 刷新或断线接回这一轮时重建那张 120 秒时限的审批卡，否则本轮豁免宽限一直等而界面什么都看不见
 export const listPendingApprovals = sid => request(`/tool-approval/pending?sessionId=${encodeURIComponent(sid)}`)
 
-// 读回一条被外溢存储的工具完整原文（仅归属人可读；超过保留期就没了）
-export const getToolOutput = spillId => request(`/tool-output/${encodeURIComponent(spillId)}`)
+// 读回一条被外溢存储的工具完整原文（仅归属人可读；超过保留期或超每人配额就没了）
+// 一次只回一段（512K 字符），offset 用响应里的 next 续读；找整份里的词走 searchToolOutput
+export const getToolOutput = (spillId, offset = 0) =>
+  request(`/tool-output/${encodeURIComponent(spillId)}?offset=${encodeURIComponent(offset)}`)
+// 按行窗口读回（翻长日志、以及从检索命中跳读用它：一次最多 500 行，服务端自动给命中行留上文）
+export const getToolOutputLines = (spillId, line, lines = 200) =>
+  request(`/tool-output/${encodeURIComponent(spillId)}?line=${encodeURIComponent(line)}&lines=${encodeURIComponent(lines)}`)
+export const searchToolOutput = (spillId, q) =>
+  request(`/tool-output/${encodeURIComponent(spillId)}/search?q=${encodeURIComponent(q)}`)
 
 // 会话事件账本（过程回放）：按轮列出这一会话的执行轨迹（工具步与耗时、三张卡、产物、编排、停止与失败）
 /**

@@ -130,7 +130,8 @@ public class SandboxTools {
         if (result.truncated) {
             sb.append("\n…（输出过长已截断）");
         }
-        return clip(sb.toString(), "execute", toolContext);
+        // 给模型的这份维持原样（帽在哪一段就是哪一段），只把砍之前的整份原文另交给留存
+        return clip(sb.toString(), result.fullOutput, "execute", toolContext);
     }
 
     @Tool(name = "read_file", description = "读取沙盒内某个文本文件的内容（支持 offset/limit 按行读取）。"
@@ -467,16 +468,28 @@ public class SandboxTools {
     }
 
     /**
-     * 兜底截断：backend 已按字节限制过命令输出，这里再按字符限制一次（读文件/列目录没走那条路）。
+     * 兜底截断（进模型的那一份）：按字符限死，读文件/列目录这类没走沙盒字节帽的也归这里收口。
      * <p>被截掉那一段不再静默丢掉：问答侧注入了留存能力时，把<b>整份原文</b>交出去落盘并上报 spillId，
      * 用户拿到的是「预览 + 可查看完整输出」；没有留存能力（非问答链路、或写盘失败）就写明丢了多少钱字，
      * 而不是留一句「已截断」让人以为那就是全部。
      */
     private static String clip(String text, String toolName, ToolContext toolContext) {
+        return clip(text, null, toolName, toolContext);
+    }
+
+    /**
+     * 同上，但<b>留存的那一份</b>与<b>进模型的那一份</b>分开给：{@code storeText} 是砍之前的整份原文
+     * （沙盒命令输出的全文只能这么带出来——{@code text} 已经是按帽挑过的一段）。
+     * <p>刻意不改 {@code text} 的形态：模型看到的内容形状一变，token 预算、历史压缩口径、评估基线会跟着漂移，
+     * 而这条能力要修的是「给人看的那一份残缺」。
+     */
+    private static String clip(String text, String storeText, String toolName, ToolContext toolContext) {
         if (text == null) return "";
-        if (text.length() <= TOOL_OUTPUT_CHARS) return text;
+        String store = storeText != null && storeText.length() > text.length() ? storeText : text;
+        if (store.length() <= TOOL_OUTPUT_CHARS) return text;
         java.util.function.BiFunction<String, String, String> spill = ctxFn(toolContext, CTX_SPILL);
-        String spillId = spill == null ? null : safeSpill(spill, toolName, text);
+        String spillId = spill == null ? null : safeSpill(spill, toolName, store);
+        String head = text.length() <= TOOL_OUTPUT_CHARS ? text : text.substring(0, TOOL_OUTPUT_CHARS);
         if (spillId != null) {
             java.util.function.BiConsumer<String, String> report = ctxFn(toolContext, CTX_SPILL_REPORT);
             if (report != null) {
@@ -486,12 +499,10 @@ public class SandboxTools {
                     // 上报失败不影响回给模型的文本（卡片少一个续读入口，原文仍在盘上）
                 }
             }
-            return text.substring(0, TOOL_OUTPUT_CHARS)
-                    + "\n…（输出过长，只展示前 " + TOOL_OUTPUT_CHARS + " 字；完整 " + text.length()
+            return head + "\n…（输出过长，只展示前 " + TOOL_OUTPUT_CHARS + " 字；完整 " + store.length()
                     + " 字已留存，可从本轮工具卡片「查看完整输出」读回）";
         }
-        return text.substring(0, TOOL_OUTPUT_CHARS)
-                + "\n…（内容过长已截断，另有 " + (text.length() - TOOL_OUTPUT_CHARS) + " 字未能留存）";
+        return head + "\n…（内容过长已截断，另有 " + (store.length() - TOOL_OUTPUT_CHARS) + " 字未能留存）";
     }
 
     /** 取上下文里注入的能力（问答侧经 ToolContext 传的函数）；不在上下文里就返回 null 走降级路径 */

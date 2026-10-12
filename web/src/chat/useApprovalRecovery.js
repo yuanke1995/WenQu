@@ -14,7 +14,8 @@ export function useApprovalRecovery () {
   const busy = ref(false)
   const statusText = computed(() => {
     const s = approval.value?.status
-    return { PENDING: '待处理', APPROVED: '已批准', REJECTED: '已拒绝', TIMEOUT: '已超时' }[s] || (s || '未知')
+    return { PENDING: '待处理', APPROVED: '已批准', REJECTED: '已拒绝', TIMEOUT: '已超时',
+      REVISED: '已退回重出', SUPERSEDED: '已被取代', STOPPED: '已随本轮停止', INTERRUPTED: '已随本轮中断' }[s] || (s || '未知')
   })
   const statusClass = computed(() => {
     const s = approval.value?.status

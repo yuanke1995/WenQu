@@ -29,7 +29,8 @@
            产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障。
            取数与渲染在共用组件里（移动壳的底部 sheet 用同一份，不各写一遍） -->
       <a-modal v-model:open="eventsOpen" :title="eventsTitle" width="min(880px, 94vw)" :footer="null">
-        <SessionEventsPanel :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurn" />
+        <SessionEventsPanel :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurn"
+                            :message="eventsMsg" :question="eventsQuestion" />
       </a-modal>
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
@@ -1089,6 +1090,7 @@
         <div v-else-if="pendingAsk" class="input-box askp-box" @keydown="onAskPanelKeydown">
           <div class="askp-head">
             <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
+            <span v-if="askQueueCount" class="askp-state" :title="'这一轮还有 ' + askQueueCount + ' 张卡要答，这张答完接着来'">还有 {{ askQueueCount }} 张待答</span>
             <span class="askp-q">{{ curAsk.question }}</span>
             <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
             <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
@@ -1758,11 +1760,16 @@ const togglePanel = () => {
 const eventsOpen = ref(false)
 // 非空=只看这一轮（气泡上的「过程」带进来的 turnId）；空=会话级最近几轮
 const eventsTurn = ref('')
+// 对照视图要的那一半：这一轮那条回答 + 它对应的问题（只有按轮回放时才带）
+const eventsMsg = ref(null)
+const eventsQuestion = ref('')
 const eventsTitle = computed(() => eventsTurn.value ? '执行过程 · 这一轮' : '执行过程（事件账本）')
-function openEvents (turnId) {
+function openEvents (turnId, msg, question) {
   // 两种看法共用一个面板：不带参数=会话级「最近几轮跑了什么」，
   // 带气泡的 turnId=只看这一条回答「是怎么跑出来的」
   eventsTurn.value = typeof turnId === 'string' ? turnId : ''
+  eventsMsg.value = eventsTurn.value ? (msg || null) : null
+  eventsQuestion.value = eventsTurn.value ? (question || '') : ''
   eventsOpen.value = true
 }
 // 分组展开态（key → 开/合，默认展开）：**必须存在 computed 外的响应式容器**——
@@ -2564,7 +2571,16 @@ const onMoreAction = (key, mi) => {
   else if (key === 'deleteRound') deleteRound(mi)
   else if (key === 'export') exportRound(mi)
   // 逐气泡的过程回放：会话级「过程」列最近几轮，这里按消息行的 turnId 只看这一条回答那一轮
-  else if (key === 'events') openEvents(messages.value[mi]?.turnId)
+  else if (key === 'events') {
+    const ai = messages.value[mi]
+    let q = ''
+    for (let i = mi - 1; i >= 0; i--) {
+      const r = messages.value[i]?.role
+      if (r === 'user') { q = messages.value[i].content || ''; break }
+      if (r === 'assistant' || r === 'ai') break
+    }
+    openEvents(ai?.turnId, ai, q)
+  }
 }
 /** 差评回流一键固化：本轮「问题 → 引用的知识块」追加进检索评测集（后端按问题去重） */
 const addToEval = async mi => {
@@ -2981,6 +2997,8 @@ const pendingAsk = computed(() => {
   }
   return null
 })
+// 同一轮里排在当前卡之后的待答卡数（并行工具调用能一次挂出两张提问卡，一张一答轮着来）
+const askQueueCount = computed(() => ((pendingAsk.value && pendingAsk.value.askQueue) || []).length)
 const askPage = ref(0)              // 当前翻页（0 基）：一卡多问逐题展示
 const askCustomRef = ref(null)
 const askNow = ref(Date.now())      // 倒计时心跳（仅挂起中有 deadline 时走表）
