@@ -71,4 +71,13 @@ public class Session {
      * {@code c_ai_session_event} 的 todo 事件留痕。NULL=本会话没有清单。
      */
     private String todos;
+
+    /**
+     * 会话种类：chat=用户发起的对话；temp=平台内部临时会话（子智能体分支、工作流子智能体节点
+     * 各跑一整轮问答用的那条会话，跑完即删）。
+     * <p>temp 必须与用户会话分开：它挂在<b>真实用户</b>名下（分支要按调用者的权限跑检索、
+     * 产物也要收养进父会话），但它是平台自己派出来的一轮，不是用户开的对话。
+     * 见 {@link com.wenqu.ai.service.SessionService#KIND_TEMP}。
+     */
+    private String kind;
 }

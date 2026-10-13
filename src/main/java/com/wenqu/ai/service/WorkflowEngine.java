@@ -1053,7 +1053,7 @@ public class WorkflowEngine {
                 throw new BizException("节点「" + n.getId() + "」智能体不存在或对当前用户不可见");
             }
             int timeoutMs = withReplay(ctx, () -> Math.max(30_000, configService.getInt("workflow.subagentTimeoutMs", 180_000)));
-            String sessionId = sessionService.createSession(ctx.uid);
+            String sessionId = sessionService.createTempSession(ctx.uid);
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 withReplay(ctx, () -> {

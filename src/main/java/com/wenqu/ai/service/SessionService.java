@@ -46,6 +46,19 @@ public class SessionService {
 
     private static final String KEY_PREFIX = "ai-doc:session:";
 
+    /** 会话种类：用户发起的对话（默认值，进会话列表） */
+    public static final String KIND_CHAT = "chat";
+    /**
+     * 会话种类：平台内部临时会话——子智能体分支（{@code consultAgent}）与工作流的子智能体节点
+     * 各要跑一整轮问答，需要一个独立 sessionId 来占轮次互斥锁、落消息、当沙盒工作区目录名。
+     * <p>它跑在<b>真实用户</b>名下（分支要按调用者的权限检索、产物随后收养进父会话），所以
+     * 只靠"跑完即删"挡不住用户看见它：一支跑几十秒，这期间任何一次列表刷新（切页回聊天页、
+     * 搜索、置顶/删除别的会话）都会把「用户想开发一个智能报表系统…」这种内部提问当成一个新会话
+     * 抬进侧栏，而侧栏整表刷新只在首条消息 done 时发生——那条幽灵会话会一直挂到下次刷新为止，
+     * 点进去还是半条别人的对话。故显式打标，用户侧的查询一律排除。
+     */
+    public static final String KIND_TEMP = "temp";
+
     /**
      * 原子追加：RPUSH 消息 → LTRIM 保留最近 max 条 → 重置 EXPIRE
      */
@@ -69,11 +82,25 @@ public class SessionService {
      * @param userId 归属用户（null/空白归入 anonymous 历史兼容池）
      */
     public String createSession(String userId) {
+        return createSession(userId, KIND_CHAT);
+    }
+
+    /**
+     * 建一条平台内部临时会话（子智能体分支 / 工作流子智能体节点）：跑完即删，且<b>从建出来那一刻
+     * 就不进会话列表</b>——归属仍是真实用户（权限与产物收养要靠它），所以只能靠种类标记区分。
+     * 见 {@link #KIND_TEMP}。
+     */
+    public String createTempSession(String userId) {
+        return createSession(userId, KIND_TEMP);
+    }
+
+    private String createSession(String userId, String kind) {
         String sessionId = UUID.randomUUID().toString().replace("-", "");
         try {
             Session session = new Session();
             session.setId(sessionId);
             session.setUserId(normalizeUser(userId));
+            session.setKind(kind);
             session.setMessageCount(0);
             sessionMapper.insert(session);
         } catch (Exception e) {
@@ -126,11 +153,14 @@ public class SessionService {
 
     /** 取当前用户可复用的空会话（无消息、未置顶；取最近更新的那条）。
      *  <p>P5 起不再看 agent_id：那一列已从"会话锁定的智能体"变成"最近一次作答的智能体"，
-     *  一个还没发过消息的会话本来就没有作答方，用它当"不可复用"的判据是旧锁定语义的残留。 */
+     *  一个还没发过消息的会话本来就没有作答方，用它当"不可复用"的判据是旧锁定语义的残留。
+     *  <p>内部临时会话要排除：它从建出来到首条消息落库之间正是"无消息"的空档，被复用成用户的
+     *  新对话就等于把一条分支会话交到人手上——分支跑完随手一删，用户这一轮就写进了已删会话。 */
     private Session findEmptySession(String uid) {
         LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
         q.eq(Session::getUserId, uid)
                 .eq(Session::getMessageCount, 0)
+                .ne(Session::getKind, KIND_TEMP)
                 .and(w -> w.isNull(Session::getIsPinned).or().ne(Session::getIsPinned, 1))
                 .orderByDesc(Session::getUpdateTime)
                 .last("LIMIT 1");
@@ -279,13 +309,14 @@ public class SessionService {
         return page;
     }
 
-    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）与关键词，供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装） */
+    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）、种类（排除内部临时会话）与关键词，供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装） */
     private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw) {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
         wrapper.and(w -> {
             w.eq(Session::getUserId, uid);
             if (anonPool) w.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
         });
+        wrapper.ne(Session::getKind, KIND_TEMP);
         if (kw != null) {
             String esc = escapeLike(kw);
             wrapper.and(w -> w.like(Session::getTitle, escapeLikeWildcard(kw))
@@ -343,12 +374,14 @@ public class SessionService {
      * 不按 uid 一把列出：访客 uid 是浏览器级的（同一浏览器打开多个分享链接共用一个 uid），
      * 不带 agentId 过滤会把别个智能体的会话标题也暴露出来。
      * 单页取满即止、不做游标——一个访客在某个智能体下的会话数量由手动点击天然有界。
+     * 内部临时会话同样排除：访客那一侧也会咨询其他助手，那条分支的提问不该出现在他的历史里。
      */
     public List<SessionInfo> listSessionsForAgent(String userId, String agentId, int limit) {
         if (agentId == null || agentId.isBlank()) return List.of();
         LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
         q.eq(Session::getUserId, normalizeUser(userId))
                 .eq(Session::getAgentId, agentId)
+                .ne(Session::getKind, KIND_TEMP)
                 .gt(Session::getMessageCount, 0)
                 .orderByDesc(Session::getUpdateTime)
                 .orderByDesc(Session::getId)

@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`       INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    `kind`          VARCHAR(16)  NOT NULL DEFAULT 'chat' COMMENT '会话种类：chat=用户发起的对话（进会话列表）；temp=平台内部临时会话（子智能体分支、工作流子智能体节点各跑一整轮，跑完即删），既不出现在会话列表也不参与「新建对话」的空会话复用',
     PRIMARY KEY (`id`),
     KEY `idx_deleted_update` (`deleted`, `update_time` DESC),
     KEY `idx_user_update` (`user_id`, `deleted`, `update_time` DESC)

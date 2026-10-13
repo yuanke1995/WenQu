@@ -142,7 +142,8 @@ public class SubAgentBranchRuntime {
      * 分支是增强项，一支炸了不能让用户这一轮整个报错。
      * <p>为什么用临时会话：{@code chat()} 的轮级互斥（{@code ChatRunRuntime#tryBeginTurn}，按会话加锁）
      * 借父会话就是父轮自己撞自己的坑（派出去立刻失败）；而分支之间用不同会话天然并行、
-     * 彼此不互斥。临时会话跑完即删（软删可审计），不污染会话列表。
+     * 彼此不互斥。临时会话跑完即删（软删可审计），且建出来就带 temp 种类标记，
+     * 分支在跑的那几十秒里也不会出现在会话列表里（见 {@link SessionService#KIND_TEMP}）。
      */
     public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
                                      boolean guestMode, SseEmitter parentEmitter) {
@@ -171,7 +172,7 @@ public class SubAgentBranchRuntime {
                 }
             });
             try {
-                childSession = sessionService.createSession(req.userId());
+                childSession = sessionService.createTempSession(req.userId());
                 turn.run(ChatCommand.builder()
                         .sessionId(childSession)
                         .question(req.question())
