@@ -8,6 +8,8 @@ import com.wenqu.ai.agent.chat.TurnHandle;
 import com.wenqu.ai.agent.chat.TurnRegistry;
 import com.wenqu.ai.agent.chat.SseClientGoneException;
 import com.wenqu.ai.agent.hitl.HitlDecisionService;
+import com.wenqu.ai.agent.context.RetrievalPipeline;
+import com.wenqu.ai.agent.chat.TurnRecorder;
 import com.wenqu.ai.agent.chat.TurnSourceRegistry;
 import com.wenqu.ai.agent.chat.TurnState;
 import com.wenqu.ai.agent.hitl.HitlDecisionService.PlanDecision;
@@ -70,16 +72,17 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * RAG 问答服务
- * 混合检索（向量+关键词）→ 重排 → 构建上下文（含 [图片N] 位置标记 + 引用来源）
- * → LLM 流式回答，SSE 输出 token/图片/done(含引用与相关推荐)
- * 流式采用 subscribe 异步订阅，前端断开/超时时 dispose 实现停止生成
+ * 问答运行时门面（P6 刀 5d 由 {@code RagService} 更名）：一轮问答从入口到落库的编排都在这里——
+ * 会话互斥与总线开轮、身份/偏好装载、检索范围裁决、上下文装配（{@link RetrievalPipeline}）、
+ * 提示词装配、生成流订阅与工具循环接缝、终态落库（{@link TurnRecorder}）。
+ * 检索执行在 {@code HybridRetrievalService}/{@code RerankService}，轮次活在 {@link ChatRunRuntime}，
+ * 卡片在 {@code HitlDecisionService}——本类只回答「这一轮怎么把资料找出来、答案怎么生成出来」。
  *
  * @author yuanke
  */
 @Slf4j
 @Service
-public class RagService {
+public class ChatService {
 
     /**
      * 智能体/知识库可覆盖的检索参数白名单（只有这些键生效，防止越权改其他配置）；
@@ -230,15 +233,8 @@ public class RagService {
 
     /** 改写结果（实际检索用 query + 命中） */
 
-    /** 引用摘要截断长度 */
-    private static final int SNIPPET_LEN = 80;
 
-    /** 知识块填充的预算保留下限（token）：固定部分（system+问题）吃满预算时，至少留这点空间给首块资料。
-     *  原设置页参数 chat.remainTokenFloor 已退役——装配工程细节易被误解为压缩参数，固定为常量（压缩与其无关） */
-    private static final int REMAIN_TOKEN_FLOOR = 800;
 
-    /** 首块资料超预算硬截断时至少保留的字符数（原 chat.truncateFallbackChars，随设置页一并退役为常量） */
-    private static final int TRUNCATE_FALLBACK_CHARS = 200;
 
     /** <related> 下一步建议条数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
     private String relatedPromptLine() {
@@ -278,30 +274,8 @@ public class RagService {
             - 尽量把一段完整的过程叙述写完再发起工具调用，不要在一句话中间插入工具调用；
             - 全部工具执行完后，在标签外输出完整的正式回答（结论 + 结果摘要 + 必要说明），可直接作为交付内容阅读。
             """;
-    /**
-     * 进程收尾（重启/部署/被容器杀掉）时追加的标记。第三种成因，必须与前两个分开：用户既没按停止、
-     * 连接也没断，是服务本身换了个进程——写成「已停止本轮」会让人以为是自己手滑停的。
-     */
-    private static final String RESTART_SUFFIX = "\n\n> ⏹ 服务在这一轮中途重启，以上为已生成的部分";
-    /**
-     * 整轮失败（模型流抛异常 / 工具失败冒泡）时追加在正文尾部的标注。
-     * 与 TurnState.TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
-     * 工具卡片已经记录了失败原因，这行只交代正文本身的完整性，刷新后仍在。
-     */
-    private static final String STREAM_ERROR_SUFFIX =
-            "\n\n> ⚠️ 本轮回答未能完成，以上为已生成的部分（失败的工具调用记录见下方）";
-    /** 网关 finish_reason=length（输出达长度上限）时的用户可见标注：正文尾部直书，刷新后仍在 */
-    private static final String LENGTH_TRUNCATED_SUFFIX =
-            "\n\n> ⏹ 回答写到长度上限被截断，可让我接着说完，或重新生成";
-    /** 生成量与正文字数严重不符（内容在生成链路里丢失）时的用户可见标注 */
-    private static final String OUTPUT_LOST_SUFFIX =
-            "\n\n> ⚠️ 这次回答不完整，有内容在生成过程中丢失，建议重新生成";
     /** 推荐块条目超过此长度即视为「正文被写进 related」，并回回答而不是剥离丢弃 */
     private static final int RELATED_PROSE_MIN_CHARS = 80;
-    /** 生成量对账门槛：最终轮输出不足此 token 数时不参与对账（短回答的字符/token 比波动太大） */
-    private static final int OUTPUT_LOSS_MIN_TOKENS = 150;
-    /** 生成量对账比例：中文字符/token 实测 0.7~1.4，低于 0.15 才认定有内容丢失（留足误判余量） */
-    private static final double OUTPUT_LOSS_CHAR_PER_TOKEN = 0.15;
 
     private final ChatClient chatClient;
     private final SessionService sessionService;
@@ -351,7 +325,7 @@ public class RagService {
     private final ModelRegistryService modelRegistryService;
     /**
      * M4：工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
-     * {@code WorkflowService → WorkflowEngine → RagService} 已是一条依赖链（子智能体节点复用问答管线），
+     * {@code WorkflowService → WorkflowEngine → ChatService} 已是一条依赖链（子智能体节点复用问答管线），
      * 这里再直接注入就成环（Spring Boot 3 默认禁止循环依赖，启动直接失败）。惰性取用把这个
      * 「只有绑定了工作流的智能体才用得到」的反向依赖推迟到调用时，依赖图保持单向。
      */
@@ -460,6 +434,20 @@ public class RagService {
      */
     private final com.wenqu.ai.agent.context.CitationIntegrityService citations;
 
+    /**
+     * 上下文装配（P6 刀 5b）：@ 引用块前置、子智能体命中并入、相邻块合并、分域相关度门、
+     * 单文档/单库配额、信息增益去冗余、片段截取与图片全局编号，产出参考资料正文与引用表。
+     * 它不回头调问答入口，所以是纯 bean；降级登记经参数里的出口交回本轮（本类不认识状态袋）。
+     */
+    private final com.wenqu.ai.agent.context.RetrievalPipeline retrieval;
+
+    /**
+     * 本轮记录与落库（P6 刀 5c）：工具卡、时间线、用量快照、截断标注、半程正文与计划收尾落库。
+     * 原先这条链在 done 与中断兜底两条路上各写一遍同款 21 个位置参数，少传一位的表现是
+     * 「刷新后某个字段整块消失」——收在这里只剩一个出处。
+     */
+    private final com.wenqu.ai.agent.chat.TurnRecorder recorder;
+
     /** 计划族本轮要用的回call（无本轮状态，只是把本类那四个方法按接口签名摆出来） */
     private final com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks planHooks;
 
@@ -565,7 +553,7 @@ public class RagService {
             String sid = st.sessionId;
             try {
                 if (st.claimTerminal()) {
-                    persistPartialAnswer(st, RESTART_SUFFIX);
+                    recorder.persistPartialAnswer(st, TurnRecorder.RESTART_SUFFIX);
                     saved++;
                 }
                 // 账本同样要留这一笔：事后回看「这一轮为什么只有半程」，不写会以为是自己断的线
@@ -583,7 +571,7 @@ public class RagService {
         if (saved > 0) log.info("[SHUTDOWN] 进程收尾：{} 轮在跑的半程正文已按中断态落库", saved);
     }
 
-    public RagService(ChatClient chatClient,
+    public ChatService(ChatClient chatClient,
                       SessionService sessionService,
                       AppProperties properties,
                       ImageUrlSigner imageUrlSigner,
@@ -627,7 +615,9 @@ public class RagService {
                       com.wenqu.ai.agent.think.DeepThinkService deepThinkService,
                       com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
                       com.wenqu.ai.agent.plan.PlanModeService plan,
-                      com.wenqu.ai.agent.context.CitationIntegrityService citations) {
+                      com.wenqu.ai.agent.context.CitationIntegrityService citations,
+                      com.wenqu.ai.agent.context.RetrievalPipeline retrieval,
+                      com.wenqu.ai.agent.chat.TurnRecorder recorder) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -674,6 +664,8 @@ public class RagService {
         this.chatflow = chatflow;
         this.plan = plan;
         this.citations = citations;
+        this.retrieval = retrieval;
+        this.recorder = recorder;
         this.planHooks = new com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks() {
             @Override
             public java.util.List<org.springframework.ai.tool.ToolCallback> mountTools(
@@ -683,27 +675,24 @@ public class RagService {
 
             @Override
             public boolean todoExposed(com.wenqu.ai.model.Agent agent, TurnState st) {
-                return RagService.this.todoExposed(st.guestMode, agent, st.branchTurn);
+                return ChatService.this.todoExposed(st.guestMode, agent, st.branchTurn);
             }
 
             @Override
             public void recordToolStatus(TurnState st, String name, String input, String status,
                                          String resultOrError, long elapsedMs, int attempts, boolean denied) {
-                RagService.this.recordToolStatus(st, name, input, status, resultOrError, elapsedMs, attempts, denied);
+                // 工具卡与时间线的记录只有一处实现，在 TurnRecorder（计划前的澄清卡走的就是这条管道）
+                recorder.recordToolStatus(st, name, input, status, resultOrError, elapsedMs, attempts, denied);
             }
 
             @Override
             public String askUser(TurnState st, java.util.List<BuiltinTools.AskQuestion> questions) {
-                return RagService.this.doAskUserMulti(st, questions);
+                return ChatService.this.doAskUserMulti(st, questions);
             }
         };
-        // 本轮状态的依赖清单：必须在上面全部赋值之后再建（它要引用这些服务）
-        this.turnDeps = new TurnState.Deps(chatRunBus, new TurnState.TurnRuntime() {
-            @Override
-            public void persistPartial(TurnState st, String tailMarker) {
-                persistPartialAnswer(st, tailMarker);
-            }
-        });
+        // 本轮状态的依赖清单：必须在上面全部赋值之后再建（它要引用这些服务）。
+        // 刀 5c 之后它只剩两件事：问总线「本轮还有观众吗」+ 半程正文落库（交方法引用，那层 TurnRuntime 动作接口退场）
+        this.turnDeps = new TurnState.Deps(chatRunBus, recorder::persistPartialAnswer);
     }
 
     /**
@@ -971,7 +960,7 @@ public class RagService {
         //   kb  → 本轮检索收窄到被引库，不跑无关库、不让无关块挤占上下文名额；
         //   doc → 该文档的块不经检索直接前置进上下文（用户认为它相关，不该被相关性门/排序挡掉），
         //         检索范围同时收窄到这些文档所属库（否则无关库的块会与之竞争名额）。
-        final MentionScope mentionScope = MentionScope.of(mentions);
+        final RetrievalPipeline.MentionScope mentionScope = RetrievalPipeline.MentionScope.of(mentions);
         if (mentionScope != null) {
             Set<String> mentionKbs = new LinkedHashSet<>(mentionScope.kbIds());
             mentionKbs.addAll(mentionScope.docKbIds());
@@ -1147,7 +1136,8 @@ public class RagService {
                 log.info("[AGENT] 智能体 {} 不使用知识库，跳过检索链路", agent.getId());
                 // 该分支不检索，但用户手动 @ 的文档仍按「手动指定优先」取块前置
                 // （方法注释里承诺已久的语义，此前只有注释没有实现）
-                String mentionText = buildMentionText(loadMentionChunks(mentionScope, degradations, degradedCodes));
+                String mentionText = retrieval.buildMentionText(retrieval.loadMentionChunks(mentionScope,
+                        (code, msg) -> runtime.addDegradation(degradations, degradedCodes, code, msg)));
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
@@ -1266,7 +1256,7 @@ public class RagService {
                     }
                     // 与普通路径一致：命中数在重排区间内时重排（多路合并后同样重排，保持两路行为一致）
                     hits = rerankIfNeeded(hits, rankQuery, degradations, degradedCodes);
-                    hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
+                    hits = retrieval.applyScope(hits, scopeDocIds); // 智能体知识库范围约束
                     log.info("[DEEP-THINK] 检索计划: refined={}, subQueries={}, thinkTerms={}, hits={}",
                             dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
                 } else {
@@ -1293,7 +1283,7 @@ public class RagService {
                     // 的重复计费/重复延迟（second rank 结果不变）
                     hits = rerankIfNeeded(hits, retrievalQuery, degradations, degradedCodes);
                 }
-                hits = applyScope(hits, scopeDocIds); // 智能体知识库范围约束
+                hits = retrieval.applyScope(hits, scopeDocIds); // 智能体知识库范围约束
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
             if (retrievalDiag.isVectorFailed()) {
@@ -1519,7 +1509,8 @@ public class RagService {
             int partOtherEnd = system.length();
 
             // 3. 预算先行：历史装配与知识块填充共用同一预算（历史按压缩阈值占一部分，其余留给检索资料）
-            CtxBudget ctxBudget = resolveContextBudget(resolvedModel, requestedContextWindow, degradations, degradedCodes);
+            var ctxBudget = retrieval.resolveContextBudget(resolvedModel, requestedContextWindow,
+                    (code, msg) -> runtime.addDegradation(degradations, degradedCodes, code, msg));
             int budget = ctxBudget.budget();
 
             // 4. 对话历史：预算驱动全量带入——近期原样 + 更早轮次滚动摘要（替代旧的「按轮数 + 单条截断」）
@@ -1556,315 +1547,23 @@ public class RagService {
                         + "但最终回答必须以下方参考资料为准：\n").append(thinkingInject);
             }
 
-            // 5. 价值驱动填充：预算已在上方解析；减去 system/问题固定部分后，按相关度累积填充知识块。
-            // 保留下限是装配工程细节（平台常量，不进设置页）：保证固定部分吃满预算时至少还有一小段空间
-            // 给首块资料（截断兜底），与历史压缩无关——压缩由 assembleHistory 按 budget×compressRatio 触发
-            int fixedTokens = TokenCounter.estimate(system.toString()) + TokenCounter.estimate(userQuestion.toString());
-            int remainTokens = Math.max(REMAIN_TOKEN_FLOOR, budget - fixedTokens);
-
-            Map<Integer, String> imgIndex = new LinkedHashMap<>();
-            // 全局图片编号 → 描述（图片相关性校验用：LLM 输出标记后逐图比对）
-            Map<Integer, String> imgDescIndex = new HashMap<>();
-            StringBuilder context = new StringBuilder();
-            List<Map<String, Object>> sources = new ArrayList<>();
-            int docNo = 1;
-            int usedTokens = 0;
-            List<String> retrievalTerms = keywordExtractor.extract(retrievalQuery);
-            int maxContextHits = configService.getInt("context.maxContextHits");
-            int snippetWindow = configService.getInt("context.snippetWindowChars");
-            // 引用扩散 + 结构上下文扩展：命中 A → 带出被引块 B / 引用块 C（默认关）/ 父章节块。
-            // 扩散块以 Hit 形态混入同一上下文循环，复用图片占位/截取/预算逻辑；任一环节失败降级为不扩散
-            // （subOutcome 在检索阶段就已产出：子代理命中并入 mainHits、要点注入 system）
-            List<HybridRetrievalService.Hit> mainHits = new ArrayList<>();
-            Set<String> seenKid = new HashSet<>();
-            // @ 引用的文档块优先级最高（用户显式指定）：不经检索直接置于最前，并在填充段跳过
-            // 相关性门与信息增益去冗余（显式指定 = 强相关，不该被算法判掉——否则用户看到的行为就是"@ 没用"）
-            Set<String> mentionKids = new HashSet<>();
-            for (Knowledge k : loadMentionChunks(mentionScope, degradations, degradedCodes)) {
-                if (k.getId() == null || !seenKid.add(k.getId())) continue;
-                mentionKids.add(k.getId());
-                List<String> kImgs = List.of();
-                try {
-                    if (k.getImages() != null && !k.getImages().isBlank()) {
-                        kImgs = JSON.parseArray(k.getImages(), String.class);
-                    }
-                } catch (Exception ignored) {
-                    // 图片解析失败不影响文本入上下文（图片是增强项）
-                }
-                mainHits.add(new HybridRetrievalService.Hit(k.getId(), k.getDocId(), k.getTitle(), k.getContent(),
-                        kImgs, 1.0, k.getChunkIndex(), k.getTitlePath(), null));
-            }
-            // 子代理命中优先级仅次于检索命中（针对性视角检索，价值高于部分普通召回）；同样受智能体知识库范围约束。
-            // 分支检索不重排（只带融合分）：不补重排直接并入，会以「无重排分」身份走融合门（minFusionScore，
-            // 默认 0.5）入场，绕过主链路 0.6 重排门（修复前无关块即由此混进上下文与引用来源）——
-            // 与主链路同 query 小批量强制重排（≤6 块低于 minHits 窗口，rank() 会整批跳过，须走 rankForced），
-            // 让子代理块与主链路块同分域、同门槛；重排不可用时原样并入（与主链路「重排不可用」同语义，走融合门）
-            if (subOutcome != null && !subOutcome.hits().isEmpty()) {
-                List<HybridRetrievalService.Hit> subHits = subOutcome.hits();
-                if (rerankService.debugUnavailableReason() == null) {
-                    subHits = rerankService.rankForced(new ArrayList<>(subHits), retrievalQuery);
-                } else {
-                    runtime.addDegradation(degradations, degradedCodes, "rerankUnavailable",
-                            "重排不可用，子代理命中按融合分参与填充");
-                }
-                for (HybridRetrievalService.Hit h : subHits) {
-                    if (h.knowledgeId() != null && seenKid.add(h.knowledgeId())
-                            && (scopeDocIds == null || (h.docId() != null && scopeDocIds.contains(h.docId())))) {
-                        mainHits.add(h);
-                    }
-                }
-            }
-            for (HybridRetrievalService.Hit h : hits) {
-                // 子代理块与检索命中重复时只保留前置位置（避免同一块在上下文出现两次、重复占号）
-                if (h.knowledgeId() == null || seenKid.add(h.knowledgeId())) mainHits.add(h);
-            }
-            // 相邻块合并（进上下文前的组装策略，不改检索结果本身）：同文档 chunk 序号连续的命中块
-            // 拼成一块再填充——切块常把一段完整流程切成相邻几片，逐块独立既碎片化又互相挤名额；
-            // 合并后一块讲完整个流程，引用编号也更省。@ 引用块不参与（保持"显式指定优先展示"语义）。
-            Set<String> adjacentMergedKids = new HashSet<>();
-            if (configService.getBoolean("context.adjacentMergeEnabled")) {
-                List<HybridRetrievalService.Hit> mergedList = mergeAdjacentHits(mainHits, mentionKids,
-                        Math.max(2, configService.getInt("context.adjacentMergeMaxChunks", 3)));
-                if (mergedList != mainHits) {
-                    // 合并块豁免片段截取（见填充循环）：相邻块是连续流程，150 字窗口恰好把完整性切没；
-                    // 长度由 token 预算兜底（超预算 break / 截断，见预算控制段）
-                    for (HybridRetrievalService.Hit h : mergedList) {
-                        if (!mentionKids.contains(h.knowledgeId())) adjacentMergedKids.add(h.knowledgeId());
-                    }
-                    log.debug("[CTX] 相邻块合并: {} 块 → {} 块", mainHits.size(), mergedList.size());
-                    mainHits = mergedList;
-                }
-            }
-            // 关联块扩散已移除（对齐精简检索链路）：只使用主检索命中，不做引用关系扩散与父章节带出
-            Map<String, String> refOrigins = new HashMap<>();
-            List<HybridRetrievalService.Hit> allHits = new ArrayList<>(mainHits);
-            int maxExtraHits = 0;
-            int maxExtraTokens = 0;
-            int extraUsed = 0;
-            int extraTokensUsed = 0;
-            // 批量预取引用文件名（原始命中 + 扩散块都可能有引用展示；冷缓存时一次 selectBatchIds）
-            Set<String> refDocIds = allHits.stream().map(HybridRetrievalService.Hit::docId)
-                    .filter(d -> d != null && !d.isBlank())
-                    .collect(Collectors.toSet());
-            Map<String, String> fileNameMap = documentMetaCache.getFileNames(refDocIds);
-
-            // 信息增益去冗余（MMR 轻量版）：候选块与已选块词元重叠过高 → 视为同一信息的重复切片，跳过。
-            // 同一操作被切成多块时，重复块一起进上下文既浪费预算，又让模型在不同表述间自相矛盾。
-            // 章节路径相同的块是同一章节相邻切片（高概率讲同一内容），重叠阈值放更低更易剪。
-            // 仅影响问答上下文填充，不改检索结果本身（评估/调试面板看到的是原始召回）。
-            boolean dedupEnabled = configService.getBoolean("context.dedupEnabled");
-            double dedupThreshold = configService.getDouble("context.dedupThreshold", 0.45);
-            double dedupPathThreshold = configService.getDouble("context.dedupPathThreshold", 0.28);
-            // 最低相关分门（对齐 Dify/Coze 的 Score 阈值标配）——<b>分域双门</b>：排序分有两个来源域，
-            // 数值分布完全不同，一个绝对门不可能同时对两者成立：
-            //   ① rerank 分（0~1 相关性分，重排开启且命中数在重排区间时）→ 门 = retrieval.minContextScore（默认 0.6）；
-            //   ② 加权融合分（vectorWeight×vecNorm + keywordWeight×hitRate；评测基线：期望块中位 0.745、无关块中位 0.469）
-            //      → 门 = retrieval.minFusionScore（默认 0.5，拦跨域词面弱相关块；0.25 旧值对无关块拦截率不足 18%）。
-            // 不分域的后果（修复前实测）：rerank 服务不可用或关闭时，全部融合分低于 0.6 → 上下文被门清空，
-            // 检索"看似无结果"。0 = 关闭对应域的门。调值前先看检索调试面板的实际分数分布（两个域分开看）；
-            // 跳过不占 docNo/extra 配额（与去冗余同语义）。
-            // 另有单侧约束：重排本轮实际执行过（存在重排分）时，未重排的候选不得借融合门入场（见下方门代码）——
-            // 否则"重排判定无相关资料"会被融合序尾部的词面噪声推翻。
-            double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-            double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
-            // 单文档块数配额（0=不限制）：docId → 已进上下文的块数
-            int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
-            Map<String, Integer> docBlockCount = new HashMap<>();
-            // 每库配额（P5 解绑后的配套件）：主检索不再被智能体绑定的库限住，一轮可能同时面对十几个库。
-            // 没有这一条，块数最多、词面最泛的那个库会把上下文名额占满——症状从"别的库查不到"变成
-            // "别的库查到了但挤不进来"，一样是跨主题答不好，而且更难归因。0=不限制。
-            int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 4);
-            Map<String, Integer> kbBlockCount = new HashMap<>();
-            Map<String, String> hitKbIds = maxBlocksPerKb > 0
-                    ? documentMetaCache.getKbIds(allHits.stream().map(HybridRetrievalService.Hit::docId)
-                    .filter(d -> d != null && !d.isBlank()).collect(Collectors.toSet()))
-                    : Map.of();
-            List<Set<String>> selectedTermSets = new ArrayList<>();
-            List<String> selectedPaths = new ArrayList<>();
-            for (int hi = 0; hi < allHits.size(); hi++) {
-                HybridRetrievalService.Hit hit = allHits.get(hi);
-                boolean isExtra = hi >= mainHits.size();
-                if (isExtra) {
-                    // 扩散块是可舍弃的增强：数量/token 双上限，超限直接跳过（不做首块硬截断）
-                    if (extraUsed >= maxExtraHits || extraTokensUsed >= maxExtraTokens) break;
-                } else {
-                    if (docNo > maxContextHits) break;
-                }
-                // 最低相关分门：排序分（重排分??融合分，与填充顺序同口径）低于阈值的块不进上下文/引用，不占名额
-                // @ 引用块（用户显式指定）豁免门与去冗余：用户说它相关，算法没有否决权
-                boolean mentioned = hit.knowledgeId() != null && mentionKids.contains(hit.knowledgeId());
-                // 单文档配额：同一文档最多进 maxBlocksPerDoc 块（0=不限制）——一个文档讲不清的问题才需要
-                // 多来源；单文档刷屏挤掉的正是「其它文档的视角」。@ 引用块豁免（显式指定不受算法约束）。
-                if (!mentioned && maxBlocksPerDoc > 0 && hit.docId() != null && !hit.docId().isBlank()
-                        && docBlockCount.merge(hit.docId(), 1, Integer::sum) > maxBlocksPerDoc) {
-                    log.debug("[CTX] 单文档配额跳过: docId={} kid={} title={}",
-                            hit.docId(), hit.knowledgeId(), hit.title());
-                    continue;
-                }
-                // 单库配额：同一知识库最多进 maxBlocksPerKb 块。@ 引用块豁免（用户显式指定优先于算法配额）；
-                // 库取不到（缓存回源失败/文档已删）时放行——配额是防挤占的，不该让一次查库失败吃掉资料。
-                if (!mentioned && maxBlocksPerKb > 0 && hit.docId() != null) {
-                    String hitKbId = hitKbIds.get(hit.docId());
-                    if (hitKbId != null && kbBlockCount.merge(hitKbId, 1, Integer::sum) > maxBlocksPerKb) {
-                        log.debug("[CTX] 单库配额跳过: kbId={} kid={} title={}",
-                                hitKbId, hit.knowledgeId(), hit.title());
-                        continue;
-                    }
-                }
-                // 重排已实际执行 → 相关性结论以重排分为准：未被重排的候选（超出重排区间的主链路尾部）
-                // 不得改走更低的融合门入场，否则「重排判定无相关资料」会被尾部词面噪声推翻
-                // （修复前无关块即以此侧门混进上下文/引用来源）。重排未执行（关闭/不可用）时维持原融合门语义。
-                if (!mentioned && rerankActive && hit.rerankScore() == null) {
-                    log.debug("[CTX] 重排已执行，未重排块不走融合门跳过: kid={} title={} score={}",
-                            hit.knowledgeId(), hit.title(), hit.score());
-                    continue;
-                }
-                double rankScore = hit.rerankScore() != null ? hit.rerankScore() : hit.score();
-                // 分域取门：rerank 分走 minContextScore，融合分走 minFusionScore（两域分布不同，见上方说明）
-                double gate = hit.rerankScore() != null ? minRerankGate : minFusionGate;
-                if (!mentioned && gate > 0 && rankScore < gate) {
-                    log.debug("[CTX] 低于最低相关分跳过: kid={} title={} rankScore={} gate={} (rerank={} score={})",
-                            hit.knowledgeId(), hit.title(), rankScore, gate, hit.rerankScore(), hit.score());
-                    continue;
-                }
-                // 信息增益去冗余：与已选块语义重叠过高则跳过（不占 docNo/extra 配额，只是不再进上下文）
-                if (!mentioned && dedupEnabled && !selectedTermSets.isEmpty()
-                        && isRedundantHit(hit, selectedTermSets, selectedPaths, dedupThreshold, dedupPathThreshold)) {
-                    log.debug("[CTX] 信息增益去冗余跳过: kid={} title={}", hit.knowledgeId(), hit.title());
-                    continue;
-                }
-                String text = hit.content();
-                List<String> urls = hit.images();
-
-                // 将正文中的 [图片] / [图片：xxx] 替换为全局编号 [图片N]，保留描述。
-                // 预筛（生成时即避免错配）：与本次检索问题相关性不足的图不编号（替换为裸 [图片]，LLM 不可引用），
-                // 避免"先输出后剔除"导致图闪一下再消失；图片仍留在 sources.images 供引用弹窗查看。
-                boolean imgPrefilter = retrievalQuery != null && retrievalQuery.length() >= 2;
-                int imgIdxForChunk = 0;
-                Matcher matcher = TurnState.IMG_PLACEHOLDER_PATTERN.matcher(text);
-                StringBuffer sb = new StringBuffer();
-                while (matcher.find()) {
-                    if (imgIdxForChunk < urls.size()) {
-                        String raw = matcher.group();
-                        String desc = "";
-                        int colonIdx = raw.indexOf("：");
-                        if (colonIdx >= 0 && raw.length() > colonIdx + 2) {
-                            desc = raw.substring(colonIdx + 1, raw.length() - 1).trim();
-                        }
-                        // 与问题无关的图（描述与检索 query 无共同主题词）→ 不编号
-                        if (imgPrefilter && !desc.isEmpty()
-                                && !imageFilterService.relevant(retrievalQuery, desc, 1)) {
-                            log.debug("[IMG-PRE] 与问题相关性不足，图不编号（{}）: {}", imgIdxForChunk,
-                                    desc.length() > 24 ? desc.substring(0, 24) + "…" : desc);
-                            matcher.appendReplacement(sb, Matcher.quoteReplacement("[图片]"));
-                            imgIdxForChunk++;
-                            continue;
-                        }
-                        int globalSeq = imgIndex.size() + 1;
-                        imgIndex.put(globalSeq, urls.get(imgIdxForChunk));
-                        String replacement = desc.isEmpty()
-                                ? "[图片" + globalSeq + "]"
-                                : "[图片" + globalSeq + "：" + desc + "]";
-                        matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
-                        imgDescIndex.put(globalSeq, desc);
-                        imgIdxForChunk++;
-                    } else {
-                        matcher.appendReplacement(sb, matcher.group());
-                    }
-                }
-                matcher.appendTail(sb);
-                text = sb.toString();
-
-                // 块内片段截取：按检索词元定位命中位置，取 ±窗口（省 token 保精度；未命中则整块）。
-                // 相邻合并块豁免：多段拼接的完整流程被窗口截回第一段附近，合并就白做了——
-                // 长度由预算控制兜底（超预算 break/截断），信息量不低于"3 块各截 150 字"的旧形态。
-                String fullTextForImg = text; // 截取前的完整文本（占位已替换为 [图片N：desc]）
-                if (snippetWindow > 0 && !adjacentMergedKids.contains(hit.knowledgeId())) {
-                    text = extractHitSnippet(fullTextForImg, retrievalTerms, snippetWindow);
-                    // 片段截取会丢掉窗口外的 [图片N：描述] 占位 → LLM 看不到图、漏配图。
-                    // 把片段里没有的图片占位（描述截断到 60 字符）追加到片段末尾，保证 LLM 有完整配图依据
-                    List<String> cutImgs = new ArrayList<>();
-                    Matcher im = TurnState.IMG_NUMBER_PATTERN.matcher(fullTextForImg);
-                    while (im.find()) {
-                        String g = im.group();
-                        if (!text.contains(g)) {
-                            cutImgs.add(g.length() > 60 ? g.substring(0, 60) + "]" : g);
-                        }
-                    }
-                    if (!cutImgs.isEmpty()) {
-                        text = text + "\n（本块其他截图：" + String.join(" ", cutImgs) + "）";
-                    }
-                }
-
-                // 章节路径前置：入库只存净正文，路径在检索时拼入上下文（供 LLM 理解内容出处）。
-                // 放在片段截取之后，保证路径不被窗口截掉、也不占窗口预算。
-                if (hit.titlePath() != null && !hit.titlePath().isBlank()) {
-                    text = "【上下文】" + hit.titlePath() + "\n\n" + text;
-                }
-
-                // 预算控制：累积填充；除第一块外超预算即停止；第一块超预算则截断兜底（保证至少 1 块）
-                int tokens = TokenCounter.estimate(text);
-                if (docNo > 1 && usedTokens + tokens > remainTokens) {
-                    log.debug("[CTX] 预算用尽停止填充: used={}/{} token, 已塞 {} 块", usedTokens, remainTokens, docNo - 1);
-                    break;
-                }
-                if (usedTokens + tokens > remainTokens) {
-                    // M5 fail-loud：首块超预算被硬截断（高相关块信息可能丢失），不再只记 debug
-                    runtime.addDegradation(degradations, degradedCodes, "contextTruncated",
-                            "资料内容较长，仅截取部分，细节可能缺失");
-                    text = truncateChars(text, Math.max(TRUNCATE_FALLBACK_CHARS, remainTokens - usedTokens));
-                    tokens = TokenCounter.estimate(text);
-                }
-
-                // 引用来源（ref 与上下文编号对应，回答中 [1] 即可溯源）
-                Map<String, Object> src = new LinkedHashMap<>();
-                src.put("ref", docNo);
-                // 来源出处：MENTION=用户 @ 显式引用（前端标注「你引用的」）；RETRIEVAL=常规检索命中
-                src.put("origin", mentioned ? "MENTION" : "RETRIEVAL");
-                src.put("knowledgeId", hit.knowledgeId());
-                src.put("docId", hit.docId());
-                src.put("fileName", fileNameMap.get(hit.docId()));
-                src.put("title", hit.title());
-                src.put("snippet", snippet(text)); // 用截取后的片段做溯源摘要（更贴近命中内容）
-                src.put("images", hit.images()); // 关联文档截图（原始URL，前端经 /proxy 访问）
-                // 相关度：score=检索融合分（恒有）；rerankScore=重排模型相关度（重排实际执行才有），
-                // 3 位小数仅为展示整洁，数据本身真实
-                src.put("score", Math.round(hit.score() * 1000) / 1000.0);
-                if (hit.rerankScore() != null) {
-                    src.put("rerankScore", Math.round(hit.rerankScore() * 1000) / 1000.0);
-                }
-                // 扩散块来源标注：REF_OUT（被引用）/ REF_IN（引用者）/ PARENT（父章节上下文），前端引用弹窗可区分
-                String refOrigin = refOrigins.get(hit.knowledgeId());
-                if (refOrigin != null) src.put("origin", refOrigin);
-                sources.add(src);
-
-                context.append("[").append(docNo++).append("] ").append(text).append("\n");
-                usedTokens += tokens;
-                if (isExtra) {
-                    extraUsed++;
-                    extraTokensUsed += tokens;
-                }
-                // 记录已选块特征（词元集合 + 章节路径），供后续候选去冗余判定
-                String featureSrc = (hit.title() == null ? "" : hit.title()) + " "
-                        + (hit.content() == null ? "" : hit.content());
-                if (featureSrc.length() > 400) featureSrc = featureSrc.substring(0, 400);
-                Set<String> terms = new HashSet<>(keywordExtractor.extract(featureSrc));
-                if (!terms.isEmpty()) {
-                    selectedTermSets.add(terms);
-                    if (hit.titlePath() != null && !hit.titlePath().isBlank()) {
-                        selectedPaths.add(hit.titlePath());
-                    }
-                }
-
-                // 图片数量多于正文占位时，剩余补在末尾
-                for (int i = imgIdxForChunk; i < urls.size(); i++) {
-                    int globalSeq = imgIndex.size() + 1;
-                    imgIndex.put(globalSeq, urls.get(i));
-                    imgDescIndex.put(globalSeq, "");
-                    context.append("[图片").append(globalSeq).append("]\n");
-                }
-            }
-            log.info("[CTX] 上下文填充 {} 块（含扩散 {}）, 总用 {} / 预算 {} token", docNo - 1, extraUsed, usedTokens + fixedTokens, budget);
+            // 5. 价值驱动填充（P6 刀 5b 收进 RetrievalPipeline）：减去 system/问题固定部分后按相关度累积填充知识块。
+            //   候选合并、相邻块合并、分域相关度门、单文档/单库配额、信息增益去冗余、片段截取、
+            //   图片占位换全局编号都在它那边；这边拿走结果，继续回填分支编号、发 retrieved/image 事件、建本轮状态
+            var ctx = retrieval.assemble(new RetrievalPipeline.Request(
+                    retrievalQuery, hits, subOutcome == null ? List.of() : subOutcome.hits(),
+                    mentionScope, scopeDocIds, rerankActive, budget,
+                    system.toString(), userQuestion.toString(),
+                    (code, msg) -> runtime.addDegradation(degradations, degradedCodes, code, msg)));
+            StringBuilder context = new StringBuilder(ctx.context());
+            List<Map<String, Object>> sources = ctx.sources();
+            Map<Integer, String> imgIndex = ctx.imgIndex();
+            Map<Integer, String> imgDescIndex = ctx.imgDescIndex();
+            Map<String, String> fileNameMap = ctx.fileNames();
+            // 主链路填充块数（done 的「参考 N 段资料」按它，不是 sources.size()：回报回填还会往引用表追加）
+            int docNo = ctx.hitsUsed() + 1;
+            int usedTokens = ctx.usedTokens();
+            int fixedTokens = ctx.fixedTokens();
             // 检索 + 重排 + 上下文填充全部完成（生成前的最后一个阶段）
             stageMs.put("retrieve", System.currentTimeMillis() - startTime);
 
@@ -1992,10 +1691,10 @@ public class RagService {
                     // 两者都要补标准 done 收尾——SSE 读循环「流关闭且无 done」会按『连接被提前关闭』误报中断错；
                     // 收尾轮没有流式回答可挂计划卡：先补落一条收尾助手消息（含 plan 快照，刷新后卡不丢）
                     if (st.planSuperseded) {
-                        persistPlanSuperseded(st);
+                        recorder.persistPlanSuperseded(st);
                         runtime.sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
                     } else {
-                        persistPlanRejected(st);
+                        recorder.persistPlanRejected(st);
                         runtime.sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
                     }
                     Map<String, Object> cancelled = new LinkedHashMap<>();
@@ -2379,7 +2078,7 @@ public class RagService {
                     if (SandboxTools.STREAMING_TOOL_NAME.equals(inv.toolName()) || runCode) {
                         m.put(SandboxTools.CTX_OUTPUT_SINK,
                                 (java.util.function.Consumer<String>) delta ->
-                                        recordToolOutput(st, inv.toolName(), delta));
+                                        recorder.recordToolOutput(st, inv.toolName(), delta));
                     }
                     // 基础设施故障信箱对全部沙盒工具注入：沙盒不可用时工具不抛异常（抛出会掐断整轮流、
                     // 连带已生成正文与全部工具记录一起落空），而是把失败文本回给模型 + 经此信箱上报，
@@ -2477,13 +2176,13 @@ public class RagService {
             @Override
             public void observe(ToolInvocation inv, String status, String resultOrError) {
                 boolean starting = "start".equals(status);
-                recordToolStatus(st, inv.toolName(), inv.arguments(), status, resultOrError,
+                recorder.recordToolStatus(st, inv.toolName(), inv.arguments(), status, resultOrError,
                         starting ? 0 : inv.elapsedMillis(), starting ? 1 : inv.attempts(), inv.denied());
             }
 
             @Override
             public void onOutput(ToolInvocation inv, String delta) {
-                recordToolOutput(st, inv.toolName(), delta);
+                recorder.recordToolOutput(st, inv.toolName(), delta);
             }
 
             @Override
@@ -2532,7 +2231,7 @@ public class RagService {
             req.put("tool", name);
             // 中文名来自注册中心：审批卡上写「execute」用户看不懂，而前端那份手抄映射对 MCP 动态
             // 工具和无声明工具一律失效，下发之后前端只兜底、不再是唯一来源
-            putToolDisplayName(req, name);
+            toolRegistry.putDisplayFields(req, name);   // 中文名取注册中心，与工具卡同源（见 TurnRecorder）
             String args = toolInput == null ? "" : toolInput;
             req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
             req.put("timeoutMs", timeoutMs);
@@ -2565,10 +2264,6 @@ public class RagService {
         }
     }
 
-    /** 工具展示名下发：卡片名与悬停说明都取注册中心，未知工具（MCP 动态名）不下发空字段，前端用自己那份兜底 */
-    private void putToolDisplayName(Map<String, Object> payload, String name) {
-        toolRegistry.putDisplayFields(payload, name);
-    }
 
     // ==================== 工具执行心跳 ====================
 
@@ -2642,505 +2337,25 @@ public class RagService {
         throw last;
     }
 
-    /** 工具入参/结果分级截断：SSE 实时只发 200 字摘要（防超长工具 I/O 撑爆 SSE 帧与实时渲染） */
-    private static final int TOOL_IO_SSE_BRIEF = 200;
-    /** 终态记录（done 汇总 + 随消息持久化）保存的全文上限：前端工具卡片展开查看完整入参/输出 */
-    private static final int TOOL_IO_MAX = 8 * 1024;
-    /** 原文已外溢成功时挂在预览尾部的说明（前端据此显示「查看完整输出」，这句只兜住展开前的一眼） */
-    private static final String SPILL_SUFFIX = "\n\n…（以上为预览，完整输出可点卡片下方「查看完整输出」读回）";
-
-    /** 取出工具侧上报的外溢标识（按工具名匹配最早那条未消费的；没有返回 null） */
-    private static String takeToolSpill(TurnState st, String name) {
-        for (java.util.Iterator<String> it = st.toolSpills.iterator(); it.hasNext(); ) {
-            String e = it.next();
-            int bar = e.indexOf('|');
-            if (bar > 0 && name.equals(e.substring(0, bar))) {
-                it.remove();
-                return e.substring(bar + 1);
-            }
-        }
-        return null;
-    }
-
-    /** 超出展示上限<b>又没能留住原文</b>（外溢开关关闭或落盘失败）时的实话：说清楚少了多少，别装作完整 */
-    private static String spillNote(String text) {
-        if (text == null || text.length() <= TOOL_IO_MAX) return "";
-        return "\n\n…（其余 " + (text.length() - TOOL_IO_MAX) + " 字未显示，且原文未能留存，请缩小范围重跑）";
-    }
-
-    /**
-     * 哪些工具的 SSE 实时副本必须带完整入参/结果（不受 {@link #TOOL_IO_SSE_BRIEF} 截断）。
-     *
-     * <p>截断对这些工具不是「摘要」而是「破坏」：前端要 JSON.parse 出来才能渲染，
-     * 砍一刀后解析必然失败，于是卡片只剩半截。askUser 尤其致命——多问题的入参
-     * （questions 数组）动辄 600+ 字符，200 字截断后既丢问题、又把答案的 JSON
-     * 数组当纯文本原样打印，且**刷新后走8KB 全文又正常**，看起来像随机故障。
-     */
-    private static boolean needsFullToolIO(String name) {
-        return "askUser".equals(name);
-    }
-
-    private static String truncBrief(String s, int max) {
-        return s == null ? "" : s.substring(0, Math.min(max, s.length()));
-    }
-
-    /** 工具实时输出增量：SSE tool_output 事件（前端在运行中的工具卡片里实时滚动）。不落库——
-     *  完整输出随 done 汇总的 result 走持久化；本事件仅服务执行期的"看着它跑"。 */
-    private void recordToolOutput(TurnState st, String toolName, String delta) {
-        if (delta == null || delta.isEmpty()) {
-            return;
-        }
-        String brief = delta.length() > 4096 ? delta.substring(0, 4096) : delta; // 单片上限，防异常大块撑爆 SSE 帧
-        Map<String, Object> rec = new LinkedHashMap<>();
-        rec.put("name", toolName);
-        rec.put("delta", brief);
-        String payload = JSON.toJSONString(rec);
-        // 总线优先：接流的观众也要看着工具卡片转圈与实时输出滚动（快照给不了「正在跑」这一条）
-        if (!chatRunBus.publishRaw(st.channel.emitter, "tool_output", payload, st.sessionId)) {
-            try {
-                st.channel.emitter.send(SseEmitter.event().name("tool_output")
-                        .data("{\"type\":\"tool_output\",\"content\":" + payload
-                                + ",\"sessionId\":\"" + st.sessionId + "\"}"));
-            } catch (Exception e) {
-                log.debug("[TOOL-OUTPUT] SSE 下发失败（客户端可能已断开）: {}", e.getMessage());
-            }
-        }
-    }
-
-    /**
-     * 把锚点到 pos 之间的正文记为一个文本段（无新增正文则忽略）。工具/产物插入时间线前调用，
-     * 使「正文 → 工具 → 正文」的交错顺序可被记录（只存区间，不复制正文）。
-     */
-    private void flushTimelineText(TurnState st, int pos) {
-        int from = st.timelineAnchor.get();
-        if (pos <= from) return;
-        Map<String, Object> seg = new LinkedHashMap<>();
-        seg.put("kind", "text");
-        seg.put("from", from);
-        seg.put("to", pos);
-        st.timeline.add(seg);
-        st.timelineAnchor.set(pos);
-    }
-
-    /**
-     * 过程时间线成段：锚点到 pos 之间的过程独白记为一个过程段（区间指向 processText，与正文段同构）。
-     * 连续追加时锚点不前移、区间自动延伸；工具/产物插入时先成段再插卡，保持「正文—过程—工具」真实交错。
-     */
-    private void flushTimelineProcess(TurnState st, int pos) {
-        int from = st.processAnchor.get();
-        if (pos <= from) return;
-        synchronized (st.timeline) {
-            // 连续追加合并进末段：过程独白是按 token 增量下发的（routeProcessText 每条都调本方法），
-            // 无条件新建段会把一段独白切成上百个 1~2 字的过程段，done 落库后前端每个碎片各渲染一个
-            // 「执行过程」折叠头。末段仍是过程段且正好接在锚点上（其间没插工具/产物段）时延伸它。
-            // 工具/产物打断时末段已是 tool/artifact 段，此处自然另起新段，交错顺序如实保留。
-            if (!st.timeline.isEmpty()) {
-                Map<String, Object> last = st.timeline.get(st.timeline.size() - 1);
-                if (last != null && "process".equals(last.get("kind")) && toInt(last.get("to")) == from) {
-                    last.put("to", pos);
-                    st.processAnchor.set(pos);
-                    return;
-                }
-            }
-            Map<String, Object> seg = new LinkedHashMap<>();
-            seg.put("kind", "process");
-            seg.put("from", from);
-            seg.put("to", pos);
-            st.timeline.add(seg);
-        }
-        st.processAnchor.set(pos);
-    }
-
-    /**
-     * 过程独白入通道：累积 processResponse、推进时间线过程段、SSE process 实时下发。
-     * 客户端断开只丢实时显示，累积与落库不受影响。
-     */
-    private void routeProcessText(TurnState st, String delta) {
-        if (delta == null || delta.isEmpty()) return;
-        st.processResponse.append(delta);
-        flushTimelineProcess(st, st.processResponse.length());
-        runtime.sendSseEvent(st.channel.emitter, "process", delta, st.sessionId);
-    }
-
-    /** 产物生成时刻：正文成段后插入产物段（下标指向本轮产物清单，与 artifacts 数组同源同序） */
-    private void pushTimelineArtifact(TurnState st, int artifactIndex) {
-        flushTimelineText(st, st.fullResponse.length());
-        flushTimelineProcess(st, st.processResponse.length());
-        Map<String, Object> seg = new LinkedHashMap<>();
-        seg.put("kind", "artifact");
-        seg.put("i", artifactIndex);
-        st.timeline.add(seg);
-    }
-
-    /**
-     * 落库/下发用的时间线快照：补上尾部正文并按最终正文长度夹取。
-     * 引用自检可能删除若干引用标记使最终正文短于流式累积，区间按最终版收敛（不越界）；
-     * 只有「单段覆盖全文」时返回空（与整段渲染等价，不必占一列存储）。
-     */
-    private List<Map<String, Object>> buildTimelineSnapshot(TurnState st, String answer,
-                                                            int toolCount, int artifactCount) {
-        return timelineSnapshot(st, answer == null ? 0 : answer.length(), toolCount, artifactCount, true);
-    }
-
-    /**
-     * 时间线快照。<b>flush 是这个方法的唯一分岔</b>：
-     * <ul>
-     *   <li>{@code true}（终态落库/done）：把锚点之后尚未成段的正文/过程补成段并<b>推进锚点</b>——
-     *       本轮到此结束，锚点没有后续可言；</li>
-     *   <li>{@code false}（断线重连接流）：<b>绝不动锚点</b>。在实时跑着的一轮上推进锚点，等于在接流那一刻
-     *       凭空多切一个文本段，把用户正在看的表格/代码块从中间劈开，而 done 之后又是另一份切法
-     *       （实时视图与刷新视图本应同源）。尾段只在副本上补齐，用于让接流方看到「已经流出的那段正文」。</li>
-     * </ul>
-     */
-    private List<Map<String, Object>> timelineSnapshot(TurnState st, int len,
-                                                       int toolCount, int artifactCount, boolean flush) {
-        int processLen = st.processResponse.length();
-        List<Map<String, Object>> src;
-        synchronized (st.timeline) {
-            src = new ArrayList<>(st.timeline.size() + 2);
-            for (Map<String, Object> seg : st.timeline) {
-                if (seg != null) src.add(new LinkedHashMap<>(seg));
-            }
-        }
-        if (flush) {
-            flushTimelineText(st, len);
-            flushTimelineProcess(st, processLen);
-        } else {
-            appendPendingTimelineTails(st, src, len, processLen);
-        }
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> seg : src) {
-            if (seg == null) continue;
-            Map<String, Object> copy = new LinkedHashMap<>(seg);
-            if ("text".equals(copy.get("kind"))) {
-                int from = Math.min(toInt(copy.get("from")), len);
-                int to = Math.min(toInt(copy.get("to")), len);
-                if (to <= from) continue; // 空段：不渲染也不打断交错
-                copy.put("from", from);
-                copy.put("to", to);
-            } else if ("process".equals(copy.get("kind"))) {
-                // 过程段区间指向 processText，按其最终长度夹取（与正文段同规则）
-                int from = Math.min(toInt(copy.get("from")), processLen);
-                int to = Math.min(toInt(copy.get("to")), processLen);
-                if (to <= from) continue;
-                copy.put("from", from);
-                copy.put("to", to);
-            } else if ("tool".equals(copy.get("kind"))) {
-                // 下标段必须与终态清单一一对齐：工具并发（终态入列顺序与 start 不同）时
-                // 该段无法指回确定的工具，丢弃比张冠李戴更诚实（卡片信息不会错配）
-                int i = toInt(copy.get("i"));
-                if (i < 0 || i >= toolCount) continue;
-            } else if ("artifact".equals(copy.get("kind"))) {
-                int i = toInt(copy.get("i"));
-                if (i < 0 || i >= artifactCount) continue;
-            }
-            out.add(copy);
-        }
-        if (out.size() == 1 && "text".equals(out.get(0).get("kind"))
-                && toInt(out.get(0).get("from")) == 0 && toInt(out.get(0).get("to")) == len) {
-            return List.of();
-        }
-        return out;
-    }
-
-    /**
-     * 只读尾段补齐：把「锚点之后尚未成段的正文/过程」接在副本末尾（与 flushTimelineText/Process 同规则：
-     * 末段同类且正好接在锚点上就延伸它，否则另起一段）。只改 {@code src}，不碰 {@code st.timeline} 与锚点。
-     */
-    private static void appendPendingTimelineTails(TurnState st, List<Map<String, Object>> src,
-                                                   int len, int processLen) {
-        appendTailIfLonger(src, "text", st.timelineAnchor.get(), len);
-        appendTailIfLonger(src, "process", st.processAnchor.get(), processLen);
-    }
-
-    private static void appendTailIfLonger(List<Map<String, Object>> src, String kind, int from, int to) {
-        if (to <= from) return;
-        Map<String, Object> last = src.isEmpty() ? null : src.get(src.size() - 1);
-        if (last != null && kind.equals(last.get("kind")) && toInt(last.get("to")) == from) {
-            last.put("to", to);
-            return;
-        }
-        Map<String, Object> seg = new LinkedHashMap<>();
-        seg.put("kind", kind);
-        seg.put("from", from);
-        seg.put("to", to);
-        src.add(seg);
-    }
-
-    private static int toInt(Object v) {
-        return v instanceof Number n ? n.intValue() : 0;
-    }
-
-    /**
-     * 中断/失败兜底落库：客户端停止/断开、看门狗截断、流错误把生成流掐断时，把已产出的半程内容
-     * 按截断态落库。此前只有完整走完 doOnComplete 才落库，中断轮在历史里只剩问题——刷新/重进会话后
-     * 「已生成的部分」全部蒸发（连用户盯着跑了五分钟的工具卡片与计划快照一起）。与正常完成路径
-     * 共用 answerPersistGate 幂等闸（CAS 先到先得，谁先落库谁赢）。
-     * 只落「已下发给前端」的正文（fullResponse 与 token 事件同源；尾部扣留的标签前缀缓冲不参与）；
-     * 引用自检/图片过滤/记忆提取/QA 日志均不再执行（那是完整轮的收尾语义），正文尾部追加标记，
-     * 时间线仍按原始半程长度夹取（标记落在区间之外，前端 restore 后由尾段兜底渲染）。
-     * <p>「正文为空但已有工具记录」同样落库：工具执行/计划确认这类轮的价值全在工具卡片与计划快照上，
-     * 正文可能一个 token 都没有——按「正文非空」判会让整轮记录蒸发。真正空轮（正文、工具记录
-     * 都为空，如客户端秒断）不落库：落一条空消息只会污染历史。
-     *
-     * @param tailMarker 正文尾部追加的可见标记（截断态/失败态各自不同，均落在时间线区间之外）
-     */
-    private void persistPartialAnswer(TurnState st, String tailMarker) {
-        try {
-            String answer = st.fullResponse.toString();
-            // 空轮不落库：正文、工具记录、过程独白、已完成的思考全空时，落了也是一条空消息，只污染历史。
-            // 思考要算进来——深度思考收尾后、正文首字之前被掐的轮（断线/看门狗/用户停止都在这窗口），
-            // 那一轮并非「什么都没发生」：刷新后至少留得住它想过什么。
-            String thinkingSoFar = st.thinkingHolder[0];
-            if (answer.isEmpty() && st.toolCalls.isEmpty() && st.processResponse.length() == 0
-                    && (thinkingSoFar == null || thinkingSoFar.isBlank())) {
-                return;
-            }
-            List<Map<String, Object>> sources = st.refs.sources;
-            List<String> finalImgs = new ArrayList<>(st.refs.imgIndex.values());
-            String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
-            // retrieved 状态行 refs 对齐 + 编排视图随持久化（与 doOnComplete 同款小步：来源可能被工具续编）
-            String finalRetrievedJson = st.retrievedJson;
-            try {
-                Map<String, Object> rj = JSON.parseObject(st.retrievedJson);
-                if (rj != null) {
-                    Integer oldRefs = rj.get("refs") instanceof Number n ? n.intValue() : null;
-                    if (oldRefs == null || oldRefs != sources.size()) {
-                        rj.put("refs", sources.size());
-                    }
-                    if (!st.subagentBranches.isEmpty()) {
-                        rj.put("branches", st.subagentBranches);
-                    }
-                    if (st.subagentRoute != null) {
-                        rj.put("route", st.subagentRoute);
-                    }
-                    finalRetrievedJson = JSON.toJSONString(rj);
-                }
-            } catch (Exception ignored) {
-            }
-            List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
-            List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
-            String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
-            // 时间线按原始半程正文夹取；截断标记追加在快照之后（区间之外，前端尾段兜底渲染）
-            List<Map<String, Object>> timelineSnapshot =
-                    buildTimelineSnapshot(st, answer, toolCallSnapshot.size(), sessionArtifacts.size());
-            String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
-            String processText = st.processResponse.toString();
-            Map<String, Object> tokens = buildUsageSnapshot(st, answer);
-            // 重新生成被中断：同样软删被替换的旧回答并登记分支版本组——用户已看到新版在气泡里替代旧版，
-            // 历史保持同观感（半程截断版同样挂组，多版本口径一致）
-            String replaceGroup = null;
-            if (st.replaceMessageId != null && !st.replaceMessageId.isBlank()) {
-                replaceGroup = sessionService.beginAnswerReplace(st.replaceMessageId);
-            }
-            // 走全量重载（带 plan）：中断轮同样把计划快照随截断版落库，刷新后计划卡与半程回答一起回显
-            String partialMessageId = sessionService.appendMessage(st.sessionId, "assistant", answer + tailMarker,
-                    finalImgs, sourcesJson, st.thinkingHolder[0], finalRetrievedJson,
-                    sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
-                    toolCallsJson, null, JSON.toJSONString(tokens), timelineJson,
-                    processText.isEmpty() ? null : processText,
-                    st.agentId, st.agentName, st.model,
-                    null, null, null,   // related / mentions / historyRefs：中断兜底沿用原有口径不带
-                    planRecordJson(st), st.turnId);
-            if (replaceGroup != null && partialMessageId != null) {
-                sessionService.setMessageVariant(partialMessageId, replaceGroup);
-            }
-            // 中断轮同样留降级证据（半程回答也是这一轮的事实）
-            sessionService.persistDegradations(partialMessageId, st.degradations);
-            // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
-            artifactService.unregisterEmitter(st.sessionId);
-            log.info("[SSE] 中断/失败兜底：半程回答已落库 (session={}, chars={}, tools={})",
-                    st.sessionId, answer.length(), toolCallSnapshot.size());
-        } catch (Exception e) {
-            // 兜底失败只记日志：管道已断无处下发错误，回退为现状「中断即丢失」
-            log.warn("[SSE] 中断兜底落库失败 (session={}): {}", st.sessionId, e.getMessage());
-        }
-    }
 
 
-    /**
-     * Token 用量快照（done 下发与落库共用）：工具调用循环逐轮求和（native 原始口径）=全部请求轮次总量，
-     * 与供应商账单同口径；最终轮（prompt 最大：工具结果逐轮入上下文）的输出用于触顶判定、其 prompt 用于
-     * ctxParts 校准（分类拆的是最终上下文而非各轮总和）。无逐轮数据时回落旧单值字段，
-     * 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
-     * 中断兜底路径复用同一口径：逐轮实测（若有）如实反映已耗用量，无则按半程正文估算。
-     */
-    private Map<String, Object> buildUsageSnapshot(TurnState st, String answer) {
-        long sumPrompt = st.roundUsage.promptTotal(), sumOutput = st.roundUsage.completionTotal();
-        long sumCached = st.roundUsage.cachedTotal();
-        long finalPrompt = st.roundUsage.finalRoundPrompt();
-        long finalRoundOutput = st.roundUsage.finalRoundCompletion();
-        boolean hasRounds = !st.roundUsage.isEmpty();
-        boolean realOutput = hasRounds ? sumOutput > 0 : st.realOutputTokens > 0;
-        int outputTokens = realOutput ? (int) (hasRounds ? sumOutput : st.realOutputTokens)
-                : TokenCounter.estimate(answer);
-        // 输出触顶 fail-loud：网关真实 completion_tokens 达到输出上限 ⇒ 大概率被
-        // 截断（finish_reason=length），回答/related 推荐块不完整。原实现静默落库，
-        // 用户只会看到残缺回答而无任何提示（"没有回答出内容"的帮凶之一）。
-        // 上限与 max_tokens 下发同源（模型管理中该模型声明的最大输出）；未声明输出上限时无从判定，跳过。
-        // 多轮时只看生成最终回答那一轮的输出（各轮工具调用参数的输出不参与触顶判定）
-        int maxOutput = st.effectiveMaxOutput;
-        int answerRoundOutput = hasRounds ? (int) finalRoundOutput : outputTokens;
-        if (maxOutput > 0 && realOutput && answerRoundOutput >= maxOutput) {
-            runtime.addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
-                    "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
-        }
-        int promptTokens = hasRounds ? (int) sumPrompt
-                : (st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens);
-        Map<String, Object> tokens = new LinkedHashMap<>();
-        tokens.put("context", st.contextTokens);
-        tokens.put("budget", st.budgetTokens);
-        tokens.put("hits", st.contextHits);
-        tokens.put("output", outputTokens);
-        tokens.put("prompt", promptTokens);
-        tokens.put("outputIsReal", realOutput);
-        tokens.put("total", promptTokens + outputTokens);
-        // 容量面板数据：生效窗口/来源 + 分类用量（按网关真实 prompt 等比校准）+ 缓存命中
-        tokens.put("window", st.windowTokens);
-        tokens.put("windowSource", st.windowSource);
-        tokens.put("cached", hasRounds ? (int) sumCached : st.cachedPromptTokens);
-        tokens.put("parts", calibrateParts(st.ctxParts,
-                hasRounds ? (int) finalPrompt : promptTokens, hasRounds || st.realPromptTokens > 0));
-        if (st.historyCompressedTurns > 0) {
-            tokens.put("historyCompressed", st.historyCompressedTurns);
-        }
-        return tokens;
-    }
 
-    /**
-     * 回答被截断的判定与用户可见标注文案（null=未截断）。两条独立证据：
-     * ① 网关明说 finish_reason=length（输出达上限）；
-     * ② 暗截断——最终轮真实输出 token 折算的字符量，远高于实际进入回答/过程/思考/工具入参的字符数，
-     *    说明有内容在剥离环节消失了（此前这类轮次连一条提示都没有，用户只看到断在半句的回答）。
-     * ② 只在网关回了真实 usage 时参与判定，且门槛留足余量：中英混排、表格与 markdown 都会拉低
-     * 字符/token 比，宁可漏报不可误报。
-     */
-    private String truncationSuffix(TurnState st, String answer) {
-        if (st.finishLength) {
-            runtime.addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
-                    "回答达到模型输出长度上限被截断；可在模型管理中调大该模型的最大输出");
-            log.warn("[FAIL-LOUD] 网关 finish_reason=length，回答被截断: session={}, 正文 {} 字",
-                    st.sessionId, answer.length());
-            return LENGTH_TRUNCATED_SUFFIX;
-        }
-        long finalRoundOutput = st.roundUsage.finalRoundCompletion();
-        boolean realUsage = st.roundUsage.completionTotal() > 0 || st.realOutputTokens > 0;
-        // 工具入参同样是模型生成的输出（写文件类工具动辄几百 token），不计进"已交代"必然误判
-        int toolArgChars = 0;
-        for (Map<String, Object> rec : st.toolCalls) {
-            Object args = rec.get("args");
-            if (args != null) toolArgChars += String.valueOf(args).length();
-        }
-        int accounted = answer.length() + st.processResponse.length() + st.reasoningChars + toolArgChars;
-        if (realUsage && finalRoundOutput >= OUTPUT_LOSS_MIN_TOKENS
-                && accounted < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN) {
-            runtime.addDegradation(st.degradations, st.degradedCodes, "outputLost",
-                    "模型本轮生成 " + finalRoundOutput + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");
-            log.warn("[FAIL-LOUD] 生成量与正文字数不符: session={}, 最终轮输出={} tokens, 已交代={} 字"
-                            + "（正文 {}/过程 {}/思考 {}/工具入参 {}）, finishReason={}",
-                    st.sessionId, finalRoundOutput, accounted, answer.length(),
-                    st.processResponse.length(), st.reasoningChars, toolArgChars, st.lastFinishReason);
-            return OUTPUT_LOST_SUFFIX;
-        }
-        return null;
-    }
 
-    private void recordToolStatus(TurnState st, String name, String input,
-                                  String status, String resultOrError, long elapsedMs, int attempts,
-                                  boolean denied) {
-        Map<String, Object> rec = new LinkedHashMap<>();
-        rec.put("name", name);
-        // 展示名与悬停说明随后端下发：工具卡上写「execute」用户读不懂，而前端那份手抄映射
-        // 对 MCP 动态工具与新增工具一律失效（writeTodo 上线时清单与卡片都只剩英文名）
-        putToolDisplayName(rec, name);
-        rec.put("status", status);
-        rec.put("elapsedMs", elapsedMs);
-        // 被守卫在执行前挡下：卡片照常留一行（失败要看得见），但这条不计入「跑了 N 步工具」
-        if (denied) rec.put("denied", true);
-        if (attempts > 1) {
-            rec.put("attempts", attempts); // 自动重试后成功：前端显示「重试 N 次」
-        }
-        int sseLimit = needsFullToolIO(name) ? TOOL_IO_MAX : TOOL_IO_SSE_BRIEF;
-        String argsBrief = truncBrief(input, sseLimit);
-        rec.put("args", argsBrief);
-        if (resultOrError != null) {
-            rec.put(status.equals("error") ? "error" : "result", truncBrief(resultOrError, sseLimit));
-        }
-        // run_code 的扇出清单（P3b 过程下钻）：一次运行内部调了哪些工具、各自多久、有没有被挡下。
-        // 只带终态那一份，且随卡片一起落库——刷新后仍然点得开，不然这段结构只有实时看得到
-        if ("run_code".equals(name) && !"start".equals(status)) {
-            // 这一段脚本结束了：面板不再刷（终态那一份就挂在下面这条记录里，随消息落库）
-            st.board.runBoardActive = false;
-            subCall.stopRunBoardTicker(st);
-            if (!st.board.subCallLog.isEmpty()) rec.put("fanOut", subCall.buildFanOut(st, false));
-            // 这一次运行到底是跑完了、超时了，还是沙盒压根没通——字段化随卡片落库，
-            // 刷新后仍然看得出来（正文里那句话只有读的人才知道它在说什么）
-            if (st.board.runOutcome != null) {
-                rec.put("run", st.board.runOutcome);
-                st.board.runOutcome = null;
-            }
-        }
-        // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
-        // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位
-        if ("start".equals(status)) {
-            flushTimelineText(st, st.fullResponse.length());
-            flushTimelineProcess(st, st.processResponse.length());
-            Map<String, Object> toolSeg = new LinkedHashMap<>();
-            toolSeg.put("kind", "tool");
-            // 终态记录在 start 之后才入 toolCalls 列表，此处 size 正是它将落到的下标
-            toolSeg.put("i", st.toolCalls.size());
-            st.timeline.add(toolSeg);
-        }
-        // 只把终态（done/error）记入持久化列表：start 仅实时下发（前端转圈显示），
-        // 否则快照里 start/done 成对存在，前端 done 汇总覆盖后工具状态行会出现重复双行
-        if (!"start".equals(status)) {
-            // 终态记录升级为全文（上限 8KB）：done 汇总与落库都用它，前端卡片展开可见完整入参/输出，
-            // 历史恢复同样可展开（实时 SSE 副本保持短摘要，两者字段同名、前端合并时全文覆盖摘要）
-            Map<String, Object> full = new LinkedHashMap<>(rec);
-            // 超过上限的那一段不再「截断即丢」：整份原文外溢到磁盘，卡片留 spillId 供「查看完整输出」按需读回。
-            // 写失败退回原样截断（旁路语义，绝不影响本轮问答）
-            String argsSpillId = input != null && input.length() > TOOL_IO_MAX
-                    ? toolSpillService.spill(st.sessionId, st.userId, name, input) : null;
-            full.put("args", truncBrief(input, TOOL_IO_MAX)
-                    + (argsSpillId == null ? spillNote(input) : SPILL_SUFFIX));
-            if (argsSpillId != null) full.put("argsSpillId", argsSpillId);
-            if (resultOrError != null) {
-                String key = status.equals("error") ? "error" : "result";
-                // 工具侧截断时已留存过就用它那一份（那才是全文）；否则由这层的上限补一份
-                String spillId = takeToolSpill(st, name);
-                if (spillId == null && resultOrError.length() > TOOL_IO_MAX) {
-                    spillId = toolSpillService.spill(st.sessionId, st.userId, name, resultOrError);
-                }
-                full.put(key, truncBrief(resultOrError, TOOL_IO_MAX)
-                        + (spillId == null ? spillNote(resultOrError) : SPILL_SUFFIX));
-                if (spillId != null) full.put("spillId", spillId);
-            }
-            st.toolCalls.add(full);
-        }
-        // 后端日志同步留痕（与 [RAG]/[CTX] 等阶段日志同级可观测）：开始/完成/失败各一行，结果截断防爆量
-        if ("start".equals(status)) {
-            log.info("[TOOL] {} 调用开始 args={}", name, argsBrief);
-        } else if ("error".equals(status)) {
-            log.warn("[TOOL] {} 调用失败 ({}ms) error={}", name, elapsedMs, rec.get("error"));
-        } else {
-            log.info("[TOOL] {} 调用完成 ({}ms) result={}", name, elapsedMs,
-                    resultOrError == null ? "" : truncBrief(resultOrError.replace('\n', ' '), 160));
-        }
-        String ssePayload = JSON.toJSONString(rec);
-        // 总线优先：接流的观众看到的工具卡片要有实时状态（快照只给到接流那一刻为止的记录）
-        if (!chatRunBus.publishRaw(st.channel.emitter, "tool_status", ssePayload, st.sessionId)) {
-            try {
-                st.channel.emitter.send(SseEmitter.event().name("tool_status")
-                        .data("{\"type\":\"tool_status\",\"content\":" + ssePayload
-                                + ",\"sessionId\":\"" + st.sessionId + "\"}"));
-            } catch (Exception e) {
-                log.debug("[TOOL-STATUS] SSE 下发失败（客户端可能已断开）: {}", e.getMessage());
-            }
-        }
-        // 账本留痕：工具步的「何时开始/结束、耗时、成败」是一轮执行轨迹的主干。载荷用 SSE 那份短摘要
-        // ——终态全文（8KB）已随消息落库，账本不重复存大字段；start 也记，回放才看得出每步的起点。
-        sessionEventService.append(st.sessionId, st.userId, st.turnId, "tool", ssePayload);
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     /**
      * 本轮思考强度档位归一：用户显式选的（reqLevel，须落在模型支持档位内）优先，
@@ -3220,7 +2435,7 @@ public class RagService {
         // 登记产物 emitter：供 PresentArtifactTool 在流式执行中实时下发 artifact 事件（结束/出错时清理）
         artifactService.registerEmitter(st.sessionId, emitter);
         // 产物生成时刻监听：把产物卡片按生成顺序插进本轮时间线（刷新后仍在原位，不再堆到气泡底部）
-        artifactService.registerArtifactListener(st.sessionId, (sid, idx) -> pushTimelineArtifact(st, idx));
+        artifactService.registerArtifactListener(st.sessionId, (sid, idx) -> recorder.pushTimelineArtifact(st, idx));
         // 整轮流级心跳：从这里到终态（complete/error/dispose）全程保活，覆盖工具执行
         // 与「工具结束→最终回答首 token」两段静默盲区（重试重建流时幂等复用）
         runtime.startRunHeartbeat(st);
@@ -3374,7 +2589,7 @@ public class RagService {
                         if (prompt != null && prompt > 0) st.realPromptTokens = prompt;
                         // 缓存命中 token（prompt 缓存）：网关方言不一，尽力从 nativeUsage 里挖；
                         // 挖不到保持 0，容量面板隐藏「缓存命中率」行（不显示假数据）
-                        st.cachedPromptTokens = extractCachedTokens(usage);
+                        st.cachedPromptTokens = recorder.extractCachedTokens(usage);
                         // 工具调用循环逐轮累加（native 原始口径，见 UsageAccumulator 注释）；
                         // 上面的单值字段保留作 native 缺失网关的单轮兜底
                         st.roundUsage.accept(resp.getMetadata() == null ? null : resp.getMetadata().getId(), usage);
@@ -3464,7 +2679,7 @@ public class RagService {
                                         return;
                                     }
                                 }
-                                routeProcessText(st, procPart.stripLeading());
+                                recorder.routeProcessText(st, procPart.stripLeading());
                             } else {
                                 // related 未闭合（或两类标签并存难以可靠拆分）：按原文发送（extractRelated 兜底清理）；fail-loud 标记
                                 runtime.addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
@@ -3556,11 +2771,11 @@ public class RagService {
                     }
                     // 过程事件在正文之后下发（同缓冲内先到的正文先行，保持流式顺序）
                     if (procBuf.length() > 0) {
-                        routeProcessText(st, procBuf.toString());
+                        recorder.routeProcessText(st, procBuf.toString());
                     }
                     // 未闭合开口的增量紧随其后（到达顺序即真实顺序，前端按序续写过程段）
                     if (!emitProc.isEmpty()) {
-                        routeProcessText(st, emitProc);
+                        recorder.routeProcessText(st, emitProc);
                     }
                 })
                 .doOnError(error -> {
@@ -3640,7 +2855,7 @@ public class RagService {
                     // 重进会话后彻底蒸发——用户看到的只是「问题还在，回答说没了」。
                     // 与正常完成/中断兜底共用 answerPersistGate幂等闸，三条路径 CAS 先到先得。
                     if (st.claimTerminal()) {
-                        persistPartialAnswer(st, STREAM_ERROR_SUFFIX);
+                        recorder.persistPartialAnswer(st, TurnRecorder.STREAM_ERROR_SUFFIX);
                     }
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);
@@ -3717,7 +2932,7 @@ public class RagService {
                         int ptLt = procTail.lastIndexOf("<");
                         if (ptLt >= 0 && isProcessEndStart(procTail.substring(ptLt))) procTail.setLength(ptLt);
                         if (procTail.length() > 0) {
-                            routeProcessText(st, procTail.toString());
+                            recorder.routeProcessText(st, procTail.toString());
                         }
                     }
                     // 相关推荐：优先用流式收集的块内容；兜底再对完整回答剥离一次（防 </related> 缺失等异常）
@@ -3773,7 +2988,7 @@ public class RagService {
                     // 截断必须让用户看见：降级提示受 chat.retrievalDebugEnabled 控制（面向用户的部署
                     // 默认关闭），只落提示等于没提示——标注直接进正文尾部，随 done 与落库一起走，
                     // 刷新后仍在（与中断兜底的 TurnState.TRUNCATION_SUFFIX 同口径）。
-                    String truncSuffix = truncationSuffix(st, answer);
+                    String truncSuffix = recorder.truncationSuffix(st, answer);
                     if (truncSuffix != null) {
                         answer = answer.stripTrailing() + truncSuffix;
                     }
@@ -3809,7 +3024,7 @@ public class RagService {
 
                     // 回答时间线：正文区间 + 过程区间 + 工具/产物下标，随消息持久化（刷新与历史会话据此还原交错顺序）
                     List<Map<String, Object>> timelineSnapshot =
-                            buildTimelineSnapshot(st, answer, toolCallSnapshot.size(), sessionArtifacts.size());
+                            recorder.buildTimelineSnapshot(st, answer, toolCallSnapshot.size(), sessionArtifacts.size());
                     String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
                     // 过程独白全文（<process> 标签内，与正文分流）：随消息落库 + done 下发，前端时间线灰字弱化渲染
                     String processText = st.processResponse.toString();
@@ -3824,7 +3039,7 @@ public class RagService {
                         runtime.addDegradation(st.degradations, st.degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
                     }
                     // Token 用量快照（done 下发与落库共用；中断兜底路径同口径，见 buildUsageSnapshot）
-                    Map<String, Object> tokens = buildUsageSnapshot(st, answer);
+                    Map<String, Object> tokens = recorder.buildUsageSnapshot(st, answer);
                     // 落库幂等闸：与中断兜底（disposeSafe → persistPartialAnswer）CAS 先到先得——
                     // SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条。CAS 失败说明
                     // 截断版已入库，此处放弃落库（messageId 为空，done 照常下发，反馈按钮退化为不可用）
@@ -3856,7 +3071,7 @@ public class RagService {
                                 // 助手消息无 @ / # 引用（引用仅用户消息携带），占位保持主方法签名一致
                                 null, null,
                                 // 计划批准卡随行落库：刷新/历史按轮重建气泡计划卡（此前只活在实时流里）
-                                planRecordJson(st),
+                                recorder.planRecordJson(st),
                                 // 本轮身份：账本事件按 turnId 分组，消息带上它，气泡才能直接回看自己那一轮的过程
                                 st.turnId);
                         // 新回答挂上被替换旧回答的版本组键：组内版本序列即 ‹ n/N › 切换数据源
@@ -4626,83 +3841,8 @@ public class RagService {
         return byKb != null ? byKb : fine;
     }
 
-    /**
-     * @ 引用的检索范围解析（控制器已完成存在性与可见性校验，这里只做形态归类）。
-     * <p>{@code docKbIds}：被引文档所属库——@ 文档时检索范围同样收窄到这些库，
-     * 否则别的库的块会与「强制前置」的文档块竞争上下文名额。
-     */
-    private record MentionScope(Set<String> kbIds, Set<String> docIds, Set<String> docKbIds) {
-        static MentionScope of(List<ChatRequest.Mention> mentions) {
-            if (mentions == null || mentions.isEmpty()) return null;
-            Set<String> kbs = new LinkedHashSet<>();
-            Set<String> docs = new LinkedHashSet<>();
-            Set<String> docKbs = new LinkedHashSet<>();
-            for (ChatRequest.Mention m : mentions) {
-                if (m == null || m.getId() == null || m.getId().isBlank()) continue;
-                if ("kb".equals(m.getType())) {
-                    kbs.add(m.getId());
-                } else if ("doc".equals(m.getType())) {
-                    docs.add(m.getId());
-                    if (m.getKbId() != null && !m.getKbId().isBlank()) docKbs.add(m.getKbId());
-                }
-            }
-            return (kbs.isEmpty() && docs.isEmpty()) ? null : new MentionScope(kbs, docs, docKbs);
-        }
-    }
 
-    /**
-     * 加载 @ 引用文档的内容块（每篇前 N 块，chunkIndex 升序，仅 status=0 的生效块）。
-     * 用户显式指定 = 强相关：这些块**不走检索、不参与相关性门与信息增益去冗余**
-     * （见填充段的 mentionKids 判定），保证「我 @ 的文档一定被读到」。
-     */
-    private List<Knowledge> loadMentionChunks(MentionScope scope, List<Map<String, String>> degradations,
-                                              Set<String> degradedCodes) {
-        if (scope == null || scope.docIds().isEmpty()) return List.of();
-        int perDoc = Math.max(1, configService.getInt("retrieval.mentionDocChunks", 3));
-        try {
-            List<Knowledge> all = knowledgeMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
-                            .in(Knowledge::getDocId, scope.docIds())
-                            .eq(Knowledge::getStatus, 0)
-                            .orderByAsc(Knowledge::getChunkIndex));
-            Map<String, Integer> taken = new HashMap<>();
-            List<Knowledge> out = new ArrayList<>();
-            for (Knowledge k : all) {
-                if (taken.merge(k.getDocId(), 1, Integer::sum) <= perDoc) out.add(k);
-            }
-            if (out.isEmpty()) {
-                // 显式 @ 了文档却取不到内容（未解析/解析失败/全部停用）——不能静默变成"什么都没引用"
-                log.warn("[FAIL-LOUD] @ 引用的文档没有可用内容块（未解析或全部停用）: docs={}", scope.docIds());
-                runtime.addDegradation(degradations, degradedCodes, "mentionEmpty",
-                        "你引用的文档还没有可用的解析内容，本轮不会把它作为参考资料");
-            } else {
-                log.info("[MENTION] @ 引用文档块前置 {} 块（{} 篇，每篇上限 {}）",
-                        out.size(), scope.docIds().size(), perDoc);
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] @ 引用文档块加载失败: {}", e.toString());
-            runtime.addDegradation(degradations, degradedCodes, "mentionLoadFailed", "引用的文档内容读取失败，本轮未带入");
-            return List.of();
-        }
-    }
 
-    /** @ 引用文档块的文本化（供「不使用知识库」分支直接用：该分支不检索，把被引内容作为参考资料注入问题） */
-    private String buildMentionText(List<Knowledge> chunks) {
-        if (chunks == null || chunks.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (Knowledge k : chunks) {
-            sb.append("\n[").append(i++).append("] ");
-            if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) sb.append(k.getTitlePath());
-            if (k.getTitle() != null && !k.getTitle().isBlank()) {
-                if (k.getTitlePath() != null && !k.getTitlePath().isBlank()) sb.append(" / ");
-                sb.append(k.getTitle());
-            }
-            sb.append('\n').append(k.getContent() == null ? "" : k.getContent()).append('\n');
-        }
-        return sb.toString();
-    }
 
     /**
      * # 历史引用的文本化：用户从本会话历史点名的问答，按「[N] 问 / 答」成对编组前置。
@@ -4726,158 +3866,13 @@ public class RagService {
         return sb.toString();
     }
 
-    /** 知识库范围约束：scopeDocIds 为空（all）则原样返回；否则仅保留命中块中 docId 在范围内的 */
-    private List<HybridRetrievalService.Hit> applyScope(List<HybridRetrievalService.Hit> hits, Set<String> scopeDocIds) {
-        if (scopeDocIds == null || hits == null) return hits;
-        List<HybridRetrievalService.Hit> scoped = hits.stream()
-                .filter(h -> h.docId() != null && scopeDocIds.contains(h.docId()))
-                .collect(Collectors.toList());
-        if (scoped.size() < hits.size()) {
-            log.info("[AGENT] 知识库范围约束：命中 {} → 范围内 {} 块", hits.size(), scoped.size());
-        }
-        return scoped;
-    }
 
-    /** 上下文预算解析结果：窗口与最大输出均来自「用户所选/模型行声明」（模型管理页维护），供触顶提示与 max_tokens 下发区分来源 */
-    private record CtxBudget(int window, int maxOutput, int budget, String windowSource) {}
 
-    private CtxBudget resolveContextBudget(String resolvedModel, Integer requestedWindow,
-                                           List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        // 窗口/最大输出是模型固有属性：模型行声明了就用模型行（模型管理页维护）。
-        // 安全系数为平台固定策略（ModelRegistryService.CONTEXT_SAFETY_FACTOR），不再作为设置页配置项。
-        ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
-        Integer declaredWindow = mi == null ? null : mi.getContextWindow();
-        Integer declaredMin = mi == null ? null : mi.getContextWindowMin();
-        Integer declaredOutput = mi == null ? null : mi.getMaxOutput();
-        boolean windowFromModel = declaredWindow != null && declaredWindow > 0;
-        // 最大输出未声明 = 不主动限制（不下发 max_tokens，交由厂商默认）；预算公式按 0 处理
-        int maxOutput = declaredOutput != null && declaredOutput > 0 ? declaredOutput : 0;
-        if (!windowFromModel) {
-            runtime.addDegradation(degradations, degradedCodes, "ctxWindowUndeclared",
-                    "该模型未声明上下文窗口，检索资料将无法填入；请在模型管理页为 " + resolvedModel + " 声明窗口");
-            log.warn("[CTX] 模型 {} 未声明上下文窗口，检索预算托底 1000", resolvedModel);
-            return new CtxBudget(0, maxOutput, 1000, "未声明");
-        }
 
-        int window = declaredWindow;
-        // 窗口来源两态：用户在聊天面板所选档位 > 模型声明。区间可调 = 模型登记了
-        // 「最小窗口~窗口」且 min<max（min==max 等价于不可调）；请求值越界收敛进区间，模型不可调时忽略
-        String windowSource = "模型声明窗口";
-        boolean adjustable = declaredMin != null && declaredMin > 0 && declaredMin < declaredWindow;
-        if (requestedWindow != null && requestedWindow > 0 && adjustable) {
-            window = Math.max(declaredMin, Math.min(declaredWindow, requestedWindow));
-            windowSource = "用户所选窗口";
-        }
 
-        int windowBudget = (int) (window * ModelRegistryService.CONTEXT_SAFETY_FACTOR);
-        int budget = windowBudget - maxOutput;
-        // fail-loud：模型声明的最大输出 ≥ 模型窗口预算时预算算出负数，被下面的 1000 托底——不能静默，
-        // 否则用户只看到「预算 1.0k」却不知道是最大输出把检索资料的预算吃光了。修复入口在模型管理。
-        if (maxOutput > 0 && budget <= 0) {
-            boolean fromUser = "用户所选窗口".equals(windowSource);
-            runtime.addDegradation(degradations, degradedCodes, "contextBudgetFloored",
-                    "该模型声明的最大输出 " + maxOutput + " 不小于" + windowSource + "预算（" + windowSource + " " + window
-                            + " × 安全系数 " + ModelRegistryService.CONTEXT_SAFETY_FACTOR + " = " + windowBudget + "），"
-                            + "上下文预算被托底为 1000，检索资料将无法填入；请在"
-                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大" : "模型管理中调小该模型的最大输出"));
-            log.warn("[CTX] 最大输出 {} ≥ 窗口预算 {}（窗口 {}，来源={}），上下文预算托底 1000",
-                    maxOutput, windowBudget, window, windowSource);
-        }
-        return new CtxBudget(window, maxOutput, Math.max(budget, 1000), windowSource);
-    }
 
-    /** 生效最大输出 token：以模型行声明为准（模型管理页维护）；未声明返回 0 = 不下发 max_tokens，交由厂商默认（无知识库分支的 max_tokens 下发与触顶判定共用） */
-    private int effectiveMaxOutputOf(String resolvedModel) {
-        ModelInfo mi = modelRegistryService.modelInfoOf(resolvedModel);
-        Integer declared = mi == null ? null : mi.getMaxOutput();
-        return declared != null && declared > 0 ? declared : 0;
-    }
 
-    /**
-     * 块内片段截取：按检索词元在文本中定位第一个命中位置，取 ±window 字符窗口。
-     * 未命中（纯向量命中）返回整块。边界加省略号提示，且避免从 [图片N] 标记中间切断。
-     */
-    private String extractHitSnippet(String text, List<String> terms, int window) {
-        if (text == null || text.isEmpty() || terms == null || terms.isEmpty()) {
-            return text;
-        }
-        int bestIdx = -1;
-        for (String term : terms) {
-            if (term == null || term.isBlank()) continue;
-            int idx = text.indexOf(term);
-            if (idx >= 0 && (bestIdx < 0 || idx < bestIdx)) {
-                bestIdx = idx;
-            }
-        }
-        if (bestIdx < 0) {
-            return text;
-        }
-        int start = Math.max(0, bestIdx - window);
-        int end = Math.min(text.length(), bestIdx + window);
-        // 窗口边界避免切断 [图片N] 标记：若边界落在 "[图片" 中，向前/向后对齐
-        start = adjustBoundaryStart(text, start);
-        end = adjustBoundaryEnd(text, end);
-        // 窗口边界对齐行边界：截断点落在行中间时（长代码行/长命令），推进到整行末尾，
-        // 避免把 pip install 之类的长命令拦腰切断产生 "open..." 半截内容
-        if (end < text.length()) {
-            int nl = text.indexOf('\n', end);
-            if (nl >= 0 && nl - end <= window) {
-                end = nl + 1; // 对齐到该行行尾（代价小于一个窗口则接受）
-            }
-        }
-        // 起点对齐到行首：让截断片段从完整行开始，避免从行中间开始
-        if (start > 0) {
-            int ls = text.lastIndexOf('\n', start);
-            if (start - ls <= window) {
-                start = ls + 1;
-            }
-        }
-        StringBuilder sb = new StringBuilder();
-        if (start > 0) sb.append("…");
-        sb.append(text, start, end);
-        if (end < text.length()) sb.append("…");
-        return sb.toString();
-    }
 
-    private int adjustBoundaryStart(String text, int idx) {
-        if (idx <= 0) return idx;
-        // 若窗口起点落在 [图片N] 标记中间（'[' 前有标记内容），回退到标记开头
-        if (text.charAt(idx) == ']' || (text.charAt(idx) == '片' && idx > 0 && text.charAt(idx - 1) == '图')) {
-            int open = text.lastIndexOf('[', idx);
-            int close = text.indexOf(']', idx);
-            if (open >= 0 && close > open && close - open < 20) {
-                return open;
-            }
-        }
-        return idx;
-    }
-
-    private int adjustBoundaryEnd(String text, int idx) {
-        if (idx >= text.length()) return idx;
-        // 若窗口终点落在 [图片N] 标记中间，对齐到标记结束
-        if (text.charAt(idx) == '[' || text.charAt(idx) == '图') {
-            int close = text.indexOf(']', idx);
-            if (close >= 0 && close - idx < 20) {
-                return close + 1;
-            }
-        }
-        return idx;
-    }
-
-    /**
-     * 按字符数截断文本，尽量在最近分句符（。！？；\n）处断句
-     */
-    private String truncateChars(String text, int maxChars) {
-        if (text == null || text.length() <= maxChars) return text;
-        String cut = text.substring(0, maxChars);
-        int lastBreak = Math.max(cut.lastIndexOf('\n'),
-                Math.max(cut.lastIndexOf('。'),
-                        Math.max(cut.lastIndexOf('！'), Math.max(cut.lastIndexOf('？'), cut.lastIndexOf('；')))));
-        if (lastBreak > maxChars / 2) {
-            cut = cut.substring(0, lastBreak + 1);
-        }
-        return cut + "…";
-    }
 
     /**
      * 非问答轮（手动压缩 /compact）的生效模型解析：显式指定 &gt; 个人默认；返回空串表示未配置，
@@ -4887,150 +3882,6 @@ public class RagService {
         return resolveModel(modelOverride, loadPrefUser(userId));
     }
 
-    /**
-     * 缓存命中 token 查阅（①强类型 native usage ②Map 方言字段③DeepSeek prompt_cache_hit_tokens）。
-     * 实现统一放在 UsageAccumulator：台账与回答气泡共用一套方言解析，口径不会漂移；
-     * 全部取不到返回 0——容量面板/台账的缓存列隐藏，不显示假数据。
-     */
-    private int extractCachedTokens(org.springframework.ai.chat.metadata.Usage usage) {
-        return (int) com.wenqu.ai.util.UsageAccumulator.cachedTokensOf(usage);
-    }
-
-    /**
-     * 分类用量按网关真实 prompt token 等比校准：估算器（TokenCounter 启发式）与真实 tokenizer 有偏差，
-     * 直接用估算值会让「分类之和 ≠ 网关报的 prompt_tokens」，面板看起来自相矛盾。
-     * 有真实值时整体等比缩放（保持各分类相对比例），无真实值时原样返回估算。
-     */
-    private Map<String, Integer> calibrateParts(Map<String, Integer> parts, int promptTokens, boolean hasReal) {
-        Map<String, Integer> out = new LinkedHashMap<>();
-        if (parts == null || parts.isEmpty()) return out;
-        long sum = 0;
-        for (Integer v : parts.values()) sum += (v == null ? 0 : v);
-        if (!hasReal || sum <= 0 || promptTokens <= 0) {
-            for (Map.Entry<String, Integer> e : parts.entrySet()) out.put(e.getKey(), e.getValue());
-            return out;
-        }
-        double k = promptTokens / (double) sum;
-        long acc = 0;
-        Map.Entry<String, Integer> last = null;
-        for (Map.Entry<String, Integer> e : parts.entrySet()) {
-            int v = (int) Math.round(e.getValue() * k);
-            out.put(e.getKey(), v);
-            acc += v;
-            last = e;
-        }
-        // 舍入误差归到最后一个分类，保证分类之和严格等于网关 prompt_tokens
-        if (last != null) out.put(last.getKey(), (int) (last.getValue() + (promptTokens - acc)));
-        return out;
-    }
-
-    private String snippet(String content) {
-        if (content == null) return "";
-        // 剥离图片标记与【上下文】章节路径前缀（结构切分注入，不展示给用户）
-        String s = content.replaceAll("\\[图片[^\\]]*\\]|【上下文】[^\\n]*\\n?", " ").trim();
-        return s.length() > SNIPPET_LEN ? s.substring(0, SNIPPET_LEN) + "…" : s;
-    }
-
-    /**
-     * 相邻块合并（纯函数，供单测）：把同文档 chunk 序号连续（间隔 ≤1）的命中块按序拼成一块。
-     * <ul>
-     *   <li>豁免块（@ 引用等显式指定）不参与合并、原位保留；</li>
-     *   <li>合并块内容按 chunkIndex 升序以空行拼接，分数/重排分取 run 内最高（合并块代表整段
-     *       流程的相关性，不该低于任何成员，避免被相关性门误杀）；图片列表按序拼接；</li>
-     *   <li>run 长度受 maxChunks 限制——超长 run 截断后，剩余成员从断点继续扫描（可再成新 run），
-     *       防止把整章拼成一块吃掉全部上下文预算；</li>
-     *   <li>合并块占用 run 首块在原列表中的位置（不打乱原相关性排序），其余成员移除。</li>
-     * </ul>
-     * 只影响上下文组装，不改检索结果本身（评估/调试面板看到的是原始召回）。
-     */
-    public static List<HybridRetrievalService.Hit> mergeAdjacentHits(
-            List<HybridRetrievalService.Hit> hits, Set<String> exemptKids, int maxChunks) {
-        if (hits == null || hits.size() < 2 || maxChunks < 2) return hits;
-        List<HybridRetrievalService.Hit> sortable = new ArrayList<>();
-        for (HybridRetrievalService.Hit h : hits) {
-            boolean exempt = h.knowledgeId() != null && exemptKids.contains(h.knowledgeId());
-            if (!exempt && h.docId() != null && !h.docId().isBlank()
-                    && h.chunkIndex() != null && h.content() != null && !h.content().isBlank()) {
-                sortable.add(h);
-            }
-        }
-        if (sortable.size() < 2) return hits;
-        sortable.sort(java.util.Comparator
-                .comparing((HybridRetrievalService.Hit h) -> h.docId())
-                .thenComparingInt(HybridRetrievalService.Hit::chunkIndex));
-        Map<String, HybridRetrievalService.Hit> mergedByKid = new HashMap<>();
-        Set<String> consumedKids = new HashSet<>();
-        int i = 0;
-        while (i < sortable.size()) {
-            HybridRetrievalService.Hit first = sortable.get(i);
-            int j = i + 1;
-            while (j < sortable.size()
-                    && sortable.get(j).docId().equals(first.docId())
-                    && sortable.get(j).chunkIndex() - sortable.get(j - 1).chunkIndex() == 1
-                    && j - i < maxChunks) {
-                j++;
-            }
-            if (j - i >= 2) {
-                StringBuilder sb = new StringBuilder();
-                double bestScore = 0, bestRerank = -1;
-                boolean hasRerank = false;
-                List<String> mergedImgs = new ArrayList<>();
-                for (int t = i; t < j; t++) {
-                    HybridRetrievalService.Hit part = sortable.get(t);
-                    if (t > i) sb.append("\n\n");
-                    sb.append(part.content());
-                    bestScore = Math.max(bestScore, part.score());
-                    if (part.rerankScore() != null) {
-                        hasRerank = true;
-                        bestRerank = Math.max(bestRerank, part.rerankScore());
-                    }
-                    if (part.images() != null) mergedImgs.addAll(part.images());
-                    if (t > i) consumedKids.add(part.knowledgeId());
-                }
-                mergedByKid.put(first.knowledgeId(), new HybridRetrievalService.Hit(
-                        first.knowledgeId(), first.docId(), first.title(), sb.toString(),
-                        mergedImgs, bestScore, first.chunkIndex(), first.titlePath(),
-                        hasRerank ? bestRerank : null));
-            }
-            i = j;
-        }
-        if (mergedByKid.isEmpty()) return hits;
-        List<HybridRetrievalService.Hit> rebuilt = new ArrayList<>(hits.size());
-        for (HybridRetrievalService.Hit h : hits) {
-            if (consumedKids.contains(h.knowledgeId())) continue;
-            HybridRetrievalService.Hit m = mergedByKid.get(h.knowledgeId());
-            rebuilt.add(m != null ? m : h);
-        }
-        return rebuilt;
-    }
-
-    /**
-     * 信息增益去冗余判定：候选块词元与任一已选块的 Jaccard 重叠 ≥ 阈值即视为冗余。
-     * 同章节路径（titlePath 互为前缀/相等）的块按更低阈值判定——同一章节的相邻切片几乎总讲同一内容。
-     * 只算前 300 字特征控开销；词元提取失败（空）不判冗余（放行，宁漏勿误杀）。
-     */
-    private boolean isRedundantHit(HybridRetrievalService.Hit hit, List<Set<String>> selectedTermSets,
-                                   List<String> selectedPaths, double threshold, double pathThreshold) {
-        String title = hit.title() == null ? "" : hit.title();
-        String content = hit.content() == null ? "" : hit.content();
-        if (content.length() > 300) content = content.substring(0, 300);
-        Set<String> terms = new HashSet<>(keywordExtractor.extract(title + " " + content));
-        if (terms.isEmpty()) return false;
-        boolean samePath = hit.titlePath() != null && !hit.titlePath().isBlank()
-                && selectedPaths.stream().anyMatch(p -> p != null && (p.equals(hit.titlePath())
-                        || p.startsWith(hit.titlePath()) || hit.titlePath().startsWith(p)));
-        double useThreshold = samePath ? pathThreshold : threshold;
-        for (Set<String> s : selectedTermSets) {
-            if (s.isEmpty()) continue;
-            int inter = 0;
-            for (String t : terms) if (s.contains(t)) inter++;
-            Set<String> union = new HashSet<>(s);
-            union.addAll(terms);
-            if (union.isEmpty()) continue;
-            if ((double) inter / union.size() >= useThreshold) return true;
-        }
-        return false;
-    }
 
 
 
@@ -5056,58 +3907,13 @@ public class RagService {
 
 
 
-    /** 计划快照 → 助手消息 plan 列 JSON（null=本轮未走计划模式）；落库点见 buildAnswerStream 与中断兜底 */
-    private String planRecordJson(TurnState st) {
-        return st.planRecord == null ? null : JSON.toJSONString(st.planRecord);
-    }
 
-    /**
-     * 计划被拒/超时的收尾落库：本轮没有流式回答（gate==null 直接终止，不会走 buildAnswerStream 的落库）。
-     */
-    private void persistPlanRejected(TurnState st) {
-        persistPlanCloseout(st, "（计划未批准，本轮已停止）", "拒绝");
-    }
 
-    /**
-     * 「继续对话」取代的收尾落库：与拒绝轮同构，但正文与卡片终态是「已被取代」而不是「未批准」——
-     * 用户并没有否定计划内容，只是提出了修改；新一轮会按他的意见产出修改后的计划。
-     */
-    private void persistPlanSuperseded(TurnState st) {
-        persistPlanCloseout(st, "（你提出了修改，这版计划已被取代）", "取代");
-    }
 
-    /**
-     * 计划收尾轮（未批准 / 已被取代）的兜底落库：正文=前端同款收束语 + plan 快照 + 本轮执行快照。
-     * <p>执行快照（提问卡问答、工具卡片、过程独白、时间线）必须一并落：这些在实时气泡里是用户
-     * 看得见的「已输出的内容」（如计划前的那张问答记录卡），只落收束语会让它们刷新后整块消失，
-     * 而计划卡本身也随刷新蒸发——历史只剩一条孤零零的用户提问。
-     * <p>answerPersistGate 先到先得：占住闸位也宣告本轮已收尾，通道断开兜底（disposeSafe）与
-     * 看门狗不再对同一轮补落第二条。
-     */
-    private void persistPlanCloseout(TurnState st, String content, String phase) {
-        if (!st.claimTerminal()) return;   // 已有终态路径落过库
-        try {
-            List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
-            List<Map<String, Object>> toolCallSnapshot = new ArrayList<>(st.toolCalls);
-            String toolCallsJson = toolCallSnapshot.isEmpty() ? null : JSON.toJSONString(toolCallSnapshot);
-            // 时间线按收束语长度夹取：计划轮的正文只可能是收束语（无回答流），工具/过程段照常保留
-            List<Map<String, Object>> timelineSnapshot =
-                    buildTimelineSnapshot(st, content, toolCallSnapshot.size(), sessionArtifacts.size());
-            String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
-            String processText = st.processResponse.toString();
-            String closeoutMessageId = sessionService.appendMessage(st.sessionId, "assistant", content,
-                    null, null, st.thinkingHolder[0], st.retrievedJson,
-                    sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
-                    toolCallsJson, null, null, timelineJson, processText.isEmpty() ? null : processText,
-                    st.agentId, st.agentName, st.model,
-                    null, null, null,
-                    planRecordJson(st), st.turnId);
-            // 降级条同样要能刷新后还在（计划收尾轮也会登记降级，如"上游不认工具"）
-            sessionService.persistDegradations(closeoutMessageId, st.degradations);
-        } catch (Exception e) {
-            log.warn("[PLAN] {}轮收尾落库失败 (session={}): {}", phase, st.sessionId, e.getMessage());
-        }
-    }
+
+
+
+
 
     /**
      * askUser 工具执行体（一卡多问版）：向用户一次性下发多个结构化问题并阻塞等待批量作答，
@@ -5310,7 +4116,7 @@ public class RagService {
         snap.put("deepThink", st.deepThink);
         snap.put("toolCalls", toolCalls);
         snap.put("artifacts", artifacts);
-        snap.put("timeline", timelineSnapshot(st, content.length(), toolCalls.size(), artifacts.size(), false));
+        snap.put("timeline", recorder.timelineSnapshot(st, content.length(), toolCalls.size(), artifacts.size(), false));
         snap.put("sources", imageUrlSigner.signSourceImages(sources));
         snap.put("images", new ArrayList<>(st.refs.imgIndex.values()).stream().map(imageUrlSigner::signUrl).toList());
         snap.put("model", st.model);
@@ -5645,7 +4451,7 @@ public class RagService {
             st.budgetTokens = 0;
             st.contextHits = 0;
             // 生效最大输出（模型管理中该模型声明的值）：buildAnswerStream 的 max_tokens 与触顶判定共用
-            st.effectiveMaxOutput = effectiveMaxOutputOf(resolvedModel);
+            st.effectiveMaxOutput = retrieval.effectiveMaxOutputOf(resolvedModel);
             st.channel.stageMs.putAll(stageMs);
             // 计划模式（人在回路）：与主链路同一段钩子（本分支没有检索资料，计划输入不含资料清单）；
             // 未开计划开关时同样按消息意图自动开启（识别命中=本轮按计划模式走，卡片标「自动开启」）
@@ -5665,10 +4471,10 @@ public class RagService {
                     // 同主链路：拒绝/超时=未批准定格；「继续对话」取代=本版作废；均先补落收尾助手消息
                     // （含 plan 快照）再发对应事件 + 标准 done（防「连接被提前关闭」误报）
                     if (st.planSuperseded) {
-                        persistPlanSuperseded(st);
+                        recorder.persistPlanSuperseded(st);
                         runtime.sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
                     } else {
-                        persistPlanRejected(st);
+                        recorder.persistPlanRejected(st);
                         runtime.sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
                     }
                     Map<String, Object> cancelled = new LinkedHashMap<>();

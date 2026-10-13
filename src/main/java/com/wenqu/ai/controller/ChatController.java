@@ -12,7 +12,7 @@ import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.QaLogService;
-import com.wenqu.ai.service.RagService;
+import com.wenqu.ai.service.ChatService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.RateLimitService;
 import com.wenqu.ai.service.SessionService;
@@ -48,9 +48,9 @@ import java.util.Map;
 @Tag(name = "智能问答", description = "SSE 流式问答、会话管理、知识块详情")
 public class ChatController {
 
-    private final RagService ragService;
+    private final ChatService chatService;
     /**
-     * 人在回路裁决（P6 刀 1 自 RagService 抽族）：三张卡——工具执行审批、askUser 提问、执行计划批准——
+     * 人在回路裁决（P6 刀 1 自 ChatService 抽族）：三张卡——工具执行审批、askUser 提问、执行计划批准——
      * 的裁决提交与跨设备恢复都走这里。问答运行时不再代管卡片，本控制器也就不再向它要卡片。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
@@ -216,10 +216,10 @@ public class ChatController {
 
         // 不设容器级 SSE 超时：那是一条从请求开始一路走到头的墙钟，且 async 启动后不可续期——
         // 人在回路的提问卡/审批等待会被算进去，用户在第二张卡上选完答案整轮已被掐断。
-        // 整轮截断改由 RagService 的存活看门狗按「机器耗时」判定（chat.sseTimeoutMs，人工等待不计入）。
+        // 整轮截断改由 ChatRunRuntime 的存活看门狗按「机器耗时」判定（chat.sseTimeoutMs，人工等待不计入）。
         SseEmitter emitter = new SseEmitter(0L);
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
-        ragService.chat(ChatCommand.builder()
+        chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(question).userId(userId)
                 .userImages(images).attachments(attachments).skills(request.getSkills())
                 .mentions(mentions).historyRefs(historyRefs)
@@ -504,7 +504,7 @@ public class ChatController {
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
             @Parameter(description = "最多返回几轮（默认 5，上限 20；带 turn 时无效）") @RequestParam(value = "turns", required = false) Integer turns,
             @Parameter(description = "只看这一轮（消息行的 turnId；留空=按会话分轮列出）") @RequestParam(value = "turn", required = false) String turn) {
-        return ResultJson.ok(ragService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns, turn));
+        return ResultJson.ok(chatService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns, turn));
     }
 
     @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："
@@ -695,7 +695,7 @@ public class ChatController {
         if (requestedModel == null || requestedModel.isBlank()) {
             requestedModel = sessionService.sessionModelOf(sessionId);
         }
-        String resolvedModel = ragService.resolveChatModel(userId, requestedModel);
+        String resolvedModel = chatService.resolveChatModel(userId, requestedModel);
         if (resolvedModel.isBlank()) {
             throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
         }

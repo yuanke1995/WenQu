@@ -2407,7 +2407,7 @@ function flushPendingSteers (backendLeft = []) {
   sendSteerRound(next)
 }
 // ==================== 手动压缩会话上下文（/compact） ====================
-// 与「按阈值自动压缩」共用同一套摘要机制（后端 RagService.compactSession），差别是显式发起：
+// 与「按阈值自动压缩」共用同一套摘要机制（后端 HistoryCompactionService.compactSession），差别是显式发起：
 // 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 轮外全部并入摘要」。
 const compacting = ref(false)
 // 最近一次压缩结果（本地提示条，不落库）：带 sid，会话切走后不再显示——否则会把别的会话的结论挂在当前会话下

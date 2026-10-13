@@ -17,7 +17,7 @@ import java.time.Duration;
  *
  * <h3>为什么流式路径不设响应/读超时</h3>
  * 流式回答的 HTTP 响应与生成等长（分钟级），连接器级超时会误杀正常长流——整轮截断由
- * 存活看门狗按「机器耗时」判定（RagService.startTurnWatchdog，chat.sseTimeoutMs，人工等待不计），
+ * 存活看门狗按「机器耗时」判定（ChatService.startTurnWatchdog，chat.sseTimeoutMs，人工等待不计），
  * 挂起的网关最多拖满一个看门狗预算。实体路径则无看门狗覆盖，必须显式给读超时。
  *
  * @author yuanke

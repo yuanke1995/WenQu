@@ -492,7 +492,7 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 │   ├── WenQuApplication.java        # 入口
 │   ├── config/                      # SecurityConfig(Token+RBAC) / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler 等
 │   ├── controller/                  # 38 个控制器、240+ 端点（完整契约以 Swagger 为准）
-│   ├── service/                     # 问答主链路（RagService/HybridRetrievalService/RerankService/GraphRagService）
+│   ├── service/                     # 问答主链路（ChatService/HybridRetrievalService/RerankService/GraphRagService）
 │   │                                #   智能体与工具（SubAgentOrchestrator/ArtifactService/BuiltinTools/SkillTools/websearch/）
 │   │                                #   工作流（WorkflowDsl/WorkflowValidator/WorkflowEngine/WorkflowService）
 │   │                                #   沙盒（SandboxService/SandboxTools）· 基础设施（DynamicOpenAiChatModel/

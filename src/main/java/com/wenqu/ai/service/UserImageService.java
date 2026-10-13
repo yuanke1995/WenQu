@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 用户上传图片处理：data URL 保存到本地（并行），图片是否进模型只看当前聊天模型的能力位——
  * 支持读图走 {@link #processDirect}（原图直发），不支持走 {@link #processDisplay}（仅落盘展示 +
- * 可见降级，诚实说明注入见 RagService）。独立视觉模型描述链路已随「个人默认视觉模型」下线。
+ * 可见降级，诚实说明注入见 ChatService）。独立视觉模型描述链路已随「个人默认视觉模型」下线。
  *
  * @author yuanke
  */
@@ -63,7 +63,7 @@ public class UserImageService {
 
     /**
      * 仅展示链路：只落盘回显，dataUrl 为 null（图片不进模型）。聊天模型不支持图片理解时使用——
-     * 图片对模型不可见，本轮登记可见降级并在问题里注入诚实说明（见 RagService），不静默忽略。
+     * 图片对模型不可见，本轮登记可见降级并在问题里注入诚实说明（见 ChatService），不静默忽略。
      */
     public List<UserImage> processDisplay(List<String> dataUrls) {
         return processInternal(dataUrls, u -> processOne(u, false));

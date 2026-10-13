@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit;
  * - 某个用户长时间不用（{@link #IDLE_EVICT_MILLIS}）其连接池会被关闭回收，避免长连接无限堆积。
  * <p>
  * 工具暴露：每个成功连接的 server 的工具列表转 {@link SyncMcpToolCallback}（Spring AI ToolCallback），
- * 由 {@code RagService.enabledToolCallbacks()} 合并进请求；工具名自动带 server 前缀防冲突（Spring AI 默认行为）。
+ * 由 {@code ChatService.enabledToolCallbacks()} 合并进请求；工具名自动带 server 前缀防冲突（Spring AI 默认行为）。
  *
  * @author yuanke
  */
@@ -121,7 +121,7 @@ public class McpClientService {
     }
 
     /**
-     * 返回某用户当前所有已启用 MCP 服务的工具（供 RagService.enabledToolCallbacks() 合并）。
+     * 返回某用户当前所有已启用 MCP 服务的工具（供 ChatService.enabledToolCallbacks() 合并）。
      * 内部先按该用户的配置对齐连接（懒加载 + 配置变更重连），连接失败的 server 工具自动跳过。
      *
      * @param uid 归属用户（只取这个人的服务）

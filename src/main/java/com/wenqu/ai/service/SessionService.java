@@ -795,7 +795,7 @@ public class SessionService {
     /**
      * 追加消息（含相关推荐）：related 为 JSON 数组字符串（「接下来可以」的推荐问句清单）。
      * 落库意义：此前只随 done 事件下发、不入库，刷新后推荐整块消失；而模型把正文误写进
-     * &lt;related&gt; 时剥离即等于内容永久丢失（RagService 的 related 护栏要靠这一列留痕）。
+     * &lt;related&gt; 时剥离即等于内容永久丢失（ChatService 的 related 护栏要靠这一列留痕）。
      */
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls,
@@ -825,7 +825,7 @@ public class SessionService {
     /**
      * 追加消息（含本轮身份）：turnId 与 {@code c_ai_session_event.turn_id} 同源，是「这条回答的过程在哪一轮」的关联键。
      * <p>不带它的代价：过程回放只能整会话列一堆轮次，点不到「这一条回答怎么跑出来的」；
-     * 而账本本身按轮存着，缺的只是消息侧那半只钥匙。写入方（RagService）手里一直有 turnId，落库时递过来即可。
+     * 而账本本身按轮存着，缺的只是消息侧那半只钥匙。写入方（ChatService）手里一直有 turnId，落库时递过来即可。
      */
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls,

@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * 在跑轮次的三张登记表（P6 刀 0 自 {@code RagService} 的三张 private static Map 提出，单持有者）。
+ * 在跑轮次的三张登记表（P6 刀 0 自 {@code ChatService} 的三张 private static Map 提出，单持有者）。
  * <p>表本身是 private 的：外面只能经下面这些方法进出，不再有任何类能绕过方法名往「这一轮」的状态上伸手
  * ——这正是 P6 §一 拦路点要避免的那种跨类共享可变口袋。表随进程生死（重启即清空），不落库。
  * <p>三张表的键各不相同，因为它们的生命周期不同：

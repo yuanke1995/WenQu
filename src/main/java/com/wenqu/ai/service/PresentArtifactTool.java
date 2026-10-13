@@ -15,7 +15,7 @@ import java.util.Map;
  * 落盘为文件产物（Markdown/CSV/JSON/HTML），通过 SSE 实时下发给前端渲染成可预览/下载的卡片。
  * <p>
  * 典型用法：用户要求"把检索结果整理成表格/导出清单"，模型在回答末尾调用本工具生成文件。
- * 通过 {@code toolContext}（RagService 以 toolContext 注入 sessionId）定位当前会话，
+ * 通过 {@code toolContext}（ChatService 以 toolContext 注入 sessionId）定位当前会话，
  * 落盘到会话隔离目录并实时下发 artifact 事件。
  *
  * @author yuanke
@@ -24,11 +24,11 @@ import java.util.Map;
 @Component
 public class PresentArtifactTool {
 
-    /** toolContext 中会话 ID 的键名（RagService 注入） */
+    /** toolContext 中会话 ID 的键名（ChatService 注入） */
     public static final String CTX_SESSION_ID = "sessionId";
 
     /**
-     * toolContext 中用户 ID 的键名（RagService 注入）。
+     * toolContext 中用户 ID 的键名（ChatService 注入）。
      * <p>沙盒工具的归属 uid 必须从这里取，不能读 {@code RequestUser.uid()}：工具回调在 Spring AI
      * 响应式 I/O 线程上执行，而 {@code RequestUser} 是 ThreadLocal，由流水线线程装载，
      * 跨线程即失效、回落成 anonymous —— 表现为沙盒被建到 {@code shared/anonymous/workspace}。

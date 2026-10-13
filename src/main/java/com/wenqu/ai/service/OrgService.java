@@ -177,7 +177,7 @@ public class OrgService {
      * 个人默认模型校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
      * memoryEnabled=用户级长期记忆自动提炼开关（Boolean，null=不修改）。
      * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排/视觉个人默认已退役
-     * （重排归知识库检索设置；聊天图片理解只看模型能力位，见 RagService）。
+     * （重排归知识库检索设置；聊天图片理解只看模型能力位，见 ChatService）。
      */
     public void setPreference(String uid, String chatRef, Boolean memoryEnabled) {
         User u = userMapper.selectById(uid);

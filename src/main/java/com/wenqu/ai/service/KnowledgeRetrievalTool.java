@@ -16,7 +16,7 @@ import java.util.List;
  * 让 LLM 在主链路已注入 RAG 上下文之外，仍能按需主动调用一次"精确检索知识库"，
  * 用于：1) 主链路未召回但模型判断需要补充的信息；2) 用户追问时针对特定主题的二次检索。
  * 暴露条件（其一）：tool.knowledgeRetrieval.enabled 开启；或本轮命中检索-反思循环模式
- * （retrieval.reflectiveRetrieval，RagService 按轮强制暴露并注入充分性自评约束）。
+ * （retrieval.reflectiveRetrieval，ChatService 按轮强制暴露并注入充分性自评约束）。
  * <p>
  * 返回内容经裁剪，避免工具结果膨胀挤占上下文预算；命中内容与主链路 RAG 召回天然互补。
  *
@@ -33,7 +33,7 @@ public class KnowledgeRetrievalTool {
     /** 悬浮/弹窗溯源摘要截断长度（注册进 sources 的 snippet） */
     private static final int SNIPPET_CHARS = 120;
 
-    /** 引用来源注册器：流式问答期间由 RagService 注入（instrumentTools 包装层），把工具命中注册进当前回答的来源列表并分配引用编号 */
+    /** 引用来源注册器：流式问答期间由 ChatService 注入（instrumentTools 包装层），把工具命中注册进当前回答的来源列表并分配引用编号 */
     public interface SourceRegistrar {
         /**
          * 注册一个工具命中的知识块。
@@ -45,7 +45,7 @@ public class KnowledgeRetrievalTool {
         Registration register(Hit hit, String snippet);
 
         /**
-         * 登记一条本轮可见降级（与 RagService.addDegradation 同口径、同一份 degradations 列表）。
+         * 登记一条本轮可见降级（与 ChatService.addDegradation 同口径、同一份 degradations 列表）。
          * 工具链路自己拿不到 TurnState，由注册器桥接——典型用途：重排不可用时明确告知
          * 「本轮引用未做语义筛选」，而不是让用户对着一堆弱相关引用以为是检索本来就这样。
          */

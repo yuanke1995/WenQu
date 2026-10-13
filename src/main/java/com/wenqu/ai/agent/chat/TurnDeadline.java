@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 本轮耗时台账：整轮预算只计<b>机器</b>时间，人在回路的等待从中扣除。
- * <p>P6 刀 0 自 {@code RagService} 提出顶层（原先是它的私有 static 嵌套类）。
+ * <p>P6 刀 0 自 {@code ChatService} 提出顶层（原先是它的私有 static 嵌套类）。
  * <p>背景：askUser 提问卡单卡允许等 chat.askTimeoutMs（默认 10 分钟）、工具审批 120s，而容器级 SSE
  * 超时是<b>从请求开始一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，实测发心跳
  * 也不复位）。于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，

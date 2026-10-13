@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 定时执行智能体：用户自建的计划任务，到点后用「智能体 + 提示词」跑一次完整问答。
  * <p>
- * <b>关键实现选择</b>：执行时复用 {@link RagService#chat} 这条**网页问答同款流水线**，
+ * <b>关键实现选择</b>：执行时复用 {@link ChatService#chat} 这条**网页问答同款流水线**，
  * 用 {@link CollectingSseEmitter} 把 SSE 事件收进内存（没有浏览器连着的场景），而不是另写
  * 一条"非流式问答"——后者必然慢慢与主链路出现行为差异（引用编号、配图、产物、深度思考、
  * 工具调用、子代理编排），这正是要避免的。因此需要一次问答的其它场景（评估回放、对外 API）
@@ -73,7 +73,7 @@ public class ScheduledJobService {
     private final ScheduledJobMapper jobMapper;
     private final ScheduledRunMapper runMapper;
     private final ConfigService configService;
-    private final RagService ragService;
+    private final ChatService chatService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
     /** 站内通知：定时任务终态（完成/失败）通知归属人。旁路语义，create 内部已全捕获 */
@@ -83,13 +83,13 @@ public class ScheduledJobService {
     private final Set<String> runningJobs = ConcurrentHashMap.newKeySet();
 
     public ScheduledJobService(ScheduledJobMapper jobMapper, ScheduledRunMapper runMapper,
-                               ConfigService configService, RagService ragService,
+                               ConfigService configService, ChatService chatService,
                                SessionService sessionService, AgentMapper agentMapper,
                                NotificationService notificationService) {
         this.jobMapper = jobMapper;
         this.runMapper = runMapper;
         this.configService = configService;
-        this.ragService = ragService;
+        this.chatService = chatService;
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.notificationService = notificationService;
@@ -266,7 +266,7 @@ public class ScheduledJobService {
             int timeoutMs = Math.max(30_000, configService.getInt("scheduled.timeoutMs", 300_000));
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
-                ragService.chat(ChatCommand.builder()
+                chatService.chat(ChatCommand.builder()
                         .sessionId(sessionId).question(job.getPrompt()).userId(job.getUid())
                         .deepThink(Integer.valueOf(1).equals(job.getDeepThink()))
                         .agentId(job.getAgentId()).modelOverride(job.getModelRef())
@@ -280,7 +280,7 @@ public class ScheduledJobService {
                 run.setStatus("succeeded");
                 run.setAnswer(trimTo(sink.answer(), ANSWER_PREVIEW));
             } finally {
-                // 收集型通道不触发 onCompletion，必须主动清登记，否则 RagService 的 ACTIVE_SSE 残留
+                // 收集型通道不触发 onCompletion，必须主动清登记，否则 ChatRunRuntime 的 ACTIVE_SSE 残留
                 ChatRunRuntime.forgetSseChannel(sink);
             }
         } catch (Exception e) {

@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * run_code 的子调用通道与实时面板（P6 刀 3a，自 {@code RagService} 抽出）。
+ * run_code 的子调用通道与实时面板（P6 刀 3a，自 {@code ChatService} 抽出）。
  * <p>两件事长在一起是有原因的：脚本里那一路子调用<b>必须走与模型直调同一条守卫链</b>
  * （叫停、权限档位、引用登记），而它绕开了模型的工具循环，于是"这一次运行调了哪些工具、
  * 各自多久、额度还剩多少"这份账只能在这里记——面板就是这本账的展示面。分开两处必漂移。

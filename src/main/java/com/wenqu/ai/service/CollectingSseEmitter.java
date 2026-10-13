@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
  * 收集型 SSE 通道：把问答流水线发出的事件收进内存，而不是写给浏览器。
  * <p>
  * 用途：**没有客户端**却需要跑一次完整问答的场景（当前是定时执行智能体）。复用的是同一条
- * {@link RagService#chat} 流水线，因此检索、引用来源、配图、产物交付、深度思考、工具调用、
+ * {@link ChatService#chat} 流水线，因此检索、引用来源、配图、产物交付、深度思考、工具调用、
  * 子代理编排的行为与网页问答**完全一致**——而不是另写一条"简化版问答"再慢慢补齐差异。
  * <p>
  * 实现：继承 {@link SseEmitter} 并重写 {@code send(SseEventBuilder)}，把事件帧收进列表且
@@ -25,12 +25,12 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@link #awaitDone(long)} 等到 {@code done} / {@code error} 事件或超时；</li>
  *   <li>{@link #answer()} 取拼接好的回答正文；{@link #lastError()} 取错误文案。</li>
  * </ul>
- * ⚠️ 这里解析的是**自家协议**（事件名 + data 里的 JSON）：事件名见 RagService 的
+ * ⚠️ 这里解析的是**自家协议**（事件名 + data 里的 JSON）：事件名见 ChatService 的
  * {@code sendSseEvent} 调用（正文 {@code token}、完成 {@code done}、错误 {@code error}），
  * 改名要同步本类与前端 {@code api.js} 的事件分发。
  * <p>
  * 另外：本类不参与"客户端断开"语义——{@code ACTIVE_SSE} 的断开标记永远不会被打上，
- * 所以定时任务不会被误判为断开。用完后由 {@link RagService#forgetSseChannel} 主动清登记。
+ * 所以定时任务不会被误判为断开。用完后由 {@link ChatService#forgetSseChannel} 主动清登记。
  *
  * @author yuanke
  */

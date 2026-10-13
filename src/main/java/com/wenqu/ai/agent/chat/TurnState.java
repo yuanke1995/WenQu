@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
- * 本轮问答的运行时状态（P6 刀 0 自 {@code RagService} 的私有内部类 AnswerStreamState 提出顶层）。
+ * 本轮问答的运行时状态（P6 刀 0 自 {@code ChatService} 的私有内部类 AnswerStreamState 提出顶层）。
  * <p><b>为什么要提出来</b>：原先它是非静态内部类，隐式持有整个问答服务——任何一处「抽服务」都会变成
  * 多个类共享同一个可变口袋，而且这个口袋随时能伸手拿服务上的任何东西。提顶层后它变成一个
  * <b>可传递、可核对的对象</b>：它要的运行时能力必须写在 {@link Deps} 里，构造之外一条都拿不到。
@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * token 与容量用量、人在回路与落库归属。它们要等刀 4/5 才有自己的归属。
  * <p>三条纪律（改这里前先读）：
  * <ul>
- *   <li>不许反向持有 {@code RagService}：需要问答侧代做的动作一律经 {@link TurnRuntime} 点名列出；</li>
+ *   <li>不许反向持有 {@code ChatService}：需要问答侧代做的动作一律经 {@link Deps} 点名列出（刀 5c 之后只剩两件）；</li>
  *   <li>轮次登记（本对象、身份把手、耗时台账）都只经 {@link TurnRegistry} 进出，别在这里存静态引用；</li>
  *   <li>「本轮已收尾」的幂等闸只有 {@link #claimTerminal()} 一个入口，两条终态路径共用它。</li>
  * </ul>
@@ -62,23 +62,13 @@ public final class TurnState {
     /** 已编号的图片标记：[图片N] 或 [图片N：描述]。上下文填充与终态越界校验都认这一个语法（单源） */
     public static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
 
-    /**
-     * 本轮状态要请问答侧代做的<b>一件事</b>（P6 刀 0 交进来的是三件，刀 5a 收走两件）。
-     * <p>半程正文落库要动消息表与时间线快照，归属还在问答侧——刀 5 把持久化缝收完，这条尾巴也就没了。
-     * <p>SSE 投递与降级登记不再走这里：刀 5a 把引用池的构造点移进流水线，池直接拿
-     * {@link ChatRunRuntime}（同为问答运行时的投递出口），不必再借状态袋的动作面。
-     */
-    public interface TurnRuntime {
-        /** 半程正文与过程快照落库（幂等闸由调用方先经 {@link TurnState#claimTerminal()} 占住） */
-        void persistPartial(TurnState st, String tailMarker);
-    }
 
     /**
      * 本轮状态需要的运行时依赖：构造时显式交进来，之后不再从别处拿。
      * <p>刀 5a 之后只剩两件——「本轮还挂在运行总线上吗」与「半程正文怎么落」。
      * 原先那四件（配置/重排/图片签名/咨询工厂）都只服务引用池与工具面，现在由它们自己按窄接口拿着。
      */
-    public record Deps(ChatRunBus runBus, TurnRuntime runtime) {
+    public record Deps(ChatRunBus runBus, java.util.function.BiConsumer<TurnState, String> persistPartial) {
     }
 
     // ==================== 四个按归属下沉的子结构（刀 0 第二步） ====================
@@ -94,7 +84,7 @@ public final class TurnState {
 
     // ==================== 本轮身份 ====================
 
-    /** 本轮状态本身（构造时交进来，供 {@link TurnRuntime#persistPartial} 那类回调使用） */
+    /** 本轮状态本身（构造时交进来，供 {@link Deps#persistPartial} 那类回调使用） */
     public final Deps deps;
     public final String sessionId;
     public final String question;
@@ -268,7 +258,7 @@ public final class TurnState {
     /**
      * 工具侧（沙盒那层截断之前）已经外溢留存的登记，条目形如 {@code execute|<spillId>}。
      * <p>为什么在工具里发起而不是在这里补：只有它知道完整原文长什么样——问答侧拿到的已经是被截过的
-     * 文本，在这层再截一次只是二次丢失。工具经 {@code RagService#toolContext} 注入的能力落盘并上报，
+     * 文本，在这层再截一次只是二次丢失。工具经 {@code ChatService#toolContext} 注入的能力落盘并上报，
      * 这里只接住、把「查看完整输出」挂到对应那张卡片上（不重复落盘，也不把 id 塞进模型看到的文本）。
      */
     public final java.util.concurrent.ConcurrentLinkedQueue<String> toolSpills =
@@ -368,7 +358,7 @@ public final class TurnState {
         // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
         // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
         if (claimTerminal()) {
-            deps.runtime().persistPartial(this, userStopped ? STOP_SUFFIX : TRUNCATION_SUFFIX);
+            deps.persistPartial().accept(this, userStopped ? STOP_SUFFIX : TRUNCATION_SUFFIX);
         }
     }
 }

@@ -10,7 +10,7 @@ package com.wenqu.ai.agent.tool;
  * 那等于让一个监听器的顺序翻掉另一个的否决。
  * <p>
  * 链的顺序由 {@code @Order} 决定，靠前的先判。迁移前这段逻辑内联在
- * {@code RagService.instrumentTools} 的匿名类里（叫停闸 → 步数闸 → 记账 → 审批），
+ * {@code ChatService.instrumentTools} 的匿名类里（叫停闸 → 步数闸 → 记账 → 审批），
  * 抽出来之后工作流节点与技能那两条现在完全绕过守卫的旁路（{@code WorkflowEngine.mcpBody}/
  * {@code skillBody}）才可能复用同一批闸。
  *

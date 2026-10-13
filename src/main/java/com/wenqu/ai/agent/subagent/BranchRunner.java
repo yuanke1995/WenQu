@@ -4,8 +4,8 @@ package com.wenqu.ai.agent.subagent;
  * 全循环分支的执行器（P3a 的接缝）。
  * <p>
  * 为什么做成「父轮按轮回传的函数」而不是一个注入到编排器里的 Spring bean：编排器由
- * {@code RagService} 构造注入，而分支执行要做的事就是再调一次 {@code RagService.chat(...)}——
- * 把执行器做成 bean 就成了 RagService ↔ 编排器 ↔ 执行器的三方循环依赖，只能靠
+ * {@code ChatService} 构造注入，而分支执行要做的事就是再调一次 {@code ChatService.chat(...)}——
+ * 把执行器做成 bean 就成了 ChatService ↔ 编排器 ↔ 执行器的三方循环依赖，只能靠
  * {@code ObjectProvider} 或字段注入解开，而那种解法把一次编译期可见的接错推迟成运行期的 null。
  * 传函数则连「这一轮才有父轮上下文」这件事一起传了：分支的归属用户、父会话、深度都来自当轮，
  * 放在单例 bean 上就变成又一份跨轮共享的 ThreadLocal 状态（P1 第一刀删掉的那三对就是这类东西）。

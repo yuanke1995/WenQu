@@ -62,7 +62,7 @@ function serve (page) {
       historyGets++
       return json([{ messageId: 'q-1', role: 'user', content: '明天出差帮我安排一下', createTime: Date.now() - 120000 }])
     }
-    // 卡片恢复入口（GET /ask-user/pending?sessionId=）：口径与 RagService.listPendingAsks 一致
+    // 卡片恢复入口（GET /ask-user/pending?sessionId=）：口径与 HitlDecisionService.listPendingAsks 一致
     if (u.pathname === '/api/ai/ask-user/pending') {
       return json({ items: [{ askId: 'ask-1', questions: QUESTIONS, timeoutMs: 600000,
         remainingMs: 420000, createdAt: Date.now() - 180000, expired: false, live: askLive }] })

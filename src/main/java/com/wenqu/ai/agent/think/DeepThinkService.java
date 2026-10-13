@@ -26,7 +26,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * <b>深度思考</b>这一族（P6 刀 4，自 {@code RagService} 抽出）：生成前先跑一次同步消费的思考流，
+ * <b>深度思考</b>这一族（P6 刀 4，自 {@code ChatService} 抽出）：生成前先跑一次同步消费的思考流，
  * 从思考文本里提取「精化 query + 子问题」这份检索计划，再把计划交回调用方去多路检索。
  *
  * <p>它只做思考这一段：检索、编排、生成都还在问答侧（阶段3 由调用方执行）。
@@ -295,7 +295,7 @@ public class DeepThinkService {
     /**
      * 思考阶段被用户叫停的留痕：这一轮既没有正文也没有工具记录，什么都不落的话历史里只剩一句提问，
      * 用户读到的是「我发了个问题，没回答」而不是「我让它停了」。落一条只带思考与停止标记的消息。
-     * <p>为什么单开一条：{@code RagService#persistPartialAnswer} 挂在流状态上，而 {@code TurnState}
+     * <p>为什么单开一条：{@code ChatService#persistPartialAnswer} 挂在流状态上，而 {@code TurnState}
      * 要到生成阶段才构造——思考阶段没有那个状态可借。
      *
      * @param turnId 本轮身份（调用点从把手取，见 {@code ChatRunRuntime#turnIdOf}）：带上它这条留痕才回得去那一轮的账本

@@ -114,7 +114,7 @@ public class WorkflowEngine {
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     private final SandboxService sandboxService;
     private final AgentService agentService;
-    private final RagService ragService;
+    private final ChatService chatService;
     private final SessionService sessionService;
     private final com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper;
     private final RerankService rerankService;
@@ -127,7 +127,7 @@ public class WorkflowEngine {
                           ModelRegistryService modelRegistryService,
                           com.wenqu.ai.mapper.UserMapper userMapper,
                           SandboxService sandboxService, AgentService agentService,
-                          RagService ragService, SessionService sessionService,
+                          ChatService chatService, SessionService sessionService,
                           com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
                           RerankService rerankService, SkillService skillService,
                           McpClientService mcpClientService, CredentialService credentialService) {
@@ -139,7 +139,7 @@ public class WorkflowEngine {
         this.userMapper = userMapper;
         this.sandboxService = sandboxService;
         this.agentService = agentService;
-        this.ragService = ragService;
+        this.chatService = chatService;
         this.sessionService = sessionService;
         this.toolApprovalMapper = toolApprovalMapper;
         this.rerankService = rerankService;
@@ -553,7 +553,7 @@ public class WorkflowEngine {
                 if (text.length() > 0 && !text.toString().endsWith("\n")) text.append("\n");
                 text.append(content == null ? "" : content).append("\n\n");
             }
-            // 对话型接入：编号完成后把累计图片清单推给调用方（RagService 签名后发 SSE image 事件，
+            // 对话型接入：编号完成后把累计图片清单推给调用方（ChatService 签名后发 SSE image 事件，
             // 时序与主链路一致——image 事件先于 LLM token）。sink 抛错（SSE 已断）不打断节点执行。
             if (ctx != null && ctx.imageSink != null && !ctx.imageUrls.isEmpty()) {
                 try {
@@ -576,7 +576,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * 命中块图片占位编号（镜像 {@code RagService} 上下文填充的同名逻辑，工作流无片段截取故实现更简）：
+     * 命中块图片占位编号（镜像 {@code ChatService} 上下文填充的同名逻辑，工作流无片段截取故实现更简）：
      * 把正文里的 [图片] / [图片：描述] 占位按出现顺序配对块内图片 URL，替换为全局编号 [图片N：描述]
      * （N 跨节点连续，挂在 ctx 上）；图片多于占位时剩余的以 [图片N] 追加在块尾（与主链路一致）。
      * 与主链路的差异：无"描述与检索问题相关性"预筛——块本身已经过检索/低分门筛选，
@@ -1039,7 +1039,7 @@ public class WorkflowEngine {
     // ---- M3：subagent ----
 
     /**
-     * 子智能体节点：委派指定智能体作答——复用 RagService.chat 全管线（智能体的知识库范围/
+     * 子智能体节点：委派指定智能体作答——复用 ChatService.chat 全管线（智能体的知识库范围/
      * 工具/技能原样生效），身份按触发者装载（可见性按调用者），回答经 CollectingSseEmitter 收集。
      * 会话为<b>临时会话</b>：跑完即删（软删可审计），回答留在 trace 与 state，不污染会话列表。
      */
@@ -1057,7 +1057,7 @@ public class WorkflowEngine {
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 withReplay(ctx, () -> {
-                    ragService.chat(ChatCommand.builder()
+                    chatService.chat(ChatCommand.builder()
                             .sessionId(sessionId).question(prompt).userId(ctx.uid)
                             .userImages(List.of()).attachments(List.of()).skills(List.of())
                             .agentId(agentId).modelOverride(modelRef)
@@ -1148,7 +1148,7 @@ public class WorkflowEngine {
 
     /**
      * 技能节点：把所选技能的<b>全文</b>注入下游上下文（与聊天「+」菜单的「本轮指定技能」同一约定，
-     * 见 {@code RagService.buildUserSkillText}）——输出 {@code text}，下游 llm 节点用
+     * 见 {@code ChatService.buildUserSkillText}）——输出 {@code text}，下游 llm 节点用
      * {@code {{skill_1.text}}} 引用即可让模型按技能要求作答。
      * <p>
      * 技能是个人资产（不共享）：按 {@code ctx.uid} 取，名字不存在/已停用即 fail-loud，不静默降级。
@@ -1226,7 +1226,7 @@ public class WorkflowEngine {
             trace.put("args", args);
             trace.put("result", result);
             // 显式声明本节点走的是聊天守卫链之外的直调路径（P1 收口判据要求旁路可见，见
-            // docs/agent-runtime-gap-2026q4.md §三 P1）。这里刻意**不**接 RagService 那条守卫链：
+            // docs/agent-runtime-gap-2026q4.md §三 P1）。这里刻意**不**接 ChatService 那条守卫链：
             // ①画布的审批是独立的 approval 节点（挂起-快照-重放），把「按工具逐个问人」的聊天审批
             //    套上来会让每个 MCP 节点都等一张没人点的卡，等于打断在跑的画布；
             // ②留痕已由 node_traces 承担（args/result 全量入库），账本那张表是会话轮次维度的，

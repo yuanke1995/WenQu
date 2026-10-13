@@ -31,7 +31,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class TodoService {
 
-    /** 工具上下文键：本轮清单写入器（闭包持有会话与流，落库 + SSE 都在 RagService 那一侧） */
+    /** 工具上下文键：本轮清单写入器（闭包持有会话与流，落库 + SSE 都在 ChatService 那一侧） */
     public static final String CTX_TODO = "todoWrite";
 
     /** 单张清单最多条目数：超过就看不出"还剩几步"，也占上下文 */

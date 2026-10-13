@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * 工具调用管线：把模型侧的一次工具调用过一遍「守卫链 → 上下文注入 → 执行 → 观测 → 结果加工」。
  * <p>
- * 迁移前这一整段是 {@code RagService.instrumentTools} 里的匿名内部类（两百行、直读
+ * 迁移前这一整段是 {@code ChatService.instrumentTools} 里的匿名内部类（两百行、直读
  * TurnState 的字段）。搬出来的直接收益有三条，都不是抽象洁癖：
  * <ol>
  *   <li><b>旁路可收口</b>：工作流的 mcp/skill 节点当前是 {@code target.call(json)} 裸调，

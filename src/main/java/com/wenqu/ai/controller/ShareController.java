@@ -6,7 +6,7 @@ import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.AgentShare;
 import com.wenqu.ai.service.AgentShareService;
 import com.wenqu.ai.service.ModelRegistryService;
-import com.wenqu.ai.service.RagService;
+import com.wenqu.ai.service.ChatService;
 import com.wenqu.ai.service.RateLimitService;
 import com.wenqu.ai.service.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,7 +38,7 @@ import java.util.Map;
  *   <li>token 即凭据：链接持有者即可对话，停用/撤销立即失效（404 不泄露存在性）；</li>
  *   <li>限流：复用 chat 桶按 IP 限频（游客无身份，防单人挤兑共享池）；</li>
  *   <li>身份：检索可见性与个人默认模型按发布者执行（发布即授权）；</li>
- *   <li>能力：RagService 游客模式只暴露知识检索与内置工具，沙盒/产物/MCP/技能不暴露；</li>
+ *   <li>能力：ChatService 游客模式只暴露知识检索与内置工具，沙盒/产物/MCP/技能不暴露；</li>
  *   <li>会话：游客 uid = "share-visitor:{客户端随机ID}"，SessionService 按 owner 精确匹配，
  *       游客只能读写自己的会话，也不会出现在任何登录用户的会话列表里。
  *       清除同样只按 (uid, 智能体) 在 SQL 里圈定，不接受调用方传会话 ID。</li>
@@ -55,7 +55,7 @@ public class ShareController {
 
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
-    private final RagService ragService;
+    private final ChatService chatService;
 
     /**
      * 轮次控制与存活（P6 刀 2）。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
@@ -218,10 +218,10 @@ public class ShareController {
             }
         }
 
-        // 游客对话同样不设容器级 SSE 超时：整轮截断由 RagService 的存活看门狗按机器耗时判定
+        // 游客对话同样不设容器级 SSE 超时：整轮截断由 ChatRunRuntime 的存活看门狗按机器耗时判定
         SseEmitter emitter = new SseEmitter(0L);
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
-        ragService.chat(ChatCommand.builder()
+        chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
                 // 接流归属用访客身份（不是发布者）：分享页刷新/换设备能把这一轮接回来，
                 // 而别人即便拿到同一个 token 也接不走不属于自己的会话

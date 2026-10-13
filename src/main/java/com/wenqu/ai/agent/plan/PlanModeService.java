@@ -31,7 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * <b>计划模式</b>这一族（P6 刀 4，自 {@code RagService} 抽出）：出计划 → 挂批准卡等人裁决 →
+ * <b>计划模式</b>这一族（P6 刀 4，自 {@code ChatService} 抽出）：出计划 → 挂批准卡等人裁决 →
  * 批准后把计划注入执行轮 / 退回则带意见重出下一版 / 「继续对话」则本版作废；
  * 外加计划意图识别（用户没开计划开关时，按这条消息判「不先对齐就会白做」）。
  *
@@ -57,7 +57,7 @@ import java.util.Map;
 public class PlanModeService {
 
     /**
-     * 计划轮要请问答侧代做的四件事（<b>本轮</b>绑定，所以按调用传入——本类不认识 {@code RagService}）。
+     * 计划轮要请问答侧代做的四件事（<b>本轮</b>绑定，所以按调用传入——本类不认识 {@code ChatService}）。
      */
     public interface PlanTurnHooks {
         /** 与生成轮同口径装配本轮工具集（计划的能力清单；结果同时缓存给生成轮复用） */

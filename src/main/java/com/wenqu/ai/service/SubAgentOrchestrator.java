@@ -382,7 +382,7 @@ public class SubAgentOrchestrator {
      *       （见 NodeExecutor：{@code subscribeOn(scheduler)}），跑在 reactor 线程池的工作线程上，
      *       主线程设的 ThreadLocal 在那里 get() 返回 null → 分支静默不执行（"编排完成但命中 0 块"）。</li>
      *   <li><b>不能把 RunCtx 直接放进 state</b>：框架会对 state 做 Jackson 序列化，而 RunCtx 含
-     *       onBranch 回调（lambda 捕获了 RagService → chatClient → 整条 Spring bean 链），
+     *       onBranch 回调（lambda 捕获了 ChatService → chatClient → 整条 Spring bean 链），
      *       序列化时抛 InvalidDefinitionException（jdk.proxy2 无法构造 BeanSerializer）→ 整轮编排失败降级。
      *       故 state 只放可安全序列化的 ctxId 字符串，真正的上下文存在 {@link #CTX_REGISTRY}。</li>
      * </ol>
@@ -641,7 +641,7 @@ public class SubAgentOrchestrator {
     /**
      * 全循环分支：把这一支交回问答管线跑完整一轮，回收回报。
      * <p>与 digest 分支的分工：本方法只负责"派出去、等回来、把状态写成编排视图认的形状"。
-     * 会话、超时、产物收养、编号都在 {@code BranchRunner} 的实现（RagService）里——那里才有
+     * 会话、超时、产物收养、编号都在 {@code BranchRunner} 的实现（ChatService）里——那里才有
      * 本轮的会话服务与引用列表，编排器无从介入，硬要在此处编号就会把问答侧的知识抄一份到编排侧。
      * <p>失败不抛：回报状态写成 failed/timeout，主链路照常作答，并在要点段留一行占位
      * （沿用 {@code agent.aggregateMarkFailed} 那条"失败要看得见"的口径）。

@@ -24,7 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 子智能体分支的簿记（P6 刀 3b，自 {@code RagService} 抽出）：派一支、收一支的回报、
+ * 子智能体分支的簿记（P6 刀 3b，自 {@code ChatService} 抽出）：派一支、收一支的回报、
  * 把子轮用过的引用与图片回填进父轮编号表、给下一层准备继承用的父轮上下文。
  * <p><b>「跑一整轮」仍然是交进来的函数</b>（{@link TurnRunner}）。分支是一条完整的问答轮，
  * 而流水线还在问答服务里（刀 5 才搬进门面）——注入进来就是运行时候选之间的一根环。
@@ -39,7 +39,7 @@ import java.util.regex.Pattern;
 @Service
 public class SubAgentBranchRuntime {
 
-    /** 跑一整轮的口子：由问答侧按轮传入（通常是 {@code RagService::chat}） */
+    /** 跑一整轮的口子：由问答侧按轮传入（通常是 {@code ChatService::chat}） */
     public interface TurnRunner {
         void run(ChatCommand cmd, SseEmitter sink);
     }

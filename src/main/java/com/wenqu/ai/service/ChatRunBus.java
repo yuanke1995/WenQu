@@ -29,7 +29,7 @@ import java.util.function.Supplier;
  *
  * <p>做法是把「一轮的执行」和「一条连接」解耦：事件先进总线（按 sessionId 归属，一轮一条），
  * 由它扇出给<b>当前挂着的所有通道</b>；通道全没了也不掐本轮，只在<b>宽限期</b>到点后回调中止
- * （中止走 RagService 既有的半程截断落库路径，落库结果与今天「断开即停」完全一致）。
+ * （中止走 ChatService 既有的半程截断落库路径，落库结果与今天「断开即停」完全一致）。
  * 迟到的观众先拿一份<b>权威快照</b>（正文/过程独白/工具卡片/时间线/清单……），此后只收快照之后的增量。
  *
  * <p>为什么不缓冲逐字增量：正文本身已经在 {@link com.wenqu.ai.agent.chat.TurnState#fullResponse} 这类权威缓冲里，
@@ -93,9 +93,9 @@ public class ChatRunBus {
         public long beganAt() {
             return beganAt;
         }
-        /** 权威快照供给（正文/工具/时间线这些仍归本轮状态所有，由 RagService 提供） */
+        /** 权威快照供给（正文/工具/时间线这些仍归本轮状态所有，由 ChatService 提供） */
         final Supplier<Map<String, Object>> snapshotSource;
-        /** 宽限到点：由 RagService 掐本轮并走半程落库。返回 false=本轮不归宽限管（例如正等人工裁决），顺延 */
+        /** 宽限到点：由 ChatService 掐本轮并走半程落库。返回 false=本轮不归宽限管（例如正等人工裁决），顺延 */
         final BooleanSupplier onGraceExpired;
         /** 本轮是否还在跑（把手还在且是同一 turnId）：终态后由巡检回收，免得每条终态路径都得记得关总线 */
         final BooleanSupplier turnAlive;
@@ -132,7 +132,7 @@ public class ChatRunBus {
         }
     }
 
-    /** sessionId → 在跑的轮（会话轮级互斥保证一会话至多一轮，见 {@code RagService#chat}） */
+    /** sessionId → 在跑的轮（会话轮级互斥保证一会话至多一轮，见 {@code ChatService#chat}） */
     private final Map<String, Run> runs = new ConcurrentHashMap<>();
     /**
      * 通道 → 它所属的那一轮。流水线闭包里握着的是<b>发起时</b>那条 emitter，
@@ -436,7 +436,7 @@ public class ChatRunBus {
 
     /**
      * 组装 data 帧：{@code {"type":..,"content":"..","sessionId":..,"seq":..,"pos":..}}。
-     * <p>content 一律按字符串转义，与 {@code RagService.sendSseEvent} 原有的手工拼接同形；
+     * <p>content 一律按字符串转义，与 {@code ChatService.sendSseEvent} 原有的手工拼接同形；
      * 多出的 seq/pos 对老前端无感（只读 data 行、按 type 派发）。
      */
     public static String frame(String type, String content, String sessionId, long seq, Integer pos) {

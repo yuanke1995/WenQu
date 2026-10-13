@@ -50,7 +50,7 @@ import java.util.UUID;
  * <b>安全模型（复用游客分享的既有结论，不另起一套）</b>：
  * <ul>
  *   <li>身份：检索可见性与默认模型按<b>发布者</b>执行（{@code created_by}）——发布即授权；</li>
- *   <li>能力：走 {@code RagService.chat} 的 guestMode，工具白名单收窄到知识检索与内置项，
+ *   <li>能力：走 {@code ChatService.chat} 的 guestMode，工具白名单收窄到知识检索与内置项，
  *       沙盒/产物/个人技能/个人 MCP 等身份敏感能力一律不暴露；</li>
  *   <li>凭据：URL 路径里的 token，停用（enabled=0）或未开启 MCP（mcp_enabled=0）或撤销（删行）立即失效；</li>
  *   <li>限频：优先按客户端 IP（取不到时按 token）走 chat 桶，防止单个端点被打爆；</li>
@@ -97,7 +97,7 @@ public class McpServerService {
 
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
-    private final RagService ragService;
+    private final ChatService chatService;
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final ConfigService configService;
@@ -110,7 +110,7 @@ public class McpServerService {
     private final McpCallLogMapper mcpCallLogMapper;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
-                            RagService ragService, RateLimitService rateLimitService,
+                            ChatService chatService, RateLimitService rateLimitService,
                             ModelRegistryService modelRegistryService, ConfigService configService,
                             ApiKeyService apiKeyService, UserMapper userMapper,
                             KnowledgeRetrievalTool knowledgeRetrievalTool,
@@ -118,7 +118,7 @@ public class McpServerService {
                             ResourceVisibilityService visibility, McpCallLogMapper mcpCallLogMapper) {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
-        this.ragService = ragService;
+        this.chatService = chatService;
         this.rateLimitService = rateLimitService;
         this.modelRegistryService = modelRegistryService;
         this.configService = configService;
@@ -316,7 +316,7 @@ public class McpServerService {
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 // 非游客模式：身份与网页问答完全一致（智能体、个人技能、个人 MCP、工具开关等按本人配置）
-                ragService.chat(ChatCommand.builder()
+                chatService.chat(ChatCommand.builder()
                         .sessionId(sid).question(question).userId(key.getCreatedBy())
                         .userImages(List.of()).attachments(List.of()).skills(List.of())
                         .agentId(agentId.isEmpty() ? null : agentId).modelOverride("")
@@ -430,7 +430,7 @@ public class McpServerService {
     }
 
     /**
-     * 工具执行：跑一次完整的问答流水线（复用 {@link RagService#chat} 的游客模式），
+     * 工具执行：跑一次完整的问答流水线（复用 {@link ChatService#chat} 的游客模式），
      * 用 {@link CollectingSseEmitter} 收集完整回答后一次性返回（MCP 的 tools/call 是请求-响应语义）。
      * 外层 {@link #audit} 统一落调用审计（每次外部调用一行，可回溯）。
      */
@@ -473,7 +473,7 @@ public class McpServerService {
         CollectingSseEmitter sink = new CollectingSseEmitter();
         try {
             // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载
-            ragService.chat(ChatCommand.builder()
+            chatService.chat(ChatCommand.builder()
                     .sessionId(sessionId).question(question).userId(r.owner().getUid())
                     .userImages(List.of()).attachments(List.of()).skills(List.of())
                     .agentId(r.agent().getId()).modelOverride(r.modelRef()).guestMode(true)
@@ -494,7 +494,7 @@ public class McpServerService {
                     .structuredContent(Map.of("sessionId", sessionId))
                     .build();
         } finally {
-            // 收集型通道不触发 onCompletion，必须主动清登记，否则 RagService 的 ACTIVE_SSE 残留
+            // 收集型通道不触发 onCompletion，必须主动清登记，否则 ChatRunRuntime 的 ACTIVE_SSE 残留
             ChatRunRuntime.forgetSseChannel(sink);
         }
     }

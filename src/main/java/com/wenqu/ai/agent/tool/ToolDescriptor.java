@@ -6,7 +6,7 @@ import java.util.function.Predicate;
  * 工具描述符（平台内一个工具的单一真源）。
  * <p>
  * 迁移前这一个工具的信息摊在四处：{@code ToolInventoryService.LABELS}（管理清单中文名）、
- * {@code ToolInventoryService} 里硬编码的 sensitive 集合、{@code RagService.enabledToolCallbacks}
+ * {@code ToolInventoryService} 里硬编码的 sensitive 集合、{@code ChatService.enabledToolCallbacks}
  * 的 if 链（哪个开关控制挂不挂、游客给不给、算不算有副作用）、以及前端 {@code projections.js} 的
  * TOOL_LABELS/TOOL_DESCS（对话卡片口语名）。四处各自演进的结果是：新工具上线时清单页显示裸英文名
  * （writeTodo 就漏过），改一个开关名要同步三处，而「提示词教了模型、工具却没挂上」只能靠注释约束

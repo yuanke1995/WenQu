@@ -80,18 +80,18 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
         // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatController 内处理）
         if ("POST".equals(method) && path.equals("/api/ai/chat/attachment")) return true;
-        // 停止本轮（问答链路控制）：POST /chat/stop——归属由 RagService.stopTurn 按
+        // 停止本轮（问答链路控制）：POST /chat/stop——归属由 ChatService.stopTurn 按
         // 「停止人 uid == 发起本轮 uid」严格校验，别人停不动；不放行则普通用户点停止直接 403
         if ("POST".equals(method) && path.equals("/api/ai/chat/stop")) return true;
-        // 运行中插话：POST /chat/steer——归属同样由 RagService.steerTurn 按「发起人 uid == 插话人 uid」校验
+        // 运行中插话：POST /chat/steer——归属同样由 ChatService.steerTurn 按「发起人 uid == 插话人 uid」校验
         if ("POST".equals(method) && path.equals("/api/ai/chat/steer")) return true;
-        // 断线重连接流：GET /chat/run（探测）+ GET /chat/resume（接流）——归属由 RagService 按
+        // 断线重连接流：GET /chat/run（探测）+ GET /chat/resume（接流）——归属由 ChatService 按
         // 「接流人 uid == 发起本轮 uid」严格校验，别人的轮既看不到有没有在跑、也接不走。
         // 不放行则普通用户刷新页面后接不上自己那一轮（只有管理员能重连，等于这功能对多数用户是坏的）
         if ("GET".equals(method) && (path.equals("/api/ai/chat/run") || path.equals("/api/ai/chat/resume"))) {
             return true;
         }
-        // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 RagService.resolveApproval
+        // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 ChatService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝。
         // GET 同样放行：GET /tool-approval/{id} 是铃铛通知的深链恢复入口、GET /tool-approval/pending 是
         // 会话加载/断线接回时重建审批卡的入口（控制器内都按 uid 过滤）。此前只放了 POST，普通用户点铃铛
@@ -256,7 +256,7 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     /**
      * 游客分享端点（公开链接 /s/{token} 的后端 API）：免登录可访问。
-     * 安全面收窄在 {@code ShareController} 与 RagService 游客模式内做：
+     * 安全面收窄在 {@code ShareController} 与 ChatService 游客模式内做：
      * token 校验 + IP 限流 + 工具白名单收窄（沙盒/产物/MCP/技能不暴露）。
      */
     private static boolean isShareGuestEndpoint(String path) {

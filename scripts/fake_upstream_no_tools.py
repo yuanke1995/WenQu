@@ -16,7 +16,7 @@
 
 `GET /requests` 回吐收到过的每次请求 [{model, withTools, toolCount}]——换路是否真发生，看这条序列最省事。
 
-判定入口在后端 RagService.looksLikeToolsRejected：错误文本要同时出现 tool/function 与
+判定入口在后端 ChatService.looksLikeToolsRejected：错误文本要同时出现 tool/function 与
 not support/unsupported/invalid/unknown/unrecognized/unexpected 才会换路，这里按此口径造文案。
 """
 import json

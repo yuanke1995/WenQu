@@ -31,7 +31,7 @@ import java.util.*;
 @Tag(name = "检索调试", description = "检索链路分步调试，排查召回问题")
 public class RetrievalDebugController {
 
-    /** 与 RagService 保持一致：最终上下文条数（重排区间由 RerankService 单一持有，此处不再复刻） */
+    /** 与 ChatService 保持一致：最终上下文条数（重排区间由 RerankService 单一持有，此处不再复刻） */
     private static final int MAX_CONTEXT_HITS = 8;
 
     private final HybridRetrievalService hybridRetrievalService;
@@ -115,7 +115,7 @@ public class RetrievalDebugController {
             return m;
         }).toList());
 
-        // 3. 合并（RagService 实际使用的检索结果；kbIds 限定库范围——对照实验/单库排查）
+        // 3. 合并（ChatService 实际使用的检索结果；kbIds 限定库范围——对照实验/单库排查）
         List<HybridRetrievalService.Hit> merged = hybridRetrievalService.search(query, null, kbIds);
         if (kbIds != null) {
             // 关键词路不受 kbIds 约束（产品现状：向量路按库索引过滤，关键词路全库）——

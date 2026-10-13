@@ -17,8 +17,8 @@ import java.util.Set;
  *   <li>裸 {@code name}：存量配置的弱匹配（按名字在当前用户自己的资源里找）；内置技能也走这条——
  *       它随版本分发、人人都有，按名字匹配才是对的。</li>
  * </ul>
- * 迁移前这段是 {@code RagService} 的私有静态方法，MCP 与技能各调一次；MCP 族迁到 provider 之后
- * 判据要在 provider 里跑，纯字符串解析再留在问答侧就变成「provider 得回头问 RagService」，所以搬过来。
+ * 迁移前这段是 {@code ChatService} 的私有静态方法，MCP 与技能各调一次；MCP 族迁到 provider 之后
+ * 判据要在 provider 里跑，纯字符串解析再留在问答侧就变成「provider 得回头问 ChatService」，所以搬过来。
  *
  * @author yuanke
  */

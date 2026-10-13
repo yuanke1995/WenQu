@@ -4,7 +4,7 @@ package com.wenqu.ai.agent.tool;
  * 工具族（P1 seam 化的第一层归属）。
  * <p>
  * 为什么要有它：一个工具的「挂不挂、要不要审批、游客能不能用、开关在哪、卡片叫什么」历史上散在
- * {@code RagService.enabledToolCallbacks} 的 if 链、{@code ToolInventoryService.LABELS}、
+ * {@code ChatService.enabledToolCallbacks} 的 if 链、{@code ToolInventoryService.LABELS}、
  * {@code ToolInventoryService} 里硬编码的 sensitive 集合、以及前端两份映射里——同一族工具的属性
  * 被抄了四份，改一处漏三处（writeTodo 上线时清单页就直接漏了中文名，就是这个机制的实测代价）。
  * 族是收口的单位：每个 {@link ToolFamilyProvider} 一次把本族全部 {@link ToolDescriptor} 声明清楚，

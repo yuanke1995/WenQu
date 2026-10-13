@@ -17,7 +17,7 @@ import java.util.Map;
  * <p>
  * 数据来源是 {@link ToolRegistry}：工具名、中文名、开关归属、是否算有副作用，都由各工具族的
  * {@code ToolFamilyProvider} 声明一次，这里只负责按族展示。迁移前这个类自己维护一张中文名表
- * 与一份硬编码的 sensitive 集合，与装配处（{@code RagService.enabledToolCallbacks}）、前端两处
+ * 与一份硬编码的 sensitive 集合，与装配处（{@code ChatService.enabledToolCallbacks}）、前端两处
  * 各抄各的——新工具上线时清单里只剩英文名（writeTodo 就漏过），改一个开关要同步三处。
  * <p>
  * 模型可见的 description 仍然是反射出来的（{@code @Tool} 注解原文），不另存一份：

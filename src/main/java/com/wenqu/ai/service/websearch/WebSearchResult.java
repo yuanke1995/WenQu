@@ -4,7 +4,7 @@ package com.wenqu.ai.service.websearch;
  * 联网搜索单条结果（服务商无关的中间模型）。
  * <p>
  * 各服务商（Tavily / 博查 / 自建 SearXNG）的响应字段不同，统一收敛到这里后再进引用体系，
- * 避免上层（WebSearchTools / RagService）感知服务商差异。
+ * 避免上层（WebSearchTools / ChatService）感知服务商差异。
  *
  * @param title       结果标题（展示与引用用）
  * @param url         结果链接（溯源的锚点，也是同一来源去重的键）

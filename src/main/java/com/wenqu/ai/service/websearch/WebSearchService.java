@@ -13,7 +13,7 @@ import java.util.Locale;
  * 联网搜索服务：按配置选服务商、执行搜索、把结果收敛成统一模型。
  * <p>
  * 职责边界：本类只做「服务商无关的一次搜索」（选型 + 参数 + 清洗），
- * **不碰**会话语义（配额、引用编号、降级提示）——那些在 WebSearchTools 与 RagService。
+ * **不碰**会话语义（配额、引用编号、降级提示）——那些在 WebSearchTools 与 ChatService。
  *
  * @author yuanke
  */

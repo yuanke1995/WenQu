@@ -42,13 +42,13 @@ public final class WorkflowRunCtx {
     final int maxSteps;
     /**
      * M4 对话型接入（智能体绑定）的 token 透传通道：非空时 llm 节点改走流式调用，
-     * 每个文本块即时交给它（由 RagService 包装成 SSE token 事件推给前端），
+     * 每个文本块即时交给它（由 ChatService 包装成 SSE token 事件推给前端），
      * 节点输出仍为完整文本——流式只是"边跑边看"，不改变节点语义。
      * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推，走非流式）。
      */
     final Consumer<String> tokenSink;
 
-    // ---- 工作流图片机制（与主问答管线同语义，镜像 RagService 的 [图片N] 编号口径） ----
+    // ---- 工作流图片机制（与主问答管线同语义，镜像 ChatService 的 [图片N] 编号口径） ----
     /**
      * 全局图片编号 → 原始 URL（有序；retrieval 节点填充）。
      * 节点把命中块正文里的 [图片]/[图片：描述] 占位替换为全局编号 [图片N：描述]，
@@ -58,7 +58,7 @@ public final class WorkflowRunCtx {
     final List<String> imageUrls = new ArrayList<>();
     /**
      * 图片列表透传通道（对话型接入）：retrieval 节点完成编号后回调（<b>累计</b>有序原始 URL 列表副本），
-     * 由 RagService 签名后发 SSE image 事件——LLM 开始吐 token 前前端就拿到图片清单，
+     * 由 ChatService 签名后发 SSE image 事件——LLM 开始吐 token 前前端就拿到图片清单，
      * 与主链路"image 事件先于 token"的时序一致。多个 retrieval 节点按完成序各回调一次（每次都带全量）。
      * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推）。
      */

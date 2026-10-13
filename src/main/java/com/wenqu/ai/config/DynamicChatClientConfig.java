@@ -12,12 +12,12 @@ import org.springframework.context.annotation.Configuration;
  * 网关四要素由「模型供应商」表按模型引用解析（会话覆盖 / 个人默认均为 {providerId}/{modelId}），
  * 供应商保存即生效，下一次请求自动用新网关，无需重启服务；解析不出引用一律 fail-loud。
  * <p>
- * 替换 Spring AI 自动配置基于 yml 单例 ChatModel 的 ChatClient.Builder 注入（RagService 改为注入本 ChatClient）。
+ * 替换 Spring AI 自动配置基于 yml 单例 ChatModel 的 ChatClient.Builder 注入（ChatService 改为注入本 ChatClient）。
  *
  * <h3>工具调用（Function Calling）</h3>
  * 本配置注册 {@link ToolCallAdvisor} 作为默认 advisor：它持有 {@link ToolCallingManager}，
  * 在流式回答中检测模型发出的 tool_calls，执行 {@code @Tool} 注册的工具并把结果回传，
- * 自动完成多轮 tool-calling 循环。当请求未挂载任何工具（RagService.enabledTools() 返回空）
+ * 自动完成多轮 tool-calling 循环。当请求未挂载任何工具（ChatService.enabledTools() 返回空）
  * 时，advisor 是纯透传，对现有行为零侵入。
  *
  * @author yuanke

@@ -11,7 +11,7 @@ import java.util.Map;
  * <p>
  * 编号语义要留意：{@code answer} 里的 {@code [N]} 与 {@code [图片N]} 仍是<b>子轮自己的编号</b>，
  * 引用与图片的真身在 {@code sources}/{@code images} 里。父轮装配时按这两份表把它们续编成
- * 父轮编号（见 RagService 的回报段处理）——直接拼进父轮上下文是错的，两套编号会互相指错资料。
+ * 父轮编号（见 ChatService 的回报段处理）——直接拼进父轮上下文是错的，两套编号会互相指错资料。
  *
  * @param status        done | failed | timeout（失败分支照样在回报段占一行，让主模型知道这一支没结果，
  *                      与「要点提炼」的失败占位同一口径）

@@ -21,7 +21,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 回答定稿前的<b>引用面校验</b>（P6 刀 5a，自 {@code RagService} 的流收尾回调里收口）。
+ * 回答定稿前的<b>引用面校验</b>（P6 刀 5a，自 {@code ChatService} 的流收尾回调里收口）。
  *
  * <p>四道检查按由浅到深排：<b>没标引用</b>（有来源却一个 [N] 都没有）→ <b>编号越界</b>（[N] 落不在
  * 来源表里，LLM 编造）→ <b>图片标记越界</b>（[图片N] 落不在本轮图片清单里）→ <b>语义不支撑</b>

@@ -435,7 +435,7 @@ public class AgentService {
                 }
             }
             // 知识库范围同为身份锁死项：内置「问渠」固定检索使用者自己的默认库「问渠」＋官方内置手册库——智能体
-            // 全局一只、默认库每人一个（运行时按使用者解析，见 RagService），没有可静态绑定的库 ID。与现值等价的
+            // 全局一只、默认库每人一个（运行时按使用者解析，见 ChatService），没有可静态绑定的库 ID。与现值等价的
             // 提交放行（旧前端整单保存不受影响），真正改动 fail-loud 拒绝——静默忽略会让人以为改成功了。
             String curKb = asText(existing.getKnowledgeBaseIds(), 1000);
             String reqKb = body.containsKey("knowledgeBaseIds") ? asText(body.get("knowledgeBaseIds"), 1000) : curKb;

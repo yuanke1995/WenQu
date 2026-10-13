@@ -2275,7 +2275,7 @@ public class DocumentService {
 
     /**
      * 向量化/embedding 文本统一拼装：title + 【上下文】章节路径 + 重叠尾巴 + 净正文。
-     * 入库 content 只存净正文；路径与重叠仅作为向量语义的上下文输入，检索时路径另由 RagService 拼装。
+     * 入库 content 只存净正文；路径与重叠仅作为向量语义的上下文输入，检索时路径另由 ChatService 拼装。
      */
     private String buildEmbedText(String title, String titlePath, String content, String overlapPrefix) {
         StringBuilder sb = new StringBuilder();

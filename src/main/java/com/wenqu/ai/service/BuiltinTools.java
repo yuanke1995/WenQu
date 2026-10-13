@@ -450,7 +450,7 @@ public class BuiltinTools {
         }
     }
 
-    /** ToolContext 键：askUser 的本轮执行器（RagService 装配会话态时注入） */
+    /** ToolContext 键：askUser 的本轮执行器（ChatService 装配会话态时注入） */
     public static final String CTX_ASK = "wenqu.askUser.fn";
 
     /** askUser 的单个问题（一卡多问）：话题标签（可空）、问题、选项 */

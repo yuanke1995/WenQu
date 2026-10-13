@@ -36,7 +36,7 @@ export const sessionStore = reactive({
 //         切走/新建会话后流继续跑、对象照常更新；切回该会话时把它接回视图尾部
 //         （本轮完成前后端不落库助手消息，getHistory 里没有这条）。
 //   abort 本轮请求的 AbortController：停止生成 / 删除流式中的会话时中止。
-// 后端口径：客户端断开 = 取消订阅立即停止生成、本轮不落库助手消息（RagService sendSseEvent
+// 后端口径：客户端断开 = 取消订阅立即停止生成、本轮不落库助手消息（ChatRunRuntime sendSseEvent
 // 返回 false 短路），所以"放着不管"不等于后台续跑——前台必须持有连接，切换会话才能不断流。
 // 必须用 shallowReactive：deep reactive 的 Map 在 get() 时会把存入的 {msg,abort} 包一层代理，
 // onDone 里 `chatStreams.get(sid) === st` 恒为 false → 记录永不清理 → 回答完成后 loading 卡死

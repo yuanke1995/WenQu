@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * 人在回路裁决服务（P6 刀 1，自 {@code RagService} 抽出）。
+ * 人在回路裁决服务（P6 刀 1，自 {@code ChatService} 抽出）。
  * <p>三张卡共用同一套「挂起—恢复」管道：内存 future 阻塞着等人的那根线程 + c_ai_tool_approval 里一条
  * PENDING 记录（卡片的权威源）+ SSE 卡片（只触达正开着页面的人）+ 站内通知（人不在页面时的可感知面，
  * 由问答运行时发起，不在本类）。本类只管前两件：<b>谁的哪张卡还挂在等、裁决怎么落终态、

@@ -7,7 +7,7 @@ import java.util.Map;
 /**
  * 一轮问答交给工具执行层的契约（P1 seam 的 Consumer 侧）。
  * <p>
- * 为什么是接口而不是一句「把 TurnState 传进去」：TurnState 是本轮的可变状态袋（P6 刀 0 才从 RagService
+ * 为什么是接口而不是一句「把 TurnState 传进去」：TurnState 是本轮的可变状态袋（P6 刀 0 才从 ChatService
  *   的私有内部类提成顶层类），工具层不该因为「想读一个本轮的事实」就依赖它的类型，
  * 86 个字段、什么都有。守卫链一旦认识它，就再也拿不出问答流水线之外——工作流节点与技能那两条
  * 现在完全绕过守卫的旁路（{@code WorkflowEngine.mcpBody}/{@code skillBody}）会永远接不上来。

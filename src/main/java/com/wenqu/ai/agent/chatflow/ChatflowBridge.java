@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 智能体绑定工作流后的问答路径（M4，chatflow 语义；P6 刀 4 自 {@code RagService} 抽出）。
+ * 智能体绑定工作流后的问答路径（M4，chatflow 语义；P6 刀 4 自 {@code ChatService} 抽出）。
  *
  * <p><b>为什么整条走工作流、不与常规链路混合</b>：绑定了工作流的智能体，行为由工作流定义——
  * 智能体自带的人设 / 知识库范围 / 工具开关都不参与（那些是"预设型智能体"的维度）。两套逻辑同时生效

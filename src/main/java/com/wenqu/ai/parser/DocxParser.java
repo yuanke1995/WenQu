@@ -777,8 +777,8 @@ public class DocxParser implements DocumentParser {
 
     /**
      * 描述文本写入 [图片：…] 标记前的方括号清理：下游多处按"标记内不含 ]"正则解析
-     * （RagService IMG_NUMBER_PATTERN、DocumentService IMG_PH/重叠尾巴、ImageFilterService、
-     * QaLogService、RagService 历史剥离），描述含 ASCII [] 会让标记被截断错配，统一换全角。
+     * （ChatService IMG_NUMBER_PATTERN、DocumentService IMG_PH/重叠尾巴、ImageFilterService、
+     * QaLogService、ChatService 历史剥离），描述含 ASCII [] 会让标记被截断错配，统一换全角。
      */
     static String sanitizeDesc(String desc) {
         if (desc == null || desc.isEmpty()) return desc;

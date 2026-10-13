@@ -100,7 +100,7 @@ const toolCallsView = list => {
 /** 「执行了 N 个操作」的计数口径：只数真执行过的。
  *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
  *  卡片仍留一行说明为什么没跑，但计入操作数会把「平台只让它试了 4 次」读成「它试了 8 次还没找到」。
- *  分支卡上的「跑了 N 步工具」在后端按同一口径统计（RagService 读 toolCalls 时跳过 denied）。 */
+ *  分支卡上的「跑了 N 步工具」在后端按同一口径统计（工具卡的 denied 标记由 TurnRecorder.recordToolStatus 落记）。 */
 const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t && !t.denied).length
 // ==================== askUser（向用户提问）问答记录 ====================
 // 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；

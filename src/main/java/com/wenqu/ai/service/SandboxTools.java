@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  * （{@code deliver_artifact} 为本工程新增），便于将来两边共用提示词与技能文档。
  * <p>
  * 归属与 scope 的来源：会话 id 与用户 uid 都走 {@code ToolContext}（与产物交付工具同一约定），
- * 由 RagService 发起流式请求时注入。注意：工具回调跑在 Spring AI 响应式 I/O 线程上，
+ * 由 ChatService 发起流式请求时注入。注意：工具回调跑在 Spring AI 响应式 I/O 线程上，
  * 而 {@code RequestUser} 是流水线线程装载的 ThreadLocal，跨线程读不到（回落 anonymous），
  * 所以这里必须读 toolContext 透传的 uid，而不是 RequestUser.uid()——否则沙盒会被建到
  * {@code shared/anonymous/workspace}（已踩坑）。
@@ -34,13 +34,13 @@ public class SandboxTools {
     /** 单次命令输出超过该长度时，返回给模型的内容会被截断（避免把上下文撑爆）。 */
     private static final int TOOL_OUTPUT_CHARS = 20_000;
 
-    /** toolContext 里「工具输出增量回调」的键（Consumer&lt;String&gt;，RagService 注入 → SSE tool_output 实时下发）。 */
+    /** toolContext 里「工具输出增量回调」的键（Consumer&lt;String&gt;，ChatService 注入 → SSE tool_output 实时下发）。 */
     public static final String CTX_OUTPUT_SINK = "wq_tool_output_sink";
     /**
-     * toolContext 里「基础设施故障上报」的键（Consumer&lt;String&gt;，RagService 注入）。
+     * toolContext 里「基础设施故障上报」的键（Consumer&lt;String&gt;，ChatService 注入）。
      * <p>沙盒不可用（provisioner 没起 / 连不上 / 鉴权被拒）时，工具**不抛异常**——抛出去会掐断
      * 整轮流、让已生成的正文与全部工具记录一起落空。工具照常把失败文本返回给模型让它自行调整，
-     * 同时经此回调把「这次失败是基础设施层、不是命令本身跑失败」告诉 RagService，
+     * 同时经此回调把「这次失败是基础设施层、不是命令本身跑失败」告诉 ChatService，
      * 让工具记录落成 status=error（红色失败）而不是 status=done（绿色对勾）。
      * <p>不这么做的后果：命令退出码非 0（业务失败）与沙盒压根没通（基础设施故障）都是
      * "exitCode=1 +一段文本"，记录一律显示成功，排查时完全看不出沙盒没通。
@@ -71,12 +71,12 @@ public class SandboxTools {
      * 缺这个键时 run_code 直接拒（不是"那就不带工具、纯算"）：模型看到的能力与实际给的不能两样。
      */
     public static final String CTX_RUN_CODE_BRIDGE = "wq_runcode_bridge";
-    /** 支持流式输出的工具名（RagService 按 name 判定是否注入输出回调）。 */
+    /** 支持流式输出的工具名（ChatService 按 name 判定是否注入输出回调）。 */
     public static final String STREAMING_TOOL_NAME = "execute";
-    /** 脚本型工具名（P3b）：RagService 判定是否注入子调用回程用 */
+    /** 脚本型工具名（P3b）：ChatService 判定是否注入子调用回程用 */
     public static final String RUN_CODE_TOOL_NAME = "run_code";
     /**
-     * 本组件注册的全部工具名（RagService 判定「是否沙盒工具」用，决定要不要注入
+     * 本组件注册的全部工具名（ChatService 判定「是否沙盒工具」用，决定要不要注入
      * CTX_INFRA_ERROR_SINK）。刻意列全而非用前缀匹配：工具名是 @Tool 显式声明的字符串，
      * 改名时编译期就会暴露这里的漏项风险（新增工具忘记加入 → 基础设施故障仍显示为成功），
      * 而前缀匹配会在重构时静默失配。
@@ -349,7 +349,7 @@ public class SandboxTools {
         return v == null ? null : String.valueOf(v);
     }
 
-    /** 取输出增量回调（RagService 按工具名注入；缺省 null = 无流式上下文，走同步执行）。 */
+    /** 取输出增量回调（ChatService 按工具名注入；缺省 null = 无流式上下文，走同步执行）。 */
     @SuppressWarnings("unchecked")
     private java.util.function.Consumer<String> outputSink(ToolContext toolContext) {
         if (toolContext == null) return null;
@@ -383,7 +383,7 @@ public class SandboxTools {
         return reportInfra(toolContext, message);
     }
 
-    /** 取基础设施故障上报回调（RagService 注入；缺省 null = 无问答流上下文，只返回文本不落状态）。 */
+    /** 取基础设施故障上报回调（ChatService 注入；缺省 null = 无问答流上下文，只返回文本不落状态）。 */
     @SuppressWarnings("unchecked")
     private java.util.function.Consumer<String> infraErrorSink(ToolContext toolContext) {
         if (toolContext == null) return null;
@@ -447,7 +447,7 @@ public class SandboxTools {
             if (u != null) uid = String.valueOf(u);
         }
         if (uid == null || uid.isBlank()) {
-            // 跨线程身份透传缺失（理论上 RagService 必然注入 CTX_USER_ID）——显式报警，绝不静默回落 anonymous 建沙盒。
+            // 跨线程身份透传缺失（理论上 ChatService 必然注入 CTX_USER_ID）——显式报警，绝不静默回落 anonymous 建沙盒。
             log.warn("[FAIL-LOUD] 沙盒工具缺少 toolContext 用户归属，拒绝建沙盒（session={}）", sessionId);
             return null;
         }

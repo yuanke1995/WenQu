@@ -720,7 +720,7 @@ public class WorkflowService {
 
     /**
      * 智能体绑定的对话型运行（chatflow）：跑<b>已发布</b> DSL，llm 节点的流式 token 经
-     * {@code tokenSink} 透传给调用方（由 RagService 转成 SSE token 事件）。
+     * {@code tokenSink} 透传给调用方（由 ChatService 转成 SSE token 事件）。
      * 同样不支持人工审核节点（会话里没有工作流审批卡交互面，fail-loud 而非自动放行）。
      */
     public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
@@ -730,7 +730,7 @@ public class WorkflowService {
 
     /**
      * 智能体对话触发（带图片通道）：imageSink 非空时 retrieval 节点完成图片编号后回调
-     * 累计有序原始 URL 列表（RagService 签名后发 SSE image 事件，时序先于 LLM token）。
+     * 累计有序原始 URL 列表（ChatService 签名后发 SSE image 事件，时序先于 LLM token）。
      */
     public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
                                      Consumer<String> tokenSink, Consumer<List<String>> imageSink) {

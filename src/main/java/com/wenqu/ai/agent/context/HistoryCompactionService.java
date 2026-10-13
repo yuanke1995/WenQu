@@ -20,7 +20,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
- * 对话历史的<b>预算驱动装配与滚动压缩</b>（P6 刀 4 第一族，自 {@code RagService} 抽出）。
+ * 对话历史的<b>预算驱动装配与滚动压缩</b>（P6 刀 4 第一族，自 {@code ChatService} 抽出）。
  *
  * <p>这一族回答三个问题：本轮带多少历史（近期原样 + 早期摘要）、什么时候压（阈值）、
  * 用户手动 /compact 时怎么分批压完。它<b>不认识本轮状态</b>——入参只有会话、模型、预算与

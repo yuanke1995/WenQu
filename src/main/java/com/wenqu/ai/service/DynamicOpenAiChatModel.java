@@ -36,7 +36,7 @@ import com.wenqu.ai.util.UsageAttr;
  *   由问答入口/调用方的「选择模型」引导兜住
  * - 网关地址/密钥变更（供应商管理保存）后指纹变化 → 自动构建新客户端，旧实例由缓存淘汰
  * - 供应商变更经由 Redis 广播 reload / 周期兜底 reload 刷新，下一次请求自动感知
- * - 替换 Spring AI 自动配置的单例 ChatModel：RagService 注入基于本类的 ChatClient（DynamicChatClientConfig）
+ * - 替换 Spring AI 自动配置的单例 ChatModel：ChatService 注入基于本类的 ChatClient（DynamicChatClientConfig）
  *
  * @author yuanke
  */
@@ -134,7 +134,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
                     })
                     .doOnError(err -> {
                         // 额度不足在此登记并转成可行动文案——流式错误经 Reactor 冒泡，
-                        // 不在这里拦就会一路裸奔到 RagService 的通用兜底（用户只看到"请稍后重试"）
+                        // 不在这里拦就会一路裸奔到 ChatService 的通用兜底（用户只看到"请稍后重试"）
                         throw quotaAware(err, route, modelRef);
                     })
                     .doOnComplete(() -> {
@@ -330,7 +330,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
                 .restClientBuilder(com.wenqu.ai.config.GatewayHttpClients.restClientBuilder());
         OpenAiChatModel.Builder builder = OpenAiChatModel.builder()
                 .openAiApi(apiBuilder.build())
-                // 空 default options：模型名/温度等均由 per-request options 提供（RagService 三处调用均已显式传入）
+                // 空 default options：模型名/温度等均由 per-request options 提供（ChatService 三处调用均已显式传入）
                 .defaultOptions(OpenAiChatOptions.builder().build());
         if (retryTemplate != null) {
             builder.retryTemplate(retryTemplate);

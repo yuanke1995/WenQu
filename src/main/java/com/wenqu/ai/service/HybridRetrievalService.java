@@ -83,7 +83,7 @@ public class HybridRetrievalService {
 
     /**
      * 检索诊断（fail-loud：单路失败/降级标记，随检索结果透传给调用方上报 degradations）。
-     * 只写不入日志，避免热路径日志噪音；由 RagService 统一转成回答级警示。
+     * 只写不入日志，避免热路径日志噪音；由 ChatService 统一转成回答级警示。
      */
     public static final class RetrievalDiag {
         private boolean vectorFailed;

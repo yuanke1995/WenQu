@@ -208,7 +208,7 @@ function streamChatSse (start, opts) {
   let donePayload = null
   // kind 区分失败性质，供 UI 决定文案与「重试」语义：
   //   'interrupted' —— 断线/读失败/连接被掐断/idle 超时。**后端已把半程回答按截断态落库**
-  //                    （RagService.persistPartialAnswer，尾部带「⏹ 中断」标记），
+  //                    （TurnRecorder.persistPartialAnswer，尾部带「⏹ 中断」标记），
   //                    所以「重试」= 重新生成本轮，后端会软删那条截态回答并挂进同一版本组。
   //   'aborted'     —— 用户主动停止（signal abort），属正常结束。
   //   其他/未传      —— 业务错误（4xx/5xx、模型报错等）。

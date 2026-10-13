@@ -95,7 +95,7 @@ public class ImageFilterService {
      * 编造的不存在编号（imgDescIndex 无此 key）直接剔除；描述为空（旧文档无视觉描述）放行。
      *
      * @param answer           LLM 原始回答
-     * @param imgDescIndex     全局图片编号 → 图片描述（RagService 构建上下文时生成）
+     * @param imgDescIndex     全局图片编号 → 图片描述（ChatService 构建上下文时生成）
      * @param question         用户问题（参与判定）
      * @param minHits          关键词命中数阈值
      * @param preContextChars  取标记前文的最大字符数

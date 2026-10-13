@@ -100,7 +100,7 @@ public class KnowledgeBaseController {
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
         for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, effectiveDefault(k));
-        for (String k : com.wenqu.ai.service.RagService.AGENT_QUERY_PARAM_KEYS) {
+        for (String k : com.wenqu.ai.service.ChatService.AGENT_QUERY_PARAM_KEYS) {
             if (k.endsWith(".baseUrl")) continue;   // 网关地址不外发给普通用户（表单也没有该字段）
             out.put(k, effectiveDefault(k));
         }
@@ -138,7 +138,7 @@ public class KnowledgeBaseController {
     public ResultJson paramTips() {
         java.util.Set<String> keys = new java.util.LinkedHashSet<>();
         keys.addAll(DocumentService.PARSE_PARAM_KEYS);
-        keys.addAll(com.wenqu.ai.service.RagService.AGENT_QUERY_PARAM_KEYS);
+        keys.addAll(com.wenqu.ai.service.ChatService.AGENT_QUERY_PARAM_KEYS);
         keys.remove("rerank.baseUrl");   // 表单没有该字段，无需下发
         return ResultJson.ok(configSchemaService.tipsByKey(keys));
     }

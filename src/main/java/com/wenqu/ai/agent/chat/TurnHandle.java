@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 本轮身份把手：turnId + userId + 通道，外加两个跨线程标志（叫停 / 未送达的插话）。
- * <p>P6 刀 0 自 {@code RagService} 提出顶层（原先是它的私有 record，只有内层状态能碰）。
+ * <p>P6 刀 0 自 {@code ChatService} 提出顶层（原先是它的私有 record，只有内层状态能碰）。
  * <p><b>它比 {@link TurnState} 早得多也必须早</b>：在 {@code chat()} 抢到轮级互斥的那一刻就建好——
  * 计划卡、子智能体编排、检索统计这些事件发生在流状态构造之前，只靠状态表归因会把同一轮的轨迹劈成
  * 「无 turn_id 的孤儿行」与「有 turn_id 的行」两截，回放时拼不回去。

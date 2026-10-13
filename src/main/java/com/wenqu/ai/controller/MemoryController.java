@@ -20,7 +20,7 @@ import java.util.Map;
 
 /**
  * 用户长期记忆（个人设置页管理）：全部按 RequestUser.uid() 归属过滤，
- * 只能看/改/删自己的记忆。注入与自动提取在 RagService/UserMemoryService 内完成。
+ * 只能看/改/删自己的记忆。注入与自动提取在 ChatService/UserMemoryService 内完成。
  *
  * @author yuanke
  */

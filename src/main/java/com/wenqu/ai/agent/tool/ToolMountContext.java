@@ -9,7 +9,7 @@ package com.wenqu.ai.agent.tool;
  * TurnState 影子。
  * <p>
  * 为什么要让各族自己判：迁移前「哪个开关控制哪族挂不挂、游客给不给」整份抄在
- * {@code RagService.enabledToolCallbacks} 的 if 链里，并且为免登录分享会话又整份复制了一遍
+ * {@code ChatService.enabledToolCallbacks} 的 if 链里，并且为免登录分享会话又整份复制了一遍
  * （知识检索与内置工具各出现两次）。判据分散的后果不是难看，而是改一处忘另一处：
  * 收紧了常规分支的开关，游客分支照旧放行。
  *

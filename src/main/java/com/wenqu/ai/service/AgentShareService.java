@@ -20,7 +20,7 @@ import java.util.List;
  * <p>
  * 发布（publish）：一个智能体一条配置，token 生成后不变（停用=enabled=0，撤销=删行）；
  * 游客解析（resolveGuest）：token → 分享配置 + 智能体 + 发布者档案三件套，
- * 供 ShareController 组装游客会话与受限对话（RagService 游客模式）。
+ * 供 ShareController 组装游客会话与受限对话（ChatService 游客模式）。
  *
  * @author yuanke
  */

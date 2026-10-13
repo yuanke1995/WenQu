@@ -7,7 +7,7 @@ import lombok.Getter;
 import java.util.List;
 
 /**
- * 一轮问答的入参对象（P1 seam 化：把 {@code RagService.chat(...)} 的十个 telescoping 重载收成这一个）。
+ * 一轮问答的入参对象（P1 seam 化：把 {@code ChatService.chat(...)} 的十个 telescoping 重载收成这一个）。
  * <p>
  * 为什么值得动：迁移前 {@code chat()} 有 10 个重载层层委托（10 参 → 11 参 → … → 19 参），
  * 每加一个能力就往尾部加一个参数、再补一个重载。后果不是难看，而是三件具体的事：
