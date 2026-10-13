@@ -48,6 +48,16 @@ search:
   formats:
     - html
     - json
+  # 默认界面语言必须钉死 zh-CN，不能留空。
+  # 留空的注释是「从浏览器信息检测」——但问渠是程序化 JSON 调用（无 Accept-Language），
+  # 检测失败后回落英文，bing 引擎随之带上 setlang=en：cn.bing.com 的国际版语言模式下，
+  # 中文查询返回的是轮换的无关降级页（实测「考勤系统 厂商」→ 黄奇帆环球时报、
+  # 「主流考勤系统产品对比」→ 英镑汇率页、weather → 百度首页），HTTP 200、格式完好，
+  # 只是内容全不对——这就是「检索内容页一半是垃圾」在搜索侧的根因。
+  # 带上 language=zh-CN 复测同查询即恢复全对（考勤百科/钉钉考勤/各厂商对比）。
+  # 2026-10-14 实测定位：容器内直连 cn.bing.com（python/curl_cffi 各指纹、h1.1/h2、
+  # 带不带 setlang）全部正常，唯一变量就是语言参数。
+  default_locale: "zh-CN"
 
 # 默认 3.0s 对境内引擎偏紧（sogou/quark 首字节常在 2s 上下），调到 6.0s
 outgoing:
